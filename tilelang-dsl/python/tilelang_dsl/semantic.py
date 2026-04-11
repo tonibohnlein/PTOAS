@@ -1985,7 +1985,7 @@ class _SemanticAnalyzer:
             return FrontendConstantExpr(value=node.value)
         if isinstance(node, ast.Attribute):
             path = self._annotation_attribute_path(node)
-            if path is not None and path[0] in {"pto", "PAT", "PIPE", "EVENT"} and len(path) >= 2:
+            if path is not None and path[0] in {"pto", "PAT", "PIPE", "Pipe", "EVENT", "Event"} and len(path) >= 2:
                 return FrontendSymbolExpr(namespace=".".join(path[:-1]), name=path[-1])
             return FrontendAttributeExpr(
                 base=self._build_frontend_annotation_expr(node.value),
@@ -2354,7 +2354,7 @@ class _SemanticAnalyzer:
                     value=pattern,
                     type=SemanticMetaType(kind="mask_pattern"),
                 )
-        if expr.namespace in {"PIPE", "pto.PIPE"}:
+        if expr.namespace in {"PIPE", "Pipe", "pto.PIPE", "pto.Pipe"}:
             pipe = _PIPE_SYMBOLS.get(expr.name)
             if pipe is not None:
                 return SemanticSymbolExpr(
@@ -2363,7 +2363,7 @@ class _SemanticAnalyzer:
                     value=pipe,
                     type=SemanticMetaType(kind="pipe"),
                 )
-        if expr.namespace in {"EVENT", "pto.EVENT"}:
+        if expr.namespace in {"EVENT", "Event", "pto.EVENT", "pto.Event"}:
             event = _EVENT_SYMBOLS.get(expr.name)
             if event is not None:
                 return SemanticSymbolExpr(

@@ -3323,6 +3323,32 @@ class TileLangDSLDescriptorTests(unittest.TestCase):
         self.assertIn("scf.for %lane_", text)
         self.assertIn("pto.barrier #pto.pipe<PIPE_ALL>", text)
 
+    def test_sync_ops_accept_event_class_alias_and_full_event_range(self) -> None:
+        Event = pto.Event
+        Pipe = pto.Pipe
+
+        @pto.vkernel(op="eltwise", dtypes=[(pto.f32, pto.f32)], advanced=True)
+        def kernel(inp: pto.TensorView, tile: pto.Tile):
+            pto.set_flag(Pipe.MTE2, Pipe.V, Event.ID31)
+            pto.wait_flag(Pipe.MTE2, Pipe.V, Event.ID31)
+            return None
+
+        specialized = kernel.specialize(
+            tile=pto.TileSpecialization(
+                shape=(16, 16),
+                memory_space=pto.MemorySpace.UB,
+            )
+        )
+
+        semantic_kernel = analyze_frontend_kernel(build_frontend_kernel_node(specialized))
+        self.assertIsInstance(semantic_kernel.body[0], SemanticSetFlagStmt)
+        self.assertIsInstance(semantic_kernel.body[1], SemanticWaitFlagStmt)
+        self.assertEqual(pto.Event.ID31.value, "EVENT_ID31")
+
+        text = specialized.mlir_text()
+        self.assertIn('pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID31"]', text)
+        self.assertIn('pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID31"]', text)
+
     def test_strict_vecscope_rejects_implicit_capture_during_semantic_analysis(self) -> None:
         @pto.vkernel(op="eltwise", dtypes=[(pto.f32, pto.f16, pto.i32)], advanced=True)
         def kernel(inp: pto.TensorView, tile: pto.Tile, scale: pto.i32):

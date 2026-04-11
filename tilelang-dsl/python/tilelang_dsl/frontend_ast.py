@@ -776,7 +776,7 @@ def _build_expr(node: ast.AST, context: _FrontendBuildContext) -> FrontendExprNo
         )
     if isinstance(node, ast.Attribute):
         path = _attribute_path(node)
-        if path is not None and path[0] in {"pto", "PAT", "PIPE", "EVENT"} and len(path) >= 2:
+        if path is not None and path[0] in {"pto", "PAT", "PIPE", "Pipe", "EVENT", "Event"} and len(path) >= 2:
             return FrontendSymbolExpr(namespace=".".join(path[:-1]), name=path[-1])
         return FrontendAttributeExpr(base=_build_expr(node.value, context), attr=node.attr)
     if isinstance(node, ast.Subscript):
