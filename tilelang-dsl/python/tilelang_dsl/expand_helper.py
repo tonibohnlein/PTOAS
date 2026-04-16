@@ -291,6 +291,7 @@ def _select_descriptor(
         operand_types,
         context_attrs=_build_positional_context_attrs(operand_specs),
         registry=registry,
+        return_metadata=False,
     )
 
 

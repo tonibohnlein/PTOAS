@@ -241,6 +241,50 @@ selected = pto.select_kernel(
 )
 ```
 
+`pto.select_kernel(...)` also supports an opt-in diagnostics path for matcher debugging:
+
+```python
+report = pto.select_kernel(
+    "a5",
+    "matmul",
+    (pto.f16, pto.f16, pto.f32),
+    context_attrs={"k_aligned": False},
+    return_metadata=True,
+    include_mlir=False,
+)
+```
+
+When `return_metadata=True`, the result is a `KernelSelectionReport` instead of one
+selected descriptor.
+
+- `report.selected` carries the winner when one candidate is selected.
+- `report.final_status` is one of `selected`, `no_candidate`, or `priority_tie`.
+- `report.final_error` summarizes the final selection outcome.
+- `report.candidates` contains one `KernelSelectionCandidateMetadata` per
+  `target/op`-matched descriptor, including `dtype_mismatch`,
+  `constraint_failed`, `constraint_error`, `priority_shadowed`, `selected`, and
+  `priority_tie` states.
+
+Constraint diagnostics in report mode include:
+
+- `failed_constraint_index`
+- `failed_constraint_name`
+- `failed_constraint_location` as `file:line`
+
+For best diagnostics, prefer splitting compound predicates into multiple
+constraint entries instead of writing one large `cond0 and cond1 and cond2`
+callable. Report mode can precisely identify which constraint entry failed, but
+it does not introspect which sub-expression inside one Python boolean
+expression returned `False`.
+
+When `include_mlir=True`, report mode also attempts `mlir_text()` for candidates
+that pass constraint evaluation.
+
+- On success, the candidate carries `mlir_text`.
+- On materialization failure such as missing `specialize()` bindings, the
+  candidate carries `mlir_error`.
+- Use `include_mlir=False` to skip this extra materialization attempt.
+
 #### Examples
 
 ##### Matmul with Multiple Implementations

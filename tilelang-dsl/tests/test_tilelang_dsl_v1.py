@@ -768,6 +768,246 @@ class TileLangDSLMatcherEntryTests(unittest.TestCase):
             )
         self.assertIn("after constraint evaluation", str(ctx.exception))
 
+    def test_select_kernel_report_mode_keeps_default_descriptor_path_compatible(self) -> None:
+        @pto.vkernel(op="matcher_report_default_compat_unique", dtypes=[(pto.f32, pto.f32)])
+        def kernel(inp: pto.TensorView, out: pto.TensorView):
+            return None
+
+        selected = pto.select_kernel(
+            "a5",
+            "matcher_report_default_compat_unique",
+            (pto.f32, pto.f32),
+            return_metadata=False,
+            include_mlir=False,
+        )
+
+        self.assertIsInstance(selected, pto.VKernelDescriptor)
+        self.assertIs(selected.py_fn, kernel.py_fn)
+        self.assertEqual(selected.dtype_signature, (pto.f32, pto.f32))
+
+    def test_select_kernel_report_mode_records_dtype_mismatch_candidates(self) -> None:
+        @pto.vkernel(
+            op="matcher_report_dtype_mismatch_unique",
+            dtypes=[(pto.f32, pto.f32)],
+            priority=5,
+        )
+        def mismatch(inp: pto.TensorView, out: pto.TensorView):
+            return None
+
+        @pto.vkernel(
+            op="matcher_report_dtype_mismatch_unique",
+            dtypes=[(pto.AnyFloat, pto.AnyFloat)],
+            priority=10,
+        )
+        def fallback(inp: pto.TensorView, out: pto.TensorView):
+            return None
+
+        report = pto.select_kernel(
+            "a5",
+            "matcher_report_dtype_mismatch_unique",
+            (pto.bf16, pto.bf16),
+            return_metadata=True,
+            include_mlir=False,
+        )
+
+        self.assertIsInstance(report, pto.KernelSelectionReport)
+        self.assertEqual(report.final_status, "selected")
+        self.assertIsNotNone(report.selected)
+        assert report.selected is not None
+        self.assertEqual(report.selected.py_fn, fallback.py_fn)
+        self.assertEqual(
+            [(candidate.name, candidate.status) for candidate in report.candidates],
+            [("mismatch", "dtype_mismatch"), ("fallback", "selected")],
+        )
+
+    def test_select_kernel_report_mode_records_constraint_failure_candidates(self) -> None:
+        constrained_check = lambda enabled=False: enabled
+
+        @pto.vkernel(
+            op="matcher_report_constraint_failure_unique",
+            dtypes=[(pto.AnyFloat, pto.AnyFloat)],
+            constraints=[constrained_check],
+            priority=20,
+        )
+        def constrained(inp: pto.TensorView, out: pto.TensorView):
+            return None
+
+        @pto.vkernel(
+            op="matcher_report_constraint_failure_unique",
+            dtypes=[(pto.AnyFloat, pto.AnyFloat)],
+            priority=5,
+        )
+        def fallback(inp: pto.TensorView, out: pto.TensorView):
+            return None
+
+        report = pto.select_kernel(
+            "a5",
+            "matcher_report_constraint_failure_unique",
+            (pto.f32, pto.f32),
+            context_attrs={"enabled": False},
+            return_metadata=True,
+            include_mlir=False,
+        )
+
+        self.assertEqual(report.final_status, "selected")
+        self.assertIsNotNone(report.selected)
+        assert report.selected is not None
+        self.assertEqual(report.selected.py_fn, fallback.py_fn)
+        expected_location = (
+            f"{constrained_check.__code__.co_filename}:{constrained_check.__code__.co_firstlineno}"
+        )
+        self.assertEqual(
+            [
+                (
+                    candidate.name,
+                    candidate.status,
+                    candidate.failed_constraint_index,
+                    candidate.failed_constraint_location,
+                )
+                for candidate in report.candidates
+            ],
+            [
+                ("constrained", "constraint_failed", 0, expected_location),
+                ("fallback", "selected", None, None),
+            ],
+        )
+        self.assertIn(expected_location, report.candidates[0].reason)
+
+    def test_select_kernel_report_mode_records_constraint_exceptions(self) -> None:
+        bad_constraint = lambda missing: missing
+
+        @pto.vkernel(
+            op="matcher_report_constraint_exception_unique",
+            dtypes=[(pto.f32, pto.f32)],
+            constraints=[bad_constraint],
+        )
+        def bad(inp: pto.TensorView, out: pto.TensorView):
+            return None
+
+        report = pto.select_kernel(
+            "a5",
+            "matcher_report_constraint_exception_unique",
+            (pto.f32, pto.f32),
+            return_metadata=True,
+            include_mlir=False,
+        )
+
+        self.assertEqual(report.final_status, "no_candidate")
+        self.assertIsNone(report.selected)
+        self.assertIn("requires unsupported parameter", report.final_error)
+        self.assertEqual(len(report.candidates), 1)
+        expected_location = (
+            f"{bad_constraint.__code__.co_filename}:{bad_constraint.__code__.co_firstlineno}"
+        )
+        candidate = report.candidates[0]
+        self.assertEqual(candidate.name, "bad")
+        self.assertEqual(candidate.status, "constraint_error")
+        self.assertEqual(candidate.failed_constraint_index, 0)
+        self.assertEqual(candidate.failed_constraint_location, expected_location)
+        self.assertEqual(candidate.error_type, "TypeError")
+        self.assertIn("requires unsupported parameter", candidate.error_message)
+        self.assertIn(expected_location, candidate.error_message)
+
+    def test_select_kernel_report_mode_reports_priority_ties(self) -> None:
+        @pto.vkernel(
+            op="matcher_report_priority_tie_unique",
+            dtypes=[(pto.f32, pto.f32)],
+            priority=33,
+        )
+        def lhs(inp: pto.TensorView, out: pto.TensorView):
+            return None
+
+        @pto.vkernel(
+            op="matcher_report_priority_tie_unique",
+            dtypes=[(pto.f32, pto.f32)],
+            priority=33,
+        )
+        def rhs(inp: pto.TensorView, out: pto.TensorView):
+            return None
+
+        report = pto.select_kernel(
+            "a5",
+            "matcher_report_priority_tie_unique",
+            (pto.f32, pto.f32),
+            return_metadata=True,
+            include_mlir=False,
+        )
+
+        self.assertEqual(report.final_status, "priority_tie")
+        self.assertIsNone(report.selected)
+        self.assertIn("multiple highest-priority kernels", report.final_error)
+        self.assertEqual(
+            [(candidate.name, candidate.status) for candidate in report.candidates],
+            [("lhs", "priority_tie"), ("rhs", "priority_tie")],
+        )
+
+    def test_select_kernel_report_mode_reports_no_candidate_without_candidates(self) -> None:
+        empty_registry = pto.KernelRegistry()
+
+        report = pto.select_kernel(
+            "a5",
+            "matcher_report_empty_registry_unique",
+            (pto.f32,),
+            registry=empty_registry,
+            return_metadata=True,
+            include_mlir=False,
+        )
+
+        self.assertEqual(report.final_status, "no_candidate")
+        self.assertIsNone(report.selected)
+        self.assertEqual(report.candidates, ())
+        self.assertIn("found no registered kernel", report.final_error)
+
+    def test_select_kernel_report_mode_includes_mlir_text_for_materializable_candidate(self) -> None:
+        @pto.vkernel(
+            op="matcher_report_mlir_text_unique",
+            dtypes=[(pto.f32, pto.f32)],
+        )
+        def kernel(inp: pto.TensorView, out: pto.TensorView):
+            return None
+
+        report = pto.select_kernel(
+            "a5",
+            "matcher_report_mlir_text_unique",
+            (pto.f32, pto.f32),
+            return_metadata=True,
+            include_mlir=True,
+        )
+
+        self.assertEqual(report.final_status, "selected")
+        self.assertEqual(len(report.candidates), 1)
+        candidate = report.candidates[0]
+        self.assertEqual(candidate.status, "selected")
+        self.assertIsNotNone(candidate.mlir_text)
+        self.assertIsNone(candidate.mlir_error)
+        self.assertIn("module attributes", candidate.mlir_text)
+        self.assertIn("@kernel", candidate.mlir_text)
+        self.assertIn("!pto.tensor_view", candidate.mlir_text)
+
+    def test_select_kernel_report_mode_includes_mlir_error_for_unspecialized_tile_candidate(self) -> None:
+        @pto.vkernel(
+            op="matcher_report_mlir_error_unique",
+            dtypes=[(pto.f32, pto.f32)],
+        )
+        def kernel(inp: pto.TensorView, out: pto.Tile):
+            return None
+
+        report = pto.select_kernel(
+            "a5",
+            "matcher_report_mlir_error_unique",
+            (pto.f32, pto.f32),
+            return_metadata=True,
+            include_mlir=True,
+        )
+
+        self.assertEqual(report.final_status, "selected")
+        self.assertEqual(len(report.candidates), 1)
+        candidate = report.candidates[0]
+        self.assertEqual(candidate.status, "selected")
+        self.assertIsNone(candidate.mlir_text)
+        self.assertIsNotNone(candidate.mlir_error)
+        self.assertIn("requires specialize() bindings for bare Tile parameters", candidate.mlir_error)
+
     def test_materialization_constraints_can_see_specializations_and_selected_context_attrs(self) -> None:
         @pto.vkernel(
             op="matcher_materialization_constraint_unique",

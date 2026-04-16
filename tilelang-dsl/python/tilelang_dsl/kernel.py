@@ -1084,7 +1084,9 @@ class VKernelDescriptor:
         if not self.constraints:
             return
         context_attrs = self._constraint_context_for_evaluation()
-        if _evaluate_constraints(self, context_attrs):
+        evaluation = _evaluate_constraints(self, context_attrs)
+        _raise_constraint_evaluation_error(evaluation)
+        if evaluation.passed:
             return
         raise LookupError(
             f"{api_name}() constraint evaluation rejected kernel {self.name!r} "
@@ -1120,6 +1122,124 @@ class VKernelDescriptor:
         self._validate_materialization_constraints("emit")
         output_path = Path(path)
         output_path.write_text(self.mlir_text(), encoding="utf-8")
+
+
+@dataclass(frozen=True)
+class KernelSelectionCandidateMetadata:
+    """Structured selection diagnostics for one target/op-matched kernel candidate."""
+
+    descriptor: VKernelDescriptor
+    status: str
+    selected_op: str | None = None
+    matched_dtype_signature: tuple[ScalarType | MaskType, ...] | None = None
+    reason: str | None = None
+    failed_constraint_index: int | None = None
+    failed_constraint_name: str | None = None
+    failed_constraint_location: str | None = None
+    error_type: str | None = None
+    error_message: str | None = None
+    mlir_text: str | None = None
+    mlir_error: str | None = None
+
+    @property
+    def name(self) -> str:
+        return self.descriptor.name
+
+    @property
+    def priority(self) -> int:
+        return self.descriptor.priority
+
+    @property
+    def match_ops(self) -> tuple[str, ...]:
+        return self.descriptor.match_ops
+
+    @property
+    def dtype_signatures(self) -> tuple[tuple[Any, ...], ...]:
+        return self.descriptor.dtypes
+
+
+@dataclass(frozen=True)
+class KernelSelectionReport:
+    """Structured selector result returned by the opt-in metadata path."""
+
+    target: str
+    op: str
+    operand_types: tuple[ScalarType | MaskType, ...]
+    selected: VKernelDescriptor | None
+    candidates: tuple[KernelSelectionCandidateMetadata, ...] = ()
+    final_status: str = "no_candidate"
+    final_error: str | None = None
+    _context_attrs: tuple[tuple[str, Any], ...] = field(default=(), repr=False)
+
+    @property
+    def context_attrs(self) -> dict[str, Any]:
+        return dict(self._context_attrs)
+
+    @property
+    def ok(self) -> bool:
+        return self.final_status == "selected" and self.selected is not None
+
+
+@dataclass(frozen=True)
+class _TargetOpSelectionCandidate:
+    descriptor: VKernelDescriptor
+
+
+@dataclass(frozen=True)
+class _DtypeSelectionCandidate:
+    descriptor: VKernelDescriptor
+    matched_descriptor: VKernelDescriptor | None = None
+    matched_dtype_signature: tuple[ScalarType | MaskType, ...] | None = None
+
+    @property
+    def matched(self) -> bool:
+        return self.matched_descriptor is not None
+
+
+@dataclass(frozen=True)
+class _ConstraintSelectionCandidate:
+    descriptor: VKernelDescriptor
+    passed: bool
+    evaluation: "_ConstraintEvaluationResult"
+    bound_descriptor: VKernelDescriptor | None = None
+
+
+@dataclass(frozen=True)
+class _PrioritySelectionResult:
+    candidates: tuple[VKernelDescriptor, ...]
+    highest_priority: int | None
+    winners: tuple[VKernelDescriptor, ...]
+
+    @property
+    def has_tie(self) -> bool:
+        return len(self.winners) > 1
+
+    @property
+    def winner(self) -> VKernelDescriptor | None:
+        if len(self.winners) != 1:
+            return None
+        return self.winners[0]
+
+
+@dataclass(frozen=True)
+class _MaterializationSelectionCandidate:
+    descriptor: VKernelDescriptor
+    mlir_text: str | None = None
+    mlir_error: str | None = None
+
+
+@dataclass(frozen=True)
+class _ConstraintEvaluationResult:
+    passed: bool
+    failed_constraint_index: int | None = None
+    failed_constraint_name: str | None = None
+    failed_constraint_location: str | None = None
+    error_type: str | None = None
+    error_message: str | None = None
+
+    @property
+    def raised_error(self) -> bool:
+        return self.error_type is not None
 
 
 class KernelRegistry:
@@ -1950,7 +2070,7 @@ def _build_descriptor(
 def _evaluate_constraints(
     descriptor: VKernelDescriptor,
     context_attrs: Mapping[str, Any],
-) -> bool:
+) -> _ConstraintEvaluationResult:
     named_context: dict[str, Any] = {
         "target": context_attrs.get("target"),
         "op": context_attrs.get("op"),
@@ -1963,6 +2083,8 @@ def _evaluate_constraints(
         named_context[spec.name] = _ConstraintParamView(spec.name, param_attrs)
 
     for index, constraint in enumerate(descriptor.constraints):
+        constraint_name = _constraint_callable_name(constraint)
+        constraint_location = _constraint_callable_location(constraint)
         try:
             signature = inspect.signature(constraint)
             parameters = list(signature.parameters.values())
@@ -1990,12 +2112,61 @@ def _evaluate_constraints(
                 )
             result = constraint(**kwargs)
         except Exception as exc:
-            raise TypeError(
-                f"constraint {index} for kernel {descriptor.name!r} raised {type(exc).__name__}: {exc}"
-            ) from exc
+            return _ConstraintEvaluationResult(
+                passed=False,
+                failed_constraint_index=index,
+                failed_constraint_name=constraint_name,
+                failed_constraint_location=constraint_location,
+                error_type=type(exc).__name__,
+                error_message=(
+                    f"constraint {index} for kernel {descriptor.name!r} "
+                    f"raised {type(exc).__name__}: {exc}"
+                    f"{_format_constraint_location_suffix(constraint_location)}"
+                ),
+            )
         if not result:
-            return False
-    return True
+            return _ConstraintEvaluationResult(
+                passed=False,
+                failed_constraint_index=index,
+                failed_constraint_name=constraint_name,
+                failed_constraint_location=constraint_location,
+                error_message=(
+                    f"constraint {index} for kernel {descriptor.name!r} returned False"
+                    f"{_format_constraint_location_suffix(constraint_location)}"
+                ),
+            )
+    return _ConstraintEvaluationResult(passed=True)
+
+
+def _constraint_callable_name(constraint: Callable[..., Any]) -> str | None:
+    qualname = getattr(constraint, "__qualname__", None)
+    if isinstance(qualname, str) and qualname:
+        return qualname
+    name = getattr(constraint, "__name__", None)
+    if isinstance(name, str) and name:
+        return name
+    return None
+
+
+def _constraint_callable_location(constraint: Callable[..., Any]) -> str | None:
+    code = getattr(constraint, "__code__", None)
+    filename = getattr(code, "co_filename", None)
+    firstlineno = getattr(code, "co_firstlineno", None)
+    if isinstance(filename, str) and filename and isinstance(firstlineno, int) and firstlineno > 0:
+        return f"{filename}:{firstlineno}"
+    return None
+
+
+def _format_constraint_location_suffix(location: str | None) -> str:
+    if location is None:
+        return ""
+    return f" at {location}"
+
+
+def _raise_constraint_evaluation_error(result: _ConstraintEvaluationResult) -> None:
+    if not result.raised_error or result.error_message is None:
+        return
+    raise TypeError(result.error_message)
 
 
 def _format_descriptor_identity(descriptor: VKernelDescriptor) -> str:
@@ -2005,6 +2176,73 @@ def _format_descriptor_identity(descriptor: VKernelDescriptor) -> str:
     return f"{descriptor.name}(priority={descriptor.priority}, dtypes={dtype_signature!r})"
 
 
+def _bind_descriptor_for_target_op(
+    descriptor: VKernelDescriptor,
+    *,
+    target: str,
+    op: str,
+) -> VKernelDescriptor | None:
+    if descriptor.target != target:
+        return None
+    if op not in descriptor.match_ops:
+        return None
+    return descriptor._bind_selected_op(op)
+
+
+def _collect_target_op_candidates(
+    registry: KernelRegistry,
+    *,
+    target: str,
+    op: str,
+) -> tuple[_TargetOpSelectionCandidate, ...]:
+    candidates: list[_TargetOpSelectionCandidate] = []
+    for descriptor in registry:
+        op_bound_descriptor = _bind_descriptor_for_target_op(
+            descriptor,
+            target=target,
+            op=op,
+        )
+        if op_bound_descriptor is None:
+            continue
+        candidates.append(_TargetOpSelectionCandidate(descriptor=op_bound_descriptor))
+    return tuple(candidates)
+
+
+def _evaluate_dtype_candidate(
+    candidate: _TargetOpSelectionCandidate,
+    *,
+    operand_types: tuple[ScalarType | MaskType, ...],
+) -> _DtypeSelectionCandidate:
+    matched_signature = _match_descriptor_dtype_signature(candidate.descriptor, operand_types)
+    if matched_signature is None:
+        return _DtypeSelectionCandidate(descriptor=candidate.descriptor)
+    if candidate.descriptor._selected_dtype_signature == matched_signature:
+        return _DtypeSelectionCandidate(
+            descriptor=candidate.descriptor,
+            matched_descriptor=candidate.descriptor,
+            matched_dtype_signature=matched_signature,
+        )
+    return _DtypeSelectionCandidate(
+        descriptor=candidate.descriptor,
+        matched_descriptor=candidate.descriptor._bind_selected_dtype_signature(matched_signature),
+        matched_dtype_signature=matched_signature,
+    )
+
+
+def _evaluate_dtype_candidates(
+    candidates: tuple[_TargetOpSelectionCandidate, ...],
+    *,
+    operand_types: tuple[ScalarType | MaskType, ...],
+) -> tuple[_DtypeSelectionCandidate, ...]:
+    return tuple(
+        _evaluate_dtype_candidate(
+            candidate,
+            operand_types=operand_types,
+        )
+        for candidate in candidates
+    )
+
+
 def _match_descriptor_query(
     descriptor: VKernelDescriptor,
     *,
@@ -2012,18 +2250,249 @@ def _match_descriptor_query(
     op: str,
     operand_types: tuple[ScalarType | MaskType, ...],
 ) -> VKernelDescriptor | None:
-    if descriptor.target != target:
+    op_bound_descriptor = _bind_descriptor_for_target_op(
+        descriptor,
+        target=target,
+        op=op,
+    )
+    if op_bound_descriptor is None:
         return None
-    if op not in descriptor.match_ops:
-        return None
+    dtype_result = _evaluate_dtype_candidate(
+        _TargetOpSelectionCandidate(descriptor=op_bound_descriptor),
+        operand_types=operand_types,
+    )
+    return dtype_result.matched_descriptor
 
-    op_bound_descriptor = descriptor._bind_selected_op(op)
-    matched_signature = _match_descriptor_dtype_signature(op_bound_descriptor, operand_types)
-    if matched_signature is None:
-        return None
-    if op_bound_descriptor._selected_dtype_signature == matched_signature:
-        return op_bound_descriptor
-    return op_bound_descriptor._bind_selected_dtype_signature(matched_signature)
+
+def _evaluate_constraint_candidate(
+    descriptor: VKernelDescriptor,
+    *,
+    context_attrs: Mapping[str, Any],
+) -> _ConstraintSelectionCandidate:
+    evaluation = _evaluate_constraints(
+        descriptor,
+        descriptor._constraint_context_for_evaluation(context_attrs),
+    )
+    if not evaluation.passed:
+        return _ConstraintSelectionCandidate(
+            descriptor=descriptor,
+            passed=False,
+            evaluation=evaluation,
+        )
+    return _ConstraintSelectionCandidate(
+        descriptor=descriptor,
+        passed=True,
+        evaluation=evaluation,
+        bound_descriptor=descriptor._bind_constraint_context_attrs(context_attrs),
+    )
+
+
+def _evaluate_constraint_candidates(
+    descriptors: tuple[VKernelDescriptor, ...],
+    *,
+    context_attrs: Mapping[str, Any],
+) -> tuple[_ConstraintSelectionCandidate, ...]:
+    return tuple(
+        _evaluate_constraint_candidate(
+            descriptor,
+            context_attrs=context_attrs,
+        )
+        for descriptor in descriptors
+    )
+
+
+def _resolve_priority_candidates(
+    descriptors: tuple[VKernelDescriptor, ...],
+) -> _PrioritySelectionResult:
+    if not descriptors:
+        return _PrioritySelectionResult(
+            candidates=(),
+            highest_priority=None,
+            winners=(),
+        )
+    highest_priority = max(descriptor.priority for descriptor in descriptors)
+    winners = tuple(
+        descriptor
+        for descriptor in descriptors
+        if descriptor.priority == highest_priority
+    )
+    return _PrioritySelectionResult(
+        candidates=descriptors,
+        highest_priority=highest_priority,
+        winners=winners,
+    )
+
+
+def _materialize_selection_candidate(
+    descriptor: VKernelDescriptor,
+) -> _MaterializationSelectionCandidate:
+    try:
+        return _MaterializationSelectionCandidate(
+            descriptor=descriptor,
+            mlir_text=descriptor.mlir_text(),
+        )
+    except Exception as exc:
+        return _MaterializationSelectionCandidate(
+            descriptor=descriptor,
+            mlir_error=str(exc),
+        )
+
+
+def _collect_materialization_candidates(
+    descriptors: tuple[VKernelDescriptor, ...],
+) -> tuple[_MaterializationSelectionCandidate, ...]:
+    return tuple(
+        _materialize_selection_candidate(descriptor)
+        for descriptor in descriptors
+    )
+
+
+def _select_kernel_no_candidate_error(
+    *,
+    target: str,
+    op: str,
+    operand_types: tuple[ScalarType | MaskType, ...],
+) -> str:
+    return (
+        "select_kernel() found no registered kernel for "
+        f"target={target!r}, op={op!r}, operand_types={operand_types!r}"
+    )
+
+
+def _select_kernel_constraint_error(
+    *,
+    target: str,
+    op: str,
+    operand_types: tuple[ScalarType | MaskType, ...],
+) -> str:
+    return (
+        "select_kernel() found no registered kernel after constraint evaluation for "
+        f"target={target!r}, op={op!r}, operand_types={operand_types!r}"
+    )
+
+
+def _select_kernel_priority_tie_error(
+    *,
+    target: str,
+    op: str,
+    operand_types: tuple[ScalarType | MaskType, ...],
+    winners: tuple[VKernelDescriptor, ...],
+) -> str:
+    winner_set = ", ".join(sorted(_format_descriptor_identity(descriptor) for descriptor in winners))
+    return (
+        "select_kernel() found multiple highest-priority kernels for "
+        f"target={target!r}, op={op!r}, operand_types={operand_types!r}: "
+        f"{winner_set}"
+    )
+
+
+def _build_selection_report(
+    *,
+    target: str,
+    op: str,
+    operand_types: tuple[ScalarType | MaskType, ...],
+    context_attrs: Mapping[str, Any],
+    dtype_results: tuple[_DtypeSelectionCandidate, ...],
+    constraint_results: tuple[_ConstraintSelectionCandidate, ...],
+    materialization_results: tuple[_MaterializationSelectionCandidate, ...],
+    priority_result: _PrioritySelectionResult,
+    final_status: str,
+    final_error: str | None,
+) -> KernelSelectionReport:
+    constraint_by_descriptor_id = {
+        id(result.descriptor): result
+        for result in constraint_results
+    }
+    materialization_by_descriptor_id = {
+        id(result.descriptor): result
+        for result in materialization_results
+    }
+    winner_ids = {id(descriptor) for descriptor in priority_result.winners}
+    highest_priority = priority_result.highest_priority
+    candidates: list[KernelSelectionCandidateMetadata] = []
+
+    for dtype_result in dtype_results:
+        if dtype_result.matched_descriptor is None:
+            candidates.append(
+                KernelSelectionCandidateMetadata(
+                    descriptor=dtype_result.descriptor,
+                    status="dtype_mismatch",
+                    selected_op=dtype_result.descriptor.selected_op,
+                    reason=(
+                        "no dtype signature matched "
+                        f"operand_types={operand_types!r}"
+                    ),
+                )
+            )
+            continue
+
+        constraint_result = constraint_by_descriptor_id.get(id(dtype_result.matched_descriptor))
+        if constraint_result is None:
+            continue
+        evaluation = constraint_result.evaluation
+        candidate_descriptor = constraint_result.bound_descriptor or dtype_result.matched_descriptor
+        materialization_result = materialization_by_descriptor_id.get(id(candidate_descriptor))
+        base_kwargs = {
+            "descriptor": candidate_descriptor,
+            "selected_op": candidate_descriptor.selected_op,
+            "matched_dtype_signature": dtype_result.matched_dtype_signature,
+            "failed_constraint_index": evaluation.failed_constraint_index,
+            "failed_constraint_name": evaluation.failed_constraint_name,
+            "failed_constraint_location": evaluation.failed_constraint_location,
+            "error_type": evaluation.error_type,
+            "error_message": evaluation.error_message,
+            "mlir_text": None if materialization_result is None else materialization_result.mlir_text,
+            "mlir_error": None if materialization_result is None else materialization_result.mlir_error,
+        }
+
+        if evaluation.raised_error:
+            candidates.append(
+                KernelSelectionCandidateMetadata(
+                    status="constraint_error",
+                    reason=evaluation.error_message,
+                    **base_kwargs,
+                )
+            )
+            continue
+        if not evaluation.passed:
+            candidates.append(
+                KernelSelectionCandidateMetadata(
+                    status="constraint_failed",
+                    reason=evaluation.error_message,
+                    **base_kwargs,
+                )
+            )
+            continue
+        if id(candidate_descriptor) in winner_ids:
+            status = "selected" if final_status == "selected" else "priority_tie"
+            reason = None if status == "selected" else final_error
+        else:
+            status = "priority_shadowed"
+            if highest_priority is None:
+                reason = "not selected"
+            else:
+                reason = f"shadowed by higher-priority candidate priority={highest_priority}"
+        candidates.append(
+            KernelSelectionCandidateMetadata(
+                status=status,
+                reason=reason,
+                **base_kwargs,
+            )
+        )
+
+    frozen_context_attrs = tuple(
+        sorted(dict(context_attrs).items(), key=lambda item: item[0])
+    )
+    return KernelSelectionReport(
+        target=target,
+        op=op,
+        operand_types=operand_types,
+        selected=priority_result.winner if final_status == "selected" else None,
+        candidates=tuple(candidates),
+        final_status=final_status,
+        final_error=final_error,
+        _context_attrs=frozen_context_attrs,
+    )
 
 
 def select_kernel(
@@ -2032,7 +2501,10 @@ def select_kernel(
     operand_types: Any,
     context_attrs: Mapping[str, Any] | None = None,
     registry: KernelRegistry | None = None,
-) -> VKernelDescriptor:
+    *,
+    return_metadata: bool = False,
+    include_mlir: bool = True,
+) -> VKernelDescriptor | KernelSelectionReport:
     """Select one registered kernel descriptor for the given query."""
 
     normalized_target = _validate_target(target)
@@ -2049,55 +2521,120 @@ def select_kernel(
     active_registry = _DEFAULT_KERNEL_REGISTRY if registry is None else registry
     if not isinstance(active_registry, KernelRegistry):
         raise TypeError("registry must be a KernelRegistry or None")
+    if not isinstance(return_metadata, bool):
+        raise TypeError("return_metadata must be a bool")
+    if not isinstance(include_mlir, bool):
+        raise TypeError("include_mlir must be a bool")
 
-    type_matched_candidates = [
-        matched_descriptor
-        for descriptor in active_registry
-        for matched_descriptor in (
-            _match_descriptor_query(
-                descriptor,
+    target_op_candidates = _collect_target_op_candidates(
+        active_registry,
+        target=normalized_target,
+        op=normalized_op,
+    )
+    dtype_results = _evaluate_dtype_candidates(
+        target_op_candidates,
+        operand_types=normalized_operand_types,
+    )
+    type_matched_candidates = tuple(
+        result.matched_descriptor
+        for result in dtype_results
+        if result.matched_descriptor is not None
+    )
+
+    if not type_matched_candidates:
+        no_candidate_error = _select_kernel_no_candidate_error(
+            target=normalized_target,
+            op=normalized_op,
+            operand_types=normalized_operand_types,
+        )
+        if return_metadata:
+            return _build_selection_report(
                 target=normalized_target,
                 op=normalized_op,
                 operand_types=normalized_operand_types,
-            ),
-        )
-        if matched_descriptor is not None
-    ]
+                context_attrs=normalized_context_attrs,
+                dtype_results=dtype_results,
+                constraint_results=(),
+                materialization_results=(),
+                priority_result=_PrioritySelectionResult(candidates=(), highest_priority=None, winners=()),
+                final_status="no_candidate",
+                final_error=no_candidate_error,
+            )
+        raise LookupError(no_candidate_error)
 
-    if not type_matched_candidates:
-        raise LookupError(
-            "select_kernel() found no registered kernel for "
-            f"target={normalized_target!r}, op={normalized_op!r}, operand_types={normalized_operand_types!r}"
+    constraint_results = _evaluate_constraint_candidates(
+        type_matched_candidates,
+        context_attrs=normalized_context_attrs,
+    )
+    constrained_candidates = tuple(
+        result.bound_descriptor
+        for result in constraint_results
+        if result.bound_descriptor is not None
+    )
+    if return_metadata:
+        priority_result = _resolve_priority_candidates(constrained_candidates)
+        materialization_results = (
+            _collect_materialization_candidates(constrained_candidates)
+            if include_mlir
+            else ()
         )
-
-    constrained_candidates = [
-        descriptor
-        for descriptor in type_matched_candidates
-        if _evaluate_constraints(
-            descriptor,
-            descriptor._constraint_context_for_evaluation(normalized_context_attrs),
+        final_status = "selected"
+        final_error: str | None = None
+        if not constrained_candidates:
+            final_status = "no_candidate"
+            error_messages = [
+                result.evaluation.error_message
+                for result in constraint_results
+                if result.evaluation.error_message is not None
+            ]
+            final_error = error_messages[0] if error_messages else _select_kernel_constraint_error(
+                target=normalized_target,
+                op=normalized_op,
+                operand_types=normalized_operand_types,
+            )
+        elif priority_result.has_tie:
+            final_status = "priority_tie"
+            final_error = _select_kernel_priority_tie_error(
+                target=normalized_target,
+                op=normalized_op,
+                operand_types=normalized_operand_types,
+                winners=priority_result.winners,
+            )
+        return _build_selection_report(
+            target=normalized_target,
+            op=normalized_op,
+            operand_types=normalized_operand_types,
+            context_attrs=normalized_context_attrs,
+            dtype_results=dtype_results,
+            constraint_results=constraint_results,
+            materialization_results=materialization_results,
+            priority_result=priority_result,
+            final_status=final_status,
+            final_error=final_error,
         )
-    ]
+    for result in constraint_results:
+        _raise_constraint_evaluation_error(result.evaluation)
     if not constrained_candidates:
         raise LookupError(
-            "select_kernel() found no registered kernel after constraint evaluation for "
-            f"target={normalized_target!r}, op={normalized_op!r}, operand_types={normalized_operand_types!r}"
+            _select_kernel_constraint_error(
+                target=normalized_target,
+                op=normalized_op,
+                operand_types=normalized_operand_types,
+            )
         )
 
-    highest_priority = max(descriptor.priority for descriptor in constrained_candidates)
-    winners = [
-        descriptor
-        for descriptor in constrained_candidates
-        if descriptor.priority == highest_priority
-    ]
-    if len(winners) > 1:
-        winner_set = ", ".join(sorted(_format_descriptor_identity(descriptor) for descriptor in winners))
+    priority_result = _resolve_priority_candidates(constrained_candidates)
+    if priority_result.has_tie:
         raise LookupError(
-            "select_kernel() found multiple highest-priority kernels for "
-            f"target={normalized_target!r}, op={normalized_op!r}, operand_types={normalized_operand_types!r}: "
-            f"{winner_set}"
+            _select_kernel_priority_tie_error(
+                target=normalized_target,
+                op=normalized_op,
+                operand_types=normalized_operand_types,
+                winners=priority_result.winners,
+            )
         )
-    return winners[0]._bind_constraint_context_attrs(normalized_context_attrs)
+    assert priority_result.winner is not None
+    return priority_result.winner
 
 
 def vkernel(
@@ -2146,6 +2683,8 @@ __all__ = [
     "BoundKernelParameter",
     "InlineProcDescriptor",
     "KernelRegistry",
+    "KernelSelectionCandidateMetadata",
+    "KernelSelectionReport",
     "MaterializedMLIRModule",
     "TileLangFrontendError",
     "VKernelDescriptor",

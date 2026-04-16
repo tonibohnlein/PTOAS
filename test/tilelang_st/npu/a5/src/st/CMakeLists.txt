@@ -13,6 +13,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# CMake 3.27+ may ask the linker to emit dependency files via
+# `--dependency-file`. bisheng/cce-ld does not support that flag, so disable
+# linker-generated link dependencies for this standalone ST build.
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.27)
+    set(CMAKE_LINK_DEPENDS_USE_LINKER FALSE)
+endif()
+
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 

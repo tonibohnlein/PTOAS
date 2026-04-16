@@ -114,6 +114,33 @@ Matcher rules in the implemented package:
 - when a multi-op descriptor matches, the returned descriptor is already bound
   to one concrete `selected_op`
 
+Matcher diagnostics are also available through the opt-in report path:
+
+```python
+report = pto.select_kernel(
+    "a5",
+    "eltwise",
+    (pto.f32, pto.f32),
+    context_attrs={"enabled": False},
+    return_metadata=True,
+    include_mlir=False,
+)
+```
+
+In report mode:
+
+- `report.final_status` summarizes the overall outcome
+- `report.candidates` keeps one record per `target/op`-matched descriptor
+- constraint failures expose `failed_constraint_index`,
+  `failed_constraint_name`, and `failed_constraint_location`
+- `include_mlir=True` additionally collects `mlir_text` or `mlir_error` for
+  candidates that pass constraint evaluation
+
+For clearer diagnostics, prefer writing multiple small constraint entries over a
+single compound Python predicate. Report mode can identify which constraint
+callable failed, but it does not decompose `cond0 and cond1` inside one
+callable.
+
 For explicit single-op kernels that already map 1:1 to one real PTO op, you
 do not need to migrate anything. Keep `op="..."` and keep authoring explicit
 real `pto.*` calls in the kernel body.
