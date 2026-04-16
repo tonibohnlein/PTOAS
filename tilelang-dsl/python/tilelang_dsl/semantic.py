@@ -289,12 +289,13 @@ _COMPARE_SELECT_OPS = {"vcmp", "vcmps", "vsel", "vselr", "vselrv2"}
 _PREDICATE_MOVEMENT_OPS = {"pnot", "psel", "ppack", "punpack"}
 _CARRY_OPS = {"vaddc", "vsubc", "vaddcs", "vsubcs"}
 _REARRANGEMENT_OPS = {"vintlv", "vdintlv", "vintlvv2", "vdintlvv2"}
+_UB_HELPER_OPS = {"vbitsort", "vmrgsort4"}
 _ADVANCED_VECTOR_ACTIVITY_OPS = (
     _COMPARE_SELECT_OPS
     | _PREDICATE_MOVEMENT_OPS
     | _CARRY_OPS
     | _REARRANGEMENT_OPS
-    | {"vcvt", "vbitsort", "vmrgsort4"}
+    | {"vcvt"}
 )
 _TENSORVIEW_RANK = 5
 
@@ -1124,7 +1125,11 @@ class _SemanticAnalyzer:
             return not stmt.is_constexpr
         return (
             isinstance(stmt, FrontendExprStmt)
-            and (self._is_dma_call(stmt.expr) or self._is_sync_call(stmt.expr))
+            and (
+                self._is_dma_call(stmt.expr)
+                or self._is_sync_call(stmt.expr)
+                or self._is_ub_helper_call(stmt.expr)
+            )
         )
 
     def _constexpr_if_contains_vector_activity(self, stmt: FrontendIfStmt) -> bool:
@@ -1563,6 +1568,13 @@ class _SemanticAnalyzer:
                 "wait_flag_dev",
                 "wait_intra_core",
             }
+        )
+
+    def _is_ub_helper_call(self, expr: FrontendExprNode) -> bool:
+        return (
+            isinstance(expr, FrontendCallExpr)
+            and expr.namespace == "pto"
+            and expr.name in _UB_HELPER_OPS
         )
 
     def _is_low_level_dma_call(self, expr: FrontendExprNode) -> bool:

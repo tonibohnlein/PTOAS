@@ -1413,6 +1413,8 @@ LogicalResult Vmrgsort4Op::verify() {
       classifyMemoryRole(getSource2().getType()) != MemoryRole::UB ||
       classifyMemoryRole(getSource3().getType()) != MemoryRole::UB)
     return emitOpError("requires UB-backed destination and sources");
+  if (failed(verifyNotNestedInVecScope(*this, "pto.vmrgsort4")))
+    return failure();
   return success();
 }
 

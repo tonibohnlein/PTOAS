@@ -2693,6 +2693,37 @@ class TileLangDSLDescriptorTests(unittest.TestCase):
             r"!pto\.ptr<f32, ub>, !pto\.ptr<f32, ub>, !pto\.ptr<f32, ub>, !pto\.ptr<f32, ub>, !pto\.ptr<f32, ub>, i64, i64",
         )
 
+    def test_vbitsort_helper_stays_outside_inferred_vecscope(self) -> None:
+        @pto.vkernel(
+            op="vbitsort_vecscope_boundary_unique",
+            dtypes=[(pto.f32, pto.f32, pto.i32)],
+            advanced=True,
+        )
+        def kernel(dst: pto.Tile, src: pto.Tile, idx: pto.Tile):
+            dst_ptr = dst.as_ptr()
+            src_ptr = src.as_ptr()
+            idx_ptr = idx.as_ptr()
+
+            pto.vbitsort(dst_ptr, src_ptr, idx_ptr, 1)
+            return None
+
+        specialized = kernel.specialize(
+            dst=pto.TileSpecialization(shape=(8, 256), memory_space=pto.MemorySpace.UB),
+            src=pto.TileSpecialization(shape=(8, 256), memory_space=pto.MemorySpace.UB),
+            idx=pto.TileSpecialization(shape=(8, 256), memory_space=pto.MemorySpace.UB),
+        )
+
+        semantic_kernel = analyze_frontend_kernel(build_frontend_kernel_node(specialized))
+        vecscope_stmts = [stmt for stmt in semantic_kernel.body if isinstance(stmt, SemanticVecscopeStmt)]
+        self.assertEqual(vecscope_stmts, [])
+
+        text = specialized.mlir_text()
+        self.assertRegex(
+            text,
+            r"pto\.vbitsort %dst_ptr_\d+, %src_ptr_\d+, %idx_ptr_\d+, %c1 : !pto\.ptr<f32, ub>, !pto\.ptr<f32, ub>, !pto\.ptr<i32, ub>, index",
+        )
+        self.assertNotIn("pto.vecscope {", text)
+
     def test_vcvt_rejects_legacy_string_spellings(self) -> None:
         with self.assertRaises(TypeError) as ctx:
 
