@@ -1,0 +1,18 @@
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --vpto-emit-hivm-llvm %s -o - | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @kernel() {
+    %ctrl = pto.get_ctrl : i64
+    %bit0 = arith.constant 0 : i64
+    %bit45 = arith.constant 45 : i64
+    %ctrl0 = pto.sbitset0 %ctrl, %bit0 : i64, i64 -> i64
+    %ctrl1 = pto.sbitset1 %ctrl0, %bit45 : i64, i64 -> i64
+    pto.set_ctrl %ctrl1 : i64
+    return
+  }
+}
+
+// CHECK: call i64 @llvm.hivm.GET.CTRL()
+// CHECK: call i64 @llvm.hivm.SBITSET0(i64
+// CHECK: call i64 @llvm.hivm.SBITSET1(i64
+// CHECK: call void @llvm.hivm.SET.CTRL(i64

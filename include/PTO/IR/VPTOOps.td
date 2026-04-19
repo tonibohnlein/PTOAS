@@ -141,6 +141,37 @@ class PTO_BinaryI64ConfigOp<string mnemonic> : PTO_Op<mnemonic> {
   }];
 }
 
+class PTO_BinaryI64PureOp<string mnemonic> : PTO_Op<mnemonic, [Pure]> {
+  let arguments = (ins
+    I64:$first,
+    I64:$second
+  );
+
+  let results = (outs I64:$result);
+
+  let assemblyFormat = [{
+    $first `,` $second attr-dict `:` type($first) `,` type($second) `->` type($result)
+  }];
+}
+
+class PTO_UnaryI64ConfigOp<string mnemonic> : PTO_Op<mnemonic> {
+  let arguments = (ins I64:$value);
+  let results = (outs);
+
+  let assemblyFormat = [{
+    $value attr-dict `:` type($value)
+  }];
+}
+
+class PTO_NullaryI64PureOp<string mnemonic> : PTO_Op<mnemonic, [Pure]> {
+  let arguments = (ins);
+  let results = (outs I64:$result);
+
+  let assemblyFormat = [{
+    attr-dict `:` type($result)
+  }];
+}
+
 def PTO_SetMovPadValOp : PTO_Op<"set_mov_pad_val"> {
   let arguments = (ins AnyTypeOf<[AnyInteger, AnyFloat],
                                 "integer/float scalar">:$value);
@@ -158,6 +189,10 @@ def PTO_SetLoopSizeOutToUbOp : PTO_BinaryI64ConfigOp<"set_loop_size_outtoub">;
 def PTO_SetLoop2StrideUbToOutOp : PTO_BinaryI64ConfigOp<"set_loop2_stride_ubtoout">;
 def PTO_SetLoop1StrideUbToOutOp : PTO_BinaryI64ConfigOp<"set_loop1_stride_ubtoout">;
 def PTO_SetLoopSizeUbToOutOp : PTO_BinaryI64ConfigOp<"set_loop_size_ubtoout">;
+def PTO_GetCtrlOp : PTO_NullaryI64PureOp<"get_ctrl">;
+def PTO_SetCtrlOp : PTO_UnaryI64ConfigOp<"set_ctrl">;
+def PTO_Sbitset0Op : PTO_BinaryI64PureOp<"sbitset0">;
+def PTO_Sbitset1Op : PTO_BinaryI64PureOp<"sbitset1">;
 
 def PTO_CopyGmToUbufOp : PTO_Op<"copy_gm_to_ubuf", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>

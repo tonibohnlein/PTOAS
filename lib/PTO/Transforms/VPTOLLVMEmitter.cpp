@@ -1080,8 +1080,24 @@ static StringRef buildInitAlignCallee(MLIRContext *context) {
   return StringAttr::get(context, "llvm.hivm.init.vector.align.data").getValue();
 }
 
+template <typename QueryOp>
+static StringRef buildRuntimeQueryCallee(MLIRContext *context);
+
+template <>
+StringRef buildRuntimeQueryCallee<pto::GetCtrlOp>(MLIRContext *context) {
+  return StringAttr::get(context, "llvm.hivm.GET.CTRL").getValue();
+}
+
 static StringRef buildSprclrCallee(MLIRContext *context) {
   return StringAttr::get(context, "llvm.hivm.sprclr").getValue();
+}
+
+template <typename ConfigOp>
+static StringRef buildUnaryConfigCallee(MLIRContext *context);
+
+template <>
+StringRef buildUnaryConfigCallee<pto::SetCtrlOp>(MLIRContext *context) {
+  return StringAttr::get(context, "llvm.hivm.SET.CTRL").getValue();
 }
 
 static StringRef buildVstarCallee(MLIRContext *context) {
@@ -1090,6 +1106,19 @@ static StringRef buildVstarCallee(MLIRContext *context) {
 
 static StringRef buildVstasCallee(MLIRContext *context) {
   return StringAttr::get(context, "llvm.hivm.vstas").getValue();
+}
+
+template <typename BinaryOp>
+static StringRef buildBinaryI64PureCallee(MLIRContext *context);
+
+template <>
+StringRef buildBinaryI64PureCallee<pto::Sbitset0Op>(MLIRContext *context) {
+  return StringAttr::get(context, "llvm.hivm.SBITSET0").getValue();
+}
+
+template <>
+StringRef buildBinaryI64PureCallee<pto::Sbitset1Op>(MLIRContext *context) {
+  return StringAttr::get(context, "llvm.hivm.SBITSET1").getValue();
 }
 
 static FailureOr<StringRef> buildVldsPostCallee(MLIRContext *context,
@@ -4297,6 +4326,32 @@ private:
   LoweringState &state;
 };
 
+template <typename ConfigOp>
+class LowerUnaryI64ConfigOpPattern final : public OpConversionPattern<ConfigOp> {
+public:
+  explicit LowerUnaryI64ConfigOpPattern(TypeConverter &typeConverter,
+                                        MLIRContext *context,
+                                        LoweringState &state)
+      : OpConversionPattern<ConfigOp>(typeConverter, context), state(state) {}
+
+  LogicalResult
+  matchAndRewrite(ConfigOp op, typename ConfigOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    StringRef calleeName = buildUnaryConfigCallee<ConfigOp>(op.getContext());
+    auto funcType =
+        rewriter.getFunctionType(TypeRange{adaptor.getValue().getType()},
+                                 TypeRange{});
+    rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{},
+                                  ValueRange{adaptor.getValue()});
+    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  LoweringState &state;
+};
+
 template <typename SyncOp>
 class LowerPipeEventSyncOpPattern final : public OpConversionPattern<SyncOp> {
 public:
@@ -4458,6 +4513,38 @@ public:
     auto funcType = rewriter.getFunctionType(TypeRange{}, TypeRange{resultType});
     auto call = rewriter.create<func::CallOp>(op.getLoc(), calleeName,
                                               TypeRange{resultType}, ValueRange{});
+    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
+    rewriter.replaceOp(op, call.getResults());
+    return success();
+  }
+
+private:
+  LoweringState &state;
+};
+
+template <typename BinaryOp>
+class LowerBinaryI64PureOpPattern final : public OpConversionPattern<BinaryOp> {
+public:
+  explicit LowerBinaryI64PureOpPattern(TypeConverter &typeConverter,
+                                       MLIRContext *context,
+                                       LoweringState &state)
+      : OpConversionPattern<BinaryOp>(typeConverter, context), state(state) {}
+
+  LogicalResult
+  matchAndRewrite(BinaryOp op, typename BinaryOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Type resultType = this->getTypeConverter()->convertType(op.getResult().getType());
+    if (!resultType)
+      return rewriter.notifyMatchFailure(op, "failed to convert result type");
+
+    StringRef calleeName = buildBinaryI64PureCallee<BinaryOp>(op.getContext());
+    auto funcType =
+        rewriter.getFunctionType(TypeRange{adaptor.getFirst().getType(),
+                                           adaptor.getSecond().getType()},
+                                 TypeRange{resultType});
+    auto call = rewriter.create<func::CallOp>(
+        op.getLoc(), calleeName, TypeRange{resultType},
+        ValueRange{adaptor.getFirst(), adaptor.getSecond()});
     state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
     rewriter.replaceOp(op, call.getResults());
     return success();
@@ -4753,12 +4840,16 @@ static void populateVPTOOpLoweringPatterns(VPTOTypeConverter &typeConverter,
                LowerPgeOpPattern<pto::PgeB8Op>,
                LowerPgeOpPattern<pto::PgeB16Op>,
                LowerPgeOpPattern<pto::PgeB32Op>,
+               LowerRuntimeQueryOpPattern<pto::GetCtrlOp>,
+               LowerBinaryI64PureOpPattern<pto::Sbitset0Op>,
+               LowerBinaryI64PureOpPattern<pto::Sbitset1Op>,
                LowerSetLoopConfigOpPattern<pto::SetLoop2StrideOutToUbOp>,
                LowerSetLoopConfigOpPattern<pto::SetLoop1StrideOutToUbOp>,
                LowerSetLoopConfigOpPattern<pto::SetLoopSizeOutToUbOp>,
                LowerSetLoopConfigOpPattern<pto::SetLoop2StrideUbToOutOp>,
                LowerSetLoopConfigOpPattern<pto::SetLoop1StrideUbToOutOp>,
                LowerSetLoopConfigOpPattern<pto::SetLoopSizeUbToOutOp>,
+               LowerUnaryI64ConfigOpPattern<pto::SetCtrlOp>,
                LowerUnaryConfigOpPattern<pto::SetMovPadValOp>,
                LowerPipeEventSyncOpPattern<pto::SetFlagOp>,
                LowerPipeEventSyncOpPattern<pto::WaitFlagOp>,
@@ -4801,11 +4892,13 @@ static void configureVPTOOpLoweringTarget(ConversionTarget &target,
   target.addIllegalOp<pto::SetFlagOp, pto::WaitFlagOp, pto::BarrierOp,
                       pto::MemBarOp, pto::GetBufOp, pto::RlsBufOp>();
   target.addIllegalOp<pto::GetBlockIdxOp, pto::GetSubBlockIdxOp,
-                      pto::GetBlockNumOp, pto::GetSubBlockNumOp>();
+                      pto::GetBlockNumOp, pto::GetSubBlockNumOp,
+                      pto::GetCtrlOp>();
   target.addIllegalOp<pto::SetLoop2StrideOutToUbOp, pto::SetLoop1StrideOutToUbOp,
                       pto::SetLoopSizeOutToUbOp, pto::SetLoop2StrideUbToOutOp,
                       pto::SetLoop1StrideUbToOutOp, pto::SetLoopSizeUbToOutOp,
-                      pto::SetMovPadValOp>();
+                      pto::SetCtrlOp, pto::SetMovPadValOp>();
+  target.addIllegalOp<pto::Sbitset0Op, pto::Sbitset1Op>();
   target.addIllegalOp<pto::VldsOp, pto::VldsPostOp, pto::Vldsx2Op,
                       pto::VsldbOp, pto::VldasOp, pto::InitAlignOp,
                       pto::VldusOp, pto::SprclrOp, pto::VstsOp,
