@@ -4631,7 +4631,10 @@ class _SemanticAnalyzer:
         vreg = self._require_vreg_expr(value, f"pto.{name} value")
         self._require_mask_for_vreg(mask, vreg, f"pto.{name}")
         self._validate_unary_dtype(name, vreg.element_dtype)
-        return SemanticCallExpr(namespace="pto", name=name, args=args, type=vreg)
+        result_type = vreg
+        if name == "vcadd":
+            result_type = self._vcadd_result_vreg_type(vreg)
+        return SemanticCallExpr(namespace="pto", name=name, args=args, type=result_type)
 
     def _analyze_binary_vector_op(
         self,
@@ -5242,6 +5245,20 @@ class _SemanticAnalyzer:
         if isinstance(value.type, SemanticScalarType):
             return self._vreg_type_for_dtype(value.type.dtype)
         return self._vreg_type_for_dtype(i32)
+
+    def _vcadd_result_vreg_type(self, vreg_type: SemanticVRegType) -> SemanticVRegType:
+        dtype = vreg_type.element_dtype
+        if not is_integer_dtype(dtype):
+            return vreg_type
+        signedness = integer_signedness(dtype)
+        bitwidth = integer_bitwidth(dtype)
+        if bitwidth == 8:
+            widened_dtype = ui16 if signedness == "unsigned" else i16
+            return self._vreg_type_for_dtype(widened_dtype)
+        if bitwidth == 16:
+            widened_dtype = ui32 if signedness == "unsigned" else i32
+            return self._vreg_type_for_dtype(widened_dtype)
+        return vreg_type
 
     def _normalize_position_mode(
         self,
