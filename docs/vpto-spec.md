@@ -250,10 +250,9 @@ pto.strict_vecscope(%ub, %ub_out, %lane) {
 ### Example: VecScope
 
 ```mlir
-pto.dma_load %7, %2, %c0_i64, %c0_i64, %c128_i64
+pto.dma_load %7, %2, %c0_i64, %c128_i64
   nburst(%c32_i64, %c128_i64, %c128_i64)
-  : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64,
-    i64, i64, i64
+  : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64
 
 pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
 pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
@@ -269,10 +268,9 @@ pto.vecscope {
 
 pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
 pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
-pto.dma_store %8, %14, %c0_i64, %c0_i64, %c128_i64
+pto.dma_store %8, %14, %c128_i64
   nburst(%c32_i64, %c128_i64, %c128_i64)
-  : !pto.ptr<f32, ub>, !pto.ptr<f32, gm>, i64, i64, i64,
-    i64, i64, i64
+  : !pto.ptr<f32, ub>, !pto.ptr<f32, gm>, i64, i64, i64, i64
 ```
 
 ### Example: Strict VecScope

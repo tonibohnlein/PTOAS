@@ -259,18 +259,14 @@ def PTO_DmaLoadOp : PTO_Op<"dma_load", [
   let arguments = (ins
     PTO_BufferType:$source,
     PTO_BufferType:$destination,
-    I64:$sid,
     I64:$l2_cache_ctl,
     I64:$len_burst,
     I64:$n_burst,
     I64:$nburst_src_stride,
     I64:$nburst_dst_stride,
-    Optional<I64>:$loop1_count,
-    Optional<I64>:$loop1_src_stride,
-    Optional<I64>:$loop1_dst_stride,
-    Optional<I64>:$loop2_count,
-    Optional<I64>:$loop2_src_stride,
-    Optional<I64>:$loop2_dst_stride,
+    Variadic<I64>:$loop_counts,
+    Variadic<I64>:$loop_src_strides,
+    Variadic<I64>:$loop_dst_strides,
     Optional<AnyTypeOf<[AnyInteger, AnyFloat], "integer/float scalar">>:$pad_value,
     Optional<I64>:$left_padding_count,
     Optional<I64>:$right_padding_count
@@ -285,7 +281,15 @@ def PTO_DmaLoadOp : PTO_Op<"dma_load", [
     OpBuilder<(ins
       "::mlir::Value":$source,
       "::mlir::Value":$destination,
-      "::mlir::Value":$sid,
+      "::mlir::Value":$l2CacheCtl,
+      "::mlir::Value":$lenBurst,
+      "::mlir::pto::DmaLoopConfig":$nburst,
+      "::llvm::ArrayRef<::mlir::pto::DmaLoopConfig>":$loops,
+      "::std::optional<::mlir::pto::DmaPadConfig>":$pad
+    )>,
+    OpBuilder<(ins
+      "::mlir::Value":$source,
+      "::mlir::Value":$destination,
       "::mlir::Value":$l2CacheCtl,
       "::mlir::Value":$lenBurst,
       "::mlir::pto::DmaLoopConfig":$nburst,
@@ -325,7 +329,6 @@ def PTO_DmaCopyOp : PTO_Op<"dma_copy", [
   let arguments = (ins
     PTO_BufferType:$source,
     PTO_BufferType:$destination,
-    I64:$sid,
     I64:$n_burst,
     I64:$len_burst,
     I64:$src_stride,
@@ -337,10 +340,10 @@ def PTO_DmaCopyOp : PTO_Op<"dma_copy", [
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    $source `,` $destination `,` $sid `,` $len_burst
+    $source `,` $destination `,` $len_burst
     `nburst` `(` $n_burst `,` $src_stride `,` $dst_stride `)`
-    attr-dict `:` type($source) `,` type($destination) `,` type($sid) `,`
-    type($n_burst) `,` type($len_burst) `,` type($src_stride) `,`
+    attr-dict `:` type($source) `,` type($destination) `,` type($n_burst) `,`
+    type($len_burst) `,` type($src_stride) `,`
     type($dst_stride)
   }];
 }
@@ -1579,18 +1582,13 @@ def PTO_DmaStoreOp : PTO_Op<"dma_store", [
   let arguments = (ins
     PTO_BufferType:$source,
     PTO_BufferType:$destination,
-    I64:$sid,
-    I64:$reserved,
     I64:$len_burst,
     I64:$n_burst,
     I64:$nburst_src_stride,
     I64:$nburst_dst_stride,
-    Optional<I64>:$loop1_count,
-    Optional<I64>:$loop1_src_stride,
-    Optional<I64>:$loop1_dst_stride,
-    Optional<I64>:$loop2_count,
-    Optional<I64>:$loop2_src_stride,
-    Optional<I64>:$loop2_dst_stride
+    Variadic<I64>:$loop_counts,
+    Variadic<I64>:$loop_src_strides,
+    Variadic<I64>:$loop_dst_strides
   );
 
   let results = (outs);
@@ -1602,8 +1600,13 @@ def PTO_DmaStoreOp : PTO_Op<"dma_store", [
     OpBuilder<(ins
       "::mlir::Value":$source,
       "::mlir::Value":$destination,
-      "::mlir::Value":$sid,
-      "::mlir::Value":$reserved,
+      "::mlir::Value":$lenBurst,
+      "::mlir::pto::DmaLoopConfig":$nburst,
+      "::llvm::ArrayRef<::mlir::pto::DmaLoopConfig>":$loops
+    )>,
+    OpBuilder<(ins
+      "::mlir::Value":$source,
+      "::mlir::Value":$destination,
       "::mlir::Value":$lenBurst,
       "::mlir::pto::DmaLoopConfig":$nburst,
       "::std::optional<::mlir::pto::DmaLoopConfig>":$loop1,

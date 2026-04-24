@@ -43,18 +43,18 @@ module attributes {pto.target_arch = "a5"} {
     %dst_row2 = pto.castptr %c192_i64 : i64 -> !pto.ptr<i16, ub>
     %dst_row3 = pto.castptr %c224_i64 : i64 -> !pto.ptr<i16, ub>
 
-    pto.dma_copy %src_row2, %dst_row0, %c0_i64, %arg3
+    pto.dma_copy %src_row2, %dst_row0, %arg3
       nburst(%arg2, %arg4, %arg5)
-      : !pto.ptr<i16, ub>, !pto.ptr<i16, ub>, i64, i64, i64, i64, i64
-    pto.dma_copy %src_row0, %dst_row1, %c0_i64, %arg3
+      : !pto.ptr<i16, ub>, !pto.ptr<i16, ub>, i64, i64, i64, i64
+    pto.dma_copy %src_row0, %dst_row1, %arg3
       nburst(%arg2, %arg4, %arg5)
-      : !pto.ptr<i16, ub>, !pto.ptr<i16, ub>, i64, i64, i64, i64, i64
-    pto.dma_copy %src_row3, %dst_row2, %c0_i64, %arg3
+      : !pto.ptr<i16, ub>, !pto.ptr<i16, ub>, i64, i64, i64, i64
+    pto.dma_copy %src_row3, %dst_row2, %arg3
       nburst(%arg2, %arg4, %arg5)
-      : !pto.ptr<i16, ub>, !pto.ptr<i16, ub>, i64, i64, i64, i64, i64
-    pto.dma_copy %src_row1, %dst_row3, %c0_i64, %arg3
+      : !pto.ptr<i16, ub>, !pto.ptr<i16, ub>, i64, i64, i64, i64
+    pto.dma_copy %src_row1, %dst_row3, %arg3
       nburst(%arg2, %arg4, %arg5)
-      : !pto.ptr<i16, ub>, !pto.ptr<i16, ub>, i64, i64, i64, i64, i64
+      : !pto.ptr<i16, ub>, !pto.ptr<i16, ub>, i64, i64, i64, i64
 
     pto.barrier #pto.pipe<PIPE_ALL>
 

@@ -12,6 +12,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
@@ -84,6 +85,74 @@ static bool shouldRestoreDmaLoopSize(Value loop1Count, Value loop2Count) {
   return !isKnownOne(loop1Count) || !isKnownOne(loop2Count);
 }
 
+static SmallVector<pto::DmaLoopConfig> collectLoopConfigs(ValueRange counts,
+                                                          ValueRange srcStrides,
+                                                          ValueRange dstStrides) {
+  SmallVector<pto::DmaLoopConfig> loops;
+  loops.reserve(counts.size());
+  for (auto [count, srcStride, dstStride] :
+       llvm::zip(counts, srcStrides, dstStrides))
+    loops.push_back({count, srcStride, dstStride});
+  return loops;
+}
+
+static Value offsetPointerByBytes(Value basePtr, Value byteOffset,
+                                  PatternRewriter &rewriter, Location loc) {
+  if (!basePtr)
+    return {};
+
+  APInt constOffset;
+  if (matchPattern(byteOffset, m_ConstantInt(&constOffset)) && constOffset.isZero())
+    return basePtr;
+
+  Value baseInt =
+      rewriter.create<pto::CastPtrOp>(loc, rewriter.getI64Type(), basePtr);
+  Value offsetI64 = byteOffset;
+  if (!offsetI64.getType().isInteger(64))
+    offsetI64 =
+        rewriter.create<arith::IndexCastUIOp>(loc, rewriter.getI64Type(),
+                                              offsetI64);
+  Value sum = rewriter.create<arith::AddIOp>(loc, baseInt, offsetI64);
+  return rewriter.create<pto::CastPtrOp>(loc, basePtr.getType(), sum);
+}
+
+static Value buildAccumulatedByteOffset(Location loc, Value baseOffset,
+                                        Value indexI64, Value stride,
+                                        PatternRewriter &rewriter) {
+  Value delta = rewriter.create<arith::MulIOp>(loc, indexI64, stride);
+  return rewriter.create<arith::AddIOp>(loc, baseOffset, delta);
+}
+
+template <typename BodyBuilder>
+static void buildSoftwareLoopNest(PatternRewriter &rewriter, Location loc,
+                                  ArrayRef<pto::DmaLoopConfig> loops,
+                                  Value srcOffset, Value dstOffset,
+                                  BodyBuilder &&buildLeaf) {
+  if (loops.empty()) {
+    buildLeaf(srcOffset, dstOffset);
+    return;
+  }
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value count = rewriter.create<arith::IndexCastUIOp>(loc, rewriter.getIndexType(),
+                                                      loops.front().count);
+  scf::ForOp forOp = rewriter.create<scf::ForOp>(loc, c0, count, c1);
+  {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToStart(forOp.getBody());
+    Value ivI64 =
+        rewriter.create<arith::IndexCastUIOp>(loc, rewriter.getI64Type(),
+                                              forOp.getInductionVar());
+    Value nextSrcOffset = buildAccumulatedByteOffset(
+        loc, srcOffset, ivI64, loops.front().srcStride, rewriter);
+    Value nextDstOffset = buildAccumulatedByteOffset(
+        loc, dstOffset, ivI64, loops.front().dstStride, rewriter);
+    buildSoftwareLoopNest(rewriter, loc, loops.drop_front(), nextSrcOffset,
+                          nextDstOffset, buildLeaf);
+  }
+}
+
 struct ExpandUvldPattern : public OpRewritePattern<pto::UvldOp> {
   using OpRewritePattern<pto::UvldOp>::OpRewritePattern;
 
@@ -117,17 +186,28 @@ struct ExpandDmaLoadPattern : public OpRewritePattern<pto::DmaLoadOp> {
   LogicalResult matchAndRewrite(pto::DmaLoadOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
+    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
     Value one = rewriter.create<arith::ConstantIntOp>(loc, 1, 64);
-    Value loop2Size = op.getLoop2Count();
-    if (!loop2Size)
-      loop2Size = one;
-    if (Value loop2Count = op.getLoop2Count())
-      rewriter.create<pto::SetLoop2StrideOutToUbOp>(
-          loc, op.getLoop2SrcStride(), op.getLoop2DstStride());
+    SmallVector<pto::DmaLoopConfig> loops =
+        collectLoopConfigs(op.getLoopCounts(), op.getLoopSrcStrides(),
+                           op.getLoopDstStrides());
+    ArrayRef<pto::DmaLoopConfig> hwLoops = ArrayRef<pto::DmaLoopConfig>(loops).take_front(2);
+    ArrayRef<pto::DmaLoopConfig> swLoops = ArrayRef<pto::DmaLoopConfig>(loops).drop_front(hwLoops.size());
 
-    if (Value loop1Count = op.getLoop1Count()) {
+    Value loop1Count;
+    Value loop2Size = one;
+    if (hwLoops.size() == 2) {
+      rewriter.create<pto::SetLoop2StrideOutToUbOp>(
+          loc, hwLoops[0].srcStride, hwLoops[0].dstStride);
+      loop2Size = hwLoops[0].count;
+      loop1Count = hwLoops[1].count;
       rewriter.create<pto::SetLoop1StrideOutToUbOp>(
-          loc, op.getLoop1SrcStride(), op.getLoop1DstStride());
+          loc, hwLoops[1].srcStride, hwLoops[1].dstStride);
+      rewriter.create<pto::SetLoopSizeOutToUbOp>(loc, loop2Size, loop1Count);
+    } else if (hwLoops.size() == 1) {
+      loop1Count = hwLoops[0].count;
+      rewriter.create<pto::SetLoop1StrideOutToUbOp>(
+          loc, hwLoops[0].srcStride, hwLoops[0].dstStride);
       rewriter.create<pto::SetLoopSizeOutToUbOp>(loc, loop2Size, loop1Count);
     }
 
@@ -144,11 +224,18 @@ struct ExpandDmaLoadPattern : public OpRewritePattern<pto::DmaLoadOp> {
     if (Value padValue = op.getPadValue())
       rewriter.create<pto::SetMovPadValOp>(loc, padValue);
 
-    rewriter.create<pto::CopyGmToUbufOp>(
-        loc, op.getSource(), op.getDestination(), op.getSid(), op.getNBurst(),
-        op.getLenBurst(), leftPadding, rightPadding, dataSelect,
-        op.getL2CacheCtl(), op.getNburstSrcStride(), op.getNburstDstStride());
-    if (shouldRestoreDmaLoopSize(op.getLoop1Count(), loop2Size))
+    buildSoftwareLoopNest(
+        rewriter, loc, swLoops, zero, zero,
+        [&](Value srcOffset, Value dstOffset) {
+          Value source = offsetPointerByBytes(op.getSource(), srcOffset, rewriter, loc);
+          Value destination =
+              offsetPointerByBytes(op.getDestination(), dstOffset, rewriter, loc);
+          rewriter.create<pto::CopyGmToUbufOp>(
+              loc, source, destination, zero, op.getNBurst(), op.getLenBurst(),
+              leftPadding, rightPadding, dataSelect, op.getL2CacheCtl(),
+              op.getNburstSrcStride(), op.getNburstDstStride());
+        });
+    if (shouldRestoreDmaLoopSize(loop1Count, loop2Size))
       rewriter.create<pto::SetLoopSizeOutToUbOp>(loc, one, one);
     rewriter.eraseOp(op);
     return success();
@@ -161,25 +248,42 @@ struct ExpandDmaStorePattern : public OpRewritePattern<pto::DmaStoreOp> {
   LogicalResult matchAndRewrite(pto::DmaStoreOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
+    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
     Value one = rewriter.create<arith::ConstantIntOp>(loc, 1, 64);
-    Value loop2Size = op.getLoop2Count();
-    if (!loop2Size)
-      loop2Size = one;
-    if (Value loop2Count = op.getLoop2Count())
-      rewriter.create<pto::SetLoop2StrideUbToOutOp>(
-          loc, op.getLoop2SrcStride(), op.getLoop2DstStride());
+    SmallVector<pto::DmaLoopConfig> loops =
+        collectLoopConfigs(op.getLoopCounts(), op.getLoopSrcStrides(),
+                           op.getLoopDstStrides());
+    ArrayRef<pto::DmaLoopConfig> hwLoops = ArrayRef<pto::DmaLoopConfig>(loops).take_front(2);
+    ArrayRef<pto::DmaLoopConfig> swLoops = ArrayRef<pto::DmaLoopConfig>(loops).drop_front(hwLoops.size());
 
-    if (Value loop1Count = op.getLoop1Count()) {
+    Value loop1Count;
+    Value loop2Size = one;
+    if (hwLoops.size() == 2) {
+      rewriter.create<pto::SetLoop2StrideUbToOutOp>(
+          loc, hwLoops[0].srcStride, hwLoops[0].dstStride);
+      loop2Size = hwLoops[0].count;
+      loop1Count = hwLoops[1].count;
       rewriter.create<pto::SetLoop1StrideUbToOutOp>(
-          loc, op.getLoop1SrcStride(), op.getLoop1DstStride());
+          loc, hwLoops[1].srcStride, hwLoops[1].dstStride);
+      rewriter.create<pto::SetLoopSizeUbToOutOp>(loc, loop2Size, loop1Count);
+    } else if (hwLoops.size() == 1) {
+      loop1Count = hwLoops[0].count;
+      rewriter.create<pto::SetLoop1StrideUbToOutOp>(
+          loc, hwLoops[0].srcStride, hwLoops[0].dstStride);
       rewriter.create<pto::SetLoopSizeUbToOutOp>(loc, loop2Size, loop1Count);
     }
 
-    rewriter.create<pto::CopyUbufToGmOp>(
-        loc, op.getSource(), op.getDestination(), op.getSid(), op.getNBurst(),
-        op.getLenBurst(), op.getReserved(), op.getNburstDstStride(),
-        op.getNburstSrcStride());
-    if (shouldRestoreDmaLoopSize(op.getLoop1Count(), loop2Size))
+    buildSoftwareLoopNest(
+        rewriter, loc, swLoops, zero, zero,
+        [&](Value srcOffset, Value dstOffset) {
+          Value source = offsetPointerByBytes(op.getSource(), srcOffset, rewriter, loc);
+          Value destination =
+              offsetPointerByBytes(op.getDestination(), dstOffset, rewriter, loc);
+          rewriter.create<pto::CopyUbufToGmOp>(
+              loc, source, destination, zero, op.getNBurst(), op.getLenBurst(),
+              zero, op.getNburstDstStride(), op.getNburstSrcStride());
+        });
+    if (shouldRestoreDmaLoopSize(loop1Count, loop2Size))
       rewriter.create<pto::SetLoopSizeUbToOutOp>(loc, one, one);
     rewriter.eraseOp(op);
     return success();
@@ -191,8 +295,9 @@ struct ExpandDmaCopyPattern : public OpRewritePattern<pto::DmaCopyOp> {
 
   LogicalResult matchAndRewrite(pto::DmaCopyOp op,
                                 PatternRewriter &rewriter) const override {
+    Value zero = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 64);
     rewriter.replaceOpWithNewOp<pto::CopyUbufToUbufOp>(
-        op, op.getSource(), op.getDestination(), op.getSid(), op.getNBurst(),
+        op, op.getSource(), op.getDestination(), zero, op.getNBurst(),
         op.getLenBurst(), op.getSrcStride(), op.getDstStride());
     return success();
   }
