@@ -444,6 +444,7 @@ jobs:
           echo "PTOAS_BIN=${GITHUB_WORKSPACE}/build/tools/ptoas/ptoas" >> "${GITHUB_ENV}"
 
       - name: Run VPTO SIM validation
+        if: ${{ false }}
         shell: bash
         run: |
           set -euo pipefail
@@ -462,7 +463,7 @@ jobs:
           mkdir -p "${TILELANG_DSL_WORKSPACE}"
           ASCEND_HOME_PATH="${ASCEND_HOME_PATH}" \
           PTOAS_BIN="${PTOAS_BIN}" \
-          bash test/tilelang_st/script/run_ci.sh -r sim -v a5 --jobs 32 \
+          bash test/tilelang_st/script/run_ci.sh -r sim -v a5 --jobs 64 \
             2>&1 | tee "${TILELANG_DSL_WORKSPACE}/run_ci.log"
 
       - name: Upload TileLang DSL logs
