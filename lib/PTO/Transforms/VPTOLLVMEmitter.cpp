@@ -4141,7 +4141,9 @@ public:
       if (failed(normalizedScalar))
         return rewriter.notifyMatchFailure(op,
                                            "failed to normalize scalar vdup input");
-      callArgs.push_back(*normalizedScalar);
+      Value scalarForCall = normalizeByteScalarOperandForHivmCall(
+          rewriter, op.getLoc(), *normalizedScalar, scalarType);
+      callArgs.push_back(scalarForCall);
     }
 
     callArgs.push_back(mask);
