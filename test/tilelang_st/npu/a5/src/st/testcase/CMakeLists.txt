@@ -138,6 +138,8 @@ set(ALL_TESTCASES
     tlog
     tneg
     tnot
+    tpartmax
+    tpartmin
     tpartadd
     tpartmul
     trecip
