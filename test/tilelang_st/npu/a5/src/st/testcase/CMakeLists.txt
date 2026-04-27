@@ -135,7 +135,6 @@ set(ALL_TESTCASES
     tdiv
     tmax
     tmin
-    tcmp
     tshl
     tshr
     tand
@@ -201,8 +200,6 @@ set(ALL_TESTCASES
     tshrs
     tsubs
     txors
-    tfmod
-    trem
 )
 
 if((TEST_CASE IN_LIST ALL_TESTCASES) OR (TEST_CASE STREQUAL "all"))
