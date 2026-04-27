@@ -345,7 +345,7 @@ neg_vec = pto.vneg(vec_f32, mask32)
 **Constraints**:
 - Operates on integer vector types only
 
-#### `pto.vexpdif(vec: VRegType, max_vec: VRegType, part: pto.VcvtPartMode) -> VRegType`
+#### `pto.vexpdif(vec: VRegType, max_vec: VRegType, mask: MaskType, part: pto.VcvtPartMode) -> VRegType`
 
 **Description**: Fused exponential difference `exp(vec - max_vec)` for numerically stable softmax lowering.
 
@@ -354,6 +354,7 @@ neg_vec = pto.vneg(vec_f32, mask32)
 |-----------|------|-------------|
 | `vec` | `VRegType` | Input vector |
 | `max_vec` | `VRegType` | Per-lane max vector subtracted before exponentiation |
+| `mask` | `MaskType` | Predicate mask. Use `b16` for `f16` inputs and `b32` for `f32` inputs. |
 | `part` | `pto.VcvtPartMode` | Output part selector enum. Use `pto.VcvtPartMode.EVEN` or `pto.VcvtPartMode.ODD`. |
 
 **Returns**:
@@ -364,6 +365,7 @@ neg_vec = pto.vneg(vec_f32, mask32)
 **Constraints**:
 - Supports `f16` and `f32` input vectors only
 - `vec` and `max_vec` must use the same vector type
+- `mask` granularity must match the input vector element width
 - `part` should use `pto.VcvtPartMode.EVEN` or `pto.VcvtPartMode.ODD`
 - Canonical strings `"EVEN"` / `"ODD"` are still accepted for compatibility
 

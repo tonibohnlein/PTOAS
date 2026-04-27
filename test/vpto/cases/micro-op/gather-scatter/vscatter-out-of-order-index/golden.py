@@ -30,7 +30,9 @@ def generate(output_dir: Path, seed: int) -> None:
     flat = rng.uniform(-8.0, 8.0, size=(ROWS * COLS,)).astype(np.float32)
     offsets = ((np.arange(ROWS * COLS, dtype=np.int32) * 43) + 11) % (ROWS * COLS)
     scattered = np.zeros((ROWS * COLS,), dtype=np.float32)
-    scattered[offsets] = flat
+    for base in range(0, ROWS * COLS, 64):
+        lanes = np.arange(base + 8, base + 64, dtype=np.int32)
+        scattered[offsets[lanes]] = flat[lanes]
     v1 = flat.reshape(ROWS, COLS)
     v2 = offsets.reshape(ROWS, COLS)
     v3 = np.zeros((ROWS, COLS), dtype=np.float32)

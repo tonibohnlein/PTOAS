@@ -571,7 +571,7 @@ class SemanticVScatterStmt(SemanticStmt):
     value: SemanticExpr
     destination: SemanticExpr
     offsets: SemanticExpr
-    active_lanes: SemanticExpr
+    mask: SemanticExpr
 
 
 @dataclass(frozen=True)
@@ -1931,7 +1931,7 @@ class _SemanticAnalyzer:
             )
             if len(args) != 4:
                 raise TypeError("pto.vscatter expects exactly 4 positional arguments in TileLang DSL v1")
-            value, destination, offsets, active_lanes = args
+            value, destination, offsets, mask = args
             value_type = self._require_vreg_expr(value, "pto.vscatter value")
             self._require_vector_pointer_expr(destination, "pto.vscatter destination")
             offsets_type = self._require_vreg_expr(offsets, "pto.vscatter offsets")
@@ -1941,14 +1941,14 @@ class _SemanticAnalyzer:
                 raise TypeError("pto.vscatter currently requires i32 offset vectors in TileLang DSL v1")
             if value_type.lanes != offsets_type.lanes:
                 raise TypeError("pto.vscatter value and offsets must use the same lane count in TileLang DSL v1")
-            self._require_i32_like_expr(active_lanes, "pto.vscatter active_lanes")
             self._require_matching_vector_pointer(value_type, destination.type, "pto.vscatter")
+            self._require_mask_for_vreg(mask, value_type, "pto.vscatter")
             return (
                 SemanticVScatterStmt(
                     value=value,
                     destination=destination,
                     offsets=offsets,
-                    active_lanes=active_lanes,
+                    mask=mask,
                 ),
                 dict(env),
             )
@@ -4856,19 +4856,20 @@ class _SemanticAnalyzer:
         self,
         args: tuple[SemanticExpr, ...],
     ) -> SemanticExpr:
-        if len(args) != 3:
-            raise TypeError("pto.vexpdif expects exactly 3 positional arguments in TileLang DSL v1")
-        input_expr, max_expr, part_expr = args
+        if len(args) != 4:
+            raise TypeError("pto.vexpdif expects exactly 4 positional arguments in TileLang DSL v1")
+        input_expr, max_expr, mask_expr, part_expr = args
         input_type = self._require_vreg_expr(input_expr, "pto.vexpdif input")
         max_type = self._require_vreg_expr(max_expr, "pto.vexpdif max")
         if input_type != max_type:
             raise TypeError("pto.vexpdif requires input/max vector types to match")
         self._validate_vexpdif_dtype(input_type.element_dtype)
+        self._require_mask_for_vreg(mask_expr, input_type, "pto.vexpdif")
         part = self._normalize_vexpdif_part(part_expr, "pto.vexpdif part")
         return SemanticCallExpr(
             namespace="pto",
             name="vexpdif",
-            args=(input_expr, max_expr, part),
+            args=(input_expr, max_expr, mask_expr, part),
             type=self._vexpdif_result_vreg_type(input_type),
         )
 

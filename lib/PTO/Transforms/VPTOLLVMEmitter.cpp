@@ -5529,12 +5529,6 @@ public:
       return rewriter.notifyMatchFailure(op,
                                          "unexpected converted vgather2 operand types");
 
-    FailureOr<Value> mask = materializeDynamicPltMask(
-        rewriter, state, op.getLoc(), adaptor.getActiveLanes(), elemType);
-    if (failed(mask))
-      return rewriter.notifyMatchFailure(op,
-                                         "failed to materialize vgather2 mask");
-
     Type resultType = this->getTypeConverter()->convertType(op.getResult().getType());
     if (!resultType)
       return rewriter.notifyMatchFailure(op, "failed to convert vgather2 result type");
@@ -5546,11 +5540,11 @@ public:
 
     auto funcType = rewriter.getFunctionType(
         TypeRange{adaptor.getSource().getType(), adaptor.getOffsets().getType(),
-                  (*mask).getType()},
+                  adaptor.getMask().getType()},
         TypeRange{resultType});
     auto call = rewriter.create<func::CallOp>(
         op.getLoc(), *calleeName, TypeRange{resultType},
-        ValueRange{adaptor.getSource(), adaptor.getOffsets(), *mask});
+        ValueRange{adaptor.getSource(), adaptor.getOffsets(), adaptor.getMask()});
     state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
     rewriter.replaceOp(op, call.getResults());
     return success();
@@ -5654,12 +5648,6 @@ public:
       return rewriter.notifyMatchFailure(op,
                                          "unexpected converted vscatter operand types");
 
-    FailureOr<Value> mask = materializeDynamicPltMask(
-        rewriter, state, op.getLoc(), adaptor.getActiveLanes(), elemType);
-    if (failed(mask))
-      return rewriter.notifyMatchFailure(op,
-                                         "failed to materialize vscatter mask");
-
     FailureOr<StringRef> calleeName =
         buildVscatterCallee(op.getContext(), op.getValue().getType());
     if (failed(calleeName))
@@ -5667,12 +5655,12 @@ public:
 
     auto funcType = rewriter.getFunctionType(
         TypeRange{adaptor.getValue().getType(), adaptor.getDestination().getType(),
-                  adaptor.getOffsets().getType(), (*mask).getType()},
+                  adaptor.getOffsets().getType(), adaptor.getMask().getType()},
         TypeRange{});
     rewriter.create<func::CallOp>(
         op.getLoc(), *calleeName, TypeRange{},
         ValueRange{adaptor.getValue(), adaptor.getDestination(),
-                   adaptor.getOffsets(), *mask});
+                   adaptor.getOffsets(), adaptor.getMask()});
     state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
     rewriter.eraseOp(op);
     return success();
@@ -5787,17 +5775,9 @@ public:
   LogicalResult
   matchAndRewrite(pto::VexpdifOp op, pto::VexpdifOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    auto laneCount = getElementCountFromVectorLike(op.getInput().getType());
-    Type elemType = getElementTypeFromVectorLike(op.getInput().getType());
     auto part = parsePartImmediate(op.getPart());
-    if (!laneCount || !elemType || !part)
+    if (!part)
       return rewriter.notifyMatchFailure(op, "unsupported vexpdif signature");
-
-    FailureOr<Value> mask = materializeDynamicPltMask(
-        rewriter, state, op.getLoc(), getI32Constant(rewriter, op.getLoc(), *laneCount),
-        elemType);
-    if (failed(mask))
-      return rewriter.notifyMatchFailure(op, "failed to materialize vexpdif mask");
 
     Type resultType = this->getTypeConverter()->convertType(op.getResult().getType());
     if (!resultType)
@@ -5812,11 +5792,12 @@ public:
     Value partValue = getI32Constant(rewriter, op.getLoc(), *part);
     auto funcType = rewriter.getFunctionType(
         TypeRange{adaptor.getInput().getType(), adaptor.getMax().getType(),
-                  (*mask).getType(), partValue.getType()},
+                  adaptor.getMask().getType(), partValue.getType()},
         TypeRange{resultType});
     auto call = rewriter.create<func::CallOp>(
         op.getLoc(), *calleeName, TypeRange{resultType},
-        ValueRange{adaptor.getInput(), adaptor.getMax(), *mask, partValue});
+        ValueRange{adaptor.getInput(), adaptor.getMax(), adaptor.getMask(),
+                   partValue});
     state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
     rewriter.replaceOp(op, call.getResults());
     return success();

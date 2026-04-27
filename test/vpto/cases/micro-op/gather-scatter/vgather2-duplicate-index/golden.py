@@ -30,7 +30,11 @@ def generate(output_dir: Path, seed: int) -> None:
     flat = rng.uniform(-8.0, 8.0, size=(ROWS * COLS,)).astype(np.float32)
     pair_ids = ((np.arange((ROWS * COLS) // 2, dtype=np.int32) * 29) + 5) % (ROWS * COLS)
     offsets = np.repeat(pair_ids, 2)
-    gathered = flat[offsets].reshape(ROWS, COLS)
+    gathered = np.zeros((ROWS * COLS,), dtype=np.float32)
+    for base in range(0, ROWS * COLS, 64):
+        lanes = np.arange(base + 8, base + 64, dtype=np.int32)
+        gathered[lanes] = flat[offsets[lanes]]
+    gathered = gathered.reshape(ROWS, COLS)
     v1 = flat.reshape(ROWS, COLS)
     v2 = offsets.reshape(ROWS, COLS)
     v3 = np.zeros((ROWS, COLS), dtype=np.float32)

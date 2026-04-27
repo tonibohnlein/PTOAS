@@ -292,22 +292,23 @@ for (int blk = 0; blk < 8; ++blk) {
 
 ### `pto.vgather2`
 
-- **syntax:** `%result = pto.vgather2 %source, %offsets, %active_lanes : !pto.ptr<T, ub>, !pto.vreg<NxI>, index -> !pto.vreg<NxT>`
+- **syntax:** `%result = pto.vgather2 %source, %offsets, %mask : !pto.ptr<T, ub>, !pto.vreg<NxI>, !pto.mask<G> -> !pto.vreg<NxT>`
 - **semantics:** Indexed gather from UB.
 - **inputs:**
   `%source` is the UB base pointer, `%offsets` provides per-lane element
-  offsets, and `%active_lanes` bounds how many lanes participate.
+  offsets, and `%mask` selects the active requests.
 - **outputs:**
   `%result` is the gathered vector.
 - **constraints and limitations:**
-  Only the first `%active_lanes` indices participate. The index element width
+  Only masked-on indices participate. The index element width
   and interpretation MUST match the selected gather form, and each effective
   address must satisfy that form's alignment rules.
 - **Latency:** **27–28** cycles per `RV_VGATHER2`; throughput much lower than contiguous `RV_VLD` (see **Latency and throughput (A5)** at the start of this chapter).
 
 ```c
-for (int i = 0; i < active_lanes; i++)
-    dst[i] = UB[base + offsets[i] * sizeof(T)];
+for (int i = 0; i < N; i++)
+    if (mask[i])
+        dst[i] = UB[base + offsets[i] * sizeof(T)];
 ```
 
 ---
@@ -464,11 +465,11 @@ for (int blk = 0; blk < 8; ++blk) {
 
 ### `pto.vscatter`
 
-- **syntax:** `pto.vscatter %value, %dest, %offsets, %active_lanes : !pto.vreg<NxT>, !pto.ptr<T, ub>, !pto.vreg<NxI>, index`
+- **syntax:** `pto.vscatter %value, %dest, %offsets, %mask : !pto.vreg<NxT>, !pto.ptr<T, ub>, !pto.vreg<NxI>, !pto.mask<G>`
 - **semantics:** Indexed scatter to UB.
 - **inputs:**
   `%value` is the source vector, `%dest` is the UB base pointer, `%offsets`
-  provides per-lane or per-block indices, and `%active_lanes` bounds the active
+  provides per-lane or per-block indices, and `%mask` selects the active
   requests.
 - **outputs:**
   This op writes UB memory and returns no SSA value.
@@ -480,8 +481,9 @@ for (int blk = 0; blk < 8; ++blk) {
 - **Latency:** **~17** cycles for **`Dtype: B16`**.
 
 ```c
-for (int i = 0; i < active_lanes; i++)
-    UB[base + offsets[i] * sizeof(T)] = src[i];
+for (int i = 0; i < N; i++)
+    if (mask[i])
+        UB[base + offsets[i] * sizeof(T)] = src[i];
 ```
 
 ---

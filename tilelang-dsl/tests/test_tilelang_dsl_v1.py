@@ -3509,7 +3509,7 @@ class TileLangDSLDescriptorTests(unittest.TestCase):
             out = pto.vsqrt(out, all_mask)
             out = pto.vrec(out, all_mask)
             out = pto.vrsqrt(out, all_mask)
-            out = pto.vexpdif(out, vec1, pto.VcvtPartMode.ODD)
+            out = pto.vexpdif(out, vec1, all_mask, pto.VcvtPartMode.ODD)
             out = pto.vcadd(out, all_mask)
             out = pto.vcmax(out, all_mask)
             out = pto.vcmin(out, all_mask)
@@ -3550,7 +3550,8 @@ class TileLangDSLDescriptorTests(unittest.TestCase):
         def kernel(dst: pto.Tile, src: pto.Tile, max_src: pto.Tile):
             vec = pto.vlds(src, 0)
             max_vec = pto.vlds(max_src, 0)
-            out = pto.vexpdif(vec, max_vec, pto.VcvtPartMode.ODD)
+            mask = pto.make_mask(pto.f16, pto.PAT.ALL)
+            out = pto.vexpdif(vec, max_vec, mask, pto.VcvtPartMode.ODD)
             mask = pto.make_mask(pto.f32, pto.PAT.ALL)
             pto.vsts(out, dst, 0, mask)
             return None
@@ -3564,7 +3565,7 @@ class TileLangDSLDescriptorTests(unittest.TestCase):
         text = specialized.mlir_text()
         self.assertRegex(
             text,
-            r'pto\.vexpdif %\w+_\d+, %\w+_\d+, "ODD" : !pto\.vreg<128xf16>, !pto\.vreg<128xf16> -> !pto\.vreg<64xf32>',
+            r'pto\.vexpdif %\w+_\d+, %\w+_\d+, %\w+_\d+, "ODD" : !pto\.vreg<128xf16>, !pto\.vreg<128xf16>, !pto\.mask<b16> -> !pto\.vreg<64xf32>',
         )
 
     def test_vcvt_supports_keyword_attrs_with_enums(self) -> None:
@@ -6721,7 +6722,8 @@ class TileLangDSLDescriptorTests(unittest.TestCase):
         ):
             vec = pto.vbr(1.0)
             offsets = pto.vlds(offsets_src, 0)
-            pto.vscatter(vec, dst, offsets, 64)
+            mask = pto.make_mask(pto.f32, pto.PAT.ALL)
+            pto.vscatter(vec, dst, offsets, mask)
             return None
 
         specialized = kernel.specialize()
@@ -6733,11 +6735,13 @@ class TileLangDSLDescriptorTests(unittest.TestCase):
         self.assertEqual(scatter_stmt.destination.type.memory_space, "ub")
         self.assertEqual(scatter_stmt.value.type.element_dtype, pto.f32)
         self.assertEqual(scatter_stmt.offsets.type.element_dtype, pto.i32)
+        self.assertEqual(scatter_stmt.mask.type.granularity, "b32")
 
         text = specialized.mlir_text()
         self.assertIn("pto.vscatter", text)
         self.assertIn("!pto.vreg<64xf32>", text)
         self.assertIn("!pto.vreg<64xi32>", text)
+        self.assertIn("!pto.mask<b32>", text)
 
     def test_align_load_and_stateful_store_ops_lower_to_current_vpto_surface(self) -> None:
         @pto.vkernel(

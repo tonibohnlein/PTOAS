@@ -44,7 +44,7 @@ def template_trowexpandexpdif_f32(src0: pto.Tile, src1: pto.Tile, dst: pto.Tile)
             scalar_vec = pto.vlds(src1[row, :])
             broadcasted = pto.vdup(scalar_vec, mask)
             lhs = pto.vlds(src0[row, col:])
-            result = pto.vexpdif(lhs, broadcasted, pto.VcvtPartMode.EVEN)
+            result = pto.vexpdif(lhs, broadcasted, mask, pto.VcvtPartMode.EVEN)
             pto.vsts(result, dst[row, col:], mask)
     return
 

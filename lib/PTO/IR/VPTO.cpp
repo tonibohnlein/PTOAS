@@ -1773,8 +1773,8 @@ LogicalResult Vgather2Op::verify() {
     return emitOpError("offset vector must use integer element type");
   if (offsetsType.getElementCount() != resultType.getElementCount())
     return emitOpError("offset and result vectors must have the same element count");
-  if (!getActiveLanes().getType().isIndex())
-    return emitOpError("active_lanes must be index");
+  if (failed(verifyMaskTypeLike(*this, getMask().getType(), "mask type")))
+    return failure();
   return success();
 }
 
@@ -3189,6 +3189,7 @@ LogicalResult VpreluOp::verify() { return verifyFloatBinaryVecMaskOp(*this); }
 LogicalResult VexpdifOp::verify() {
   if (failed(verifyVRegTypeLike(*this, getInput().getType(), "input type")) ||
       failed(verifyVRegTypeLike(*this, getMax().getType(), "max type")) ||
+      failed(verifyMaskTypeLike(*this, getMask().getType(), "mask type")) ||
       failed(verifyVRegTypeLike(*this, getResult().getType(), "result type")))
     return failure();
 
@@ -3201,6 +3202,13 @@ LogicalResult VexpdifOp::verify() {
   Type inputElemType = inputType.getElementType();
   if (!inputElemType.isF16() && !inputElemType.isF32())
     return emitOpError("requires f16 or f32 input vector element type");
+  auto expectedGranularity = getVdupMaskGranularity(inputElemType);
+  if (!expectedGranularity)
+    return emitOpError("requires input element type with supported predicate granularity");
+  if (failed(verifyMaskTypeWithGranularityLike(*this, getMask().getType(),
+                                               "mask type",
+                                               *expectedGranularity)))
+    return failure();
   if (!resultType.getElementType().isF32())
     return emitOpError("requires f32 result vector element type");
 
@@ -3407,11 +3415,11 @@ LogicalResult VscatterOp::verify() {
     return emitOpError("currently requires 32-bit offset vector elements");
   if (offsetsType.getElementCount() != valueType.getElementCount())
     return emitOpError("offset and value vectors must have the same element count");
+  if (failed(verifyMaskTypeLike(*this, getMask().getType(), "mask type")))
+    return failure();
   MemoryRole destinationRole = classifyMemoryRole(getDestination().getType());
   if (destinationRole == MemoryRole::GM)
     return emitOpError("requires a UB-backed destination");
-  if (!getActiveLanes().getType().isIndex())
-    return emitOpError("active_lanes must be index");
   return success();
 }
 

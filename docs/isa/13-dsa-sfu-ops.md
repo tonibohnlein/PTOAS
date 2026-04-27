@@ -59,7 +59,7 @@ for (int i = 0; i < N; i++)
 
 ### `pto.vexpdif`
 
-- **syntax:** `%result = pto.vexpdif %input, %max, "EVEN|ODD" : !pto.vreg<NxT>, !pto.vreg<NxT> -> !pto.vreg<Mxf32>`
+- **syntax:** `%result = pto.vexpdif %input, %max, %mask, "EVEN|ODD" : !pto.vreg<NxT>, !pto.vreg<NxT>, !pto.mask<bW> -> !pto.vreg<Mxf32>`
 - **A5 types:** input `f16` or `f32`, output `f32`
 - **semantics:** Fused exp(x - max) for numerically stable softmax.
 
@@ -70,13 +70,14 @@ for (int i = 0; i < N; i++)
 
 **Use case:** Softmax numerator computation with numerical stability.
 
-- **inputs:** `%input` is the source vector and `%max` is the broadcasted
-  subtraction term. `%part` selects `EVEN` or `ODD` for the
-  underlying hardware contract.
+- **inputs:** `%input` is the source vector, `%max` is the broadcasted
+  subtraction term, `%mask` selects active source lanes, and `%part` selects
+  `EVEN` or `ODD` for the underlying hardware contract.
 - **outputs:** `%result` is the fused `exp(input - max)` vector with `f32`
   elements.
 - **constraints and limitations:** Source vectors must be `f16` or `f32`, the
-  result vector must be `f32`, and source/result storage width must match.
+  result vector must be `f32`, the mask granularity must match the input
+  vector element width, and source/result storage width must match.
 
 ---
 
@@ -223,7 +224,7 @@ for (int i = 0; i < N; i++)
 ```mlir
 // Softmax with fused expdiff
 %max_broadcast = pto.vlds %ub_max[%c0] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-%exp_stable = pto.vexpdif %logits, %max_broadcast : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>
+%exp_stable = pto.vexpdif %logits, %max_broadcast, %mask, "ODD" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 
 // Leaky ReLU activation
 %activated = pto.vlrelu %linear_out, %alpha_scalar, %mask : !pto.vreg<64xf32>, f32, !pto.mask<G> -> !pto.vreg<64xf32>

@@ -2396,22 +2396,23 @@ for (int blk = 0; blk < 8; ++blk) {
 
 ##### `pto.vgather2`
 
-- **syntax:** `%result = pto.vgather2 %source, %offsets, %active_lanes : !pto.ptr<T, ub>, !pto.vreg<NxI>, index -> !pto.vreg<NxT>`
+- **syntax:** `%result = pto.vgather2 %source, %offsets, %mask : !pto.ptr<T, ub>, !pto.vreg<NxI>, !pto.mask<G> -> !pto.vreg<NxT>`
 - **semantics:** Indexed gather from UB.
 - **inputs:**
   `%source` is the UB base pointer, `%offsets` provides per-lane element
-  offsets, and `%active_lanes` bounds how many lanes participate.
+  offsets, and `%mask` selects the active requests.
 - **outputs:**
   `%result` is the gathered vector.
 - **constraints and limitations:**
-  Only the first `%active_lanes` indices participate. The index element width
+  Only masked-on indices participate. The index element width
   and interpretation MUST match the selected gather form, and each effective
   address must satisfy that form's alignment rules.
 - **Latency:** **27–28** cycles per `RV_VGATHER2`; throughput much lower than contiguous `RV_VLD` (see **Latency and throughput (A5)** at the start of this chapter).
 
 ```c
-for (int i = 0; i < active_lanes; i++)
-    dst[i] = UB[base + offsets[i] * sizeof(T)];
+for (int i = 0; i < N; i++)
+    if (mask[i])
+        dst[i] = UB[base + offsets[i] * sizeof(T)];
 ```
 
 ---
@@ -2568,11 +2569,11 @@ for (int blk = 0; blk < 8; ++blk) {
 
 ##### `pto.vscatter`
 
-- **syntax:** `pto.vscatter %value, %dest, %offsets, %active_lanes : !pto.vreg<NxT>, !pto.ptr<T, ub>, !pto.vreg<NxI>, index`
+- **syntax:** `pto.vscatter %value, %dest, %offsets, %mask : !pto.vreg<NxT>, !pto.ptr<T, ub>, !pto.vreg<NxI>, !pto.mask<G>`
 - **semantics:** Indexed scatter to UB.
 - **inputs:**
   `%value` is the source vector, `%dest` is the UB base pointer, `%offsets`
-  provides per-lane or per-block indices, and `%active_lanes` bounds the active
+  provides per-lane or per-block indices, and `%mask` selects the active
   requests.
 - **outputs:**
   This op writes UB memory and returns no SSA value.
@@ -2584,8 +2585,9 @@ for (int blk = 0; blk < 8; ++blk) {
 - **Latency:** **~17** cycles for **`Dtype: B16`**.
 
 ```c
-for (int i = 0; i < active_lanes; i++)
-    UB[base + offsets[i] * sizeof(T)] = src[i];
+for (int i = 0; i < N; i++)
+    if (mask[i])
+        UB[base + offsets[i] * sizeof(T)] = src[i];
 ```
 
 ---
@@ -4857,7 +4859,7 @@ for (int i = 0; i < N; i++)
 
 ##### `pto.vexpdif`
 
-- **syntax:** `%result = pto.vexpdif %input, %max, "EVEN|ODD" : !pto.vreg<NxT>, !pto.vreg<NxT> -> !pto.vreg<Mxf32>`
+- **syntax:** `%result = pto.vexpdif %input, %max, %mask, "EVEN|ODD" : !pto.vreg<NxT>, !pto.vreg<NxT>, !pto.mask<bW> -> !pto.vreg<Mxf32>`
 - **A5 types:** input `f16` or `f32`, output `f32`
 - **semantics:** Fused exp(x - max) for numerically stable softmax.
 
@@ -5016,7 +5018,7 @@ for (int i = 0; i < N; i++)
 ```mlir
 // Softmax with fused expdiff
 %max_broadcast = pto.vlds %ub_max[%c0] {dist = "BRC"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-%exp_stable = pto.vexpdif %logits, %max_broadcast : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>
+%exp_stable = pto.vexpdif %logits, %max_broadcast, %mask, "ODD" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 
 // Leaky ReLU activation
 %activated = pto.vlrelu %linear_out, %alpha_scalar, %mask : !pto.vreg<64xf32>, f32, !pto.mask<G> -> !pto.vreg<64xf32>
@@ -5252,7 +5254,7 @@ pto.vsts %max_vec, %ub_tmp[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !
 %max_bc = pto.vlds %ub_tmp[%c0] {dist = "BRC"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
 
 // 2. exp(x - max) using fused op
-%exp = pto.vexpdif %logits, %max_bc, "ODD" : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>
+%exp = pto.vexpdif %logits, %max_bc, %mask, "ODD" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 
 // 3. Sum
 %sum = pto.vcadd %exp, %mask : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>

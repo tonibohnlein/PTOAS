@@ -52,6 +52,6 @@ def template_tcolexpandexpdif_f32(src0: pto.Tile, src1: pto.Tile, dst: pto.Tile)
             mask, remained = pto.make_mask(dtype, remained)
             lhs = pto.vlds(src0[row, col:])
             rhs = pto.vlds(src1[0, col:])
-            result = pto.vexpdif(lhs, rhs, pto.VcvtPartMode.ODD)
+            result = pto.vexpdif(lhs, rhs, mask, pto.VcvtPartMode.ODD)
             pto.vsts(result, dst[row, col:], mask)
     return
