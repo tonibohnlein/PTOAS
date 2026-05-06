@@ -1,6 +1,6 @@
 # TileLang DSL 文档
 
-TileLang Python DSL 为面向 Ascend NPU 硬件的向量计算内核提供高级的 Pythonic 接口。本指南适用于需要编写高效、硬件感知内核的库开发人员和性能工程师。
+TileLang Python DSL 为面向 Ascend NPU 硬件的向量计算和矩阵乘法（Cube）内核提供高级的 Pythonic 接口。本指南适用于需要编写高效、硬件感知内核的库开发人员和性能工程师。
 
 ## 文档结构
 
@@ -24,14 +24,15 @@ TileLang Python DSL 为面向 Ascend NPU 硬件的向量计算内核提供高级
 - [向量内存操作](user_guide/09-vector-memory-operations.md) - 向量加载和存储操作
 - [谓词操作](user_guide/10-predicate-operations.md) - 谓词操作
 - [向量算术操作](user_guide/11-vector-arithmetic-operations.md) - 向量算术操作
+- [Cube 矩阵乘法操作](user_guide/12-cube-operations.md) - Cube 数据搬运与矩阵乘法操作
 
 ### 示例和错误处理
-- [示例](user_guide/12-examples.md) - 各种内核示例
-- [常见错误](user_guide/13-common-errors.md) - 常见错误和解决方案
+- [示例](user_guide/13-examples.md) - 各种 Vector 和 Cube 内核示例
+- [常见错误](user_guide/14-common-errors.md) - 常见错误和解决方案
 
 ### 附录
-- [兼容性说明](user_guide/14-compatibility-notes.md) - 与实验实现的差异
-- [后续步骤](user_guide/15-next-steps.md) - 相关资源链接
+- [兼容性说明](user_guide/15-compatibility-notes.md) - 与实验实现的差异
+- [后续步骤](user_guide/16-next-steps.md) - 相关资源链接
 
 ## 相关文档
 - [v1-surface.md](v1-surface.md) - TileLang DSL v1 合约

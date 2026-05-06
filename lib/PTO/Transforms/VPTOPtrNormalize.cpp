@@ -20,6 +20,7 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "llvm/ADT/Twine.h"
 
 namespace mlir {
 namespace pto {
@@ -218,6 +219,53 @@ static Value materializeScalarAccessPtr(Value source, PatternRewriter &rewriter,
   // boundary bridge. Materializing fresh memref -> ptr casts here would leave
   // illegal pto.castptr(memref) behind in this pass.
   return {};
+}
+
+static Value materializeBoundaryOperandPtr(Value source,
+                                           PatternRewriter &rewriter,
+                                           Location loc) {
+  if (!source)
+    return {};
+  if (isa<pto::PtrType>(source.getType()))
+    return source;
+  return materializeScalarAccessPtr(source, rewriter, loc);
+}
+
+template <typename OpTy>
+static LogicalResult rewriteBufferLikeBoundaryOp(
+    OpTy op, typename OpTy::Adaptor adaptor, ConversionPatternRewriter &rewriter,
+    StringRef sourceRole, StringRef destinationRole) {
+  Value source =
+      materializeBoundaryOperandPtr(adaptor.getOperands()[0], rewriter, op.getLoc());
+  if (!source)
+    return rewriter.notifyMatchFailure(
+        op, (Twine("failed to materialize ") + sourceRole + " ptr").str());
+  if (!isa<pto::PtrType>(source.getType()))
+    return rewriter.notifyMatchFailure(
+        op, (Twine("expected ptr-form ") + sourceRole).str());
+
+  Value destination = materializeBoundaryOperandPtr(adaptor.getOperands()[1],
+                                                    rewriter, op.getLoc());
+  if (!destination)
+    return rewriter.notifyMatchFailure(
+        op, (Twine("failed to materialize ") + destinationRole + " ptr").str());
+  if (!isa<pto::PtrType>(destination.getType()))
+    return rewriter.notifyMatchFailure(
+        op, (Twine("expected ptr-form ") + destinationRole).str());
+
+  SmallVector<Value> operands(adaptor.getOperands().begin(),
+                              adaptor.getOperands().end());
+  operands[0] = source;
+  operands[1] = destination;
+
+  OperationState state(op.getLoc(), op->getName().getStringRef());
+  state.addOperands(operands);
+  state.addTypes(op->getResultTypes());
+  state.addAttributes(op->getAttrs());
+  state.propertiesAttr = op->getPropertiesAsAttribute();
+  Operation *newOp = rewriter.create(state);
+  rewriter.replaceOp(op, newOp->getResults());
+  return success();
 }
 
 struct ConvertTileBufAddrToPtrPattern
@@ -427,6 +475,144 @@ struct ConvertStoreScalarOperandToPtrPattern
   }
 };
 
+struct ConvertCubeLoadOperandPattern
+    : public OpConversionPattern<pto::CubeLoadOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::CubeLoadOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    return rewriteBufferLikeBoundaryOp(op, adaptor, rewriter, "cube_load source",
+                                       "cube_load destination");
+  }
+};
+
+struct ConvertCubeStoreOperandPattern
+    : public OpConversionPattern<pto::CubeStoreOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::CubeStoreOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    return rewriteBufferLikeBoundaryOp(op, adaptor, rewriter,
+                                       "cube_store source",
+                                       "cube_store destination");
+  }
+};
+
+struct ConvertBiasLoadOperandPattern
+    : public OpConversionPattern<pto::BiasLoadOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::BiasLoadOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    return rewriteBufferLikeBoundaryOp(op, adaptor, rewriter, "bias_load source",
+                                       "bias_load destination");
+  }
+};
+
+struct ConvertCubeLoadFracOperandPattern
+    : public OpConversionPattern<pto::CubeLoadFracOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::CubeLoadFracOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    return rewriteBufferLikeBoundaryOp(op, adaptor, rewriter, "cube_load_frac source",
+                                       "cube_load_frac destination");
+  }
+};
+
+struct ConvertLeftLoadOperandPattern
+    : public OpConversionPattern<pto::LeftLoadOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::LeftLoadOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    return rewriteBufferLikeBoundaryOp(op, adaptor, rewriter, "left_load source",
+                                       "left_load destination");
+  }
+};
+
+struct ConvertRightLoadOperandPattern
+    : public OpConversionPattern<pto::RightLoadOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::RightLoadOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    return rewriteBufferLikeBoundaryOp(op, adaptor, rewriter,
+                                       "right_load source",
+                                       "right_load destination");
+  }
+};
+
+struct ConvertLeftLoadMxOperandPattern
+    : public OpConversionPattern<pto::LeftLoadMxOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::LeftLoadMxOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    return rewriteBufferLikeBoundaryOp(op, adaptor, rewriter,
+                                       "left_load_mx source",
+                                       "left_load_mx destination");
+  }
+};
+
+struct ConvertRightLoadMxOperandPattern
+    : public OpConversionPattern<pto::RightLoadMxOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::RightLoadMxOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    return rewriteBufferLikeBoundaryOp(op, adaptor, rewriter,
+                                       "right_load_mx source",
+                                       "right_load_mx destination");
+  }
+};
+
+struct ConvertAccStoreOperandPattern
+    : public OpConversionPattern<pto::AccStoreOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::AccStoreOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    return rewriteBufferLikeBoundaryOp(op, adaptor, rewriter, "acc_store source",
+                                       "acc_store destination");
+  }
+};
+
+struct ConvertAccStoreGmOperandPattern
+    : public OpConversionPattern<pto::AccStoreGmOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::AccStoreGmOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    return rewriteBufferLikeBoundaryOp(op, adaptor, rewriter,
+                                       "acc_store_gm source",
+                                       "acc_store_gm destination");
+  }
+};
+
+struct ConvertAccStoreUbOperandPattern
+    : public OpConversionPattern<pto::AccStoreUbOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::AccStoreUbOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    return rewriteBufferLikeBoundaryOp(op, adaptor, rewriter,
+                                       "acc_store_ub source",
+                                       "acc_store_ub destination");
+  }
+};
+
 struct ConvertPtrNormalizeUnrealizedCastOp final
     : public OpConversionPattern<UnrealizedConversionCastOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -514,6 +700,50 @@ struct VPTOPtrNormalizePass
         [](pto::LoadScalarOp op) { return isa<pto::PtrType>(op.getPtr().getType()); });
     target.addDynamicallyLegalOp<pto::StoreScalarOp>(
         [](pto::StoreScalarOp op) { return isa<pto::PtrType>(op.getPtr().getType()); });
+    target.addDynamicallyLegalOp<pto::CubeLoadOp>([](pto::CubeLoadOp op) {
+      return isa<pto::PtrType>(op.getSource().getType()) &&
+             isa<pto::PtrType>(op.getDestination().getType());
+    });
+    target.addDynamicallyLegalOp<pto::CubeStoreOp>([](pto::CubeStoreOp op) {
+      return isa<pto::PtrType>(op.getSource().getType()) &&
+             isa<pto::PtrType>(op.getDestination().getType());
+    });
+    target.addDynamicallyLegalOp<pto::BiasLoadOp>([](pto::BiasLoadOp op) {
+      return isa<pto::PtrType>(op.getSource().getType()) &&
+             isa<pto::PtrType>(op.getDestination().getType());
+    });
+    target.addDynamicallyLegalOp<pto::CubeLoadFracOp>([](pto::CubeLoadFracOp op) {
+      return isa<pto::PtrType>(op.getSource().getType()) &&
+             isa<pto::PtrType>(op.getDestination().getType());
+    });
+    target.addDynamicallyLegalOp<pto::LeftLoadOp>([](pto::LeftLoadOp op) {
+      return isa<pto::PtrType>(op.getSource().getType()) &&
+             isa<pto::PtrType>(op.getDestination().getType());
+    });
+    target.addDynamicallyLegalOp<pto::RightLoadOp>([](pto::RightLoadOp op) {
+      return isa<pto::PtrType>(op.getSource().getType()) &&
+             isa<pto::PtrType>(op.getDestination().getType());
+    });
+    target.addDynamicallyLegalOp<pto::LeftLoadMxOp>([](pto::LeftLoadMxOp op) {
+      return isa<pto::PtrType>(op.getSource().getType()) &&
+             isa<pto::PtrType>(op.getDestination().getType());
+    });
+    target.addDynamicallyLegalOp<pto::RightLoadMxOp>([](pto::RightLoadMxOp op) {
+      return isa<pto::PtrType>(op.getSource().getType()) &&
+             isa<pto::PtrType>(op.getDestination().getType());
+    });
+    target.addDynamicallyLegalOp<pto::AccStoreOp>([](pto::AccStoreOp op) {
+      return isa<pto::PtrType>(op.getSource().getType()) &&
+             isa<pto::PtrType>(op.getDestination().getType());
+    });
+    target.addDynamicallyLegalOp<pto::AccStoreGmOp>([](pto::AccStoreGmOp op) {
+      return isa<pto::PtrType>(op.getSource().getType()) &&
+             isa<pto::PtrType>(op.getDestination().getType());
+    });
+    target.addDynamicallyLegalOp<pto::AccStoreUbOp>([](pto::AccStoreUbOp op) {
+      return isa<pto::PtrType>(op.getSource().getType()) &&
+             isa<pto::PtrType>(op.getDestination().getType());
+    });
     target.addDynamicallyLegalOp<memref::SubViewOp>(
         [](memref::SubViewOp op) { return !needsSubviewPtrConversion(op); });
 
@@ -529,6 +759,17 @@ struct VPTOPtrNormalizePass
                  ConvertVstsSubviewOperandPattern,
                  ConvertLoadScalarOperandToPtrPattern,
                  ConvertStoreScalarOperandToPtrPattern,
+                 ConvertCubeLoadOperandPattern,
+                 ConvertCubeStoreOperandPattern,
+                 ConvertBiasLoadOperandPattern,
+                 ConvertCubeLoadFracOperandPattern,
+                 ConvertLeftLoadOperandPattern,
+                 ConvertRightLoadOperandPattern,
+                 ConvertLeftLoadMxOperandPattern,
+                 ConvertRightLoadMxOperandPattern,
+                 ConvertAccStoreOperandPattern,
+                 ConvertAccStoreGmOperandPattern,
+                 ConvertAccStoreUbOperandPattern,
                  ConvertPtrNormalizeUnrealizedCastOp>(
         typeConverter, context);
 

@@ -2,7 +2,10 @@
 
 ### Kernel Declaration
 
-Kernels are defined using the `@pto.vkernel` decorator with enhanced matching capabilities for PTO operations. The decorator specifies matching criteria for target architecture, operation type, data types, and additional constraints, along with a priority for disambiguation when multiple kernels match.
+TileLang DSL exposes two kernel decorators:
+
+- `@pto.vkernel` for the Vector (AIV) execution model
+- `@pto.ckernel` for the Cube (AIC) execution model
 
 #### Basic Syntax
 
@@ -393,3 +396,133 @@ def conv2d_nhwc_f16_f32(input: pto.Tile, filter: pto.Tile, output: pto.Tile) -> 
     # Optimized for NHWC layout with static shapes
     pass
 ```
+
+---
+
+### Cube Kernel Declaration
+
+Cube kernels target the AIC (Cube) hardware unit for matrix multiplication operations. Unlike Vector kernels, Cube kernels operate on raw `pto.ptr<T, addr_space>` pointers and do not use `vecscope` execution scopes.
+
+#### Basic Syntax
+
+```python
+@pto.ckernel(
+    target="a5",
+    op="pto.mad",                               # concrete matcher op
+    dtypes=[(pto.f16, pto.f16, pto.f32)],       # selection dtype signature
+    name="my_gemm",                             # optional registry/debug name
+)
+def gemm(inp: pto.TensorView):
+    # Cube kernel body — linear cube authoring IR
+    ...
+```
+
+#### Parameter Type Conventions
+
+Cube kernel parameters represent different roles in the data flow:
+
+| Parameter Type | Role | Description |
+|---------------|------|-------------|
+| `PartitionTensorView` | GM input/output | Tiled view of a logical tensor in GM, partitioned by the caller |
+| `TensorView` | GM input/output | Full logical tensor view in GM (for non-partitioned use) |
+| `Tile` (specific addr space) | Pre-allocated hardware buffer | Tile already allocated in LEFT/RIGHT/ACC/MAT/BIAS address space |
+| `int` | Dimension | Scalar dimension parameter (M, K, N, etc.) |
+| `pto.f16` / `pto.f32` etc. | Scalar | Scalar parameters (threshold, alpha, etc.) |
+
+GM payload is modeled through `TensorView` and `PartitionTensorView`. `Tile`
+values represent staged hardware buffers allocated in concrete hardware address
+spaces such as `MAT`, `LEFT`, `RIGHT`, `ACC`, and `BIAS` via `pto.Tile`.
+
+#### Decorator Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `target` | `str` | No | Target hardware architecture. Cube DSL v1 supports `"a5"`. Default: `"a5"`. |
+| `op` | `str` | 与 `ops` 二选一 | Single concrete matcher op. Bare-op strings such as `"pto.mad"` are supported. **Mutually exclusive with `ops`**. |
+| `ops` | `List[str]` | 与 `op` 二选一 | List of concrete matcher ops for shared-body selection and template-slot dispatch. **Mutually exclusive with `op`**. |
+| `dtypes` | `List[Tuple[Type, ...]]` | Recommended | List of selection dtype signatures. For cube kernels, these signatures describe the concrete query op rather than necessarily mirroring the Python parameter list. |
+| `templates` | `Dict[str, Dict[str, str]]` | No | Static template-slot mappings. Each slot maps concrete op names to real `pto.*` calls. Required when the kernel body uses `pto.tpl(...)`. |
+| `name` | `str` | No | Descriptor name used for registration, debugging, and emitted symbol naming. Defaults to the decorated function name. |
+| `priority` | `int` | No | Selection priority when multiple kernels match. Default: `0`. |
+
+#### Key Differences from `@pto.vkernel`
+
+| Feature | `@pto.vkernel` (Vector) | `@pto.ckernel` (Cube) |
+|---------|--------------------------|------------------------|
+| Hardware unit | AIV (Vector) | AIC (Cube) |
+| Execution scope | `pto.vecscope` / `pto.strict_vecscope` | **No scope** — function body is linear IR |
+| GM data input | `TensorView` / `Tile` | `TensorView` / `PartitionTensorView` |
+| Operand abstraction | Tile + vector registers + masks | `pto.ptr<T, addr_space>` raw pointers |
+| Core operations | Vector ALU, load/store | Data movement (cube_load/store) + matmul (mad) |
+| Address spaces | GM, UB (VEC) | GM, MAT, LEFT, RIGHT, ACC, BIAS, UB |
+| Generated IR attr | `#pto.kernel_kind<vector>` | `#pto.kernel_kind<cube>` |
+
+#### Programming Model
+
+Cube kernels follow a GM → L1 → L0 → compute → L0 → GM data flow:
+
+```python
+@pto.ckernel(
+    target="a5",
+    op="pto.mad",
+    dtypes=[(pto.f16, pto.f16, pto.f32)],
+    name="gemm",
+)
+def gemm(a_tv: pto.PartitionTensorView,   # [M, K] in GM
+         b_tv: pto.PartitionTensorView,   # [K, N] in GM
+         c_tv: pto.PartitionTensorView):  # [M, N] in GM, output
+    # 1. Get GM pointers from PartitionTensorViews
+    a_ptr = a_tv.as_ptr()  # -> pto.ptr<f16, gm>
+    b_ptr = b_tv.as_ptr()  # -> pto.ptr<f16, gm>
+    c_ptr = c_tv.as_ptr()  # -> pto.ptr<f32, gm>
+
+    # 2. Allocate L1 (MAT) tile buffers (returns Tile, then get ptr)
+    l1_a = pto.Tile([16, 32], pto.f16, pto.MemorySpace.MAT)
+    l1_b = pto.Tile([32, 16], pto.f16, pto.MemorySpace.MAT)
+
+    # 3. Allocate L0 tile buffers
+    l0a = pto.Tile([16, 32], pto.f16, pto.MemorySpace.LEFT)
+    l0b = pto.Tile([32, 16], pto.f16, pto.MemorySpace.RIGHT)
+    l0c = pto.Tile([16, 16], pto.f32, pto.MemorySpace.ACC)
+
+    # 4. GM → L1 data movement
+    pto.cube_load(a_ptr, l1_a.as_ptr(), 16, nburst=(1, 0, 0))
+    pto.cube_load(b_ptr, l1_b.as_ptr(), 16, nburst=(1, 0, 0))
+
+    # 5. L1 → L0 data movement
+    pto.left_load(l1_a.as_ptr(), l0a.as_ptr(), 16, 32)
+    pto.right_load(l1_b.as_ptr(), l0b.as_ptr(), 32, 16)
+
+    # 6. Matrix multiplication
+    pto.mad(l0a.as_ptr(), l0b.as_ptr(), l0c.as_ptr(), 16, 16, 32)
+
+    # 7. L0C → GM writeback
+    pto.acc_store_gm(
+        l0c.as_ptr(), c_ptr, 16, 16, 16, 16, mode=pto.FractalMode.NZ2ND
+    )
+```
+
+This example shows a **full-pipeline** kernel that handles data movement and compute. Alternatively, a **pure-compute** kernel can take pre-allocated tiles directly:
+
+```python
+@pto.ckernel(
+    target="a5",
+    op="pto.mad",
+    dtypes=[(pto.f16, pto.f16, pto.f32)],
+    name="matmul_compute",
+)
+def matmul_compute(a_left: pto.Tile,   # Pre-allocated LEFT tile (L0A)
+                   b_right: pto.Tile,  # Pre-allocated RIGHT tile (L0B)
+                   c_acc: pto.Tile):   # Pre-allocated ACC tile (L0C)
+    pto.mad_acc(a_left.as_ptr(), b_right.as_ptr(), c_acc.as_ptr(), 16, 16, 32)
+```
+
+#### Hardware Isolation
+
+- `@pto.ckernel` functions generate `#pto.kernel_kind<cube>` IR attribute.
+- `@pto.vkernel` functions generate `#pto.kernel_kind<vector>` IR attribute.
+- The IR verifier prevents Cube and Vector operations from appearing in the same function.
+- The DSL semantic analyzer additionally checks that Cube kernel bodies do not contain Vector-specific operations (`vlds`, `vadd`, etc.) or `vecscope` scopes.
+- Both kernel types can coexist in the same `.py` file; each compiles independently with conditional compilation macros (`__DAV_CUBE__` / `__DAV_VEC__`).
+
+For the complete Cube operation reference and `pto.Tile` constructor details, see [Cube Matrix Multiply Operations](12-cube-operations.md).

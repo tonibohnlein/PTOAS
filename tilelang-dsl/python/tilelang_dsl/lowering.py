@@ -164,19 +164,23 @@ def _extract_single_function_lines(rendered_text: str) -> list[str]:
 
 
 def _rewrite_inline_helper_attrs(function_line: str) -> str:
-    kernel_attr = "attributes { pto.tilelang.instance }"
     helper_attr = "private "
-    helper_marker_attr = "attributes { pto.tilelang.inline_proc }"
-    if kernel_attr in function_line:
-        rewritten = function_line.replace("func.func ", f"func.func {helper_attr}", 1)
-        return rewritten.replace(kernel_attr, helper_marker_attr)
+    helper_marker_attr = "pto.tilelang.inline_proc"
+    if function_line.lstrip().startswith("func.func "):
+        after_keyword = function_line.lstrip()[len("func.func ") :]
+        if not after_keyword.startswith(("private ", "public ")):
+            function_line = function_line.replace("func.func ", f"func.func {helper_attr}", 1)
+    if "pto.tilelang.instance" in function_line:
+        return function_line.replace("pto.tilelang.instance", helper_marker_attr)
     if "attributes {" in function_line:
         return function_line
     if function_line.rstrip().endswith("{"):
         stripped = function_line.rstrip()
-        if stripped.startswith("func.func "):
-            stripped = stripped.replace("func.func ", f"func.func {helper_attr}", 1)
-        return stripped[:-1] + f" {helper_marker_attr} {{"
+        if stripped.lstrip().startswith("func.func "):
+            after_keyword = stripped.lstrip()[len("func.func ") :]
+            if not after_keyword.startswith(("private ", "public ")):
+                stripped = stripped.replace("func.func ", f"func.func {helper_attr}", 1)
+        return stripped[:-1] + f" attributes {{ {helper_marker_attr} }} {{"
     return function_line
 
 
@@ -272,11 +276,17 @@ class _AuthoringRenderer:
                 f"{binding.name} shape={binding.shape} memory_space={binding.memory_space} "
                 f"config={binding.config}{valid_shape}"
             )
+        kernel_kind = "cube" if self.kernel.kernel_family == "cube" else "vector"
+        function_attrs = (
+            "attributes { "
+            f"pto.tilelang.instance, pto.kernel_kind = #pto.kernel_kind<{kernel_kind}> "
+            "}"
+        )
         lines.append(f'module attributes {{pto.target_arch = "{self.kernel.target}"}} {{')
         lines.append(
             "  func.func "
             f"{_format_symbol_name(self.kernel.symbol_name)}({parameter_list}){result_sig} "
-            "attributes { pto.tilelang.instance } {"
+            f"{function_attrs} {{"
         )
         lines.extend(self._constant_lines)
         lines.extend(entry_lines)
@@ -2851,6 +2861,37 @@ class _AuthoringRenderer:
             )
             return _RenderedValue(name=result_name, type=expr.type)
 
+        if expr.name == "alloc_tile":
+            if not isinstance(expr.type, SemanticTileType):
+                raise NotImplementedError("pto.alloc_tile lowering expects a SemanticTileType result")
+            attrs: list[str] = []
+            if len(expr.args) >= 1:
+                valid_shape_expr = expr.args[0]
+                valid_shape = expr.type.valid_shape
+                if valid_shape is None:
+                    raise NotImplementedError("pto.alloc_tile lowering requires known tile valid_shape metadata")
+                if expr.type.rank >= 1 and valid_shape[0] is None:
+                    valid_row = self._lower_expr(valid_shape_expr, env, indent=indent, into=into)
+                    attrs.append(f"valid_row = {valid_row.name}")
+                if expr.type.rank >= 2 and valid_shape[1] is None:
+                    if not isinstance(valid_shape_expr, SemanticTupleExpr):
+                        raise NotImplementedError(
+                            "pto.alloc_tile lowering expects tuple valid_shape when valid_col is dynamic"
+                        )
+                    valid_col = self._lower_expr(valid_shape_expr.elements[1], env, indent=indent, into=into)
+                    attrs.append(f"valid_col = {valid_col.name}")
+            if len(expr.args) >= 2:
+                addr = self._lower_expr(expr.args[1], env, indent=indent, into=into)
+                attrs.append(f"addr = {addr.name}")
+            op_text = f"{result_name} = pto.alloc_tile"
+            if attrs:
+                op_text += " " + " ".join(attrs)
+            into.append(
+                self._indent(indent)
+                + f"{op_text} : {self._render_type(expr.type)}"
+            )
+            return _RenderedValue(name=result_name, type=expr.type)
+
         if expr.name == "castptr":
             value = self._lower_expr(expr.args[0], env, indent=indent, into=into)
             if isinstance(expr.type, SemanticPtrType) and isinstance(value.type, SemanticIndexType):
@@ -2892,6 +2933,30 @@ class _AuthoringRenderer:
                 + f"{self._render_type(pointer.type)} -> {self._render_type(expr.type)}"
             )
             return _RenderedValue(name=result_name, type=expr.type)
+
+        if expr.name in {"mad", "mad_acc", "mad_bias", "mad_mx", "mad_mx_acc", "mad_mx_bias"}:
+            self._render_cube_mad_like(expr, env, indent=indent, into=into)
+            return _RenderedValue(name="__void_call__", type=SemanticMetaType(kind="void"))
+
+        if expr.name in {"cube_load", "cube_store"}:
+            self._render_cube_load_store(expr, env, indent=indent, into=into)
+            return _RenderedValue(name="__void_call__", type=SemanticMetaType(kind="void"))
+
+        if expr.name == "cube_load_frac":
+            self._render_cube_load_frac(expr, env, indent=indent, into=into)
+            return _RenderedValue(name="__void_call__", type=SemanticMetaType(kind="void"))
+
+        if expr.name == "bias_load":
+            self._render_cube_bias_load(expr, env, indent=indent, into=into)
+            return _RenderedValue(name="__void_call__", type=SemanticMetaType(kind="void"))
+
+        if expr.name in {"left_load", "right_load", "left_load_mx", "right_load_mx"}:
+            self._render_cube_stage_load(expr, env, indent=indent, into=into)
+            return _RenderedValue(name="__void_call__", type=SemanticMetaType(kind="void"))
+
+        if expr.name in {"acc_store", "acc_store_gm", "acc_store_ub"}:
+            self._render_cube_acc_store(expr, env, indent=indent, into=into)
+            return _RenderedValue(name="__void_call__", type=SemanticMetaType(kind="void"))
 
         if expr.name in {"ppack", "punpack"}:
             value = self._lower_expr(expr.args[0], env, indent=indent, into=into)
@@ -3198,6 +3263,307 @@ class _AuthoringRenderer:
             return _RenderedValue(name=result_name, type=expr.type)
 
         raise NotImplementedError(f"unsupported pto call `{expr.name}` in lowering")
+
+    def _render_cube_mad_like(
+        self,
+        expr: SemanticCallExpr,
+        env: dict[str, _RenderedValue],
+        *,
+        indent: int,
+        into: list[str],
+    ) -> None:
+        has_bias = "bias" in expr.name
+        lhs = self._lower_expr(expr.args[0], env, indent=indent, into=into)
+        rhs = self._lower_expr(expr.args[1], env, indent=indent, into=into)
+        dst = self._lower_expr(expr.args[2], env, indent=indent, into=into)
+        bias = None
+        dim_start = 3
+        if has_bias:
+            bias = self._lower_expr(expr.args[3], env, indent=indent, into=into)
+            dim_start = 4
+        m = self._lower_to_i64(expr.args[dim_start], env, indent=indent, into=into)
+        n = self._lower_to_i64(expr.args[dim_start + 1], env, indent=indent, into=into)
+        k = self._lower_to_i64(expr.args[dim_start + 2], env, indent=indent, into=into)
+        unit_flag_ctrl = self._extract_static_int(expr.args[-2], context=f"pto.{expr.name} unit_flag_ctrl")
+        disable_gemv = self._extract_static_bool(expr.args[-1], context=f"pto.{expr.name} disable_gemv")
+
+        attr_parts: list[str] = []
+        if unit_flag_ctrl != 0:
+            attr_parts.append(f"unit_flag_ctrl = {unit_flag_ctrl} : i32")
+        if disable_gemv is not True:
+            attr_parts.append(f"disable_gemv = {'true' if disable_gemv else 'false'}")
+        attr_suffix = f" {{{', '.join(attr_parts)}}}" if attr_parts else ""
+
+        operands = [lhs.name, rhs.name, dst.name]
+        operand_types = [self._render_type(lhs.type), self._render_type(rhs.type), self._render_type(dst.type)]
+        if bias is not None:
+            operands.append(bias.name)
+            operand_types.append(self._render_type(bias.type))
+        operands.extend([m.name, n.name, k.name])
+        operand_types.extend([self._render_type(m.type), self._render_type(n.type), self._render_type(k.type)])
+        into.append(
+            self._indent(indent)
+            + f"pto.{expr.name} "
+            + ", ".join(operands)
+            + attr_suffix
+            + " : "
+            + ", ".join(operand_types)
+        )
+
+    def _render_cube_load_store(
+        self,
+        expr: SemanticCallExpr,
+        env: dict[str, _RenderedValue],
+        *,
+        indent: int,
+        into: list[str],
+    ) -> None:
+        source = self._lower_expr(expr.args[0], env, indent=indent, into=into)
+        destination = self._lower_expr(expr.args[1], env, indent=indent, into=into)
+        len_burst = self._lower_to_i64(expr.args[2], env, indent=indent, into=into)
+        nburst = self._lower_cube_i64_tuple(expr.args[3], env, indent=indent, into=into, expected_len=3)
+        loop_groups = self._lower_cube_loop_groups(expr.args[4], env, indent=indent, into=into)
+
+        op_text = (
+            f"pto.{expr.name} {source.name}, {destination.name}, {len_burst.name}"
+            f" nburst({nburst[0].name}, {nburst[1].name}, {nburst[2].name})"
+        )
+        type_text = (
+            f"{self._render_type(source.type)}, {self._render_type(destination.type)}, "
+            f"{self._render_type(len_burst.type)}, {self._render_type(nburst[0].type)}, "
+            f"{self._render_type(nburst[1].type)}, {self._render_type(nburst[2].type)}"
+        )
+        for count, src_stride, dst_stride in loop_groups:
+            op_text += f" loop({count.name}, {src_stride.name}, {dst_stride.name})"
+            type_text += (
+                f", loop {self._render_type(count.type)}, {self._render_type(src_stride.type)}, "
+                f"{self._render_type(dst_stride.type)}"
+            )
+        into.append(self._indent(indent) + op_text + " : " + type_text)
+
+    def _render_cube_load_frac(
+        self,
+        expr: SemanticCallExpr,
+        env: dict[str, _RenderedValue],
+        *,
+        indent: int,
+        into: list[str],
+    ) -> None:
+        source = self._lower_expr(expr.args[0], env, indent=indent, into=into)
+        destination = self._lower_expr(expr.args[1], env, indent=indent, into=into)
+        mode = self._extract_static_string(expr.args[2], context="pto.cube_load_frac mode")
+        shape = self._lower_cube_i64_tuple(expr.args[3], env, indent=indent, into=into, expected_len=2)
+        src_layout = self._lower_cube_i64_tuple(expr.args[4], env, indent=indent, into=into, min_len=1, max_len=2)
+        dst_group = self._lower_cube_i64_tuple(expr.args[5], env, indent=indent, into=into, expected_len=4)
+        ctrl = self._lower_cube_tuple_elements(expr.args[6], env, indent=indent, into=into, expected_len=2)
+        l2_cache_ctrl = self._coerce_rendered_to_i64(ctrl[0], indent=indent, into=into)
+        smallc0_en = self._coerce_rendered_value(ctrl[1], _I1_TYPE, indent=indent, into=into)
+
+        src_layout_operands = ", ".join(value.name for value in src_layout)
+        src_layout_types = ", ".join(self._render_type(value.type) for value in src_layout)
+        into.append(
+            self._indent(indent)
+            + f"pto.cube_load_frac {source.name}, {destination.name}, {mode}, "
+            + f"shape({shape[0].name}, {shape[1].name}), "
+            + f"src_layout({src_layout_operands}), "
+            + f"dst_group({dst_group[0].name}, {dst_group[1].name}, {dst_group[2].name}, {dst_group[3].name}), "
+            + f"ctrl({l2_cache_ctrl.name}, {smallc0_en.name}) : "
+            + f"{self._render_type(source.type)}, {self._render_type(destination.type)}, {mode}, "
+            + f"shape {self._render_type(shape[0].type)}, {self._render_type(shape[1].type)}, "
+            + f"src_layout({src_layout_types}), "
+            + f"dst_group {self._render_type(dst_group[0].type)}, {self._render_type(dst_group[1].type)}, "
+            + f"{self._render_type(dst_group[2].type)}, {self._render_type(dst_group[3].type)}, "
+            + f"ctrl {self._render_type(l2_cache_ctrl.type)}, {self._render_type(smallc0_en.type)}"
+        )
+
+    def _render_cube_bias_load(
+        self,
+        expr: SemanticCallExpr,
+        env: dict[str, _RenderedValue],
+        *,
+        indent: int,
+        into: list[str],
+    ) -> None:
+        source = self._lower_expr(expr.args[0], env, indent=indent, into=into)
+        destination = self._lower_expr(expr.args[1], env, indent=indent, into=into)
+        len_burst = self._lower_to_i64(expr.args[2], env, indent=indent, into=into)
+        nburst = self._lower_cube_i64_tuple(expr.args[3], env, indent=indent, into=into, expected_len=3)
+        into.append(
+            self._indent(indent)
+            + f"pto.bias_load {source.name}, {destination.name}, {len_burst.name}"
+            + f" nburst({nburst[0].name}, {nburst[1].name}, {nburst[2].name}) : "
+            + f"{self._render_type(source.type)}, {self._render_type(destination.type)}, "
+            + f"{self._render_type(len_burst.type)}, {self._render_type(nburst[0].type)}, "
+            + f"{self._render_type(nburst[1].type)}, {self._render_type(nburst[2].type)}"
+        )
+
+    def _render_cube_stage_load(
+        self,
+        expr: SemanticCallExpr,
+        env: dict[str, _RenderedValue],
+        *,
+        indent: int,
+        into: list[str],
+    ) -> None:
+        source = self._lower_expr(expr.args[0], env, indent=indent, into=into)
+        destination = self._lower_expr(expr.args[1], env, indent=indent, into=into)
+        first = self._lower_to_i64(expr.args[2], env, indent=indent, into=into)
+        second = self._lower_to_i64(expr.args[3], env, indent=indent, into=into)
+        into.append(
+            self._indent(indent)
+            + f"pto.{expr.name} {source.name}, {destination.name}, {first.name}, {second.name} : "
+            + f"{self._render_type(source.type)}, {self._render_type(destination.type)}, "
+            + f"{self._render_type(first.type)}, {self._render_type(second.type)}"
+        )
+
+    def _render_cube_acc_store(
+        self,
+        expr: SemanticCallExpr,
+        env: dict[str, _RenderedValue],
+        *,
+        indent: int,
+        into: list[str],
+    ) -> None:
+        source = self._lower_expr(expr.args[0], env, indent=indent, into=into)
+        destination = self._lower_expr(expr.args[1], env, indent=indent, into=into)
+        fixed_values = [
+            self._lower_to_i64(arg, env, indent=indent, into=into)
+            for arg in expr.args[2:9]
+        ]
+
+        cursor = 9
+        extra_fixed_values: list[_RenderedValue] = []
+        if expr.name == "acc_store_gm":
+            extra_fixed_values = [
+                self._lower_to_i64(expr.args[cursor], env, indent=indent, into=into),
+                self._lower_to_i64(expr.args[cursor + 1], env, indent=indent, into=into),
+            ]
+            cursor += 2
+        elif expr.name == "acc_store_ub":
+            extra_fixed_values = [
+                self._lower_to_i64(expr.args[cursor], env, indent=indent, into=into),
+                self._lower_to_i64(expr.args[cursor + 1], env, indent=indent, into=into),
+            ]
+            cursor += 2
+
+        mode = self._extract_static_string(expr.args[cursor], context=f"pto.{expr.name} mode")
+        cursor += 1
+
+        split_value: _RenderedValue | None = None
+        loop0_src_stride: _RenderedValue | None = None
+        loop3_values: tuple[_RenderedValue, _RenderedValue, _RenderedValue] | None = None
+        if mode == "nz2dn" and cursor < len(expr.args):
+            loop0_src_stride = self._lower_to_i64(expr.args[cursor], env, indent=indent, into=into)
+            cursor += 1
+        elif mode == "nz2nz" and cursor < len(expr.args):
+            split_value = self._lower_to_i64(expr.args[cursor], env, indent=indent, into=into)
+            cursor += 1
+        if cursor < len(expr.args):
+            lowered_loop3 = self._lower_cube_i64_tuple(expr.args[cursor], env, indent=indent, into=into, expected_len=3)
+            loop3_values = (lowered_loop3[0], lowered_loop3[1], lowered_loop3[2])
+
+        rendered_values = [source, destination, *fixed_values, *extra_fixed_values]
+        operand_text = ", ".join(value.name for value in rendered_values)
+        type_text = ", ".join(self._render_type(value.type) for value in rendered_values)
+        op_text = f"pto.{expr.name} {operand_text}, {mode}"
+        mode_type_text = mode
+        if mode == "nz2dn" and loop0_src_stride is not None:
+            op_text = f"pto.{expr.name} {operand_text}, {mode}({loop0_src_stride.name})"
+            mode_type_text = f"{mode}({self._render_type(loop0_src_stride.type)})"
+        elif mode == "nz2nz" and split_value is not None:
+            op_text = f"pto.{expr.name} {operand_text}, {mode}({split_value.name})"
+            mode_type_text = f"{mode}({self._render_type(split_value.type)})"
+        if loop3_values is not None:
+            op_text += (
+                f" loop3({loop3_values[0].name}, {loop3_values[1].name}, {loop3_values[2].name})"
+            )
+            type_text += (
+                f", loop3 {self._render_type(loop3_values[0].type)}, "
+                f"{self._render_type(loop3_values[1].type)}, {self._render_type(loop3_values[2].type)}"
+            )
+        into.append(self._indent(indent) + op_text + " : " + type_text + ", " + mode_type_text)
+
+    def _lower_cube_loop_groups(
+        self,
+        expr: SemanticExpr,
+        env: dict[str, _RenderedValue],
+        *,
+        indent: int,
+        into: list[str],
+    ) -> list[tuple[_RenderedValue, _RenderedValue, _RenderedValue]]:
+        if self._is_none_meta_expr(expr):
+            return []
+        if not isinstance(expr, SemanticTupleExpr):
+            raise NotImplementedError("cube loop lowering expects a tuple of loop triples")
+        loop_groups: list[tuple[_RenderedValue, _RenderedValue, _RenderedValue]] = []
+        for loop_expr in expr.elements:
+            lowered_loop = self._lower_cube_i64_tuple(loop_expr, env, indent=indent, into=into, expected_len=3)
+            loop_groups.append((lowered_loop[0], lowered_loop[1], lowered_loop[2]))
+        return loop_groups
+
+    def _lower_cube_i64_tuple(
+        self,
+        expr: SemanticExpr,
+        env: dict[str, _RenderedValue],
+        *,
+        indent: int,
+        into: list[str],
+        expected_len: int | None = None,
+        min_len: int | None = None,
+        max_len: int | None = None,
+    ) -> tuple[_RenderedValue, ...]:
+        lowered = self._lower_cube_tuple_elements(expr, env, indent=indent, into=into, expected_len=expected_len, min_len=min_len, max_len=max_len)
+        return tuple(self._coerce_rendered_to_i64(value, indent=indent, into=into) for value in lowered)
+
+    def _lower_cube_tuple_elements(
+        self,
+        expr: SemanticExpr,
+        env: dict[str, _RenderedValue],
+        *,
+        indent: int,
+        into: list[str],
+        expected_len: int | None = None,
+        min_len: int | None = None,
+        max_len: int | None = None,
+    ) -> tuple[_RenderedValue, ...]:
+        if not isinstance(expr, SemanticTupleExpr):
+            raise NotImplementedError("cube structured lowering expects a tuple expression")
+        elements = expr.elements
+        if expected_len is not None and len(elements) != expected_len:
+            raise NotImplementedError(f"cube structured lowering expects exactly {expected_len} tuple elements")
+        if min_len is not None and len(elements) < min_len:
+            raise NotImplementedError(f"cube structured lowering expects at least {min_len} tuple elements")
+        if max_len is not None and len(elements) > max_len:
+            raise NotImplementedError(f"cube structured lowering expects at most {max_len} tuple elements")
+        return tuple(self._lower_expr(element, env, indent=indent, into=into) for element in elements)
+
+    def _extract_static_value(self, expr: SemanticExpr, *, context: str) -> object:
+        if isinstance(expr, SemanticLiteralExpr):
+            return expr.value
+        if isinstance(expr, SemanticBindingRef):
+            return expr.binding.value
+        raise NotImplementedError(f"{context} must be a compile-time constant in TileLang DSL v1 lowering")
+
+    def _extract_static_int(self, expr: SemanticExpr, *, context: str) -> int:
+        value = self._extract_static_value(expr, context=context)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise NotImplementedError(f"{context} must be an integer constant in TileLang DSL v1 lowering")
+        return value
+
+    def _extract_static_bool(self, expr: SemanticExpr, *, context: str) -> bool:
+        value = self._extract_static_value(expr, context=context)
+        if not isinstance(value, bool):
+            raise NotImplementedError(f"{context} must be a boolean constant in TileLang DSL v1 lowering")
+        return value
+
+    def _extract_static_string(self, expr: SemanticExpr, *, context: str) -> str:
+        value = self._extract_static_value(expr, context=context)
+        if not isinstance(value, str):
+            raise NotImplementedError(f"{context} must be a string constant in TileLang DSL v1 lowering")
+        return value
+
+    def _is_none_meta_expr(self, expr: SemanticExpr | None) -> bool:
+        return isinstance(expr, SemanticLiteralExpr) and expr.value is None
 
     def _lower_compare_expr(
         self,
@@ -4185,6 +4551,8 @@ class _AuthoringRenderer:
             return "#pto.address_space<gm>"
         if memory_space == "ub":
             return "#pto.address_space<vec>"
+        if memory_space in {"mat", "left", "right", "acc", "bias"}:
+            return f"#pto.address_space<{memory_space}>"
         raise NotImplementedError(f"unsupported memref memory space '{memory_space}' in TileLang DSL v1 lowering")
 
     def _render_tile_buf_type(self, ty: SemanticTileType) -> str:
@@ -4211,6 +4579,8 @@ class _AuthoringRenderer:
             return "vec"
         if memory_space == "gm":
             return "gm"
+        if memory_space in {"mat", "left", "right", "acc", "bias"}:
+            return memory_space
         raise NotImplementedError(f"unsupported tile_buf memory space '{memory_space}'")
 
     def _render_tile_buf_dim(self, dim: int | None) -> str:

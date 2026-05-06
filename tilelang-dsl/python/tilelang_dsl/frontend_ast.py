@@ -19,6 +19,7 @@ from .support_matrix import (
     ADVANCED_EXPR_PTO_CALLS,
     ADVANCED_TOPLEVEL_PTO_CALLS,
     ADVANCED_VECSCOPE_PTO_CALLS,
+    CUBE_ONLY_PTO_CALLS,
     DEFERRED_PTO_SURFACES,
     SUPPORTED_TOPLEVEL_PTO_CALLS,
     SUPPORTED_VECSCOPE_PTO_CALLS,
@@ -198,9 +199,10 @@ class FrontendKernelNode:
     target: str
     op: str
     name: str
+    kernel_family: str
     verify_enabled: bool
     advanced_enabled: bool
-    dtype_signature: tuple[Any, ...]
+    dtype_signature: tuple[Any, ...] | None
     parameters: tuple[FrontendParameterNode, ...]
     tile_specializations: tuple[FrontendTileSpecializationNode, ...]
     body: tuple[FrontendStmtNode, ...]
@@ -223,6 +225,7 @@ class _FrontendBuildContext:
     templates: dict[str, dict[str, str]]
     selected_op: str | None
     advanced_enabled: bool
+    kernel_family: str
     inline_procs: dict[str, _FrontendInlineProc]
     global_literal_constants: dict[str, Any]
     local_bindings: frozenset[str]
@@ -241,6 +244,7 @@ class _FrontendBuildContext:
             templates=self.templates,
             selected_op=self.selected_op,
             advanced_enabled=self.advanced_enabled,
+            kernel_family=self.kernel_family,
             inline_procs=self.inline_procs,
             global_literal_constants=self.global_literal_constants,
             local_bindings=self.local_bindings,
@@ -261,6 +265,7 @@ class _FrontendBuildContext:
             templates=self.templates,
             selected_op=self.selected_op,
             advanced_enabled=self.advanced_enabled,
+            kernel_family=self.kernel_family,
             inline_procs=self.inline_procs,
             global_literal_constants=global_literal_constants,
             local_bindings=local_bindings,
@@ -272,6 +277,20 @@ class _FrontendBuildContext:
 _UNSUPPORTED_GLOBAL_LITERAL = object()
 _LOCAL_BINDINGS_CACHE: dict[tuple[str, int, str], frozenset[str]] = {}
 _GLOBAL_NAME_READS_CACHE: dict[tuple[str, int, str], frozenset[str]] = {}
+
+
+def _reject_cube_vector_surface(context: _FrontendBuildContext, node: ast.AST, surface_name: str) -> None:
+    raise context.error(
+        node,
+        f"vector-only surface `{surface_name}` is not part of the @pto.ckernel contract",
+    )
+
+
+def _reject_vector_cube_surface(context: _FrontendBuildContext, node: ast.AST, surface_name: str) -> None:
+    raise context.error(
+        node,
+        f"cube-only surface `{surface_name}` is not part of the @pto.vkernel contract",
+    )
 
 
 def _iter_target_names(node: ast.AST) -> tuple[str, ...]:
@@ -831,6 +850,49 @@ _DMA_CALL_KEYWORDS: dict[str, frozenset[str]] = {
     "vsts": frozenset({"dist"}),
     "vbitcast": frozenset(),
     "pbitcast": frozenset(),
+    "cube_load": frozenset({"nburst", "loops"}),
+    "cube_store": frozenset({"nburst", "loops"}),
+    "cube_load_frac": frozenset({"shape", "src_layout", "dst_group", "ctrl"}),
+    "bias_load": frozenset({"nburst"}),
+    "left_load": frozenset(),
+    "right_load": frozenset(),
+    "left_load_mx": frozenset(),
+    "right_load_mx": frozenset(),
+    "mad": frozenset({"unit_flag_ctrl", "disable_gemv"}),
+    "mad_acc": frozenset({"unit_flag_ctrl", "disable_gemv"}),
+    "mad_bias": frozenset({"unit_flag_ctrl", "disable_gemv"}),
+    "mad_mx": frozenset({"unit_flag_ctrl", "disable_gemv"}),
+    "mad_mx_acc": frozenset({"unit_flag_ctrl", "disable_gemv"}),
+    "mad_mx_bias": frozenset({"unit_flag_ctrl", "disable_gemv"}),
+    "acc_store": frozenset(
+        {"unit_flag_ctrl", "quant_pre", "relu_pre_mode", "mode", "loop0_src_stride", "split", "loop3"}
+    ),
+    "acc_store_gm": frozenset(
+        {
+            "unit_flag_ctrl",
+            "quant_pre",
+            "relu_pre_mode",
+            "sid",
+            "l2_cache_ctrl",
+            "mode",
+            "loop0_src_stride",
+            "split",
+            "loop3",
+        }
+    ),
+    "acc_store_ub": frozenset(
+        {
+            "unit_flag_ctrl",
+            "quant_pre",
+            "relu_pre_mode",
+            "dual_dst_mode",
+            "sub_blockid",
+            "mode",
+            "loop0_src_stride",
+            "channel_split_en",
+            "loop3",
+        }
+    ),
 }
 
 
@@ -850,6 +912,11 @@ def _validate_resolved_template_op_surface(
     node: ast.AST,
     context: _FrontendBuildContext,
 ) -> None:
+    if op_name in CUBE_ONLY_PTO_CALLS:
+        if context.kernel_family == "cube":
+            return
+        _reject_vector_cube_surface(context, node, f"pto.{op_name}")
+        return
     if op_name in SUPPORTED_TOPLEVEL_PTO_CALLS:
         return
     if op_name in SUPPORTED_VECSCOPE_PTO_CALLS:
@@ -973,7 +1040,7 @@ def _build_expr(node: ast.AST, context: _FrontendBuildContext) -> FrontendExprNo
             node,
             context,
         )
-    if isinstance(node, ast.Tuple):
+    if isinstance(node, (ast.Tuple, ast.List)):
         return _attach_source_location(
             FrontendTupleExpr(
                 elements=tuple(_build_expr(elt, context) for elt in node.elts)
@@ -1007,6 +1074,7 @@ def _build_expr(node: ast.AST, context: _FrontendBuildContext) -> FrontendExprNo
             "VcvtSatMode",
             "VcvtPartMode",
             "PostUpdateMode",
+            "FractalMode",
         } and len(path) >= 2:
             return _attach_source_location(
                 FrontendSymbolExpr(namespace=".".join(path[:-1]), name=path[-1]),
@@ -1175,6 +1243,18 @@ def _build_expr(node: ast.AST, context: _FrontendBuildContext) -> FrontendExprNo
                 context,
             )
         if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            if node.func.value.id == "pto" and context.kernel_family == "cube":
+                if node.func.attr in SUPPORTED_VECSCOPE_PTO_CALLS:
+                    _reject_cube_vector_surface(context, node, f"pto.{node.func.attr}")
+                if node.func.attr in ADVANCED_VECSCOPE_PTO_CALLS:
+                    _reject_cube_vector_surface(context, node, f"pto.{node.func.attr}")
+                if node.func.attr in ADVANCED_TOPLEVEL_PTO_CALLS:
+                    _reject_cube_vector_surface(context, node, f"pto.{node.func.attr}")
+                if node.func.attr in DEFERRED_PTO_SURFACES:
+                    raise context.error(node, deferred_surface_message(node.func.attr))
+            if node.func.value.id == "pto" and context.kernel_family != "cube":
+                if node.func.attr in CUBE_ONLY_PTO_CALLS:
+                    _reject_vector_cube_surface(context, node, f"pto.{node.func.attr}")
             return _attach_source_location(
                 FrontendCallExpr(
                     namespace=node.func.value.id,
@@ -1389,15 +1469,26 @@ def _build_stmt(node: ast.stmt, context: _FrontendBuildContext) -> FrontendStmtN
 def build_frontend_kernel_node(descriptor: Any) -> FrontendKernelNode:
     """Project the core-foundation descriptor into a lowering-owned AST."""
 
-    parameters = tuple(
-        FrontendParameterNode(
-            name=param.name,
-            kind=param.kind,
-            annotation=param.annotation,
-            dtype=param.dtype,
+    if getattr(descriptor, "_parameters", None) is not None:
+        parameters = tuple(
+            FrontendParameterNode(
+                name=param.name,
+                kind=param.kind,
+                annotation=param.annotation,
+                dtype=param.dtype,
+            )
+            for param in descriptor.parameters
         )
-        for param in descriptor.parameters
-    )
+    else:
+        parameters = tuple(
+            FrontendParameterNode(
+                name=param.name,
+                kind=param.kind,
+                annotation=param.annotation,
+                dtype=None,
+            )
+            for param in descriptor._parameter_specs
+        )
     tile_specializations = tuple(
         FrontendTileSpecializationNode(
             name=name,
@@ -1433,6 +1524,7 @@ def build_frontend_kernel_node(descriptor: Any) -> FrontendKernelNode:
             )
             for name, proc in sorted_inline_procs
         },
+        kernel_family=getattr(descriptor, "kernel_family", "vector"),
         global_literal_constants=global_literal_constants,
         local_bindings=local_bindings,
     )
@@ -1538,6 +1630,7 @@ def build_frontend_kernel_node(descriptor: Any) -> FrontendKernelNode:
             templates=descriptor.templates,
             selected_op=descriptor.selected_op,
             advanced_enabled=descriptor.advanced_enabled,
+            kernel_family="vector",
             inline_procs=merged_inline_proc_descriptors,
             global_literal_constants=global_literal_constants,
             local_bindings=local_bindings,
@@ -1598,13 +1691,18 @@ def build_frontend_kernel_node(descriptor: Any) -> FrontendKernelNode:
                     context=helper_context,
                 )
 
+    dtype_signature = descriptor._selected_dtype_signature
+    if dtype_signature is None and getattr(descriptor, "kernel_family", "vector") != "cube":
+        dtype_signature = descriptor.dtype_signature
+
     return FrontendKernelNode(
         target=descriptor.target,
         op=descriptor.op,
         name=descriptor.name,
+        kernel_family=getattr(descriptor, "kernel_family", "vector"),
         verify_enabled=descriptor.verify_enabled,
         advanced_enabled=descriptor.advanced_enabled,
-        dtype_signature=descriptor.dtype_signature,
+        dtype_signature=dtype_signature,
         parameters=parameters,
         tile_specializations=tile_specializations,
         body=body,

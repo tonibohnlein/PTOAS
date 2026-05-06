@@ -74,6 +74,11 @@ _populate_dtype_map()
 _MEMSPACE_MAP = {
     "ub": MemorySpace.UB,
     "gm": MemorySpace.GM,
+    "mat": MemorySpace.MAT,
+    "left": MemorySpace.LEFT,
+    "right": MemorySpace.RIGHT,
+    "acc": MemorySpace.ACC,
+    "bias": MemorySpace.BIAS,
 }
 
 
@@ -410,7 +415,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--op", required=True, help="Tile op name, e.g. pto.tadd")
     parser.add_argument("--dtype", help="Element dtype, e.g. f32")
     parser.add_argument("--shape", help="Tile shape, e.g. 16,64")
-    parser.add_argument("--memory-space", default="ub", help="Memory space (ub or gm)")
+    parser.add_argument(
+        "--memory-space",
+        default="ub",
+        help="Memory space (ub/gm/mat/left/right/acc/bias)",
+    )
     parser.add_argument(
         "--operand-specs",
         help="JSON array describing each operand (tile/scalar/vector schema)",

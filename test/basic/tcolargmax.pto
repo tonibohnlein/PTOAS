@@ -18,10 +18,10 @@
 // pto.tcolargmax should be lowered to vector-style VPTO IR.
 // CHECK: func.func @TCOLARGMAX
 // CHECK-NOT: pto.tcolargmax ins
-// CHECK: pto.vecscope
 // CHECK: pto.castptr
-// CHECK: pto.vlds
+// CHECK: pto.vecscope
 // CHECK: pto.vdup
+// CHECK: pto.vlds
 // CHECK: pto.vcmp
 // CHECK: pto.vsel
 // CHECK: pto.vsts

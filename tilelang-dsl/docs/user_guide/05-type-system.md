@@ -306,9 +306,15 @@ The `MemorySpace` enum provides type-safe memory space specification:
 | Enum Value | Description |
 |------------|-------------|
 | `MemorySpace.GM` | Global Memory (off-chip HBM/DDR) |
+| `MemorySpace.MAT` | Cube L1 / cbuf staging buffer |
+| `MemorySpace.LEFT` | Cube L0A left-operand buffer |
+| `MemorySpace.RIGHT` | Cube L0B right-operand buffer |
+| `MemorySpace.ACC` | Cube L0C accumulator buffer |
+| `MemorySpace.BIAS` | Cube bias table buffer |
 | `MemorySpace.UB` | Unified Buffer (on-chip SRAM, 256KB) |
 
-This replaces string literals (`MemorySpace.GM`/`MemorySpace.UB`) with compile-time checked enums.
+This replaces ad-hoc string literals with compile-time checked enums and is
+shared by both the Vector and Cube DSL surfaces.
 
 ### Public Buffer Types
 
@@ -318,7 +324,7 @@ TileLang uses three public buffer-facing type names in kernel signatures:
 |-------------|-------------|
 | `pto.TensorView` | GM-facing tensor view descriptor used for DMA-oriented data access |
 | `pto.PartitionTensorView` | Logical GM partition (slice) descriptor, corresponding to `!pto.partition_tensor_view<...>` |
-| `pto.Tile` | UB-facing tile buffer value used for tiled compute |
+| `pto.Tile` | Tile buffer value for hardware-resident staged compute/storage buffers |
 
 ### TensorView Types
 
@@ -450,7 +456,52 @@ Tile types represent data blocks in memory with layout and configuration informa
 
 #### Tile Type Definition
 
-`pto.Tile` is the public tile type used in kernel signatures and vectorized UB compute. User code does not construct tiles with standalone helper APIs in the stable guide surface.
+`pto.Tile` is the public tile type used for hardware buffer allocation in specific
+address spaces. Tiles are constructed directly via the `pto.Tile` constructor:
+
+```python
+pto.Tile(
+    shape: tuple[int, ...],           # Buffer shape (required)
+    dtype: Type,                 # Element type (required)
+    memory_space: MemorySpace,        # Address space (required)
+    valid_shape: tuple[int, ...] | None = None,    # Valid region, defaults to shape
+    blayout: BLayout | None = None,               # B layout, auto-detected from address space
+    slayout: SLayout | None = None,               # S layout, auto-detected from address space
+    fractal_size: int | None = None,              # Fractal size, auto-detected from address space
+    pad_value: PadValue = PadValue.Null,          # Pad policy
+    compact_mode: CompactMode = CompactMode.Null, # Compact mode
+    addr: int | None = None,                      # Pre-assigned address (level3 only)
+) -> Tile
+```
+
+Layout defaults are selected automatically based on the address space:
+
+| Address Space | blayout default | slayout default | fractal_size default |
+|--------------|----------------|----------------|---------------------|
+| `MAT` | `ColMajor` | `RowMajor` | `TileConfig.fractalABSize` (512) |
+| `LEFT` | `ColMajor` | `RowMajor` | `TileConfig.fractalABSize` (512) |
+| `RIGHT` | `RowMajor` | `ColMajor` | `TileConfig.fractalABSize` (512) |
+| `ACC` | `ColMajor` | `RowMajor` | `TileConfig.fractalCSize` (1024) |
+| `BIAS` | `RowMajor` | `NoneBox` | `TileConfig.fractalABSize` (512) |
+| `UB` / `VEC` | `RowMajor` | `NoneBox` | `TileConfig.fractalABSize` (512) |
+
+Related enum types:
+
+| Enum | Values |
+|------|--------|
+| `BLayout` | `ColMajor` (0), `RowMajor` (1) |
+| `SLayout` | `NoneBox` (0), `RowMajor` (1), `ColMajor` (2) |
+| `PadValue` | `Null` (0), `Zero` (1), `Max` (2), `Min` (3) |
+| `CompactMode` | `Null` (0), `Normal` (1), `RowPlusOne` (2) |
+
+Usage:
+
+```python
+# Allocate tiles in @vkernel or @ckernel
+tile_ub = pto.Tile([256, 128], pto.f32, MemorySpace.UB)
+tile_left = pto.Tile([16, 64], pto.f16, MemorySpace.LEFT)
+tile_acc = pto.Tile([16, 16], pto.f32, MemorySpace.ACC, valid_shape=(12, 12))
+```
 
 Important notes on shape and valid shape:
 - `shape` must be a compile-time constant. Tile dimensions are fixed at compilation time and cannot change at runtime.
@@ -463,7 +514,7 @@ Important notes on shape and valid shape:
 |-----------|------|-------------|
 | `shape` | `tuple[int, ...]` | Full tile dimensions. These are compile-time constants |
 | `element_type` | `Type` | Element data type (for example `pto.f32`) |
-| `memory_space` | `MemorySpace` | Memory space such as GM or UB |
+| `memory_space` | `MemorySpace` | Memory space such as UB, MAT, LEFT, RIGHT, ACC, or BIAS |
 | `valid_shape` | `tuple[int, ...]` | Actual data dimensions within the tile. Must be less than or equal to `shape` in each dimension |
 | `config` | `TileConfig` | Layout and padding configuration |
 

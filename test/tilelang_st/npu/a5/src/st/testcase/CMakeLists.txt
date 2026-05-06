@@ -7,7 +7,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 
 # --------------------------------------------------------------------------
-# pto_tilelang_vec_st(NAME)
+# pto_tilelang_st(NAME)
 #
 # CMake macro for TileLang ST test cases.  Unlike pto-isa's pto_vec_st()
 # which compiles a hand-written kernel.cpp with -xcce, this macro:
@@ -19,9 +19,9 @@
 # --------------------------------------------------------------------------
 set(PTO_TILELANG_ST_TESTCASE_DIR ${CMAKE_CURRENT_LIST_DIR})
 
-function(pto_tilelang_vec_st NAME)
+function(pto_tilelang_st NAME)
     set(options DISABLE_INSERT_SYNC)
-    set(oneValueArgs PTO_LEVEL)
+    set(oneValueArgs PTO_LEVEL PTOAS_VPTO_MARCH AICORE_ARCH)
     cmake_parse_arguments(PTO_TILELANG_ST "${options}" "${oneValueArgs}" "" ${ARGN})
 
     set(PTOAS_ENABLE_INSERT_SYNC ON)
@@ -32,6 +32,16 @@ function(pto_tilelang_vec_st NAME)
     set(PTOAS_PTO_LEVEL "")
     if(DEFINED PTO_TILELANG_ST_PTO_LEVEL)
         set(PTOAS_PTO_LEVEL "${PTO_TILELANG_ST_PTO_LEVEL}")
+    endif()
+
+    set(PTOAS_VPTO_MARCH "dav-c310-vec")
+    if(DEFINED PTO_TILELANG_ST_PTOAS_VPTO_MARCH)
+        set(PTOAS_VPTO_MARCH "${PTO_TILELANG_ST_PTOAS_VPTO_MARCH}")
+    endif()
+
+    set(AICORE_ARCH "dav-c310-vec")
+    if(DEFINED PTO_TILELANG_ST_AICORE_ARCH)
+        set(AICORE_ARCH "${PTO_TILELANG_ST_AICORE_ARCH}")
     endif()
 
     # Step 1: ptoas  .pto → kernel.ll
@@ -47,6 +57,7 @@ function(pto_tilelang_vec_st NAME)
             -DKERNEL_LL=${KERNEL_LL}
             -DPTOAS_ENABLE_INSERT_SYNC=${PTOAS_ENABLE_INSERT_SYNC}
             -DPTOAS_PTO_LEVEL=${PTOAS_PTO_LEVEL}
+            -DPTOAS_VPTO_MARCH=${PTOAS_VPTO_MARCH}
             -P ${PTOAS_CAPTURE_SCRIPT}
         DEPENDS ${PTO_SRC} ${PTOAS_CAPTURE_SCRIPT}
         COMMENT "ptoas: ${NAME}.pto -> ${NAME}_kernel.ll"
@@ -59,8 +70,8 @@ function(pto_tilelang_vec_st NAME)
         OUTPUT ${KERNEL_DEVICE_OBJ}
         COMMAND bisheng
             --target=hiipu64-hisilicon-cce
-            -march=dav-c310-vec
-            --cce-aicore-arch=dav-c310-vec
+            -march=${AICORE_ARCH}
+            --cce-aicore-arch=${AICORE_ARCH}
             --cce-aicore-only
             -O2
             -c -x ir ${KERNEL_LL}
@@ -82,7 +93,7 @@ function(pto_tilelang_vec_st NAME)
         COMMAND bash ${REPACK_SCRIPT}
             ${ASCEND_HOME_PATH}
             ${PTO_ISA_ROOT}
-            dav-c310-vec
+            ${AICORE_ARCH}
             ${KERNEL_LAUNCH_SRC}
             ${KERNEL_DEVICE_OBJ}
             ${KERNEL_REPACK_OBJ}
@@ -97,7 +108,7 @@ function(pto_tilelang_vec_st NAME)
     set_source_files_properties(${KERNEL_REPACK_OBJ}
         PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
     target_compile_options(${NAME}_kernel PRIVATE
-        ${CMAKE_CCE_COMPILE_OPTIONS} --cce-aicore-arch=dav-c310-vec -std=c++17)
+        ${CMAKE_CCE_COMPILE_OPTIONS} --cce-aicore-arch=${AICORE_ARCH} -std=c++17)
     target_include_directories(${NAME}_kernel PRIVATE
         ${ASCEND_HOME_PATH}/pkg_inc/
         ${ASCEND_HOME_PATH}/pkg_inc/profiling/
@@ -122,6 +133,24 @@ function(pto_tilelang_vec_st NAME)
         $<BUILD_INTERFACE:$<$<STREQUAL:${RUN_MODE},sim>:runtime_camodel>>
         $<BUILD_INTERFACE:$<$<STREQUAL:${RUN_MODE},npu>:runtime>>
         stdc++ ascendcl m tiling_api platform c_sec dl nnopbase pthread
+    )
+endfunction()
+
+function(pto_tilelang_vec_st NAME)
+    pto_tilelang_st(
+        ${NAME}
+        PTOAS_VPTO_MARCH dav-c310-vec
+        AICORE_ARCH dav-c310-vec
+        ${ARGN}
+    )
+endfunction()
+
+function(pto_tilelang_cube_st NAME)
+    pto_tilelang_st(
+        ${NAME}
+        PTOAS_VPTO_MARCH dav-c310-cube
+        AICORE_ARCH dav-c310-cube
+        ${ARGN}
     )
 endfunction()
 
@@ -211,6 +240,7 @@ set(ALL_TESTCASES
     trems
     tfmods
     tcmps
+    tmatmul
 )
 
 if((TEST_CASE IN_LIST ALL_TESTCASES) OR (TEST_CASE STREQUAL "all"))

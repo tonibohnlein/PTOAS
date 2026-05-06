@@ -349,3 +349,4 @@ ub_ptr = pto.castptr(0, pto.ptr(pto.f32, MemorySpace.UB))
 # Advance pointer by 1024 f32 elements (not bytes)
 next_ptr = pto.addptr(ub_ptr, 1024)
 ```
+

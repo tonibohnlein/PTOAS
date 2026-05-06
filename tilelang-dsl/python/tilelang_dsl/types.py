@@ -137,6 +137,11 @@ class TypeVariable:
 
 class MemorySpace(str, Enum):
     GM = "gm"
+    MAT = "mat"
+    LEFT = "left"
+    RIGHT = "right"
+    ACC = "acc"
+    BIAS = "bias"
     UB = "ub"
 
 
@@ -515,6 +520,14 @@ class PostUpdateMode(str, Enum):
     NO_POST_UPDATE = "NO_POST_UPDATE"
 
 
+class FractalMode(str, Enum):
+    ND2NZ = "nd2nz"
+    DN2NZ = "dn2nz"
+    NZ2ND = "nz2nd"
+    NZ2DN = "nz2dn"
+    NZ2NZ = "nz2nz"
+
+
 @dataclass(frozen=True)
 class TileConfig:
     fields: tuple[tuple[str, Any], ...] = ()
@@ -630,6 +643,48 @@ class TileConfig:
     def pad_value(self) -> PadValue:
         value = dict(self.fields).get("pad_value", PadValue.NULL)
         return self._normalize_pad_value(value)
+
+    @classmethod
+    def for_memory_space(cls, memory_space: MemorySpace) -> "TileConfig":
+        if not isinstance(memory_space, MemorySpace):
+            raise TypeError("TileConfig.for_memory_space expects a TileLang MemorySpace")
+        defaults: dict[str, Any]
+        if memory_space in {MemorySpace.MAT, MemorySpace.LEFT}:
+            defaults = {
+                "b_layout": BLayout.COL_MAJOR,
+                "s_layout": SLayout.ROW_MAJOR,
+                "s_fractal_size": 512,
+                "pad_value": PadValue.NULL,
+            }
+        elif memory_space == MemorySpace.RIGHT:
+            defaults = {
+                "b_layout": BLayout.ROW_MAJOR,
+                "s_layout": SLayout.COL_MAJOR,
+                "s_fractal_size": 512,
+                "pad_value": PadValue.NULL,
+            }
+        elif memory_space == MemorySpace.ACC:
+            defaults = {
+                "b_layout": BLayout.COL_MAJOR,
+                "s_layout": SLayout.ROW_MAJOR,
+                "s_fractal_size": 1024,
+                "pad_value": PadValue.NULL,
+            }
+        elif memory_space == MemorySpace.BIAS:
+            defaults = {
+                "b_layout": BLayout.ROW_MAJOR,
+                "s_layout": SLayout.NONE_BOX,
+                "s_fractal_size": 512,
+                "pad_value": PadValue.NULL,
+            }
+        else:
+            defaults = {
+                "b_layout": BLayout.ROW_MAJOR,
+                "s_layout": SLayout.NONE_BOX,
+                "s_fractal_size": 512,
+                "pad_value": PadValue.NULL,
+            }
+        return cls(tuple(sorted(defaults.items())))
 
 
 @dataclass(frozen=True)

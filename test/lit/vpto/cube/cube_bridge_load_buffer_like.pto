@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Guard: buffer-like cube bridge loads must round-trip from memref-like
+// authoring operands back to !pto.ptr forms before bridge expansion, and then
+// lower to the expected VPTO cube load bridge ops.
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-before=pto-vpto-expand-bridge-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=ROUNDTRIP
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=pto-vpto-expand-bridge-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXPAND
+
+module attributes {"pto.target_arch" = "a5"} {
+  func.func @cube_bridge_load_buffer_like(
+      %src_mat: memref<?xf16, #pto.address_space<mat>>,
+      %dst_left: memref<?xf16, #pto.address_space<left>>,
+      %dst_right: memref<?xf16, #pto.address_space<right>>,
+      %dst_left_mx: memref<?xf16, #pto.address_space<left>>,
+      %dst_right_mx: memref<?xf16, #pto.address_space<right>>,
+      %dst_bias: memref<?xf32, #pto.address_space<bias>>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c2_i64 = arith.constant 2 : i64
+    %c4_i64 = arith.constant 4 : i64
+    %c16_i64 = arith.constant 16 : i64
+
+    pto.left_load %src_mat, %dst_left, %c16_i64, %c16_i64
+      : memref<?xf16, #pto.address_space<mat>>, memref<?xf16, #pto.address_space<left>>, i64, i64
+    pto.right_load %src_mat, %dst_right, %c16_i64, %c16_i64 {transpose = true}
+      : memref<?xf16, #pto.address_space<mat>>, memref<?xf16, #pto.address_space<right>>, i64, i64
+    pto.left_load_mx %src_mat, %dst_left_mx, %c16_i64, %c16_i64
+      : memref<?xf16, #pto.address_space<mat>>, memref<?xf16, #pto.address_space<left>>, i64, i64
+    pto.right_load_mx %src_mat, %dst_right_mx, %c16_i64, %c16_i64
+      : memref<?xf16, #pto.address_space<mat>>, memref<?xf16, #pto.address_space<right>>, i64, i64
+    pto.bias_load %src_mat, %dst_bias, %c4_i64 nburst(%c2_i64, %c0_i64, %c0_i64)
+      : memref<?xf16, #pto.address_space<mat>>, memref<?xf32, #pto.address_space<bias>>, i64, i64, i64, i64
+
+    return
+  }
+}
+
+// ROUNDTRIP-LABEL: func.func @cube_bridge_load_buffer_like(%{{.*}}: !pto.ptr<f16, mat>, %{{.*}}: !pto.ptr<f16, left>, %{{.*}}: !pto.ptr<f16, right>, %{{.*}}: !pto.ptr<f16, left>, %{{.*}}: !pto.ptr<f16, right>, %{{.*}}: !pto.ptr<f32, bias>) {
+// ROUNDTRIP: pto.left_load %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}
+// ROUNDTRIP: pto.right_load %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} {transpose = true}
+// ROUNDTRIP: pto.left_load_mx %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}
+// ROUNDTRIP: pto.right_load_mx %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}
+// ROUNDTRIP: pto.bias_load %{{.*}}, %{{.*}}, %{{.*}} nburst(%{{.*}}, %{{.*}}, %{{.*}})
+
+// EXPAND-LABEL: func.func @cube_bridge_load_buffer_like(
+// EXPAND: pto.load_cbuf_to_ca
+// EXPAND: pto.load_cbuf_to_cb
+// EXPAND: pto.load_cbuf_to_ca_mx
+// EXPAND: pto.load_cbuf_to_cb_mx
+// EXPAND: pto.copy_cbuf_to_bt

@@ -101,7 +101,7 @@ struct OperandTypeInfo {
   // --- Tile-only (TileBufType) ---
   SmallVector<int64_t, 2> tileShape;
   SmallVector<int64_t, 2> tileValidShape;
-  std::string tileMemorySpace; // "ub" or "gm"
+  std::string tileMemorySpace; // e.g. "ub", "gm", "mat", "left", "right", "acc", "bias"
   int32_t blayout = 0;
   int32_t slayout = 0;
   int32_t fractal = 0;
@@ -212,18 +212,36 @@ static std::string getTargetArchString(ModuleOp mod) {
   return targetAttr.getValue().str();
 }
 
+static std::string stringifyMemorySpace(pto::AddressSpace space) {
+  switch (space) {
+  case pto::AddressSpace::GM:
+    return "gm";
+  case pto::AddressSpace::MAT:
+    return "mat";
+  case pto::AddressSpace::LEFT:
+    return "left";
+  case pto::AddressSpace::RIGHT:
+    return "right";
+  case pto::AddressSpace::ACC:
+    return "acc";
+  case pto::AddressSpace::BIAS:
+    return "bias";
+  case pto::AddressSpace::VEC:
+  case pto::AddressSpace::SCALING:
+  case pto::AddressSpace::Zero:
+    return "ub";
+  }
+  return "ub";
+}
+
 static std::string getMemorySpaceString(pto::TileBufType tbTy) {
   auto msAttr = dyn_cast_or_null<pto::AddressSpaceAttr>(tbTy.getMemorySpace());
-  if (!msAttr) return "ub";
-  if (msAttr.getAddressSpace() == pto::AddressSpace::GM) return "gm";
-  return "ub";
+  return msAttr ? stringifyMemorySpace(msAttr.getAddressSpace()) : "ub";
 }
 
 static std::string getMemorySpaceString(MemRefType mrTy) {
   auto msAttr = dyn_cast_or_null<pto::AddressSpaceAttr>(mrTy.getMemorySpace());
-  if (!msAttr) return "gm";
-  if (msAttr.getAddressSpace() == pto::AddressSpace::GM) return "gm";
-  return "ub";
+  return msAttr ? stringifyMemorySpace(msAttr.getAddressSpace()) : "gm";
 }
 
 static std::string getBLayoutString(int32_t blayout) {

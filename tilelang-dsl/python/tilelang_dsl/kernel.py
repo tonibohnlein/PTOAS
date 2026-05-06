@@ -15,8 +15,6 @@ import inspect
 import ast
 import importlib.util
 import sys
-import subprocess
-import tempfile
 import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,6 +44,7 @@ from .support_matrix import (
     ADVANCED_EXPR_PTO_CALLS,
     ADVANCED_TOPLEVEL_PTO_CALLS,
     ADVANCED_VECSCOPE_PTO_CALLS,
+    CUBE_ONLY_PTO_CALLS,
     DEFERRED_PTO_SURFACES,
     SUPPORTED_TOPLEVEL_PTO_CALLS,
     SUPPORTED_VECSCOPE_PTO_CALLS,
@@ -55,7 +54,6 @@ from .support_matrix import (
 
 
 _UNSET = object()
-_PTOAS_BIN_ENV = "PTOAS_BIN"
 _INTERNAL_SOFT_MATH_MODULE_NAME = "tilelang_dsl._internal_soft_math"
 _SUPPORTED_TEMPLATE_PTO_CALLS = frozenset(
     SUPPORTED_TOPLEVEL_PTO_CALLS
@@ -63,6 +61,7 @@ _SUPPORTED_TEMPLATE_PTO_CALLS = frozenset(
     | ADVANCED_VECSCOPE_PTO_CALLS
     | ADVANCED_EXPR_PTO_CALLS
     | ADVANCED_TOPLEVEL_PTO_CALLS
+    | CUBE_ONLY_PTO_CALLS
 )
 
 _DSL_DTYPE_NAMES = frozenset(
@@ -361,10 +360,18 @@ class _FunctionSourceInfo:
 
 
 class _KernelBodyValidator(ast.NodeVisitor):
-    def __init__(self, source_info: _FunctionSourceInfo, *, advanced_enabled: bool, module_name: str | None):
+    def __init__(
+        self,
+        source_info: _FunctionSourceInfo,
+        *,
+        advanced_enabled: bool,
+        module_name: str | None,
+        kernel_family: str,
+    ):
         self.source_info = source_info
         self.advanced_enabled = advanced_enabled
         self.module_name = module_name
+        self.kernel_family = kernel_family
         self._vecscope_depth = 0
         self._static_dtype_bindings: set[str] = set()
 
@@ -452,6 +459,12 @@ class _KernelBodyValidator(ast.NodeVisitor):
                 "only pto.vecscope/pto.strict_vecscope are supported as with-contexts in TileLang DSL v1",
             )
         with_name = item.context_expr.func.attr
+        if self.kernel_family == "cube" and with_name in {"vecscope", "strict_vecscope"}:
+            raise self.source_info.error(
+                item.context_expr,
+                "@pto.ckernel does not support pto.vecscope()/pto.strict_vecscope(); "
+                "cube kernels must use linear control flow without vecscope",
+            )
         if with_name == "vecscope":
             if item.context_expr.args or item.context_expr.keywords:
                 raise self.source_info.error(
@@ -486,15 +499,30 @@ class _KernelBodyValidator(ast.NodeVisitor):
         finally:
             self._vecscope_depth -= 1
 
-    def _validate_call_keywords(self, node: ast.Call) -> None:
-        if not node.keywords:
-            return
+    def _validate_no_keyword_unpacking(self, node: ast.Call) -> None:
         for keyword in node.keywords:
             if keyword.arg is None:
                 raise self.source_info.error(
                     keyword.value,
                     "keyword unpacking via `**` is not supported in TileLang DSL v1",
                 )
+
+    def _reject_cube_vector_surface(self, node: ast.Call, surface_name: str) -> None:
+        raise self.source_info.error(
+            node,
+            f"vector-only surface `{surface_name}` is not part of the @pto.ckernel contract",
+        )
+
+    def _reject_vector_cube_surface(self, node: ast.Call, surface_name: str) -> None:
+        raise self.source_info.error(
+            node,
+            f"cube-only surface `{surface_name}` is not part of the @pto.vkernel contract",
+        )
+
+    def _validate_call_keywords(self, node: ast.Call) -> None:
+        if not node.keywords:
+            return
+        self._validate_no_keyword_unpacking(node)
 
         if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
             namespace = node.func.value.id
@@ -558,6 +586,8 @@ class _KernelBodyValidator(ast.NodeVisitor):
                         node,
                         "`as_ptr()` does not accept positional arguments in TileLang DSL v1",
                     )
+                if self.kernel_family == "cube":
+                    return
                 if self.advanced_enabled:
                     return
                 raise self.source_info.error(
@@ -578,8 +608,31 @@ class _KernelBodyValidator(ast.NodeVisitor):
                 # Type checking will be done during semantic analysis
                 return
             if node.func.value.id == "pto" and node.func.attr == "tpl":
-                self._validate_call_keywords(node)
+                if self.kernel_family == "cube":
+                    self._validate_no_keyword_unpacking(node)
+                else:
+                    self._validate_call_keywords(node)
                 return
+            if node.func.value.id == "pto" and node.func.attr == "Tile":
+                self._validate_no_keyword_unpacking(node)
+                return
+            if node.func.value.id == "pto" and self.kernel_family == "cube":
+                self._validate_no_keyword_unpacking(node)
+                if node.func.attr in SUPPORTED_VECSCOPE_PTO_CALLS:
+                    self._reject_cube_vector_surface(node, f"pto.{node.func.attr}")
+                if node.func.attr in ADVANCED_VECSCOPE_PTO_CALLS:
+                    self._reject_cube_vector_surface(node, f"pto.{node.func.attr}")
+                if node.func.attr in ADVANCED_TOPLEVEL_PTO_CALLS:
+                    self._reject_cube_vector_surface(node, f"pto.{node.func.attr}")
+                if node.func.attr in DEFERRED_PTO_SURFACES:
+                    raise self.source_info.error(
+                        node,
+                        deferred_surface_message(node.func.attr),
+                    )
+                return
+            if node.func.value.id == "pto" and self.kernel_family != "cube":
+                if node.func.attr in CUBE_ONLY_PTO_CALLS:
+                    self._reject_vector_cube_surface(node, f"pto.{node.func.attr}")
             if node.func.value.id == "pto" and node.func.attr in SUPPORTED_TOPLEVEL_PTO_CALLS:
                 self._validate_call_keywords(node)
                 return
@@ -688,6 +741,7 @@ def _validate_function_body(
     *,
     advanced_enabled: bool,
     module_name: str | None,
+    kernel_family: str,
 ) -> None:
     if source_info is None:
         return
@@ -695,6 +749,7 @@ def _validate_function_body(
         source_info,
         advanced_enabled=advanced_enabled,
         module_name=module_name,
+        kernel_family=kernel_family,
     ).validate()
 
 
@@ -926,6 +981,7 @@ class VKernelDescriptor:
     advanced_enabled: bool
     _parameter_specs: tuple[KernelParameterSpec, ...]
     _py_fn: Callable[..., Any] = field(repr=False)
+    kernel_family: str = "vector"
     _source_info: _FunctionSourceInfo | None = field(repr=False, compare=False, default=None)
     specializations: tuple[tuple[str, TileSpecialization], ...] = ()
     constraints: tuple[Callable[[Mapping[str, Any]], Any], ...] = field(default=(), repr=False)
@@ -1036,6 +1092,7 @@ class VKernelDescriptor:
             name=self.name,
             verify_enabled=self.verify_enabled,
             advanced_enabled=self.advanced_enabled,
+            kernel_family=self.kernel_family,
             _parameter_specs=self._parameter_specs,
             _py_fn=self._py_fn,
             _source_info=self._source_info,
@@ -1063,6 +1120,7 @@ class VKernelDescriptor:
             name=self.name,
             verify_enabled=self.verify_enabled,
             advanced_enabled=self.advanced_enabled,
+            kernel_family=self.kernel_family,
             _parameter_specs=self._parameter_specs,
             _py_fn=self._py_fn,
             _source_info=self._source_info,
@@ -1093,6 +1151,7 @@ class VKernelDescriptor:
             name=self.name,
             verify_enabled=self.verify_enabled,
             advanced_enabled=self.advanced_enabled,
+            kernel_family=self.kernel_family,
             _parameter_specs=self._parameter_specs,
             _py_fn=self._py_fn,
             _source_info=self._source_info,
@@ -1127,7 +1186,12 @@ class VKernelDescriptor:
 
         updated = self.specializations_by_name
         for name, binding in bindings.items():
-            updated[name] = _coerce_tile_specialization(name, binding, self._source_info)
+            updated[name] = _coerce_tile_specialization(
+                name,
+                binding,
+                self._source_info,
+                kernel_family=self.kernel_family,
+            )
 
         return VKernelDescriptor(
             target=self.target,
@@ -1136,6 +1200,7 @@ class VKernelDescriptor:
             name=self.name,
             verify_enabled=self.verify_enabled,
             advanced_enabled=self.advanced_enabled,
+            kernel_family=self.kernel_family,
             _parameter_specs=self._parameter_specs,
             _source_info=self._source_info,
             specializations=tuple(sorted(updated.items())),
@@ -1301,12 +1366,6 @@ class VKernelDescriptor:
         self._require_specialized_tiles("mlir_module")
         return MaterializedMLIRModule(text=self.mlir_text(), target=self.target)
 
-    def verify(self, *, ptoas_bin: str | Path | None = None) -> "VerificationResult":
-        self._require_materialization_binding("verify")
-        self._require_specialized_tiles("verify")
-        self._validate_materialization_constraints("verify")
-        return self.mlir_module().verify(ptoas_bin=ptoas_bin)
-
     def emit(self, path: str | Path) -> None:
         self._require_materialization_binding("emit")
         self._require_specialized_tiles("emit")
@@ -1469,170 +1528,9 @@ class MaterializedMLIRModule:
     def __str__(self) -> str:
         return self.text
 
-    def verify(self, *, ptoas_bin: str | Path | None = None) -> "VerificationResult":
-        return _run_ptoas_verifier(self.text, target=self.target, ptoas_bin=ptoas_bin)
-
-
-@dataclass(frozen=True)
-class VerificationResult:
-    status: str
-    available: bool
-    passed: bool
-    message: str
-    command: tuple[str, ...] | None = None
-    returncode: int | None = None
-    stdout: str = ""
-    stderr: str = ""
-
-    @property
-    def ok(self) -> bool:
-        return self.available and self.passed
-
-    def __bool__(self) -> bool:
-        return self.ok
-
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
-
-
-def _resolve_ptoas_bin(ptoas_bin: str | Path | None) -> Path:
-    if ptoas_bin is not None:
-        return Path(ptoas_bin)
-    env_path = os.environ.get(_PTOAS_BIN_ENV)
-    if env_path:
-        return Path(env_path)
-    return _repo_root() / "build/tools/ptoas/ptoas"
-
-
-def _unavailable_result(
-    message: str,
-    *,
-    command: tuple[str, ...] | None = None,
-    stderr: str = "",
-) -> VerificationResult:
-    return VerificationResult(
-        status="unavailable",
-        available=False,
-        passed=False,
-        message=message,
-        command=command,
-        stderr=stderr,
-    )
-
-
-def _failed_result(
-    message: str,
-    *,
-    command: tuple[str, ...],
-    returncode: int,
-    stdout: str,
-    stderr: str,
-) -> VerificationResult:
-    return VerificationResult(
-        status="failed",
-        available=True,
-        passed=False,
-        message=message,
-        command=command,
-        returncode=returncode,
-        stdout=stdout,
-        stderr=stderr,
-    )
-
-
-def _passed_result(
-    *,
-    command: tuple[str, ...],
-    stdout: str,
-    stderr: str,
-) -> VerificationResult:
-    return VerificationResult(
-        status="passed",
-        available=True,
-        passed=True,
-        message="generated IR passed the repo VPTO authoring-stage legality verifier",
-        command=command,
-        returncode=0,
-        stdout=stdout,
-        stderr=stderr,
-    )
-
-
-def _is_verifier_unavailable_process_failure(stderr: str) -> bool:
-    lowered = stderr.lower()
-    return (
-        "error while loading shared libraries" in lowered
-        or "cannot open shared object file" in lowered
-        or "image not found" in lowered
-        or "dll load failed" in lowered
-    )
-
-
-def _run_ptoas_verifier(
-    mlir_text: str,
-    *,
-    target: str,
-    ptoas_bin: str | Path | None,
-) -> VerificationResult:
-    binary = _resolve_ptoas_bin(ptoas_bin)
-    command = (
-        str(binary),
-        "--pto-arch",
-        target,
-        "--pto-backend=vpto",
-        "--emit-vpto",
-    )
-    if not binary.exists():
-        return _unavailable_result(
-            f"verifier unavailable: missing ptoas binary at {binary}",
-            command=command,
-        )
-    if not os.access(binary, os.X_OK):
-        return _unavailable_result(
-            f"verifier unavailable: ptoas binary is not executable: {binary}",
-            command=command,
-        )
-
-    try:
-        with tempfile.TemporaryDirectory(prefix="tilelang_dsl_verify_") as tmpdir:
-            tmpdir_path = Path(tmpdir)
-            input_path = tmpdir_path / "kernel.mlir"
-            output_path = tmpdir_path / "verified.mlir"
-            input_path.write_text(mlir_text, encoding="utf-8")
-            full_command = command + (str(input_path), "-o", str(output_path))
-            completed = subprocess.run(
-                full_command,
-                cwd=_repo_root(),
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-    except OSError as exc:
-        return _unavailable_result(
-            f"verifier unavailable: failed to execute ptoas: {exc}",
-            command=command,
-            stderr=str(exc),
-        )
-
-    stderr = completed.stderr.strip()
-    stdout = completed.stdout.strip()
-    if completed.returncode == 0:
-        return _passed_result(command=full_command, stdout=stdout, stderr=stderr)
-    if _is_verifier_unavailable_process_failure(stderr):
-        return _unavailable_result(
-            "verifier unavailable: failed to launch repo ptoas legality path",
-            command=full_command,
-            stderr=stderr,
-        )
-    message = stderr or stdout or "generated IR failed the repo VPTO authoring-stage legality verifier"
-    return _failed_result(
-        message,
-        command=full_command,
-        returncode=completed.returncode,
-        stdout=stdout,
-        stderr=stderr,
-    )
 
 
 def _validate_target(target: str) -> str:
@@ -1647,6 +1545,11 @@ def _validate_op(op: Any) -> str:
     if not isinstance(op, str) or not op:
         raise TypeError("op must be a non-empty string")
     return op
+
+
+def _is_schema_form_match_op(op: str) -> bool:
+    normalized = " ".join(op.split())
+    return " ins(" in normalized and "->" in normalized and " outs(" in normalized
 
 
 def _freeze_match_ops(*, op: Any, ops: Any) -> tuple[str, ...]:
@@ -1860,6 +1763,8 @@ def _coerce_tile_specialization(
     param_name: str,
     binding: Any,
     source_info: _FunctionSourceInfo | None,
+    *,
+    kernel_family: str = "vector",
 ) -> TileSpecialization:
     if isinstance(binding, TileSpecialization):
         spec = binding
@@ -1918,11 +1823,27 @@ def _coerce_tile_specialization(
             param_name,
             f"illegal Tile profile for '{param_name}': v1 only supports rank-1 or rank-2 Tile shapes",
         )
-    if spec.memory_space != MemorySpace.UB:
+    allowed_memory_spaces = (
+        {MemorySpace.UB}
+        if kernel_family != "cube"
+        else {
+            MemorySpace.MAT,
+            MemorySpace.LEFT,
+            MemorySpace.RIGHT,
+            MemorySpace.ACC,
+            MemorySpace.BIAS,
+            MemorySpace.UB,
+        }
+    )
+    if spec.memory_space not in allowed_memory_spaces:
+        if kernel_family == "cube":
+            allowed_text = "MemorySpace.MAT/LEFT/RIGHT/ACC/BIAS/UB"
+        else:
+            allowed_text = "MemorySpace.UB"
         _raise_tile_param_error(
             source_info,
             param_name,
-            f"illegal Tile profile for '{param_name}': v1 only supports MemorySpace.UB",
+            f"illegal Tile profile for '{param_name}': {kernel_family} v1 only supports {allowed_text}",
         )
     valid_shape = _coerce_tile_valid_shape(spec.shape, spec.valid_shape, param_name, source_info)
     return TileSpecialization(
@@ -2116,9 +2037,18 @@ def _default_dtype_signature(
 def _validate_dtype_arity(
     parameter_specs: tuple[KernelParameterSpec, ...],
     dtypes: tuple[tuple[Any, ...], ...],
+    *,
+    kernel_family: str = "vector",
 ) -> None:
+    if kernel_family == "cube":
+        # Cube v1 reuses the shared descriptor object, but its `dtypes` surface
+        # follows the cube op contract rather than Python parameter arity.
+        # Keep descriptor construction permissive here and defer concrete
+        # semantic checks to cube frontend/semantic analysis.
+        return
+    expected_arity = len(parameter_specs)
     for dtype_signature in dtypes:
-        if len(dtype_signature) != len(parameter_specs):
+        if len(dtype_signature) != expected_arity:
             raise ValueError(
                 "each dtypes signature must match the decorated function parameter count"
             )
@@ -2229,6 +2159,7 @@ def _build_descriptor(
     advanced: Any,
     constraints: Any,
     priority: Any,
+    kernel_family: str = "vector",
 ) -> VKernelDescriptor:
     if not callable(py_fn):
         raise TypeError("@vkernel can only decorate callables")
@@ -2241,21 +2172,33 @@ def _build_descriptor(
         source_info,
         advanced_enabled=advanced_enabled,
         module_name=py_fn.__module__,
+        kernel_family=kernel_family,
     )
     match_ops = _freeze_match_ops(op=op, ops=ops)
+    if kernel_family == "cube":
+        for match_op in match_ops:
+            if _is_schema_form_match_op(match_op):
+                raise ValueError(
+                    "@pto.ckernel does not support schema-form op matching; "
+                    "use concrete op strings such as 'pto.mad' or ops=[...]"
+                )
     frozen_templates = _freeze_templates(templates, match_ops=match_ops)
     parameter_specs = _collect_parameter_specs(py_fn)
     if dtypes is None:
         dtypes = (_default_dtype_signature(parameter_specs),)
     frozen_dtypes = _freeze_dtypes(dtypes)
-    _validate_dtype_arity(parameter_specs, frozen_dtypes)
+    _validate_dtype_arity(parameter_specs, frozen_dtypes, kernel_family=kernel_family)
 
     selected_op: str | None = None
     selected_dtype_signature: tuple[ScalarType | MaskType, ...] | None = None
     bound_parameters: tuple[BoundKernelParameter, ...] | None = None
     if len(match_ops) == 1:
         selected_op = match_ops[0]
-    if len(frozen_dtypes) == 1 and all(isinstance(dtype, (ScalarType, MaskType)) for dtype in frozen_dtypes[0]):
+    if (
+        len(frozen_dtypes) == 1
+        and all(isinstance(dtype, (ScalarType, MaskType)) for dtype in frozen_dtypes[0])
+        and (kernel_family != "cube" or len(frozen_dtypes[0]) == len(parameter_specs))
+    ):
         selected_dtype_signature = tuple(frozen_dtypes[0])
         bound_parameters = _bind_parameters(parameter_specs, selected_dtype_signature)
 
@@ -2266,6 +2209,7 @@ def _build_descriptor(
         name=_validate_name(py_fn, name),
         verify_enabled=_validate_verify(verify),
         advanced_enabled=advanced_enabled,
+        kernel_family=kernel_family,
         _parameter_specs=parameter_specs,
         _py_fn=py_fn,
         _source_info=source_info,
@@ -2885,6 +2829,47 @@ def vkernel(
             advanced=advanced,
             constraints=constraints,
             priority=priority,
+            kernel_family="vector",
+        )
+        return _DEFAULT_KERNEL_REGISTRY.register(descriptor)
+
+    if py_fn is None:
+        return wrap
+    return wrap(py_fn)
+
+
+def ckernel(
+    py_fn: Callable[..., Any] | None = None,
+    *,
+    target: str = "a5",
+    op: str | None = None,
+    ops: tuple[str, ...] | list[str] | None = None,
+    templates: Any = _UNSET,
+    dtypes: Any = None,
+    name: str | None = None,
+    priority: Any = _UNSET,
+) -> VKernelDescriptor | Callable[[Callable[..., Any]], VKernelDescriptor]:
+    """Create a TileLang DSL cube-kernel descriptor.
+
+    This public entrypoint intentionally reuses the existing descriptor and
+    registry path first; cube-specific semantic and lowering behavior is added
+    incrementally in follow-up tasks.
+    """
+
+    def wrap(fn: Callable[..., Any]) -> VKernelDescriptor:
+        descriptor = _build_descriptor(
+            fn,
+            target=target,
+            op=op,
+            ops=ops,
+            templates=templates,
+            dtypes=dtypes,
+            name=name,
+            verify=True,
+            advanced=False,
+            constraints=_UNSET,
+            priority=priority,
+            kernel_family="cube",
         )
         return _DEFAULT_KERNEL_REGISTRY.register(descriptor)
 
@@ -2902,6 +2887,7 @@ __all__ = [
     "MaterializedMLIRModule",
     "TileLangFrontendError",
     "VKernelDescriptor",
+    "ckernel",
     "inline_proc",
     "select_kernel",
     "vkernel",

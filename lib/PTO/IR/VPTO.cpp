@@ -1145,6 +1145,49 @@ static int64_t getBufferElementByteSize(Type type) {
   return 0;
 }
 
+static std::optional<AddressSpace> getBufferAddressSpace(Type type) {
+  if (auto ptrType = dyn_cast<pto::PtrType>(type))
+    return ptrType.getMemorySpace().getAddressSpace();
+  if (auto memrefType = dyn_cast<BaseMemRefType>(type)) {
+    if (auto space =
+            dyn_cast_or_null<pto::AddressSpaceAttr>(memrefType.getMemorySpace()))
+      return space.getAddressSpace();
+    if (auto intSpace = dyn_cast_or_null<IntegerAttr>(memrefType.getMemorySpace()))
+      return static_cast<AddressSpace>(intSpace.getInt());
+  }
+  return std::nullopt;
+}
+
+template <typename BridgeLoadOp>
+static LogicalResult verifyCubeBridgeLoadLikeOp(BridgeLoadOp op,
+                                                AddressSpace expectedDstSpace,
+                                                StringRef dstName) {
+  if (!isBufferLike(op.getSource().getType()) ||
+      !isBufferLike(op.getDestination().getType()))
+    return op.emitOpError("requires buffer-like source and destination");
+
+  if (getBufferAddressSpace(op.getSource().getType()) != AddressSpace::MAT)
+    return op.emitOpError("requires MAT source");
+  if (getBufferAddressSpace(op.getDestination().getType()) != expectedDstSpace) {
+    return op.emitOpError()
+           << "requires " << dstName << " destination";
+  }
+
+  int64_t sourceElemBytes = getBufferElementByteSize(op.getSource().getType());
+  int64_t destinationElemBytes =
+      getBufferElementByteSize(op.getDestination().getType());
+  if (sourceElemBytes <= 0 || destinationElemBytes <= 0) {
+    return op.emitOpError(
+        "requires source and destination element types with known byte width");
+  }
+  if (sourceElemBytes != destinationElemBytes) {
+    return op.emitOpError(
+        "requires source and destination element byte widths to match");
+  }
+
+  return success();
+}
+
 static bool hasAll(Value first, Value second, Value third) {
   return static_cast<bool>(first) && static_cast<bool>(second) &&
          static_cast<bool>(third);
@@ -4932,19 +4975,24 @@ LogicalResult CubeStoreOp::verify() {
 }
 
 LogicalResult BiasLoadOp::verify() {
-  auto sourceType = dyn_cast<pto::PtrType>(getSource().getType());
-  auto destinationType = dyn_cast<pto::PtrType>(getDestination().getType());
-  if (!sourceType || !destinationType)
-    return emitOpError("requires typed !pto.ptr source/destination operands");
-  if (sourceType.getMemorySpace().getAddressSpace() != pto::AddressSpace::MAT)
-    return emitOpError("requires source pointer in !pto.ptr<..., mat>");
-  if (destinationType.getMemorySpace().getAddressSpace() !=
-      pto::AddressSpace::BIAS) {
-    return emitOpError("requires destination pointer in !pto.ptr<..., bias>");
-  }
+  auto getBufferElementType = [](Type type) -> Type {
+    if (auto ptrType = dyn_cast<pto::PtrType>(type))
+      return ptrType.getElementType();
+    if (auto memrefType = dyn_cast<BaseMemRefType>(type))
+      return memrefType.getElementType();
+    return {};
+  };
 
-  Type srcElem = sourceType.getElementType();
-  Type dstElem = destinationType.getElementType();
+  if (!isBufferLike(getSource().getType()) ||
+      !isBufferLike(getDestination().getType()))
+    return emitOpError("requires buffer-like source and destination");
+  if (getBufferAddressSpace(getSource().getType()) != pto::AddressSpace::MAT)
+    return emitOpError("requires MAT source");
+  if (getBufferAddressSpace(getDestination().getType()) != pto::AddressSpace::BIAS)
+    return emitOpError("requires BIAS destination");
+
+  Type srcElem = getBufferElementType(getSource().getType());
+  Type dstElem = getBufferElementType(getDestination().getType());
   const bool isF32 = srcElem.isF32() && dstElem.isF32();
   const bool isI32 = isa<IntegerType>(srcElem) && isa<IntegerType>(dstElem) &&
                      cast<IntegerType>(srcElem).getWidth() == 32 &&
@@ -5254,13 +5302,14 @@ void AccStoreOp::print(OpAsmPrinter &printer) {
 }
 
 LogicalResult AccStoreOp::verify() {
-  auto sourceType = dyn_cast<pto::PtrType>(getSource().getType());
-  auto destinationType = dyn_cast<pto::PtrType>(getDestination().getType());
-  if (!sourceType || !destinationType)
-    return emitOpError("requires typed !pto.ptr source and destination");
-  if (sourceType.getMemorySpace().getAddressSpace() != AddressSpace::ACC ||
-      destinationType.getMemorySpace().getAddressSpace() !=
-          AddressSpace::MAT) {
+  if (!isBufferLike(getSource().getType()) ||
+      !isBufferLike(getDestination().getType()))
+    return emitOpError("requires buffer-like source and destination");
+  std::optional<AddressSpace> sourceSpace =
+      getBufferAddressSpace(getSource().getType());
+  std::optional<AddressSpace> destinationSpace =
+      getBufferAddressSpace(getDestination().getType());
+  if (sourceSpace != AddressSpace::ACC || destinationSpace != AddressSpace::MAT) {
     return emitOpError("requires ACC source and MAT destination");
   }
   return verifyAccStoreLikeModeOperands(
@@ -5269,6 +5318,22 @@ LogicalResult AccStoreOp::verify() {
       "nz2nd does not accept split", "nz2nd does not accept loop0_src_stride",
       "nz2dn does not accept split", "nz2nz does not accept loop0_src_stride",
       "nz2nz does not accept loop3");
+}
+
+LogicalResult LeftLoadOp::verify() {
+  return verifyCubeBridgeLoadLikeOp(*this, AddressSpace::LEFT, "LEFT");
+}
+
+LogicalResult RightLoadOp::verify() {
+  return verifyCubeBridgeLoadLikeOp(*this, AddressSpace::RIGHT, "RIGHT");
+}
+
+LogicalResult LeftLoadMxOp::verify() {
+  return verifyCubeBridgeLoadLikeOp(*this, AddressSpace::LEFT, "LEFT");
+}
+
+LogicalResult RightLoadMxOp::verify() {
+  return verifyCubeBridgeLoadLikeOp(*this, AddressSpace::RIGHT, "RIGHT");
 }
 
 void LeftLoadOp::getEffects(
@@ -5476,13 +5541,14 @@ void AccStoreGmOp::print(OpAsmPrinter &printer) {
 }
 
 LogicalResult AccStoreGmOp::verify() {
-  auto sourceType = dyn_cast<pto::PtrType>(getSource().getType());
-  auto destinationType = dyn_cast<pto::PtrType>(getDestination().getType());
-  if (!sourceType || !destinationType)
-    return emitOpError("requires typed !pto.ptr source and destination");
-  if (sourceType.getMemorySpace().getAddressSpace() != AddressSpace::ACC ||
-      destinationType.getMemorySpace().getAddressSpace() !=
-          AddressSpace::GM) {
+  if (!isBufferLike(getSource().getType()) ||
+      !isBufferLike(getDestination().getType()))
+    return emitOpError("requires buffer-like source and destination");
+  std::optional<AddressSpace> sourceSpace =
+      getBufferAddressSpace(getSource().getType());
+  std::optional<AddressSpace> destinationSpace =
+      getBufferAddressSpace(getDestination().getType());
+  if (sourceSpace != AddressSpace::ACC || destinationSpace != AddressSpace::GM) {
     return emitOpError("requires ACC source and GM destination");
   }
   return verifyAccStoreLikeModeOperands(
@@ -5673,13 +5739,14 @@ void AccStoreUbOp::print(OpAsmPrinter &printer) {
 }
 
 LogicalResult AccStoreUbOp::verify() {
-  auto sourceType = dyn_cast<pto::PtrType>(getSource().getType());
-  auto destinationType = dyn_cast<pto::PtrType>(getDestination().getType());
-  if (!sourceType || !destinationType)
-    return emitOpError("requires typed !pto.ptr source and destination");
-  if (sourceType.getMemorySpace().getAddressSpace() != AddressSpace::ACC ||
-      destinationType.getMemorySpace().getAddressSpace() !=
-          AddressSpace::VEC) {
+  if (!isBufferLike(getSource().getType()) ||
+      !isBufferLike(getDestination().getType()))
+    return emitOpError("requires buffer-like source and destination");
+  std::optional<AddressSpace> sourceSpace =
+      getBufferAddressSpace(getSource().getType());
+  std::optional<AddressSpace> destinationSpace =
+      getBufferAddressSpace(getDestination().getType());
+  if (sourceSpace != AddressSpace::ACC || destinationSpace != AddressSpace::VEC) {
     return emitOpError("requires ACC source and UB destination");
   }
 

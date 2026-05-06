@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Guard: TileLang cube tmatmul expansion on the dav-c310-cube VPTO path must
+// inline the template body and lower the tile op to cube MAD instructions.
+//
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --vpto-march=dav-c310-cube --enable-tile-op-expand %s -o - 2>/dev/null | FileCheck %s
+
+// CHECK-LABEL: func.func @TMATMUL
+// CHECK-NOT: pto.tmatmul ins
+// CHECK: pto.mad
+
+module {
+  func.func @TMATMUL() {
+    %lhs = pto.alloc_tile
+      : !pto.tile_buf<loc=left, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %rhs = pto.alloc_tile
+      : !pto.tile_buf<loc=right, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %acc = pto.alloc_tile
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+
+    pto.tmatmul ins(%lhs, %rhs : !pto.tile_buf<loc=left, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                                    blayout=col_major, slayout=row_major, fractal=512, pad=0>,
+                                !pto.tile_buf<loc=right, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                                    blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+                outs(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                                          blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+    return
+  }
+}

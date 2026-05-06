@@ -1,0 +1,18 @@
+// Guard: cube bridge loads must reject non-MAT sources at verification time
+// before any VPTO bridge expansion runs.
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %s -o - 2>&1 | FileCheck %s
+
+module attributes {"pto.target_arch" = "a5"} {
+  func.func @cube_bridge_load_verify_invalid(
+      %src_gm: memref<?xf16, #pto.address_space<gm>>,
+      %dst_left: memref<?xf16, #pto.address_space<left>>) {
+    %c16_i64 = arith.constant 16 : i64
+
+    pto.left_load %src_gm, %dst_left, %c16_i64, %c16_i64
+      : memref<?xf16, #pto.address_space<gm>>, memref<?xf16, #pto.address_space<left>>, i64, i64
+
+    return
+  }
+}
+
+// CHECK: error: 'pto.left_load' op requires MAT source
