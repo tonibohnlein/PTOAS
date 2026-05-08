@@ -10,21 +10,30 @@
 //    after preheat sets are emitted.
 //
 // CHECK-LABEL: tri_inv_block2x2_fp16(
-// CHECK: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID2);
+// CHECK: set_flag(PIPE_FIX, PIPE_M, EVENT_ID1);
+// CHECK-NEXT: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID1);
+// CHECK-NEXT: wait_flag(PIPE_FIX, PIPE_M, EVENT_ID1);
+// CHECK-NEXT: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID2);
 // CHECK-NEXT: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID3);
 // CHECK-NEXT: for (size_t
 // CHECK-NEXT: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID2);
 // CHECK-NEXT: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID3);
-// CHECK: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID2);
-// CHECK-NEXT: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID3);
+// CHECK: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID3);
+// CHECK-NEXT: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID2);
+// CHECK-NEXT: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID6);
+// CHECK-NEXT: set_flag(PIPE_M, PIPE_FIX, EVENT_ID4);
 // CHECK-NEXT: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID4);
-// CHECK: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
+// CHECK: set_flag(PIPE_FIX, PIPE_M, EVENT_ID5);
+// CHECK-NEXT: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID7);
+// CHECK-NEXT: wait_flag(PIPE_FIX, PIPE_M, EVENT_ID5);
+// CHECK-NEXT: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
 // CHECK-NEXT: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID1);
 // CHECK-NEXT: for (size_t
 // CHECK-NEXT: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
 // CHECK-NEXT: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID1);
-// CHECK: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
-// CHECK-NEXT: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID1);
+// CHECK: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID1);
+// CHECK-NEXT: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
+// CHECK-NEXT: set_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
 // CHECK-NEXT: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
 // CHECK: ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
 
