@@ -537,45 +537,6 @@ static bool hasTilelangInlineHelpers(ModuleOp module) {
   return found;
 }
 
-static bool isVPTOKernelSubmodule(ModuleOp module) {
-  return module->hasAttr(pto::FunctionKernelKindAttr::name);
-}
-
-static LogicalResult verifyNormalizedVPTOContainer(ModuleOp module) {
-  bool hasChildModules = false;
-  for (Operation &op : module.getBodyRegion().front().getOperations()) {
-    auto child = dyn_cast<ModuleOp>(op);
-    if (!child) {
-      return op.emitError()
-             << "expected VPTO container top level to contain only kernel "
-                "submodules";
-    }
-    hasChildModules = true;
-    if (!isVPTOKernelSubmodule(child)) {
-      return child.emitError()
-             << "expected VPTO kernel submodule to carry 'pto.kernel_kind'";
-    }
-  }
-
-  if (hasChildModules)
-    return success();
-
-  return module.emitError()
-         << "expected VPTO input to be a kernel submodule with "
-            "'pto.kernel_kind' or a container of kernel submodules";
-}
-
-static LogicalResult normalizeVPTOContainer(OwningOpRef<ModuleOp> &module) {
-  if (!isVPTOKernelSubmodule(module.get()))
-    return success();
-
-  auto outer = ModuleOp::create(module->getLoc());
-  auto oldModule = module.release();
-  outer.getBodyRegion().front().push_back(oldModule.getOperation());
-  module = OwningOpRef<ModuleOp>(outer);
-  return success();
-}
-
 // --------------------------------------------------------------------------
 // Post-process C++ output: rewrite marker calls into Tile member calls.
 // We emit marker calls in EmitC IR because EmitC currently does not provide a
@@ -1568,12 +1529,10 @@ static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
                                             int argc, char **argv,
                                             bool hasTileOpsToExpand,
                                             bool hasTilelangHelpers) {
-  if (failed(normalizeVPTOContainer(module)))
-    return failure();
-  if (failed(verifyNormalizedVPTOContainer(module.get())))
-    return failure();
   PassManager pm(module->getContext());
   pm.enableVerifier();
+  pm.addPass(pto::createVPTOSplitCVModulePass());
+  pm.addPass(pto::createVPTONormalizeContainerPass());
   if (!hasTileOpsToExpand && hasTilelangHelpers)
     inlineTilelangHelpersOnVPTOInput(pm);
   if (hasTileOpsToExpand)

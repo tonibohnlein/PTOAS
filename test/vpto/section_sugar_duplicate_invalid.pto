@@ -1,0 +1,14 @@
+// RUN: ! ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @duplicate_section_kernel() attributes {pto.aicore} {
+    pto.section.vector {
+    }
+    pto.section.vector {
+    }
+    return
+  }
+}
+
+// CHECK: contains more than one pto.section.vector
+

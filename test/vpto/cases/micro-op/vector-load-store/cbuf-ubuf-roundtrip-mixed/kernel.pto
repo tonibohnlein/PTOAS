@@ -7,20 +7,20 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 module attributes {pto.target_arch = "a5"} {
-  module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
-    func.func @cbuf_ubuf_roundtrip_mixed_kernel(
-        %src_gm: !pto.ptr<i16, gm>, %dst_gm: !pto.ptr<i16, gm>)
-        attributes {pto.aicore} {
-      %c0_i64 = arith.constant 0 : i64
-      %c1_i64 = arith.constant 1 : i64
-      %c16_i64 = arith.constant 16 : i64
-      %c32_i64 = arith.constant 32 : i64
-      %c512_i64 = arith.constant 512 : i64
+  func.func @cbuf_ubuf_roundtrip_mixed_kernel(
+      %src_gm: !pto.ptr<i16, gm>, %dst_gm: !pto.ptr<i16, gm>)
+      attributes {pto.aicore} {
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c16_i64 = arith.constant 16 : i64
+    %c32_i64 = arith.constant 32 : i64
+    %c512_i64 = arith.constant 512 : i64
 
-      %l1_rt = pto.castptr %c512_i64 : i64 -> !pto.ptr<i16, mat>
-      %ub0 = pto.castptr %c0_i64 : i64 -> !pto.ptr<i16, ub>
-      %ub1 = pto.castptr %c512_i64 : i64 -> !pto.ptr<i16, ub>
+    %l1_rt = pto.castptr %c512_i64 : i64 -> !pto.ptr<i16, mat>
+    %ub0 = pto.castptr %c0_i64 : i64 -> !pto.ptr<i16, ub>
+    %ub1 = pto.castptr %c512_i64 : i64 -> !pto.ptr<i16, ub>
 
+    pto.section.vector {
       pto.dma_load %src_gm, %ub0, %c0_i64, %c32_i64
         nburst(%c16_i64, %c32_i64, %c32_i64)
         : !pto.ptr<i16, gm>, !pto.ptr<i16, ub>, i64, i64, i64, i64, i64
@@ -42,22 +42,9 @@ module attributes {pto.target_arch = "a5"} {
         nburst(%c16_i64, %c32_i64, %c32_i64)
         : !pto.ptr<i16, ub>, !pto.ptr<i16, gm>, i64, i64, i64, i64
       pto.barrier #pto.pipe<PIPE_ALL>
-      return
     }
-  }
 
-  module attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
-    func.func @cbuf_ubuf_roundtrip_mixed_kernel(
-        %src_gm: !pto.ptr<i16, gm>, %dst_gm: !pto.ptr<i16, gm>)
-        attributes {pto.aicore} {
-      %c0_i64 = arith.constant 0 : i64
-      %c1_i64 = arith.constant 1 : i64
-      %c16_i64 = arith.constant 16 : i64
-      %c512_i64 = arith.constant 512 : i64
-
-      %l1_rt = pto.castptr %c512_i64 : i64 -> !pto.ptr<i16, mat>
-      %ub1 = pto.castptr %c512_i64 : i64 -> !pto.ptr<i16, ub>
-
+    pto.section.cube {
       // Follow the working PTO-ISA tmov_ub2l1 handoff:
       // vec produces L1, cube waits on MTE1 before reading cbuf.
       pto.sync.wait <PIPE_MTE1>, 0
@@ -71,7 +58,7 @@ module attributes {pto.target_arch = "a5"} {
       // cube produces UB, vec waits on MTE3 for the return handoff.
       pto.sync.set <PIPE_FIX>, 1
       pto.sync.set <PIPE_FIX>, 17
-      return
     }
+    return
   }
 }

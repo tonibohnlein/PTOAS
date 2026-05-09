@@ -188,6 +188,43 @@ def PTOWrapFunctionsInSections : Pass<"pto-wrap-functions-in-sections", "func::F
   ];
 }
 
+def VPTOSplitCVModule : Pass<"vpto-split-cv-module", "ModuleOp"> {
+  let summary = "Split a VPTO module with cube/vector sections into kernel modules";
+  let description = [{
+    Rewrites a single-module VPTO input where one `pto.aicore` function
+    contains `pto.section.cube` / `pto.section.vector` regions into the
+    normalized fatobj input form with one child module per kernel kind.
+
+    The pass clones the original module for each target kind, removes the
+    opposite section kind, and inlines the target section body. It does not
+    analyze cross-section SSA dependencies; normal MLIR verification catches
+    illegal uses after the non-target section is removed.
+  }];
+
+  let constructor = "mlir::pto::createVPTOSplitCVModulePass()";
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::func::FuncDialect"
+  ];
+}
+
+def VPTONormalizeContainer : Pass<"vpto-normalize-container", "ModuleOp"> {
+  let summary = "Normalize and verify VPTO kernel container shape";
+  let description = [{
+    Normalizes a VPTO kernel module carrying `pto.kernel_kind` into the canonical
+    outer container form. Existing containers are left in place. The pass
+    verifies that the resulting top-level module contains only child modules and
+    that every child module carries `pto.kernel_kind`.
+  }];
+
+  let constructor = "mlir::pto::createVPTONormalizeContainerPass()";
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect"
+  ];
+}
+
 def MemrefToTileBuf : Pass<"pto-memref-to-tile-buf", "ModuleOp"> {
   let summary = "Recover tile_buf types from memref + pto.bind_tile metadata";
   let description = [{

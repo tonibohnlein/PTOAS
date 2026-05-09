@@ -1,0 +1,25 @@
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @vec_only() attributes {pto.aicore} {
+    pto.section.vector {
+    }
+    return
+  }
+
+  func.func @cube_only() attributes {pto.aicore} {
+    pto.section.cube {
+    }
+    return
+  }
+}
+
+// CHECK: module attributes {pto.target_arch = "a5"} {
+// CHECK: module attributes {
+// CHECK-SAME: pto.kernel_kind = #pto.kernel_kind<vector>
+// CHECK: func.func @vec_only
+// CHECK-NOT: func.func @cube_only
+// CHECK: module attributes {
+// CHECK-SAME: pto.kernel_kind = #pto.kernel_kind<cube>
+// CHECK-NOT: func.func @vec_only
+// CHECK: func.func @cube_only
