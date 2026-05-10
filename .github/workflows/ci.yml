@@ -462,10 +462,17 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${TILELANG_DSL_WORKSPACE}"
-          ASCEND_HOME_PATH="${ASCEND_HOME_PATH}" \
-          PTOAS_BIN="${PTOAS_BIN}" \
-          bash test/tilelang_st/script/run_ci.sh -r sim -v a5 --jobs 64 \
-            2>&1 | tee "${TILELANG_DSL_WORKSPACE}/run_ci.log"
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            ASCEND_HOME_PATH="${ASCEND_HOME_PATH}" \
+            PTOAS_BIN="${PTOAS_BIN}" \
+            bash test/tilelang_st/script/run_ci.sh -r sim -v a5 --jobs 64 --smoke \
+              2>&1 | tee "${TILELANG_DSL_WORKSPACE}/run_ci.log"
+          else
+            ASCEND_HOME_PATH="${ASCEND_HOME_PATH}" \
+            PTOAS_BIN="${PTOAS_BIN}" \
+            bash test/tilelang_st/script/run_ci.sh -r sim -v a5 --jobs 64 \
+              2>&1 | tee "${TILELANG_DSL_WORKSPACE}/run_ci.log"
+          fi
 
       - name: Upload TileLang DSL logs
         if: always()

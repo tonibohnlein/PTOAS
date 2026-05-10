@@ -11,6 +11,7 @@
 
 import argparse
 import concurrent.futures
+import importlib.util
 import os
 import subprocess
 import sys
@@ -23,6 +24,8 @@ SOC_VERSION_MAP = {
     "a5": "Ascend950PR_9599",
 }
 
+SMOKE_CASE_LIMIT = 1
+
 
 def discover_testcases(testcase_root):
     testcases = []
@@ -34,6 +37,26 @@ def discover_testcases(testcase_root):
         if os.path.isfile(pto_file):
             testcases.append(entry)
     return testcases
+
+
+def load_case_names(testcase_root, testcase):
+    cases_path = os.path.join(testcase_root, testcase, "cases.py")
+    if not os.path.isfile(cases_path):
+        raise FileNotFoundError(f"cases.py not found: {cases_path}")
+
+    spec = importlib.util.spec_from_file_location(f"_tilelang_{testcase}_cases", cases_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return [case["name"] for case in module.CASES]
+
+
+def resolve_case_filters(testcase_root, testcase, smoke_mode):
+    if not smoke_mode:
+        return []
+    case_names = load_case_names(testcase_root, testcase)
+    if not case_names:
+        raise ValueError(f"no cases found for smoke testcase: {testcase}")
+    return case_names[:SMOKE_CASE_LIMIT]
 
 
 def parse_args():
@@ -72,6 +95,10 @@ def parse_args():
         "-j", "--jobs", type=int, default=1,
         help="Number of testcases to run in parallel after the shared build (default: 1).",
     )
+    parser.add_argument(
+        "--smoke", action="store_true",
+        help="Run only a representative smoke subset of cases for each testcase.",
+    )
     return parser.parse_args()
 
 
@@ -95,16 +122,18 @@ def resolve_selected_testcases(all_testcases, requested):
     return requested_set
 
 
-def run_testcase_subprocess(script_path, run_mode, soc_version, ptoas_bin, testcase):
+def run_testcase_subprocess(run_st_script_path, run_mode, soc_version, ptoas_bin, testcase, case_filters=None):
     command = [
         sys.executable,
-        script_path,
+        run_st_script_path,
         "-r", run_mode,
         "-v", soc_version,
         "-t", testcase,
         "-p", ptoas_bin,
         "-w",
     ]
+    for case_filter in case_filters or []:
+        command.extend(["-c", case_filter])
     env = os.environ.copy()
     result = subprocess.run(
         command,
@@ -131,8 +160,9 @@ def main():
         print("[ERROR] --jobs must be >= 1", file=sys.stderr)
         sys.exit(1)
 
-    script_path = os.path.abspath(__file__)
-    tilelang_st_root = os.path.dirname(os.path.dirname(script_path))
+    batch_script_path = os.path.abspath(__file__)
+    run_st_script_path = os.path.abspath(run_st.__file__)
+    tilelang_st_root = os.path.dirname(os.path.dirname(batch_script_path))
     testcase_root = os.path.join(
         tilelang_st_root, "npu", args.soc_version, "src", "st", "testcase"
     )
@@ -173,6 +203,7 @@ def main():
     print(f"[INFO] ptoas={ptoas_bin}")
     print(f"[INFO] target_dir={target_dir}")
     print(f"[INFO] selected_testcases={', '.join(selected_testcases)}")
+    print(f"[INFO] smoke={args.smoke}")
     print(f"[INFO] jobs={args.jobs}")
 
     original_dir = os.getcwd()
@@ -189,11 +220,14 @@ def main():
         total = len(selected_testcases)
         if args.jobs == 1:
             for index, testcase in enumerate(selected_testcases, start=1):
+                case_filters = resolve_case_filters(testcase_root, testcase, args.smoke)
                 print(f"[INFO] [{index}/{total}] running testcase: {testcase}")
+                if case_filters:
+                    print(f"[INFO] smoke cases: {', '.join(case_filters)}")
                 try:
-                    run_st.run_gen_data(testcase)
-                    run_st.run_binary(testcase)
-                    run_st.run_compare(testcase)
+                    run_st.run_gen_data(testcase, case_filters)
+                    run_st.run_binary(testcase, case_filters)
+                    run_st.run_compare(testcase, case_filters)
                 except Exception as exc:  # pragma: no cover - CI-side aggregation path
                     failures.append((testcase, str(exc)))
                     print(f"[ERROR] testcase failed: {testcase}")
@@ -206,14 +240,18 @@ def main():
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_testcase = {}
                 for index, testcase in enumerate(selected_testcases, start=1):
+                    case_filters = resolve_case_filters(testcase_root, testcase, args.smoke)
                     print(f"[INFO] [{index}/{total}] queue testcase: {testcase}")
+                    if case_filters:
+                        print(f"[INFO] smoke cases: {', '.join(case_filters)}")
                     future = executor.submit(
                         run_testcase_subprocess,
-                        script_path,
+                        run_st_script_path,
                         args.run_mode,
                         args.soc_version,
                         ptoas_bin,
                         testcase,
+                        case_filters,
                     )
                     future_to_testcase[future] = testcase
 
