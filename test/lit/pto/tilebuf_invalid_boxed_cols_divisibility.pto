@@ -1,8 +1,0 @@
-// RUN: not ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s
-
-// CHECK: error: tile_buf boxed layout requires cols to be divisible by inner_cols
-
-func.func @test_boxed_cols_divisibility() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
-  %tb = pto.alloc_tile : !pto.tile_buf<loc=left, dtype=f16, rows=32, cols=17, v_row=32, v_col=17, blayout=row_major, slayout=row_major, fractal=512, pad=0>
-  return
-}

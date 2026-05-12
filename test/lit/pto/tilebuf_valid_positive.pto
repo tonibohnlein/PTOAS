@@ -1,4 +1,4 @@
-// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a3 --emit-pto-ir %s -o - 2>&1 | FileCheck %s
 
 // CHECK: module attributes
 // CHECK-LABEL: func.func @test_vec_unboxed_rowmajor

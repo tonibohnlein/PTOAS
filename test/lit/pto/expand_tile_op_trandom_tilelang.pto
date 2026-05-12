@@ -6,6 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+// RUN: ptoas --pto-arch=a5 --emit-pto-ir %s -o - | FileCheck %s
+// CHECK-LABEL: func.func @TRandom_test
+
 // Test template for pto.trandom operator
 // 
 // NOTE: pto.trandom uses Philox random number generation.

@@ -1,6 +1,6 @@
 // RUN: not ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s
 
-// CHECK: error: tile_buf valid_shape[0]
+// CHECK: error: tile_buf valid_row (20) exceeds row (16)
 
 func.func @test_valid_exceeds_rows() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
   %tb = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=32, v_row=20, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
