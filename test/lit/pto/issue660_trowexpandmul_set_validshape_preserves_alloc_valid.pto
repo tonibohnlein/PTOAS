@@ -1,0 +1,47 @@
+// RUN: ptoas --pto-arch=a3 %s | FileCheck %s
+
+module {
+  func.func @issue660_trowexpandmul_then_set_validshape() {
+    %c16 = arith.constant 16 : index
+    %c256 = arith.constant 256 : index
+    %src0 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=256, v_row=16, v_col=256,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src1 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1,
+                      blayout=col_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile valid_row = %c16 valid_col = %c256
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=256, v_row=?, v_col=?,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %padded = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=256, v_row=16, v_col=256,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=3>
+    pto.trowexpandmul
+      ins(%src0, %src1
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=256, v_row=16, v_col=256,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+            !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1,
+                          blayout=col_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=256, v_row=?, v_col=?,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.set_validshape %dst, %c16, %c16
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=256, v_row=?, v_col=?,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tfillpad
+      ins(%dst
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=256, v_row=?, v_col=?,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%padded
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=256, v_row=16, v_col=256,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=3>)
+    return
+  }
+}
+
+// CHECK-DAG: const int32_t [[ROW:v[0-9]+]] = 16;
+// CHECK-DAG: const int32_t [[FULL_COL:v[0-9]+]] = 256;
+// CHECK: Tile<TileType::Vec, float, 16, 256, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[DST:v[0-9]+]] = Tile<TileType::Vec, float, 16, 256, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>([[ROW]], [[FULL_COL]]);
+// CHECK: TROWEXPANDMUL([[DST]],
+// CHECK: [[DST]].SetValidShape([[ROW]], [[ROW]]);
+// CHECK: TFILLPAD({{v[0-9]+}}, [[DST]]);

@@ -15,6 +15,7 @@ module {
   }
 }
 
-// CHECK: Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[TILE:v[0-9]+]];
+// CHECK-DAG: const int32_t [[C32:v[0-9]+]] = 32;
+// CHECK: Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[TILE:v[0-9]+]] = Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>([[C32]], [[C32]]);
 // CHECK: TASSIGN([[TILE]], [[ADDR:v[0-9]+]]);
 // CHECK: [[TILE]].SetValidShape([[ROW:v[0-9]+]], [[COL:v[0-9]+]])

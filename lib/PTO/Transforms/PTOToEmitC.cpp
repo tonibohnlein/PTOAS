@@ -10397,28 +10397,10 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
     };
 
     if (op.getSource().getDefiningOp<pto::DeclareTileMemRefOp>()) {
-      auto hasFollowingSetValidShape = [&]() {
-        for (Operation *user : op->getUsers()) {
-          auto setValidShape = dyn_cast<pto::SetValidShapeOp>(user);
-          if (!setValidShape)
-            continue;
-          if (setValidShape.getSource() != op.getResult())
-            continue;
-          return true;
-        }
-        return false;
-      };
-
       FailureOr<TileBuildSpec> tileSpec = buildTileSpec();
       if (failed(tileSpec))
         return failure();
-      TileBuildSpec declSpec = *tileSpec;
-      if (op->hasAttr(kForceDynamicValidShapeAttrName) &&
-          hasFollowingSetValidShape()) {
-        declSpec.useConstructor = false;
-        declSpec.constructorArgs.clear();
-      }
-      rewriter.replaceOp(op, buildTileValue(declSpec));
+      rewriter.replaceOp(op, buildTileValue(*tileSpec));
       return success();
     }
 
@@ -10549,22 +10531,10 @@ struct PTOAllocTileToEmitC
     if (!convertedTy)
       convertedTy = emitc::OpaqueType::get(ctx, *tileTypeString);
 
-    auto hasFollowingSetValidShape = [&]() {
-      for (Operation *user : op->getUsers()) {
-        auto setValidShape = dyn_cast<pto::SetValidShapeOp>(user);
-        if (setValidShape && setValidShape.getSource() == op.getResult())
-          return true;
-      }
-      return false;
-    };
-
-    bool suppressDynamicConstructor =
-        op->hasAttr(kForceDynamicValidShapeAttrName) &&
-        hasFollowingSetValidShape();
     auto validShape = tileTy.getValidShape();
     bool hasDynamicValidDim =
         llvm::any_of(validShape, [](int64_t dim) { return dim < 0; });
-    bool useConstructor = hasDynamicValidDim && !suppressDynamicConstructor;
+    bool useConstructor = hasDynamicValidDim;
 
     SmallVector<Value> constructorArgs;
     if (useConstructor) {
@@ -10774,16 +10744,6 @@ struct PTOMaterializeTileToEmitC
     bool isSubview = viewSemantics && viewSemantics.getValue() == "subview";
     bool sourceIsDeclaredTile =
         op.getSource().getDefiningOp<pto::DeclareTileMemRefOp>();
-    bool declaredTileHasFollowingSetValidShape = false;
-    if (sourceIsDeclaredTile) {
-      for (Operation *user : op->getUsers()) {
-        auto setValidShape = dyn_cast<pto::SetValidShapeOp>(user);
-        if (setValidShape && setValidShape.getSource() == op.getResult()) {
-          declaredTileHasFollowingSetValidShape = true;
-          break;
-        }
-      }
-    }
 
     auto createTileValue = [&]() -> Value {
       SmallVector<Value, 2> constructorArgs;
@@ -10813,9 +10773,7 @@ struct PTOMaterializeTileToEmitC
         return renderTileTemplateDim(shape[dimIdx], elemTy, blayout, dimIdx);
       };
 
-      if (sourceIsDeclaredTile && declaredTileHasFollowingSetValidShape) {
-        useConstructor = false;
-      } else if (forceDynamicValid) {
+      if (forceDynamicValid) {
         useConstructor = true;
         constructorArgs.push_back(makeCtorDimValue(
             maybeScaleDynamicValid(adaptor.getValidRow(), 0), fallbackDim(0)));
