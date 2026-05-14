@@ -230,6 +230,33 @@ def EventIdArrayType : TypeDef<PTO_Dialect, "EventIdArray"> {
   let assemblyFormat = "`<` $size `>`";
 }
 
+// ---- !pto.local_array<D1 x D2 x ... x Dk x T> ----
+// Statically-shaped C++ stack-local array. Lowers to a plain `T a[D1][D2]...;`
+// declaration in the emitted C++. Element type is restricted to scalars
+// (integer / float). This type does NOT participate in PTO memory planning
+// or pto.pointer_cast lowering — the underlying address is decided by the
+// host C++ compiler, not by PTOAS.
+def LocalArrayType : TypeDef<PTO_Dialect, "LocalArray"> {
+  let mnemonic = "local_array";
+  let summary = "C++ stack-local statically-sized array";
+  let parameters = (ins
+    ArrayRefParameter<"int64_t">:$shape,
+    "mlir::Type":$elementType
+  );
+
+  let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
+
+  let extraClassDeclaration = [{
+    int64_t getRank() const { return getShape().size(); }
+    int64_t getNumElements() const {
+      int64_t num = 1;
+      for (int64_t d : getShape()) num *= d;
+      return num;
+    }
+  }];
+}
+
 def PipeType : TypeDef<PTO_Dialect, "Pipe"> {
   let mnemonic = "pipe";
   let summary = "Opaque pipe handle type for TPUSH/TPOP communication";

@@ -59,9 +59,9 @@ def PTOInjectBarrierAllSync : Pass<"pto-inject-barrier-all-sync", "func::FuncOp"
 
 // Define PTOGraphSyncSolver Pass (graph-based intra-core sync solver).
 // Coexists with PTOInsertSync; selectable via the driver flag
-// `--enable-graph-sync-solver`. Minimal port of bishengir's GraphSyncSolver:
-// Dijkstra-based reachability pruning + Welsh-Powell event-id coloring with
-// fallback to a single PIPE_ALL barrier when the budget is exceeded.
+// `--enable-graph-sync-solver`. Ported from bishengir's GraphSyncSolver core:
+// hierarchical SyncSolver IR, conflict graph pruning, event-id coloring and
+// barrier fallback, with PTO-specific IR translation and sync op codegen.
 def PTOGraphSyncSolver : Pass<"pto-graph-sync-solver", "func::FuncOp"> {
   let summary = "Graph-based intra-core synchronization solver for PTO";
   let description = [{
@@ -76,8 +76,8 @@ def PTOGraphSyncSolver : Pass<"pto-graph-sync-solver", "func::FuncOp"> {
   let options = [
     Option<"eventIdNumMax", "event-id-num-max", "int64_t",
            /*default=*/"8",
-           "Maximum EVENT_ID slots usable by Welsh-Powell coloring; exceeding "
-           "the budget falls back to a single PIPE_ALL barrier.">,
+           "Maximum EVENT_ID slots usable by coloring; this caps the hardware "
+           "available event-id budget used by the graph solver.">,
   ];
 
   let dependentDialects = [

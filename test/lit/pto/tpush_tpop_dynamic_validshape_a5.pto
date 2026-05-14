@@ -48,12 +48,12 @@ module {
 
 // A5-LABEL: AICORE void cube_kernel(
 // A5: auto {{v[0-9]+}} = TPipe<0, Direction::DIR_BOTH, 1024, 4, 2, false>(
-// A5: Tile<TileType::Mat, float, 16, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Null> [[CUBE_TILE:v[0-9]+]];
+// A5: Tile<TileType::Mat, float, 16, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Null> [[CUBE_TILE:v[0-9]+]] = Tile<TileType::Mat, float, 16, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Null>({{v[0-9]+}}, {{v[0-9]+}});
 // A5: [[CUBE_TILE]].SetValidShape({{v[0-9]+}}, {{v[0-9]+}});
 // A5: TPOP<TPipe<0, Direction::DIR_BOTH, 1024, 4, 2, false>, Tile<TileType::Mat, float, 16, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_LEFT_RIGHT>({{v[0-9]+}}, [[CUBE_TILE]]);
 
 // A5-LABEL: AICORE void vector_kernel(
 // A5: auto {{v[0-9]+}} = TPipe<0, Direction::DIR_BOTH, 1024, 4, 2, false>(
-// A5: Tile<TileType::Vec, float, 16, 64, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[VEC_TILE:v[0-9]+]];
+// A5: Tile<TileType::Vec, float, 16, 64, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[VEC_TILE:v[0-9]+]] = Tile<TileType::Vec, float, 16, 64, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>({{v[0-9]+}}, {{v[0-9]+}});
 // A5: [[VEC_TILE]].SetValidShape({{v[0-9]+}}, {{v[0-9]+}});
 // A5: TPOP<TPipe<0, Direction::DIR_BOTH, 1024, 4, 2, false>, Tile<TileType::Vec, float, 16, 64, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_LEFT_RIGHT>({{v[0-9]+}}, [[VEC_TILE]]);

@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas %s 2>&1 | FileCheck %s
+
+// Stack-local 2D array: declare, set at (i, j), get at (j, i), set the
+// read-back to (i, j). Expected: lowers to `float m[8][8];` plus chained
+// `m[i][j] = v;` / `m[i][j] = m[j][i];` in the emitted C++.
+
+module {
+  func.func @local_array_2d(%i : index, %j : index, %v : f32) {
+    %m = pto.declare_local_array -> !pto.local_array<8x8xf32>
+    pto.local_array_set %m[%i, %j], %v : !pto.local_array<8x8xf32>, f32
+    %r = pto.local_array_get %m[%j, %i] : !pto.local_array<8x8xf32> -> f32
+    pto.local_array_set %m[%i, %j], %r : !pto.local_array<8x8xf32>, f32
+    return
+  }
+}
+
+// CHECK-LABEL: local_array_2d
+// CHECK: float [[M:v[0-9]+]][8][8];
+// CHECK: [[M]][{{v[0-9]+}}][{{v[0-9]+}}] = {{v[0-9]+}};
+// CHECK: [[M]][{{v[0-9]+}}][{{v[0-9]+}}] = [[M]][{{v[0-9]+}}][{{v[0-9]+}}];

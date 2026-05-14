@@ -1709,6 +1709,11 @@ def TPutOp : PTO_Op<"comm.tput", [
   );
   let results = (outs);
   let hasVerifier = 1;
+  let assemblyFormat = [{
+    `(` $dst `,` $src `,` `buf` `(` $ping (`,` $pong^)? `)`
+    `:` type($dst) `,` type($src) `,` type($ping) (`,` type($pong)^)? `)`
+    attr-dict
+  }];
 }
 
 def TGetOp : PTO_Op<"comm.tget", [
@@ -1723,6 +1728,11 @@ def TGetOp : PTO_Op<"comm.tget", [
   );
   let results = (outs);
   let hasVerifier = 1;
+  let assemblyFormat = [{
+    `(` $dst `,` $src `,` `buf` `(` $ping (`,` $pong^)? `)`
+    `:` type($dst) `,` type($src) `,` type($ping) (`,` type($pong)^)? `)`
+    attr-dict
+  }];
 }
 
 def TNotifyOp : PTO_Op<"comm.tnotify", [
@@ -1736,6 +1746,10 @@ def TNotifyOp : PTO_Op<"comm.tnotify", [
   );
   let results = (outs);
   let hasVerifier = 1;
+  let assemblyFormat = [{
+    `(` $signal `,` $value `:` type($signal) `,` type($value) `)`
+    attr-dict
+  }];
 }
 
 def TWaitOp : PTO_Op<"comm.twait", [
@@ -1749,6 +1763,10 @@ def TWaitOp : PTO_Op<"comm.twait", [
   );
   let results = (outs);
   let hasVerifier = 1;
+  let assemblyFormat = [{
+    `(` $signal `,` $cmpValue `:` type($signal) `,` type($cmpValue) `)`
+    attr-dict
+  }];
 }
 
 def TTestOp : PTO_Op<"comm.ttest", [
@@ -1762,6 +1780,10 @@ def TTestOp : PTO_Op<"comm.ttest", [
   );
   let results = (outs I1:$result);
   let hasVerifier = 1;
+  let assemblyFormat = [{
+    `(` $signal `,` $cmpValue `:` type($signal) `,` type($cmpValue) `)`
+    attr-dict `->` type($result)
+  }];
 }
 
 def TBroadcastOp : PTO_Op<"comm.tbroadcast", [
@@ -1778,9 +1800,10 @@ def TBroadcastOp : PTO_Op<"comm.tbroadcast", [
   );
   let results = (outs);
   let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
 }
 
-def CommTGatherOp : PTO_Op<"comm.comm_tgather", [
+def CommTGatherOp : PTO_Op<"comm.tgather", [
     AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
@@ -1794,9 +1817,10 @@ def CommTGatherOp : PTO_Op<"comm.comm_tgather", [
   );
   let results = (outs);
   let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
 }
 
-def CommTScatterOp : PTO_Op<"comm.comm_tscatter", [
+def CommTScatterOp : PTO_Op<"comm.tscatter", [
     AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
@@ -1810,6 +1834,7 @@ def CommTScatterOp : PTO_Op<"comm.comm_tscatter", [
   );
   let results = (outs);
   let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
 }
 
 def TReduceOp : PTO_Op<"comm.treduce", [
@@ -1828,6 +1853,7 @@ def TReduceOp : PTO_Op<"comm.treduce", [
   );
   let results = (outs);
   let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
 }
 
 def InitializeL2G2LPipeOp : PTO_Op<"initialize_l2g2l_pipe", [
@@ -2057,6 +2083,75 @@ def EventIdArraySetOp : PTO_Op<"eventid_array_set"> {
 
   let assemblyFormat = [{
     $array `[` $index `]` `,` $value attr-dict `:` qualified(type($array))
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Stack-local array (minimum set)
+//===----------------------------------------------------------------------===//
+//
+// Mirrors the `eventid_array` triad (declare / get / set) for a generic
+// statically-shaped scalar stack array. Disjoint from the tile-buf / scratch
+// memory world: the array's address is decided by the host C++ compiler at
+// codegen time, never by PTO memory planning or `pto.pointer_cast`.
+
+def DeclareLocalArrayOp : PTO_Op<"declare_local_array"> {
+  let summary = "Declare a stack-local statically-shaped array";
+  let description = [{
+    Lowers to a plain C++ stack variable like `T a[d1][d2]...;`. The element
+    type is restricted to scalars (integer / float); no nested aggregates.
+
+    This op does not participate in PTO memory planning. The resulting array's
+    address is determined by the host C++ compiler.
+  }];
+
+  let results = (outs LocalArrayType:$array);
+
+  let assemblyFormat = [{
+    attr-dict `->` qualified(type($array))
+  }];
+}
+
+def LocalArrayGetOp : PTO_Op<"local_array_get"> {
+  let summary = "Read one element from a stack-local array";
+  let description = [{
+    Lowers to `a[i0][i1]...[iN-1]` (an rvalue) in the emitted C++. The number
+    of indices must equal the array's rank.
+  }];
+
+  let arguments = (ins
+    LocalArrayType:$array,
+    Variadic<Index>:$indices
+  );
+  let results = (outs ScalarType:$result);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $array `[` $indices `]` attr-dict
+      `:` qualified(type($array)) `->` type($result)
+  }];
+}
+
+def LocalArraySetOp : PTO_Op<"local_array_set"> {
+  let summary = "Write one element into a stack-local array";
+  let description = [{
+    Lowers to `a[i0][i1]...[iN-1] = v;` in the emitted C++. The number of
+    indices must equal the array's rank.
+  }];
+
+  let arguments = (ins
+    LocalArrayType:$array,
+    Variadic<Index>:$indices,
+    ScalarType:$value
+  );
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $array `[` $indices `]` `,` $value attr-dict
+      `:` qualified(type($array)) `,` type($value)
   }];
 }
 

@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas %s 2>&1 | FileCheck %s
+
+// Stack-local 1D array: declare, set by dynamic index, get by another dynamic
+// index, set the read-back. Expected: lowers to `int32_t a[16];` plus
+// `a[i] = v;` / `a[i] = a[j];` in the emitted C++.
+
+module {
+  func.func @local_array_1d(%i : index, %j : index, %v : i32) {
+    %a = pto.declare_local_array -> !pto.local_array<16xi32>
+    pto.local_array_set %a[%i], %v : !pto.local_array<16xi32>, i32
+    %r = pto.local_array_get %a[%j] : !pto.local_array<16xi32> -> i32
+    pto.local_array_set %a[%i], %r : !pto.local_array<16xi32>, i32
+    return
+  }
+}
+
+// CHECK-LABEL: local_array_1d
+// CHECK: int32_t [[A:v[0-9]+]][16];
+// CHECK: [[A]][{{v[0-9]+}}] = {{v[0-9]+}};
+// CHECK: [[A]][{{v[0-9]+}}] = [[A]][{{v[0-9]+}}];

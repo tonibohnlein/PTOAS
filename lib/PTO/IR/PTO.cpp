@@ -791,6 +791,273 @@ void mlir::pto::TGatherOp::print(OpAsmPrinter &p) {
   }
 }
 
+namespace {
+
+struct CommRecvClause {
+  OpAsmParser::UnresolvedOperand ping;
+  std::optional<OpAsmParser::UnresolvedOperand> pong;
+  Type pingTy;
+  Type pongTy;
+};
+
+static ParseResult parseCommRecvClause(OpAsmParser &parser,
+                                       CommRecvClause &recvClause) {
+  if (parser.parseKeyword("recv") || parser.parseLParen() ||
+      parser.parseOperand(recvClause.ping))
+    return failure();
+  if (succeeded(parser.parseOptionalComma())) {
+    OpAsmParser::UnresolvedOperand pong;
+    if (parser.parseOperand(pong))
+      return failure();
+    recvClause.pong = pong;
+  }
+  return parser.parseRParen();
+}
+
+static ParseResult parseCommCollectiveTail(
+    OpAsmParser &parser, OperationState &result,
+    ArrayRef<OpAsmParser::UnresolvedOperand> fixedOperands,
+    SmallVectorImpl<Type> &fixedTypes, CommRecvClause &recvClause,
+    SmallVectorImpl<OpAsmParser::UnresolvedOperand> &groupOps,
+    SmallVectorImpl<Type> &groupTypes, ArrayRef<int32_t> operandSegmentsPrefix,
+    ArrayRef<StringRef> requiredAttrs) {
+  if (parser.parseComma() || parser.parseKeyword("group") || parser.parseLParen())
+    return failure();
+
+  OpAsmParser::UnresolvedOperand group;
+  if (parser.parseOperand(group))
+    return failure();
+  groupOps.push_back(group);
+  while (succeeded(parser.parseOptionalComma())) {
+    if (parser.parseOperand(group))
+      return failure();
+    groupOps.push_back(group);
+  }
+
+  if (parser.parseRParen())
+    return failure();
+
+  if (parser.parseColon())
+    return failure();
+
+  for (size_t i = 0; i < fixedTypes.size(); ++i) {
+    if (i != 0 && parser.parseComma())
+      return failure();
+    if (parser.parseType(fixedTypes[i]))
+      return failure();
+  }
+  if (parser.parseComma() || parser.parseType(recvClause.pingTy))
+    return failure();
+  if (recvClause.pong) {
+    if (parser.parseComma() || parser.parseType(recvClause.pongTy))
+      return failure();
+  }
+  for (size_t i = 0; i < groupOps.size(); ++i) {
+    Type groupTy;
+    if (parser.parseComma() || parser.parseType(groupTy))
+      return failure();
+    groupTypes.push_back(groupTy);
+  }
+  if (parser.parseRParen())
+    return failure();
+
+  NamedAttrList attrs;
+  if (parser.parseOptionalAttrDict(attrs))
+    return failure();
+  for (StringRef attrName : requiredAttrs) {
+    if (!attrs.get(attrName)) {
+      return parser.emitError(parser.getCurrentLocation())
+             << "expected '" << attrName << "' attribute";
+    }
+  }
+  result.addAttributes(attrs);
+
+  for (auto [operand, type] : llvm::zip_equal(fixedOperands, fixedTypes)) {
+    if (parser.resolveOperand(operand, type, result.operands))
+      return failure();
+  }
+  if (parser.resolveOperand(recvClause.ping, recvClause.pingTy, result.operands))
+    return failure();
+  if (recvClause.pong &&
+      parser.resolveOperand(*recvClause.pong, recvClause.pongTy, result.operands))
+    return failure();
+  if (parser.resolveOperands(groupOps, groupTypes, parser.getCurrentLocation(),
+                             result.operands))
+    return failure();
+
+  SmallVector<int32_t, 5> segmentSizes(operandSegmentsPrefix.begin(),
+                                       operandSegmentsPrefix.end());
+  segmentSizes.push_back(static_cast<int32_t>(groupOps.size()));
+  result.addAttribute("operandSegmentSizes",
+                      parser.getBuilder().getDenseI32ArrayAttr(segmentSizes));
+  return success();
+}
+
+static void printCommRecvClause(OpAsmPrinter &p, Value ping, Value pong) {
+  p << "recv(" << ping;
+  if (pong)
+    p << ", " << pong;
+  p << ")";
+}
+
+static void printCommGroupTypes(OpAsmPrinter &p, ValueRange group) {
+  for (Value groupValue : group)
+    p << ", " << groupValue.getType();
+}
+
+static void printCommGroupClause(OpAsmPrinter &p, ValueRange group) {
+  p << "group(";
+  p.printOperands(group);
+  p << ")";
+}
+
+} // namespace
+
+ParseResult mlir::pto::TBroadcastOp::parse(OpAsmParser &parser,
+                                           OperationState &result) {
+  OpAsmParser::UnresolvedOperand src;
+  CommRecvClause recvClause;
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> groupOps;
+  SmallVector<Type, 4> groupTypes;
+
+  if (parser.parseLParen() || parser.parseOperand(src) || parser.parseComma())
+    return failure();
+  if (failed(parseCommRecvClause(parser, recvClause)))
+    return failure();
+
+  SmallVector<OpAsmParser::UnresolvedOperand, 1> fixedOperands{src};
+  SmallVector<Type, 1> fixedTypes(1);
+  if (failed(parseCommCollectiveTail(parser, result, fixedOperands, fixedTypes,
+                                     recvClause, groupOps, groupTypes,
+                                     {1, 1, recvClause.pong ? 1 : 0}, {"root"})))
+    return failure();
+  return success();
+}
+
+void mlir::pto::TBroadcastOp::print(OpAsmPrinter &p) {
+  p << "(" << getSrc() << ", ";
+  printCommRecvClause(p, getPing(), getPong());
+  p << ", ";
+  printCommGroupClause(p, getGroup());
+  p << " : " << getSrc().getType() << ", " << getPing().getType();
+  if (getPong())
+    p << ", " << getPong().getType();
+  printCommGroupTypes(p, getGroup());
+  p << ")";
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          /*elidedAttrs=*/{"operandSegmentSizes"});
+}
+
+ParseResult mlir::pto::CommTGatherOp::parse(OpAsmParser &parser,
+                                            OperationState &result) {
+  OpAsmParser::UnresolvedOperand dst;
+  CommRecvClause recvClause;
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> groupOps;
+  SmallVector<Type, 4> groupTypes;
+
+  if (parser.parseLParen() || parser.parseOperand(dst) || parser.parseComma())
+    return failure();
+  if (failed(parseCommRecvClause(parser, recvClause)))
+    return failure();
+
+  SmallVector<OpAsmParser::UnresolvedOperand, 1> fixedOperands{dst};
+  SmallVector<Type, 1> fixedTypes(1);
+  if (failed(parseCommCollectiveTail(
+          parser, result, fixedOperands, fixedTypes, recvClause, groupOps,
+          groupTypes, {1, 1, recvClause.pong ? 1 : 0},
+          {"root"})))
+    return failure();
+  return success();
+}
+
+void mlir::pto::CommTGatherOp::print(OpAsmPrinter &p) {
+  p << "(" << getDst() << ", ";
+  printCommRecvClause(p, getPing(), getPong());
+  p << ", ";
+  printCommGroupClause(p, getGroup());
+  p << " : " << getDst().getType() << ", " << getPing().getType();
+  if (getPong())
+    p << ", " << getPong().getType();
+  printCommGroupTypes(p, getGroup());
+  p << ")";
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          /*elidedAttrs=*/{"operandSegmentSizes"});
+}
+
+ParseResult mlir::pto::CommTScatterOp::parse(OpAsmParser &parser,
+                                             OperationState &result) {
+  OpAsmParser::UnresolvedOperand src;
+  CommRecvClause recvClause;
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> groupOps;
+  SmallVector<Type, 4> groupTypes;
+
+  if (parser.parseLParen() || parser.parseOperand(src) || parser.parseComma())
+    return failure();
+  if (failed(parseCommRecvClause(parser, recvClause)))
+    return failure();
+
+  SmallVector<OpAsmParser::UnresolvedOperand, 1> fixedOperands{src};
+  SmallVector<Type, 1> fixedTypes(1);
+  if (failed(parseCommCollectiveTail(
+          parser, result, fixedOperands, fixedTypes, recvClause, groupOps,
+          groupTypes, {1, 1, recvClause.pong ? 1 : 0},
+          {"root"})))
+    return failure();
+  return success();
+}
+
+void mlir::pto::CommTScatterOp::print(OpAsmPrinter &p) {
+  p << "(" << getSrc() << ", ";
+  printCommRecvClause(p, getPing(), getPong());
+  p << ", ";
+  printCommGroupClause(p, getGroup());
+  p << " : " << getSrc().getType() << ", " << getPing().getType();
+  if (getPong())
+    p << ", " << getPong().getType();
+  printCommGroupTypes(p, getGroup());
+  p << ")";
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          /*elidedAttrs=*/{"operandSegmentSizes"});
+}
+
+ParseResult mlir::pto::TReduceOp::parse(OpAsmParser &parser,
+                                        OperationState &result) {
+  OpAsmParser::UnresolvedOperand dst, acc;
+  CommRecvClause recvClause;
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> groupOps;
+  SmallVector<Type, 4> groupTypes;
+
+  if (parser.parseLParen() || parser.parseOperand(dst) || parser.parseComma() ||
+      parser.parseOperand(acc) || parser.parseComma())
+    return failure();
+  if (failed(parseCommRecvClause(parser, recvClause)))
+    return failure();
+
+  SmallVector<OpAsmParser::UnresolvedOperand, 2> fixedOperands{dst, acc};
+  SmallVector<Type, 2> fixedTypes(2);
+  if (failed(parseCommCollectiveTail(
+          parser, result, fixedOperands, fixedTypes, recvClause, groupOps,
+          groupTypes, {1, 1, 1, recvClause.pong ? 1 : 0},
+          {"reduceOp", "root"})))
+    return failure();
+  return success();
+}
+
+void mlir::pto::TReduceOp::print(OpAsmPrinter &p) {
+  p << "(" << getDst() << ", " << getAcc() << ", ";
+  printCommRecvClause(p, getRecvPing(), getRecvPong());
+  p << ", ";
+  printCommGroupClause(p, getGroup());
+  p << " : " << getDst().getType() << ", " << getAcc().getType() << ", "
+    << getRecvPing().getType();
+  if (getRecvPong())
+    p << ", " << getRecvPong().getType();
+  printCommGroupTypes(p, getGroup());
+  p << ")";
+  p.printOptionalAttrDict((*this)->getAttrs(),
+                          /*elidedAttrs=*/{"operandSegmentSizes"});
+}
+
 ParseResult mlir::pto::MakeTensorViewOp::parse(OpAsmParser &parser,
                                                OperationState &result) {
   OpAsmParser::UnresolvedOperand ptr;
@@ -1057,6 +1324,129 @@ static LogicalResult verifyInsertStaticBoundsCommon(
 
 static unsigned getElemByteSize(Type ty) {
   return getPTOStorageElemByteSize(ty);
+}
+
+static LogicalResult verifyTileBufLayoutConstraints(Operation *op,
+                                                    pto::TileBufType tb,
+                                                    StringRef name) {
+  auto shape = tb.getShape();
+  if (shape.size() != 2)
+    return op->emitOpError() << "expects " << name << " to be rank-2";
+
+  int64_t rows = shape[0];
+  int64_t cols = shape[1];
+  if (rows != ShapedType::kDynamic && rows <= 0)
+    return op->emitOpError() << "expects " << name << " rows to be positive";
+  if (cols != ShapedType::kDynamic && cols <= 0)
+    return op->emitOpError() << "expects " << name << " cols to be positive";
+
+  unsigned elemBytes = getElemByteSize(tb.getElementType());
+  if (elemBytes == 0)
+    return op->emitOpError() << "expects " << name
+                             << " element type to have a byte size";
+
+  auto cfg = tb.getConfigAttr();
+  if (!cfg)
+    cfg = TileBufConfigAttr::getDefault(tb.getContext());
+  auto readBLayout = [](Attribute attr, int32_t &out) -> bool {
+    if (auto layout = dyn_cast_or_null<BLayoutAttr>(attr)) {
+      out = static_cast<int32_t>(layout.getValue());
+      return true;
+    }
+    if (auto value = dyn_cast_or_null<IntegerAttr>(attr)) {
+      out = static_cast<int32_t>(value.getInt());
+      return true;
+    }
+    return false;
+  };
+  auto readSLayout = [](Attribute attr, int32_t &out) -> bool {
+    if (auto layout = dyn_cast_or_null<SLayoutAttr>(attr)) {
+      out = static_cast<int32_t>(layout.getValue());
+      return true;
+    }
+    if (auto value = dyn_cast_or_null<IntegerAttr>(attr)) {
+      out = static_cast<int32_t>(value.getInt());
+      return true;
+    }
+    return false;
+  };
+  int32_t blayout = 0;
+  int32_t slayout = 0;
+  if (!readBLayout(cfg.getBLayout(), blayout) ||
+      !readSLayout(cfg.getSLayout(), slayout))
+    return op->emitOpError() << "expects " << name
+                             << " to have concrete tile layout attributes";
+  constexpr int64_t kAlignedBytes = 32;
+
+  auto checkByteAlignment = [&](int64_t dim, StringRef layoutName,
+                                StringRef byteExpr) -> LogicalResult {
+    if (dim == ShapedType::kDynamic)
+      return success();
+    int64_t bytes = dim * static_cast<int64_t>(elemBytes);
+    if (bytes % kAlignedBytes == 0)
+      return success();
+    return op->emitOpError()
+           << "expects " << name << " " << layoutName
+           << " none_box tile " << byteExpr
+           << " to be 32-byte aligned, but got " << bytes << " bytes";
+  };
+
+  if (slayout == static_cast<int32_t>(SLayout::NoneBox)) {
+    if (blayout == static_cast<int32_t>(BLayout::RowMajor))
+      return checkByteAlignment(cols, "row-major",
+                                "row byte size (cols * sizeof(dtype))");
+    return checkByteAlignment(rows, "col-major",
+                              "column byte size (rows * sizeof(dtype))");
+  }
+
+  int64_t innerRows = 0;
+  int64_t innerCols = 0;
+  int32_t fractal = static_cast<int32_t>(cfg.getSFractalSize().getInt());
+  switch (fractal) {
+  case 1024:
+    innerRows = 16;
+    innerCols = 16;
+    break;
+  case 32:
+    innerRows = 16;
+    innerCols = 2;
+    break;
+  case 512:
+    if (kAlignedBytes % elemBytes != 0)
+      return op->emitOpError() << "expects " << name
+                               << " element byte size to divide 32 for boxed "
+                                  "fractal-512 tile layout";
+    if (slayout == static_cast<int32_t>(SLayout::RowMajor)) {
+      innerRows = 16;
+      innerCols = kAlignedBytes / static_cast<int64_t>(elemBytes);
+    } else if (slayout == static_cast<int32_t>(SLayout::ColMajor)) {
+      innerRows = kAlignedBytes / static_cast<int64_t>(elemBytes);
+      innerCols = 16;
+    }
+    break;
+  default:
+    break;
+  }
+  if (innerRows <= 0 || innerCols <= 0)
+    return op->emitOpError() << "expects " << name
+                             << " to use a supported boxed tile layout";
+
+  auto loc = getPTOMemorySpaceEnum(tb);
+  bool allowUnalignedRows =
+      (loc && *loc == pto::AddressSpace::VEC) || fractal == 32 || rows == 1;
+  if (!allowUnalignedRows && rows != ShapedType::kDynamic &&
+      rows % innerRows != 0)
+    return op->emitOpError()
+           << "expects " << name
+           << " boxed tile rows to be a multiple of innerRows (" << innerRows
+           << "), but got " << rows;
+  if (cols != ShapedType::kDynamic && cols % innerCols != 0)
+    return op->emitOpError()
+           << "expects " << name
+           << " boxed tile cols to be a multiple of innerCols (" << innerCols
+           << "), but got " << cols;
+
+  return success();
 }
 
 [[maybe_unused]] static bool isSupportedLoadStoreElemTypeA2A3(Type ty) {
@@ -1520,6 +1910,37 @@ LogicalResult mlir::pto::AddPtrOp::verify() {
   return success();
 }
 
+LogicalResult mlir::pto::LocalArrayGetOp::verify() {
+  auto arrayTy = getArray().getType();
+  int64_t rank = arrayTy.getRank();
+  int64_t numIdx = static_cast<int64_t>(getIndices().size());
+  if (numIdx != rank)
+    return emitOpError() << "expects " << rank
+                         << " indices for !pto.local_array of rank " << rank
+                         << ", got " << numIdx;
+  if (getResult().getType() != arrayTy.getElementType())
+    return emitOpError()
+           << "result type " << getResult().getType()
+           << " does not match array element type "
+           << arrayTy.getElementType();
+  return success();
+}
+
+LogicalResult mlir::pto::LocalArraySetOp::verify() {
+  auto arrayTy = getArray().getType();
+  int64_t rank = arrayTy.getRank();
+  int64_t numIdx = static_cast<int64_t>(getIndices().size());
+  if (numIdx != rank)
+    return emitOpError() << "expects " << rank
+                         << " indices for !pto.local_array of rank " << rank
+                         << ", got " << numIdx;
+  if (getValue().getType() != arrayTy.getElementType())
+    return emitOpError() << "value type " << getValue().getType()
+                         << " does not match array element type "
+                         << arrayTy.getElementType();
+  return success();
+}
+
 
 
 
@@ -1714,6 +2135,9 @@ LogicalResult AllocTileOp::verify() {
     return emitOpError() << "result dtype " << elemTy
                          << " is not supported by pto.alloc_tile yet";
 
+  if (failed(verifyTileBufLayoutConstraints(*this, ty, "result")))
+    return failure();
+
   // op 上有没有传 operands
   bool hasVR = getValidRow() != nullptr;
   bool hasVC = getValidCol() != nullptr;
@@ -1753,6 +2177,8 @@ LogicalResult MaterializeTileOp::verify() {
     return emitOpError("source memref must be rank-2 to materialize a tile handle");
   if (resultTy.getRank() != 2)
     return emitOpError("result tile_buf must be rank-2");
+  if (failed(verifyTileBufLayoutConstraints(*this, resultTy, "result")))
+    return failure();
 
   auto viewSemantics = (*this)->getAttrOfType<StringAttr>("pto.view_semantics");
   bool isSubview = viewSemantics && viewSemantics.getValue() == "subview";
@@ -5393,9 +5819,9 @@ mlir::LogicalResult mlir::pto::TMaxOp::verify() {
 mlir::LogicalResult mlir::pto::TMaxSOp::verify() {
   return verifyArithmeticScalarTileOpWithArchDispatch(
       getOperation(), getSrc().getType(), getDst().getType(), getScalar().getType(),
-      /*allowInt8OnA5=*/true, /*allowBf16OnA5=*/false,
+      /*allowInt8OnA5=*/true, /*allowBf16OnA5=*/true,
       "expects A2/A3 tmaxs element type to be i32/i16/f16/f32",
-      "expects A5 tmaxs element type to be i32/i16/i8/f16/f32",
+      "expects A5 tmaxs element type to be i32/i16/i8/f16/bf16/f32",
       /*requireValidRowsEqualOnA2A3=*/true,
       /*requireValidRowsEqualOnA5=*/true);
 }
@@ -6329,10 +6755,22 @@ mlir::LogicalResult mlir::pto::TMrgSortOp::verify() {
       return emitOpError() << "format2 expects dst/tmp element types to match";
     auto dstShape = getShapeVec(dstTy);
     auto tmpShape = getShapeVec(tmpTy);
-    if (dstShape != tmpShape)
-      return emitOpError() << "format2 expects dst/tmp shapes to match";
+    if (dstShape.size() != 2 || tmpShape.size() != 2)
+      return emitOpError() << "format2 expects dst/tmp to be rank-2 tile-shaped";
+    if ((dstShape[0] != mlir::ShapedType::kDynamic && dstShape[0] != 1) ||
+        (tmpShape[0] != mlir::ShapedType::kDynamic && tmpShape[0] != 1))
+      return emitOpError() << "format2 expects dst/tmp rows == 1";
+    if (dstShape[1] != mlir::ShapedType::kDynamic &&
+        tmpShape[1] != mlir::ShapedType::kDynamic &&
+        tmpShape[1] < dstShape[1])
+      return emitOpError() << "format2 expects tmp.cols >= dst.cols";
     for (Value src : getSrcs()) {
       Type srcTy = src.getType();
+      auto srcShape = getShapeVec(srcTy);
+      if (srcShape.size() != 2)
+        return emitOpError() << "format2 expects src to be rank-2 tile-shaped";
+      if (srcShape[0] != mlir::ShapedType::kDynamic && srcShape[0] != 1)
+        return emitOpError() << "format2 expects src rows == 1";
       if (getElemTy(srcTy) != elemTy)
         return emitOpError() << "format2 expects src/dst/tmp element types to match";
     }
@@ -8239,12 +8677,12 @@ mlir::LogicalResult mlir::pto::TSelOp::verify() {
     if (failed(srcElem))
       return failure();
     Type elem = *srcElem;
-    bool ok = elem.isF16() || elem.isF32();
+    bool ok = elem.isF16() || elem.isBF16() || elem.isF32();
     if (auto it = dyn_cast<IntegerType>(elem))
       ok = it.getWidth() == 16 || it.getWidth() == 32;
     if (!ok)
       return emitOpError(
-          "expects A2/A3 tsel src0, src1, and dst element type to be i16/i32/f16/f32");
+          "expects A2/A3 tsel src0, src1, and dst element type to be i16/i32/f16/bf16/f32");
     return success();
   };
 
@@ -8253,12 +8691,12 @@ mlir::LogicalResult mlir::pto::TSelOp::verify() {
     if (failed(srcElem))
       return failure();
     Type elem = *srcElem;
-    bool ok = elem.isF16() || elem.isF32();
+    bool ok = elem.isF16() || elem.isBF16() || elem.isF32();
     if (auto it = dyn_cast<IntegerType>(elem))
       ok = it.getWidth() == 8 || it.getWidth() == 16 || it.getWidth() == 32;
     if (!ok)
       return emitOpError(
-          "expects A5 tsel src0, src1, and dst element type to be i8/i16/i32/f16/f32");
+          "expects A5 tsel src0, src1, and dst element type to be i8/i16/i32/f16/bf16/f32");
     return success();
   };
 
@@ -8989,6 +9427,43 @@ Type TileType::parse(AsmParser &parser) {
 
 void TileType::print(AsmPrinter &printer) const {
   printShapeAndElem(printer, getShape(), getElementType());
+}
+
+// ---- LocalArrayType ----
+// Asm form: !pto.local_array<D1 x D2 x ... x Dk x T>
+// Static shape only (no '?'). Element type must be a scalar; this is enforced
+// by the type verifier below.
+Type LocalArrayType::parse(AsmParser &parser) {
+  SmallVector<int64_t, 4> shape;
+  Type elemTy;
+  if (failed(parseShapeAndElem(parser, shape, elemTy, /*allowDynamic=*/false)))
+    return Type();
+  return LocalArrayType::getChecked(
+      [&]() { return parser.emitError(parser.getNameLoc()); },
+      parser.getContext(), shape, elemTy);
+}
+
+void LocalArrayType::print(AsmPrinter &printer) const {
+  printShapeAndElem(printer, getShape(), getElementType());
+}
+
+LogicalResult LocalArrayType::verify(
+    llvm::function_ref<InFlightDiagnostic()> emitError,
+    llvm::ArrayRef<int64_t> shape, Type elementType) {
+  if (shape.empty())
+    return emitError() << "'!pto.local_array' requires at least one dimension";
+  for (auto [i, d] : llvm::enumerate(shape)) {
+    if (d <= 0)
+      return emitError()
+             << "'!pto.local_array' dimension " << i
+             << " must be a positive static size, got " << d;
+  }
+  if (!elementType.isIntOrFloat())
+    return emitError()
+           << "'!pto.local_array' element type must be a scalar integer or "
+              "float, got "
+           << elementType;
+  return success();
 }
 
 // =============================================================================

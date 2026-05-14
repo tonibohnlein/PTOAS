@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas %s 2>&1 | FileCheck %s
+
+// Verify that pto.local_array_get behaves as a real scalar rvalue: its result
+// flows into arith ops without an explicit load. The expected C++ shape is
+// `t = a[j] + 1; a[i] = t;` (or any expression-folded equivalent).
+
+module {
+  func.func @local_array_get_rvalue(%i : index, %j : index) {
+    %a = pto.declare_local_array -> !pto.local_array<16xi32>
+    %c1 = arith.constant 1 : i32
+    %r = pto.local_array_get %a[%j] : !pto.local_array<16xi32> -> i32
+    %s = arith.addi %r, %c1 : i32
+    pto.local_array_set %a[%i], %s : !pto.local_array<16xi32>, i32
+    return
+  }
+}
+
+// CHECK-LABEL: local_array_get_rvalue
+// CHECK: int32_t [[A:v[0-9]+]][16];
+// `a[i] = ...a[j]... + ...;` — confirms the get result flows through arith as
+// a scalar rvalue. The exact cast/paren shape comes from arith.addi's signless
+// overflow-aware lowering; we only pin the subscript-rvalue flow here.
+// CHECK: [[A]][{{v[0-9]+}}] = {{.*}}[[A]][{{v[0-9]+}}]{{.*}};
