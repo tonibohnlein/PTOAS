@@ -28,6 +28,7 @@ constexpr const uint kBlockSyncAllVectorEventId = 15;
 constexpr const uint kBlockSyncSetWaitEventIdNum = 16;
 constexpr const uint kMaxWidenTryNum = 99;
 constexpr const uint kReallocatedPipePairInlineCapacity = 16;
+constexpr const uint kReservedBlockSyncEventIdNum = 2;
  
 /// Event ID 生命周期池
 struct EventCyclePool {

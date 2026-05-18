@@ -25,6 +25,21 @@
 
 namespace ptobc {
 
+namespace {
+
+constexpr unsigned kHexFloatInlineCapacity = 32;
+constexpr unsigned kDigitInlineCapacity = 32;
+constexpr unsigned kNamedAttributeInlineCapacity = 8;
+constexpr size_t kSSAReserveCapacity = 256;
+constexpr size_t kRenameMapReserveMultiplier = 2;
+constexpr unsigned kHexadecimalRadix = 16;
+
+using DigitBuffer = llvm::SmallVector<char, kDigitInlineCapacity>;
+using NamedAttributeVector =
+    llvm::SmallVector<mlir::NamedAttribute, kNamedAttributeInlineCapacity>;
+
+} // namespace
+
 static std::vector<std::string> splitLinesPreserveEmpty(const std::string &s) {
   std::vector<std::string> lines;
   std::string cur;
@@ -65,11 +80,12 @@ static void stripUnknownLocSuffix(std::vector<std::string> &lines) {
 }
 
 static std::string hexFloatLiteral(mlir::FloatAttr a) {
-  llvm::SmallString<32> s;
+  llvm::SmallString<kHexFloatInlineCapacity> s;
   llvm::raw_svector_ostream os(s);
-  llvm::SmallVector<char, 32> digits;
+  DigitBuffer digits;
   llvm::APInt bits = a.getValue().bitcastToAPInt();
-  bits.toString(digits, /*Radix=*/16, /*Signed=*/false, /*formatAsCLiteral=*/true);
+  bits.toString(digits, /*Radix=*/kHexadecimalRadix, /*Signed=*/false,
+                /*formatAsCLiteral=*/true);
   os << llvm::StringRef(digits.data(), digits.size());
   return os.str().str();
 }
@@ -79,7 +95,7 @@ static void sortAttributesLexicographically(mlir::ModuleOp module) {
     auto attrs = op->getAttrs();
     if (attrs.size() <= 1) return;
 
-    llvm::SmallVector<mlir::NamedAttribute, 8> sorted(attrs.begin(), attrs.end());
+    NamedAttributeVector sorted(attrs.begin(), attrs.end());
     llvm::sort(sorted, [](const mlir::NamedAttribute &a, const mlir::NamedAttribute &b) {
       return a.getName().getValue() < b.getName().getValue();
     });
@@ -227,7 +243,7 @@ static std::string canonicalizeSSANames(const std::string &printed) {
   auto lines = splitLinesPreserveEmpty(printed);
 
   std::vector<std::string> defs;
-  defs.reserve(256);
+  defs.reserve(kSSAReserveCapacity);
 
   for (const auto &ln : lines) {
     if (ln.find("func.func") != std::string::npos) {
@@ -253,7 +269,7 @@ static std::string canonicalizeSSANames(const std::string &printed) {
   }
 
   std::unordered_map<std::string, std::string> ren;
-  ren.reserve(defs.size() * 2);
+  ren.reserve(defs.size() * kRenameMapReserveMultiplier);
 
   std::unordered_map<std::string, int> constCounts;
   uint64_t nextNonConst = 0;

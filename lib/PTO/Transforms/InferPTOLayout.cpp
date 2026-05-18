@@ -43,6 +43,13 @@ namespace {
 static constexpr llvm::StringLiteral kLayoutAttrName = "layout";
 static constexpr llvm::StringLiteral kInferredLayoutAttrName =
     "pto.inferred_layout";
+static constexpr unsigned kBitsPerByte = 8;
+static constexpr unsigned kPaddedLayoutRank = 5;
+static constexpr int64_t kUnitExtent = 1;
+static constexpr int64_t kNZInnerRows = 16;
+static constexpr int64_t kNZFractalBytes = 512;
+
+using LayoutRankVector = SmallVector<int64_t, kPaddedLayoutRank>;
 
 static std::optional<int64_t> getConstInt(Value v) {
   if (auto c = v.getDefiningOp<arith::ConstantIndexOp>())
@@ -67,9 +74,9 @@ static std::optional<int64_t> getConstInt(OpFoldResult ofr) {
 
 static unsigned elemByteSize(Type ty) {
   if (auto f = dyn_cast<FloatType>(ty))
-    return f.getWidth() / 8;
+    return f.getWidth() / kBitsPerByte;
   if (auto i = dyn_cast<IntegerType>(ty))
-    return i.getWidth() / 8;
+    return i.getWidth() / kBitsPerByte;
   return 0;
 }
 
@@ -84,8 +91,8 @@ static bool isGlobalMemRef(MemRefType ty) {
 }
 
 struct ShapeStride5D {
-  SmallVector<int64_t, 5> shape;
-  SmallVector<int64_t, 5> stride;
+  LayoutRankVector shape;
+  LayoutRankVector stride;
 };
 
 static bool isMinor2DLayout(Layout layout) {
@@ -96,15 +103,15 @@ static std::optional<ShapeStride5D> rightAlignTo5D(ArrayRef<int64_t> shape,
                                                    ArrayRef<int64_t> stride) {
   if (shape.size() != stride.size())
     return std::nullopt;
-  if (shape.size() > 5)
+  if (shape.size() > kPaddedLayoutRank)
     return std::nullopt;
 
   ShapeStride5D out;
-  out.shape.assign(5, 1);
-  out.stride.assign(5, 1);
+  out.shape.assign(kPaddedLayoutRank, kUnitExtent);
+  out.stride.assign(kPaddedLayoutRank, kUnitExtent);
 
   const int rank = static_cast<int>(shape.size());
-  const int shift = 5 - rank;
+  const int shift = static_cast<int>(kPaddedLayoutRank) - rank;
   for (int i = 0; i < rank; ++i) {
     out.shape[shift + i] = shape[i];
     out.stride[shift + i] = stride[i];
@@ -163,8 +170,10 @@ static std::optional<Layout> inferNZLayout(ArrayRef<int64_t> shape,
   int64_t sh5 = shape[4];
   int64_t st4 = stride[3];
   int64_t st5 = stride[4];
-  bool alignMatch = (sh3 == 16) && (sh3 * sh4 * elemBytes == 512);
-  bool strideMatch = (st5 == 1) && (st4 == sh5);
+  bool alignMatch =
+      (sh3 == kNZInnerRows) &&
+      (sh3 * sh4 * static_cast<int64_t>(elemBytes) == kNZFractalBytes);
+  bool strideMatch = (st5 == kUnitExtent) && (st4 == sh5);
   if (alignMatch && strideMatch)
     return Layout::NZ;
   return std::nullopt;
@@ -265,7 +274,8 @@ static void verifyOrSetLayoutAttr(Operation *op,
 }
 
 static std::optional<Layout> inferFromStaticMemRefTy(MemRefType mrTy) {
-  if (!mrTy.hasStaticShape() || mrTy.getRank() == 0 || mrTy.getRank() > 5)
+  if (!mrTy.hasStaticShape() || mrTy.getRank() == 0 ||
+      mrTy.getRank() > kPaddedLayoutRank)
     return std::nullopt;
   SmallVector<int64_t> strideInts;
   int64_t offset = ShapedType::kDynamic;
@@ -415,7 +425,7 @@ static bool getStaticShapeAndStride(MakeTensorViewOp op,
     return false;
 
   const size_t rank = op.getShape().size();
-  if (rank == 0 || rank > 5)
+  if (rank == 0 || rank > kPaddedLayoutRank)
     return false;
 
   shape.clear();
@@ -508,7 +518,7 @@ static void inferReinterpretCastLayoutAttr(memref::ReinterpretCastOp op,
     return;
 
   const size_t rank = op.getMixedSizes().size();
-  if (rank == 0 || rank > 5) {
+  if (rank == 0 || rank > kPaddedLayoutRank) {
     verifyOrSetLayoutAttr(op.getOperation(), std::nullopt, signalFailure);
     return;
   }

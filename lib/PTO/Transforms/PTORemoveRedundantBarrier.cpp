@@ -14,6 +14,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include <memory>
  
 using namespace mlir;
 using namespace mlir::pto;
@@ -206,7 +207,6 @@ struct PTORemoveRedundantBarrierPass : public PassWrapper<PTORemoveRedundantBarr
         // === 3. Wait 消除 (幽灵 Wait 消除) ===
         Attribute waitDst;
         if (getWaitSyncDst(op, waitDst)) {
-            
             // 规则: Dead Consumer
             // 如果 dst 后面没有 Resource Op，这个 Wait 是毫无意义的阻塞。
             // 即使逻辑上需要等，但如果等完不干活，等它干嘛？
@@ -251,7 +251,7 @@ struct PTORemoveRedundantBarrierPass : public PassWrapper<PTORemoveRedundantBarr
 namespace mlir {
 namespace pto {
 std::unique_ptr<Pass> createPTORemoveRedundantBarrierPass() {
-  return std::unique_ptr<Pass>(new PTORemoveRedundantBarrierPass());
+  return std::make_unique<PTORemoveRedundantBarrierPass>();
 }
 } // namespace pto
 } // namespace mlir

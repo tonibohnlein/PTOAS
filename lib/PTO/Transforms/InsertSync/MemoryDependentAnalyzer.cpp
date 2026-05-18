@@ -109,7 +109,6 @@ bool MemoryDependentAnalyzer::DepBetween(
     const SmallVector<const BaseMemInfo *> &a,
     const SmallVector<const BaseMemInfo *> &b,
     DepBaseMemInfoPairVec &depBaseMemInfosVec) {
-  
   // [Debug Log] 关键入口信息
   if (isTraceEnabled()) {
     llvm::errs() << "\n[DepBetween] Checking dependency...\n";
@@ -193,7 +192,6 @@ bool MemoryDependentAnalyzer::isGMBufferOverlap(const BaseMemInfo *a,
   if (a->rootBuffer != b->rootBuffer) {
     Value realRootA = GetRealRoot(a->rootBuffer);
     Value realRootB = GetRealRoot(b->rootBuffer);
-    
     if (realRootA != realRootB) {
         return false;
     }

@@ -91,7 +91,7 @@ void SyncEventIdAllocation::reserveBlockAllEventIds() {
     if (blockSyncAllExists) break;
   }
   if (blockSyncAllExists) {
-    reservedBlockSyncEventIdNum = 2;
+    reservedBlockSyncEventIdNum = kReservedBlockSyncEventIdNum;
   }
 }
  

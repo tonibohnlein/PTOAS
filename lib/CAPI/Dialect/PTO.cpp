@@ -34,8 +34,24 @@
 
 using namespace mlir;
 
-static SmallVector<int64_t, 4> canonicalizeTileBufValidShape(ArrayRef<int64_t> validShape) {
-  SmallVector<int64_t, 4> canonical;
+namespace {
+
+constexpr unsigned kCanonicalValidShapeInlineCapacity = 4;
+constexpr unsigned kI32BitWidth = 32;
+constexpr unsigned kGMTypeStrideInlineCapacity = 8;
+constexpr int32_t kLegacyMaskPatternP0101Value = 0;
+constexpr int32_t kLegacyMaskPatternP0001Value = 3;
+constexpr int32_t kLegacyMaskPatternP1111Value = 4;
+constexpr int32_t kLegacyMaskPatternP1010Value = 5;
+
+using CanonicalValidShapeVector =
+    SmallVector<int64_t, kCanonicalValidShapeInlineCapacity>;
+
+} // namespace
+
+static CanonicalValidShapeVector
+canonicalizeTileBufValidShape(ArrayRef<int64_t> validShape) {
+  CanonicalValidShapeVector canonical;
   canonical.reserve(validShape.size());
   for (int64_t dim : validShape)
     canonical.push_back(dim < 0 ? ShapedType::kDynamic : dim);
@@ -462,13 +478,13 @@ maskPatternFromIsaValue(int32_t value) {
 static std::optional<mlir::pto::MaskPattern>
 maskPatternFromLegacyRaw(int32_t value) {
   switch (value) {
-  case 0:
+  case kLegacyMaskPatternP0101Value:
     return mlir::pto::MaskPattern::P0101;
-  case 3:
+  case kLegacyMaskPatternP0001Value:
     return mlir::pto::MaskPattern::P0001;
-  case 4:
+  case kLegacyMaskPatternP1111Value:
     return mlir::pto::MaskPattern::P1111;
-  case 5:
+  case kLegacyMaskPatternP1010Value:
     return mlir::pto::MaskPattern::P1010;
   default:
     return std::nullopt;
@@ -479,8 +495,8 @@ MlirAttribute mlirPTOMaskPatternAttrGet(MlirContext ctx, int32_t value) {
   auto *c = unwrap(ctx);
   std::optional<mlir::pto::MaskPattern> v;
   switch (value) {
-  case 0:
-  case 3:
+  case kLegacyMaskPatternP0101Value:
+  case kLegacyMaskPatternP0001Value:
     v = maskPatternFromLegacyRaw(value);
     break;
   case static_cast<int32_t>(mlir::pto::MaskPattern::P1000):
@@ -708,7 +724,7 @@ MlirAttribute mlirPTOTileBufConfigAttrGetWithCompactMode(
     return MlirAttribute{nullptr};
 
   auto sz = mlir::dyn_cast<mlir::IntegerAttr>(unwrap(sFractalSize));
-  if (!sz || !sz.getType().isInteger(32))
+  if (!sz || !sz.getType().isInteger(kI32BitWidth))
     return MlirAttribute{nullptr};
 
   return wrap(mlir::pto::TileBufConfigAttr::get(c, blA, slA, sz, pvA, cmA));
@@ -720,8 +736,8 @@ MlirType mlirPTOGMTypeGet(MlirContext ctx, intptr_t rank, const int64_t *shape,
   auto elemTy = unwrap(elementType);
   llvm::ArrayRef<int64_t> shp(shape, static_cast<size_t>(rank));
 
-  llvm::SmallVector<int64_t, 8> strides(static_cast<size_t>(rank),
-                                        ShapedType::kDynamic);
+  llvm::SmallVector<int64_t, kGMTypeStrideInlineCapacity> strides(
+      static_cast<size_t>(rank), ShapedType::kDynamic);
   if (rank > 0)
     strides[static_cast<size_t>(rank) - 1] = 1;
   auto layout =

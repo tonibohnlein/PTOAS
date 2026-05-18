@@ -21,12 +21,18 @@
 using namespace mlir;
 using namespace mlir::pto;
 
+namespace {
+
+constexpr size_t kSetWaitSyncPairSize = 2;
+
+} // namespace
+
 void RemoveRedundantSync::Run() {
   // 1. 收集所有成对的同步指令 (Set/Wait)
   std::vector<std::pair<SyncOperation *, SyncOperation *>> syncOps;
   for (auto &syncPair : syncOperations_) {
     // 只有成对的 (Set, Wait) 才能进行此类消除，Barrier 不适用
-    if (syncPair.size() == 2) {
+    if (syncPair.size() == kSetWaitSyncPairSize) {
       auto *setFlag = syncPair[0].get();
       auto *waitFlag = syncPair[1].get();
       syncOps.push_back(std::make_pair(setFlag, waitFlag));
@@ -41,7 +47,6 @@ void RemoveRedundantSync::Run() {
           std::pair<SyncOperation *, SyncOperation *> syncPair2) {
          auto *syncOp1 = syncPair1.first;
          auto *syncOp2 = syncPair2.first;
-         
          bool hasLoop1 = syncOp1->GetForEndIndex().has_value();
          bool hasLoop2 = syncOp2->GetForEndIndex().has_value();
  
