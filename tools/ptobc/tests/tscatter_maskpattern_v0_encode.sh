@@ -34,3 +34,14 @@ ROUNDTRIP="${OUT_DIR}/tscatter_maskpattern_v0_roundtrip.roundtrip.pto"
 grep -F "pto.tscatter ins(" "${ROUNDTRIP}" >/dev/null
 grep -F "{maskPattern = #pto.mask_pattern<P0101>}" "${ROUNDTRIP}" >/dev/null
 grep -E "pto\\.tscatter ins\\(%[^,]+, %[^:]+ :" "${ROUNDTRIP}" >/dev/null
+
+python - <<'PY' "${BC}"
+from pathlib import Path
+import sys
+
+data = Path(sys.argv[1]).read_bytes()
+if b"\x56\x10\x00" not in data:
+    raise SystemExit("missing legacy indexed tscatter opcode encoding")
+if b"\x9c\x10" not in data:
+    raise SystemExit("missing mask-pattern tscatter opcode encoding")
+PY

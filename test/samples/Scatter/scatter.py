@@ -67,7 +67,7 @@ def build():
 
                 pto.TLoadOp(None, src_view, src_tile)
                 pto.TLoadOp(None, indices_view, indices_tile)
-                pto.TScatterOp(src_tile, dst_tile, indices_tile)
+                pto.TScatterOp(src_tile, indices_tile, dst_tile)
                 pto.TStoreOp(None, dst_tile, dst_view)
                 func.ReturnOp([])
 

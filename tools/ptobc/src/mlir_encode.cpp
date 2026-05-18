@@ -540,6 +540,20 @@ void Encoder::encodeOp(mlir::Operation& op, Buffer& out) {
   }
 
   auto fullName = op.getName().getStringRef();
+  if (auto tscatter = llvm::dyn_cast<mlir::pto::TScatterOp>(&op)) {
+    uint16_t opcode = tscatter.getMaskPatternAttr()
+                          ? ptobc::v0::kTscatterMaskOpcode
+                          : uint16_t(0x1056);
+    auto variantInfo =
+        ptobc::v0::OpcodeAndVariant{opcode, /*hasVariant=*/0, /*variant=*/0};
+    const auto *info = ptobc::v0::lookupByOpcode(opcode);
+    if (!info)
+      throw std::runtime_error("missing v0 opcode schema for op: " +
+                               fullName.str());
+    encodeKnownOp(op, out, *info, variantInfo);
+    return;
+  }
+
   auto variantInfo = ptobc::v0::lookupOpcodeAndVariantByFullName(fullName);
   if (variantInfo) {
     const auto *info = ptobc::v0::lookupByOpcode(variantInfo->opcode);

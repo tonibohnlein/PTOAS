@@ -706,34 +706,82 @@ class TScatterOp(_GeneratedTScatterOp):
     def __init__(
         self,
         src,
-        dst,
         *args,
+        dst=_TSCATTER_UNSET,
         indexes=_TSCATTER_UNSET,
         maskPattern=_TSCATTER_UNSET,
         loc=None,
         ip=None,
     ):
-        if len(args) > 1:
-            raise TypeError(f"too many positional arguments: {len(args) + 2}")
+        if len(args) > 2:
+            raise TypeError(f"too many positional arguments: {len(args) + 1}")
 
-        if args:
-            if indexes is not _TSCATTER_UNSET or maskPattern is not _TSCATTER_UNSET:
+        def _is_mask_pattern(value):
+            return isinstance(value, (MaskPattern, MaskPatternAttr))
+
+        def _value_type(value):
+            try:
+                return _pto_ops_gen._get_op_result_or_value(value).type
+            except Exception:
+                return None
+
+        def _matches_src_type(value):
+            src_value = _pto_ops_gen._get_op_result_or_value(src)
+            value_type = _value_type(value)
+            return value_type is not None and value_type == src_value.type
+
+        if len(args) == 2:
+            if (
+                dst is not _TSCATTER_UNSET
+                or indexes is not _TSCATTER_UNSET
+                or maskPattern is not _TSCATTER_UNSET
+            ):
                 raise TypeError(
-                    "positional third argument cannot be combined with "
-                    "'indexes' or 'maskPattern' keywords"
+                    "two positional mode arguments cannot be combined with "
+                    "'dst', 'indexes', or 'maskPattern' keywords"
                 )
-            third = args[0]
-            if isinstance(third, (MaskPattern, MaskPatternAttr)):
-                maskPattern = third
+            first, second = args
+            if _is_mask_pattern(second):
+                dst = first
+                maskPattern = second
+            elif _matches_src_type(first) and not _matches_src_type(second):
+                dst = first
+                indexes = second
+            elif _matches_src_type(second) and not _matches_src_type(first):
+                indexes = first
+                dst = second
             else:
-                indexes = third
+                indexes = first
+                dst = second
+        elif len(args) == 1:
+            positional = args[0]
+            if dst is _TSCATTER_UNSET:
+                if indexes is _TSCATTER_UNSET and maskPattern is _TSCATTER_UNSET:
+                    raise TypeError(
+                        "missing required mode for tscatter; provide 'indexes' "
+                        "or 'maskPattern'"
+                    )
+                dst = positional
+            else:
+                if indexes is not _TSCATTER_UNSET or maskPattern is not _TSCATTER_UNSET:
+                    raise TypeError(
+                        "positional mode argument cannot be combined with "
+                        "'indexes' or 'maskPattern' keywords"
+                    )
+                if _is_mask_pattern(positional):
+                    maskPattern = positional
+                else:
+                    indexes = positional
 
         kwargs = {}
+        if dst is _TSCATTER_UNSET:
+            raise TypeError("missing required argument: dst")
+        kwargs["dst"] = dst
         if indexes is not _TSCATTER_UNSET:
             kwargs["indexes"] = indexes
         if maskPattern is not _TSCATTER_UNSET:
             kwargs["maskPattern"] = maskPattern
-        super().__init__(src, dst, **kwargs, loc=loc, ip=ip)
+        super().__init__(src, **kwargs, loc=loc, ip=ip)
 
 
 TScatter = TScatterOp

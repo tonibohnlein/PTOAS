@@ -26,6 +26,7 @@ inline constexpr uint8_t kVariantMxBias = 5;
 inline constexpr uint8_t kSectionCubeVariant = 0;
 inline constexpr uint8_t kSectionVectorVariant = 1;
 inline constexpr uint8_t kHasVariant = 1;
+inline constexpr uint16_t kTscatterMaskOpcode = 0x109C;
 
 inline constexpr int kTgemvOperandCount = 3;
 inline constexpr int kTgemvAccOperandCount = 4;
@@ -146,7 +147,7 @@ inline constexpr OpInfo kOpTable[] = {
   {0x1053, "pto.trowmin", 0, 0x00, 0x00, 3, 0, 0, 0x00},
   {0x1054, "pto.trowsum", 0, 0x00, 0x00, 3, 0, 0, 0x00},
   {0x1055, "pto.trsqrt", 0, 0x00, 0x02, 0, 0, 0, 0x00},
-  {0x1056, "pto.tscatter", 0, 0x00, 0x02, 0, 0, 0, 0x00},
+  {0x1056, "pto.tscatter", 0, 0x00, 0x00, 3, 0, 0, 0x00},
   {0x1057, "pto.tsel", 0, 0x00, 0x00, 5, 0, 0, 0x00},
   {0x1058, "pto.tsels", 0, 0x00, 0x00, 5, 0, 0, 0x00},
   {0x1059, "pto.tset_img2col_padding", 0, 0x00, 0x00, 1, 0, 0, 0x00},
@@ -216,6 +217,7 @@ inline constexpr OpInfo kOpTable[] = {
   {0x1099, "pto.comm.treduce", 0, 0x00, 0x02, 0, 0, 0, 0x00},
   {0x109A, "pto.tpartargmax", 0, 0x00, 0x00, 6, 0, 0, 0x00},
   {0x109B, "pto.tpartargmin", 0, 0x00, 0x00, 6, 0, 0, 0x00},
+  {0x109C, "pto.tscatter.maskpattern", 0, 0x00, 0x00, 2, 0, 0, 0x00},
   {0x2000, "arith.addi", 0, 0x01, 0x00, 2, 1, 0, 0x00},
   {0x2001, "arith.ceildivsi", 0, 0x01, 0x00, 2, 1, 0, 0x00},
   {0x2002, "arith.cmpi", 0, 0x01, 0x00, 2, 1, 0, 0x01},
@@ -650,6 +652,7 @@ inline std::optional<OpcodeAndVariant> lookupOpcodeAndVariantByFullName(llvm::St
 inline const char *fullNameFromOpcodeVariant(uint16_t opcode, uint8_t variant) {
   const OpInfo *info = lookupByOpcode(opcode);
   if (!info) return nullptr;
+  if (opcode == kTscatterMaskOpcode) return "pto.tscatter";
   if (!info->has_variant_u8) return info->name;
   switch (opcode) {
   case 0x0006:
