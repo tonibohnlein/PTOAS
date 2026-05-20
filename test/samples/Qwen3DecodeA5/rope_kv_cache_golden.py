@@ -11,4 +11,4 @@ from qwen3_decode_golden_lib import run_case
 
 
 if __name__ == '__main__':
-    run_case('qwen3_decode_incore_13')
+    run_case('rope_kv_cache')
