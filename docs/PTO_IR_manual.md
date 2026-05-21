@@ -600,6 +600,7 @@ result = alloc_tile(base_addr, valid_row, valid_col)   // operands are optional
 **Constraints & Verification:**
 
 - The operation has a custom verifier that checks:
+  - The result tile type may use standard or PTO low-precision element types.
   - If result `v_row`/`v_col` are dynamic (`?`), the corresponding operands must be present
   - If result `v_row`/`v_col` are static, the corresponding operands must be absent
 - If `base_addr` is omitted, the address is assigned by the compiler
@@ -857,6 +858,7 @@ For each element (i, j) in the tile valid region:
   - The destination tile element type and source partition element type must have the same bitwidth.
   - Runtime: all source partition extents and the destination valid region must be positive.
 - **Implementation checks (A5)**
+  - The source partition and destination tile element types must be one of `i8/i16/i32/i64/f16/bf16/f32/f8E4M3*/f8E5M2*/!pto.hif8/!pto.f4E1M2x2/!pto.f4E2M1x2`.
   - The destination tile element size must be `1`, `2`, `4`, or `8` bytes, and must match the source partition element size.
   - For `i64`, the destination tile `pad` must be `null` or `zero`.
 
@@ -902,6 +904,7 @@ op is modeled as writing the prefetched data into `dst`.
 - `dst` must use `loc=vec` or `loc=mat`.
 - Static source extents and static destination valid extents must be positive when known.
 - `src` and `dst` element types must have the same element size in bytes.
+- Low-precision element types (`f8E4M3*`, `f8E5M2*`, `!pto.hif8`, `!pto.f4E1M2x2`, `!pto.f4E2M1x2`) are only accepted on A5.
 
 **Hardware Mapping:**
 
@@ -1017,14 +1020,14 @@ For each element (i, j) in the tile valid region:
   - `src.loc` must be `vec` or `acc` (A5 does not support `mat` here).
   - For `loc=vec`:
     - `preQuantScalar` is not allowed.
-    - `src` element type must be one of `i8/i16/i32/i64/f16/bf16/f32`.
+    - `src` element type must be one of `i8/i16/i32/i64/f16/bf16/f32/f8E4M3*/f8E5M2*/!pto.hif8/!pto.f4E1M2x2/!pto.f4E2M1x2`.
     - `src`/`dst` element bitwidth must match.
   - For `loc=acc`:
     - `src` element type must be `i32` or `f32`.
     - Without `preQuantScalar`: `dst` element type must be `i32/f32/f16/bf16`.
     - With `preQuantScalar`:
       - `src=i32` -> `dst=i8(ui8)/f16/bf16`
-      - `src=f32` -> `dst=i8(ui8)/f16/bf16/f32`
+      - `src=f32` -> `dst=i8(ui8)/f16/bf16/f32/!pto.hif8/f8E4M3*`
 
 **Type Note (PTO IR):**
 
@@ -7556,7 +7559,20 @@ dst[i, j] = saturate(cast(src[i, j], rmode), satmode)
 - `dst` and `src` must be compatible in shape/valid region as required by the implementation.
 - `satmode = ON` requests destination-range clamping after rounding; `OFF` preserves the target's non-saturating conversion path.
 - **A2/A3 and A5 notes:**
-  - The current implementation does not add extra compile-time or runtime checks for the type pair; unsupported conversions are target-defined.
+  - A2/A3 reject all low-precision `tcvt` operands.
+  - A5 only accepts the following low-precision pairs: 
+    `f32 -> f8E4M3*`, 
+    `f32 -> f8E5M2*`, 
+    `f32 -> !pto.hif8`, 
+    `f16 -> !pto.hif8`, 
+    `bf16 -> !pto.f4E1M2x2`, 
+    `bf16 -> !pto.f4E2M1x2`, 
+    `!pto.f4E1M2x2 -> bf16`, 
+    `!pto.f4E2M1x2 -> bf16`, 
+    `f8E4M3* -> f32`, 
+    `f8E5M2* -> f32`, 
+    `!pto.hif8 -> f32`.
+  - Non-low-precision pairs continue to use the existing target-defined behavior.
 
 **Hardware Mapping:**
 

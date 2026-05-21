@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --emit-pto-ir --mlir-print-ir-before-all %s 2>&1 | FileCheck %s
+//
+// The current PTOViewToMemref pipeline still rejects low-precision memref
+// element types, so this test matches the verifier-accepted IR dump before that
+// later pass runs.
+
+module {
+  func.func @tload_tprefetch_low_precision_a5_valid(
+      %src0: !pto.partition_tensor_view<16x16xf8E4M3FN>,
+      %src1: !pto.partition_tensor_view<16x16x!pto.hif8>) {
+    %dst0 = pto.declare_tile -> !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst1 = pto.declare_tile -> !pto.tile_buf<loc=vec, dtype=!pto.hif8, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tload ins(%src0 : !pto.partition_tensor_view<16x16xf8E4M3FN>)
+              outs(%dst0 : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tprefetch ins(%src1 : !pto.partition_tensor_view<16x16x!pto.hif8>)
+                  outs(%dst1 : !pto.tile_buf<loc=vec, dtype=!pto.hif8, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK: func.func @tload_tprefetch_low_precision_a5_valid(%arg0: !pto.partition_tensor_view<16x16xf8E4M3FN>, %arg1: !pto.partition_tensor_view<16x16x!pto.hif8>)
+// CHECK: pto.tload ins(%arg0 : !pto.partition_tensor_view<16x16xf8E4M3FN>) outs(%0 : !pto.tile_buf<vec, 16x16xf8E4M3FN>)
+// CHECK: pto.tprefetch ins(%arg1 : !pto.partition_tensor_view<16x16x!pto.hif8>) outs(%1 : !pto.tile_buf<vec, 16x16x!pto.hif8>)

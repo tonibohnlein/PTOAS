@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --emit-pto-ir --mlir-print-ir-before-all %s 2>&1 | FileCheck %s
+//
+// The current PTOViewToMemref pipeline still rejects low-precision memref
+// element types, so this test matches the verifier-accepted IR dump before that
+// later pass runs.
+
+module {
+  func.func @tstore_low_precision_a5_valid(
+      %vec_dst: !pto.partition_tensor_view<16x16xf8E4M3FN>,
+      %acc_dst: !pto.partition_tensor_view<16x16x!pto.hif8>,
+      %prequant: i64) {
+    %vec_src = pto.declare_tile -> !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %acc_src = pto.declare_tile -> !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+
+    pto.tstore ins(%vec_src : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+               outs(%vec_dst : !pto.partition_tensor_view<16x16xf8E4M3FN>)
+    pto.tstore ins(%acc_src : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, %prequant : i64)
+               outs(%acc_dst : !pto.partition_tensor_view<16x16x!pto.hif8>)
+    return
+  }
+}
+
+// CHECK: func.func @tstore_low_precision_a5_valid(%arg0: !pto.partition_tensor_view<16x16xf8E4M3FN>, %arg1: !pto.partition_tensor_view<16x16x!pto.hif8>, %arg2: i64)
+// CHECK: pto.tstore ins(%0 : !pto.tile_buf<vec, 16x16xf8E4M3FN>) outs(%arg0 : !pto.partition_tensor_view<16x16xf8E4M3FN>)
+// CHECK: pto.tstore ins(%1 : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>, %arg2 : i64) outs(%arg1 : !pto.partition_tensor_view<16x16x!pto.hif8>)

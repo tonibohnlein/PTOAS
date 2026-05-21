@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --emit-pto-ir --mlir-print-ir-before-all %s 2>&1 | FileCheck %s
+//
+// PTOViewToMemref still rejects low-precision memref element types today, so
+// this test matches the verifier-accepted IR dump before that later pass runs.
+
+module {
+  func.func @alloc_tile_low_precision_valid() {
+    %0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=!pto.hif8, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %1 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=!pto.f4E1M2x2, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %2 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    return
+  }
+}
+
+// CHECK: func.func @alloc_tile_low_precision_valid()
+// CHECK: %0 = pto.alloc_tile : !pto.tile_buf<vec, 16x32x!pto.hif8>
+// CHECK: %1 = pto.alloc_tile : !pto.tile_buf<vec, 16x32x!pto.f4E1M2x2>
+// CHECK: %2 = pto.alloc_tile : !pto.tile_buf<vec, 16x32xf8E4M3FN>
