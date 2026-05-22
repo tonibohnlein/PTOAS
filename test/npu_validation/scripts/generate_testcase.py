@@ -86,7 +86,25 @@ UNSTABLE_A3_CUSTOM_GOLDEN_CASES = frozenset({
     "xor",
 })
 
-CASE_INT_SCALAR_DEFAULTS = {}
+DEEPSEEK_V4_DIRECT_CASES = frozenset({
+    "attention_csa_test_refresh_incore_81",
+    "attention_hca_test_incore_54",
+    "attention_swa_test_incore_40",
+    "decode_csa_test_incore_81",
+    "decode_hca_test_incore_54",
+    "decode_swa_test_incore_40",
+    "sparse_attn_test_incore_7",
+})
+
+CASE_INT_SCALAR_DEFAULTS = {
+    testcase: {
+        "v4": 0,
+        "v5": 32,
+    }
+    for testcase in DEEPSEEK_V4_DIRECT_CASES
+}
+
+CASE_BOOL_SCALAR_DEFAULTS = {}
 
 CASE_POINTER_COUNT_MINIMUMS = {
     "down_proj_residual": {
@@ -96,6 +114,14 @@ CASE_POINTER_COUNT_MINIMUMS = {
     "out_proj_residual": {
         "v1": 123648,
         "v2": 123648,
+    },
+    **{
+        testcase: {
+            "v1": 1024 * 4096,
+            "v2": 8192 * 64,
+            "v3": 8192 * 64,
+        }
+        for testcase in DEEPSEEK_V4_DIRECT_CASES
     },
 }
 
@@ -831,6 +857,13 @@ def _integer_scalar_default_value(testcase: str, name: str, host_type: str) -> O
     if re.match(r"^(u?int)(8|16|32|64)_t$", host_type) or host_type in {"int", "unsigned", "size_t"}:
         return 1
     return None
+
+
+def _bool_scalar_default_value(testcase: str, name: str) -> Optional[bool]:
+    override = CASE_BOOL_SCALAR_DEFAULTS.get(testcase, {}).get(name)
+    if override is None:
+        return None
+    return bool(override)
 
 
 def _derive_testcase_name(input_cpp: Path) -> str:
@@ -1704,9 +1737,11 @@ def generate_testcase(
             param_decls_lines.append(f"    {t} {p['name']}{{128, 128, 128, 128}};")
             continue
         if t == "bool":
-            value = "true"
+            bool_override = _bool_scalar_default_value(testcase, p["name"])
+            value = "true" if bool_override is None else ("true" if bool_override else "false")
         elif re.match(r"^(u?int)(8|16|32|64)_t$", t) or t in {"int", "unsigned", "size_t"}:
-            value = str(_integer_scalar_default_value(testcase, p["name"], t) or 1)
+            int_override = _integer_scalar_default_value(testcase, p["name"], t)
+            value = "1" if int_override is None else str(int_override)
         elif t in {"float"}:
             value = "1.0f"
         elif t in {"double"}:
