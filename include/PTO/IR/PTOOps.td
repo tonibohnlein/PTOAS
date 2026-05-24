@@ -2775,7 +2775,7 @@ def THistogramOp : PTO_TOp<"thistogram", [
     PTODpsType:$src,
     PTODpsType:$idx,
     PTODpsType:$dst,
-    DefaultValuedOptionalAttr<BoolAttr, "true">:$isMSB
+    DefaultValuedOptionalAttr<I32Attr, "1">:$byte
   );
 
   let results = (outs);

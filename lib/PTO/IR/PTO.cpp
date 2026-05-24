@@ -6662,6 +6662,9 @@ LogicalResult THistogramOp::verify() {
     auto it = dyn_cast<IntegerType>(ty);
     return it && it.getWidth() == width;
   };
+  auto byte = getByte();
+  if (byte < 0 || byte > 3)
+    return emitOpError("expects byte to be in range [0, 3]");
 
   auto verifyA2A3 = [&]() -> LogicalResult {
     return emitOpError("thistogram is only supported on A5");
@@ -6697,13 +6700,11 @@ LogicalResult THistogramOp::verify() {
     if (dstTB.getBLayoutValueI32() != static_cast<int32_t>(pto::BLayout::RowMajor) ||
         dstTB.getSLayoutValueI32() != static_cast<int32_t>(pto::SLayout::NoneBox))
       return emitOpError("expects dst to use row_major + none_box layout");
-    if (idxTB.getBLayoutValueI32() != static_cast<int32_t>(pto::BLayout::ColMajor) ||
-        idxTB.getSLayoutValueI32() != static_cast<int32_t>(pto::SLayout::NoneBox))
-      return emitOpError(
-          "expects idx to use DN layout (col_major + none_box)");
 
-    if (!isIntegerWidth(getElemTy(srcTy), 16))
-      return emitOpError("expects src element type to be ui16");
+    bool srcIsUi16 = isIntegerWidth(getElemTy(srcTy), 16);
+    bool srcIsUi32 = isIntegerWidth(getElemTy(srcTy), 32);
+    if (!srcIsUi16 && !srcIsUi32)
+      return emitOpError("expects src element type to be ui16 or ui32");
     if (!isIntegerWidth(getElemTy(idxTy), 8))
       return emitOpError("expects idx element type to be ui8");
     if (!isIntegerWidth(getElemTy(dstTy), 32))
@@ -6720,15 +6721,40 @@ LogicalResult THistogramOp::verify() {
       return emitOpError(
           "expects src, idx, and dst to have rank-2 shape and valid_shape");
 
-    if (!hasCompatibleKnownExtent(srcShape[0], idxShape[0]) ||
-        !hasCompatibleKnownExtent(srcValid[0], idxValid[0]))
-      return emitOpError("expects idx rows and valid rows to match src");
     if (!hasCompatibleKnownExtent(srcShape[0], dstShape[0]) ||
         !hasCompatibleKnownExtent(srcValid[0], dstValid[0]))
       return emitOpError("expects dst rows and valid rows to match src");
 
-    if (!isKnownUnitExtent(idxShape[1]) || !isKnownUnitExtent(idxValid[1]))
-      return emitOpError("expects idx to have exactly one column");
+    if (srcIsUi16) {
+      if (byte > 1)
+        return emitOpError("expects byte to be 0 or 1 when src element type is ui16");
+      if (idxTB.getBLayoutValueI32() != static_cast<int32_t>(pto::BLayout::ColMajor) ||
+          idxTB.getSLayoutValueI32() != static_cast<int32_t>(pto::SLayout::NoneBox))
+        return emitOpError(
+            "expects idx to use DN layout (col_major + none_box) when src element type is ui16");
+      if (!hasCompatibleKnownExtent(srcShape[0], idxShape[0]) ||
+          !hasCompatibleKnownExtent(srcValid[0], idxValid[0]))
+        return emitOpError("expects idx rows and valid rows to match src when src element type is ui16");
+      if (!isKnownUnitExtent(idxShape[1]) || !isKnownUnitExtent(idxValid[1]))
+        return emitOpError("expects idx to have exactly one column when src element type is ui16");
+    } else {
+      if (idxTB.getBLayoutValueI32() != static_cast<int32_t>(pto::BLayout::RowMajor) ||
+          idxTB.getSLayoutValueI32() != static_cast<int32_t>(pto::SLayout::NoneBox))
+        return emitOpError(
+            "expects idx to use row_major + none_box layout when src element type is ui32");
+      if (!hasCompatibleKnownExtent(srcShape[1], idxShape[1]) ||
+          !hasCompatibleKnownExtent(srcValid[1], idxValid[1]))
+        return emitOpError("expects idx cols and valid cols to match src when src element type is ui32");
+
+      int64_t expectedIdxRows = 1;
+      if (byte == 1)
+        expectedIdxRows = 2;
+      else if (byte == 0)
+        expectedIdxRows = 3;
+      if (!hasCompatibleKnownExtent(idxShape[0], expectedIdxRows) ||
+          !hasCompatibleKnownExtent(idxValid[0], expectedIdxRows))
+        return emitOpError("expects idx rows/valid rows to match the byte-selected filter depth when src element type is ui32");
+    }
     if (dstShape[1] != ShapedType::kDynamic && dstShape[1] < 256)
       return emitOpError("expects dst shape[1] to be at least 256");
     if (dstValid[1] != ShapedType::kDynamic && dstValid[1] < 256)

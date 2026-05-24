@@ -4554,26 +4554,30 @@ pto.trowprod ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=i16, rows=16, cols=16
 
 ##### `pto.thistogram` - Row-wise Histogram Accumulation
 
-**Summary:** Updates a 256-bin histogram row in `dst` using each source row and a per-row index selector. This op is only supported on A5.
+**Summary:** Updates a 256-bin histogram row in `dst` using A5 `THISTOGRAM` modes selected by the `byte` attribute.
 
 **Semantics:**
 
 ```
-For each row i:
-    bin = idx[i, 0]
-    dst[i, bin] = histogram_update(dst[i, bin], src[i, :])
+For `src : ui16`, each row updates one histogram bin selected by `idx[i, 0]`.
+
+For `src : ui32`, the exact filtering behavior is defined by the backend `THISTOGRAM<HistByte::BYTE_n>` intrinsic:
+- `byte = 3`: histogram byte 3 directly
+- `byte = 2`: histogram byte 2, filtered by byte 3
+- `byte = 1`: histogram byte 1, filtered by bytes 3 and 2
+- `byte = 0`: histogram byte 0, filtered by bytes 3, 2, and 1
 ```
 
-The exact accumulation performed inside the selected bin is target-defined by the hardware `THISTOGRAM` intrinsic. The `isMSB` attribute selects the intrinsic mode.
+The exact accumulation performed inside the selected bin is target-defined by the hardware `THISTOGRAM` intrinsic. The `byte` attribute maps directly to `HistByte::BYTE_<byte>`.
 
 **Arguments:**
 
 | Name | Type | Description |
 |------|------|-------------|
-| `src` | `pto.tile_buf` | Source tile buffer, one logical row per histogram update |
-| `idx` | `pto.tile_buf` | Per-row bin selector tile |
+| `src` | `pto.tile_buf` | Source tile buffer (`ui16` or `ui32`) |
+| `idx` | `pto.tile_buf` | Selector/filter tile interpreted according to `src` dtype and `byte` |
 | `dst` | `pto.tile_buf` | Destination histogram tile |
-| `isMSB` | `BoolAttr` (default: `true`) | Selects the `THISTOGRAM<...>` intrinsic mode |
+| `byte` | `I32Attr` (default: `1`) | Selects `THISTOGRAM<HistByte::BYTE_<byte>>`, valid range `[0, 3]` |
 
 **Results:** None. Writes into `dst` via DPS pattern.
 
@@ -4582,7 +4586,7 @@ The exact accumulation performed inside the selected bin is target-defined by th
 ```
 pto.thistogram ins(<src>, <idx> : <src_type>, <idx_type>)
                outs(<dst> : <dst_type>)
-               {isMSB = true}
+               {byte = 1 : i32}
 ```
 
 **Constraints & Verification:**
@@ -4592,15 +4596,22 @@ pto.thistogram ins(<src>, <idx> : <src_type>, <idx_type>)
 - **Implementation checks (A5)**
   - `src`, `idx`, and `dst` must all be `tile_buf` values in `loc=vec`.
   - `src` and `dst` must use `row_major + none_box` layout.
-  - `idx` must use DN-style layout (`col_major + none_box`).
-  - `src` element type must be `ui16`.
+  - `src` element type must be `ui16` or `ui32`.
   - `idx` element type must be `ui8`.
   - `dst` element type must be `ui32`.
+  - `byte` must be in `[0, 3]`.
   - `src`, `idx`, and `dst` must all be rank-2 tiles.
-  - `idx` rows and valid rows must match `src`.
   - `dst` rows and valid rows must match `src`.
-  - `idx` must have exactly one column.
   - `dst` shape[1] and valid_shape[1] must be at least `256`.
+  - When `src` is `ui16`:
+    - `byte` must be `0` or `1`.
+    - `idx` must use DN-style layout (`col_major + none_box`).
+    - `idx` rows and valid rows must match `src`.
+    - `idx` must have exactly one column.
+  - When `src` is `ui32`:
+    - `idx` must use `row_major + none_box` layout.
+    - `idx` cols and valid cols must match `src`.
+    - `idx` rows / valid rows must be `1` for `byte = 3` or `2`, `2` for `byte = 1`, and `3` for `byte = 0`.
 
 **Hardware Mapping:**
 
@@ -4618,7 +4629,7 @@ pto.thistogram ins(%src, %idx : !pto.tile_buf<loc=vec, dtype=ui16, rows=8, cols=
                    fractal=512, pad=0>)
                outs(%dst : !pto.tile_buf<loc=vec, dtype=ui32, rows=8, cols=256,
                    v_row=8, v_col=256, blayout=row_major, slayout=none_box,
-                   fractal=512, pad=0>) {isMSB = false}
+                   fractal=512, pad=0>) {byte = 0 : i32}
 ```
 
 ---
