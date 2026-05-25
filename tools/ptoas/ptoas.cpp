@@ -634,10 +634,23 @@ static void addUniqueFlushPtr(llvm::SmallVectorImpl<std::string> &ptrs,
   ptrs.push_back(std::move(trimmed));
 }
 
-static bool isScalarGMFlushInsertionPoint(llvm::StringRef trimmed) {
-  return trimmed.starts_with("#endif // __DAV_") ||
-         trimmed.starts_with("ptoas_auto_sync_tail(") ||
-         trimmed.starts_with("return");
+static bool isAICOREFunctionStart(llvm::StringRef trimmed) {
+  if (trimmed.empty() || trimmed.starts_with("#") || trimmed.starts_with("//"))
+    return false;
+  if (!trimmed.contains("AICORE"))
+    return false;
+  return trimmed.contains("(");
+}
+
+static int countBraceDelta(llvm::StringRef line) {
+  int delta = 0;
+  for (char c : line) {
+    if (c == '{')
+      ++delta;
+    else if (c == '}')
+      --delta;
+  }
+  return delta;
 }
 
 static void appendScalarGMFlush(std::string &out, llvm::StringRef indent,
@@ -696,11 +709,115 @@ static bool stripScalarGMFlushMarkersFromLine(
   return changed;
 }
 
+static bool previousSignificantLineIsTailFlushPoint(
+    llvm::ArrayRef<std::string> lines, size_t index) {
+  for (size_t i = index; i > 0; --i) {
+    llvm::StringRef prev = llvm::StringRef(lines[i - 1]).trim();
+    if (prev.empty())
+      continue;
+    return prev.starts_with("#endif // __DAV_") ||
+           prev.starts_with("ptoas_auto_sync_tail(");
+  }
+  return false;
+}
+
+static bool previousSignificantLineIsExitOrTailFlushPoint(
+    llvm::ArrayRef<std::string> lines, size_t index) {
+  for (size_t i = index; i > 0; --i) {
+    llvm::StringRef prev = llvm::StringRef(lines[i - 1]).trim();
+    if (prev.empty())
+      continue;
+    return prev.starts_with("return") ||
+           prev.starts_with("#endif // __DAV_") ||
+           prev.starts_with("ptoas_auto_sync_tail(");
+  }
+  return false;
+}
+
+static std::string rewriteScalarGMStoreFlushMarkersInFunction(
+    llvm::ArrayRef<std::string> functionLines, bool hasTrailingNewline) {
+  llvm::SmallVector<std::string, 4> flushPtrs;
+  llvm::SmallVector<std::string, 32> lines;
+  lines.reserve(functionLines.size());
+
+  for (const std::string &rawLine : functionLines) {
+    std::string line = rawLine;
+    bool hadMarker = stripScalarGMFlushMarkersFromLine(line, flushPtrs);
+    if (hadMarker && llvm::StringRef(line).trim().empty()) {
+      continue;
+    }
+    lines.push_back(std::move(line));
+  }
+
+  if (flushPtrs.empty()) {
+    std::string unchanged;
+    unchanged.reserve(kRewriteOutputReserveExtra);
+    for (size_t i = 0; i < lines.size(); ++i) {
+      unchanged.append(lines[i]);
+      if (i + 1 < lines.size() || hasTrailingNewline)
+        unchanged.push_back('\n');
+    }
+    return unchanged;
+  }
+
+  std::string out;
+  out.reserve(kRewriteOutputReserveExtra);
+  bool inserted = false;
+  size_t fallbackIndex = lines.size();
+  for (size_t i = lines.size(); i > 0; --i) {
+    llvm::StringRef trimmed = llvm::StringRef(lines[i - 1]).trim();
+    if (trimmed.empty())
+      continue;
+    if (trimmed.starts_with("}"))
+      fallbackIndex = i - 1;
+    break;
+  }
+
+  for (size_t i = 0; i < lines.size(); ++i) {
+    llvm::StringRef lineRef(lines[i]);
+    llvm::StringRef trimmed = lineRef.trim();
+    bool insertHere = false;
+    if (trimmed.starts_with("return")) {
+      insertHere = !previousSignificantLineIsTailFlushPoint(lines, i);
+    } else {
+      insertHere = trimmed.starts_with("#endif // __DAV_") ||
+                   trimmed.starts_with("ptoas_auto_sync_tail(");
+    }
+    if (i == fallbackIndex &&
+        !previousSignificantLineIsExitOrTailFlushPoint(lines, i))
+      insertHere = true;
+    if (insertHere) {
+      appendScalarGMFlush(out, getLineIndent(lineRef), flushPtrs);
+      inserted = true;
+    }
+    out.append(lines[i]);
+    if (i + 1 < lines.size() || hasTrailingNewline)
+      out.push_back('\n');
+  }
+
+  if (!inserted)
+    appendScalarGMFlush(out, "  ", flushPtrs);
+  return out;
+}
+
 static void rewriteScalarGMStoreFlushMarkers(std::string &cpp) {
   std::string out;
   out.reserve(cpp.size() + kRewriteOutputReserveExtra);
 
-  llvm::SmallVector<std::string, 4> pendingPtrs;
+  llvm::SmallVector<std::string, 32> functionLines;
+  bool inFunction = false;
+  bool sawFunctionBrace = false;
+  int braceDepth = 0;
+
+  auto flushFunction = [&](bool hasTrailingNewline) {
+    out.append(rewriteScalarGMStoreFlushMarkersInFunction(functionLines,
+                                                         hasTrailingNewline));
+    functionLines.clear();
+    inFunction = false;
+    sawFunctionBrace = false;
+    braceDepth = 0;
+  };
+
   llvm::StringRef ref(cpp);
   while (!ref.empty()) {
     auto split = ref.split('\n');
@@ -708,28 +825,28 @@ static void rewriteScalarGMStoreFlushMarkers(std::string &cpp) {
     bool hadNewline = !split.second.empty();
     ref = split.second;
 
-    bool hadMarker = stripScalarGMFlushMarkersFromLine(line, pendingPtrs);
-    if (hadMarker && llvm::StringRef(line).trim().empty()) {
-      if (!hadNewline && ref.empty())
-        break;
+    llvm::StringRef trimmed = llvm::StringRef(line).trim();
+    if (!inFunction && isAICOREFunctionStart(trimmed))
+      inFunction = true;
+
+    if (!inFunction) {
+      out.append(line);
+      if (hadNewline)
+        out.push_back('\n');
       continue;
     }
 
-    llvm::StringRef lineRef(line);
-    llvm::StringRef trimmed = lineRef.trim();
-    if (!pendingPtrs.empty() && isScalarGMFlushInsertionPoint(trimmed)) {
-      appendScalarGMFlush(out, getLineIndent(lineRef), pendingPtrs);
-      pendingPtrs.clear();
-    }
-
-    out.append(line);
-    if (hadNewline)
-      out.push_back('\n');
+    functionLines.push_back(std::move(line));
+    int delta = countBraceDelta(functionLines.back());
+    if (delta != 0)
+      sawFunctionBrace = true;
+    braceDepth += delta;
+    if (sawFunctionBrace && braceDepth == 0)
+      flushFunction(hadNewline);
   }
 
-  if (!pendingPtrs.empty())
-    appendScalarGMFlush(out, "  ", pendingPtrs);
-
+  if (!functionLines.empty())
+    flushFunction(false);
   cpp.swap(out);
 }
 

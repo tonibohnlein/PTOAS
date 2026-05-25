@@ -19,6 +19,20 @@ module {
     return
   }
 
+  func.func @scalar_gm_store_multi_exit(%dst: !pto.ptr<i32>, %src: !pto.ptr<i32>, %idx: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %val = pto.load_scalar %src[%c0] : !pto.ptr<i32> -> i32
+    pto.store_scalar %val, %dst[%idx] : !pto.ptr<i32>, i32
+    %is_zero = arith.cmpi eq, %idx, %c0 : index
+    cf.cond_br %is_zero, ^early, ^tail
+  ^early:
+    return
+  ^tail:
+    pto.store_scalar %val, %dst[%c0] : !pto.ptr<i32>, i32
+    return
+  }
+
   func.func @scalar_gm_load_only(%src: !pto.ptr<i32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c0 = arith.constant 0 : index
     %val = pto.load_scalar %src[%c0] : !pto.ptr<i32> -> i32
@@ -34,6 +48,19 @@ module {
 // CPP: pipe_barrier(PIPE_ALL);
 // CPP-NEXT: dcci([[DST0]], ENTIRE_DATA_CACHE, CACHELINE_OUT);
 // CPP-NEXT: dcci([[DST1]], ENTIRE_DATA_CACHE, CACHELINE_OUT);
+// CPP-NEXT: dsb((mem_dsb_t)0);
+// CPP-NEXT: #endif // __DAV_VEC__
+// CPP: return;
+
+// CPP-LABEL: AICORE void scalar_gm_store_multi_exit
+// CPP-SAME: (__gm__ int32_t* [[ME_DST:v[0-9]+]], __gm__ int32_t* [[ME_SRC:v[0-9]+]], int32_t [[ME_IDX:v[0-9]+]])
+// CPP: [[ME_DST]][[[ME_IDX]]] =
+// CPP: pipe_barrier(PIPE_ALL);
+// CPP-NEXT: dcci([[ME_DST]], ENTIRE_DATA_CACHE, CACHELINE_OUT);
+// CPP-NEXT: dsb((mem_dsb_t)0);
+// CPP-NEXT: return;
+// CPP: pipe_barrier(PIPE_ALL);
+// CPP-NEXT: dcci([[ME_DST]], ENTIRE_DATA_CACHE, CACHELINE_OUT);
 // CPP-NEXT: dsb((mem_dsb_t)0);
 // CPP-NEXT: #endif // __DAV_VEC__
 // CPP: return;
