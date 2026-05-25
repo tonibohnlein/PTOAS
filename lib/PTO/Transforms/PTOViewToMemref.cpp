@@ -1864,7 +1864,8 @@ struct PTOViewToMemrefPass
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
         rewriter.replaceOpWithNewOp<pto::TExpOp>(
-            op, TypeRange{}, op->getOperand(0), op->getOperand(1));
+            op, TypeRange{}, op->getOperand(0), op->getOperand(1),
+            op.getPrecisionTypeAttr());
       }
 
       // --- TMulOp [Src, Scalar, Dst] ---
@@ -2694,7 +2695,8 @@ struct PTOViewToMemrefPass
             TypeRange{},
             src0,
             src1,
-            dst);
+            dst,
+            op.getPrecisionTypeAttr());
       }
 
       DefaultInlineVector<mlir::pto::TDivSOp> divsops;
@@ -3059,7 +3061,8 @@ struct PTOViewToMemrefPass
             op,
             TypeRange{},
             src,
-            dst);
+            dst,
+            op.getPrecisionTypeAttr());
       }
 
       DefaultInlineVector<mlir::pto::TLReluOp> lreluops;

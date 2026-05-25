@@ -3425,7 +3425,8 @@ def TColExpandDivOp : PTO_TOp<"tcolexpanddiv", [
   let arguments = (ins
     PTODpsType:$src0,
     PTODpsType:$src1,
-    PTODpsType:$dst
+    PTODpsType:$dst,
+    DefaultValuedAttr<PTO_DivPrecisionAttr, "::mlir::pto::DivPrecision::Default">:$precisionType
   );
 
   let results = (outs);
@@ -3804,7 +3805,8 @@ def TDivOp : PTO_TOp<"tdiv", [
   let arguments = (ins
     PTODpsType:$src0,
     PTODpsType:$src1,
-    PTODpsType:$dst
+    PTODpsType:$dst,
+    DefaultValuedAttr<PTO_DivPrecisionAttr, "::mlir::pto::DivPrecision::Default">:$precisionType
   );
 
   let results = (outs);
@@ -3860,7 +3862,8 @@ def TFModOp : PTO_TOp<"tfmod", [
   let arguments = (ins
     PTODpsType:$src0,
     PTODpsType:$src1,
-    PTODpsType:$dst
+    PTODpsType:$dst,
+    DefaultValuedAttr<PTO_FmodPrecisionAttr, "::mlir::pto::FmodPrecision::Default">:$precisionType
   );
 
   let results = (outs);
@@ -3917,7 +3920,8 @@ def TExpOp : PTO_TOp<"texp", [
 
   let arguments = (ins
     PTODpsType:$src,
-    PTODpsType:$dst
+    PTODpsType:$dst,
+    DefaultValuedAttr<PTO_ExpPrecisionAttr, "::mlir::pto::ExpPrecision::Default">:$precisionType
   );
 
   let results = (outs);
@@ -4355,7 +4359,8 @@ def TLogOp : PTO_TOp<"tlog", [
 
   let arguments = (ins
     PTODpsType:$src,
-    PTODpsType:$dst
+    PTODpsType:$dst,
+    DefaultValuedAttr<PTO_LogPrecisionAttr, "::mlir::pto::LogPrecision::Default">:$precisionType
   );
 
   let results = (outs);
@@ -5118,7 +5123,8 @@ def TRecipOp: PTO_TOp<"trecip", [
 
   let arguments = (ins
     PTODpsType:$src,
-    PTODpsType:$dst
+    PTODpsType:$dst,
+    DefaultValuedAttr<PTO_RecipPrecisionAttr, "::mlir::pto::RecipPrecision::Default">:$precisionType
   );
 
   let results = (outs);
@@ -5182,7 +5188,8 @@ def TRemOp: PTO_TOp<"trem", [
     PTODpsType:$src0,
     PTODpsType:$src1,
     PTODpsType:$tmp,
-    PTODpsType:$dst
+    PTODpsType:$dst,
+    DefaultValuedAttr<PTO_RemPrecisionAttr, "::mlir::pto::RemPrecision::Default">:$precisionType
   );
 
   let results = (outs);
@@ -5311,7 +5318,8 @@ def TRowExpandDivOp: PTO_TOp<"trowexpanddiv", [
     PTODpsType:$src0,
     PTODpsType:$src1,
     Optional<PTODpsType>:$tmp,
-    PTODpsType:$dst
+    PTODpsType:$dst,
+    DefaultValuedAttr<PTO_DivPrecisionAttr, "::mlir::pto::DivPrecision::Default">:$precisionType
   );
 
   let results = (outs);
@@ -5702,7 +5710,8 @@ def TRsqrtOp: PTO_TOp<"trsqrt", [
   let arguments = (ins
     PTODpsType:$src,
     PTODpsType:$dst,
-    Optional<PTODpsType>:$tmp
+    Optional<PTODpsType>:$tmp,
+    DefaultValuedAttr<PTO_RsqrtPrecisionAttr, "::mlir::pto::RsqrtPrecision::Default">:$precisionType
   );
 
   let results = (outs);
@@ -6012,7 +6021,8 @@ def TSqrtOp: PTO_TOp<"tsqrt", [
 
   let arguments = (ins
     PTODpsType:$src,
-    PTODpsType:$dst
+    PTODpsType:$dst,
+    DefaultValuedAttr<PTO_SqrtPrecisionAttr, "::mlir::pto::SqrtPrecision::Default">:$precisionType
   );
 
   let results = (outs);

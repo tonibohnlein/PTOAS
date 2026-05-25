@@ -424,6 +424,110 @@ def PTO_SaturationModeAttr : EnumAttr<PTO_Dialect, PTO_SaturationModeEnum, "satu
   let summary = "saturation mode attribute";
 }
 //===----------------------------------------------------------------------===//
+// TDIV template controls
+//===----------------------------------------------------------------------===//
+
+def PTO_DivPrecisionEnum : PTO_I32Enum<
+  "DivPrecision", "PTO TDIV precision mode", [
+    I32EnumAttrCase<"Default", 0, "default">,
+    I32EnumAttrCase<"HighPrecision", 1, "high_precision">
+  ]>;
+
+def PTO_DivPrecisionAttr : EnumAttr<PTO_Dialect, PTO_DivPrecisionEnum, "div_precision"> {
+  let summary = "TDIV precision mode attribute";
+}
+//===----------------------------------------------------------------------===//
+// TEXP template controls
+//===----------------------------------------------------------------------===//
+
+def PTO_ExpPrecisionEnum : PTO_I32Enum<
+  "ExpPrecision", "PTO TEXP precision mode", [
+    I32EnumAttrCase<"Default", 0, "default">,
+    I32EnumAttrCase<"HighPrecision", 1, "high_precision">
+  ]>;
+
+def PTO_ExpPrecisionAttr : EnumAttr<PTO_Dialect, PTO_ExpPrecisionEnum, "exp_precision"> {
+  let summary = "TEXP precision mode attribute";
+}
+//===----------------------------------------------------------------------===//
+// TLOG template controls
+//===----------------------------------------------------------------------===//
+
+def PTO_LogPrecisionEnum : PTO_I32Enum<
+  "LogPrecision", "PTO TLOG precision mode", [
+    I32EnumAttrCase<"Default", 0, "default">,
+    I32EnumAttrCase<"HighPrecision", 1, "high_precision">
+  ]>;
+
+def PTO_LogPrecisionAttr : EnumAttr<PTO_Dialect, PTO_LogPrecisionEnum, "log_precision"> {
+  let summary = "TLOG precision mode attribute";
+}
+//===----------------------------------------------------------------------===//
+// TRECIP template controls
+//===----------------------------------------------------------------------===//
+
+def PTO_RecipPrecisionEnum : PTO_I32Enum<
+  "RecipPrecision", "PTO TRECIP precision mode", [
+    I32EnumAttrCase<"Default", 0, "default">,
+    I32EnumAttrCase<"HighPrecision", 1, "high_precision">
+  ]>;
+
+def PTO_RecipPrecisionAttr : EnumAttr<PTO_Dialect, PTO_RecipPrecisionEnum, "recip_precision"> {
+  let summary = "TRECIP precision mode attribute";
+}
+//===----------------------------------------------------------------------===//
+// TREM template controls
+//===----------------------------------------------------------------------===//
+
+def PTO_RemPrecisionEnum : PTO_I32Enum<
+  "RemPrecision", "PTO TREM precision mode", [
+    I32EnumAttrCase<"Default", 0, "default">,
+    I32EnumAttrCase<"HighPrecision", 1, "high_precision">
+  ]>;
+
+def PTO_RemPrecisionAttr : EnumAttr<PTO_Dialect, PTO_RemPrecisionEnum, "rem_precision"> {
+  let summary = "TREM precision mode attribute";
+}
+//===----------------------------------------------------------------------===//
+// TRSQRT template controls
+//===----------------------------------------------------------------------===//
+
+def PTO_RsqrtPrecisionEnum : PTO_I32Enum<
+  "RsqrtPrecision", "PTO TRSQRT precision mode", [
+    I32EnumAttrCase<"Default", 0, "default">,
+    I32EnumAttrCase<"HighPrecision", 1, "high_precision">
+  ]>;
+
+def PTO_RsqrtPrecisionAttr : EnumAttr<PTO_Dialect, PTO_RsqrtPrecisionEnum, "rsqrt_precision"> {
+  let summary = "TRSQRT precision mode attribute";
+}
+//===----------------------------------------------------------------------===//
+// TSQRT template controls
+//===----------------------------------------------------------------------===//
+
+def PTO_SqrtPrecisionEnum : PTO_I32Enum<
+  "SqrtPrecision", "PTO TSQRT precision mode", [
+    I32EnumAttrCase<"Default", 0, "default">,
+    I32EnumAttrCase<"HighPrecision", 1, "high_precision">
+  ]>;
+
+def PTO_SqrtPrecisionAttr : EnumAttr<PTO_Dialect, PTO_SqrtPrecisionEnum, "sqrt_precision"> {
+  let summary = "TSQRT precision mode attribute";
+}
+//===----------------------------------------------------------------------===//
+// TFMOD template controls
+//===----------------------------------------------------------------------===//
+
+def PTO_FmodPrecisionEnum : PTO_I32Enum<
+  "FmodPrecision", "PTO TFMOD precision mode", [
+    I32EnumAttrCase<"Default", 0, "default">,
+    I32EnumAttrCase<"HighPrecision", 1, "high_precision">
+  ]>;
+
+def PTO_FmodPrecisionAttr : EnumAttr<PTO_Dialect, PTO_FmodPrecisionEnum, "fmod_precision"> {
+  let summary = "TFMOD precision mode attribute";
+}
+//===----------------------------------------------------------------------===//
 // TStore template controls
 //===----------------------------------------------------------------------===//
 
