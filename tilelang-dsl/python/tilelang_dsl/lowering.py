@@ -3884,7 +3884,7 @@ class _AuthoringRenderer:
         if memory_space == "gm":
             return "gm"
         if memory_space in {"mat", "left", "right", "acc", "bias", "scaling"}:
-            return self._render_address_space_name(memory_space)
+            return memory_space
         raise NotImplementedError(f"unsupported tile_buf memory space '{memory_space}'")
 
     def _render_address_space_name(self, memory_space: str) -> str:
