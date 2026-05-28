@@ -380,7 +380,12 @@ func.func @vector_kernel(%gm_slot_buffer : !pto.ptr<f32>,
 - 单函数允许多条 `import_reserved_buffer`
 - `DIR_MASK` 只允许 `1`、`2`、`3`
 - `SLOT_SIZE > 0`
-- 使用 consumer 侧 local FIFO buffer 时，`reserve_buffer.size == SLOT_SIZE * SLOT_NUM`
+- 使用 consumer 侧 local FIFO buffer 时，`reserve_buffer.size` 表示该
+  consumer FIFO 实际预留的本地字节数。A2/A3 GM FIFO 路径要求
+  `reserve_buffer.size == SLOT_SIZE * EFFECTIVE_LOCAL_SLOT_NUM`，其中
+  `EFFECTIVE_LOCAL_SLOT_NUM` 为显式 `local_slot_num`，缺省时为有效
+  `slot_num`。A5 L2L 路径不支持 `local_slot_num`，要求
+  `reserve_buffer.size == SLOT_SIZE * 4`
 - 使用 consumer 侧 local FIFO buffer 时，C2V consumer 的 `reserve_buffer.location` 必须是 `VEC`
 - 使用 consumer 侧 local FIFO buffer 时，V2C consumer 的 `reserve_buffer.location` 必须是 `MAT`
 - `reserve_buffer.name` 在本函数内必须唯一
@@ -515,6 +520,8 @@ DIR_BOTH 示例：
     `pto.aic_initialize_pipe` / `pto.aiv_initialize_pipe` 提供并在 A2/A3 lowering 时转发
   - 表示 GM 路径下 consumer 侧 local slot buffer 的槽数，仅在存在 local FIFO buffer 的 tile-entry 路径有意义
   - 仅在通过 GM 传递时对底层 `TPipe` 模板参数有意义，不改变 GM FIFO 的 `slot_num`
+  - A2/A3 consumer 侧 `reserve_buffer.size` 应按
+    `slot_size * effective_local_slot_num` 预留
   - 存在 local FIFO buffer 且缺省时，默认值等于该内部 pipe 的 `slot_num`
   - 因此前端未显式指定 `slot_num` 时：
     - `DIR_MASK=1/2` 直接 lowering 时，`local_slot_num = 8`
@@ -667,6 +674,8 @@ pto.tfree(%entry, %pipe : !pto.tensor_view<128x512xf32>, !pto.pipe) {split = 0}
 
 - `pto.aic_initialize_pipe` 和 `pto.aiv_initialize_pipe` lower 为 `pto.initialize_l2l_pipe`
 - A5 不支持 `local_slot_num`；前端 init 若显式携带该属性，verifier 会报错
+- A5 的 consumer 侧 `reserve_buffer.size` 不由 `local_slot_num` 决定；当前
+  L2L pipe 约定按 `slot_size * 4` 预留本地 FIFO buffer
 
 ### 6.2 `DIR_MASK=1/2`
 
@@ -978,13 +987,15 @@ pass 在模块级按两步执行：
 
 ### 9.1 前端 verifier
 
-前端 verifier 负责检查：
+前端 IR 需满足以下约束：
 
 - 每个函数 init op 数量是否合法
 - 每个函数 `reserve_buffer` / `import_reserved_buffer` 数量是否合法
 - `DIR_MASK` 取值是否合法
 - `SLOT_SIZE > 0`
-- 使用 consumer 侧 local FIFO buffer 时，`reserve_buffer.size == SLOT_SIZE * SLOT_NUM`
+- 使用 consumer 侧 local FIFO buffer 时，`reserve_buffer.size` 必须匹配对应
+  pipe 的本地 FIFO 字节数：A2/A3 GM FIFO 路径为
+  `SLOT_SIZE * EFFECTIVE_LOCAL_SLOT_NUM`，A5 L2L 路径为 `SLOT_SIZE * 4`
 - 使用 consumer 侧 local FIFO buffer 时，`reserve_buffer.location` 与 consumer 函数类型匹配
 - `reserve_buffer.name` 在函数内唯一
 - `import_reserved_buffer` 的 `(name, peer_func)` 在函数内唯一
