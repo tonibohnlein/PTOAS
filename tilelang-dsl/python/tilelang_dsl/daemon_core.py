@@ -319,6 +319,8 @@ def _build_positional_context_attrs(operand_specs: list[dict]) -> dict[str, Any]
         attrs[f"{prefix}_dtype"] = dtype
 
         if spec.get("kind") == "scalar":
+            if "value" in spec:
+                attrs[f"{prefix}_value"] = spec["value"]
             continue
 
         shape = spec.get("shape")

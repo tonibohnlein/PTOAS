@@ -2160,6 +2160,97 @@ def fallback(src: pto.TensorView, dst: pto.Tile):
 
         self.assertIn("func.func @constrained", mlir_text)
 
+    def test_instance_cache_constraints_can_read_scalar_values(self) -> None:
+        source = """
+import tilelang_dsl as pto
+
+@pto.vkernel(
+    target="a5",
+    op="matcher_daemon_scalar_value_constraints_unique",
+    dtypes=[(pto.f32, pto.i32, pto.f32)],
+    constraints=[lambda src, indexCol, dst: indexCol.value % 8 == 0],
+    priority=100,
+)
+def constrained(src: pto.Tile, indexCol: pto.i32, dst: pto.Tile):
+    return None
+
+@pto.vkernel(
+    target="a5",
+    op="matcher_daemon_scalar_value_constraints_unique",
+    dtypes=[(pto.f32, pto.i32, pto.f32)],
+    constraints=[],
+    priority=10,
+)
+def fallback(src: pto.Tile, indexCol: pto.i32, dst: pto.Tile):
+    return None
+"""
+
+        aligned_operand_specs = [
+            {
+                "kind": "tile",
+                "dtype": "f32",
+                "shape": [1, 64],
+                "valid_shape": [1, 64],
+                "memory_space": "ub",
+            },
+            {
+                "kind": "scalar",
+                "dtype": "i32",
+                "value": 8,
+            },
+            {
+                "kind": "tile",
+                "dtype": "f32",
+                "shape": [1, 64],
+                "valid_shape": [1, 64],
+                "memory_space": "ub",
+            },
+        ]
+
+        fallback_operand_specs = [
+            {
+                "kind": "tile",
+                "dtype": "f32",
+                "shape": [1, 64],
+                "valid_shape": [1, 64],
+                "memory_space": "ub",
+            },
+            {
+                "kind": "scalar",
+                "dtype": "i32",
+                "value": 1,
+            },
+            {
+                "kind": "tile",
+                "dtype": "f32",
+                "shape": [1, 64],
+                "valid_shape": [1, 64],
+                "memory_space": "ub",
+            },
+        ]
+
+        async def instantiate_from_tmpdir(tmpdir: str, operand_specs: list[dict]) -> str:
+            cache = daemon_core.InstanceCache()
+            cache.scan_template_directory(Path(tmpdir))
+            return await cache.instantiate(
+                "a5",
+                "matcher_daemon_scalar_value_constraints_unique",
+                operand_specs,
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module_path = Path(tmpdir) / "matcher_daemon_scalar_value_constraints_unique.py"
+            module_path.write_text(source, encoding="utf-8")
+            aligned_mlir = asyncio.run(instantiate_from_tmpdir(tmpdir, aligned_operand_specs))
+            fallback_mlir = asyncio.run(instantiate_from_tmpdir(tmpdir, fallback_operand_specs))
+
+        self.assertIn("func.func @constrained", aligned_mlir)
+        self.assertIn("func.func @fallback", fallback_mlir)
+        self.assertEqual(
+            daemon_core._build_positional_context_attrs(aligned_operand_specs)["arg1_value"],
+            8,
+        )
+
     def test_select_kernel_binds_selected_op_for_multi_op_descriptor(self) -> None:
         @pto.vkernel(
             ops=["matcher_multi_op_bind_add_unique", "matcher_multi_op_bind_sub_unique"],
