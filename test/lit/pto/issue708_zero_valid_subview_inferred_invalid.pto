@@ -8,20 +8,18 @@
 
 // RUN: not ptoas --pto-arch=a5 --emit-pto-ir %s 2>&1 | FileCheck %s
 
-// Guards the bounds of the inferred-empty subview relaxation: a result type may
-// declare an empty valid region (0) only as the operand-omitted no-op marker.
-// A non-zero valid that disagrees with the inferred/explicit valid is still
-// rejected -- 0 is the only extra value allowed beyond `sizes`.
+// On the inferred path (no valid operand) the result type is authoritative for a
+// *static* valid extent. A *dynamic* result valid (?) is the one case that still
+// cannot be inferred from the type -- there is no SSA value to supply the runtime
+// extent, so an explicit valid_row/valid_col operand is required.
 
 module attributes {"pto.device-spec" = "Ascend910B3"} {
-  // Inferred path (no valid operand) declaring a non-zero, non-size valid (3):
-  // must still fail, exactly as before this relaxation.
-  func.func @neg_inferred_nonzero_mismatch() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @neg_inferred_dynamic_requires_operand() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c0 = arith.constant 0 : index
     %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %t = pto.subview %src[%c0, %c0] sizes [5, 128] :
       !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-      -> !pto.tile_buf<loc=vec, dtype=f32, rows=5, cols=128, v_row=3, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      -> !pto.tile_buf<loc=vec, dtype=f32, rows=5, cols=128, v_row=?, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     return
   }
 }

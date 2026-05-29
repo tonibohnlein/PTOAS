@@ -70,6 +70,25 @@ module attributes {"pto.device-spec" = "Ascend910B3"} {
                outs(%dst : memref<5x128xf32, #pto.address_space<gm>>)
     return
   }
+
+  // Inferred partial valid: no valid operand, result type declares a non-zero,
+  // non-size static valid (v_row=3). The result type is authoritative, so
+  // lowering threads 3 (not the subview size 5) into the bind_tile.
+  func.func @issue708_inferred_partial_valid(
+      %dst: memref<5x128xf32, #pto.address_space<gm>>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tail = pto.subview %src[%c0, %c0] sizes [5, 128] :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      -> !pto.tile_buf<loc=vec, dtype=f32, rows=5, cols=128, v_row=3, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tstore ins(%tail : !pto.tile_buf<loc=vec, dtype=f32, rows=5, cols=128, v_row=3, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+               outs(%dst : memref<5x128xf32, #pto.address_space<gm>>)
+    return
+  }
 }
 
 // The bind_tile that replaces each pto.subview must carry valid operands taken
@@ -89,3 +108,8 @@ module attributes {"pto.device-spec" = "Ascend910B3"} {
 // CHECK: %[[ROW:[0-9A-Za-z_]+]] = pto.bind_tile {{.*}}, %c0, %c128
 // CHECK-SAME: pto.view_semantics = "subview"
 // CHECK: pto.tstore ins(%[[ROW]]
+
+// CHECK-LABEL: func.func @issue708_inferred_partial_valid
+// CHECK: %[[PARTIAL:[0-9A-Za-z_]+]] = pto.bind_tile {{.*}}, %c3, %c128
+// CHECK-SAME: pto.view_semantics = "subview"
+// CHECK: pto.tstore ins(%[[PARTIAL]]

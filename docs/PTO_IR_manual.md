@@ -659,11 +659,12 @@ result.valid = clip(explicit_valid_or_sizes, sizes)
   - For boxed row-major tiles, the subview must keep the full source column extent, and the column offset must be the constant `0`.
   - For boxed col-major tiles, the subview must keep the full source row extent, and the row offset must be the constant `0`.
 - `valid_row` and `valid_col` must be both present or both absent.
-- If `valid_row/valid_col` are omitted, result `valid_shape` defaults to `sizes`.
-  As an exception, a result type may declare an empty `v_row=0`/`v_col=0` with
-  the operands omitted; this "no useful output" marker (used by the dual-AIV
-  no-op replay lane) is accepted and lowering takes the valid extent from the
-  result type rather than `sizes`.
+- If `valid_row/valid_col` are omitted, the result type is authoritative for the
+  valid extent: any static `valid_shape` in `[0, sizes]` is accepted (this covers
+  the full-size default and a `v_row=0`/`v_col=0` no-op-replay empty marker), and
+  lowering takes the valid extent from the result type rather than `sizes`. A
+  dynamic result valid (`?`) still requires an explicit `valid_row`/`valid_col`
+  operand to supply the runtime extent.
 - If `valid_row/valid_col` are provided:
   - constant values must be non-negative and `<= sizes` in each dimension
   - non-constant values are represented as dynamic valid dims in the result type

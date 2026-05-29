@@ -10450,12 +10450,14 @@ void mlir::pto::SubViewOp::print(OpAsmPrinter &printer) {
 }
 
 // The inferred result type derives valid_shape from `sizes` (or the explicit
-// valid operands). PyPTO's dual-AIV no-op replay instead declares a result type
-// with an empty valid region (v_row/v_col = 0) and no valid operand. Accept that
-// declared empty marker here; SubViewOp::verify() enforces that 0 is only legal
-// where the corresponding valid operand is absent. Every other difference
-// (shape, element type, address space, config, or a non-zero valid mismatch) is
-// still rejected exactly as the default exact-equality check would.
+// valid operands). With the operand omitted the result type is authoritative for
+// the valid extent (any static value, including the v=0 no-op-replay marker or a
+// partial valid), so accept a static declared valid that differs from the
+// size-inferred one here; SubViewOp::verify() enforces the precise per-path rule
+// (operand clamping vs the [0, size] range). Only a dynamic declared valid that
+// disagrees with the inferred extent is incompatible -- it needs an explicit
+// operand to supply the runtime value. Every other difference (shape, element
+// type, address space, config) is still rejected as the default check would.
 bool SubViewOp::isCompatibleReturnTypes(TypeRange lhs, TypeRange rhs) {
   if (lhs.size() != rhs.size())
     return false;
@@ -10476,8 +10478,9 @@ bool SubViewOp::isCompatibleReturnTypes(TypeRange lhs, TypeRange rhs) {
     if (inferredValid.size() != declaredValid.size())
       return false;
     for (auto [inferredDim, declaredDim] : llvm::zip(inferredValid, declaredValid)) {
-      // A declared 0 is the empty-region marker; otherwise the dims must match.
-      if (inferredDim != declaredDim && declaredDim != 0)
+      // Any static declared valid extent is accepted in place of the inferred
+      // one; only a dynamic declared valid that disagrees is incompatible.
+      if (inferredDim != declaredDim && declaredDim == ShapedType::kDynamic)
         return false;
     }
   }
@@ -10763,17 +10766,19 @@ mlir::LogicalResult mlir::pto::SubViewOp::verify() {
   auto dstValid = dstTy.getValidShape();
   if (dstValid.size() != 2)
     return emitOpError("expects result to have rank-2 valid_shape");
-  // An omitted valid operand normally infers valid_shape == sizes. Also accept a
-  // result type that declares an empty valid region (v_row/v_col == 0) on that
-  // path: this is the "no useful output" marker PyPTO's dual-AIV no-op replay
-  // stamps on the inactive lane. Lowering derives the bind_tile valid operand
-  // from this type, so the empty marker reaches codegen instead of being
-  // widened back to sizes.
-  bool rowInferredEmpty = !getValidRow() && dstValid[0] == 0;
-  bool colInferredEmpty = !getValidCol() && dstValid[1] == 0;
-  if (dstValid[0] != expectedVRow && !rowInferredEmpty)
+  // With the valid operand omitted, the result type is authoritative for the
+  // valid extent: accept any static value in [0, size] (this subsumes both the
+  // full-size default and the v=0 no-op-replay empty marker). Lowering derives
+  // the bind_tile valid operand from this type. A dynamic result valid still
+  // requires an explicit operand to supply the runtime extent, so it stays
+  // rejected on this path.
+  bool rowInferred = !getValidRow() && dstValid[0] != ShapedType::kDynamic &&
+                     dstValid[0] >= 0 && dstValid[0] <= sizeR;
+  bool colInferred = !getValidCol() && dstValid[1] != ShapedType::kDynamic &&
+                     dstValid[1] >= 0 && dstValid[1] <= sizeC;
+  if (dstValid[0] != expectedVRow && !rowInferred)
     return emitOpError("expects result valid_shape[0] to match inferred/explicit valid_row");
-  if (dstValid[1] != expectedVCol && !colInferredEmpty)
+  if (dstValid[1] != expectedVCol && !colInferred)
     return emitOpError("expects result valid_shape[1] to match inferred/explicit valid_col");
 
   auto cfg = srcTy.getConfigAttr();
