@@ -96,7 +96,6 @@ module attributes {pto.target_arch = "a5"} {
     pto.store_vfsimt_info %dim_z, %dim_y, %dim_x : i32, i32, i32
     func.call @simt_stage0(%ub_out) : (!pto.ptr<i32, ub>) -> ()
     func.call @simt_stage1(%ub_out) : (!pto.ptr<i32, ub>) -> ()
-    %tid2 = pto.resume {slot = 0} : i32
 
     pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
     pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
@@ -107,10 +106,16 @@ module attributes {pto.target_arch = "a5"} {
   }
 
   func.func @simt_stage0(%dst: !pto.ptr<i32, ub>) attributes {pto.simt_entry} {
+    %tid = pto.get_tid_x : i32
+    pto.keep %tid {slot = 0 : i64} : i32
     return
   }
 
   func.func @simt_stage1(%dst: !pto.ptr<i32, ub>) attributes {pto.simt_entry} {
+    %tid2 = pto.resume {slot = 0 : i64} : i32
+    %tid = pto.get_tid_x : i32
+    %idx = arith.index_castui %tid : i32 to index
+    pto.store %tid2, %dst[%idx] : !pto.ptr<i32, ub>, i32
     return
   }
 }
@@ -138,6 +143,9 @@ module attributes {pto.target_arch = "a5"} {
 
 ### 5.3 成对约束
 
+这些约束描述用户必须保持的跨 SIMT entry 语义关系。实现不需要对跨
+entry 关系做 verifier 检查。
+
 - 一个 `slot` 在被 `resume` 消费前不能再次被 `keep` 覆盖。
 - `keep` 和 `resume` 的 payload 类型必须完全一致。
 - 第一版只支持线性调用链，不跨分支/循环。
@@ -146,9 +154,8 @@ module attributes {pto.target_arch = "a5"} {
 
 `keep` 和匹配的 `resume` 之间：
 
-- 禁止新的 `pto.simt_entry` 调用
+- 禁止插入无关的 `pto.simt_entry` 调用
 - 禁止新的 `pto.keep` / `pto.resume`
-- 禁止新的 `pto.store_vfsimt_info`
 - 允许普通标量算术、地址计算、常量、`arith.*`、以及非 `pto.simt_entry` 的纯 helper call
 
 ---
@@ -159,8 +166,6 @@ module attributes {pto.target_arch = "a5"} {
 
 - `keep` 所在的 `simtvf`
 - `resume` 所在的 `simtvf`
-
-在 `keep` 和 `resume` 之间不得插入新的 `pto.store_vfsimt_info`。
 
 ---
 
@@ -202,10 +207,9 @@ module attributes {pto.target_arch = "a5"} {
    整数占两个槽且起始 slot 必须为偶数。
 5. 同一 keep/resume 组内的槽位覆盖范围不得重叠。
 6. `resume` 必须是所在 block 的第一条操作，`keep` 必须紧邻 `func.return`。
-7. 同一 `slot` 的 `keep` 与 `resume` payload 类型必须一致。
-8. 一个 `slot` 在被消费前不能再次被覆盖。
-9. `keep` 和 `resume` 之间不得插入新的 `pto.store_vfsimt_info`。
-10. 第一版要求线性链路，不跨分支/循环。
+
+跨 SIMT entry 的 slot 配对、payload 类型匹配、覆盖关系和 launch 维度
+一致性属于用户必须遵守的语义约束，不作为 verifier 的跨 entry 检查项。
 
 ---
 

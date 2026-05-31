@@ -431,7 +431,7 @@ table, `<st-l2cache>` means one token from the store/atomic L2 cache table,
 
 ### `pto.load`
 
-- **syntax:** `%value = pto.load %ptr[%offset] attr-dict : !pto.ptr<T, space> -> T`
+- **syntax:** `%value = pto.load %ptr[%offset] : !pto.ptr<T, space> -> T`
 - **accepted forms:**
 
 ```mlir
@@ -450,11 +450,12 @@ result = memory[effective_element]
   `index` element offset, not a byte offset.
 - **outputs:** One scalar value of type `T`.
 - **constraints and limitations:** The result type must match the pointer
-  element type. Use `pto.ldg` for GM scalar loads that need cache controls.
+  element type. This op does not accept cache-control clauses; use `pto.ldg`
+  for GM scalar loads that need `l1cache(...)` or `l2cache(...)`.
 
 ### `pto.store`
 
-- **syntax:** `pto.store %value, %ptr[%offset] attr-dict : !pto.ptr<T, space>, T`
+- **syntax:** `pto.store %value, %ptr[%offset] : !pto.ptr<T, space>, T`
 - **accepted forms:**
 
 ```mlir
@@ -473,7 +474,8 @@ memory[effective_element] = value
   `!pto.ptr<T, space>` or memref. `%offset` is an `index` element offset.
 - **outputs:** None.
 - **constraints and limitations:** `%value` type must match the pointer element
-  type. Use `pto.stg` for GM scalar stores that need cache controls.
+  type. This op does not accept cache-control clauses; use `pto.stg` for GM
+  scalar stores that need `l1cache(...)` or `l2cache(...)`.
 
 ### `pto.ldg`
 

@@ -18,21 +18,9 @@ ELEMS = 1024
 def generate(output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     v1 = np.full(ELEMS, -1, dtype=np.int32)
-    xs = np.arange(32, dtype=np.int32)
-    ys = np.arange(32, dtype=np.int32)[:, None]
-    tid = ys * 32 + xs[None, :]
-    tid_i16 = tid & 0xFFFF
-    tid_i8 = tid & 0xFF
-    golden_v1 = (
-        (xs[None, :] | (ys << 8))
-        + tid
-        + tid_i16
-        + tid_i8
-        + tid
-        + 100
-        + 1000
-        + 100000
-    ).reshape(ELEMS)
+    golden_v1 = np.zeros(ELEMS, dtype=np.int32)
+    tx = np.arange(128, dtype=np.int32)
+    golden_v1[:128] = 101100 + 5 * tx
     v1.tofile(output_dir / "v1.bin")
     golden_v1.tofile(output_dir / "golden_v1.bin")
 

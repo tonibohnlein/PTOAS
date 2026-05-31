@@ -12,21 +12,41 @@ import sys
 
 import numpy as np
 
+CHECK_ELEMS = 128
+
 
 def main():
     strict = os.getenv("COMPARE_STRICT", "1") != "0"
     golden = np.fromfile("golden_v1.bin", dtype=np.int32)
     out = np.fromfile("v1.bin", dtype=np.int32)
-    ok = golden.shape == out.shape and np.array_equal(golden, out)
+    golden_prefix = golden[:CHECK_ELEMS]
+    out_prefix = out[:CHECK_ELEMS]
+    shape_ok = golden_prefix.shape == (CHECK_ELEMS,) and out_prefix.shape == (
+        CHECK_ELEMS,
+    )
+    ok = shape_ok and np.array_equal(golden_prefix, out_prefix)
     if not ok:
-        idxs = np.nonzero(golden != out)[0]
+        if not shape_ok:
+            print(
+                f"[ERROR] expected at least {CHECK_ELEMS} elements, "
+                f"golden={golden.size}, out={out.size}"
+            )
+            if strict:
+                sys.exit(2)
+            print(f"[WARN] compare failed for first {CHECK_ELEMS} elements (non-gating)")
+            return
+        idxs = np.nonzero(golden_prefix != out_prefix)[0]
         idx = int(idxs[0]) if idxs.size else 0
         print(
-            f"[ERROR] mismatch at idx={idx}, golden={int(golden[idx])}, out={int(out[idx])}"
+            f"[ERROR] mismatch at idx={idx}, golden={int(golden_prefix[idx])}, out={int(out_prefix[idx])}"
         )
         if strict:
             sys.exit(2)
-    print("[INFO] compare passed" if ok else "[WARN] compare failed (non-gating)")
+    print(
+        f"[INFO] compare passed for first {CHECK_ELEMS} elements"
+        if ok
+        else f"[WARN] compare failed for first {CHECK_ELEMS} elements (non-gating)"
+    )
 
 
 if __name__ == "__main__":
