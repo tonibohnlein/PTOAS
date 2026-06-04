@@ -278,7 +278,12 @@ public:
   }
 
   LogicalResult initializeObjectEmission() {
-    return mlir::pto::discoverObjectEmissionToolchain(toolchain, llvm::errs());
+    std::optional<mlir::pto::CANNToolchain> discovered =
+        mlir::pto::CANNToolchain::create(llvm::errs());
+    if (!discovered)
+      return failure();
+    toolchain = std::move(*discovered);
+    return success();
   }
 
   MLIRContext &getMLIRContext() { return mlirContext; }
@@ -298,7 +303,7 @@ public:
     return "ptoas_module_" + std::to_string(nextModuleId++);
   }
 
-  const mlir::pto::ObjectEmissionToolchain &getToolchain() const {
+  const mlir::pto::CANNToolchain &getToolchain() const {
     return toolchain;
   }
 
@@ -315,7 +320,7 @@ private:
   std::string arch;
   int argc = 0;
   char **argv = nullptr;
-  mlir::pto::ObjectEmissionToolchain toolchain;
+  mlir::pto::CANNToolchain toolchain;
   mlir::pto::TempFileRegistry tempFiles;
 };
 

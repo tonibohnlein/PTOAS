@@ -346,7 +346,7 @@ PTOASContext
   output path
   target arch
   original argc / argv
-  ObjectEmissionToolchain
+  CANNToolchain
   TempFileRegistry
 
 PTOASCompileResult

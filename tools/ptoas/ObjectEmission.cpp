@@ -158,20 +158,6 @@ static bool usesBeta1VPTOPublicABI(llvm::StringRef cannVersion) {
   return cannVersion == "9.0.0-beta.1";
 }
 
-static llvm::StringRef getVPTOVectorPublicABISuffix(
-    const mlir::pto::ObjectEmissionToolchain &toolchain) {
-  if (!toolchain.vptoVectorPublicABISuffix.empty())
-    return toolchain.vptoVectorPublicABISuffix;
-  return ".vector";
-}
-
-static llvm::StringRef getVPTOCubePublicABISuffix(
-    const mlir::pto::ObjectEmissionToolchain &toolchain) {
-  if (!toolchain.vptoCubePublicABISuffix.empty())
-    return toolchain.vptoCubePublicABISuffix;
-  return ".cube";
-}
-
 static std::optional<std::string> locateProgram(llvm::StringRef envPath,
                                                 llvm::StringRef fallbackName) {
   if (!envPath.empty() && llvm::sys::fs::exists(envPath))
@@ -234,8 +220,6 @@ discoverCppIncludeDirs(llvm::StringRef ascendHome,
   return includeDirs;
 }
 
-class VPTOFatobjToolchain;
-
 static bool compileDeviceLLVMToObject(llvm::StringRef llPath,
                                       llvm::StringRef outObjPath,
                                       llvm::StringRef targetCPU,
@@ -246,7 +230,7 @@ static bool compileHostStubToObject(llvm::StringRef stubPath,
                                     llvm::StringRef outObjPath,
                                     llvm::StringRef moduleId,
                                     llvm::StringRef targetCPU,
-                                    const VPTOFatobjToolchain &toolchain,
+                                    const mlir::pto::CANNToolchain &toolchain,
                                     llvm::StringRef deviceObjPath,
                                     llvm::StringRef stderrPath,
                                     llvm::raw_ostream &diagOS);
@@ -266,142 +250,6 @@ getTargetCPU(mlir::pto::ObjectEmissionDeviceTarget target) {
   }
   llvm_unreachable("unknown object emission device target");
 }
-
-class VPTOFatobjToolchain {
-public:
-  explicit VPTOFatobjToolchain(
-      const mlir::pto::ObjectEmissionToolchain &toolchain)
-      : ascendHomePath(toolchain.ascendHomePath),
-        bishengPath(toolchain.bishengPath),
-        bishengCc1Path(toolchain.bishengCc1Path),
-        cceLdPath(toolchain.cceLdPath),
-        ldLldPath(toolchain.ldLldPath),
-        resourceDirPath(toolchain.resourceDirPath),
-        resourceIncludeDirPath(toolchain.resourceIncludeDirPath),
-        cceStubDirPath(toolchain.cceStubDirPath),
-        bishengCompilerBinDirPath(toolchain.bishengCompilerBinDirPath),
-        ptoIsaPath(toolchain.ptoIsaPath),
-        cannVersion(toolchain.cannVersion),
-        vptoVectorPublicABISuffix(toolchain.vptoVectorPublicABISuffix),
-        vptoCubePublicABISuffix(toolchain.vptoCubePublicABISuffix) {
-    cppIncludeDirs.assign(toolchain.cppIncludeDirs.begin(),
-                          toolchain.cppIncludeDirs.end());
-  }
-
-  static std::optional<VPTOFatobjToolchain>
-  create(llvm::raw_ostream &diagOS) {
-    std::optional<std::string> ascendHome = getAscendHomePath();
-    if (!ascendHome) {
-      diagOS << "Error: ASCEND_HOME_PATH is required for VPTO fatobj emission.\n";
-      return std::nullopt;
-    }
-
-    VPTOFatobjToolchain toolchain(*ascendHome, diagOS);
-    if (!toolchain.validate(diagOS))
-      return std::nullopt;
-    return toolchain;
-  }
-
-  const std::string &ascendHome() const { return ascendHomePath; }
-  const std::string &bisheng() const { return bishengPath; }
-  const std::string &bishengCc1() const { return bishengCc1Path; }
-  const std::string &cceLd() const { return cceLdPath; }
-  const std::string &ldLld() const { return ldLldPath; }
-  const std::string &resourceDir() const { return resourceDirPath; }
-  const std::string &resourceIncludeDir() const {
-    return resourceIncludeDirPath;
-  }
-  const std::string &cceStubDir() const { return cceStubDirPath; }
-  const std::string &bishengCompilerBinDir() const {
-    return bishengCompilerBinDirPath;
-  }
-
-  mlir::pto::ObjectEmissionToolchain toPublicToolchain() const {
-    mlir::pto::ObjectEmissionToolchain toolchain;
-    toolchain.ascendHomePath = ascendHomePath;
-    toolchain.bishengPath = bishengPath;
-    toolchain.bishengCc1Path = bishengCc1Path;
-    toolchain.cceLdPath = cceLdPath;
-    toolchain.ldLldPath = ldLldPath;
-    toolchain.resourceDirPath = resourceDirPath;
-    toolchain.resourceIncludeDirPath = resourceIncludeDirPath;
-    toolchain.cceStubDirPath = cceStubDirPath;
-    toolchain.bishengCompilerBinDirPath = bishengCompilerBinDirPath;
-    toolchain.ptoIsaPath = ptoIsaPath;
-    toolchain.cannVersion = cannVersion;
-    toolchain.vptoVectorPublicABISuffix = vptoVectorPublicABISuffix;
-    toolchain.vptoCubePublicABISuffix = vptoCubePublicABISuffix;
-    toolchain.cppIncludeDirs.assign(cppIncludeDirs.begin(),
-                                    cppIncludeDirs.end());
-    return toolchain;
-  }
-
-private:
-  explicit VPTOFatobjToolchain(llvm::StringRef ascendHome,
-                               llvm::raw_ostream &diagOS)
-      : ascendHomePath(ascendHome.str()),
-        bishengPath(joinPath(ascendHomePath, "bin/bisheng")),
-        bishengCc1Path(
-            joinPath(ascendHomePath, "tools/bisheng_compiler/bin/bisheng")),
-        cceLdPath(joinPath(ascendHomePath, "bin/cce-ld")),
-        ldLldPath(
-            locateProgram(joinPath(ascendHomePath, "bin/ld.lld"), "ld.lld")
-                .value_or(std::string())),
-        resourceDirPath(joinPath(
-            ascendHomePath, "tools/bisheng_compiler/lib/clang/15.0.5")),
-        resourceIncludeDirPath(joinPath(resourceDirPath, "include")),
-        cceStubDirPath(joinPath(resourceIncludeDirPath, "cce_stub")),
-        bishengCompilerBinDirPath(
-            joinPath(ascendHomePath, "tools/bisheng_compiler/bin")) {
-    cannVersion =
-        discoverCANNVersion(ascendHomePath).value_or("9.0.0-beta.1");
-    if (usesBeta1VPTOPublicABI(cannVersion)) {
-      vptoVectorPublicABISuffix = "_mix_aiv";
-      vptoCubePublicABISuffix = "_mix_aic";
-    } else {
-      vptoVectorPublicABISuffix = ".vector";
-      vptoCubePublicABISuffix = ".cube";
-    }
-    cppIncludeDirs = discoverCppIncludeDirs(ascendHomePath, diagOS,
-                                            ptoIsaPath);
-  }
-
-  bool validate(llvm::raw_ostream &diagOS) const {
-    if (!llvm::sys::fs::exists(bishengPath)) {
-      diagOS << "Error: unable to locate bisheng: " << bishengPath << "\n";
-      return false;
-    }
-    if (!llvm::sys::fs::exists(bishengCc1Path)) {
-      diagOS << "Error: unable to locate bisheng cc1 frontend: "
-             << bishengCc1Path << "\n";
-      return false;
-    }
-    if (!llvm::sys::fs::exists(cceLdPath)) {
-      diagOS << "Error: unable to locate cce-ld: " << cceLdPath << "\n";
-      return false;
-    }
-    if (ldLldPath.empty() || !llvm::sys::fs::exists(ldLldPath)) {
-      diagOS << "Error: unable to locate ld.lld.\n";
-      return false;
-    }
-    return true;
-  }
-
-  std::string ascendHomePath;
-  std::string bishengPath;
-  std::string bishengCc1Path;
-  std::string cceLdPath;
-  std::string ldLldPath;
-  std::string resourceDirPath;
-  std::string resourceIncludeDirPath;
-  std::string cceStubDirPath;
-  std::string bishengCompilerBinDirPath;
-  std::string ptoIsaPath;
-  std::string cannVersion;
-  std::string vptoVectorPublicABISuffix;
-  std::string vptoCubePublicABISuffix;
-  llvm::SmallVector<std::string, 8> cppIncludeDirs;
-};
 
 class VPTOFatobjArtifacts {
 public:
@@ -423,7 +271,7 @@ public:
   }
 
   bool emitCubeObject(llvm::Module *module,
-                      const VPTOFatobjToolchain &toolchain,
+                      const mlir::pto::CANNToolchain &toolchain,
                       llvm::raw_ostream &diagOS) {
     if (!module)
       return true;
@@ -432,12 +280,11 @@ public:
     if (failed(tempFiles.create("ptoas-device", ".o", cubeObjPath, diagOS)))
       return false;
     return succeeded(mlir::pto::emitVPTOCubeDeviceObject(
-        *module, cubeLLPath, cubeObjPath, toolchain.toPublicToolchain(),
-        stderrPath, diagOS));
+        *module, cubeLLPath, cubeObjPath, toolchain, stderrPath, diagOS));
   }
 
   bool emitVectorObject(llvm::Module *module,
-                        const VPTOFatobjToolchain &toolchain,
+                        const mlir::pto::CANNToolchain &toolchain,
                         llvm::raw_ostream &diagOS) {
     if (!module)
       return true;
@@ -446,11 +293,10 @@ public:
     if (failed(tempFiles.create("ptoas-device", ".o", vectorObjPath, diagOS)))
       return false;
     return succeeded(mlir::pto::emitVPTOVectorDeviceObject(
-        *module, vectorLLPath, vectorObjPath, toolchain.toPublicToolchain(),
-        stderrPath, diagOS));
+        *module, vectorLLPath, vectorObjPath, toolchain, stderrPath, diagOS));
   }
 
-  bool mergeDeviceObjects(const VPTOFatobjToolchain &toolchain,
+  bool mergeDeviceObjects(const mlir::pto::CANNToolchain &toolchain,
                           llvm::raw_ostream &diagOS) {
     llvm::SmallVector<std::string, 2> deviceObjPaths;
     if (!cubeObjPath.empty())
@@ -465,10 +311,10 @@ public:
                                 mergedDeviceObjPath, diagOS)))
       return false;
     return ::mergeDeviceObjects(deviceObjPaths, mergedDeviceObjPath,
-                                toolchain.ldLld(), stderrPath, diagOS);
+                                toolchain.ldLldPath, stderrPath, diagOS);
   }
 
-  bool compileHostStub(const VPTOFatobjToolchain &toolchain,
+  bool compileHostStub(const mlir::pto::CANNToolchain &toolchain,
                        llvm::StringRef moduleId,
                        llvm::StringRef targetCPU,
                        llvm::raw_ostream &diagOS) {
@@ -480,7 +326,7 @@ public:
                                    stderrPath, diagOS);
   }
 
-  bool compileHostStubToFatobj(const VPTOFatobjToolchain &toolchain,
+  bool compileHostStubToFatobj(const mlir::pto::CANNToolchain &toolchain,
                                llvm::StringRef moduleId,
                                llvm::StringRef targetCPU,
                                llvm::StringRef outputPath,
@@ -490,12 +336,12 @@ public:
                                    diagOS);
   }
 
-  bool repackFatObj(const VPTOFatobjToolchain &toolchain,
+  bool repackFatObj(const mlir::pto::CANNToolchain &toolchain,
                     llvm::StringRef moduleId, llvm::StringRef targetCPU,
                     llvm::StringRef outPath, llvm::raw_ostream &diagOS) {
     llvm::SmallVector<std::string, 16> args = {
-        toolchain.cceLd(),
-        toolchain.ldLld(),
+        toolchain.cceLdPath,
+        toolchain.ldLldPath,
         "-x",
         "-cce-lite-bin-module-id",
         moduleId.str(),
@@ -507,14 +353,14 @@ public:
         "-o",
         outPath.str(),
         "-cce-stub-dir",
-        toolchain.cceStubDir(),
+        toolchain.cceStubDirPath,
         "-cce-install-dir",
-        toolchain.bishengCompilerBinDir(),
+        toolchain.bishengCompilerBinDirPath,
         "-cce-inputs-number",
         "1",
         hostStubObjPath,
     };
-    return runCommandWithStderr(toolchain.cceLd(), args, stderrPath, diagOS,
+    return runCommandWithStderr(toolchain.cceLdPath, args, stderrPath, diagOS,
                                 "fatobj repack");
   }
 
@@ -591,7 +437,7 @@ static bool compileDeviceLLVMToObject(llvm::StringRef llPath,
 
 static bool compileCppDeviceSourceToObject(
     llvm::StringRef cppPath, llvm::StringRef outObjPath,
-    llvm::StringRef targetCPU, const mlir::pto::ObjectEmissionToolchain &toolchain,
+    llvm::StringRef targetCPU, const mlir::pto::CANNToolchain &toolchain,
     llvm::StringRef stderrPath, llvm::raw_ostream &diagOS) {
   llvm::SmallVector<std::string, 32> args = {
       toolchain.bishengPath,
@@ -630,7 +476,7 @@ static bool compileCppDeviceSourceToObject(
 
 static bool compileCppDeviceSourceToFatobj(
     llvm::StringRef cppPath, llvm::StringRef outObjPath,
-    const mlir::pto::ObjectEmissionToolchain &toolchain,
+    const mlir::pto::CANNToolchain &toolchain,
     llvm::StringRef stderrPath, llvm::raw_ostream &diagOS) {
   llvm::SmallVector<std::string, 32> args = {
       toolchain.bishengPath,
@@ -671,7 +517,7 @@ static bool compileHostStubToObject(llvm::StringRef stubPath,
                                     llvm::StringRef outObjPath,
                                     llvm::StringRef moduleId,
                                     llvm::StringRef targetCPU,
-                                    const VPTOFatobjToolchain &toolchain,
+                                    const mlir::pto::CANNToolchain &toolchain,
                                     llvm::StringRef deviceObjPath,
                                     llvm::StringRef stderrPath,
                                     llvm::raw_ostream &diagOS) {
@@ -680,7 +526,7 @@ static bool compileHostStubToObject(llvm::StringRef stubPath,
   std::string hostTriple = llvm::sys::getProcessTriple();
 
   llvm::SmallVector<std::string, 32> args = {
-      toolchain.bishengCc1(),
+      toolchain.bishengCc1Path,
       "-cc1",
       "-triple",
       hostTriple,
@@ -719,9 +565,9 @@ static bool compileHostStubToObject(llvm::StringRef stubPath,
       "-treat-scalable-fixed-error-as-warning",
       std::string("-fcoverage-compilation-dir=") + coverageDir,
       "-resource-dir",
-      toolchain.resourceDir(),
+      toolchain.resourceDirPath,
       "-internal-isystem",
-      toolchain.resourceIncludeDir(),
+      toolchain.resourceIncludeDirPath,
       "-include",
       "__clang_cce_runtime_wrapper.h",
       "-D",
@@ -766,7 +612,7 @@ static bool compileHostStubToObject(llvm::StringRef stubPath,
       "cce",
       stubPath.str(),
   };
-  return runCommandWithStderr(toolchain.bishengCc1(), args, stderrPath, diagOS,
+  return runCommandWithStderr(toolchain.bishengCc1Path, args, stderrPath, diagOS,
                               "host stub compilation");
 }
 
@@ -797,7 +643,7 @@ static bool mergeDeviceObjects(llvm::ArrayRef<std::string> deviceObjPaths,
 
 static bool linkFatobjFiles(llvm::ArrayRef<std::string> fatobjPaths,
                             llvm::StringRef outObjPath,
-                            const mlir::pto::ObjectEmissionToolchain &toolchain,
+                            const mlir::pto::CANNToolchain &toolchain,
                             llvm::StringRef stderrPath,
                             llvm::raw_ostream &diagOS) {
   if (fatobjPaths.empty())
@@ -847,14 +693,81 @@ mlir::pto::TempFileRegistry::create(llvm::StringRef prefix,
   return success();
 }
 
-mlir::LogicalResult mlir::pto::discoverObjectEmissionToolchain(
-    ObjectEmissionToolchain &publicToolchain, llvm::raw_ostream &diagOS) {
-  std::optional<VPTOFatobjToolchain> toolchain =
-      VPTOFatobjToolchain::create(diagOS);
-  if (!toolchain)
+std::optional<mlir::pto::CANNToolchain>
+mlir::pto::CANNToolchain::create(llvm::raw_ostream &diagOS) {
+  std::optional<std::string> ascendHome = getAscendHomePath();
+  if (!ascendHome) {
+    diagOS << "Error: ASCEND_HOME_PATH is required for VPTO fatobj emission.\n";
+    return std::nullopt;
+  }
+
+  CANNToolchain toolchain;
+  toolchain.ascendHomePath = *ascendHome;
+  toolchain.bishengPath = joinPath(toolchain.ascendHomePath, "bin/bisheng");
+  toolchain.bishengCc1Path =
+      joinPath(toolchain.ascendHomePath, "tools/bisheng_compiler/bin/bisheng");
+  toolchain.cceLdPath = joinPath(toolchain.ascendHomePath, "bin/cce-ld");
+  toolchain.ldLldPath =
+      locateProgram(joinPath(toolchain.ascendHomePath, "bin/ld.lld"), "ld.lld")
+          .value_or(std::string());
+  toolchain.resourceDirPath = joinPath(
+      toolchain.ascendHomePath, "tools/bisheng_compiler/lib/clang/15.0.5");
+  toolchain.resourceIncludeDirPath =
+      joinPath(toolchain.resourceDirPath, "include");
+  toolchain.cceStubDirPath =
+      joinPath(toolchain.resourceIncludeDirPath, "cce_stub");
+  toolchain.bishengCompilerBinDirPath =
+      joinPath(toolchain.ascendHomePath, "tools/bisheng_compiler/bin");
+  toolchain.cannVersion =
+      discoverCANNVersion(toolchain.ascendHomePath).value_or("9.0.0-beta.1");
+  if (usesBeta1VPTOPublicABI(toolchain.cannVersion)) {
+    toolchain.vptoVectorPublicABISuffix = "_mix_aiv";
+    toolchain.vptoCubePublicABISuffix = "_mix_aic";
+  } else {
+    toolchain.vptoVectorPublicABISuffix = ".vector";
+    toolchain.vptoCubePublicABISuffix = ".cube";
+  }
+  llvm::SmallVector<std::string, 8> cppIncludeDirs = discoverCppIncludeDirs(
+      toolchain.ascendHomePath, diagOS, toolchain.ptoIsaPath);
+  toolchain.cppIncludeDirs.assign(cppIncludeDirs.begin(),
+                                  cppIncludeDirs.end());
+  if (failed(toolchain.validate(diagOS)))
+    return std::nullopt;
+  return toolchain;
+}
+
+mlir::LogicalResult
+mlir::pto::CANNToolchain::validate(llvm::raw_ostream &diagOS) const {
+  if (!llvm::sys::fs::exists(bishengPath)) {
+    diagOS << "Error: unable to locate bisheng: " << bishengPath << "\n";
     return failure();
-  publicToolchain = toolchain->toPublicToolchain();
+  }
+  if (!llvm::sys::fs::exists(bishengCc1Path)) {
+    diagOS << "Error: unable to locate bisheng cc1 frontend: "
+           << bishengCc1Path << "\n";
+    return failure();
+  }
+  if (!llvm::sys::fs::exists(cceLdPath)) {
+    diagOS << "Error: unable to locate cce-ld: " << cceLdPath << "\n";
+    return failure();
+  }
+  if (ldLldPath.empty() || !llvm::sys::fs::exists(ldLldPath)) {
+    diagOS << "Error: unable to locate ld.lld.\n";
+    return failure();
+  }
   return success();
+}
+
+llvm::StringRef mlir::pto::CANNToolchain::vptoPublicABISuffix(
+    ObjectEmissionDeviceTarget target) const {
+  switch (target) {
+  case ObjectEmissionDeviceTarget::Vector:
+    return vptoVectorPublicABISuffix.empty() ? ".vector"
+                                             : vptoVectorPublicABISuffix;
+  case ObjectEmissionDeviceTarget::Cube:
+    return vptoCubePublicABISuffix.empty() ? ".cube" : vptoCubePublicABISuffix;
+  }
+  llvm_unreachable("unknown object emission device target");
 }
 
 mlir::LogicalResult mlir::pto::writeLLVMModule(llvm::Module &module,
@@ -877,7 +790,7 @@ mlir::LogicalResult mlir::pto::writeHostStubSource(
 
 mlir::LogicalResult mlir::pto::compileCppToDeviceObject(
     llvm::StringRef cppPath, llvm::StringRef outObjPath,
-    ObjectEmissionDeviceTarget target, const ObjectEmissionToolchain &toolchain,
+    ObjectEmissionDeviceTarget target, const CANNToolchain &toolchain,
     llvm::StringRef stderrPath, llvm::raw_ostream &diagOS) {
   return compileCppDeviceSourceToObject(cppPath, outObjPath,
                                         getTargetCPU(target), toolchain,
@@ -888,7 +801,7 @@ mlir::LogicalResult mlir::pto::compileCppToDeviceObject(
 
 mlir::LogicalResult mlir::pto::compileLLVMToDeviceObject(
     llvm::StringRef llPath, llvm::StringRef outObjPath,
-    ObjectEmissionDeviceTarget target, const ObjectEmissionToolchain &toolchain,
+    ObjectEmissionDeviceTarget target, const CANNToolchain &toolchain,
     llvm::StringRef stderrPath, llvm::raw_ostream &diagOS) {
   return compileDeviceLLVMToObject(llPath, outObjPath, getTargetCPU(target),
                                    toolchain.bishengPath, stderrPath, diagOS)
@@ -898,7 +811,7 @@ mlir::LogicalResult mlir::pto::compileLLVMToDeviceObject(
 
 mlir::LogicalResult mlir::pto::emitCppVectorDeviceObject(
     llvm::StringRef cppSource, llvm::StringRef cppPath,
-    llvm::StringRef outObjPath, const ObjectEmissionToolchain &toolchain,
+    llvm::StringRef outObjPath, const CANNToolchain &toolchain,
     llvm::StringRef stderrPath, llvm::raw_ostream &diagOS) {
   if (failed(writeCppSource(cppSource, cppPath, diagOS)))
     return failure();
@@ -909,7 +822,7 @@ mlir::LogicalResult mlir::pto::emitCppVectorDeviceObject(
 
 mlir::LogicalResult mlir::pto::emitCppCubeDeviceObject(
     llvm::StringRef cppSource, llvm::StringRef cppPath,
-    llvm::StringRef outObjPath, const ObjectEmissionToolchain &toolchain,
+    llvm::StringRef outObjPath, const CANNToolchain &toolchain,
     llvm::StringRef stderrPath, llvm::raw_ostream &diagOS) {
   if (failed(writeCppSource(cppSource, cppPath, diagOS)))
     return failure();
@@ -920,7 +833,7 @@ mlir::LogicalResult mlir::pto::emitCppCubeDeviceObject(
 
 mlir::LogicalResult mlir::pto::emitCppFatobj(
     llvm::StringRef cppSource, llvm::StringRef cppPath,
-    llvm::StringRef outObjPath, const ObjectEmissionToolchain &toolchain,
+    llvm::StringRef outObjPath, const CANNToolchain &toolchain,
     llvm::StringRef stderrPath, llvm::raw_ostream &diagOS) {
   if (failed(writeCppSource(cppSource, cppPath, diagOS)))
     return failure();
@@ -932,7 +845,7 @@ mlir::LogicalResult mlir::pto::emitCppFatobj(
 
 mlir::LogicalResult mlir::pto::emitFatobjCCE(
     llvm::StringRef cppSource, llvm::StringRef outputPath,
-    const ObjectEmissionToolchain &toolchain, TempFileRegistry &tempFiles,
+    const CANNToolchain &toolchain, TempFileRegistry &tempFiles,
     llvm::raw_ostream &diagOS) {
   std::string cppPath;
   std::string stderrPath;
@@ -989,10 +902,12 @@ static mlir::LogicalResult applyVPTOLLVMABINames(llvm::Module &module,
 
 mlir::LogicalResult mlir::pto::emitVPTOVectorDeviceObject(
     llvm::Module &module, llvm::StringRef llPath, llvm::StringRef outObjPath,
-    const ObjectEmissionToolchain &toolchain, llvm::StringRef stderrPath,
+    const CANNToolchain &toolchain, llvm::StringRef stderrPath,
     llvm::raw_ostream &diagOS) {
-  if (failed(applyVPTOLLVMABINames(module, getVPTOVectorPublicABISuffix(toolchain),
-                                   diagOS)))
+  if (failed(applyVPTOLLVMABINames(
+          module,
+          toolchain.vptoPublicABISuffix(ObjectEmissionDeviceTarget::Vector),
+          diagOS)))
     return failure();
   if (failed(writeLLVMModule(module, llPath, diagOS)))
     return failure();
@@ -1003,10 +918,12 @@ mlir::LogicalResult mlir::pto::emitVPTOVectorDeviceObject(
 
 mlir::LogicalResult mlir::pto::emitVPTOCubeDeviceObject(
     llvm::Module &module, llvm::StringRef llPath, llvm::StringRef outObjPath,
-    const ObjectEmissionToolchain &toolchain, llvm::StringRef stderrPath,
+    const CANNToolchain &toolchain, llvm::StringRef stderrPath,
     llvm::raw_ostream &diagOS) {
-  if (failed(applyVPTOLLVMABINames(module, getVPTOCubePublicABISuffix(toolchain),
-                                   diagOS)))
+  if (failed(applyVPTOLLVMABINames(
+          module,
+          toolchain.vptoPublicABISuffix(ObjectEmissionDeviceTarget::Cube),
+          diagOS)))
     return failure();
   if (failed(writeLLVMModule(module, llPath, diagOS)))
     return failure();
@@ -1018,28 +935,27 @@ mlir::LogicalResult mlir::pto::emitVPTOCubeDeviceObject(
 mlir::LogicalResult mlir::pto::emitFatobjLLVM(
     llvm::Module *cubeModule, llvm::Module *vectorModule,
     llvm::StringRef stubSource, llvm::StringRef outputPath,
-    llvm::StringRef moduleId, const ObjectEmissionToolchain &toolchain,
+    llvm::StringRef moduleId, const CANNToolchain &toolchain,
     TempFileRegistry &tempFiles, llvm::raw_ostream &diagOS) {
   if (!cubeModule && !vectorModule) {
     diagOS << "Error: VPTO fatobj emission requires at least one LLVM module.\n";
     return failure();
   }
 
-  VPTOFatobjToolchain privateToolchain(toolchain);
   VPTOFatobjArtifacts artifacts(tempFiles);
   if (!artifacts.emitStubSource(stubSource, diagOS))
     return failure();
   if (!artifacts.initCommandLogs(diagOS))
     return failure();
-  if (!artifacts.emitCubeObject(cubeModule, privateToolchain, diagOS))
+  if (!artifacts.emitCubeObject(cubeModule, toolchain, diagOS))
     return failure();
-  if (!artifacts.emitVectorObject(vectorModule, privateToolchain, diagOS))
+  if (!artifacts.emitVectorObject(vectorModule, toolchain, diagOS))
     return failure();
-  if (!artifacts.mergeDeviceObjects(privateToolchain, diagOS))
+  if (!artifacts.mergeDeviceObjects(toolchain, diagOS))
     return failure();
 
   constexpr llvm::StringLiteral targetCPU = "dav-c310";
-  if (!artifacts.compileHostStubToFatobj(privateToolchain, moduleId, targetCPU,
+  if (!artifacts.compileHostStubToFatobj(toolchain, moduleId, targetCPU,
                                          outputPath, diagOS))
     return failure();
   return success();
@@ -1047,7 +963,7 @@ mlir::LogicalResult mlir::pto::emitFatobjLLVM(
 
 mlir::LogicalResult mlir::pto::mergeDeviceObjects(
     llvm::ArrayRef<std::string> deviceObjPaths, llvm::StringRef outObjPath,
-    const ObjectEmissionToolchain &toolchain, llvm::StringRef stderrPath,
+    const CANNToolchain &toolchain, llvm::StringRef stderrPath,
     llvm::raw_ostream &diagOS) {
   return ::mergeDeviceObjects(deviceObjPaths, outObjPath, toolchain.ldLldPath,
                               stderrPath, diagOS)
@@ -1058,13 +974,11 @@ mlir::LogicalResult mlir::pto::mergeDeviceObjects(
 mlir::LogicalResult mlir::pto::compileStubToFatobj(
     llvm::StringRef stubPath, llvm::StringRef deviceObjPath,
     llvm::StringRef outputPath, llvm::StringRef moduleId,
-    const ObjectEmissionToolchain &toolchain, llvm::StringRef stderrPath,
+    const CANNToolchain &toolchain, llvm::StringRef stderrPath,
     llvm::raw_ostream &diagOS) {
-  VPTOFatobjToolchain privateToolchain(toolchain);
-
   constexpr llvm::StringLiteral targetCPU = "dav-c310";
   return compileHostStubToObject(stubPath, outputPath, moduleId, targetCPU,
-                                 privateToolchain, deviceObjPath, stderrPath,
+                                 toolchain, deviceObjPath, stderrPath,
                                  diagOS)
              ? success()
              : failure();
@@ -1072,7 +986,7 @@ mlir::LogicalResult mlir::pto::compileStubToFatobj(
 
 mlir::LogicalResult mlir::pto::linkFatobjs(
     llvm::ArrayRef<std::string> fatobjPaths, llvm::StringRef outputPath,
-    const ObjectEmissionToolchain &toolchain, llvm::StringRef stderrPath,
+    const CANNToolchain &toolchain, llvm::StringRef stderrPath,
     llvm::raw_ostream &diagOS) {
   return linkFatobjFiles(fatobjPaths, outputPath, toolchain, stderrPath, diagOS)
              ? success()
@@ -1088,8 +1002,7 @@ mlir::LogicalResult mlir::pto::emitFatobjLLVMWithRuntime(
     return failure();
   }
 
-  std::optional<VPTOFatobjToolchain> toolchain =
-      VPTOFatobjToolchain::create(diagOS);
+  std::optional<CANNToolchain> toolchain = CANNToolchain::create(diagOS);
   if (!toolchain)
     return failure();
 
