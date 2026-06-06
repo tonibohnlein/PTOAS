@@ -1,0 +1,84 @@
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
+name: Watchdog
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  rerun-self-hosted-git-failure:
+    if: >-
+      ${{
+        github.repository == 'hw-native-sys/PTOAS' &&
+        github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.conclusion == 'failure' &&
+        github.event.workflow_run.run_attempt == 1
+      }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Rerun self-hosted git failures once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Watchdog is running in observe-only mode; skip rerun."
+          exit 0
+
+          echo "Inspecting CI workflow run ${RUN_ID} in ${REPO}"
+          mapfile -t job_ids < <(
+            gh api "repos/${REPO}/actions/runs/${RUN_ID}/jobs?filter=latest&per_page=100" \
+              --jq '.jobs[] | select(.name == "vpto-sim-validation" and .conclusion == "failure") | .id'
+          )
+
+          if [[ "${#job_ids[@]}" -eq 0 ]]; then
+            echo "No failed vpto-sim-validation job found."
+            exit 0
+          fi
+
+          git_failure_pattern='(fatal:|error: RPC failed|unable to access|Operation timed out|Connection timed out|Failed to connect|Could not resolve host|early EOF|fetch-pack|remote end hung up|index\.lock|GnuTLS recv error|TLS connection|HTTP/2 stream|exit code 128)'
+          rerun_count=0
+
+          for job_id in "${job_ids[@]}"; do
+            log_file="job-${job_id}.log"
+            step_log_file="job-${job_id}-git-steps.log"
+
+            echo "Downloading logs for job ${job_id}"
+            gh run view "${RUN_ID}" --repo "${REPO}" --job "${job_id}" --log > "${log_file}"
+
+            awk -F'\t' '
+              $2 == "Checkout" || $2 == "Prepare LLVM source (no rebuild)" {
+                print
+              }
+            ' "${log_file}" > "${step_log_file}"
+
+            if [[ ! -s "${step_log_file}" ]]; then
+              echo "No Checkout/Prepare LLVM source logs found for job ${job_id}; skip rerun."
+              continue
+            fi
+
+            if grep -Eiq "${git_failure_pattern}" "${step_log_file}"; then
+              echo "Git/network failure detected in self-hosted checkout/fetch stage; rerunning job ${job_id}."
+              gh api --method POST "repos/${REPO}/actions/jobs/${job_id}/rerun"
+              rerun_count=$((rerun_count + 1))
+            else
+              echo "Failed job ${job_id} did not fail in a recognized git/network stage; skip rerun."
+            fi
+          done
+
+          echo "Rerun requests submitted: ${rerun_count}"
