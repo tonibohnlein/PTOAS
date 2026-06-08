@@ -13,6 +13,8 @@
 
 add_mlir_dialect_library(PTOTransforms
   VPTOLLVMEmitter.cpp
+  VPTOCANN900LLVMEmitter.cpp
+  VPTOLLVMEmitterDispatcher.cpp
   VPTOLLVMEmitterHelper.cpp
   VPTOPtrNormalize.cpp
   VPTOPtrCastCleanup.cpp

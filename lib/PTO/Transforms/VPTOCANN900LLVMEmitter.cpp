@@ -390,19 +390,74 @@ static FailureOr<StringRef> buildLaneTypedCallee(MLIRContext *context,
       .getValue();
 }
 
-static FailureOr<StringRef> buildLaneTypedCalleeFromInput(MLIRContext *context,
-                                                          Type inputType,
-                                                          StringRef stem,
-                                                          StringRef suffix) {
-  std::string vec =
-      getElementTypeFragment(getElementTypeFromVectorLike(inputType));
-  auto lanes = getElementCountFromVectorLike(inputType);
-  if (vec.empty() || !lanes)
-    return failure();
+static std::string getCANN900VectorElementFragment(Type type) {
+  if (type.isF16())
+    return "f16";
+  if (type.isBF16())
+    return "bf16";
+  if (type.isF32())
+    return "f32";
+  if (auto intType = dyn_cast<IntegerType>(type))
+    return "i" + std::to_string(intType.getWidth());
+  return {};
+}
 
-  return StringAttr::get(context, "llvm.hivm." + stem.str() + ".v" +
-                                      std::to_string(*lanes) + vec +
-                                      suffix.str())
+static std::string getCANN900VectorTypeFragment(Type vectorType) {
+  std::string elem =
+      getCANN900VectorElementFragment(getElementTypeFromVectorLike(vectorType));
+  auto lanes = getElementCountFromVectorLike(vectorType);
+  if (elem.empty() || !lanes)
+    return {};
+  return "v" + std::to_string(*lanes) + elem;
+}
+
+static std::string getCANN900SignednessFragment(Type elemType) {
+  if (elemType.isF16() || elemType.isBF16() || elemType.isF32())
+    return "s";
+  if (auto intType = dyn_cast<IntegerType>(elemType))
+    return intType.isUnsigned() ? "u" : "s";
+  return {};
+}
+
+static FailureOr<StringRef> buildCANN900ModeTypedCallee(MLIRContext *context,
+                                                        Type vectorType,
+                                                        StringRef stem,
+                                                        StringRef mode) {
+  std::string vec = getCANN900VectorTypeFragment(vectorType);
+  if (vec.empty())
+    return failure();
+  return StringAttr::get(context, "llvm.hivm." + stem.str() + "." +
+                                      mode.str() + "." + vec)
+      .getValue();
+}
+
+static FailureOr<StringRef>
+buildCANN900SignedModeTypedCallee(MLIRContext *context, Type vectorType,
+                                  StringRef stem, StringRef mode) {
+  std::string vec = getCANN900VectorTypeFragment(vectorType);
+  std::string signedness =
+      getCANN900SignednessFragment(getElementTypeFromVectorLike(vectorType));
+  if (vec.empty() || signedness.empty())
+    return failure();
+  return StringAttr::get(context, "llvm.hivm." + stem.str() + "." +
+                                      signedness + "." + mode.str() + "." +
+                                      vec)
+      .getValue();
+}
+
+static FailureOr<StringRef>
+buildCANN900WideningReductionCallee(MLIRContext *context, Type inputType,
+                                    Type resultType, StringRef stem,
+                                    StringRef mode) {
+  std::string inputVec = getCANN900VectorTypeFragment(inputType);
+  std::string resultVec = getCANN900VectorTypeFragment(resultType);
+  std::string signedness =
+      getCANN900SignednessFragment(getElementTypeFromVectorLike(inputType));
+  if (inputVec.empty() || resultVec.empty() || signedness.empty())
+    return failure();
+  return StringAttr::get(context, "llvm.hivm." + stem.str() + "." +
+                                      signedness + "." + mode.str() + "." +
+                                      resultVec + "." + inputVec)
       .getValue();
 }
 
@@ -481,18 +536,6 @@ static std::string getL0LoadElementFragment(Type type) {
       StringRef(lower).contains("e8m0") ||
       StringRef(lower).contains("hif8"))
     return "s8";
-  return {};
-}
-
-static std::string getVbrScalarFragment(Type type) {
-  if (type.isF16())
-    return "f16";
-  if (type.isBF16())
-    return "bf16";
-  if (type.isF32())
-    return "f32";
-  if (auto intType = dyn_cast<IntegerType>(type))
-    return (intType.isUnsigned() ? "u" : "s") + std::to_string(intType.getWidth());
   return {};
 }
 
@@ -625,18 +668,17 @@ static FailureOr<Value> normalizeVdupScalarOperand(OpBuilder &builder, Location 
       .getResult(0);
 }
 
-static Value normalizeByteScalarOperandForHivmCall(OpBuilder &builder, Location loc,
-                                                   Value input,
-                                                   Type semanticElementType) {
+static Value normalizeByteScalarOperandForCANN900VectorCall(
+    OpBuilder &builder, Location loc, Value input, Type semanticElementType) {
+  (void)semanticElementType;
   auto intType = dyn_cast<IntegerType>(input.getType());
-  if (!intType || intType.getWidth() != 8)
+  if (!intType || intType.getWidth() != 8 || intType.isSignless())
     return input;
 
-  Type i16Type = builder.getIntegerType(16);
-  auto semanticIntType = dyn_cast<IntegerType>(semanticElementType);
-  if (semanticIntType && semanticIntType.isUnsigned())
-    return builder.create<arith::ExtUIOp>(loc, i16Type, input).getResult();
-  return builder.create<arith::ExtSIOp>(loc, i16Type, input).getResult();
+  Type signlessType = builder.getIntegerType(8);
+  return builder
+      .create<UnrealizedConversionCastOp>(loc, TypeRange{signlessType}, input)
+      .getResult(0);
 }
 
 static bool isCompatibleScalarForSemanticType(Type semanticType,
@@ -1937,6 +1979,14 @@ static StringRef getBinaryMaskedStem() {
   return {};
 }
 
+template <typename BinaryOp>
+static constexpr bool usesSignedBinaryCANN900Callee() {
+  return !std::is_same_v<BinaryOp, pto::VandOp> &&
+         !std::is_same_v<BinaryOp, pto::VorOp> &&
+         !std::is_same_v<BinaryOp, pto::VxorOp> &&
+         !std::is_same_v<BinaryOp, pto::VpreluOp>;
+}
+
 template <typename CarryOp>
 static StringRef getCarryBinaryStem() {
   if constexpr (std::is_same_v<CarryOp, pto::VaddcOp>)
@@ -1958,62 +2008,46 @@ static constexpr bool hasCarryInput() {
 
 static FailureOr<StringRef> buildVselCallee(MLIRContext *context,
                                             Type resultType) {
-  std::string vec =
-      getElementTypeFragment(cast<pto::VRegType>(resultType).getElementType());
-  auto lanes = getElementCountFromVectorLike(resultType);
-  if (vec.empty() || !lanes)
+  std::string vec = getCANN900VectorTypeFragment(resultType);
+  if (vec.empty())
     return failure();
-  return StringAttr::get(context, "llvm.hivm.vsel.v" + std::to_string(*lanes) +
-                                      vec)
+  return StringAttr::get(context, "llvm.hivm.vsel." + vec)
       .getValue();
 }
 
 static FailureOr<StringRef> buildVselrCallee(MLIRContext *context,
                                              Type resultType) {
-  Type elemType = getElementTypeFromVectorLike(resultType);
-  auto lanes = getElementCountFromVectorLike(resultType);
-  if (!elemType || !lanes)
-    return failure();
-
-  std::string vec = getElementTypeFragment(elemType);
-  if (auto floatType = dyn_cast<FloatType>(elemType);
-      floatType && floatType.isF32())
-    vec = "u32";
+  std::string vec = getCANN900VectorTypeFragment(resultType);
   if (vec.empty())
     return failure();
-
-  return StringAttr::get(context, "llvm.hivm.vselr.v" + std::to_string(*lanes) +
-                                      vec)
+  return StringAttr::get(context, "llvm.hivm.vselr." + vec)
       .getValue();
 }
 
 static FailureOr<StringRef> buildVdupCallee(MLIRContext *context, pto::VdupOp op) {
   Type inputType = op.getInput().getType();
   Type resultType = op.getResult().getType();
-  std::string vec = getElementTypeFragment(getElementTypeFromVectorLike(resultType));
-  auto lanes = getElementCountFromVectorLike(resultType);
-  if (vec.empty() || !lanes)
+  std::string vec = getCANN900VectorTypeFragment(resultType);
+  if (vec.empty())
     return failure();
 
   if (isa<VectorType, pto::VRegType>(inputType)) {
     StringRef position = op.getPosition().value_or("LOWEST");
     StringRef family = position == "HIGHEST" ? "vdupm" : "vdup";
-    return StringAttr::get(context, "llvm.hivm." + family.str() + ".v" +
-                                        std::to_string(*lanes) + vec + ".z")
+    return StringAttr::get(context, "llvm.hivm." + family.str() + ".z." + vec)
         .getValue();
   }
 
-  return StringAttr::get(context, "llvm.hivm.vdups.v" + std::to_string(*lanes) +
-                                      vec + ".z")
+  return StringAttr::get(context, "llvm.hivm.vdups.z." + vec)
       .getValue();
 }
 
 static FailureOr<StringRef> buildVbrCallee(MLIRContext *context,
-                                          Type semanticElementType) {
-  std::string scalar = getVbrScalarFragment(semanticElementType);
-  if (scalar.empty())
+                                          Type resultType) {
+  std::string vec = getCANN900VectorTypeFragment(resultType);
+  if (vec.empty())
     return failure();
-  return StringAttr::get(context, "llvm.hivm.vbr." + scalar + ".v300").getValue();
+  return StringAttr::get(context, "llvm.hivm.vbr." + vec).getValue();
 }
 
 static FailureOr<StringRef> buildPstuCallee(MLIRContext *context, pto::PstuOp op) {
@@ -2720,12 +2754,15 @@ static FailureOr<StringRef> buildVldusCallee(MLIRContext *context,
 static FailureOr<StringRef> buildVcmpCallee(MLIRContext *context, Type inputType,
                                             StringRef cmpMode,
                                             bool isScalarCompare) {
-  std::string elem = getElementTypeFragment(getElementTypeFromVectorLike(inputType));
-  if (elem.empty())
+  std::string vec = getCANN900VectorTypeFragment(inputType);
+  std::string signedness =
+      getCANN900SignednessFragment(getElementTypeFromVectorLike(inputType));
+  if (vec.empty() || signedness.empty())
     return failure();
   StringRef stem = isScalarCompare ? "vcmps" : "vcmp";
   return StringAttr::get(context, "llvm.hivm." + stem.str() + "." +
-                                      cmpMode.str() + "." + elem + ".z")
+                                      cmpMode.str() + "." + signedness +
+                                      ".z." + vec)
       .getValue();
 }
 
@@ -2748,6 +2785,11 @@ static StringRef getVecScalarMaskedStem() {
   return {};
 }
 
+template <typename VecScalarOp>
+static constexpr bool usesSignedVecScalarCANN900Callee() {
+  return !std::is_same_v<VecScalarOp, pto::VlreluOp>;
+}
+
 template <typename ReductionOp>
 static StringRef getReductionUnaryStem() {
   if constexpr (std::is_same_v<ReductionOp, pto::VcaddOp>)
@@ -2765,6 +2807,11 @@ static StringRef getReductionUnaryStem() {
   if constexpr (std::is_same_v<ReductionOp, pto::VcpaddOp>)
     return "vcpadd";
   return {};
+}
+
+template <typename ReductionOp>
+static constexpr bool usesSignedReductionCANN900Callee() {
+  return !std::is_same_v<ReductionOp, pto::VcpaddOp>;
 }
 
 static FailureOr<StringRef> buildCopyGmToUbCallee(MLIRContext *context,
@@ -3081,50 +3128,49 @@ StringRef buildPredicatePairReorderCallee<pto::PintlvB32Op>(MLIRContext *context
 static FailureOr<StringRef> buildInterleaveCallee(MLIRContext *context,
                                                   Type resultType,
                                                   StringRef stem) {
-  return buildLaneTypedCallee(context, resultType, stem, "");
+  std::string vec = getCANN900VectorTypeFragment(resultType);
+  if (vec.empty())
+    return failure();
+  return StringAttr::get(context, "llvm.hivm." + stem.str() + "." + vec)
+      .getValue();
 }
 
 static FailureOr<StringRef> buildUnpackCallee(MLIRContext *context,
                                               Type inputType,
                                               Type resultType,
                                               StringRef stem) {
-  std::string input =
-      getElementTypeFragment(getElementTypeFromVectorLike(inputType));
-  std::string result =
-      getElementTypeFragment(getElementTypeFromVectorLike(resultType));
-  if (input.empty() || result.empty())
+  (void)inputType;
+  std::string vec = getCANN900VectorTypeFragment(resultType);
+  if (vec.empty())
     return failure();
-  return StringAttr::get(context,
-                         "llvm.hivm." + stem.str() + "." + input + "2" + result)
+  return StringAttr::get(context, "llvm.hivm." + stem.str() + "." + vec)
       .getValue();
 }
 
 static FailureOr<StringRef> buildVpackCallee(MLIRContext *context, Type inputType,
                                              Type resultType) {
-  std::string input =
-      getElementTypeFragment(getElementTypeFromVectorLike(inputType));
-  std::string result =
-      getElementTypeFragment(getElementTypeFromVectorLike(resultType));
-  if (input.empty() || result.empty())
+  (void)resultType;
+  std::string vec = getCANN900VectorTypeFragment(inputType);
+  if (vec.empty())
     return failure();
 
-  return StringAttr::get(context, "llvm.hivm.vpack." + input + "2" + result + ".x")
+  return StringAttr::get(context, "llvm.hivm.vpack.x." + vec)
       .getValue();
 }
 
 static FailureOr<StringRef> buildVsqzCallee(MLIRContext *context,
                                             Type resultType) {
-  return buildLaneTypedCallee(context, resultType, "vsqz", ".x.v300");
+  return buildCANN900ModeTypedCallee(context, resultType, "vsqz", "x");
 }
 
 static FailureOr<StringRef> buildVusqzCallee(MLIRContext *context,
                                              Type resultType) {
-  return buildLaneTypedCallee(context, resultType, "vusqz", ".m");
+  return buildCANN900ModeTypedCallee(context, resultType, "vusqz", "m");
 }
 
 static FailureOr<StringRef> buildVmulaCallee(MLIRContext *context,
                                              Type resultType) {
-  return buildLaneTypedCallee(context, resultType, "vmula", ".m");
+  return buildCANN900SignedModeTypedCallee(context, resultType, "vmula", "m");
 }
 
 static FailureOr<StringRef> buildVmullCallee(MLIRContext *context,
@@ -3323,21 +3369,14 @@ static FailureOr<StringRef> buildVscatterCallee(MLIRContext *context,
 
 static FailureOr<StringRef> buildVaxpyCallee(MLIRContext *context,
                                              Type resultType) {
-  return buildLaneTypedCallee(context, resultType, "vaxpy", ".m");
+  return buildCANN900ModeTypedCallee(context, resultType, "vaxpy", "m");
 }
 
 static FailureOr<StringRef> buildVciCallee(MLIRContext *context, Type resultType) {
-  std::string vec =
-      getElementTypeFragment(getElementTypeFromVectorLike(resultType));
-  auto lanes = getElementCountFromVectorLike(resultType);
-  if (vec.empty() || !lanes)
+  std::string vec = getCANN900VectorTypeFragment(resultType);
+  if (vec.empty())
     return failure();
-  if (vec == "f16" || vec == "f32")
-    return StringAttr::get(context, "llvm.hivm.vci.v" + std::to_string(*lanes) +
-                                        vec + "." + vec)
-        .getValue();
-  return StringAttr::get(context,
-                         "llvm.hivm.vci.v" + std::to_string(*lanes) + vec)
+  return StringAttr::get(context, "llvm.hivm.vci." + vec)
       .getValue();
 }
 
@@ -3353,17 +3392,18 @@ static FailureOr<StringRef> buildVtrcCallee(MLIRContext *context, Type resultTyp
 static FailureOr<StringRef> buildVexpdifCallee(MLIRContext *context,
                                                Type inputType,
                                                Type resultType) {
-  std::string srcVec =
-      getElementTypeFragment(getElementTypeFromVectorLike(inputType));
+  Type inputElem = getElementTypeFromVectorLike(inputType);
+  Type resultElem = getElementTypeFromVectorLike(resultType);
   auto srcLanes = getElementCountFromVectorLike(inputType);
-  std::string dstElem =
-      getElementTypeFragment(getElementTypeFromVectorLike(resultType));
-  if (srcVec.empty() || dstElem.empty() || !srcLanes)
+  if (!srcLanes)
     return failure();
-  return StringAttr::get(context, "llvm.hivm.vexpdif.v" +
-                                      std::to_string(*srcLanes) + srcVec +
-                                      dstElem)
-      .getValue();
+  if (inputElem.isF16() && resultElem.isF32() && *srcLanes == 128)
+    return StringAttr::get(context,
+                           "llvm.hivm.vexpdif.interleave.v128f16")
+        .getValue();
+  if (inputElem.isF32() && resultElem.isF32() && *srcLanes == 64)
+    return StringAttr::get(context, "llvm.hivm.vexpdif.v64f32").getValue();
+  return failure();
 }
 
 static FailureOr<StringRef> buildVbitsortCallee(MLIRContext *context,
@@ -3750,7 +3790,8 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     StringRef stem = getUnaryMaskedStem<UnaryOp>();
     FailureOr<StringRef> calleeName =
-        buildLaneTypedCallee(op.getContext(), op.getResult().getType(), stem, ".x");
+        buildCANN900ModeTypedCallee(op.getContext(), op.getResult().getType(),
+                                    stem, "x");
     if (failed(calleeName))
       return rewriter.notifyMatchFailure(op, "unsupported unary VPTO signature");
 
@@ -3972,7 +4013,11 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     StringRef stem = getBinaryMaskedStem<BinaryOp>();
     FailureOr<StringRef> calleeName =
-        buildLaneTypedCallee(op.getContext(), op.getResult().getType(), stem, ".x");
+        usesSignedBinaryCANN900Callee<BinaryOp>()
+            ? buildCANN900SignedModeTypedCallee(
+                  op.getContext(), op.getResult().getType(), stem, "x")
+            : buildCANN900ModeTypedCallee(op.getContext(),
+                                          op.getResult().getType(), stem, "x");
     if (failed(calleeName))
       return rewriter.notifyMatchFailure(op, "unsupported binary VPTO signature");
 
@@ -5065,7 +5110,11 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     StringRef stem = getVecScalarMaskedStem<VecScalarOp>();
     FailureOr<StringRef> calleeName =
-        buildLaneTypedCallee(op.getContext(), op.getResult().getType(), stem, ".x");
+        usesSignedVecScalarCANN900Callee<VecScalarOp>()
+            ? buildCANN900SignedModeTypedCallee(
+                  op.getContext(), op.getResult().getType(), stem, "x")
+            : buildCANN900ModeTypedCallee(op.getContext(),
+                                          op.getResult().getType(), stem, "x");
     if (failed(calleeName))
       return rewriter.notifyMatchFailure(op,
                                          "unsupported vec-scalar VPTO signature");
@@ -5114,7 +5163,11 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     StringRef stem = getReductionUnaryStem<ReductionOp>();
     FailureOr<StringRef> calleeName =
-        buildLaneTypedCallee(op.getContext(), op.getResult().getType(), stem, ".x");
+        usesSignedReductionCANN900Callee<ReductionOp>()
+            ? buildCANN900SignedModeTypedCallee(
+                  op.getContext(), op.getResult().getType(), stem, "x")
+            : buildCANN900ModeTypedCallee(op.getContext(),
+                                          op.getResult().getType(), stem, "x");
     if (failed(calleeName))
       return rewriter.notifyMatchFailure(op,
                                          "unsupported reduction VPTO signature");
@@ -5160,9 +5213,10 @@ public:
   LogicalResult
   matchAndRewrite(ReductionOp op, typename ReductionOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    FailureOr<StringRef> calleeName = buildLaneTypedCalleeFromInput(
-        op.getContext(), op.getInput().getType(),
-        getReductionUnaryStem<ReductionOp>(), ".x");
+    StringRef stem = getReductionUnaryStem<ReductionOp>();
+    FailureOr<StringRef> calleeName = buildCANN900WideningReductionCallee(
+        op.getContext(), op.getInput().getType(), op.getResult().getType(),
+        stem, "x");
     if (failed(calleeName))
       return rewriter.notifyMatchFailure(op,
                                          "unsupported widening reduction VPTO signature");
@@ -5285,7 +5339,7 @@ public:
       if (failed(normalizedScalar))
         return rewriter.notifyMatchFailure(op,
                                            "failed to normalize scalar vdup input");
-      Value scalarForCall = normalizeByteScalarOperandForHivmCall(
+      Value scalarForCall = normalizeByteScalarOperandForCANN900VectorCall(
           rewriter, op.getLoc(), *normalizedScalar, scalarType);
       callArgs.push_back(scalarForCall);
     }
@@ -5315,8 +5369,7 @@ public:
   matchAndRewrite(pto::VbrOp op, pto::VbrOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     FailureOr<StringRef> calleeName =
-        buildVbrCallee(op.getContext(),
-                       cast<pto::VRegType>(op.getResult().getType()).getElementType());
+        buildVbrCallee(op.getContext(), op.getResult().getType());
     if (failed(calleeName))
       return rewriter.notifyMatchFailure(op, "unsupported vbr VPTO signature");
 
@@ -5331,7 +5384,7 @@ public:
       return rewriter.notifyMatchFailure(op,
                                          "unexpected converted vbr operand type");
 
-    scalar = normalizeByteScalarOperandForHivmCall(
+    scalar = normalizeByteScalarOperandForCANN900VectorCall(
         rewriter, op.getLoc(), scalar,
         cast<pto::VRegType>(op.getResult().getType()).getElementType());
 
@@ -5755,7 +5808,7 @@ public:
         return rewriter.notifyMatchFailure(
             op, "unexpected converted scalar-compare operand types");
       }
-      callArgs[1] = normalizeByteScalarOperandForHivmCall(
+      callArgs[1] = normalizeByteScalarOperandForCANN900VectorCall(
           rewriter, op.getLoc(), callArgs[1],
           cast<pto::VRegType>(op.getSrc().getType()).getElementType());
     } else {
@@ -6755,21 +6808,6 @@ public:
       return rewriter.notifyMatchFailure(op, "unsupported vci callee");
 
     Value indexValue = adaptor.getIndex();
-    Type resultElemType =
-        cast<pto::VRegType>(op.getResult().getType()).getElementType();
-    if (auto intType = dyn_cast<IntegerType>(resultElemType)) {
-      if (intType.getWidth() == 8) {
-        Type loweredIndexType = rewriter.getI16Type();
-        if (intType.isUnsigned())
-          indexValue = rewriter.create<arith::ExtUIOp>(op.getLoc(),
-                                                       loweredIndexType,
-                                                       indexValue);
-        else
-          indexValue = rewriter.create<arith::ExtSIOp>(op.getLoc(),
-                                                       loweredIndexType,
-                                                       indexValue);
-      }
-    }
 
     Value orderValue = getI32Constant(rewriter, op.getLoc(), *order);
     auto funcType = rewriter.getFunctionType(
@@ -7592,7 +7630,6 @@ public:
       rewriter.eraseOp(keep);
     return success();
   }
-
 };
 
 class LowerResumeOpPattern final : public OpConversionPattern<pto::ResumeOp> {
@@ -7691,7 +7728,6 @@ public:
       rewriter.replaceOp(resume, result);
     return success();
   }
-
 };
 
 template <typename ConfigOp>
@@ -8833,7 +8869,6 @@ public:
         getNaturalByteAlignment(convertedValueType));
     return success();
   }
-
 };
 
 static Type getLdgCallResultType(Type valueType, Type convertedValueType,
@@ -8979,7 +9014,6 @@ public:
         getNaturalByteAlignment(adaptor.getValue().getType()));
     return success();
   }
-
 };
 
 static Value convertStgValue(Location loc, Type valueType, Value value,
@@ -9662,8 +9696,6 @@ static LogicalResult renameKernelFunctionsForKernelKind(ModuleOp module,
 
 struct LowerVPTOOpsPass final
     : public PassWrapper<LowerVPTOOpsPass, OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerVPTOOpsPass)
-
   void runOnOperation() override {
     materializeVecScopeCarrierLoops(getOperation());
     if (failed(lowerVPTOOps(getOperation(), llvm::errs())))
@@ -9673,8 +9705,6 @@ struct LowerVPTOOpsPass final
 
 struct LowerVPTOTypesPass final
     : public PassWrapper<LowerVPTOTypesPass, OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerVPTOTypesPass)
-
   void runOnOperation() override {
     if (failed(lowerVPTOTypes(getOperation(), llvm::errs())))
       signalPassFailure();
@@ -9684,9 +9714,6 @@ struct LowerVPTOTypesPass final
 struct NormalizeFuncSignaturesForLLVMLoweringPass final
     : public PassWrapper<NormalizeFuncSignaturesForLLVMLoweringPass,
                          OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
-      NormalizeFuncSignaturesForLLVMLoweringPass)
-
   void runOnOperation() override {
     normalizeFuncSignaturesForOfficialLLVMLowering(getOperation());
   }
@@ -9694,8 +9721,6 @@ struct NormalizeFuncSignaturesForLLVMLoweringPass final
 
 struct PrepareVPTOLLVMLoweringPass final
     : public PassWrapper<PrepareVPTOLLVMLoweringPass, OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PrepareVPTOLLVMLoweringPass)
-
   void runOnOperation() override {
     ModuleOp module = getOperation();
     pto::annotatePTOEntryFunctions(module);
@@ -9820,7 +9845,7 @@ static LogicalResult runPipeline(ModuleOp module, llvm::raw_ostream &diagOS,
 
 } // namespace
 
-LogicalResult lowerVPTOModuleToLLVMModulesBeta1(
+LogicalResult lowerVPTOModuleToLLVMModulesCANN900(
     ModuleOp module, const VPTOEmissionOptions &options,
     EmittedLLVMModule &cubeModule, EmittedLLVMModule &vectorModule,
     llvm::raw_ostream &diagOS) {

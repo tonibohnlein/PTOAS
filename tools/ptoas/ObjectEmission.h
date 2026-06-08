@@ -9,6 +9,8 @@
 #ifndef PTOAS_OBJECT_EMISSION_H
 #define PTOAS_OBJECT_EMISSION_H
 
+#include "PTO/Support/CANNVersion.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -48,9 +50,8 @@ public:
   std::string cceStubDirPath;
   std::string bishengCompilerBinDirPath;
   std::string ptoIsaPath;
-  std::string cannVersion;
-  std::string vptoVectorPublicABISuffix;
-  std::string vptoCubePublicABISuffix;
+  std::string cannVersionString;
+  CANNVersion cannVersion = CANNVersion{9, 0, 0, 1};
   std::vector<std::string> cppIncludeDirs;
 };
 

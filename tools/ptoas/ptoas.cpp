@@ -1508,15 +1508,18 @@ static void inlineTilelangHelpersOnVPTOInput(PassManager &pm) {
   kernelModulePM.addPass(mlir::createCanonicalizerPass());
 }
 
-static pto::VPTOEmissionOptions buildVPTOEmissionOptions() {
+static pto::VPTOEmissionOptions
+buildVPTOEmissionOptions(const pto::CANNVersion &cannVersion) {
   pto::VPTOEmissionOptions options;
   options.dumpVPTOIR = false;
   options.targetTriple = "hiipu64-hisilicon-cce";
+  options.cannVersion = cannVersion;
   return options;
 }
 
 static int emitVPTOBackendResult(ModuleOp module, PTOASCompileResult &result,
-                                 bool emitHostStub) {
+                                 bool emitHostStub,
+                                 const pto::CANNVersion &cannVersion) {
   if (emitVPTO) {
     result.kind = PTOASCompileResultKind::Text;
     llvm::raw_string_ostream os(result.textOutput);
@@ -1526,7 +1529,7 @@ static int emitVPTOBackendResult(ModuleOp module, PTOASCompileResult &result,
     return 0;
   }
 
-  pto::VPTOEmissionOptions options = buildVPTOEmissionOptions();
+  pto::VPTOEmissionOptions options = buildVPTOEmissionOptions(cannVersion);
   std::string stubSource;
   if (emitHostStub) {
     if (failed(pto::emitVPTOHostStubSource(module, stubSource, llvm::errs()))) {
@@ -1573,10 +1576,13 @@ static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
 }
 
 int mlir::pto::compilePTOASModule(
-    OwningOpRef<ModuleOp> &module, llvm::StringRef arch,
-    PTOBackend effectiveBackend, int argc, char **argv,
-    PTOASCompileResult &result, bool emitVPTOHostStub) {
+    OwningOpRef<ModuleOp> &module, PTOASContext &context,
+    PTOBackend effectiveBackend, PTOASCompileResult &result,
+    bool emitVPTOHostStub) {
   result.reset();
+  llvm::StringRef arch = context.getArch();
+  int argc = context.getArgc();
+  char **argv = context.getArgv();
 
   if (effectiveBackend != PTOBackend::VPTO &&
       (emitVPTO || ptoPrintSeamIR || !ptoSeamIRFile.empty())) {
@@ -1707,7 +1713,8 @@ int mlir::pto::compilePTOASModule(
     if (failed(runVPTOBackendPipeline(module, argc, argv, hasTileOpsToExpand,
                                       hasTilelangHelpers)))
       return 1;
-    return emitVPTOBackendResult(*module, result, emitVPTOHostStub);
+    return emitVPTOBackendResult(*module, result, emitVPTOHostStub,
+                                 context.getCANNVersionOrDefault());
   }
 
   // Main PassManager
@@ -1806,7 +1813,8 @@ int mlir::pto::compilePTOASModule(
     if (failed(runVPTOBackendPipeline(module, argc, argv, hasTileOpsToExpand,
                                       hasTilelangHelpers)))
       return 1;
-    return emitVPTOBackendResult(*module, result, emitVPTOHostStub);
+    return emitVPTOBackendResult(*module, result, emitVPTOHostStub,
+                                 context.getCANNVersionOrDefault());
   }
 
   if (arch == "a3") {

@@ -30,6 +30,7 @@
 #include "llvm/Support/Regex.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/ToolOutputFile.h"
+#include "llvm/Support/raw_ostream.h"
 #include <cstring>
 #include <memory>
 #include <optional>
@@ -37,6 +38,7 @@
 #include <vector>
 
 using namespace mlir;
+using mlir::pto::PTOASContext;
 
 #ifndef PTOAS_RELEASE_VERSION
 #define PTOAS_RELEASE_VERSION "unknown"
@@ -255,74 +257,108 @@ static constexpr llvm::StringLiteral kEmptyHostStubSource =
     "#ifndef __global__\n#define __global__\n#endif\n\n"
     "#ifndef __gm__\n#define __gm__\n#endif\n\n";
 
-class PTOASContext;
-
 static LogicalResult emitVPTOLLVMFatobj(
     const mlir::pto::PTOASCompileResult &jobResult, PTOASContext &context,
     llvm::StringRef moduleId, llvm::StringRef outputPath);
 
-class PTOASContext {
-public:
-  PTOASContext(DialectRegistry &registry, llvm::StringRef outputPath, int argc,
-               char **argv)
-      : mlirContext(registry), outputPath(outputPath.str()), argc(argc),
-        argv(argv) {}
+mlir::pto::PTOASContext::PTOASContext(DialectRegistry &registry,
+                                      llvm::StringRef outputPath, int argc,
+                                      char **argv)
+    : mlirContext(registry), outputPath(outputPath.str()), argc(argc),
+      argv(argv) {}
 
-  ~PTOASContext() = default;
+mlir::pto::PTOASContext::~PTOASContext() = default;
 
-  void initializeMLIRContext() {
-    // Be tolerant: ptobc decode may materialize ops from dialects that aren't
-    // explicitly registered/loaded in this tool yet.
-    mlirContext.allowUnregisteredDialects(true);
-    mlir::pto::loadPTOASDialects(mlirContext);
-  }
+LogicalResult
+mlir::pto::PTOASContext::initializeEnvironment(bool requiresToolchain,
+                                               llvm::raw_ostream &diagOS) {
+  if (requiresToolchain)
+    return initializeToolchain(diagOS);
+  return success();
+}
 
-  LogicalResult initializeObjectEmission() {
-    std::optional<mlir::pto::CANNToolchain> discovered =
-        mlir::pto::CANNToolchain::create(llvm::errs());
-    if (!discovered)
-      return failure();
-    toolchain = std::move(*discovered);
+void mlir::pto::PTOASContext::initializeMLIRContext() {
+  // Be tolerant: ptobc decode may materialize ops from dialects that aren't
+  // explicitly registered/loaded in this tool yet.
+  mlirContext.allowUnregisteredDialects(true);
+  mlir::pto::loadPTOASDialects(mlirContext);
+}
+
+MLIRContext &mlir::pto::PTOASContext::getMLIRContext() { return mlirContext; }
+
+void mlir::pto::PTOASContext::setArch(std::string value) {
+  arch = std::move(value);
+}
+
+llvm::StringRef mlir::pto::PTOASContext::getArch() const { return arch; }
+
+void mlir::pto::PTOASContext::setBackendInfo(BackendInfo value) {
+  backendInfo = std::move(value);
+}
+
+const mlir::pto::BackendInfo &mlir::pto::PTOASContext::getBackendInfo() const {
+  return backendInfo;
+}
+
+int mlir::pto::PTOASContext::getArgc() const { return argc; }
+
+char **mlir::pto::PTOASContext::getArgv() const { return argv; }
+
+llvm::StringRef mlir::pto::PTOASContext::getOutputPath() const {
+  return outputPath;
+}
+
+std::string mlir::pto::PTOASContext::allocModuleId() {
+  static size_t nextModuleId = 0;
+  return "ptoas_module_" + std::to_string(nextModuleId++);
+}
+
+LogicalResult
+mlir::pto::PTOASContext::initializeToolchain(llvm::raw_ostream &diagOS) {
+  if (toolchain)
     return success();
+  std::optional<mlir::pto::CANNToolchain> discovered =
+      mlir::pto::CANNToolchain::create(diagOS);
+  if (!discovered)
+    return failure();
+  std::optional<CANNVersion> parsedVersion =
+      parseCANNVersion(discovered->cannVersionString);
+  if (!parsedVersion) {
+    diagOS << "Warning: unable to parse CANN version: "
+           << discovered->cannVersionString
+           << "; using 9.0.0-beta.1 compatibility behavior.\n";
+    parsedVersion = CANNVersion{9, 0, 0, 1};
   }
+  discovered->cannVersion = *parsedVersion;
+  cannVersion = discovered->cannVersion;
+  toolchain = std::move(*discovered);
+  return success();
+}
 
-  MLIRContext &getMLIRContext() { return mlirContext; }
-
-  void setArch(std::string value) { arch = std::move(value); }
-
-  llvm::StringRef getArch() const { return arch; }
-
-  int getArgc() const { return argc; }
-
-  char **getArgv() const { return argv; }
-
-  llvm::StringRef getOutputPath() const { return outputPath; }
-
-  std::string allocModuleId() {
-    static size_t nextModuleId = 0;
-    return "ptoas_module_" + std::to_string(nextModuleId++);
+const mlir::pto::CANNToolchain *
+mlir::pto::PTOASContext::getToolchain(llvm::raw_ostream &diagOS) const {
+  if (!toolchain) {
+    diagOS << "Error: CANN toolchain is required but was not initialized.\n";
+    return nullptr;
   }
+  return &*toolchain;
+}
 
-  const mlir::pto::CANNToolchain &getToolchain() const {
-    return toolchain;
-  }
+mlir::pto::CANNVersion
+mlir::pto::PTOASContext::getCANNVersionOrDefault() const {
+  return cannVersion;
+}
 
-  mlir::pto::TempFileRegistry &getTempFiles() { return tempFiles; }
+mlir::pto::TempFileRegistry &mlir::pto::PTOASContext::getTempFiles() {
+  return tempFiles;
+}
 
-  LogicalResult createTempPath(llvm::StringRef prefix, llvm::StringRef suffix,
-                               std::string &path) {
-    return tempFiles.create(prefix, suffix, path, llvm::errs());
-  }
-
-private:
-  MLIRContext mlirContext;
-  std::string outputPath;
-  std::string arch;
-  int argc = 0;
-  char **argv = nullptr;
-  mlir::pto::CANNToolchain toolchain;
-  mlir::pto::TempFileRegistry tempFiles;
-};
+LogicalResult
+mlir::pto::PTOASContext::createTempPath(llvm::StringRef prefix,
+                                        llvm::StringRef suffix,
+                                        std::string &path) {
+  return tempFiles.create(prefix, suffix, path, llvm::errs());
+}
 
 static bool hasPTOKernel(ModuleOp module) {
   bool found = false;
@@ -379,10 +415,8 @@ public:
     op->setAttr("pto.backend", StringAttr::get(op.getContext(), "emitc"));
 
     mlir::pto::PTOASCompileResult jobResult;
-    if (mlir::pto::compilePTOASModule(module, context.getArch(),
-                                      mlir::pto::PTOBackend::EmitC,
-                                      context.getArgc(), context.getArgv(),
-                                      jobResult,
+    if (mlir::pto::compilePTOASModule(module, context,
+                                      mlir::pto::PTOBackend::EmitC, jobResult,
                                       /*emitVPTOHostStub=*/false) != 0)
       return failure();
     if (jobResult.kind != mlir::pto::PTOASCompileResultKind::Text) {
@@ -394,8 +428,12 @@ public:
     std::string fatobjPath;
     if (failed(context.createTempPath("ptoas-emitc-fatobj", ".o", fatobjPath)))
       return failure();
+    const mlir::pto::CANNToolchain *toolchain =
+        context.getToolchain(llvm::errs());
+    if (!toolchain)
+      return failure();
     if (failed(mlir::pto::emitFatobjCCE(
-            jobResult.textOutput, fatobjPath, context.getToolchain(),
+            jobResult.textOutput, fatobjPath, *toolchain,
             context.getTempFiles(), llvm::errs())))
       return failure();
 
@@ -422,8 +460,8 @@ public:
     bool emitHostStub = hasPTOKernel(op);
     mlir::pto::PTOASCompileResult jobResult;
     if (mlir::pto::compilePTOASModule(
-            module, context.getArch(), mlir::pto::PTOBackend::VPTO,
-            context.getArgc(), context.getArgv(), jobResult, emitHostStub) != 0)
+            module, context, mlir::pto::PTOBackend::VPTO, jobResult,
+            emitHostStub) != 0)
       return failure();
     if (jobResult.kind != mlir::pto::PTOASCompileResultKind::VPTOObject) {
       llvm::errs() << "Error: VPTO backend child job produced non-object "
@@ -463,9 +501,12 @@ public:
     std::string stderrPath;
     if (failed(context.createTempPath("ptoas-fatobj", ".log", stderrPath)))
       return failure();
+    const mlir::pto::CANNToolchain *toolchain =
+        context.getToolchain(llvm::errs());
+    if (!toolchain)
+      return failure();
     return mlir::pto::linkFatobjs(fatobjPaths, context.getOutputPath(),
-                                  context.getToolchain(), stderrPath,
-                                  llvm::errs());
+                                  *toolchain, stderrPath, llvm::errs());
   }
 
 private:
@@ -476,9 +517,8 @@ LogicalResult EmitCBackendJob::run(PTOASContext &context) {
   ModuleOp op = module.get();
   op->setAttr("pto.backend", StringAttr::get(op.getContext(), "emitc"));
 
-  if (mlir::pto::compilePTOASModule(module, context.getArch(),
-                                    mlir::pto::PTOBackend::EmitC,
-                                    context.getArgc(), context.getArgv(), result,
+  if (mlir::pto::compilePTOASModule(module, context,
+                                    mlir::pto::PTOBackend::EmitC, result,
                                     /*emitVPTOHostStub=*/false) != 0)
     return failure();
   if (result.kind != mlir::pto::PTOASCompileResultKind::Text) {
@@ -494,8 +534,8 @@ LogicalResult VPTOBackendJob::run(PTOASContext &context) {
 
   bool emitHostStub = hasPTOKernel(op);
   if (mlir::pto::compilePTOASModule(
-          module, context.getArch(), mlir::pto::PTOBackend::VPTO,
-          context.getArgc(), context.getArgv(), result, emitHostStub) != 0)
+          module, context, mlir::pto::PTOBackend::VPTO, result,
+          emitHostStub) != 0)
     return failure();
   if (result.kind == mlir::pto::PTOASCompileResultKind::Text)
     return success();
@@ -509,8 +549,6 @@ LogicalResult VPTOBackendJob::run(PTOASContext &context) {
                     "passed with -o.\n";
     return failure();
   }
-  if (failed(context.initializeObjectEmission()))
-    return failure();
 
   std::string moduleId = context.allocModuleId();
   if (failed(emitVPTOLLVMFatobj(result, context, moduleId,
@@ -529,10 +567,14 @@ static LogicalResult emitVPTOLLVMFatobj(
   if (!jobResult.vptoStubSource.empty())
     stubSource = jobResult.vptoStubSource;
 
+  const mlir::pto::CANNToolchain *toolchain =
+      context.getToolchain(llvm::errs());
+  if (!toolchain)
+    return failure();
   if (failed(mlir::pto::emitFatobjLLVM(
           jobResult.vptoCubeModule.module.get(),
           jobResult.vptoVectorModule.module.get(), stubSource,
-          outputPath, moduleId, context.getToolchain(), context.getTempFiles(),
+          outputPath, moduleId, *toolchain, context.getTempFiles(),
           llvm::errs())))
     return failure();
   return success();
@@ -597,12 +639,11 @@ static LogicalResult resolveSingleBackend(
   return success();
 }
 
-static LogicalResult runPTOASJobs(OwningOpRef<ModuleOp> &module,
-                                  bool cliBackendSpecified,
-                                  PTOASContext &context,
-                                  mlir::pto::PTOASCompileResult &result) {
-  mlir::pto::PTOBackend defaultBackend = mlir::pto::PTOBackend::EmitC;
-  if (!parseDriverBackend(mlir::pto::ptoBackend, defaultBackend)) {
+static LogicalResult buildBackendInfo(ModuleOp module, bool cliBackendSpecified,
+                                      mlir::pto::BackendInfo &backendInfo) {
+  backendInfo = mlir::pto::BackendInfo();
+  if (!parseDriverBackend(mlir::pto::ptoBackend,
+                          backendInfo.defaultBackend)) {
     llvm::errs() << "Error: invalid --pto-backend='" << mlir::pto::ptoBackend
                  << "'. Expected 'emitc' or 'vpto'.\n";
     return failure();
@@ -610,17 +651,44 @@ static LogicalResult runPTOASJobs(OwningOpRef<ModuleOp> &module,
 
   std::optional<mlir::pto::PTOBackend> moduleBackend;
   if (!cliBackendSpecified) {
-    if (failed(parseDriverBackendAttr(module->getOperation(), moduleBackend)))
+    if (failed(parseDriverBackendAttr(module.getOperation(), moduleBackend)))
       return failure();
   }
 
-  std::optional<mlir::pto::PTOBackend> singleBackend;
   if (failed(resolveSingleBackend(cliBackendSpecified, moduleBackend,
-                                  defaultBackend, module.get(), singleBackend)))
+                                  backendInfo.defaultBackend, module,
+                                  backendInfo.singleBackend)))
     return failure();
 
-  if (singleBackend) {
-    if (*singleBackend == mlir::pto::PTOBackend::EmitC) {
+  if (backendInfo.singleBackend) {
+    backendInfo.requiresToolchain =
+        *backendInfo.singleBackend == mlir::pto::PTOBackend::VPTO &&
+        !mlir::pto::emitMlirIR && !mlir::pto::emitVPTO;
+    return success();
+  }
+
+  if (mlir::pto::emitMlirIR || mlir::pto::emitVPTO ||
+      mlir::pto::ptoPrintSeamIR || !mlir::pto::ptoSeamIRFile.empty()) {
+    llvm::errs() << "Error: mixed pto.backend fatobj mode does not support "
+                    "debug IR output flags.\n";
+    return failure();
+  }
+  if (outputFilename.empty() || outputFilename == "-") {
+    llvm::errs() << "Error: mixed pto.backend fatobj mode requires an "
+                    "explicit file path passed with -o.\n";
+    return failure();
+  }
+
+  backendInfo.requiresToolchain = true;
+  return success();
+}
+
+static LogicalResult runPTOASJobs(OwningOpRef<ModuleOp> &module,
+                                  PTOASContext &context,
+                                  mlir::pto::PTOASCompileResult &result) {
+  const mlir::pto::BackendInfo &backendInfo = context.getBackendInfo();
+  if (backendInfo.singleBackend) {
+    if (*backendInfo.singleBackend == mlir::pto::PTOBackend::EmitC) {
       EmitCBackendJob singleJob(module, result);
       return singleJob.run(context);
     }
@@ -630,27 +698,12 @@ static LogicalResult runPTOASJobs(OwningOpRef<ModuleOp> &module,
 
   SmallVector<std::unique_ptr<BackendChildJob>, 4> backendJobs;
   SmallVector<std::string, 4> fatobjPaths;
-  if (failed(collectChildJobs(module.get(), defaultBackend, context, fatobjPaths,
-                              backendJobs)))
+  if (failed(collectChildJobs(module.get(), backendInfo.defaultBackend,
+                              context, fatobjPaths, backendJobs)))
     return failure();
-
-  if (mlir::pto::emitMlirIR || mlir::pto::emitVPTO ||
-      mlir::pto::ptoPrintSeamIR || !mlir::pto::ptoSeamIRFile.empty()) {
-    llvm::errs() << "Error: mixed pto.backend fatobj mode does not support "
-                    "debug IR output flags.\n";
-    return failure();
-  }
-  if (context.getOutputPath().empty() || context.getOutputPath() == "-") {
-    llvm::errs() << "Error: mixed pto.backend fatobj mode requires an "
-                    "explicit file path passed with -o.\n";
-    return failure();
-  }
 
   result.reset();
   result.kind = mlir::pto::PTOASCompileResultKind::MixedObject;
-
-  if (failed(context.initializeObjectEmission()))
-    return failure();
 
   for (size_t i = 0, e = backendJobs.size(); i < e; ++i) {
     if (failed(backendJobs[i]->run(context)))
@@ -703,11 +756,12 @@ int main(int argc, char **argv) {
 
   llvm::cl::ParseCommandLineOptions(argc, argv, "PTO Assembler (ptoas)\n");
 
+  PTOASContext context(registry, outputFilename, argc, argv);
+  context.initializeMLIRContext();
+
   std::unique_ptr<llvm::MemoryBuffer> inputBuffer = readInputBuffer();
   if (!inputBuffer)
     return 1;
-  PTOASContext context(registry, outputFilename, argc, argv);
-  context.initializeMLIRContext();
 
   std::string arch;
   OwningOpRef<ModuleOp> module = loadInputModule(
@@ -716,8 +770,15 @@ int main(int argc, char **argv) {
     return 1;
   context.setArch(std::move(arch));
 
+  mlir::pto::BackendInfo backendInfo;
+  if (failed(buildBackendInfo(module.get(), cliBackendSpecified, backendInfo)))
+    return 1;
+  context.setBackendInfo(std::move(backendInfo));
+  (void)context.initializeEnvironment(context.getBackendInfo().requiresToolchain,
+                                      llvm::errs());
+
   mlir::pto::PTOASCompileResult result;
-  if (failed(runPTOASJobs(module, cliBackendSpecified, context, result)))
+  if (failed(runPTOASJobs(module, context, result)))
     return 1;
 
   if (result.kind == mlir::pto::PTOASCompileResultKind::Text)

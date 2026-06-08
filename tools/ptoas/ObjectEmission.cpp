@@ -13,6 +13,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
@@ -162,10 +163,6 @@ discoverCANNVersion(llvm::StringRef ascendHome) {
       return version;
   }
   return std::nullopt;
-}
-
-static bool usesBeta1VPTOPublicABI(llvm::StringRef cannVersion) {
-  return cannVersion == "9.0.0-beta.1";
 }
 
 static std::optional<std::string> locateProgram(llvm::StringRef envPath,
@@ -728,15 +725,8 @@ mlir::pto::CANNToolchain::create(llvm::raw_ostream &diagOS) {
       joinPath(toolchain.resourceIncludeDirPath, "cce_stub");
   toolchain.bishengCompilerBinDirPath =
       joinPath(toolchain.ascendHomePath, "tools/bisheng_compiler/bin");
-  toolchain.cannVersion =
+  toolchain.cannVersionString =
       discoverCANNVersion(toolchain.ascendHomePath).value_or("9.0.0-beta.1");
-  if (usesBeta1VPTOPublicABI(toolchain.cannVersion)) {
-    toolchain.vptoVectorPublicABISuffix = "_mix_aiv";
-    toolchain.vptoCubePublicABISuffix = "_mix_aic";
-  } else {
-    toolchain.vptoVectorPublicABISuffix = ".vector";
-    toolchain.vptoCubePublicABISuffix = ".cube";
-  }
   llvm::SmallVector<std::string, 8> cppIncludeDirs = discoverCppIncludeDirs(
       toolchain.ascendHomePath, diagOS, toolchain.ptoIsaPath);
   toolchain.cppIncludeDirs.assign(cppIncludeDirs.begin(),
@@ -770,13 +760,12 @@ mlir::pto::CANNToolchain::validate(llvm::raw_ostream &diagOS) const {
 
 llvm::StringRef mlir::pto::CANNToolchain::vptoPublicABISuffix(
     ObjectEmissionDeviceTarget target) const {
+  const bool usesNewABI = cannVersion >= CANNVersion{9, 0, 0, 2};
   switch (target) {
   case ObjectEmissionDeviceTarget::Vector:
-    return vptoVectorPublicABISuffix.empty() ? llvm::StringRef(".vector")
-                                             : llvm::StringRef(vptoVectorPublicABISuffix);
+    return usesNewABI ? llvm::StringRef(".vector") : llvm::StringRef("_mix_aiv");
   case ObjectEmissionDeviceTarget::Cube:
-    return vptoCubePublicABISuffix.empty() ? llvm::StringRef(".cube")
-                                           : llvm::StringRef(vptoCubePublicABISuffix);
+    return usesNewABI ? llvm::StringRef(".cube") : llvm::StringRef("_mix_aic");
   }
   llvm_unreachable("unknown object emission device target");
 }
