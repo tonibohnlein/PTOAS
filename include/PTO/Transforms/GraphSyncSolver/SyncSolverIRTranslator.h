@@ -56,6 +56,11 @@ private:
 
   std::unique_ptr<Scope> funcIrBuilder(Region &region, OperationBase *parentOp,
                                        bool skipEmptyScopes = false);
+  void translateRegionIntoScope(Region &region, Scope *scopeOp,
+                                bool skipEmptyScopes,
+                                bool createFunctionBlocks = false);
+  void translateBlockIntoScope(Block &block, Scope *scopeOp,
+                               bool skipEmptyScopes);
 
   void generateProcessingOrders(Occurrence *occ1, Occurrence *occ2,
                                 bool isUseless);
