@@ -480,6 +480,21 @@ def FoldTileBufIntrinsics : Pass<"pto-fold-tile-buf-intrinsics", "mlir::func::Fu
   ];
 }
 
+def PTOCanonicalizeIR : Pass<"pto-canonicalize-ir", "func::FuncOp"> {
+  let summary = "Canonicalize PTO IR forms before backend lowering";
+  let description = [{
+    Rewrites shorthand or legacy PTO IR forms into canonical forms before
+    backend-specific lowering. Currently this canonicalizes rank-2 tensor_view /
+    partition_tensor_view descriptors into the canonical right-aligned rank-5
+    form: [R, C] -> [1, 1, 1, R, C].
+  }];
+  let constructor = "mlir::pto::createPTOCanonicalizeIRPass()";
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::arith::ArithDialect"
+  ];
+}
+
 def PTOInlineLibCall : Pass<"pto-inline-libcall", "ModuleOp"> {
   let summary = "Materialize OP-Lib instance bodies and inline OP-Lib calls";
   let description = [{

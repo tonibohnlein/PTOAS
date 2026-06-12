@@ -1737,6 +1737,7 @@ int mlir::pto::compilePTOASModule(
   if (failed(applyPassManagerCLOptions(pm)))
     return 1;
 
+  pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCanonicalizeIRPass());
   pm.addNestedPass<mlir::func::FuncOp>(
       pto::createPTOAssignDefaultFrontendPipeIdPass());
   pm.addNestedPass<mlir::func::FuncOp>(
