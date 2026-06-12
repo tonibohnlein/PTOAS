@@ -47,6 +47,18 @@ struct TestCase {
     size_t      dstElemSize; // bytes per destination element
 };
 
+static size_t GetDstElemCount(const TestCase &tc) {
+    if (tc.srcElemSize == sizeof(float) || tc.srcElemSize == sizeof(int32_t)) {
+        const size_t logicalElems = tc.validRows * tc.validCols;
+        const size_t repeatElm = 256 / tc.srcElemSize;
+        const size_t repeatTimes = (logicalElems + repeatElm - 1) / repeatElm + 1;
+        return (repeatTimes / 2) * 16;
+    }
+    const size_t repeatElm = 256 / tc.srcElemSize;
+    const size_t repeatTimes = (tc.validCols + repeatElm - 1) / repeatElm;
+    return tc.validRows * repeatTimes * 16;
+}
+
 static const TestCase kCases[] = {
     {"f32_1x64",              (void (*)(void*,void*,void*))LaunchTCMP_f32_1x64,              1,   64,   1,   64,  sizeof(float),    sizeof(uint8_t)},
     {"f32_4x64",              (void (*)(void*,void*,void*))LaunchTCMP_f32_4x64,              4,   64,   4,   64,  sizeof(float),    sizeof(uint8_t)},
@@ -67,7 +79,7 @@ static constexpr size_t kNumCases = sizeof(kCases) / sizeof(kCases[0]);
 static int RunCase(const TestCase &tc, int deviceId, aclrtStream stream) {
     int rc = 0;
     const size_t srcElemCount = tc.rows * tc.cols;
-    const size_t dstElemCount = tc.rows * tc.cols;
+    const size_t dstElemCount = GetDstElemCount(tc);
     const size_t srcFileSize  = srcElemCount * tc.srcElemSize;
     const size_t dstFileSize  = dstElemCount * tc.dstElemSize;
 

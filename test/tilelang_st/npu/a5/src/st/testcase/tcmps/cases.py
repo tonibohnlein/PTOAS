@@ -9,13 +9,7 @@
 
 # coding=utf-8
 
-"""Single source of truth for tcmps ST test cases.
-
-tcmps: packed mask of (src < scalar), dst stores packed predicate mask.
-Supports 32-bit source types: f32, i32. Output dtype is uint8.
-
-Cases reference testcase/tcmps with various shapes and valid regions.
-"""
+"""Single source of truth for tcmps ST test cases."""
 
 import numpy as np
 
