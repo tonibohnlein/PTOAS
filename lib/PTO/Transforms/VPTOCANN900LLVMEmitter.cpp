@@ -3695,6 +3695,21 @@ static FailureOr<StringRef> buildVaxpyCallee(MLIRContext *context,
   return buildCANN900ModeTypedCallee(context, resultType, "vaxpy", "m");
 }
 
+static FailureOr<StringRef> buildVmulscvtCallee(MLIRContext *context,
+                                                Type inputType,
+                                                Type resultType) {
+  auto inputElemType = getElementTypeFromVectorLike(inputType);
+  auto resultElemType = getElementTypeFromVectorLike(resultType);
+  auto inputLanes = getElementCountFromVectorLike(inputType);
+  auto resultLanes = getElementCountFromVectorLike(resultType);
+  if (!inputElemType || !resultElemType || !inputLanes || !resultLanes)
+    return failure();
+  if (!inputElemType.isF32() || !resultElemType.isF16() || *inputLanes != 64 ||
+      *resultLanes != 128)
+    return failure();
+  return StringAttr::get(context, "llvm.hivm.vmulscvt.v128f16").getValue();
+}
+
 static FailureOr<StringRef> buildVciCallee(MLIRContext *context, Type resultType) {
   std::string vec = getCANN900VectorTypeFragment(resultType);
   if (vec.empty())
@@ -7381,6 +7396,58 @@ private:
   LoweringState &state;
 };
 
+class LowerVmulscvtOpPattern final
+    : public OpConversionPattern<pto::VmulscvtOp> {
+public:
+  explicit LowerVmulscvtOpPattern(TypeConverter &typeConverter,
+                                  MLIRContext *context, LoweringState &state)
+      : OpConversionPattern<pto::VmulscvtOp>(typeConverter, context),
+        state(state) {}
+
+  LogicalResult
+  matchAndRewrite(pto::VmulscvtOp op, pto::VmulscvtOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto roundMode = parseRoundModeImmediate(op.getRnd());
+    if (!roundMode)
+      return rewriter.notifyMatchFailure(op, "vmulscvt requires valid rnd attr");
+    if (*roundMode != 1)
+      return rewriter.notifyMatchFailure(
+          op, "current vmulscvt lowering only supports rnd A");
+
+    auto part = parsePartImmediate(op.getPart());
+    if (!part)
+      return rewriter.notifyMatchFailure(op, "unsupported vmulscvt part");
+
+    Type resultType =
+        this->getTypeConverter()->convertType(op.getResult().getType());
+    if (!resultType)
+      return rewriter.notifyMatchFailure(op,
+                                         "failed to convert vmulscvt result type");
+
+    FailureOr<StringRef> calleeName =
+        buildVmulscvtCallee(op.getContext(), op.getInput().getType(),
+                            op.getResult().getType());
+    if (failed(calleeName))
+      return rewriter.notifyMatchFailure(op, "unsupported vmulscvt signature");
+
+    Value partValue = getI32Constant(rewriter, op.getLoc(), *part);
+    auto funcType = rewriter.getFunctionType(
+        TypeRange{adaptor.getInput().getType(), adaptor.getScalar().getType(),
+                  adaptor.getMask().getType(), partValue.getType()},
+        TypeRange{resultType});
+    auto call = rewriter.create<func::CallOp>(
+        op.getLoc(), *calleeName, TypeRange{resultType},
+        ValueRange{adaptor.getInput(), adaptor.getScalar(), adaptor.getMask(),
+                   partValue});
+    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
+    rewriter.replaceOp(op, call.getResults());
+    return success();
+  }
+
+private:
+  LoweringState &state;
+};
+
 class LowerVciOpPattern final : public OpConversionPattern<pto::VciOp> {
 public:
   explicit LowerVciOpPattern(TypeConverter &typeConverter, MLIRContext *context,
@@ -9930,7 +9997,7 @@ static void populateVPTOOpLoweringPatterns(VPTOTypeConverter &typeConverter,
                LowerVstarOpPattern, LowerVstasOpPattern,
                LowerVgather2OpPattern, LowerVgather2BcOpPattern,
                LowerVgatherbOpPattern, LowerVscatterOpPattern,
-               LowerVaxpyOpPattern,
+               LowerVaxpyOpPattern, LowerVmulscvtOpPattern,
                LowerVciOpPattern, LowerVexpdifOpPattern,
                LowerVbitsortOpPattern, LowerVmrgsort4OpPattern,
                LowerVtrcOpPattern, LowerVcvtOpPattern,
@@ -10050,7 +10117,7 @@ static void configureVPTOOpLoweringTarget(ConversionTarget &target,
                       pto::PintlvB8Op, pto::PintlvB16Op, pto::PintlvB32Op,
                       pto::VsunpackOp, pto::VzunpackOp, pto::VpackOp,
                       pto::VintlvOp, pto::VdintlvOp, pto::VpreluOp,
-                      pto::VaxpyOp, pto::VciOp, pto::VexpdifOp,
+                      pto::VaxpyOp, pto::VmulscvtOp, pto::VciOp, pto::VexpdifOp,
                       pto::VbitsortOp, pto::Vmrgsort4Op, pto::VtrcOp,
                       pto::VcvtOp,
                       pto::VbitcastOp,
