@@ -14,18 +14,6 @@
 
 extern "C" __global__ AICORE void online_softmax_update_kernel_2d(__gm__ float *v1, __gm__ float *v2, __gm__ float *v3, __gm__ float *v4, __gm__ float *v5, __gm__ float *v6, __gm__ float *v7, int32_t v8, int32_t v9);
 
-void LaunchSOFTMAX_f32_rows8_seq32(float *v1, float *v2, float *v3,
-                                   float *v4, float *v5, float *v6,
-                                   float *v7, int32_t v8, int32_t v9,
-                                   void *stream) {
-  const int32_t blockRows = 8;
-  const int32_t blocks = (v9 + blockRows - 1) / blockRows;
-  online_softmax_update_kernel_2d<<<blocks, nullptr, stream>>>(
-      (__gm__ float *)v1, (__gm__ float *)v2, (__gm__ float *)v3,
-      (__gm__ float *)v4, (__gm__ float *)v5, (__gm__ float *)v6,
-      (__gm__ float *)v7, v8, v9);
-}
-
 void LaunchSOFTMAX_f32_rows24_seq73(float *v1, float *v2, float *v3,
                                     float *v4, float *v5, float *v6,
                                     float *v7, int32_t v8, int32_t v9,

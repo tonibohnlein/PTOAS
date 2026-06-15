@@ -26,20 +26,20 @@ import numpy as np
 
 CASES = [
     {
-        "name": "f16_64x64_valid_60x60",
-        "dtype": np.float16,
-        "shape": (60, 60),
-        "tile_shape": (64, 64),
-        "valid_shape": (60, 60),
-        "eps": 1e-3,
-    },
-    {
         "name": "int32_64x64",
         "dtype": np.int32,
         "shape": (64, 64),
         "tile_shape": (64, 64),
         "valid_shape": (64, 64),
         "eps": 1e-6,
+    },
+    {
+        "name": "f16_64x64_valid_60x60",
+        "dtype": np.float16,
+        "shape": (60, 60),
+        "tile_shape": (64, 64),
+        "valid_shape": (60, 60),
+        "eps": 1e-3,
     },
     {
         "name": "f32_64x64_valid_60x60",

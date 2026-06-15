@@ -34,15 +34,6 @@ gen_data.py and compare.py both import this list to avoid redundant definitions.
 import numpy as np
 
 CASES = [
-    {
-        "name": "f32_2x24_src1_col_less",
-        "dtype": np.float32,
-        "shape": (2, 24),
-        "valid_shape": (2, 24),       # src0 valid region (equals dst)
-        "src1_vshape": (2, 8),        # src1 valid region (col_less)
-        "dst_vshape": (2, 24),        # dst valid region
-        "eps": 1e-6,
-    },
     # float32 cases from pto-isa
     {
         "name": "f32_64x64_full",
@@ -51,6 +42,15 @@ CASES = [
         "valid_shape": (64, 64),      # src0 valid region
         "src1_vshape": (64, 64),      # src1 valid region (same as dst)
         "dst_vshape": (64, 64),       # dst valid region
+        "eps": 1e-6,
+    },
+    {
+        "name": "f32_2x24_src1_col_less",
+        "dtype": np.float32,
+        "shape": (2, 24),
+        "valid_shape": (2, 24),       # src0 valid region (equals dst)
+        "src1_vshape": (2, 8),        # src1 valid region (col_less)
+        "dst_vshape": (2, 24),        # dst valid region
         "eps": 1e-6,
     },
     {

@@ -26,14 +26,6 @@ import numpy as np
 
 CASES = [
     {
-        "name": "int32_1x256",
-        "dtype": np.int32,
-        "shape": (1, 256),
-        "valid_shape": (1, 256),
-        "rounds": 10,
-        "eps": 0,
-    },
-    {
         "name": "int32_4x256",
         "dtype": np.int32,
         "shape": (4, 256),

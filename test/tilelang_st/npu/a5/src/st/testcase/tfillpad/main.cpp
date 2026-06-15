@@ -22,7 +22,6 @@
 using namespace PtoTestCommon;
 
 // Kernel launch wrappers (defined in launch.cpp)
-void LaunchTFILLPAD_f32_64x16_pad_64x7(float *src, float *dst, void *stream);
 void LaunchTFILLPAD_f32_128x128_pad_128x127(float *src, float *dst, void *stream);
 void LaunchTFILLPAD_f32_128x160_pad_128x127(float *src, float *dst, void *stream);
 void LaunchTFILLPAD_f32_128x160_pad_128x127_v2(float *src, float *dst, void *stream);
@@ -55,10 +54,6 @@ void wrapLaunch(void *src, void *dst, void *stream, void (*fn)(T *, T *, void *)
 }
 
 static const TestCase kCases[] = {
-    {"f32_64x16_pad_64x7", DataType::F32,
-     [](void *src, void *dst, void *stream) { wrapLaunch<float>(src, dst, stream, LaunchTFILLPAD_f32_64x16_pad_64x7); },
-     64, 16, 64, 16, 64, 7, sizeof(float)},
-
     // Case 1: float, src=128x127, dst=128x128, LoadPad=Max, FillPad=Max
     // Output: 128x128 (full dst tile)
     {"f32_128x128_pad_128x127", DataType::F32,

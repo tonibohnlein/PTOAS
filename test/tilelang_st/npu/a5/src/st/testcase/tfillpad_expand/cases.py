@@ -44,17 +44,6 @@ PADVAL_ZERO = "Zero"     # zero fill
 PADVAL_NEG1 = "Neg1"     # -1.0f for float, -1 for integers (Custom)
 
 CASES = [
-    {
-        "name": "u16_64x16_src_63x7",
-        "dtype": np.uint16,
-        "shape": (63, 7),
-        "valid_shape": (63, 7),
-        "dst_shape": (64, 16),
-        "dst_valid_shape": (64, 16),
-        "load_padval": PADVAL_MIN,
-        "fill_padval": PADVAL_MAX,
-        "eps": 0,
-    },
     # ========== Case 1: uint16, src=259x7, dst=260x32, expand, LoadPad=Min, FillPad=Max ==========
 
     {

@@ -22,7 +22,6 @@
 using namespace PtoTestCommon;
 
 // Kernel launch wrappers (defined in launch.cpp)
-void LaunchTFILLPAD_EXPAND_u16_64x16_src_63x7(uint16_t *src, uint16_t *dst, void *stream);
 void LaunchTFILLPAD_EXPAND_u16_260x32_src_259x7(uint16_t *src, uint16_t *dst, void *stream);
 void LaunchTFILLPAD_EXPAND_s8_260x64_src_259x7(int8_t *src, int8_t *dst, void *stream);
 
@@ -50,10 +49,6 @@ void wrapLaunch(void *src, void *dst, void *stream, void (*fn)(T *, T *, void *)
 }
 
 static const TestCase kCases[] = {
-    {"u16_64x16_src_63x7", DataType::U16,
-     [](void *src, void *dst, void *stream) { wrapLaunch<uint16_t>(src, dst, stream, LaunchTFILLPAD_EXPAND_u16_64x16_src_63x7); },
-     64, 16, 63, 7, 64, 16, 64, 16, sizeof(uint16_t)},
-
     // ========== uint16 case (C++ case 8) ==========
     {"u16_260x32_src_259x7", DataType::U16,
      [](void *src, void *dst, void *stream) { wrapLaunch<uint16_t>(src, dst, stream, LaunchTFILLPAD_EXPAND_u16_260x32_src_259x7); },

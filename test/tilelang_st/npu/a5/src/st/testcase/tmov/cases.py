@@ -26,17 +26,17 @@ import numpy as np
 
 CASES = [
     {
-        "name": "f32_32x32",
-        "dtype": np.float32,
-        "shape": (32, 32),
-        "valid_shape": (32, 32),
-        "eps": 1e-6,
-    },
-    {
         "name": "f32_64x64",
         "dtype": np.float32,
         "shape": (64, 64),
         "valid_shape": (64, 64),
+        "eps": 1e-6,
+    },
+    {
+        "name": "f32_32x32",
+        "dtype": np.float32,
+        "shape": (32, 32),
+        "valid_shape": (32, 32),
         "eps": 1e-6,
     },
     {

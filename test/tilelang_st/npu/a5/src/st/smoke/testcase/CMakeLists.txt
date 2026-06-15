@@ -153,6 +153,9 @@ set(ALL_TESTCASES
     softmax
     tabs
     texp
+    textract
+    textract_fp
+    textract_v2v
     tlog
     tneg
     tnot

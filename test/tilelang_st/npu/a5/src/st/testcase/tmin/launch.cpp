@@ -12,13 +12,6 @@
 #define AICORE [aicore]
 #endif
 
-// Smoke case: f32 32x32
-extern "C" __global__ AICORE void TMIN_f32_32x32(__gm__ float *a, __gm__ float *b, __gm__ float *c);
-
-void LaunchTMIN_f32_32x32(void *a, void *b, void *c, void *stream) {
-    TMIN_f32_32x32<<<1, nullptr, stream>>>((__gm__ float *)a, (__gm__ float *)b, (__gm__ float *)c);
-}
-
 // Case 0: f32 64x64
 extern "C" __global__ AICORE void TMIN_f32_64x64(__gm__ float *a, __gm__ float *b, __gm__ float *c);
 

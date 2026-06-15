@@ -44,10 +44,6 @@ void LaunchSOFTMAX_f32_rows24_seq73(float *v1, float *v2, float *v3,
                                     float *v4, float *v5, float *v6,
                                     float *v7, int32_t v8, int32_t v9,
                                     void *stream);
-void LaunchSOFTMAX_f32_rows8_seq32(float *v1, float *v2, float *v3,
-                                   float *v4, float *v5, float *v6,
-                                   float *v7, int32_t v8, int32_t v9,
-                                   void *stream);
 
 using LaunchFn = void (*)(float *, float *, float *, float *, float *, float *,
                           float *, int32_t, int32_t, void *);
@@ -60,7 +56,6 @@ struct TestCase {
 };
 
 static const TestCase kCases[] = {
-    {"f32_rows8_seq32", LaunchSOFTMAX_f32_rows8_seq32, 8, 128},
     {"f32_rows24_seq73", LaunchSOFTMAX_f32_rows24_seq73, 24, 128},
 };
 static constexpr size_t kNumCases = sizeof(kCases) / sizeof(kCases[0]);

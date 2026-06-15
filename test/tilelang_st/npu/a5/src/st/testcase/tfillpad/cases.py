@@ -41,31 +41,6 @@ PADVAL_ZERO = "Zero"     # zero fill
 PADVAL_NEG1 = "Neg1"     # -1.0f for float, -1 for integers (Custom)
 
 CASES = [
-    {
-        "name": "f32_64x16_pad_64x7",
-        "dtype": np.float32,
-        "shape": (64, 16),
-        "valid_shape": (64, 16),
-        "src_shape": (64, 7),
-        "src_valid_shape": (64, 7),
-        "load_padval": PADVAL_MIN,
-        "fill_padval": PADVAL_MAX,
-        "eps": 1e-6,
-    },
-    # ========== Case 4: float, 260x7 -> 260x16, PadMin/Max ==========
-    # C++: runTFILLPAD<float, 1,1,1, 260,7, 260,16, 1, PadValue::Min, PadValue::Max>
-
-    {
-        "name": "f32_260x16_pad_260x7",
-        "dtype": np.float32,
-        "shape": (260, 16),               # dst tile physical
-        "valid_shape": (260, 16),         # dst valid (output size)
-        "src_shape": (260, 7),            # src tile physical
-        "src_valid_shape": (260, 7),      # src valid
-        "load_padval": PADVAL_MIN,        # TLOAD: fill cols 8-15 with -inf (32B aligned tile)
-        "fill_padval": PADVAL_MAX,        # TFILLPAD: no expansion needed
-        "eps": 1e-6,
-    },
     # ========== Case 1: float, 128x127 -> 128x128, PadMax ==========
     # C++: runTFILLPAD<float, 1,1,1, 128,127, 128,128, 1, PadValue::Max, PadValue::Max>
 
@@ -108,6 +83,21 @@ CASES = [
         "src_valid_shape": (128, 127),    # src valid
         "load_padval": PADVAL_MIN,        # TLOAD: fill col 127 with -inf
         "fill_padval": PADVAL_MAX,        # TFILLPAD: fill cols 128-159 with +inf
+        "eps": 1e-6,
+    },
+
+    # ========== Case 4: float, 260x7 -> 260x16, PadMin/Max ==========
+    # C++: runTFILLPAD<float, 1,1,1, 260,7, 260,16, 1, PadValue::Min, PadValue::Max>
+
+    {
+        "name": "f32_260x16_pad_260x7",
+        "dtype": np.float32,
+        "shape": (260, 16),               # dst tile physical
+        "valid_shape": (260, 16),         # dst valid (output size)
+        "src_shape": (260, 7),            # src tile physical
+        "src_valid_shape": (260, 7),      # src valid
+        "load_padval": PADVAL_MIN,        # TLOAD: fill cols 8-15 with -inf (32B aligned tile)
+        "fill_padval": PADVAL_MAX,        # TFILLPAD: no expansion needed
         "eps": 1e-6,
     },
 

@@ -12,14 +12,6 @@
 #define AICORE [aicore]
 #endif
 
-// ========== Smoke uint16 kernel ==========
-
-extern "C" __global__ AICORE void TFILLPAD_EXPAND_u16_64x16_src_63x7(__gm__ uint16_t *src, __gm__ uint16_t *dst);
-
-void LaunchTFILLPAD_EXPAND_u16_64x16_src_63x7(uint16_t *src, uint16_t *dst, void *stream) {
-    TFILLPAD_EXPAND_u16_64x16_src_63x7<<<1, nullptr, stream>>>((__gm__ uint16_t *)src, (__gm__ uint16_t *)dst);
-}
-
 // ========== uint16 kernel (C++ case 8) ==========
 
 extern "C" __global__ AICORE void TFILLPAD_EXPAND_u16_260x32_src_259x7(__gm__ uint16_t *src, __gm__ uint16_t *dst);

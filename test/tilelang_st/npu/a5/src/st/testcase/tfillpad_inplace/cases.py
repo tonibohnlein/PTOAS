@@ -23,16 +23,6 @@ Each case defines:
 import numpy as np
 
 CASES = [
-    {
-        "name": "f32_64x16_noexpand",
-        "dtype": np.float32,
-        "src_shape": (64, 16),
-        "src_valid": (64, 16),
-        "dst_shape": (64, 16),
-        "dst_valid": (64, 16),
-        "fill_padval": "Max",
-        "eps": 1e-6,
-    },
     # ========== Case: float, src_valid == dst_valid (no expansion) ==========
 
     {

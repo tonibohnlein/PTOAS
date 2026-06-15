@@ -28,21 +28,21 @@ import numpy as np
 
 CASES = [
     {
-        "name": "fp32_32_32_1_32",
-        "dtype": np.float32,
-        "src0_shape": (32, 32),
-                "src1_shape": (1, 32),
-        "shape": (32, 32),
-        "valid_shape": (32, 32),
-        "eps": 1e-3,
-    },
-    {
         "name": "fp32_16_128_1_128",
         "dtype": np.float32,
         "src0_shape": (16, 128),
                 "src1_shape": (1, 128),
         "shape": (16, 128),
         "valid_shape": (16, 128),
+        "eps": 1e-3,
+    },
+    {
+        "name": "fp32_32_32_1_32",
+        "dtype": np.float32,
+        "src0_shape": (32, 32),
+                "src1_shape": (1, 32),
+        "shape": (32, 32),
+        "valid_shape": (32, 32),
         "eps": 1e-3,
     },
     {

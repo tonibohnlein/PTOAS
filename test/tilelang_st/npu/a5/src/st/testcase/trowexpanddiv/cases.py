@@ -22,19 +22,6 @@ trowexpanddiv: dst = src0 / broadcast(src1) across columns.
 import numpy as np
 
 CASES = [
-    # launchTRowExpandDiv<aclFloat16, 16, 32, 16, 1, true, false>
-    {
-        "name": "f16_16x32",
-        "dtype": np.float16,
-        "src0_shape": (16, 32),
-        "src0_valid_shape": (16, 32),
-        "src1_shape": (16, 16),       # physical: 32/sizeof(f16)=16
-        "src1_valid_shape": (16, 1),
-        "dst_shape": (16, 32),
-        "dst_valid_shape": (16, 32),
-        "eps": 1e-3,
-        "high_precision": False,
-    },
     # launchTRowExpandDiv<float, 40, 64, 40, 1, true, false>
     {
         "name": "f32_40x64",
@@ -59,6 +46,19 @@ CASES = [
         "dst_shape": (16, 256),
         "dst_valid_shape": (16, 256),
         "eps": 1e-6,
+        "high_precision": False,
+    },
+    # launchTRowExpandDiv<aclFloat16, 16, 32, 16, 1, true, false>
+    {
+        "name": "f16_16x32",
+        "dtype": np.float16,
+        "src0_shape": (16, 32),
+        "src0_valid_shape": (16, 32),
+        "src1_shape": (16, 16),       # physical: 32/sizeof(f16)=16
+        "src1_valid_shape": (16, 1),
+        "dst_shape": (16, 32),
+        "dst_valid_shape": (16, 32),
+        "eps": 1e-3,
         "high_precision": False,
     },
     # launchTRowExpandDiv<aclFloat16, 32, 512, 32, 1, true, false>

@@ -12,9 +12,8 @@
 #define AICORE [aicore]
 #endif
 
-// Case 0: ui32 4x256
-extern "C" __global__ AICORE void TRANDOM_int32_4x256(__gm__ uint32_t *key, __gm__ uint32_t *counter, __gm__ uint32_t *output);
+extern "C" __global__ AICORE void TEXTRACT_FP_f32_f16_16x16(__gm__ uint16_t *a, __gm__ uint16_t *b, __gm__ float *fb, __gm__ uint16_t *id, __gm__ float *out);
 
-void LaunchTRANDOM_int32_4x256(uint32_t *key, uint32_t *counter, uint32_t *output, void *stream) {
-    TRANDOM_int32_4x256<<<1, nullptr, stream>>>((__gm__ uint32_t *)key, (__gm__ uint32_t *)counter, (__gm__ uint32_t *)output);
+void LaunchTEXTRACT_FP_f32_f16_16x16(uint16_t *a, uint16_t *b, float *fb, uint16_t *id, float *out, void *stream) {
+    TEXTRACT_FP_f32_f16_16x16<<<1, nullptr, stream>>>((__gm__ uint16_t *)a, (__gm__ uint16_t *)b, (__gm__ float *)fb, (__gm__ uint16_t *)id, (__gm__ float *)out);
 }

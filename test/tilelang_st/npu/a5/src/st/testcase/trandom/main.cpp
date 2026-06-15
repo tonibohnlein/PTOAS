@@ -22,7 +22,6 @@
 using namespace PtoTestCommon;
 
 // Kernel launch wrappers (defined in launch.cpp)
-void LaunchTRANDOM_int32_1x256(uint32_t *key, uint32_t *counter, uint32_t *output, void *stream);
 void LaunchTRANDOM_int32_4x256(uint32_t *key, uint32_t *counter, uint32_t *output, void *stream);
 
 struct TestCase {
@@ -33,7 +32,6 @@ struct TestCase {
 };
 
 static const TestCase kCases[] = {
-    {"int32_1x256", LaunchTRANDOM_int32_1x256, 1, 256},
     {"int32_4x256", LaunchTRANDOM_int32_4x256, 4, 256},
 };
 static constexpr size_t kNumCases = sizeof(kCases) / sizeof(kCases[0]);

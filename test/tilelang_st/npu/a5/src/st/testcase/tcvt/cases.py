@@ -152,8 +152,6 @@ def _make_low_precision_cases():
 
 
 CASES = [
-    # f32 -> f16 smoke case starts at 1x128.
-    *_make_cases(np.float32, np.float16),
     {
         "name": "f32_to_i32_rint_16x64",
         "dtype": np.int32,
@@ -205,7 +203,8 @@ CASES = [
         "eps": 1e-6,
     },
     *_make_low_precision_cases(),
-    # f32 -> bf16, i16, i32, i64, f32
+    # f32 → f16, bf16, i16, i32, i64, f32
+    *_make_cases(np.float32, np.float16),
     *_make_cases(np.float32, bfloat16),
     *_make_cases(np.float32, np.int16),
     *_make_cases(np.float32, np.int32),

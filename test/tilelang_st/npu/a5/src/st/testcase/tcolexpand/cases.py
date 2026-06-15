@@ -25,14 +25,6 @@ import numpy as np
 
 CASES = [
     {
-        "name": "float_1_8_128_63",
-        "dtype": np.float32,
-        "src_shape": (1, 128),
-        "shape": (8, 128),
-        "valid_shape": (8, 63),
-        "eps": 1e-6,
-    },
-    {
         "name": "half_1_16_512_512",
         "dtype": np.float16,
         "src_shape": (1, 512),
@@ -47,6 +39,14 @@ CASES = [
         "shape": (32, 256),
         "valid_shape": (32, 255),
         "eps": 0,
+    },
+    {
+        "name": "float_1_8_128_63",
+        "dtype": np.float32,
+        "src_shape": (1, 128),
+        "shape": (8, 128),
+        "valid_shape": (8, 63),
+        "eps": 1e-6,
     },
     {
         "name": "half_1_33_512_512",

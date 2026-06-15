@@ -11,49 +11,6 @@
 // to produce a fatobj object.
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
-  // Smoke case: ui32 1x256 (256 elements, valid=1x256)
-  func.func @TRANDOM_int32_1x256(%key_ptr: !pto.ptr<ui32>, %counter_ptr: !pto.ptr<ui32>, %output_ptr: !pto.ptr<ui32>) attributes {pto.kernel} {
-    %c0    = arith.constant 0   : index
-    %c1    = arith.constant 1   : index
-    %c2    = arith.constant 2   : index
-    %c3    = arith.constant 3   : index
-    %c256  = arith.constant 256 : index
-
-    %key0_ui32 = pto.load_scalar %key_ptr[%c0] : !pto.ptr<ui32> -> ui32
-    %key1_ui32 = pto.load_scalar %key_ptr[%c1] : !pto.ptr<ui32> -> ui32
-    %counter0_ui32 = pto.load_scalar %counter_ptr[%c0] : !pto.ptr<ui32> -> ui32
-    %counter1_ui32 = pto.load_scalar %counter_ptr[%c1] : !pto.ptr<ui32> -> ui32
-    %counter2_ui32 = pto.load_scalar %counter_ptr[%c2] : !pto.ptr<ui32> -> ui32
-    %counter3_ui32 = pto.load_scalar %counter_ptr[%c3] : !pto.ptr<ui32> -> ui32
-
-    %key0 = builtin.unrealized_conversion_cast %key0_ui32 : ui32 to i32
-    %key1 = builtin.unrealized_conversion_cast %key1_ui32 : ui32 to i32
-    %counter0 = builtin.unrealized_conversion_cast %counter0_ui32 : ui32 to i32
-    %counter1 = builtin.unrealized_conversion_cast %counter1_ui32 : ui32 to i32
-    %counter2 = builtin.unrealized_conversion_cast %counter2_ui32 : ui32 to i32
-    %counter3 = builtin.unrealized_conversion_cast %counter3_ui32 : ui32 to i32
-
-    %output_view = pto.make_tensor_view %output_ptr,
-      shape = [%c1, %c1, %c1, %c1, %c256],
-      strides = [%c256, %c256, %c256, %c256, %c1]
-      : !pto.tensor_view<1x1x1x1x256xui32>
-
-    %output_part = pto.partition_view %output_view,
-      offsets = [%c0, %c0, %c0, %c0, %c0],
-      sizes = [%c1, %c1, %c1, %c1, %c256]
-      : !pto.tensor_view<1x1x1x1x256xui32> -> !pto.partition_tensor_view<1x1x1x1x256xui32>
-
-    %dst = pto.alloc_tile
-      : !pto.tile_buf<vec, 1x256xui32>
-
-    pto.trandom ins(%key0, %key1, %counter0, %counter1, %counter2, %counter3 : i32, i32, i32, i32, i32, i32)
-                outs(%dst : !pto.tile_buf<vec, 1x256xui32>)
-
-    pto.tstore ins(%dst : !pto.tile_buf<vec, 1x256xui32>)
-               outs(%output_part : !pto.partition_tensor_view<1x1x1x1x256xui32>)
-    return
-  }
-
   // Case 0: ui32 4x256 (1024 elements, valid=4x256)
   // Key and counter passed as ui32 arrays, converted to i32 for pto.trandom (which requires signless)
   func.func @TRANDOM_int32_4x256(%key_ptr: !pto.ptr<ui32>, %counter_ptr: !pto.ptr<ui32>, %output_ptr: !pto.ptr<ui32>) attributes {pto.kernel} {

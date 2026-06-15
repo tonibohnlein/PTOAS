@@ -6,9 +6,6 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Host driver for TileLang tfillpad_inplace ST.
-// Matches C++ reference test case: Case 5
-
 #include "acl/acl.h"
 #include "test_common.h"
 #include <cstdint>
@@ -16,78 +13,81 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
-#include <sys/stat.h>
 
 using namespace PtoTestCommon;
 
-// Kernel launch wrapper (defined in launch.cpp)
-// Inplace kernel takes single buffer pointer
-void LaunchTFILLPAD_INPLACE_f32_260x16_noexpand(float *buf, float *dummy, void *stream);
+void LaunchTEXTRACT_V2V_ND_f32_16x16(float *src, float *out, void *stream);
 
-enum class DataType { F32 };
+using LaunchFn = void (*)(float *, float *, void *);
 
 struct TestCase {
     const char *name;
-    DataType    dtype;
-    size_t      rows;
-    size_t      cols;
-    size_t      validRows;
-    size_t      validCols;
-    size_t      elemSize;
+    LaunchFn launch;
+    size_t srcRows;
+    size_t srcCols;
+    size_t outRows;
+    size_t outCols;
 };
 
 static const TestCase kCases[] = {
-    // Case: float, 260x16, no expansion (inplace: single buffer)
-    {"f32_260x16_noexpand", DataType::F32,
-     260, 16, 260, 16, sizeof(float)},
+    {"v2v_f32_16x16", LaunchTEXTRACT_V2V_ND_f32_16x16, 16, 16, 16, 16},
 };
 static constexpr size_t kNumCases = sizeof(kCases) / sizeof(kCases[0]);
 
 static int RunCase(const TestCase &tc, int deviceId, aclrtStream stream) {
+    (void)deviceId;
     int rc = 0;
-    size_t elemCount = tc.rows * tc.cols;
-    size_t fileSize  = elemCount * tc.elemSize;
+    const size_t srcElems = tc.srcRows * tc.srcCols;
+    const size_t outElems = tc.outRows * tc.outCols;
+    const size_t srcBytes = srcElems * sizeof(float);
+    const size_t outBytes = outElems * sizeof(float);
+    size_t srcFileSize = srcBytes;
 
-    std::printf("[INFO] === case: %s (%zux%zu, inplace) ===\n",
-                tc.name, tc.validRows, tc.validCols);
+    std::printf(
+        "[INFO] === case: %s (src=%zux%zu, out=%zux%zu) ===\n",
+        tc.name, tc.srcRows, tc.srcCols, tc.outRows, tc.outCols
+    );
 
     std::string caseDir = std::string("./") + tc.name;
 
-    // Single buffer for inplace operation
-    void *bufHost = nullptr;
-    void *bufDevice = nullptr;
+    void *srcHost = nullptr;
+    void *outHost = nullptr;
+    void *srcDevice = nullptr;
+    void *outDevice = nullptr;
 
-    aclrtMallocHost(&bufHost, fileSize);
-    aclrtMalloc(&bufDevice, fileSize, ACL_MEM_MALLOC_HUGE_FIRST);
+    aclrtMallocHost(&srcHost, srcBytes);
+    aclrtMallocHost(&outHost, outBytes);
 
-    // Load input data into the single buffer
-    if (!ReadFile((caseDir + "/input.bin").c_str(), fileSize, bufHost, fileSize)) {
-        std::fprintf(stderr, "[ERROR] failed to read %s/input.bin\n", caseDir.c_str());
+    aclrtMalloc(&srcDevice, srcBytes, ACL_MEM_MALLOC_HUGE_FIRST);
+    aclrtMalloc(&outDevice, outBytes, ACL_MEM_MALLOC_HUGE_FIRST);
+
+    if (!ReadFile((caseDir + "/input1.bin").c_str(), srcFileSize, srcHost, srcBytes)) {
+        std::fprintf(stderr, "[ERROR] failed to read %s/input1.bin\n", caseDir.c_str());
         rc = 1;
     }
 
     if (rc == 0) {
-        // Copy input to device buffer
-        aclrtMemcpy(bufDevice, fileSize, bufHost, fileSize, ACL_MEMCPY_HOST_TO_DEVICE);
+        aclrtMemcpy(srcDevice, srcBytes, srcHost, srcBytes, ACL_MEMCPY_HOST_TO_DEVICE);
 
-        // Run inplace kernel (src == dst = bufDevice)
-        // Note: launch wrapper takes two args but inplace kernel uses same physical address
-        LaunchTFILLPAD_INPLACE_f32_260x16_noexpand((float *)bufDevice, (float *)bufDevice, stream);
+        tc.launch(
+            static_cast<float *>(srcDevice),
+            static_cast<float *>(outDevice),
+            stream
+        );
 
         aclrtSynchronizeStream(stream);
-        // Copy result back (same buffer contains output)
-        aclrtMemcpy(bufHost, fileSize, bufDevice, fileSize, ACL_MEMCPY_DEVICE_TO_HOST);
+        aclrtMemcpy(outHost, outBytes, outDevice, outBytes, ACL_MEMCPY_DEVICE_TO_HOST);
     }
 
-    if (rc == 0 && !WriteFile((caseDir + "/output.bin").c_str(), bufHost, fileSize)) {
+    if (rc == 0 && !WriteFile((caseDir + "/output.bin").c_str(), outHost, outBytes)) {
         std::fprintf(stderr, "[ERROR] failed to write %s/output.bin\n", caseDir.c_str());
         rc = 1;
     }
 
-    if (bufDevice != nullptr)
-        aclrtFree(bufDevice);
-    if (bufHost != nullptr)
-        aclrtFreeHost(bufHost);
+    if (srcDevice != nullptr) aclrtFree(srcDevice);
+    if (outDevice != nullptr) aclrtFree(outDevice);
+    if (srcHost != nullptr) aclrtFreeHost(srcHost);
+    if (outHost != nullptr) aclrtFreeHost(outHost);
 
     if (rc == 0)
         std::printf("[INFO] case %s done\n", tc.name);
@@ -120,8 +120,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (stream != nullptr)
-        aclrtDestroyStream(stream);
+    if (stream != nullptr) aclrtDestroyStream(stream);
     aclrtResetDevice(deviceId);
     aclFinalize();
 

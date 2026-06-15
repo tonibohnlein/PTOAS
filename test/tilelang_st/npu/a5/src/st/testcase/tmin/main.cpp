@@ -22,7 +22,6 @@
 using namespace PtoTestCommon;
 
 // Kernel launch wrappers (defined in launch.cpp)
-void LaunchTMIN_f32_32x32(void *a, void *b, void *c, void *stream);
 void LaunchTMIN_f32_64x64(void *a, void *b, void *c, void *stream);
 void LaunchTMIN_i32_64x64(void *a, void *b, void *c, void *stream);
 void LaunchTMIN_i16_64x64(void *a, void *b, void *c, void *stream);
@@ -45,7 +44,6 @@ struct TestCase {
 };
 
 static const TestCase kCases[] = {
-    {"f32_32x32", LaunchTMIN_f32_32x32, 32, 32, 32, 32, sizeof(float)},
     {"f32_64x64", LaunchTMIN_f32_64x64, 64, 64, 64, 64, sizeof(float)},
     {"i32_64x64", LaunchTMIN_i32_64x64, 64, 64, 64, 64, sizeof(int32_t)},
     {"i16_64x64", LaunchTMIN_i16_64x64, 64, 64, 64, 64, sizeof(int16_t)},

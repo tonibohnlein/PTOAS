@@ -12,15 +12,6 @@
 #define AICORE [aicore]
 #endif
 
-// ========== Smoke case: float, 64x16, no expansion (inplace single buffer) ==========
-
-extern "C" __global__ AICORE void TFILLPAD_INPLACE_f32_64x16_noexpand(__gm__ float *buf);
-
-void LaunchTFILLPAD_INPLACE_f32_64x16_noexpand(float *buf, float *dummy, void *stream) {
-    (void)dummy;
-    TFILLPAD_INPLACE_f32_64x16_noexpand<<<1, nullptr, stream>>>((__gm__ float *)buf);
-}
-
 // ========== Case: float, 260x16, no expansion (inplace single buffer) ==========
 
 extern "C" __global__ AICORE void TFILLPAD_INPLACE_f32_260x16_noexpand(__gm__ float *buf);
