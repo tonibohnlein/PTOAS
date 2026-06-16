@@ -61,6 +61,29 @@ static void printPTOASVersion(llvm::raw_ostream &os) {
   os << "ptoas " << PTOAS_RELEASE_VERSION << "\n";
 }
 
+static bool parseRequestedOutputCANNVersion(
+    llvm::StringRef versionText, std::optional<mlir::pto::CANNVersion> &version,
+    llvm::raw_ostream &diagOS) {
+  version.reset();
+  if (versionText.empty())
+    return true;
+  std::optional<mlir::pto::CANNVersion> parsed =
+      mlir::pto::parseCANNVersion(versionText);
+  if (!parsed) {
+    diagOS << "Error: invalid --cann-output-version='" << versionText
+           << "'. Expected forms like '9.0.0' or '9.0.0-beta.1'.\n";
+    return false;
+  }
+  version = *parsed;
+  return true;
+}
+
+static mlir::pto::CANNVersion selectEffectiveOutputCANNVersion(
+    const mlir::pto::CANNVersion &detectedVersion,
+    const std::optional<mlir::pto::CANNVersion> &overrideVersion) {
+  return overrideVersion.value_or(detectedVersion);
+}
+
 static bool hasCLIOption(int argc, char **argv, llvm::StringRef option) {
   const std::string optionWithValue = (option + "=").str();
   for (int i = 1; i < argc; ++i) {
@@ -626,6 +649,11 @@ const mlir::pto::BackendInfo &mlir::pto::PTOASContext::getBackendInfo() const {
   return backendInfo;
 }
 
+void mlir::pto::PTOASContext::setOutputCANNVersionOverride(
+    std::optional<CANNVersion> value) {
+  outputCANNVersionOverride = std::move(value);
+}
+
 int mlir::pto::PTOASContext::getArgc() const { return argc; }
 
 char **mlir::pto::PTOASContext::getArgv() const { return argv; }
@@ -652,11 +680,14 @@ mlir::pto::PTOASContext::initializeToolchain(llvm::raw_ostream &diagOS) {
   if (!parsedVersion) {
     diagOS << "Warning: unable to parse CANN version: "
            << discovered->cannVersionString
-           << "; using 9.0.0-beta.1 compatibility behavior.\n";
+           << "; defaulting detected version to 9.0.0-beta.1.\n";
     parsedVersion = CANNVersion{9, 0, 0, 1};
   }
-  discovered->cannVersion = *parsedVersion;
-  cannVersion = discovered->cannVersion;
+  CANNVersion effectiveVersion =
+      selectEffectiveOutputCANNVersion(*parsedVersion,
+                                       outputCANNVersionOverride);
+  discovered->cannVersion = effectiveVersion;
+  cannVersion = effectiveVersion;
   toolchain = std::move(*discovered);
   return success();
 }
@@ -672,7 +703,8 @@ mlir::pto::PTOASContext::getToolchain(llvm::raw_ostream &diagOS) const {
 
 mlir::pto::CANNVersion
 mlir::pto::PTOASContext::getCANNVersionOrDefault() const {
-  return cannVersion;
+  return selectEffectiveOutputCANNVersion(cannVersion,
+                                          outputCANNVersionOverride);
 }
 
 mlir::pto::TempFileRegistry &mlir::pto::PTOASContext::getTempFiles() {
@@ -1024,11 +1056,13 @@ static LogicalResult buildBackendInfo(ModuleOp module, bool cliBackendSpecified,
   if (backendInfo.singleBackend) {
     backendInfo.requiresToolchain =
         *backendInfo.singleBackend == mlir::pto::PTOBackend::VPTO &&
-        !mlir::pto::emitMlirIR && !mlir::pto::emitVPTO;
+        !mlir::pto::emitMlirIR && !mlir::pto::emitVPTO &&
+        !mlir::pto::emitVPTOLLVMDialect;
     return success();
   }
 
   if (mlir::pto::emitMlirIR || mlir::pto::emitVPTO ||
+      mlir::pto::emitVPTOLLVMDialect ||
       mlir::pto::ptoPrintSeamIR || !mlir::pto::ptoSeamIRFile.empty()) {
     llvm::errs() << "Error: mixed pto.backend fatobj mode does not support "
                     "debug IR output flags.\n";
@@ -1117,7 +1151,14 @@ int main(int argc, char **argv) {
 
   llvm::cl::ParseCommandLineOptions(argc, argv, "PTO Assembler (ptoas)\n");
 
+  std::optional<mlir::pto::CANNVersion> outputCANNVersionOverride;
+  if (!parseRequestedOutputCANNVersion(mlir::pto::cannOutputVersion,
+                                       outputCANNVersionOverride,
+                                       llvm::errs()))
+    return 1;
+
   PTOASContext context(registry, outputFilename, argc, argv);
+  context.setOutputCANNVersionOverride(outputCANNVersionOverride);
   context.initializeMLIRContext();
 
   std::unique_ptr<llvm::MemoryBuffer> inputBuffer = readInputBuffer();

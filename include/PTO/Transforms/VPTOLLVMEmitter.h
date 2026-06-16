@@ -51,6 +51,10 @@ struct EmittedLLVMModule {
   std::unique_ptr<llvm::Module> module;
 };
 
+LogicalResult lowerVPTOModuleToLLVMIRText(
+    ModuleOp module, const VPTOEmissionOptions &options, std::string &output,
+    llvm::raw_ostream &diagOS);
+
 LogicalResult lowerVPTOModuleToLLVMModules(
     ModuleOp module, const VPTOEmissionOptions &options,
     EmittedLLVMModule &cubeModule, EmittedLLVMModule &vectorModule,

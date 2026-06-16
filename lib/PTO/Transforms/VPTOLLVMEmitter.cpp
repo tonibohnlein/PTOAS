@@ -10545,4 +10545,51 @@ LogicalResult lowerVPTOModuleToLLVMModulesBeta1(
                      });
 }
 
+LogicalResult lowerVPTOModuleToLLVMIRText(
+    ModuleOp module, const VPTOEmissionOptions &options, std::string &output,
+    llvm::raw_ostream &diagOS) {
+  output.clear();
+  return runPipeline(module, diagOS, [&](ModuleOp loweredModule) {
+    auto simtEntryNames = collectSimtEntryFunctionNames(loweredModule);
+    auto vectorDeviceModule = getUniqueDeviceModuleByKernelKind(
+        loweredModule, FunctionKernelKind::Vector, diagOS);
+    if (failed(vectorDeviceModule))
+      return failure();
+    auto cubeDeviceModule = getUniqueDeviceModuleByKernelKind(
+        loweredModule, FunctionKernelKind::Cube, diagOS);
+    if (failed(cubeDeviceModule))
+      return failure();
+
+    llvm::raw_string_ostream os(output);
+    bool printedAny = false;
+    if (*vectorDeviceModule) {
+      auto vectorOptions =
+          makeDeviceEmissionOptions(options, FunctionKernelKind::Vector);
+      auto emitted = emitDeviceLLVMModule(*vectorDeviceModule, "vector",
+                                          vectorOptions, simtEntryNames,
+                                          diagOS);
+      if (failed(emitted))
+        return failure();
+      emitted->module->print(os, nullptr);
+      os << "\n";
+      printedAny = true;
+    }
+    if (*cubeDeviceModule) {
+      auto cubeOptions =
+          makeDeviceEmissionOptions(options, FunctionKernelKind::Cube);
+      auto emitted = emitDeviceLLVMModule(*cubeDeviceModule, "cube",
+                                          cubeOptions, simtEntryNames,
+                                          diagOS);
+      if (failed(emitted))
+        return failure();
+      if (printedAny)
+        os << "\n";
+      emitted->module->print(os, nullptr);
+      os << "\n";
+    }
+    os.flush();
+    return success();
+  });
+}
+
 } // namespace mlir::pto

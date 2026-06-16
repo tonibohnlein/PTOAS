@@ -31,8 +31,10 @@ extern llvm::cl::opt<bool> emitMlirIR;
 extern llvm::cl::opt<std::string> ptoTargetArch;
 extern llvm::cl::opt<std::string> ptoBackend;
 extern llvm::cl::opt<bool> emitVPTO;
+extern llvm::cl::opt<bool> emitVPTOLLVMDialect;
 extern llvm::cl::opt<bool> ptoPrintSeamIR;
 extern llvm::cl::opt<std::string> ptoSeamIRFile;
+extern llvm::cl::opt<std::string> cannOutputVersion;
 
 enum class PTOBackend {
   EmitC,
@@ -78,6 +80,7 @@ public:
   const CANNToolchain *getToolchain(llvm::raw_ostream &diagOS) const;
   CANNVersion getCANNVersionOrDefault() const;
 
+  void setOutputCANNVersionOverride(std::optional<CANNVersion> value);
   TempFileRegistry &getTempFiles();
   LogicalResult createTempPath(llvm::StringRef prefix, llvm::StringRef suffix,
                                std::string &path);
@@ -90,6 +93,7 @@ private:
   int argc = 0;
   char **argv = nullptr;
   CANNVersion cannVersion = CANNVersion{9, 0, 0, 1};
+  std::optional<CANNVersion> outputCANNVersionOverride;
   std::optional<CANNToolchain> toolchain;
   TempFileRegistry tempFiles;
 

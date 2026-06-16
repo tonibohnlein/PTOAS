@@ -6,10 +6,10 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: env PTOAS_DEBUG_CHILD_UNIT=1 ptoas --pto-arch=a5 %s -o %t.o 2>&1 | FileCheck %s
+// RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --emit-pto-ir %s -o - 2>&1 | FileCheck %s
 // Guards child-unit rewriting: user-authored symbols containing "__ptodsl_"
-// must not be rewritten into logical-name wrappers. Anchor both debug child
-// units explicitly so bulk stderr noise cannot satisfy the checks out of order.
+// must not be rewritten into logical-name wrappers. Check the emitted PTO IR
+// directly so the test stays toolchain-free and does not require fatobj output.
 
 module attributes {pto.target_arch = "a5"} {
   module attributes {pto.backend = "emitc"} {
@@ -32,13 +32,13 @@ module attributes {pto.target_arch = "a5"} {
   }
 }
 
-// CHECK-LABEL: // ----- child compile unit ----- //
+// CHECK-LABEL: module attributes {pto.backend = "emitc", pto.target_arch = "a5"} {
+// CHECK: module attributes {pto.backend = "emitc"} {
 // CHECK: func.func private @helper__ptodsl_user()
 // CHECK: func.func @entry() attributes {pto.entry} {
 // CHECK: call @helper__ptodsl_user() : () -> ()
 // CHECK: return
-
-// CHECK-LABEL: // ----- child compile unit ----- //
+// CHECK: module attributes {pto.backend = "emitc"} {
 // CHECK: func.func public @helper() {
 // CHECK-NEXT: return
 // CHECK-NEXT: }

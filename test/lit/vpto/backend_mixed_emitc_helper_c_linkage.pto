@@ -6,8 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-arch=a5 %s -o %t.o
-// RUN: strings %t.o | FileCheck %s --check-prefix=OBJ
+// RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --emit-pto-ir %s -o - 2>&1 | FileCheck %s
 
 module attributes {pto.target_arch = "a5"} {
   module attributes {pto.backend = "emitc"} {
@@ -29,7 +28,13 @@ module attributes {pto.target_arch = "a5"} {
   }
 }
 
-// OBJ: helper.cube
-// OBJ: helper.vector
-// OBJ: entry_mix_aic
-// OBJ: entry_mix_aiv
+// CHECK-LABEL: module attributes {pto.backend = "emitc", pto.target_arch = "a5"} {
+// CHECK: module attributes {pto.backend = "emitc"} {
+// CHECK: func.func private @helper()
+// CHECK: func.func @entry() attributes {pto.aicore} {
+// CHECK: call @helper() : () -> ()
+// CHECK: return
+// CHECK: module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<vector>} {
+// CHECK: func.func public @helper() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+// CHECK-NEXT: return
+// CHECK-NEXT: }

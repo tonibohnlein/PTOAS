@@ -7,9 +7,9 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // Guards the EmitC fixup that sinks tile.data() reads past TASSIGN for
-// tile-like emitc.variable values. This alloc_tile(addr=...) form requires
-// level3 lowering, and the assertion is anchored on the EmitPTOManualPass dump.
-// RUN: ptoas --pto-arch=a5 --pto-level=level3 --mlir-print-ir-after-all %s -o /dev/null 2>&1 | FileCheck %s
+// tile-like values bridged through a second tile assignment. This alloc_tile
+// addr form requires level3 lowering; check the final emitted C++ directly.
+// RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-level=level3 %s -o - 2>&1 | FileCheck %s
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @kernel(%arg0: i64) {
@@ -24,9 +24,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
   }
 }
 
-// CHECK-LABEL: // -----// IR Dump After {anonymous}::EmitPTOManualPass () //----- //
-// CHECK-LABEL: emitc.func @kernel
-// CHECK: %[[TILE:[0-9]+]] = "emitc.variable"
-// CHECK-NEXT: emitc.call_opaque "TASSIGN"(%[[TILE]], %arg0)
-// CHECK: emitc.call_opaque "PTOAS__TILE_DATA"(%[[TILE]])
-// CHECK: emitc.call @sink_ptr
+// CHECK-LABEL: extern "C" AICORE void kernel(int64_t
+// CHECK: Tile<TileType::Vec, float, 1, 16
+// CHECK-NEXT: TASSIGN(v2, v1);
+// CHECK: Tile<TileType::Vec, float, 32, 32
+// CHECK: __ubuf__ float* v4 = v2.data();
+// CHECK: uint64_t v5 = reinterpret_cast<uint64_t>(v4);
+// CHECK: TASSIGN(v3, v5);
+// CHECK: __ubuf__ float* v6 = v3.data();
+// CHECK: sink_ptr(v6);

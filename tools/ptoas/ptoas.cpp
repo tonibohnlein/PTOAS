@@ -465,6 +465,11 @@ llvm::cl::opt<bool> mlir::pto::emitVPTO(
     llvm::cl::desc("Write final post-pass VPTO IR to -o"),
     llvm::cl::init(false));
 
+llvm::cl::opt<bool> mlir::pto::emitVPTOLLVMDialect(
+    "emit-vpto-llvm-ir",
+    llvm::cl::desc("Write translated VPTO LLVM IR to -o"),
+    llvm::cl::init(false));
+
 static llvm::cl::opt<bool> vptoPrintIR(
     "vpto-print-ir",
     llvm::cl::desc("Print post-pass VPTO backend IR to stderr"),
@@ -491,6 +496,11 @@ llvm::cl::opt<std::string> mlir::pto::ptoSeamIRFile(
     llvm::cl::desc("Write shared pre-backend seam IR to a file"),
     llvm::cl::value_desc("path"),
     llvm::cl::init(""));
+
+llvm::cl::opt<std::string> mlir::pto::cannOutputVersion(
+    "cann-output-version",
+    llvm::cl::desc("Override the CANN version used for lowering and public ABI output selection; examples: 9.0.0, 9.0.0-beta.1"),
+    llvm::cl::value_desc("version"), llvm::cl::init(""));
 
 enum class PTOBuildLevel {
   Level1,
@@ -1585,6 +1595,17 @@ static int emitVPTOBackendResult(ModuleOp module, PTOASCompileResult &result,
     return 0;
   }
 
+  if (emitVPTOLLVMDialect) {
+    result.kind = PTOASCompileResultKind::Text;
+    pto::VPTOEmissionOptions options = buildVPTOEmissionOptions(cannVersion);
+    if (failed(pto::lowerVPTOModuleToLLVMIRText(
+            module, options, result.textOutput, llvm::errs()))) {
+      llvm::errs() << "Error: Failed to lower VPTO to LLVM IR.\n";
+      return 1;
+    }
+    return 0;
+  }
+
   pto::VPTOEmissionOptions options = buildVPTOEmissionOptions(cannVersion);
   std::string stubSource;
   if (emitHostStub) {
@@ -1638,7 +1659,8 @@ int mlir::pto::compilePTOASModule(
   char **argv = context.getArgv();
 
   if (effectiveBackend != PTOBackend::VPTO &&
-      (emitVPTO || ptoPrintSeamIR || !ptoSeamIRFile.empty())) {
+      (emitVPTO || emitVPTOLLVMDialect || ptoPrintSeamIR ||
+       !ptoSeamIRFile.empty())) {
     llvm::errs() << "Error: VPTO-specific flags require "
                     "--pto-backend=vpto or pto.backend = \"vpto\".\n";
     return 1;
