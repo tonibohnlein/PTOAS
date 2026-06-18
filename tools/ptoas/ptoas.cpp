@@ -1464,6 +1464,12 @@ static bool shouldDeclareVariablesAtTop(ModuleOp module) {
 
 static void prepareVPTOForEmission(PassManager &pm) {
   auto &kernelModulePM = pm.nest<ModuleOp>();
+  // Issue #485 workaround: unroll small constant-trip-count scf.for loops
+  // inside pto.simt_entry functions, then constant-fold the induction-variable
+  // dependent scf.if branches so subsequent canonicalize/cse eliminate them.
+  kernelModulePM.addNestedPass<func::FuncOp>(
+      pto::createPTOUnrollSIMTForPass());
+  kernelModulePM.addPass(createSCCPPass());
   kernelModulePM.addPass(createCanonicalizerPass());
   kernelModulePM.addPass(createCSEPass());
   kernelModulePM.addPass(pto::createVPTOPtrNormalizePass());
