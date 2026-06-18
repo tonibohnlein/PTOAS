@@ -193,12 +193,7 @@ def template_tinsert_acc_to_mat(
     src_elem = src.element_type
     dst_elem = dst.element_type
     elem_bytes = pto.bytewidth(dst_elem)
-    c0_standard = BLOCK_BYTE_SIZE // elem_bytes
-    s_frac_bits = dst.config.s_fractal_size
-    if pto.constexpr(s_frac_bits == 2 * BLOCK_BYTE_BITS):
-        c0_size = 2 * c0_standard
-    else:
-        c0_size = c0_standard
+    c0_size = BLOCK_BYTE_SIZE // elem_bytes
 
     valid_rows = src.valid_shape[0]
     valid_cols = src.valid_shape[1]
@@ -281,12 +276,7 @@ def template_tinsert_acc_to_mat_basic(
     src_elem = src.element_type
     dst_elem = dst.element_type
     elem_bytes = pto.bytewidth(dst_elem)
-    c0_standard = BLOCK_BYTE_SIZE // elem_bytes
-    s_frac_bits = dst.config.s_fractal_size
-    if pto.constexpr(s_frac_bits == 2 * BLOCK_BYTE_BITS):
-        c0_size = 2 * c0_standard
-    else:
-        c0_size = c0_standard
+    c0_size = BLOCK_BYTE_SIZE // elem_bytes
 
     valid_rows = src.valid_shape[0]
     valid_cols = src.valid_shape[1]
@@ -707,22 +697,13 @@ def template_tinsert_acc_to_vec_nz(
     src_elem = src.element_type
     dst_elem = dst.element_type
     elem_bytes = pto.bytewidth(dst_elem)
-    c0_standard = BLOCK_BYTE_SIZE // elem_bytes
-    s_frac_bits = dst.config.s_fractal_size
-    if pto.constexpr(s_frac_bits == 2 * BLOCK_BYTE_BITS):
-        c0_size = 2 * c0_standard
-    else:
-        c0_size = c0_standard
+    c0_size = BLOCK_BYTE_SIZE // elem_bytes
 
     valid_rows = src.valid_shape[0]
     valid_cols_raw = src.valid_shape[1]
 
     if pto.constexpr(dst_elem == pto.f32):
-        s_frac_bits = dst.config.s_fractal_size
-        if pto.constexpr(s_frac_bits == BLOCK_BYTE_BITS):
-            valid_cols_align = c0_size
-        else:
-            valid_cols_align = FRACTAL_NZ_ROW
+        valid_cols_align = FRACTAL_NZ_ROW
     else:
         valid_cols_align = c0_size
     valid_cols = (valid_cols_raw + valid_cols_align - 1) // valid_cols_align * valid_cols_align
@@ -820,22 +801,13 @@ def template_tinsert_acc_to_vec_nz_basic(
     src_elem = src.element_type
     dst_elem = dst.element_type
     elem_bytes = pto.bytewidth(dst_elem)
-    c0_standard = BLOCK_BYTE_SIZE // elem_bytes
-    s_frac_bits = dst.config.s_fractal_size
-    if pto.constexpr(s_frac_bits == 2 * BLOCK_BYTE_BITS):
-        c0_size = 2 * c0_standard
-    else:
-        c0_size = c0_standard
+    c0_size = BLOCK_BYTE_SIZE // elem_bytes
 
     valid_rows = src.valid_shape[0]
     valid_cols_raw = src.valid_shape[1]
 
     if pto.constexpr(dst_elem == pto.f32):
-        s_frac_bits = dst.config.s_fractal_size
-        if pto.constexpr(s_frac_bits == BLOCK_BYTE_BITS):
-            valid_cols_align = c0_size
-        else:
-            valid_cols_align = FRACTAL_NZ_ROW
+        valid_cols_align = FRACTAL_NZ_ROW
     else:
         valid_cols_align = c0_size
     valid_cols = (valid_cols_raw + valid_cols_align - 1) // valid_cols_align * valid_cols_align
@@ -1143,12 +1115,7 @@ def template_tinsert_vec_to_vec_nz(
 ):
     dtype = dst.element_type
     elem_bytes = pto.bytewidth(dtype)
-    c0_standard = BLOCK_BYTE_SIZE // elem_bytes
-    s_frac_bits = dst.config.s_fractal_size
-    if pto.constexpr(s_frac_bits == 2 * BLOCK_BYTE_BITS):
-        c0_size = 2 * c0_standard
-    else:
-        c0_size = c0_standard
+    c0_size = BLOCK_BYTE_SIZE // elem_bytes
 
     valid_rows = src.valid_shape[0]
     valid_cols = src.valid_shape[1]
@@ -1192,12 +1159,7 @@ def template_tinsert_vec_to_vec_nz_basic(
 ):
     dtype = dst.element_type
     elem_bytes = pto.bytewidth(dtype)
-    c0_standard = BLOCK_BYTE_SIZE // elem_bytes
-    s_frac_bits = dst.config.s_fractal_size
-    if pto.constexpr(s_frac_bits == 2 * BLOCK_BYTE_BITS):
-        c0_size = 2 * c0_standard
-    else:
-        c0_size = c0_standard
+    c0_size = BLOCK_BYTE_SIZE // elem_bytes
 
     valid_rows = src.valid_shape[0]
     valid_cols = src.valid_shape[1]
@@ -1263,12 +1225,7 @@ def template_tinsert_vec_to_mat_nz(
 ):
     dtype = dst.element_type
     elem_bytes = pto.bytewidth(dtype)
-    c0_standard = BLOCK_BYTE_SIZE // elem_bytes
-    s_frac_bits = dst.config.s_fractal_size
-    if pto.constexpr(s_frac_bits == 2 * BLOCK_BYTE_BITS):
-        c0_size = 2 * c0_standard
-    else:
-        c0_size = c0_standard
+    c0_size = BLOCK_BYTE_SIZE // elem_bytes
 
     valid_rows = src.valid_shape[0]
     valid_cols = src.valid_shape[1]
@@ -1312,12 +1269,7 @@ def template_tinsert_vec_to_mat_nz_basic(
 ):
     dtype = dst.element_type
     elem_bytes = pto.bytewidth(dtype)
-    c0_standard = BLOCK_BYTE_SIZE // elem_bytes
-    s_frac_bits = dst.config.s_fractal_size
-    if pto.constexpr(s_frac_bits == 2 * BLOCK_BYTE_BITS):
-        c0_size = 2 * c0_standard
-    else:
-        c0_size = c0_standard
+    c0_size = BLOCK_BYTE_SIZE // elem_bytes
 
     valid_rows = src.valid_shape[0]
     valid_cols = src.valid_shape[1]
@@ -1453,12 +1405,7 @@ def _make_split_template(split_count):
     def _split_fn(src: pto.Tile, index_row: pto.i32, index_col: pto.i32, dst: pto.Tile):
         dtype = dst.element_type
         elem_bytes = pto.bytewidth(dtype)
-        c0_standard = BLOCK_BYTE_SIZE // elem_bytes
-        s_frac_bits = dst.config.s_fractal_size
-        if pto.constexpr(s_frac_bits == 2 * BLOCK_BYTE_BITS):
-            c0_size = 2 * c0_standard
-        else:
-            c0_size = c0_standard
+        c0_size = BLOCK_BYTE_SIZE // elem_bytes
 
         valid_rows = src.valid_shape[0]
         valid_cols = src.valid_shape[1]

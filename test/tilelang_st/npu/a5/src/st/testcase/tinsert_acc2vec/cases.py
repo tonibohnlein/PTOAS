@@ -38,6 +38,7 @@ CASES = [
         "m": 16, "k": 16, "n": 16,
         "dtype": np.float16,
         "dtype_out": np.float32,
+        "path": "acc2vec_nz",
         "has_output": True,
         "eps": 1e-2,
     },
