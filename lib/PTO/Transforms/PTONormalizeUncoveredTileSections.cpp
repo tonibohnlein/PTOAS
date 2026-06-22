@@ -143,9 +143,99 @@ static void collectTileAddressSpaces(Type type,
     spaces.push_back(*addressSpace);
 }
 
+static std::optional<int8_t> getPipeHandleDirMask(Value pipeHandle) {
+  if (!pipeHandle)
+    return std::nullopt;
+  if (auto init = pipeHandle.getDefiningOp<InitializeL2LPipeOp>())
+    return init.getDirMask();
+  if (auto init = pipeHandle.getDefiningOp<InitializeL2G2LPipeOp>())
+    return init.getDirMask();
+  return std::nullopt;
+}
+
+static std::optional<InferredSectionKind>
+classifyTileSectionByAddressSpace(std::optional<AddressSpace> space) {
+  if (!space)
+    return std::nullopt;
+
+  switch (*space) {
+  case AddressSpace::VEC:
+    return InferredSectionKind::Vector;
+  case AddressSpace::MAT:
+  case AddressSpace::LEFT:
+  case AddressSpace::RIGHT:
+  case AddressSpace::ACC:
+  case AddressSpace::BIAS:
+  case AddressSpace::SCALING:
+    return InferredSectionKind::Cube;
+  default:
+    return std::nullopt;
+  }
+}
+
+static std::optional<InferredSectionKind>
+classifyInternalPipeTileOp(Operation *op) {
+  if (auto push = dyn_cast<TPushOp>(op)) {
+    std::optional<int8_t> dirMask = getPipeHandleDirMask(push.getPipeHandle());
+    if (!dirMask)
+      return std::nullopt;
+    if (*dirMask == 1)
+      return InferredSectionKind::Cube;
+    if (*dirMask == 2)
+      return InferredSectionKind::Vector;
+    return classifyTileSectionByAddressSpace(
+        getBufferAddressSpace(push.getTile().getType()));
+  }
+
+  if (auto pop = dyn_cast<TPopOp>(op)) {
+    std::optional<int8_t> dirMask = getPipeHandleDirMask(pop.getPipeHandle());
+    if (!dirMask)
+      return std::nullopt;
+    if (*dirMask == 1)
+      return InferredSectionKind::Vector;
+    if (*dirMask == 2)
+      return InferredSectionKind::Cube;
+    return classifyTileSectionByAddressSpace(
+        getBufferAddressSpace(pop.getTile().getType()));
+  }
+
+  if (auto free = dyn_cast<TFreeOp>(op)) {
+    std::optional<int8_t> dirMask = getPipeHandleDirMask(free.getPipeHandle());
+    if (!dirMask)
+      return std::nullopt;
+    if (*dirMask == 1)
+      return InferredSectionKind::Vector;
+    if (*dirMask == 2)
+      return InferredSectionKind::Cube;
+    if (!free.getEntry())
+      return std::nullopt;
+    return classifyTileSectionByAddressSpace(
+        getBufferAddressSpace(free.getEntry().getType()));
+  }
+
+  if (auto alloc = dyn_cast<TAllocOp>(op)) {
+    std::optional<int8_t> dirMask = getPipeHandleDirMask(alloc.getPipeHandle());
+    if (!dirMask)
+      return std::nullopt;
+    if (*dirMask == 1)
+      return InferredSectionKind::Cube;
+    if (*dirMask == 2)
+      return InferredSectionKind::Vector;
+    return std::nullopt;
+  }
+
+  return std::nullopt;
+}
+
 static std::optional<InferredSectionKind> classifyTileOpByName(Operation *op) {
   StringRef name = op->getName().getStringRef();
   if (name.starts_with("pto.tmatmul") || name.starts_with("pto.tgemv"))
+    return InferredSectionKind::Cube;
+  if (name == "pto.talloc_to_aiv" || name == "pto.tpush_to_aic" ||
+      name == "pto.tpop_from_aic" || name == "pto.tfree_from_aic")
+    return InferredSectionKind::Vector;
+  if (name == "pto.talloc_to_aic" || name == "pto.tpush_to_aiv" ||
+      name == "pto.tpop_from_aiv" || name == "pto.tfree_from_aiv")
     return InferredSectionKind::Cube;
   if (name.ends_with("_to_aiv") || name.ends_with("_from_aiv"))
     return InferredSectionKind::Vector;
@@ -266,6 +356,8 @@ classifyTStoreBySourceAddressSpace(Operation *op) {
 
 static std::optional<InferredSectionKind> classifyTileOp(Operation *op) {
   if (std::optional<InferredSectionKind> kind = classifyTileOpByName(op))
+    return kind;
+  if (std::optional<InferredSectionKind> kind = classifyInternalPipeTileOp(op))
     return kind;
   if (std::optional<InferredSectionKind> kind =
           classifyTLoadByDestinationAddressSpace(op))
@@ -509,6 +601,8 @@ static void inspectSegmentOperation(Operation *op,
 
 static std::optional<InferredSectionKind>
 inferSegmentKind(const UncoveredTopLevelSegment &segment) {
+  if (!segment.ambiguousTileOps.empty())
+    return std::nullopt;
   if (segment.vectorTileOpCount && segment.cubeTileOpCount)
     return std::nullopt;
   if (segment.vectorTileOpCount)
