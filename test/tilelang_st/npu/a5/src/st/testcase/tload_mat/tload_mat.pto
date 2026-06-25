@@ -128,10 +128,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     pto.tload ins(%sv_x1 : !pto.partition_tensor_view<16x16xf16>)
               outs(%mat_a : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>)
 
-    %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
-    %sv_x2 = pto.partition_view %tv_x2, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x32xf16>
+    // DN2NZ: x2 source is col-major [N, K]=[32,16] with DN strides [16, 1] (transposed)
+    %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c32, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %sv_x2 = pto.partition_view %tv_x2, offsets = [%c0, %c0], sizes = [%c32, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<32x16xf16>
     %mat_b = pto.alloc_tile : !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>
-    pto.tload ins(%sv_x2 : !pto.partition_tensor_view<16x32xf16>)
+    pto.tload ins(%sv_x2 : !pto.partition_tensor_view<32x16xf16>)
               outs(%mat_b : !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>)
 
     %acc_c = pto.alloc_tile : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>
@@ -161,10 +162,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     pto.tload ins(%sv_x1 : !pto.partition_tensor_view<16x16xbf16>)
               outs(%mat_a : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>)
 
-    %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xbf16>
-    %sv_x2 = pto.partition_view %tv_x2, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x32xbf16>
+    // DN2NZ: x2 source is col-major [N, K]=[32,16] with DN strides [16, 1] (transposed)
+    %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c32, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xbf16>
+    %sv_x2 = pto.partition_view %tv_x2, offsets = [%c0, %c0], sizes = [%c32, %c16] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<32x16xbf16>
     %mat_b = pto.alloc_tile : !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>
-    pto.tload ins(%sv_x2 : !pto.partition_tensor_view<16x32xbf16>)
+    pto.tload ins(%sv_x2 : !pto.partition_tensor_view<32x16xbf16>)
               outs(%mat_b : !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>)
 
     %acc_c = pto.alloc_tile : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>
@@ -194,10 +196,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     pto.tload ins(%sv_x1 : !pto.partition_tensor_view<16x16xf32>)
               outs(%mat_a : !pto.tile_buf<mat, 16x16xf32, blayout=col_major, slayout=row_major>)
 
-    %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %sv_x2 = pto.partition_view %tv_x2, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x32xf32>
+    // DN2NZ: x2 source is col-major [N, K]=[32,16] with DN strides [16, 1] (transposed)
+    %tv_x2 = pto.make_tensor_view %x2_gm, shape = [%c32, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %sv_x2 = pto.partition_view %tv_x2, offsets = [%c0, %c0], sizes = [%c32, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x16xf32>
     %mat_b = pto.alloc_tile : !pto.tile_buf<mat, 16x32xf32, blayout=col_major, slayout=row_major>
-    pto.tload ins(%sv_x2 : !pto.partition_tensor_view<16x32xf32>)
+    pto.tload ins(%sv_x2 : !pto.partition_tensor_view<32x16xf32>)
               outs(%mat_b : !pto.tile_buf<mat, 16x32xf32, blayout=col_major, slayout=row_major>)
 
     %acc_c = pto.alloc_tile : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>

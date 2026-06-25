@@ -220,7 +220,6 @@ set(ALL_TESTCASES
     tmov_fp
     tstore_acc2gm
     tload_mat
-    tstore_fp
 )
 
 if((TEST_CASE IN_LIST ALL_TESTCASES) OR (TEST_CASE STREQUAL "all"))

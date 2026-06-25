@@ -104,8 +104,9 @@ for case in CASES:
 
     # For vector quant (TSTORE_FP), generate per-column quantization vector
     if quant_mode == 2:
-        # Use small quantization values near 1.0 to keep results within dtype range
-        quant_vector_f32 = np.ones((1, N), dtype=np.float32)
+        # Use non-trivial quantization values to actually test scaling functionality.
+        # Values near 1.0 keep results within dtype range while being distinct from 1.0.
+        quant_vector_f32 = np.random.uniform(0.5, 1.5, size=(1, N)).astype(np.float32)
         if scaling_dtype_raw == "bf16":
             quant_bin = bf16_to_uint16(quant_vector_f32)
         elif case.get("scaling_dtype") == np.float16:

@@ -376,8 +376,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     pto.tmatmul ins(%mat_a, %mat_b : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>)
                 outs(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
 
-    // Load scaling buffer (1x32 f16) for TSTORE_FP
+    // TLOAD quant_vector from GM to scaling buffer (1x32 f16) for TSTORE_FP
+    %tv_quant = pto.make_tensor_view %quant_gm, shape = [%c1, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
+    %sv_quant = pto.partition_view %tv_quant, offsets = [%c0, %c0], sizes = [%c1, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<1x32xf16>
     %fp_tile = pto.alloc_tile : !pto.tile_buf<scaling, 1x32xf16>
+    pto.tload ins(%sv_quant : !pto.partition_tensor_view<1x32xf16>)
+              outs(%fp_tile : !pto.tile_buf<scaling, 1x32xf16>)
 
     // TSTORE_FP: ACC f32 + scaling f16 -> GM f16 (qf322f16_pre_vec)
     %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
@@ -416,8 +420,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
     pto.tmatmul ins(%mat_a, %mat_b : !pto.tile_buf<mat, 16x16xbf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>)
                 outs(%acc_c : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major>)
 
-    // Load scaling buffer (1x32 bf16) for TSTORE_FP
+    // TLOAD quant_vector from GM to scaling buffer (1x32 bf16) for TSTORE_FP
+    %tv_quant = pto.make_tensor_view %quant_gm, shape = [%c1, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xbf16>
+    %sv_quant = pto.partition_view %tv_quant, offsets = [%c0, %c0], sizes = [%c1, %c32] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x32xbf16>
     %fp_tile = pto.alloc_tile : !pto.tile_buf<scaling, 1x32xbf16>
+    pto.tload ins(%sv_quant : !pto.partition_tensor_view<1x32xbf16>)
+              outs(%fp_tile : !pto.tile_buf<scaling, 1x32xbf16>)
 
     // TSTORE_FP: ACC f32 + scaling bf16 -> GM bf16 (qf322bf16_pre_vec)
     %tv_dst = pto.make_tensor_view %dst_gm, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xbf16>

@@ -44,20 +44,29 @@ for case in CASES:
     # Golden = matmul result in f32 (ACC output is always f32 for float matmul)
     golden_f32 = np.matmul(x1_f32, x2_f32)
 
-    # Prepare input data in source dtype
+    # For DN2NZ layout, input data must be stored in DN (col-major/transposed) format
+    # in GM. The kernel's tload handles the DN→NZ conversion internally.
+    if layout == "dn2nz":
+        x1_gm_f32 = x1_f32.T  # [K, M] transposed for DN format
+        x2_gm_f32 = x2_f32.T  # [N, K] transposed for DN format
+    else:
+        x1_gm_f32 = x1_f32
+        x2_gm_f32 = x2_f32
+
+    # Prepare input data in source dtype (using DN-layout data if needed)
     dtype_raw = case.get("dtype_raw", None)
     if dtype_raw == "bf16":
-        x1_bin = bf16_to_uint16(x1_f32)
-        x2_bin = bf16_to_uint16(x2_f32)
+        x1_bin = bf16_to_uint16(x1_gm_f32)
+        x2_bin = bf16_to_uint16(x2_gm_f32)
     elif case["dtype"] == np.float16:
-        x1_bin = x1_f32.astype(np.float16)
-        x2_bin = x2_f32.astype(np.float16)
+        x1_bin = x1_gm_f32.astype(np.float16)
+        x2_bin = x2_gm_f32.astype(np.float16)
     elif case["dtype"] == np.float32:
-        x1_bin = x1_f32
-        x2_bin = x2_f32
+        x1_bin = x1_gm_f32
+        x2_bin = x2_gm_f32
     else:
-        x1_bin = x1_f32
-        x2_bin = x2_f32
+        x1_bin = x1_gm_f32
+        x2_bin = x2_gm_f32
 
     # Golden is always f32 (ACC output)
     golden_bin = golden_f32

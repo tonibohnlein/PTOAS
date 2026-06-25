@@ -53,8 +53,9 @@ def main():
 
         # Determine reshape dimensions based on layout
         if dst_layout == "nz2dn":
-            # NZ2DN: output is stored as [N, M] in col-major (DN) format
-            golden = np.fromfile(os.path.join(name, "golden.bin"), dtype=dtype).reshape(N, M)
+            # NZ2DN: golden is stored as [M, N] row-major; output is [N, M] DN col-major.
+            # Read golden as [M, N], transpose to [N, M] to match kernel output layout.
+            golden = np.fromfile(os.path.join(name, "golden.bin"), dtype=dtype).reshape(M, N).T
             output = np.fromfile(os.path.join(name, "output.bin"), dtype=dtype).reshape(N, M)
             # Convert DN (col-major) back to ND (row-major) [M, N] for comparison
             # DN format stores data as col-major, so transpose gives row-major [M, N]
