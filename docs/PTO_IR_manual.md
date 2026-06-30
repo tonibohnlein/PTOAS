@@ -7426,13 +7426,13 @@ backends that provide it, including A2/A3 and A5.
 
 ##### `pto.mgather` - Gather-Load from Global Memory
 
-**Summary:** Loads elements from a global table into a VEC tile using per-element indices. Supports optional `coalesce` and `gatherOob` attributes that lower to the corresponding `MGATHER<...>` template overload.
+**Summary:** Loads elements from a global table into a VEC tile using per-element indices. Requires an explicit `coalesce` attribute and supports an optional `gatherOob` attribute; these lower to the corresponding `MGATHER<...>` template overload.
 
 **Semantics:**
 
 ```
-row mode (default): dst[r, j] = mem[idx[r], j]
-elem mode:          dst[i, j] = mem[idx[i, j]]
+row mode:  dst[r, j] = mem[idx[r], j]
+elem mode: dst[i, j] = mem[idx[i, j]]
 ```
 
 **Arguments:**
@@ -7442,7 +7442,7 @@ elem mode:          dst[i, j] = mem[idx[i, j]]
 | `mem` | `!pto.partition_tensor_view<...>` / GM memref | `NA` | Global source table |
 | `idx` | `pto.tile_buf` | `NA` | Index tile |
 | `dst` | `pto.tile_buf` | `NA` | Destination VEC tile |
-| `coalesce` | `#pto<coalesce ...>` | inferred | Explicit coalesce mode (`row` / `elem`) |
+| `coalesce` | `#pto<coalesce ...>` | required | Explicit coalesce mode (`row` / `elem`) |
 | `gatherOob` | `#pto<gather_oob ...>` | `undefined` | Out-of-bounds mode (`undefined/clamp/wrap/zero`) |
 
 **Results:** None. Writes into `dst` via DPS pattern.
@@ -7469,8 +7469,8 @@ elem mode:          dst[i, j] = mem[idx[i, j]]
   - Default `gatherOob = undefined` lowers to the default `MGATHER(dst, mem, idx)` overload.
   - Non-default `gatherOob` values lower to `MGATHER<Coalesce, GatherOOB::...>(dst, mem, idx)`.
 - **Coalesce mode**
-  - If `coalesce` is omitted, PTOAS preserves the existing inference from the `idx` tile shape/layout.
-  - If `coalesce` is specified, the `idx` tile shape/layout must match that mode.
+  - `coalesce` must be specified explicitly; PTOAS does not infer Row or Elem from the `idx` tile shape/layout.
+  - The `idx` tile shape/layout must match the specified mode.
   - `coalesce = #pto<coalesce row>` lowers to `MGATHER<pto::Coalesce::Row, ...>`.
   - `coalesce = #pto<coalesce elem>` lowers to `MGATHER<pto::Coalesce::Elem, ...>`.
 
@@ -7483,6 +7483,7 @@ elem mode:          dst[i, j] = mem[idx[i, j]]
 ```mlir
 pto.mgather ins(%mem, %idx : memref<...>, !pto.tile_buf<...>)
            outs(%dst : !pto.tile_buf<...>)
+           {coalesce = #pto<coalesce row>}
 
 pto.mgather ins(%mem, %idx : memref<...>, !pto.tile_buf<...>)
            outs(%dst : !pto.tile_buf<...>)
@@ -7490,7 +7491,7 @@ pto.mgather ins(%mem, %idx : memref<...>, !pto.tile_buf<...>)
 
 pto.mgather ins(%mem, %idx : memref<...>, !pto.tile_buf<...>)
            outs(%dst : !pto.tile_buf<...>)
-           {gatherOob = #pto<gather_oob zero>}
+           {coalesce = #pto<coalesce row>, gatherOob = #pto<gather_oob zero>}
 ```
 
 **GM → L1 (cube `loc=mat`) destination:**

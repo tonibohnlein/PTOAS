@@ -6,7 +6,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
-from mlir.ir import Context, Location, Module, InsertionPoint, StringAttr, UnitAttr
+from mlir.ir import Attribute, Context, Location, Module, InsertionPoint, StringAttr, UnitAttr
 from mlir.dialects import func, arith, pto
 from mlir.ir import IndexType, IntegerType
 
@@ -59,7 +59,9 @@ def build():
                 tb2 = pto.AllocTileOp(tile_buf_data_i32).result
 
                 pto.TLoadOp(None, sv1, tb1)
-                pto.MGatherOp(sv0, tb1, tb2)
+                pto.MGatherOp(
+                    sv0, tb1, tb2,
+                    coalesce=Attribute.parse("#pto<coalesce row>"))
 
                 sv2 = pto.PartitionViewOp(tile_view_32, tv2, offsets=[c0, c0], sizes=[c32, c32]).result
                 pto.TStoreOp(None, tb2, sv2)

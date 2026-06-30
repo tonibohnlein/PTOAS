@@ -33,4 +33,4 @@ module attributes {pto.target_arch = "a2a3"} {
   }
 }
 
-// CHECK: error: 'pto.mgather' op expects mgather to specify an explicit coalesce attribute (row or elem)
+// CHECK: error: 'pto.mgather' op requires attribute 'coalesce'

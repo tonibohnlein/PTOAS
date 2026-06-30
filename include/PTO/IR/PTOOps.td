@@ -2855,7 +2855,7 @@ def MGatherOp : PTO_TOp<"mgather", [
     PTODpsType:$idx,
     PTODpsType:$dst,
     Optional<PTODpsType>:$scratch,
-    OptionalAttr<PTO_CoalesceAttr>:$coalesce,
+    PTO_CoalesceAttr:$coalesce,
     DefaultValuedAttr<PTO_GatherOOBAttr, "::mlir::pto::GatherOOB::Undefined">:$gatherOob);
 
   let results = (outs);
