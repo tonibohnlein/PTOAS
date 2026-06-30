@@ -1,0 +1,66 @@
+// Heterogeneous forced-reuse case (extracted from the TileLang tsort32 suite):
+// three UB tiles of different sizes (src 32KB, idx 32KB, dst 128KB) whose total
+// exceeds the UB budget, so PlanMemory takes the reuse path where allocation
+// ORDER matters. With the default (DMA/gen) order the largest tile (dst) is
+// allocated last and lands at a high offset. With --plan-memory-order-by-size
+// (first-fit-decreasing) the largest tile is allocated first and gets offset 0.
+//
+// RUN: ptoas --pto-arch=a3 --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=DEFAULT
+// RUN: ptoas --pto-arch=a3 --plan-memory-order-by-size --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=BYSIZE
+
+module {
+  func.func @order_by_size_reuse(%src_ptr: !pto.ptr<f32>, %idx_ptr: !pto.ptr<ui32>, %dst_ptr: !pto.ptr<f32>) attributes {pto.kernel} {
+    %c0    = arith.constant 0     : index
+    %c1    = arith.constant 1     : index
+    %c8192 = arith.constant 8192  : index
+    %c32768 = arith.constant 32768 : index
+
+    %src_view = pto.make_tensor_view %src_ptr,
+      shape = [%c1, %c1, %c1, %c1, %c8192],
+      strides = [%c8192, %c8192, %c8192, %c8192, %c1]
+      : !pto.tensor_view<1x1x1x1x8192xf32>
+    %idx_view = pto.make_tensor_view %idx_ptr,
+      shape = [%c1, %c1, %c1, %c1, %c8192],
+      strides = [%c8192, %c8192, %c8192, %c8192, %c1]
+      : !pto.tensor_view<1x1x1x1x8192xui32>
+    %dst_view = pto.make_tensor_view %dst_ptr,
+      shape = [%c1, %c1, %c1, %c1, %c32768],
+      strides = [%c32768, %c32768, %c32768, %c32768, %c1]
+      : !pto.tensor_view<1x1x1x1x32768xf32>
+
+    %src_part = pto.partition_view %src_view,
+      offsets = [%c0, %c0, %c0, %c0, %c0],
+      sizes = [%c1, %c1, %c1, %c1, %c8192]
+      : !pto.tensor_view<1x1x1x1x8192xf32> -> !pto.partition_tensor_view<1x1x1x1x8192xf32>
+    %idx_part = pto.partition_view %idx_view,
+      offsets = [%c0, %c0, %c0, %c0, %c0],
+      sizes = [%c1, %c1, %c1, %c1, %c8192]
+      : !pto.tensor_view<1x1x1x1x8192xui32> -> !pto.partition_tensor_view<1x1x1x1x8192xui32>
+    %dst_part = pto.partition_view %dst_view,
+      offsets = [%c0, %c0, %c0, %c0, %c0],
+      sizes = [%c1, %c1, %c1, %c1, %c32768]
+      : !pto.tensor_view<1x1x1x1x32768xf32> -> !pto.partition_tensor_view<1x1x1x1x32768xf32>
+
+    %src_tile = pto.alloc_tile : !pto.tile_buf<vec, 1x8192xf32>
+    %idx_tile = pto.alloc_tile : !pto.tile_buf<vec, 1x8192xui32>
+    %dst_tile = pto.alloc_tile : !pto.tile_buf<vec, 1x32768xf32>
+
+    pto.tload ins(%src_part : !pto.partition_tensor_view<1x1x1x1x8192xf32>)
+              outs(%src_tile : !pto.tile_buf<vec, 1x8192xf32>)
+    pto.tload ins(%idx_part : !pto.partition_tensor_view<1x1x1x1x8192xui32>)
+              outs(%idx_tile : !pto.tile_buf<vec, 1x8192xui32>)
+
+    pto.tsort32 ins(%src_tile, %idx_tile : !pto.tile_buf<vec, 1x8192xf32>,
+                          !pto.tile_buf<vec, 1x8192xui32>)
+             outs(%dst_tile : !pto.tile_buf<vec, 1x32768xf32>)
+
+    pto.tstore ins(%dst_tile : !pto.tile_buf<vec, 1x32768xf32>)
+               outs(%dst_part : !pto.partition_tensor_view<1x1x1x1x32768xf32>)
+    return
+  }
+}
+
+// The largest tile (dst, 1x32768xf32) is placed at offset 0 ONLY with
+// order-by-size; the default order leaves offset 0 to a smaller input tile.
+// BYSIZE: pto.pointer_cast(%c0_i64){{.*}} : memref<1x32768xf32
+// DEFAULT-NOT: pto.pointer_cast(%c0_i64){{.*}} : memref<1x32768xf32

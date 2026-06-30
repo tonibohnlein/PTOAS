@@ -1548,6 +1548,9 @@ void MemPlan::ReportCurEntryDebugInfo(const StorageEntry *curEntry) {
 
 StorageEntry *
 MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
+  if (orderBySize) {
+    return GetSizeOrderedRootStorageEntry(rootStorageEntry);
+  }
   if (rootStorageEntry->bufInfo->bufferScope != pto::AddressSpace::VEC) {
     return rootStorageEntry;
   }
@@ -1614,6 +1617,49 @@ void MemPlan::ReorderContinuousPingPongEntry(
     }
   }
   reorderedStorageEntryVec.swap(storageEntryVec);
+}
+
+StorageEntry *
+MemPlan::GetSizeOrderedRootStorageEntry(StorageEntry *rootStorageEntry) {
+  // First-fit-decreasing: place the largest buffers first. For the heterogeneous
+  // buffer sizes that real kernels produce, decreasing-size order packs tighter
+  // than an arbitrary/DMA-first order (this is the ordering XLA, TVM and SOMAS
+  // all use). Applies to every memory space, unlike the DMA-first reorder which
+  // is VEC-only.
+  SmallVector<StorageEntry *> entries = {rootStorageEntry};
+  entries.insert(entries.end(), rootStorageEntry->mergedChildren.begin(),
+                 rootStorageEntry->mergedChildren.end());
+
+  // Stable sort by decreasing buffer size. Stable keeps the original order among
+  // equal-size buffers, so uniform-size instances (e.g. the plan_memory_* tests)
+  // are left untouched.
+  std::stable_sort(entries.begin(), entries.end(),
+                   [](const StorageEntry *a, const StorageEntry *b) {
+                     return a->bufInfo->constBits > b->bufInfo->constBits;
+                   });
+
+  // Keep ping-pong (double-buffer) pairs contiguous so double-buffering is
+  // preserved (same post-processing the DMA-first path applies).
+  ReorderContinuousPingPongEntry(entries);
+
+  // Rebuild the flat root -> children structure around the new (largest) root.
+  // Clear every entry's child list first: when the root changes, the previous
+  // root would otherwise keep its stale child list (forming a cycle), and only
+  // the new root should carry the flat list of the others.
+  StorageEntry *reorderedRootStorageEntry = entries[0];
+  for (StorageEntry *entry : entries) {
+    entry->mergedChildren.clear();
+  }
+  for (size_t j = 1; j < entries.size(); ++j) {
+    reorderedRootStorageEntry->mergedChildren.push_back(entries[j]);
+  }
+  // Keep the scope -> root map consistent so later consumers (RecordOverflowIfAny,
+  // PrintSuccessfulAllocatedMaxBits) read the new root and its full child list.
+  // This must accompany the clear above: clearing children without updating the
+  // map would leave the stale root pointing at an empty child list.
+  memscope2rootStorageEntry[reorderedRootStorageEntry->bufInfo->bufferScope] =
+      reorderedRootStorageEntry;
+  return reorderedRootStorageEntry;
 }
 
 std::pair<size_t, size_t>
@@ -2347,7 +2393,7 @@ void PlanMemoryPass::runOnOperation() {
 
     MemPlan memPlan(this->memMode, this->enableGlobalReuse,
                     this->enablePrintMemoryAllocatedSize,
-                    this->restrictInplaceAsISA);
+                    this->restrictInplaceAsISA, this->orderBySize);
     if (failed(memPlan.InitMemSpecsFromModule(funcOp))) {
       return signalPassFailure();
     }

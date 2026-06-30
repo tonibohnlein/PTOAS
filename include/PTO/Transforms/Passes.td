@@ -178,6 +178,12 @@ def PlanMemory : Pass<"pto-plan-memory", "ModuleOp"> {
     Option<"restrictInplaceAsISA", "restrict-inplace-as-isa", "bool",
            /*default=*/"false",
            "restrict memory inplace as isa, default : false">,
+    Option<"orderBySize", "order-by-size", "bool",
+           /*default=*/"false",
+           "Process buffers largest-first (first-fit-decreasing order) during "
+           "local memory planning instead of the default DMA-first order. "
+           "Decreasing-size order packs heterogeneous-size buffers tighter "
+           "(matches XLA/TVM/SOMAS). default : false">,
   ];
 }
 def PTOLoweringSyncToPipe : Pass<"pto-lowering-sync-to-pipe", "func::FuncOp"> {
