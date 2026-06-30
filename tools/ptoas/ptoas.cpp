@@ -317,6 +317,13 @@ static llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
                                             llvm::cl::desc("Enable automatic synchronization insertion pass"),
                                             llvm::cl::init(false));
 
+static llvm::cl::opt<bool> planMemoryOrderBySize(
+    "plan-memory-order-by-size",
+    llvm::cl::desc("PlanMemory: allocate buffers largest-first "
+                   "(first-fit-decreasing) instead of the default DMA-first "
+                   "order"),
+    llvm::cl::init(false));
+
 static llvm::cl::opt<bool> enableBufidSync(
     "enable-bufid_sync",
     llvm::cl::desc("Enable A5 buffer-id synchronization insertion pass"),
@@ -1864,6 +1871,7 @@ int mlir::pto::compilePTOASModule(
     planMemoryOption.memMode = MemPlanMode::LOCAL_MEM_PLAN;
     planMemoryOption.enableGlobalReuse = false;
     planMemoryOption.enablePrintMemoryAllocatedSize = false;
+    planMemoryOption.orderBySize = planMemoryOrderBySize;
     pm.addPass(pto::createPlanMemoryPass(planMemoryOption));
   }
   pm.addPass(pto::createPTOResolveReservedBuffersPass());

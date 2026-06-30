@@ -415,10 +415,10 @@ using StorageEntryPair = std::pair<const StorageEntry *, const StorageEntry *>;
 class MemPlan {
 public:
   MemPlan(MemPlanMode planMode, bool enableGlobalReuse, bool enablePrintMemoryAllocatedSize,
-          bool restrictInplaceAsISA)
+          bool restrictInplaceAsISA, bool orderBySize)
       : planMode(planMode), enableGlobalReuse(enableGlobalReuse),
         enablePrintMemoryAllocatedSize(enablePrintMemoryAllocatedSize),
-        restrictInplaceAsISA(restrictInplaceAsISA) {}
+        restrictInplaceAsISA(restrictInplaceAsISA), orderBySize(orderBySize) {}
 
   LogicalResult plan();
 
@@ -480,6 +480,9 @@ private:
   /// enable PTO op plan memory inplace
   bool restrictInplaceAsISA;
 
+  /// Process buffers largest-first (first-fit-decreasing) instead of DMA-first.
+  bool orderBySize;
+
   /// StorageEntry generate.
   void GenerateStorageEntry();
 
@@ -537,6 +540,11 @@ private:
   /// Adjust the allocation order of rootStoreEntry to prioritize the allocation
   /// of buffers corresponding to DMA.
   StorageEntry *GetReorderRootStorageEntry(StorageEntry *rootStorageEntry);
+
+  /// Reorder rootStorageEntry's children largest-first (first-fit-decreasing)
+  /// across every memory space, keeping ping-pong pairs contiguous. Used when
+  /// the order-by-size option is enabled.
+  StorageEntry *GetSizeOrderedRootStorageEntry(StorageEntry *rootStorageEntry);
 
   /// Assign addresses without reuse.
   void PlanBuffersWithoutReuse(StorageEntry *rootStorageEntry,
