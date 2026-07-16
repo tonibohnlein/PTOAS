@@ -271,6 +271,119 @@ module attributes {pto.target_arch = "a2a3"} {
               outs(%target : memref<1x8xf32, #pto.address_space<vec>>)
     return
   }
+
+  // A dynamic reinterpret offset cannot be modeled as zero. At runtime the
+  // offset may move the view from 4096 to 8192, so the resulting local address
+  // must conservatively alias the following MTE2 write.
+  func.func @dynamic_reinterpret_offset_sync(
+      %index_src: memref<1x8xf32, #pto.address_space<gm>>,
+      %offset: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c4096_i64 = arith.constant 4096 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %one = arith.constant 1.000000e+00 : f32
+
+    %root = pto.pointer_cast(%c4096_i64)
+        : memref<1x8xf32, #pto.address_space<vec>>
+    %reinterpreted = memref.reinterpret_cast %root to offset: [%offset],
+        sizes: [1, 8], strides: [8, 1]
+        : memref<1x8xf32, #pto.address_space<vec>>
+        to memref<1x8xf32, strided<[8, 1], offset: ?>, #pto.address_space<vec>>
+    %vector_out = pto.pointer_cast(%c16384_i64)
+        : memref<1x8xf32, #pto.address_space<vec>>
+    %target = pto.pointer_cast(%c8192_i64)
+        : memref<1x8xf32, #pto.address_space<vec>>
+
+    pto.tmuls ins(%reinterpreted, %one
+        : memref<1x8xf32, strided<[8, 1], offset: ?>, #pto.address_space<vec>>, f32)
+        outs(%vector_out : memref<1x8xf32, #pto.address_space<vec>>)
+    pto.tload ins(%index_src : memref<1x8xf32, #pto.address_space<gm>>)
+              outs(%target : memref<1x8xf32, #pto.address_space<vec>>)
+    return
+  }
+
+  // Even a one-segment subview has already adjusted its physical address.
+  // reinterpret_cast offset 0 resets to the underlying allocation base 4096;
+  // accumulating it from the subview address 4160 would miss this overlap.
+  func.func @contiguous_subview_reinterpret_sync(
+      %index_src: memref<1x8xf32, #pto.address_space<gm>>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c4096_i64 = arith.constant 4096 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %one = arith.constant 1.000000e+00 : f32
+
+    %root = pto.pointer_cast(%c4096_i64)
+        : memref<2x16xf32, #pto.address_space<vec>>
+    %subview = memref.subview %root[1, 0] [1, 8] [1, 1]
+        : memref<2x16xf32, #pto.address_space<vec>>
+        to memref<1x8xf32, strided<[16, 1], offset: 16>, #pto.address_space<vec>>
+    %reset = memref.reinterpret_cast %subview to offset: [0],
+        sizes: [1, 8], strides: [8, 1]
+        : memref<1x8xf32, strided<[16, 1], offset: 16>, #pto.address_space<vec>>
+        to memref<1x8xf32, strided<[8, 1]>, #pto.address_space<vec>>
+    %vector_out = pto.pointer_cast(%c16384_i64)
+        : memref<1x8xf32, #pto.address_space<vec>>
+    %target = pto.pointer_cast(%c4096_i64)
+        : memref<1x8xf32, #pto.address_space<vec>>
+
+    pto.tmuls ins(%reset, %one
+        : memref<1x8xf32, strided<[8, 1]>, #pto.address_space<vec>>, f32)
+        outs(%vector_out : memref<1x8xf32, #pto.address_space<vec>>)
+    pto.tload ins(%index_src : memref<1x8xf32, #pto.address_space<gm>>)
+              outs(%target : memref<1x8xf32, #pto.address_space<vec>>)
+    return
+  }
+
+  // The dynamic access is a real two-slot buffer, while %segments is two
+  // discontiguous pieces of fixed slot 0. Across the loop back-edge, the
+  // dynamic access needs per-slot event IDs, but the segmented access is one
+  // logical allocation and still needs its own single-event V -> MTE2 sync.
+  func.func @segmented_backedge_uses_single_event(
+      %index_src: memref<2x16xf32, #pto.address_space<gm>>,
+      %n: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4096_i64 = arith.constant 4096 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %c32768_i64 = arith.constant 32768 : i64
+    %one = arith.constant 1.000000e+00 : f32
+
+    %slots = pto.pointer_cast(%c4096_i64, %c8192_i64)
+        : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>
+    %slot0 = pto.slot_marker %slots[%c0]
+        : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>
+        -> memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>
+    %segments = memref.subview %slot0[0, 0] [2, 8] [1, 1]
+        : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>
+        to memref<2x8xf32, strided<[16, 1]>, #pto.address_space<vec>>
+    %segment_out = pto.pointer_cast(%c16384_i64)
+        : memref<2x8xf32, strided<[16, 1]>, #pto.address_space<vec>>
+    %slot_out = pto.pointer_cast(%c32768_i64)
+        : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>
+
+    scf.for %i = %c0 to %n step %c1 {
+      %idx = arith.remui %i, %c2 : index
+      %dynamic = pto.slot_marker %slots[%idx]
+          : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>
+          -> memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>
+      pto.tload ins(%index_src : memref<2x16xf32, #pto.address_space<gm>>)
+                outs(%dynamic
+                  : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>)
+      pto.tmuls ins(%segments, %one
+          : memref<2x8xf32, strided<[16, 1]>, #pto.address_space<vec>>, f32)
+          outs(%segment_out
+            : memref<2x8xf32, strided<[16, 1]>, #pto.address_space<vec>>)
+      pto.tmuls ins(%dynamic, %one
+          : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>, f32)
+          outs(%slot_out
+            : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>)
+    }
+    return
+  }
 }
 
 // CHECK-LABEL: AICORE void alloc_tile_physical_overlap_sync(
@@ -318,3 +431,33 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[CHAINED_V_TO_MTE2:[0-9]+]]);
 // CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[CHAINED_V_TO_MTE2]]);
 // CHECK:      TLOAD(
+
+// CHECK-LABEL: AICORE void dynamic_reinterpret_offset_sync(
+// CHECK:      TMULS(
+// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[DYNAMIC_REINTERPRET_V_TO_MTE2:[0-9]+]]);
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[DYNAMIC_REINTERPRET_V_TO_MTE2]]);
+// CHECK:      TLOAD(
+
+// CHECK-LABEL: AICORE void contiguous_subview_reinterpret_sync(
+// CHECK:      TMULS(
+// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[SUBVIEW_REINTERPRET_V_TO_MTE2:[0-9]+]]);
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[SUBVIEW_REINTERPRET_V_TO_MTE2]]);
+// CHECK:      TLOAD(
+
+// CHECK-LABEL: AICORE void segmented_backedge_uses_single_event(
+// Two events belong to the real dynamic two-slot dependency. The third is the
+// independent single-event dependency for the segmented view.
+// CHECK:      set_flag(PIPE_V, PIPE_MTE2, EVENT_ID0);
+// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID1);
+// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[SEGMENT_EVENT:[2-9][0-9]*]]);
+// CHECK:      for (
+// CHECK:      wait_flag(PIPE_V, PIPE_MTE2, {{[_A-Za-z][_A-Za-z0-9]*}});
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[SEGMENT_EVENT]]);
+// CHECK:      TLOAD(
+// CHECK:      TMULS(
+// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[SEGMENT_EVENT]]);
+// CHECK:      TMULS(
+// CHECK:      set_flag(PIPE_V, PIPE_MTE2, {{[_A-Za-z][_A-Za-z0-9]*}});
+// CHECK:      wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID0);
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID1);
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[SEGMENT_EVENT]]);

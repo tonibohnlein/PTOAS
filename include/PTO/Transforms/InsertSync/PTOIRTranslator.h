@@ -78,6 +78,7 @@ private:
   // 处理 View/Alias (MakeTensorView, Subview, Mov)
   void UpdateAliasBufferInfo(Value result, Value source);
   void UpdateConservativeAliasBufferInfo(Value result, Value source);
+  void UpdateConservativeSubviewAliasBufferInfo(Value result, Value source);
   void UpdateMemrefSubViewAliasBufferInfo(memref::SubViewOp op);
   void UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op);
   void UpdateSlotMarkerAliasBufferInfo(pto::SlotMarkerOp op);

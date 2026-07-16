@@ -449,17 +449,33 @@ static bool isForwardDepDroppableBySlotAffine(const BaseMemInfo *a,
                                               const BaseMemInfo *b) {
   if (!a || !b)
     return false;
-  size_t aN = a->baseAddresses.size();
-  size_t bN = b->baseAddresses.size();
-  size_t n = std::max(aN, bN);
-  if (n < 2)
+  if (a->addressListKind != AddressListKind::AlternativeSlots ||
+      b->addressListKind != AddressListKind::AlternativeSlots)
     return false;
   Value slotA = findSlotMarkerExpr(a->baseBuffer);
   Value slotB = findSlotMarkerExpr(b->baseBuffer);
   if (!slotA || !slotB)
     return false;
+  size_t aN = a->baseAddresses.size();
+  size_t bN = b->baseAddresses.size();
+  size_t n = std::max(aN, bN);
+  if (n < 2)
+    return false;
   return compareSlotSSA(slotA, slotB, static_cast<uint32_t>(n)) ==
          SlotRelation::kDisjoint;
+}
+
+static size_t getAlternativeSlotPairCount(const BaseMemInfo *a,
+                                          const BaseMemInfo *b) {
+  if (!a || !b)
+    return 1;
+  if (a->addressListKind != AddressListKind::AlternativeSlots ||
+      b->addressListKind != AddressListKind::AlternativeSlots)
+    return 1;
+  if (!findSlotMarkerExpr(a->baseBuffer) ||
+      !findSlotMarkerExpr(b->baseBuffer))
+    return 1;
+  return std::max(a->baseAddresses.size(), b->baseAddresses.size());
 }
 
 void InsertSyncAnalysis::MemAnalyze(
@@ -628,6 +644,8 @@ void InsertSyncAnalysis::InsertSyncOperation(
         Value producerSlot;
         Value consumerSlot;
         for (auto &pair : depBaseMemInfosVec) {
+          if (getAlternativeSlotPairCount(pair.first, pair.second) <= 1)
+            continue;
           if (pair.second && pair.second->baseBuffer)
             producerSlot = findSlotMarkerExpr(pair.second->baseBuffer);
           if (pair.first && pair.first->baseBuffer)
@@ -810,15 +828,9 @@ SmallVector<Value> InsertSyncAnalysis::GetMemInfoBuffers(
 
 int InsertSyncAnalysis::GetEventIdNum(
     const DepBaseMemInfoPairVec &depBaseMemInfosVec) {
-  // A back-edge dependency benefits from N dynamic event IDs whenever at
-  // least one side is a multi-buffer access. We detect that from the
-  // BaseMemInfo's `baseAddresses` size, which `UpdateSlotMarkerAliasBufferInfo`
-  // populated:
-  //   - kSingle / const-slot              : size == 1
-  //   - dyn-slot (PTOIRTranslator default) : size == N (all slots, conservative)
-  // For the alias to even reach this point both sides share a root, so the
-  // slot count derived from either side's full address set should be the
-  // same N. We pick the max to be robust against accidental narrowing.
+  // A back-edge dependency uses N dynamic event IDs only when both accesses
+  // are alternative-slot views with recoverable slot SSA expressions.
+  // Multiple segmented addresses are one logical view, not N event lanes.
   int eventIdNum = 1;
   for (const auto &pair : depBaseMemInfosVec) {
     bool isLocalA =
@@ -829,9 +841,8 @@ int InsertSyncAnalysis::GetEventIdNum(
                         pair.second->scope == pto::AddressSpace::VEC);
     if (!isLocalA && !isLocalB)
       continue;
-    size_t aN = pair.first ? pair.first->baseAddresses.size() : 1;
-    size_t bN = pair.second ? pair.second->baseAddresses.size() : 1;
-    int pairN = static_cast<int>(std::max(aN, bN));
+    int pairN = static_cast<int>(
+        getAlternativeSlotPairCount(pair.first, pair.second));
     if (pairN <= 1)
       continue;
     if (eventIdNum == 1) {
