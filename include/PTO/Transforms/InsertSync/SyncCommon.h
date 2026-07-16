@@ -90,6 +90,14 @@ enum class AddressProvenance {
   /// The buffer has an absolute address, but its value is dynamic or unknown.
   UnknownAbsolute
 };
+
+/// Describes what multiple entries in BaseMemInfo::baseAddresses represent.
+enum class AddressListKind {
+  /// Each entry is the start of a discontiguous segment of one logical view.
+  Segments,
+  /// Each entry is an alternative physical slot for the same logical view.
+  AlternativeSlots
+};
  
 /// Meminfo of the target buffer
 /// 用于追踪 Buffer 的别名和根节点
@@ -98,10 +106,14 @@ struct BaseMemInfo {
       Value baseBuffer, Value rootBuffer, pto::AddressSpace scope,
       SmallVector<uint64_t> baseAddresses, uint64_t allocateSize,
       AddressProvenance addressProvenance = AddressProvenance::RootRelative,
+      AddressListKind addressListKind = AddressListKind::Segments,
+      bool hasAppliedReinterpret = false,
       bool aliasesUnknownRange = false)
       : baseBuffer(baseBuffer), rootBuffer(rootBuffer), scope(scope),
         baseAddresses(std::move(baseAddresses)), allocateSize(allocateSize),
         addressProvenance(addressProvenance),
+        addressListKind(addressListKind),
+        hasAppliedReinterpret(hasAppliedReinterpret),
         aliasesUnknownRange(aliasesUnknownRange) {}
  
   /// baseBuffer: 当前操作直接使用的 Buffer (可能是 View 或 Alias)
@@ -113,6 +125,9 @@ struct BaseMemInfo {
   SmallVector<uint64_t> baseAddresses; // 用于 Offset 分析
   uint64_t allocateSize;
   AddressProvenance addressProvenance;
+  AddressListKind addressListKind;
+  /// True once a reinterpret_cast descriptor offset has been modeled.
+  bool hasAppliedReinterpret;
   // Address-preserving provenance can be lost when a pointer is round-tripped
   // through integer IR. When set, this memory object aliases any range in the
   // same address space.
@@ -133,6 +148,8 @@ struct BaseMemInfo {
     if (scope != other.scope) return false;
     if (addressProvenance != other.addressProvenance)
       return false;
+    if (addressListKind != other.addressListKind)
+      return false;
     if (aliasesUnknownRange != other.aliasesUnknownRange)
       return false;
     // allocateSize 和 baseBuffer 的严格相等性在某些别名分析中可能太强了，
@@ -145,13 +162,15 @@ struct BaseMemInfo {
   std::unique_ptr<BaseMemInfo> clone() const {
     return std::make_unique<BaseMemInfo>(
         baseBuffer, rootBuffer, scope, baseAddresses, allocateSize,
-        addressProvenance, aliasesUnknownRange);
+        addressProvenance, addressListKind, hasAppliedReinterpret,
+        aliasesUnknownRange);
   }
 
   std::unique_ptr<BaseMemInfo> clone(Value cloneBaseBuffer) const {
     return std::make_unique<BaseMemInfo>(
         cloneBaseBuffer, rootBuffer, scope, baseAddresses, allocateSize,
-        addressProvenance, aliasesUnknownRange);
+        addressProvenance, addressListKind, hasAppliedReinterpret,
+        aliasesUnknownRange);
   }
 };
  

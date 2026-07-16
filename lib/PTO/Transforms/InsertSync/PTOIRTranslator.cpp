@@ -149,6 +149,8 @@ static std::optional<uint64_t> addByteOffset(uint64_t base, uint64_t offset) {
 static void markAddressRangeUnknown(BaseMemInfo &info) {
   info.baseAddresses.clear();
   info.allocateSize = 0;
+  info.addressListKind = AddressListKind::Segments;
+  info.hasAppliedReinterpret = false;
   if (info.addressProvenance == AddressProvenance::KnownAbsolute)
     info.addressProvenance = AddressProvenance::UnknownAbsolute;
 }
@@ -515,7 +517,8 @@ PTOIRTranslator::UpdateAllocMultiTileOpMemInfo(pto::AllocMultiTileOp op) {
       result, result, space, std::move(addresses), slotBytes,
       hasKnownAddresses && isLocalAddressSpace(space)
           ? AddressProvenance::KnownAbsolute
-          : AddressProvenance::RootRelative);
+          : AddressProvenance::RootRelative,
+      AddressListKind::AlternativeSlots);
   buffer2MemInfoMap_[result].emplace_back(info->clone());
   return success();
 }
@@ -895,6 +898,7 @@ LogicalResult PTOIRTranslator::UpdateIntToPtrOpMemInfo(pto::IntToPtrOp op) {
   auto newMemInfo = std::make_unique<BaseMemInfo>(
       result, result, space, SmallVector<uint64_t>{0},
       /*allocateSize=*/0, AddressProvenance::RootRelative,
+      AddressListKind::Segments, /*hasAppliedReinterpret=*/false,
       /*aliasesUnknownRange=*/true);
   buffer2MemInfoMap_[result].emplace_back(newMemInfo->clone());
   return success();
@@ -934,6 +938,7 @@ void PTOIRTranslator::UpdateSlotSelectedAliasBufferInfo(Value result,
           newInfo->baseAddresses[static_cast<size_t>(constSlotIdx)];
       newInfo->baseAddresses.clear();
       newInfo->baseAddresses.push_back(pickAddr);
+      newInfo->addressListKind = AddressListKind::Segments;
     }
     resultMemInfoVec.emplace_back(std::move(newInfo));
   }
@@ -999,6 +1004,7 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
     }
     newInfo->baseAddresses = std::move(addresses);
     newInfo->allocateSize = segmentSize;
+    newInfo->addressListKind = AddressListKind::Segments;
     resultMemInfoVec.emplace_back(std::move(newInfo));
   }
 }
