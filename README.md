@@ -272,10 +272,14 @@ ptoas test/lit/pto/empty_func.pto
 # 运行 AutoSyncInsert Pass
 ptoas test/lit/pto/empty_func.pto --enable-insert-sync -o outputfile.cpp
 
+# 将最终同步统计按函数写成 JSON Lines
+ptoas test/lit/pto/empty_func.pto --enable-insert-sync \
+  --pto-insert-sync-summary=sync-summary.jsonl -o outputfile.cpp
+
 # 指定目标硬件架构（A3 / A5）
 ptoas test/lit/pto/empty_func.pto --pto-arch=a5 -o outputfile.cpp
 
-# 指定构建 Level（level3 会禁用 PlanMemory/InsertSync）
+# 指定构建 Level（level3 信任显式地址并跳过 PlanMemory）
 ptoas test/lit/pto/empty_func.pto --pto-level=level3 -o outputfile.cpp
 
 # VPTO backend 总是启用 VMI -> VPTO 语义 pipeline
@@ -287,6 +291,9 @@ ptoas --version
 
 ```
 
+同步 summary 在 event-id 分配后生成，包含有效同步组/操作、pipe 对计数、循环回边、
+多 event 组、PIPE_ALL 降级、补偿操作，以及 event-id 使用量（请求的槽位数和每个
+pipe 对的不同 ID 数量）。该输出用于受控的内存 placement 实验，不直接估算运行周期。
 ### 5.2 Python 接口 (Python API)
 
 在支持的 `ptoas` 安装环境中，PTO Dialect 与 PTODSL 都可以直接导入。
