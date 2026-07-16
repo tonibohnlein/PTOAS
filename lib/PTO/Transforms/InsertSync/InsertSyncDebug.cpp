@@ -13,7 +13,15 @@
 
 #include "mlir/IR/AsmState.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/JSON.h"
+
+#include <algorithm>
+#include <map>
+#include <mutex>
+#include <set>
+#include <string>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -28,9 +36,18 @@ llvm::cl::opt<unsigned> insertSyncDebugLevelOpt(
                    "0=off, 1=phase, 2=syncir, 3=trace"),
     llvm::cl::init(0));
 
+llvm::cl::opt<std::string> insertSyncSummaryPathOpt(
+    "pto-insert-sync-summary",
+    llvm::cl::desc("Write final PTOInsertSync statistics as JSON Lines"),
+    llvm::cl::value_desc("path"), llvm::cl::init(""));
+
 } // namespace
 
 unsigned mlir::pto::getInsertSyncDebugLevel() { return insertSyncDebugLevelOpt; }
+
+bool mlir::pto::isInsertSyncSummaryEnabled() {
+  return !insertSyncSummaryPathOpt.empty();
+}
 
 bool mlir::pto::isInsertSyncDebugEnabled(InsertSyncDebugLevel minLevel) {
   return getInsertSyncDebugLevel() >= static_cast<unsigned>(minLevel);
@@ -362,4 +379,151 @@ void mlir::pto::dumpInsertSyncPhase(llvm::StringRef phase, const SyncIRs &syncIR
 
   dumpSyncIR(os, syncIR, opForPrinting, options, showMemInfo);
   os << "// ========================================= //\n";
+}
+
+bool mlir::pto::writeInsertSyncSummary(
+    llvm::StringRef status, const SyncIRs &syncIR,
+    const SyncOperations &syncOperations, Operation *opForPrinting) {
+  if (!isInsertSyncSummaryEnabled())
+    return true;
+
+  unsigned activeGroups = 0;
+  unsigned activeOps = 0;
+  unsigned setCnt = 0;
+  unsigned waitCnt = 0;
+  unsigned barrierCnt = 0;
+  unsigned blockSetCnt = 0;
+  unsigned blockWaitCnt = 0;
+  unsigned blockAllCnt = 0;
+  unsigned pipeAllGroups = 0;
+  unsigned loopCarriedGroups = 0;
+  unsigned multiEventGroups = 0;
+  unsigned eventSyncGroups = 0;
+  unsigned compensationOps = 0;
+  unsigned requestedEventSlots = 0;
+  std::map<std::string, unsigned> pipePairGroups;
+  std::map<std::string, std::set<int>> pipePairEventIds;
+
+  for (const auto &group : syncOperations) {
+    const SyncOperation *representative = nullptr;
+    bool groupPipeAll = false;
+    bool groupLoopCarried = false;
+    bool groupUsesEvent = false;
+    unsigned groupEventIdSlots = 0;
+    std::set<int> groupEventIds;
+    for (const auto &ownedOp : group) {
+      const SyncOperation *op = ownedOp.get();
+      if (!op || op->uselessSync)
+        continue;
+      if (!representative)
+        representative = op;
+      activeOps++;
+      groupPipeAll |= op->GetSrcPipe() == PipelineType::PIPE_ALL ||
+                      op->GetDstPipe() == PipelineType::PIPE_ALL;
+      groupLoopCarried |= op->GetForEndIndex().has_value();
+      if (op->isCompensation)
+        compensationOps++;
+      for (int eventId : op->eventIds)
+        groupEventIds.insert(eventId);
+      switch (op->GetType()) {
+      case SyncOperation::TYPE::SET_EVENT:
+        setCnt++;
+        groupUsesEvent = true;
+        groupEventIdSlots =
+            std::max(groupEventIdSlots, static_cast<unsigned>(op->eventIdNum));
+        break;
+      case SyncOperation::TYPE::WAIT_EVENT:
+        waitCnt++;
+        groupUsesEvent = true;
+        groupEventIdSlots =
+            std::max(groupEventIdSlots, static_cast<unsigned>(op->eventIdNum));
+        break;
+      case SyncOperation::TYPE::PIPE_BARRIER:
+      case SyncOperation::TYPE::PIPE_BARRIER_CUBE:
+      case SyncOperation::TYPE::PIPE_BARRIER_VECTOR:
+        barrierCnt++;
+        break;
+      case SyncOperation::TYPE::SYNC_BLOCK_SET:
+        blockSetCnt++;
+        break;
+      case SyncOperation::TYPE::SYNC_BLOCK_WAIT:
+        blockWaitCnt++;
+        break;
+      case SyncOperation::TYPE::SYNC_BLOCK_ALL:
+        blockAllCnt++;
+        break;
+      }
+    }
+    if (!representative)
+      continue;
+    activeGroups++;
+    pipeAllGroups += groupPipeAll ? 1 : 0;
+    loopCarriedGroups += groupLoopCarried ? 1 : 0;
+    multiEventGroups += groupUsesEvent && groupEventIdSlots > 1 ? 1 : 0;
+    eventSyncGroups += groupUsesEvent ? 1 : 0;
+    if (groupUsesEvent)
+      requestedEventSlots += groupEventIdSlots;
+    const std::string pair =
+        (getPipelineName(representative->GetSrcPipe()) + "->" +
+         getPipelineName(representative->GetDstPipe()))
+            .str();
+    pipePairGroups[pair]++;
+    if (groupUsesEvent)
+      pipePairEventIds[pair].insert(groupEventIds.begin(), groupEventIds.end());
+  }
+
+  llvm::json::Object pipePairs;
+  for (const auto &[pair, count] : pipePairGroups)
+    pipePairs[pair] = static_cast<int64_t>(count);
+  llvm::json::Object pipePairIds;
+  for (const auto &[pair, eventIds] : pipePairEventIds)
+    pipePairIds[pair] = static_cast<int64_t>(eventIds.size());
+
+  std::string functionName = "<unknown>";
+  if (opForPrinting) {
+    if (auto name = opForPrinting->getAttrOfType<StringAttr>("sym_name"))
+      functionName = name.str();
+  }
+
+  llvm::json::Object summary;
+  summary["schema_version"] = 1;
+  summary["function"] = functionName;
+  summary["status"] = status.str();
+  summary["sync_ir_nodes"] = static_cast<int64_t>(syncIR.size());
+  summary["active_sync_groups"] = static_cast<int64_t>(activeGroups);
+  summary["active_sync_operations"] = static_cast<int64_t>(activeOps);
+  summary["set_operations"] = static_cast<int64_t>(setCnt);
+  summary["wait_operations"] = static_cast<int64_t>(waitCnt);
+  summary["barrier_operations"] = static_cast<int64_t>(barrierCnt);
+  summary["block_set_operations"] = static_cast<int64_t>(blockSetCnt);
+  summary["block_wait_operations"] = static_cast<int64_t>(blockWaitCnt);
+  summary["block_all_operations"] = static_cast<int64_t>(blockAllCnt);
+  summary["pipe_all_groups"] = static_cast<int64_t>(pipeAllGroups);
+  summary["loop_carried_groups"] = static_cast<int64_t>(loopCarriedGroups);
+  summary["multi_event_groups"] = static_cast<int64_t>(multiEventGroups);
+  summary["event_sync_groups"] = static_cast<int64_t>(eventSyncGroups);
+  summary["compensation_operations"] = static_cast<int64_t>(compensationOps);
+  summary["requested_event_slots"] =
+      static_cast<int64_t>(requestedEventSlots);
+  summary["pipe_pair_groups"] = std::move(pipePairs);
+  summary["pipe_pair_event_ids"] = std::move(pipePairIds);
+
+  static std::mutex outputMutex;
+  static std::string initializedPath;
+  std::lock_guard<std::mutex> lock(outputMutex);
+  const bool append = initializedPath == insertSyncSummaryPathOpt;
+  std::error_code error;
+  llvm::sys::fs::OpenFlags flags = llvm::sys::fs::OF_Text;
+  if (append)
+    flags |= llvm::sys::fs::OF_Append;
+  llvm::raw_fd_ostream output(insertSyncSummaryPathOpt, error, flags);
+  if (error) {
+    llvm::errs() << "error: cannot write PTOInsertSync summary '"
+                 << insertSyncSummaryPathOpt << "': " << error.message()
+                 << "\n";
+    return false;
+  }
+  output << llvm::json::Value(std::move(summary)) << "\n";
+  initializedPath = insertSyncSummaryPathOpt;
+  return true;
 }

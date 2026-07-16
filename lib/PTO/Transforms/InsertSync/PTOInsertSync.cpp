@@ -86,6 +86,11 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
       return WalkResult::advance();
     });
     if (hasExplicitSync) {
+      SyncIRs emptySyncIR;
+      SyncOperations emptySyncOperations;
+      if (!writeInsertSyncSummary("skipped_explicit_sync", emptySyncIR,
+                                  emptySyncOperations, func.getOperation()))
+        signalPassFailure();
       return;
     }
 
@@ -101,6 +106,9 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
 
     // 如果 IR 太简单，直接跳过
     if (syncIR.size() <= 1) {
+      if (!writeInsertSyncSummary("skipped_trivial", syncIR, syncOpsStorage,
+                                  func.getOperation()))
+        signalPassFailure();
       return;
     }
 
@@ -146,6 +154,12 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
 
     dumpInsertSyncPhase("After EventId Allocation", syncIR, syncOpsStorage,
                         func.getOperation());
+
+    if (!writeInsertSyncSummary("analyzed", syncIR, syncOpsStorage,
+                                func.getOperation())) {
+      signalPassFailure();
+      return;
+    }
 
     SyncCodegen codegen(syncIR, func, SyncAnalysisMode::NORMALSYNC);
     codegen.Run();
