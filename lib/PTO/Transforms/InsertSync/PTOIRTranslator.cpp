@@ -26,6 +26,7 @@
 // [P0 新增] 引入副作用接口和 PTO 接口
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
+#include <limits>
 #include <optional>
 
 #define DEBUG_TYPE "pto-ir-translator"
@@ -87,6 +88,29 @@ static std::optional<uint64_t> getKnownPhysicalAddress(Value value) {
   if (!getConstIndexValue(value, address) || address < 0)
     return std::nullopt;
   return static_cast<uint64_t>(address);
+}
+
+static std::optional<uint64_t> addByteOffset(uint64_t base, uint64_t offset) {
+  if (offset > std::numeric_limits<uint64_t>::max() - base)
+    return std::nullopt;
+  return base + offset;
+}
+
+static std::optional<uint64_t> addByteOffset(uint64_t base, int64_t offset) {
+  if (offset >= 0)
+    return addByteOffset(base, static_cast<uint64_t>(offset));
+
+  uint64_t magnitude = static_cast<uint64_t>(-(offset + 1)) + 1;
+  if (magnitude > base)
+    return std::nullopt;
+  return base - magnitude;
+}
+
+static void markAddressRangeUnknown(BaseMemInfo &info) {
+  info.baseAddresses.clear();
+  info.allocateSize = 0;
+  if (info.addressProvenance == AddressProvenance::KnownAbsolute)
+    info.addressProvenance = AddressProvenance::UnknownAbsolute;
 }
 
 static bool isLocalAddressSpace(pto::AddressSpace space) {
@@ -509,9 +533,15 @@ LogicalResult PTOIRTranslator::UpdateAllocTileOpMemInfo(pto::AllocTileOp op) {
   }
 
   // 3. 注册 Buffer 信息
+  AddressProvenance addressProvenance = AddressProvenance::RootRelative;
+  if (op.getAddr() && isLocalAddressSpace(space)) {
+    addressProvenance = knownPhysicalAddress
+                            ? AddressProvenance::KnownAbsolute
+                            : AddressProvenance::UnknownAbsolute;
+  }
   auto newMemInfo = std::make_unique<BaseMemInfo>(
       res, res, space, SmallVector<uint64_t>{baseAddr}, sizeInBytes,
-      knownPhysicalAddress.has_value() && isLocalAddressSpace(space));
+      addressProvenance);
 
   buffer2MemInfoMap_[res].emplace_back(newMemInfo->clone());
   return success();
@@ -546,21 +576,23 @@ LogicalResult PTOIRTranslator::UpdatePointerCastOpMemInfo(pto::PointerCastOp op)
 
   if (op.getAddrs().size() == 1) {
     // Keep the address SSA as the root so dynamic pointer casts retain their
-    // historical identity-based behavior. For a static local cast, also keep
-    // its byte address for cross-root physical range analysis; downstream view
-    // ops accumulate their delta into baseAddresses[0].
+    // identity. Local pointer_cast operands are absolute physical addresses:
+    // keep a constant byte address for cross-root range analysis, and mark a
+    // dynamic address as unknown-absolute so alias analysis stays conservative.
+    // Downstream view ops accumulate their delta into baseAddresses[0].
     Value rootSrc = op.getAddrs().front();
     SmallVector<uint64_t> baseAddresses{0};
-    bool hasKnownPhysicalAddresses = false;
+    AddressProvenance addressProvenance = AddressProvenance::RootRelative;
     if (isLocalAddressSpace(space)) {
+      addressProvenance = AddressProvenance::UnknownAbsolute;
       if (std::optional<uint64_t> address = getKnownPhysicalAddress(rootSrc)) {
         baseAddresses[0] = *address;
-        hasKnownPhysicalAddresses = true;
+        addressProvenance = AddressProvenance::KnownAbsolute;
       }
     }
     auto newMemInfo = std::make_unique<BaseMemInfo>(
         res, rootSrc, space, std::move(baseAddresses), sizeInBytes,
-        hasKnownPhysicalAddresses);
+        addressProvenance);
     buffer2MemInfoMap_[res].emplace_back(newMemInfo->clone());
     return success();
   }
@@ -583,7 +615,9 @@ LogicalResult PTOIRTranslator::UpdatePointerCastOpMemInfo(pto::PointerCastOp op)
       // historical behavior.
       Value rootSrc = op.getAddrs().front();
       auto newMemInfo = std::make_unique<BaseMemInfo>(
-          res, rootSrc, space, SmallVector<uint64_t>{0}, sizeInBytes);
+          res, rootSrc, space, SmallVector<uint64_t>{0}, sizeInBytes,
+          isLocalAddressSpace(space) ? AddressProvenance::UnknownAbsolute
+                                     : AddressProvenance::RootRelative);
       buffer2MemInfoMap_[res].emplace_back(newMemInfo->clone());
       return success();
     }
@@ -592,7 +626,8 @@ LogicalResult PTOIRTranslator::UpdatePointerCastOpMemInfo(pto::PointerCastOp op)
 
   auto newMemInfo = std::make_unique<BaseMemInfo>(
       res, res, space, std::move(slotOffsets), sizeInBytes,
-      isLocalAddressSpace(space));
+      isLocalAddressSpace(space) ? AddressProvenance::KnownAbsolute
+                                 : AddressProvenance::RootRelative);
   buffer2MemInfoMap_[res].emplace_back(newMemInfo->clone());
   return success();
 }
@@ -960,14 +995,26 @@ void PTOIRTranslator::UpdateAliasBufferInfo(Value result, Value source) {
 
   for (auto &parentInfo : buffer2MemInfoMap_[source]) {
     auto newInfo = parentInfo->clone(result);
+    bool addressRangeUnknown = false;
 
     if (!newInfo->baseAddresses.empty()) {
-        newInfo->baseAddresses[0] += deltaOffset;
+      if (std::optional<uint64_t> address =
+              addByteOffset(newInfo->baseAddresses[0], deltaOffset)) {
+        newInfo->baseAddresses[0] = *address;
+      } else {
+        markAddressRangeUnknown(*newInfo);
+        addressRangeUnknown = true;
+      }
     } else {
-        newInfo->baseAddresses.push_back(deltaOffset);
+      if (std::optional<uint64_t> address = addByteOffset(0, deltaOffset))
+        newInfo->baseAddresses.push_back(*address);
+      else {
+        markAddressRangeUnknown(*newInfo);
+        addressRangeUnknown = true;
+      }
     }
 
-    if (newSize > 0) {
+    if (newSize > 0 && !addressRangeUnknown) {
         newInfo->allocateSize = newSize;
     }
 
@@ -1078,8 +1125,20 @@ void PTOIRTranslator::UpdateMemrefSubViewAliasBufferInfo(memref::SubViewOp op) {
     SmallVector<uint64_t> addresses;
     addresses.reserve(subViewAddresses->size());
     uint64_t parentBase = parentInfo->baseAddresses[0];
-    for (uint64_t offset : *subViewAddresses)
-      addresses.push_back(parentBase + offset);
+    bool overflowed = false;
+    for (uint64_t offset : *subViewAddresses) {
+      std::optional<uint64_t> address = addByteOffset(parentBase, offset);
+      if (!address) {
+        overflowed = true;
+        break;
+      }
+      addresses.push_back(*address);
+    }
+    if (overflowed) {
+      markAddressRangeUnknown(*newInfo);
+      resultMemInfoVec.emplace_back(std::move(newInfo));
+      continue;
+    }
     newInfo->baseAddresses = std::move(addresses);
     newInfo->allocateSize = segmentSize;
     resultMemInfoVec.emplace_back(std::move(newInfo));
@@ -1131,8 +1190,20 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
     SmallVector<uint64_t> addresses;
     addresses.reserve(subViewAddresses->size());
     uint64_t parentBase = parentInfo->baseAddresses[0];
-    for (uint64_t offset : *subViewAddresses)
-      addresses.push_back(parentBase + offset);
+    bool overflowed = false;
+    for (uint64_t offset : *subViewAddresses) {
+      std::optional<uint64_t> address = addByteOffset(parentBase, offset);
+      if (!address) {
+        overflowed = true;
+        break;
+      }
+      addresses.push_back(*address);
+    }
+    if (overflowed) {
+      markAddressRangeUnknown(*newInfo);
+      resultMemInfoVec.emplace_back(std::move(newInfo));
+      continue;
+    }
     newInfo->baseAddresses = std::move(addresses);
     newInfo->allocateSize = segmentSize;
     resultMemInfoVec.emplace_back(std::move(newInfo));
