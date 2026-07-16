@@ -108,13 +108,15 @@ struct BaseMemInfo {
       AddressProvenance addressProvenance = AddressProvenance::RootRelative,
       AddressListKind addressListKind = AddressListKind::Segments,
       bool hasAppliedReinterpret = false,
-      bool hasAppliedSubviewOffset = false)
+      bool hasAppliedSubviewOffset = false,
+      bool hasInexactSubviewRange = false)
       : baseBuffer(baseBuffer), rootBuffer(rootBuffer), scope(scope),
         baseAddresses(std::move(baseAddresses)), allocateSize(allocateSize),
         addressProvenance(addressProvenance),
         addressListKind(addressListKind),
         hasAppliedReinterpret(hasAppliedReinterpret),
-        hasAppliedSubviewOffset(hasAppliedSubviewOffset) {}
+        hasAppliedSubviewOffset(hasAppliedSubviewOffset),
+        hasInexactSubviewRange(hasInexactSubviewRange) {}
  
   /// baseBuffer: 当前操作直接使用的 Buffer (可能是 View 或 Alias)
   Value baseBuffer;
@@ -130,6 +132,8 @@ struct BaseMemInfo {
   bool hasAppliedReinterpret;
   /// True once a subview offset has adjusted the physical address list.
   bool hasAppliedSubviewOffset;
+  /// True when the range is a conservative parent envelope, not an exact view.
+  bool hasInexactSubviewRange;
  
   bool areVectorEqual(const SmallVector<uint64_t>& vec1,
                       const SmallVector<uint64_t>& vec2) const {
@@ -159,14 +163,14 @@ struct BaseMemInfo {
     return std::make_unique<BaseMemInfo>(
         baseBuffer, rootBuffer, scope, baseAddresses, allocateSize,
         addressProvenance, addressListKind, hasAppliedReinterpret,
-        hasAppliedSubviewOffset);
+        hasAppliedSubviewOffset, hasInexactSubviewRange);
   }
 
   std::unique_ptr<BaseMemInfo> clone(Value cloneBaseBuffer) const {
     return std::make_unique<BaseMemInfo>(
         cloneBaseBuffer, rootBuffer, scope, baseAddresses, allocateSize,
         addressProvenance, addressListKind, hasAppliedReinterpret,
-        hasAppliedSubviewOffset);
+        hasAppliedSubviewOffset, hasInexactSubviewRange);
   }
 };
  

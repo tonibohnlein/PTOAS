@@ -467,7 +467,7 @@ lit test/lit/pto/multi_tile_prefetch_gss.pto
 | **`MemAlias` 自动识别 const-slot disjoint**：不同常量 slot 的 access baseAddresses disjoint → 不发同步 | ✅ | `lib/PTO/Transforms/InsertSync/MemoryDependentAnalyzer.cpp` (复用既有 range-overlap 逻辑) |
 | **GSS 别名链穿透 `pto.bind_tile` / `pto.slot_marker`** | ✅ | `lib/PTO/Transforms/Utils.cpp` (`getOperationAliasInfo`) |
 | **InsertSync 处理 arith.select-on-memref**：保留为防御逻辑（Resolve 移到 sync 后实际不再产生此场景） | ✅ | `lib/PTO/Transforms/InsertSync/PTOIRTranslator.cpp` |
-| **`GetEventIdNum` 按多 slot 推 N**：back-edge dep 双侧 `baseAddresses.size() == N` 时返回 N | ✅ | `lib/PTO/Transforms/InsertSync/InsertSyncAnalysis.cpp` |
+| **`GetEventIdNum` 按多 slot 推 N**：仅当 back-edge 的每个 local dep pair 都是同 N 的 `AlternativeSlots` 且双侧 slot SSA 可恢复时返回 N；`Segments`、缺失 slot SSA 或混合依赖回退到单个静态 event | ✅ | `lib/PTO/Transforms/InsertSync/InsertSyncAnalysis.cpp` |
 | **`SyncOperation` 携带 slot SSA**：`slotSSAExpr` + `slotCount` 字段，set/wait 各自记录自己一侧的 slot SSA | ✅ | `include/PTO/Transforms/InsertSync/SyncCommon.h`, `lib/PTO/Transforms/InsertSync/{SyncCommon,InsertSyncAnalysis}.cpp` |
 | **dyn event-id codegen**：`CreateSetWaitOpForMultiBuffer` 发 `pto.set_flag_dyn` / `pto.wait_flag_dyn`，event id 由 N-way `arith.select` 链根据 `slot % N` 选自分配的 N 个静态 event id | ✅ | `lib/PTO/Transforms/InsertSync/SyncCodegen.cpp` |
 | **`SyncEventIdAllocation` N event ids 分配**：复用既有 `eventIdNum > 1` 路径（已支持 N），自动给 set/wait 对分配 N 个 hardware event id | ✅ pre-existing | `lib/PTO/Transforms/InsertSync/SyncEventIdAllocation.cpp` |
@@ -480,11 +480,12 @@ lit test/lit/pto/multi_tile_prefetch_gss.pto
 | **GSS 同 SSA 行为对齐 InsertSync**：`getMultiBufferEventIdInfo` 不再因 all-equal slot SSA 早退，对同 SSA 的 producer/consumer 也走 N dyn event id 路径；GSS 同 SSA 现在 emit 与 InsertSync 完全一样的 prefetch pipeline | ✅ | `lib/PTO/Transforms/GraphSyncSolver/SyncSolver.cpp` |
 | **EmitC 穿透 `arith.select`-on-memref**：`PTOMaterializeTileHandles::computeExplicitAddress` 沿 select 两支递归求 i64 地址，配合 dyn slot 路径的 select 链；EmitC TASSIGN 拿到正确地址 | ✅ | `lib/PTO/Transforms/PTOMaterializeTileHandles.cpp` |
 | **`multi_tile_get` lowering 防御**：`op->getOperand(0)` 取 source（绕开类型 cast），因为 alloc_multi_tile replace 之后 source 已经变成 memref，typed accessor `getSource()` 会断言 | ✅ | `lib/PTO/Transforms/PTOViewToMemref.cpp` |
-| lit 测试（17 个）：parse/print、verifier、const slot lowering、dyn slot lowering、N=3 / N=4 端到端、无 loop unroll、const-slot sync disjoint、dyn-slot sync 编译、GSS multi-buffer compile、prefetch dyn event-id (InsertSync)、prefetch GSS dyn flag、affine disjoint slots、const preload + dyn loop select、preload + loop set/wait、unknown slot GSS 保守降级 | ✅ | `test/lit/pto/multi_tile_*.pto` |
+| lit 测试（21 个）：parse/print、verifier、const slot lowering、dyn slot lowering、N=3 / N=4 端到端、无 loop unroll、const-slot sync disjoint、dyn-slot sync 编译、GSS multi-buffer compile、prefetch dyn event-id (InsertSync)、prefetch GSS dyn flag、affine disjoint slots、const preload + dyn loop select、preload + loop set/wait、unknown slot GSS 保守降级等 | ✅ | `test/lit/pto/multi_tile_*.pto` |
 
 ### 当前限制
 
 - **affine 分析仅覆盖核心几种形态**：`compareSlotSSA` 当前能证 `iv % N` / `(iv ± c) % N` / 同 SSA / 纯常量；不能证 `(iv * c) % N`、跨函数 / 跨循环的 SSA 等价、非 `arith.remui` 包装的 slot 表达式。命中不到时退回 kUnknown / 保守 N dyn event id。
+- **混合 back-edge 依赖回退到静态 event**：只要同一同步候选还包含 `Segments` 或其他不能与 slot lane 一一对应的 local dep pair，InsertSync 就使用单个静态 event 覆盖全部 hazard，而不是只按 multi-buffer slot 派发。
 - **PlanMemory N>2 不复用 Stage1**：N>2 的兄弟 slot 不走 SPEC_LEVEL_1 "ping/pong 相邻摆放"优化，用更多内存。N=2 路径不变。
 - 初版仅支持 `loc=vec` / `loc=mat` local memory。
 - function argument / return 上的 `multi_tile_buf` 不支持（多 buffer 所有权限定在 ptoas 内）。

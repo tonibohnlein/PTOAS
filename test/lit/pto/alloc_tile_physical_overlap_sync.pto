@@ -335,6 +335,99 @@ module attributes {pto.target_arch = "a2a3"} {
     return
   }
 
+  // An unsupported dynamic subview is still contained by its known parent
+  // range. Retaining that range avoids inventing an alias with the disjoint
+  // target at 8192 while remaining conservative about the exact subview.
+  func.func @dynamic_subview_parent_range_disjoint(
+      %index_src: memref<1x8xf32, #pto.address_space<gm>>,
+      %offset: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c4096_i64 = arith.constant 4096 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %one = arith.constant 1.000000e+00 : f32
+
+    %root = pto.pointer_cast(%c4096_i64)
+        : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>
+    %subview = memref.subview %root[0, %offset] [1, 8] [1, 1]
+        : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>
+        to memref<1x8xf32, strided<[16, 1], offset: ?>, #pto.address_space<vec>>
+    %vector_out = pto.pointer_cast(%c16384_i64)
+        : memref<1x8xf32, #pto.address_space<vec>>
+    %target = pto.pointer_cast(%c8192_i64)
+        : memref<1x8xf32, #pto.address_space<vec>>
+
+    pto.tmuls ins(%subview, %one
+        : memref<1x8xf32, strided<[16, 1], offset: ?>, #pto.address_space<vec>>, f32)
+        outs(%vector_out : memref<1x8xf32, #pto.address_space<vec>>)
+    pto.tload ins(%index_src : memref<1x8xf32, #pto.address_space<gm>>)
+              outs(%target : memref<1x8xf32, #pto.address_space<vec>>)
+    return
+  }
+
+  // A static child of an inexact dynamic subview must retain the conservative
+  // parent envelope instead of narrowing from the root base. At runtime
+  // %offset = 8 places %child at the target address 4128.
+  func.func @chained_dynamic_subview_remains_conservative(
+      %index_src: memref<1x8xf32, #pto.address_space<gm>>,
+      %offset: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c4096_i64 = arith.constant 4096 : i64
+    %c4128_i64 = arith.constant 4128 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %one = arith.constant 1.000000e+00 : f32
+
+    %root = pto.pointer_cast(%c4096_i64)
+        : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>
+    %dynamic = memref.subview %root[0, %offset] [1, 8] [1, 1]
+        : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>
+        to memref<1x8xf32, strided<[16, 1], offset: ?>, #pto.address_space<vec>>
+    %child = memref.subview %dynamic[0, 0] [1, 8] [1, 1]
+        : memref<1x8xf32, strided<[16, 1], offset: ?>, #pto.address_space<vec>>
+        to memref<1x8xf32, strided<[16, 1], offset: ?>, #pto.address_space<vec>>
+    %vector_out = pto.pointer_cast(%c16384_i64)
+        : memref<1x8xf32, #pto.address_space<vec>>
+    %target = pto.pointer_cast(%c4128_i64)
+        : memref<1x8xf32, #pto.address_space<vec>>
+
+    pto.tmuls ins(%child, %one
+        : memref<1x8xf32, strided<[16, 1], offset: ?>, #pto.address_space<vec>>, f32)
+        outs(%vector_out : memref<1x8xf32, #pto.address_space<vec>>)
+    pto.tload ins(%index_src : memref<1x8xf32, #pto.address_space<gm>>)
+              outs(%target : memref<1x8xf32, #pto.address_space<vec>>)
+    return
+  }
+
+  // The logical byte count of a padded/strided root is not a physical
+  // envelope. Row 1 starts at 4224, outside the recorded 128 logical bytes, so
+  // an unsupported dynamic subview of this root must remain unknown.
+  func.func @strided_dynamic_subview_unknown_sync(
+      %index_src: memref<1x16xf32, #pto.address_space<gm>>,
+      %row: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c4096_i64 = arith.constant 4096 : i64
+    %c4224_i64 = arith.constant 4224 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %one = arith.constant 1.000000e+00 : f32
+
+    %root = pto.pointer_cast(%c4096_i64)
+        : memref<2x16xf32, strided<[32, 1]>, #pto.address_space<vec>>
+    %subview = memref.subview %root[%row, 0] [1, 16] [1, 1]
+        : memref<2x16xf32, strided<[32, 1]>, #pto.address_space<vec>>
+        to memref<1x16xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>
+    %vector_out = pto.pointer_cast(%c16384_i64)
+        : memref<1x16xf32, #pto.address_space<vec>>
+    %target = pto.pointer_cast(%c4224_i64)
+        : memref<1x16xf32, #pto.address_space<vec>>
+
+    pto.tmuls ins(%subview, %one
+        : memref<1x16xf32, strided<[32, 1], offset: ?>, #pto.address_space<vec>>, f32)
+        outs(%vector_out : memref<1x16xf32, #pto.address_space<vec>>)
+    pto.tload ins(%index_src : memref<1x16xf32, #pto.address_space<gm>>)
+              outs(%target : memref<1x16xf32, #pto.address_space<vec>>)
+    return
+  }
+
   // The dynamic access is a real two-slot buffer, while %segments is two
   // discontiguous pieces of fixed slot 0. Across the loop back-edge, the
   // dynamic access needs per-slot event IDs, but the segmented access is one
@@ -380,6 +473,48 @@ module attributes {pto.target_arch = "a2a3"} {
       pto.tmuls ins(%dynamic, %one
           : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>, f32)
           outs(%slot_out
+            : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>)
+    }
+    return
+  }
+
+  // The V operation has both a lane-compatible dynamic-slot dependency and an
+  // incompatible segmented dependency with the following iteration's TLOAD.
+  // A dynamic event keyed only by %idx would not cover both hazards, so the
+  // combined back-edge must fall back to one static event.
+  func.func @mixed_segmented_backedge_falls_back_to_single_event(
+      %index_src: memref<2x16xf32, #pto.address_space<gm>>,
+      %n: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4096_i64 = arith.constant 4096 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+
+    %slots = pto.pointer_cast(%c4096_i64, %c8192_i64)
+        : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>
+    %wide_slot0 = pto.pointer_cast(%c4096_i64)
+        : memref<2x32xf32, strided<[32, 1]>, #pto.address_space<vec>>
+    %segments = memref.subview %wide_slot0[0, 0] [2, 16] [1, 1]
+        : memref<2x32xf32, strided<[32, 1]>, #pto.address_space<vec>>
+        to memref<2x16xf32, strided<[32, 1]>, #pto.address_space<vec>>
+    %out = pto.pointer_cast(%c16384_i64)
+        : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>
+
+    scf.for %i = %c0 to %n step %c1 {
+      %idx = arith.remui %i, %c2 : index
+      %dynamic = pto.slot_marker %slots[%idx]
+          : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>
+          -> memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>
+      pto.tload ins(%index_src : memref<2x16xf32, #pto.address_space<gm>>)
+                outs(%dynamic
+                  : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>)
+      pto.tadd ins(%segments, %dynamic
+          : memref<2x16xf32, strided<[32, 1]>, #pto.address_space<vec>>,
+            memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>)
+          outs(%out
             : memref<2x16xf32, strided<[16, 1]>, #pto.address_space<vec>>)
     }
     return
@@ -444,6 +579,23 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[SUBVIEW_REINTERPRET_V_TO_MTE2]]);
 // CHECK:      TLOAD(
 
+// CHECK-LABEL: AICORE void dynamic_subview_parent_range_disjoint(
+// CHECK:      TMULS(
+// CHECK-NOT:  set_flag(PIPE_V, PIPE_MTE2
+// CHECK:      TLOAD(
+
+// CHECK-LABEL: AICORE void chained_dynamic_subview_remains_conservative(
+// CHECK:      TMULS(
+// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[CHAINED_SUBVIEW_EVENT:[0-9]+]]);
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[CHAINED_SUBVIEW_EVENT]]);
+// CHECK:      TLOAD(
+
+// CHECK-LABEL: AICORE void strided_dynamic_subview_unknown_sync(
+// CHECK:      TMULS(
+// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[STRIDED_SUBVIEW_EVENT:[0-9]+]]);
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[STRIDED_SUBVIEW_EVENT]]);
+// CHECK:      TLOAD(
+
 // CHECK-LABEL: AICORE void segmented_backedge_uses_single_event(
 // Two events belong to the real dynamic two-slot dependency. The third is the
 // independent single-event dependency for the segmented view.
@@ -461,3 +613,13 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK:      wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID0);
 // CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID1);
 // CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[SEGMENT_EVENT]]);
+
+// CHECK-LABEL: AICORE void mixed_segmented_backedge_falls_back_to_single_event(
+// CHECK:      set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[MIXED_EVENT:[0-9]+]]);
+// CHECK-NOT:  set_flag(PIPE_V, PIPE_MTE2,
+// CHECK:      for (
+// CHECK:      wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[MIXED_EVENT]]);
+// CHECK:      TLOAD(
+// CHECK:      TADD(
+// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[MIXED_EVENT]]);
+// CHECK:      wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[MIXED_EVENT]]);
