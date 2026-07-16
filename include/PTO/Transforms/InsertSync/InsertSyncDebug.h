@@ -6,11 +6,6 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
-
 #ifndef MLIR_DIALECT_PTO_TRANSFORMS_INSERT_SYNC_DEBUG_H
 #define MLIR_DIALECT_PTO_TRANSFORMS_INSERT_SYNC_DEBUG_H
 
@@ -31,6 +26,9 @@ enum class InsertSyncDebugLevel : unsigned {
 /// Runtime-configurable debug verbosity for the InsertSync pipeline.
 unsigned getInsertSyncDebugLevel();
 
+/// Whether a machine-readable InsertSync summary was requested.
+bool isInsertSyncSummaryEnabled();
+
 /// Returns true when InsertSync debug is enabled at or above \p minLevel.
 bool isInsertSyncDebugEnabled(
     InsertSyncDebugLevel minLevel = InsertSyncDebugLevel::Phase);
@@ -48,6 +46,12 @@ void dumpInsertSyncPhase(llvm::StringRef phase, const SyncIRs &syncIR,
                          const SyncOperations &syncOperations,
                          Operation *opForPrinting = nullptr,
                          llvm::raw_ostream &os = llvm::errs());
+
+/// Append one JSON-lines record describing the final InsertSync result for a
+/// function. Returns false when the requested output could not be written.
+bool writeInsertSyncSummary(llvm::StringRef status, const SyncIRs &syncIR,
+                            const SyncOperations &syncOperations,
+                            Operation *opForPrinting);
 
 } // namespace pto
 } // namespace mlir

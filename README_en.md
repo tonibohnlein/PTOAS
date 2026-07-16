@@ -189,15 +189,26 @@ ptoas test/lit/pto/empty_func.pto
 # Run the AutoSyncInsert pass
 ptoas test/lit/pto/empty_func.pto --enable-insert-sync -o outputfile.cpp
 
+# Record final synchronization statistics as one JSON-lines row per function
+ptoas test/lit/pto/empty_func.pto --enable-insert-sync \
+  --pto-insert-sync-summary=sync-summary.jsonl -o outputfile.cpp
+
 # Specify target hardware architecture (A3 / A5)
 ptoas test/lit/pto/empty_func.pto --pto-arch=a5 -o outputfile.cpp
 
-# Specify build level (level3 disables PlanMemory/InsertSync)
+# Specify build level (level3 trusts explicit addresses and skips PlanMemory)
 ptoas test/lit/pto/empty_func.pto --pto-level=level3 -o outputfile.cpp
 
 # Print the current ptoas release version
 ptoas --version
 ```
+
+The synchronization summary is emitted after event-id allocation. It reports
+active synchronization groups and operations, pipe-pair counts, loop-carried
+and multi-event groups, PIPE_ALL fallbacks, compensation operations, and event
+identifier usage (requested slots and distinct IDs per pipe pair). It is
+intended for controlled memory-placement experiments; it does not estimate
+runtime cycles.
 
 ### 4.2 Python API
 
