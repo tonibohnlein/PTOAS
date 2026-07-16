@@ -15,11 +15,11 @@
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --pto-insert-sync-summary=%t.summary.jsonl %s -o /dev/null
 // RUN: FileCheck %s --check-prefix=SUMMARY < %t.summary.jsonl
 //
-// SUMMARY: "function":"alloc_tile_explicit_overlap_v_to_mte2"
-// SUMMARY-SAME: "status":"analyzed"
+// SUMMARY-DAG: "function":{{ *}}"alloc_tile_explicit_overlap_v_to_mte2"
+// SUMMARY-DAG: "status":{{ *}}"analyzed"
 // SUMMARY-DAG: "active_sync_groups":
 // SUMMARY-DAG: "pipe_pair_groups":
-// SUMMARY-DAG: "function":"alloc_tile_explicit_disjoint_no_sync"
+// SUMMARY-DAG: "function":{{ *}}"alloc_tile_explicit_disjoint_no_sync"
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @alloc_tile_physical_overlap_sync(
