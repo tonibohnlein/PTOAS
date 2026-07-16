@@ -151,6 +151,7 @@ static void markAddressRangeUnknown(BaseMemInfo &info) {
   info.allocateSize = 0;
   info.addressListKind = AddressListKind::Segments;
   info.hasAppliedReinterpret = false;
+  info.hasAppliedSubviewOffset = false;
   if (info.addressProvenance == AddressProvenance::KnownAbsolute)
     info.addressProvenance = AddressProvenance::UnknownAbsolute;
 }
@@ -874,6 +875,20 @@ void PTOIRTranslator::UpdateConservativeAliasBufferInfo(Value result,
   UpdateAliasBufferInfo(result, source);
 }
 
+void PTOIRTranslator::UpdateConservativeSubviewAliasBufferInfo(Value result,
+                                                               Value source) {
+  if (!result || !source) return;
+  if (!buffer2MemInfoMap_.contains(source)) return;
+
+  auto &resultMemInfoVec = buffer2MemInfoMap_[result];
+  for (auto &parentInfo : buffer2MemInfoMap_[source]) {
+    auto newInfo = parentInfo->clone(result);
+    markAddressRangeUnknown(*newInfo);
+    newInfo->hasAppliedSubviewOffset = true;
+    resultMemInfoVec.emplace_back(std::move(newInfo));
+  }
+}
+
 LogicalResult PTOIRTranslator::UpdateIntToPtrOpMemInfo(pto::IntToPtrOp op) {
   Value result = op.getResult();
   if (!result)
@@ -899,6 +914,7 @@ LogicalResult PTOIRTranslator::UpdateIntToPtrOpMemInfo(pto::IntToPtrOp op) {
       result, result, space, SmallVector<uint64_t>{0},
       /*allocateSize=*/0, AddressProvenance::RootRelative,
       AddressListKind::Segments, /*hasAppliedReinterpret=*/false,
+      /*hasAppliedSubviewOffset=*/false,
       /*aliasesUnknownRange=*/true);
   buffer2MemInfoMap_[result].emplace_back(newMemInfo->clone());
   return success();
@@ -931,7 +947,8 @@ void PTOIRTranslator::UpdateSlotSelectedAliasBufferInfo(Value result,
     // two const-slot uses pick different slots. For a dynamic slot index,
     // keep all addresses -- the runtime SSA could resolve to any slot, so
     // sync must conservatively treat the use as touching all of them.
-    if (isConstSlot && constSlotIdx >= 0 &&
+    if (newInfo->addressListKind == AddressListKind::AlternativeSlots &&
+        isConstSlot && constSlotIdx >= 0 &&
         constSlotIdx < static_cast<int64_t>(newInfo->baseAddresses.size()) &&
         newInfo->baseAddresses.size() > 1) {
       uint64_t pickAddr =
@@ -952,7 +969,7 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
 
   auto sourceType = dyn_cast<pto::TileBufType>(source.getType());
   if (!sourceType) {
-    UpdateConservativeAliasBufferInfo(result, source);
+    UpdateConservativeSubviewAliasBufferInfo(result, source);
     return;
   }
 
@@ -962,7 +979,7 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
                      : getPtoSubViewBaseAddresses(
                            op, sourceType, static_cast<int64_t>(elemBytes));
   if (!subViewAddresses || subViewAddresses->empty()) {
-    UpdateConservativeAliasBufferInfo(result, source);
+    UpdateConservativeSubviewAliasBufferInfo(result, source);
     return;
   }
 
@@ -978,7 +995,7 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
   for (auto &parentInfo : buffer2MemInfoMap_[source]) {
     if (!parentInfo || parentInfo->baseAddresses.size() != 1 ||
         parentInfo->allocateSize == 0) {
-      UpdateConservativeAliasBufferInfo(result, source);
+      UpdateConservativeSubviewAliasBufferInfo(result, source);
       return;
     }
   }
@@ -999,12 +1016,14 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
       addresses.push_back(*address);
     }
     if (addresses.empty()) {
+      newInfo->hasAppliedSubviewOffset = true;
       resultMemInfoVec.emplace_back(std::move(newInfo));
       continue;
     }
     newInfo->baseAddresses = std::move(addresses);
     newInfo->allocateSize = segmentSize;
     newInfo->addressListKind = AddressListKind::Segments;
+    newInfo->hasAppliedSubviewOffset = true;
     resultMemInfoVec.emplace_back(std::move(newInfo));
   }
 }

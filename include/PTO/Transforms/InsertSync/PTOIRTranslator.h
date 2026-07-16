@@ -77,6 +77,7 @@ private:
   // 处理 View/Alias (MakeTensorView, Subview, Mov)
   void UpdateAliasBufferInfo(Value result, Value source);
   void UpdateConservativeAliasBufferInfo(Value result, Value source);
+  void UpdateConservativeSubviewAliasBufferInfo(Value result, Value source);
   void UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op);
   LogicalResult UpdateIntToPtrOpMemInfo(pto::IntToPtrOp op);
   void UpdateMultiTileGetAliasBufferInfo(pto::MultiTileGetOp op);

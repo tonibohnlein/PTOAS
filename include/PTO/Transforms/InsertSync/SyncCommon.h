@@ -108,12 +108,14 @@ struct BaseMemInfo {
       AddressProvenance addressProvenance = AddressProvenance::RootRelative,
       AddressListKind addressListKind = AddressListKind::Segments,
       bool hasAppliedReinterpret = false,
+      bool hasAppliedSubviewOffset = false,
       bool aliasesUnknownRange = false)
       : baseBuffer(baseBuffer), rootBuffer(rootBuffer), scope(scope),
         baseAddresses(std::move(baseAddresses)), allocateSize(allocateSize),
         addressProvenance(addressProvenance),
         addressListKind(addressListKind),
         hasAppliedReinterpret(hasAppliedReinterpret),
+        hasAppliedSubviewOffset(hasAppliedSubviewOffset),
         aliasesUnknownRange(aliasesUnknownRange) {}
  
   /// baseBuffer: 当前操作直接使用的 Buffer (可能是 View 或 Alias)
@@ -128,6 +130,8 @@ struct BaseMemInfo {
   AddressListKind addressListKind;
   /// True once a reinterpret_cast descriptor offset has been modeled.
   bool hasAppliedReinterpret;
+  /// True once a subview offset has adjusted the physical address list.
+  bool hasAppliedSubviewOffset;
   // Address-preserving provenance can be lost when a pointer is round-tripped
   // through integer IR. When set, this memory object aliases any range in the
   // same address space.
@@ -163,14 +167,14 @@ struct BaseMemInfo {
     return std::make_unique<BaseMemInfo>(
         baseBuffer, rootBuffer, scope, baseAddresses, allocateSize,
         addressProvenance, addressListKind, hasAppliedReinterpret,
-        aliasesUnknownRange);
+        hasAppliedSubviewOffset, aliasesUnknownRange);
   }
 
   std::unique_ptr<BaseMemInfo> clone(Value cloneBaseBuffer) const {
     return std::make_unique<BaseMemInfo>(
         cloneBaseBuffer, rootBuffer, scope, baseAddresses, allocateSize,
         addressProvenance, addressListKind, hasAppliedReinterpret,
-        aliasesUnknownRange);
+        hasAppliedSubviewOffset, aliasesUnknownRange);
   }
 };
  
