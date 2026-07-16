@@ -147,6 +147,130 @@ module attributes {pto.target_arch = "a2a3"} {
               outs(%index_row : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return
   }
+
+  // A dynamic slot selection conservatively tracks every physical address. A
+  // downstream reinterpret_cast offset applies to every possible slot, not
+  // just slot 0. Here slot 1 moves from 8192 to 8704, where it overlaps the
+  // following MTE2 write.
+  func.func @multi_slot_alias_offset_sync(
+      %index_src: memref<1x8xf32, #pto.address_space<gm>>,
+      %slot: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c4096_i64 = arith.constant 4096 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %c8704_i64 = arith.constant 8704 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %one = arith.constant 1.000000e+00 : f32
+
+    %slots = pto.pointer_cast(%c4096_i64, %c8192_i64)
+        : memref<1x8xf32, #pto.address_space<vec>>
+    %selected = pto.slot_marker %slots[%slot]
+        : memref<1x8xf32, #pto.address_space<vec>>
+        -> memref<1x8xf32, #pto.address_space<vec>>
+    %shifted = memref.reinterpret_cast %selected to offset: [128],
+        sizes: [1, 8], strides: [8, 1]
+        : memref<1x8xf32, #pto.address_space<vec>>
+        to memref<1x8xf32, strided<[8, 1], offset: ?>, #pto.address_space<vec>>
+    %vector_out = pto.pointer_cast(%c16384_i64)
+        : memref<1x8xf32, #pto.address_space<vec>>
+    %target = pto.pointer_cast(%c8704_i64)
+        : memref<1x8xf32, #pto.address_space<vec>>
+
+    pto.tmuls ins(%shifted, %one
+        : memref<1x8xf32, strided<[8, 1], offset: ?>, #pto.address_space<vec>>, f32)
+        outs(%vector_out : memref<1x8xf32, #pto.address_space<vec>>)
+    pto.tload ins(%index_src : memref<1x8xf32, #pto.address_space<gm>>)
+              outs(%target : memref<1x8xf32, #pto.address_space<vec>>)
+    return
+  }
+
+  // A subview uses one address entry per discontiguous row segment. A
+  // reinterpret_cast changes the logical range from [0, 32) + [64, 96) to
+  // [32, 96); treating both entries like alternative slots would instead
+  // invent [32, 64) + [96, 128) and miss the write at address 64.
+  func.func @segmented_alias_reinterpret_sync(
+      %index_src: memref<1x8xf32, #pto.address_space<gm>>,
+      %n: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c64_i64 = arith.constant 64 : i64
+    %c128_i64 = arith.constant 128 : i64
+    %one = arith.constant 1.000000e+00 : f32
+
+    %root = pto.pointer_cast(%c0_i64)
+        : memref<2x16xf32, #pto.address_space<vec>>
+    %segments = memref.subview %root[0, 0] [2, 8] [1, 1]
+        : memref<2x16xf32, #pto.address_space<vec>>
+        to memref<2x8xf32, strided<[16, 1]>, #pto.address_space<vec>>
+    %vector_out = pto.pointer_cast(%c128_i64)
+        : memref<2x8xf32, #pto.address_space<vec>>
+    %target = pto.pointer_cast(%c64_i64)
+        : memref<1x8xf32, #pto.address_space<vec>>
+
+    scf.for %i = %c0 to %n step %c1
+        iter_args(%iter = %segments)
+        -> (memref<2x8xf32, strided<[16, 1]>, #pto.address_space<vec>>) {
+      %reinterpreted = memref.reinterpret_cast %iter to offset: [8],
+          sizes: [2, 8], strides: [8, 1]
+          : memref<2x8xf32, strided<[16, 1]>, #pto.address_space<vec>>
+          to memref<2x8xf32, strided<[8, 1], offset: ?>, #pto.address_space<vec>>
+      pto.tmuls ins(%reinterpreted, %one
+          : memref<2x8xf32, strided<[8, 1], offset: ?>, #pto.address_space<vec>>, f32)
+          outs(%vector_out : memref<2x8xf32, #pto.address_space<vec>>)
+      pto.tload ins(%index_src : memref<1x8xf32, #pto.address_space<gm>>)
+                outs(%target : memref<1x8xf32, #pto.address_space<vec>>)
+      scf.yield %iter
+          : memref<2x8xf32, strided<[16, 1]>, #pto.address_space<vec>>
+    }
+    return
+  }
+
+  // reinterpret_cast offsets are relative to the underlying allocation, not
+  // the source descriptor's current offset. The final cast resets either
+  // selected offset back to 0, so slot 1 again overlaps the write at 8192.
+  func.func @chained_reinterpret_resets_slot_offset_sync(
+      %index_src: memref<1x8xf32, #pto.address_space<gm>>,
+      %slot: index,
+      %choose: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c4096_i64 = arith.constant 4096 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %one = arith.constant 1.000000e+00 : f32
+
+    %slots = pto.pointer_cast(%c4096_i64, %c8192_i64)
+        : memref<1x8xf32, #pto.address_space<vec>>
+    %selected = pto.slot_marker %slots[%slot]
+        : memref<1x8xf32, #pto.address_space<vec>>
+        -> memref<1x8xf32, #pto.address_space<vec>>
+    %shifted128 = memref.reinterpret_cast %selected to offset: [128],
+        sizes: [1, 8], strides: [8, 1]
+        : memref<1x8xf32, #pto.address_space<vec>>
+        to memref<1x8xf32, strided<[8, 1], offset: ?>, #pto.address_space<vec>>
+    %shifted256 = memref.reinterpret_cast %selected to offset: [256],
+        sizes: [1, 8], strides: [8, 1]
+        : memref<1x8xf32, #pto.address_space<vec>>
+        to memref<1x8xf32, strided<[8, 1], offset: ?>, #pto.address_space<vec>>
+    %descriptor = arith.select %choose, %shifted128, %shifted256
+        : memref<1x8xf32, strided<[8, 1], offset: ?>, #pto.address_space<vec>>
+    %reset = memref.reinterpret_cast %descriptor to offset: [0],
+        sizes: [1, 8], strides: [16, 1]
+        : memref<1x8xf32, strided<[8, 1], offset: ?>, #pto.address_space<vec>>
+        to memref<1x8xf32, strided<[16, 1], offset: ?>, #pto.address_space<vec>>
+    %vector_out = pto.pointer_cast(%c16384_i64)
+        : memref<1x8xf32, #pto.address_space<vec>>
+    %target = pto.pointer_cast(%c8192_i64)
+        : memref<1x8xf32, #pto.address_space<vec>>
+
+    pto.tmuls ins(%reset, %one
+        : memref<1x8xf32, strided<[16, 1], offset: ?>, #pto.address_space<vec>>, f32)
+        outs(%vector_out : memref<1x8xf32, #pto.address_space<vec>>)
+    pto.tload ins(%index_src : memref<1x8xf32, #pto.address_space<gm>>)
+              outs(%target : memref<1x8xf32, #pto.address_space<vec>>)
+    return
+  }
 }
 
 // CHECK-LABEL: AICORE void alloc_tile_physical_overlap_sync(
@@ -175,4 +299,22 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK:      TMULS(
 // CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[UNKNOWN_V_TO_MTE2:[0-9]+]]);
 // CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[UNKNOWN_V_TO_MTE2]]);
+// CHECK:      TLOAD(
+
+// CHECK-LABEL: AICORE void multi_slot_alias_offset_sync(
+// CHECK:      TMULS(
+// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[SLOT_OFFSET_V_TO_MTE2:[0-9]+]]);
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[SLOT_OFFSET_V_TO_MTE2]]);
+// CHECK:      TLOAD(
+
+// CHECK-LABEL: AICORE void segmented_alias_reinterpret_sync(
+// CHECK:      TMULS(
+// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[SEGMENT_V_TO_MTE2:[0-9]+]]);
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[SEGMENT_V_TO_MTE2]]);
+// CHECK:      TLOAD(
+
+// CHECK-LABEL: AICORE void chained_reinterpret_resets_slot_offset_sync(
+// CHECK:      TMULS(
+// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[CHAINED_V_TO_MTE2:[0-9]+]]);
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[CHAINED_V_TO_MTE2]]);
 // CHECK:      TLOAD(
