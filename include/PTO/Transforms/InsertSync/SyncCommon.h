@@ -80,6 +80,16 @@ enum class TCoreType {
   CUBE_OR_VECTOR,
   CUBE_AND_VECTOR
 };
+
+/// Describes how BaseMemInfo::baseAddresses must be interpreted.
+enum class AddressProvenance {
+  /// Addresses are byte offsets relative to rootBuffer.
+  RootRelative,
+  /// Addresses are known absolute byte addresses in the local address space.
+  KnownAbsolute,
+  /// The buffer has an absolute address, but its value is dynamic or unknown.
+  UnknownAbsolute
+};
  
 /// Meminfo of the target buffer
 /// 用于追踪 Buffer 的别名和根节点
@@ -87,11 +97,11 @@ struct BaseMemInfo {
   BaseMemInfo(
       Value baseBuffer, Value rootBuffer, pto::AddressSpace scope,
       SmallVector<uint64_t> baseAddresses, uint64_t allocateSize,
-      bool hasKnownPhysicalAddresses = false,
+      AddressProvenance addressProvenance = AddressProvenance::RootRelative,
       bool aliasesUnknownRange = false)
       : baseBuffer(baseBuffer), rootBuffer(rootBuffer), scope(scope),
         baseAddresses(std::move(baseAddresses)), allocateSize(allocateSize),
-        hasKnownPhysicalAddresses(hasKnownPhysicalAddresses),
+        addressProvenance(addressProvenance),
         aliasesUnknownRange(aliasesUnknownRange) {}
  
   /// baseBuffer: 当前操作直接使用的 Buffer (可能是 View 或 Alias)
@@ -102,9 +112,7 @@ struct BaseMemInfo {
   pto::AddressSpace scope;
   SmallVector<uint64_t> baseAddresses; // 用于 Offset 分析
   uint64_t allocateSize;
-  // PlanMemory materializes static local allocations as physical addresses.
-  // This distinguishes their physical addresses from root-relative offsets.
-  bool hasKnownPhysicalAddresses;
+  AddressProvenance addressProvenance;
   // Address-preserving provenance can be lost when a pointer is round-tripped
   // through integer IR. When set, this memory object aliases any range in the
   // same address space.
@@ -123,7 +131,7 @@ struct BaseMemInfo {
     if (!areVectorEqual(baseAddresses, other.baseAddresses)) return false;
     if (rootBuffer != other.rootBuffer) return false;
     if (scope != other.scope) return false;
-    if (hasKnownPhysicalAddresses != other.hasKnownPhysicalAddresses)
+    if (addressProvenance != other.addressProvenance)
       return false;
     if (aliasesUnknownRange != other.aliasesUnknownRange)
       return false;
@@ -137,13 +145,13 @@ struct BaseMemInfo {
   std::unique_ptr<BaseMemInfo> clone() const {
     return std::make_unique<BaseMemInfo>(
         baseBuffer, rootBuffer, scope, baseAddresses, allocateSize,
-        hasKnownPhysicalAddresses, aliasesUnknownRange);
+        addressProvenance, aliasesUnknownRange);
   }
 
   std::unique_ptr<BaseMemInfo> clone(Value cloneBaseBuffer) const {
     return std::make_unique<BaseMemInfo>(
         cloneBaseBuffer, rootBuffer, scope, baseAddresses, allocateSize,
-        hasKnownPhysicalAddresses, aliasesUnknownRange);
+        addressProvenance, aliasesUnknownRange);
   }
 };
  

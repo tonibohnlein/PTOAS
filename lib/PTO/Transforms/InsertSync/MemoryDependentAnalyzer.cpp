@@ -15,6 +15,8 @@
 #include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "llvm/Support/Debug.h"
+
+#include <limits>
  
 #define DEBUG_TYPE "pto-inject-sync"
  
@@ -202,11 +204,22 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
   }
  
   // 2. Local Memory (UB/L1)
-  // PTOPlanMemory writes physical addresses back to allocation roots. Once an
-  // async MTE3 store has consumed the source SSA, a later allocation can reuse
-  // the same physical range with a different alloc_tile root. Compare those
-  // ranges directly when both sides carry known physical local addresses.
-  if (a->hasKnownPhysicalAddresses && b->hasKnownPhysicalAddresses) {
+  // An unknown absolute local address can overlap any other allocation in the
+  // same address space. Keep this case conservative instead of falling back to
+  // distinct-root identity and silently declaring no-alias.
+  if (a->addressProvenance == AddressProvenance::UnknownAbsolute ||
+      b->addressProvenance == AddressProvenance::UnknownAbsolute) {
+    if (isTraceEnabled())
+      llvm::errs() << "    -> Unknown absolute local address. Conservatively "
+                      "aliasing.\n";
+    return true;
+  }
+
+  // PTOPlanMemory and level-3 explicit allocations can produce distinct SSA
+  // roots for the same physical bytes. Compare known absolute ranges directly
+  // across roots.
+  if (a->addressProvenance == AddressProvenance::KnownAbsolute &&
+      b->addressProvenance == AddressProvenance::KnownAbsolute) {
     if (isTraceEnabled())
       llvm::errs() << "    -> Comparing known physical local ranges.\n";
     if (a->baseAddresses.empty() || b->baseAddresses.empty())
@@ -299,6 +312,13 @@ bool MemoryDependentAnalyzer::isBufferOverlap(const BaseMemInfo *a,
                                               int bIndex) {
   uint64_t aStart = a->baseAddresses[aIndex];
   uint64_t bStart = b->baseAddresses[bIndex];
+
+  // Invalid/overflowing half-open ranges are not safe to classify as disjoint.
+  // Conservatively report overlap if either end cannot be represented.
+  if (a->allocateSize > std::numeric_limits<uint64_t>::max() - aStart ||
+      b->allocateSize > std::numeric_limits<uint64_t>::max() - bStart)
+    return true;
+
   uint64_t aEnd = aStart + a->allocateSize;
   uint64_t bEnd = bStart + b->allocateSize;
  
