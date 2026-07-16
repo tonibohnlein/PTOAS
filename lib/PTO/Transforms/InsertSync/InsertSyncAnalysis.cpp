@@ -413,26 +413,28 @@ static bool isForwardDepDroppableBySlotAffine(const BaseMemInfo *a,
   Value slotB = findMultiTileSlotExpr(b->baseBuffer);
   if (!slotA || !slotB)
     return false;
-  size_t aN = a->baseAddresses.size();
-  size_t bN = b->baseAddresses.size();
-  size_t n = std::max(aN, bN);
-  if (n < 2)
+  if (a->baseAddresses.size() < 2 ||
+      a->baseAddresses.size() != b->baseAddresses.size())
     return false;
-  return compareSlotSSA(slotA, slotB, static_cast<uint32_t>(n)) ==
+  return compareSlotSSA(slotA, slotB,
+                        static_cast<uint32_t>(a->baseAddresses.size())) ==
          SlotRelation::kDisjoint;
 }
 
-static size_t getAlternativeSlotPairCount(const BaseMemInfo *a,
-                                          const BaseMemInfo *b) {
+static std::optional<size_t>
+getAlternativeSlotPairCount(const BaseMemInfo *a, const BaseMemInfo *b) {
   if (!a || !b)
-    return 1;
+    return std::nullopt;
   if (a->addressListKind != AddressListKind::AlternativeSlots ||
       b->addressListKind != AddressListKind::AlternativeSlots)
-    return 1;
+    return std::nullopt;
   if (!findMultiTileSlotExpr(a->baseBuffer) ||
       !findMultiTileSlotExpr(b->baseBuffer))
-    return 1;
-  return std::max(a->baseAddresses.size(), b->baseAddresses.size());
+    return std::nullopt;
+  if (a->baseAddresses.size() < 2 ||
+      a->baseAddresses.size() != b->baseAddresses.size())
+    return std::nullopt;
+  return a->baseAddresses.size();
 }
 
 void InsertSyncAnalysis::MemAnalyze(
@@ -601,7 +603,7 @@ void InsertSyncAnalysis::InsertSyncOperation(
         Value producerSlot;
         Value consumerSlot;
         for (auto &pair : depBaseMemInfosVec) {
-          if (getAlternativeSlotPairCount(pair.first, pair.second) <= 1)
+          if (!getAlternativeSlotPairCount(pair.first, pair.second))
             continue;
           if (pair.second && pair.second->baseBuffer)
             producerSlot = findMultiTileSlotExpr(pair.second->baseBuffer);
@@ -780,10 +782,11 @@ SmallVector<Value> InsertSyncAnalysis::GetMemInfoBuffers(
 
 int InsertSyncAnalysis::GetEventIdNum(
     const DepBaseMemInfoPairVec &depBaseMemInfosVec) {
-  // A back-edge dependency uses N dynamic event IDs only when both accesses
-  // are alternative-slot views with recoverable slot SSA expressions.
-  // Multiple segmented addresses are one logical view, not N event lanes.
-  int eventIdNum = 1;
+  // A back-edge dependency uses N dynamic event IDs only when every local
+  // dependency pair contains compatible alternative-slot views with
+  // recoverable slot SSA expressions. A segmented or otherwise incompatible
+  // pair forces one static event so synchronization covers every hazard.
+  std::optional<int> eventIdNum;
   for (const auto &pair : depBaseMemInfosVec) {
     bool isLocalA =
         pair.first && (pair.first->scope == pto::AddressSpace::MAT ||
@@ -793,20 +796,20 @@ int InsertSyncAnalysis::GetEventIdNum(
                         pair.second->scope == pto::AddressSpace::VEC);
     if (!isLocalA && !isLocalB)
       continue;
-    int pairN = static_cast<int>(
-        getAlternativeSlotPairCount(pair.first, pair.second));
-    if (pairN <= 1)
-      continue;
-    if (eventIdNum == 1) {
+    auto pairCount = getAlternativeSlotPairCount(pair.first, pair.second);
+    if (!pairCount)
+      return 1;
+    int pairN = static_cast<int>(*pairCount);
+    if (!eventIdNum) {
       eventIdNum = pairN;
-    } else if (eventIdNum != pairN) {
+    } else if (*eventIdNum != pairN) {
       // Multiple dep pairs disagreeing on N: fall back to single event id
       // for safety. With more work this could be relaxed by per-pair
       // multi-buffer reasoning.
       return 1;
     }
   }
-  return eventIdNum;
+  return eventIdNum.value_or(1);
 }
 
 bool InsertSyncAnalysis::IsGMHazard(

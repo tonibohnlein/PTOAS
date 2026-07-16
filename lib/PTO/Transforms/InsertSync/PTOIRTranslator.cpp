@@ -146,12 +146,31 @@ static std::optional<uint64_t> addByteOffset(uint64_t base, uint64_t offset) {
   return base + offset;
 }
 
+static bool canRetainSubviewParentRange(Value source,
+                                        const BaseMemInfo &parentInfo) {
+  if (parentInfo.baseAddresses.empty() || parentInfo.allocateSize == 0 ||
+      parentInfo.addressProvenance == AddressProvenance::UnknownAbsolute)
+    return false;
+  if (parentInfo.hasInexactSubviewRange)
+    return true;
+  if (parentInfo.hasAppliedSubviewOffset &&
+      parentInfo.addressListKind == AddressListKind::Segments)
+    return true;
+
+  auto sourceType = dyn_cast<pto::TileBufType>(source.getType());
+  if (!sourceType)
+    return false;
+  uint64_t sourceBytes = getTileBufferFootprintBytes(sourceType);
+  return sourceBytes != 0 && parentInfo.allocateSize >= sourceBytes;
+}
+
 static void markAddressRangeUnknown(BaseMemInfo &info) {
   info.baseAddresses.clear();
   info.allocateSize = 0;
   info.addressListKind = AddressListKind::Segments;
   info.hasAppliedReinterpret = false;
   info.hasAppliedSubviewOffset = false;
+  info.hasInexactSubviewRange = false;
   if (info.addressProvenance == AddressProvenance::KnownAbsolute)
     info.addressProvenance = AddressProvenance::UnknownAbsolute;
 }
@@ -883,8 +902,10 @@ void PTOIRTranslator::UpdateConservativeSubviewAliasBufferInfo(Value result,
   auto &resultMemInfoVec = buffer2MemInfoMap_[result];
   for (auto &parentInfo : buffer2MemInfoMap_[source]) {
     auto newInfo = parentInfo->clone(result);
-    markAddressRangeUnknown(*newInfo);
+    if (!canRetainSubviewParentRange(source, *parentInfo))
+      markAddressRangeUnknown(*newInfo);
     newInfo->hasAppliedSubviewOffset = true;
+    newInfo->hasInexactSubviewRange = true;
     resultMemInfoVec.emplace_back(std::move(newInfo));
   }
 }
@@ -915,6 +936,7 @@ LogicalResult PTOIRTranslator::UpdateIntToPtrOpMemInfo(pto::IntToPtrOp op) {
       /*allocateSize=*/0, AddressProvenance::RootRelative,
       AddressListKind::Segments, /*hasAppliedReinterpret=*/false,
       /*hasAppliedSubviewOffset=*/false,
+      /*hasInexactSubviewRange=*/false,
       /*aliasesUnknownRange=*/true);
   buffer2MemInfoMap_[result].emplace_back(newMemInfo->clone());
   return success();
@@ -972,6 +994,12 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
     UpdateConservativeSubviewAliasBufferInfo(result, source);
     return;
   }
+  if (llvm::any_of(buffer2MemInfoMap_[source], [](const auto &parentInfo) {
+        return !parentInfo || parentInfo->hasInexactSubviewRange;
+      })) {
+    UpdateConservativeSubviewAliasBufferInfo(result, source);
+    return;
+  }
 
   unsigned elemBytes = pto::getPTOStorageElemByteSize(sourceType.getElementType());
   auto subViewAddresses =
@@ -1017,6 +1045,7 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
     }
     if (addresses.empty()) {
       newInfo->hasAppliedSubviewOffset = true;
+      newInfo->hasInexactSubviewRange = true;
       resultMemInfoVec.emplace_back(std::move(newInfo));
       continue;
     }
@@ -1024,6 +1053,7 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
     newInfo->allocateSize = segmentSize;
     newInfo->addressListKind = AddressListKind::Segments;
     newInfo->hasAppliedSubviewOffset = true;
+    newInfo->hasInexactSubviewRange = false;
     resultMemInfoVec.emplace_back(std::move(newInfo));
   }
 }
