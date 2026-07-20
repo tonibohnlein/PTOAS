@@ -42,15 +42,24 @@ using MemoryEffectVector =
     SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>,
                 kMemoryEffectInlineCapacity>;
 
+static std::optional<uint64_t> checkedMultiply(uint64_t lhs, uint64_t rhs) {
+  if (lhs != 0 && rhs > std::numeric_limits<uint64_t>::max() / lhs)
+    return std::nullopt;
+  return lhs * rhs;
+}
+
 static uint64_t getStaticBufferSizeInBytes(ArrayRef<int64_t> shape,
                                            Type elementType) {
   uint64_t size = pto::getPTOStorageElemByteSize(elementType);
   if (size == 0)
     return 0;
   for (int64_t dim : shape) {
-    if (dim == ShapedType::kDynamic)
+    if (dim == ShapedType::kDynamic || dim < 0)
       return 0;
-    size *= static_cast<uint64_t>(dim);
+    auto next = checkedMultiply(size, static_cast<uint64_t>(dim));
+    if (!next)
+      return 0;
+    size = *next;
   }
   return size;
 }
@@ -73,7 +82,14 @@ static uint64_t getTileBufferFootprintBytes(pto::TileBufType type) {
   uint64_t minor = static_cast<uint64_t>(rowMajor ? shape[1] : shape[0]);
   if (major == 0 || minor == 0)
     return 0;
-  return ((major - 1) * (minor + 1) + minor) * elemBytes;
+  if (minor == std::numeric_limits<uint64_t>::max())
+    return 0;
+  auto prefixElements = checkedMultiply(major - 1, minor + 1);
+  if (!prefixElements ||
+      *prefixElements > std::numeric_limits<uint64_t>::max() - minor)
+    return 0;
+  auto bytes = checkedMultiply(*prefixElements + minor, elemBytes);
+  return bytes.value_or(0);
 }
 
 static pto::AddressSpace getTileAddressSpace(pto::TileBufType type) {
@@ -517,13 +533,23 @@ PTOIRTranslator::UpdateAllocMultiTileOpMemInfo(pto::AllocMultiTileOp op) {
           pto::kPtoMultiBufferAddrsAttrName)) {
     if (planned.size() != multiType.getCount())
       return op.emitError("planned address count does not match slot count");
-    for (int64_t address : planned.asArrayRef())
+    for (int64_t address : planned.asArrayRef()) {
+      if (address < 0)
+        return op.emitError("planned slot address must be non-negative");
       addresses.push_back(static_cast<uint64_t>(address));
+    }
     hasKnownAddresses = true;
   } else if (Value base = op.getAddr()) {
     if (std::optional<uint64_t> knownBase = getKnownPhysicalAddress(base)) {
-      for (uint32_t slot = 0; slot < multiType.getCount(); ++slot)
-        addresses.push_back(*knownBase + slot * slotBytes);
+      for (uint32_t slot = 0; slot < multiType.getCount(); ++slot) {
+        auto slotOffset =
+            checkedMultiply(static_cast<uint64_t>(slot), slotBytes);
+        auto address =
+            slotOffset ? addByteOffset(*knownBase, *slotOffset) : std::nullopt;
+        if (!address)
+          return op.emitError("physical slot address overflows uint64");
+        addresses.push_back(*address);
+      }
       hasKnownAddresses = true;
     }
   }

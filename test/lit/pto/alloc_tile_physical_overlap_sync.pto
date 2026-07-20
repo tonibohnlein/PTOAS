@@ -49,8 +49,8 @@ module attributes {pto.target_arch = "a2a3"} {
   // at [4608,4640). The distinct alloc_tile roots must still produce a
   // PIPE_V -> PIPE_MTE2 WAR dependency.
   func.func @alloc_tile_explicit_overlap_v_to_mte2(
-      %assembled_src: memref<32x32xf32, #pto.address_space<gm>>,
-      %index_src: memref<1x8xf32, #pto.address_space<gm>>)
+      %assembled_src: !pto.partition_tensor_view<32x32xf32>,
+      %index_src: !pto.partition_tensor_view<1x8xf32>)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c4096_i64 = arith.constant 4096 : i64
     %c4608_i64 = arith.constant 4608 : i64
@@ -64,18 +64,18 @@ module attributes {pto.target_arch = "a2a3"} {
     %index_row = pto.alloc_tile addr = %c4608_i64 :
       !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 
-    pto.tload ins(%assembled_src : memref<32x32xf32, #pto.address_space<gm>>)
+    pto.tload ins(%assembled_src : !pto.partition_tensor_view<32x32xf32>)
               outs(%assembled : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     pto.tmuls ins(%assembled, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
               outs(%vector_out : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
-    pto.tload ins(%index_src : memref<1x8xf32, #pto.address_space<gm>>)
+    pto.tload ins(%index_src : !pto.partition_tensor_view<1x8xf32>)
               outs(%index_row : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return
   }
 
   func.func @alloc_tile_explicit_disjoint_no_sync(
-      %assembled_src: memref<32x32xf32, #pto.address_space<gm>>,
-      %index_src: memref<1x8xf32, #pto.address_space<gm>>)
+      %assembled_src: !pto.partition_tensor_view<32x32xf32>,
+      %index_src: !pto.partition_tensor_view<1x8xf32>)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c4096_i64 = arith.constant 4096 : i64
     %c8192_i64 = arith.constant 8192 : i64
@@ -89,18 +89,18 @@ module attributes {pto.target_arch = "a2a3"} {
     %index_row = pto.alloc_tile addr = %c16384_i64 :
       !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 
-    pto.tload ins(%assembled_src : memref<32x32xf32, #pto.address_space<gm>>)
+    pto.tload ins(%assembled_src : !pto.partition_tensor_view<32x32xf32>)
               outs(%assembled : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     pto.tmuls ins(%assembled, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
               outs(%vector_out : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
-    pto.tload ins(%index_src : memref<1x8xf32, #pto.address_space<gm>>)
+    pto.tload ins(%index_src : !pto.partition_tensor_view<1x8xf32>)
               outs(%index_row : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return
   }
 
   func.func @alloc_tile_explicit_boundary_no_sync(
-      %assembled_src: memref<32x32xf32, #pto.address_space<gm>>,
-      %index_src: memref<1x8xf32, #pto.address_space<gm>>)
+      %assembled_src: !pto.partition_tensor_view<32x32xf32>,
+      %index_src: !pto.partition_tensor_view<1x8xf32>)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c4096_i64 = arith.constant 4096 : i64
     %c8192_i64 = arith.constant 8192 : i64
@@ -114,18 +114,18 @@ module attributes {pto.target_arch = "a2a3"} {
     %index_row = pto.alloc_tile addr = %c8192_i64 :
       !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 
-    pto.tload ins(%assembled_src : memref<32x32xf32, #pto.address_space<gm>>)
+    pto.tload ins(%assembled_src : !pto.partition_tensor_view<32x32xf32>)
               outs(%assembled : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     pto.tmuls ins(%assembled, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
               outs(%vector_out : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
-    pto.tload ins(%index_src : memref<1x8xf32, #pto.address_space<gm>>)
+    pto.tload ins(%index_src : !pto.partition_tensor_view<1x8xf32>)
               outs(%index_row : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return
   }
 
   func.func @alloc_tile_unknown_absolute_sync(
-      %assembled_src: memref<32x32xf32, #pto.address_space<gm>>,
-      %index_src: memref<1x8xf32, #pto.address_space<gm>>,
+      %assembled_src: !pto.partition_tensor_view<32x32xf32>,
+      %index_src: !pto.partition_tensor_view<1x8xf32>,
       %assembled_addr: i64,
       %index_addr: i64)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
@@ -139,11 +139,11 @@ module attributes {pto.target_arch = "a2a3"} {
     %index_row = pto.alloc_tile addr = %index_addr :
       !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 
-    pto.tload ins(%assembled_src : memref<32x32xf32, #pto.address_space<gm>>)
+    pto.tload ins(%assembled_src : !pto.partition_tensor_view<32x32xf32>)
               outs(%assembled : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     pto.tmuls ins(%assembled, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
               outs(%vector_out : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
-    pto.tload ins(%index_src : memref<1x8xf32, #pto.address_space<gm>>)
+    pto.tload ins(%index_src : !pto.partition_tensor_view<1x8xf32>)
               outs(%index_row : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return
   }

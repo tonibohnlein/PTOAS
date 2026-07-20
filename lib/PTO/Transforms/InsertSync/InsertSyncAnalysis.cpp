@@ -402,19 +402,53 @@ void InsertSyncAnalysis::InsertSync(
 // back-edge path still needs to sync per-slot via dyn event id (the
 // prefetch idiom). When the analysis is inconclusive (kUnknown / kEqual)
 // the dep is kept and the existing conservative path runs.
+static bool rangesOverlapConservatively(uint64_t aStart, uint64_t aSize,
+                                        uint64_t bStart, uint64_t bSize) {
+  if (aSize == 0 || bSize == 0 ||
+      aSize > std::numeric_limits<uint64_t>::max() - aStart ||
+      bSize > std::numeric_limits<uint64_t>::max() - bStart)
+    return true;
+  return std::max(aStart, bStart) < std::min(aStart + aSize, bStart + bSize);
+}
+
+// Slot-indexed synchronization is safe only when slot i on one side can
+// physically alias slot i on the other side, and every off-diagonal pair is
+// disjoint. Equal vector lengths alone do not establish that mapping for
+// shifted, reordered, or partially overlapping physical allocations.
+static bool hasIdentityPhysicalSlotMapping(const BaseMemInfo *a,
+                                           const BaseMemInfo *b) {
+  if (!a || !b || a->addressListKind != AddressListKind::AlternativeSlots ||
+      b->addressListKind != AddressListKind::AlternativeSlots ||
+      a->baseAddresses.size() < 2 ||
+      a->baseAddresses.size() != b->baseAddresses.size() ||
+      a->addressProvenance == AddressProvenance::UnknownAbsolute ||
+      b->addressProvenance == AddressProvenance::UnknownAbsolute ||
+      a->addressProvenance != b->addressProvenance)
+    return false;
+
+  if (a->addressProvenance == AddressProvenance::RootRelative &&
+      a->rootBuffer != b->rootBuffer)
+    return false;
+
+  for (size_t i = 0; i < a->baseAddresses.size(); ++i) {
+    for (size_t j = 0; j < b->baseAddresses.size(); ++j) {
+      bool overlaps =
+          rangesOverlapConservatively(a->baseAddresses[i], a->allocateSize,
+                                      b->baseAddresses[j], b->allocateSize);
+      if ((i == j) != overlaps)
+        return false;
+    }
+  }
+  return true;
+}
+
 static bool isForwardDepDroppableBySlotAffine(const BaseMemInfo *a,
                                               const BaseMemInfo *b) {
-  if (!a || !b)
-    return false;
-  if (a->addressListKind != AddressListKind::AlternativeSlots ||
-      b->addressListKind != AddressListKind::AlternativeSlots)
+  if (!hasIdentityPhysicalSlotMapping(a, b))
     return false;
   Value slotA = findMultiTileSlotExpr(a->baseBuffer);
   Value slotB = findMultiTileSlotExpr(b->baseBuffer);
   if (!slotA || !slotB)
-    return false;
-  if (a->baseAddresses.size() < 2 ||
-      a->baseAddresses.size() != b->baseAddresses.size())
     return false;
   return compareSlotSSA(slotA, slotB,
                         static_cast<uint32_t>(a->baseAddresses.size())) ==
@@ -423,18 +457,58 @@ static bool isForwardDepDroppableBySlotAffine(const BaseMemInfo *a,
 
 static std::optional<size_t>
 getAlternativeSlotPairCount(const BaseMemInfo *a, const BaseMemInfo *b) {
-  if (!a || !b)
-    return std::nullopt;
-  if (a->addressListKind != AddressListKind::AlternativeSlots ||
-      b->addressListKind != AddressListKind::AlternativeSlots)
+  if (!hasIdentityPhysicalSlotMapping(a, b))
     return std::nullopt;
   if (!findMultiTileSlotExpr(a->baseBuffer) ||
       !findMultiTileSlotExpr(b->baseBuffer))
     return std::nullopt;
-  if (a->baseAddresses.size() < 2 ||
-      a->baseAddresses.size() != b->baseAddresses.size())
-    return std::nullopt;
   return a->baseAddresses.size();
+}
+
+struct DynamicEventSlotMapping {
+  int eventIdNum;
+  Value consumerSlot;
+  Value producerSlot;
+};
+
+static bool isLocalMemInfo(const BaseMemInfo *info) {
+  return info && (info->scope == pto::AddressSpace::MAT ||
+                  info->scope == pto::AddressSpace::VEC);
+}
+
+// A single set/wait pair can carry only one producer and one consumer slot
+// expression. Require every local dependency pair to agree on both expressions
+// modulo N as well as on the physical lane mapping.
+static std::optional<DynamicEventSlotMapping>
+getDynamicEventSlotMapping(const DepBaseMemInfoPairVec &depPairs) {
+  std::optional<DynamicEventSlotMapping> mapping;
+  for (const auto &pair : depPairs) {
+    if (!isLocalMemInfo(pair.first) && !isLocalMemInfo(pair.second))
+      continue;
+
+    auto pairCount = getAlternativeSlotPairCount(pair.first, pair.second);
+    if (!pairCount)
+      return std::nullopt;
+    int pairN = static_cast<int>(*pairCount);
+    Value consumerSlot = findMultiTileSlotExpr(pair.first->baseBuffer);
+    Value producerSlot = findMultiTileSlotExpr(pair.second->baseBuffer);
+    if (!consumerSlot || !producerSlot)
+      return std::nullopt;
+
+    if (!mapping) {
+      mapping = DynamicEventSlotMapping{pairN, consumerSlot, producerSlot};
+      continue;
+    }
+    if (mapping->eventIdNum != pairN)
+      return std::nullopt;
+    uint32_t n = static_cast<uint32_t>(pairN);
+    if (compareSlotSSA(mapping->consumerSlot, consumerSlot, n) !=
+            SlotRelation::kEqual ||
+        compareSlotSSA(mapping->producerSlot, producerSlot, n) !=
+            SlotRelation::kEqual)
+      return std::nullopt;
+  }
+  return mapping;
 }
 
 void InsertSyncAnalysis::MemAnalyze(
@@ -595,34 +669,13 @@ void InsertSyncAnalysis::InsertSyncOperation(
     // dyn event IDs are warranted, also plumb the per-side slot SSA so
     // codegen can lower into `pto.set_flag_dyn` / `pto.wait_flag_dyn`.
     if (forEndIndex.has_value()) {
-      int eventIdNum = GetEventIdNum(depBaseMemInfosVec);
-      if (eventIdNum > 1) {
-        // Each dep pair has (now=consumer, front=producer). The producer's
-        // slot SSA gates the `set_flag_dyn`; the consumer's gates the
-        // `wait_flag_dyn`. Walk the first viable dep pair to extract them.
-        Value producerSlot;
-        Value consumerSlot;
-        for (auto &pair : depBaseMemInfosVec) {
-          if (!getAlternativeSlotPairCount(pair.first, pair.second))
-            continue;
-          if (pair.second && pair.second->baseBuffer)
-            producerSlot = findMultiTileSlotExpr(pair.second->baseBuffer);
-          if (pair.first && pair.first->baseBuffer)
-            consumerSlot = findMultiTileSlotExpr(pair.first->baseBuffer);
-          if (producerSlot && consumerSlot)
-            break;
-        }
-        if (!producerSlot || !consumerSlot) {
-          // No slot SSA threaded through -- fall back to single event id.
-          // This keeps non-multi-buffer codepaths untouched even if their
-          // baseAddresses happen to have multiple entries for another reason.
-          eventIdNum = 1;
-        } else {
-          setOp->slotSSAExpr = producerSlot;
-          setOp->slotCount = static_cast<uint32_t>(eventIdNum);
-          waitOp->slotSSAExpr = consumerSlot;
-          waitOp->slotCount = static_cast<uint32_t>(eventIdNum);
-        }
+      int eventIdNum = 1;
+      if (auto mapping = getDynamicEventSlotMapping(depBaseMemInfosVec)) {
+        eventIdNum = mapping->eventIdNum;
+        setOp->slotSSAExpr = mapping->producerSlot;
+        setOp->slotCount = static_cast<uint32_t>(eventIdNum);
+        waitOp->slotSSAExpr = mapping->consumerSlot;
+        waitOp->slotCount = static_cast<uint32_t>(eventIdNum);
       }
       setOp->eventIdNum = eventIdNum;
       waitOp->eventIdNum = eventIdNum;
@@ -786,30 +839,8 @@ int InsertSyncAnalysis::GetEventIdNum(
   // dependency pair contains compatible alternative-slot views with
   // recoverable slot SSA expressions. A segmented or otherwise incompatible
   // pair forces one static event so synchronization covers every hazard.
-  std::optional<int> eventIdNum;
-  for (const auto &pair : depBaseMemInfosVec) {
-    bool isLocalA =
-        pair.first && (pair.first->scope == pto::AddressSpace::MAT ||
-                       pair.first->scope == pto::AddressSpace::VEC);
-    bool isLocalB =
-        pair.second && (pair.second->scope == pto::AddressSpace::MAT ||
-                        pair.second->scope == pto::AddressSpace::VEC);
-    if (!isLocalA && !isLocalB)
-      continue;
-    auto pairCount = getAlternativeSlotPairCount(pair.first, pair.second);
-    if (!pairCount)
-      return 1;
-    int pairN = static_cast<int>(*pairCount);
-    if (!eventIdNum) {
-      eventIdNum = pairN;
-    } else if (*eventIdNum != pairN) {
-      // Multiple dep pairs disagreeing on N: fall back to single event id
-      // for safety. With more work this could be relaxed by per-pair
-      // multi-buffer reasoning.
-      return 1;
-    }
-  }
-  return eventIdNum.value_or(1);
+  auto mapping = getDynamicEventSlotMapping(depBaseMemInfosVec);
+  return mapping ? mapping->eventIdNum : 1;
 }
 
 bool InsertSyncAnalysis::IsGMHazard(
