@@ -182,8 +182,30 @@ void CodeGenerator::emitSyncMap(IRRewriter &rewriter, SyncMap &syncMap,
   }
 }
 
+void CodeGenerator::appendAutoSyncTailBarrier(IRRewriter &rewriter) {
+  SmallVector<func::ReturnOp, 4> returns;
+  funcOp.walk([&](func::ReturnOp ret) { returns.push_back(ret); });
+
+  auto pipeAllAttr = makePipe(rewriter.getContext(), PIPE::PIPE_ALL);
+  for (func::ReturnOp ret : returns) {
+    rewriter.setInsertionPoint(ret);
+    auto barrier = rewriter.create<pto::BarrierOp>(ret.getLoc(), pipeAllAttr);
+    barrier->setAttr("pto.auto_sync_tail_barrier", rewriter.getUnitAttr());
+    if (auto hintAttr =
+            funcOp->getAttrOfType<StringAttr>("pto.auto_sync_tail_hint")) {
+      barrier->setAttr("pto.auto_sync_tail_hint", hintAttr);
+    }
+  }
+}
+
 void CodeGenerator::generateResultOps() {
   IRRewriter rewriter(funcOp.getContext());
   emitSyncMap(rewriter, syncMapBefore, /*insertAfter=*/false);
   emitSyncMap(rewriter, syncMapAfter, /*insertAfter=*/true);
+  // Kernel completion is part of the synchronization contract. In
+  // particular, a final asynchronous TSTORE may still be in flight when the
+  // scalar control flow reaches func.return. InsertSync emits the same
+  // compiler-owned PIPE_ALL tail barrier; GraphSyncSolver must not leave this
+  // responsibility to callers.
+  appendAutoSyncTailBarrier(rewriter);
 }

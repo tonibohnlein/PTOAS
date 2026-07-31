@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --enable-graph-sync-solver --graph-sync-solver-event-id-max=64 %s | FileCheck %s
+
+// GraphSyncSolver must drain asynchronous work before returning from the
+// kernel. Without this compiler-owned tail barrier, the final TSTORE can race
+// kernel completion and produce nondeterministic output on device.
+
+module {
+  func.func @store_tail(
+      %dst : !pto.partition_tensor_view<16x16xf32>) {
+    %tile = pto.alloc_tile
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                        v_row=16, v_col=16, blayout=row_major,
+                        slayout=none_box, fractal=1024, pad=0>
+    pto.tstore
+        ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                                  v_row=16, v_col=16, blayout=row_major,
+                                  slayout=none_box, fractal=1024, pad=0>)
+        outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+    func.return
+  }
+}
+
+// CHECK-LABEL: AICORE void store_tail(
+// CHECK: TSTORE
+// CHECK: ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
+// CHECK-NEXT: }

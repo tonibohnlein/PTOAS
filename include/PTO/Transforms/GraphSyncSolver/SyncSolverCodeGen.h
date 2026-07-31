@@ -52,6 +52,7 @@ private:
                          bool insertAfter);
   void emitSyncOp(IRRewriter &rewriter, SyncOp *syncOp);
   void emitSyncMap(IRRewriter &rewriter, SyncMap &syncMap, bool insertAfter);
+  void appendAutoSyncTailBarrier(IRRewriter &rewriter);
 };
 
 } // namespace mlir::pto::syncsolver
