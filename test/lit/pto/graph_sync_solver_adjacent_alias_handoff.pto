@@ -1,0 +1,109 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-graph-sync-solver --graph-sync-solver-event-id-max=64 --emit-pto-ir %s | FileCheck %s
+
+// Distinct tile SSA values may name the same physical address after memory
+// planning. Preserve both direct MTE2 -> V and V -> MTE3 handoffs in each
+// stage of a loop; a pipe-level path selected for another stage is not a
+// substitute for these immediate physical dependencies.
+
+module {
+  func.func @adjacent_alias_handoffs(
+      %src0 : !pto.partition_tensor_view<16x16xf32>,
+      %dst0 : !pto.partition_tensor_view<16x16xf32>,
+      %src1 : !pto.partition_tensor_view<16x16xf32>,
+      %dst1 : !pto.partition_tensor_view<16x16xf32>,
+      %scale : f32) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1 = arith.constant 1024 : i64
+    scf.for %i = %c0 to %c4 step %c1 {
+      %load0 = pto.alloc_tile addr = %addr0
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                          v_row=16, v_col=16, blayout=row_major,
+                          slayout=none_box, fractal=1024, pad=0>
+      pto.tload ins(%src0 : !pto.partition_tensor_view<16x16xf32>)
+          outs(%load0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                                      v_row=16, v_col=16, blayout=row_major,
+                                      slayout=none_box, fractal=1024, pad=0>)
+      %input0 = pto.alloc_tile addr = %addr0
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                          v_row=16, v_col=16, blayout=row_major,
+                          slayout=none_box, fractal=1024, pad=0>
+      %result0 = pto.alloc_tile addr = %addr1
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                          v_row=16, v_col=16, blayout=row_major,
+                          slayout=none_box, fractal=1024, pad=0>
+      pto.tmuls ins(%input0, %scale : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                                                  v_row=16, v_col=16, blayout=row_major,
+                                                  slayout=none_box, fractal=1024, pad=0>, f32)
+          outs(%result0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                                        v_row=16, v_col=16, blayout=row_major,
+                                        slayout=none_box, fractal=1024, pad=0>)
+      %store0 = pto.alloc_tile addr = %addr1
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                          v_row=16, v_col=16, blayout=row_major,
+                          slayout=none_box, fractal=1024, pad=0>
+      pto.tstore ins(%store0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                                             v_row=16, v_col=16, blayout=row_major,
+                                             slayout=none_box, fractal=1024, pad=0>)
+          outs(%dst0 : !pto.partition_tensor_view<16x16xf32>)
+
+      %load1 = pto.alloc_tile addr = %addr0
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                          v_row=16, v_col=16, blayout=row_major,
+                          slayout=none_box, fractal=1024, pad=0>
+      pto.tload ins(%src1 : !pto.partition_tensor_view<16x16xf32>)
+          outs(%load1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                                      v_row=16, v_col=16, blayout=row_major,
+                                      slayout=none_box, fractal=1024, pad=0>)
+      %input1 = pto.alloc_tile addr = %addr0
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                          v_row=16, v_col=16, blayout=row_major,
+                          slayout=none_box, fractal=1024, pad=0>
+      %result1 = pto.alloc_tile addr = %addr1
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                          v_row=16, v_col=16, blayout=row_major,
+                          slayout=none_box, fractal=1024, pad=0>
+      pto.tmuls ins(%input1, %scale : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                                                  v_row=16, v_col=16, blayout=row_major,
+                                                  slayout=none_box, fractal=1024, pad=0>, f32)
+          outs(%result1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                                        v_row=16, v_col=16, blayout=row_major,
+                                        slayout=none_box, fractal=1024, pad=0>)
+      %store1 = pto.alloc_tile addr = %addr1
+          : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                          v_row=16, v_col=16, blayout=row_major,
+                          slayout=none_box, fractal=1024, pad=0>
+      pto.tstore ins(%store1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                                             v_row=16, v_col=16, blayout=row_major,
+                                             slayout=none_box, fractal=1024, pad=0>)
+          outs(%dst1 : !pto.partition_tensor_view<16x16xf32>)
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @adjacent_alias_handoffs
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>
+// CHECK-NEXT: pto.tmuls
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>
+// CHECK-NEXT: pto.tstore
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>
+// CHECK-NEXT: pto.tmuls
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>
+// CHECK-NEXT: pto.tstore

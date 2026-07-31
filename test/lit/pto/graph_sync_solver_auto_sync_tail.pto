@@ -14,11 +14,25 @@
 
 module {
   func.func @store_tail(
-      %dst : !pto.partition_tensor_view<16x16xf32>) {
+      %src : !pto.partition_tensor_view<16x16xf32>,
+      %dst : !pto.partition_tensor_view<16x16xf32>,
+      %scale : f32) {
     %tile = pto.alloc_tile
         : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
                         v_row=16, v_col=16, blayout=row_major,
                         slayout=none_box, fractal=1024, pad=0>
+    pto.tload
+        ins(%src : !pto.partition_tensor_view<16x16xf32>)
+        outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                                   v_row=16, v_col=16, blayout=row_major,
+                                   slayout=none_box, fractal=1024, pad=0>)
+    pto.tmuls
+        ins(%tile, %scale : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                                          v_row=16, v_col=16, blayout=row_major,
+                                          slayout=none_box, fractal=1024, pad=0>, f32)
+        outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                                   v_row=16, v_col=16, blayout=row_major,
+                                   slayout=none_box, fractal=1024, pad=0>)
     pto.tstore
         ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
                                   v_row=16, v_col=16, blayout=row_major,
@@ -29,6 +43,9 @@ module {
 }
 
 // CHECK-LABEL: AICORE void store_tail(
+// CHECK: TLOAD
+// CHECK: TMULS
 // CHECK: TSTORE
 // CHECK: ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
+// CHECK-NEXT: return;
 // CHECK-NEXT: }

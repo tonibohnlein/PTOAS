@@ -2014,7 +2014,16 @@ void Solver::handleConflict(Occurrence *occ1, Occurrence *occ2,
                             RWOperation *rwOp1, RWOperation *rwOp2,
                             CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
                             EventIdInfo eventIdInfo, bool isUseless) {
-  if (!checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo)) {
+  // A pipe-only reachability path cannot replace the dependency between two
+  // consecutive memory operations. In particular, distinct tile SSA values
+  // may name the same physical range after memory planning. GSS previously
+  // reused an earlier pipe edge to prune these direct RAW/WAR/WAW handoffs,
+  // leaving an asynchronous load or store unordered from its immediate
+  // consumer/producer. Keep graph pruning for non-local conflicts, but retain
+  // every physical conflict for consecutive operations in the linearized IR.
+  const bool isConsecutive = occ1->syncIrEndIndex == occ2->syncIrIndex;
+  if (!isConsecutive &&
+      !checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo)) {
     return;
   }
   LLVM_DEBUG({
