@@ -89,7 +89,10 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
       SyncIRs emptySyncIR;
       SyncOperations emptySyncOperations;
       if (!writeInsertSyncSummary("skipped_explicit_sync", emptySyncIR,
-                                  emptySyncOperations, func.getOperation()))
+                                  emptySyncOperations, func.getOperation()) ||
+          !writeInsertSyncScheduleGraph(
+              "skipped_explicit_sync", emptySyncIR, emptySyncOperations,
+              func.getOperation()))
         signalPassFailure();
       return;
     }
@@ -107,7 +110,9 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     // 如果 IR 太简单，直接跳过
     if (syncIR.size() <= 1) {
       if (!writeInsertSyncSummary("skipped_trivial", syncIR, syncOpsStorage,
-                                  func.getOperation()))
+                                  func.getOperation()) ||
+          !writeInsertSyncScheduleGraph("skipped_trivial", syncIR,
+                                        syncOpsStorage, func.getOperation()))
         signalPassFailure();
       return;
     }
@@ -156,7 +161,9 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
                         func.getOperation());
 
     if (!writeInsertSyncSummary("analyzed", syncIR, syncOpsStorage,
-                                func.getOperation())) {
+                                func.getOperation()) ||
+        !writeInsertSyncScheduleGraph("analyzed", syncIR, syncOpsStorage,
+                                      func.getOperation())) {
       signalPassFailure();
       return;
     }

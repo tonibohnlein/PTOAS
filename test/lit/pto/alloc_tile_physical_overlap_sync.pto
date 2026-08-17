@@ -13,12 +13,26 @@
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s -o - 2>&1 | FileCheck %s
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --pto-insert-sync-summary=%t.summary.jsonl %s -o /dev/null
 // RUN: FileCheck %s --check-prefix=SUMMARY < %t.summary.jsonl
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --pto-insert-sync-schedule-graph=%t.schedule.jsonl %s -o %t.instrumented.cpp
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s -o %t.reference.cpp
+// RUN: cmp %t.instrumented.cpp %t.reference.cpp
+// RUN: FileCheck %s --check-prefix=SCHEDULE < %t.schedule.jsonl
 //
 // SUMMARY-DAG: "function":{{ *}}"alloc_tile_explicit_overlap_v_to_mte2"
 // SUMMARY-DAG: "status":{{ *}}"analyzed"
 // SUMMARY-DAG: "active_sync_groups":
 // SUMMARY-DAG: "pipe_pair_groups":
 // SUMMARY-DAG: "function":{{ *}}"alloc_tile_explicit_disjoint_no_sync"
+// SCHEDULE-DAG: "function":{{ *}}"alloc_tile_physical_overlap_sync"
+// SCHEDULE-DAG: "duration_model":{{ *}}"unestimated"
+// SCHEDULE-DAG: "kind":{{ *}}"operation"
+// SCHEDULE-DAG: "op_name":{{ *}}"pto.tstore"
+// SCHEDULE-DAG: "pipe":{{ *}}"PIPE_MTE3"
+// SCHEDULE-DAG: "pypto_access_order":{{ *}}7
+// SCHEDULE-DAG: "stream_edges":
+// SCHEDULE-DAG: "sync_edges":
+// SCHEDULE-DAG: "src_pipe":{{ *}}"PIPE_MTE3"
+// SCHEDULE-DAG: "dst_pipe":{{ *}}"PIPE_V"
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @alloc_tile_physical_overlap_sync(
@@ -45,7 +59,7 @@ module attributes {pto.target_arch = "a2a3"} {
     pto.tmuls ins(%input, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
               outs(%stored : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     pto.tstore ins(%stored : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
-               outs(%dst : !pto.partition_tensor_view<16x128xf32>)
+               outs(%dst : !pto.partition_tensor_view<16x128xf32>) loc("pypto.access.7"("kernel.py":42:3))
     pto.tmuls ins(%input, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
               outs(%reused : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return

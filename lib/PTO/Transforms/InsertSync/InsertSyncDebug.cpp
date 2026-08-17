@@ -11,7 +11,9 @@
 
 #include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
 
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/AsmState.h"
+#include "mlir/IR/Matchers.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -41,12 +43,22 @@ llvm::cl::opt<std::string> insertSyncSummaryPathOpt(
     llvm::cl::desc("Write final PTOInsertSync statistics as JSON Lines"),
     llvm::cl::value_desc("path"), llvm::cl::init(""));
 
+llvm::cl::opt<std::string> insertSyncScheduleGraphPathOpt(
+    "pto-insert-sync-schedule-graph",
+    llvm::cl::desc("Write the analyzed PTOInsertSync schedule graph as JSON "
+                   "Lines"),
+    llvm::cl::value_desc("path"), llvm::cl::init(""));
+
 } // namespace
 
 unsigned mlir::pto::getInsertSyncDebugLevel() { return insertSyncDebugLevelOpt; }
 
 bool mlir::pto::isInsertSyncSummaryEnabled() {
   return !insertSyncSummaryPathOpt.empty();
+}
+
+bool mlir::pto::isInsertSyncScheduleGraphEnabled() {
+  return !insertSyncScheduleGraphPathOpt.empty();
 }
 
 bool mlir::pto::isInsertSyncDebugEnabled(InsertSyncDebugLevel minLevel) {
@@ -133,6 +145,147 @@ static llvm::StringRef getMemScopeName(pto::AddressSpace scope) {
     return "SCALING";
   }
   return "SCOPE_UNKNOWN";
+}
+
+static std::string printValue(Value value, AsmState *state) {
+  if (!value)
+    return "";
+  std::string storage;
+  llvm::raw_string_ostream os(storage);
+  if (state)
+    value.printAsOperand(os, *state);
+  else
+    os << "<value>";
+  return os.str();
+}
+
+template <typename Printable>
+static std::string printObject(const Printable &object) {
+  std::string storage;
+  llvm::raw_string_ostream os(storage);
+  object.print(os);
+  return os.str();
+}
+
+static llvm::json::Object encodeMemInfo(const BaseMemInfo *info,
+                                        AsmState *state) {
+  llvm::json::Object object;
+  if (!info) {
+    object["null"] = true;
+    return object;
+  }
+
+  object["base"] = printValue(info->baseBuffer, state);
+  object["root"] = printValue(info->rootBuffer, state);
+  object["scope"] = getMemScopeName(info->scope).str();
+  object["allocate_size_bytes"] = static_cast<int64_t>(info->allocateSize);
+  object["known_physical_addresses"] = info->hasKnownPhysicalAddresses;
+  object["aliases_unknown_range"] = info->aliasesUnknownRange;
+  llvm::json::Array addresses;
+  for (uint64_t address : info->baseAddresses)
+    addresses.push_back(static_cast<int64_t>(address));
+  object["base_addresses"] = std::move(addresses);
+  return object;
+}
+
+static llvm::json::Array encodeMemInfoList(
+    const SmallVector<const BaseMemInfo *> &infos, AsmState *state) {
+  llvm::json::Array array;
+  for (const BaseMemInfo *info : infos)
+    array.push_back(encodeMemInfo(info, state));
+  return array;
+}
+
+static std::optional<int64_t> getStaticTripCount(Operation *op) {
+  auto forOp = dyn_cast_or_null<scf::ForOp>(op);
+  if (!forOp)
+    return std::nullopt;
+  std::optional<int64_t> lower = getConstantIntValue(forOp.getLowerBound());
+  std::optional<int64_t> upper = getConstantIntValue(forOp.getUpperBound());
+  std::optional<int64_t> step = getConstantIntValue(forOp.getStep());
+  if (!lower || !upper || !step || *step <= 0)
+    return std::nullopt;
+  if (*upper <= *lower)
+    return 0;
+  return (*upper - *lower + *step - 1) / *step;
+}
+
+static llvm::json::Object encodeOperation(Operation *op) {
+  llvm::json::Object object;
+  if (!op)
+    return object;
+
+  object["name"] = op->getName().getStringRef().str();
+  const std::string location = printObject(op->getLoc());
+  object["location"] = location;
+  // PyPTO can wrap source locations in a diagnostic-only NameLoc of the form
+  //   loc("pypto.access.N"("file.py":line:column))
+  // where N is the same preorder coordinate exported in raw DSA candidate
+  // records. Keep the parsed integer beside the lossless location string so
+  // downstream schedule analysis does not depend on MLIR's pretty-printer.
+  constexpr llvm::StringLiteral accessPrefix = "pypto.access.";
+  llvm::StringRef locationRef(location);
+  const size_t prefixPosition = locationRef.find(accessPrefix);
+  if (prefixPosition != llvm::StringRef::npos) {
+    llvm::StringRef suffix = locationRef.drop_front(prefixPosition + accessPrefix.size());
+    const size_t end = suffix.find_first_not_of("0123456789");
+    llvm::StringRef digits = suffix.take_front(end);
+    uint64_t accessOrder = 0;
+    if (!digits.empty() && !digits.getAsInteger(10, accessOrder))
+      object["pypto_access_order"] = static_cast<int64_t>(accessOrder);
+  }
+
+  llvm::json::Array operands;
+  for (Type type : op->getOperandTypes())
+    operands.push_back(printObject(type));
+  object["operand_types"] = std::move(operands);
+
+  llvm::json::Array results;
+  for (Type type : op->getResultTypes())
+    results.push_back(printObject(type));
+  object["result_types"] = std::move(results);
+
+  llvm::json::Object attributes;
+  for (NamedAttribute attribute : op->getAttrs())
+    attributes[attribute.getName().strref().str()] =
+        printObject(attribute.getValue());
+  object["attributes"] = std::move(attributes);
+  return object;
+}
+
+static llvm::json::Array encodeUnsignedStack(ArrayRef<unsigned> values) {
+  llvm::json::Array array;
+  for (unsigned value : values)
+    array.push_back(static_cast<int64_t>(value));
+  return array;
+}
+
+static llvm::json::Array encodeValues(ArrayRef<Value> values, AsmState *state) {
+  llvm::json::Array array;
+  for (Value value : values)
+    array.push_back(printValue(value, state));
+  return array;
+}
+
+static bool appendJsonLine(llvm::StringRef path, llvm::json::Object record,
+                           std::mutex &outputMutex,
+                           std::string &initializedPath,
+                           llvm::StringRef description) {
+  std::lock_guard<std::mutex> lock(outputMutex);
+  const bool append = initializedPath == path;
+  std::error_code error;
+  llvm::sys::fs::OpenFlags flags = llvm::sys::fs::OF_Text;
+  if (append)
+    flags |= llvm::sys::fs::OF_Append;
+  llvm::raw_fd_ostream output(path, error, flags);
+  if (error) {
+    llvm::errs() << "error: cannot write " << description << " '" << path
+                 << "': " << error.message() << "\n";
+    return false;
+  }
+  output << llvm::json::Value(std::move(record)) << "\n";
+  initializedPath = path.str();
+  return true;
 }
 
 static void dumpEventIds(llvm::raw_ostream &os,
@@ -526,4 +679,226 @@ bool mlir::pto::writeInsertSyncSummary(
   output << llvm::json::Value(std::move(summary)) << "\n";
   initializedPath = insertSyncSummaryPathOpt;
   return true;
+}
+
+bool mlir::pto::writeInsertSyncScheduleGraph(
+    llvm::StringRef status, const SyncIRs &syncIR,
+    const SyncOperations &syncOperations, Operation *opForPrinting) {
+  if (!isInsertSyncScheduleGraphEnabled())
+    return true;
+
+  std::optional<AsmState> state;
+  if (opForPrinting)
+    state.emplace(opForPrinting);
+  AsmState *asmState = state ? &*state : nullptr;
+
+  std::string functionName = "<unknown>";
+  if (opForPrinting) {
+    if (auto name = opForPrinting->getAttrOfType<StringAttr>("sym_name"))
+      functionName = name.str();
+  }
+
+  llvm::json::Array nodes;
+  llvm::json::Array streamEdges;
+  SmallVector<unsigned> loopStack;
+  SmallVector<unsigned> branchStack;
+  std::map<PipelineType, unsigned> previousByPipe;
+
+  for (const auto &ownedElement : syncIR) {
+    const InstanceElement *element = ownedElement.get();
+    if (!element)
+      continue;
+
+    if (auto *loop = dyn_cast<LoopInstanceElement>(element)) {
+      if (loop->getLoopKind() == KindOfLoop::LOOP_END && !loopStack.empty())
+        loopStack.pop_back();
+    }
+    if (auto *branch = dyn_cast<BranchInstanceElement>(element)) {
+      if (branch->getBranchKind() == KindOfBranch::IF_END &&
+          !branchStack.empty())
+        branchStack.pop_back();
+    }
+
+    llvm::json::Object node;
+    node["id"] = static_cast<int64_t>(element->GetIndex());
+    node["loop_stack"] = encodeUnsignedStack(loopStack);
+    node["branch_stack"] = encodeUnsignedStack(branchStack);
+
+    switch (element->GetKind()) {
+    case InstanceElement::KindTy::COMPOUND: {
+      auto *compound = cast<CompoundInstanceElement>(element);
+      node["kind"] = "operation";
+      node["op_name"] = compound->opName.getStringRef().str();
+      node["pipe"] = getPipelineName(compound->kPipeValue).str();
+      node["macro_phase"] = static_cast<int64_t>(compound->macroOpInstanceId);
+      node["defs"] = encodeMemInfoList(compound->defVec, asmState);
+      node["uses"] = encodeMemInfoList(compound->useVec, asmState);
+      node["operation"] = encodeOperation(compound->elementOp);
+
+      auto previous = previousByPipe.find(compound->kPipeValue);
+      if (previous != previousByPipe.end()) {
+        llvm::json::Object edge;
+        edge["source"] = static_cast<int64_t>(previous->second);
+        edge["target"] = static_cast<int64_t>(element->GetIndex());
+        edge["pipe"] = getPipelineName(compound->kPipeValue).str();
+        streamEdges.push_back(std::move(edge));
+      }
+      previousByPipe[compound->kPipeValue] = element->GetIndex();
+      break;
+    }
+    case InstanceElement::KindTy::LOOP: {
+      auto *loop = cast<LoopInstanceElement>(element);
+      node["kind"] = "loop";
+      node["loop_kind"] = getLoopKindName(loop->getLoopKind()).str();
+      node["begin"] = static_cast<int64_t>(loop->beginId);
+      node["end"] = static_cast<int64_t>(loop->endId);
+      node["operation"] = encodeOperation(loop->elementOp);
+      if (std::optional<int64_t> tripCount =
+              getStaticTripCount(loop->elementOp))
+        node["static_trip_count"] = *tripCount;
+      else
+        node["static_trip_count"] = nullptr;
+      break;
+    }
+    case InstanceElement::KindTy::BRANCH: {
+      auto *branch = cast<BranchInstanceElement>(element);
+      node["kind"] = "branch";
+      node["branch_kind"] = getBranchKindName(branch->getBranchKind()).str();
+      node["begin"] = static_cast<int64_t>(branch->beginId);
+      node["branch"] = static_cast<int64_t>(branch->branchId);
+      node["end"] = static_cast<int64_t>(branch->endId);
+      node["operation"] = encodeOperation(branch->elementOp);
+      break;
+    }
+    case InstanceElement::KindTy::PLACE_HOLDER: {
+      auto *placeholder = cast<PlaceHolderInstanceElement>(element);
+      node["kind"] = "placeholder";
+      node["parent_scope"] =
+          static_cast<int64_t>(placeholder->parentScopeId);
+      node["virtual_else"] = placeholder->isVirtualElse;
+      break;
+    }
+    }
+    nodes.push_back(std::move(node));
+
+    if (auto *loop = dyn_cast<LoopInstanceElement>(element)) {
+      if (loop->getLoopKind() == KindOfLoop::LOOP_BEGIN)
+        loopStack.push_back(loop->GetIndex());
+    }
+    if (auto *branch = dyn_cast<BranchInstanceElement>(element)) {
+      if (branch->getBranchKind() == KindOfBranch::IF_BEGIN)
+        branchStack.push_back(branch->GetIndex());
+      else if (branch->getBranchKind() == KindOfBranch::ELSE_BEGIN) {
+        if (!branchStack.empty())
+          branchStack.pop_back();
+        branchStack.push_back(branch->GetIndex());
+      }
+    }
+  }
+
+  llvm::json::Array syncEdges;
+  llvm::json::Array syncGroups;
+  for (size_t groupIndex = 0; groupIndex < syncOperations.size();
+       ++groupIndex) {
+    const auto &group = syncOperations[groupIndex];
+    SmallVector<unsigned> sources;
+    SmallVector<unsigned> targets;
+    SmallVector<Value> roots;
+    llvm::json::Array operations;
+    const SyncOperation *representative = nullptr;
+    bool loopCarried = false;
+
+    for (const auto &ownedSync : group) {
+      const SyncOperation *sync = ownedSync.get();
+      if (!sync || sync->uselessSync)
+        continue;
+      if (!representative)
+        representative = sync;
+      loopCarried |= sync->GetForEndIndex().has_value();
+      for (Value root : sync->depRootBuffers) {
+        if (!llvm::is_contained(roots, root))
+          roots.push_back(root);
+      }
+
+      llvm::json::Object operation;
+      operation["type"] = SyncOperation::TypeName(sync->GetType());
+      operation["node"] = static_cast<int64_t>(sync->GetSyncIRIndex());
+      operation["dependency_node"] =
+          static_cast<int64_t>(sync->GetDepSyncIRIndex());
+      operation["compensation"] = sync->isCompensation;
+      operation["event_slots"] = static_cast<int64_t>(sync->eventIdNum);
+      llvm::json::Array eventIds;
+      for (int eventId : sync->eventIds)
+        eventIds.push_back(static_cast<int64_t>(eventId));
+      operation["event_ids"] = std::move(eventIds);
+      if (sync->GetForEndIndex())
+        operation["loop_end"] =
+            static_cast<int64_t>(*sync->GetForEndIndex());
+      else
+        operation["loop_end"] = nullptr;
+      operations.push_back(std::move(operation));
+
+      if (sync->isSyncSetType()) {
+        if (!llvm::is_contained(sources, sync->GetSyncIRIndex()))
+          sources.push_back(sync->GetSyncIRIndex());
+      } else if (sync->isSyncWaitType()) {
+        if (!llvm::is_contained(targets, sync->GetSyncIRIndex()))
+          targets.push_back(sync->GetSyncIRIndex());
+      } else if (sync->isBarrierType()) {
+        if (!llvm::is_contained(sources, sync->GetDepSyncIRIndex()))
+          sources.push_back(sync->GetDepSyncIRIndex());
+        if (!llvm::is_contained(targets, sync->GetSyncIRIndex()))
+          targets.push_back(sync->GetSyncIRIndex());
+      }
+    }
+
+    if (!representative)
+      continue;
+
+    llvm::json::Object groupObject;
+    groupObject["id"] = static_cast<int64_t>(groupIndex);
+    groupObject["sync_index"] =
+        static_cast<int64_t>(representative->GetSyncIndex());
+    groupObject["src_pipe"] =
+        getPipelineName(representative->GetSrcPipe()).str();
+    groupObject["dst_pipe"] =
+        getPipelineName(representative->GetDstPipe()).str();
+    groupObject["loop_carried"] = loopCarried;
+    groupObject["root_buffers"] = encodeValues(roots, asmState);
+    groupObject["operations"] = std::move(operations);
+    syncGroups.push_back(std::move(groupObject));
+
+    for (unsigned source : sources) {
+      for (unsigned target : targets) {
+        llvm::json::Object edge;
+        edge["source"] = static_cast<int64_t>(source);
+        edge["target"] = static_cast<int64_t>(target);
+        edge["group"] = static_cast<int64_t>(groupIndex);
+        edge["src_pipe"] =
+            getPipelineName(representative->GetSrcPipe()).str();
+        edge["dst_pipe"] =
+            getPipelineName(representative->GetDstPipe()).str();
+        edge["loop_carried"] = loopCarried;
+        edge["root_buffers"] = encodeValues(roots, asmState);
+        syncEdges.push_back(std::move(edge));
+      }
+    }
+  }
+
+  llvm::json::Object record;
+  record["schema_version"] = 1;
+  record["function"] = functionName;
+  record["status"] = status.str();
+  record["node_count"] = static_cast<int64_t>(syncIR.size());
+  record["duration_model"] = "unestimated";
+  record["nodes"] = std::move(nodes);
+  record["stream_edges"] = std::move(streamEdges);
+  record["sync_groups"] = std::move(syncGroups);
+  record["sync_edges"] = std::move(syncEdges);
+
+  static std::mutex outputMutex;
+  static std::string initializedPath;
+  return appendJsonLine(insertSyncScheduleGraphPathOpt, std::move(record),
+                        outputMutex, initializedPath,
+                        "PTOInsertSync schedule graph");
 }
