@@ -276,6 +276,10 @@ ptoas test/lit/pto/empty_func.pto --enable-insert-sync -o outputfile.cpp
 ptoas test/lit/pto/empty_func.pto --enable-insert-sync \
   --pto-insert-sync-summary=sync-summary.jsonl -o outputfile.cpp
 
+# 导出分析后的操作流和同步依赖图
+ptoas test/lit/pto/empty_func.pto --enable-insert-sync \
+  --pto-insert-sync-schedule-graph=schedule-graph.jsonl -o outputfile.cpp
+
 # 指定目标硬件架构（A3 / A5）
 ptoas test/lit/pto/empty_func.pto --pto-arch=a5 -o outputfile.cpp
 
@@ -294,6 +298,11 @@ ptoas --version
 同步 summary 在 event-id 分配后生成，包含有效同步组/操作、pipe 对计数、循环回边、
 多 event 组、PIPE_ALL 降级、补偿操作，以及 event-id 使用量（请求的槽位数和每个
 pipe 对的不同 ID 数量）。该输出用于受控的内存 placement 实验，不直接估算运行周期。
+
+schedule graph 同样在 event-id 分配后生成。它记录操作节点、执行 pipe、内存访问、
+静态循环边界、每个 pipe 的顺序边，以及最终同步组和同步边。导出器不分配操作时长，
+也不改变生成代码；延迟或关键路径分析必须由独立且经过校准的模型完成。
+
 ### 5.2 Python 接口 (Python API)
 
 在支持的 `ptoas` 安装环境中，PTO Dialect 与 PTODSL 都可以直接导入。

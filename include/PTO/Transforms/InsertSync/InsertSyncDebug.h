@@ -29,6 +29,9 @@ unsigned getInsertSyncDebugLevel();
 /// Whether a machine-readable InsertSync summary was requested.
 bool isInsertSyncSummaryEnabled();
 
+/// Whether a machine-readable schedule graph was requested.
+bool isInsertSyncScheduleGraphEnabled();
+
 /// Returns true when InsertSync debug is enabled at or above \p minLevel.
 bool isInsertSyncDebugEnabled(
     InsertSyncDebugLevel minLevel = InsertSyncDebugLevel::Phase);
@@ -52,6 +55,13 @@ void dumpInsertSyncPhase(llvm::StringRef phase, const SyncIRs &syncIR,
 bool writeInsertSyncSummary(llvm::StringRef status, const SyncIRs &syncIR,
                             const SyncOperations &syncOperations,
                             Operation *opForPrinting);
+
+/// Append one JSON-lines record describing the analyzed operation graph and
+/// final synchronization dependencies for a function.
+bool writeInsertSyncScheduleGraph(llvm::StringRef status,
+                                  const SyncIRs &syncIR,
+                                  const SyncOperations &syncOperations,
+                                  Operation *opForPrinting);
 
 } // namespace pto
 } // namespace mlir

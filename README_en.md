@@ -247,6 +247,10 @@ ptoas test/lit/pto/empty_func.pto --enable-insert-sync -o outputfile.cpp
 ptoas test/lit/pto/empty_func.pto --enable-insert-sync \
   --pto-insert-sync-summary=sync-summary.jsonl -o outputfile.cpp
 
+# Export the analyzed operation streams and synchronization dependencies
+ptoas test/lit/pto/empty_func.pto --enable-insert-sync \
+  --pto-insert-sync-schedule-graph=schedule-graph.jsonl -o outputfile.cpp
+
 # Specify target hardware architecture (A3 / A5)
 ptoas test/lit/pto/empty_func.pto --pto-arch=a5 -o outputfile.cpp
 
@@ -263,6 +267,13 @@ and multi-event groups, PIPE_ALL fallbacks, compensation operations, and event
 identifier usage (requested slots and distinct IDs per pipe pair). It is
 intended for controlled memory-placement experiments; it does not estimate
 runtime cycles.
+
+The schedule-graph diagnostic is also emitted after event-id allocation. It
+records operation nodes, execution pipes, memory accesses, static loop bounds,
+per-pipe stream edges, and the final synchronization groups and edges. The
+exporter does not assign durations and does not change generated code. A
+separate calibrated model must interpret the graph before it can be used for
+latency or critical-path analysis.
 
 ### 5.2 Python API
 
