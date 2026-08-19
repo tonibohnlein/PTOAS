@@ -1,0 +1,73 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-print-kernel-schedule-graph=format=text' | FileCheck %s --check-prefix=TEXT
+// RUN: pto-test-opt %s '-pto-print-kernel-schedule-graph=format=dot' | FileCheck %s --check-prefix=DOT
+// RUN: not pto-test-opt %s '-pto-print-kernel-schedule-graph=format=json' 2>&1 | FileCheck %s --check-prefix=INVALID
+
+module {
+  func.func @kernel_schedule_graph(%src: !pto.ptr<f32>,
+                                   %dst: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c32 = arith.constant 32 : index
+
+    %scalar = pto.load_scalar %src[%c0] : !pto.ptr<f32> -> f32
+    pto.store_scalar %scalar, %dst[%c0] : !pto.ptr<f32>, f32
+
+    %view = pto.make_tensor_view %src,
+      shape = [%c2, %c32], strides = [%c32, %c1]
+      : !pto.tensor_view<2x32xf32>
+    %input = pto.alloc_tile :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %output = pto.alloc_tile :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    scf.for %i = %c0 to %c2 step %c1 {
+      %part = pto.partition_view %view,
+        offsets = [%i, %c0], sizes = [%c1, %c32]
+        : !pto.tensor_view<2x32xf32>
+          -> !pto.partition_tensor_view<1x32xf32>
+      pto.tload ins(%part : !pto.partition_tensor_view<1x32xf32>)
+        outs(%input : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.trelu ins(%input : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+        outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tstore ins(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+        outs(%part : !pto.partition_tensor_view<1x32xf32>)
+    }
+
+    %after = pto.load_scalar %dst[%c0] : !pto.ptr<f32> -> f32
+    pto.store_scalar %after, %dst[%c1] : !pto.ptr<f32>, f32
+    return
+  }
+}
+
+// TEXT-LABEL: KernelScheduleGraph @kernel_schedule_graph nodes=7
+// TEXT: node[0] op=pto.load_scalar pipe=PIPE_S kind=transfer order=0 block=0 loop_depth=0
+// TEXT: node[1] op=pto.store_scalar pipe=PIPE_S kind=transfer order=1 block=0 loop_depth=0
+// TEXT: node[2] op=pto.tload pipe=PIPE_MTE2 kind=transfer order=2 block=1 loop_depth=1
+// TEXT: node[3] op=pto.trelu pipe=PIPE_V kind=compute order=3 block=1 loop_depth=1
+// TEXT: node[4] op=pto.tstore pipe=PIPE_MTE3 kind=transfer order=4 block=1 loop_depth=1
+// TEXT: node[5] op=pto.load_scalar pipe=PIPE_S kind=transfer order=5 block=0 loop_depth=0
+// TEXT: node[6] op=pto.store_scalar pipe=PIPE_S kind=transfer order=6 block=0 loop_depth=0
+// TEXT-DAG: edge 0 -> 1 kind=ssa distance=0
+// TEXT-DAG: edge 2 -> 3 kind=memory-raw distance=0
+// TEXT-DAG: edge 3 -> 4 kind=memory-raw distance=0
+// TEXT-DAG: edge 0 -> 2 kind=control distance=0
+// TEXT-DAG: edge 2 -> 5 kind=control distance=0
+// TEXT-DAG: edge 2 -> 2 kind=memory-waw distance=1
+// TEXT-DAG: edge 3 -> 2 kind=memory-war distance=1
+
+// DOT-LABEL: digraph "kernel_schedule_graph" {
+// DOT: n2 [label="2: pto.tload\nPIPE_MTE2 / transfer", fillcolor="#DCEBFA"];
+// DOT: n3 [label="3: pto.trelu\nPIPE_V / compute", fillcolor="#FDE7C8"];
+// DOT: n2 -> n2 [label="memory-waw, d=1, loop-depth=1", color="#9C2F45"
+// DOT-SAME: style=dashed];
+
+// INVALID: error: unsupported kernel schedule graph format 'json'; expected 'text' or 'dot'

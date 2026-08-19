@@ -84,6 +84,7 @@ std::unique_ptr<Pass> createPTOA5NormalizeTMovPass();
 std::unique_ptr<Pass> createPTORemoveIdentityTMovPass();
 std::unique_ptr<Pass> createPreFusionAnalysisPass();
 std::unique_ptr<Pass> createPrintPreFusionAnalysisPass();
+std::unique_ptr<Pass> createPrintKernelScheduleGraphPass();
 std::unique_ptr<Pass> createFusionPlanPass();
 std::unique_ptr<Pass>
 createFusionPlanPass(const FusionPlanOptions &options);

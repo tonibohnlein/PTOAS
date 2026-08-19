@@ -1,0 +1,14 @@
+digraph "linear_chain" {
+  rankdir=LR;
+  graph [bgcolor="white", pad="0.2", nodesep="0.35", ranksep="0.7"];
+  node [fontname="DejaVu Sans", fontsize=10, shape=box, style="filled,rounded", color="#59636E"];
+  edge [fontname="DejaVu Sans", fontsize=8, arrowsize=0.7];
+  n0 [label="0: pto.tload\nPIPE_MTE2 / transfer", fillcolor="#DCEBFA"];
+  n1 [label="1: pto.tmuls\nPIPE_V / compute", fillcolor="#FDE7C8"];
+  n2 [label="2: pto.tstore\nPIPE_MTE3 / transfer", fillcolor="#DCEBFA"];
+  n0 -> n1 [label="memory-raw", color="#2E7D32", fontcolor="#2E7D32"];
+  n0 -> n1 [label="memory-waw", color="#9C2F45", fontcolor="#9C2F45"];
+  n0 -> n2 [label="control", color="#6B5CA5", fontcolor="#6B5CA5"];
+  n1 -> n2 [label="memory-raw", color="#2E7D32", fontcolor="#2E7D32"];
+  n1 -> n2 [label="control", color="#6B5CA5", fontcolor="#6B5CA5"];
+}
