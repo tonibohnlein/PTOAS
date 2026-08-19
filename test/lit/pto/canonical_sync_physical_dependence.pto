@@ -1,0 +1,97 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=all' \
+// RUN:   | FileCheck %s --check-prefix=PLAN
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=IR
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=dot view=events' \
+// RUN:   | FileCheck %s --check-prefix=DOT
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --emit-pto-ir %s | FileCheck %s --check-prefix=DRIVER
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @overlap_reuse(
+      %src0: !pto.partition_tensor_view<16x128xf32>,
+      %src1: !pto.partition_tensor_view<16x128xf32>,
+      %dst: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %addr16384 = arith.constant 16384 : i64
+    %one = arith.constant 1.000000e+00 : f32
+
+    %stored = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %reused = pto.alloc_tile addr = %addr4096 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %input = pto.alloc_tile addr = %addr16384 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tload ins(%src0 : !pto.partition_tensor_view<16x128xf32>)
+      outs(%stored : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%src1 : !pto.partition_tensor_view<16x128xf32>)
+      outs(%input : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tstore ins(%stored : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst : !pto.partition_tensor_view<16x128xf32>)
+    pto.tmuls ins(%input, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+      outs(%reused : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @disjoint_reuse(
+      %src0: !pto.partition_tensor_view<16x128xf32>,
+      %src1: !pto.partition_tensor_view<16x128xf32>,
+      %dst: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %addr0 = arith.constant 0 : i64
+    %addr8192 = arith.constant 8192 : i64
+    %addr16384 = arith.constant 16384 : i64
+    %one = arith.constant 1.000000e+00 : f32
+
+    %stored = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %reused = pto.alloc_tile addr = %addr8192 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %input = pto.alloc_tile addr = %addr16384 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tload ins(%src0 : !pto.partition_tensor_view<16x128xf32>)
+      outs(%stored : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%src1 : !pto.partition_tensor_view<16x128xf32>)
+      outs(%input : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tstore ins(%stored : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst : !pto.partition_tensor_view<16x128xf32>)
+    pto.tmuls ins(%input, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+      outs(%reused : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @overlap_reuse
+// PLAN: domain PIPE_MTE3 -> PIPE_V events=1
+// PLAN-LABEL: PTOCanonicalSyncPlan @disjoint_reuse
+// PLAN-NOT: domain PIPE_MTE3 -> PIPE_V
+
+// IR-LABEL: func.func @overlap_reuse
+// IR: pto.tstore
+// IR-NEXT: pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID{{[0-7]}}>]
+// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID{{[0-7]}}>]
+// IR: pto.tmuls
+// IR-LABEL: func.func @disjoint_reuse
+// IR-NOT: pto.set_flag[<PIPE_MTE3>, <PIPE_V>
+// IR-NOT: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>
+
+// DRIVER-LABEL: func.func @overlap_reuse
+// DRIVER: pto.set_flag[<PIPE_MTE3>, <PIPE_V>
+// DRIVER: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>
+
+// DOT-LABEL: digraph "overlap_reuse" {
+// DOT: e{{[0-9]+}} [shape=ellipse, label="event

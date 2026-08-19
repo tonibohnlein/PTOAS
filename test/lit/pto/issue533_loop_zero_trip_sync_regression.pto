@@ -1,4 +1,6 @@
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s | FileCheck %s
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync %s \
+// RUN:   | FileCheck %s --check-prefix=CANONICAL
 //
 // Regression guard for issue #533 (zero-trip loop):
 // a post-loop vector consumer must wait on MTE2->V before TROWEXPANDDIV.
@@ -8,6 +10,13 @@
 // CHECK: }
 // CHECK: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[POST:[0-9]+]]);
 // CHECK: TROWEXPANDDIV
+//
+// CANONICAL-LABEL: AICORE void qwen3_scope2_incore_5
+// CANONICAL: set_flag(PIPE_MTE2, PIPE_V, EVENT_ID3);
+// CANONICAL: for (int64_t
+// CANONICAL: }
+// CANONICAL: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID3);
+// CANONICAL: TROWEXPANDDIV
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @qwen3_scope2_incore_5(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<f32>, %arg2: !pto.ptr<f32>, %arg3: !pto.ptr<bf16>, %arg4: index, %arg5: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {

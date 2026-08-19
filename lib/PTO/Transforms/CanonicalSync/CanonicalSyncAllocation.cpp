@@ -1,0 +1,154 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+#include "CanonicalSyncInternal.h"
+
+#include "llvm/ADT/STLExtras.h"
+
+#include <algorithm>
+#include <map>
+#include <vector>
+
+using namespace mlir;
+using namespace mlir::pto;
+
+namespace {
+
+struct EventLane {
+  std::size_t event = 0;
+  unsigned lane = 0;
+};
+
+bool lifetimesConflict(const CanonicalEvent &first,
+                       const CanonicalEvent &second) {
+  return !(first.intervalEnd < second.intervalBegin ||
+           second.intervalEnd < first.intervalBegin);
+}
+
+SyncColoring selectColoring(const SyncConflictGraph &graph, bool &interval,
+                            std::string &method) {
+  IntervalColoring intervalResult = colorIntervalGraph(graph);
+  if (intervalResult.isInterval) {
+    interval = true;
+    method = "interval-optimal";
+    return intervalResult.coloring;
+  }
+  interval = false;
+  SyncColoring dsatur = colorDsatur(graph);
+  SyncColoring smallestLast = colorSmallestLast(graph);
+  if (smallestLast.colorCount < dsatur.colorCount) {
+    method = "smallest-last-first-fit";
+    return smallestLast;
+  }
+  method = "dsatur";
+  return dsatur;
+}
+
+std::vector<unsigned> getAvailableIds(unsigned maximum,
+                                      const std::set<unsigned> &reserved) {
+  std::vector<unsigned> available;
+  for (unsigned id = 0; id < maximum; ++id) {
+    if (!reserved.count(id)) {
+      available.push_back(id);
+    }
+  }
+  return available;
+}
+
+} // namespace
+
+LogicalResult CanonicalSyncPlanBuilder::allocateEvents() {
+  std::map<CanonicalEventDomainKey, SmallVector<std::size_t, 8>> eventsByDomain;
+  for (auto [index, event] : llvm::enumerate(plan_.events_)) {
+    eventsByDomain[{event.sourcePipe, event.targetPipe}].push_back(index);
+  }
+
+  for (const auto &entry : eventsByDomain) {
+    const CanonicalEventDomainKey key = entry.first;
+    const SmallVector<std::size_t, 8> &eventIndices = entry.second;
+    SyncConflictGraph graph;
+    std::vector<EventLane> lanes;
+    for (std::size_t eventIndex : eventIndices) {
+      CanonicalEvent &event = plan_.events_[eventIndex];
+      if (event.width == 0 || event.width > kMaxMultiBufferCount) {
+        return func_.emitError()
+               << "canonical sync event width " << event.width
+               << " is outside the supported multi-buffer range";
+      }
+      for (unsigned lane = 0; lane < event.width; ++lane) {
+        graph.addVertex();
+        lanes.push_back({eventIndex, lane});
+      }
+    }
+    for (std::size_t first = 0; first < lanes.size(); ++first) {
+      for (std::size_t second = first + 1; second < lanes.size(); ++second) {
+        const bool sameEvent = lanes[first].event == lanes[second].event;
+        const bool overlapping =
+            lifetimesConflict(plan_.events_[lanes[first].event],
+                              plan_.events_[lanes[second].event]);
+        if (sameEvent || overlapping) {
+          graph.addEdge(first, second);
+        }
+      }
+    }
+
+    bool interval = false;
+    std::string method;
+    SyncColoring coloring = selectColoring(graph, interval, method);
+    if (!isValidColoring(graph, coloring)) {
+      return func_.emitError("canonical sync produced an invalid event "
+                             "coloring");
+    }
+    const std::set<unsigned> &reserved = reservedIds_[key];
+    const std::vector<unsigned> available =
+        getAvailableIds(eventIdMax_, reserved);
+
+    CanonicalEventDomain domain;
+    domain.sourcePipe = key.source;
+    domain.targetPipe = key.target;
+    domain.eventCount = eventIndices.size();
+    domain.availableIds = available.size();
+    domain.colorCount = coloring.colorCount;
+    domain.interval = interval;
+    domain.coloringMethod = method;
+    domain.reservedIds.append(reserved.begin(), reserved.end());
+    plan_.domains_.push_back(domain);
+
+    if (coloring.colorCount > available.size()) {
+      InFlightDiagnostic diagnostic =
+          func_.emitError()
+          << "PTOCanonicalSync cannot allocate domain "
+          << static_cast<unsigned>(key.source) << " -> "
+          << static_cast<unsigned>(key.target) << ": " << coloring.colorCount
+          << " colors requested but only " << available.size()
+          << " event IDs are available";
+      if (interval) {
+        diagnostic << "; the interval-domain color count is exact";
+      } else {
+        const SyncColoring dsatur = colorDsatur(graph);
+        const SyncColoring smallestLast = colorSmallestLast(graph);
+        diagnostic << "; DSATUR used " << dsatur.colorCount
+                   << " and smallest-last first-fit used "
+                   << smallestLast.colorCount
+                   << ". Heuristic failure does not prove that the domain is "
+                      "not colorable within the hardware limit";
+      }
+      return failure();
+    }
+    for (std::size_t vertex = 0; vertex < lanes.size(); ++vertex) {
+      CanonicalEvent &event = plan_.events_[lanes[vertex].event];
+      if (event.eventIds.empty()) {
+        event.eventIds.resize(event.width);
+      }
+      event.eventIds[lanes[vertex].lane] = available[coloring.colors[vertex]];
+    }
+  }
+  return success();
+}

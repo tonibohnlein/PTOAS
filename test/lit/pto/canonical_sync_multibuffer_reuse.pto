@@ -1,0 +1,52 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --enable-canonical-sync --canonical-sync-event-id-max=8 \
+// RUN:   --mlir-print-ir-after=pto-canonical-sync %s 2>&1 1>/dev/null \
+// RUN:   | FileCheck %s
+
+// A slot is reused only after two iterations. The V read/write must complete
+// before MTE2 overwrites that slot even though adjacent iterations are
+// physically disjoint.
+
+module {
+  func.func @two_slot_reuse(
+      %src : !pto.partition_tensor_view<16x16xf32>, %n : index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %buffer = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+
+    scf.for %i = %c0 to %n step %c1 {
+      %slot_index = arith.remui %i, %c2 : index
+      %slot = pto.multi_tile_get %buffer[%slot_index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tmuls ins(%slot, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @two_slot_reuse
+// CHECK-DAG: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// CHECK-DAG: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID1>]
+// CHECK: scf.for
+// CHECK: pto.wait_flag_dyn[<PIPE_V>, <PIPE_MTE2>,
+// CHECK: pto.tload
+// CHECK: pto.tmuls
+// CHECK: pto.set_flag_dyn[<PIPE_V>, <PIPE_MTE2>,
+// CHECK-DAG: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// CHECK-DAG: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID1>]

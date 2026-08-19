@@ -1,17 +1,19 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- SlotAffineAnalysis.cpp ----------------------------------*- C++ -*-===//
 
 #include "PTO/Transforms/SlotAffineAnalysis.h"
 
-#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/Support/CodeConstants.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -58,7 +60,7 @@ constexpr int kMaxAddSubPeelCount = 4;
 // when the input is a pure constant -- then the canonical form is just
 // `innerOffset mod N` with `innerSym == nullptr`.
 struct SlotForm {
-  Value innerSym;        // null = constant-only form
+  Value innerSym; // null = constant-only form
   int64_t innerOffset{0};
   uint32_t N{0};
 };
@@ -179,13 +181,15 @@ static int64_t pyMod(int64_t a, int64_t n) {
 
 } // namespace
 
-SlotRelation compareSlotSSA(Value a, Value b, uint32_t N) {
+static SlotRelation compareSlotForms(Value a, Value b, uint32_t N,
+                                     Value shiftedSymbol,
+                                     int64_t rhsSymbolOffset) {
   if (!a || !b || N == 0) {
     return SlotRelation::kUnknown;
   }
 
   // Shortcut: same SSA value -> always equal regardless of N.
-  if (a == b) {
+  if (a == b && rhsSymbolOffset == 0) {
     return SlotRelation::kEqual;
   }
 
@@ -226,8 +230,25 @@ SlotRelation compareSlotSSA(Value a, Value b, uint32_t N) {
     return SlotRelation::kUnknown;
   }
 
-  int64_t diff = pyMod(fa.innerOffset - fb.innerOffset, N);
+  if (rhsSymbolOffset != 0 && fa.innerSym != shiftedSymbol) {
+    return SlotRelation::kUnknown;
+  }
+
+  int64_t diff = pyMod(fa.innerOffset - fb.innerOffset - rhsSymbolOffset, N);
   return diff == 0 ? SlotRelation::kEqual : SlotRelation::kDisjoint;
+}
+
+SlotRelation compareSlotSSA(Value a, Value b, uint32_t N) {
+  return compareSlotForms(a, b, N, Value(), 0);
+}
+
+SlotRelation compareSlotSSAWithOffset(Value a, Value b, uint32_t N,
+                                      Value shiftedSymbol,
+                                      int64_t rhsSymbolOffset) {
+  if (!shiftedSymbol || rhsSymbolOffset == 0) {
+    return compareSlotSSA(a, b, N);
+  }
+  return compareSlotForms(a, b, N, shiftedSymbol, rhsSymbolOffset);
 }
 
 } // namespace pto

@@ -16,3 +16,17 @@ add_test(NAME pto_schedule_graph_unit
   COMMAND pto-schedule-graph-unit-test
 )
 set_tests_properties(pto_schedule_graph_unit PROPERTIES LABELS "PTO;unit")
+
+add_executable(pto-canonical-sync-algorithms-unit-test
+  CanonicalSyncAlgorithmsTest.cpp
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/CanonicalSyncColoring.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/CompletionReduction.cpp"
+)
+target_include_directories(pto-canonical-sync-algorithms-unit-test PRIVATE
+  "${PROJECT_SOURCE_DIR}/include"
+)
+add_test(NAME pto_canonical_sync_algorithms_unit
+  COMMAND pto-canonical-sync-algorithms-unit-test
+)
+set_tests_properties(pto_canonical_sync_algorithms_unit
+  PROPERTIES LABELS "PTO;unit")

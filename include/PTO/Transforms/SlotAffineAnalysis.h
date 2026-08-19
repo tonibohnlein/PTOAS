@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- SlotAffineAnalysis.h - Multi-buffer slot affine compare --*- C++ -*-===//
 //
@@ -52,6 +54,13 @@ mlir::Value findMultiTileSlotExpr(mlir::Value v);
 ///   compareSlotSSA(%iv % 2, %j % 2)          -> kUnknown   // diff symbols
 ///   compareSlotSSA(arith.constant 0, arith.constant 1) -> kDisjoint
 SlotRelation compareSlotSSA(mlir::Value a, mlir::Value b, uint32_t N);
+
+/// Compare `a(symbol)` with `b(symbol + rhsSymbolOffset)` modulo `N`.
+/// Returns `kUnknown` when the canonical symbolic form does not use
+/// `shiftedSymbol`. This is used for fixed-distance loop recurrences.
+SlotRelation compareSlotSSAWithOffset(mlir::Value a, mlir::Value b, uint32_t N,
+                                      mlir::Value shiftedSymbol,
+                                      int64_t rhsSymbolOffset);
 
 } // namespace pto
 } // namespace mlir
