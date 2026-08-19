@@ -150,6 +150,15 @@ add_mlir_dialect_library(PTOTransforms
   GraphSyncSolver/EventIdSolver.cpp
   GraphSyncSolver/SyncSolver.cpp
   GraphSyncSolver/SyncSolverCodeGen.cpp
+  CanonicalSync/CanonicalSyncColoring.cpp
+  CanonicalSync/CompletionReduction.cpp
+  CanonicalSync/CanonicalSyncAnalysis.cpp
+  CanonicalSync/CanonicalSyncDependencies.cpp
+  CanonicalSync/CanonicalSyncPlanning.cpp
+  CanonicalSync/CanonicalSyncAllocation.cpp
+  CanonicalSync/CanonicalSyncCodegen.cpp
+  CanonicalSync/CanonicalSyncPrinter.cpp
+  CanonicalSync/PTOCanonicalSync.cpp
   LoweringSyncToPipe.cpp
   PTOVerifyTFreePass.cpp
 

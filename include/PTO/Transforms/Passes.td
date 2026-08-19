@@ -115,6 +115,62 @@ def PTOGraphSyncSolver : Pass<"pto-graph-sync-solver", "func::FuncOp"> {
   ];
 }
 
+def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
+  let summary = "Insert synchronization from canonical physical dependences";
+  let description = [{
+    Builds the sound dependence graph implied by fixed operation order and
+    planned physical memory addresses, reduces completion-qualified
+    synchronization requirements, and allocates the available hardware event
+    IDs. The pass fails without changing the IR when the event budget is
+    insufficient.
+  }];
+
+  let constructor = "mlir::pto::createPTOCanonicalSyncPass()";
+
+  let options = [
+    Option<"eventIdNumMax", "event-id-num-max", "int64_t",
+           /*default=*/"8",
+           "Maximum hardware EVENT_ID slots available to the planner.">,
+  ];
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::memref::MemRefDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::func::FuncDialect"
+  ];
+}
+
+def PrintCanonicalSyncPlan
+    : Pass<"pto-print-canonical-sync-plan", "ModuleOp"> {
+  let summary = "Print the canonical synchronization analysis and plan";
+  let description = [{
+    Runs canonical synchronization analysis without mutating the function and
+    prints either text or DOT for the selected analysis view.
+  }];
+
+  let constructor = "mlir::pto::createPrintCanonicalSyncPlanPass()";
+
+  let options = [
+    Option<"format", "format", "std::string", "\"text\"",
+           "Output format: text or dot.">,
+    Option<"view", "view", "std::string", "\"all\"",
+           "Analysis view: all, dependencies, plan, or events.">,
+    Option<"eventIdNumMax", "event-id-num-max", "int64_t",
+           /*default=*/"8",
+           "Maximum hardware EVENT_ID slots available to the planner.">,
+  ];
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::memref::MemRefDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::func::FuncDialect"
+  ];
+}
+
 def ConvertToPTOOp : Pass<"convert-to-pto-op"> {
   let summary = "Convert Ops from other dialects to PTO Ops";
   let constructor = "mlir::pto::createConvertToPTOOpPass()";
@@ -267,7 +323,7 @@ def PrintPreFusionAnalysis
 }
 
 def PrintKernelScheduleGraph
-    : Pass<"pto-print-kernel-schedule-graph", "func::FuncOp"> {
+    : Pass<"pto-print-kernel-schedule-graph", "ModuleOp"> {
   let summary = "Build and print the kernel compute/transfer scheduling graph";
   let description = [{
     Builds an analysis-only graph of schedulable PTO compute and transfer

@@ -62,6 +62,11 @@ This can be quadratic for large regions; a compact boundary representation or
 structural transitive reduction is required before using the graph as a
 large-kernel scheduling input.
 
+`PTOCanonicalSync` also imports this graph's SSA and loop-carried SSA edges.
+It augments them with post-memory-planning physical-range hazards and keeps its
+completion-qualified reduction separate from this scheduling DAG. See
+`docs/designs/pto-canonical-sync.md`.
+
 ## Inspection
 
 Stable text output:

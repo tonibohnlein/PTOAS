@@ -56,6 +56,10 @@ createPTOBufidSyncPass(const PTOBufidSyncOptions &options = {});
 // Graph-based intra-core sync solver (coexists with PTOInsertSync).
 std::unique_ptr<Pass>
 createPTOGraphSyncSolverPass(const PTOGraphSyncSolverOptions &options = {});
+// Canonical dependence-driven intra-core synchronization planner.
+std::unique_ptr<Pass>
+createPTOCanonicalSyncPass(const PTOCanonicalSyncOptions &options = {});
+std::unique_ptr<Pass> createPrintCanonicalSyncPlanPass();
 // Default arch is A3 unless overridden by callers.
 std::unique_ptr<Pass> createEmitPTOManualPass();
 // Explicitly select target arch for codegen.

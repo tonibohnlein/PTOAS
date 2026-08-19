@@ -10,6 +10,7 @@
 #include "PTO/Transforms/Passes.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/Support/raw_ostream.h"
@@ -32,27 +33,29 @@ struct PrintKernelScheduleGraphPass
       PrintKernelScheduleGraphPass>::PrintKernelScheduleGraphBase;
 
   void runOnOperation() override {
-    func::FuncOp func = getOperation();
-    if (func.isExternal()) {
-      return;
-    }
+    ModuleOp module = getOperation();
     if (format != "text" && format != "dot") {
-      func.emitError() << "unsupported kernel schedule graph format '" << format
-                       << "'; expected 'text' or 'dot'";
+      module.emitError() << "unsupported kernel schedule graph format '"
+                         << format << "'; expected 'text' or 'dot'";
       signalPassFailure();
       return;
     }
 
-    FailureOr<pto::KernelScheduleGraph> graph =
-        pto::buildKernelScheduleGraph(func);
-    if (failed(graph)) {
-      signalPassFailure();
-      return;
-    }
-    if (format == "dot") {
-      pto::printKernelScheduleGraphDot(llvm::outs(), func, *graph);
-    } else {
-      pto::printKernelScheduleGraph(llvm::outs(), func, *graph);
+    for (func::FuncOp func : module.getOps<func::FuncOp>()) {
+      if (func.isExternal()) {
+        continue;
+      }
+      FailureOr<pto::KernelScheduleGraph> graph =
+          pto::buildKernelScheduleGraph(func);
+      if (failed(graph)) {
+        signalPassFailure();
+        return;
+      }
+      if (format == "dot") {
+        pto::printKernelScheduleGraphDot(llvm::outs(), func, *graph);
+      } else {
+        pto::printKernelScheduleGraph(llvm::outs(), func, *graph);
+      }
     }
     markAllAnalysesPreserved();
   }
