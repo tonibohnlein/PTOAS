@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-print-kernel-schedule-graph=format=text' | FileCheck %s
+
+module {
+  func.func @structured_control(%src: !pto.ptr<i32>, %dst: !pto.ptr<i32>,
+                                %condition: i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %before = pto.load_scalar %src[%c0] : !pto.ptr<i32> -> i32
+    pto.record_event [#pto.pipe_event_type<TLOAD>, #pto.pipe_event_type<TVEC>, #pto.event<EVENT_ID0>]
+    scf.if %condition {
+      pto.store_scalar %before, %dst[%c0] : !pto.ptr<i32>, i32
+    } else {
+      %alternative = pto.load_scalar %src[%c1] : !pto.ptr<i32> -> i32
+    }
+    %after = pto.load_scalar %dst[%c0] : !pto.ptr<i32> -> i32
+    return
+  }
+
+  func.func @empty_kernel() {
+    return
+  }
+}
+
+// CHECK-LABEL: KernelScheduleGraph @structured_control nodes=4
+// CHECK: node[0] op=pto.load_scalar
+// CHECK-NEXT: node[1] op=pto.store_scalar
+// CHECK-NEXT: node[2] op=pto.load_scalar
+// CHECK-NEXT: node[3] op=pto.load_scalar
+// CHECK-NOT: op=pto.record_event
+// CHECK-DAG: edge 0 -> 1 kind=control distance=0
+// CHECK-DAG: edge 0 -> 2 kind=control distance=0
+// CHECK-DAG: edge 1 -> 3 kind=control distance=0
+// CHECK-DAG: edge 2 -> 3 kind=control distance=0
+// CHECK-LABEL: KernelScheduleGraph @empty_kernel nodes=0 dag_edges=0 dependencies=0

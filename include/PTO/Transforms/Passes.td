@@ -268,6 +268,23 @@ def PrintPreFusionAnalysis
   let dependentDialects = ["mlir::pto::PTODialect"];
 }
 
+def PrintKernelScheduleGraph
+    : Pass<"pto-print-kernel-schedule-graph", "func::FuncOp"> {
+  let summary = "Build and print the kernel compute/transfer scheduling graph";
+  let description = [{
+    Builds an analysis-only graph of schedulable PTO compute and transfer
+    operations. Nodes are typed by the hardware pipe obtained through
+    OpPipeInterface. Edges capture SSA, memory, structured-control, and
+    loop-carried dependencies. The graph can be printed as stable text or DOT.
+  }];
+  let constructor = "mlir::pto::createPrintKernelScheduleGraphPass()";
+  let options = [
+    Option<"format", "format", "std::string", "\"text\"",
+           "Output format: text or dot">
+  ];
+  let dependentDialects = ["mlir::pto::PTODialect"];
+}
+
 def FusionPlan : Pass<"pto-fusion-plan", "func::FuncOp"> {
   let summary = "Build conservative tile-fusion planning groups from block-local analysis";
   let description = [{
