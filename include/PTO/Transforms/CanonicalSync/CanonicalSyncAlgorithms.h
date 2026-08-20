@@ -20,40 +20,19 @@
 namespace mlir {
 namespace pto {
 
-class SyncConflictGraph {
-public:
-  using Vertex = std::size_t;
-
-  Vertex addVertex();
-  bool addEdge(Vertex first, Vertex second);
-
-  std::size_t size() const { return neighbors_.size(); }
-  const std::vector<Vertex> &neighbors(Vertex vertex) const {
-    return neighbors_[vertex];
-  }
-  bool adjacent(Vertex first, Vertex second) const;
-
-private:
-  std::vector<std::vector<Vertex>> neighbors_;
+struct SyncInterval {
+  std::size_t begin = 0;
+  std::size_t end = 0;
 };
 
 struct SyncColoring {
-  static constexpr unsigned kUncolored = static_cast<unsigned>(-1);
-
   std::vector<unsigned> colors;
   unsigned colorCount = 0;
 };
 
-struct IntervalColoring {
-  bool isInterval = false;
-  SyncColoring coloring;
-};
-
-IntervalColoring colorIntervalGraph(const SyncConflictGraph &graph);
-SyncColoring colorDsatur(const SyncConflictGraph &graph);
-SyncColoring colorSmallestLast(const SyncConflictGraph &graph);
-bool isValidColoring(const SyncConflictGraph &graph,
-                     const SyncColoring &coloring);
+/// Optimally color inclusive intervals. Intervals that share an endpoint
+/// overlap and therefore receive different colors.
+SyncColoring colorSyncIntervals(const std::vector<SyncInterval> &intervals);
 
 enum class SyncGraphEdgeKind : std::uint8_t {
   IssueOrder,

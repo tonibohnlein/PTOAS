@@ -26,7 +26,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <string>
 #include <vector>
 
 namespace mlir {
@@ -104,8 +103,6 @@ struct CanonicalEventDomain {
   unsigned eventCount = 0;
   unsigned availableIds = 0;
   unsigned colorCount = 0;
-  bool interval = false;
-  std::string coloringMethod;
   SmallVector<unsigned, 2> reservedIds;
 };
 

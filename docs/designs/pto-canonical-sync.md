@@ -126,25 +126,21 @@ corresponding pipe-pair domain.
 ## Event feasibility boundary
 
 Event IDs are independent per directed `(source pipe, target pipe)` domain.
-Two events conflict when their inclusive set-to-wait lifetimes overlap. A
-multi-buffer event is expanded into a clique of one lane per required ID.
-
-The allocator first recognizes interval conflict graphs. For an interval
-domain, greedy coloring in the reverse perfect-elimination order is optimal,
-so a failure against the configured budget is a proof of infeasibility for
-the fixed synchronization plan. For a non-interval domain, the allocator runs
-both deterministic DSATUR and smallest-last plus first-fit and uses the better
-coloring. Failure of those heuristics is reported as non-conclusive; the pass
-does not silently serialize the kernel or claim the instance is impossible.
+Every event lane has one inclusive set-to-wait lifetime, and two lanes conflict
+exactly when those intervals overlap. A multi-buffer event contributes one
+identical interval per required ID. The conflict graph is therefore interval by
+construction; the allocator colors the intervals directly in start order and
+reuses the smallest available color after an earlier interval ends. This greedy
+algorithm is optimal, so a failure against the configured budget proves that
+the fixed synchronization plan is infeasible.
 
 The hardware budget defaults to eight and is configurable for analysis with
 `--canonical-sync-event-id-max` or the pass option `event-id-num-max`. Values
 outside `[1, 8]` are rejected.
 
 This failure point is the boundary for future scarcity handling. Possible
-extensions include exact bounded coloring, synchronization coalescing, and
-costed serialization. They are intentionally outside the canonical dependence
-construction.
+extensions include synchronization coalescing and costed serialization. They
+are intentionally outside the canonical dependence construction.
 
 ## Inspection
 

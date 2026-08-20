@@ -12,16 +12,15 @@
 
 #include <iostream>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 namespace {
 
 using mlir::pto::CompletionRequirement;
-using mlir::pto::IntervalColoring;
-using mlir::pto::SyncConflictGraph;
+using mlir::pto::SyncColoring;
 using mlir::pto::SyncGraphEdge;
 using mlir::pto::SyncGraphEdgeKind;
+using mlir::pto::SyncInterval;
 
 bool check(bool condition, std::string_view message) {
   if (!condition) {
@@ -30,69 +29,45 @@ bool check(bool condition, std::string_view message) {
   return condition;
 }
 
-SyncConflictGraph makeGraph(std::size_t vertices,
-                            const std::vector<std::pair<int, int>> &edges) {
-  SyncConflictGraph graph;
-  for (std::size_t vertex = 0; vertex < vertices; ++vertex) {
-    graph.addVertex();
-  }
-  for (auto [first, second] : edges) {
-    graph.addEdge(static_cast<std::size_t>(first),
-                  static_cast<std::size_t>(second));
-  }
-  return graph;
+bool intervalsOverlap(const SyncInterval &first, const SyncInterval &second) {
+  return !(first.end < second.begin || second.end < first.begin);
 }
 
-bool testIntervalRecognitionAndOptimalColoring() {
-  SyncConflictGraph path = makeGraph(4, {{0, 1}, {1, 2}, {2, 3}});
-  IntervalColoring pathColoring = mlir::pto::colorIntervalGraph(path);
+bool isValidColoring(const std::vector<SyncInterval> &intervals,
+                     const SyncColoring &coloring) {
+  if (coloring.colors.size() != intervals.size()) {
+    return false;
+  }
+  for (std::size_t first = 0; first < intervals.size(); ++first) {
+    if (coloring.colors[first] >= coloring.colorCount) {
+      return false;
+    }
+    for (std::size_t second = first + 1; second < intervals.size(); ++second) {
+      if (intervalsOverlap(intervals[first], intervals[second]) &&
+          coloring.colors[first] == coloring.colors[second]) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool testOptimalIntervalColoring() {
+  const std::vector<SyncInterval> intervals = {
+      {0, 2}, {2, 4}, {3, 5}, {6, 7}, {8, 9}};
+  const SyncColoring coloring = mlir::pto::colorSyncIntervals(intervals);
   bool passed =
-      check(pathColoring.isInterval, "path is interval") &&
-      check(pathColoring.coloring.colorCount == 2, "path needs two colors") &&
-      check(mlir::pto::isValidColoring(path, pathColoring.coloring),
-            "path coloring is valid");
+      check(coloring.colorCount == 2,
+            "maximum overlap determines the color count") &&
+      check(isValidColoring(intervals, coloring), "interval coloring is valid");
+  passed &= check(coloring.colors == std::vector<unsigned>({0, 1, 0, 0, 0}),
+                  "expired colors are reused deterministically");
 
-  SyncConflictGraph clique =
-      makeGraph(4, {{0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}});
-  IntervalColoring cliqueColoring = mlir::pto::colorIntervalGraph(clique);
-  passed &= check(cliqueColoring.isInterval, "clique is interval");
-  passed &= check(cliqueColoring.coloring.colorCount == 4,
-                  "four-clique needs four colors");
-  return passed;
-}
-
-bool testNonIntervalCertificates() {
-  SyncConflictGraph cycle = makeGraph(4, {{0, 1}, {1, 2}, {2, 3}, {3, 0}});
-  bool passed = check(!mlir::pto::colorIntervalGraph(cycle).isInterval,
-                      "induced four-cycle is not interval");
-
-  SyncConflictGraph threeSun = makeGraph(
-      6,
-      {{0, 1}, {1, 2}, {2, 0}, {3, 0}, {3, 1}, {4, 1}, {4, 2}, {5, 2}, {5, 0}});
-  passed &= check(!mlir::pto::colorIntervalGraph(threeSun).isInterval,
-                  "three-sun is chordal but not interval");
-  return passed;
-}
-
-bool testHeuristicColorings() {
-  SyncConflictGraph graph = makeGraph(
-      6, {{0, 1}, {0, 2}, {1, 2}, {1, 3}, {2, 4}, {3, 4}, {3, 5}, {4, 5}});
-  const auto dsatur = mlir::pto::colorDsatur(graph);
-  const auto smallestLast = mlir::pto::colorSmallestLast(graph);
-  bool passed = check(mlir::pto::isValidColoring(graph, dsatur),
-                      "DSATUR coloring is valid") &&
-                check(mlir::pto::isValidColoring(graph, smallestLast),
-                      "smallest-last coloring is valid");
-
-  SyncConflictGraph witness = makeGraph(
-      6,
-      {{0, 1}, {0, 2}, {0, 4}, {1, 4}, {1, 5}, {2, 3}, {2, 5}, {3, 4}, {3, 5}});
-  const auto witnessDsatur = mlir::pto::colorDsatur(witness);
-  const auto witnessSmallestLast = mlir::pto::colorSmallestLast(witness);
-  passed &= check(witnessDsatur.colorCount == 3,
-                  "DSATUR uses three colors on the witness");
-  passed &= check(witnessSmallestLast.colorCount == 4,
-                  "smallest-last uses four colors on the witness");
+  const std::vector<SyncInterval> inclusive = {{4, 4}, {4, 4}};
+  const SyncColoring inclusiveColoring =
+      mlir::pto::colorSyncIntervals(inclusive);
+  passed &= check(inclusiveColoring.colorCount == 2,
+                  "inclusive endpoint overlap requires distinct colors");
   return passed;
 }
 
@@ -124,38 +99,28 @@ bool testCompletionQualifiedReduction() {
 }
 
 bool testColoringBoundariesAndDeterminism() {
-  SyncConflictGraph empty = makeGraph(0, {});
-  const auto emptyColoring = mlir::pto::colorIntervalGraph(empty);
-  bool passed = check(emptyColoring.isInterval, "empty graph is interval") &&
-                check(emptyColoring.coloring.colorCount == 0,
-                      "empty graph needs no colors") &&
-                check(mlir::pto::isValidColoring(empty, emptyColoring.coloring),
-                      "empty coloring is valid");
+  const std::vector<SyncInterval> empty;
+  const SyncColoring emptyColoring = mlir::pto::colorSyncIntervals(empty);
+  bool passed = check(emptyColoring.colorCount == 0,
+                      "empty interval set needs no colors") &&
+                check(isValidColoring(empty, emptyColoring),
+                      "empty interval coloring is valid");
 
-  SyncConflictGraph clique =
-      makeGraph(8, {{0, 1}, {0, 2}, {0, 3}, {0, 4}, {0, 5}, {0, 6}, {0, 7},
-                    {1, 2}, {1, 3}, {1, 4}, {1, 5}, {1, 6}, {1, 7}, {2, 3},
-                    {2, 4}, {2, 5}, {2, 6}, {2, 7}, {3, 4}, {3, 5}, {3, 6},
-                    {3, 7}, {4, 5}, {4, 6}, {4, 7}, {5, 6}, {5, 7}, {6, 7}});
-  const auto cliqueColoring = mlir::pto::colorIntervalGraph(clique);
-  passed &= check(cliqueColoring.isInterval, "eight-clique is interval");
-  passed &= check(cliqueColoring.coloring.colorCount == 8,
-                  "eight-clique reaches the hardware color bound");
+  const std::vector<SyncInterval> clique(8, {1, 5});
+  const SyncColoring cliqueColoring = mlir::pto::colorSyncIntervals(clique);
+  passed &= check(cliqueColoring.colorCount == 8,
+                  "eight overlapping intervals reach the hardware bound");
+  passed &= check(isValidColoring(clique, cliqueColoring),
+                  "eight-interval clique coloring is valid");
 
-  SyncConflictGraph witness = makeGraph(
-      6,
-      {{0, 1}, {0, 2}, {0, 4}, {1, 4}, {1, 5}, {2, 3}, {2, 5}, {3, 4}, {3, 5}});
-  const auto firstDsatur = mlir::pto::colorDsatur(witness);
-  const auto secondDsatur = mlir::pto::colorDsatur(witness);
-  const auto firstSmallestLast = mlir::pto::colorSmallestLast(witness);
-  const auto secondSmallestLast = mlir::pto::colorSmallestLast(witness);
-  passed &= check(firstDsatur.colorCount == secondDsatur.colorCount &&
-                      firstDsatur.colors == secondDsatur.colors,
-                  "DSATUR is deterministic");
+  const std::vector<SyncInterval> unordered = {{5, 7}, {0, 1}, {2, 4}};
+  const SyncColoring first = mlir::pto::colorSyncIntervals(unordered);
+  const SyncColoring second = mlir::pto::colorSyncIntervals(unordered);
   passed &=
-      check(firstSmallestLast.colorCount == secondSmallestLast.colorCount &&
-                firstSmallestLast.colors == secondSmallestLast.colors,
-            "smallest-last is deterministic");
+      check(first.colorCount == 1, "disjoint intervals reuse one color") &&
+      check(first.colorCount == second.colorCount &&
+                first.colors == second.colors,
+            "interval coloring is deterministic");
   return passed;
 }
 
@@ -171,9 +136,7 @@ bool testInvalidCompletionRequirements() {
 } // namespace
 
 int main() {
-  const bool passed = testIntervalRecognitionAndOptimalColoring() &&
-                      testNonIntervalCertificates() &&
-                      testHeuristicColorings() &&
+  const bool passed = testOptimalIntervalColoring() &&
                       testCompletionQualifiedReduction() &&
                       testColoringBoundariesAndDeterminism() &&
                       testInvalidCompletionRequirements();

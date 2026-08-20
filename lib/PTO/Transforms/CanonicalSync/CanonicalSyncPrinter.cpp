@@ -129,9 +129,7 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
          << " -> " << stringifyPIPE(static_cast<PIPE>(domain.targetPipe))
          << " events=" << domain.eventCount
          << " available=" << domain.availableIds
-         << " colors=" << domain.colorCount
-         << " interval=" << (domain.interval ? "yes" : "no")
-         << " method=" << domain.coloringMethod << " reserved=";
+         << " colors=" << domain.colorCount << " reserved=";
       printIds(os, domain.reservedIds);
       os << '\n';
     }
