@@ -74,6 +74,7 @@ struct CompletionRequirement {
 /// Returns one keep bit per completion requirement. A requirement is removed
 /// only when another path from its source to target contains a hardware or
 /// retained completion edge. Issue-order-only paths never satisfy a hazard.
+/// Invalid or non-forward requirements receive a false keep bit.
 std::vector<bool> reduceCompletionRequirements(
     std::size_t vertexCount, const std::vector<SyncGraphEdge> &fixedEdges,
     const std::vector<CompletionRequirement> &requirements);

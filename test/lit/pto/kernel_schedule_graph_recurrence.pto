@@ -7,6 +7,9 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: pto-test-opt %s '-pto-print-kernel-schedule-graph=format=text' | FileCheck %s
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=dependencies' \
+// RUN:   | FileCheck %s --check-prefix=CANONICAL
 
 module {
   func.func @scalar_recurrence(%src: !pto.ptr<i32>, %dst: !pto.ptr<i32>) {
@@ -53,3 +56,8 @@ module {
 // CHECK: node[0] op=pto.tmuls pipe=PIPE_V
 // CHECK-DAG: edge 0 -> 0 kind=memory-waw distance=1 recurrence_loop_depth=1
 // CHECK-DAG: edge 0 -> 0 kind=memory-waw distance=1 recurrence_loop_depth=2
+
+// CANONICAL-LABEL: PTOCanonicalSyncPlan @scalar_recurrence
+// CANONICAL: dependency 2 -> 1 kind=loop-carried-ssa distance=1
+// CANONICAL-LABEL: PTOCanonicalSyncPlan @nested_recurrence_owners
+// CANONICAL-DAG: dependency 0 -> 0 kind=memory-waw distance=1

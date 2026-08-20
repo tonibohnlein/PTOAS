@@ -24,6 +24,12 @@ struct ReachabilityState {
   bool hasCompletion = false;
 };
 
+bool isValidRequirement(std::size_t vertexCount,
+                        const CompletionRequirement &requirement) {
+  return requirement.source < vertexCount && requirement.target < vertexCount &&
+         requirement.source < requirement.target;
+}
+
 bool hasQualifiedPath(std::size_t vertexCount,
                       const std::vector<SyncGraphEdge> &fixedEdges,
                       const std::vector<CompletionRequirement> &requirements,
@@ -38,6 +44,9 @@ bool hasQualifiedPath(std::size_t vertexCount,
   for (std::size_t index = 0; index < requirements.size(); ++index) {
     if (index != skipped && keep[index]) {
       const CompletionRequirement &requirement = requirements[index];
+      if (!isValidRequirement(vertexCount, requirement)) {
+        continue;
+      }
       outgoing[requirement.source].push_back(
           {requirement.source, requirement.target,
            SyncGraphEdgeKind::HardwareCompletion});
@@ -74,6 +83,11 @@ std::vector<bool> mlir::pto::reduceCompletionRequirements(
     std::size_t vertexCount, const std::vector<SyncGraphEdge> &fixedEdges,
     const std::vector<CompletionRequirement> &requirements) {
   std::vector<bool> keep(requirements.size(), true);
+  for (std::size_t index = 0; index < requirements.size(); ++index) {
+    if (!isValidRequirement(vertexCount, requirements[index])) {
+      keep[index] = false;
+    }
+  }
   std::vector<std::size_t> order(requirements.size());
   std::iota(order.begin(), order.end(), 0);
   std::stable_sort(
@@ -93,9 +107,7 @@ std::vector<bool> mlir::pto::reduceCompletionRequirements(
 
   for (std::size_t candidate : order) {
     const CompletionRequirement &requirement = requirements[candidate];
-    if (requirement.source >= vertexCount ||
-        requirement.target >= vertexCount ||
-        requirement.source >= requirement.target) {
+    if (!keep[candidate]) {
       continue;
     }
     keep[candidate] = false;

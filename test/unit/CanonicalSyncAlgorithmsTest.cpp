@@ -123,12 +123,59 @@ bool testCompletionQualifiedReduction() {
   return passed;
 }
 
+bool testColoringBoundariesAndDeterminism() {
+  SyncConflictGraph empty = makeGraph(0, {});
+  const auto emptyColoring = mlir::pto::colorIntervalGraph(empty);
+  bool passed = check(emptyColoring.isInterval, "empty graph is interval") &&
+                check(emptyColoring.coloring.colorCount == 0,
+                      "empty graph needs no colors") &&
+                check(mlir::pto::isValidColoring(empty, emptyColoring.coloring),
+                      "empty coloring is valid");
+
+  SyncConflictGraph clique =
+      makeGraph(8, {{0, 1}, {0, 2}, {0, 3}, {0, 4}, {0, 5}, {0, 6}, {0, 7},
+                    {1, 2}, {1, 3}, {1, 4}, {1, 5}, {1, 6}, {1, 7}, {2, 3},
+                    {2, 4}, {2, 5}, {2, 6}, {2, 7}, {3, 4}, {3, 5}, {3, 6},
+                    {3, 7}, {4, 5}, {4, 6}, {4, 7}, {5, 6}, {5, 7}, {6, 7}});
+  const auto cliqueColoring = mlir::pto::colorIntervalGraph(clique);
+  passed &= check(cliqueColoring.isInterval, "eight-clique is interval");
+  passed &= check(cliqueColoring.coloring.colorCount == 8,
+                  "eight-clique reaches the hardware color bound");
+
+  SyncConflictGraph witness = makeGraph(
+      6,
+      {{0, 1}, {0, 2}, {0, 4}, {1, 4}, {1, 5}, {2, 3}, {2, 5}, {3, 4}, {3, 5}});
+  const auto firstDsatur = mlir::pto::colorDsatur(witness);
+  const auto secondDsatur = mlir::pto::colorDsatur(witness);
+  const auto firstSmallestLast = mlir::pto::colorSmallestLast(witness);
+  const auto secondSmallestLast = mlir::pto::colorSmallestLast(witness);
+  passed &= check(firstDsatur.colorCount == secondDsatur.colorCount &&
+                      firstDsatur.colors == secondDsatur.colors,
+                  "DSATUR is deterministic");
+  passed &=
+      check(firstSmallestLast.colorCount == secondSmallestLast.colorCount &&
+                firstSmallestLast.colors == secondSmallestLast.colors,
+            "smallest-last is deterministic");
+  return passed;
+}
+
+bool testInvalidCompletionRequirements() {
+  const std::vector<CompletionRequirement> requirements = {
+      {4, 5}, {0, 3}, {2, 2}, {3, 1}};
+  const std::vector<bool> keep =
+      mlir::pto::reduceCompletionRequirements(4, {}, requirements);
+  return check(keep.size() == 4 && !keep[0] && keep[1] && !keep[2] && !keep[3],
+               "invalid completion requirements are rejected safely");
+}
+
 } // namespace
 
 int main() {
   const bool passed = testIntervalRecognitionAndOptimalColoring() &&
                       testNonIntervalCertificates() &&
                       testHeuristicColorings() &&
-                      testCompletionQualifiedReduction();
+                      testCompletionQualifiedReduction() &&
+                      testColoringBoundariesAndDeterminism() &&
+                      testInvalidCompletionRequirements();
   return passed ? 0 : 1;
 }

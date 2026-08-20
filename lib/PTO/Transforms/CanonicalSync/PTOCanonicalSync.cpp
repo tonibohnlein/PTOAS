@@ -37,6 +37,11 @@ bool isValidView(StringRef view) {
          view == "events";
 }
 
+bool shouldSkipCanonicalSync(func::FuncOp func) {
+  return func.isExternal() || func->hasAttr("pto.tileop.helper") ||
+         func->hasAttr("pto.ptodsl.subkernel_helper");
+}
+
 struct PTOCanonicalSyncPass
     : public pto::impl::PTOCanonicalSyncBase<PTOCanonicalSyncPass> {
   using pto::impl::PTOCanonicalSyncBase<
@@ -44,7 +49,7 @@ struct PTOCanonicalSyncPass
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
-    if (func.isExternal()) {
+    if (shouldSkipCanonicalSync(func)) {
       return;
     }
     if (eventIdNumMax <= 0 || eventIdNumMax > kHardwareEventIdCount) {
@@ -82,7 +87,7 @@ struct PrintCanonicalSyncPlanPass
       return;
     }
     for (func::FuncOp func : module.getOps<func::FuncOp>()) {
-      if (func.isExternal()) {
+      if (shouldSkipCanonicalSync(func)) {
         continue;
       }
       FailureOr<pto::CanonicalSyncPlan> plan = pto::buildCanonicalSyncPlan(

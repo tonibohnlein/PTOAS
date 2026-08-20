@@ -19,6 +19,9 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/Operation.h"
+#include "llvm/Support/MathExtras.h"
+
+#include <limits>
 
 using namespace mlir;
 
@@ -70,7 +73,11 @@ static bool tryGetConstantInt(Value v, int64_t &out) {
   if (!matchPattern(v, m_Constant(&attr))) {
     return false;
   }
-  out = attr.getValue().getSExtValue();
+  const APInt &value = attr.getValue();
+  if (!value.isSignedIntN(64)) {
+    return false;
+  }
+  out = value.getSExtValue();
   return true;
 }
 
@@ -97,14 +104,24 @@ static bool peelAddSubConst(Value v, Value &remaining, int64_t &offset) {
 
   int64_t c;
   if (tryGetConstantInt(rhs, c)) {
+    int64_t updatedOffset;
+    const bool overflow = isSub ? llvm::SubOverflow(offset, c, updatedOffset)
+                                : llvm::AddOverflow(offset, c, updatedOffset);
+    if (overflow) {
+      return false;
+    }
     remaining = lhs;
-    offset += isSub ? -c : c;
+    offset = updatedOffset;
     return true;
   }
   if (!isSub && tryGetConstantInt(lhs, c)) {
     // commutativity only for add
+    int64_t updatedOffset;
+    if (llvm::AddOverflow(offset, c, updatedOffset)) {
+      return false;
+    }
     remaining = rhs;
-    offset += c;
+    offset = updatedOffset;
     return true;
   }
   return false;
@@ -128,7 +145,8 @@ static bool extractSlotForm(Value slot, uint32_t expectN, SlotForm &out) {
   // Case 1: `arith.remui inner, %const_N`.
   if (auto remOp = dyn_cast_if_present<arith::RemUIOp>(def)) {
     int64_t n;
-    if (!tryGetConstantInt(remOp.getRhs(), n) || n <= 0) {
+    if (!tryGetConstantInt(remOp.getRhs(), n) || n <= 0 ||
+        static_cast<uint64_t>(n) > std::numeric_limits<uint32_t>::max()) {
       return false;
     }
     out.N = static_cast<uint32_t>(n);
@@ -146,8 +164,12 @@ static bool extractSlotForm(Value slot, uint32_t expectN, SlotForm &out) {
     }
     int64_t cst;
     if (tryGetConstantInt(rem, cst)) {
+      int64_t combinedOffset;
+      if (llvm::AddOverflow(cst, offset, combinedOffset)) {
+        return false;
+      }
       out.innerSym = Value();
-      out.innerOffset = cst + offset;
+      out.innerOffset = combinedOffset;
     } else {
       out.innerSym = rem;
       out.innerOffset = offset;
@@ -234,7 +256,11 @@ static SlotRelation compareSlotForms(Value a, Value b, uint32_t N,
     return SlotRelation::kUnknown;
   }
 
-  int64_t diff = pyMod(fa.innerOffset - fb.innerOffset - rhsSymbolOffset, N);
+  const int64_t lhsOffset = pyMod(fa.innerOffset, N);
+  const int64_t rhsOffset = pyMod(fb.innerOffset, N);
+  const int64_t shiftedOffset = pyMod(rhsSymbolOffset, N);
+  int64_t diff = pyMod(lhsOffset - rhsOffset, N);
+  diff = pyMod(diff - shiftedOffset, N);
   return diff == 0 ? SlotRelation::kEqual : SlotRelation::kDisjoint;
 }
 

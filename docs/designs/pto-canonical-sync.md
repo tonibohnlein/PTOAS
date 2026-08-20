@@ -26,6 +26,12 @@ The pass is a separate implementation. It does not modify or call the legacy
 It reuses `PTOIRTranslator` only as the PTO operation/memory-effect adapter
 that maps scheduled macro phases to `BaseMemInfo` physical ranges.
 
+Private functions marked `pto.tileop.helper` or
+`pto.ptodsl.subkernel_helper` are implementation bodies, not independently
+scheduled kernels, so the pass does not analyze or mutate those bodies. Their
+call sites remain schedulable compound operations whose pipe and precise
+read/write contract come from the helper attributes.
+
 ## Analysis model
 
 Every schedulable macro phase is a node with:
@@ -52,6 +58,9 @@ iteration; recurrence analysis compares the rotating physical storage across
 iterations. For constant-step `scf.for`, the slot-affine comparison evaluates
 the consumer expression at the recurrence distance, for example comparing
 `producer(i)` with `consumer(i + 1)`.
+Integer constants and accumulated offsets are range-checked during this
+comparison. An expression that cannot be represented without signed overflow
+is classified as unknown and therefore retains conservative synchronization.
 
 The recurrence scan checks increasing distances through the physical slot
 count and retains the first aliasing distance for each hazard kind. This also

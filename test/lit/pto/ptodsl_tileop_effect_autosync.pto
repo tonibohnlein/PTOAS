@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: ptoas --pto-arch=a5 --emit-pto-ir --enable-insert-sync --pto-insert-sync-debug=2 %s -o - 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --emit-pto-ir --enable-canonical-sync %s -o - \
+// RUN:   | FileCheck %s --check-prefix=CANONICAL
 
 module attributes {pto.target_arch = "a5"} {
   func.func @tileop_effect_autosync(%src_ptr: !pto.ptr<f32>,
@@ -57,3 +59,15 @@ module attributes {pto.target_arch = "a5"} {
 // CHECK: POST: set_flag <PIPE_V -> PIPE_MTE3>
 // CHECK: PRE : wait_flag <PIPE_V -> PIPE_MTE3>
 // CHECK: pto.tileop.effects = ["read", "write"]
+
+// CANONICAL-LABEL: func.func @tileop_effect_autosync
+// CANONICAL: pto.tload
+// CANONICAL: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
+// CANONICAL: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// CANONICAL-NEXT: func.call @copy_tileop
+// CANONICAL: pto.set_flag[<PIPE_V>, <PIPE_MTE3>,
+// CANONICAL: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>,
+// CANONICAL-NEXT: pto.tstore
+// CANONICAL-LABEL: func.func private @copy_tileop
+// CANONICAL: pto.vlds
+// CANONICAL: pto.vsts

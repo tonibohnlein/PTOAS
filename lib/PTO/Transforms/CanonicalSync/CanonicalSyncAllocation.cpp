@@ -125,10 +125,10 @@ LogicalResult CanonicalSyncPlanBuilder::allocateEvents() {
       InFlightDiagnostic diagnostic =
           func_.emitError()
           << "PTOCanonicalSync cannot allocate domain "
-          << static_cast<unsigned>(key.source) << " -> "
-          << static_cast<unsigned>(key.target) << ": " << coloring.colorCount
-          << " colors requested but only " << available.size()
-          << " event IDs are available";
+          << stringifyPIPE(static_cast<PIPE>(key.source)) << " -> "
+          << stringifyPIPE(static_cast<PIPE>(key.target)) << ": "
+          << coloring.colorCount << " colors requested but only "
+          << available.size() << " event IDs are available";
       if (interval) {
         diagnostic << "; the interval-domain color count is exact";
       } else {

@@ -9,6 +9,9 @@
 // RUN: pto-test-opt %s '-pto-print-kernel-schedule-graph=format=text' | FileCheck %s --check-prefix=TEXT
 // RUN: pto-test-opt %s '-pto-print-kernel-schedule-graph=format=dot' | FileCheck %s --check-prefix=DOT
 // RUN: not pto-test-opt %s '-pto-print-kernel-schedule-graph=format=json' 2>&1 | FileCheck %s --check-prefix=INVALID
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=dependencies' \
+// RUN:   | FileCheck %s --check-prefix=CANONICAL
 
 module {
   func.func @kernel_schedule_graph(%src: !pto.ptr<f32>,
@@ -71,3 +74,7 @@ module {
 // DOT-SAME: style=dashed];
 
 // INVALID: error: unsupported kernel schedule graph format 'json'; expected 'text' or 'dot'
+
+// CANONICAL-LABEL: PTOCanonicalSyncPlan @kernel_schedule_graph
+// CANONICAL-DAG: dependency 0 -> 1 kind=ssa distance=0
+// CANONICAL-DAG: dependency 2 -> 3 kind=memory-raw distance=0
