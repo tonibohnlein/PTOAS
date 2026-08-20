@@ -13,6 +13,11 @@
 // internally, so compiler-generated sync around the call must avoid them.
 //
 // RUN: ptoas --pto-arch=a3 --enable-insert-sync %s -o - 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a3 --enable-canonical-sync %s -o - 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=CANONICAL
+// RUN: not pto-test-opt %s \
+// RUN:   '-pto-canonical-sync=event-id-num-max=1' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=SCARCE
 
 module {
   func.func @tgather_waits_for_tstore_group(
@@ -92,6 +97,21 @@ module {
 // CHECK:      set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID1);
 // CHECK-NEXT: wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID1);
 // CHECK:      pto::comm::TGATHER(
+
+// CANONICAL-LABEL: AICORE void tgather_waits_for_tstore_group(
+// CANONICAL:      TSTORE(
+// CANONICAL:      set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID1);
+// CANONICAL:      wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID1);
+// CANONICAL:      pto::comm::TGATHER(
+
+// CANONICAL-LABEL: AICORE void tgather_pingpong_keeps_internal_events_hidden(
+// CANONICAL:      TSTORE(
+// CANONICAL:      set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID2);
+// CANONICAL:      wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID2);
+// CANONICAL:      pto::comm::TGATHER(
+
+// SCARCE: error: PTOCanonicalSync cannot allocate domain PIPE_MTE3 -> PIPE_MTE2
+// SCARCE-SAME: 1 colors requested but only 0 event IDs are available
 
 // CHECK-LABEL: AICORE void tgather_pingpong_keeps_internal_events_hidden(
 // CHECK:      TSTORE(

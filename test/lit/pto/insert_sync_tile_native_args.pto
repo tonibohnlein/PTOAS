@@ -8,6 +8,8 @@
 
 // RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-insert-sync \
 // RUN:   --emit-pto-ir %s -o - | FileCheck %s
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --emit-pto-ir %s -o - | FileCheck %s --check-prefix=CANONICAL
 
 module attributes {pto.target_arch = "a5"} {
   func.func @view_arg_hazard(
@@ -71,3 +73,19 @@ module attributes {pto.target_arch = "a5"} {
 // CHECK: pto.set_flag[<PIPE_M>, <PIPE_V>, <EVENT_ID0>]
 // CHECK-NEXT: pto.wait_flag[<PIPE_M>, <PIPE_V>, <EVENT_ID0>]
 // CHECK-NEXT: call @read_acc_simd
+
+// CANONICAL-LABEL: func.func @view_arg_hazard
+// CANONICAL: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>,
+// CANONICAL: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>,
+// CANONICAL-LABEL: func.func @tile_arg_hazard
+// CANONICAL: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
+// CANONICAL: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// CANONICAL-LABEL: func.func @local_ptr_arg_hazard
+// CANONICAL: call @read_acc_cube
+// CANONICAL-NOT: pto.set_flag
+// CANONICAL-NOT: pto.wait_flag
+// CANONICAL-NEXT: call @read_acc_simd
+// CANONICAL-LABEL: func.func private @read_acc_cube
+// CANONICAL: return
+// CANONICAL-LABEL: func.func private @read_acc_simd
+// CANONICAL: return

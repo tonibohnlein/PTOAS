@@ -44,6 +44,53 @@ module {
     }
     return
   }
+
+  func.func @overflow_slot_relation(
+      %src : !pto.partition_tensor_view<16x16xf32>, %n : index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %min = arith.constant -9223372036854775808 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %buffer = pto.alloc_multi_tile
+        {pto.multi_buffer_addrs = array<i64: 0, 1024>}
+        : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+
+    scf.for %i = %c0 to %n step %c1 {
+      %shifted = arith.subi %i, %min : index
+      %slot_index = arith.remui %shifted, %c2 : index
+      %slot = pto.multi_tile_get %buffer[%slot_index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tmuls ins(%slot, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    return
+  }
+
+  func.func @non_unit_step_relation(
+      %src : !pto.partition_tensor_view<16x16xf32>, %n : index) {
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %buffer = pto.alloc_multi_tile
+        {pto.multi_buffer_addrs = array<i64: 0, 1024>}
+        : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+
+    scf.for %i = %c0 to %n step %c2 {
+      %slot_index = arith.remui %i, %c2 : index
+      %slot = pto.multi_tile_get %buffer[%slot_index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tmuls ins(%slot, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    return
+  }
 }
 
 // CHECK-LABEL: func.func @unknown_slot_relation
@@ -56,3 +103,21 @@ module {
 // CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-7]}}>]
 // CHECK-NOT: pto.set_flag_dyn[<PIPE_V>, <PIPE_MTE2>
 // CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-7]}}>]
+
+// CHECK-LABEL: func.func @overflow_slot_relation
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-7]}}>]
+// CHECK: scf.for
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-7]}}>]
+// CHECK-NOT: pto.wait_flag_dyn[<PIPE_V>, <PIPE_MTE2>
+// CHECK: pto.tload
+// CHECK: pto.tmuls
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-7]}}>]
+
+// CHECK-LABEL: func.func @non_unit_step_relation
+// CHECK-DAG: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// CHECK-DAG: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID1>]
+// CHECK: scf.for
+// CHECK: pto.wait_flag_dyn[<PIPE_V>, <PIPE_MTE2>,
+// CHECK: pto.tload
+// CHECK: pto.tmuls
+// CHECK: pto.set_flag_dyn[<PIPE_V>, <PIPE_MTE2>,

@@ -1,0 +1,109 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @if_branch_anchors(
+      %src: !pto.partition_tensor_view<16x16xf32>, %condition: i1) {
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %then_value = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %else_value = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %common = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %input = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    scf.if %condition {
+      pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                outs(%then_value : !pto.tile_buf<vec, 16x16xf32>)
+    } else {
+      pto.tmuls ins(%input, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%else_value : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    pto.tstore ins(%common : !pto.tile_buf<vec, 16x16xf32>)
+               outs(%src : !pto.partition_tensor_view<16x16xf32>)
+    return
+  }
+
+  func.func @while_before_after_handshake(
+      %src: !pto.partition_tensor_view<16x16xf32>, %limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %shared = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %final = scf.while (%i = %c0) : (index) -> index {
+      %go = arith.cmpi slt, %i, %limit : index
+      pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+      scf.condition(%go) %i : index
+    } do {
+    ^bb0(%i: index):
+      pto.tmuls ins(%shared, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+      %next = arith.addi %i, %c1 : index
+      scf.yield %next : index
+    }
+    return
+  }
+
+  func.func @for_zero_trip_recurrence(
+      %src: !pto.partition_tensor_view<16x16xf32>, %limit: index) {
+    %c1 = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %shared = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    scf.for %i = %c1 to %limit step %c1 {
+      pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tmuls ins(%shared, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @if_branch_anchors
+// CHECK: scf.if
+// CHECK: pto.tload
+// CHECK: } else {
+// CHECK: pto.tmuls
+// CHECK: }
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>,
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>,
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>,
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>,
+// CHECK-NEXT: pto.tstore
+
+// CHECK-LABEL: func.func @while_before_after_handshake
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>,
+// CHECK-NEXT: scf.while
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>,
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK: scf.condition
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK-NEXT: pto.tmuls
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>,
+// CHECK-NEXT: scf.yield
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+
+// CHECK-LABEL: func.func @for_zero_trip_recurrence
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>,
+// CHECK: scf.for
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>,
+// CHECK: pto.tload
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK-NEXT: pto.tmuls
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>,
+// CHECK: }
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>,

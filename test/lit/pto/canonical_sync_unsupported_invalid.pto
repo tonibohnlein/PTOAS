@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: not pto-test-opt %t/call.pto '-pto-canonical-sync' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=CALL
+// RUN: not pto-test-opt %t/region.pto '-pto-canonical-sync' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=REGION
+// RUN: not pto-test-opt %t/cfg.pto '-pto-canonical-sync' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=CFG
+// RUN: not pto-test-opt %t/tassign.pto '-pto-canonical-sync' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=TASSIGN
+// RUN: not pto-test-opt %t/barrier.pto '-pto-canonical-sync' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=BARRIER
+
+//--- call.pto
+module {
+  func.func private @unknown()
+  func.func @unknown_call() {
+    func.call @unknown() : () -> ()
+    return
+  }
+}
+
+//--- region.pto
+module {
+  func.func @unsupported_region() {
+    scf.execute_region {
+      scf.yield
+    }
+    return
+  }
+}
+
+//--- cfg.pto
+module {
+  func.func @unstructured_cfg() {
+    cf.br ^next
+  ^next:
+    return
+  }
+}
+
+//--- tassign.pto
+module {
+  func.func @unsupported_tassign() {
+    %addr = arith.constant 0 : i64
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf32>
+    %assigned = pto.tassign %tile, %addr
+      : !pto.tile_buf<vec, 16x16xf32> -> !pto.tile_buf<vec, 16x16xf32>
+    return
+  }
+}
+
+//--- barrier.pto
+module {
+  func.func @manual_barrier() {
+    pto.barrier <PIPE_V>
+    return
+  }
+}
+
+// CALL: error: PTOCanonicalSync requires precise effects for helper calls
+// REGION: error: PTOCanonicalSync cannot model this region operation
+// CFG: error: PTOCanonicalSync does not support unstructured control flow
+// TASSIGN: error: PTOCanonicalSync does not support pto.tassign
+// BARRIER: error: PTOCanonicalSync does not accept input containing manual synchronization

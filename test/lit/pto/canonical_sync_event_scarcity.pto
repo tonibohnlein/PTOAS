@@ -9,6 +9,14 @@
 // RUN: not pto-test-opt %s \
 // RUN:   '-pto-canonical-sync=event-id-num-max=1' 2>&1 \
 // RUN:   | FileCheck %s
+// RUN: not pto-test-opt %s \
+// RUN:   '-pto-canonical-sync=event-id-num-max=0' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=ZERO
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=EIGHT
+// RUN: not pto-test-opt %s \
+// RUN:   '-pto-canonical-sync=event-id-num-max=9' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=NINE
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @two_live_events(
@@ -37,3 +45,7 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: error: PTOCanonicalSync cannot allocate domain
 // CHECK-SAME: 2 colors requested but only 1 event IDs are available
 // CHECK-SAME: interval-domain color count is exact
+// ZERO: error: event-id-num-max must be in [1, 8]
+// EIGHT-LABEL: func.func @two_live_events
+// EIGHT: pto.set_flag
+// NINE: error: event-id-num-max must be in [1, 8]

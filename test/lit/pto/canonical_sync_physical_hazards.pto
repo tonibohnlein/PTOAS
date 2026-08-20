@@ -1,0 +1,95 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=dependencies' \
+// RUN:   | FileCheck %s --check-prefix=PLAN
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=IR
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=all' > %t.text.1
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=all' > %t.text.2
+// RUN: diff %t.text.1 %t.text.2
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=dot view=all' > %t.dot.1
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=dot view=all' > %t.dot.2
+// RUN: diff %t.dot.1 %t.dot.2
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @partial_raw(%src: !pto.partition_tensor_view<16x16xf32>) {
+    %addr0 = arith.constant 0 : i64
+    %addr512 = arith.constant 512 : i64
+    %addr2048 = arith.constant 2048 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %written = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %read = pto.alloc_tile addr = %addr512 : !pto.tile_buf<vec, 16x16xf32>
+    %output = pto.alloc_tile addr = %addr2048 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+              outs(%written : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tmuls ins(%read, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+               outs(%output : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+
+  func.func @partial_war(%src: !pto.partition_tensor_view<16x16xf32>) {
+    %addr0 = arith.constant 0 : i64
+    %addr512 = arith.constant 512 : i64
+    %addr2048 = arith.constant 2048 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %read = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %written = pto.alloc_tile addr = %addr512 : !pto.tile_buf<vec, 16x16xf32>
+    %output = pto.alloc_tile addr = %addr2048 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tmuls ins(%read, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+               outs(%output : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+              outs(%written : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+
+  func.func @partial_waw(%src: !pto.partition_tensor_view<16x16xf32>) {
+    %addr0 = arith.constant 0 : i64
+    %addr512 = arith.constant 512 : i64
+    %addr2048 = arith.constant 2048 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %first = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %second = pto.alloc_tile addr = %addr512 : !pto.tile_buf<vec, 16x16xf32>
+    %input = pto.alloc_tile addr = %addr2048 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tmuls ins(%input, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+               outs(%first : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+              outs(%second : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+}
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @partial_raw
+// PLAN: dependency 0 -> 1 kind=memory-raw distance=0 retained=yes
+// PLAN-LABEL: PTOCanonicalSyncPlan @partial_war
+// PLAN: dependency 0 -> 1 kind=memory-war distance=0 retained=yes
+// PLAN-LABEL: PTOCanonicalSyncPlan @partial_waw
+// PLAN: dependency 0 -> 1 kind=memory-waw distance=0 retained=yes
+
+// IR-LABEL: func.func @partial_raw
+// IR: pto.tload
+// IR-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
+// IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// IR-NEXT: pto.tmuls
+// IR-LABEL: func.func @partial_war
+// IR: pto.tmuls
+// IR-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>,
+// IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>,
+// IR-NEXT: pto.tload
+// IR-LABEL: func.func @partial_waw
+// IR: pto.tmuls
+// IR-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>,
+// IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>,
+// IR-NEXT: pto.tload
