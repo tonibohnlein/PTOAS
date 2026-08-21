@@ -10,6 +10,7 @@
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncAlgorithms.h"
 
+#include <algorithm>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -211,7 +212,37 @@ bool testScopedCompletionReduction() {
       3, conditionalPath, requirements, includesAllVertices);
   passed &= check(remove.size() == 1 && !remove[0],
                   "an available completion path satisfies the requirement");
+
+  const auto excludesSourceVertex = [](std::size_t, std::size_t vertex) {
+    return vertex != 0;
+  };
+  const std::vector<bool> unavailableSource =
+      mlir::pto::reduceCompletionRequirements(3, conditionalPath, requirements,
+                                              excludesSourceVertex);
+  passed &= check(unavailableSource.size() == 1 && unavailableSource[0],
+                  "an unavailable source cannot start a coverage path");
   return passed;
+}
+
+bool testDenseCompletionReduction() {
+  constexpr std::size_t vertexCount = 96;
+  std::vector<SyncGraphEdge> issueEdges;
+  issueEdges.reserve(vertexCount - 1);
+  for (std::size_t vertex = 0; vertex + 1 < vertexCount; ++vertex) {
+    issueEdges.push_back({vertex, vertex + 1, SyncGraphEdgeKind::IssueOrder});
+  }
+
+  std::vector<CompletionRequirement> requirements;
+  for (std::size_t source = 0; source < vertexCount; ++source) {
+    for (std::size_t target = source + 1; target < vertexCount; ++target) {
+      requirements.push_back({source, target});
+    }
+  }
+
+  const std::vector<bool> keep = mlir::pto::reduceCompletionRequirements(
+      vertexCount, issueEdges, requirements);
+  return check(std::count(keep.begin(), keep.end(), true) == vertexCount - 1,
+               "dense reduction retains only adjacent completion requirements");
 }
 
 bool testCompletionCoverage() {
@@ -245,6 +276,6 @@ int main() {
       testWeightedCriticalPath() && testCompletionQualifiedReduction() &&
       testColoringBoundariesAndDeterminism() &&
       testInvalidCompletionRequirements() && testScopedCompletionReduction() &&
-      testCompletionCoverage();
+      testDenseCompletionReduction() && testCompletionCoverage();
   return passed ? 0 : 1;
 }

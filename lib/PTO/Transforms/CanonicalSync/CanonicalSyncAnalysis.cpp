@@ -76,6 +76,19 @@ bool isMemoryDefinition(Operation *op) {
   return isa<AllocTileOp, AllocMultiTileOp, DeclareTileOp, DeclareGlobalOp>(op);
 }
 
+bool hasNonPayloadMemoryEffects(Operation *op) {
+  return isa<SetValidShapeOp, GetValidShapeOp, InitializeL2G2LPipeOp,
+             InitializeL2LPipeOp, CmoCacheInvalidOp>(op);
+}
+
+bool isPhysicalMemoryValue(Value value) {
+  if (!value) {
+    return false;
+  }
+  return isa<PtrType, TileBufType, MultiTileBufType, TensorViewType,
+             PartitionTensorViewType>(value.getType());
+}
+
 bool isTransferPipe(PipelineType pipe) {
   switch (static_cast<PIPE>(pipe)) {
   case PIPE::PIPE_MTE1:
@@ -339,7 +352,8 @@ LogicalResult CanonicalSyncPlanBuilder::collectNodes() {
 
 LogicalResult CanonicalSyncPlanBuilder::validateModeledEffects() {
   WalkResult result = func_.walk([&](Operation *op) {
-    if (isSupportedRegionContainer(op) || isMemoryDefinition(op)) {
+    if (isSupportedRegionContainer(op) || isMemoryDefinition(op) ||
+        hasNonPayloadMemoryEffects(op)) {
       return WalkResult::advance();
     }
     auto effects = dyn_cast<MemoryEffectOpInterface>(op);
@@ -377,17 +391,18 @@ LogicalResult CanonicalSyncPlanBuilder::validateModeledEffects() {
         continue;
       }
       Value value = effect.getValue();
-      const bool modeled =
-          value && llvm::any_of(nodeIt->second, [&](auto node) {
-            return llvm::any_of(plan_.nodes_[node].accesses,
-                                [&](const CanonicalMemoryAccess &access) {
-                                  const bool sameValue = access.base == value ||
-                                                         access.root == value;
-                                  return sameValue &&
-                                         (!reads || access.reads) &&
-                                         (!writes || access.writes);
-                                });
-          });
+      if (!isPhysicalMemoryValue(value)) {
+        continue;
+      }
+      const bool modeled = llvm::any_of(nodeIt->second, [&](auto node) {
+        return llvm::any_of(plan_.nodes_[node].accesses,
+                            [&](const CanonicalMemoryAccess &access) {
+                              const bool sameValue =
+                                  access.base == value || access.root == value;
+                              return sameValue && (!reads || access.reads) &&
+                                     (!writes || access.writes);
+                            });
+      });
       if (!modeled) {
         op->emitError("PTOCanonicalSync could not recover a declared memory "
                       "effect");

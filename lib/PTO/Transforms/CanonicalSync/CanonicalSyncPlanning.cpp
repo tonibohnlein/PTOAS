@@ -260,12 +260,56 @@ void CanonicalSyncPlanBuilder::reduceForwardDependencies() {
   }
 
   auto groups = groupDependencies(plan_.dependencies_);
+  std::map<Block *,
+           std::map<std::pair<PipelineType, PipelineType>,
+                    std::vector<DependencyGroupKey>>,
+           std::less<Block *>>
+      blockDomains;
+  for (const auto &entry : groups) {
+    const CanonicalDependency &dependency =
+        plan_.dependencies_[entry.second.front()];
+    if (!dependency.retained || entry.first.distance != 0) {
+      continue;
+    }
+    const CanonicalSyncNode &source = plan_.nodes_[entry.first.source];
+    const CanonicalSyncNode &target = plan_.nodes_[entry.first.target];
+    Block *block = source.operation->getBlock();
+    if (!block || block != target.operation->getBlock()) {
+      continue;
+    }
+    blockDomains[block][{source.pipe, target.pipe}].push_back(entry.first);
+  }
+
+  for (auto &blockEntry : blockDomains) {
+    for (auto &domainEntry : blockEntry.second) {
+      std::vector<DependencyGroupKey> &keys = domainEntry.second;
+      llvm::stable_sort(keys, [](const DependencyGroupKey &first,
+                                 const DependencyGroupKey &second) {
+        if (first.source != second.source) {
+          return first.source > second.source;
+        }
+        return first.target < second.target;
+      });
+      std::optional<std::size_t> earliestTarget;
+      for (const DependencyGroupKey &key : keys) {
+        if (earliestTarget && key.target >= *earliestTarget) {
+          for (std::size_t dependency : groups[key]) {
+            plan_.dependencies_[dependency].retained = false;
+          }
+          continue;
+        }
+        earliestTarget = key.target;
+      }
+    }
+  }
+
   std::vector<CompletionRequirement> requirements;
   std::vector<DependencyGroupKey> requirementKeys;
   for (const auto &entry : groups) {
+    const bool retained = plan_.dependencies_[entry.second.front()].retained;
     const std::size_t source = entry.first.source;
     const std::size_t target = entry.first.target;
-    if (entry.first.distance == 0) {
+    if (retained && entry.first.distance == 0) {
       requirements.push_back({source, target});
       requirementKeys.push_back(entry.first);
     }

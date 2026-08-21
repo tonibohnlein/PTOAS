@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <deque>
 #include <numeric>
+#include <optional>
 #include <tuple>
 
 using namespace mlir::pto;
@@ -23,6 +24,14 @@ struct ReachabilityState {
   std::size_t vertex = 0;
   bool hasCompletion = false;
 };
+
+struct CompletionGraphEdge {
+  std::size_t target = 0;
+  SyncGraphEdgeKind kind = SyncGraphEdgeKind::IssueOrder;
+  std::optional<std::size_t> requirement;
+};
+
+using CompletionGraph = std::vector<std::vector<CompletionGraphEdge>>;
 
 bool isValidRequirement(std::size_t vertexCount,
                         const CompletionRequirement &requirement) {
@@ -35,36 +44,34 @@ bool isAvailable(const CompletionVertexFilter &isVertexAvailable,
   return !isVertexAvailable || isVertexAvailable(requirement, vertex);
 }
 
-bool hasQualifiedPath(std::size_t vertexCount,
-                      const std::vector<SyncGraphEdge> &fixedEdges,
-                      const std::vector<CompletionRequirement> &requirements,
-                      const std::vector<bool> &keep, std::size_t skipped,
-                      std::size_t source, std::size_t target,
-                      const CompletionVertexFilter &isVertexAvailable) {
-  std::vector<std::vector<SyncGraphEdge>> outgoing(vertexCount);
+CompletionGraph
+buildCompletionGraph(std::size_t vertexCount,
+                     const std::vector<SyncGraphEdge> &fixedEdges,
+                     const std::vector<CompletionRequirement> &requirements) {
+  CompletionGraph outgoing(vertexCount);
   for (const SyncGraphEdge &edge : fixedEdges) {
-    if (edge.source < vertexCount && edge.target < vertexCount &&
-        isAvailable(isVertexAvailable, skipped, edge.source) &&
-        isAvailable(isVertexAvailable, skipped, edge.target)) {
-      outgoing[edge.source].push_back(edge);
+    if (edge.source < vertexCount && edge.target < vertexCount) {
+      outgoing[edge.source].push_back({edge.target, edge.kind, std::nullopt});
     }
   }
   for (std::size_t index = 0; index < requirements.size(); ++index) {
-    if (index != skipped && keep[index]) {
-      const CompletionRequirement &requirement = requirements[index];
-      const bool isUnavailable =
-          !isValidRequirement(vertexCount, requirement) ||
-          !isAvailable(isVertexAvailable, skipped, requirement.source) ||
-          !isAvailable(isVertexAvailable, skipped, requirement.target);
-      if (isUnavailable) {
-        continue;
-      }
+    const CompletionRequirement &requirement = requirements[index];
+    if (isValidRequirement(vertexCount, requirement)) {
       outgoing[requirement.source].push_back(
-          {requirement.source, requirement.target,
-           SyncGraphEdgeKind::HardwareCompletion});
+          {requirement.target, SyncGraphEdgeKind::HardwareCompletion, index});
     }
   }
+  return outgoing;
+}
 
+bool hasQualifiedPath(std::size_t vertexCount, const CompletionGraph &outgoing,
+                      const std::vector<bool> &keep, std::size_t skipped,
+                      std::size_t source, std::size_t target,
+                      const CompletionVertexFilter &isVertexAvailable) {
+  if (!isAvailable(isVertexAvailable, skipped, source) ||
+      !isAvailable(isVertexAvailable, skipped, target)) {
+    return false;
+  }
   std::vector<std::vector<bool>> visited(vertexCount,
                                          std::vector<bool>(2, false));
   std::deque<ReachabilityState> ready{{source, false}};
@@ -72,7 +79,12 @@ bool hasQualifiedPath(std::size_t vertexCount,
   while (!ready.empty()) {
     const ReachabilityState state = ready.front();
     ready.pop_front();
-    for (const SyncGraphEdge &edge : outgoing[state.vertex]) {
+    for (const CompletionGraphEdge &edge : outgoing[state.vertex]) {
+      if ((edge.requirement &&
+           (*edge.requirement == skipped || !keep[*edge.requirement])) ||
+          !isAvailable(isVertexAvailable, skipped, edge.target)) {
+        continue;
+      }
       const bool hasCompletion =
           state.hasCompletion ||
           edge.kind == SyncGraphEdgeKind::HardwareCompletion;
@@ -118,14 +130,17 @@ std::vector<bool> mlir::pto::reduceCompletionRequirements(
                std::tie(right.source, right.target, rhs);
       });
 
+  const CompletionGraph outgoing =
+      buildCompletionGraph(vertexCount, fixedEdges, requirements);
+
   for (std::size_t candidate : order) {
     const CompletionRequirement &requirement = requirements[candidate];
     if (!keep[candidate]) {
       continue;
     }
     keep[candidate] = false;
-    if (!hasQualifiedPath(vertexCount, fixedEdges, requirements, keep,
-                          candidate, requirement.source, requirement.target,
+    if (!hasQualifiedPath(vertexCount, outgoing, keep, candidate,
+                          requirement.source, requirement.target,
                           isVertexAvailable)) {
       keep[candidate] = true;
     }
@@ -140,6 +155,8 @@ std::vector<bool> mlir::pto::getCompletionRequirementCoverage(
   std::vector<bool> covered(requirements.size(), false);
   const std::vector<CompletionRequirement> noAdditionalRequirements;
   const std::vector<bool> noRetainedRequirements;
+  const CompletionGraph outgoing =
+      buildCompletionGraph(vertexCount, edges, noAdditionalRequirements);
   for (std::size_t index = 0; index < requirements.size(); ++index) {
     const CompletionRequirement &requirement = requirements[index];
     const bool valid = isValidRequirement(vertexCount, requirement);
@@ -151,8 +168,8 @@ std::vector<bool> mlir::pto::getCompletionRequirementCoverage(
       continue;
     }
     covered[index] = hasQualifiedPath(
-        vertexCount, edges, noAdditionalRequirements, noRetainedRequirements,
-        index, requirement.source, requirement.target, isVertexAvailable);
+        vertexCount, outgoing, noRetainedRequirements, index,
+        requirement.source, requirement.target, isVertexAvailable);
   }
   return covered;
 }

@@ -20,6 +20,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -80,11 +81,29 @@ public:
       : func_(func), funcOperation_(func.getOperation()),
         eventIdMax_(eventIdMax),
         translator_(syncIR_, memoryAnalyzer_, bufferMap_, func,
-                    SyncAnalysisMode::NORMALSYNC) {}
+                    SyncAnalysisMode::CANONICALSYNC) {}
 
   FailureOr<CanonicalSyncPlan> build();
 
 private:
+  struct DependencyKey {
+    std::size_t source = 0;
+    std::size_t target = 0;
+    CanonicalDependencyKind kind = CanonicalDependencyKind::SSA;
+    unsigned iterationDistance = 0;
+    Operation *recurrenceLoop = nullptr;
+
+    bool operator<(const DependencyKey &other) const {
+      const auto key = std::tie(source, target, kind, iterationDistance);
+      const auto otherKey = std::tie(other.source, other.target, other.kind,
+                                     other.iterationDistance);
+      if (key != otherKey) {
+        return key < otherKey;
+      }
+      return std::less<Operation *>{}(recurrenceLoop, other.recurrenceLoop);
+    }
+  };
+
   LogicalResult validateInput();
   LogicalResult parseNoAliasPairs();
   LogicalResult collectNodes();
@@ -151,6 +170,9 @@ private:
   Buffer2MemInfoMap bufferMap_;
   PTOIRTranslator translator_;
   DenseMap<Operation *, SmallVector<std::size_t, 2>> operationNodes_;
+  std::set<std::tuple<std::size_t, std::size_t, SyncGraphEdgeKind>>
+      fixedEdgeKeys_;
+  std::set<DependencyKey> dependencyKeys_;
   std::map<CanonicalEventDomainKey, std::set<unsigned>> reservedIds_;
   std::map<CanonicalEventDomainKey, CanonicalScarcityStats> scarcityStats_;
   std::set<std::pair<unsigned, unsigned>> noAliasArgPairs_;

@@ -12,6 +12,7 @@
 #include "PTO/Transforms/Passes.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/Support/raw_ostream.h"
@@ -37,9 +38,31 @@ bool isValidView(StringRef view) {
          view == "events";
 }
 
+bool isKernelDispatchWrapper(func::FuncOp func) {
+  if (!func->hasAttr("pto.entry") || !func.getBody().hasOneBlock()) {
+    return false;
+  }
+
+  bool hasDispatch = false;
+  for (Operation &operation : func.getBody().front().without_terminator()) {
+    auto call = dyn_cast<func::CallOp>(operation);
+    if (!call) {
+      return false;
+    }
+    func::FuncOp callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
+        call, call.getCalleeAttr());
+    if (!callee || !callee->hasAttr("pto.kernel_kind")) {
+      return false;
+    }
+    hasDispatch = true;
+  }
+  return hasDispatch;
+}
+
 bool shouldSkipCanonicalSync(func::FuncOp func) {
   return func.isExternal() || func->hasAttr("pto.tileop.helper") ||
-         func->hasAttr("pto.ptodsl.subkernel_helper");
+         func->hasAttr("pto.ptodsl.subkernel_helper") ||
+         isKernelDispatchWrapper(func);
 }
 
 struct PTOCanonicalSyncPass

@@ -114,12 +114,7 @@ LogicalResult CanonicalSyncPlanBuilder::addDependencies() {
 void CanonicalSyncPlanBuilder::addFixedEdge(std::size_t source,
                                             std::size_t target,
                                             SyncGraphEdgeKind kind) {
-  const bool duplicate =
-      llvm::any_of(plan_.fixedEdges_, [&](const SyncGraphEdge &edge) {
-        return edge.source == source && edge.target == target &&
-               edge.kind == kind;
-      });
-  if (!duplicate) {
+  if (fixedEdgeKeys_.insert({source, target, kind}).second) {
     plan_.fixedEdges_.push_back({source, target, kind});
   }
 }
@@ -232,14 +227,9 @@ void CanonicalSyncPlanBuilder::addDependency(std::size_t source,
                                              CanonicalDependencyKind kind,
                                              unsigned iterationDistance,
                                              Operation *recurrenceLoop) {
-  const bool duplicate = llvm::any_of(
-      plan_.dependencies_, [&](const CanonicalDependency &dependency) {
-        return dependency.source == source && dependency.target == target &&
-               dependency.kind == kind &&
-               dependency.iterationDistance == iterationDistance &&
-               dependency.recurrenceLoop == recurrenceLoop;
-      });
-  if (!duplicate) {
+  if (dependencyKeys_
+          .insert({source, target, kind, iterationDistance, recurrenceLoop})
+          .second) {
     plan_.dependencies_.push_back(
         {source, target, kind, iterationDistance, recurrenceLoop, true});
   }

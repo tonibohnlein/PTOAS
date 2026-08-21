@@ -66,6 +66,7 @@ private:
   Buffer2MemInfoMap &buffer2MemInfoMap_;
   MemoryDependentAnalyzer &memAnalyzer_;
   SyncAnalysisMode mode_;
+  bool usePreciseGmRanges_ = false;
   std::vector<std::unique_ptr<BaseMemInfo>> operationMemInfos_;
  
   // --- 递归遍历逻辑 ---

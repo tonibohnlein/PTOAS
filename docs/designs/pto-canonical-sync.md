@@ -25,12 +25,21 @@ The pass is a separate implementation. It does not modify or call the legacy
 `InsertSyncAnalysis`, `RemoveRedundantSync`, or `GraphSyncSolver` algorithms.
 It reuses `PTOIRTranslator` only as the PTO operation/memory-effect adapter
 that maps scheduled macro phases to `BaseMemInfo` physical ranges.
+The adapter has a dedicated `CANONICALSYNC` mode. Precise GM subranges and
+CanonicalSync-specific operation mappings are not exposed to legacy
+InsertSync, so enabling this implementation cannot silently change a legacy
+InsertSync plan.
 
 Private functions marked `pto.tileop.helper` or
 `pto.ptodsl.subkernel_helper` are implementation bodies, not independently
 scheduled kernels, so the pass does not analyze or mutate those bodies. Their
 call sites remain schedulable compound operations whose pipe and precise
 read/write contract come from the helper attributes.
+
+An entry function whose body consists only of calls to private
+`pto.kernel_kind` functions is a kernel-dispatch wrapper. CanonicalSync skips
+that wrapper and analyzes each leaf kernel function independently. A wrapper
+containing any other non-terminator operation is not exempted.
 
 ## Analysis model
 
@@ -40,6 +49,24 @@ Every schedulable macro phase is a node with:
 - its concrete pipe;
 - read and write effects; and
 - physical address-space, range, root, and multi-buffer information.
+
+The memory-effect adapter applies the following operation contracts:
+
+- scalar loads/stores and `pto.comm.tnotify`/`pto.comm.twait` are `PIPE_S`
+  payload accesses;
+- `pto.set_quant_vector` reads its scaling tile on `PIPE_FIX`;
+- global-entry `pto.talloc`, `pto.tpush`, and `pto.tpop` are scalar-side TPipe
+  ownership operations, while `pto.tfree` is additionally modeled as a release
+  write so it cannot precede the last asynchronous payload use;
+- `pto.set_validshape`/`pto.get_validshape` and lowered TPipe initialization
+  update descriptors rather than payload bytes and are not memory nodes; and
+- `pto.cmo.cacheinvalid` remains an explicit producer-placed memory-consistency
+  boundary. CanonicalSync preserves it but does not use it to infer payload
+  dependencies or to prove completion of another requirement.
+
+Memory effects attached to scalar SSA operands are not physical-memory
+effects. They therefore do not require a recovered `BaseMemInfo`; pointer,
+tile, multi-tile, tensor-view, and partition-view operands do.
 
 The canonical dependence graph contains the following edges:
 
@@ -133,6 +160,14 @@ retained set/wait pair, a same-pipe hardware completion guarantee, or a
 barrier. A path containing only issue-order edges cannot discharge a memory
 hazard.
 
+Before the general coverage check, same-block requirements in one directed
+pipe domain use an exact dominance rule. A completion from a later producer to
+an earlier consumer covers a requirement from an earlier producer to a later
+consumer because both sides are connected by guaranteed fixed pipe order. The
+general reducer then searches one tagged adjacency graph and ignores removed
+requirement edges per query; it does not rebuild the dense graph for every
+candidate.
+
 Forward dependencies are reduced on the single-iteration graph with a
 requirement-specific structured execution scope. A proof may cross nested
 regions, but only through operations guaranteed to execute whenever that
@@ -198,6 +233,23 @@ relation falls back to one conservative static event. Other loop forms use one
 conservative event.
 Event IDs used internally by PTO synchronization macros are reserved in the
 corresponding pipe-pair domain.
+
+### Current barrier limitation
+
+Barrier selection is intentionally conservative and barrier-first. Every
+retained same-pipe requirement without a hardware completion guarantee is
+materialized as a barrier before cross-pipe events are finalized. This is
+sound, but it can retain more barriers than a joint barrier/event plan needs
+and can explain a performance loss even when the final event count is lower.
+
+Fine-grained replacement must operate on complete synchronization protocols,
+not delete one barrier based on local issue order. A safe implementation needs
+an immutable set of original completion requirements, alternative protocol
+bundles (including recurrence prime/wait/set/drain and multi-buffer ownership),
+and a final whole-plan coverage check after every candidate replacement. Only
+plans that cover every original requirement and still color within the event
+budget may be emitted. Costed selection and latency calibration remain a
+separate follow-up.
 
 ## Event feasibility boundary
 
