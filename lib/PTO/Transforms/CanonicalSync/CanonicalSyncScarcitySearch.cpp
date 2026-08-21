@@ -38,6 +38,30 @@ struct ScarcityState {
 
 using StateSignature = std::vector<std::vector<std::size_t>>;
 
+std::vector<std::size_t> getBlockPipeRanks(ArrayRef<CanonicalSyncNode> nodes) {
+  std::map<Block *, std::map<PipelineType, std::vector<std::size_t>>> groups;
+  for (auto [index, node] : llvm::enumerate(nodes)) {
+    if (node.operation) {
+      groups[node.operation->getBlock()][node.pipe].push_back(index);
+    }
+  }
+
+  std::vector<std::size_t> ranks(nodes.size(), 0);
+  for (auto &blockEntry : groups) {
+    for (auto &pipeEntry : blockEntry.second) {
+      std::vector<std::size_t> &members = pipeEntry.second;
+      llvm::stable_sort(members, [&](std::size_t first, std::size_t second) {
+        return std::tie(nodes[first].order, first) <
+               std::tie(nodes[second].order, second);
+      });
+      for (auto [rank, member] : llvm::enumerate(members)) {
+        ranks[member] = rank;
+      }
+    }
+  }
+  return ranks;
+}
+
 bool isInDomain(const CanonicalEvent &event,
                 const CanonicalEventDomainKey &key) {
   return event.sourcePipe == key.source && event.targetPipe == key.target;
@@ -67,24 +91,24 @@ std::size_t saturatingAdd(std::size_t value, std::size_t increment) {
 
 std::size_t calculateCost(const ScarcityState &state,
                           ArrayRef<CanonicalEvent> originals,
-                          ArrayRef<CanonicalSyncNode> nodes) {
+                          ArrayRef<std::size_t> blockPipeRanks) {
   std::size_t cost = 0;
   for (const EventGroup &group : state.groups) {
-    const CanonicalSyncNode &mergedSource = nodes[group.event.source];
-    const CanonicalSyncNode &mergedTarget = nodes[group.event.target];
+    const std::size_t mergedSourceRank = blockPipeRanks[group.event.source];
+    const std::size_t mergedTargetRank = blockPipeRanks[group.event.target];
     for (std::size_t member : group.members) {
       const CanonicalEvent &original = originals[member];
       cost = saturatingAdd(cost,
-                           mergedSource.order - nodes[original.source].order);
+                           mergedSourceRank - blockPipeRanks[original.source]);
       cost = saturatingAdd(cost,
-                           nodes[original.target].order - mergedTarget.order);
+                           blockPipeRanks[original.target] - mergedTargetRank);
     }
   }
   return cost;
 }
 
 void evaluateState(ScarcityState &state, ArrayRef<CanonicalEvent> originals,
-                   ArrayRef<CanonicalSyncNode> nodes) {
+                   ArrayRef<std::size_t> blockPipeRanks) {
   std::vector<SyncInterval> intervals;
   SmallVector<std::size_t, 16> laneOwners;
   for (auto [groupIndex, group] : llvm::enumerate(state.groups)) {
@@ -99,7 +123,7 @@ void evaluateState(ScarcityState &state, ArrayRef<CanonicalEvent> originals,
     hotspot.insert(laneOwners[lane]);
   }
   state.hotspotGroups.assign(hotspot.begin(), hotspot.end());
-  state.serializationCost = calculateCost(state, originals, nodes);
+  state.serializationCost = calculateCost(state, originals, blockPipeRanks);
 }
 
 bool stateLess(const ScarcityState &first, const ScarcityState &second,
@@ -140,7 +164,9 @@ CanonicalSyncPlanBuilder::repairEventDomain(const CanonicalEventDomainKey &key,
   for (auto [index, event] : llvm::enumerate(originals)) {
     initial.groups.push_back({{index}, event});
   }
-  evaluateState(initial, originals, plan_.nodes_);
+  const std::vector<std::size_t> blockPipeRanks =
+      getBlockPipeRanks(plan_.nodes_);
+  evaluateState(initial, originals, blockPipeRanks);
   CanonicalScarcityStats &stats = scarcityStats_[key];
   stats.originalEventCount = originals.size();
   stats.originalColorCount = initial.colorCount;
@@ -181,7 +207,7 @@ CanonicalSyncPlanBuilder::repairEventDomain(const CanonicalEventDomainKey &key,
           if (!seen.insert(getSignature(candidate)).second) {
             continue;
           }
-          evaluateState(candidate, originals, plan_.nodes_);
+          evaluateState(candidate, originals, blockPipeRanks);
           candidates.push_back(std::move(candidate));
         }
       }
