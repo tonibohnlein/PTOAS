@@ -71,6 +71,22 @@ bool testOptimalIntervalColoring() {
   return passed;
 }
 
+bool testMaximumIntervalClique() {
+  const std::vector<SyncInterval> intervals = {
+      {0, 3}, {1, 4}, {2, 2}, {4, 6}, {7, 8}};
+  bool passed = check(mlir::pto::findMaximumIntervalClique(intervals) ==
+                          std::vector<std::size_t>({0, 1, 2}),
+                      "maximum interval clique is found deterministically");
+
+  const std::vector<SyncInterval> tied = {{0, 1}, {1, 2}, {3, 4}, {4, 5}};
+  passed &= check(mlir::pto::findMaximumIntervalClique(tied) ==
+                      std::vector<std::size_t>({0, 1}),
+                  "earliest lexicographic maximum clique breaks ties");
+  passed &= check(mlir::pto::findMaximumIntervalClique({}).empty(),
+                  "empty intervals have an empty maximum clique");
+  return passed;
+}
+
 bool testCompletionQualifiedReduction() {
   const std::vector<SyncGraphEdge> issueEdges = {
       {0, 1, SyncGraphEdgeKind::IssueOrder}};
@@ -157,12 +173,37 @@ bool testScopedCompletionReduction() {
   return passed;
 }
 
+bool testCompletionCoverage() {
+  const std::vector<SyncGraphEdge> edges = {
+      {0, 1, SyncGraphEdgeKind::IssueOrder},
+      {1, 2, SyncGraphEdgeKind::HardwareCompletion},
+      {2, 3, SyncGraphEdgeKind::IssueOrder}};
+  const std::vector<CompletionRequirement> requirements = {
+      {0, 2}, {1, 3}, {0, 3}, {0, 1}};
+  const std::vector<bool> covered =
+      mlir::pto::getCompletionRequirementCoverage(4, edges, requirements);
+  bool passed =
+      check(covered == std::vector<bool>({true, true, true, false}),
+            "coverage distinguishes completion paths from issue-only paths");
+
+  const auto excludesMergedProducer = [](std::size_t, std::size_t vertex) {
+    return vertex != 1;
+  };
+  const std::vector<bool> scoped = mlir::pto::getCompletionRequirementCoverage(
+      4, edges, {{0, 3}}, excludesMergedProducer);
+  passed &= check(scoped == std::vector<bool>({false}),
+                  "coverage respects structured execution filters");
+  return passed;
+}
+
 } // namespace
 
 int main() {
   const bool passed =
-      testOptimalIntervalColoring() && testCompletionQualifiedReduction() &&
+      testOptimalIntervalColoring() && testMaximumIntervalClique() &&
+      testCompletionQualifiedReduction() &&
       testColoringBoundariesAndDeterminism() &&
-      testInvalidCompletionRequirements() && testScopedCompletionReduction();
+      testInvalidCompletionRequirements() && testScopedCompletionReduction() &&
+      testCompletionCoverage();
   return passed ? 0 : 1;
 }

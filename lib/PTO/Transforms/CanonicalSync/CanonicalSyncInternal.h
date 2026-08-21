@@ -21,6 +21,7 @@
 #include "llvm/ADT/DenseSet.h"
 
 #include <map>
+#include <optional>
 #include <set>
 #include <tuple>
 #include <utility>
@@ -36,6 +37,12 @@ struct CanonicalEventDomainKey {
   bool operator<(const CanonicalEventDomainKey &other) const {
     return std::tie(source, target) < std::tie(other.source, other.target);
   }
+};
+
+struct CanonicalScarcityStats {
+  std::size_t originalEventCount = 0;
+  unsigned originalColorCount = 0;
+  std::size_t serializationCost = 0;
 };
 
 class CanonicalSyncPlanBuilder {
@@ -65,6 +72,13 @@ private:
   void reduceBarrierCoveredDependencies();
   void materializeEvents();
   std::vector<SyncGraphEdge> buildBarrierCompletionEdges() const;
+  LogicalResult repairEventScarcity();
+  LogicalResult repairEventDomain(const CanonicalEventDomainKey &key,
+                                  unsigned availableIds);
+  std::optional<CanonicalEvent>
+  coalesceForwardEvents(ArrayRef<CanonicalEvent> events) const;
+  bool coversCoalescedEvents(const CanonicalEvent &candidate,
+                             ArrayRef<CanonicalEvent> originals) const;
   LogicalResult allocateEvents();
 
   void addDependency(std::size_t source, std::size_t target,
@@ -109,6 +123,7 @@ private:
   PTOIRTranslator translator_;
   DenseMap<Operation *, SmallVector<std::size_t, 2>> operationNodes_;
   std::map<CanonicalEventDomainKey, std::set<unsigned>> reservedIds_;
+  std::map<CanonicalEventDomainKey, CanonicalScarcityStats> scarcityStats_;
   std::set<std::pair<unsigned, unsigned>> noAliasArgPairs_;
 };
 

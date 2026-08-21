@@ -127,9 +127,12 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
     for (const CanonicalEventDomain &domain : plan.getDomains()) {
       os << "  domain " << stringifyPIPE(static_cast<PIPE>(domain.sourcePipe))
          << " -> " << stringifyPIPE(static_cast<PIPE>(domain.targetPipe))
+         << " original-events=" << domain.originalEventCount
          << " events=" << domain.eventCount
          << " available=" << domain.availableIds
-         << " colors=" << domain.colorCount << " reserved=";
+         << " original-colors=" << domain.originalColorCount
+         << " colors=" << domain.colorCount
+         << " serialization-cost=" << domain.serializationCost << " reserved=";
       printIds(os, domain.reservedIds);
       os << '\n';
     }

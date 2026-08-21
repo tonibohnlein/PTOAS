@@ -71,6 +71,15 @@ LogicalResult CanonicalSyncPlanBuilder::allocateEvents() {
     CanonicalEventDomain domain;
     domain.sourcePipe = key.source;
     domain.targetPipe = key.target;
+    auto stats = scarcityStats_.find(key);
+    if (stats == scarcityStats_.end()) {
+      domain.originalEventCount = eventIndices.size();
+      domain.originalColorCount = coloring.colorCount;
+    } else {
+      domain.originalEventCount = stats->second.originalEventCount;
+      domain.originalColorCount = stats->second.originalColorCount;
+      domain.serializationCost = stats->second.serializationCost;
+    }
     domain.eventCount = eventIndices.size();
     domain.availableIds = available.size();
     domain.colorCount = coloring.colorCount;

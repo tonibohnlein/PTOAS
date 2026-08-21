@@ -132,3 +132,27 @@ std::vector<bool> mlir::pto::reduceCompletionRequirements(
   }
   return keep;
 }
+
+std::vector<bool> mlir::pto::getCompletionRequirementCoverage(
+    std::size_t vertexCount, const std::vector<SyncGraphEdge> &edges,
+    const std::vector<CompletionRequirement> &requirements,
+    const CompletionVertexFilter &isVertexAvailable) {
+  std::vector<bool> covered(requirements.size(), false);
+  const std::vector<CompletionRequirement> noAdditionalRequirements;
+  const std::vector<bool> noRetainedRequirements;
+  for (std::size_t index = 0; index < requirements.size(); ++index) {
+    const CompletionRequirement &requirement = requirements[index];
+    const bool valid = isValidRequirement(vertexCount, requirement);
+    const bool sourceAvailable =
+        isAvailable(isVertexAvailable, index, requirement.source);
+    const bool targetAvailable =
+        isAvailable(isVertexAvailable, index, requirement.target);
+    if (!valid || !sourceAvailable || !targetAvailable) {
+      continue;
+    }
+    covered[index] = hasQualifiedPath(
+        vertexCount, edges, noAdditionalRequirements, noRetainedRequirements,
+        index, requirement.source, requirement.target, isVertexAvailable);
+  }
+  return covered;
+}

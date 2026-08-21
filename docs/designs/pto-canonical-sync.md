@@ -214,9 +214,25 @@ The hardware budget defaults to eight and is configurable for analysis with
 `--canonical-sync-event-id-max` or the pass option `event-id-num-max`. Values
 outside `[1, 8]` are rejected.
 
-This failure point is the boundary for future scarcity handling. Possible
-extensions include synchronization coalescing and costed serialization. They
-are intentionally outside the canonical dependence construction.
+When the fixed plan exceeds that budget, CanonicalSync runs a bounded,
+deterministic beam search around a maximum-overlap event clique. The initial
+scarcity transformation coalesces forward width-one events whose producers and
+consumers are all in one block. A group with producer endpoints `p_i` and
+consumer endpoints `c_i` becomes one stronger event from the latest `p_i` to
+the earliest `c_i`. This can reduce overlap by deliberately serializing work.
+
+Every candidate is recolored exactly and is accepted only when
+completion-qualified reachability proves that its coalesced event covers every
+event it replaces. Candidates are ordered by remaining color overflow, then by
+an unweighted structural cost: the total source-pipe distance moved later plus
+the total target-pipe distance moved earlier. Event count and a stable group
+signature break ties. The beam retains at most 16 states per depth.
+
+Recurrences, dynamic-width events, forward drains, and events crossing
+structured-region boundaries are not coalesced. If those events keep the plan
+over budget, the pass fails without changing the IR. Costed barriers and
+latency-aware serialization remain future extensions; scarcity repair does not
+alter the canonical dependence construction.
 
 ## Inspection
 

@@ -14,6 +14,9 @@
 // RUN: pto-test-opt %s -pto-plan-memory \
 // RUN:   '-pto-canonical-sync=event-id-num-max=8' \
 // RUN:   | FileCheck %s --check-prefix=IR
+// RUN: not pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-canonical-sync=event-id-num-max=1' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=SCARCE
 
 // Two slots of one allocation are live in each iteration. The vector operation
 // reads both before the next iteration overwrites them in MTE2. Waiting before
@@ -214,6 +217,11 @@ module {
 // IR: pto.tload
 // IR: pto.tadd
 // IR: pto.set_flag_dyn[<PIPE_V>, <PIPE_MTE2>
+
+// SCARCE: error: PTOCanonicalSync cannot repair event-id scarcity in domain
+// SCARCE-SAME: PIPE_V -> PIPE_MTE2
+// SCARCE-SAME: 2 colors requested but only 1 event IDs are available
+// SCARCE-SAME: bounded structural coalescing found no completion-covered plan
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @distance_two_short
 // PLAN: dependency 2 -> 0 kind=memory-war distance=2 retained=no

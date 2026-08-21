@@ -76,7 +76,7 @@ module attributes {pto.target_arch = "a2a3"} {
 }
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @overlap_reuse
-// PLAN: domain PIPE_MTE3 -> PIPE_V events=1
+// PLAN: domain PIPE_MTE3 -> PIPE_V original-events=1 events=1
 // PLAN-LABEL: PTOCanonicalSyncPlan @disjoint_reuse
 // PLAN-NOT: domain PIPE_MTE3 -> PIPE_V
 

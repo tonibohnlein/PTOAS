@@ -178,6 +178,9 @@ FailureOr<CanonicalSyncPlan> CanonicalSyncPlanBuilder::build() {
   reduceForwardDependencies();
   materializeSyncRequirements();
   reserveHiddenEventIds();
+  if (failed(repairEventScarcity())) {
+    return failure();
+  }
   if (failed(allocateEvents())) {
     return failure();
   }
