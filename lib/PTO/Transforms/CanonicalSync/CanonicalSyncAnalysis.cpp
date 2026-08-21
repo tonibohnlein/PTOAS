@@ -76,6 +76,13 @@ bool isMemoryDefinition(Operation *op) {
   return isa<AllocTileOp, AllocMultiTileOp, DeclareTileOp, DeclareGlobalOp>(op);
 }
 
+bool isGmPointerLikeArgument(Type type) {
+  if (auto ptrType = dyn_cast<PtrType>(type)) {
+    return ptrType.getMemorySpace().getAddressSpace() == AddressSpace::GM;
+  }
+  return isa<TensorViewType, PartitionTensorViewType>(type);
+}
+
 bool isKnownSyncHelper(func::CallOp call) {
   func::FuncOp callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
       call, call.getCalleeAttr());
@@ -183,6 +190,9 @@ LogicalResult CanonicalSyncPlanBuilder::validateInput() {
            << "canonical sync event-id maximum must be in [1, "
            << kHardwareEventIdCount << "]";
   }
+  if (failed(parseNoAliasPairs())) {
+    return failure();
+  }
   WalkResult result = func_.walk([&](Operation *op) {
     if (isa<TAssignOp>(op)) {
       op->emitError("PTOCanonicalSync does not support pto.tassign");
@@ -226,6 +236,57 @@ LogicalResult CanonicalSyncPlanBuilder::validateInput() {
     return WalkResult::advance();
   });
   return failure(result.wasInterrupted());
+}
+
+LogicalResult CanonicalSyncPlanBuilder::parseNoAliasPairs() {
+  Attribute rawPairs = func_->getAttr(kPtoNoAliasPairsAttrName);
+  if (!rawPairs) {
+    return success();
+  }
+  auto pairs = dyn_cast<DenseI64ArrayAttr>(rawPairs);
+  if (!pairs) {
+    return func_.emitError()
+           << "expects '" << kPtoNoAliasPairsAttrName
+           << "' to be a dense i64 array of argument-index pairs";
+  }
+  if (pairs.size() % 2 != 0) {
+    return func_.emitError()
+           << "expects '" << kPtoNoAliasPairsAttrName
+           << "' to contain an even number of argument indices";
+  }
+
+  ArrayRef<int64_t> indices = pairs.asArrayRef();
+  for (size_t index = 0; index < indices.size(); index += 2) {
+    const int64_t first = indices[index];
+    const int64_t second = indices[index + 1];
+    if (first < 0 || second < 0 ||
+        first >= static_cast<int64_t>(func_.getNumArguments()) ||
+        second >= static_cast<int64_t>(func_.getNumArguments())) {
+      return func_.emitError() << "'" << kPtoNoAliasPairsAttrName
+                               << "' argument indices must be in [0, "
+                               << func_.getNumArguments() << ")";
+    }
+    if (first == second) {
+      return func_.emitError()
+             << "'" << kPtoNoAliasPairsAttrName
+             << "' cannot contain a self-pair for argument " << first;
+    }
+    if (!isGmPointerLikeArgument(func_.getArgument(first).getType()) ||
+        !isGmPointerLikeArgument(func_.getArgument(second).getType())) {
+      return func_.emitError()
+             << "'" << kPtoNoAliasPairsAttrName << "' pair (" << first << ", "
+             << second << ") must name GM pointer or view arguments";
+    }
+
+    const std::pair<unsigned, unsigned> pair = std::minmax(
+        static_cast<unsigned>(first), static_cast<unsigned>(second));
+    if (!noAliasArgPairs_.insert(pair).second) {
+      return func_.emitError()
+             << "'" << kPtoNoAliasPairsAttrName << "' repeats pair ("
+             << pair.first << ", " << pair.second << ")";
+    }
+  }
+  return success();
 }
 
 LogicalResult CanonicalSyncPlanBuilder::collectNodes() {
@@ -335,6 +396,9 @@ bool CanonicalSyncPlanBuilder::memoryAliases(
     }
   }
   if (first.space == AddressSpace::GM) {
+    if (rootsAreNoAlias(first.root, second.root)) {
+      return false;
+    }
     return first.root != second.root || addressSetsOverlap(first, second);
   }
   if (first.knownPhysical && second.knownPhysical) {
@@ -344,6 +408,20 @@ bool CanonicalSyncPlanBuilder::memoryAliases(
     return addressSetsOverlap(first, second);
   }
   return true;
+}
+
+bool CanonicalSyncPlanBuilder::rootsAreNoAlias(Value first,
+                                               Value second) const {
+  auto firstArgument = dyn_cast<BlockArgument>(first);
+  auto secondArgument = dyn_cast<BlockArgument>(second);
+  if (!firstArgument || !secondArgument ||
+      firstArgument.getOwner()->getParentOp() != funcOperation_ ||
+      secondArgument.getOwner()->getParentOp() != funcOperation_) {
+    return false;
+  }
+  const std::pair<unsigned, unsigned> pair =
+      std::minmax(firstArgument.getArgNumber(), secondArgument.getArgNumber());
+  return noAliasArgPairs_.find(pair) != noAliasArgPairs_.end();
 }
 
 bool CanonicalSyncPlanBuilder::memoryAliasesAcrossIterations(

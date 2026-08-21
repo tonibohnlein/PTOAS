@@ -24,6 +24,7 @@
 // [P0 新增] 引入副作用接口和 PTO 接口
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
+#include <limits>
 #include <optional>
 
 #define DEBUG_TYPE "pto-ir-translator"
@@ -34,12 +35,18 @@ using namespace mlir::pto;
 namespace {
 
 constexpr size_t kTileRank2D = 2;
+constexpr size_t kMaxGmRangeSegments = 4096;
 constexpr unsigned kMemoryEffectInlineCapacity = 4;
 constexpr llvm::StringLiteral kTileOpEffectsAttr = "pto.tileop.effects";
 
 using MemoryEffectVector =
     SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>,
                 kMemoryEffectInlineCapacity>;
+
+struct GmAccessRanges {
+  SmallVector<uint64_t> addresses;
+  uint64_t segmentSize = 0;
+};
 
 static uint64_t getStaticBufferSizeInBytes(ArrayRef<int64_t> shape,
                                            Type elementType) {
@@ -106,25 +113,6 @@ appendUniqueMemInfo(SmallVectorImpl<std::unique_ptr<BaseMemInfo>> &infos,
 } // namespace
 
 static bool getConstIndexValue(Value value, int64_t &out) {
-  while (true) {
-    if (auto castOp = value.getDefiningOp<arith::IndexCastOp>()) {
-      value = castOp.getIn();
-      continue;
-    }
-    if (auto extOp = value.getDefiningOp<arith::ExtSIOp>()) {
-      value = extOp.getIn();
-      continue;
-    }
-    if (auto extOp = value.getDefiningOp<arith::ExtUIOp>()) {
-      value = extOp.getIn();
-      continue;
-    }
-    if (auto truncOp = value.getDefiningOp<arith::TruncIOp>()) {
-      value = truncOp.getIn();
-      continue;
-    }
-    break;
-  }
   if (auto constIndex = value.getDefiningOp<arith::ConstantIndexOp>()) {
     out = constIndex.value();
     return true;
@@ -141,6 +129,157 @@ static bool getConstIndexValue(Value value, int64_t &out) {
   }
   out = intAttr.getInt();
   return true;
+}
+
+static std::optional<SmallVector<uint64_t>>
+getConstantNonnegativeValues(ValueRange values) {
+  SmallVector<uint64_t> constants;
+  constants.reserve(values.size());
+  for (Value value : values) {
+    int64_t constant = 0;
+    if (!getConstIndexValue(value, constant) || constant < 0) {
+      return std::nullopt;
+    }
+    constants.push_back(static_cast<uint64_t>(constant));
+  }
+  return constants;
+}
+
+static bool addUnsignedOverflow(uint64_t first, uint64_t second,
+                                uint64_t &result) {
+  if (first > std::numeric_limits<uint64_t>::max() - second) {
+    return true;
+  }
+  result = first + second;
+  return false;
+}
+
+static bool multiplyUnsignedOverflow(uint64_t first, uint64_t second,
+                                     uint64_t &result) {
+  if (first != 0 && second > std::numeric_limits<uint64_t>::max() / first) {
+    return true;
+  }
+  result = first * second;
+  return false;
+}
+
+static std::optional<SmallVector<uint64_t>>
+getByteStrides(ValueRange strides, uint64_t elementBytes) {
+  std::optional<SmallVector<uint64_t>> elementStrides =
+      getConstantNonnegativeValues(strides);
+  if (!elementStrides || elementBytes == 0) {
+    return std::nullopt;
+  }
+  SmallVector<uint64_t> byteStrides;
+  byteStrides.reserve(elementStrides->size());
+  for (uint64_t stride : *elementStrides) {
+    uint64_t byteStride = 0;
+    if (multiplyUnsignedOverflow(stride, elementBytes, byteStride)) {
+      return std::nullopt;
+    }
+    byteStrides.push_back(byteStride);
+  }
+  return byteStrides;
+}
+
+static std::optional<GmAccessRanges>
+getBoundingGmAccessRange(uint64_t origin, ArrayRef<uint64_t> sizes,
+                         ArrayRef<uint64_t> byteStrides,
+                         uint64_t elementBytes) {
+  uint64_t maximumOffset = 0;
+  for (auto [size, stride] : llvm::zip(sizes, byteStrides)) {
+    if (size == 0) {
+      return std::nullopt;
+    }
+    uint64_t dimensionOffset = 0;
+    uint64_t updatedOffset = 0;
+    if (multiplyUnsignedOverflow(size - 1, stride, dimensionOffset) ||
+        addUnsignedOverflow(maximumOffset, dimensionOffset, updatedOffset)) {
+      return std::nullopt;
+    }
+    maximumOffset = updatedOffset;
+  }
+  uint64_t span = 0;
+  if (addUnsignedOverflow(maximumOffset, elementBytes, span)) {
+    return std::nullopt;
+  }
+  return GmAccessRanges{{origin}, span};
+}
+
+static std::optional<GmAccessRanges>
+getGmAccessRanges(uint64_t origin, ArrayRef<uint64_t> sizes,
+                  ArrayRef<uint64_t> byteStrides, uint64_t elementBytes) {
+  if (sizes.size() != byteStrides.size() || elementBytes == 0) {
+    return std::nullopt;
+  }
+  if (sizes.empty()) {
+    return GmAccessRanges{{origin}, elementBytes};
+  }
+
+  size_t contiguousStart = sizes.size();
+  uint64_t segmentSize = elementBytes;
+  while (contiguousStart > 0) {
+    const size_t dimension = contiguousStart - 1;
+    if (sizes[dimension] == 0 || byteStrides[dimension] != segmentSize) {
+      break;
+    }
+    uint64_t expandedSize = 0;
+    if (multiplyUnsignedOverflow(segmentSize, sizes[dimension], expandedSize)) {
+      return std::nullopt;
+    }
+    segmentSize = expandedSize;
+    contiguousStart = dimension;
+  }
+
+  uint64_t segmentCount = 1;
+  for (size_t dimension = 0; dimension < contiguousStart; ++dimension) {
+    uint64_t expandedCount = 0;
+    if (sizes[dimension] == 0 ||
+        multiplyUnsignedOverflow(segmentCount, sizes[dimension],
+                                 expandedCount)) {
+      return std::nullopt;
+    }
+    segmentCount = expandedCount;
+    if (segmentCount > kMaxGmRangeSegments) {
+      return getBoundingGmAccessRange(origin, sizes, byteStrides, elementBytes);
+    }
+  }
+
+  SmallVector<uint64_t> relativeOffsets{0};
+  for (size_t dimension = 0; dimension < contiguousStart; ++dimension) {
+    SmallVector<uint64_t> expandedOffsets;
+    expandedOffsets.reserve(relativeOffsets.size() * sizes[dimension]);
+    for (uint64_t relativeOffset : relativeOffsets) {
+      for (uint64_t index = 0; index < sizes[dimension]; ++index) {
+        uint64_t dimensionOffset = 0;
+        uint64_t expandedOffset = 0;
+        if (multiplyUnsignedOverflow(index, byteStrides[dimension],
+                                     dimensionOffset) ||
+            addUnsignedOverflow(relativeOffset, dimensionOffset,
+                                expandedOffset)) {
+          return std::nullopt;
+        }
+        expandedOffsets.push_back(expandedOffset);
+      }
+    }
+    relativeOffsets = std::move(expandedOffsets);
+  }
+
+  GmAccessRanges ranges;
+  ranges.segmentSize = segmentSize;
+  ranges.addresses.reserve(relativeOffsets.size());
+  for (uint64_t relativeOffset : relativeOffsets) {
+    uint64_t address = 0;
+    if (addUnsignedOverflow(origin, relativeOffset, address)) {
+      return std::nullopt;
+    }
+    ranges.addresses.push_back(address);
+  }
+  llvm::sort(ranges.addresses);
+  ranges.addresses.erase(
+      std::unique(ranges.addresses.begin(), ranges.addresses.end()),
+      ranges.addresses.end());
+  return ranges;
 }
 
 static std::optional<uint64_t> getKnownPhysicalAddress(Value value) {
@@ -335,8 +474,13 @@ void PTOIRTranslator::UpdateKernelArgMemInfo() {
       continue;
     }
 
+    std::optional<uint64_t> rootRelativeOffset =
+        space == pto::AddressSpace::GM ? std::optional<uint64_t>(0)
+                                       : std::nullopt;
     buffer2MemInfoMap_[funcArg].emplace_back(std::make_unique<BaseMemInfo>(
-        funcArg, funcArg, space, std::move(baseAddresses), sizeInBytes));
+        funcArg, funcArg, space, std::move(baseAddresses), sizeInBytes,
+        /*hasKnownPhysicalAddresses=*/false,
+        /*aliasesUnknownRange=*/false, rootRelativeOffset));
   }
 }
 
@@ -368,13 +512,13 @@ void PTOIRTranslator::RecursionIR(Region *region) {
     }
     // --- Case B: 别名/视图操作 ---
     else if (auto makeViewOp = dyn_cast<pto::MakeTensorViewOp>(op)) {
-      UpdateAliasBufferInfo(makeViewOp.getResult(), makeViewOp.getPtr());
+      UpdateMakeTensorViewAliasBufferInfo(makeViewOp);
     }
     else if (auto subViewOp = dyn_cast<pto::PartitionViewOp>(op)) {
-      UpdateAliasBufferInfo(subViewOp.getResult(), subViewOp.getSource());
+      UpdatePartitionViewAliasBufferInfo(subViewOp);
     }
     else if (auto addPtrOp = dyn_cast<pto::AddPtrOp>(op)) {
-      UpdateAliasBufferInfo(addPtrOp.getResult(), addPtrOp.getPtr());
+      UpdateAddPtrAliasBufferInfo(addPtrOp);
     }
     else if (auto ptrToIntOp = dyn_cast<pto::PtrToIntOp>(op)) {
       UpdateAliasBufferInfo(ptrToIntOp.getResult(), ptrToIntOp.getPtr());
@@ -597,7 +741,10 @@ PTOIRTranslator::UpdateDeclareGlobalOpMemInfo(pto::DeclareGlobalOp op) {
       res,
       pto::AddressSpace::GM,
       SmallVector<uint64_t>{0},
-      sizeInBytes);
+      sizeInBytes,
+      /*hasKnownPhysicalAddresses=*/false,
+      /*aliasesUnknownRange=*/false,
+      /*rootRelativeOffset=*/0);
 
   buffer2MemInfoMap_[res].emplace_back(newMemInfo->clone());
   return success();
@@ -622,7 +769,12 @@ void PTOIRTranslator::UpdatePTOOpInfoWithPipeline(Operation *op,
   SmallVector<const BaseMemInfo *> defVec;
   SmallVector<const BaseMemInfo *> useVec;
   // 2. [关键] 使用 MemoryEffects 接口自动获取读写依赖
-  if (auto memEffect = dyn_cast<MemoryEffectOpInterface>(op)) {
+  if (auto loadScalar = dyn_cast<pto::LoadScalarOp>(op)) {
+    UpdateScalarAccessInfo(loadScalar.getPtr(), loadScalar.getOffset(), useVec);
+  } else if (auto storeScalar = dyn_cast<pto::StoreScalarOp>(op)) {
+    UpdateScalarAccessInfo(storeScalar.getPtr(), storeScalar.getOffset(),
+                           defVec);
+  } else if (auto memEffect = dyn_cast<MemoryEffectOpInterface>(op)) {
     MemoryEffectVector effects;
     memEffect.getEffects(effects);
     for (auto &effect : effects) {
@@ -631,14 +783,14 @@ void PTOIRTranslator::UpdatePTOOpInfoWithPipeline(Operation *op,
         continue;
       }
 
-       // 只有当 Value 在我们的 BufferMap 中有记录时，才视为有效依赖
-       // (过滤掉比如 Loop Iterator 或其他标量)
-       if (isa<MemoryEffects::Read>(effect.getEffect())) {
-          UpdateDefUseVec({val}, useVec);
-       } else if (isa<MemoryEffects::Write>(effect.getEffect())) {
-          UpdateDefUseVec({val}, defVec);
-       }
-     }
+      // 只有当 Value 在我们的 BufferMap 中有记录时，才视为有效依赖
+      // (过滤掉比如 Loop Iterator 或其他标量)
+      if (isa<MemoryEffects::Read>(effect.getEffect())) {
+        UpdateDefUseVec({val}, useVec);
+      } else if (isa<MemoryEffects::Write>(effect.getEffect())) {
+        UpdateDefUseVec({val}, defVec);
+      }
+    }
   } else {
     // 如果算子有 Pipe 属性但没实现 MemoryEffects，这是一个定义错误
     // 我们可以打印个 Warning 或者保持为空 (认为无副作用)
@@ -657,7 +809,8 @@ void PTOIRTranslator::UpdatePTOOpInfoWithPipeline(Operation *op,
 
   // 4. 设置 Core Type (用于区分 Cube/Vector 资源)
   // Matmul (M) 和 L1->L0 搬运 (MTE1) 通常涉及 Cube 资源
-  if (pipe == pto::PipelineType::PIPE_M || pipe == pto::PipelineType::PIPE_MTE1) {
+  if (pipe == pto::PipelineType::PIPE_M ||
+      pipe == pto::PipelineType::PIPE_MTE1) {
     compoundElement->compoundCoreType = pto::TCoreType::CUBE;
   } else {
     // MTE2, MTE3, Vector 归类为 Vector Core (或者对应 MTE 资源)
@@ -666,6 +819,48 @@ void PTOIRTranslator::UpdatePTOOpInfoWithPipeline(Operation *op,
 
   syncIR_.emplace_back(std::move(compoundElement));
   index++;
+}
+
+void PTOIRTranslator::UpdateScalarAccessInfo(
+    Value pointer, Value offset, SmallVector<const BaseMemInfo *> &accesses) {
+  if (!pointer || !offset || !buffer2MemInfoMap_.contains(pointer)) {
+    return;
+  }
+
+  auto ptrType = dyn_cast<pto::PtrType>(pointer.getType());
+  const uint64_t elementBytes =
+      ptrType ? pto::getPTOStorageElemByteSize(ptrType.getElementType()) : 0;
+  int64_t elementOffset = 0;
+  const bool hasConstantOffset =
+      getConstIndexValue(offset, elementOffset) && elementOffset >= 0;
+
+  for (const auto &parentInfo : buffer2MemInfoMap_[pointer]) {
+    if (parentInfo->scope != pto::AddressSpace::GM) {
+      accesses.push_back(parentInfo.get());
+      continue;
+    }
+
+    auto accessInfo = parentInfo->clone(pointer);
+    accessInfo->byteStrides.clear();
+    uint64_t byteOffset = 0;
+    uint64_t rootRelativeOffset = 0;
+    if (!hasConstantOffset || elementBytes == 0 ||
+        !parentInfo->rootRelativeOffset ||
+        multiplyUnsignedOverflow(static_cast<uint64_t>(elementOffset),
+                                 elementBytes, byteOffset) ||
+        addUnsignedOverflow(*parentInfo->rootRelativeOffset, byteOffset,
+                            rootRelativeOffset)) {
+      accessInfo->baseAddresses.clear();
+      accessInfo->allocateSize = 0;
+      accessInfo->rootRelativeOffset.reset();
+    } else {
+      accessInfo->baseAddresses = {rootRelativeOffset};
+      accessInfo->allocateSize = elementBytes;
+      accessInfo->rootRelativeOffset = rootRelativeOffset;
+    }
+    accesses.push_back(accessInfo.get());
+    operationMemInfos_.push_back(std::move(accessInfo));
+  }
 }
 
 void PTOIRTranslator::MakeMacroCompound(Operation *op, PipelineType pipe,
@@ -912,6 +1107,158 @@ void PTOIRTranslator::UpdateAliasBufferInfo(Value result, Value source) {
 void PTOIRTranslator::UpdateConservativeAliasBufferInfo(Value result,
                                                         Value source) {
   UpdateAliasBufferInfo(result, source);
+}
+
+void PTOIRTranslator::UpdateAddPtrAliasBufferInfo(pto::AddPtrOp op) {
+  Value result = op.getResult();
+  Value source = op.getPtr();
+  if (!result || !source || !buffer2MemInfoMap_.contains(source)) {
+    return;
+  }
+
+  auto ptrType = dyn_cast<pto::PtrType>(source.getType());
+  const uint64_t elementBytes =
+      ptrType ? pto::getPTOStorageElemByteSize(ptrType.getElementType()) : 0;
+  int64_t elementOffset = 0;
+  const bool hasConstantOffset =
+      getConstIndexValue(op.getOffset(), elementOffset) && elementOffset >= 0;
+
+  auto &resultMemInfoVec = buffer2MemInfoMap_[result];
+  for (const auto &parentInfo : buffer2MemInfoMap_[source]) {
+    auto newInfo = parentInfo->clone(result);
+    if (parentInfo->scope != pto::AddressSpace::GM) {
+      appendUniqueMemInfo(resultMemInfoVec, std::move(newInfo));
+      continue;
+    }
+
+    newInfo->allocateSize = 0;
+    newInfo->byteStrides.clear();
+    uint64_t byteOffset = 0;
+    uint64_t rootRelativeOffset = 0;
+    if (!hasConstantOffset || elementBytes == 0 ||
+        !parentInfo->rootRelativeOffset ||
+        multiplyUnsignedOverflow(static_cast<uint64_t>(elementOffset),
+                                 elementBytes, byteOffset) ||
+        addUnsignedOverflow(*parentInfo->rootRelativeOffset, byteOffset,
+                            rootRelativeOffset)) {
+      newInfo->baseAddresses.clear();
+      newInfo->rootRelativeOffset.reset();
+      appendUniqueMemInfo(resultMemInfoVec, std::move(newInfo));
+      continue;
+    }
+
+    newInfo->baseAddresses = {rootRelativeOffset};
+    newInfo->rootRelativeOffset = rootRelativeOffset;
+    appendUniqueMemInfo(resultMemInfoVec, std::move(newInfo));
+  }
+}
+
+void PTOIRTranslator::UpdateMakeTensorViewAliasBufferInfo(
+    pto::MakeTensorViewOp op) {
+  Value result = op.getResult();
+  Value source = op.getPtr();
+  if (!result || !source || !buffer2MemInfoMap_.contains(source)) {
+    return;
+  }
+
+  auto viewType = dyn_cast<pto::TensorViewType>(result.getType());
+  const uint64_t elementBytes =
+      viewType ? pto::getPTOStorageElemByteSize(viewType.getElementType()) : 0;
+  std::optional<SmallVector<uint64_t>> sizes =
+      getConstantNonnegativeValues(op.getShape());
+  std::optional<SmallVector<uint64_t>> byteStrides =
+      getByteStrides(op.getStrides(), elementBytes);
+
+  auto &resultMemInfoVec = buffer2MemInfoMap_[result];
+  for (const auto &parentInfo : buffer2MemInfoMap_[source]) {
+    auto newInfo = parentInfo->clone(result);
+    if (parentInfo->scope != pto::AddressSpace::GM) {
+      appendUniqueMemInfo(resultMemInfoVec, std::move(newInfo));
+      continue;
+    }
+
+    newInfo->baseAddresses.clear();
+    newInfo->allocateSize = 0;
+    newInfo->byteStrides = byteStrides.value_or(SmallVector<uint64_t>{});
+    if (!parentInfo->rootRelativeOffset || !sizes || !byteStrides) {
+      appendUniqueMemInfo(resultMemInfoVec, std::move(newInfo));
+      continue;
+    }
+
+    std::optional<GmAccessRanges> ranges = getGmAccessRanges(
+        *parentInfo->rootRelativeOffset, *sizes, *byteStrides, elementBytes);
+    if (ranges) {
+      newInfo->baseAddresses = std::move(ranges->addresses);
+      newInfo->allocateSize = ranges->segmentSize;
+    }
+    appendUniqueMemInfo(resultMemInfoVec, std::move(newInfo));
+  }
+}
+
+void PTOIRTranslator::UpdatePartitionViewAliasBufferInfo(
+    pto::PartitionViewOp op) {
+  Value result = op.getResult();
+  Value source = op.getSource();
+  if (!result || !source || !buffer2MemInfoMap_.contains(source)) {
+    return;
+  }
+
+  auto viewType = dyn_cast<pto::PartitionTensorViewType>(result.getType());
+  const uint64_t elementBytes =
+      viewType ? pto::getPTOStorageElemByteSize(viewType.getElementType()) : 0;
+  std::optional<SmallVector<uint64_t>> offsets =
+      getConstantNonnegativeValues(op.getOffsets());
+  std::optional<SmallVector<uint64_t>> sizes =
+      getConstantNonnegativeValues(op.getSizes());
+
+  auto &resultMemInfoVec = buffer2MemInfoMap_[result];
+  for (const auto &parentInfo : buffer2MemInfoMap_[source]) {
+    auto newInfo = parentInfo->clone(result);
+    if (parentInfo->scope != pto::AddressSpace::GM) {
+      appendUniqueMemInfo(resultMemInfoVec, std::move(newInfo));
+      continue;
+    }
+
+    newInfo->baseAddresses.clear();
+    newInfo->allocateSize = 0;
+    const bool hasGeometry =
+        parentInfo->rootRelativeOffset && offsets && sizes &&
+        offsets->size() == parentInfo->byteStrides.size() &&
+        sizes->size() == parentInfo->byteStrides.size();
+    if (!hasGeometry) {
+      newInfo->rootRelativeOffset.reset();
+      appendUniqueMemInfo(resultMemInfoVec, std::move(newInfo));
+      continue;
+    }
+
+    uint64_t partitionOrigin = *parentInfo->rootRelativeOffset;
+    bool overflow = false;
+    for (auto [offset, stride] : llvm::zip(*offsets, parentInfo->byteStrides)) {
+      uint64_t dimensionOffset = 0;
+      uint64_t updatedOrigin = 0;
+      if (multiplyUnsignedOverflow(offset, stride, dimensionOffset) ||
+          addUnsignedOverflow(partitionOrigin, dimensionOffset,
+                              updatedOrigin)) {
+        overflow = true;
+        break;
+      }
+      partitionOrigin = updatedOrigin;
+    }
+    if (overflow) {
+      newInfo->rootRelativeOffset.reset();
+      appendUniqueMemInfo(resultMemInfoVec, std::move(newInfo));
+      continue;
+    }
+
+    newInfo->rootRelativeOffset = partitionOrigin;
+    std::optional<GmAccessRanges> ranges = getGmAccessRanges(
+        partitionOrigin, *sizes, parentInfo->byteStrides, elementBytes);
+    if (ranges) {
+      newInfo->baseAddresses = std::move(ranges->addresses);
+      newInfo->allocateSize = ranges->segmentSize;
+    }
+    appendUniqueMemInfo(resultMemInfoVec, std::move(newInfo));
+  }
 }
 
 LogicalResult PTOIRTranslator::UpdateIntToPtrOpMemInfo(pto::IntToPtrOp op) {

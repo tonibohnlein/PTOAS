@@ -133,12 +133,36 @@ bool testInvalidCompletionRequirements() {
                "invalid completion requirements are rejected safely");
 }
 
+bool testScopedCompletionReduction() {
+  const std::vector<SyncGraphEdge> conditionalPath = {
+      {0, 1, SyncGraphEdgeKind::HardwareCompletion},
+      {1, 2, SyncGraphEdgeKind::IssueOrder}};
+  const std::vector<CompletionRequirement> requirements = {{0, 2}};
+  const auto excludesConditionalVertex = [](std::size_t, std::size_t vertex) {
+    return vertex != 1;
+  };
+  const std::vector<bool> keep = mlir::pto::reduceCompletionRequirements(
+      3, conditionalPath, requirements, excludesConditionalVertex);
+  bool passed =
+      check(keep.size() == 1 && keep[0],
+            "a conditional completion cannot satisfy an outer requirement");
+
+  const auto includesAllVertices = [](std::size_t, std::size_t) {
+    return true;
+  };
+  const std::vector<bool> remove = mlir::pto::reduceCompletionRequirements(
+      3, conditionalPath, requirements, includesAllVertices);
+  passed &= check(remove.size() == 1 && !remove[0],
+                  "an available completion path satisfies the requirement");
+  return passed;
+}
+
 } // namespace
 
 int main() {
-  const bool passed = testOptimalIntervalColoring() &&
-                      testCompletionQualifiedReduction() &&
-                      testColoringBoundariesAndDeterminism() &&
-                      testInvalidCompletionRequirements();
+  const bool passed =
+      testOptimalIntervalColoring() && testCompletionQualifiedReduction() &&
+      testColoringBoundariesAndDeterminism() &&
+      testInvalidCompletionRequirements() && testScopedCompletionReduction();
   return passed ? 0 : 1;
 }

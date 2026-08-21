@@ -62,10 +62,56 @@ Integer constants and accumulated offsets are range-checked during this
 comparison. An expression that cannot be represented without signed overflow
 is classified as unknown and therefore retains conservative synchronization.
 
+### GM range and no-alias contract
+
+GM pointers and views retain their function-argument provenance. CanonicalSync
+tracks constant `pto.addptr` and scalar-access offsets in bytes and the
+constant shape, stride, offset, and size operands of `pto.make_tensor_view`
+and `pto.partition_view`. Contiguous regions are represented exactly. Static
+strided regions are represented as a bounded union of equal-sized intervals;
+when that representation would be too large, a conservative bounding interval
+is used. Dynamic, negative, or overflowing address arithmetic remains an
+unknown range and therefore cannot prove two same-root accesses disjoint.
+
+By default, distinct GM arguments are `MayAlias`. A producer may state a
+pairwise no-alias contract with the function attribute:
+
+```mlir
+func.func @kernel(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<f32>,
+                  %arg2: !pto.ptr<f32>)
+    attributes {pto.noalias_pairs = array<i64: 0, 1, 0, 2>} {
+  // ...
+}
+```
+
+Each adjacent pair is an unordered pair of function-argument indices. The
+contract promises that, for one invocation of the function, every GM byte
+accessed through either argument and its provenance-preserving derivations is
+disjoint from every GM byte accessed through the other argument and its
+derivations. The contract is pairwise, not transitive: the example says
+`arg0` does not alias `arg1` or `arg2`, but says nothing about the relation
+between `arg1` and `arg2`.
+
+`pto.addptr`, tensor/partition views, pointer casts, and an immediate
+`pto.ptrtoint`/`pto.inttoptr` round trip preserve argument provenance. A raw
+`pto.inttoptr` does not. It may alias every range in its address space even
+when the function has `pto.noalias_pairs`.
+
+CanonicalSync rejects an attribute with the wrong type, an odd number of
+indices, an out-of-range index, a self-pair, a repeated unordered pair, or a
+pair naming a non-GM-pointer/view argument. The attribute is a static compiler
+contract and has no runtime check. A frontend must emit it only when the
+promise is valid; otherwise generated synchronization may be insufficient.
+Unannotated distinct GM arguments remain `MayAlias`.
+
 The recurrence scan checks increasing distances through the physical slot
 count and retains the first aliasing distance for each hazard kind. This also
 captures reuse such as `consumer(i) -> producer(i + N)` for an `N`-slot ring;
-checking adjacent iterations alone is not sufficient.
+checking adjacent iterations alone is not sufficient. A recurrence is removed
+when exact constant `scf.for` bounds and a positive constant step prove that
+the loop executes at most its iteration distance, because no source/target
+instance of that recurrence can then occur. Dynamic bounds, unknown steps, and
+other loop forms remain conservative.
 
 Operations in opposite arms of one `scf.if` are mutually exclusive. The
 initial implementation supports structured `scf.for`, `scf.if`, `scf.while`,
@@ -87,13 +133,43 @@ retained set/wait pair, a same-pipe hardware completion guarantee, or a
 barrier. A path containing only issue-order edges cannot discharge a memory
 hazard.
 
-Forward dependencies in one MLIR block are reduced on the single-iteration
-graph. Distance-one recurrences in one block are reduced on a two-copy graph
-representing consecutive iterations, with inner-loop synchronization fixed
-before reducing an enclosing loop. Longer-distance and cross-region
-requirements are retained: a completion in a conditional or zero-trip region
-is not assumed to cover an outer path. This keeps the reduction deterministic,
-polynomial, and control-flow sound.
+Forward dependencies are reduced on the single-iteration graph with a
+requirement-specific structured execution scope. A proof may cross nested
+regions, but only through operations guaranteed to execute whenever that
+requirement's source and target execute. Consequently, a completion in one
+`scf.if` arm or a potentially zero-trip loop body cannot discharge an outer
+requirement. Distance-`d` recurrences use the same rule on a `d + 1`-copy graph
+representing the relevant iteration occurrences. Fixed and retained forward
+completion edges are replicated in each copy, while same-pipe order crosses
+only adjacent copies. Control conditions are tagged by copy, so a branch fact
+from iteration `i` is not reused in another iteration.
+For forward dependencies, an `scf.for` body is guaranteed to execute when its
+lower bound, upper bound, and positive step are compile-time constants and the
+lower bound is strictly less than the upper bound. This fact does not remove
+conditions from nested zero-trip loops or conditionals. Dynamic loops and
+`scf.while` remain potentially zero-trip.
+
+Inner-loop forward synchronization is fixed before reducing an enclosing
+loop. Inner-loop recurrence synchronization is not summarized as ordinary
+completion for an enclosing recurrence. Its prime, per-iteration handshake,
+drain, or recurrence barrier provides pipe-specific completion only at precise
+loop boundaries; an unconditional source-to-target edge in each enclosing-loop
+copy would be stronger than the emitted protocol. Shorter-distance recurrence
+protocols are likewise not summarized while reducing a longer-distance
+recurrence.
+
+Same-pipe barriers are selected before cross-pipe events. Each non-recurrence
+barrier then contributes completion edges from operations on its pipe that are
+guaranteed to issue before the barrier to operations guaranteed to issue after
+it. Cross-pipe requirements are reduced a second time against those fixed
+barrier guarantees. A conditional or loop-local barrier is usable only when
+its execution context is implied by the edge endpoints; recurrence barriers
+are not used for this forward reduction. Barrier selection is frozen during
+the second reduction, preventing a synchronization requirement from removing
+the barrier on which its proof depends. A barrier in a statically positive-trip
+`scf.for` body may cover an outer forward requirement; barriers in dynamic or
+zero-trip loops may not. The complete procedure remains deterministic and
+polynomial.
 
 ## Synchronization plan
 

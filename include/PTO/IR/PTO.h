@@ -140,6 +140,8 @@ class TypeConverter;
 namespace pto {
 
 inline constexpr char kPTOTargetArchAttrName[] = "pto.target_arch";
+/// Pairwise GM argument disjointness contract documented by CanonicalSync.
+inline constexpr char kPtoNoAliasPairsAttrName[] = "pto.noalias_pairs";
 
 /// Get PTO Address Space Attr from input type.
 AddressSpaceAttr getPTOAddressSpaceAttr(Type type);

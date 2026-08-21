@@ -41,7 +41,8 @@ struct CanonicalEventDomainKey {
 class CanonicalSyncPlanBuilder {
 public:
   CanonicalSyncPlanBuilder(func::FuncOp func, unsigned eventIdMax)
-      : func_(func), eventIdMax_(eventIdMax),
+      : func_(func), funcOperation_(func.getOperation()),
+        eventIdMax_(eventIdMax),
         translator_(syncIR_, memoryAnalyzer_, bufferMap_, func,
                     SyncAnalysisMode::NORMALSYNC) {}
 
@@ -49,6 +50,7 @@ public:
 
 private:
   LogicalResult validateInput();
+  LogicalResult parseNoAliasPairs();
   LogicalResult collectNodes();
   LogicalResult validateModeledEffects();
   LogicalResult addDependencies();
@@ -59,6 +61,10 @@ private:
   LogicalResult addSSAAndRecurrenceDependencies();
   void reduceForwardDependencies();
   void materializeSyncRequirements();
+  void materializeBarriers();
+  void reduceBarrierCoveredDependencies();
+  void materializeEvents();
+  std::vector<SyncGraphEdge> buildBarrierCompletionEdges() const;
   LogicalResult allocateEvents();
 
   void addDependency(std::size_t source, std::size_t target,
@@ -79,6 +85,7 @@ private:
                                      const CanonicalMemoryAccess &second,
                                      Operation *loop,
                                      unsigned iterationDistance) const;
+  bool rootsAreNoAlias(Value first, Value second) const;
   SlotRelation compareSlotsAcrossIterations(const CanonicalMemoryAccess &first,
                                             const CanonicalMemoryAccess &second,
                                             Operation *loop,
@@ -93,6 +100,7 @@ private:
   void reserveHiddenEventIds();
 
   func::FuncOp func_;
+  Operation *funcOperation_ = nullptr;
   unsigned eventIdMax_ = 0;
   CanonicalSyncPlan plan_;
   SyncIRs syncIR_;
@@ -101,6 +109,7 @@ private:
   PTOIRTranslator translator_;
   DenseMap<Operation *, SmallVector<std::size_t, 2>> operationNodes_;
   std::map<CanonicalEventDomainKey, std::set<unsigned>> reservedIds_;
+  std::set<std::pair<unsigned, unsigned>> noAliasArgPairs_;
 };
 
 } // namespace pto
