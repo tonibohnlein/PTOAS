@@ -224,9 +224,10 @@ the earliest `c_i`. This can reduce overlap by deliberately serializing work.
 Every candidate is recolored exactly and is accepted only when
 completion-qualified reachability proves that its coalesced event covers every
 event it replaces. Candidates are ordered by remaining color overflow, then by
-an unweighted structural cost: the total source-pipe distance moved later plus
-the total target-pipe distance moved earlier. Event count and a stable group
-signature break ties. The beam retains at most 16 states per depth.
+an unweighted structural cost: the total block-local source-pipe distance moved
+later plus the total block-local target-pipe distance moved earlier. Event
+count and a stable group signature break ties. The beam retains at most 16
+states per depth.
 
 Recurrences, dynamic-width events, forward drains, and events crossing
 structured-region boundaries are not coalesced. If those events keep the plan

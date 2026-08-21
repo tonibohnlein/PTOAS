@@ -33,7 +33,9 @@
 module attributes {pto.target_arch = "a2a3"} {
   func.func @two_live_events(
       %src0: !pto.partition_tensor_view<16x128xf32>,
-      %src1: !pto.partition_tensor_view<16x128xf32>) {
+      %src1: !pto.partition_tensor_view<16x128xf32>,
+      %scalar_src: !pto.ptr<f32>) {
+    %index0 = arith.constant 0 : index
     %addr0 = arith.constant 0 : i64
     %addr8192 = arith.constant 8192 : i64
     %one = arith.constant 1.000000e+00 : f32
@@ -44,6 +46,7 @@ module attributes {pto.target_arch = "a2a3"} {
 
     pto.tload ins(%src0 : !pto.partition_tensor_view<16x128xf32>)
       outs(%tile0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %unused = pto.load_scalar %scalar_src[%index0] : !pto.ptr<f32> -> f32
     pto.tload ins(%src1 : !pto.partition_tensor_view<16x128xf32>)
       outs(%tile1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     pto.tmuls ins(%tile0, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
@@ -86,6 +89,7 @@ module attributes {pto.target_arch = "a2a3"} {
 
 // ONE-LABEL: func.func @two_live_events
 // ONE: pto.tload
+// ONE-NEXT: %{{.*}} = pto.load_scalar
 // ONE-NEXT: pto.tload
 // ONE-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
 // ONE-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
@@ -103,7 +107,7 @@ module attributes {pto.target_arch = "a2a3"} {
 // ONE: return
 
 // PLAN-ONE-LABEL: PTOCanonicalSyncPlan @two_live_events
-// PLAN-ONE: event[0] PIPE_MTE2 -> PIPE_V source=1 target=2 width=1 ids=[0]
+// PLAN-ONE: event[0] PIPE_MTE2 -> PIPE_V source=2 target=3 width=1 ids=[0]
 // PLAN-ONE: domain PIPE_MTE2 -> PIPE_V original-events=2 events=1 available=1 original-colors=2 colors=1 serialization-cost=2
 // PLAN-ONE-LABEL: PTOCanonicalSyncPlan @three_live_events
 // PLAN-ONE: event[0] PIPE_MTE2 -> PIPE_V source=2 target=3 width=1 ids=[0]
