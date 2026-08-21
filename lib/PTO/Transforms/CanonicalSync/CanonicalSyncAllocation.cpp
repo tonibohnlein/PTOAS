@@ -79,6 +79,9 @@ LogicalResult CanonicalSyncPlanBuilder::allocateEvents() {
       domain.originalEventCount = stats->second.originalEventCount;
       domain.originalColorCount = stats->second.originalColorCount;
       domain.serializationCost = stats->second.serializationCost;
+      domain.originalCriticalPathWeight =
+          stats->second.originalCriticalPathWeight;
+      domain.criticalPathWeight = stats->second.criticalPathWeight;
     }
     domain.eventCount = eventIndices.size();
     domain.availableIds = available.size();

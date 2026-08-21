@@ -11,6 +11,8 @@
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncAlgorithms.h"
 
 #include <iostream>
+#include <limits>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -84,6 +86,45 @@ bool testMaximumIntervalClique() {
                   "earliest lexicographic maximum clique breaks ties");
   passed &= check(mlir::pto::findMaximumIntervalClique({}).empty(),
                   "empty intervals have an empty maximum clique");
+  return passed;
+}
+
+bool testWeightedCriticalPath() {
+  const std::vector<std::uint64_t> weights = {2 + 3, 4 + 0, 1 + 6, 3 + 1};
+  const std::vector<SyncGraphEdge> edges = {
+      {0, 1, SyncGraphEdgeKind::IssueOrder},
+      {0, 2, SyncGraphEdgeKind::HardwareCompletion},
+      {1, 3, SyncGraphEdgeKind::IssueOrder},
+      {2, 3, SyncGraphEdgeKind::HardwareCompletion},
+      {0, 2, SyncGraphEdgeKind::IssueOrder}};
+  const std::optional<std::uint64_t> criticalPath =
+      mlir::pto::calculateWeightedCriticalPath(weights, edges);
+  bool passed =
+      check(criticalPath && *criticalPath == 16,
+            "one scalar vertex weight may sum multiple cost components");
+
+  const std::optional<std::uint64_t> disconnected =
+      mlir::pto::calculateWeightedCriticalPath({2, 9, 4}, {});
+  passed &= check(disconnected && *disconnected == 9,
+                  "a disconnected DAG uses its heaviest path");
+
+  const std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max();
+  const std::optional<std::uint64_t> saturated =
+      mlir::pto::calculateWeightedCriticalPath(
+          {maximum - 1, 4}, {{0, 1, SyncGraphEdgeKind::IssueOrder}});
+  passed &= check(saturated && *saturated == maximum,
+                  "critical-path weight addition saturates");
+
+  const std::optional<std::uint64_t> cyclic =
+      mlir::pto::calculateWeightedCriticalPath(
+          {1, 1}, {{0, 1, SyncGraphEdgeKind::IssueOrder},
+                   {1, 0, SyncGraphEdgeKind::IssueOrder}});
+  passed &= check(!cyclic, "a cyclic graph is rejected");
+
+  const std::optional<std::uint64_t> invalid =
+      mlir::pto::calculateWeightedCriticalPath(
+          {1}, {{0, 1, SyncGraphEdgeKind::IssueOrder}});
+  passed &= check(!invalid, "an invalid edge endpoint is rejected");
   return passed;
 }
 
@@ -201,7 +242,7 @@ bool testCompletionCoverage() {
 int main() {
   const bool passed =
       testOptimalIntervalColoring() && testMaximumIntervalClique() &&
-      testCompletionQualifiedReduction() &&
+      testWeightedCriticalPath() && testCompletionQualifiedReduction() &&
       testColoringBoundariesAndDeterminism() &&
       testInvalidCompletionRequirements() && testScopedCompletionReduction() &&
       testCompletionCoverage();

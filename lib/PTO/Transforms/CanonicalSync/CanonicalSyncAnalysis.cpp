@@ -76,6 +76,22 @@ bool isMemoryDefinition(Operation *op) {
   return isa<AllocTileOp, AllocMultiTileOp, DeclareTileOp, DeclareGlobalOp>(op);
 }
 
+bool isTransferPipe(PipelineType pipe) {
+  switch (static_cast<PIPE>(pipe)) {
+  case PIPE::PIPE_MTE1:
+  case PIPE::PIPE_MTE2:
+  case PIPE::PIPE_MTE3:
+  case PIPE::PIPE_MTE4:
+  case PIPE::PIPE_MTE5:
+  case PIPE::PIPE_FIX:
+  case PIPE::VIRTUAL_PIPE_MTE2_L1A:
+  case PIPE::VIRTUAL_PIPE_MTE2_L1B:
+    return true;
+  default:
+    return false;
+  }
+}
+
 bool isGmPointerLikeArgument(Type type) {
   if (auto ptrType = dyn_cast<PtrType>(type)) {
     return ptrType.getMemorySpace().getAddressSpace() == AddressSpace::GM;
@@ -304,6 +320,11 @@ LogicalResult CanonicalSyncPlanBuilder::collectNodes() {
     node.pipe = compound->kPipeValue;
     node.macroPhase = compound->macroOpInstanceId;
     node.order = compound->GetIndex();
+    if (isTransferPipe(node.pipe)) {
+      node.transferWeight = 1;
+    } else {
+      node.computeWeight = 1;
+    }
     for (const BaseMemInfo *read : compound->useVec) {
       appendAccess(node, read, true, false);
     }

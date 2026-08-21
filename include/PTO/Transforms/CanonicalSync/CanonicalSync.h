@@ -57,6 +57,8 @@ struct CanonicalSyncNode {
   PipelineType pipe = PipelineType::PIPE_UNASSIGNED;
   int macroPhase = -1;
   std::size_t order = 0;
+  std::uint64_t computeWeight = 0;
+  std::uint64_t transferWeight = 0;
   SmallVector<CanonicalMemoryAccess, 4> accesses;
 };
 
@@ -106,6 +108,8 @@ struct CanonicalEventDomain {
   unsigned originalColorCount = 0;
   unsigned colorCount = 0;
   std::size_t serializationCost = 0;
+  std::uint64_t originalCriticalPathWeight = 0;
+  std::uint64_t criticalPathWeight = 0;
   SmallVector<unsigned, 2> reservedIds;
 };
 

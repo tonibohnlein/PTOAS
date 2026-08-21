@@ -43,6 +43,35 @@ struct CanonicalScarcityStats {
   std::size_t originalEventCount = 0;
   unsigned originalColorCount = 0;
   std::size_t serializationCost = 0;
+  std::uint64_t originalCriticalPathWeight = 0;
+  std::uint64_t criticalPathWeight = 0;
+};
+
+class CanonicalSyncLatencyContext {
+public:
+  CanonicalSyncLatencyContext(const CanonicalSyncPlan &plan,
+                              ArrayRef<CanonicalEvent> domainEvents,
+                              const CanonicalEventDomainKey &domain);
+
+  std::uint64_t
+  calculateCriticalPathWeight(ArrayRef<CanonicalEvent> domainEvents) const;
+
+private:
+  struct BlockGraph {
+    std::vector<std::uint64_t> weights;
+    std::vector<SyncGraphEdge> baseEdges;
+  };
+
+  using NodeLocation = std::pair<std::size_t, std::size_t>;
+
+  std::optional<std::pair<std::size_t, SyncGraphEdge>>
+  localizeEdge(std::size_t source, std::size_t target) const;
+  void addNodes(const CanonicalSyncPlan &plan,
+                const std::set<Block *> &affectedBlocks);
+  void addBaseEdge(std::size_t source, std::size_t target);
+
+  std::vector<BlockGraph> blocks_;
+  std::map<std::size_t, NodeLocation> nodeLocations_;
 };
 
 class CanonicalSyncPlanBuilder {

@@ -132,7 +132,11 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
          << " available=" << domain.availableIds
          << " original-colors=" << domain.originalColorCount
          << " colors=" << domain.colorCount
-         << " serialization-cost=" << domain.serializationCost << " reserved=";
+         << " serialization-cost=" << domain.serializationCost
+         << " original-critical-path-weight="
+         << domain.originalCriticalPathWeight
+         << " critical-path-weight=" << domain.criticalPathWeight
+         << " reserved=";
       printIds(os, domain.reservedIds);
       os << '\n';
     }

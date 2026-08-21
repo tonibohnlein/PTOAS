@@ -223,17 +223,26 @@ the earliest `c_i`. This can reduce overlap by deliberately serializing work.
 
 Every candidate is recolored exactly and is accepted only when
 completion-qualified reachability proves that its coalesced event covers every
-event it replaces. Candidates are ordered by remaining color overflow, then by
-an unweighted structural cost: the total block-local source-pipe distance moved
-later plus the total block-local target-pipe distance moved earlier. Event
-count and a stable group signature break ties. The beam retains at most 16
-states per depth.
+event it replaces. Candidates are ordered by remaining color overflow and then
+by the sum of the weighted critical paths in the affected blocks. The latency
+graph keeps one vertex per CanonicalSync node. Fixed pipe order and event edges
+are finish-to-start constraints, and a vertex has one scalar weight equal to
+its saturated compute-weight plus transfer-weight sum. The initial uncalibrated
+model assigns unit compute weight to non-transfer nodes and unit transfer
+weight to MTE/FIX nodes; it therefore measures critical-path operation count,
+not hardware cycles. A target model can replace those two components without
+changing the graph or search.
+
+The previous structural cost remains a deterministic tie-breaker: it is the
+total block-local source-pipe distance moved later plus the total block-local
+target-pipe distance moved earlier. Event count and a stable group signature
+break further ties. The beam retains at most 16 states per depth.
 
 Recurrences, dynamic-width events, forward drains, and events crossing
 structured-region boundaries are not coalesced. If those events keep the plan
-over budget, the pass fails without changing the IR. Costed barriers and
-latency-aware serialization remain future extensions; scarcity repair does not
-alter the canonical dependence construction.
+over budget, the pass fails without changing the IR. Calibrated target weights,
+loop-frequency composition, and costed barriers remain future extensions;
+scarcity repair does not alter the canonical dependence construction.
 
 ## Inspection
 

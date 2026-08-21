@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <vector>
 
 namespace mlir {
@@ -50,6 +51,14 @@ struct SyncGraphEdge {
   std::size_t target = 0;
   SyncGraphEdgeKind kind = SyncGraphEdgeKind::IssueOrder;
 };
+
+/// Return the maximum sum of vertex weights along any path in a DAG. Each
+/// operation is represented by one vertex and one scalar weight. Invalid
+/// endpoints and cycles return std::nullopt. Addition saturates at uint64_t's
+/// maximum so large target-model estimates cannot wrap around.
+std::optional<std::uint64_t>
+calculateWeightedCriticalPath(const std::vector<std::uint64_t> &vertexWeights,
+                              const std::vector<SyncGraphEdge> &edges);
 
 struct CompletionRequirement {
   std::size_t source = 0;

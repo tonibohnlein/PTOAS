@@ -121,7 +121,8 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
     Builds the sound dependence graph implied by fixed operation order and
     planned physical memory addresses, reduces completion-qualified
     synchronization requirements, structurally coalesces covered forward
-    events when the exact interval coloring exceeds the hardware budget, and
+    events when the exact interval coloring exceeds the hardware budget, ranks
+    scarcity candidates by a one-node weighted critical-path estimate, and
     allocates the available event IDs. The pass fails without changing the IR
     when bounded scarcity repair cannot produce a covered plan.
   }];

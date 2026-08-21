@@ -13,6 +13,7 @@
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <limits>
 #include <set>
 #include <tuple>
@@ -33,6 +34,7 @@ struct ScarcityState {
   std::vector<EventGroup> groups;
   SmallVector<std::size_t, 16> hotspotGroups;
   std::size_t serializationCost = 0;
+  std::uint64_t criticalPathWeight = 0;
   unsigned colorCount = 0;
 };
 
@@ -84,7 +86,7 @@ void sortGroups(ScarcityState &state) {
                     });
 }
 
-std::size_t saturatingAdd(std::size_t value, std::size_t increment) {
+std::size_t saturatingAddDistance(std::size_t value, std::size_t increment) {
   const std::size_t maximum = std::numeric_limits<std::size_t>::max();
   return increment > maximum - value ? maximum : value + increment;
 }
@@ -98,17 +100,18 @@ std::size_t calculateCost(const ScarcityState &state,
     const std::size_t mergedTargetRank = blockPipeRanks[group.event.target];
     for (std::size_t member : group.members) {
       const CanonicalEvent &original = originals[member];
-      cost = saturatingAdd(cost,
-                           mergedSourceRank - blockPipeRanks[original.source]);
-      cost = saturatingAdd(cost,
-                           blockPipeRanks[original.target] - mergedTargetRank);
+      cost = saturatingAddDistance(cost, mergedSourceRank -
+                                             blockPipeRanks[original.source]);
+      cost = saturatingAddDistance(cost, blockPipeRanks[original.target] -
+                                             mergedTargetRank);
     }
   }
   return cost;
 }
 
 void evaluateState(ScarcityState &state, ArrayRef<CanonicalEvent> originals,
-                   ArrayRef<std::size_t> blockPipeRanks) {
+                   ArrayRef<std::size_t> blockPipeRanks,
+                   const CanonicalSyncLatencyContext &latencyContext) {
   std::vector<SyncInterval> intervals;
   SmallVector<std::size_t, 16> laneOwners;
   for (auto [groupIndex, group] : llvm::enumerate(state.groups)) {
@@ -124,6 +127,11 @@ void evaluateState(ScarcityState &state, ArrayRef<CanonicalEvent> originals,
   }
   state.hotspotGroups.assign(hotspot.begin(), hotspot.end());
   state.serializationCost = calculateCost(state, originals, blockPipeRanks);
+  SmallVector<CanonicalEvent, 16> events;
+  for (const EventGroup &group : state.groups) {
+    events.push_back(group.event);
+  }
+  state.criticalPathWeight = latencyContext.calculateCriticalPathWeight(events);
 }
 
 bool stateLess(const ScarcityState &first, const ScarcityState &second,
@@ -132,10 +140,12 @@ bool stateLess(const ScarcityState &first, const ScarcityState &second,
       first.colorCount > availableIds ? first.colorCount - availableIds : 0;
   const unsigned secondOverflow =
       second.colorCount > availableIds ? second.colorCount - availableIds : 0;
-  return std::make_tuple(firstOverflow, first.serializationCost,
-                         first.groups.size(), getSignature(first)) <
-         std::make_tuple(secondOverflow, second.serializationCost,
-                         second.groups.size(), getSignature(second));
+  return std::make_tuple(firstOverflow, first.criticalPathWeight,
+                         first.serializationCost, first.groups.size(),
+                         getSignature(first)) <
+         std::make_tuple(secondOverflow, second.criticalPathWeight,
+                         second.serializationCost, second.groups.size(),
+                         getSignature(second));
 }
 
 std::vector<CanonicalEvent> collectEvents(const ScarcityState &state) {
@@ -166,10 +176,13 @@ CanonicalSyncPlanBuilder::repairEventDomain(const CanonicalEventDomainKey &key,
   }
   const std::vector<std::size_t> blockPipeRanks =
       getBlockPipeRanks(plan_.nodes_);
-  evaluateState(initial, originals, blockPipeRanks);
+  const CanonicalSyncLatencyContext latencyContext(plan_, originals, key);
+  evaluateState(initial, originals, blockPipeRanks, latencyContext);
   CanonicalScarcityStats &stats = scarcityStats_[key];
   stats.originalEventCount = originals.size();
   stats.originalColorCount = initial.colorCount;
+  stats.originalCriticalPathWeight = initial.criticalPathWeight;
+  stats.criticalPathWeight = initial.criticalPathWeight;
   if (initial.colorCount <= availableIds) {
     return success();
   }
@@ -207,7 +220,7 @@ CanonicalSyncPlanBuilder::repairEventDomain(const CanonicalEventDomainKey &key,
           if (!seen.insert(getSignature(candidate)).second) {
             continue;
           }
-          evaluateState(candidate, originals, blockPipeRanks);
+          evaluateState(candidate, originals, blockPipeRanks, latencyContext);
           candidates.push_back(std::move(candidate));
         }
       }
@@ -220,6 +233,7 @@ CanonicalSyncPlanBuilder::repairEventDomain(const CanonicalEventDomainKey &key,
     if (hasCandidate && candidates.front().colorCount <= availableIds) {
       const ScarcityState &solution = candidates.front();
       stats.serializationCost = solution.serializationCost;
+      stats.criticalPathWeight = solution.criticalPathWeight;
       const std::vector<CanonicalEvent> repaired = collectEvents(solution);
       std::vector<CanonicalEvent> updated;
       bool inserted = false;
