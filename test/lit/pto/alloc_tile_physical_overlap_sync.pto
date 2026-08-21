@@ -26,6 +26,7 @@
 // SCHEDULE-DAG: "function":{{ *}}"alloc_tile_physical_overlap_sync"
 // SCHEDULE-DAG: "duration_model":{{ *}}"unestimated"
 // SCHEDULE-DAG: "kind":{{ *}}"operation"
+// SCHEDULE-DAG: "op_name":{{ *}}"pto.tmuls","operation":{"attributes":{},"location":{{[^,]+}},"name":{{ *}}"pto.tmuls","operand_constants":{{ *}}[null,{{ *}}"1.000000e+00 : f32",{{ *}}null]
 // SCHEDULE-DAG: "op_name":{{ *}}"pto.tstore"
 // SCHEDULE-DAG: "pipe":{{ *}}"PIPE_MTE3"
 // SCHEDULE-DAG: "pypto_access_order":{{ *}}7

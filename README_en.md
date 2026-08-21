@@ -269,9 +269,10 @@ intended for controlled memory-placement experiments; it does not estimate
 runtime cycles.
 
 The schedule-graph diagnostic is also emitted after event-id allocation. It
-records operation nodes, execution pipes, memory accesses, static loop bounds,
-per-pipe stream edges, and the final synchronization groups and edges. The
-exporter does not assign durations and does not change generated code. A
+records operation nodes, operand/result types, scalar constant operands,
+execution pipes, memory accesses, static loop bounds, per-pipe stream edges,
+and the final synchronization groups and edges. The exporter does not assign
+durations and does not change generated code. A
 separate calibrated model must interpret the graph before it can be used for
 latency or critical-path analysis.
 

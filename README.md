@@ -299,9 +299,10 @@ ptoas --version
 多 event 组、PIPE_ALL 降级、补偿操作，以及 event-id 使用量（请求的槽位数和每个
 pipe 对的不同 ID 数量）。该输出用于受控的内存 placement 实验，不直接估算运行周期。
 
-schedule graph 同样在 event-id 分配后生成。它记录操作节点、执行 pipe、内存访问、
-静态循环边界、每个 pipe 的顺序边，以及最终同步组和同步边。导出器不分配操作时长，
-也不改变生成代码；延迟或关键路径分析必须由独立且经过校准的模型完成。
+schedule graph 同样在 event-id 分配后生成。它记录操作节点、operand/result type、标量
+常量 operand、执行 pipe、内存访问、静态循环边界、每个 pipe 的顺序边，以及最终同步组
+和同步边。导出器不分配操作时长，也不改变生成代码；延迟或关键路径分析必须由独立且
+经过校准的模型完成。
 
 ### 5.2 Python 接口 (Python API)
 

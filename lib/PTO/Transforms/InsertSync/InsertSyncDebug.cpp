@@ -240,6 +240,17 @@ static llvm::json::Object encodeOperation(Operation *op) {
     operands.push_back(printObject(type));
   object["operand_types"] = std::move(operands);
 
+  llvm::json::Array operandConstants;
+  for (Value operand : op->getOperands()) {
+    Attribute constant;
+    if (isa<IntegerType, IndexType, FloatType>(operand.getType()) &&
+        matchPattern(operand, m_Constant(&constant)))
+      operandConstants.push_back(printObject(constant));
+    else
+      operandConstants.push_back(nullptr);
+  }
+  object["operand_constants"] = std::move(operandConstants);
+
   llvm::json::Array results;
   for (Type type : op->getResultTypes())
     results.push_back(printObject(type));
