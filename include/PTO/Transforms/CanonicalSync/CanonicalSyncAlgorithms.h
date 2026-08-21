@@ -42,7 +42,12 @@ std::vector<std::size_t>
 findMaximumIntervalClique(const std::vector<SyncInterval> &intervals);
 
 enum class SyncGraphEdgeKind : std::uint8_t {
+  /// Same-pipe issue order: completion of the later operation also proves
+  /// completion of earlier operations on that pipe.
   IssueOrder,
+  /// Cross-pipe sequencer order. It does not propagate completion because a
+  /// wait stalls only its destination pipe.
+  NonCompletionPreservingIssueOrder,
   HardwareCompletion,
 };
 

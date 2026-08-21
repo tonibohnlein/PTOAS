@@ -85,6 +85,9 @@ bool hasQualifiedPath(std::size_t vertexCount, const CompletionGraph &outgoing,
           !isAvailable(isVertexAvailable, skipped, edge.target)) {
         continue;
       }
+      if (edge.kind == SyncGraphEdgeKind::NonCompletionPreservingIssueOrder) {
+        continue;
+      }
       const bool hasCompletion =
           state.hasCompletion ||
           edge.kind == SyncGraphEdgeKind::HardwareCompletion;

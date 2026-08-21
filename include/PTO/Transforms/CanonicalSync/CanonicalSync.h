@@ -91,6 +91,7 @@ struct CanonicalEvent {
   CanonicalAnchor waitAnchor;
   Operation *recurrenceLoop = nullptr;
   Operation *forwardDrainLoop = nullptr;
+  unsigned iterationDistance = 0;
   Value setSlot;
   Value waitSlot;
   unsigned width = 1;
@@ -122,6 +123,9 @@ public:
   ArrayRef<CanonicalDependency> getDependencies() const {
     return dependencies_;
   }
+  ArrayRef<CanonicalDependency> getCompletionRequirements() const {
+    return completionRequirements_;
+  }
   ArrayRef<CanonicalBarrier> getBarriers() const { return barriers_; }
   ArrayRef<CanonicalEvent> getEvents() const { return events_; }
   ArrayRef<CanonicalEventDomain> getDomains() const { return domains_; }
@@ -134,6 +138,7 @@ private:
   std::vector<CanonicalSyncNode> nodes_;
   std::vector<SyncGraphEdge> fixedEdges_;
   std::vector<CanonicalDependency> dependencies_;
+  std::vector<CanonicalDependency> completionRequirements_;
   std::vector<CanonicalBarrier> barriers_;
   std::vector<CanonicalEvent> events_;
   std::vector<CanonicalEventDomain> domains_;

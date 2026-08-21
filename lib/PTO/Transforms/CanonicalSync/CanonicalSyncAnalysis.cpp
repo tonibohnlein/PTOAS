@@ -204,10 +204,16 @@ FailureOr<CanonicalSyncPlan> CanonicalSyncPlanBuilder::build() {
       failed(addDependencies())) {
     return failure();
   }
+  discardImpossibleRecurrences();
+  preserveForwardCompletionRequirements();
+  preserveRecurrenceCompletionRequirements();
   reduceForwardDependencies();
-  materializeSyncRequirements();
   reserveHiddenEventIds();
+  materializeSyncRequirements();
   if (failed(repairEventScarcity())) {
+    return failure();
+  }
+  if (failed(verifyFinalPlan())) {
     return failure();
   }
   if (failed(allocateEvents())) {

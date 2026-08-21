@@ -230,6 +230,8 @@ module {
 // PLAN-LABEL: PTOCanonicalSyncPlan @distance_two_reduced
 // PLAN: dependency 2 -> 0 kind=memory-war distance=2 retained=yes
 // PLAN: dependency 2 -> 1 kind=memory-war distance=2 retained=no
+// PLAN: event{{\[[0-9]+\]}} PIPE_V -> PIPE_MTE2 source=2 target=0 width=2
+// PLAN-SAME: recurrence=yes distance=2
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @distance_two_issue_only
 // PLAN: dependency 0 -> 0 kind=memory-raw distance=2 retained=yes

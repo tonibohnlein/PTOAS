@@ -119,11 +119,11 @@ void CanonicalSyncPlanBuilder::addFixedEdge(std::size_t source,
   }
 }
 
-bool CanonicalSyncPlanBuilder::hasHardwareCompletion(PipelineType pipe) {
+bool CanonicalSyncPlanBuilder::hasHardwareCompletion(PipelineType pipe) const {
   if (pipe == PipelineType::PIPE_S) {
     return true;
   }
-  return pipe == PipelineType::PIPE_V && isTargetArchA5(func_.getOperation());
+  return pipe == PipelineType::PIPE_V && isTargetArchA5(funcOperation_);
 }
 
 void CanonicalSyncPlanBuilder::addIssueOrderEdges() {
@@ -211,7 +211,11 @@ LogicalResult CanonicalSyncPlanBuilder::addSSAAndRecurrenceDependencies() {
       continue;
     }
     if (isControl) {
-      addFixedEdge(source, target, SyncGraphEdgeKind::IssueOrder);
+      const SyncGraphEdgeKind kind =
+          plan_.nodes_[source].pipe == plan_.nodes_[target].pipe
+              ? SyncGraphEdgeKind::IssueOrder
+              : SyncGraphEdgeKind::NonCompletionPreservingIssueOrder;
+      addFixedEdge(source, target, kind);
       continue;
     }
     addDependency(source, target,

@@ -46,7 +46,7 @@ struct DependencyGroupKey {
 };
 
 std::map<DependencyGroupKey, SmallVector<std::size_t, 3>>
-groupDependencies(const std::vector<CanonicalDependency> &dependencies) {
+groupDependencies(ArrayRef<CanonicalDependency> dependencies) {
   std::map<DependencyGroupKey, SmallVector<std::size_t, 3>> groups;
   DenseMap<Operation *, std::size_t> ownerOrders;
   std::size_t nextOwnerOrder = 1;
@@ -243,7 +243,7 @@ bool formsMemoryHazard(CanonicalDependencyKind kind,
 
 } // namespace
 
-void CanonicalSyncPlanBuilder::reduceForwardDependencies() {
+void CanonicalSyncPlanBuilder::discardImpossibleRecurrences() {
   for (CanonicalDependency &dependency : plan_.dependencies_) {
     if (dependency.iterationDistance == 0) {
       continue;
@@ -258,7 +258,18 @@ void CanonicalSyncPlanBuilder::reduceForwardDependencies() {
       dependency.retained = false;
     }
   }
+}
 
+void CanonicalSyncPlanBuilder::preserveForwardCompletionRequirements() {
+  plan_.completionRequirements_.clear();
+  for (const CanonicalDependency &dependency : plan_.dependencies_) {
+    if (dependency.retained && dependency.iterationDistance == 0) {
+      plan_.completionRequirements_.push_back(dependency);
+    }
+  }
+}
+
+void CanonicalSyncPlanBuilder::reduceForwardDependencies() {
   auto groups = groupDependencies(plan_.dependencies_);
   std::map<Block *,
            std::map<std::pair<PipelineType, PipelineType>,
@@ -473,6 +484,60 @@ void CanonicalSyncPlanBuilder::reduceForwardDependencies() {
   }
 }
 
+void CanonicalSyncPlanBuilder::preserveRecurrenceCompletionRequirements() {
+  for (const CanonicalDependency &dependency : plan_.dependencies_) {
+    if (dependency.retained && dependency.iterationDistance != 0) {
+      plan_.completionRequirements_.push_back(dependency);
+    }
+  }
+}
+
+bool CanonicalSyncPlanBuilder::isForwardVertexAvailable(
+    const CanonicalDependency &requirement, std::size_t vertex) const {
+  if (requirement.iterationDistance != 0 ||
+      requirement.source >= plan_.nodes_.size() ||
+      requirement.target >= plan_.nodes_.size() ||
+      vertex >= plan_.nodes_.size()) {
+    return false;
+  }
+  return isGuaranteedInContext(plan_.nodes_[vertex].operation, 0,
+                               plan_.nodes_[requirement.source].operation, 0,
+                               plan_.nodes_[requirement.target].operation, 0,
+                               nullptr, true);
+}
+
+bool CanonicalSyncPlanBuilder::isRecurrenceVertexAvailable(
+    const CanonicalDependency &requirement, std::size_t vertex,
+    std::size_t nodeCount) const {
+  if (requirement.iterationDistance == 0 || !requirement.recurrenceLoop ||
+      nodeCount == 0 || requirement.source >= nodeCount ||
+      requirement.target >= nodeCount ||
+      vertex / nodeCount > requirement.iterationDistance) {
+    return false;
+  }
+  Operation *operation = plan_.nodes_[vertex % nodeCount].operation;
+  if (!requirement.recurrenceLoop->isAncestor(operation)) {
+    return false;
+  }
+  const unsigned occurrence = static_cast<unsigned>(vertex / nodeCount);
+  return isGuaranteedInContext(
+      operation, occurrence, plan_.nodes_[requirement.source].operation, 0,
+      plan_.nodes_[requirement.target].operation, requirement.iterationDistance,
+      requirement.recurrenceLoop);
+}
+
+bool CanonicalSyncPlanBuilder::isAnchorGuaranteedForRequirement(
+    const CanonicalAnchor &anchor, std::size_t source,
+    std::size_t target) const {
+  if (!anchor.operation || source >= plan_.nodes_.size() ||
+      target >= plan_.nodes_.size()) {
+    return false;
+  }
+  return isGuaranteedInContext(
+      anchor.operation, 0, plan_.nodes_[source].operation, 0,
+      plan_.nodes_[target].operation, 0, nullptr, true);
+}
+
 CanonicalAnchor
 CanonicalSyncPlanBuilder::getSetAnchor(Operation *source,
                                        Operation *target) const {
@@ -579,8 +644,8 @@ unsigned CanonicalSyncPlanBuilder::getRecurrenceWidth(
 
 void CanonicalSyncPlanBuilder::materializeSyncRequirements() {
   materializeBarriers();
-  reduceBarrierCoveredDependencies();
   materializeEvents();
+  optimizeBarriers();
 }
 
 void CanonicalSyncPlanBuilder::materializeBarriers() {
@@ -615,9 +680,11 @@ void CanonicalSyncPlanBuilder::materializeBarriers() {
 }
 
 std::vector<SyncGraphEdge>
-CanonicalSyncPlanBuilder::buildBarrierCompletionEdges() const {
+CanonicalSyncPlanBuilder::buildBarrierCompletionEdges(
+    ArrayRef<CanonicalBarrier> barriers) const {
   std::vector<SyncGraphEdge> edges;
-  for (const CanonicalBarrier &barrier : plan_.barriers_) {
+  std::set<std::pair<std::size_t, std::size_t>> seen;
+  for (const CanonicalBarrier &barrier : barriers) {
     if (barrier.recurrenceLoop) {
       continue;
     }
@@ -634,11 +701,7 @@ CanonicalSyncPlanBuilder::buildBarrierCompletionEdges() const {
                                    nullptr, true)) {
           continue;
         }
-        const bool duplicate =
-            llvm::any_of(edges, [&](const SyncGraphEdge &edge) {
-              return edge.source == source.id && edge.target == target.id;
-            });
-        if (!duplicate) {
+        if (seen.emplace(source.id, target.id).second) {
           edges.push_back(
               {source.id, target.id, SyncGraphEdgeKind::HardwareCompletion});
         }
@@ -648,50 +711,65 @@ CanonicalSyncPlanBuilder::buildBarrierCompletionEdges() const {
   return edges;
 }
 
-void CanonicalSyncPlanBuilder::reduceBarrierCoveredDependencies() {
-  auto groups = groupDependencies(plan_.dependencies_);
-  std::vector<CompletionRequirement> requirements;
-  std::vector<DependencyGroupKey> requirementKeys;
-  for (const auto &entry : groups) {
-    const CanonicalDependency &dependency =
-        plan_.dependencies_[entry.second.front()];
-    if (!dependency.retained || dependency.iterationDistance != 0 ||
-        plan_.nodes_[dependency.source].pipe ==
-            plan_.nodes_[dependency.target].pipe) {
-      continue;
-    }
-    requirements.push_back({dependency.source, dependency.target});
-    requirementKeys.push_back(entry.first);
-  }
-  std::vector<SyncGraphEdge> fixedEdges = plan_.fixedEdges_;
-  const std::vector<SyncGraphEdge> barrierEdges = buildBarrierCompletionEdges();
-  fixedEdges.insert(fixedEdges.end(), barrierEdges.begin(), barrierEdges.end());
-  const auto isVertexAvailable = [&](std::size_t requirement,
-                                     std::size_t vertex) {
-    const bool isInvalid =
-        requirement >= requirementKeys.size() || vertex >= plan_.nodes_.size();
-    if (isInvalid) {
-      return false;
-    }
-    const DependencyGroupKey &key = requirementKeys[requirement];
-    return isGuaranteedInContext(
-        plan_.nodes_[vertex].operation, 0, plan_.nodes_[key.source].operation,
-        0, plan_.nodes_[key.target].operation, 0, nullptr, true);
-  };
-  const std::vector<bool> keep = reduceCompletionRequirements(
-      plan_.nodes_.size(), fixedEdges, requirements, isVertexAvailable);
-  for (std::size_t index = 0; index < keep.size(); ++index) {
-    for (std::size_t dependency : groups[requirementKeys[index]]) {
-      plan_.dependencies_[dependency].retained = keep[index];
-    }
-  }
+void CanonicalSyncPlanBuilder::materializeEvents() {
+  materializeEventsFrom(plan_.dependencies_, plan_.events_);
+  materializeEventsFrom(plan_.completionRequirements_, eventCandidates_);
 }
 
-void CanonicalSyncPlanBuilder::materializeEvents() {
-  auto groups = groupDependencies(plan_.dependencies_);
+CanonicalEvent
+CanonicalSyncPlanBuilder::makeForwardEvent(std::size_t sourceId,
+                                           std::size_t targetId) const {
+  const CanonicalSyncNode &source = plan_.nodes_[sourceId];
+  const CanonicalSyncNode &target = plan_.nodes_[targetId];
+  CanonicalEvent event;
+  event.source = sourceId;
+  event.target = targetId;
+  event.sourcePipe = source.pipe;
+  event.targetPipe = target.pipe;
+  event.setAnchor = getSetAnchor(source.operation, target.operation);
+  event.waitAnchor = getWaitAnchor(source.operation, target.operation);
+  event.forwardDrainLoop =
+      getWhileForwardDrain(source.operation, target.operation);
+  event.intervalBegin = getAnchorPosition(event.setAnchor);
+  event.intervalEnd = event.forwardDrainLoop
+                          ? getAnchorPosition({event.forwardDrainLoop, false})
+                          : getAnchorPosition(event.waitAnchor);
+  if (event.intervalBegin > event.intervalEnd) {
+    std::swap(event.intervalBegin, event.intervalEnd);
+  }
+  return event;
+}
+
+CanonicalEvent CanonicalSyncPlanBuilder::makeRecurrenceEvent(
+    const CanonicalDependency &dependency) const {
+  const CanonicalSyncNode &source = plan_.nodes_[dependency.source];
+  const CanonicalSyncNode &target = plan_.nodes_[dependency.target];
+  CanonicalEvent event;
+  event.source = dependency.source;
+  event.target = dependency.target;
+  event.sourcePipe = source.pipe;
+  event.targetPipe = target.pipe;
+  event.recurrenceLoop = dependency.recurrenceLoop;
+  event.iterationDistance = dependency.iterationDistance;
+  event.width = getRecurrenceWidth(dependency, event.setSlot, event.waitSlot);
+  event.setAnchor =
+      getLoopRegionExitAnchor(source.operation, event.recurrenceLoop);
+  event.waitAnchor = event.width == 1 ? getLoopEntryAnchor(event.recurrenceLoop)
+                                      : CanonicalAnchor{target.operation, true};
+  event.intervalBegin = getAnchorPosition({event.recurrenceLoop, true});
+  event.intervalEnd = getAnchorPosition({event.recurrenceLoop, false});
+  if (event.intervalBegin > event.intervalEnd) {
+    std::swap(event.intervalBegin, event.intervalEnd);
+  }
+  return event;
+}
+
+void CanonicalSyncPlanBuilder::materializeEventsFrom(
+    ArrayRef<CanonicalDependency> dependencies,
+    std::vector<CanonicalEvent> &events) {
+  auto groups = groupDependencies(dependencies);
   for (const auto &entry : groups) {
-    const CanonicalDependency &dependency =
-        plan_.dependencies_[entry.second.front()];
+    const CanonicalDependency &dependency = dependencies[entry.second.front()];
     if (!dependency.retained) {
       continue;
     }
@@ -701,51 +779,29 @@ void CanonicalSyncPlanBuilder::materializeEvents() {
       continue;
     }
 
-    CanonicalEvent event;
-    event.source = dependency.source;
-    event.target = dependency.target;
-    event.sourcePipe = source.pipe;
-    event.targetPipe = target.pipe;
-    event.recurrenceLoop = dependency.recurrenceLoop;
-    if (dependency.iterationDistance == 0) {
-      event.setAnchor = getSetAnchor(source.operation, target.operation);
-      event.waitAnchor = getWaitAnchor(source.operation, target.operation);
-      event.forwardDrainLoop =
-          getWhileForwardDrain(source.operation, target.operation);
-    } else {
-      event.width =
-          getRecurrenceWidth(dependency, event.setSlot, event.waitSlot);
-      event.setAnchor =
-          getLoopRegionExitAnchor(source.operation, event.recurrenceLoop);
-      event.waitAnchor = event.width == 1
-                             ? getLoopEntryAnchor(event.recurrenceLoop)
-                             : CanonicalAnchor{target.operation, true};
-    }
-    event.intervalBegin = getAnchorPosition(event.setAnchor);
-    event.intervalEnd = getAnchorPosition(event.waitAnchor);
-    if (event.forwardDrainLoop) {
-      event.intervalEnd = getAnchorPosition({event.forwardDrainLoop, false});
-    }
-    if (event.recurrenceLoop) {
-      event.intervalBegin = getAnchorPosition({event.recurrenceLoop, true});
-      event.intervalEnd = getAnchorPosition({event.recurrenceLoop, false});
-    }
-    if (event.intervalBegin > event.intervalEnd) {
-      std::swap(event.intervalBegin, event.intervalEnd);
-    }
-    const bool duplicate = llvm::any_of(plan_.events_, [&](const auto &old) {
-      return old.sourcePipe == event.sourcePipe &&
-             old.targetPipe == event.targetPipe &&
-             old.setAnchor.operation == event.setAnchor.operation &&
-             old.setAnchor.before == event.setAnchor.before &&
-             old.waitAnchor.operation == event.waitAnchor.operation &&
-             old.waitAnchor.before == event.waitAnchor.before &&
-             old.recurrenceLoop == event.recurrenceLoop &&
-             old.forwardDrainLoop == event.forwardDrainLoop &&
-             old.setSlot == event.setSlot && old.waitSlot == event.waitSlot;
+    CanonicalEvent event =
+        dependency.iterationDistance == 0
+            ? makeForwardEvent(dependency.source, dependency.target)
+            : makeRecurrenceEvent(dependency);
+    const bool duplicate = llvm::any_of(events, [&](const auto &old) {
+      const bool sameProtocol =
+          old.sourcePipe == event.sourcePipe &&
+          old.targetPipe == event.targetPipe &&
+          old.setAnchor.operation == event.setAnchor.operation &&
+          old.setAnchor.before == event.setAnchor.before &&
+          old.waitAnchor.operation == event.waitAnchor.operation &&
+          old.waitAnchor.before == event.waitAnchor.before &&
+          old.recurrenceLoop == event.recurrenceLoop &&
+          old.forwardDrainLoop == event.forwardDrainLoop &&
+          old.setSlot == event.setSlot && old.waitSlot == event.waitSlot &&
+          old.width == event.width;
+      return sameProtocol &&
+             (!event.recurrenceLoop ||
+              (old.source == event.source && old.target == event.target &&
+               old.iterationDistance == event.iterationDistance));
     });
     if (!duplicate) {
-      plan_.events_.push_back(std::move(event));
+      events.push_back(std::move(event));
     }
   }
 }

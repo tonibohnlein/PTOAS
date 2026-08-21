@@ -114,12 +114,45 @@ private:
   void addIssueOrderEdges();
   void addMemoryDependencies();
   LogicalResult addSSAAndRecurrenceDependencies();
+  void discardImpossibleRecurrences();
+  void preserveForwardCompletionRequirements();
   void reduceForwardDependencies();
+  void preserveRecurrenceCompletionRequirements();
   void materializeSyncRequirements();
   void materializeBarriers();
-  void reduceBarrierCoveredDependencies();
   void materializeEvents();
-  std::vector<SyncGraphEdge> buildBarrierCompletionEdges() const;
+  void materializeEventsFrom(ArrayRef<CanonicalDependency> dependencies,
+                             std::vector<CanonicalEvent> &events);
+  CanonicalEvent makeForwardEvent(std::size_t source, std::size_t target) const;
+  CanonicalEvent
+  makeRecurrenceEvent(const CanonicalDependency &dependency) const;
+  void optimizeBarriers();
+  std::vector<SyncGraphEdge>
+  buildBarrierCompletionEdges(ArrayRef<CanonicalBarrier> barriers) const;
+  std::vector<SyncGraphEdge>
+  buildEventCompletionEdges(ArrayRef<CanonicalEvent> events) const;
+  std::vector<CanonicalEvent>
+  selectRequiredEvents(ArrayRef<CanonicalBarrier> barriers,
+                       ArrayRef<CanonicalEvent> candidates) const;
+  bool isForwardVertexAvailable(const CanonicalDependency &requirement,
+                                std::size_t vertex) const;
+  bool isAnchorGuaranteedForRequirement(const CanonicalAnchor &anchor,
+                                        std::size_t source,
+                                        std::size_t target) const;
+  bool planCoversRequirements(ArrayRef<CanonicalBarrier> barriers,
+                              ArrayRef<CanonicalEvent> events,
+                              bool diagnose = false) const;
+  std::size_t countUncoveredRequirements(
+      ArrayRef<CanonicalBarrier> barriers, ArrayRef<CanonicalEvent> events,
+      ArrayRef<CanonicalDependency> requirements, bool diagnose = false) const;
+  std::size_t countUncoveredRecurrenceRequirements(
+      ArrayRef<CanonicalBarrier> barriers, ArrayRef<CanonicalEvent> events,
+      ArrayRef<CanonicalDependency> requirements, bool diagnose) const;
+  bool isRecurrenceVertexAvailable(const CanonicalDependency &requirement,
+                                   std::size_t vertex,
+                                   std::size_t nodeCount) const;
+  bool eventsFitBudget(ArrayRef<CanonicalEvent> events) const;
+  LogicalResult verifyFinalPlan();
   LogicalResult repairEventScarcity();
   LogicalResult repairEventDomain(const CanonicalEventDomainKey &key,
                                   unsigned availableIds);
@@ -153,7 +186,7 @@ private:
                                             Operation *loop,
                                             unsigned iterationDistance) const;
   bool mayExecuteTogether(Operation *first, Operation *second) const;
-  bool hasHardwareCompletion(PipelineType pipe);
+  bool hasHardwareCompletion(PipelineType pipe) const;
   CanonicalAnchor getSetAnchor(Operation *source, Operation *target) const;
   CanonicalAnchor getWaitAnchor(Operation *source, Operation *target) const;
   std::size_t getAnchorPosition(const CanonicalAnchor &anchor) const;
@@ -176,6 +209,7 @@ private:
   std::map<CanonicalEventDomainKey, std::set<unsigned>> reservedIds_;
   std::map<CanonicalEventDomainKey, CanonicalScarcityStats> scarcityStats_;
   std::set<std::pair<unsigned, unsigned>> noAliasArgPairs_;
+  std::vector<CanonicalEvent> eventCandidates_;
 };
 
 } // namespace pto

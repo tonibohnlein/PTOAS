@@ -48,8 +48,15 @@ bool includesEvents(StringRef view) {
 }
 
 StringRef stringifyFixedEdgeKind(SyncGraphEdgeKind kind) {
-  return kind == SyncGraphEdgeKind::IssueOrder ? "issue-order"
-                                               : "hardware-completion";
+  switch (kind) {
+  case SyncGraphEdgeKind::IssueOrder:
+    return "issue-order";
+  case SyncGraphEdgeKind::NonCompletionPreservingIssueOrder:
+    return "cross-pipe-issue-order";
+  case SyncGraphEdgeKind::HardwareCompletion:
+    return "hardware-completion";
+  }
+  return "unknown";
 }
 
 void printIds(llvm::raw_ostream &os, ArrayRef<unsigned> ids) {
@@ -82,6 +89,7 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
      << " nodes=" << plan.getNodes().size()
      << " fixed=" << plan.getFixedEdges().size()
      << " dependencies=" << plan.getDependencies().size()
+     << " requirements=" << plan.getCompletionRequirements().size()
      << " barriers=" << plan.getBarriers().size()
      << " events=" << plan.getEvents().size() << '\n';
   if (includesDependencies(view)) {
@@ -120,7 +128,8 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
          << " width=" << event.width << " ids=";
       printIds(os, event.eventIds);
       os << " lifetime=[" << event.intervalBegin << ',' << event.intervalEnd
-         << "] recurrence=" << (event.recurrenceLoop ? "yes" : "no") << '\n';
+         << "] recurrence=" << (event.recurrenceLoop ? "yes" : "no")
+         << " distance=" << event.iterationDistance << '\n';
     }
   }
   if (includesEvents(view)) {

@@ -138,6 +138,17 @@ bool testCompletionQualifiedReduction() {
   bool passed = check(keep.size() == 2 && keep[0] && !keep[1],
                       "completion path removes the long requirement");
 
+  const std::vector<SyncGraphEdge> crossPipeIssueEdges = {
+      {0, 1, SyncGraphEdgeKind::NonCompletionPreservingIssueOrder}};
+  const std::vector<bool> keepAcrossCrossPipeIssue =
+      mlir::pto::reduceCompletionRequirements(3, crossPipeIssueEdges,
+                                              requirements);
+  passed &=
+      check(keepAcrossCrossPipeIssue.size() == 2 &&
+                keepAcrossCrossPipeIssue[0] && keepAcrossCrossPipeIssue[1],
+            "cross-pipe issue cannot inherit a later retained "
+            "completion requirement");
+
   const std::vector<SyncGraphEdge> issueOnly = {
       {0, 1, SyncGraphEdgeKind::IssueOrder},
       {1, 2, SyncGraphEdgeKind::IssueOrder}};
@@ -265,6 +276,26 @@ bool testCompletionCoverage() {
       4, edges, {{0, 3}}, excludesMergedProducer);
   passed &= check(scoped == std::vector<bool>({false}),
                   "coverage respects structured execution filters");
+
+  const std::vector<SyncGraphEdge> completionAfterCrossPipeIssue = {
+      {0, 1, SyncGraphEdgeKind::NonCompletionPreservingIssueOrder},
+      {1, 2, SyncGraphEdgeKind::HardwareCompletion}};
+  const std::vector<bool> unsafeComposition =
+      mlir::pto::getCompletionRequirementCoverage(
+          3, completionAfterCrossPipeIssue, {{0, 2}});
+  passed &= check(unsafeComposition == std::vector<bool>({false}),
+                  "cross-pipe issue before completion does not complete the "
+                  "original source");
+
+  const std::vector<SyncGraphEdge> crossPipeIssueAfterCompletion = {
+      {0, 1, SyncGraphEdgeKind::HardwareCompletion},
+      {1, 2, SyncGraphEdgeKind::NonCompletionPreservingIssueOrder}};
+  const std::vector<bool> blockedComposition =
+      mlir::pto::getCompletionRequirementCoverage(
+          3, crossPipeIssueAfterCompletion, {{0, 2}});
+  passed &= check(blockedComposition == std::vector<bool>({false}),
+                  "cross-pipe issue after a pipe-local wait does not carry "
+                  "completion to a third pipe");
   return passed;
 }
 

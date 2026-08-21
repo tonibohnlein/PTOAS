@@ -289,13 +289,99 @@ module attributes {pto.target_arch = "a2a3"} {
     }
     return
   }
+
+  func.func @round_trip_events_replace_barrier(
+      %src0: !pto.partition_tensor_view<16x16xf32>,
+      %src1: !pto.partition_tensor_view<16x16xf32>) {
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %shared = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %computed = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src0 : !pto.partition_tensor_view<16x16xf32>)
+              outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tmuls ins(%shared, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+               outs(%computed : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tload ins(%src1 : !pto.partition_tensor_view<16x16xf32>)
+              outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+
+  func.func @conditional_round_trip_keeps_barrier(
+      %src0: !pto.partition_tensor_view<16x16xf32>,
+      %src1: !pto.partition_tensor_view<16x16xf32>, %condition: i1) {
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %shared = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %computed = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src0 : !pto.partition_tensor_view<16x16xf32>)
+              outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    scf.if %condition {
+      pto.tmuls ins(%shared, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%computed : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    pto.tload ins(%src1 : !pto.partition_tensor_view<16x16xf32>)
+              outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+
+  func.func @synthetic_round_trip_replaces_store_barrier(
+      %src: !pto.partition_tensor_view<16x16xf32>,
+      %dst: !pto.partition_tensor_view<16x16xf32>) {
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %input = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %computed = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+              outs(%input : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tstore ins(%input : !pto.tile_buf<vec, 16x16xf32>)
+               outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+    pto.tmuls ins(%input, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+               outs(%computed : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tstore ins(%computed : !pto.tile_buf<vec, 16x16xf32>)
+               outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+    return
+  }
+
+  func.func @while_synthetic_round_trip_drains(
+      %src: !pto.partition_tensor_view<16x16xf32>,
+      %dst: !pto.partition_tensor_view<16x16xf32>, %limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %computed = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %input = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+              outs(%input : !pto.tile_buf<vec, 16x16xf32>)
+    %final = scf.while (%i = %c0) : (index) -> index {
+      %go = arith.cmpi slt, %i, %limit : index
+      pto.tstore ins(%input : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+      scf.condition(%go) %i : index
+    } do {
+    ^bb0(%i: index):
+      pto.tmuls ins(%input, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%computed : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tstore ins(%computed : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+      %next = arith.addi %i, %c1 : index
+      scf.yield %next : index
+    }
+    return
+  }
 }
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @region_transitive
 // PLAN-SAME: barriers=0 events=2
+// PLAN: fixed 0 -> 1 kind=cross-pipe-issue-order
 // PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=no
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @conditional_path_preserved
+// PLAN: fixed 0 -> 1 kind=cross-pipe-issue-order
 // PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=yes
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @zero_trip_path_preserved
@@ -319,7 +405,7 @@ module attributes {pto.target_arch = "a2a3"} {
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @barrier_covers_event
 // PLAN-SAME: barriers=1 events=0
-// PLAN: dependency 0 -> 3 kind=memory-raw distance=0 retained=no
+// PLAN: dependency 0 -> 3 kind=memory-raw distance=0 retained=yes
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @conditional_barrier_does_not_cover
 // PLAN-SAME: barriers=1 events=1
@@ -331,7 +417,7 @@ module attributes {pto.target_arch = "a2a3"} {
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @positive_trip_barrier_covers_event
 // PLAN-SAME: barriers=1 events=0
-// PLAN: dependency 0 -> 3 kind=memory-raw distance=0 retained=no
+// PLAN: dependency 0 -> 3 kind=memory-raw distance=0 retained=yes
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @nested_recurrence_not_summarized
 // PLAN-SAME: barriers=0 events=3
@@ -340,6 +426,18 @@ module attributes {pto.target_arch = "a2a3"} {
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @nested_recurrence_third_pipe_preserved
 // PLAN: dependency 3 -> 0 kind=memory-raw distance=1 retained=yes
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @round_trip_events_replace_barrier
+// PLAN-SAME: barriers=0 events=2
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @conditional_round_trip_keeps_barrier
+// PLAN-SAME: barriers=1 events=2
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @synthetic_round_trip_replaces_store_barrier
+// PLAN-SAME: barriers=0 events=4
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @while_synthetic_round_trip_drains
+// PLAN-SAME: barriers=1
 
 // IR-LABEL: func.func @positive_trip_path_reduced
 // IR-NOT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>
@@ -364,3 +462,30 @@ module attributes {pto.target_arch = "a2a3"} {
 // IR-LABEL: func.func @positive_trip_barrier_covers_event
 // IR-NOT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>
 // IR: return
+
+// IR-LABEL: func.func @round_trip_events_replace_barrier
+// IR-NOT: pto.barrier <PIPE_MTE2>
+// IR: pto.set_flag[<PIPE_MTE2>, <PIPE_V>
+// IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>
+// IR: pto.set_flag[<PIPE_V>, <PIPE_MTE2>
+// IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>
+
+// IR-LABEL: func.func @conditional_round_trip_keeps_barrier
+// IR: pto.barrier <PIPE_MTE2>
+
+// IR-LABEL: func.func @synthetic_round_trip_replaces_store_barrier
+// IR-NOT: pto.barrier <PIPE_MTE3>
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_V>
+// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>
+
+// IR-LABEL: func.func @while_synthetic_round_trip_drains
+// IR-NOT: pto.barrier <PIPE_MTE3>
+// IR: scf.while
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_V>
+// IR: scf.condition
+// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>
+// IR: pto.tmuls
+// IR: pto.set_flag[<PIPE_V>, <PIPE_MTE3>
+// IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>
+// IR: scf.yield
+// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>

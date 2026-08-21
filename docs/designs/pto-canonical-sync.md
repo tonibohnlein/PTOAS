@@ -160,6 +160,13 @@ retained set/wait pair, a same-pipe hardware completion guarantee, or a
 barrier. A path containing only issue-order edges cannot discharge a memory
 hazard.
 
+Same-pipe issue order may precede a completion edge because completion of a
+later operation on that pipe also completes the earlier operation. Cross-pipe
+sequencer order cannot participate on either side of a completion proof:
+issuing work on another pipe does not transfer the original operation's
+completion obligation, and a wait stalls only its destination pipe rather than
+the global sequencer.
+
 Before the general coverage check, same-block requirements in one directed
 pipe domain use an exact dominance rule. A completion from a later producer to
 an earlier consumer covers a requirement from an earlier producer to a later
@@ -193,24 +200,31 @@ copy would be stronger than the emitted protocol. Shorter-distance recurrence
 protocols are likewise not summarized while reducing a longer-distance
 recurrence.
 
-Same-pipe barriers are selected before cross-pipe events. Each non-recurrence
-barrier then contributes completion edges from operations on its pipe that are
-guaranteed to issue before the barrier to operations guaranteed to issue after
-it. Cross-pipe requirements are reduced a second time against those fixed
-barrier guarantees. A conditional or loop-local barrier is usable only when
-its execution context is implied by the edge endpoints; recurrence barriers
-are not used for this forward reduction. Barrier selection is frozen during
-the second reduction, preventing a synchronization requirement from removing
-the barrier on which its proof depends. A barrier in a statically positive-trip
-`scf.for` body may cover an outer forward requirement; barriers in dynamic or
-zero-trip loops may not. The complete procedure remains deterministic and
-polynomial.
+Before reduction, CanonicalSync preserves an immutable copy of every feasible
+forward and recurrence completion requirement. Statically impossible counted
+loop recurrences are discarded first. The reduced dependency graph still
+constructs the conservative baseline, but mechanism selection cannot erase an
+original obligation merely because a provisional barrier covers it.
+
+The final recurrence verifier replays the reduction on a `d + 1`-copy graph.
+It substitutes completion edges certified from the final non-recurrence
+barriers/events and from exact retained recurrence protocols. Recurrence event
+identity includes source, target, loop, distance, width, slot expressions, and
+anchors. This prevents a different token age or multi-buffer lane mapping from
+standing in for the required recurrence.
+
+A non-recurrence barrier contributes completion edges from operations on its
+pipe that are guaranteed to issue before the barrier to operations guaranteed
+to issue after it. A conditional or loop-local barrier is usable only when its
+execution context is implied by the edge endpoints. A barrier in a statically
+positive-trip `scf.for` body may cover an outer forward requirement; barriers
+in dynamic or zero-trip loops may not.
 
 ## Synchronization plan
 
-A retained same-pipe requirement becomes a pipe barrier unless the target
-architecture provides the required same-pipe completion guarantee. A retained
-cross-pipe requirement becomes one set/wait event:
+A retained same-pipe requirement initially becomes a pipe barrier unless the
+target architecture provides the required same-pipe completion guarantee. A
+retained cross-pipe requirement initially becomes one set/wait event:
 
 - the set is placed after the producer;
 - the wait is placed before the consumer;
@@ -234,22 +248,41 @@ conservative event.
 Event IDs used internally by PTO synchronization macros are reserved in the
 corresponding pipe-pair domain.
 
-### Current barrier limitation
+### Barrier optimization
 
-Barrier selection is intentionally conservative and barrier-first. Every
-retained same-pipe requirement without a hardware completion guarantee is
-materialized as a barrier before cross-pipe events are finalized. This is
-sound, but it can retain more barriers than a joint barrier/event plan needs
-and can explain a performance loss even when the final event count is lower.
+CanonicalSync considers non-recurrence barriers in deterministic order. For
+each barrier, it evaluates the complete mixed barrier/event plan rather than an
+isolated edge. Candidate mechanisms include original cross-pipe requirements
+hidden by dependency reduction and bounded round-trip protocols. A round trip
+can serialize an operation on the barrier's pipe before an existing incoming
+ready event on another pipe, producing a completion-qualified path back to the
+later same-pipe operation.
 
-Fine-grained replacement must operate on complete synchronization protocols,
-not delete one barrier based on local issue order. A safe implementation needs
-an immutable set of original completion requirements, alternative protocol
-bundles (including recurrence prime/wait/set/drain and multi-buffer ownership),
-and a final whole-plan coverage check after every candidate replacement. Only
-plans that cover every original requirement and still color within the event
-budget may be emitted. Costed selection and latency calibration remain a
-separate follow-up.
+The bounded search uses at most three additional events and retains the best
+eight partial bundles by uncovered reduced requirements, event lifetime, and a
+stable signature. It restarts from the first remaining barrier after each
+successful replacement so a newly introduced protocol can enable another
+replacement. Every searched state is recolored exactly. A barrier is removed
+only when the complete candidate fits the hardware event budget and a
+whole-plan check covers every immutable forward and recurrence requirement.
+Under event pressure, complete recurrence ownership protocols are pruned only
+in an over-budget directed domain and only until exact coloring fits. Each
+removal rechecks that the remaining initialize/wait/set/drain protocols cover
+every immutable loop-carried requirement.
+Forward events crossing an `scf.while` before/after boundary carry their final
+drain in both code generation and event lifetime. The emitted plan is verified
+again after event-scarcity repair.
+
+This stage deliberately uses an unweighted structural objective: removing a
+barrier is preferred once correctness and event feasibility are proven, and
+candidate bundles of equal depth prefer shorter event lifetimes. A calibrated
+latency model may later choose to retain a cheap barrier instead.
+
+Recurrence barriers are intentionally excluded from this first replacement
+step. Removing them requires a complete loop protocol, including initial
+credits, per-iteration waits and sets, slot/parity mapping, and final drains.
+Unknown or conditional structures retain the conservative barrier. Calibrated
+latency-based selection also remains a separate follow-up.
 
 ## Event feasibility boundary
 
