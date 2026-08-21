@@ -12,10 +12,10 @@
 // CHECK: TROWEXPANDDIV
 //
 // CANONICAL-LABEL: AICORE void qwen3_scope2_incore_5
-// CANONICAL: set_flag(PIPE_MTE2, PIPE_V, EVENT_ID3);
+// CANONICAL: set_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[POST:[0-9]+]]);
 // CANONICAL: for (int64_t
 // CANONICAL: }
-// CANONICAL: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID3);
+// CANONICAL: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[POST]]);
 // CANONICAL: TROWEXPANDDIV
 
 module attributes {pto.target_arch = "a2a3"} {

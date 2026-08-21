@@ -85,21 +85,24 @@ enum class TCoreType {
 /// Meminfo of the target buffer
 /// 用于追踪 Buffer 的别名和根节点
 struct BaseMemInfo {
-  BaseMemInfo(
-      Value baseBuffer, Value rootBuffer, pto::AddressSpace scope,
-      SmallVector<uint64_t> baseAddresses, uint64_t allocateSize,
-      bool hasKnownPhysicalAddresses = false,
-      bool aliasesUnknownRange = false)
+  BaseMemInfo(Value baseBuffer, Value rootBuffer, pto::AddressSpace scope,
+              SmallVector<uint64_t> baseAddresses, uint64_t allocateSize,
+              bool hasKnownPhysicalAddresses = false,
+              bool aliasesUnknownRange = false,
+              std::optional<uint64_t> rootRelativeOffset = std::nullopt,
+              SmallVector<uint64_t> byteStrides = {})
       : baseBuffer(baseBuffer), rootBuffer(rootBuffer), scope(scope),
         baseAddresses(std::move(baseAddresses)), allocateSize(allocateSize),
         hasKnownPhysicalAddresses(hasKnownPhysicalAddresses),
-        aliasesUnknownRange(aliasesUnknownRange) {}
- 
+        aliasesUnknownRange(aliasesUnknownRange),
+        rootRelativeOffset(rootRelativeOffset),
+        byteStrides(std::move(byteStrides)) {}
+
   /// baseBuffer: 当前操作直接使用的 Buffer (可能是 View 或 Alias)
   Value baseBuffer;
   /// rootBuffer: 最底层的分配源头 (alloc_tile 或 Kernel Argument)
   Value rootBuffer;
-  
+
   pto::AddressSpace scope;
   SmallVector<uint64_t> baseAddresses; // 用于 Offset 分析
   uint64_t allocateSize;
@@ -110,9 +113,14 @@ struct BaseMemInfo {
   // through integer IR. When set, this memory object aliases any range in the
   // same address space.
   bool aliasesUnknownRange;
- 
-  bool areVectorEqual(const SmallVector<uint64_t>& vec1,
-                      const SmallVector<uint64_t>& vec2) const {
+  // Root-relative descriptor origin and strides for GM pointer/view aliases.
+  // These remain separate from baseAddresses, which describes the concrete
+  // access intervals of the current value.
+  std::optional<uint64_t> rootRelativeOffset;
+  SmallVector<uint64_t> byteStrides;
+
+  bool areVectorEqual(const SmallVector<uint64_t> &vec1,
+                      const SmallVector<uint64_t> &vec2) const {
     if (vec1.size() != vec2.size()) {
       return false;
     }
@@ -123,7 +131,7 @@ struct BaseMemInfo {
     }
     return true;
   }
- 
+
   bool operator==(const BaseMemInfo &other) const {
     if (!areVectorEqual(baseAddresses, other.baseAddresses)) {
       return false;
@@ -140,6 +148,12 @@ struct BaseMemInfo {
     if (aliasesUnknownRange != other.aliasesUnknownRange) {
       return false;
     }
+    if (rootRelativeOffset != other.rootRelativeOffset) {
+      return false;
+    }
+    if (!areVectorEqual(byteStrides, other.byteStrides)) {
+      return false;
+    }
     // allocateSize 和 baseBuffer 的严格相等性在某些别名分析中可能太强了，
     // 但为了保持原有逻辑，先保留。重点是 rootBuffer 必须一致。
     if (allocateSize != other.allocateSize) {
@@ -150,17 +164,19 @@ struct BaseMemInfo {
     }
     return true;
   }
- 
+
   std::unique_ptr<BaseMemInfo> clone() const {
     return std::make_unique<BaseMemInfo>(
         baseBuffer, rootBuffer, scope, baseAddresses, allocateSize,
-        hasKnownPhysicalAddresses, aliasesUnknownRange);
+        hasKnownPhysicalAddresses, aliasesUnknownRange, rootRelativeOffset,
+        byteStrides);
   }
 
   std::unique_ptr<BaseMemInfo> clone(Value cloneBaseBuffer) const {
     return std::make_unique<BaseMemInfo>(
         cloneBaseBuffer, rootBuffer, scope, baseAddresses, allocateSize,
-        hasKnownPhysicalAddresses, aliasesUnknownRange);
+        hasKnownPhysicalAddresses, aliasesUnknownRange, rootRelativeOffset,
+        byteStrides);
   }
 };
  

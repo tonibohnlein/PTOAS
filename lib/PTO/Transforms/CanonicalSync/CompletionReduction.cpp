@@ -30,21 +30,33 @@ bool isValidRequirement(std::size_t vertexCount,
          requirement.source < requirement.target;
 }
 
+bool isAvailable(const CompletionVertexFilter &isVertexAvailable,
+                 std::size_t requirement, std::size_t vertex) {
+  return !isVertexAvailable || isVertexAvailable(requirement, vertex);
+}
+
 bool hasQualifiedPath(std::size_t vertexCount,
                       const std::vector<SyncGraphEdge> &fixedEdges,
                       const std::vector<CompletionRequirement> &requirements,
                       const std::vector<bool> &keep, std::size_t skipped,
-                      std::size_t source, std::size_t target) {
+                      std::size_t source, std::size_t target,
+                      const CompletionVertexFilter &isVertexAvailable) {
   std::vector<std::vector<SyncGraphEdge>> outgoing(vertexCount);
   for (const SyncGraphEdge &edge : fixedEdges) {
-    if (edge.source < vertexCount && edge.target < vertexCount) {
+    if (edge.source < vertexCount && edge.target < vertexCount &&
+        isAvailable(isVertexAvailable, skipped, edge.source) &&
+        isAvailable(isVertexAvailable, skipped, edge.target)) {
       outgoing[edge.source].push_back(edge);
     }
   }
   for (std::size_t index = 0; index < requirements.size(); ++index) {
     if (index != skipped && keep[index]) {
       const CompletionRequirement &requirement = requirements[index];
-      if (!isValidRequirement(vertexCount, requirement)) {
+      const bool isUnavailable =
+          !isValidRequirement(vertexCount, requirement) ||
+          !isAvailable(isVertexAvailable, skipped, requirement.source) ||
+          !isAvailable(isVertexAvailable, skipped, requirement.target);
+      if (isUnavailable) {
         continue;
       }
       outgoing[requirement.source].push_back(
@@ -81,7 +93,8 @@ bool hasQualifiedPath(std::size_t vertexCount,
 
 std::vector<bool> mlir::pto::reduceCompletionRequirements(
     std::size_t vertexCount, const std::vector<SyncGraphEdge> &fixedEdges,
-    const std::vector<CompletionRequirement> &requirements) {
+    const std::vector<CompletionRequirement> &requirements,
+    const CompletionVertexFilter &isVertexAvailable) {
   std::vector<bool> keep(requirements.size(), true);
   for (std::size_t index = 0; index < requirements.size(); ++index) {
     if (!isValidRequirement(vertexCount, requirements[index])) {
@@ -112,7 +125,8 @@ std::vector<bool> mlir::pto::reduceCompletionRequirements(
     }
     keep[candidate] = false;
     if (!hasQualifiedPath(vertexCount, fixedEdges, requirements, keep,
-                          candidate, requirement.source, requirement.target)) {
+                          candidate, requirement.source, requirement.target,
+                          isVertexAvailable)) {
       keep[candidate] = true;
     }
   }

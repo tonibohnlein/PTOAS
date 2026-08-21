@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: not pto-test-opt %t/type.pto '-pto-canonical-sync' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=TYPE
+// RUN: not pto-test-opt %t/odd.pto '-pto-canonical-sync' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=ODD
+// RUN: not pto-test-opt %t/range.pto '-pto-canonical-sync' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=RANGE
+// RUN: not pto-test-opt %t/self.pto '-pto-canonical-sync' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=SELF
+// RUN: not pto-test-opt %t/duplicate.pto '-pto-canonical-sync' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=DUPLICATE
+// RUN: not pto-test-opt %t/non_gm.pto '-pto-canonical-sync' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=NON_GM
+
+//--- type.pto
+module {
+  func.func @wrong_type(%first: !pto.ptr<f32>, %second: !pto.ptr<f32>)
+      attributes {pto.noalias_pairs = "invalid"} {
+    return
+  }
+}
+
+//--- odd.pto
+module {
+  func.func @odd_count(%first: !pto.ptr<f32>, %second: !pto.ptr<f32>)
+      attributes {pto.noalias_pairs = array<i64: 0>} {
+    return
+  }
+}
+
+//--- range.pto
+module {
+  func.func @out_of_range(%first: !pto.ptr<f32>, %second: !pto.ptr<f32>)
+      attributes {pto.noalias_pairs = array<i64: 0, 2>} {
+    return
+  }
+}
+
+//--- self.pto
+module {
+  func.func @self_pair(%first: !pto.ptr<f32>, %second: !pto.ptr<f32>)
+      attributes {pto.noalias_pairs = array<i64: 0, 0>} {
+    return
+  }
+}
+
+//--- duplicate.pto
+module {
+  func.func @duplicate_pair(%first: !pto.ptr<f32>, %second: !pto.ptr<f32>)
+      attributes {pto.noalias_pairs = array<i64: 0, 1, 1, 0>} {
+    return
+  }
+}
+
+//--- non_gm.pto
+module {
+  func.func @non_gm_pair(%first: !pto.ptr<f32>, %value: i64)
+      attributes {pto.noalias_pairs = array<i64: 0, 1>} {
+    return
+  }
+}
+
+// TYPE: error: expects 'pto.noalias_pairs' to be a dense i64 array
+// ODD: error: expects 'pto.noalias_pairs' to contain an even number
+// RANGE: error: 'pto.noalias_pairs' argument indices must be in [0, 2)
+// SELF: error: 'pto.noalias_pairs' cannot contain a self-pair for argument 0
+// DUPLICATE: error: 'pto.noalias_pairs' repeats pair (0, 1)
+// NON_GM: error: 'pto.noalias_pairs' pair (0, 1) must name GM pointer or view arguments

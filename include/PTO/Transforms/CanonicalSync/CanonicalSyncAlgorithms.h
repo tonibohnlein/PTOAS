@@ -15,6 +15,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace mlir {
@@ -50,13 +51,19 @@ struct CompletionRequirement {
   std::size_t target = 0;
 };
 
+using CompletionVertexFilter =
+    std::function<bool(std::size_t requirement, std::size_t vertex)>;
+
 /// Returns one keep bit per completion requirement. A requirement is removed
 /// only when another path from its source to target contains a hardware or
 /// retained completion edge. Issue-order-only paths never satisfy a hazard.
-/// Invalid or non-forward requirements receive a false keep bit.
+/// Invalid or non-forward requirements receive a false keep bit. When supplied,
+/// `isVertexAvailable` restricts each candidate's proof to vertices guaranteed
+/// to execute in that requirement's control-flow context.
 std::vector<bool> reduceCompletionRequirements(
     std::size_t vertexCount, const std::vector<SyncGraphEdge> &fixedEdges,
-    const std::vector<CompletionRequirement> &requirements);
+    const std::vector<CompletionRequirement> &requirements,
+    const CompletionVertexFilter &isVertexAvailable = {});
 
 } // namespace pto
 } // namespace mlir

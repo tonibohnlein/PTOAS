@@ -8,14 +8,16 @@
 
 // pto.comm.tgather is a macro-like library call: TGATHER_IMPL reads each group
 // source through MTE2 and writes dst through MTE3. If a preceding TSTORE writes
-// a group source, insert-sync must see the hidden MTE2 read and emit an
-// MTE3->MTE2 sync before TGATHER. The library also uses fixed EVENT_ID0/1
-// internally, so compiler-generated sync around the call must avoid them.
+// a group source, autosync must see the hidden MTE2 read and complete MTE3
+// before TGATHER. CanonicalSync can reuse the MTE3 barrier required by the
+// macro's MTE3 phase, while InsertSync emits an MTE3->MTE2 event. The library
+// uses fixed EVENT_ID0/1 internally, so compiler-generated events must avoid
+// them.
 //
 // RUN: ptoas --pto-arch=a3 --enable-insert-sync %s -o - 2>&1 | FileCheck %s
 // RUN: ptoas --pto-arch=a3 --enable-canonical-sync %s -o - 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=CANONICAL
-// RUN: not pto-test-opt %s \
+// RUN: pto-test-opt %s \
 // RUN:   '-pto-canonical-sync=event-id-num-max=1' 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SCARCE
 
@@ -100,18 +102,18 @@ module {
 
 // CANONICAL-LABEL: AICORE void tgather_waits_for_tstore_group(
 // CANONICAL:      TSTORE(
-// CANONICAL:      set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID1);
-// CANONICAL:      wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID1);
+// CANONICAL-NEXT: pipe_barrier(PIPE_MTE3);
 // CANONICAL:      pto::comm::TGATHER(
 
 // CANONICAL-LABEL: AICORE void tgather_pingpong_keeps_internal_events_hidden(
 // CANONICAL:      TSTORE(
-// CANONICAL:      set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID2);
-// CANONICAL:      wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID2);
+// CANONICAL-NEXT: pipe_barrier(PIPE_MTE3);
 // CANONICAL:      pto::comm::TGATHER(
 
-// SCARCE: error: PTOCanonicalSync cannot allocate domain PIPE_MTE3 -> PIPE_MTE2
-// SCARCE-SAME: 1 colors requested but only 0 event IDs are available
+// SCARCE-LABEL: func.func @tgather_waits_for_tstore_group
+// SCARCE: pto.tstore
+// SCARCE-NEXT: pto.barrier <PIPE_MTE3>
+// SCARCE-NEXT: pto.comm.tgather
 
 // CHECK-LABEL: AICORE void tgather_pingpong_keeps_internal_events_hidden(
 // CHECK:      TSTORE(
