@@ -120,9 +120,10 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
   let description = [{
     Builds the sound dependence graph implied by fixed operation order and
     planned physical memory addresses, reduces completion-qualified
-    synchronization requirements, and allocates the available hardware event
-    IDs. The pass fails without changing the IR when the event budget is
-    insufficient.
+    synchronization requirements, structurally coalesces covered forward
+    events when the exact interval coloring exceeds the hardware budget, and
+    allocates the available event IDs. The pass fails without changing the IR
+    when bounded scarcity repair cannot produce a covered plan.
   }];
 
   let constructor = "mlir::pto::createPTOCanonicalSyncPass()";

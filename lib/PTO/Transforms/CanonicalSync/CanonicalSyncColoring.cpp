@@ -14,6 +14,8 @@
 #include <functional>
 #include <numeric>
 #include <queue>
+#include <set>
+#include <tuple>
 #include <utility>
 
 using namespace mlir::pto;
@@ -59,4 +61,45 @@ mlir::pto::colorSyncIntervals(const std::vector<SyncInterval> &intervals) {
     active.emplace(interval.end, color);
   }
   return result;
+}
+
+std::vector<std::size_t> mlir::pto::findMaximumIntervalClique(
+    const std::vector<SyncInterval> &intervals) {
+  std::vector<std::size_t> order(intervals.size());
+  std::iota(order.begin(), order.end(), 0);
+  std::stable_sort(
+      order.begin(), order.end(), [&](std::size_t first, std::size_t second) {
+        return std::tie(intervals[first].begin, intervals[first].end, first) <
+               std::tie(intervals[second].begin, intervals[second].end, second);
+      });
+
+  std::set<std::pair<std::size_t, std::size_t>> activeByEnd;
+  std::set<std::size_t> activeIndices;
+  std::vector<std::size_t> maximum;
+  for (std::size_t position = 0; position < order.size();) {
+    const std::size_t point = intervals[order[position]].begin;
+    while (!activeByEnd.empty()) {
+      if (activeByEnd.begin()->first >= point) {
+        break;
+      }
+      activeIndices.erase(activeByEnd.begin()->second);
+      activeByEnd.erase(activeByEnd.begin());
+    }
+    while (position < order.size()) {
+      if (intervals[order[position]].begin != point) {
+        break;
+      }
+      const std::size_t interval = order[position++];
+      activeByEnd.emplace(intervals[interval].end, interval);
+      activeIndices.insert(interval);
+    }
+    std::vector<std::size_t> candidate(activeIndices.begin(),
+                                       activeIndices.end());
+    const bool isLarger = candidate.size() > maximum.size();
+    const bool isSameSize = candidate.size() == maximum.size();
+    if (isLarger || (isSameSize && candidate < maximum)) {
+      maximum = std::move(candidate);
+    }
+  }
+  return maximum;
 }

@@ -35,6 +35,11 @@ struct SyncColoring {
 /// overlap and therefore receive different colors.
 SyncColoring colorSyncIntervals(const std::vector<SyncInterval> &intervals);
 
+/// Return the deterministic maximum clique of an interval graph. The result
+/// contains interval indices in ascending order. Inclusive endpoints overlap.
+std::vector<std::size_t>
+findMaximumIntervalClique(const std::vector<SyncInterval> &intervals);
+
 enum class SyncGraphEdgeKind : std::uint8_t {
   IssueOrder,
   HardwareCompletion,
@@ -62,6 +67,13 @@ using CompletionVertexFilter =
 /// to execute in that requirement's control-flow context.
 std::vector<bool> reduceCompletionRequirements(
     std::size_t vertexCount, const std::vector<SyncGraphEdge> &fixedEdges,
+    const std::vector<CompletionRequirement> &requirements,
+    const CompletionVertexFilter &isVertexAvailable = {});
+
+/// Return one coverage bit per requirement. A requirement is covered only when
+/// its source reaches its target through a path containing a completion edge.
+std::vector<bool> getCompletionRequirementCoverage(
+    std::size_t vertexCount, const std::vector<SyncGraphEdge> &edges,
     const std::vector<CompletionRequirement> &requirements,
     const CompletionVertexFilter &isVertexAvailable = {});
 

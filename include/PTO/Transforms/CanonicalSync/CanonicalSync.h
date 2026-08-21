@@ -100,9 +100,12 @@ struct CanonicalEvent {
 struct CanonicalEventDomain {
   PipelineType sourcePipe = PipelineType::PIPE_UNASSIGNED;
   PipelineType targetPipe = PipelineType::PIPE_UNASSIGNED;
+  std::size_t originalEventCount = 0;
   unsigned eventCount = 0;
   unsigned availableIds = 0;
+  unsigned originalColorCount = 0;
   unsigned colorCount = 0;
+  std::size_t serializationCost = 0;
   SmallVector<unsigned, 2> reservedIds;
 };
 
