@@ -278,6 +278,20 @@ An analyzed cycle is only a protocol candidate. CanonicalSync emits its ready
 and release events only after token-protocol verification, exact recoloring,
 and whole-plan completion coverage succeed.
 
+Discovery also recognizes two hierarchical ownership roles:
+
+- `MAT` slots written on `PIPE_MTE2` and read by `PIPE_MTE1`, where all reads
+  of one slot may be nested in a common extraction loop; and
+- an `ACC` slot written by `PIPE_M` and read by `PIPE_FIX`, where the complete
+  producer sequence may be nested in a common compute loop.
+
+These roles are discovery-only until their nested-loop lifecycle protocols are
+enabled. Each cycle has a stable identity, and any duplicate or physically
+overlapping cycles in the same or nested loop scope are rejected before
+protocol selection. Ownership protocol pairs are retained or removed by cycle
+identity rather than by loop, so independent roles in one loop cannot be
+silently coupled.
+
 ### Barrier optimization
 
 CanonicalSync considers non-recurrence barriers in deterministic order. For

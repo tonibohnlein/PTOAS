@@ -60,6 +60,7 @@ buildOwnershipProtocols(const CanonicalOwnershipCycle &cycle) {
   ready.targetPipe = cycle.consumerPipe;
   ready.scopeLoop = cycle.loop;
   ready.width = cycle.lanes.size();
+  ready.ownershipCycle = cycle.id;
   ready.ownershipProtocol = true;
 
   for (const CanonicalOwnershipPath &path : cycle.paths) {
@@ -91,6 +92,7 @@ buildOwnershipProtocols(const CanonicalOwnershipCycle &cycle) {
   release.scopeLoop = cycle.loop;
   release.iterationDistance = 1;
   release.width = cycle.lanes.size();
+  release.ownershipCycle = cycle.id;
   release.ownershipProtocol = true;
   const unsigned prime = addAction(release, CanonicalEventActionKind::Set,
                                    CanonicalEventActionPhase::Prime,
@@ -188,7 +190,23 @@ buildOwnershipProtocols(const CanonicalOwnershipCycle &cycle) {
 
 void CanonicalSyncPlanBuilder::synthesizeOwnershipProtocols() {
   for (const CanonicalOwnershipCycle &cycle : plan_.ownershipCycles_) {
+    if (cycle.kind != CanonicalOwnershipKind::L0Operand) {
+      continue;
+    }
     auto [ready, release] = buildOwnershipProtocols(cycle);
+    const auto sortTraceActions = [&](CanonicalEvent &event) {
+      for (CanonicalEventTrace &trace : event.traces) {
+        llvm::stable_sort(trace.actions, [&](unsigned first, unsigned second) {
+          const std::size_t firstPosition =
+              getAnchorPosition(event.actions[first].anchor);
+          const std::size_t secondPosition =
+              getAnchorPosition(event.actions[second].anchor);
+          return firstPosition < secondPosition;
+        });
+      }
+    };
+    sortTraceActions(ready);
+    sortTraceActions(release);
     deriveEventInterval(ready);
     deriveEventInterval(release);
 

@@ -48,7 +48,8 @@ std::optional<CanonicalEvent> CanonicalSyncPlanBuilder::coalesceForwardEvents(
   std::size_t target = events.front().target;
   for (const CanonicalEvent &event : events) {
     if (event.width != 1 || event.recurrenceLoop || event.forwardDrainLoop ||
-        event.protocolBundle != 0 || event.source >= plan_.nodes_.size() ||
+        event.ownershipProtocol || event.protocolBundle != 0 ||
+        event.source >= plan_.nodes_.size() ||
         event.target >= plan_.nodes_.size()) {
       return std::nullopt;
     }

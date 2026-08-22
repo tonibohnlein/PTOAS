@@ -38,6 +38,10 @@ mlir::pto::stringifyCanonicalOwnershipKind(CanonicalOwnershipKind kind) {
   switch (kind) {
   case CanonicalOwnershipKind::L0Operand:
     return "l0-operand";
+  case CanonicalOwnershipKind::L1Tile:
+    return "l1-tile";
+  case CanonicalOwnershipKind::L0Accumulator:
+    return "l0-accumulator";
   }
   return "unknown";
 }
@@ -176,6 +180,7 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
          << " completions=" << event.completions.size()
          << " traces=" << event.traces.size()
          << " ownership=" << (event.ownershipProtocol ? "yes" : "no")
+         << " ownership-cycle=" << event.ownershipCycle
          << " bundle=" << event.protocolBundle << '\n';
     }
   }
@@ -200,8 +205,8 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
   if (includesOwnership(view)) {
     for (auto [cycleIndex, cycle] :
          llvm::enumerate(plan.getOwnershipCycles())) {
-      os << "  ownership[" << cycleIndex
-         << "] kind=" << stringifyCanonicalOwnershipKind(cycle.kind) << ' '
+      os << "  ownership[" << cycleIndex << "] id=" << cycle.id
+         << " kind=" << stringifyCanonicalOwnershipKind(cycle.kind) << ' '
          << stringifyPIPE(static_cast<PIPE>(cycle.producerPipe)) << " -> "
          << stringifyPIPE(static_cast<PIPE>(cycle.consumerPipe))
          << " lanes=" << cycle.lanes.size() << " paths=" << cycle.paths.size()

@@ -31,6 +31,16 @@ struct OwnershipSpec {
   PipelineType producerPipe = PipelineType::PIPE_UNASSIGNED;
   PipelineType consumerPipe = PipelineType::PIPE_UNASSIGNED;
   SmallVector<AddressSpace, 2> spaces;
+  unsigned minimumLanes = 2;
+};
+
+struct HierarchicalOwnershipSpec {
+  CanonicalOwnershipKind kind = CanonicalOwnershipKind::L1Tile;
+  PipelineType producerPipe = PipelineType::PIPE_UNASSIGNED;
+  PipelineType consumerPipe = PipelineType::PIPE_UNASSIGNED;
+  AddressSpace space = AddressSpace::Zero;
+  unsigned minimumLanes = 1;
+  bool allowProducerReads = false;
 };
 
 struct OwnershipNode {
@@ -72,9 +82,10 @@ bool slotsOverlap(const CanonicalPhysicalSlot &first,
 }
 
 std::optional<CanonicalPhysicalSlot>
-getExactSlot(const CanonicalMemoryAccess &access, const OwnershipSpec &spec) {
+getExactSlot(const CanonicalMemoryAccess &access,
+             ArrayRef<AddressSpace> spaces) {
   const bool exactAddress = access.addresses.size() == 1;
-  const bool usable = includesSpace(spec, access.space) &&
+  const bool usable = llvm::is_contained(spaces, access.space) &&
                       access.knownPhysical && !access.unknownRange &&
                       exactAddress && access.size != 0;
   if (!usable) {
@@ -82,6 +93,11 @@ getExactSlot(const CanonicalMemoryAccess &access, const OwnershipSpec &spec) {
   }
   return CanonicalPhysicalSlot{access.space, access.addresses.front(),
                                access.size};
+}
+
+std::optional<CanonicalPhysicalSlot>
+getExactSlot(const CanonicalMemoryAccess &access, const OwnershipSpec &spec) {
+  return getExactSlot(access, spec.spaces);
 }
 
 Operation *getTopLevelChild(Operation *operation, Operation *loop) {
@@ -405,9 +421,9 @@ recognizeOwnershipCycle(scf::ForOp loop, ArrayRef<CanonicalSyncNode> planNodes,
     }
     result.paths.push_back(std::move(*parsed));
   }
-  const bool hasMultipleLanes = bundleLanes.size() >= 2;
+  const bool hasEnoughLanes = bundleLanes.size() >= spec.minimumLanes;
   const bool hasDisjointLanes = lanesAreDisjoint(bundleLanes);
-  if (!hasMultipleLanes || !hasDisjointLanes) {
+  if (!hasEnoughLanes || !hasDisjointLanes) {
     return std::nullopt;
   }
   for (const CanonicalOwnershipPath &path : result.paths) {
@@ -430,6 +446,222 @@ recognizeOwnershipCycle(scf::ForOp loop, ArrayRef<CanonicalSyncNode> planNodes,
   return result;
 }
 
+struct SlotOwnershipGroup {
+  CanonicalPhysicalSlot slot;
+  SmallVector<OwnershipNode *, 8> producers;
+  SmallVector<OwnershipNode *, 8> consumers;
+};
+
+std::optional<SmallVector<OwnershipNode, 32>> collectHierarchicalNodes(
+    scf::ForOp loop, ArrayRef<CanonicalSyncNode> planNodes,
+    const HierarchicalOwnershipSpec &spec) {
+  SmallVector<OwnershipNode, 32> result;
+  const AddressSpace spaces[] = {spec.space};
+  for (const CanonicalSyncNode &node : planNodes) {
+    if (!loop->isAncestor(node.operation)) {
+      continue;
+    }
+    SmallVector<std::pair<CanonicalPhysicalSlot, const CanonicalMemoryAccess *>,
+                2>
+        accesses;
+    for (const CanonicalMemoryAccess &access : node.accesses) {
+      if (access.space != spec.space) {
+        continue;
+      }
+      std::optional<CanonicalPhysicalSlot> slot = getExactSlot(access, spaces);
+      if (!slot) {
+        return std::nullopt;
+      }
+      accesses.push_back({*slot, &access});
+    }
+    if (accesses.empty()) {
+      continue;
+    }
+    const bool hasSingleAccess = accesses.size() == 1;
+    if (!hasSingleAccess) {
+      return std::nullopt;
+    }
+
+    OwnershipNode ownershipNode;
+    ownershipNode.id = node.id;
+    ownershipNode.operation = node.operation;
+    ownershipNode.topLevelChild = getTopLevelChild(node.operation, loop);
+    if (!ownershipNode.topLevelChild) {
+      return std::nullopt;
+    }
+    const CanonicalMemoryAccess &access = *accesses.front().second;
+    if (node.pipe == spec.producerPipe) {
+      if (!access.writes || (access.reads && !spec.allowProducerReads)) {
+        return std::nullopt;
+      }
+      ownershipNode.produced.push_back(accesses.front().first);
+    } else if (node.pipe == spec.consumerPipe) {
+      if (!access.reads || access.writes) {
+        return std::nullopt;
+      }
+      ownershipNode.consumed.push_back(accesses.front().first);
+    } else {
+      return std::nullopt;
+    }
+    result.push_back(std::move(ownershipNode));
+  }
+  return result.empty()
+             ? std::nullopt
+             : std::optional<SmallVector<OwnershipNode, 32>>(std::move(result));
+}
+
+Operation *getCommonTopLevelAnchor(ArrayRef<OwnershipNode *> nodes) {
+  if (nodes.empty()) {
+    return nullptr;
+  }
+  Operation *anchor = nodes.front()->topLevelChild;
+  return llvm::all_of(nodes, [&](const OwnershipNode *node) {
+           return node->topLevelChild == anchor;
+         })
+             ? anchor
+             : nullptr;
+}
+
+bool hierarchicalSlotsAreDisjoint(
+    const std::map<CanonicalPhysicalSlot, SlotOwnershipGroup> &groups) {
+  for (auto first = groups.begin(); first != groups.end(); ++first) {
+    for (auto second = std::next(first); second != groups.end(); ++second) {
+      if (slotsOverlap(first->first, second->first)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+std::optional<CanonicalOwnershipCycle> recognizeHierarchicalOwnershipCycle(
+    scf::ForOp loop, ArrayRef<CanonicalSyncNode> planNodes,
+    const HierarchicalOwnershipSpec &spec) {
+  std::optional<SmallVector<OwnershipNode, 32>> nodes =
+      collectHierarchicalNodes(loop, planNodes, spec);
+  if (!nodes) {
+    return std::nullopt;
+  }
+
+  std::map<CanonicalPhysicalSlot, SlotOwnershipGroup> groups;
+  for (OwnershipNode &node : *nodes) {
+    const CanonicalPhysicalSlot &slot = !node.produced.empty()
+                                            ? node.produced.front()
+                                            : node.consumed.front();
+    SlotOwnershipGroup &group = groups[slot];
+    group.slot = slot;
+    (!node.produced.empty() ? group.producers : group.consumers)
+        .push_back(&node);
+  }
+  const bool hasEnoughLanes = groups.size() >= spec.minimumLanes;
+  const bool hasDisjointLanes = hierarchicalSlotsAreDisjoint(groups);
+  if (!hasEnoughLanes || !hasDisjointLanes) {
+    return std::nullopt;
+  }
+
+  SmallVector<SlotOwnershipGroup *, 8> orderedGroups;
+  for (auto &entry : groups) {
+    SlotOwnershipGroup &group = entry.second;
+    const bool hasProducer = !group.producers.empty();
+    const bool hasConsumer = !group.consumers.empty();
+    if (!hasProducer || !hasConsumer) {
+      return std::nullopt;
+    }
+    orderedGroups.push_back(&group);
+  }
+  llvm::stable_sort(orderedGroups,
+                    [&](const SlotOwnershipGroup *first,
+                        const SlotOwnershipGroup *second) {
+                      return planNodes[first->producers.front()->id].order <
+                             planNodes[second->producers.front()->id].order;
+                    });
+
+  CanonicalOwnershipCycle result;
+  result.kind = spec.kind;
+  result.loop = loop;
+  result.producerPipe = spec.producerPipe;
+  result.consumerPipe = spec.consumerPipe;
+  CanonicalOwnershipPath path;
+  path.region = &loop.getRegion();
+  for (auto [lane, group] : llvm::enumerate(orderedGroups)) {
+    Operation *producerAnchor = getCommonTopLevelAnchor(group->producers);
+    Operation *consumerAnchor = getCommonTopLevelAnchor(group->consumers);
+    if (!producerAnchor || !consumerAnchor ||
+        producerAnchor == consumerAnchor ||
+        producerAnchor->getBlock() != consumerAnchor->getBlock() ||
+        !producerAnchor->isBeforeInBlock(consumerAnchor)) {
+      return std::nullopt;
+    }
+
+    CanonicalOwnershipLane ownershipLane;
+    ownershipLane.id = lane;
+    ownershipLane.slots.push_back(group->slot);
+    result.lanes.push_back(std::move(ownershipLane));
+
+    CanonicalOwnershipUse use;
+    use.lane = lane;
+    llvm::transform(group->producers, std::back_inserter(use.producers),
+                    [](const OwnershipNode *node) { return node->id; });
+    llvm::transform(group->consumers, std::back_inserter(use.consumers),
+                    [](const OwnershipNode *node) { return node->id; });
+    use.writeAcquireAnchor = {producerAnchor, true};
+    use.readyAnchor = {producerAnchor, false};
+    use.readAcquireAnchor = {consumerAnchor, true};
+    use.releaseAnchor = {consumerAnchor, false};
+    path.uses.push_back(std::move(use));
+  }
+  result.paths.push_back(std::move(path));
+  return result;
+}
+
+bool ownershipCyclesEqual(const CanonicalOwnershipCycle &first,
+                          const CanonicalOwnershipCycle &second) {
+  if (first.kind != second.kind || first.loop != second.loop ||
+      first.producerPipe != second.producerPipe ||
+      first.consumerPipe != second.consumerPipe ||
+      first.lanes.size() != second.lanes.size()) {
+    return false;
+  }
+  for (auto [left, right] : llvm::zip(first.lanes, second.lanes)) {
+    if (left.slots != right.slots) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool ownershipCyclesOverlap(const CanonicalOwnershipCycle &first,
+                            const CanonicalOwnershipCycle &second) {
+  const bool nestedScopes =
+      first.loop == second.loop || first.loop->isAncestor(second.loop) ||
+      second.loop->isAncestor(first.loop);
+  if (!nestedScopes) {
+    return false;
+  }
+  for (const CanonicalOwnershipLane &firstLane : first.lanes) {
+    for (const CanonicalOwnershipLane &secondLane : second.lanes) {
+      for (const CanonicalPhysicalSlot &firstSlot : firstLane.slots) {
+        for (const CanonicalPhysicalSlot &secondSlot : secondLane.slots) {
+          if (slotsOverlap(firstSlot, secondSlot)) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+void appendUniqueOwnershipCycle(
+    SmallVectorImpl<CanonicalOwnershipCycle> &cycles,
+    CanonicalOwnershipCycle cycle) {
+  if (!llvm::any_of(cycles, [&](const CanonicalOwnershipCycle &existing) {
+        return ownershipCyclesEqual(existing, cycle);
+      })) {
+    cycles.push_back(std::move(cycle));
+  }
+}
+
 } // namespace
 
 void CanonicalSyncPlanBuilder::analyzeOwnershipCycles() {
@@ -439,13 +671,56 @@ void CanonicalSyncPlanBuilder::analyzeOwnershipCycles() {
       PipelineType::PIPE_M,
       {AddressSpace::LEFT, AddressSpace::RIGHT},
   };
+  const HierarchicalOwnershipSpec l1TileSpec{
+      CanonicalOwnershipKind::L1Tile,
+      PipelineType::PIPE_MTE2,
+      PipelineType::PIPE_MTE1,
+      AddressSpace::MAT,
+      2,
+      false,
+  };
+  const HierarchicalOwnershipSpec l0AccumulatorSpec{
+      CanonicalOwnershipKind::L0Accumulator,
+      PipelineType::PIPE_M,
+      PipelineType::PIPE_FIX,
+      AddressSpace::ACC,
+      1,
+      true,
+  };
   SmallVector<scf::ForOp, 4> loops;
   func_.walk([&](scf::ForOp loop) { loops.push_back(loop); });
+  SmallVector<CanonicalOwnershipCycle, 8> candidates;
   for (scf::ForOp loop : loops) {
     std::optional<CanonicalOwnershipCycle> cycle =
         recognizeOwnershipCycle(loop, plan_.nodes_, l0OperandSpec);
     if (cycle) {
-      plan_.ownershipCycles_.push_back(std::move(*cycle));
+      appendUniqueOwnershipCycle(candidates, std::move(*cycle));
     }
+    cycle = recognizeHierarchicalOwnershipCycle(loop, plan_.nodes_, l1TileSpec);
+    if (cycle) {
+      appendUniqueOwnershipCycle(candidates, std::move(*cycle));
+    }
+    cycle = recognizeHierarchicalOwnershipCycle(loop, plan_.nodes_,
+                                                l0AccumulatorSpec);
+    if (cycle) {
+      appendUniqueOwnershipCycle(candidates, std::move(*cycle));
+    }
+  }
+
+  SmallVector<bool, 8> conflicts(candidates.size(), false);
+  for (std::size_t first = 0; first < candidates.size(); ++first) {
+    for (std::size_t second = first + 1; second < candidates.size(); ++second) {
+      if (ownershipCyclesOverlap(candidates[first], candidates[second])) {
+        conflicts[first] = true;
+        conflicts[second] = true;
+      }
+    }
+  }
+  for (auto [index, cycle] : llvm::enumerate(candidates)) {
+    if (conflicts[index]) {
+      continue;
+    }
+    cycle.id = plan_.ownershipCycles_.size() + 1;
+    plan_.ownershipCycles_.push_back(std::move(cycle));
   }
 }

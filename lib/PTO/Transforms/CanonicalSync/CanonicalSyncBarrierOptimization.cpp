@@ -43,6 +43,7 @@ bool sameEventProtocol(const CanonicalEvent &first,
   if (first.sourcePipe != second.sourcePipe ||
       first.targetPipe != second.targetPipe || first.width != second.width ||
       first.scopeLoop != second.scopeLoop ||
+      first.ownershipCycle != second.ownershipCycle ||
       first.actions.size() != second.actions.size() ||
       first.completions.size() != second.completions.size() ||
       first.traces.size() != second.traces.size()) {
@@ -724,18 +725,19 @@ void CanonicalSyncPlanBuilder::optimizeBarriers() {
       events = std::move(reduced);
     }
   }
-  SmallVector<Operation *, 4> ownershipLoops;
+  SmallVector<std::size_t, 4> ownershipCycles;
   for (const CanonicalEvent &event : events) {
-    if (event.ownershipProtocol && event.scopeLoop &&
-        !llvm::is_contained(ownershipLoops, event.scopeLoop)) {
-      ownershipLoops.push_back(event.scopeLoop);
+    if (event.ownershipProtocol && event.ownershipCycle != 0 &&
+        !llvm::is_contained(ownershipCycles, event.ownershipCycle)) {
+      ownershipCycles.push_back(event.ownershipCycle);
     }
   }
-  for (Operation *loop : ownershipLoops) {
+  for (std::size_t cycle : ownershipCycles) {
     std::vector<CanonicalEvent> reduced;
     llvm::copy_if(events, std::back_inserter(reduced),
                   [&](const CanonicalEvent &event) {
-                    return !event.ownershipProtocol || event.scopeLoop != loop;
+                    return !event.ownershipProtocol ||
+                           event.ownershipCycle != cycle;
                   });
     if (planCoversRequirements(barriers, reduced)) {
       events = std::move(reduced);

@@ -40,6 +40,8 @@ enum class CanonicalDependencyKind : std::uint8_t {
 
 enum class CanonicalOwnershipKind : std::uint8_t {
   L0Operand,
+  L1Tile,
+  L0Accumulator,
 };
 
 struct CanonicalPhysicalSlot {
@@ -116,6 +118,7 @@ struct CanonicalOwnershipPath {
 };
 
 struct CanonicalOwnershipCycle {
+  std::size_t id = 0;
   CanonicalOwnershipKind kind = CanonicalOwnershipKind::L0Operand;
   Operation *loop = nullptr;
   PipelineType producerPipe = PipelineType::PIPE_UNASSIGNED;
@@ -198,6 +201,7 @@ struct CanonicalEvent {
   SmallVector<CanonicalEventCompletion, 4> completions;
   SmallVector<CanonicalEventTrace, 4> traces;
   std::size_t protocolBundle = 0;
+  std::size_t ownershipCycle = 0;
   bool ownershipProtocol = false;
 };
 

@@ -299,18 +299,18 @@ module attributes {pto.target_arch = "a2a3"} {
 
 // OWNERSHIP-LABEL: PTOCanonicalSyncPlan @two_slot_l0_ownership
 // OWNERSHIP-SAME: ownership-cycles=1
-// OWNERSHIP: ownership[0] kind=l0-operand PIPE_MTE1 -> PIPE_M lanes=2 paths=1
+// OWNERSHIP: ownership[0] id=1 kind=l0-operand PIPE_MTE1 -> PIPE_M lanes=2 paths=1
 // OWNERSHIP: lane[0] slots=[left@0+16384, right@0+32768]
 // OWNERSHIP: lane[1] slots=[left@16384+16384, right@32768+32768]
 // OWNERSHIP: path[0] uses=2 lane-order=[0, 1]
 // OWNERSHIP-LABEL: PTOCanonicalSyncPlan @branched_two_slot_l0_ownership
 // OWNERSHIP-SAME: ownership-cycles=1
-// OWNERSHIP: ownership[0] kind=l0-operand PIPE_MTE1 -> PIPE_M lanes=2 paths=2
+// OWNERSHIP: ownership[0] id=1 kind=l0-operand PIPE_MTE1 -> PIPE_M lanes=2 paths=2
 // OWNERSHIP: path[0] uses=2 lane-order=[0, 1]
 // OWNERSHIP: path[1] uses=2 lane-order=[1, 0]
 // OWNERSHIP-LABEL: PTOCanonicalSyncPlan @nested_consumer_l0_ownership
 // OWNERSHIP-SAME: ownership-cycles=1
-// OWNERSHIP: ownership[0] kind=l0-operand PIPE_MTE1 -> PIPE_M lanes=2 paths=1
+// OWNERSHIP: ownership[0] id=1 kind=l0-operand PIPE_MTE1 -> PIPE_M lanes=2 paths=1
 // OWNERSHIP: path[0] uses=2 lane-order=[0, 1]
 // OWNERSHIP: use[0] lane=0 producers=[0, 1] consumers=[2, 3]
 // OWNERSHIP: use[1] lane=1 producers=[4, 5] consumers=[6, 7]

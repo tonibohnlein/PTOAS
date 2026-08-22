@@ -1,0 +1,156 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=ownership' \
+// RUN:   | FileCheck %s --check-prefix=OWNERSHIP
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=dot view=ownership' \
+// RUN:   | FileCheck %s --check-prefix=DOT
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @nested_l1_ownership(%source0: !pto.ptr<f16, gm>,
+                                 %source1: !pto.ptr<f16, gm>, %limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %addr0 = arith.constant 0 : i64
+    %addr16384 = arith.constant 16384 : i64
+    %addr32768 = arith.constant 32768 : i64
+    %view0 = pto.make_tensor_view %source0, shape = [%c128, %c128],
+      strides = [%c128, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %view1 = pto.make_tensor_view %source1, shape = [%c128, %c128],
+      strides = [%c128, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %part0 = pto.partition_view %view0, offsets = [%c0, %c0],
+      sizes = [%c128, %c128] : !pto.tensor_view<?x?xf16>
+    %part1 = pto.partition_view %view1, offsets = [%c0, %c0],
+      sizes = [%c128, %c128] : !pto.tensor_view<?x?xf16>
+    %mat0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %mat1 = pto.alloc_tile addr = %addr32768 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %left0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %left1 = pto.alloc_tile addr = %addr16384 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+
+    scf.for %i = %c0 to %limit step %c1 {
+      pto.tload ins(%part0 : !pto.partition_tensor_view<128x128xf16>)
+        outs(%mat0 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+      pto.tload ins(%part1 : !pto.partition_tensor_view<128x128xf16>)
+        outs(%mat1 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+      scf.for %k = %c0 to %c2 step %c1 {
+        pto.textract ins(%mat0, %c0, %c0 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left0 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        pto.textract ins(%mat1, %c0, %c64 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left1 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+      }
+    }
+    return
+  }
+
+  func.func @nested_l0c_ownership(%destination: !pto.ptr<f32, gm>,
+                                  %limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %addr0 = arith.constant 0 : i64
+    %view = pto.make_tensor_view %destination, shape = [%c128, %c256],
+      strides = [%c256, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0],
+      sizes = [%c128, %c256] : !pto.tensor_view<?x?xf32>
+    %left = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %right = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+    %acc = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>
+
+    scf.for %i = %c0 to %limit step %c1 {
+      scf.for %k = %c0 to %c2 step %c1 {
+        pto.tmatmul ins(%left, %right :
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+      }
+      pto.tstore ins(%acc :
+        !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+        outs(%part : !pto.partition_tensor_view<128x256xf32>)
+    }
+    return
+  }
+
+  func.func @overlapping_l1_slots_refused(%source0: !pto.ptr<f16, gm>,
+                                          %source1: !pto.ptr<f16, gm>,
+                                          %limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %addr0 = arith.constant 0 : i64
+    %addr16384 = arith.constant 16384 : i64
+    %view0 = pto.make_tensor_view %source0, shape = [%c128, %c128],
+      strides = [%c128, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %view1 = pto.make_tensor_view %source1, shape = [%c128, %c128],
+      strides = [%c128, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %part0 = pto.partition_view %view0, offsets = [%c0, %c0],
+      sizes = [%c128, %c128] : !pto.tensor_view<?x?xf16>
+    %part1 = pto.partition_view %view1, offsets = [%c0, %c0],
+      sizes = [%c128, %c128] : !pto.tensor_view<?x?xf16>
+    %mat0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %mat1 = pto.alloc_tile addr = %addr16384 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %left0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %left1 = pto.alloc_tile addr = %addr16384 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+
+    scf.for %i = %c0 to %limit step %c1 {
+      pto.tload ins(%part0 : !pto.partition_tensor_view<128x128xf16>)
+        outs(%mat0 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+      pto.tload ins(%part1 : !pto.partition_tensor_view<128x128xf16>)
+        outs(%mat1 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+      pto.textract ins(%mat0, %c0, %c0 :
+        !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+        outs(%left0 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+      pto.textract ins(%mat1, %c0, %c64 :
+        !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+        outs(%left1 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+    }
+    return
+  }
+}
+
+// OWNERSHIP-LABEL: PTOCanonicalSyncPlan @nested_l1_ownership
+// OWNERSHIP-SAME: ownership-cycles=1
+// OWNERSHIP: ownership[0] id=1 kind=l1-tile PIPE_MTE2 -> PIPE_MTE1 lanes=2 paths=1
+// OWNERSHIP: lane[0] slots=[mat@0+32768]
+// OWNERSHIP: lane[1] slots=[mat@32768+32768]
+// OWNERSHIP: path[0] uses=2 lane-order=[0, 1]
+// OWNERSHIP-LABEL: PTOCanonicalSyncPlan @nested_l0c_ownership
+// OWNERSHIP-SAME: ownership-cycles=1
+// OWNERSHIP: ownership[0] id=1 kind=l0-accumulator PIPE_M -> PIPE_FIX lanes=1 paths=1
+// OWNERSHIP: lane[0] slots=[acc@0+131072]
+// OWNERSHIP: path[0] uses=1 lane-order=[0]
+// OWNERSHIP-LABEL: PTOCanonicalSyncPlan @overlapping_l1_slots_refused
+// OWNERSHIP-SAME: ownership-cycles=0
+
+// DOT: digraph "nested_l1_ownership"
+// DOT: label="ownership 0\nl1-tile"
+// DOT: digraph "nested_l0c_ownership"
+// DOT: label="ownership 0\nl0-accumulator"
+// DOT: digraph "overlapping_l1_slots_refused"
+// DOT-NOT: label="ownership

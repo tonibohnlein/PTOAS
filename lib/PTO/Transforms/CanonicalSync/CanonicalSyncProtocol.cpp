@@ -352,6 +352,9 @@ bool CanonicalSyncPlanBuilder::verifyEventProtocol(const CanonicalEvent &event,
       event.completions.empty()) {
     return reject("invalid domain, width, or empty action/completion list");
   }
+  if (event.ownershipProtocol != (event.ownershipCycle != 0)) {
+    return reject("ownership protocol has no unique cycle identity");
+  }
   if (requireAllocation) {
     if (event.eventIds.size() != event.width ||
         llvm::any_of(event.eventIds,
@@ -552,6 +555,7 @@ CanonicalSyncPlanBuilder::verifyEventProtocols(ArrayRef<CanonicalEvent> events,
                                                bool requireAllocation,
                                                bool diagnose) const {
   std::map<std::size_t, unsigned> protocolBundles;
+  std::map<std::size_t, unsigned> ownershipCycles;
   for (const CanonicalEvent &event : events) {
     if (!verifyEventProtocol(event, requireAllocation, diagnose)) {
       return failure();
@@ -559,9 +563,17 @@ CanonicalSyncPlanBuilder::verifyEventProtocols(ArrayRef<CanonicalEvent> events,
     if (event.protocolBundle != 0) {
       ++protocolBundles[event.protocolBundle];
     }
+    if (event.ownershipCycle != 0) {
+      ++ownershipCycles[event.ownershipCycle];
+    }
   }
-  if (llvm::any_of(protocolBundles,
-                   [](const auto &entry) { return entry.second != 2; })) {
+  const auto incompletePair =
+      [](const auto &entry) { return entry.second != 2; };
+  const bool hasIncompleteProtocol =
+      llvm::any_of(protocolBundles, incompletePair);
+  const bool hasIncompleteOwnership =
+      llvm::any_of(ownershipCycles, incompletePair);
+  if (hasIncompleteProtocol || hasIncompleteOwnership) {
     if (diagnose) {
       llvm::errs() << "invalid canonical event protocol bundle\n";
     }
