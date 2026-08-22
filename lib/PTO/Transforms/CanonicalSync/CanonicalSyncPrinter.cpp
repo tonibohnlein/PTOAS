@@ -129,7 +129,12 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
       printIds(os, event.eventIds);
       os << " lifetime=[" << event.intervalBegin << ',' << event.intervalEnd
          << "] recurrence=" << (event.recurrenceLoop ? "yes" : "no")
-         << " distance=" << event.iterationDistance << '\n';
+         << " distance=" << event.iterationDistance
+         << " actions=" << event.actions.size()
+         << " completions=" << event.completions.size()
+         << " traces=" << event.traces.size()
+         << " ownership=" << (event.ownershipProtocol ? "yes" : "no")
+         << " bundle=" << event.protocolBundle << '\n';
     }
   }
   if (includesEvents(view)) {

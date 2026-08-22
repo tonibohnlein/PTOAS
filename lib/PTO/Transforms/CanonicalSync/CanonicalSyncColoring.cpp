@@ -63,6 +63,27 @@ mlir::pto::colorSyncIntervals(const std::vector<SyncInterval> &intervals) {
   return result;
 }
 
+bool mlir::pto::verifySyncIntervalAllocation(
+    unsigned eventIdMax, const std::vector<unsigned> &reservedIds,
+    const std::vector<SyncAllocatedInterval> &allocation) {
+  const std::set<unsigned> reserved(reservedIds.begin(), reservedIds.end());
+  for (std::size_t index = 0; index < allocation.size(); ++index) {
+    const SyncAllocatedInterval &current = allocation[index];
+    if (current.eventId >= eventIdMax || reserved.count(current.eventId) != 0) {
+      return false;
+    }
+    for (std::size_t other = 0; other < index; ++other) {
+      const SyncAllocatedInterval &previous = allocation[other];
+      const bool overlaps = current.interval.end >= previous.interval.begin &&
+                            previous.interval.end >= current.interval.begin;
+      if (overlaps && current.eventId == previous.eventId) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 std::vector<std::size_t> mlir::pto::findMaximumIntervalClique(
     const std::vector<SyncInterval> &intervals) {
   std::vector<std::size_t> order(intervals.size());

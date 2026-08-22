@@ -538,6 +538,18 @@ bool CanonicalSyncPlanBuilder::isAnchorGuaranteedForRequirement(
       plan_.nodes_[target].operation, 0, nullptr, true);
 }
 
+bool CanonicalSyncPlanBuilder::isRecurrenceAnchorGuaranteedForEndpoint(
+    const CanonicalAnchor &anchor, unsigned anchorOccurrence,
+    std::size_t endpoint, unsigned endpointOccurrence, Operation *loop) const {
+  if (!anchor.operation || !loop || endpoint >= plan_.nodes_.size()) {
+    return false;
+  }
+  Operation *endpointOperation = plan_.nodes_[endpoint].operation;
+  return isGuaranteedInContext(anchor.operation, anchorOccurrence,
+                               endpointOperation, endpointOccurrence,
+                               endpointOperation, endpointOccurrence, loop);
+}
+
 CanonicalAnchor
 CanonicalSyncPlanBuilder::getSetAnchor(Operation *source,
                                        Operation *target) const {
@@ -590,6 +602,30 @@ std::size_t CanonicalSyncPlanBuilder::getAnchorPosition(
     maximum = std::max(maximum, node.order * 2 + 1);
   }
   if (!found) {
+    Block *anchorBlock = anchor.operation->getBlock();
+    std::optional<std::size_t> previous;
+    std::optional<std::size_t> next;
+    for (const CanonicalSyncNode &node : plan_.nodes_) {
+      Operation *child = node.operation;
+      while (child && child->getBlock() != anchorBlock) {
+        child = child->getParentOp();
+      }
+      if (!child || child == anchor.operation) {
+        continue;
+      }
+      if (child->isBeforeInBlock(anchor.operation)) {
+        previous = std::max(previous.value_or(0), node.order * 2 + 1);
+      } else if (anchor.operation->isBeforeInBlock(child)) {
+        next = std::min(next.value_or(std::numeric_limits<std::size_t>::max()),
+                        node.order * 2);
+      }
+    }
+    if (next) {
+      return *next;
+    }
+    if (previous) {
+      return *previous;
+    }
     return anchor.before ? 0 : timelineEnd + 1;
   }
   return anchor.before ? minimum : maximum;
@@ -645,6 +681,7 @@ unsigned CanonicalSyncPlanBuilder::getRecurrenceWidth(
 void CanonicalSyncPlanBuilder::materializeSyncRequirements() {
   materializeBarriers();
   materializeEvents();
+  synthesizeL0OwnershipProtocols();
   optimizeBarriers();
 }
 
@@ -737,6 +774,7 @@ CanonicalSyncPlanBuilder::makeForwardEvent(std::size_t sourceId,
   if (event.intervalBegin > event.intervalEnd) {
     std::swap(event.intervalBegin, event.intervalEnd);
   }
+  initializeForwardProtocol(event);
   return event;
 }
 
@@ -750,6 +788,7 @@ CanonicalEvent CanonicalSyncPlanBuilder::makeRecurrenceEvent(
   event.sourcePipe = source.pipe;
   event.targetPipe = target.pipe;
   event.recurrenceLoop = dependency.recurrenceLoop;
+  event.scopeLoop = dependency.recurrenceLoop;
   event.iterationDistance = dependency.iterationDistance;
   event.width = getRecurrenceWidth(dependency, event.setSlot, event.waitSlot);
   event.setAnchor =
@@ -761,6 +800,13 @@ CanonicalEvent CanonicalSyncPlanBuilder::makeRecurrenceEvent(
   if (event.intervalBegin > event.intervalEnd) {
     std::swap(event.intervalBegin, event.intervalEnd);
   }
+  if (event.width > 1 && compareSlotSSA(event.setSlot, event.waitSlot,
+                                        event.width) != SlotRelation::kEqual) {
+    event.width = 1;
+    event.setSlot = {};
+    event.waitSlot = {};
+  }
+  initializeRecurrenceProtocol(event);
   return event;
 }
 

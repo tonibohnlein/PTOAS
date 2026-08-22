@@ -13,6 +13,7 @@
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <optional>
@@ -34,19 +35,47 @@ struct BarrierSearchState {
   std::size_t intervalSpan = 0;
 };
 
+struct BarrierEventBundle {
+  SmallVector<CanonicalEvent, 2> events;
+  std::size_t id = 0;
+};
+
 bool sameEventProtocol(const CanonicalEvent &first,
                        const CanonicalEvent &second) {
-  return first.sourcePipe == second.sourcePipe &&
-         first.targetPipe == second.targetPipe &&
-         first.setAnchor.operation == second.setAnchor.operation &&
-         first.setAnchor.before == second.setAnchor.before &&
-         first.waitAnchor.operation == second.waitAnchor.operation &&
-         first.waitAnchor.before == second.waitAnchor.before &&
-         first.recurrenceLoop == second.recurrenceLoop &&
-         first.forwardDrainLoop == second.forwardDrainLoop &&
-         first.setSlot == second.setSlot && first.waitSlot == second.waitSlot &&
-         first.width == second.width &&
-         first.iterationDistance == second.iterationDistance;
+  if (first.sourcePipe != second.sourcePipe ||
+      first.targetPipe != second.targetPipe || first.width != second.width ||
+      first.scopeLoop != second.scopeLoop ||
+      first.actions.size() != second.actions.size() ||
+      first.completions.size() != second.completions.size() ||
+      first.traces.size() != second.traces.size()) {
+    return false;
+  }
+  for (auto [left, right] : llvm::zip(first.actions, second.actions)) {
+    if (left.kind != right.kind || left.phase != right.phase ||
+        left.anchor.operation != right.anchor.operation ||
+        left.anchor.before != right.anchor.before ||
+        left.lane.kind != right.lane.kind ||
+        left.lane.index != right.lane.index ||
+        left.lane.selector != right.lane.selector) {
+      return false;
+    }
+  }
+  for (auto [left, right] : llvm::zip(first.completions, second.completions)) {
+    if (left.source != right.source || left.target != right.target ||
+        left.iterationDistance != right.iterationDistance ||
+        left.recurrenceLoop != right.recurrenceLoop ||
+        left.setAction != right.setAction ||
+        left.waitAction != right.waitAction) {
+      return false;
+    }
+  }
+  for (auto [left, right] : llvm::zip(first.traces, second.traces)) {
+    if (left.kind != right.kind || left.actions != right.actions ||
+        left.controlRegion != right.controlRegion) {
+      return false;
+    }
+  }
+  return true;
 }
 
 std::size_t getIntervalSpan(const CanonicalEvent &event) {
@@ -67,46 +96,14 @@ std::vector<SyncGraphEdge> CanonicalSyncPlanBuilder::buildEventCompletionEdges(
     ArrayRef<CanonicalEvent> events) const {
   std::vector<SyncGraphEdge> edges;
   std::set<std::pair<std::size_t, std::size_t>> seen;
-  const auto addEdge = [&](std::size_t source, std::size_t target) {
-    if (seen.emplace(source, target).second) {
-      edges.push_back({source, target, SyncGraphEdgeKind::HardwareCompletion});
-    }
-  };
   for (const CanonicalEvent &event : events) {
-    if (event.recurrenceLoop) {
-      continue;
-    }
-    if (event.source >= plan_.nodes_.size() ||
-        event.target >= plan_.nodes_.size()) {
-      continue;
-    }
-    const CanonicalSyncNode &eventSource = plan_.nodes_[event.source];
-    const CanonicalSyncNode &eventTarget = plan_.nodes_[event.target];
-    if (event.setAnchor.operation == eventSource.operation &&
-        !event.setAnchor.before &&
-        event.waitAnchor.operation == eventTarget.operation &&
-        event.waitAnchor.before) {
-      addEdge(event.source, event.target);
-      continue;
-    }
-    const std::size_t setPosition = getAnchorPosition(event.setAnchor);
-    const std::size_t waitPosition = getAnchorPosition(event.waitAnchor);
-    for (const CanonicalSyncNode &source : plan_.nodes_) {
-      if (source.pipe != event.sourcePipe ||
-          source.order * 2 + 1 > setPosition) {
-        continue;
-      }
-      for (const CanonicalSyncNode &target : plan_.nodes_) {
-        if (target.pipe != event.targetPipe || source.id >= target.id ||
-            target.order * 2 < waitPosition ||
-            !mayExecuteTogether(source.operation, target.operation) ||
-            !isAnchorGuaranteedForRequirement(event.setAnchor, source.id,
-                                              target.id) ||
-            !isAnchorGuaranteedForRequirement(event.waitAnchor, source.id,
-                                              target.id)) {
-          continue;
-        }
-        addEdge(source.id, target.id);
+    for (const CanonicalEventCompletion &completion : event.completions) {
+      if (completion.iterationDistance == 0 &&
+          completion.source < plan_.nodes_.size() &&
+          completion.target < plan_.nodes_.size() &&
+          seen.emplace(completion.source, completion.target).second) {
+        edges.push_back({completion.source, completion.target,
+                         SyncGraphEdgeKind::HardwareCompletion});
       }
     }
   }
@@ -186,6 +183,28 @@ std::size_t CanonicalSyncPlanBuilder::countUncoveredRecurrenceRequirements(
         }
       }
 
+      for (const CanonicalEvent &event : events) {
+        for (const CanonicalEventCompletion &completion : event.completions) {
+          if (completion.iterationDistance == 0 ||
+              completion.iterationDistance > distance ||
+              completion.recurrenceLoop != loop ||
+              completion.source >= nodeCount ||
+              completion.target >= nodeCount) {
+            continue;
+          }
+          for (std::size_t occurrence = 0;
+               occurrence + completion.iterationDistance < occurrenceCount;
+               ++occurrence) {
+            const std::size_t sourceOffset = occurrence * nodeCount;
+            const std::size_t targetOffset =
+                (occurrence + completion.iterationDistance) * nodeCount;
+            expandedEdges.push_back({sourceOffset + completion.source,
+                                     targetOffset + completion.target,
+                                     SyncGraphEdgeKind::HardwareCompletion});
+          }
+        }
+      }
+
       for (const CanonicalDependency &dependency : plan_.dependencies_) {
         if (!dependency.retained || dependency.iterationDistance == 0 ||
             dependency.recurrenceLoop != loop ||
@@ -195,36 +214,27 @@ std::size_t CanonicalSyncPlanBuilder::countUncoveredRecurrenceRequirements(
         }
         const CanonicalSyncNode &source = plan_.nodes_[dependency.source];
         const CanonicalSyncNode &target = plan_.nodes_[dependency.target];
-        bool hasProtocol =
-            hasHardwareCompletion(source.pipe) && source.pipe == target.pipe;
-        if (source.pipe == target.pipe && !hasProtocol) {
-          hasProtocol =
-              llvm::any_of(barriers, [&](const CanonicalBarrier &barrier) {
-                return barrier.pipe == source.pipe &&
-                       barrier.recurrenceLoop == loop &&
-                       barrier.anchor.operation == target.operation &&
-                       barrier.anchor.before;
-              });
-        } else if (source.pipe != target.pipe) {
-          const CanonicalEvent expected = makeRecurrenceEvent(dependency);
-          hasProtocol = llvm::any_of(events, [&](const CanonicalEvent &event) {
-            return event.source == expected.source &&
-                   event.target == expected.target &&
-                   sameEventProtocol(event, expected);
-          });
-        }
-        if (!hasProtocol) {
+        const bool hasIntrinsicCompletion =
+            source.pipe == target.pipe && hasHardwareCompletion(source.pipe);
+        const bool hasBarrier =
+            source.pipe == target.pipe && !hasHardwareCompletion(source.pipe) &&
+            llvm::any_of(barriers, [&](const CanonicalBarrier &barrier) {
+              return barrier.pipe == source.pipe &&
+                     barrier.recurrenceLoop == loop &&
+                     barrier.anchor.operation == target.operation &&
+                     barrier.anchor.before;
+            });
+        if (!hasIntrinsicCompletion && !hasBarrier) {
           continue;
         }
         for (std::size_t occurrence = 0;
              occurrence + dependency.iterationDistance < occurrenceCount;
              ++occurrence) {
-          const std::size_t sourceOffset = occurrence * nodeCount;
-          const std::size_t targetOffset =
-              (occurrence + dependency.iterationDistance) * nodeCount;
-          expandedEdges.push_back({sourceOffset + dependency.source,
-                                   targetOffset + dependency.target,
-                                   SyncGraphEdgeKind::HardwareCompletion});
+          expandedEdges.push_back(
+              {occurrence * nodeCount + dependency.source,
+               (occurrence + dependency.iterationDistance) * nodeCount +
+                   dependency.target,
+               SyncGraphEdgeKind::HardwareCompletion});
         }
       }
 
@@ -269,11 +279,20 @@ std::vector<CanonicalEvent> CanonicalSyncPlanBuilder::selectRequiredEvents(
   std::vector<SyncGraphEdge> barrierEdges =
       buildBarrierCompletionEdges(barriers);
   fixedEdges.insert(fixedEdges.end(), barrierEdges.begin(), barrierEdges.end());
+  SmallVector<CanonicalEvent, 4> ownershipEvents;
+  llvm::copy_if(
+      candidates, std::back_inserter(ownershipEvents),
+      [](const CanonicalEvent &event) { return event.ownershipProtocol; });
+  std::vector<SyncGraphEdge> ownershipEdges =
+      buildEventCompletionEdges(ownershipEvents);
+  fixedEdges.insert(fixedEdges.end(), ownershipEdges.begin(),
+                    ownershipEdges.end());
 
   std::vector<CompletionRequirement> requirements;
   SmallVector<std::size_t, 16> forwardCandidates;
   for (auto [index, event] : llvm::enumerate(candidates)) {
-    if (!event.recurrenceLoop) {
+    if (!event.recurrenceLoop && !event.ownershipProtocol &&
+        event.protocolBundle == 0) {
       requirements.push_back({event.source, event.target});
       forwardCandidates.push_back(index);
     }
@@ -296,10 +315,12 @@ std::vector<CanonicalEvent> CanonicalSyncPlanBuilder::selectRequiredEvents(
   selected.reserve(candidates.size());
   std::size_t forward = 0;
   for (const CanonicalEvent &event : candidates) {
-    if (event.recurrenceLoop || (forward < keep.size() && keep[forward])) {
+    if (event.recurrenceLoop || event.ownershipProtocol ||
+        event.protocolBundle != 0 || (forward < keep.size() && keep[forward])) {
       selected.push_back(event);
     }
-    if (!event.recurrenceLoop) {
+    if (!event.recurrenceLoop && !event.ownershipProtocol &&
+        event.protocolBundle == 0) {
       ++forward;
     }
   }
@@ -336,12 +357,27 @@ std::vector<CanonicalEvent> CanonicalSyncPlanBuilder::selectRequiredEvents(
     return overBudget;
   };
 
+  for (std::size_t index = 0; index < selected.size();) {
+    if (!selected[index].recurrenceLoop || selected[index].ownershipProtocol) {
+      ++index;
+      continue;
+    }
+    std::vector<CanonicalEvent> reduced = selected;
+    reduced.erase(reduced.begin() + index);
+    if (planCoversRequirements(barriers, reduced)) {
+      selected = std::move(reduced);
+      continue;
+    }
+    ++index;
+  }
+
   while (true) {
     bool removed = false;
     for (const CanonicalEventDomainKey &domain : getOverBudgetDomains()) {
       for (std::size_t index = 0; index < selected.size(); ++index) {
         const CanonicalEvent &event = selected[index];
-        if (!event.recurrenceLoop || event.sourcePipe != domain.source ||
+        if (!event.recurrenceLoop || event.ownershipProtocol ||
+            event.sourcePipe != domain.source ||
             event.targetPipe != domain.target) {
           continue;
         }
@@ -462,12 +498,9 @@ void CanonicalSyncPlanBuilder::optimizeBarriers() {
       compactRequirements.push_back(dependency);
     }
   }
+  std::size_t nextProtocolBundle = 1;
 
   for (std::size_t index = 0; index < barriers.size();) {
-    if (barriers[index].recurrenceLoop) {
-      ++index;
-      continue;
-    }
     std::vector<CanonicalBarrier> candidateBarriers = barriers;
     candidateBarriers.erase(candidateBarriers.begin() + index);
 
@@ -478,29 +511,65 @@ void CanonicalSyncPlanBuilder::optimizeBarriers() {
       barriers = std::move(candidateBarriers);
       continue;
     }
+    if (barriers[index].recurrenceLoop) {
+      ++index;
+      continue;
+    }
 
     const CanonicalBarrier &removedBarrier = barriers[index];
     const std::size_t barrierPosition =
         getAnchorPosition(removedBarrier.anchor);
-    SmallVector<CanonicalEvent, 16> alternatives;
-    const auto addAlternative = [&](const CanonicalEvent &candidate) {
-      if (candidate.recurrenceLoop ||
-          candidate.sourcePipe != removedBarrier.pipe ||
-          getAnchorPosition(candidate.setAnchor) > barrierPosition ||
-          getAnchorPosition(candidate.waitAnchor) > barrierPosition ||
-          llvm::any_of(events,
-                       [&](const CanonicalEvent &event) {
-                         return sameEventProtocol(event, candidate);
-                       }) ||
-          llvm::any_of(alternatives, [&](const CanonicalEvent &event) {
-            return sameEventProtocol(event, candidate);
-          })) {
+    SmallVector<BarrierEventBundle, 16> alternatives;
+    const auto addAlternative = [&](ArrayRef<CanonicalEvent> candidates) {
+      BarrierEventBundle bundle;
+      bool needsAddition = false;
+      for (const CanonicalEvent &candidate : candidates) {
+        if (candidate.recurrenceLoop ||
+            (candidate.sourcePipe != removedBarrier.pipe &&
+             candidate.targetPipe != removedBarrier.pipe) ||
+            getAnchorPosition(candidate.setAnchor) > barrierPosition ||
+            getAnchorPosition(candidate.waitAnchor) > barrierPosition) {
+          return;
+        }
+        if (llvm::any_of(bundle.events, [&](const CanonicalEvent &event) {
+              return sameEventProtocol(event, candidate);
+            })) {
+          continue;
+        }
+        auto selected = llvm::find_if(events, [&](const CanonicalEvent &event) {
+          return sameEventProtocol(event, candidate);
+        });
+        if (candidates.size() > 1 && selected != events.end() &&
+            selected->protocolBundle != 0) {
+          return;
+        }
+        needsAddition |= selected == events.end();
+        bundle.events.push_back(candidate);
+      }
+      if (bundle.events.empty() || !needsAddition) {
         return;
       }
-      alternatives.push_back(candidate);
+      if (bundle.events.size() > 1) {
+        bundle.id = nextProtocolBundle++;
+      }
+      const bool duplicate =
+          llvm::any_of(alternatives, [&](const BarrierEventBundle &other) {
+            if (other.events.size() != bundle.events.size()) {
+              return false;
+            }
+            for (auto [left, right] : llvm::zip(other.events, bundle.events)) {
+              if (!sameEventProtocol(left, right)) {
+                return false;
+              }
+            }
+            return true;
+          });
+      if (!duplicate) {
+        alternatives.push_back(std::move(bundle));
+      }
     };
     for (const CanonicalEvent &candidate : eventCandidates_) {
-      addAlternative(candidate);
+      addAlternative(ArrayRef<CanonicalEvent>(&candidate, 1));
     }
 
     // Complete a same-pipe requirement through an existing incoming ready
@@ -518,7 +587,11 @@ void CanonicalSyncPlanBuilder::optimizeBarriers() {
           target.pipe != removedBarrier.pipe) {
         continue;
       }
-      for (const CanonicalEvent &incoming : events) {
+      SmallVector<CanonicalEvent, 32> incomingCandidates(events.begin(),
+                                                         events.end());
+      incomingCandidates.append(eventCandidates_.begin(),
+                                eventCandidates_.end());
+      for (const CanonicalEvent &incoming : incomingCandidates) {
         if (incoming.recurrenceLoop ||
             incoming.targetPipe != removedBarrier.pipe ||
             incoming.target != requirement.target ||
@@ -531,20 +604,28 @@ void CanonicalSyncPlanBuilder::optimizeBarriers() {
         if (roundTrip.sourcePipe == roundTrip.targetPipe) {
           continue;
         }
-        addAlternative(roundTrip);
+        const CanonicalEvent bundle[] = {roundTrip, incoming};
+        addAlternative(bundle);
       }
     }
 
-    const auto buildEvents = [&](const BarrierSearchState &state) {
+    const auto buildEvents = [&](const BarrierSearchState &state,
+                                 bool tagBundles = false) {
       std::vector<CanonicalEvent> candidateEvents = events;
       for (std::size_t alternative : state.additions) {
-        const CanonicalEvent &candidate = alternatives[alternative];
-        const bool duplicate =
-            llvm::any_of(candidateEvents, [&](const CanonicalEvent &event) {
-              return sameEventProtocol(event, candidate);
-            });
-        if (!duplicate) {
-          candidateEvents.push_back(candidate);
+        const BarrierEventBundle &bundle = alternatives[alternative];
+        for (const CanonicalEvent &candidate : bundle.events) {
+          auto existing =
+              llvm::find_if(candidateEvents, [&](const CanonicalEvent &event) {
+                return sameEventProtocol(event, candidate);
+              });
+          if (existing == candidateEvents.end()) {
+            candidateEvents.push_back(candidate);
+            existing = std::prev(candidateEvents.end());
+          }
+          if (tagBundles && bundle.id != 0) {
+            existing->protocolBundle = bundle.id;
+          }
         }
       }
       return candidateEvents;
@@ -562,13 +643,38 @@ void CanonicalSyncPlanBuilder::optimizeBarriers() {
             state.additions.empty() ? 0 : state.additions.back() + 1;
         for (std::size_t alternative = begin; alternative < alternatives.size();
              ++alternative) {
+          const bool overlapsAtomicBundle =
+              alternatives[alternative].id != 0 &&
+              llvm::any_of(state.additions, [&](std::size_t selected) {
+                if (alternatives[selected].id == 0) {
+                  return false;
+                }
+                return llvm::any_of(alternatives[alternative].events,
+                                    [&](const CanonicalEvent &candidate) {
+                                      return llvm::any_of(
+                                          alternatives[selected].events,
+                                          [&](const CanonicalEvent &existing) {
+                                            return sameEventProtocol(candidate,
+                                                                     existing);
+                                          });
+                                    });
+              });
+          if (overlapsAtomicBundle) {
+            continue;
+          }
           BarrierSearchState candidateState = state;
           candidateState.additions.push_back(alternative);
-          const CanonicalEvent &added = alternatives[alternative];
-          candidateState.intervalSpan += getIntervalSpan(added);
+          for (const CanonicalEvent &added : alternatives[alternative].events) {
+            candidateState.intervalSpan += getIntervalSpan(added);
+          }
           std::vector<CanonicalEvent> candidateEvents =
               buildEvents(candidateState);
           if (!eventsFitBudget(candidateEvents)) {
+            continue;
+          }
+          if (failed(verifyEventProtocols(candidateEvents,
+                                          /*requireAllocation=*/false,
+                                          /*diagnose=*/false))) {
             continue;
           }
           candidateState.uncovered = countUncoveredRequirements(
@@ -584,7 +690,7 @@ void CanonicalSyncPlanBuilder::optimizeBarriers() {
         }
       }
       if (feasible) {
-        replacement = buildEvents(*feasible);
+        replacement = buildEvents(*feasible, /*tagBundles=*/true);
         break;
       }
       llvm::stable_sort(next, searchStateLess);
@@ -602,11 +708,51 @@ void CanonicalSyncPlanBuilder::optimizeBarriers() {
     events = std::move(*replacement);
     index = 0;
   }
+  events = selectRequiredEvents(barriers, events);
+  SmallVector<std::size_t, 4> protocolBundles;
+  for (const CanonicalEvent &event : events) {
+    if (event.protocolBundle != 0 &&
+        !llvm::is_contained(protocolBundles, event.protocolBundle)) {
+      protocolBundles.push_back(event.protocolBundle);
+    }
+  }
+  for (std::size_t bundle : protocolBundles) {
+    std::vector<CanonicalEvent> reduced;
+    llvm::copy_if(events, std::back_inserter(reduced),
+                  [&](const CanonicalEvent &event) {
+                    return event.protocolBundle != bundle;
+                  });
+    if (planCoversRequirements(barriers, reduced)) {
+      events = std::move(reduced);
+    }
+  }
+  SmallVector<Operation *, 4> ownershipLoops;
+  for (const CanonicalEvent &event : events) {
+    if (event.ownershipProtocol && event.scopeLoop &&
+        !llvm::is_contained(ownershipLoops, event.scopeLoop)) {
+      ownershipLoops.push_back(event.scopeLoop);
+    }
+  }
+  for (Operation *loop : ownershipLoops) {
+    std::vector<CanonicalEvent> reduced;
+    llvm::copy_if(events, std::back_inserter(reduced),
+                  [&](const CanonicalEvent &event) {
+                    return !event.ownershipProtocol || event.scopeLoop != loop;
+                  });
+    if (planCoversRequirements(barriers, reduced)) {
+      events = std::move(reduced);
+    }
+  }
   plan_.barriers_ = std::move(barriers);
   plan_.events_ = std::move(events);
 }
 
 LogicalResult CanonicalSyncPlanBuilder::verifyFinalPlan() {
+  if (failed(verifyEventProtocols(plan_.events_, /*requireAllocation=*/false,
+                                  /*diagnose=*/true))) {
+    return func_.emitError(
+        "internal error: canonical event protocol verification failed");
+  }
   if (!planCoversRequirements(plan_.barriers_, plan_.events_,
                               /*diagnose=*/true)) {
     return func_.emitError(

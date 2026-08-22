@@ -27,6 +27,11 @@ struct SyncInterval {
   std::size_t end = 0;
 };
 
+struct SyncAllocatedInterval {
+  SyncInterval interval;
+  unsigned eventId = 0;
+};
+
 struct SyncColoring {
   std::vector<unsigned> colors;
   unsigned colorCount = 0;
@@ -35,6 +40,12 @@ struct SyncColoring {
 /// Optimally color inclusive intervals. Intervals that share an endpoint
 /// overlap and therefore receive different colors.
 SyncColoring colorSyncIntervals(const std::vector<SyncInterval> &intervals);
+
+/// Verify a physical-ID assignment for one pipe domain. Interval endpoints
+/// are inclusive, and reserved IDs cannot be assigned.
+bool verifySyncIntervalAllocation(
+    unsigned eventIdMax, const std::vector<unsigned> &reservedIds,
+    const std::vector<SyncAllocatedInterval> &allocation);
 
 /// Return the deterministic maximum clique of an interval graph. The result
 /// contains interval indices in ascending order. Inclusive endpoints overlap.
@@ -69,6 +80,21 @@ struct CompletionRequirement {
   std::size_t source = 0;
   std::size_t target = 0;
 };
+
+enum class SyncTokenActionKind : std::uint8_t { Set, Wait };
+
+struct SyncTokenAction {
+  SyncTokenActionKind kind = SyncTokenActionKind::Set;
+  unsigned lane = 0;
+};
+
+/// Verify one finite event-token trace. Each lane is a one-bit token: set
+/// transitions empty to full and wait transitions full to empty. Initial and
+/// expected full-lane lists must be duplicate-free and in range.
+bool verifySyncTokenTrace(unsigned laneCount,
+                          const std::vector<unsigned> &initiallyFullLanes,
+                          const std::vector<SyncTokenAction> &actions,
+                          const std::vector<unsigned> &expectedFullLanes);
 
 using CompletionVertexFilter =
     std::function<bool(std::size_t requirement, std::size_t vertex)>;

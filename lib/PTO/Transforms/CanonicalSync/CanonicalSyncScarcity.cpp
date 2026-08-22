@@ -50,7 +50,7 @@ std::optional<CanonicalEvent> CanonicalSyncPlanBuilder::coalesceForwardEvents(
   std::size_t target = events.front().target;
   for (const CanonicalEvent &event : events) {
     if (event.width != 1 || event.recurrenceLoop || event.forwardDrainLoop ||
-        event.source >= plan_.nodes_.size() ||
+        event.protocolBundle != 0 || event.source >= plan_.nodes_.size() ||
         event.target >= plan_.nodes_.size()) {
       return std::nullopt;
     }
@@ -94,6 +94,7 @@ std::optional<CanonicalEvent> CanonicalSyncPlanBuilder::coalesceForwardEvents(
   if (result.intervalBegin > result.intervalEnd) {
     return std::nullopt;
   }
+  initializeForwardProtocol(result);
   return result;
 }
 

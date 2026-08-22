@@ -126,6 +126,12 @@ private:
   CanonicalEvent makeForwardEvent(std::size_t source, std::size_t target) const;
   CanonicalEvent
   makeRecurrenceEvent(const CanonicalDependency &dependency) const;
+  void synthesizeL0OwnershipProtocols();
+  LogicalResult verifyEventProtocols(ArrayRef<CanonicalEvent> events,
+                                     bool requireAllocation,
+                                     bool diagnose) const;
+  bool verifyEventProtocol(const CanonicalEvent &event, bool requireAllocation,
+                           bool diagnose) const;
   void optimizeBarriers();
   std::vector<SyncGraphEdge>
   buildBarrierCompletionEdges(ArrayRef<CanonicalBarrier> barriers) const;
@@ -139,6 +145,11 @@ private:
   bool isAnchorGuaranteedForRequirement(const CanonicalAnchor &anchor,
                                         std::size_t source,
                                         std::size_t target) const;
+  bool isRecurrenceAnchorGuaranteedForEndpoint(const CanonicalAnchor &anchor,
+                                               unsigned anchorOccurrence,
+                                               std::size_t endpoint,
+                                               unsigned endpointOccurrence,
+                                               Operation *loop) const;
   bool planCoversRequirements(ArrayRef<CanonicalBarrier> barriers,
                               ArrayRef<CanonicalEvent> events,
                               bool diagnose = false) const;
@@ -161,6 +172,9 @@ private:
   bool coversCoalescedEvents(const CanonicalEvent &candidate,
                              ArrayRef<CanonicalEvent> originals) const;
   LogicalResult allocateEvents();
+  void initializeForwardProtocol(CanonicalEvent &event) const;
+  void initializeRecurrenceProtocol(CanonicalEvent &event) const;
+  void deriveEventInterval(CanonicalEvent &event) const;
 
   void addDependency(std::size_t source, std::size_t target,
                      CanonicalDependencyKind kind,

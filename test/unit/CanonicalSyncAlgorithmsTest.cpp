@@ -24,6 +24,8 @@ using mlir::pto::SyncColoring;
 using mlir::pto::SyncGraphEdge;
 using mlir::pto::SyncGraphEdgeKind;
 using mlir::pto::SyncInterval;
+using mlir::pto::SyncTokenAction;
+using mlir::pto::SyncTokenActionKind;
 
 bool check(bool condition, std::string_view message) {
   if (!condition) {
@@ -299,6 +301,56 @@ bool testCompletionCoverage() {
   return passed;
 }
 
+bool testSyncTokenTrace() {
+  const std::vector<SyncTokenAction> straight = {
+      {SyncTokenActionKind::Set, 0}, {SyncTokenActionKind::Wait, 0}};
+  bool passed = check(mlir::pto::verifySyncTokenTrace(1, {}, straight, {}),
+                      "a balanced straight-line token trace is valid");
+
+  const std::vector<SyncTokenAction> steady = {{SyncTokenActionKind::Wait, 0},
+                                               {SyncTokenActionKind::Set, 0},
+                                               {SyncTokenActionKind::Wait, 1},
+                                               {SyncTokenActionKind::Set, 1}};
+  passed &= check(mlir::pto::verifySyncTokenTrace(2, {0, 1}, steady, {0, 1}),
+                  "a two-lane ownership cycle preserves its state");
+  passed &= check(!mlir::pto::verifySyncTokenTrace(
+                      1, {}, {{SyncTokenActionKind::Wait, 0}}, {}),
+                  "wait cannot consume an empty token");
+  passed &= check(
+      !mlir::pto::verifySyncTokenTrace(
+          1, {}, {{SyncTokenActionKind::Set, 0}, {SyncTokenActionKind::Set, 0}},
+          {0}),
+      "set cannot overwrite a full token");
+  passed &= check(!mlir::pto::verifySyncTokenTrace(2, {0, 0}, {}, {0}),
+                  "initial lanes must be unique");
+  passed &= check(!mlir::pto::verifySyncTokenTrace(2, {}, {}, {2}),
+                  "expected lanes must be in range");
+  passed &= check(!mlir::pto::verifySyncTokenTrace(0, {}, {}, {}),
+                  "a protocol must have at least one lane");
+  return passed;
+}
+
+bool testSyncIntervalAllocationVerification() {
+  using mlir::pto::SyncAllocatedInterval;
+  const std::vector<SyncAllocatedInterval> valid = {
+      {{0, 2}, 0}, {{3, 5}, 0}, {{1, 4}, 1}};
+  bool passed = check(mlir::pto::verifySyncIntervalAllocation(2, {}, valid),
+                      "disjoint lifetimes may reuse an event id");
+
+  const std::vector<SyncAllocatedInterval> inclusiveConflict = {{{0, 2}, 0},
+                                                                {{2, 3}, 0}};
+  passed &=
+      check(!mlir::pto::verifySyncIntervalAllocation(2, {}, inclusiveConflict),
+            "inclusive endpoint overlap cannot reuse an event id");
+  passed &=
+      check(!mlir::pto::verifySyncIntervalAllocation(2, {1}, {{{0, 1}, 1}}),
+            "reserved event ids cannot be allocated");
+  passed &=
+      check(!mlir::pto::verifySyncIntervalAllocation(2, {}, {{{0, 1}, 2}}),
+            "allocated event ids must be in range");
+  return passed;
+}
+
 } // namespace
 
 int main() {
@@ -307,6 +359,7 @@ int main() {
       testWeightedCriticalPath() && testCompletionQualifiedReduction() &&
       testColoringBoundariesAndDeterminism() &&
       testInvalidCompletionRequirements() && testScopedCompletionReduction() &&
-      testDenseCompletionReduction() && testCompletionCoverage();
+      testDenseCompletionReduction() && testCompletionCoverage() &&
+      testSyncTokenTrace() && testSyncIntervalAllocationVerification();
   return passed ? 0 : 1;
 }

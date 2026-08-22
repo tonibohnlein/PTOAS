@@ -82,6 +82,53 @@ struct CanonicalBarrier {
   Operation *recurrenceLoop = nullptr;
 };
 
+enum class CanonicalEventActionKind : std::uint8_t { Set, Wait };
+
+enum class CanonicalEventActionPhase : std::uint8_t {
+  Straight,
+  Prime,
+  Body,
+  Condition,
+  Drain,
+};
+
+enum class CanonicalEventLaneKind : std::uint8_t { Static, Dynamic, All };
+
+enum class CanonicalEventTraceKind : std::uint8_t {
+  Straight,
+  Prime,
+  Cycle,
+  Final,
+};
+
+struct CanonicalEventLane {
+  CanonicalEventLaneKind kind = CanonicalEventLaneKind::Static;
+  unsigned index = 0;
+  Value selector;
+};
+
+struct CanonicalEventAction {
+  CanonicalEventActionKind kind = CanonicalEventActionKind::Set;
+  CanonicalEventActionPhase phase = CanonicalEventActionPhase::Straight;
+  CanonicalAnchor anchor;
+  CanonicalEventLane lane;
+};
+
+struct CanonicalEventCompletion {
+  std::size_t source = 0;
+  std::size_t target = 0;
+  unsigned iterationDistance = 0;
+  Operation *recurrenceLoop = nullptr;
+  unsigned setAction = 0;
+  unsigned waitAction = 0;
+};
+
+struct CanonicalEventTrace {
+  CanonicalEventTraceKind kind = CanonicalEventTraceKind::Straight;
+  SmallVector<unsigned, 8> actions;
+  Region *controlRegion = nullptr;
+};
+
 struct CanonicalEvent {
   std::size_t source = 0;
   std::size_t target = 0;
@@ -91,6 +138,7 @@ struct CanonicalEvent {
   CanonicalAnchor waitAnchor;
   Operation *recurrenceLoop = nullptr;
   Operation *forwardDrainLoop = nullptr;
+  Operation *scopeLoop = nullptr;
   unsigned iterationDistance = 0;
   Value setSlot;
   Value waitSlot;
@@ -98,6 +146,11 @@ struct CanonicalEvent {
   SmallVector<unsigned, 2> eventIds;
   std::size_t intervalBegin = 0;
   std::size_t intervalEnd = 0;
+  SmallVector<CanonicalEventAction, 8> actions;
+  SmallVector<CanonicalEventCompletion, 4> completions;
+  SmallVector<CanonicalEventTrace, 4> traces;
+  std::size_t protocolBundle = 0;
+  bool ownershipProtocol = false;
 };
 
 struct CanonicalEventDomain {

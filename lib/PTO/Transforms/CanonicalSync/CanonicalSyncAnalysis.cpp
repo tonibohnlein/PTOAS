@@ -219,6 +219,11 @@ FailureOr<CanonicalSyncPlan> CanonicalSyncPlanBuilder::build() {
   if (failed(allocateEvents())) {
     return failure();
   }
+  if (failed(verifyEventProtocols(plan_.events_, /*requireAllocation=*/true,
+                                  /*diagnose=*/true))) {
+    return func_.emitError(
+        "internal error: allocated canonical event protocol is invalid");
+  }
   return std::move(plan_);
 }
 

@@ -13,7 +13,6 @@
 #include "PTO/IR/PTO.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -98,78 +97,25 @@ void createDynamicFlag(IRRewriter &rewriter, Location location,
   markGenerated(created, rewriter);
 }
 
-bool isInWhileBeforeRegion(Operation *operation, scf::WhileOp whileOp) {
-  Operation *current = operation;
-  while (current && current->getParentOp() != whileOp) {
-    current = current->getParentOp();
-  }
-  return current && current->getParentRegion() == &whileOp.getBefore();
-}
-
-void emitForwardEvent(IRRewriter &rewriter, const CanonicalEvent &event) {
-  setInsertionPoint(rewriter, event.setAnchor);
-  createStaticFlag(rewriter, event.setAnchor.operation->getLoc(),
-                   event.sourcePipe, event.targetPipe, event.eventIds.front(),
-                   true);
-  setInsertionPoint(rewriter, event.waitAnchor);
-  createStaticFlag(rewriter, event.waitAnchor.operation->getLoc(),
-                   event.sourcePipe, event.targetPipe, event.eventIds.front(),
-                   false);
-  if (event.forwardDrainLoop) {
-    CanonicalAnchor drain{event.forwardDrainLoop, false};
-    setInsertionPoint(rewriter, drain);
-    createStaticFlag(rewriter, event.forwardDrainLoop->getLoc(),
-                     event.sourcePipe, event.targetPipe, event.eventIds.front(),
-                     false);
-  }
-}
-
-void emitRecurrenceEvent(IRRewriter &rewriter, const CanonicalEvent &event) {
-  CanonicalAnchor beforeLoop{event.recurrenceLoop, true};
-  setInsertionPoint(rewriter, beforeLoop);
-  for (unsigned eventId : event.eventIds) {
-    createStaticFlag(rewriter, event.recurrenceLoop->getLoc(), event.sourcePipe,
-                     event.targetPipe, eventId, true);
-  }
-
-  setInsertionPoint(rewriter, event.waitAnchor);
-  if (event.width > 1) {
-    createDynamicFlag(rewriter, event.waitAnchor.operation->getLoc(),
-                      event.sourcePipe, event.targetPipe, event.waitSlot,
-                      event.eventIds, false);
-  } else {
-    createStaticFlag(rewriter, event.waitAnchor.operation->getLoc(),
-                     event.sourcePipe, event.targetPipe, event.eventIds.front(),
-                     false);
-  }
-
-  setInsertionPoint(rewriter, event.setAnchor);
-  if (event.width > 1) {
-    createDynamicFlag(rewriter, event.setAnchor.operation->getLoc(),
-                      event.sourcePipe, event.targetPipe, event.setSlot,
-                      event.eventIds, true);
-  } else {
-    createStaticFlag(rewriter, event.setAnchor.operation->getLoc(),
-                     event.sourcePipe, event.targetPipe, event.eventIds.front(),
-                     true);
-  }
-
-  bool needsDrain = true;
-  if (auto whileOp = dyn_cast<scf::WhileOp>(event.recurrenceLoop)) {
-    const bool setInBefore =
-        isInWhileBeforeRegion(event.setAnchor.operation, whileOp);
-    const bool waitInBefore =
-        isInWhileBeforeRegion(event.waitAnchor.operation, whileOp);
-    needsDrain = setInBefore || !waitInBefore;
-  }
-  if (needsDrain) {
-    CanonicalAnchor afterLoop{event.recurrenceLoop, false};
-    setInsertionPoint(rewriter, afterLoop);
+void emitEventAction(IRRewriter &rewriter, const CanonicalEvent &event,
+                     const CanonicalEventAction &action) {
+  setInsertionPoint(rewriter, action.anchor);
+  const bool set = action.kind == CanonicalEventActionKind::Set;
+  const Location location = action.anchor.operation->getLoc();
+  if (action.lane.kind == CanonicalEventLaneKind::All) {
     for (unsigned eventId : event.eventIds) {
-      createStaticFlag(rewriter, event.recurrenceLoop->getLoc(),
-                       event.sourcePipe, event.targetPipe, eventId, false);
+      createStaticFlag(rewriter, location, event.sourcePipe, event.targetPipe,
+                       eventId, set);
     }
+    return;
   }
+  if (action.lane.kind == CanonicalEventLaneKind::Dynamic) {
+    createDynamicFlag(rewriter, location, event.sourcePipe, event.targetPipe,
+                      action.lane.selector, event.eventIds, set);
+    return;
+  }
+  createStaticFlag(rewriter, location, event.sourcePipe, event.targetPipe,
+                   event.eventIds[action.lane.index], set);
 }
 
 } // namespace
@@ -188,10 +134,8 @@ LogicalResult mlir::pto::emitCanonicalSyncPlan(func::FuncOp func,
     markGenerated(created.getOperation(), rewriter);
   }
   for (const CanonicalEvent &event : plan.getEvents()) {
-    if (event.recurrenceLoop) {
-      emitRecurrenceEvent(rewriter, event);
-    } else {
-      emitForwardEvent(rewriter, event);
+    for (const CanonicalEventAction &action : event.actions) {
+      emitEventAction(rewriter, event, action);
     }
   }
   SmallVector<func::ReturnOp, 4> returns;
