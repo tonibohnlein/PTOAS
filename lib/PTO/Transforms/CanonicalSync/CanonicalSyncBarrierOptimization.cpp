@@ -44,6 +44,7 @@ bool sameEventProtocol(const CanonicalEvent &first,
       first.targetPipe != second.targetPipe || first.width != second.width ||
       first.scopeLoop != second.scopeLoop ||
       first.ownershipCycle != second.ownershipCycle ||
+      first.ownershipRole != second.ownershipRole ||
       first.actions.size() != second.actions.size() ||
       first.completions.size() != second.completions.size() ||
       first.traces.size() != second.traces.size()) {

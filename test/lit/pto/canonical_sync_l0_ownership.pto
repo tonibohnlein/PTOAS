@@ -286,11 +286,11 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @two_slot_l0_ownership
-// PLAN: PIPE_MTE1 -> PIPE_M {{.*}}width=2{{.*}}traces=1 ownership=yes
-// PLAN: PIPE_M -> PIPE_MTE1 {{.*}}width=2{{.*}}traces=3 ownership=yes
+// PLAN: PIPE_MTE1 -> PIPE_M {{.*}}width=2{{.*}}traces=1 ownership=yes ownership-cycle=1 ownership-role=ready
+// PLAN: PIPE_M -> PIPE_MTE1 {{.*}}width=2{{.*}}traces=3 ownership=yes ownership-cycle=1 ownership-role=release
 // PLAN-LABEL: PTOCanonicalSyncPlan @branched_two_slot_l0_ownership
-// PLAN: PIPE_MTE1 -> PIPE_M {{.*}}width=2{{.*}}traces=2 ownership=yes
-// PLAN: PIPE_M -> PIPE_MTE1 {{.*}}width=2{{.*}}traces=4 ownership=yes
+// PLAN: PIPE_MTE1 -> PIPE_M {{.*}}width=2{{.*}}traces=2 ownership=yes ownership-cycle=1 ownership-role=ready
+// PLAN: PIPE_M -> PIPE_MTE1 {{.*}}width=2{{.*}}traces=4 ownership=yes ownership-cycle=1 ownership-role=release
 // PLAN-LABEL: PTOCanonicalSyncPlan @nested_consumer_l0_ownership
 // PLAN: PIPE_MTE1 -> PIPE_M {{.*}}width=2{{.*}}completions=8 traces=1 ownership=yes
 // PLAN: PIPE_M -> PIPE_MTE1 {{.*}}width=2{{.*}}completions=8 traces=3 ownership=yes

@@ -292,6 +292,12 @@ protocol selection. Ownership protocol pairs are retained or removed by cycle
 identity rather than by loop, so independent roles in one loop cannot be
 silently coupled.
 
+Every synthesized ownership cycle contains one explicitly tagged `ready`
+event and one `release` event. Verification binds both events back to the
+discovered cycle and checks their complementary pipe directions, width, loop
+scope, action lifecycle, lane-local completion endpoints, and recurrence
+distance before allocation or emission.
+
 ### Barrier optimization
 
 CanonicalSync considers non-recurrence barriers in deterministic order. For

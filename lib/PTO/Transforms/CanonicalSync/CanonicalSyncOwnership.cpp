@@ -61,6 +61,7 @@ buildOwnershipProtocols(const CanonicalOwnershipCycle &cycle) {
   ready.scopeLoop = cycle.loop;
   ready.width = cycle.lanes.size();
   ready.ownershipCycle = cycle.id;
+  ready.ownershipRole = CanonicalOwnershipEventRole::Ready;
   ready.ownershipProtocol = true;
 
   for (const CanonicalOwnershipPath &path : cycle.paths) {
@@ -93,6 +94,7 @@ buildOwnershipProtocols(const CanonicalOwnershipCycle &cycle) {
   release.iterationDistance = 1;
   release.width = cycle.lanes.size();
   release.ownershipCycle = cycle.id;
+  release.ownershipRole = CanonicalOwnershipEventRole::Release;
   release.ownershipProtocol = true;
   const unsigned prime = addAction(release, CanonicalEventActionKind::Set,
                                    CanonicalEventActionPhase::Prime,

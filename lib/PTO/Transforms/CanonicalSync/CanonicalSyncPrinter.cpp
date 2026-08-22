@@ -86,6 +86,18 @@ StringRef stringifyOwnershipAddressSpace(AddressSpace space) {
   return "unknown";
 }
 
+StringRef stringifyOwnershipRole(CanonicalOwnershipEventRole role) {
+  switch (role) {
+  case CanonicalOwnershipEventRole::None:
+    return "none";
+  case CanonicalOwnershipEventRole::Ready:
+    return "ready";
+  case CanonicalOwnershipEventRole::Release:
+    return "release";
+  }
+  return "unknown";
+}
+
 StringRef stringifyFixedEdgeKind(SyncGraphEdgeKind kind) {
   switch (kind) {
   case SyncGraphEdgeKind::IssueOrder:
@@ -181,6 +193,7 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
          << " traces=" << event.traces.size()
          << " ownership=" << (event.ownershipProtocol ? "yes" : "no")
          << " ownership-cycle=" << event.ownershipCycle
+         << " ownership-role=" << stringifyOwnershipRole(event.ownershipRole)
          << " bundle=" << event.protocolBundle << '\n';
     }
   }

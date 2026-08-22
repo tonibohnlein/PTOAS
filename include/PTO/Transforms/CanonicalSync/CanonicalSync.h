@@ -152,6 +152,12 @@ enum class CanonicalEventTraceKind : std::uint8_t {
   Final,
 };
 
+enum class CanonicalOwnershipEventRole : std::uint8_t {
+  None,
+  Ready,
+  Release,
+};
+
 struct CanonicalEventLane {
   CanonicalEventLaneKind kind = CanonicalEventLaneKind::Static;
   unsigned index = 0;
@@ -202,6 +208,8 @@ struct CanonicalEvent {
   SmallVector<CanonicalEventTrace, 4> traces;
   std::size_t protocolBundle = 0;
   std::size_t ownershipCycle = 0;
+  CanonicalOwnershipEventRole ownershipRole =
+      CanonicalOwnershipEventRole::None;
   bool ownershipProtocol = false;
 };
 

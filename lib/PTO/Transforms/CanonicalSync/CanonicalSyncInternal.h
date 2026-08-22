@@ -46,6 +46,10 @@ struct CanonicalScarcityStats {
   std::uint64_t criticalPathWeight = 0;
 };
 
+bool verifyCanonicalOwnershipEventPair(
+    const CanonicalOwnershipCycle &cycle,
+    ArrayRef<const CanonicalEvent *> events);
+
 class CanonicalSyncLatencyContext {
 public:
   CanonicalSyncLatencyContext(const CanonicalSyncPlan &plan,
