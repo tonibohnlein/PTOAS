@@ -207,6 +207,7 @@ FailureOr<CanonicalSyncPlan> CanonicalSyncPlanBuilder::build() {
   preserveRecurrenceCompletionRequirements();
   reduceForwardDependencies();
   reserveHiddenEventIds();
+  analyzeOwnershipCycles();
   materializeSyncRequirements();
   if (failed(repairEventScarcity())) {
     return failure();

@@ -124,7 +124,8 @@ private:
   CanonicalEvent makeForwardEvent(std::size_t source, std::size_t target) const;
   CanonicalEvent
   makeRecurrenceEvent(const CanonicalDependency &dependency) const;
-  void synthesizeL0OwnershipProtocols();
+  void analyzeOwnershipCycles();
+  void synthesizeOwnershipProtocols();
   LogicalResult verifyEventProtocols(ArrayRef<CanonicalEvent> events,
                                      bool requireAllocation,
                                      bool diagnose) const;

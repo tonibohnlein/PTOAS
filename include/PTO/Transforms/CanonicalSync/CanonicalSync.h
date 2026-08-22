@@ -24,6 +24,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <tuple>
 #include <vector>
 
 namespace mlir {
@@ -35,6 +36,26 @@ enum class CanonicalDependencyKind : std::uint8_t {
   MemoryWAR,
   MemoryWAW,
   LoopCarriedSSA,
+};
+
+enum class CanonicalOwnershipKind : std::uint8_t {
+  L0Operand,
+};
+
+struct CanonicalPhysicalSlot {
+  AddressSpace space = AddressSpace::Zero;
+  std::uint64_t address = 0;
+  std::uint64_t size = 0;
+
+  bool operator<(const CanonicalPhysicalSlot &other) const {
+    return std::tie(space, address, size) <
+           std::tie(other.space, other.address, other.size);
+  }
+
+  bool operator==(const CanonicalPhysicalSlot &other) const {
+    return space == other.space && address == other.address &&
+           size == other.size;
+  }
 };
 
 struct CanonicalMemoryAccess {
@@ -72,6 +93,35 @@ struct CanonicalDependency {
 struct CanonicalAnchor {
   Operation *operation = nullptr;
   bool before = true;
+};
+
+struct CanonicalOwnershipLane {
+  unsigned id = 0;
+  SmallVector<CanonicalPhysicalSlot, 2> slots;
+};
+
+struct CanonicalOwnershipUse {
+  unsigned lane = 0;
+  SmallVector<std::size_t, 2> producers;
+  SmallVector<std::size_t, 2> consumers;
+  CanonicalAnchor writeAcquireAnchor;
+  CanonicalAnchor readyAnchor;
+  CanonicalAnchor readAcquireAnchor;
+  CanonicalAnchor releaseAnchor;
+};
+
+struct CanonicalOwnershipPath {
+  Region *region = nullptr;
+  SmallVector<CanonicalOwnershipUse, 8> uses;
+};
+
+struct CanonicalOwnershipCycle {
+  CanonicalOwnershipKind kind = CanonicalOwnershipKind::L0Operand;
+  Operation *loop = nullptr;
+  PipelineType producerPipe = PipelineType::PIPE_UNASSIGNED;
+  PipelineType consumerPipe = PipelineType::PIPE_UNASSIGNED;
+  SmallVector<CanonicalOwnershipLane, 2> lanes;
+  SmallVector<CanonicalOwnershipPath, 2> paths;
 };
 
 struct CanonicalBarrier {
@@ -180,6 +230,9 @@ public:
   ArrayRef<CanonicalBarrier> getBarriers() const { return barriers_; }
   ArrayRef<CanonicalEvent> getEvents() const { return events_; }
   ArrayRef<CanonicalEventDomain> getDomains() const { return domains_; }
+  ArrayRef<CanonicalOwnershipCycle> getOwnershipCycles() const {
+    return ownershipCycles_;
+  }
 
 private:
   friend class CanonicalSyncPlanBuilder;
@@ -193,6 +246,7 @@ private:
   std::vector<CanonicalBarrier> barriers_;
   std::vector<CanonicalEvent> events_;
   std::vector<CanonicalEventDomain> domains_;
+  std::vector<CanonicalOwnershipCycle> ownershipCycles_;
 };
 
 FailureOr<CanonicalSyncPlan> buildCanonicalSyncPlan(func::FuncOp func,
@@ -201,6 +255,7 @@ LogicalResult emitCanonicalSyncPlan(func::FuncOp func,
                                     const CanonicalSyncPlan &plan);
 
 StringRef stringifyCanonicalDependencyKind(CanonicalDependencyKind kind);
+StringRef stringifyCanonicalOwnershipKind(CanonicalOwnershipKind kind);
 void printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
                             const CanonicalSyncPlan &plan, StringRef view);
 void printCanonicalSyncPlanDot(llvm::raw_ostream &os, func::FuncOp func,

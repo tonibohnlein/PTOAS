@@ -679,7 +679,7 @@ unsigned CanonicalSyncPlanBuilder::getRecurrenceWidth(
 void CanonicalSyncPlanBuilder::materializeSyncRequirements() {
   materializeBarriers();
   materializeEvents();
-  synthesizeL0OwnershipProtocols();
+  synthesizeOwnershipProtocols();
   optimizeBarriers();
 }
 

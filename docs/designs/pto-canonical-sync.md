@@ -248,6 +248,36 @@ conservative event.
 Event IDs used internally by PTO synchronization macros are reserved in the
 corresponding pipe-pair domain.
 
+### Physical-slot ownership analysis
+
+CanonicalSync analyzes reusable local-memory ownership before selecting a
+synchronization mechanism. An ownership cycle records:
+
+- a producer and consumer pipe;
+- each lane as a sorted bundle of exact physical `(space, address, size)`
+  ranges;
+- the producer and consumer nodes for every use;
+- write-acquire, ready, read-acquire, and release anchors; and
+- every mutually exclusive structured-control path through the cycle.
+
+Lane identity is physical rather than SSA-based. This lets the analysis follow
+address reuse introduced by memory planning while refusing unknown ranges or
+overlapping lanes. Paths may use the same lanes in different orders, as in a
+parity branch. Every path must account for every lane, and alternative
+consumers are accepted only when both arms access the same physical bundle.
+
+The first client recognizes L0 operand ownership from exact `LEFT` and `RIGHT`
+bundles produced on `PIPE_MTE1` and consumed on `PIPE_M`. It supports any
+number of disjoint lanes and one or more producer operations whose combined
+writes exactly match a consumer bundle. The analysis result is independent of
+protocol selection and is available through the plan printer's `ownership`
+view. L1 and L0C ownership use the same representation but require separate
+role-specific discovery before they are enabled.
+
+An analyzed cycle is only a protocol candidate. CanonicalSync emits its ready
+and release events only after token-protocol verification, exact recoloring,
+and whole-plan completion coverage succeed.
+
 ### Barrier optimization
 
 CanonicalSync considers non-recurrence barriers in deterministic order. For

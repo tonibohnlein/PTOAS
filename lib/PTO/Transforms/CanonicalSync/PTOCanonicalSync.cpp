@@ -35,7 +35,7 @@ constexpr std::int64_t kHardwareEventIdCount = 8;
 
 bool isValidView(StringRef view) {
   return view == "all" || view == "dependencies" || view == "plan" ||
-         view == "events";
+         view == "events" || view == "ownership";
 }
 
 bool isKernelDispatchWrapper(func::FuncOp func) {

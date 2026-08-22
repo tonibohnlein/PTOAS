@@ -33,6 +33,15 @@ mlir::pto::stringifyCanonicalDependencyKind(CanonicalDependencyKind kind) {
   return "unknown";
 }
 
+StringRef
+mlir::pto::stringifyCanonicalOwnershipKind(CanonicalOwnershipKind kind) {
+  switch (kind) {
+  case CanonicalOwnershipKind::L0Operand:
+    return "l0-operand";
+  }
+  return "unknown";
+}
+
 namespace {
 
 bool includesDependencies(StringRef view) {
@@ -43,6 +52,34 @@ bool includesPlan(StringRef view) { return view == "all" || view == "plan"; }
 
 bool includesEvents(StringRef view) {
   return view == "all" || view == "events";
+}
+
+bool includesOwnership(StringRef view) {
+  return view == "all" || view == "ownership";
+}
+
+StringRef stringifyOwnershipAddressSpace(AddressSpace space) {
+  switch (space) {
+  case AddressSpace::Zero:
+    return "zero";
+  case AddressSpace::GM:
+    return "gm";
+  case AddressSpace::MAT:
+    return "mat";
+  case AddressSpace::LEFT:
+    return "left";
+  case AddressSpace::RIGHT:
+    return "right";
+  case AddressSpace::ACC:
+    return "acc";
+  case AddressSpace::VEC:
+    return "vec";
+  case AddressSpace::BIAS:
+    return "bias";
+  case AddressSpace::SCALING:
+    return "scaling";
+  }
+  return "unknown";
 }
 
 StringRef stringifyFixedEdgeKind(SyncGraphEdgeKind kind) {
@@ -58,6 +95,12 @@ StringRef stringifyFixedEdgeKind(SyncGraphEdgeKind kind) {
 }
 
 void printIds(llvm::raw_ostream &os, ArrayRef<unsigned> ids) {
+  os << '[';
+  llvm::interleaveComma(ids, os);
+  os << ']';
+}
+
+void printNodeIds(llvm::raw_ostream &os, ArrayRef<std::size_t> ids) {
   os << '[';
   llvm::interleaveComma(ids, os);
   os << ']';
@@ -89,7 +132,8 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
      << " dependencies=" << plan.getDependencies().size()
      << " requirements=" << plan.getCompletionRequirements().size()
      << " barriers=" << plan.getBarriers().size()
-     << " events=" << plan.getEvents().size() << '\n';
+     << " events=" << plan.getEvents().size()
+     << " ownership-cycles=" << plan.getOwnershipCycles().size() << '\n';
   if (includesDependencies(view)) {
     for (const CanonicalSyncNode &node : plan.getNodes()) {
       os << "  node[" << node.id
@@ -153,6 +197,42 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
       os << '\n';
     }
   }
+  if (includesOwnership(view)) {
+    for (auto [cycleIndex, cycle] :
+         llvm::enumerate(plan.getOwnershipCycles())) {
+      os << "  ownership[" << cycleIndex
+         << "] kind=" << stringifyCanonicalOwnershipKind(cycle.kind) << ' '
+         << stringifyPIPE(static_cast<PIPE>(cycle.producerPipe)) << " -> "
+         << stringifyPIPE(static_cast<PIPE>(cycle.consumerPipe))
+         << " lanes=" << cycle.lanes.size() << " paths=" << cycle.paths.size()
+         << '\n';
+      for (const CanonicalOwnershipLane &lane : cycle.lanes) {
+        os << "    lane[" << lane.id << "] slots=[";
+        llvm::interleaveComma(lane.slots, os,
+                              [&](const CanonicalPhysicalSlot &slot) {
+                                os << stringifyOwnershipAddressSpace(slot.space)
+                                   << '@' << slot.address << '+' << slot.size;
+                              });
+        os << "]\n";
+      }
+      for (auto [pathIndex, path] : llvm::enumerate(cycle.paths)) {
+        os << "    path[" << pathIndex << "] uses=" << path.uses.size()
+           << " lane-order=[";
+        llvm::interleaveComma(
+            path.uses, os,
+            [&](const CanonicalOwnershipUse &use) { os << use.lane; });
+        os << "]\n";
+        for (auto [useIndex, use] : llvm::enumerate(path.uses)) {
+          os << "      use[" << useIndex << "] lane=" << use.lane
+             << " producers=";
+          printNodeIds(os, use.producers);
+          os << " consumers=";
+          printNodeIds(os, use.consumers);
+          os << '\n';
+        }
+      }
+    }
+  }
 }
 
 void mlir::pto::printCanonicalSyncPlanDot(llvm::raw_ostream &os,
@@ -163,7 +243,9 @@ void mlir::pto::printCanonicalSyncPlanDot(llvm::raw_ostream &os,
   printQuoted(os, func.getSymName());
   os << " {\n  rankdir=LR;\n"
         "  node [fontname=\"DejaVu Sans\", fontsize=10, shape=box];\n";
-  if (includesDependencies(view) || includesPlan(view)) {
+  const bool printNodes = includesDependencies(view) || includesPlan(view) ||
+                          includesOwnership(view);
+  if (printNodes) {
     for (const CanonicalSyncNode &node : plan.getNodes()) {
       os << "  n" << node.id << " [label=";
       printQuoted(os, (llvm::Twine(node.id) + ": " +
@@ -210,6 +292,28 @@ void mlir::pto::printCanonicalSyncPlanDot(llvm::raw_ostream &os,
         if (sameDomain && overlaps) {
           os << "  e" << first << " -> e" << second
              << " [dir=none, color=\"#9C2F45\"];\n";
+        }
+      }
+    }
+  }
+  if (includesOwnership(view)) {
+    for (auto [cycleIndex, cycle] :
+         llvm::enumerate(plan.getOwnershipCycles())) {
+      os << "  o" << cycleIndex << " [shape=diamond, label=";
+      printQuoted(os, (llvm::Twine("ownership ") + llvm::Twine(cycleIndex) +
+                       "\n" + stringifyCanonicalOwnershipKind(cycle.kind))
+                          .str());
+      os << "];\n";
+      for (const CanonicalOwnershipPath &path : cycle.paths) {
+        for (const CanonicalOwnershipUse &use : path.uses) {
+          for (std::size_t producer : use.producers) {
+            os << "  n" << producer << " -> o" << cycleIndex
+               << " [style=dotted];\n";
+          }
+          for (std::size_t consumer : use.consumers) {
+            os << "  o" << cycleIndex << " -> n" << consumer
+               << " [style=dotted];\n";
+          }
         }
       }
     }

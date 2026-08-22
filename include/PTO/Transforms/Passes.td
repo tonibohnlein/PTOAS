@@ -158,7 +158,7 @@ def PrintCanonicalSyncPlan
     Option<"format", "format", "std::string", "\"text\"",
            "Output format: text or dot.">,
     Option<"view", "view", "std::string", "\"all\"",
-           "Analysis view: all, dependencies, plan, or events.">,
+           "Analysis view: all, dependencies, plan, events, or ownership.">,
     Option<"eventIdNumMax", "event-id-num-max", "int64_t",
            /*default=*/"8",
            "Maximum hardware EVENT_ID slots available to the planner.">,
