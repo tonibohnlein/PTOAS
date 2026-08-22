@@ -1,0 +1,133 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=IR
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=events event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=PLAN
+
+module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<cube>, pto.target_arch = "a3"} {
+  func.func @l0_ownership_gemm_branched(%arg0: !pto.ptr<f16, gm>, %arg1: !pto.ptr<f16, gm>,
+                                        %arg2: !pto.ptr<f16, gm>, %arg3: !pto.ptr<f32, gm>,
+                                        %arg4: index, %arg5: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %c32768_i64 = arith.constant 32768 : i64
+    %0 = pto.make_tensor_view %arg0, shape = [%c128, %c128], strides = [%c128, %c1]
+      {layout = #pto.layout<nd>, pto.inferred_layout = true} : !pto.tensor_view<?x?xf16>
+    %1 = pto.make_tensor_view %arg1, shape = [%c128, %c256], strides = [%c256, %c1]
+      {layout = #pto.layout<nd>, pto.inferred_layout = true} : !pto.tensor_view<?x?xf16>
+    %2 = pto.make_tensor_view %arg3, shape = [%c128, %c256], strides = [%c256, %c1]
+      {layout = #pto.layout<nd>, pto.inferred_layout = true} : !pto.tensor_view<?x?xf32>
+    %3 = pto.partition_view %0, offsets = [%c0, %c0], sizes = [%c128, %c128] : !pto.tensor_view<?x?xf16>
+    %4 = pto.partition_view %1, offsets = [%c0, %c0], sizes = [%c128, %c256] : !pto.tensor_view<?x?xf16>
+    %5 = pto.partition_view %2, offsets = [%c0, %c0], sizes = [%c128, %c256] : !pto.tensor_view<?x?xf32>
+    %6 = pto.alloc_tile addr = %c0_i64 :
+      !pto.tile_buf<mat, 128x128xf16, blayout=col_major, slayout=row_major>
+    %7 = pto.alloc_tile addr = %c32768_i64 :
+      !pto.tile_buf<mat, 128x256xf16, blayout=col_major, slayout=row_major>
+    %8 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %9 = pto.alloc_tile addr = %c16384_i64 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %10 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+    %11 = pto.alloc_tile addr = %c32768_i64 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+    %12 = pto.alloc_tile addr = %c0_i64 :
+      !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>
+    pto.tload ins(%3 : !pto.partition_tensor_view<128x128xf16>)
+      outs(%6 : !pto.tile_buf<mat, 128x128xf16, blayout=col_major, slayout=row_major>)
+      {layout = #pto.layout<nd>, pto.inferred_layout = true}
+    pto.tload ins(%4 : !pto.partition_tensor_view<128x256xf16>)
+      outs(%7 : !pto.tile_buf<mat, 128x256xf16, blayout=col_major, slayout=row_major>)
+      {layout = #pto.layout<nd>, pto.inferred_layout = true}
+    pto.textract ins(%6, %c0, %c0 :
+      !pto.tile_buf<mat, 128x128xf16, blayout=col_major, slayout=row_major>, index, index)
+      outs(%9 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+    pto.textract ins(%7, %c0, %c0 :
+      !pto.tile_buf<mat, 128x256xf16, blayout=col_major, slayout=row_major>, index, index)
+      outs(%11 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+    pto.tmatmul ins(%9, %11 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+      !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+      outs(%12 : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+    scf.for %arg6 = %c0 to %arg4 step %c1 {
+      scf.if %arg5 {
+        pto.textract ins(%6, %c0, %c0 :
+          !pto.tile_buf<mat, 128x128xf16, blayout=col_major, slayout=row_major>, index, index)
+          outs(%8 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        pto.textract ins(%7, %c0, %c0 :
+          !pto.tile_buf<mat, 128x256xf16, blayout=col_major, slayout=row_major>, index, index)
+          outs(%10 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+        pto.tmatmul.acc ins(%12, %8, %10 :
+          !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          outs(%12 : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+        pto.textract ins(%6, %c0, %c64 :
+          !pto.tile_buf<mat, 128x128xf16, blayout=col_major, slayout=row_major>, index, index)
+          outs(%9 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        pto.textract ins(%7, %c64, %c0 :
+          !pto.tile_buf<mat, 128x256xf16, blayout=col_major, slayout=row_major>, index, index)
+          outs(%11 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+        pto.tmatmul.acc ins(%12, %9, %11 :
+          !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          outs(%12 : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+      } else {
+        pto.textract ins(%6, %c0, %c0 :
+          !pto.tile_buf<mat, 128x128xf16, blayout=col_major, slayout=row_major>, index, index)
+          outs(%8 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        pto.textract ins(%7, %c0, %c0 :
+          !pto.tile_buf<mat, 128x256xf16, blayout=col_major, slayout=row_major>, index, index)
+          outs(%10 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+        pto.tmatmul.acc ins(%12, %8, %10 :
+          !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          outs(%12 : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+        pto.textract ins(%6, %c0, %c64 :
+          !pto.tile_buf<mat, 128x128xf16, blayout=col_major, slayout=row_major>, index, index)
+          outs(%9 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        pto.textract ins(%7, %c64, %c0 :
+          !pto.tile_buf<mat, 128x256xf16, blayout=col_major, slayout=row_major>, index, index)
+          outs(%11 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+        pto.tmatmul.acc ins(%12, %9, %11 :
+          !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          outs(%12 : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+      }
+    }
+    pto.tstore ins(%12 :
+      !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+      outs(%5 : !pto.partition_tensor_view<128x256xf32>)
+      {layout = #pto.layout<nd>, pto.inferred_layout = true}
+    return
+  }
+}
+
+// IR-LABEL: func.func @l0_ownership_gemm_branched
+// IR: pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+// IR-NEXT: pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+// IR: scf.for
+// IR: scf.if
+// IR: } else {
+// IR: pto.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+// IR-NEXT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+// IR-NEXT: pto.tstore
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @l0_ownership_gemm_branched
+// PLAN: PIPE_M -> PIPE_FIX {{.*}}actions=2 completions=2 traces=1 ownership=no
+// PLAN: PIPE_MTE1 -> PIPE_M {{.*}}width=2{{.*}}completions=8 traces=2 ownership=yes
+// PLAN: PIPE_M -> PIPE_MTE1 {{.*}}width=2{{.*}}completions=16 traces=4 ownership=yes
+// PLAN: domain PIPE_M -> PIPE_MTE1 original-events=3 events=3 available=8 original-colors=3 colors=3

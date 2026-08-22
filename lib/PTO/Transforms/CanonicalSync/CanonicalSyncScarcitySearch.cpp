@@ -1,12 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under
-// the terms and conditions of CANN Open Software License Agreement Version 2.0
-// (the "License"). Please refer to the License for details. You may not use
-// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
-// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
-// for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 #include "CanonicalSyncInternal.h"
 
@@ -169,6 +167,21 @@ CanonicalSyncPlanBuilder::repairEventDomain(const CanonicalEventDomainKey &key,
       originals.push_back(event);
     }
   }
+  const auto replaceDomainEvents = [&](ArrayRef<CanonicalEvent> replacement) {
+    std::vector<CanonicalEvent> updated;
+    bool inserted = false;
+    for (auto [index, event] : llvm::enumerate(plan_.events_)) {
+      if (llvm::is_contained(domainIndices, index)) {
+        if (!inserted) {
+          updated.insert(updated.end(), replacement.begin(), replacement.end());
+          inserted = true;
+        }
+      } else {
+        updated.push_back(event);
+      }
+    }
+    return updated;
+  };
 
   ScarcityState initial;
   for (auto [index, event] : llvm::enumerate(originals)) {
@@ -221,6 +234,16 @@ CanonicalSyncPlanBuilder::repairEventDomain(const CanonicalEventDomainKey &key,
             continue;
           }
           evaluateState(candidate, originals, blockPipeRanks, latencyContext);
+          const std::vector<CanonicalEvent> candidateDomain =
+              collectEvents(candidate);
+          const std::vector<CanonicalEvent> candidatePlan =
+              replaceDomainEvents(candidateDomain);
+          if (failed(verifyEventProtocols(candidatePlan,
+                                          /*requireAllocation=*/false,
+                                          /*diagnose=*/false)) ||
+              !planCoversRequirements(plan_.barriers_, candidatePlan)) {
+            continue;
+          }
           candidates.push_back(std::move(candidate));
         }
       }
@@ -235,19 +258,7 @@ CanonicalSyncPlanBuilder::repairEventDomain(const CanonicalEventDomainKey &key,
       stats.serializationCost = solution.serializationCost;
       stats.criticalPathWeight = solution.criticalPathWeight;
       const std::vector<CanonicalEvent> repaired = collectEvents(solution);
-      std::vector<CanonicalEvent> updated;
-      bool inserted = false;
-      for (auto [index, event] : llvm::enumerate(plan_.events_)) {
-        if (llvm::is_contained(domainIndices, index)) {
-          if (!inserted) {
-            updated.insert(updated.end(), repaired.begin(), repaired.end());
-            inserted = true;
-          }
-        } else {
-          updated.push_back(event);
-        }
-      }
-      plan_.events_ = std::move(updated);
+      plan_.events_ = replaceDomainEvents(repaired);
       return success();
     }
     const std::size_t candidateCount = candidates.size();

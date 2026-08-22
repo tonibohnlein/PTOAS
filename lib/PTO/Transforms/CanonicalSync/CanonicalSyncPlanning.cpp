@@ -1,12 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under
-// the terms and conditions of CANN Open Software License Agreement Version 2.0
-// (the "License"). Please refer to the License for details. You may not use
-// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
-// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
-// for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 #include "CanonicalSyncInternal.h"
 
@@ -829,7 +827,7 @@ void CanonicalSyncPlanBuilder::materializeEventsFrom(
         dependency.iterationDistance == 0
             ? makeForwardEvent(dependency.source, dependency.target)
             : makeRecurrenceEvent(dependency);
-    const bool duplicate = llvm::any_of(events, [&](const auto &old) {
+    auto existing = llvm::find_if(events, [&](const auto &old) {
       const bool sameProtocol =
           old.sourcePipe == event.sourcePipe &&
           old.targetPipe == event.targetPipe &&
@@ -846,8 +844,24 @@ void CanonicalSyncPlanBuilder::materializeEventsFrom(
               (old.source == event.source && old.target == event.target &&
                old.iterationDistance == event.iterationDistance));
     });
-    if (!duplicate) {
+    if (existing == events.end()) {
       events.push_back(std::move(event));
+      continue;
+    }
+    for (const CanonicalEventCompletion &completion : event.completions) {
+      const bool duplicateCompletion = llvm::any_of(
+          existing->completions,
+          [&](const CanonicalEventCompletion &old) {
+            return old.source == completion.source &&
+                   old.target == completion.target &&
+                   old.iterationDistance == completion.iterationDistance &&
+                   old.recurrenceLoop == completion.recurrenceLoop &&
+                   old.setAction == completion.setAction &&
+                   old.waitAction == completion.waitAction;
+          });
+      if (!duplicateCompletion) {
+        existing->completions.push_back(completion);
+      }
     }
   }
 }
