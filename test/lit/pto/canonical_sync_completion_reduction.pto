@@ -386,6 +386,9 @@ module attributes {pto.target_arch = "a2a3"} {
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @zero_trip_path_preserved
 // PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=yes
+// PLAN: scope[1] op=scf.for operation-order={{[0-9]+}} parent-scope=0
+// PLAN: requirement[5] 1 -> 1 kind=memory-raw distance=1 recurrence=yes scope=1
+// PLAN: barrier[0] pipe=PIPE_V anchor=before:pto.tmuls anchor-nodes=[1] recurrence=yes scope=1 requirements=[5, 6, 7]
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @positive_trip_path_reduced
 // PLAN-SAME: barriers=0 events=2
@@ -406,6 +409,8 @@ module attributes {pto.target_arch = "a2a3"} {
 // PLAN-LABEL: PTOCanonicalSyncPlan @barrier_covers_event
 // PLAN-SAME: barriers=1 events=0
 // PLAN: dependency 0 -> 3 kind=memory-raw distance=0 retained=yes
+// PLAN: requirement[2] 1 -> 2 kind=memory-waw distance=0 recurrence=no scope=0
+// PLAN: barrier[0] pipe=PIPE_MTE2 anchor=before:pto.tload anchor-nodes=[2] recurrence=no scope=0 requirements=[2]
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @conditional_barrier_does_not_cover
 // PLAN-SAME: barriers=1 events=1
@@ -426,6 +431,9 @@ module attributes {pto.target_arch = "a2a3"} {
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @nested_recurrence_third_pipe_preserved
 // PLAN: dependency 3 -> 0 kind=memory-raw distance=1 retained=yes
+// PLAN: scope[1] op=scf.for operation-order={{[0-9]+}} parent-scope=2
+// PLAN: scope[2] op=scf.for operation-order={{[0-9]+}} parent-scope=0
+// PLAN: barrier[0] pipe=PIPE_MTE3 anchor=before:pto.tstore anchor-nodes=[0] recurrence=yes scope=2 requirements=[6, 15]
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @round_trip_events_replace_barrier
 // PLAN-SAME: barriers=0 events=2
@@ -440,6 +448,7 @@ module attributes {pto.target_arch = "a2a3"} {
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @while_synthetic_round_trip_drains
 // PLAN-SAME: barriers=1
+// PLAN: barrier[1] pipe=PIPE_MTE3 anchor=before:pto.tstore anchor-nodes=[1] recurrence=yes scope=1 requirements=[10]
 
 // IR-LABEL: func.func @positive_trip_path_reduced
 // IR-NOT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>

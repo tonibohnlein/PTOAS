@@ -44,6 +44,11 @@ enum class CanonicalOwnershipKind : std::uint8_t {
   L0Accumulator,
 };
 
+enum class CanonicalOwnershipProtocolKind : std::uint8_t {
+  RoundTrip,
+  AlternatingPrefetch,
+};
+
 struct CanonicalPhysicalSlot {
   AddressSpace space = AddressSpace::Zero;
   std::uint64_t address = 0;
@@ -104,6 +109,7 @@ struct CanonicalOwnershipLane {
 
 struct CanonicalOwnershipUse {
   unsigned lane = 0;
+  unsigned producerLane = 0;
   SmallVector<std::size_t, 2> producers;
   SmallVector<std::size_t, 2> consumers;
   CanonicalAnchor writeAcquireAnchor;
@@ -120,17 +126,34 @@ struct CanonicalOwnershipPath {
 struct CanonicalOwnershipCycle {
   std::size_t id = 0;
   CanonicalOwnershipKind kind = CanonicalOwnershipKind::L0Operand;
+  CanonicalOwnershipProtocolKind protocol =
+      CanonicalOwnershipProtocolKind::RoundTrip;
   Operation *loop = nullptr;
   PipelineType producerPipe = PipelineType::PIPE_UNASSIGNED;
   PipelineType consumerPipe = PipelineType::PIPE_UNASSIGNED;
   SmallVector<CanonicalOwnershipLane, 2> lanes;
   SmallVector<CanonicalOwnershipPath, 2> paths;
+  SmallVector<std::size_t, 2> initialProducers;
+  CanonicalAnchor initialReadyAnchor;
+  unsigned initialReadyLane = 0;
+  SmallVector<unsigned, 2> initiallyFreeLanes;
+};
+
+struct CanonicalRecurrenceScope {
+  std::size_t id = 0;
+  Operation *operation = nullptr;
+  std::size_t operationOrder = 0;
+  std::size_t parentScope = 0;
 };
 
 struct CanonicalBarrier {
+  std::size_t id = 0;
   PipelineType pipe = PipelineType::PIPE_UNASSIGNED;
   CanonicalAnchor anchor;
+  SmallVector<std::size_t, 2> anchorNodes;
   Operation *recurrenceLoop = nullptr;
+  std::size_t recurrenceScope = 0;
+  SmallVector<std::size_t, 3> requirements;
 };
 
 enum class CanonicalEventActionKind : std::uint8_t { Set, Wait };
@@ -169,6 +192,7 @@ struct CanonicalEventAction {
   CanonicalEventActionPhase phase = CanonicalEventActionPhase::Straight;
   CanonicalAnchor anchor;
   CanonicalEventLane lane;
+  Operation *nonEmptyLoopGuard = nullptr;
 };
 
 struct CanonicalEventCompletion {
@@ -184,6 +208,9 @@ struct CanonicalEventTrace {
   CanonicalEventTraceKind kind = CanonicalEventTraceKind::Straight;
   SmallVector<unsigned, 8> actions;
   Region *controlRegion = nullptr;
+  bool hasExplicitTokenState = false;
+  SmallVector<unsigned, 8> initialTokens;
+  SmallVector<unsigned, 8> expectedTokens;
 };
 
 struct CanonicalEvent {
@@ -239,6 +266,9 @@ public:
   ArrayRef<CanonicalDependency> getCompletionRequirements() const {
     return completionRequirements_;
   }
+  ArrayRef<CanonicalRecurrenceScope> getRecurrenceScopes() const {
+    return recurrenceScopes_;
+  }
   ArrayRef<CanonicalBarrier> getBarriers() const { return barriers_; }
   ArrayRef<CanonicalEvent> getEvents() const { return events_; }
   ArrayRef<CanonicalEventDomain> getDomains() const { return domains_; }
@@ -255,6 +285,7 @@ private:
   std::vector<SyncGraphEdge> fixedEdges_;
   std::vector<CanonicalDependency> dependencies_;
   std::vector<CanonicalDependency> completionRequirements_;
+  std::vector<CanonicalRecurrenceScope> recurrenceScopes_;
   std::vector<CanonicalBarrier> barriers_;
   std::vector<CanonicalEvent> events_;
   std::vector<CanonicalEventDomain> domains_;

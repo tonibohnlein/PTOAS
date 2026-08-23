@@ -328,6 +328,48 @@ bool testSyncTokenTrace() {
   return passed;
 }
 
+bool testAlternatingOwnershipTokenTrace() {
+  const auto valid = [](std::vector<SyncTokenAction> actions) {
+    return mlir::pto::verifySyncTokenTrace(2, {}, actions, {});
+  };
+  bool passed = check(valid({}), "zero-trip guards emit no token actions");
+
+  const std::vector<SyncTokenAction> readyOne = {
+      {SyncTokenActionKind::Set, 0}, {SyncTokenActionKind::Wait, 0}};
+  passed &= check(valid(readyOne), "one-trip ready protocol consumes lane 0");
+  const std::vector<SyncTokenAction> readyTwo = {
+      {SyncTokenActionKind::Set, 0},  {SyncTokenActionKind::Wait, 0},
+      {SyncTokenActionKind::Set, 1},  {SyncTokenActionKind::Wait, 1}};
+  passed &= check(valid(readyTwo),
+                  "two-trip ready protocol transfers lane 0 to lane 1");
+  const std::vector<SyncTokenAction> readyThree = {
+      {SyncTokenActionKind::Set, 0},  {SyncTokenActionKind::Wait, 0},
+      {SyncTokenActionKind::Set, 1},  {SyncTokenActionKind::Wait, 1},
+      {SyncTokenActionKind::Set, 0},  {SyncTokenActionKind::Wait, 0}};
+  passed &= check(valid(readyThree),
+                  "multi-trip ready protocol alternates and terminates");
+
+  const std::vector<SyncTokenAction> releaseOne = {
+      {SyncTokenActionKind::Set, 1},  {SyncTokenActionKind::Set, 0},
+      {SyncTokenActionKind::Wait, 0}, {SyncTokenActionKind::Wait, 1}};
+  passed &= check(valid(releaseOne),
+                  "one-trip release protocol fills and drains both lanes");
+  const std::vector<SyncTokenAction> releaseTwo = {
+      {SyncTokenActionKind::Set, 1},  {SyncTokenActionKind::Set, 0},
+      {SyncTokenActionKind::Wait, 1}, {SyncTokenActionKind::Set, 1},
+      {SyncTokenActionKind::Wait, 0}, {SyncTokenActionKind::Wait, 1}};
+  passed &= check(valid(releaseTwo),
+                  "two-trip release protocol transfers and drains ownership");
+  const std::vector<SyncTokenAction> releaseThree = {
+      {SyncTokenActionKind::Set, 1},  {SyncTokenActionKind::Set, 0},
+      {SyncTokenActionKind::Wait, 1}, {SyncTokenActionKind::Set, 1},
+      {SyncTokenActionKind::Wait, 0}, {SyncTokenActionKind::Set, 0},
+      {SyncTokenActionKind::Wait, 0}, {SyncTokenActionKind::Wait, 1}};
+  passed &= check(valid(releaseThree),
+                  "multi-trip release protocol alternates and drains");
+  return passed;
+}
+
 bool testSyncIntervalAllocationVerification() {
   using mlir::pto::SyncAllocatedInterval;
   const std::vector<SyncAllocatedInterval> valid = {
@@ -358,6 +400,7 @@ int main() {
       testColoringBoundariesAndDeterminism() &&
       testInvalidCompletionRequirements() && testScopedCompletionReduction() &&
       testDenseCompletionReduction() && testCompletionCoverage() &&
-      testSyncTokenTrace() && testSyncIntervalAllocationVerification();
+      testSyncTokenTrace() && testAlternatingOwnershipTokenTrace() &&
+      testSyncIntervalAllocationVerification();
   return passed ? 0 : 1;
 }

@@ -194,9 +194,9 @@ bool hasValidPhaseAnchor(const CanonicalEvent &event,
 }
 
 bool isPhaseAllowedInTrace(const CanonicalEvent &event,
-                           CanonicalEventTraceKind trace,
+                           const CanonicalEventTrace &trace,
                            CanonicalEventActionPhase phase) {
-  switch (trace) {
+  switch (trace.kind) {
   case CanonicalEventTraceKind::Straight:
     return phase == CanonicalEventActionPhase::Straight ||
            (event.forwardDrainLoop &&
@@ -210,7 +210,9 @@ bool isPhaseAllowedInTrace(const CanonicalEvent &event,
            phase == CanonicalEventActionPhase::Condition;
   case CanonicalEventTraceKind::Final:
     return phase == CanonicalEventActionPhase::Drain ||
-           phase == CanonicalEventActionPhase::Condition;
+           phase == CanonicalEventActionPhase::Condition ||
+           (event.ownershipProtocol && trace.hasExplicitTokenState &&
+            phase == CanonicalEventActionPhase::Body);
   }
   return false;
 }
@@ -373,11 +375,19 @@ bool CanonicalSyncPlanBuilder::verifyEventProtocol(const CanonicalEvent &event,
   }
 
   for (const CanonicalEventAction &action : event.actions) {
+    const bool validNonEmptyGuard =
+        !action.nonEmptyLoopGuard ||
+        (event.ownershipProtocol &&
+         action.nonEmptyLoopGuard == event.recurrenceLoop &&
+         isa<scf::ForOp>(action.nonEmptyLoopGuard) &&
+         (action.phase == CanonicalEventActionPhase::Prime ||
+          action.phase == CanonicalEventActionPhase::Drain));
     if (!action.anchor.operation ||
         (action.lane.kind == CanonicalEventLaneKind::Static &&
          action.lane.index >= event.width) ||
         (action.lane.kind == CanonicalEventLaneKind::Dynamic &&
-         (!action.lane.selector || event.width <= 1))) {
+         (!action.lane.selector || event.width <= 1)) ||
+        !validNonEmptyGuard) {
       return reject("invalid action anchor or lane selector");
     }
     if (!hasValidPhaseAnchor(event, action) ||
@@ -479,6 +489,7 @@ bool CanonicalSyncPlanBuilder::verifyEventProtocol(const CanonicalEvent &event,
   unsigned primeCount = 0;
   unsigned cycleCount = 0;
   unsigned finalCount = 0;
+  bool hasExplicitStateTrace = false;
   for (const CanonicalEventTrace &trace : event.traces) {
     SmallVector<CanonicalEventAction, 16> actions;
     SmallVector<bool, 16> seen(event.actions.size(), false);
@@ -508,30 +519,45 @@ bool CanonicalSyncPlanBuilder::verifyEventProtocol(const CanonicalEvent &event,
           ordered = getAnchorPosition(previousAction->anchor) <= position;
         }
       }
-      if (!isPhaseAllowedInTrace(event, trace.kind, action.phase) || !ordered ||
-          (trace.controlRegion &&
-           !isActionInRegion(action, trace.controlRegion))) {
+      const bool validTraceAction =
+          isPhaseAllowedInTrace(event, trace, action.phase) && ordered &&
+          (!trace.controlRegion ||
+           isActionInRegion(action, trace.controlRegion));
+      if (!validTraceAction) {
         return reject("trace action has an invalid phase, order, or path");
       }
       previousAction = &action;
       actions.push_back(action);
     }
-    ArrayRef<unsigned> initial;
-    ArrayRef<unsigned> expected;
+    ArrayRef<unsigned> initial = trace.initialTokens;
+    ArrayRef<unsigned> expected = trace.expectedTokens;
+    hasExplicitStateTrace |= trace.hasExplicitTokenState;
+    if (!trace.hasExplicitTokenState) {
+      switch (trace.kind) {
+      case CanonicalEventTraceKind::Straight:
+        break;
+      case CanonicalEventTraceKind::Prime:
+        expected = lanes;
+        break;
+      case CanonicalEventTraceKind::Cycle:
+        initial = lanes;
+        expected = lanes;
+        break;
+      case CanonicalEventTraceKind::Final:
+        initial = lanes;
+        break;
+      }
+    }
     switch (trace.kind) {
     case CanonicalEventTraceKind::Straight:
       break;
     case CanonicalEventTraceKind::Prime:
-      expected = lanes;
       ++primeCount;
       break;
     case CanonicalEventTraceKind::Cycle:
-      initial = lanes;
-      expected = lanes;
       ++cycleCount;
       break;
     case CanonicalEventTraceKind::Final:
-      initial = lanes;
       ++finalCount;
       break;
     }
@@ -545,7 +571,10 @@ bool CanonicalSyncPlanBuilder::verifyEventProtocol(const CanonicalEvent &event,
     return reject("event action is not covered by a verified trace");
   }
   if (event.recurrenceLoop) {
-    return (primeCount == 1 && cycleCount != 0 && finalCount == 1) ||
+    const bool validFinalCount =
+        finalCount == 1 ||
+        (event.ownershipProtocol && hasExplicitStateTrace && finalCount != 0);
+    return (primeCount == 1 && cycleCount != 0 && validFinalCount) ||
            reject(
                "cyclic protocol lacks one prime, cycles, or one final trace");
   }

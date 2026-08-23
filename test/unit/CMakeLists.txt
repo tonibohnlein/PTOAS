@@ -35,7 +35,6 @@ set_tests_properties(pto_canonical_sync_algorithms_unit
 
 add_executable(pto-canonical-sync-ownership-verification-unit-test
   CanonicalSyncOwnershipVerificationTest.cpp
-  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/CanonicalSyncOwnershipVerification.cpp"
 )
 target_include_directories(pto-canonical-sync-ownership-verification-unit-test PRIVATE
   "${PROJECT_SOURCE_DIR}/include"
@@ -43,6 +42,7 @@ target_include_directories(pto-canonical-sync-ownership-verification-unit-test P
 )
 target_link_libraries(pto-canonical-sync-ownership-verification-unit-test PRIVATE
   MLIRIR
+  PTOTransforms
   LLVMSupport
 )
 add_test(NAME pto_canonical_sync_ownership_verification_unit

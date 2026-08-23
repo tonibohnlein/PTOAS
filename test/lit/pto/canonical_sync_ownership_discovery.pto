@@ -15,6 +15,10 @@
 // RUN: pto-test-opt %s \
 // RUN:   '-pto-print-canonical-sync-plan=format=text view=events' \
 // RUN:   | FileCheck %s --check-prefix=EVENTS
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=L0C-IR
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=L1-IR
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @nested_l1_ownership(%source0: !pto.ptr<f16, gm>,
@@ -326,6 +330,184 @@ module attributes {pto.target_arch = "a2a3"} {
     }
     return
   }
+
+  func.func @parity_prefetch_l1_ownership(%source: !pto.ptr<f16, gm>,
+                                           %limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %addr0 = arith.constant 0 : i64
+    %addr32768 = arith.constant 32768 : i64
+    %addr65536 = arith.constant 65536 : i64
+    %addr98304 = arith.constant 98304 : i64
+    %view = pto.make_tensor_view %source, shape = [%c128, %c128],
+      strides = [%c128, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%c0, %c0],
+      sizes = [%c128, %c128] : !pto.tensor_view<?x?xf16>
+    %a0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %a1 = pto.alloc_tile addr = %addr32768 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %b0 = pto.alloc_tile addr = %addr65536 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %b1 = pto.alloc_tile addr = %addr98304 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %left0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %left1 = pto.alloc_tile addr = %addr32768 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+      outs(%a0 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+    scf.for %i = %c0 to %limit step %c1 {
+      %parity = arith.remsi %i, %c2 : index
+      %is_even = arith.cmpi eq, %parity, %c0 : index
+      scf.if %is_even {
+        pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+          outs(%b0 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+        pto.textract ins(%a0, %c0, %c0 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left0 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        pto.textract ins(%b0, %c0, %c0 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left1 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+          outs(%b1 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+        pto.textract ins(%b1, %c0, %c64 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left1 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        %next = arith.addi %i, %c1 : index
+        %has_next = arith.cmpi slt, %next, %limit : index
+        scf.if %has_next {
+          pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+            outs(%a1 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+        }
+      } else {
+        pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+          outs(%b0 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+        pto.textract ins(%a1, %c0, %c0 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left0 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        pto.textract ins(%b0, %c0, %c0 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left1 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+          outs(%b1 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+        pto.textract ins(%b1, %c0, %c64 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left1 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        %next = arith.addi %i, %c1 : index
+        %has_next = arith.cmpi slt, %next, %limit : index
+        scf.if %has_next {
+          pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+            outs(%a0 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+        }
+      }
+    }
+    return
+  }
+
+  func.func @unguarded_parity_prefetch_refused(%source: !pto.ptr<f16, gm>,
+                                                %limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c128 = arith.constant 128 : index
+    %addr0 = arith.constant 0 : i64
+    %addr32768 = arith.constant 32768 : i64
+    %view = pto.make_tensor_view %source, shape = [%c128, %c128],
+      strides = [%c128, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%c0, %c0],
+      sizes = [%c128, %c128] : !pto.tensor_view<?x?xf16>
+    %a0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %a1 = pto.alloc_tile addr = %addr32768 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %left = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+      outs(%a0 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+    scf.for %i = %c0 to %limit step %c1 {
+      %parity = arith.remsi %i, %c2 : index
+      %is_even = arith.cmpi eq, %parity, %c0 : index
+      scf.if %is_even {
+        pto.textract ins(%a0, %c0, %c0 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+          outs(%a1 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+      } else {
+        pto.textract ins(%a1, %c0, %c0 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+          outs(%a0 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+      }
+    }
+    return
+  }
+
+  func.func @dynamic_address_l0c_refused(
+      %output: !pto.partition_tensor_view<128x256xf32>,
+      %address: i64, %limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %addr0 = arith.constant 0 : i64
+    %left = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %right = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+    %acc = pto.alloc_tile addr = %address :
+      !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>
+    scf.for %i = %c0 to %limit step %c1 {
+      scf.for %k = %c0 to %c2 step %c1 {
+        pto.tmatmul ins(%left, %right :
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          outs(%acc : !pto.tile_buf<acc, 128x256xf32,
+               blayout=col_major, slayout=row_major, fractal=1024>)
+      }
+      pto.tstore ins(%acc : !pto.tile_buf<acc, 128x256xf32,
+                       blayout=col_major, slayout=row_major, fractal=1024>)
+        outs(%output : !pto.partition_tensor_view<128x256xf32>)
+    }
+    return
+  }
+
+  func.func @multiple_l0c_consumers_refused(
+      %output0: !pto.partition_tensor_view<128x256xf32>,
+      %output1: !pto.partition_tensor_view<128x256xf32>, %limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %addr0 = arith.constant 0 : i64
+    %left = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %right = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+    %acc = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>
+    scf.for %i = %c0 to %limit step %c1 {
+      scf.for %k = %c0 to %c2 step %c1 {
+        pto.tmatmul ins(%left, %right :
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          outs(%acc : !pto.tile_buf<acc, 128x256xf32,
+               blayout=col_major, slayout=row_major, fractal=1024>)
+      }
+      pto.tstore ins(%acc : !pto.tile_buf<acc, 128x256xf32,
+                       blayout=col_major, slayout=row_major, fractal=1024>)
+        outs(%output0 : !pto.partition_tensor_view<128x256xf32>)
+      pto.tstore ins(%acc : !pto.tile_buf<acc, 128x256xf32,
+                       blayout=col_major, slayout=row_major, fractal=1024>)
+        outs(%output1 : !pto.partition_tensor_view<128x256xf32>)
+    }
+    return
+  }
 }
 
 // OWNERSHIP-LABEL: PTOCanonicalSyncPlan @nested_l1_ownership
@@ -353,15 +535,36 @@ module attributes {pto.target_arch = "a2a3"} {
 // OWNERSHIP-SAME: ownership-cycles=0
 // OWNERSHIP-LABEL: PTOCanonicalSyncPlan @conditional_anchor_l1_refused
 // OWNERSHIP-SAME: ownership-cycles=0
+// OWNERSHIP-LABEL: PTOCanonicalSyncPlan @parity_prefetch_l1_ownership
+// OWNERSHIP-SAME: ownership-cycles=2
+// OWNERSHIP: ownership[0] id=1 kind=l1-tile PIPE_MTE2 -> PIPE_MTE1 lanes=2 paths=2
+// OWNERSHIP: ownership[1] id=2 kind=l1-tile PIPE_MTE2 -> PIPE_MTE1 lanes=2 paths=2 protocol=alternating-prefetch
+// OWNERSHIP: path[0] uses=1 lane-order=[0]
+// OWNERSHIP: use[0] lane=0 producers=[6] consumers=[2] producer-lane=1
+// OWNERSHIP: path[1] uses=1 lane-order=[1]
+// OWNERSHIP: use[0] lane=1 producers=[12] consumers=[8] producer-lane=0
+// OWNERSHIP-LABEL: PTOCanonicalSyncPlan @unguarded_parity_prefetch_refused
+// OWNERSHIP-SAME: ownership-cycles=0
+// OWNERSHIP-LABEL: PTOCanonicalSyncPlan @dynamic_address_l0c_refused
+// OWNERSHIP-SAME: ownership-cycles=0
+// OWNERSHIP-LABEL: PTOCanonicalSyncPlan @multiple_l0c_consumers_refused
+// OWNERSHIP-SAME: ownership-cycles=0
 
 // EVENTS-LABEL: PTOCanonicalSyncPlan @nested_l1_ownership
-// EVENTS-NOT: ownership=yes
+// EVENTS-SAME: barriers=2 events=2
+// EVENTS: event{{.*}} PIPE_MTE2 -> PIPE_MTE1 {{.*}}width=2 {{.*}}ownership=yes ownership-cycle=1 ownership-role=ready
+// EVENTS: event{{.*}} PIPE_MTE1 -> PIPE_MTE2 {{.*}}width=2 {{.*}}ownership=yes ownership-cycle=1 ownership-role=release
 // EVENTS-LABEL: PTOCanonicalSyncPlan @nested_l0c_ownership
-// EVENTS-NOT: ownership=yes
+// EVENTS-SAME: barriers=1 events=2
+// EVENTS: event{{.*}} PIPE_M -> PIPE_FIX {{.*}}width=1 {{.*}}ownership=yes ownership-cycle=1 ownership-role=ready
+// EVENTS: event{{.*}} PIPE_FIX -> PIPE_M {{.*}}width=1 {{.*}}ownership=yes ownership-cycle=1 ownership-role=release
 // EVENTS-LABEL: PTOCanonicalSyncPlan @overlapping_l1_slots_refused
 // EVENTS-NOT: ownership=yes
 // EVENTS-LABEL: PTOCanonicalSyncPlan @two_independent_l1_cycles
-// EVENTS-NOT: ownership=yes
+// EVENTS: ownership=yes ownership-cycle=1 ownership-role=ready
+// EVENTS: ownership=yes ownership-cycle=1 ownership-role=release
+// EVENTS: ownership=yes ownership-cycle=2 ownership-role=ready
+// EVENTS: ownership=yes ownership-cycle=2 ownership-role=release
 // EVENTS-LABEL: PTOCanonicalSyncPlan @single_lane_l1_refused
 // EVENTS-NOT: ownership=yes
 // EVENTS-LABEL: PTOCanonicalSyncPlan @missing_consumer_l1_refused
@@ -369,6 +572,18 @@ module attributes {pto.target_arch = "a2a3"} {
 // EVENTS-LABEL: PTOCanonicalSyncPlan @dynamic_address_l1_refused
 // EVENTS-NOT: ownership=yes
 // EVENTS-LABEL: PTOCanonicalSyncPlan @conditional_anchor_l1_refused
+// EVENTS-NOT: ownership=yes
+// EVENTS-LABEL: PTOCanonicalSyncPlan @parity_prefetch_l1_ownership
+// EVENTS-SAME: barriers=2 events=8
+// EVENTS: PIPE_MTE2 -> PIPE_MTE1 {{.*}}width=2 {{.*}}ownership=yes ownership-cycle=1 ownership-role=ready
+// EVENTS: PIPE_MTE1 -> PIPE_MTE2 {{.*}}width=2 {{.*}}ownership=yes ownership-cycle=1 ownership-role=release
+// EVENTS: PIPE_MTE2 -> PIPE_MTE1 {{.*}}width=2 {{.*}}recurrence=yes {{.*}}ownership=yes ownership-cycle=2 ownership-role=ready
+// EVENTS: PIPE_MTE1 -> PIPE_MTE2 {{.*}}width=2 {{.*}}recurrence=yes {{.*}}ownership=yes ownership-cycle=2 ownership-role=release
+// EVENTS-LABEL: PTOCanonicalSyncPlan @unguarded_parity_prefetch_refused
+// EVENTS-NOT: ownership=yes
+// EVENTS-LABEL: PTOCanonicalSyncPlan @dynamic_address_l0c_refused
+// EVENTS-NOT: ownership=yes
+// EVENTS-LABEL: PTOCanonicalSyncPlan @multiple_l0c_consumers_refused
 // EVENTS-NOT: ownership=yes
 
 // DOT: digraph "nested_l1_ownership"
@@ -380,3 +595,51 @@ module attributes {pto.target_arch = "a2a3"} {
 // DOT: digraph "two_independent_l1_cycles"
 // DOT: label="ownership 0\nl1-tile"
 // DOT: label="ownership 1\nl1-tile"
+// DOT: digraph "parity_prefetch_l1_ownership"
+// DOT: label="ownership 0\nl1-tile"
+// DOT: label="ownership 1\nl1-tile"
+// DOT: digraph "unguarded_parity_prefetch_refused"
+// DOT-NOT: label="ownership
+
+// L0C-IR-LABEL: func.func @nested_l0c_ownership
+// L0C-IR: pto.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+// L0C-IR: scf.for
+// L0C-IR: pto.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+// L0C-IR: scf.for
+// L0C-IR: pto.barrier <PIPE_M>
+// L0C-IR-NEXT: pto.tmatmul
+// L0C-IR: pto.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+// L0C-IR-NOT: pto.barrier <PIPE_FIX>
+// L0C-IR: pto.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+// L0C-IR-NEXT: pto.tstore
+// L0C-IR-NEXT: pto.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+// L0C-IR: pto.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+
+// L1-IR-LABEL: func.func @parity_prefetch_l1_ownership
+// L1-IR: pto.tload
+// L1-IR: %[[NONEMPTY_READY:.+]] = arith.cmpi slt
+// L1-IR-NEXT: scf.if %[[NONEMPTY_READY]]
+// L1-IR: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <[[A0_READY:EVENT_ID[0-7]]]>]
+// L1-IR: %[[NONEMPTY_RELEASE:.+]] = arith.cmpi slt
+// L1-IR-NEXT: scf.if %[[NONEMPTY_RELEASE]]
+// L1-IR: pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <[[A1_FREE:EVENT_ID[0-7]]]>]
+// L1-IR: scf.for
+// L1-IR: scf.if
+// L1-IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <[[A0_READY]]>]
+// L1-IR-NEXT: pto.textract
+// L1-IR-NEXT: pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <[[A0_READY]]>]
+// L1-IR: scf.if
+// L1-IR-NEXT: pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <[[A1_FREE]]>]
+// L1-IR-NEXT: pto.tload
+// L1-IR-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <[[A1_FREE]]>]
+// L1-IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <[[A1_FREE]]>]
+// L1-IR-NEXT: pto.textract
+// L1-IR-NEXT: pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <[[A1_FREE]]>]
+// L1-IR: scf.if
+// L1-IR-NEXT: pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <[[A0_READY]]>]
+// L1-IR-NEXT: pto.tload
+// L1-IR-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <[[A0_READY]]>]
+// L1-IR: %[[NONEMPTY_DRAIN:.+]] = arith.cmpi slt
+// L1-IR-NEXT: scf.if %[[NONEMPTY_DRAIN]]
+// L1-IR: pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <[[A0_READY]]>]
+// L1-IR: pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <[[A1_FREE]]>]

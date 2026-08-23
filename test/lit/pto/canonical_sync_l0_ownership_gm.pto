@@ -11,6 +11,8 @@
 // RUN: pto-test-opt %s \
 // RUN:   '-pto-print-canonical-sync-plan=format=text view=events event-id-num-max=8' \
 // RUN:   | FileCheck %s --check-prefix=PLAN
+// RUN: ptoas %s --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-event-id-max=8 -o /dev/null
 
 module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<cube>, pto.target_arch = "a3"} {
   func.func @l0_ownership_gemm_branched(%arg0: !pto.ptr<f16, gm>, %arg1: !pto.ptr<f16, gm>,

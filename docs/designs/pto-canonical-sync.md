@@ -263,20 +263,45 @@ synchronization mechanism. An ownership cycle records:
 Lane identity is physical rather than SSA-based. This lets the analysis follow
 address reuse introduced by memory planning while refusing unknown ranges or
 overlapping lanes. Paths may use the same lanes in different orders, as in a
-parity branch. Every path must account for every lane, and alternative
+parity branch. Round-trip paths must account for every lane, and alternative
 consumers are accepted only when both arms access the same physical bundle.
+An alternating-prefetch cycle instead records distinct consumed and produced
+lanes plus its initial ready lane and initially free lanes.
 
 The first client recognizes L0 operand ownership from exact `LEFT` and `RIGHT`
 bundles produced on `PIPE_MTE1` and consumed on `PIPE_M`. It supports any
 number of disjoint lanes and one or more producer operations whose combined
 writes exactly match a consumer bundle. The analysis result is independent of
 protocol selection and is available through the plan printer's `ownership`
-view. L1 and L0C ownership use the same representation but require separate
-role-specific discovery before they are enabled.
+view. L0C ownership uses the same lifecycle for an exact accumulator slot:
+`PIPE_M` signals readiness after the complete nested compute region,
+`PIPE_FIX` waits before writeback and releases the slot afterward, and the next
+outer iteration waits before reusing it. Prime and drain actions make the token
+lifecycle complete for zero-trip and final iterations.
+
+L1 ownership has two protocol forms. A regular `MAT` cycle groups exact slots
+that are loaded by `PIPE_MTE2` and completely consumed by `PIPE_MTE1` in each
+path. An alternating-prefetch cycle recognizes a two-arm parity loop with
+unit step, `(iv rem 2) == 0` path selection, one initial load, and next-slot
+loads guarded by `iv + 1 < upper_bound`. It verifies every exact slot access,
+separates same-iteration load/use slots from parity-shifted prefetch slots, and
+emits explicit token-state transitions for continuing and final iterations.
+The initial credits and final drains are guarded by the loop's proven
+non-empty condition, so a zero-trip loop neither produces nor consumes an
+ownership token. Producers and consumers must execute directly in their
+recognized parity or continuation region, and recursively nested accesses to
+managed slots before the loop are rejected unless they form the unique initial
+load. Unknown addresses, missing path accesses, non-alternating predicates,
+indirectly guarded actions, and unguarded final prefetches are rejected rather
+than approximated.
 
 An analyzed cycle is only a protocol candidate. CanonicalSync emits its ready
 and release events only after token-protocol verification, exact recoloring,
-and whole-plan completion coverage succeed.
+and whole-plan completion coverage succeed. Ownership candidates are evaluated
+transactionally from the pre-ownership barrier/event plan. A candidate that
+makes the complete optimized plan infeasible restores the last feasible plan
+rather than turning an otherwise compilable kernel into an event-scarcity
+failure.
 
 Discovery also recognizes two hierarchical ownership roles:
 
@@ -285,18 +310,26 @@ Discovery also recognizes two hierarchical ownership roles:
 - an `ACC` slot written by `PIPE_M` and read by `PIPE_FIX`, where the complete
   producer sequence may be nested in a common compute loop.
 
-These roles are discovery-only until their nested-loop lifecycle protocols are
-enabled. Each cycle has a stable identity, and any duplicate or physically
-overlapping cycles in the same or nested loop scope are rejected before
-protocol selection. Ownership protocol pairs are retained or removed by cycle
-identity rather than by loop, so independent roles in one loop cannot be
-silently coupled.
+L0C and L1 cycles are protocol candidates. Each cycle has a stable identity,
+and any duplicate or physically overlapping cycles in the same or nested loop
+scope are rejected before protocol selection.
+Ownership protocol pairs are retained or removed by cycle identity rather than
+by loop, so independent roles in one loop cannot be silently coupled.
 
 Every synthesized ownership cycle contains one explicitly tagged `ready`
 event and one `release` event. Verification binds both events back to the
 discovered cycle and checks their complementary pipe directions, width, loop
-scope, action lifecycle, lane-local completion endpoints, and recurrence
-distance before allocation or emission.
+scope, action lifecycle, token-state traces, and the exact complete set of
+lane-local completion endpoints and recurrence distances before allocation or
+emission. Protocol construction is shared by synthesis and verification so
+the accepted action/completion graph cannot drift from the emitted one. For a
+verified pair, completion coverage may derive the full round-trip order from
+the last use of a physical lane in one iteration to the first use in the next.
+This lets the pair discharge same-pipe recurrence barriers on either endpoint
+pipe without treating an incomplete or malformed pair as a proof. The
+alternating-prefetch protocol is deliberately excluded from this
+path-insensitive summary; its two control-flow paths require a separate
+path-sensitive coverage proof before it can discharge recurrence barriers.
 
 ### Barrier optimization
 
@@ -397,3 +430,13 @@ dot -Tsvg sync.dot -o sync.svg
 ```
 
 The printer performs analysis and allocation but does not mutate the input IR.
+Text diagnostics assign stable IDs in deterministic construction order to the
+immutable completion requirements and to barriers. A barrier reports its
+operation-level anchor, every schedulable node belonging to that operation,
+its recurrence scope, and the requirement IDs with matching endpoints and
+recurrence scope that caused the barrier to be constructed. An empty anchor
+node list identifies a structural anchor. Scope definitions include the loop's
+stable operation order and parent scope, and recurrence requirements name their
+scope explicitly. These IDs describe provenance; a barrier may cover additional
+requirements transitively, which is established by the final coverage verifier
+rather than by the printed provenance list.

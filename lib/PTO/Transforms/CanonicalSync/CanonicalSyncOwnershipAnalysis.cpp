@@ -8,11 +8,14 @@
 
 #include "CanonicalSyncInternal.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Matchers.h"
 
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
+#include <array>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -340,6 +343,7 @@ std::optional<CanonicalOwnershipPath> parseOwnershipPath(
 
     CanonicalOwnershipUse use;
     use.lane = laneIt->second;
+    use.producerLane = use.lane;
     llvm::transform(producers, std::back_inserter(use.producers),
                     [](const OwnershipNode *producer) { return producer->id; });
     llvm::transform(item.consumers, std::back_inserter(use.consumers),
@@ -600,6 +604,7 @@ std::optional<CanonicalOwnershipCycle> recognizeHierarchicalOwnershipCycle(
 
     CanonicalOwnershipUse use;
     use.lane = lane;
+    use.producerLane = use.lane;
     llvm::transform(group->producers, std::back_inserter(use.producers),
                     [](const OwnershipNode *node) { return node->id; });
     llvm::transform(group->consumers, std::back_inserter(use.consumers),
@@ -614,12 +619,359 @@ std::optional<CanonicalOwnershipCycle> recognizeHierarchicalOwnershipCycle(
   return result;
 }
 
+struct ParitySlotGroup {
+  CanonicalPhysicalSlot slot;
+  std::array<SmallVector<OwnershipNode *, 8>, 2> producers;
+  std::array<SmallVector<OwnershipNode *, 8>, 2> consumers;
+};
+
+bool paritySlotsAreDisjoint(
+    const std::map<CanonicalPhysicalSlot, ParitySlotGroup> &groups) {
+  for (auto first = groups.begin(); first != groups.end(); ++first) {
+    for (auto second = std::next(first); second != groups.end(); ++second) {
+      if (slotsOverlap(first->first, second->first)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool matchPositiveConstant(Value value, std::uint64_t expected) {
+  APInt constant;
+  return matchPattern(value, m_ConstantInt(&constant)) &&
+         constant.isNonNegative() && constant.getZExtValue() == expected;
+}
+
+bool matchAlternatingParityBranch(scf::ForOp loop, scf::IfOp branch) {
+  const bool validLoop = branch && !branch.getElseRegion().empty() &&
+                         matchPositiveConstant(loop.getLowerBound(), 0) &&
+                         matchPositiveConstant(loop.getStep(), 1);
+  if (!validLoop) {
+    return false;
+  }
+  auto compare = branch.getCondition().getDefiningOp<arith::CmpIOp>();
+  const bool comparesForEquality =
+      compare && compare.getPredicate() == arith::CmpIPredicate::eq;
+  if (!comparesForEquality) {
+    return false;
+  }
+  Value remainderValue = compare.getLhs();
+  Value zeroValue = compare.getRhs();
+  if (!matchPositiveConstant(zeroValue, 0)) {
+    remainderValue = compare.getRhs();
+    zeroValue = compare.getLhs();
+  }
+  if (!matchPositiveConstant(zeroValue, 0)) {
+    return false;
+  }
+  auto remainder = remainderValue.getDefiningOp<arith::RemSIOp>();
+  return remainder && remainder.getLhs() == loop.getInductionVar() &&
+         matchPositiveConstant(remainder.getRhs(), 2);
+}
+
+bool matchNextIteration(Value value, scf::ForOp loop) {
+  auto add = value.getDefiningOp<arith::AddIOp>();
+  if (!add) {
+    return false;
+  }
+  return (add.getLhs() == loop.getInductionVar() &&
+          matchPositiveConstant(add.getRhs(), 1)) ||
+         (add.getRhs() == loop.getInductionVar() &&
+          matchPositiveConstant(add.getLhs(), 1));
+}
+
+bool hasContinuationGuard(Operation *operation, scf::ForOp loop,
+                          Region *path) {
+  auto guard = dyn_cast_or_null<scf::IfOp>(operation->getParentOp());
+  const bool directGuard =
+      guard && path && guard->getParentRegion() == path &&
+      operation->getParentRegion() == &guard.getThenRegion() &&
+      guard.getElseRegion().empty();
+  if (!directGuard) {
+    return false;
+  }
+  auto compare = guard.getCondition().getDefiningOp<arith::CmpIOp>();
+  return compare && compare.getPredicate() == arith::CmpIPredicate::slt &&
+         compare.getRhs() == loop.getUpperBound() &&
+         matchNextIteration(compare.getLhs(), loop);
+}
+
+bool executeDirectlyIn(ArrayRef<OwnershipNode *> nodes, Region *region) {
+  return llvm::all_of(nodes, [&](const OwnershipNode *node) {
+    return node->operation->getParentRegion() == region;
+  });
+}
+
+OwnershipNode *firstByOrder(ArrayRef<OwnershipNode *> nodes,
+                            ArrayRef<CanonicalSyncNode> planNodes) {
+  return *llvm::min_element(nodes, [&](const OwnershipNode *first,
+                                      const OwnershipNode *second) {
+    return planNodes[first->id].order < planNodes[second->id].order;
+  });
+}
+
+OwnershipNode *lastByOrder(ArrayRef<OwnershipNode *> nodes,
+                           ArrayRef<CanonicalSyncNode> planNodes) {
+  return *llvm::max_element(nodes, [&](const OwnershipNode *first,
+                                      const OwnershipNode *second) {
+    return planNodes[first->id].order < planNodes[second->id].order;
+  });
+}
+
+CanonicalOwnershipUse makeParityUse(
+    unsigned lane, unsigned producerLane, ArrayRef<OwnershipNode *> producers,
+    ArrayRef<OwnershipNode *> consumers,
+    ArrayRef<CanonicalSyncNode> planNodes) {
+  CanonicalOwnershipUse use;
+  use.lane = lane;
+  use.producerLane = producerLane;
+  llvm::transform(producers, std::back_inserter(use.producers),
+                  [](const OwnershipNode *node) { return node->id; });
+  llvm::transform(consumers, std::back_inserter(use.consumers),
+                  [](const OwnershipNode *node) { return node->id; });
+  OwnershipNode *firstProducer = firstByOrder(producers, planNodes);
+  OwnershipNode *lastProducer = lastByOrder(producers, planNodes);
+  OwnershipNode *firstConsumer = firstByOrder(consumers, planNodes);
+  OwnershipNode *lastConsumer = lastByOrder(consumers, planNodes);
+  use.writeAcquireAnchor = {firstProducer->operation, true};
+  use.readyAnchor = {lastProducer->operation, false};
+  use.readAcquireAnchor = {firstConsumer->operation, true};
+  use.releaseAnchor = {lastConsumer->operation, false};
+  return use;
+}
+
+std::optional<std::size_t> findInitialProducer(
+    scf::ForOp loop, const CanonicalPhysicalSlot &slot,
+    ArrayRef<CanonicalPhysicalSlot> managedSlots,
+    ArrayRef<CanonicalSyncNode> planNodes) {
+  std::optional<std::size_t> result;
+  for (const CanonicalSyncNode &node : planNodes) {
+    Operation *topLevel = node.operation;
+    bool outsideLoopBlock =
+        topLevel && topLevel->getBlock() != loop->getBlock();
+    while (outsideLoopBlock) {
+      topLevel = topLevel->getParentOp();
+      outsideLoopBlock =
+          topLevel && topLevel->getBlock() != loop->getBlock();
+    }
+    const bool precedesLoop =
+        topLevel && topLevel != loop && topLevel->isBeforeInBlock(loop);
+    if (!precedesLoop) {
+      continue;
+    }
+    bool touchesManagedSlot = false;
+    bool isInitialWrite = false;
+    bool hasOtherManagedAccess = false;
+    for (const CanonicalMemoryAccess &access : node.accesses) {
+      if (access.space != AddressSpace::MAT) {
+        continue;
+      }
+      const AddressSpace spaces[] = {AddressSpace::MAT};
+      std::optional<CanonicalPhysicalSlot> candidate =
+          getExactSlot(access, spaces);
+      if (!candidate) {
+        return std::nullopt;
+      }
+      const bool overlapsManaged =
+          llvm::any_of(managedSlots, [&](const CanonicalPhysicalSlot &managed) {
+            return slotsOverlap(*candidate, managed);
+          });
+      if (!overlapsManaged) {
+        continue;
+      }
+      touchesManagedSlot = true;
+      const bool validInitial = node.operation == topLevel &&
+                                node.pipe == PipelineType::PIPE_MTE2 &&
+                                access.writes && !access.reads &&
+                                *candidate == slot;
+      hasOtherManagedAccess |= isInitialWrite || !validInitial;
+      isInitialWrite |= validInitial;
+    }
+    if (!touchesManagedSlot) {
+      continue;
+    }
+    if (!isInitialWrite || hasOtherManagedAccess || result) {
+      return std::nullopt;
+    }
+    result = node.id;
+  }
+  return result;
+}
+
+SmallVector<CanonicalOwnershipCycle, 2> recognizeParityL1Cycles(
+    scf::ForOp loop, ArrayRef<CanonicalSyncNode> planNodes,
+    const HierarchicalOwnershipSpec &spec) {
+  SmallVector<CanonicalOwnershipCycle, 2> result;
+  std::optional<SmallVector<OwnershipNode, 32>> nodes =
+      collectHierarchicalNodes(loop, planNodes, spec);
+  if (!nodes) {
+    return result;
+  }
+  Operation *commonChild = nodes->front().topLevelChild;
+  const bool oneTopLevelChild = llvm::all_of(*nodes, [&](const auto &node) {
+    return node.topLevelChild == commonChild;
+  });
+  scf::IfOp branch =
+      oneTopLevelChild ? dyn_cast<scf::IfOp>(commonChild) : scf::IfOp{};
+  if (!matchAlternatingParityBranch(loop, branch)) {
+    return result;
+  }
+  Region *paths[] = {&branch.getThenRegion(), &branch.getElseRegion()};
+  std::map<CanonicalPhysicalSlot, ParitySlotGroup> groups;
+  for (OwnershipNode &node : *nodes) {
+    node.path = getPathRegion(node.operation, branch);
+    unsigned pathIndex = node.path == paths[0] ? 0 : node.path == paths[1] ? 1
+                                                                         : 2;
+    if (pathIndex == 2) {
+      return result;
+    }
+    const CanonicalPhysicalSlot &slot = !node.produced.empty()
+                                            ? node.produced.front()
+                                            : node.consumed.front();
+    ParitySlotGroup &group = groups[slot];
+    group.slot = slot;
+    (!node.produced.empty() ? group.producers[pathIndex]
+                            : group.consumers[pathIndex])
+        .push_back(&node);
+  }
+  if (!paritySlotsAreDisjoint(groups)) {
+    return result;
+  }
+
+  SmallVector<ParitySlotGroup *, 8> stableGroups;
+  SmallVector<ParitySlotGroup *, 2> alternatingGroups;
+  for (auto &entry : groups) {
+    ParitySlotGroup &group = entry.second;
+    const bool stable = llvm::all_of(llvm::seq<unsigned>(0, 2), [&](unsigned p) {
+      return group.producers[p].size() == 1 &&
+             !group.consumers[p].empty() &&
+             executeDirectlyIn(group.producers[p], paths[p]) &&
+             executeDirectlyIn(group.consumers[p], paths[p]) &&
+             planNodes[group.producers[p].front()->id].order <
+                 planNodes[firstByOrder(group.consumers[p], planNodes)->id]
+                     .order;
+    });
+    const bool alternating =
+        (group.producers[0].size() == 1 && group.consumers[0].empty() &&
+         group.producers[1].empty() && !group.consumers[1].empty() &&
+         executeDirectlyIn(group.consumers[1], paths[1])) ||
+        (group.producers[1].size() == 1 && group.consumers[1].empty() &&
+         group.producers[0].empty() && !group.consumers[0].empty() &&
+         executeDirectlyIn(group.consumers[0], paths[0]));
+    if (stable) {
+      stableGroups.push_back(&group);
+    } else if (alternating) {
+      alternatingGroups.push_back(&group);
+    } else {
+      return {};
+    }
+  }
+
+  std::optional<CanonicalOwnershipCycle> stableCycle;
+  const bool hasStableCycle = stableGroups.size() >= spec.minimumLanes &&
+                              stableGroups.size() <= kMaxMultiBufferCount;
+  if (hasStableCycle) {
+    CanonicalOwnershipCycle stable;
+    stable.kind = CanonicalOwnershipKind::L1Tile;
+    stable.loop = loop;
+    stable.producerPipe = spec.producerPipe;
+    stable.consumerPipe = spec.consumerPipe;
+    stable.paths.resize(2);
+    stable.paths[0].region = paths[0];
+    stable.paths[1].region = paths[1];
+    for (auto [lane, group] : llvm::enumerate(stableGroups)) {
+      CanonicalOwnershipLane ownershipLane;
+      ownershipLane.id = lane;
+      ownershipLane.slots.push_back(group->slot);
+      stable.lanes.push_back(std::move(ownershipLane));
+      for (unsigned pathIndex = 0; pathIndex < 2; ++pathIndex) {
+        stable.paths[pathIndex].uses.push_back(makeParityUse(
+            lane, lane, group->producers[pathIndex],
+            group->consumers[pathIndex], planNodes));
+      }
+    }
+    stableCycle = std::move(stable);
+  }
+
+  const bool hasAlternatingCycle = alternatingGroups.size() == 2;
+  if (!hasAlternatingCycle) {
+    return {};
+  }
+  CanonicalOwnershipCycle prefetch;
+  prefetch.kind = CanonicalOwnershipKind::L1Tile;
+  prefetch.protocol = CanonicalOwnershipProtocolKind::AlternatingPrefetch;
+  prefetch.loop = loop;
+  prefetch.producerPipe = spec.producerPipe;
+  prefetch.consumerPipe = spec.consumerPipe;
+  prefetch.paths.resize(2);
+  prefetch.paths[0].region = paths[0];
+  prefetch.paths[1].region = paths[1];
+  for (auto [lane, group] : llvm::enumerate(alternatingGroups)) {
+    CanonicalOwnershipLane ownershipLane;
+    ownershipLane.id = lane;
+    ownershipLane.slots.push_back(group->slot);
+    prefetch.lanes.push_back(std::move(ownershipLane));
+  }
+  for (unsigned pathIndex = 0; pathIndex < 2; ++pathIndex) {
+    ParitySlotGroup *consumerGroup = nullptr;
+    ParitySlotGroup *producerGroup = nullptr;
+    unsigned consumerLane = 0;
+    unsigned producerLane = 0;
+    for (auto [lane, group] : llvm::enumerate(alternatingGroups)) {
+      if (!group->consumers[pathIndex].empty()) {
+        consumerGroup = group;
+        consumerLane = lane;
+      }
+      if (!group->producers[pathIndex].empty()) {
+        producerGroup = group;
+        producerLane = lane;
+      }
+    }
+    if (!consumerGroup || !producerGroup || consumerLane == producerLane ||
+        !hasContinuationGuard(producerGroup->producers[pathIndex].front()
+                                  ->operation,
+                              loop, paths[pathIndex])) {
+      return result;
+    }
+    prefetch.paths[pathIndex].uses.push_back(makeParityUse(
+        consumerLane, producerLane, producerGroup->producers[pathIndex],
+        consumerGroup->consumers[pathIndex], planNodes));
+  }
+  const CanonicalOwnershipUse &firstPathUse = prefetch.paths[0].uses.front();
+  SmallVector<CanonicalPhysicalSlot, 8> managedSlots;
+  llvm::transform(groups, std::back_inserter(managedSlots),
+                  [](const auto &entry) { return entry.first; });
+  std::optional<std::size_t> initialProducer = findInitialProducer(
+      loop, prefetch.lanes[firstPathUse.lane].slots.front(), managedSlots,
+      planNodes);
+  if (!initialProducer) {
+    return result;
+  }
+  prefetch.initialProducers.push_back(*initialProducer);
+  prefetch.initialReadyAnchor = {loop, true};
+  prefetch.initialReadyLane = firstPathUse.lane;
+  prefetch.initiallyFreeLanes.push_back(firstPathUse.producerLane);
+  if (stableCycle) {
+    result.push_back(std::move(*stableCycle));
+  }
+  result.push_back(std::move(prefetch));
+  return result;
+}
+
 bool ownershipCyclesEqual(const CanonicalOwnershipCycle &first,
                           const CanonicalOwnershipCycle &second) {
-  if (first.kind != second.kind || first.loop != second.loop ||
+  if (first.kind != second.kind || first.protocol != second.protocol ||
+      first.loop != second.loop ||
       first.producerPipe != second.producerPipe ||
       first.consumerPipe != second.consumerPipe ||
-      first.lanes.size() != second.lanes.size()) {
+      first.lanes.size() != second.lanes.size() ||
+      first.initialProducers != second.initialProducers ||
+      first.initialReadyAnchor.operation !=
+          second.initialReadyAnchor.operation ||
+      first.initialReadyAnchor.before != second.initialReadyAnchor.before ||
+      first.initialReadyLane != second.initialReadyLane ||
+      first.initiallyFreeLanes != second.initiallyFreeLanes) {
     return false;
   }
   for (auto [left, right] : llvm::zip(first.lanes, second.lanes)) {
@@ -699,6 +1051,10 @@ void CanonicalSyncPlanBuilder::analyzeOwnershipCycles() {
     cycle = recognizeHierarchicalOwnershipCycle(loop, plan_.nodes_, l1TileSpec);
     if (cycle) {
       appendUniqueOwnershipCycle(candidates, std::move(*cycle));
+    }
+    for (CanonicalOwnershipCycle parityCycle :
+         recognizeParityL1Cycles(loop, plan_.nodes_, l1TileSpec)) {
+      appendUniqueOwnershipCycle(candidates, std::move(parityCycle));
     }
     cycle = recognizeHierarchicalOwnershipCycle(loop, plan_.nodes_,
                                                 l0AccumulatorSpec);

@@ -90,6 +90,78 @@ bool searchStateLess(const BarrierSearchState &first,
          std::tie(second.uncovered, second.intervalSpan, second.additions);
 }
 
+void appendOwnershipRoundTripEdges(
+    ArrayRef<CanonicalOwnershipCycle> cycles, ArrayRef<CanonicalEvent> events,
+    Operation *loop, std::size_t nodeCount, std::size_t occurrenceCount,
+    std::vector<SyncGraphEdge> &edges) {
+  std::map<std::size_t, SmallVector<const CanonicalEvent *, 2>> eventPairs;
+  for (const CanonicalEvent &event : events) {
+    if (event.ownershipProtocol) {
+      eventPairs[event.ownershipCycle].push_back(&event);
+    }
+  }
+
+  for (const CanonicalOwnershipCycle &cycle : cycles) {
+    if (cycle.loop != loop ||
+        cycle.protocol != CanonicalOwnershipProtocolKind::RoundTrip) {
+      continue;
+    }
+    auto pair = eventPairs.find(cycle.id);
+    const bool validPair =
+        pair != eventPairs.end() &&
+        verifyCanonicalOwnershipEventPair(cycle, pair->second);
+    if (!validPair) {
+      continue;
+    }
+    // A complete ready/release pair orders every endpoint in the lane's last
+    // use before every endpoint in its first use in the next iteration.
+    for (std::size_t occurrence = 0; occurrence + 1 < occurrenceCount;
+         ++occurrence) {
+      const std::size_t sourceOffset = occurrence * nodeCount;
+      const std::size_t targetOffset = sourceOffset + nodeCount;
+      for (const CanonicalOwnershipPath &sourcePath : cycle.paths) {
+        for (const CanonicalOwnershipPath &targetPath : cycle.paths) {
+          for (unsigned lane = 0; lane < cycle.lanes.size(); ++lane) {
+            const CanonicalOwnershipUse *sourceUse = nullptr;
+            const CanonicalOwnershipUse *targetUse = nullptr;
+            for (const CanonicalOwnershipUse &use : sourcePath.uses) {
+              if (use.lane == lane) {
+                sourceUse = &use;
+              }
+            }
+            for (const CanonicalOwnershipUse &use : targetPath.uses) {
+              if (use.lane == lane) {
+                targetUse = &use;
+                break;
+              }
+            }
+            if (!sourceUse || !targetUse) {
+              continue;
+            }
+            SmallVector<std::size_t, 4> sourceNodes(
+                sourceUse->producers.begin(), sourceUse->producers.end());
+            sourceNodes.append(sourceUse->consumers.begin(),
+                               sourceUse->consumers.end());
+            SmallVector<std::size_t, 4> targetNodes(
+                targetUse->producers.begin(), targetUse->producers.end());
+            targetNodes.append(targetUse->consumers.begin(),
+                               targetUse->consumers.end());
+            for (std::size_t source : sourceNodes) {
+              for (std::size_t target : targetNodes) {
+                if (source >= nodeCount || target >= nodeCount) {
+                  continue;
+                }
+                edges.push_back({sourceOffset + source, targetOffset + target,
+                                 SyncGraphEdgeKind::HardwareCompletion});
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 } // namespace
 
 std::vector<SyncGraphEdge> CanonicalSyncPlanBuilder::buildEventCompletionEdges(
@@ -204,6 +276,8 @@ std::size_t CanonicalSyncPlanBuilder::countUncoveredRecurrenceRequirements(
           }
         }
       }
+      appendOwnershipRoundTripEdges(plan_.ownershipCycles_, events, loop,
+                                    nodeCount, occurrenceCount, expandedEdges);
 
       for (const CanonicalDependency &dependency : plan_.dependencies_) {
         if (!dependency.retained || dependency.iterationDistance == 0 ||

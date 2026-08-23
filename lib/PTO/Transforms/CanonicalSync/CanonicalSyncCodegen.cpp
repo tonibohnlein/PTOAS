@@ -11,6 +11,7 @@
 #include "PTO/IR/PTO.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -100,6 +101,16 @@ void emitEventAction(IRRewriter &rewriter, const CanonicalEvent &event,
   setInsertionPoint(rewriter, action.anchor);
   const bool set = action.kind == CanonicalEventActionKind::Set;
   const Location location = action.anchor.operation->getLoc();
+  if (action.nonEmptyLoopGuard) {
+    auto loop = cast<scf::ForOp>(action.nonEmptyLoopGuard);
+    Value condition = rewriter.create<arith::CmpIOp>(
+        location, arith::CmpIPredicate::slt, loop.getLowerBound(),
+        loop.getUpperBound());
+    auto guard = rewriter.create<scf::IfOp>(
+        location, TypeRange{}, condition, /*withElseRegion=*/false);
+    markGenerated(guard, rewriter);
+    rewriter.setInsertionPointToStart(&guard.getThenRegion().front());
+  }
   if (action.lane.kind == CanonicalEventLaneKind::All) {
     for (unsigned eventId : event.eventIds) {
       createStaticFlag(rewriter, location, event.sourcePipe, event.targetPipe,

@@ -8,6 +8,8 @@
 
 #include "CanonicalSyncInternal.h"
 
+#include "mlir/Dialect/SCF/IR/SCF.h"
+
 #include <iostream>
 
 using namespace mlir;
@@ -20,19 +22,6 @@ bool check(bool condition, const char *message) {
     std::cerr << "FAILED: " << message << '\n';
   }
   return condition;
-}
-
-CanonicalEventLane staticLane(unsigned lane) {
-  CanonicalEventLane result;
-  result.kind = CanonicalEventLaneKind::Static;
-  result.index = lane;
-  return result;
-}
-
-CanonicalEventLane allLanes() {
-  CanonicalEventLane result;
-  result.kind = CanonicalEventLaneKind::All;
-  return result;
 }
 
 CanonicalOwnershipCycle makeCycle() {
@@ -60,59 +49,11 @@ CanonicalOwnershipCycle makeCycle() {
 }
 
 CanonicalEvent makeReadyEvent(const CanonicalOwnershipCycle &cycle) {
-  CanonicalEvent event;
-  event.sourcePipe = cycle.producerPipe;
-  event.targetPipe = cycle.consumerPipe;
-  event.scopeLoop = cycle.loop;
-  event.width = cycle.lanes.size();
-  event.ownershipCycle = cycle.id;
-  event.ownershipRole = CanonicalOwnershipEventRole::Ready;
-  event.ownershipProtocol = true;
-  for (const CanonicalOwnershipUse &use : cycle.paths.front().uses) {
-    const unsigned set = event.actions.size();
-    event.actions.push_back({CanonicalEventActionKind::Set,
-                             CanonicalEventActionPhase::Straight,
-                             use.readyAnchor, staticLane(use.lane)});
-    const unsigned wait = event.actions.size();
-    event.actions.push_back({CanonicalEventActionKind::Wait,
-                             CanonicalEventActionPhase::Straight,
-                             use.readAcquireAnchor, staticLane(use.lane)});
-    event.completions.push_back(
-        {use.producers.front(), use.consumers.front(), 0, nullptr, set, wait});
-  }
-  return event;
+  return buildCanonicalOwnershipProtocols(cycle).first;
 }
 
 CanonicalEvent makeReleaseEvent(const CanonicalOwnershipCycle &cycle) {
-  CanonicalEvent event;
-  event.sourcePipe = cycle.consumerPipe;
-  event.targetPipe = cycle.producerPipe;
-  event.recurrenceLoop = cycle.loop;
-  event.scopeLoop = cycle.loop;
-  event.iterationDistance = 1;
-  event.width = cycle.lanes.size();
-  event.ownershipCycle = cycle.id;
-  event.ownershipRole = CanonicalOwnershipEventRole::Release;
-  event.ownershipProtocol = true;
-  event.actions.push_back({CanonicalEventActionKind::Set,
-                           CanonicalEventActionPhase::Prime,
-                           {cycle.loop, true}, allLanes()});
-  for (const CanonicalOwnershipUse &use : cycle.paths.front().uses) {
-    const unsigned wait = event.actions.size();
-    event.actions.push_back({CanonicalEventActionKind::Wait,
-                             CanonicalEventActionPhase::Body,
-                             use.writeAcquireAnchor, staticLane(use.lane)});
-    const unsigned set = event.actions.size();
-    event.actions.push_back({CanonicalEventActionKind::Set,
-                             CanonicalEventActionPhase::Body,
-                             use.releaseAnchor, staticLane(use.lane)});
-    event.completions.push_back({use.consumers.front(), use.producers.front(),
-                                 1, cycle.loop, set, wait});
-  }
-  event.actions.push_back({CanonicalEventActionKind::Wait,
-                           CanonicalEventActionPhase::Drain,
-                           {cycle.loop, false}, allLanes()});
-  return event;
+  return buildCanonicalOwnershipProtocols(cycle).second;
 }
 
 bool verifyPair(const CanonicalOwnershipCycle &cycle,
@@ -170,9 +111,196 @@ bool testOwnershipPairVerification() {
       cycle.paths.front().uses.back().consumers.front();
   passed &= check(!verifyPair(cycle, malformed, release),
                   "ready completions cannot cross ownership lanes");
+
+  malformed = ready;
+  malformed.completions.pop_back();
+  passed &= check(!verifyPair(cycle, malformed, release),
+                  "ready completion coverage must be complete");
+
+  malformed = release;
+  malformed.completions.pop_back();
+  passed &= check(!verifyPair(cycle, ready, malformed),
+                  "release completion coverage must be complete");
+
+  malformed = ready;
+  malformed.completions.push_back(malformed.completions.front());
+  passed &= check(!verifyPair(cycle, malformed, release),
+                  "duplicate ready completions are rejected");
+
+  malformed = release;
+  malformed.completions.front().waitAction =
+      malformed.completions.front().setAction;
+  passed &= check(!verifyPair(cycle, ready, malformed),
+                  "completion action indices are part of the protocol");
+
+  malformed = release;
+  malformed.traces.front().actions.push_back(1);
+  passed &= check(!verifyPair(cycle, ready, malformed),
+                  "trace membership is part of the protocol");
+
+  CanonicalOwnershipCycle accumulator = makeCycle();
+  accumulator.kind = CanonicalOwnershipKind::L0Accumulator;
+  accumulator.producerPipe = PipelineType::PIPE_M;
+  accumulator.consumerPipe = PipelineType::PIPE_FIX;
+  accumulator.lanes.resize(1);
+  accumulator.paths.front().uses.resize(1);
+  const CanonicalEvent accumulatorReady = makeReadyEvent(accumulator);
+  const CanonicalEvent accumulatorRelease = makeReleaseEvent(accumulator);
+  passed &= check(verifyPair(accumulator, accumulatorReady,
+                             accumulatorRelease),
+                  "a one-lane L0C ownership lifecycle is valid");
+  return passed;
+}
+
+bool testOwnershipCandidateTransaction() {
+  CanonicalBarrier baselineBarrier;
+  baselineBarrier.pipe = PipelineType::PIPE_M;
+  CanonicalEvent baselineEvent;
+  baselineEvent.source = 100;
+  std::vector<CanonicalBarrier> barriers{baselineBarrier};
+  std::vector<CanonicalEvent> events{baselineEvent};
+  std::vector<CanonicalEvent> accepted;
+
+  CanonicalEvent ready;
+  ready.source = 1;
+  ready.ownershipRole = CanonicalOwnershipEventRole::Ready;
+  CanonicalEvent release;
+  release.source = 2;
+  release.ownershipRole = CanonicalOwnershipEventRole::Release;
+  bool evaluatedCompletePair = false;
+  const bool rejected = tryCommitCanonicalOwnershipCandidate(
+      accepted, barriers, events, ready, release, [&]() {
+        evaluatedCompletePair = accepted.size() == 2;
+        barriers.clear();
+        events.clear();
+        return false;
+      });
+  bool passed = check(!rejected && evaluatedCompletePair,
+                      "a rejected transaction evaluates the complete pair");
+  passed &= check(accepted.empty() && barriers.size() == 1 &&
+                      barriers.front().pipe == PipelineType::PIPE_M &&
+                      events.size() == 1 && events.front().source == 100,
+                  "a rejected transaction restores every state vector");
+
+  const bool committed = tryCommitCanonicalOwnershipCandidate(
+      accepted, barriers, events, ready, release, [&]() {
+        barriers.front().pipe = PipelineType::PIPE_FIX;
+        events.front().source = 200;
+        return true;
+      });
+  passed &= check(committed && accepted.size() == 2 &&
+                      barriers.front().pipe == PipelineType::PIPE_FIX &&
+                      events.front().source == 200,
+                  "an accepted transaction retains its pair and plan");
+
+  CanonicalEvent secondReady = ready;
+  secondReady.source = 3;
+  CanonicalEvent secondRelease = release;
+  secondRelease.source = 4;
+  const bool secondCommitted = tryCommitCanonicalOwnershipCandidate(
+      accepted, barriers, events, secondReady, secondRelease, [&]() {
+        barriers.clear();
+        events.clear();
+        return false;
+      });
+  passed &= check(!secondCommitted && accepted.size() == 2 &&
+                      accepted[0].source == 1 && accepted[1].source == 2 &&
+                      barriers.size() == 1 &&
+                      barriers.front().pipe == PipelineType::PIPE_FIX &&
+                      events.size() == 1 && events.front().source == 200,
+                  "rejecting a later pair preserves the committed plan");
+  return passed;
+}
+
+bool testAlternatingOwnershipPairVerification() {
+  MLIRContext context;
+  context.getOrLoadDialect<scf::SCFDialect>();
+  OperationState loopState(UnknownLoc::get(&context),
+                           scf::ForOp::getOperationName());
+  loopState.addRegion();
+  Operation *loop = Operation::create(loopState);
+  Region firstPathRegion;
+  Region secondPathRegion;
+  Region *pathRegions[] = {&firstPathRegion, &secondPathRegion};
+
+  CanonicalOwnershipCycle cycle;
+  cycle.id = 11;
+  cycle.kind = CanonicalOwnershipKind::L1Tile;
+  cycle.protocol = CanonicalOwnershipProtocolKind::AlternatingPrefetch;
+  cycle.producerPipe = PipelineType::PIPE_MTE2;
+  cycle.consumerPipe = PipelineType::PIPE_MTE1;
+  cycle.loop = loop;
+  cycle.lanes.resize(2);
+  cycle.lanes[0].id = 0;
+  cycle.lanes[1].id = 1;
+  cycle.initialProducers.push_back(0);
+  cycle.initialReadyAnchor = {loop, true};
+  cycle.initialReadyLane = 0;
+  cycle.initiallyFreeLanes.push_back(1);
+  for (auto [lane, region] : llvm::enumerate(pathRegions)) {
+    CanonicalOwnershipUse use;
+    use.lane = lane;
+    use.producerLane = 1 - lane;
+    use.producers.push_back(lane * 2 + 1);
+    use.consumers.push_back(lane * 2 + 2);
+    use.writeAcquireAnchor = {loop, true};
+    use.readyAnchor = {loop, false};
+    use.readAcquireAnchor = {loop, true};
+    use.releaseAnchor = {loop, false};
+    CanonicalOwnershipPath path;
+    path.region = region;
+    path.uses.push_back(std::move(use));
+    cycle.paths.push_back(std::move(path));
+  }
+
+  auto [ready, release] = buildCanonicalOwnershipProtocols(cycle);
+  bool passed = check(verifyPair(cycle, ready, release),
+                      "a complete alternating ownership protocol is valid");
+
+  CanonicalEvent malformed = ready;
+  malformed.actions.front().nonEmptyLoopGuard = nullptr;
+  passed &= check(!verifyPair(cycle, malformed, release),
+                  "an alternating ready prime requires a non-empty guard");
+
+  malformed = release;
+  malformed.actions.front().nonEmptyLoopGuard = nullptr;
+  passed &= check(!verifyPair(cycle, ready, malformed),
+                  "an alternating release prime requires a non-empty guard");
+
+  malformed = ready;
+  malformed.actions[2].lane.index = 0;
+  passed &= check(!verifyPair(cycle, malformed, release),
+                  "alternating ready transitions must change lanes");
+
+  malformed = release;
+  malformed.actions.pop_back();
+  passed &= check(!verifyPair(cycle, ready, malformed),
+                  "an alternating release protocol requires its drain");
+
+  malformed = release;
+  malformed.actions.back().nonEmptyLoopGuard = nullptr;
+  passed &= check(!verifyPair(cycle, ready, malformed),
+                  "an alternating release drain requires a non-empty guard");
+
+  CanonicalOwnershipCycle malformedCycle = cycle;
+  malformedCycle.paths[1].uses.front().producerLane = 1;
+  auto [malformedReady, malformedRelease] =
+      buildCanonicalOwnershipProtocols(malformedCycle);
+  passed &= check(!verifyPair(malformedCycle, malformedReady, malformedRelease),
+                  "an alternating cycle requires complementary path transitions");
+
+  const CanonicalEvent *single[] = {&ready};
+  passed &= check(!verifyCanonicalOwnershipEventPair(cycle, single),
+                  "an alternating protocol requires a complete event pair");
+  loop->destroy();
   return passed;
 }
 
 } // namespace
 
-int main() { return testOwnershipPairVerification() ? 0 : 1; }
+int main() {
+  const bool passed = testOwnershipPairVerification() &&
+                      testOwnershipCandidateTransaction() &&
+                      testAlternatingOwnershipPairVerification();
+  return passed ? 0 : 1;
+}

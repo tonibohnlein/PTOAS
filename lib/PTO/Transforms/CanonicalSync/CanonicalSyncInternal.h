@@ -17,6 +17,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 
 #include <functional>
 #include <map>
@@ -49,6 +50,15 @@ struct CanonicalScarcityStats {
 bool verifyCanonicalOwnershipEventPair(
     const CanonicalOwnershipCycle &cycle,
     ArrayRef<const CanonicalEvent *> events);
+
+std::pair<CanonicalEvent, CanonicalEvent>
+buildCanonicalOwnershipProtocols(const CanonicalOwnershipCycle &cycle);
+
+bool tryCommitCanonicalOwnershipCandidate(
+    std::vector<CanonicalEvent> &acceptedOwnership,
+    std::vector<CanonicalBarrier> &currentBarriers,
+    std::vector<CanonicalEvent> &currentEvents, CanonicalEvent ready,
+    CanonicalEvent release, llvm::function_ref<bool()> evaluate);
 
 class CanonicalSyncLatencyContext {
 public:

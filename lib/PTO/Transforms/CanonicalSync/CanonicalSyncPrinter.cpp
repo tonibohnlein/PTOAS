@@ -122,6 +122,14 @@ void printNodeIds(llvm::raw_ostream &os, ArrayRef<std::size_t> ids) {
   os << ']';
 }
 
+std::size_t getRecurrenceScopeId(
+    Operation *operation, ArrayRef<CanonicalRecurrenceScope> scopes) {
+  auto scope = llvm::find_if(scopes, [&](const auto &candidate) {
+    return candidate.operation == operation;
+  });
+  return scope == scopes.end() ? 0 : scope->id;
+}
+
 void printQuoted(llvm::raw_ostream &os, StringRef text) {
   os << '"';
   for (char character : text) {
@@ -169,12 +177,39 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
          << " retained=" << (dependency.retained ? "yes" : "no") << '\n';
     }
   }
+  const bool includeScopes = includesDependencies(view) || includesPlan(view);
+  if (includeScopes) {
+    for (const CanonicalRecurrenceScope &scope : plan.getRecurrenceScopes()) {
+      os << "  scope[" << scope.id << "] op="
+         << scope.operation->getName().getStringRef()
+         << " operation-order=" << scope.operationOrder
+         << " parent-scope=" << scope.parentScope << '\n';
+    }
+    for (auto [requirementId, requirement] :
+         llvm::enumerate(plan.getCompletionRequirements())) {
+      os << "  requirement[" << requirementId << "] " << requirement.source
+         << " -> " << requirement.target
+         << " kind=" << stringifyCanonicalDependencyKind(requirement.kind)
+         << " distance=" << requirement.iterationDistance
+         << " recurrence=" << (requirement.recurrenceLoop ? "yes" : "no")
+         << " scope="
+         << getRecurrenceScopeId(requirement.recurrenceLoop,
+                                 plan.getRecurrenceScopes())
+         << '\n';
+    }
+  }
   if (includesPlan(view)) {
     for (const CanonicalBarrier &barrier : plan.getBarriers()) {
-      os << "  barrier pipe=" << stringifyPIPE(static_cast<PIPE>(barrier.pipe))
+      os << "  barrier[" << barrier.id
+         << "] pipe=" << stringifyPIPE(static_cast<PIPE>(barrier.pipe))
          << " anchor=" << (barrier.anchor.before ? "before:" : "after:")
          << barrier.anchor.operation->getName().getStringRef()
-         << " recurrence=" << (barrier.recurrenceLoop ? "yes" : "no") << '\n';
+         << " anchor-nodes=";
+      printNodeIds(os, barrier.anchorNodes);
+      os << " recurrence=" << (barrier.recurrenceLoop ? "yes" : "no")
+         << " scope=" << barrier.recurrenceScope << " requirements=";
+      printNodeIds(os, barrier.requirements);
+      os << '\n';
     }
   }
   if (includesPlan(view) || includesEvents(view)) {
@@ -223,6 +258,10 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
          << stringifyPIPE(static_cast<PIPE>(cycle.producerPipe)) << " -> "
          << stringifyPIPE(static_cast<PIPE>(cycle.consumerPipe))
          << " lanes=" << cycle.lanes.size() << " paths=" << cycle.paths.size()
+         << (cycle.protocol ==
+                     CanonicalOwnershipProtocolKind::AlternatingPrefetch
+                 ? " protocol=alternating-prefetch"
+                 : "")
          << '\n';
       for (const CanonicalOwnershipLane &lane : cycle.lanes) {
         os << "    lane[" << lane.id << "] slots=[";
@@ -246,6 +285,9 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
           printNodeIds(os, use.producers);
           os << " consumers=";
           printNodeIds(os, use.consumers);
+          if (use.producerLane != use.lane) {
+            os << " producer-lane=" << use.producerLane;
+          }
           os << '\n';
         }
       }

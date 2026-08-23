@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=all' \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @macro_anchor_nodes() {
+    %addr0 = arith.constant 0 : i64
+    %addr128 = arith.constant 128 : i64
+    %addr256 = arith.constant 256 : i64
+    %addr384 = arith.constant 384 : i64
+    %zero = arith.constant 0.0 : f16
+    %one = arith.constant 1.0 : f16
+    %src = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x32xf16>
+    %tmp = pto.alloc_tile addr = %addr128 : !pto.tile_buf<vec, 1x32xui8>
+    %dst = pto.alloc_tile addr = %addr256 : !pto.tile_buf<vec, 1x32xi32>
+    %cdst = pto.alloc_tile addr = %addr384 : !pto.tile_buf<vec, 1x32xi32>
+    pto.tmuls ins(%src, %one : !pto.tile_buf<vec, 1x32xf16>, f16)
+               outs(%src : !pto.tile_buf<vec, 1x32xf16>)
+    pto.tgather ins(%src, %zero, %tmp : !pto.tile_buf<vec, 1x32xf16>,
+                    f16, !pto.tile_buf<vec, 1x32xui8>)
+                outs(%dst, %cdst : !pto.tile_buf<vec, 1x32xi32>,
+                     !pto.tile_buf<vec, 1x32xi32>)
+    return
+  }
+
+  func.func @structural_anchor_nodes(
+      %first: !pto.partition_tensor_view<16x16xf32>,
+      %second: !pto.partition_tensor_view<16x16xf32>, %condition: i1) {
+    %addr0 = arith.constant 0 : i64
+    %firstTile = pto.alloc_tile addr = %addr0
+        : !pto.tile_buf<vec, 16x16xf32>
+    %secondTile = pto.alloc_tile addr = %addr0
+        : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%first : !pto.partition_tensor_view<16x16xf32>)
+              outs(%firstTile : !pto.tile_buf<vec, 16x16xf32>)
+    scf.if %condition {
+      pto.tload ins(%second : !pto.partition_tensor_view<16x16xf32>)
+                outs(%secondTile : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: PTOCanonicalSyncPlan @macro_anchor_nodes
+// CHECK: node[1] op=pto.tgather pipe=PIPE_V phase=0
+// CHECK: node[2] op=pto.tgather pipe=PIPE_S phase=1
+// CHECK: node[3] op=pto.tgather pipe=PIPE_V phase=2
+// CHECK: node[4] op=pto.tgather pipe=PIPE_S phase=3
+// CHECK: barrier[0] pipe=PIPE_V anchor=before:pto.tgather anchor-nodes=[1, 2, 3, 4]
+
+// CHECK-LABEL: PTOCanonicalSyncPlan @structural_anchor_nodes
+// CHECK: barrier[0] pipe=PIPE_MTE2 anchor=before:scf.if anchor-nodes=[]

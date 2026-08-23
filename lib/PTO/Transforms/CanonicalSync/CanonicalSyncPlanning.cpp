@@ -680,11 +680,46 @@ void CanonicalSyncPlanBuilder::materializeSyncRequirements() {
   materializeBarriers();
   materializeEvents();
   synthesizeOwnershipProtocols();
-  optimizeBarriers();
 }
 
 void CanonicalSyncPlanBuilder::materializeBarriers() {
   auto groups = groupDependencies(plan_.dependencies_);
+  DenseMap<Operation *, std::size_t> operationOrders;
+  std::size_t nextOperationOrder = 0;
+  func_.walk([&](Operation *operation) {
+    operationOrders[operation] = nextOperationOrder++;
+  });
+  for (const auto &entry : groups) {
+    if (!entry.first.owner ||
+        llvm::any_of(plan_.recurrenceScopes_, [&](const auto &scope) {
+          return scope.operation == entry.first.owner;
+        })) {
+      continue;
+    }
+    CanonicalRecurrenceScope scope;
+    scope.id = entry.first.ownerOrder;
+    scope.operation = entry.first.owner;
+    scope.operationOrder = operationOrders.lookup(entry.first.owner);
+    plan_.recurrenceScopes_.push_back(scope);
+  }
+  llvm::sort(plan_.recurrenceScopes_, [](const auto &first,
+                                         const auto &second) {
+    return first.id < second.id;
+  });
+  for (CanonicalRecurrenceScope &scope : plan_.recurrenceScopes_) {
+    for (Operation *parent = scope.operation->getParentOp(); parent;
+         parent = parent->getParentOp()) {
+      auto parentScope = llvm::find_if(
+          plan_.recurrenceScopes_,
+          [&](const auto &candidate) { return candidate.operation == parent; });
+      if (parentScope != plan_.recurrenceScopes_.end()) {
+        scope.parentScope = parentScope->id;
+        break;
+      }
+    }
+  }
+
+  std::size_t nextBarrierId = 0;
   for (const auto &entry : groups) {
     const CanonicalDependency &dependency =
         plan_.dependencies_[entry.second.front()];
@@ -697,20 +732,44 @@ void CanonicalSyncPlanBuilder::materializeBarriers() {
       continue;
     }
     CanonicalBarrier barrier;
+    barrier.id = nextBarrierId;
     barrier.pipe = source.pipe;
     barrier.anchor = dependency.iterationDistance == 0
                          ? getWaitAnchor(source.operation, target.operation)
                          : CanonicalAnchor{target.operation, true};
+    auto anchorNodes = operationNodes_.find(barrier.anchor.operation);
+    if (anchorNodes != operationNodes_.end()) {
+      barrier.anchorNodes.append(anchorNodes->second.begin(),
+                                 anchorNodes->second.end());
+    }
     barrier.recurrenceLoop = dependency.recurrenceLoop;
-    const bool duplicate = llvm::any_of(plan_.barriers_, [&](const auto &old) {
+    barrier.recurrenceScope = entry.first.ownerOrder;
+    for (auto [requirementId, requirement] :
+         llvm::enumerate(plan_.completionRequirements_)) {
+      if (requirement.source == entry.first.source &&
+          requirement.target == entry.first.target &&
+          requirement.iterationDistance == entry.first.distance &&
+          requirement.recurrenceLoop == entry.first.owner) {
+        barrier.requirements.push_back(requirementId);
+      }
+    }
+
+    auto duplicate = llvm::find_if(plan_.barriers_, [&](const auto &old) {
       return old.pipe == barrier.pipe &&
              old.anchor.operation == barrier.anchor.operation &&
              old.anchor.before == barrier.anchor.before &&
              old.recurrenceLoop == barrier.recurrenceLoop;
     });
-    if (!duplicate) {
-      plan_.barriers_.push_back(barrier);
+    if (duplicate != plan_.barriers_.end()) {
+      for (std::size_t requirement : barrier.requirements) {
+        if (!llvm::is_contained(duplicate->requirements, requirement)) {
+          duplicate->requirements.push_back(requirement);
+        }
+      }
+      continue;
     }
+    plan_.barriers_.push_back(std::move(barrier));
+    ++nextBarrierId;
   }
 }
 
