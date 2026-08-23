@@ -269,6 +269,11 @@ void CanonicalSyncPlanBuilder::preserveForwardCompletionRequirements() {
 
 void CanonicalSyncPlanBuilder::reduceForwardDependencies() {
   auto groups = groupDependencies(plan_.dependencies_);
+  const auto requiresSynchronization = [&](const auto &entry) {
+    return llvm::any_of(entry.second, [&](std::size_t index) {
+      return !hasIntrinsicMmadAccumulatorOrdering(plan_.dependencies_[index]);
+    });
+  };
   std::map<Block *,
            std::map<std::pair<PipelineType, PipelineType>,
                     std::vector<DependencyGroupKey>>,
@@ -277,7 +282,8 @@ void CanonicalSyncPlanBuilder::reduceForwardDependencies() {
   for (const auto &entry : groups) {
     const CanonicalDependency &dependency =
         plan_.dependencies_[entry.second.front()];
-    if (!dependency.retained || entry.first.distance != 0) {
+    if (!dependency.retained || entry.first.distance != 0 ||
+        !requiresSynchronization(entry)) {
       continue;
     }
     const CanonicalSyncNode &source = plan_.nodes_[entry.first.source];
@@ -318,7 +324,8 @@ void CanonicalSyncPlanBuilder::reduceForwardDependencies() {
     const bool retained = plan_.dependencies_[entry.second.front()].retained;
     const std::size_t source = entry.first.source;
     const std::size_t target = entry.first.target;
-    if (retained && entry.first.distance == 0) {
+    if (retained && entry.first.distance == 0 &&
+        requiresSynchronization(entry)) {
       requirements.push_back({source, target});
       requirementKeys.push_back(entry.first);
     }
@@ -348,7 +355,8 @@ void CanonicalSyncPlanBuilder::reduceForwardDependencies() {
   for (const auto &entry : groups) {
     Operation *loop = entry.first.owner;
     const bool retained = plan_.dependencies_[entry.second.front()].retained;
-    if (retained && entry.first.distance != 0 && loop) {
+    if (retained && entry.first.distance != 0 && loop &&
+        requiresSynchronization(entry)) {
       recurrenceOwners.insert(loop);
     }
   }
@@ -367,6 +375,9 @@ void CanonicalSyncPlanBuilder::reduceForwardDependencies() {
     for (const auto &entry : groups) {
       const bool retained = plan_.dependencies_[entry.second.front()].retained;
       if (!retained || entry.first.distance == 0 || entry.first.owner != loop) {
+        continue;
+      }
+      if (!requiresSynchronization(entry)) {
         continue;
       }
       distances.push_back(entry.first.distance);
@@ -406,6 +417,7 @@ void CanonicalSyncPlanBuilder::reduceForwardDependencies() {
         const bool retained =
             plan_.dependencies_[entry.second.front()].retained;
         if (!retained || entry.first.distance != 0 ||
+            !requiresSynchronization(entry) ||
             !loop->isAncestor(plan_.nodes_[source].operation) ||
             !loop->isAncestor(plan_.nodes_[target].operation)) {
           continue;
@@ -446,7 +458,7 @@ void CanonicalSyncPlanBuilder::reduceForwardDependencies() {
         const bool retained =
             plan_.dependencies_[entry.second.front()].retained;
         if (!retained || entry.first.distance != distance ||
-            entry.first.owner != loop) {
+            entry.first.owner != loop || !requiresSynchronization(entry)) {
           continue;
         }
         recurrenceRequirements.push_back(
@@ -728,7 +740,15 @@ void CanonicalSyncPlanBuilder::materializeBarriers() {
     }
     const CanonicalSyncNode &source = plan_.nodes_[dependency.source];
     const CanonicalSyncNode &target = plan_.nodes_[dependency.target];
-    if (source.pipe != target.pipe || hasHardwareCompletion(source.pipe)) {
+    const bool requiresSynchronization =
+        llvm::any_of(entry.second, [&](std::size_t index) {
+          return !hasIntrinsicMmadAccumulatorOrdering(
+              plan_.dependencies_[index]);
+        });
+    const bool needsBarrier = source.pipe == target.pipe &&
+                              !hasHardwareCompletion(source.pipe) &&
+                              requiresSynchronization;
+    if (!needsBarrier) {
       continue;
     }
     CanonicalBarrier barrier;

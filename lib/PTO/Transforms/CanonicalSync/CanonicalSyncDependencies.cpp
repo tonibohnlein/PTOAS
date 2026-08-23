@@ -10,6 +10,7 @@
 
 #include "CanonicalSyncInternal.h"
 
+#include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOSyncUtils.h"
 #include "PTO/Transforms/KernelScheduling/KernelScheduleGraph.h"
@@ -124,6 +125,67 @@ bool CanonicalSyncPlanBuilder::hasHardwareCompletion(PipelineType pipe) const {
     return true;
   }
   return pipe == PipelineType::PIPE_V && isTargetArchA5(funcOperation_);
+}
+
+bool CanonicalSyncPlanBuilder::hasIntrinsicMmadAccumulatorOrdering(
+    const CanonicalDependency &dependency) const {
+  // A2/A3 orders dependent in-place MMAD accumulation without making the
+  // source a transitive completion point for other pipes.
+  const bool invalidEndpoint = dependency.source >= plan_.nodes_.size() ||
+                               dependency.target >= plan_.nodes_.size();
+  if (!isTargetArchA3(funcOperation_)) {
+    return false;
+  }
+  if (invalidEndpoint) {
+    return false;
+  }
+  switch (dependency.kind) {
+  case CanonicalDependencyKind::MemoryRAW:
+  case CanonicalDependencyKind::MemoryWAR:
+  case CanonicalDependencyKind::MemoryWAW:
+    break;
+  case CanonicalDependencyKind::SSA:
+  case CanonicalDependencyKind::LoopCarriedSSA:
+    return false;
+  }
+
+  const CanonicalSyncNode &source = plan_.nodes_[dependency.source];
+  const CanonicalSyncNode &target = plan_.nodes_[dependency.target];
+  if (source.pipe != PipelineType::PIPE_M ||
+      target.pipe != PipelineType::PIPE_M ||
+      !isa<TMatmulOp, TMatmulAccOp>(source.operation) ||
+      !isa<TMatmulAccOp>(target.operation)) {
+    return false;
+  }
+
+  const auto isExactL0C = [](const CanonicalMemoryAccess &access) {
+    return access.space == AddressSpace::ACC && access.knownPhysical &&
+           !access.unknownRange && access.addresses.size() == 1 &&
+           access.size != 0;
+  };
+  const auto sameSlot = [&](const CanonicalMemoryAccess &first,
+                            const CanonicalMemoryAccess &second) {
+    return isExactL0C(first) && isExactL0C(second) &&
+           first.addresses.front() == second.addresses.front() &&
+           first.size == second.size;
+  };
+  for (const CanonicalMemoryAccess &sourceAccess : source.accesses) {
+    if (!sourceAccess.writes || !isExactL0C(sourceAccess)) {
+      continue;
+    }
+    const bool targetReads = llvm::any_of(
+        target.accesses, [&](const CanonicalMemoryAccess &targetAccess) {
+          return targetAccess.reads && sameSlot(sourceAccess, targetAccess);
+        });
+    const bool targetWrites = llvm::any_of(
+        target.accesses, [&](const CanonicalMemoryAccess &targetAccess) {
+          return targetAccess.writes && sameSlot(sourceAccess, targetAccess);
+        });
+    if (targetReads && targetWrites) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void CanonicalSyncPlanBuilder::addIssueOrderEdges() {

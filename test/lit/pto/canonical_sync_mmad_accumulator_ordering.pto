@@ -1,0 +1,254 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: pto-test-opt %t/a2a3.pto \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=plan' \
+// RUN:   | FileCheck %s --check-prefix=PLAN
+// RUN: pto-test-opt %t/a2a3.pto '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=IR
+// RUN: pto-test-opt %t/a5.pto \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=plan' \
+// RUN:   | FileCheck %s --check-prefix=A5-PLAN
+// RUN: pto-test-opt %t/a5.pto '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=A5-IR
+
+//--- a2a3.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @same_l0c_accumulator_order(%limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %left = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>
+    %right = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>
+    %acc = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>
+
+    pto.tmatmul ins(%left, %right :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>,
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>)
+      outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                   slayout=row_major, fractal=1024>)
+    pto.tmatmul.acc ins(%acc, %left, %right :
+      !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>,
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>,
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>)
+      outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                   slayout=row_major, fractal=1024>)
+    scf.for %i = %c0 to %limit step %c1 {
+      pto.tmatmul.acc ins(%acc, %left, %right :
+        !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                      slayout=row_major, fractal=1024>,
+        !pto.tile_buf<left, 32x32xf16, slayout=row_major>,
+        !pto.tile_buf<right, 32x32xf16, slayout=col_major>)
+        outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                     slayout=row_major, fractal=1024>)
+    }
+    return
+  }
+
+  func.func @non_accumulating_mmad_keeps_barrier() {
+    %addr0 = arith.constant 0 : i64
+    %left = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>
+    %right = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>
+    %acc = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>
+
+    pto.tmatmul ins(%left, %right :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>,
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>)
+      outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                   slayout=row_major, fractal=1024>)
+    pto.tmatmul ins(%left, %right :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>,
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>)
+      outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                   slayout=row_major, fractal=1024>)
+    return
+  }
+
+  func.func @synthetic_round_trip_not_needed() {
+    %c0 = arith.constant 0 : index
+    %c32 = arith.constant 32 : index
+    %addr0 = arith.constant 0 : i64
+    %addr2048 = arith.constant 2048 : i64
+    %mat = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 64x64xf16, slayout=row_major>
+    %left0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>
+    %left1 = pto.alloc_tile addr = %addr2048 :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>
+    %right0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>
+    %right1 = pto.alloc_tile addr = %addr2048 :
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>
+    %acc = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>
+
+    pto.textract ins(%mat, %c0, %c0 :
+      !pto.tile_buf<mat, 64x64xf16, slayout=row_major>, index, index)
+      outs(%left0 : !pto.tile_buf<left, 32x32xf16, slayout=row_major>)
+    pto.textract ins(%mat, %c0, %c0 :
+      !pto.tile_buf<mat, 64x64xf16, slayout=row_major>, index, index)
+      outs(%right0 : !pto.tile_buf<right, 32x32xf16, slayout=col_major>)
+    pto.tmatmul ins(%left0, %right0 :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>,
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>)
+      outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                   slayout=row_major, fractal=1024>)
+    pto.textract ins(%mat, %c32, %c0 :
+      !pto.tile_buf<mat, 64x64xf16, slayout=row_major>, index, index)
+      outs(%left1 : !pto.tile_buf<left, 32x32xf16, slayout=row_major>)
+    pto.textract ins(%mat, %c0, %c32 :
+      !pto.tile_buf<mat, 64x64xf16, slayout=row_major>, index, index)
+      outs(%right1 : !pto.tile_buf<right, 32x32xf16, slayout=col_major>)
+    pto.tmatmul.acc ins(%acc, %left1, %right1 :
+      !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>,
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>,
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>)
+      outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                   slayout=row_major, fractal=1024>)
+    return
+  }
+
+  func.func @unknown_l0c_address_keeps_barrier(
+      %acc: !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                          slayout=row_major, fractal=1024>) {
+    %addr0 = arith.constant 0 : i64
+    %left = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>
+    %right = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>
+
+    pto.tmatmul ins(%left, %right :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>,
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>)
+      outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                   slayout=row_major, fractal=1024>)
+    pto.tmatmul.acc ins(%acc, %left, %right :
+      !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>,
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>,
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>)
+      outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                   slayout=row_major, fractal=1024>)
+    return
+  }
+
+  func.func @out_of_place_accumulation_keeps_barrier() {
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %left = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>
+    %right = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>
+    %acc0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>
+    %acc1 = pto.alloc_tile addr = %addr4096 :
+      !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>
+
+    pto.tmatmul ins(%left, %right :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>,
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>)
+      outs(%acc0 : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>)
+    pto.tmatmul.acc ins(%acc0, %left, %right :
+      !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>,
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>,
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>)
+      outs(%acc1 : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>)
+    return
+  }
+}
+
+//--- a5.pto
+module attributes {pto.target_arch = "a5"} {
+  func.func @a5_contract_not_assumed() {
+    %addr0 = arith.constant 0 : i64
+    %left = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 32x32xf16, blayout=col_major, slayout=row_major>
+    %right = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 32x32xf16, blayout=row_major, slayout=col_major>
+    %acc = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>
+
+    pto.tmatmul ins(%left, %right :
+      !pto.tile_buf<left, 32x32xf16, blayout=col_major, slayout=row_major>,
+      !pto.tile_buf<right, 32x32xf16, blayout=row_major, slayout=col_major>)
+      outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                   slayout=row_major, fractal=1024>)
+    pto.tmatmul.acc ins(%acc, %left, %right :
+      !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>,
+      !pto.tile_buf<left, 32x32xf16, blayout=col_major, slayout=row_major>,
+      !pto.tile_buf<right, 32x32xf16, blayout=row_major, slayout=col_major>)
+      outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                   slayout=row_major, fractal=1024>)
+    return
+  }
+}
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @same_l0c_accumulator_order
+// PLAN-SAME: barriers=0 events=0
+// PLAN: requirement{{.*}}kind=memory-raw
+// PLAN: requirement{{.*}}distance=1 recurrence=yes
+// PLAN-LABEL: PTOCanonicalSyncPlan @non_accumulating_mmad_keeps_barrier
+// PLAN-SAME: barriers=1 events=0
+// PLAN: barrier{{.*}}pipe=PIPE_M
+// PLAN-LABEL: PTOCanonicalSyncPlan @synthetic_round_trip_not_needed
+// PLAN-SAME: barriers=0
+// PLAN-NOT: PIPE_M -> PIPE_MTE1
+// PLAN-LABEL: PTOCanonicalSyncPlan @unknown_l0c_address_keeps_barrier
+// PLAN-SAME: barriers=1 events=0
+// PLAN: barrier{{.*}}pipe=PIPE_M
+// PLAN-LABEL: PTOCanonicalSyncPlan @out_of_place_accumulation_keeps_barrier
+// PLAN-SAME: barriers=1 events=0
+// PLAN: barrier{{.*}}pipe=PIPE_M
+// A5-PLAN-LABEL: PTOCanonicalSyncPlan @a5_contract_not_assumed
+// A5-PLAN-SAME: barriers=1 events=0
+// A5-PLAN: barrier{{.*}}pipe=PIPE_M
+
+// IR-LABEL: func.func @same_l0c_accumulator_order
+// IR-NOT: pto.barrier <PIPE_M>
+// IR-NOT: pto.set_flag
+// IR-NOT: pto.wait_flag
+// IR: return
+// IR-LABEL: func.func @non_accumulating_mmad_keeps_barrier
+// IR: pto.tmatmul
+// IR-NEXT: pto.barrier <PIPE_M>
+// IR-NEXT: pto.tmatmul
+// IR-LABEL: func.func @synthetic_round_trip_not_needed
+// IR-NOT: pto.set_flag[<PIPE_M>, <PIPE_MTE1>
+// IR-LABEL: func.func @unknown_l0c_address_keeps_barrier
+// IR: pto.tmatmul
+// IR-NEXT: pto.barrier <PIPE_M>
+// IR-NEXT: pto.tmatmul.acc
+// IR-LABEL: func.func @out_of_place_accumulation_keeps_barrier
+// IR: pto.tmatmul
+// IR-NEXT: pto.barrier <PIPE_M>
+// IR-NEXT: pto.tmatmul.acc
+// A5-IR-LABEL: func.func @a5_contract_not_assumed
+// A5-IR: pto.tmatmul
+// A5-IR-NEXT: pto.barrier <PIPE_M>
+// A5-IR-NEXT: pto.tmatmul.acc

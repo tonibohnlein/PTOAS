@@ -395,6 +395,7 @@ std::size_t CanonicalSyncPlanBuilder::countUncoveredRecurrenceRequirements(
       groups;
   for (auto [index, requirement] : llvm::enumerate(requirements)) {
     if (requirement.iterationDistance != 0 && requirement.recurrenceLoop &&
+        !hasIntrinsicMmadAccumulatorOrdering(requirement) &&
         !isVacuousOwnedAlternatingRecurrence(alternatingCycles, requirement)) {
       groups[requirement.recurrenceLoop][requirement.iterationDistance]
           .push_back(index);
@@ -708,7 +709,8 @@ std::size_t CanonicalSyncPlanBuilder::countUncoveredRequirements(
       barriers, events, requirements, diagnose);
   std::set<std::pair<std::size_t, std::size_t>> seenForward;
   for (auto [index, requirement] : llvm::enumerate(requirements)) {
-    if (requirement.iterationDistance == 0) {
+    if (requirement.iterationDistance == 0 &&
+        !hasIntrinsicMmadAccumulatorOrdering(requirement)) {
       if (!seenForward.emplace(requirement.source, requirement.target).second) {
         continue;
       }

@@ -220,6 +220,8 @@ private:
                                             unsigned iterationDistance) const;
   bool mayExecuteTogether(Operation *first, Operation *second) const;
   bool hasHardwareCompletion(PipelineType pipe) const;
+  bool hasIntrinsicMmadAccumulatorOrdering(
+      const CanonicalDependency &dependency) const;
   CanonicalAnchor getSetAnchor(Operation *source, Operation *target) const;
   CanonicalAnchor getWaitAnchor(Operation *source, Operation *target) const;
   std::size_t getAnchorPosition(const CanonicalAnchor &anchor) const;

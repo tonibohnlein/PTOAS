@@ -270,9 +270,13 @@ lanes plus its initial ready lane and initially free lanes.
 
 The first client recognizes L0 operand ownership from exact `LEFT` and `RIGHT`
 bundles produced on `PIPE_MTE1` and consumed on `PIPE_M`. It supports any
-number of disjoint lanes and one or more producer operations whose combined
-writes exactly match a consumer bundle. The analysis result is independent of
-protocol selection and is available through the plan printer's `ownership`
+number of disjoint lanes within the supported multi-buffer representation and
+one or more producer operations whose combined writes exactly match a consumer
+bundle. The emitted event protocol still consumes one event ID per lane in
+each of its ready and release domains. The default eight-ID hardware budget
+therefore limits an event-backed ownership cycle to at most eight lanes when
+the domain has no reserved IDs. The analysis result is independent of protocol
+selection and is available through the plan printer's `ownership`
 view. L0C ownership uses the same lifecycle for an exact accumulator slot:
 `PIPE_M` signals readiness after the complete nested compute region,
 `PIPE_FIX` waits before writeback and releases the slot afterward, and the next
@@ -378,6 +382,196 @@ complete initialize/body/drain lifecycle and, for alternating prefetch, exact
 path-sensitive facts cover every associated recurrence requirement. Unknown or
 conditional structures retain the conservative barrier. Calibrated
 latency-based selection also remains a separate follow-up.
+
+## Fine-grained barrier replacement direction
+
+This section records the intended extension boundary. It is a development
+direction, not a claim about mechanisms already emitted by the pass.
+
+### Mechanism boundary
+
+An event cannot directly replace a same-pipe requirement `P -> P`; event
+protocols require distinct source and target pipes. A replacement must instead
+prove completion through another pipe. For a forward requirement this may be a
+round trip:
+
+```text
+P: A --set------------------ wait -- B
+Q:      wait -- operation -- set
+```
+
+For physical-slot reuse across loop iterations, a valid replacement is a
+complete ownership lifecycle:
+
+```text
+prime free(slot)
+P waits-free -> produces -> sets-ready
+Q waits-ready -> consumes -> sets-free
+next iteration reuses slot
+drain remaining tokens
+```
+
+CanonicalSync currently removes a barrier when existing completion edges cover
+it, synthesizes bounded forward round trips, or substitutes a verified L0, L1,
+or L0C ownership pair. The resulting plan is sound and event-feasible, but it
+is not proven globally minimal and barrier removal alone is not a performance
+objective.
+
+A pre-extension device campaign at `9d583686` demonstrated the distinction. On
+the historical GEMM, CanonicalSync emitted 83 set/wait pairs and 7 barriers,
+while InsertSync emitted 45 pairs and 21 barriers; CanonicalSync was 51 percent
+slower. This measurement predates the latest L1 and L0C protocol changes, but
+it proves that fewer barriers can lose when they are replaced by too many
+dynamically executed event operations or by waits at expensive anchors.
+
+The follow-up campaign at `1ad29fb53` closed correctness and mechanism
+validation for path-sensitive L1 recurrence coverage. It removed exactly two
+inner-loop `PIPE_MTE2` barriers, but changed latency by only 11 of 109,028
+profiled cycles and tied the parent on silicon. The final plan still executed
+87 sets and 87 waits, compared with 47 pairs for InsertSync and 51 for the
+manual kernel. Set and wait instructions accounted for 48 percent of the
+profiled cube-core cycles.
+
+The event-plan decomposition localizes most of this gap. Sixteen synthetic
+forward barrier replacements each contain an atomic two-event round trip
+through `PIPE_MTE1`, for 32 event objects in total. They serialize consecutive
+`tmatmul` or `tmatmul.acc` operations on `PIPE_M` after the ownership events
+have already been synthesized. Removing those objects without another
+completion proof would be unsound: A2/A3 does not generally promote
+same-`PIPE_M` issue order to completion order.
+
+The focused A2/A3 device experiment used three byte-identical MMAD chains that
+differed only in synchronization:
+
+1. a `PIPE_M` barrier between dependent operations, as the correctness
+   reference;
+2. no barrier and no event, to test whether the operation pair has an
+   intrinsic ordering guarantee; and
+3. an `M -> MTE1` set after the first MMAD whose matching wait is delayed until
+   after the second MMAD, isolating the source-marker effect.
+
+The campaign at `1ad29fb53` found that the unsynchronized and set-marker arms
+both overlapped dependent MMADs by about 11 ns in the op-simulator, while only
+the barrier arm serialized them. All three arms were exact over 44,800 silicon
+launches for each load-bearing chain length, with a co-scheduled missing
+`M -> FIX` control failing in every accepted batch. The result supports
+intrinsic ordering for dependent same-L0C accumulation MMADs on one A2/A3 cube
+pipe and refutes an `M -> MTE1` set as the source-completion mechanism.
+
+CanonicalSync models this result as a direct hazard discharge, not as a
+`HardwareCompletion` graph edge. The distinction is necessary: dependent
+MMAD ordering does not prove that an arbitrary later event observes MMAD
+completion and must not participate in transitive completion reduction. The
+rule is intentionally limited to `tmatmul` or `tmatmul.acc` followed by an
+in-place `tmatmul.acc` on one exact, statically known L0C interval. Unknown
+addresses, out-of-place accumulation, non-accumulating destinations, A5, and
+all MTE hazards keep their existing synchronization.
+
+On the historical GEMM, applying that narrow rule preserves all 4,184 original
+completion requirements and all four ownership cycles, while reducing the
+plan from 42 to 10 event objects. It removes the sixteen synthetic
+`M -> MTE1 -> M` round-trip bundles, so the expected dynamic action count drops
+from 87 to 55 set/wait pairs, close to the manual kernel's 51. Five static
+barriers remain. In particular, the two surviving `PIPE_M` recurrence barriers
+precede non-accumulating `tmatmul` initializations and are outside the measured
+intrinsic-ordering contract.
+
+The immediate gate is therefore the historical hand-synchronized GEMM. Before
+adding another protocol family, the latest plan must be checked for:
+
+- numerical correctness over prime, both parity paths, steady state, and drain;
+- zero avoidable steady-state `PIPE_M` and `PIPE_MTE1` barriers;
+- event action counts and anchors relative to the manual protocol; and
+- silicon latency against InsertSync and the hand-synchronized kernel while the
+  non-synchronization operation sequence remains identical.
+
+### Candidate protocol families
+
+The next useful families are ownership protocols over reusable local storage,
+not ownership of GM arguments:
+
+1. **UB input slots:** `PIPE_MTE2` produces a VEC slot, `PIPE_V` consumes it,
+   and `PIPE_V` releases it before the next MTE2 overwrite.
+2. **UB output slots:** `PIPE_V` produces a VEC slot, `PIPE_MTE3` consumes it
+   for GM writeback, and `PIPE_MTE3` releases it before the next vector write.
+3. **Fixpipe output slots:** where real kernels materialize a FIX result in VEC
+   before an MTE3 store, use a `PIPE_FIX <-> PIPE_MTE3` round trip. Corpus
+   evidence is required before adding this specialized recognizer.
+4. **N-way L1 rotation:** generalize alternating prefetch from the exact
+   two-arm parity form to proven `N`-lane rotation. This requires generalized
+   path selection, initial token state, final-iteration behavior, and drains;
+   changing only the remainder constant is insufficient.
+5. **In-place UB pipelines:** a slot that moves through MTE2 load, vector
+   compute, and MTE3 store is a three-party state machine
+   `MTE2 -> V -> MTE3 -> MTE2`, not two independent round trips.
+
+The phrase "GM pipeline ownership" should be avoided. GM alias analysis still
+creates correctness requirements for external memory, but the rotating owned
+resource in these pipelines is the local UB slot. On A2/A3, MTE2 is the normal
+GM-to-local load pipe and MTE3 is the normal local-to-GM store pipe.
+
+### Generic protocol synthesis and proof
+
+New recurrence-barrier replacements should be produced by a physical-slot
+protocol synthesizer rather than by admitting arbitrary cyclic edges to the
+forward barrier beam search. For each candidate, the synthesizer must:
+
+1. recover exact physical lanes and every participating read and write;
+2. construct a per-lane state machine with explicit owners and transitions;
+3. place path-sensitive prime, body, condition, and drain actions;
+4. bind each transition to concrete operation endpoints and recurrence ages;
+5. verify token conservation, balanced traces, legal anchors, and complete
+   ready/release or multi-party handoffs;
+6. verify every immutable completion requirement against the final mixed
+   barrier/event plan;
+7. color all event intervals exactly, including reserved event IDs; and
+8. accept the candidate transactionally so failure restores the previous
+   feasible plan.
+
+Completion reachability alone is insufficient for a cyclic protocol. It can
+show that an abstract edge would cover a hazard without proving that emitted
+set/wait actions cannot consume a stale token or deadlock on the first or last
+iteration. Two-party additions may reuse the current ownership-pair verifier.
+A three-party UB cycle requires a joint protocol representation and verifier.
+
+The final coverage checker already computes transitive completion reachability
+through retained fixed, event, and barrier edges. A proposed "multi-stage
+forwarding closure" is therefore not a missing correctness mechanism. Search
+may still fail to generate a useful joint candidate, but that is candidate
+generation incompleteness and must not be addressed by weakening coverage.
+
+Likewise, L1 and L0 operand stages do not share one physical buffer. The MTE1
+operation consumes `MAT` storage and produces distinct `LEFT` or `RIGHT`
+storage. Their event domains remain distinct. Cross-stage reduction should use
+the completion graph through the common MTE1 operation; it should not merge
+the two ownership states or assume that one event ID can serve both domains.
+
+### Performance acceptance
+
+Until calibrated hardware-cycle weights are available, a replacement should
+be ranked with conservative structural signals after correctness and event
+feasibility:
+
+1. fewer dynamically executed set/wait actions in the steady-state loop;
+2. waits placed as close as possible to the hazardous physical-slot reuse;
+3. shorter event lifetimes and less peak event-domain pressure;
+4. fewer newly introduced directed event domains; and
+5. no additional serialization of an unrelated producer or consumer pipe.
+
+The existing unweighted rule that prefers every feasible barrier removal is
+not an adequate final performance policy. A later calibrated model may compare
+the expected barrier stall with event instruction and critical-path costs, but
+latency calibration is deferred until the historical GEMM protocol shape is
+understood.
+
+Development is intentionally staged:
+
+1. validate the intrinsic MMAD ordering reduction on the historical GEMM;
+2. explain the remaining four-pair gap from emitted actions, event domains,
+   and wait anchors before changing the recognizers;
+3. match the hand-synchronized GEMM with the existing protocol families; and
+4. only then mine the corpus and add UB or N-way protocols with focused device
+   cases.
 
 ## Event feasibility boundary
 

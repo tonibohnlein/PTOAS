@@ -120,16 +120,17 @@ module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<cub
 
 // IR-LABEL: func.func @l0_ownership_gemm_branched
 // IR: pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
-// IR-NEXT: pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+// IR: pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
 // IR: scf.for
 // IR: scf.if
 // IR: } else {
-// IR: pto.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
-// IR-NEXT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+// IR: pto.set_flag[<PIPE_M>, <PIPE_FIX>,
+// IR-NEXT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>,
+// IR-NEXT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>,
 // IR-NEXT: pto.tstore
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @l0_ownership_gemm_branched
 // PLAN: PIPE_M -> PIPE_FIX {{.*}}actions=2 completions=2 traces=1 ownership=no
 // PLAN: PIPE_MTE1 -> PIPE_M {{.*}}width=2{{.*}}completions=8 traces=2 ownership=yes ownership-cycle=1 ownership-role=ready
 // PLAN: PIPE_M -> PIPE_MTE1 {{.*}}width=2{{.*}}completions=16 traces=4 ownership=yes ownership-cycle=1 ownership-role=release
-// PLAN: domain PIPE_M -> PIPE_MTE1 original-events=3 events=3 available=8 original-colors=3 colors=3
+// PLAN: domain PIPE_M -> PIPE_MTE1 original-events=2 events=2 available=8 original-colors=3 colors=3
