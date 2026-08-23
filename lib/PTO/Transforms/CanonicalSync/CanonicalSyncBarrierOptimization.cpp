@@ -38,6 +38,145 @@ struct BarrierEventBundle {
   std::size_t id = 0;
 };
 
+using OwnershipEventPairs =
+    std::map<std::size_t, SmallVector<const CanonicalEvent *, 2>>;
+
+OwnershipEventPairs buildOwnershipEventPairs(ArrayRef<CanonicalEvent> events) {
+  OwnershipEventPairs pairs;
+  for (const CanonicalEvent &event : events) {
+    if (event.ownershipProtocol) {
+      pairs[event.ownershipCycle].push_back(&event);
+    }
+  }
+  return pairs;
+}
+
+const CanonicalEvent *
+findOwnershipEvent(ArrayRef<const CanonicalEvent *> events,
+                   CanonicalOwnershipEventRole role) {
+  auto match = llvm::find_if(events, [&](const CanonicalEvent *event) {
+    return event && event->ownershipRole == role;
+  });
+  return match == events.end() ? nullptr : *match;
+}
+
+bool isInRegion(Operation *operation, Region *region) {
+  if (!operation || !region) {
+    return false;
+  }
+  return operation->getParentRegion() == region ||
+         llvm::any_of(region->getOps(), [&](Operation &candidate) {
+           return candidate.isAncestor(operation);
+         });
+}
+
+bool ownershipCycleContainsNode(const CanonicalOwnershipCycle &cycle,
+                                std::size_t node) {
+  return llvm::any_of(cycle.paths, [&](const CanonicalOwnershipPath &path) {
+    return llvm::any_of(path.uses, [&](const CanonicalOwnershipUse &use) {
+      return llvm::is_contained(use.producers, node) ||
+             llvm::is_contained(use.consumers, node);
+    });
+  });
+}
+
+bool ownershipCycleContainsAccess(const CanonicalOwnershipCycle &cycle,
+                                  const CanonicalMemoryAccess &access) {
+  if (!access.knownPhysical || access.unknownRange || access.size == 0 ||
+      access.addresses.size() != 1) {
+    return false;
+  }
+  const CanonicalPhysicalSlot slot{access.space, access.addresses.front(),
+                                   access.size};
+  return llvm::any_of(cycle.lanes, [&](const CanonicalOwnershipLane &lane) {
+    return llvm::is_contained(lane.slots, slot);
+  });
+}
+
+bool formsMemoryHazard(CanonicalDependencyKind kind,
+                       const CanonicalMemoryAccess &source,
+                       const CanonicalMemoryAccess &target) {
+  switch (kind) {
+  case CanonicalDependencyKind::MemoryRAW:
+    return source.writes && target.reads;
+  case CanonicalDependencyKind::MemoryWAR:
+    return source.reads && target.writes;
+  case CanonicalDependencyKind::MemoryWAW:
+    return source.writes && target.writes;
+  case CanonicalDependencyKind::SSA:
+  case CanonicalDependencyKind::LoopCarriedSSA:
+    return false;
+  }
+  return false;
+}
+
+SmallVector<const CanonicalOwnershipCycle *, 2>
+getVerifiedAlternatingCycles(ArrayRef<CanonicalOwnershipCycle> cycles,
+                             ArrayRef<CanonicalEvent> events,
+                             Operation *loop = nullptr) {
+  const OwnershipEventPairs pairs = buildOwnershipEventPairs(events);
+  SmallVector<const CanonicalOwnershipCycle *, 2> verified;
+  for (const CanonicalOwnershipCycle &cycle : cycles) {
+    if (cycle.protocol != CanonicalOwnershipProtocolKind::AlternatingPrefetch ||
+        (loop && cycle.loop != loop) ||
+        !verifyCanonicalAlternatingPathMapping(cycle)) {
+      continue;
+    }
+    auto pair = pairs.find(cycle.id);
+    const bool validPair =
+        pair != pairs.end() &&
+        verifyCanonicalOwnershipEventPair(cycle, pair->second);
+    if (validPair) {
+      verified.push_back(&cycle);
+    }
+  }
+  return verified;
+}
+
+void appendAlternatingOwnershipForwardEdges(
+    ArrayRef<CanonicalOwnershipCycle> cycles, ArrayRef<CanonicalEvent> events,
+    std::size_t nodeCount, std::set<std::pair<std::size_t, std::size_t>> &seen,
+    std::vector<SyncGraphEdge> &edges) {
+  const OwnershipEventPairs pairs = buildOwnershipEventPairs(events);
+  for (const CanonicalOwnershipCycle *cycle :
+       getVerifiedAlternatingCycles(cycles, events)) {
+    auto pair = pairs.find(cycle->id);
+    if (pair == pairs.end()) {
+      continue;
+    }
+    const CanonicalEvent *ready =
+        findOwnershipEvent(pair->second, CanonicalOwnershipEventRole::Ready);
+    const CanonicalEvent *release =
+        findOwnershipEvent(pair->second, CanonicalOwnershipEventRole::Release);
+    if (!ready || !release) {
+      continue;
+    }
+
+    // Compose the initial ready handoff with the first release handoff. This
+    // summarizes a preheader producer -> first physical-slot reuse path that
+    // spans two event domains and therefore is not represented by either
+    // event's individual completion edge.
+    for (const CanonicalEventCompletion &initial : ready->completions) {
+      if (initial.iterationDistance != 0 || initial.recurrenceLoop ||
+          !llvm::is_contained(cycle->initialProducers, initial.source)) {
+        continue;
+      }
+      for (const CanonicalEventCompletion &reuse : release->completions) {
+        if (reuse.iterationDistance != 1 ||
+            reuse.recurrenceLoop != cycle->loop ||
+            initial.target != reuse.source || initial.source >= reuse.target ||
+            reuse.target >= nodeCount) {
+          continue;
+        }
+        if (seen.emplace(initial.source, reuse.target).second) {
+          edges.push_back({initial.source, reuse.target,
+                           SyncGraphEdgeKind::HardwareCompletion});
+        }
+      }
+    }
+  }
+}
+
 bool sameEventProtocol(const CanonicalEvent &first,
                        const CanonicalEvent &second) {
   if (first.sourcePipe != second.sourcePipe ||
@@ -90,16 +229,12 @@ bool searchStateLess(const BarrierSearchState &first,
          std::tie(second.uncovered, second.intervalSpan, second.additions);
 }
 
-void appendOwnershipRoundTripEdges(
-    ArrayRef<CanonicalOwnershipCycle> cycles, ArrayRef<CanonicalEvent> events,
-    Operation *loop, std::size_t nodeCount, std::size_t occurrenceCount,
-    std::vector<SyncGraphEdge> &edges) {
-  std::map<std::size_t, SmallVector<const CanonicalEvent *, 2>> eventPairs;
-  for (const CanonicalEvent &event : events) {
-    if (event.ownershipProtocol) {
-      eventPairs[event.ownershipCycle].push_back(&event);
-    }
-  }
+void appendOwnershipRoundTripEdges(ArrayRef<CanonicalOwnershipCycle> cycles,
+                                   ArrayRef<CanonicalEvent> events,
+                                   Operation *loop, std::size_t nodeCount,
+                                   std::size_t occurrenceCount,
+                                   std::vector<SyncGraphEdge> &edges) {
+  const OwnershipEventPairs eventPairs = buildOwnershipEventPairs(events);
 
   for (const CanonicalOwnershipCycle &cycle : cycles) {
     if (cycle.loop != loop ||
@@ -164,6 +299,72 @@ void appendOwnershipRoundTripEdges(
 
 } // namespace
 
+bool CanonicalSyncPlanBuilder::isVacuousOwnedAlternatingRecurrence(
+    ArrayRef<const CanonicalOwnershipCycle *> cycles,
+    const CanonicalDependency &requirement) const {
+  if (!requirement.recurrenceLoop || requirement.iterationDistance == 0 ||
+      requirement.source >= plan_.nodes_.size() ||
+      requirement.target >= plan_.nodes_.size()) {
+    return false;
+  }
+  for (const CanonicalOwnershipCycle *cycle : cycles) {
+    if (!cycle || cycle->loop != requirement.recurrenceLoop ||
+        cycle->paths.size() != 2) {
+      continue;
+    }
+    std::optional<unsigned> sourcePath;
+    std::optional<unsigned> targetPath;
+    for (auto [pathIndex, path] : llvm::enumerate(cycle->paths)) {
+      if (isInRegion(plan_.nodes_[requirement.source].operation, path.region)) {
+        sourcePath = pathIndex;
+      }
+      if (isInRegion(plan_.nodes_[requirement.target].operation, path.region)) {
+        targetPath = pathIndex;
+      }
+    }
+    if (!sourcePath || !targetPath) {
+      continue;
+    }
+    // Path zero is the even arm and path one is the odd arm. Unit-step
+    // execution flips the selected arm once per iteration.
+    const unsigned expectedTarget =
+        (*sourcePath + requirement.iterationDistance) % cycle->paths.size();
+    if (*targetPath == expectedTarget ||
+        !ownershipCycleContainsNode(*cycle, requirement.source) ||
+        !ownershipCycleContainsNode(*cycle, requirement.target)) {
+      continue;
+    }
+
+    bool foundManagedHazard = false;
+    const CanonicalSyncNode &sourceNode = plan_.nodes_[requirement.source];
+    const CanonicalSyncNode &targetNode = plan_.nodes_[requirement.target];
+    for (const CanonicalMemoryAccess &sourceAccess : sourceNode.accesses) {
+      for (const CanonicalMemoryAccess &targetAccess : targetNode.accesses) {
+        const bool aliases = memoryAliasesAcrossIterations(
+            sourceAccess, targetAccess, requirement.recurrenceLoop,
+            requirement.iterationDistance);
+        const bool isHazard =
+            formsMemoryHazard(requirement.kind, sourceAccess, targetAccess);
+        if (!isHazard || !aliases) {
+          continue;
+        }
+        const bool sourceIsOwned =
+            ownershipCycleContainsAccess(*cycle, sourceAccess);
+        const bool targetIsOwned =
+            ownershipCycleContainsAccess(*cycle, targetAccess);
+        if (!sourceIsOwned || !targetIsOwned) {
+          return false;
+        }
+        foundManagedHazard = true;
+      }
+    }
+    if (foundManagedHazard) {
+      return true;
+    }
+  }
+  return false;
+}
+
 std::vector<SyncGraphEdge> CanonicalSyncPlanBuilder::buildEventCompletionEdges(
     ArrayRef<CanonicalEvent> events) const {
   std::vector<SyncGraphEdge> edges;
@@ -179,17 +380,22 @@ std::vector<SyncGraphEdge> CanonicalSyncPlanBuilder::buildEventCompletionEdges(
       }
     }
   }
+  appendAlternatingOwnershipForwardEdges(plan_.ownershipCycles_, events,
+                                         plan_.nodes_.size(), seen, edges);
   return edges;
 }
 
 std::size_t CanonicalSyncPlanBuilder::countUncoveredRecurrenceRequirements(
     ArrayRef<CanonicalBarrier> barriers, ArrayRef<CanonicalEvent> events,
     ArrayRef<CanonicalDependency> requirements, bool diagnose) const {
+  const SmallVector<const CanonicalOwnershipCycle *, 2> alternatingCycles =
+      getVerifiedAlternatingCycles(plan_.ownershipCycles_, events);
   std::map<Operation *, std::map<unsigned, SmallVector<std::size_t, 8>>,
            std::less<Operation *>>
       groups;
   for (auto [index, requirement] : llvm::enumerate(requirements)) {
-    if (requirement.iterationDistance != 0 && requirement.recurrenceLoop) {
+    if (requirement.iterationDistance != 0 && requirement.recurrenceLoop &&
+        !isVacuousOwnedAlternatingRecurrence(alternatingCycles, requirement)) {
       groups[requirement.recurrenceLoop][requirement.iterationDistance]
           .push_back(index);
     }

@@ -326,10 +326,21 @@ the accepted action/completion graph cannot drift from the emitted one. For a
 verified pair, completion coverage may derive the full round-trip order from
 the last use of a physical lane in one iteration to the first use in the next.
 This lets the pair discharge same-pipe recurrence barriers on either endpoint
-pipe without treating an incomplete or malformed pair as a proof. The
-alternating-prefetch protocol is deliberately excluded from this
-path-insensitive summary; its two control-flow paths require a separate
-path-sensitive coverage proof before it can discharge recurrence barriers.
+pipe without treating an incomplete or malformed pair as a proof.
+
+An alternating-prefetch pair uses a narrower path-sensitive proof. The
+coverage verifier composes the initial ready completion with the first release
+completion to summarize the preheader producer-to-first-reuse order across the
+two event domains. It also uses the recognized `(iv rem 2) == 0` predicate and
+unit-step loop to reject an ownership-managed recurrence whose endpoint
+combination cannot execute at the stated iteration distance. The exemption is
+limited to memory hazards for which both endpoint nodes and every aliasing
+physical access belong to the verified cycle. Unrelated storage effects on the
+same operations retain their original requirements and barriers. These facts
+are available only while the complete ready/release pair is present and passes
+ownership-pair verification. Coverage also revalidates that the recorded
+regions are respectively the then and else arms of the recognized loop's exact
+parity branch; path-vector order alone is not a proof.
 
 ### Barrier optimization
 
@@ -361,10 +372,11 @@ barrier is preferred once correctness and event feasibility are proven, and
 candidate bundles of equal depth prefer shorter event lifetimes. A calibrated
 latency model may later choose to retain a cheap barrier instead.
 
-Recurrence barriers are intentionally excluded from this first replacement
-step. Removing them requires a complete loop protocol, including initial
-credits, per-iteration waits and sets, slot/parity mapping, and final drains.
-Unknown or conditional structures retain the conservative barrier. Calibrated
+Recurrence barriers are intentionally excluded from synthetic replacement
+search. A verified ownership protocol may still remove one directly when its
+complete initialize/body/drain lifecycle and, for alternating prefetch, exact
+path-sensitive facts cover every associated recurrence requirement. Unknown or
+conditional structures retain the conservative barrier. Calibrated
 latency-based selection also remains a separate follow-up.
 
 ## Event feasibility boundary

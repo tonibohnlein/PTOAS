@@ -256,6 +256,8 @@ bool testAlternatingOwnershipPairVerification() {
   auto [ready, release] = buildCanonicalOwnershipProtocols(cycle);
   bool passed = check(verifyPair(cycle, ready, release),
                       "a complete alternating ownership protocol is valid");
+  passed &= check(!verifyCanonicalAlternatingPathMapping(cycle),
+                  "unrelated regions cannot prove an alternating path mapping");
 
   CanonicalEvent malformed = ready;
   malformed.actions.front().nonEmptyLoopGuard = nullptr;

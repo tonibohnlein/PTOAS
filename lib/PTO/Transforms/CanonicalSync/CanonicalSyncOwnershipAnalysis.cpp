@@ -1016,6 +1016,22 @@ void appendUniqueOwnershipCycle(
 
 } // namespace
 
+bool mlir::pto::verifyCanonicalAlternatingPathMapping(
+    const CanonicalOwnershipCycle &cycle) {
+  if (cycle.protocol != CanonicalOwnershipProtocolKind::AlternatingPrefetch ||
+      !cycle.loop || cycle.paths.size() != 2 || !cycle.paths[0].region ||
+      !cycle.paths[1].region) {
+    return false;
+  }
+  auto loop = dyn_cast<scf::ForOp>(cycle.loop);
+  auto branch = dyn_cast_or_null<scf::IfOp>(
+      cycle.paths[0].region->getParentOp());
+  return loop && branch && branch->getParentOp() == loop.getOperation() &&
+         cycle.paths[0].region == &branch.getThenRegion() &&
+         cycle.paths[1].region == &branch.getElseRegion() &&
+         matchAlternatingParityBranch(loop, branch);
+}
+
 void CanonicalSyncPlanBuilder::analyzeOwnershipCycles() {
   const OwnershipSpec l0OperandSpec{
       CanonicalOwnershipKind::L0Operand,

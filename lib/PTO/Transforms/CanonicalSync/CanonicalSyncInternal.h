@@ -51,6 +51,9 @@ bool verifyCanonicalOwnershipEventPair(
     const CanonicalOwnershipCycle &cycle,
     ArrayRef<const CanonicalEvent *> events);
 
+bool verifyCanonicalAlternatingPathMapping(
+    const CanonicalOwnershipCycle &cycle);
+
 std::pair<CanonicalEvent, CanonicalEvent>
 buildCanonicalOwnershipProtocols(const CanonicalOwnershipCycle &cycle);
 
@@ -172,6 +175,9 @@ private:
   std::size_t countUncoveredRecurrenceRequirements(
       ArrayRef<CanonicalBarrier> barriers, ArrayRef<CanonicalEvent> events,
       ArrayRef<CanonicalDependency> requirements, bool diagnose) const;
+  bool isVacuousOwnedAlternatingRecurrence(
+      ArrayRef<const CanonicalOwnershipCycle *> cycles,
+      const CanonicalDependency &requirement) const;
   bool isRecurrenceVertexAvailable(const CanonicalDependency &requirement,
                                    std::size_t vertex,
                                    std::size_t nodeCount) const;
