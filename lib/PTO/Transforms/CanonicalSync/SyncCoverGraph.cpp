@@ -347,7 +347,7 @@ SyncCoverGraphResult SyncCoverGraph::validate() const {
       return {SyncCoverGraphError::InvalidTimeline, index};
     }
     if (invalidTargets) {
-      return {SyncCoverGraphError::InvalidNode, index};
+      return {SyncCoverGraphError::InvalidCompletionTargets, index};
     }
     SyncCoverGuard guard = node.guard;
     const SyncCoverGraphError error =

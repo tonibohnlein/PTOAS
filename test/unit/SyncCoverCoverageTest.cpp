@@ -316,6 +316,47 @@ bool testEndpointImpliedOptionalScopes() {
   return passed;
 }
 
+bool testEndpointImpliedScopeDoesNotCrossRecurrenceCopies() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, false, std::nullopt, true), passed,
+                "add recurrence loop");
+  const SyncCoverScopeId optional =
+      takeIndex(graph.addScope(loop, false), passed,
+                "add optional recurrence scope");
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, optional, 0), passed,
+                "add optional recurrence source");
+  const SyncCoverNodeId middle =
+      takeIndex(graph.addNode(2, 1, optional, 1), passed,
+                "add optional recurrence middle");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(2, 1, loop, 2), passed,
+                "add recurrence target");
+
+  SyncCoverDemand demand = makeDemand(source, target);
+  demand.scope = loop;
+  demand.distance = 2;
+  passed &= check(graph.addDemand(demand), "add optional recurrence demand");
+
+  SyncCoverEdge first =
+      makeEdge(source, middle, SyncCoverEdgeKind::CompletionSupply, 13);
+  first.scope = loop;
+  first.distance = 1;
+  passed &= check(graph.addEdge(first), "add optional first recurrence hop");
+  SyncCoverEdge second = makeEdge(
+      middle, target, SyncCoverEdgeKind::CompletionPreservingIssueOrder, 13);
+  second.scope = loop;
+  second.distance = 1;
+  passed &= check(graph.addEdge(second), "add optional second recurrence hop");
+
+  passed &= check(
+      !SyncCoverCoverageOracle(graph).checkDemand(0, {13}).covered,
+      "endpoint-implied optional scope is unavailable in another copy");
+  return passed;
+}
+
 bool testComposedRecurrencePath() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -497,6 +538,7 @@ int main() {
   passed &= testRecurrenceCopiesAndGuards();
   passed &= testIntermediateConditionalFailsClosed();
   passed &= testEndpointImpliedOptionalScopes();
+  passed &= testEndpointImpliedScopeDoesNotCrossRecurrenceCopies();
   passed &= testComposedRecurrencePath();
   passed &= testExactRecurrenceScopeAndOuterControl();
   passed &= testNestedExecutionAndExpansionLimit();

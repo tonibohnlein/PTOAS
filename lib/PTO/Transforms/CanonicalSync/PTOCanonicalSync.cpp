@@ -86,9 +86,12 @@ struct PTOCanonicalSyncPass
         assumeDistinctGmArgsNoAlias
             ? pto::CanonicalGMAliasPolicy::DistinctArgumentsNoAlias
             : pto::CanonicalGMAliasPolicy::MayAlias;
+    pto::CanonicalSyncBuildOptions options;
+    options.eventIdMax = static_cast<unsigned>(eventIdNumMax);
+    options.gmAliasPolicy = gmAliasPolicy;
+    options.coveringShadow = coveringShadow;
     FailureOr<pto::CanonicalSyncPlan> plan =
-        pto::buildCanonicalSyncPlan(func, static_cast<unsigned>(eventIdNumMax),
-                                    gmAliasPolicy, nullptr, coveringShadow);
+        pto::buildCanonicalSyncPlan(func, options);
     if (failed(plan) || failed(pto::emitCanonicalSyncPlan(func, *plan))) {
       signalPassFailure();
     }
@@ -150,10 +153,14 @@ struct PrintCanonicalSyncPlanPass
       if (shouldSkipCanonicalSync(func)) {
         continue;
       }
-      FailureOr<pto::CanonicalSyncPlan> plan = pto::buildCanonicalSyncPlan(
-          func, static_cast<unsigned>(eventIdNumMax), gmAliasPolicy,
-          view == "selection" ? &diagnosticRequest : nullptr,
-          coveringShadow || view == "covering");
+      pto::CanonicalSyncBuildOptions options;
+      options.eventIdMax = static_cast<unsigned>(eventIdNumMax);
+      options.gmAliasPolicy = gmAliasPolicy;
+      options.diagnosticRequest =
+          view == "selection" ? &diagnosticRequest : nullptr;
+      options.coveringShadow = coveringShadow || view == "covering";
+      FailureOr<pto::CanonicalSyncPlan> plan =
+          pto::buildCanonicalSyncPlan(func, options);
       if (failed(plan)) {
         signalPassFailure();
         return;

@@ -262,18 +262,17 @@ private:
 
 class CanonicalSyncPlanBuilder {
 public:
-  CanonicalSyncPlanBuilder(func::FuncOp func, unsigned eventIdMax,
-                           CanonicalGMAliasPolicy gmAliasPolicy,
-                           const CanonicalSelectionDiagnosticRequest
-                               *diagnosticRequest,
-                           bool coveringShadow)
+  CanonicalSyncPlanBuilder(func::FuncOp func,
+                           const CanonicalSyncBuildOptions &options)
       : func_(func), funcOperation_(func.getOperation()),
-        eventIdMax_(eventIdMax),
-        gmAliasPolicy_(gmAliasPolicy),
-        selectionDiagnosticsEnabled_(diagnosticRequest != nullptr),
-        coveringShadowEnabled_(coveringShadow),
-        diagnosticRequest_(diagnosticRequest ? *diagnosticRequest
-                                             : CanonicalSelectionDiagnosticRequest{}),
+        eventIdMax_(options.eventIdMax),
+        gmAliasPolicy_(options.gmAliasPolicy),
+        selectionDiagnosticsEnabled_(options.diagnosticRequest != nullptr),
+        coveringShadowEnabled_(options.coveringShadow),
+        diagnosticRequest_(
+            options.diagnosticRequest
+                ? *options.diagnosticRequest
+                : CanonicalSelectionDiagnosticRequest{}),
         translator_(syncIR_, memoryAnalyzer_, bufferMap_, func,
                     SyncAnalysisMode::CANONICALSYNC) {}
 

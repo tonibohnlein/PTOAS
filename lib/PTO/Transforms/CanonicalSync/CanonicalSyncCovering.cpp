@@ -134,7 +134,7 @@ public:
         hasHardwareCompletion_(hasHardwareCompletion),
         hasIntrinsicOrdering_(hasIntrinsicOrdering) {}
 
-  LogicalResult build(CanonicalSyncCoveringShadowSummary &summary) {
+  LogicalResult build(CanonicalSyncCoveringShadowSnapshot &snapshot) {
     regionContexts_[&func_.getBody()] = {};
     if (failed(buildRegionScopes(func_.getBody(), regionContexts_.at(
                                                      &func_.getBody())))) {
@@ -150,20 +150,20 @@ public:
     if (!validation) {
       return emitGraphError("final graph validation", validation);
     }
-    summary.scopes = graph_.getScopes().size();
-    summary.controls = graph_.getControls().size();
-    summary.nodes = graph_.getNodes().size();
-    summary.fixedEdges = plan_.getFixedEdges().size();
-    summary.recurrenceCarryEdges = recurrenceCarryEdges_;
-    summary.conservativeDemands = graph_.getDemands().size();
-    summary.activeDemands = activeDemands_.size();
-    summary.intrinsicallySatisfiedDemands = intrinsicallySatisfiedDemands_;
-    summary.scopeDetails = graph_.getScopes();
-    summary.controlDetails = graph_.getControls();
-    summary.nodeDetails = graph_.getNodes();
-    summary.edgeDetails = graph_.getEdges();
-    summary.demandDetails = graph_.getDemands();
-    summary.activeDemandIds = activeDemands_;
+    snapshot.scopes = graph_.getScopes().size();
+    snapshot.controls = graph_.getControls().size();
+    snapshot.nodes = graph_.getNodes().size();
+    snapshot.fixedEdges = plan_.getFixedEdges().size();
+    snapshot.recurrenceCarryEdges = recurrenceCarryEdges_;
+    snapshot.conservativeDemands = graph_.getDemands().size();
+    snapshot.activeDemands = activeDemands_.size();
+    snapshot.intrinsicallySatisfiedDemands = intrinsicallySatisfiedDemands_;
+    snapshot.scopeDetails = graph_.getScopes();
+    snapshot.controlDetails = graph_.getControls();
+    snapshot.nodeDetails = graph_.getNodes();
+    snapshot.edgeDetails = graph_.getEdges();
+    snapshot.demandDetails = graph_.getDemands();
+    snapshot.activeDemandIds = activeDemands_;
     return success();
   }
 
@@ -476,16 +476,16 @@ private:
 } // namespace
 
 LogicalResult CanonicalSyncPlanBuilder::buildCoveringShadowGraph() {
-  CanonicalSyncCoveringShadowSummary summary;
+  CanonicalSyncCoveringShadowSnapshot snapshot;
   CanonicalSyncCoveringGraphAdapter adapter(
       func_, plan_,
       [&](PipelineType pipe) { return hasHardwareCompletion(pipe); },
       [&](const CanonicalDependency &dependency) {
         return hasIntrinsicMmadAccumulatorOrdering(dependency);
       });
-  if (failed(adapter.build(summary))) {
+  if (failed(adapter.build(snapshot))) {
     return failure();
   }
-  plan_.coveringShadowSummary_ = std::move(summary);
+  plan_.coveringShadowSnapshot_ = std::move(snapshot);
   return success();
 }

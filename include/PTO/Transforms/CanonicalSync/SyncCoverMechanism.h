@@ -24,6 +24,9 @@
 namespace mlir {
 namespace pto {
 
+/// Unified public API for mechanism construction and selection evaluation.
+/// Resource feasibility and structural cost remain here because both are
+/// derived from one immutable mechanism-universe selection.
 using SyncCoverResourceDomainId = std::size_t;
 
 enum class SyncCoverMechanismKind : std::uint8_t {

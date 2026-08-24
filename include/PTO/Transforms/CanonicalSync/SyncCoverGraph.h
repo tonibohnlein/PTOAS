@@ -135,6 +135,7 @@ enum class SyncCoverGraphError : std::uint8_t {
   InvalidDistance,
   InvalidOrder,
   InvalidTimeline,
+  InvalidCompletionTargets,
   IncompatibleEndpoints,
   ZeroDistanceSelfEdge,
   ZeroDistanceSelfDemand,

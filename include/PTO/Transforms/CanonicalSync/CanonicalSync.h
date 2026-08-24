@@ -346,7 +346,7 @@ struct CanonicalSelectionDiagnosticRequest {
 
 /// Non-emitting direct-cover translation diagnostics. This is intentionally
 /// graph-only until mechanism adaptation passes independent review.
-struct CanonicalSyncCoveringShadowSummary {
+struct CanonicalSyncCoveringShadowSnapshot {
   std::size_t scopes = 0;
   std::size_t controls = 0;
   std::size_t nodes = 0;
@@ -361,6 +361,16 @@ struct CanonicalSyncCoveringShadowSummary {
   std::vector<SyncCoverEdge> edgeDetails;
   std::vector<SyncCoverDemand> demandDetails;
   std::vector<std::size_t> activeDemandIds;
+};
+
+/// Configuration for CanonicalSync plan construction. Callers set the event
+/// budget explicitly; zero therefore remains an invalid, fail-closed default.
+struct CanonicalSyncBuildOptions {
+  unsigned eventIdMax = 0;
+  CanonicalGMAliasPolicy gmAliasPolicy = CanonicalGMAliasPolicy::MayAlias;
+  /// Borrowed for buildCanonicalSyncPlan(); the builder copies the request.
+  const CanonicalSelectionDiagnosticRequest *diagnosticRequest = nullptr;
+  bool coveringShadow = false;
 };
 
 class CanonicalSyncPlanBuilder;
@@ -390,9 +400,9 @@ public:
   ArrayRef<CanonicalSelectionDiagnostic> getSelectionDiagnostics() const {
     return selectionDiagnostics_;
   }
-  const std::optional<CanonicalSyncCoveringShadowSummary> &
-  getCoveringShadowSummary() const {
-    return coveringShadowSummary_;
+  const std::optional<CanonicalSyncCoveringShadowSnapshot> &
+  getCoveringShadowSnapshot() const {
+    return coveringShadowSnapshot_;
   }
   CanonicalGMAliasPolicy getGMAliasPolicy() const { return gmAliasPolicy_; }
   bool usedInfeasibleBootstrap() const { return usedInfeasibleBootstrap_; }
@@ -400,8 +410,7 @@ public:
 private:
   friend class CanonicalSyncPlanBuilder;
   friend FailureOr<CanonicalSyncPlan>
-  buildCanonicalSyncPlan(func::FuncOp, unsigned, CanonicalGMAliasPolicy,
-                         const CanonicalSelectionDiagnosticRequest *, bool);
+  buildCanonicalSyncPlan(func::FuncOp, const CanonicalSyncBuildOptions &);
 
   std::vector<CanonicalSyncNode> nodes_;
   std::vector<SyncGraphEdge> fixedEdges_;
@@ -414,17 +423,14 @@ private:
   std::vector<CanonicalEventDomain> domains_;
   std::vector<CanonicalOwnershipCycle> ownershipCycles_;
   std::vector<CanonicalSelectionDiagnostic> selectionDiagnostics_;
-  std::optional<CanonicalSyncCoveringShadowSummary> coveringShadowSummary_;
+  std::optional<CanonicalSyncCoveringShadowSnapshot> coveringShadowSnapshot_;
   CanonicalGMAliasPolicy gmAliasPolicy_ = CanonicalGMAliasPolicy::MayAlias;
   bool usedInfeasibleBootstrap_ = false;
 };
 
 FailureOr<CanonicalSyncPlan>
-buildCanonicalSyncPlan(
-    func::FuncOp func, unsigned eventIdMax,
-    CanonicalGMAliasPolicy gmAliasPolicy = CanonicalGMAliasPolicy::MayAlias,
-    const CanonicalSelectionDiagnosticRequest *diagnosticRequest = nullptr,
-    bool coveringShadow = false);
+buildCanonicalSyncPlan(func::FuncOp func,
+                       const CanonicalSyncBuildOptions &options);
 LogicalResult emitCanonicalSyncPlan(func::FuncOp func,
                                     const CanonicalSyncPlan &plan);
 

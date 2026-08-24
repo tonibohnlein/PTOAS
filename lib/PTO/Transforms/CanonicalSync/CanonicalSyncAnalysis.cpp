@@ -552,12 +552,7 @@ bool CanonicalSyncPlanBuilder::mayExecuteTogether(Operation *first,
 }
 
 FailureOr<CanonicalSyncPlan>
-mlir::pto::buildCanonicalSyncPlan(func::FuncOp func, unsigned eventIdMax,
-                                  CanonicalGMAliasPolicy gmAliasPolicy,
-                                  const CanonicalSelectionDiagnosticRequest
-                                      *diagnosticRequest,
-                                  bool coveringShadow) {
-  return CanonicalSyncPlanBuilder(func, eventIdMax, gmAliasPolicy,
-                                  diagnosticRequest, coveringShadow)
-      .build();
+mlir::pto::buildCanonicalSyncPlan(func::FuncOp func,
+                                  const CanonicalSyncBuildOptions &options) {
+  return CanonicalSyncPlanBuilder(func, options).build();
 }

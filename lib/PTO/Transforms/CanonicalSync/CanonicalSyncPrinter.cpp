@@ -487,20 +487,20 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
     }
   }
   const bool includeCovering = includesCovering(view);
-  const bool hasCoveringSummary = plan.getCoveringShadowSummary().has_value();
-  if (includeCovering && hasCoveringSummary) {
-    const CanonicalSyncCoveringShadowSummary &summary =
-        *plan.getCoveringShadowSummary();
+  const bool hasCoveringSnapshot = plan.getCoveringShadowSnapshot().has_value();
+  if (includeCovering && hasCoveringSnapshot) {
+    const CanonicalSyncCoveringShadowSnapshot &snapshot =
+        *plan.getCoveringShadowSnapshot();
     os << "  covering-shadow status=graph-ready"
-       << " scopes=" << summary.scopes
-       << " controls=" << summary.controls << " nodes=" << summary.nodes
-       << " fixed-edges=" << summary.fixedEdges
-       << " recurrence-carries=" << summary.recurrenceCarryEdges
-       << " conservative-demands=" << summary.conservativeDemands
-       << " active-demands=" << summary.activeDemands
-       << " intrinsic-demands=" << summary.intrinsicallySatisfiedDemands
+       << " scopes=" << snapshot.scopes
+       << " controls=" << snapshot.controls << " nodes=" << snapshot.nodes
+       << " fixed-edges=" << snapshot.fixedEdges
+       << " recurrence-carries=" << snapshot.recurrenceCarryEdges
+       << " conservative-demands=" << snapshot.conservativeDemands
+       << " active-demands=" << snapshot.activeDemands
+       << " intrinsic-demands=" << snapshot.intrinsicallySatisfiedDemands
        << '\n';
-    for (const SyncCoverScope &scope : summary.scopeDetails) {
+    for (const SyncCoverScope &scope : snapshot.scopeDetails) {
       os << "  covering-scope[" << scope.id << "] parent=" << scope.parent
          << " must-execute="
          << (scope.mustExecuteWithinParent ? "yes" : "no")
@@ -512,12 +512,12 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
       }
       os << '\n';
     }
-    for (const SyncCoverControl &control : summary.controlDetails) {
+    for (const SyncCoverControl &control : snapshot.controlDetails) {
       os << "  covering-control[" << control.id
          << "] alternatives=" << control.alternatives
          << " scope=" << control.scope << '\n';
     }
-    for (const SyncCoverNode &node : summary.nodeDetails) {
+    for (const SyncCoverNode &node : snapshot.nodeDetails) {
       os << "  covering-node[" << node.id << "] resource="
          << stringifyPIPE(static_cast<PIPE>(node.resource))
          << " scope=" << node.scope << " order=" << node.order
@@ -527,22 +527,22 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
       llvm::interleaveComma(node.completionTargets, os);
       os << "]\n";
     }
-    for (auto [edgeId, edge] : llvm::enumerate(summary.edgeDetails)) {
+    for (auto [edgeId, edge] : llvm::enumerate(snapshot.edgeDetails)) {
       os << "  covering-edge[" << edgeId << "] " << edge.source << " -> "
          << edge.target << " kind=" << stringifyCoveringEdgeKind(edge.kind)
          << " scope=" << edge.scope << " distance=" << edge.distance
          << " origin="
-         << (edgeId < summary.fixedEdges ? "fixed" : "recurrence-carry")
+         << (edgeId < snapshot.fixedEdges ? "fixed" : "recurrence-carry")
          << " source-guard=";
       printCoveringGuard(os, edge.sourceGuard);
       os << " target-guard=";
       printCoveringGuard(os, edge.targetGuard);
       os << '\n';
     }
-    for (auto [demandId, demand] : llvm::enumerate(summary.demandDetails)) {
+    for (auto [demandId, demand] : llvm::enumerate(snapshot.demandDetails)) {
       const bool active =
-          std::binary_search(summary.activeDemandIds.begin(),
-                             summary.activeDemandIds.end(), demandId);
+          std::binary_search(snapshot.activeDemandIds.begin(),
+                             snapshot.activeDemandIds.end(), demandId);
       os << "  covering-demand[" << demandId << "] " << demand.source
          << " -> " << demand.target
          << " kind=" << stringifyCoveringDemandKind(demand.kind)
