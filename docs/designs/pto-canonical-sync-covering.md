@@ -81,17 +81,25 @@ authoritative coloring.
 Every non-barrier supply edge is bound to an event-ID or ownership-token
 lifetime with matching endpoints, scope, and recurrence distance. Event
 bundles use event-ID domains; verified ownership protocols may additionally
-use independent physical token pools. A barrier names a concrete same-pipe
-anchor and can cover an edge only when the covered target's scope and control
-guard guarantee that the anchor executes. Conditional and potentially
-zero-trip nested anchors therefore fail closed.
+use independent physical token pools. Buffer-token pool identities are unique
+in version one; a shared pool spanning multiple resource domains is rejected
+until coloring and component decomposition can model it jointly. A barrier
+names a concrete same-pipe anchor and can cover an edge only when the covered
+target's scope and control guard guarantee that the anchor executes.
+Conditional and potentially zero-trip nested anchors therefore fail closed.
 
 Ordinary event bundles are deliberately limited to distance-zero canonical
 actions: produce immediately after the supplied edge's source and consume
 immediately before its target. Positive-distance events require prime,
 steady-state, and drain behavior that these two anchors cannot describe. They
 therefore enter the universe as verified protocols, including the stock bare
-recurrence-event protocol that the CanonicalSync adapter will use.
+recurrence-event protocol that the CanonicalSync adapter will use. The stock
+protocol is deliberately limited to one event and distance one, with an exact
+prime, body wait/set, and drain lifecycle. Its endpoints may be in mandatory
+straight child scopes but not nested loops, whose execution multiplicity needs
+an explicit proof. Wider, longer-distance, conditional, nested-loop, or
+ownership recurrences require an adapter verifier for the exact submitted
+descriptor; there is no permissive generic fallback.
 
 The protocol verifier is a soundness boundary. For a verified ownership or
 recurrence protocol, it certifies that the submitted actions implement every
@@ -167,8 +175,12 @@ coloring is a hard constraint, but these nonseparable aggregates do not order
 plans. A future global Pareto combiner may promote them into the objective.
 Beam width, depth, and evaluation truncation are reported separately. Failure
 without truncation proves infeasibility; bounded failure reports incomplete
-search, and a bounded success does not claim optimality. Every returned plan
-is finally rechecked with fresh universe/resource and coverage epochs.
+search, and a bounded success does not claim optimality. Exact and beam search
+both obey the per-component evaluation budget; seed evaluation remains outside
+that budget so a valid incumbent is not discarded by truncation. Every
+returned plan is finally rechecked with fresh universe/resource and coverage
+epochs. Invalid or incomplete results carry an explicitly unevaluated cost,
+never a valid-looking zero cost.
 
 The initial mechanism cost is symbolic rather than a runtime estimate. It
 counts each physical synchronization action once, even when one action carries

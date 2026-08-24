@@ -28,6 +28,15 @@ bool reserveAdditional(std::vector<T> &values, std::size_t additional) {
   return true;
 }
 
+bool hasAnchor(const SyncCoverResourceAction &action,
+               SyncCoverResourceActionKind kind, std::uint32_t resource,
+               SyncCoverAnchorKind anchorKind, SyncCoverNodeId node,
+               SyncCoverScopeId scope) {
+  return action.kind == kind && action.resource == resource &&
+         action.anchor.kind == anchorKind && action.anchor.node == node &&
+         action.anchor.scope == scope;
+}
+
 } // namespace
 
 SyncCoverMechanismDescriptorBuilder::SyncCoverMechanismDescriptorBuilder(
@@ -228,4 +237,114 @@ mlir::pto::makeSyncCoverCanonicalEvent(
     return std::nullopt;
   }
   return std::move(builder).takeDescriptor();
+}
+
+std::optional<SyncCoverMechanismDescriptor>
+mlir::pto::makeSyncCoverUnitRecurrenceEvent(
+    const SyncCoverResourceDomain &domain, SyncCoverNodeId source,
+    SyncCoverNodeId target, SyncCoverScopeId loop,
+    std::uint64_t providerIdentity) {
+  if (domain.kind != SyncCoverResourceKind::EventId) {
+    return std::nullopt;
+  }
+  SyncCoverMechanismDescriptorBuilder builder(
+      SyncCoverMechanismKind::VerifiedProtocol, providerIdentity);
+  const SyncCoverDescriptorActionRef prime = builder.addAction(
+      SyncCoverResourceActionKind::Produce, domain.sourceResource,
+      {SyncCoverAnchorKind::ScopeEntry, 0, loop});
+  const SyncCoverDescriptorActionRef bodyWait = builder.addAction(
+      SyncCoverResourceActionKind::Consume, domain.targetResource,
+      {SyncCoverAnchorKind::BeforeNode, target, 0});
+  const SyncCoverDescriptorActionRef bodySet = builder.addAction(
+      SyncCoverResourceActionKind::Produce, domain.sourceResource,
+      {SyncCoverAnchorKind::AfterNode, source, 0});
+  const SyncCoverDescriptorActionRef drain = builder.addAction(
+      SyncCoverResourceActionKind::Consume, domain.targetResource,
+      {SyncCoverAnchorKind::ScopeExit, 0, loop});
+  SyncCoverEdge edge;
+  edge.source = source;
+  edge.target = target;
+  edge.kind = SyncCoverEdgeKind::CompletionSupply;
+  edge.scope = loop;
+  edge.distance = 1;
+  if (!builder.addProtocolLane(domain, loop, 1, 1,
+                               {prime, bodyWait, bodySet, drain},
+                               {{edge, bodySet, bodyWait}})) {
+    return std::nullopt;
+  }
+  return std::move(builder).takeDescriptor();
+}
+
+bool mlir::pto::verifySyncCoverUnitRecurrenceEvent(
+    const SyncCoverMechanismUniverse &universe,
+    const SyncCoverMechanismDescriptor &descriptor) {
+  const bool invalidCardinality =
+      descriptor.kind != SyncCoverMechanismKind::VerifiedProtocol ||
+      descriptor.barrier || descriptor.actions.size() != 4 ||
+      descriptor.resourceUses.size() != 1 ||
+      descriptor.supplyEdges.size() != 1 ||
+      descriptor.supplyBindings.size() != 1;
+  if (invalidCardinality) {
+    return false;
+  }
+  const SyncCoverResourceUse &use = descriptor.resourceUses.front();
+  if (use.domain >= universe.getResourceDomains().size()) {
+    return false;
+  }
+  const SyncCoverGraph &graph = universe.getGraph();
+  const SyncCoverResourceDomain &domain =
+      universe.getResourceDomains()[use.domain];
+  const SyncCoverEdge &edge = descriptor.supplyEdges.front();
+  const SyncCoverSupplyBinding &binding = descriptor.supplyBindings.front();
+  const bool invalidIdentity =
+      domain.kind != SyncCoverResourceKind::EventId ||
+      domain.sourceResource == domain.targetResource ||
+      domain.poolIdentity != 0 || domain.budget == 0 ||
+      use.domain != domain.id || use.scope >= graph.getScopes().size() ||
+      edge.source >= graph.getNodes().size() ||
+      edge.target >= graph.getNodes().size() ||
+      !graph.getScopes()[use.scope].isLoop || use.distance != 1 ||
+      use.width != 1 || use.actions != std::vector<std::size_t>({0, 1, 2, 3}) ||
+      use.supplyEdges != std::vector<std::size_t>({0}) ||
+      edge.kind != SyncCoverEdgeKind::CompletionSupply || edge.mechanism ||
+      edge.scope != use.scope || edge.distance != 1 ||
+      binding.supplyEdge != 0 || binding.resourceUse != 0 ||
+      binding.produceAction != 2 || binding.consumeAction != 1;
+  if (invalidIdentity) {
+    return false;
+  }
+  const SyncCoverNode &source = graph.getNodes()[edge.source];
+  const SyncCoverNode &target = graph.getNodes()[edge.target];
+  const std::optional<std::size_t> recurrenceDepth =
+      graph.getScopeLoopDepth(use.scope);
+  const std::optional<std::size_t> sourceDepth =
+      graph.getScopeLoopDepth(source.scope);
+  const std::optional<std::size_t> targetDepth =
+      graph.getScopeLoopDepth(target.scope);
+  const bool invalidExecution =
+      !graph.scopeMustExecuteWithin(use.scope, source.scope) ||
+      !graph.scopeMustExecuteWithin(use.scope, target.scope) ||
+      !recurrenceDepth || sourceDepth != recurrenceDepth ||
+      targetDepth != recurrenceDepth ||
+      source.resource != domain.sourceResource ||
+      target.resource != domain.targetResource ||
+      !source.guard.literals.empty() || !target.guard.literals.empty() ||
+      target.order >= source.order ||
+      !syncCoverNodeCanProduceCompletion(graph, edge.source, target.resource);
+  if (invalidExecution) {
+    return false;
+  }
+  const auto &actions = descriptor.actions;
+  return hasAnchor(actions[0], SyncCoverResourceActionKind::Produce,
+                   source.resource, SyncCoverAnchorKind::ScopeEntry, 0,
+                   use.scope) &&
+         hasAnchor(actions[1], SyncCoverResourceActionKind::Consume,
+                   target.resource, SyncCoverAnchorKind::BeforeNode,
+                   edge.target, 0) &&
+         hasAnchor(actions[2], SyncCoverResourceActionKind::Produce,
+                   source.resource, SyncCoverAnchorKind::AfterNode, edge.source,
+                   0) &&
+         hasAnchor(actions[3], SyncCoverResourceActionKind::Consume,
+                   target.resource, SyncCoverAnchorKind::ScopeExit, 0,
+                   use.scope);
 }

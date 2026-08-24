@@ -67,7 +67,8 @@ getComponentSeeds(const SyncCoverSelectionComponent &component,
 ComponentSearchResult searchExact(
     const SyncCoverSelectionEvaluator &selectionEvaluator,
     CoverageEvaluator &coverage, const SyncCoverSelectionComponent &component,
-    const std::vector<std::vector<SyncCoverMechanismId>> &seedSelections);
+    const std::vector<std::vector<SyncCoverMechanismId>> &seedSelections,
+    const SyncCoverSolverOptions &options);
 
 ComponentSearchResult
 searchBeam(const SyncCoverSelectionEvaluator &selectionEvaluator,

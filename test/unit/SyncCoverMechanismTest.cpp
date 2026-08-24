@@ -210,6 +210,112 @@ bool testDescriptorBuilderAndGraphEpoch() {
   return passed;
 }
 
+bool testStockUnitRecurrenceProtocol() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop = takeGraphIndex(
+      graph.addScope(0, false, SyncCoverTimelineInterval{0, 9}, true), passed,
+      "add stock recurrence loop");
+  const SyncCoverScopeId body = takeGraphIndex(
+      graph.addScope(loop, true, SyncCoverTimelineInterval{1, 8}), passed,
+      "add mandatory recurrence body");
+  const SyncCoverScopeId optionalRegion = takeGraphIndex(
+      graph.addScope(loop, false, SyncCoverTimelineInterval{8, 9}), passed,
+      "add optional recurrence region");
+  const SyncCoverScopeId nestedLoop = takeGraphIndex(
+      graph.addScope(body, true, SyncCoverTimelineInterval{6, 7}, true), passed,
+      "add positive-trip nested recurrence loop");
+  const SyncCoverScopeId nestedBody = takeGraphIndex(
+      graph.addScope(nestedLoop, true, SyncCoverTimelineInterval{6, 7}), passed,
+      "add nested recurrence body");
+  const SyncCoverNodeId target = takeGraphIndex(
+      graph.addNode(2, 1, body, 1), passed, "add stock recurrence target");
+  const SyncCoverNodeId source =
+      takeGraphIndex(graph.addNode(1, 1, body, 2, {}, {2}), passed,
+                     "add stock recurrence source");
+  const SyncCoverNodeId optionalSource =
+      takeGraphIndex(graph.addNode(1, 1, optionalRegion, 4, {}, {2}), passed,
+                     "add optional recurrence source");
+  const SyncCoverNodeId nestedSource =
+      takeGraphIndex(graph.addNode(1, 1, nestedBody, 3, {}, {2}), passed,
+                     "add nested-loop recurrence source");
+  SyncCoverMechanismUniverse universe(graph);
+  const SyncCoverResourceDomainId domain = takeMechanismIndex(
+      universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 8),
+      passed, "add stock recurrence domain");
+  const SyncCoverResourceDomainId tokenDomain =
+      takeMechanismIndex(universe.addResourceDomain(
+                             SyncCoverResourceKind::BufferToken, 1, 2, 1, 302),
+                         passed, "add stock recurrence token domain");
+  const SyncCoverResourceDomain &eventDomain =
+      universe.getResourceDomains()[domain];
+  const auto descriptor =
+      makeSyncCoverUnitRecurrenceEvent(eventDomain, source, target, loop, 301);
+  passed &= check(
+      descriptor && verifySyncCoverUnitRecurrenceEvent(universe, *descriptor),
+      "stock recurrence accepts a translator-shaped mandatory loop body");
+  if (descriptor) {
+    passed &= check(universe.addVerifiedProtocol(
+                        *descriptor,
+                        [&](const auto &candidate) {
+                          return verifySyncCoverUnitRecurrenceEvent(universe,
+                                                                    candidate);
+                        }),
+                    "stock unit recurrence protocol enters the universe");
+
+    SyncCoverMechanismDescriptor longer = *descriptor;
+    longer.resourceUses.front().distance = 3;
+    longer.supplyEdges.front().distance = 3;
+    passed &= check(
+        universe.addVerifiedProtocol(
+                    longer,
+                    [&](const auto &candidate) {
+                      return verifySyncCoverUnitRecurrenceEvent(universe,
+                                                                candidate);
+                    })
+                .error == SyncCoverMechanismError::UnverifiedProtocol,
+        "multi-distance recurrence requires a protocol-specific verifier");
+
+    SyncCoverMechanismDescriptor wrongDomain = *descriptor;
+    wrongDomain.resourceUses.front().domain = tokenDomain;
+    passed &= check(
+        universe.addVerifiedProtocol(
+                    wrongDomain,
+                    [&](const auto &candidate) {
+                      return verifySyncCoverUnitRecurrenceEvent(universe,
+                                                                candidate);
+                    })
+                .error == SyncCoverMechanismError::UnverifiedProtocol,
+        "stock recurrence cannot evade event coloring through a token pool");
+
+    SyncCoverMechanismDescriptor missingDrain = *descriptor;
+    missingDrain.actions.pop_back();
+    missingDrain.resourceUses.front().actions.pop_back();
+    passed &=
+        check(universe.addVerifiedProtocol(
+                          missingDrain,
+                          [&](const auto &candidate) {
+                            return verifySyncCoverUnitRecurrenceEvent(
+                                universe, candidate);
+                          })
+                      .error == SyncCoverMechanismError::UnverifiedProtocol,
+              "stock recurrence rejects an incomplete token lifecycle");
+
+    const auto optional = makeSyncCoverUnitRecurrenceEvent(
+        eventDomain, optionalSource, target, loop, 302);
+    passed &= check(
+        optional && !verifySyncCoverUnitRecurrenceEvent(universe, *optional),
+        "stock recurrence rejects an optional loop region");
+
+    const auto nested = makeSyncCoverUnitRecurrenceEvent(
+        eventDomain, nestedSource, target, loop, 303);
+    passed &= check(
+        nested && !verifySyncCoverUnitRecurrenceEvent(universe, *nested),
+        "stock recurrence rejects nested-loop execution multiplicity");
+  }
+  return passed;
+}
+
 bool testAtomicSupplyAndCoverage() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -424,6 +530,10 @@ bool testDomainsBarriersAndConflicts() {
                                              1, 1, 2, 1000, {1})
                           .error == SyncCoverMechanismError::InvalidDomain,
                   "buffer-token pools do not accept event reservations");
+  passed &= check(universe.addResourceDomain(SyncCoverResourceKind::BufferToken,
+                                             1, 1, 2)
+                          .error == SyncCoverMechanismError::InvalidDomain,
+                  "buffer-token pools require an explicit identity");
   const SyncCoverResourceDomainId firstToken =
       takeMechanismIndex(universe.addResourceDomain(
                              SyncCoverResourceKind::BufferToken, 1, 1, 2, 1001),
@@ -434,6 +544,10 @@ bool testDomainsBarriersAndConflicts() {
                          passed, "add second token pool");
   passed &= check(firstToken != secondToken,
                   "independent token pools retain distinct domains");
+  passed &= check(universe.addResourceDomain(SyncCoverResourceKind::BufferToken,
+                                             2, 2, 2, 1001)
+                          .error == SyncCoverMechanismError::InvalidDomain,
+                  "one token-pool identity cannot span resource domains");
 
   SyncCoverMechanismDescriptor event;
   appendCanonicalUse(event, domain, 1, 2, source, target);
@@ -696,7 +810,8 @@ bool testResourceSelectionFeasibility() {
   const std::vector<SyncCoverResourceWitnessUse> expectedWitness = {
       {firstId, 0, 2}, {secondId, 0, 2}};
   passed &= check(
-      pressure && !pressure.resourceFeasible && pressure.domains.size() == 1 &&
+      pressure.isValid() && !pressure && !pressure.resourceFeasible &&
+          pressure.domains.size() == 1 &&
           pressure.domains[0].required == 4 &&
           pressure.domains[0].available == 3 &&
           pressure.domains[0].overflow == 1 &&
@@ -970,6 +1085,7 @@ bool testRecurrenceUsesWholeScopePressure() {
 int main() {
   bool passed = true;
   passed &= testDescriptorBuilderAndGraphEpoch();
+  passed &= testStockUnitRecurrenceProtocol();
   passed &= testAtomicSupplyAndCoverage();
   passed &= testAtomicFailureAndProtocolGate();
   passed &= testMultiEdgeAtomicSupply();

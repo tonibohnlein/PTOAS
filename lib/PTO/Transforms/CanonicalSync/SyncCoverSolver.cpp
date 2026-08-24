@@ -71,7 +71,7 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
     }
     const SyncCoverResourceSelection seedResources =
         selectionEvaluator.evaluate(seed.mechanisms).resources;
-    if (!seedResources) {
+    if (!seedResources.isValid()) {
       return makeError(SyncCoverSelectionError::InvalidSeed);
     }
   }
@@ -98,7 +98,7 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
         getComponentSeeds(component, seeds);
     ComponentSearchResult componentResult =
         component.exact ? searchExact(selectionEvaluator, coverage, component,
-                                      componentSeeds)
+                                      componentSeeds, options)
                         : searchBeam(selectionEvaluator, coverage, component,
                                      componentSeeds, options);
     result.evaluations += componentResult.evaluations;
@@ -122,7 +122,10 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
   SyncCoverStructuralCost selectedCost;
   if (!evaluateCompleteSelection(selectionEvaluator, coverage, demands,
                                  selected, selectedCost)) {
-    result.error = SyncCoverSelectionError::ProvenInfeasible;
+    result.error = result.truncation
+                       ? SyncCoverSelectionError::SearchIncomplete
+                       : SyncCoverSelectionError::FinalVerificationFailed;
+    result.optimalityProven = false;
     result.coverageStatistics = oracle.getStatistics();
     return result;
   }
@@ -142,6 +145,7 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
   if (!independentlyVerifySelection(universe, demands, selected,
                                     selectedCost)) {
     result.error = SyncCoverSelectionError::FinalVerificationFailed;
+    result.optimalityProven = false;
     result.coverageStatistics = oracle.getStatistics();
     return result;
   }

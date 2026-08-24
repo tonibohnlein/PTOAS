@@ -9,6 +9,7 @@
 // for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverSolver.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverDescriptorBuilder.h"
 
 #include <algorithm>
 #include <iostream>
@@ -172,6 +173,16 @@ bool testCutGuidedExactSelection() {
                       result.coverageStatistics.demandPreparations == 1,
                   "solver validates and prepares each oracle epoch once");
 
+  SyncCoverSolverOptions beamOptions;
+  beamOptions.exactMechanismThreshold = 0;
+  const SyncCoverSelectionResult beamResult =
+      solveSyncCoverSelection(universe, {demandId}, {}, beamOptions);
+  passed &= check(beamResult && beamResult.optimalityProven &&
+                      !beamResult.truncation &&
+                      findBruteForceOptimum(universe) == beamResult.mechanisms,
+                  "bounded beam matches exhaustive enumeration on the "
+                  "representative component");
+
   SyncCoverGraph chainGraph;
   const SyncCoverNodeId chainSource = takeIndex(
       chainGraph.addNode(1, 1, 0, 0, {}, {2}), passed, "add chain source");
@@ -292,6 +303,37 @@ bool testComponentsConflictsAndFailure() {
   return passed;
 }
 
+bool testBarrierSelection() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add barrier source");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(1, 1, 0, 1), passed, "add barrier target");
+  const SyncCoverDemandId demandId = takeIndex(
+      graph.addDemand(demand(source, target)), passed, "add barrier demand");
+  SyncCoverMechanismUniverse universe(graph);
+  SyncCoverMechanismDescriptor descriptor;
+  descriptor.kind = SyncCoverMechanismKind::Barrier;
+  descriptor.barrier = SyncCoverBarrierPlacement{1, target, 0};
+  descriptor.supplyEdges.push_back(supply(source, target));
+  const SyncCoverMechanismId barrier = takeIndex(
+      universe.addMechanism(descriptor), passed, "add barrier candidate");
+  const SyncCoverSelectionResult result =
+      solveSyncCoverSelection(universe, {demandId});
+  passed &=
+      check(result && result.mechanisms == std::vector{barrier} &&
+                result.cost.barrierActionProfile == std::vector<std::size_t>{1},
+            "direct covering selects a same-resource barrier");
+  SyncCoverSolverOptions beamOptions;
+  beamOptions.exactMechanismThreshold = 0;
+  const SyncCoverSelectionResult beam =
+      solveSyncCoverSelection(universe, {demandId}, {}, beamOptions);
+  passed &= check(beam && beam.mechanisms == std::vector{barrier},
+                  "bounded covering also selects a same-resource barrier");
+  return passed;
+}
+
 bool testBeamSeedsAndRedundancy() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -334,21 +376,25 @@ bool testRecurrenceAndInputValidation() {
   const SyncCoverScopeId loop =
       takeIndex(graph.addScope(0, false, SyncCoverTimelineInterval{0, 5}, true),
                 passed, "add loop");
-  const SyncCoverNodeId source = takeIndex(
-      graph.addNode(1, 1, loop, 1, {}, {2}), passed, "add loop source");
   const SyncCoverNodeId target =
-      takeIndex(graph.addNode(2, 1, loop, 2), passed, "add loop target");
+      takeIndex(graph.addNode(2, 1, loop, 1), passed, "add loop target");
+  const SyncCoverNodeId source = takeIndex(
+      graph.addNode(1, 1, loop, 2, {}, {2}), passed, "add loop source");
   takeIndex(graph.addDemand(demand(source, target, loop, 1)), passed,
             "add recurrence demand");
   SyncCoverMechanismUniverse universe(graph);
   const auto domain = takeIndex(
       universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 8),
       passed, "add recurrence domain");
-  SyncCoverMechanismDescriptor protocol;
-  protocol.kind = SyncCoverMechanismKind::VerifiedProtocol;
-  appendEventUse(protocol, domain, 1, 2, source, target, loop, 1);
+  const auto protocol = makeSyncCoverUnitRecurrenceEvent(
+      universe.getResourceDomains()[domain], source, target, loop);
+  passed &= check(protocol.has_value(), "build unit recurrence protocol");
   const SyncCoverMechanismId protocolId = takeIndex(
-      universe.addVerifiedProtocol(protocol, [](const auto &) { return true; }),
+      universe.addVerifiedProtocol(
+          protocol.value_or(SyncCoverMechanismDescriptor{}),
+          [&](const auto &candidate) {
+            return verifySyncCoverUnitRecurrenceEvent(universe, candidate);
+          }),
       passed, "add verified recurrence protocol");
   passed &= check(solveSyncCoverSelection(universe, {0}).mechanisms ==
                       std::vector{protocolId},
@@ -399,6 +445,29 @@ bool testBoundedSearchDiagnostics() {
                 incomplete.error == SyncCoverSelectionError::SearchIncomplete &&
                 incomplete.truncation.evaluationLimit,
             "evaluation truncation is not reported as infeasibility");
+  passed &=
+      check(!incomplete.cost && incomplete.cost.error ==
+                                    SyncCoverStructuralCostError::NotEvaluated,
+            "failed search never exposes a valid zero cost");
+
+  options = {};
+  options.evaluationLimit = 1;
+  const SyncCoverSelectionResult exactIncomplete =
+      solveSyncCoverSelection(universe, {0}, {}, options);
+  passed &= check(!exactIncomplete &&
+                      exactIncomplete.error ==
+                          SyncCoverSelectionError::SearchIncomplete &&
+                      exactIncomplete.truncation.evaluationLimit &&
+                      !exactIncomplete.optimalityProven,
+                  "exact search obeys the per-component evaluation budget");
+  const SyncCoverSelectionResult seededExact =
+      solveSyncCoverSelection(universe, {0}, {{3, {0}}}, options);
+  passed &= check(seededExact &&
+                      seededExact.mechanisms ==
+                          std::vector<SyncCoverMechanismId>{0} &&
+                      seededExact.truncation.evaluationLimit &&
+                      !seededExact.optimalityProven,
+                  "an exact-search seed survives budget truncation");
 
   SyncCoverGraph chainGraph;
   const SyncCoverNodeId chainSource = takeIndex(
@@ -492,8 +561,8 @@ bool testManyDemandCache() {
 int main() {
   const bool passed =
       testCutGuidedExactSelection() && testAtomicProtocolAndScarcity() &&
-      testComponentsConflictsAndFailure() && testBeamSeedsAndRedundancy() &&
-      testRecurrenceAndInputValidation() && testBoundedSearchDiagnostics() &&
-      testManyDemandCache();
+      testComponentsConflictsAndFailure() && testBarrierSelection() &&
+      testBeamSeedsAndRedundancy() && testRecurrenceAndInputValidation() &&
+      testBoundedSearchDiagnostics() && testManyDemandCache();
   return passed ? 0 : 1;
 }

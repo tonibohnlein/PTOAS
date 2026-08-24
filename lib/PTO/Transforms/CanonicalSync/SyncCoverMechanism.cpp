@@ -40,7 +40,7 @@ bool validDomainShape(SyncCoverResourceKind kind, std::uint32_t source,
            std::adjacent_find(reservedIds.begin(), reservedIds.end()) ==
                reservedIds.end();
   }
-  return reservedIds.empty();
+  return poolIdentity != 0 && reservedIds.empty();
 }
 
 bool validResourceComposition(
@@ -218,6 +218,19 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addResourceDomain(
       return makeResult(SyncCoverMechanismError::None, index);
     }
     return makeResult(SyncCoverMechanismError::InvalidDomain, index);
+  }
+  if (kind == SyncCoverResourceKind::BufferToken) {
+    const auto sharedPool =
+        std::find_if(domains_.begin(), domains_.end(),
+                     [&](const SyncCoverResourceDomain &old) {
+                       return old.kind == SyncCoverResourceKind::BufferToken &&
+                              old.poolIdentity == poolIdentity;
+                     });
+    if (sharedPool != domains_.end()) {
+      return makeResult(SyncCoverMechanismError::InvalidDomain,
+                        static_cast<std::size_t>(
+                            std::distance(domains_.begin(), sharedPool)));
+    }
   }
   const SyncCoverResourceDomainId id = domains_.size();
   domains_.push_back({id, kind, sourceResource, targetResource, poolIdentity,
@@ -427,6 +440,7 @@ SyncCoverMechanismUniverse::validateUncached() const {
   if (!graph_.validate()) {
     return makeResult(SyncCoverMechanismError::InvalidGraph);
   }
+  std::vector<std::uint64_t> tokenPools;
   for (std::size_t index = 0; index < domains_.size(); ++index) {
     const SyncCoverResourceDomain &domain = domains_[index];
     const bool invalid =
@@ -436,6 +450,15 @@ SyncCoverMechanismUniverse::validateUncached() const {
                           domain.budget, domain.reservedIds);
     if (invalid) {
       return makeResult(SyncCoverMechanismError::InvalidDomain, index);
+    }
+    if (domain.kind == SyncCoverResourceKind::BufferToken) {
+      const bool duplicatePool =
+          std::find(tokenPools.begin(), tokenPools.end(),
+                    domain.poolIdentity) != tokenPools.end();
+      if (duplicatePool) {
+        return makeResult(SyncCoverMechanismError::InvalidDomain, index);
+      }
+      tokenPools.push_back(domain.poolIdentity);
     }
   }
 

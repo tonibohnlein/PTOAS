@@ -100,7 +100,7 @@ SyncCoverStructuralCost SyncCoverMechanismUniverse::evaluateStructuralCost(
 SyncCoverStructuralCost SyncCoverMechanismUniverse::evaluateStructuralCostImpl(
     const std::vector<SyncCoverMechanismId> &selected,
     const SyncCoverResourceSelection &resources) const {
-  if (!resources) {
+  if (!resources.isValid()) {
     return makeCostError(mapResourceError(resources.error));
   }
   if (!resources.resourceFeasible) {
@@ -108,6 +108,7 @@ SyncCoverStructuralCost SyncCoverMechanismUniverse::evaluateStructuralCostImpl(
   }
 
   SyncCoverStructuralCost result;
+  result.error = SyncCoverStructuralCostError::None;
   result.signature = selected;
   std::sort(result.signature.begin(), result.signature.end());
   result.mechanismCount = result.signature.size();

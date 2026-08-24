@@ -43,6 +43,9 @@ struct SyncCoverSolverOptions {
   std::size_t exactMechanismThreshold = 18;
   std::size_t beamWidth = 16;
   std::size_t beamDepth = 64;
+  /// Per-component bounded-state evaluation limit for exact and beam search.
+  /// Seed evaluation is outside this limit so a valid incumbent survives
+  /// truncation.
   std::size_t evaluationLimit = 4096;
 };
 

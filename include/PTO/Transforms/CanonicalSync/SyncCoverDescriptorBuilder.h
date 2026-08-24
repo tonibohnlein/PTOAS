@@ -78,6 +78,24 @@ std::optional<SyncCoverMechanismDescriptor> makeSyncCoverCanonicalEvent(
     SyncCoverNodeId target, SyncCoverScopeId scope = 0,
     std::size_t width = 1, std::uint64_t providerIdentity = 0);
 
+/// Builds the conservative stock recurrence protocol: prime one event at loop
+/// entry, consume it before the target, produce it after the source, and drain
+/// it at loop exit. It intentionally supports only distance one and width one.
+/// Multi-distance or multi-lane protocols require an adapter-specific verifier
+/// that proves their exact lane and control-flow semantics.
+std::optional<SyncCoverMechanismDescriptor>
+makeSyncCoverUnitRecurrenceEvent(const SyncCoverResourceDomain &domain,
+                                 SyncCoverNodeId source,
+                                 SyncCoverNodeId target,
+                                 SyncCoverScopeId loop,
+                                 std::uint64_t providerIdentity = 0);
+
+/// Verifies the exact descriptor shape emitted by
+/// makeSyncCoverUnitRecurrenceEvent against the completed universe.
+bool verifySyncCoverUnitRecurrenceEvent(
+    const SyncCoverMechanismUniverse &universe,
+    const SyncCoverMechanismDescriptor &descriptor);
+
 } // namespace pto
 } // namespace mlir
 

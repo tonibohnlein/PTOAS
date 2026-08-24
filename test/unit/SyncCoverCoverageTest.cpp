@@ -73,12 +73,28 @@ bool testSelectedCompletionAndCut() {
                   "unselected completion does not cover demand");
   passed &= check(missing.cutMechanisms == std::vector<SyncCoverMechanismId>{7},
                   "unselected crossing mechanism is reported in the cut");
+  const SyncCoverCoverageResult freshMissing =
+      SyncCoverCoverageOracle(graph).checkDemand(0, {});
+  passed &= check(missing.error == freshMissing.error &&
+                      missing.covered == freshMissing.covered &&
+                      missing.reachableStates == freshMissing.reachableStates &&
+                      missing.cutMechanisms == freshMissing.cutMechanisms,
+                  "cached and fresh uncovered cuts are equivalent");
   const SyncCoverCoverageResult selected = oracle.checkDemand(0, {7, 7});
   passed &=
       check(selected && selected.covered, "selected completion covers demand");
   passed &=
       check(selected.witnessMechanisms == std::vector<SyncCoverMechanismId>{7},
             "coverage returns a deterministic mechanism witness");
+  const SyncCoverCoverageResult cached = oracle.checkDemand(0, {7});
+  const SyncCoverCoverageResult uncached =
+      SyncCoverCoverageOracle(graph).checkDemand(0, {7});
+  passed &= check(cached.error == uncached.error &&
+                      cached.covered == uncached.covered &&
+                      cached.witnessMechanisms == uncached.witnessMechanisms &&
+                      cached.reachableStates == uncached.reachableStates &&
+                      cached.cutMechanisms == uncached.cutMechanisms,
+                  "cached and fresh demand preparation are equivalent");
   return passed;
 }
 

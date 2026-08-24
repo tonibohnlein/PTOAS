@@ -45,6 +45,9 @@ struct SyncCoverResourceDomain {
   SyncCoverResourceKind kind = SyncCoverResourceKind::EventId;
   std::uint32_t sourceResource = 0;
   std::uint32_t targetResource = 0;
+  /// BufferToken domains require one globally unique nonzero identity. Shared
+  /// physical pools are rejected until feasibility and component splitting can
+  /// reason about them jointly. EventId domains always use zero.
   std::uint64_t poolIdentity = 0;
   unsigned budget = 0;
   /// Sorted unique reservations. IDs outside [0, budget) remain visible for
@@ -172,13 +175,15 @@ struct SyncCoverResourceSelection {
   std::optional<SyncCoverMechanismId> secondConflict;
   std::vector<SyncCoverDomainFeasibility> domains;
 
-  explicit operator bool() const {
+  bool isValid() const {
     return error == SyncCoverResourceSelectionError::None;
   }
+  explicit operator bool() const { return isValid() && resourceFeasible; }
 };
 
 enum class SyncCoverStructuralCostError : std::uint8_t {
   None,
+  NotEvaluated,
   InvalidUniverse,
   InvalidSelection,
   Conflict,
@@ -190,7 +195,8 @@ enum class SyncCoverStructuralCostError : std::uint8_t {
 /// one-shot function scope. Physical actions are counted once even when they
 /// carry both EventId and BufferToken uses.
 struct SyncCoverStructuralCost {
-  SyncCoverStructuralCostError error = SyncCoverStructuralCostError::None;
+  SyncCoverStructuralCostError error =
+      SyncCoverStructuralCostError::NotEvaluated;
   std::vector<std::size_t> actionProfile;
   std::vector<std::size_t> barrierActionProfile;
   std::size_t peakEventPressure = 0;

@@ -108,10 +108,16 @@ void exactSearch(const SyncCoverSelectionEvaluator &selectionEvaluator,
                  const SyncCoverSelectionComponent &component,
                  std::vector<SyncCoverMechanismId> selected,
                  std::set<std::vector<SyncCoverMechanismId>> &seen,
+                 std::size_t evaluationLimit, std::size_t &boundedEvaluations,
                  ComponentSearchResult &result) {
   if (!seen.insert(selected).second) {
     return;
   }
+  if (boundedEvaluations == evaluationLimit) {
+    result.truncation.evaluationLimit = true;
+    return;
+  }
+  ++boundedEvaluations;
   ++result.evaluations;
   const std::optional<SearchEvaluation> evaluation =
       evaluateState(selectionEvaluator, coverage, component, selected);
@@ -134,7 +140,10 @@ void exactSearch(const SyncCoverSelectionEvaluator &selectionEvaluator,
         std::lower_bound(successor.begin(), successor.end(), mechanism),
         mechanism);
     exactSearch(selectionEvaluator, coverage, component, std::move(successor),
-                seen, result);
+                seen, evaluationLimit, boundedEvaluations, result);
+    if (result.truncation.evaluationLimit) {
+      return;
+    }
   }
 }
 
@@ -162,15 +171,18 @@ void evaluateInitialState(const SyncCoverSelectionEvaluator &selectionEvaluator,
 ComponentSearchResult mlir::pto::sync_cover_internal::searchExact(
     const SyncCoverSelectionEvaluator &selectionEvaluator,
     CoverageEvaluator &coverage, const SyncCoverSelectionComponent &component,
-    const std::vector<std::vector<SyncCoverMechanismId>> &seedSelections) {
+    const std::vector<std::vector<SyncCoverMechanismId>> &seedSelections,
+    const SyncCoverSolverOptions &options) {
   ComponentSearchResult result;
   for (const auto &seed : seedSelections) {
     evaluateInitialState(selectionEvaluator, coverage, component, seed, result,
                          nullptr);
   }
   std::set<std::vector<SyncCoverMechanismId>> seen;
-  exactSearch(selectionEvaluator, coverage, component, {}, seen, result);
-  result.optimalityProven = true;
+  std::size_t boundedEvaluations = 0;
+  exactSearch(selectionEvaluator, coverage, component, {}, seen,
+              options.evaluationLimit, boundedEvaluations, result);
+  result.optimalityProven = !result.truncation;
   return result;
 }
 
