@@ -54,12 +54,16 @@ struct CanonicalEventBundleCandidate {
   SmallVector<CanonicalEvent, 2> events;
   SmallVector<std::size_t, 2> conflicts;
   std::optional<CanonicalDependency> completionWitness;
+  SmallVector<CanonicalDependency, 4> originRequirements;
+  bool hasCompleteOriginProvenance = false;
 };
 
 struct CanonicalBarrierCandidate {
   std::size_t id = 0;
   CanonicalBarrier barrier;
   SmallVector<std::size_t, 2> conflicts;
+  SmallVector<CanonicalDependency, 4> originRequirements;
+  bool hasCompleteOriginProvenance = false;
 };
 
 struct CanonicalMechanismUniverse {
@@ -78,6 +82,39 @@ struct CanonicalMechanismPlanScore {
   std::size_t directedDomains = 0;
   std::size_t barrierCount = 0;
   std::vector<std::size_t> candidateSignature;
+};
+
+struct CanonicalAffectedSliceEvictionMechanism {
+  CanonicalSelectionMechanismRef mechanism;
+  std::vector<std::size_t> actionProfile;
+  std::vector<std::size_t> barrierProfile;
+};
+
+struct CanonicalAffectedSliceEvictionSeed {
+  SmallVector<CanonicalSelectionMechanismRef, 2> mechanisms;
+  std::vector<std::size_t> actionProfile;
+  std::vector<std::size_t> barrierProfile;
+};
+
+struct CanonicalAffectedSliceSearchCandidate {
+  CanonicalSelectionMechanismRef mechanism;
+  std::vector<std::size_t> coveredRequirements;
+};
+
+struct CanonicalAffectedSliceSearchEvaluation {
+  std::vector<std::size_t> uncoveredRequirements;
+  CanonicalMechanismPlanScore score;
+};
+
+struct CanonicalAffectedSliceSearchComplete {
+  std::vector<CanonicalSelectionMechanismRef> mechanisms;
+  CanonicalMechanismPlanScore score;
+};
+
+struct CanonicalAffectedSliceSearchResult {
+  std::vector<CanonicalAffectedSliceSearchComplete> complete;
+  std::size_t evaluations = 0;
+  bool budgetExhausted = false;
 };
 
 std::vector<CanonicalEventBundleCandidate>
@@ -122,6 +159,27 @@ bool exchangeCanonicalEventBundleCandidate(
 bool appendCanonicalEventBundleCandidate(
     std::vector<CanonicalEventBundleCandidate> &selected,
     const CanonicalEventBundleCandidate &candidate);
+
+bool canonicalMechanismOriginsAreInactive(
+    bool hasCompleteOriginProvenance,
+    ArrayRef<CanonicalDependency> originRequirements,
+    ArrayRef<CanonicalDependency> activeRequirements);
+
+std::vector<CanonicalAffectedSliceEvictionSeed>
+buildCanonicalAffectedSliceEvictionSeeds(
+    ArrayRef<CanonicalAffectedSliceEvictionMechanism> mechanisms,
+    std::size_t exhaustiveMechanismThreshold,
+    std::size_t mechanismFrontierLimit, std::size_t seedLimit);
+
+CanonicalAffectedSliceSearchResult searchCanonicalAffectedSliceCandidates(
+    ArrayRef<CanonicalAffectedSliceSearchCandidate> candidates,
+    std::size_t requirementCount,
+    const CanonicalMechanismPlanScore &initialScore, std::size_t beamWidth,
+    std::size_t depthLimit, std::size_t evaluationLimit,
+    std::size_t completeCandidateLimit,
+    llvm::function_ref<std::optional<CanonicalAffectedSliceSearchEvaluation>(
+        ArrayRef<CanonicalSelectionMechanismRef>)>
+        evaluate);
 
 std::size_t calculateCanonicalEventColorOverflow(
     ArrayRef<CanonicalEvent> events, unsigned eventIdMax,
@@ -251,6 +309,9 @@ private:
       std::vector<CanonicalEvent> &events);
   void removeRedundantMechanisms();
   LogicalResult optimizeMechanismSelection();
+  void optimizeAffectedSliceExchanges(
+      std::vector<CanonicalBarrier> &incumbentBarriers,
+      std::vector<CanonicalEventBundleCandidate> &incumbentBundles) const;
   LogicalResult buildSelectionDiagnostics();
   void synthesizeOwnershipProtocols();
   LogicalResult verifyEventProtocols(ArrayRef<CanonicalEvent> events,

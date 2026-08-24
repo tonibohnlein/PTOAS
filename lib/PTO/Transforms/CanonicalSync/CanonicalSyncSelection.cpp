@@ -82,6 +82,45 @@ bool sameCandidateEventProtocol(const CanonicalEvent &first,
          first.ownershipRole == second.ownershipRole;
 }
 
+bool sameRequirementIdentity(const CanonicalDependency &first,
+                             const CanonicalDependency &second) {
+  return first.source == second.source && first.target == second.target &&
+         first.kind == second.kind &&
+         first.iterationDistance == second.iterationDistance &&
+         first.recurrenceLoop == second.recurrenceLoop;
+}
+
+void appendOriginRequirement(
+    SmallVectorImpl<CanonicalDependency> &originRequirements,
+    const CanonicalDependency &requirement) {
+  const bool duplicate =
+      llvm::any_of(originRequirements, [&](const CanonicalDependency &old) {
+        return sameRequirementIdentity(old, requirement);
+      });
+  if (!duplicate) {
+    originRequirements.push_back(requirement);
+  }
+}
+
+bool sameMaterializedEventProtocol(const CanonicalEvent &first,
+                                   const CanonicalEvent &second) {
+  const bool sameProtocol =
+      first.sourcePipe == second.sourcePipe &&
+      first.targetPipe == second.targetPipe &&
+      first.setAnchor.operation == second.setAnchor.operation &&
+      first.setAnchor.before == second.setAnchor.before &&
+      first.waitAnchor.operation == second.waitAnchor.operation &&
+      first.waitAnchor.before == second.waitAnchor.before &&
+      first.recurrenceLoop == second.recurrenceLoop &&
+      first.forwardDrainLoop == second.forwardDrainLoop &&
+      first.setSlot == second.setSlot && first.waitSlot == second.waitSlot &&
+      first.width == second.width;
+  return sameProtocol &&
+         (!first.recurrenceLoop ||
+          (first.source == second.source && first.target == second.target &&
+           first.iterationDistance == second.iterationDistance));
+}
+
 bool sameAnchor(const CanonicalAnchor &first, const CanonicalAnchor &second) {
   return first.operation == second.operation && first.before == second.before;
 }
@@ -347,6 +386,8 @@ LogicalResult mlir::pto::restoreCanonicalEventBundleIdentities(
       bundle.protocolIdentity = known->protocolIdentity;
       bundle.conflicts = known->conflicts;
       bundle.completionWitness = known->completionWitness;
+      bundle.originRequirements = known->originRequirements;
+      bundle.hasCompleteOriginProvenance = known->hasCompleteOriginProvenance;
     } else {
       while (llvm::is_contained(usedIds, nextFreshId)) {
         if (nextFreshId == std::numeric_limits<std::size_t>::max()) {
@@ -628,12 +669,15 @@ void CanonicalSyncPlanBuilder::buildMechanismUniverse() {
         });
     if (duplicate != mechanismUniverse_.barriers.end()) {
       duplicate->barrier.requirements.push_back(requirementId);
+      appendOriginRequirement(duplicate->originRequirements, requirement);
       continue;
     }
     CanonicalBarrierCandidate candidate;
     candidate.id = mechanismUniverse_.barriers.size();
     barrier.id = candidate.id;
     candidate.barrier = barrier;
+    candidate.originRequirements.push_back(requirement);
+    candidate.hasCompleteOriginProvenance = true;
     mechanismUniverse_.barriers.push_back(std::move(candidate));
   }
 
@@ -642,6 +686,41 @@ void CanonicalSyncPlanBuilder::buildMechanismUniverse() {
                         conservativeEvents);
   mechanismUniverse_.eventBundles =
       buildCanonicalEventBundles(conservativeEvents);
+  for (CanonicalEventBundleCandidate &bundle :
+       mechanismUniverse_.eventBundles) {
+    bundle.hasCompleteOriginProvenance =
+        bundle.kind == CanonicalEventBundleKind::Standalone &&
+        bundle.events.size() == 1;
+  }
+  for (const CanonicalDependency &requirement :
+       plan_.conservativeCompletionRequirements_) {
+    const CanonicalSyncNode &source = plan_.nodes_[requirement.source];
+    const CanonicalSyncNode &target = plan_.nodes_[requirement.target];
+    if (source.pipe == target.pipe) {
+      continue;
+    }
+    const CanonicalEvent materialized =
+        requirement.iterationDistance == 0
+            ? makeForwardEvent(requirement.source, requirement.target)
+            : makeRecurrenceEvent(requirement);
+    auto bundle = llvm::find_if(
+        mechanismUniverse_.eventBundles, [&](const auto &candidate) {
+          return candidate.kind == CanonicalEventBundleKind::Standalone &&
+                 candidate.events.size() == 1 &&
+                 sameMaterializedEventProtocol(candidate.events.front(),
+                                               materialized);
+        });
+    if (bundle == mechanismUniverse_.eventBundles.end()) {
+      continue;
+    }
+    appendOriginRequirement(bundle->originRequirements, requirement);
+  }
+  for (CanonicalEventBundleCandidate &bundle :
+       mechanismUniverse_.eventBundles) {
+    if (bundle.originRequirements.empty()) {
+      bundle.hasCompleteOriginProvenance = false;
+    }
+  }
   const std::size_t standaloneBundleCount =
       mechanismUniverse_.eventBundles.size();
   std::size_t nextProtocolIdentity = 1;
@@ -685,6 +764,10 @@ void CanonicalSyncPlanBuilder::buildMechanismUniverse() {
       bundle.events.push_back(std::move(roundTrip));
       bundle.events.push_back(std::move(incomingCopy));
       bundle.completionWitness = requirement;
+      bundle.originRequirements = incomingBundle.originRequirements;
+      appendOriginRequirement(bundle.originRequirements, requirement);
+      bundle.hasCompleteOriginProvenance =
+          incomingBundle.hasCompleteOriginProvenance;
       addBundleConflict(incomingBundle, bundle);
       mechanismUniverse_.eventBundles.push_back(std::move(bundle));
     }
@@ -1155,6 +1238,7 @@ LogicalResult CanonicalSyncPlanBuilder::optimizeMechanismSelection() {
   };
 
   reduce(incumbentBarriers, incumbentBundles);
+  optimizeAffectedSliceExchanges(incumbentBarriers, incumbentBundles);
   CanonicalMechanismPlanScore incumbentScore =
       scoreCandidatePlan(incumbentBarriers, incumbentBundles);
   const bool largeRequirementSet =

@@ -661,6 +661,244 @@ bool testCandidateFrontierTruncation() {
   return passed;
 }
 
+CanonicalDependency makeRequirement(std::size_t source, std::size_t target,
+                                    unsigned distance = 0) {
+  CanonicalDependency requirement;
+  requirement.source = source;
+  requirement.target = target;
+  requirement.iterationDistance = distance;
+  return requirement;
+}
+
+bool testAffectedSliceOriginProvenance() {
+  const CanonicalDependency removed = makeRequirement(1, 2);
+  const CanonicalDependency active = makeRequirement(3, 4);
+  bool passed =
+      check(!canonicalMechanismOriginsAreInactive(false, {removed}, {active}),
+            "incomplete provenance cannot authorize an eviction");
+  passed &= check(!canonicalMechanismOriginsAreInactive(true, {}, {active}),
+                  "empty provenance cannot authorize an eviction");
+  passed &= check(
+      !canonicalMechanismOriginsAreInactive(true, {removed}, {removed, active}),
+      "an active original requirement retains its mechanism");
+  passed &=
+      check(canonicalMechanismOriginsAreInactive(true, {removed}, {active}),
+            "complete inactive provenance permits an eviction seed");
+
+  CanonicalDependency recurrence = removed;
+  recurrence.iterationDistance = 2;
+  passed &=
+      check(canonicalMechanismOriginsAreInactive(true, {recurrence}, {removed}),
+            "iteration distance is part of requirement identity");
+  return passed;
+}
+
+bool testAffectedSliceEvictionSeeds() {
+  CanonicalAffectedSliceEvictionMechanism barrier;
+  barrier.mechanism = {CanonicalSelectionMechanismKind::Barrier, 7};
+  barrier.actionProfile = {4, 0};
+  barrier.barrierProfile = {1, 0};
+
+  CanonicalAffectedSliceEvictionMechanism sameIdBundle;
+  sameIdBundle.mechanism = {CanonicalSelectionMechanismKind::EventBundle, 7};
+  sameIdBundle.actionProfile = {3, 0};
+  sameIdBundle.barrierProfile = {0, 0};
+
+  CanonicalAffectedSliceEvictionMechanism otherBundle;
+  otherBundle.mechanism = {CanonicalSelectionMechanismKind::EventBundle, 9};
+  otherBundle.actionProfile = {1, 0};
+  otherBundle.barrierProfile = {0, 0};
+
+  const CanonicalAffectedSliceEvictionMechanism mechanisms[] = {
+      otherBundle, sameIdBundle, barrier};
+  const auto seeds = buildCanonicalAffectedSliceEvictionSeeds(
+      mechanisms, /*exhaustiveMechanismThreshold=*/3,
+      /*mechanismFrontierLimit=*/3, /*seedLimit=*/8);
+  bool passed = check(seeds.size() == 6,
+                      "three mechanisms produce all singleton and pair seeds");
+  const CanonicalSelectionMechanismRef barrierRef{
+      CanonicalSelectionMechanismKind::Barrier, 7};
+  const CanonicalSelectionMechanismRef bundleRef{
+      CanonicalSelectionMechanismKind::EventBundle, 7};
+  passed &= check(
+      llvm::any_of(seeds,
+                   [&](const auto &seed) {
+                     return seed.mechanisms.size() == 2 &&
+                            llvm::is_contained(seed.mechanisms, barrierRef) &&
+                            llvm::is_contained(seed.mechanisms, bundleRef);
+                   }),
+      "typed identities preserve a same-number barrier/bundle pair");
+  const auto repeated = buildCanonicalAffectedSliceEvictionSeeds(
+      mechanisms, /*exhaustiveMechanismThreshold=*/3,
+      /*mechanismFrontierLimit=*/3, /*seedLimit=*/8);
+  passed &= check(
+      seeds.size() == repeated.size() &&
+          llvm::equal(seeds, repeated,
+                      [](const auto &first, const auto &second) {
+                        return first.mechanisms == second.mechanisms &&
+                               first.actionProfile == second.actionProfile &&
+                               first.barrierProfile == second.barrierProfile;
+                      }),
+      "eviction seed ordering is deterministic");
+
+  std::vector<CanonicalAffectedSliceEvictionMechanism> large;
+  for (std::size_t id = 0; id < 10; ++id) {
+    CanonicalAffectedSliceEvictionMechanism mechanism;
+    mechanism.mechanism = {CanonicalSelectionMechanismKind::EventBundle, id};
+    mechanism.actionProfile = {10 - id};
+    mechanism.barrierProfile = {0};
+    large.push_back(std::move(mechanism));
+  }
+  const auto bounded = buildCanonicalAffectedSliceEvictionSeeds(
+      large, /*exhaustiveMechanismThreshold=*/3,
+      /*mechanismFrontierLimit=*/4, /*seedLimit=*/5);
+  passed &= check(bounded.size() == 5,
+                  "large eviction universes obey the explicit seed limit");
+  passed &= check(llvm::all_of(bounded,
+                               [](const auto &seed) {
+                                 return llvm::all_of(seed.mechanisms,
+                                                     [](const auto &entry) {
+                                                       return entry.id < 4;
+                                                     });
+                               }),
+                  "large universes use only the ranked mechanism frontier");
+
+  CanonicalAffectedSliceEvictionMechanism saturatedFirst = barrier;
+  saturatedFirst.actionProfile = {std::numeric_limits<std::size_t>::max()};
+  CanonicalAffectedSliceEvictionMechanism saturatedSecond = sameIdBundle;
+  saturatedSecond.actionProfile = {1};
+  const auto saturated = buildCanonicalAffectedSliceEvictionSeeds(
+      {saturatedFirst, saturatedSecond},
+      /*exhaustiveMechanismThreshold=*/2,
+      /*mechanismFrontierLimit=*/2, /*seedLimit=*/3);
+  passed &=
+      check(llvm::any_of(saturated,
+                         [](const auto &seed) {
+                           return seed.mechanisms.size() == 2 &&
+                                  seed.actionProfile.front() ==
+                                      std::numeric_limits<std::size_t>::max();
+                         }),
+            "combined seed profiles saturate instead of wrapping");
+  return passed;
+}
+
+bool containsRef(ArrayRef<CanonicalSelectionMechanismRef> mechanisms,
+                 CanonicalSelectionMechanismKind kind, std::size_t id) {
+  return llvm::is_contained(mechanisms,
+                            CanonicalSelectionMechanismRef{kind, id});
+}
+
+bool testAffectedSliceCooperativeSearch() {
+  const CanonicalSelectionMechanismRef expensive{
+      CanonicalSelectionMechanismKind::EventBundle, 1};
+  const CanonicalSelectionMechanismRef forward{
+      CanonicalSelectionMechanismKind::Barrier, 1};
+  const CanonicalSelectionMechanismRef recurrence{
+      CanonicalSelectionMechanismKind::EventBundle, 2};
+  const CanonicalSelectionMechanismRef rejected{
+      CanonicalSelectionMechanismKind::EventBundle, 3};
+  const CanonicalAffectedSliceSearchCandidate candidates[] = {
+      {expensive, {0, 1}},
+      {forward, {0}},
+      {recurrence, {1}},
+      {rejected, {0, 1}}};
+
+  bool observedTypedPair = false;
+  const auto evaluate = [&](ArrayRef<CanonicalSelectionMechanismRef> mechanisms)
+      -> std::optional<CanonicalAffectedSliceSearchEvaluation> {
+    if (containsRef(mechanisms, rejected.kind, rejected.id)) {
+      return std::nullopt;
+    }
+    observedTypedPair |=
+        containsRef(mechanisms, expensive.kind, expensive.id) &&
+        containsRef(mechanisms, forward.kind, forward.id);
+    const bool coversForward =
+        containsRef(mechanisms, expensive.kind, expensive.id) ||
+        containsRef(mechanisms, forward.kind, forward.id);
+    const bool coversRecurrence =
+        containsRef(mechanisms, expensive.kind, expensive.id) ||
+        containsRef(mechanisms, recurrence.kind, recurrence.id);
+    CanonicalAffectedSliceSearchEvaluation projection;
+    if (!coversForward) {
+      projection.uncoveredRequirements.push_back(0);
+    }
+    if (!coversRecurrence) {
+      projection.uncoveredRequirements.push_back(1);
+    }
+    const std::size_t expensiveCost =
+        containsRef(mechanisms, expensive.kind, expensive.id) ? 10 : 0;
+    projection.score.dynamicActionProfile = {expensiveCost + mechanisms.size()};
+    return projection;
+  };
+
+  CanonicalMechanismPlanScore initialScore;
+  initialScore.dynamicActionProfile = {20};
+  const CanonicalAffectedSliceSearchResult result =
+      searchCanonicalAffectedSliceCandidates(
+          candidates, /*requirementCount=*/2, initialScore,
+          /*beamWidth=*/8, /*depthLimit=*/3, /*evaluationLimit=*/64,
+          /*completeCandidateLimit=*/8, evaluate);
+  bool passed = check(!result.budgetExhausted,
+                      "the cooperative search completes within its budget");
+  passed &= check(observedTypedPair,
+                  "typed same-number mechanisms remain distinct search moves");
+  passed &=
+      check(llvm::any_of(result.complete,
+                         [&](const auto &complete) {
+                           return complete.mechanisms ==
+                                  std::vector<CanonicalSelectionMechanismRef>{
+                                      expensive};
+                         }),
+            "an early complete singleton remains a candidate");
+  passed &=
+      check(llvm::any_of(result.complete,
+                         [&](const auto &complete) {
+                           return complete.mechanisms ==
+                                  std::vector<CanonicalSelectionMechanismRef>{
+                                      forward, recurrence};
+                         }),
+            "a later cooperative pair is explored after early completion");
+  passed &= check(llvm::none_of(result.complete,
+                                [&](const auto &complete) {
+                                  return llvm::is_contained(complete.mechanisms,
+                                                            rejected);
+                                }),
+                  "callback-rejected conflict or color states fail closed");
+  return passed;
+}
+
+bool testAffectedSliceSearchBudget() {
+  const CanonicalAffectedSliceSearchCandidate candidates[] = {
+      {{CanonicalSelectionMechanismKind::Barrier, 0}, {0}},
+      {{CanonicalSelectionMechanismKind::EventBundle, 0}, {0}},
+      {{CanonicalSelectionMechanismKind::EventBundle, 1}, {0}}};
+  const auto evaluate = [](ArrayRef<CanonicalSelectionMechanismRef>)
+      -> std::optional<CanonicalAffectedSliceSearchEvaluation> {
+    CanonicalAffectedSliceSearchEvaluation projection;
+    return projection;
+  };
+  CanonicalMechanismPlanScore initialScore;
+  const auto first = searchCanonicalAffectedSliceCandidates(
+      candidates, /*requirementCount=*/1, initialScore,
+      /*beamWidth=*/4, /*depthLimit=*/3, /*evaluationLimit=*/1,
+      /*completeCandidateLimit=*/4, evaluate);
+  const auto second = searchCanonicalAffectedSliceCandidates(
+      candidates, /*requirementCount=*/1, initialScore,
+      /*beamWidth=*/4, /*depthLimit=*/3, /*evaluationLimit=*/1,
+      /*completeCandidateLimit=*/4, evaluate);
+  bool passed = check(first.budgetExhausted && first.evaluations == 1,
+                      "the search stops exactly at its evaluation budget");
+  passed &= check(first.complete.size() == second.complete.size() &&
+                      first.evaluations == second.evaluations &&
+                      first.budgetExhausted == second.budgetExhausted &&
+                      llvm::equal(first.complete, second.complete,
+                                  [](const auto &left, const auto &right) {
+                                    return left.mechanisms == right.mechanisms;
+                                  }),
+                  "budget exhaustion preserves deterministic fallback state");
+  return passed;
+}
+
 bool testAlternatingOwnershipPairVerification() {
   MLIRContext context;
   context.getOrLoadDialect<scf::SCFDialect>();
@@ -750,18 +988,17 @@ bool testAlternatingOwnershipPairVerification() {
 } // namespace
 
 int main() {
-  const bool passed = testOwnershipPairVerification() &&
-                      testOwnershipCandidateTransaction() &&
-                      testEventBundleConstruction() &&
-                      testSyntheticRoundTripVerification() &&
-                      testEventBundleIdentityRestoration() &&
-                      testEventBundleConflicts() &&
-                      testDiagnosticEventBundleEquivalence() &&
-                      testEventBundleAtomicExchange() &&
-                      testReservedEventColorOverflow() &&
-                      testMechanismPlanScoreOrdering() &&
-                      testBarrierActionProfileConstruction() &&
-                      testCandidateFrontierTruncation() &&
-                      testAlternatingOwnershipPairVerification();
+  const bool passed =
+      testOwnershipPairVerification() && testOwnershipCandidateTransaction() &&
+      testEventBundleConstruction() && testSyntheticRoundTripVerification() &&
+      testEventBundleIdentityRestoration() && testEventBundleConflicts() &&
+      testDiagnosticEventBundleEquivalence() &&
+      testEventBundleAtomicExchange() && testReservedEventColorOverflow() &&
+      testMechanismPlanScoreOrdering() &&
+      testBarrierActionProfileConstruction() &&
+      testCandidateFrontierTruncation() &&
+      testAffectedSliceOriginProvenance() && testAffectedSliceEvictionSeeds() &&
+      testAffectedSliceCooperativeSearch() && testAffectedSliceSearchBudget() &&
+      testAlternatingOwnershipPairVerification();
   return passed ? 0 : 1;
 }

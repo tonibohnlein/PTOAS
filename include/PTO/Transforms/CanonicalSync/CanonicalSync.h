@@ -280,6 +280,10 @@ struct CanonicalSelectionMechanismRef {
   bool operator<(const CanonicalSelectionMechanismRef &other) const {
     return std::tie(kind, id) < std::tie(other.kind, other.id);
   }
+
+  bool operator==(const CanonicalSelectionMechanismRef &other) const {
+    return kind == other.kind && id == other.id;
+  }
 };
 
 struct CanonicalSelectionEventDomain {
