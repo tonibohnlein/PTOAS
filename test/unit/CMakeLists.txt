@@ -17,6 +17,18 @@ add_test(NAME pto_schedule_graph_unit
 )
 set_tests_properties(pto_schedule_graph_unit PROPERTIES LABELS "PTO;unit")
 
+add_executable(pto-sync-cover-graph-unit-test
+  SyncCoverGraphTest.cpp
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverGraph.cpp"
+)
+target_include_directories(pto-sync-cover-graph-unit-test PRIVATE
+  "${PROJECT_SOURCE_DIR}/include"
+)
+add_test(NAME pto_sync_cover_graph_unit
+  COMMAND pto-sync-cover-graph-unit-test
+)
+set_tests_properties(pto_sync_cover_graph_unit PROPERTIES LABELS "PTO;unit")
+
 add_executable(pto-canonical-sync-algorithms-unit-test
   CanonicalSyncAlgorithmsTest.cpp
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/CanonicalSyncColoring.cpp"
