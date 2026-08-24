@@ -214,6 +214,108 @@ bool testIntermediateConditionalFailsClosed() {
   return passed;
 }
 
+bool testEndpointImpliedOptionalScopes() {
+  bool passed = true;
+  SyncCoverGraph targetGuarded;
+  const SyncCoverScopeId targetScope =
+      takeIndex(targetGuarded.addScope(0, false), passed,
+                "add target-implied optional scope");
+  const SyncCoverControlId targetControl =
+      takeIndex(targetGuarded.addControl(2), passed,
+                "add target-implied control");
+  const SyncCoverNodeId outerSource =
+      takeIndex(targetGuarded.addNode(1, 1, 0, 0), passed,
+                "add outer source");
+  const SyncCoverNodeId targetMiddle = takeIndex(
+      targetGuarded.addNode(2, 1, targetScope, 1, {{{targetControl, 0}}}),
+      passed, "add target-implied middle");
+  const SyncCoverNodeId guardedTarget = takeIndex(
+      targetGuarded.addNode(2, 1, targetScope, 2, {{{targetControl, 0}}}),
+      passed, "add guarded target");
+  passed &= check(
+      targetGuarded.addDemand(makeDemand(outerSource, guardedTarget)),
+      "add target-implied demand");
+  passed &= check(targetGuarded.addEdge(makeEdge(
+                      outerSource, targetMiddle,
+                      SyncCoverEdgeKind::CompletionSupply)),
+                  "add target-implied completion");
+  passed &= check(targetGuarded.addEdge(makeEdge(
+                      targetMiddle, guardedTarget,
+                      SyncCoverEdgeKind::CompletionPreservingIssueOrder)),
+                  "add target-implied carry");
+  passed &= check(
+      SyncCoverCoverageOracle(targetGuarded).checkDemand(0, {}).covered,
+      "target execution makes an intermediate in the same arm available");
+
+  SyncCoverGraph sourceGuarded;
+  const SyncCoverScopeId sourceScope =
+      takeIndex(sourceGuarded.addScope(0, false), passed,
+                "add source-implied optional scope");
+  const SyncCoverControlId sourceControl =
+      takeIndex(sourceGuarded.addControl(2), passed,
+                "add source-implied control");
+  const SyncCoverNodeId guardedSource = takeIndex(
+      sourceGuarded.addNode(1, 1, sourceScope, 0, {{{sourceControl, 1}}}),
+      passed, "add guarded source");
+  const SyncCoverNodeId sourceMiddle = takeIndex(
+      sourceGuarded.addNode(2, 1, sourceScope, 1, {{{sourceControl, 1}}}),
+      passed, "add source-implied middle");
+  const SyncCoverNodeId outerTarget =
+      takeIndex(sourceGuarded.addNode(2, 1, 0, 2), passed,
+                "add outer target");
+  passed &= check(
+      sourceGuarded.addDemand(makeDemand(guardedSource, outerTarget)),
+      "add source-implied demand");
+  passed &= check(sourceGuarded.addEdge(makeEdge(
+                      guardedSource, sourceMiddle,
+                      SyncCoverEdgeKind::CompletionSupply)),
+                  "add source-implied completion");
+  passed &= check(sourceGuarded.addEdge(makeEdge(
+                      sourceMiddle, outerTarget,
+                      SyncCoverEdgeKind::CompletionPreservingIssueOrder)),
+                  "add source-implied carry");
+  passed &= check(
+      SyncCoverCoverageOracle(sourceGuarded).checkDemand(0, {}).covered,
+      "source execution makes an intermediate in the same arm available");
+
+  SyncCoverGraph nestedLoops;
+  const SyncCoverScopeId outerLoop = takeIndex(
+      nestedLoops.addScope(0, false, std::nullopt, true), passed,
+      "add potentially zero-trip outer loop");
+  const SyncCoverScopeId outerBody =
+      takeIndex(nestedLoops.addScope(outerLoop, true), passed,
+                "add outer loop body");
+  const SyncCoverScopeId innerLoop = takeIndex(
+      nestedLoops.addScope(outerBody, false, std::nullopt, true), passed,
+      "add potentially zero-trip inner loop");
+  const SyncCoverScopeId innerBody =
+      takeIndex(nestedLoops.addScope(innerLoop, true), passed,
+                "add inner loop body");
+  const SyncCoverNodeId loopSource =
+      takeIndex(nestedLoops.addNode(1, 1, 0, 0), passed,
+                "add pre-loop source");
+  const SyncCoverNodeId loopMiddle =
+      takeIndex(nestedLoops.addNode(2, 1, outerBody, 1), passed,
+                "add outer-loop middle");
+  const SyncCoverNodeId loopTarget =
+      takeIndex(nestedLoops.addNode(2, 1, innerBody, 2), passed,
+                "add nested-loop target");
+  passed &= check(nestedLoops.addDemand(makeDemand(loopSource, loopTarget)),
+                  "add nested-loop demand");
+  passed &= check(nestedLoops.addEdge(makeEdge(
+                      loopSource, loopMiddle,
+                      SyncCoverEdgeKind::CompletionSupply)),
+                  "add nested-loop completion");
+  passed &= check(nestedLoops.addEdge(makeEdge(
+                      loopMiddle, loopTarget,
+                      SyncCoverEdgeKind::CompletionPreservingIssueOrder)),
+                  "add nested-loop carry");
+  passed &= check(
+      SyncCoverCoverageOracle(nestedLoops).checkDemand(0, {}).covered,
+      "nested-loop target execution implies its enclosing loop scopes");
+  return passed;
+}
+
 bool testComposedRecurrencePath() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -394,6 +496,7 @@ int main() {
   passed &= testCompletionTransitionKinds();
   passed &= testRecurrenceCopiesAndGuards();
   passed &= testIntermediateConditionalFailsClosed();
+  passed &= testEndpointImpliedOptionalScopes();
   passed &= testComposedRecurrencePath();
   passed &= testExactRecurrenceScopeAndOuterControl();
   passed &= testNestedExecutionAndExpansionLimit();

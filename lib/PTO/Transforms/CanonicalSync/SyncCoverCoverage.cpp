@@ -115,8 +115,22 @@ bool nodeInstanceAvailable(const SyncCoverGraph &graph,
   if (isSource || isTarget) {
     return true;
   }
-  return graph.scopeMustExecuteWithin(demand.scope,
-                                      graph.getNodes()[node].scope);
+  const SyncCoverScopeId nodeScope = graph.getNodes()[node].scope;
+  if (graph.scopeMustExecuteWithin(demand.scope, nodeScope)) {
+    return true;
+  }
+
+  // An optional scope is available when execution of either endpoint in the
+  // same virtual copy implies that scope. This mirrors the legacy
+  // condition-union rule without assuming an optional path executes in an
+  // unrelated recurrence copy.
+  const SyncCoverScopeId sourceScope = graph.getNodes()[demand.source].scope;
+  if (copy == 0 && graph.scopeExecutesWhen(sourceScope, nodeScope)) {
+    return true;
+  }
+  const SyncCoverScopeId targetScope = graph.getNodes()[demand.target].scope;
+  return copy == demand.distance &&
+         graph.scopeExecutesWhen(targetScope, nodeScope);
 }
 
 std::vector<VirtualEdge>

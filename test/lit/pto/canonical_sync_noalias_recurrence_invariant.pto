@@ -20,6 +20,9 @@
 // RUN: pto-test-opt %s -pto-plan-memory \
 // RUN:   '-pto-print-canonical-sync-plan=format=text view=events event-id-num-max=2 assume-distinct-gm-args-noalias=true' \
 // RUN:   | FileCheck %s --check-prefix=MODE
+// RUN: pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=covering' \
+// RUN:   | FileCheck %s --check-prefix=COVERING
 
 module {
   func.func @recurrence_mayalias(
@@ -252,6 +255,21 @@ module {
 // IR: pto.tload
 // IR: pto.tadd
 // IR: pto.tstore
+
+// COVERING-LABEL: PTOCanonicalSyncPlan @recurrence_mayalias
+// COVERING: covering-shadow status=graph-ready scopes=3 controls=0 nodes=4
+// COVERING-SAME: fixed-edges=1 recurrence-carries=6
+// COVERING-SAME: conservative-demands=26 active-demands=21 intrinsic-demands=0
+// COVERING: covering-demand[1] 0 -> 3 kind=memory-war scope=2 distance=0 active=yes
+// COVERING: covering-demand[9] 0 -> 3 kind=memory-war scope=1 distance=1 active=yes
+// COVERING: covering-demand[22] 3 -> 0 kind=memory-raw scope=1 distance=1 active=yes
+// COVERING-LABEL: PTOCanonicalSyncPlan @recurrence_noalias
+// COVERING: covering-shadow status=graph-ready scopes=3 controls=0 nodes=4
+// COVERING-SAME: fixed-edges=1 recurrence-carries=6
+// COVERING-SAME: conservative-demands=26 active-demands=15 intrinsic-demands=0
+// COVERING: covering-demand[1] 0 -> 3 kind=memory-war scope=2 distance=0 active=no
+// COVERING: covering-demand[9] 0 -> 3 kind=memory-war scope=1 distance=1 active=no
+// COVERING: covering-demand[22] 3 -> 0 kind=memory-raw scope=1 distance=1 active=no
 
 // IR-LABEL: func.func @recurrence_noalias
 // IR: scf.for

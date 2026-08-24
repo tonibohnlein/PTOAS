@@ -230,6 +230,9 @@ FailureOr<CanonicalSyncPlan> CanonicalSyncPlanBuilder::build() {
     return func_.emitError(
         "internal error: allocated canonical event protocol is invalid");
   }
+  if (coveringShadowEnabled_ && failed(buildCoveringShadowGraph())) {
+    return failure();
+  }
   return std::move(plan_);
 }
 
@@ -552,8 +555,9 @@ FailureOr<CanonicalSyncPlan>
 mlir::pto::buildCanonicalSyncPlan(func::FuncOp func, unsigned eventIdMax,
                                   CanonicalGMAliasPolicy gmAliasPolicy,
                                   const CanonicalSelectionDiagnosticRequest
-                                      *diagnosticRequest) {
+                                      *diagnosticRequest,
+                                  bool coveringShadow) {
   return CanonicalSyncPlanBuilder(func, eventIdMax, gmAliasPolicy,
-                                  diagnosticRequest)
+                                  diagnosticRequest, coveringShadow)
       .build();
 }

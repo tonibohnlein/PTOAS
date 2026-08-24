@@ -185,6 +185,9 @@ public:
   /// Returns whether requiredScope executes whenever conditionScope executes.
   bool scopeExecutesWhen(SyncCoverScopeId conditionScope,
                          SyncCoverScopeId requiredScope) const;
+  std::optional<SyncCoverScopeId>
+  getLowestCommonScope(SyncCoverScopeId first,
+                       SyncCoverScopeId second) const;
   std::optional<std::size_t>
   getScopeLoopDepth(SyncCoverScopeId scope, bool includeScope = true) const;
   std::size_t getGeneration() const { return generation_; }

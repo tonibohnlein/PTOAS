@@ -35,7 +35,8 @@ constexpr std::int64_t kHardwareEventIdCount = 8;
 
 bool isValidView(StringRef view) {
   return view == "all" || view == "dependencies" || view == "plan" ||
-         view == "events" || view == "ownership" || view == "selection";
+         view == "events" || view == "ownership" || view == "selection" ||
+         view == "covering";
 }
 
 bool isKernelDispatchWrapper(func::FuncOp func) {
@@ -87,7 +88,7 @@ struct PTOCanonicalSyncPass
             : pto::CanonicalGMAliasPolicy::MayAlias;
     FailureOr<pto::CanonicalSyncPlan> plan =
         pto::buildCanonicalSyncPlan(func, static_cast<unsigned>(eventIdNumMax),
-                                    gmAliasPolicy);
+                                    gmAliasPolicy, nullptr, coveringShadow);
     if (failed(plan) || failed(pto::emitCanonicalSyncPlan(func, *plan))) {
       signalPassFailure();
     }
@@ -112,12 +113,20 @@ struct PrintCanonicalSyncPlanPass
                                     !evictCanonicalEventBundleIds.empty();
     const bool invalidSelectionFormat =
         view == "selection" && format != "text";
+    const bool invalidCoveringFormat =
+        view == "covering" && format != "text";
     const bool evictionWithoutSelectionView =
         hasEvictionRequest && view != "selection";
     if (invalidSelectionFormat || evictionWithoutSelectionView) {
       module.emitError()
           << "canonical sync eviction diagnostics require format='text' "
              "and view='selection'";
+      signalPassFailure();
+      return;
+    }
+    if (invalidCoveringFormat) {
+      module.emitError()
+          << "canonical sync covering diagnostics require format='text'";
       signalPassFailure();
       return;
     }
@@ -143,7 +152,8 @@ struct PrintCanonicalSyncPlanPass
       }
       FailureOr<pto::CanonicalSyncPlan> plan = pto::buildCanonicalSyncPlan(
           func, static_cast<unsigned>(eventIdNumMax), gmAliasPolicy,
-          view == "selection" ? &diagnosticRequest : nullptr);
+          view == "selection" ? &diagnosticRequest : nullptr,
+          coveringShadow || view == "covering");
       if (failed(plan)) {
         signalPassFailure();
         return;

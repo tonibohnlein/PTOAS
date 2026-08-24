@@ -492,6 +492,23 @@ bool SyncCoverGraph::scopeExecutesWhen(SyncCoverScopeId conditionScope,
   return scopeMustExecuteWithin(conditionScope, requiredScope);
 }
 
+std::optional<SyncCoverScopeId>
+SyncCoverGraph::getLowestCommonScope(SyncCoverScopeId first,
+                                     SyncCoverScopeId second) const {
+  const bool firstValid = hasValidScope(first);
+  const bool secondValid = hasValidScope(second);
+  if (!firstValid || !secondValid) {
+    return std::nullopt;
+  }
+  while (!scopeContains(first, second)) {
+    if (first == 0) {
+      return std::nullopt;
+    }
+    first = scopes_[first].parent;
+  }
+  return first;
+}
+
 std::optional<std::size_t>
 SyncCoverGraph::getScopeLoopDepth(SyncCoverScopeId scope,
                                   bool includeScope) const {

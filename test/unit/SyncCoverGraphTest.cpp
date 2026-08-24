@@ -364,6 +364,10 @@ bool testScopeQueriesAndGeneration() {
   passed &= check(graph.scopeExecutesWhen(nestedLoop, outer) &&
                       !graph.scopeExecutesWhen(outer, nestedLoop),
                   "scope execution implication is direction-sensitive");
+  passed &= check(graph.getLowestCommonScope(inner, nestedLoop) == inner &&
+                      graph.getLowestCommonScope(nestedLoop, outer) == outer &&
+                      !graph.getLowestCommonScope(99, outer),
+                  "lowest-common-scope queries handle nesting and errors");
   passed &= check(graph.getScopeLoopDepth(nestedLoop) == 2 &&
                       graph.getScopeLoopDepth(nestedLoop, false) == 1 &&
                       !graph.getScopeLoopDepth(99),

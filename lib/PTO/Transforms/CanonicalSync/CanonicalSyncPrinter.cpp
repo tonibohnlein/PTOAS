@@ -13,6 +13,8 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Twine.h"
 
+#include <algorithm>
+
 using namespace mlir;
 using namespace mlir::pto;
 
@@ -101,6 +103,10 @@ bool includesSelection(StringRef view) {
   return view == "selection";
 }
 
+bool includesCovering(StringRef view) {
+  return view == "all" || view == "covering";
+}
+
 StringRef stringifyOwnershipAddressSpace(AddressSpace space) {
   switch (space) {
   case AddressSpace::Zero:
@@ -147,6 +153,41 @@ StringRef stringifyFixedEdgeKind(SyncGraphEdgeKind kind) {
     return "hardware-completion";
   }
   return "unknown";
+}
+
+StringRef stringifyCoveringEdgeKind(SyncCoverEdgeKind kind) {
+  switch (kind) {
+  case SyncCoverEdgeKind::CompletionPreservingIssueOrder:
+    return "completion-preserving-issue-order";
+  case SyncCoverEdgeKind::NonCompletionPreservingIssueOrder:
+    return "non-completion-preserving-issue-order";
+  case SyncCoverEdgeKind::CompletionSupply:
+    return "completion-supply";
+  }
+  return "unknown";
+}
+
+StringRef stringifyCoveringDemandKind(SyncCoverDemandKind kind) {
+  switch (kind) {
+  case SyncCoverDemandKind::SSA:
+    return "ssa";
+  case SyncCoverDemandKind::MemoryRAW:
+    return "memory-raw";
+  case SyncCoverDemandKind::MemoryWAR:
+    return "memory-war";
+  case SyncCoverDemandKind::MemoryWAW:
+    return "memory-waw";
+  }
+  return "unknown";
+}
+
+void printCoveringGuard(llvm::raw_ostream &os,
+                        const SyncCoverGuard &guard) {
+  os << '[';
+  llvm::interleaveComma(guard.literals, os, [&](const auto &literal) {
+    os << literal.control << ':' << literal.alternative;
+  });
+  os << ']';
 }
 
 void printIds(llvm::raw_ostream &os, ArrayRef<unsigned> ids) {
@@ -443,6 +484,74 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
             });
         os << "]\n";
       }
+    }
+  }
+  const bool includeCovering = includesCovering(view);
+  const bool hasCoveringSummary = plan.getCoveringShadowSummary().has_value();
+  if (includeCovering && hasCoveringSummary) {
+    const CanonicalSyncCoveringShadowSummary &summary =
+        *plan.getCoveringShadowSummary();
+    os << "  covering-shadow status=graph-ready"
+       << " scopes=" << summary.scopes
+       << " controls=" << summary.controls << " nodes=" << summary.nodes
+       << " fixed-edges=" << summary.fixedEdges
+       << " recurrence-carries=" << summary.recurrenceCarryEdges
+       << " conservative-demands=" << summary.conservativeDemands
+       << " active-demands=" << summary.activeDemands
+       << " intrinsic-demands=" << summary.intrinsicallySatisfiedDemands
+       << '\n';
+    for (const SyncCoverScope &scope : summary.scopeDetails) {
+      os << "  covering-scope[" << scope.id << "] parent=" << scope.parent
+         << " must-execute="
+         << (scope.mustExecuteWithinParent ? "yes" : "no")
+         << " loop=" << (scope.isLoop ? "yes" : "no") << " timeline=";
+      if (scope.timeline) {
+        os << '[' << scope.timeline->begin << ',' << scope.timeline->end << ']';
+      } else {
+        os << "none";
+      }
+      os << '\n';
+    }
+    for (const SyncCoverControl &control : summary.controlDetails) {
+      os << "  covering-control[" << control.id
+         << "] alternatives=" << control.alternatives
+         << " scope=" << control.scope << '\n';
+    }
+    for (const SyncCoverNode &node : summary.nodeDetails) {
+      os << "  covering-node[" << node.id << "] resource="
+         << stringifyPIPE(static_cast<PIPE>(node.resource))
+         << " scope=" << node.scope << " order=" << node.order
+         << " guard=";
+      printCoveringGuard(os, node.guard);
+      os << " completion-targets=[";
+      llvm::interleaveComma(node.completionTargets, os);
+      os << "]\n";
+    }
+    for (auto [edgeId, edge] : llvm::enumerate(summary.edgeDetails)) {
+      os << "  covering-edge[" << edgeId << "] " << edge.source << " -> "
+         << edge.target << " kind=" << stringifyCoveringEdgeKind(edge.kind)
+         << " scope=" << edge.scope << " distance=" << edge.distance
+         << " origin="
+         << (edgeId < summary.fixedEdges ? "fixed" : "recurrence-carry")
+         << " source-guard=";
+      printCoveringGuard(os, edge.sourceGuard);
+      os << " target-guard=";
+      printCoveringGuard(os, edge.targetGuard);
+      os << '\n';
+    }
+    for (auto [demandId, demand] : llvm::enumerate(summary.demandDetails)) {
+      const bool active =
+          std::binary_search(summary.activeDemandIds.begin(),
+                             summary.activeDemandIds.end(), demandId);
+      os << "  covering-demand[" << demandId << "] " << demand.source
+         << " -> " << demand.target
+         << " kind=" << stringifyCoveringDemandKind(demand.kind)
+         << " scope=" << demand.scope << " distance=" << demand.distance
+         << " active=" << (active ? "yes" : "no") << " source-guard=";
+      printCoveringGuard(os, demand.sourceGuard);
+      os << " target-guard=";
+      printCoveringGuard(os, demand.targetGuard);
+      os << '\n';
     }
   }
 }

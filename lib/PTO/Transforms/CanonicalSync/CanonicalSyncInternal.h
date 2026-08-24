@@ -265,11 +265,13 @@ public:
   CanonicalSyncPlanBuilder(func::FuncOp func, unsigned eventIdMax,
                            CanonicalGMAliasPolicy gmAliasPolicy,
                            const CanonicalSelectionDiagnosticRequest
-                               *diagnosticRequest)
+                               *diagnosticRequest,
+                           bool coveringShadow)
       : func_(func), funcOperation_(func.getOperation()),
         eventIdMax_(eventIdMax),
         gmAliasPolicy_(gmAliasPolicy),
         selectionDiagnosticsEnabled_(diagnosticRequest != nullptr),
+        coveringShadowEnabled_(coveringShadow),
         diagnosticRequest_(diagnosticRequest ? *diagnosticRequest
                                              : CanonicalSelectionDiagnosticRequest{}),
         translator_(syncIR_, memoryAnalyzer_, bufferMap_, func,
@@ -392,6 +394,7 @@ private:
       ArrayRef<CanonicalBarrier> barriers,
       ArrayRef<CanonicalEventBundleCandidate> eventBundles) const;
   LogicalResult verifyFinalPlan();
+  LogicalResult buildCoveringShadowGraph();
   LogicalResult repairEventScarcity();
   LogicalResult repairEventDomain(const CanonicalEventDomainKey &key,
                                   unsigned availableIds);
@@ -447,6 +450,7 @@ private:
   unsigned eventIdMax_ = 0;
   CanonicalGMAliasPolicy gmAliasPolicy_ = CanonicalGMAliasPolicy::MayAlias;
   bool selectionDiagnosticsEnabled_ = false;
+  bool coveringShadowEnabled_ = false;
   CanonicalSelectionDiagnosticRequest diagnosticRequest_;
   CanonicalSyncPlan plan_;
   SyncIRs syncIR_;

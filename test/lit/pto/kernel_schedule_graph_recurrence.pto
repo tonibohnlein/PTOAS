@@ -10,6 +10,9 @@
 // RUN: pto-test-opt %s \
 // RUN:   '-pto-print-canonical-sync-plan=format=text view=dependencies' \
 // RUN:   | FileCheck %s --check-prefix=CANONICAL
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=covering' \
+// RUN:   | FileCheck %s --check-prefix=COVERING
 
 module {
   func.func @scalar_recurrence(%src: !pto.ptr<i32>, %dst: !pto.ptr<i32>) {
@@ -61,3 +64,25 @@ module {
 // CANONICAL: dependency 2 -> 1 kind=loop-carried-ssa distance=1
 // CANONICAL-LABEL: PTOCanonicalSyncPlan @nested_recurrence_owners
 // CANONICAL-DAG: dependency 0 -> 0 kind=memory-waw distance=1
+
+// COVERING-LABEL: PTOCanonicalSyncPlan @scalar_recurrence
+// COVERING: covering-shadow status=graph-ready scopes=3 controls=0 nodes=4
+// COVERING-SAME: fixed-edges=10 recurrence-carries=4
+// COVERING-SAME: conservative-demands=9 active-demands=9 intrinsic-demands=0
+// COVERING: covering-scope[1] parent=0 must-execute=yes loop=yes
+// COVERING: covering-node[1] resource=PIPE_S scope=2 order=2 guard=[]
+// COVERING: covering-edge[0] 0 -> 1 kind=completion-supply scope=0 distance=0 origin=fixed
+// COVERING: covering-edge[6] 0 -> 1 kind=completion-preserving-issue-order scope=0 distance=0 origin=fixed
+// COVERING: covering-edge[10] 1 -> 1 kind=completion-supply scope=1 distance=1 origin=recurrence-carry
+// COVERING: covering-demand[8] 2 -> 1 kind=ssa scope=1 distance=1 active=yes
+// COVERING-LABEL: PTOCanonicalSyncPlan @nested_recurrence_owners
+// COVERING: covering-shadow status=graph-ready scopes=5 controls=0 nodes=1
+// COVERING-SAME: fixed-edges=0 recurrence-carries=2
+// COVERING-SAME: conservative-demands=6 active-demands=6 intrinsic-demands=0
+// COVERING: covering-scope[1] parent=0 must-execute=yes loop=yes
+// COVERING: covering-scope[3] parent=2 must-execute=yes loop=yes
+// COVERING: covering-node[0] resource=PIPE_V scope=4 order=2 guard=[]
+// COVERING: covering-edge[0] 0 -> 0 kind=completion-preserving-issue-order scope=3 distance=1 origin=recurrence-carry
+// COVERING: covering-edge[1] 0 -> 0 kind=completion-preserving-issue-order scope=1 distance=1 origin=recurrence-carry
+// COVERING: covering-demand[0] 0 -> 0 kind=memory-raw scope=3 distance=1 active=yes
+// COVERING: covering-demand[3] 0 -> 0 kind=memory-raw scope=1 distance=1 active=yes
