@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <limits>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 
 using namespace mlir::pto;
@@ -171,6 +172,7 @@ SyncCoverGraph::addScope(SyncCoverScopeId parent, bool mustExecuteWithinParent,
   }
   const SyncCoverScopeId id = scopes_.size();
   scopes_.push_back({id, parent, mustExecuteWithinParent, timeline, isLoop});
+  ++generation_;
   return {SyncCoverGraphError::None, id};
 }
 
@@ -184,6 +186,7 @@ SyncCoverGraphResult SyncCoverGraph::addControl(unsigned alternatives,
   }
   const SyncCoverControlId id = controls_.size();
   controls_.push_back({id, alternatives, scope});
+  ++generation_;
   return {SyncCoverGraphError::None, id};
 }
 
@@ -215,10 +218,22 @@ SyncCoverGraph::addNode(std::uint32_t resource, std::uint64_t weight,
     return {SyncCoverGraphError::InvalidTimeline, id};
   }
   nodes_.push_back(std::move(node));
+  ++generation_;
   return {SyncCoverGraphError::None, id};
 }
 
 SyncCoverGraphResult SyncCoverGraph::addEdge(SyncCoverEdge edge) {
+  const SyncCoverGraphResult prepared = prepareEdge(edge);
+  if (!prepared) {
+    return prepared;
+  }
+  const std::size_t index = edges_.size();
+  edges_.push_back(std::move(edge));
+  ++generation_;
+  return {SyncCoverGraphError::None, index};
+}
+
+SyncCoverGraphResult SyncCoverGraph::prepareEdge(SyncCoverEdge &edge) const {
   const bool invalidNode =
       edge.source >= nodes_.size() || edge.target >= nodes_.size();
   if (invalidNode) {
@@ -226,8 +241,8 @@ SyncCoverGraphResult SyncCoverGraph::addEdge(SyncCoverEdge edge) {
   }
   const bool invalidScope =
       !hasValidScope(edge.scope) ||
-      !isScopeAncestor(edge.scope, nodes_[edge.source].scope) ||
-      !isScopeAncestor(edge.scope, nodes_[edge.target].scope);
+      !scopeContains(edge.scope, nodes_[edge.source].scope) ||
+      !scopeContains(edge.scope, nodes_[edge.target].scope);
   if (invalidScope) {
     return {SyncCoverGraphError::InvalidScope, edges_.size()};
   }
@@ -247,9 +262,7 @@ SyncCoverGraphResult SyncCoverGraph::addEdge(SyncCoverEdge edge) {
   if (error != SyncCoverGraphError::None) {
     return {error, edges_.size()};
   }
-  const std::size_t index = edges_.size();
-  edges_.push_back(std::move(edge));
-  return {SyncCoverGraphError::None, index};
+  return {SyncCoverGraphError::None, edges_.size()};
 }
 
 SyncCoverGraphResult SyncCoverGraph::addDemand(SyncCoverDemand demand) {
@@ -260,8 +273,8 @@ SyncCoverGraphResult SyncCoverGraph::addDemand(SyncCoverDemand demand) {
   }
   const bool invalidScope =
       !hasValidScope(demand.scope) ||
-      !isScopeAncestor(demand.scope, nodes_[demand.source].scope) ||
-      !isScopeAncestor(demand.scope, nodes_[demand.target].scope);
+      !scopeContains(demand.scope, nodes_[demand.source].scope) ||
+      !scopeContains(demand.scope, nodes_[demand.target].scope);
   if (invalidScope) {
     return {SyncCoverGraphError::InvalidScope, demands_.size()};
   }
@@ -284,6 +297,7 @@ SyncCoverGraphResult SyncCoverGraph::addDemand(SyncCoverDemand demand) {
   }
   const std::size_t index = demands_.size();
   demands_.push_back(std::move(demand));
+  ++generation_;
   return {SyncCoverGraphError::None, index};
 }
 
@@ -351,8 +365,8 @@ SyncCoverGraphResult SyncCoverGraph::validate() const {
     }
     const bool invalidScope =
         !hasValidScope(demand.scope) ||
-        !isScopeAncestor(demand.scope, nodes_[demand.source].scope) ||
-        !isScopeAncestor(demand.scope, nodes_[demand.target].scope);
+        !scopeContains(demand.scope, nodes_[demand.source].scope) ||
+        !scopeContains(demand.scope, nodes_[demand.target].scope);
     if (invalidScope) {
       return {SyncCoverGraphError::InvalidScope, index};
     }
@@ -388,8 +402,8 @@ SyncCoverGraphResult SyncCoverGraph::validate() const {
     }
     const bool invalidScope =
         !hasValidScope(edge.scope) ||
-        !isScopeAncestor(edge.scope, nodes_[edge.source].scope) ||
-        !isScopeAncestor(edge.scope, nodes_[edge.target].scope);
+        !scopeContains(edge.scope, nodes_[edge.source].scope) ||
+        !scopeContains(edge.scope, nodes_[edge.target].scope);
     if (invalidScope) {
       return {SyncCoverGraphError::InvalidScope, index};
     }
@@ -443,8 +457,8 @@ bool SyncCoverGraph::hasValidScope(SyncCoverScopeId scope) const {
   return scope < scopes_.size() && scopes_[scope].id == scope;
 }
 
-bool SyncCoverGraph::isScopeAncestor(SyncCoverScopeId ancestor,
-                                     SyncCoverScopeId descendant) const {
+bool SyncCoverGraph::scopeContains(SyncCoverScopeId ancestor,
+                                   SyncCoverScopeId descendant) const {
   const bool invalidScope =
       !hasValidScope(ancestor) || !hasValidScope(descendant);
   if (invalidScope) {
@@ -455,6 +469,82 @@ bool SyncCoverGraph::isScopeAncestor(SyncCoverScopeId ancestor,
   }
   return descendant == ancestor;
 }
+
+bool SyncCoverGraph::scopeMustExecuteWithin(SyncCoverScopeId ancestor,
+                                            SyncCoverScopeId descendant) const {
+  if (!scopeContains(ancestor, descendant)) {
+    return false;
+  }
+  while (descendant != ancestor) {
+    if (!scopes_[descendant].mustExecuteWithinParent) {
+      return false;
+    }
+    descendant = scopes_[descendant].parent;
+  }
+  return true;
+}
+
+bool SyncCoverGraph::scopeExecutesWhen(SyncCoverScopeId conditionScope,
+                                       SyncCoverScopeId requiredScope) const {
+  if (scopeContains(requiredScope, conditionScope)) {
+    return true;
+  }
+  return scopeMustExecuteWithin(conditionScope, requiredScope);
+}
+
+std::optional<std::size_t>
+SyncCoverGraph::getScopeLoopDepth(SyncCoverScopeId scope,
+                                  bool includeScope) const {
+  if (!hasValidScope(scope)) {
+    return std::nullopt;
+  }
+  std::size_t depth = 0;
+  bool first = true;
+  while (scope != 0) {
+    if (scopes_[scope].isLoop && (includeScope || !first)) {
+      ++depth;
+    }
+    first = false;
+    scope = scopes_[scope].parent;
+  }
+  return depth;
+}
+
+SyncCoverGraph::EdgeCheckpoint SyncCoverGraph::checkpointEdges() const {
+  return {edges_.size(), generation_};
+}
+
+void SyncCoverGraph::rollbackEdges(EdgeCheckpoint checkpoint) {
+  edges_.resize(checkpoint.edgeCount);
+  generation_ = checkpoint.generation;
+}
+
+bool SyncCoverGraph::reserveAdditionalEdges(std::size_t additionalEdges) {
+  const bool overflow = additionalEdges > edges_.max_size() - edges_.size();
+  if (overflow) {
+    return false;
+  }
+  edges_.reserve(edges_.size() + additionalEdges);
+  return true;
+}
+
+SyncCoverGraph::EdgeTransaction::EdgeTransaction(SyncCoverGraph &graph)
+    : graph_(graph), checkpoint_(graph.checkpointEdges()) {}
+
+SyncCoverGraph::EdgeTransaction::~EdgeTransaction() {
+  if (!committed_) {
+    graph_.rollbackEdges(checkpoint_);
+  }
+}
+
+void SyncCoverGraph::EdgeTransaction::append(SyncCoverEdge edge) {
+  static_assert(std::is_nothrow_move_constructible<SyncCoverEdge>::value,
+                "reserved edge commit must not throw");
+  graph_.edges_.push_back(std::move(edge));
+  ++graph_.generation_;
+}
+
+void SyncCoverGraph::EdgeTransaction::commit() { committed_ = true; }
 
 SyncCoverGraphError SyncCoverGraph::normalizeAndValidateGuard(
     SyncCoverGuard &guard, SyncCoverScopeId occurrenceScope) const {
@@ -468,7 +558,7 @@ SyncCoverGraphError SyncCoverGraph::normalizeAndValidateGuard(
     if (invalidLiteral) {
       return SyncCoverGraphError::InvalidControl;
     }
-    if (!isScopeAncestor(controls_[literal.control].scope, occurrenceScope)) {
+    if (!scopeContains(controls_[literal.control].scope, occurrenceScope)) {
       return SyncCoverGraphError::InvalidScope;
     }
   }
@@ -515,7 +605,7 @@ SyncCoverGraphError SyncCoverGraph::completeEndpointGuards(
     }
     const SyncCoverControl &control = controls_[sourceLiteral.control];
     const bool contextualized =
-        distance != 0 && isScopeAncestor(recurrenceScope, control.scope);
+        distance != 0 && scopeContains(recurrenceScope, control.scope);
     if (!contextualized &&
         sourceLiteral.alternative != targetLiteral.alternative) {
       return SyncCoverGraphError::IncompatibleEndpoints;

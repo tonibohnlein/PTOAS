@@ -268,4 +268,5 @@ mlir::pto::getSyncCoverResourceLifetime(const SyncCoverGraph &graph,
 SyncCoverSelectionEvaluator::SyncCoverSelectionEvaluator(
     const SyncCoverMechanismUniverse &universe)
     : universe_(universe), version_(universe.version_),
+      graphGeneration_(universe.graph_.getGeneration()),
       valid_(static_cast<bool>(universe.validate())) {}

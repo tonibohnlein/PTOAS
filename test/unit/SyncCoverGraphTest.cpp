@@ -13,10 +13,16 @@
 #include <iostream>
 #include <limits>
 #include <string_view>
+#include <type_traits>
 
 namespace {
 
 using namespace mlir::pto;
+
+static_assert(!std::is_move_constructible<SyncCoverGraph>::value,
+              "moving a graph must not bypass generation tracking");
+static_assert(!std::is_assignable<SyncCoverGraph &, SyncCoverGraph>::value,
+              "assigning a graph must not bypass generation tracking");
 
 bool check(bool condition, std::string_view message) {
   if (!condition) {
@@ -329,6 +335,42 @@ bool testTimelineAnchorsAndCompletionCapabilities() {
   return passed;
 }
 
+bool testScopeQueriesAndGeneration() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const std::size_t initialGeneration = graph.getGeneration();
+  passed &= check(graph.addScope(99).error == SyncCoverGraphError::InvalidScope,
+                  "failed graph mutations preserve the generation");
+  passed &= check(graph.getGeneration() == initialGeneration,
+                  "failed scope insertion does not advance the generation");
+
+  const SyncCoverScopeId outer = takeIndex(
+      graph.addScope(0, false, SyncCoverTimelineInterval{0, 20}, true), passed,
+      "add scope-query outer loop");
+  const SyncCoverScopeId inner =
+      takeIndex(graph.addScope(outer, true), passed,
+                "add must-execute inner scope");
+  const SyncCoverScopeId nestedLoop = takeIndex(
+      graph.addScope(inner, false, SyncCoverTimelineInterval{2, 18}, true),
+      passed, "add nested loop scope");
+  passed &= check(graph.getGeneration() == initialGeneration + 3,
+                  "successful graph mutations advance the generation");
+  passed &= check(graph.scopeContains(outer, nestedLoop) &&
+                      !graph.scopeContains(nestedLoop, outer),
+                  "scope containment follows the complete ancestor chain");
+  passed &= check(graph.scopeMustExecuteWithin(outer, inner) &&
+                      !graph.scopeMustExecuteWithin(outer, nestedLoop),
+                  "must-execute queries stop at an optional descendant");
+  passed &= check(graph.scopeExecutesWhen(nestedLoop, outer) &&
+                      !graph.scopeExecutesWhen(outer, nestedLoop),
+                  "scope execution implication is direction-sensitive");
+  passed &= check(graph.getScopeLoopDepth(nestedLoop) == 2 &&
+                      graph.getScopeLoopDepth(nestedLoop, false) == 1 &&
+                      !graph.getScopeLoopDepth(99),
+                  "shared loop-depth queries handle scope anchors and errors");
+  return passed;
+}
+
 } // namespace
 
 int main() {
@@ -339,5 +381,6 @@ int main() {
   passed &= testRecurrenceGuardContexts();
   passed &= testInvalidReferencesDoNotMutate();
   passed &= testTimelineAnchorsAndCompletionCapabilities();
+  passed &= testScopeQueriesAndGeneration();
   return passed ? 0 : 1;
 }

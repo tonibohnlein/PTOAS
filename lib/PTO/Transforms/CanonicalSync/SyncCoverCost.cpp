@@ -26,21 +26,6 @@ SyncCoverStructuralCost makeCostError(SyncCoverStructuralCostError error) {
   return result;
 }
 
-std::size_t getLoopDepth(const SyncCoverGraph &graph, SyncCoverScopeId scope,
-                         bool includeScope) {
-  const std::vector<SyncCoverScope> &scopes = graph.getScopes();
-  std::size_t depth = 0;
-  bool first = true;
-  while (scope != 0) {
-    if (scopes[scope].isLoop && (includeScope || !first)) {
-      ++depth;
-    }
-    first = false;
-    scope = scopes[scope].parent;
-  }
-  return depth;
-}
-
 std::optional<std::size_t>
 getActionLoopDepth(const SyncCoverGraph &graph,
                    const SyncCoverResourceAction &action) {
@@ -50,14 +35,13 @@ getActionLoopDepth(const SyncCoverGraph &graph,
     if (action.anchor.node >= graph.getNodes().size()) {
       return std::nullopt;
     }
-    return getLoopDepth(graph, graph.getNodes()[action.anchor.node].scope,
-                        true);
+    return graph.getScopeLoopDepth(graph.getNodes()[action.anchor.node].scope);
   case SyncCoverAnchorKind::ScopeEntry:
   case SyncCoverAnchorKind::ScopeExit:
     if (action.anchor.scope >= graph.getScopes().size()) {
       return std::nullopt;
     }
-    return getLoopDepth(graph, action.anchor.scope, false);
+    return graph.getScopeLoopDepth(action.anchor.scope, false);
   }
   return std::nullopt;
 }
@@ -129,7 +113,12 @@ SyncCoverStructuralCost SyncCoverMechanismUniverse::evaluateStructuralCostImpl(
   result.mechanismCount = result.signature.size();
   std::size_t maximumDepth = 0;
   for (const SyncCoverScope &scope : graph_.getScopes()) {
-    maximumDepth = std::max(maximumDepth, getLoopDepth(graph_, scope.id, true));
+    const std::optional<std::size_t> depth =
+        graph_.getScopeLoopDepth(scope.id);
+    if (!depth) {
+      return makeCostError(SyncCoverStructuralCostError::InvalidUniverse);
+    }
+    maximumDepth = std::max(maximumDepth, *depth);
   }
   result.actionProfile.assign(maximumDepth + 1, 0);
   result.barrierActionProfile.assign(maximumDepth + 1, 0);
@@ -149,9 +138,10 @@ SyncCoverStructuralCost SyncCoverMechanismUniverse::evaluateStructuralCostImpl(
       if (anchor >= graph_.getNodes().size()) {
         return makeCostError(SyncCoverStructuralCostError::InvalidUniverse);
       }
-      const std::size_t depth =
-          getLoopDepth(graph_, graph_.getNodes()[anchor].scope, true);
-      if (!incrementProfile(result.barrierActionProfile, maximumDepth, depth)) {
+      const std::optional<std::size_t> depth =
+          graph_.getScopeLoopDepth(graph_.getNodes()[anchor].scope);
+      if (!depth || !incrementProfile(result.barrierActionProfile,
+                                      maximumDepth, *depth)) {
         return makeCostError(SyncCoverStructuralCostError::ArithmeticOverflow);
       }
     }
@@ -186,7 +176,8 @@ SyncCoverStructuralCost SyncCoverMechanismUniverse::evaluateStructuralCostImpl(
 SyncCoverSelectionEvaluation SyncCoverSelectionEvaluator::evaluate(
     const std::vector<SyncCoverMechanismId> &selected) const {
   SyncCoverSelectionEvaluation result;
-  if (!valid_ || universe_.version_ != version_) {
+  if (!valid_ || universe_.version_ != version_ ||
+      universe_.graph_.getGeneration() != graphGeneration_) {
     result.resources.error = SyncCoverResourceSelectionError::InvalidUniverse;
     result.cost.error = SyncCoverStructuralCostError::InvalidUniverse;
     return result;

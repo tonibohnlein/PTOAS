@@ -22,6 +22,8 @@
 namespace mlir {
 namespace pto {
 
+class SyncCoverMechanismUniverse;
+
 using SyncCoverNodeId = std::size_t;
 using SyncCoverScopeId = std::size_t;
 using SyncCoverControlId = std::size_t;
@@ -151,6 +153,12 @@ struct SyncCoverGraphResult {
 
 class SyncCoverGraph {
 public:
+  SyncCoverGraph() = default;
+  SyncCoverGraph(const SyncCoverGraph &) = default;
+  SyncCoverGraph(SyncCoverGraph &&) = delete;
+  SyncCoverGraph &operator=(const SyncCoverGraph &) = delete;
+  SyncCoverGraph &operator=(SyncCoverGraph &&) = delete;
+
   SyncCoverGraphResult
   addScope(SyncCoverScopeId parent = 0, bool mustExecuteWithinParent = false,
            std::optional<SyncCoverTimelineInterval> timeline = std::nullopt,
@@ -170,12 +178,48 @@ public:
   const std::vector<SyncCoverScope> &getScopes() const { return scopes_; }
   const std::vector<SyncCoverControl> &getControls() const { return controls_; }
 
+  bool scopeContains(SyncCoverScopeId ancestor,
+                     SyncCoverScopeId descendant) const;
+  bool scopeMustExecuteWithin(SyncCoverScopeId ancestor,
+                              SyncCoverScopeId descendant) const;
+  /// Returns whether requiredScope executes whenever conditionScope executes.
+  bool scopeExecutesWhen(SyncCoverScopeId conditionScope,
+                         SyncCoverScopeId requiredScope) const;
+  std::optional<std::size_t>
+  getScopeLoopDepth(SyncCoverScopeId scope, bool includeScope = true) const;
+  std::size_t getGeneration() const { return generation_; }
+
   SyncCoverGraphResult validate() const;
 
 private:
+  friend class SyncCoverMechanismUniverse;
+
+  struct EdgeCheckpoint {
+    std::size_t edgeCount = 0;
+    std::size_t generation = 0;
+  };
+
+  class EdgeTransaction {
+  public:
+    explicit EdgeTransaction(SyncCoverGraph &graph);
+    ~EdgeTransaction();
+    EdgeTransaction(const EdgeTransaction &) = delete;
+    EdgeTransaction &operator=(const EdgeTransaction &) = delete;
+
+    void append(SyncCoverEdge edge);
+    void commit();
+
+  private:
+    SyncCoverGraph &graph_;
+    EdgeCheckpoint checkpoint_;
+    bool committed_ = false;
+  };
+
+  EdgeCheckpoint checkpointEdges() const;
+  void rollbackEdges(EdgeCheckpoint checkpoint);
+  bool reserveAdditionalEdges(std::size_t additionalEdges);
+  SyncCoverGraphResult prepareEdge(SyncCoverEdge &edge) const;
   bool hasValidScope(SyncCoverScopeId scope) const;
-  bool isScopeAncestor(SyncCoverScopeId ancestor,
-                       SyncCoverScopeId descendant) const;
   SyncCoverGraphError
   normalizeAndValidateGuard(SyncCoverGuard &guard,
                             SyncCoverScopeId occurrenceScope) const;
@@ -194,6 +238,7 @@ private:
        SyncCoverTimelineInterval{0, std::numeric_limits<std::size_t>::max()},
        false}};
   std::vector<SyncCoverControl> controls_;
+  std::size_t generation_ = 0;
 };
 
 bool normalizeSyncCoverGuard(SyncCoverGuard &guard);

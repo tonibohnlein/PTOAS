@@ -11,9 +11,11 @@
 #include "PTO/Transforms/CanonicalSync/SyncCoverMechanism.h"
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncAlgorithms.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverCoverage.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverDescriptorBuilder.h"
 
 #include <iostream>
 #include <limits>
+#include <stdexcept>
 #include <string_view>
 #include <vector>
 
@@ -107,6 +109,107 @@ std::size_t appendCanonicalUse(SyncCoverMechanismDescriptor &descriptor,
   return use;
 }
 
+bool testDescriptorBuilderAndGraphEpoch() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source = takeGraphIndex(
+      graph.addNode(1, 1, 0, 0, {}, {2}), passed, "add builder source");
+  const SyncCoverNodeId target = takeGraphIndex(
+      graph.addNode(2, 1, 0, 1), passed, "add builder target");
+  SyncCoverMechanismUniverse universe(graph);
+  const SyncCoverResourceDomainId eventDomain = takeMechanismIndex(
+      universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 8),
+      passed, "add builder event domain");
+  const SyncCoverResourceDomainId tokenDomain = takeMechanismIndex(
+      universe.addResourceDomain(SyncCoverResourceKind::BufferToken, 1, 2, 2,
+                                 901),
+      passed, "add builder token domain");
+  const auto &domains = universe.getResourceDomains();
+
+  std::optional<SyncCoverMechanismDescriptor> event =
+      makeSyncCoverCanonicalEvent(domains[eventDomain], source, target, 0, 1,
+                                  501);
+  passed &= check(event && event->actions.size() == 2 &&
+                      event->resourceUses.size() == 1 &&
+                      event->supplyEdges.size() == 1 &&
+                      event->supplyBindings.size() == 1,
+                  "canonical-event builder owns all local index bookkeeping");
+  const SyncCoverMechanismId eventId = takeMechanismIndex(
+      universe.addMechanism(*event), passed, "add builder event");
+
+  SyncCoverMechanismDescriptorBuilder protocol(
+      SyncCoverMechanismKind::VerifiedProtocol, 502);
+  const SyncCoverDescriptorActionRef produce = protocol.addAction(
+      SyncCoverResourceActionKind::Produce, 1,
+      {SyncCoverAnchorKind::AfterNode, source, 0});
+  const SyncCoverDescriptorActionRef consume = protocol.addAction(
+      SyncCoverResourceActionKind::Consume, 2,
+      {SyncCoverAnchorKind::BeforeNode, target, 0});
+  const bool addedEventLane = protocol.addProtocolLane(
+      domains[eventDomain], 0, 0, 1, {produce, consume},
+      {{completionEdge(source, target), produce, consume}});
+  const bool addedTokenLane = protocol.addProtocolLane(
+      domains[tokenDomain], 0, 0, 1, {produce, consume},
+      {{completionEdge(source, target), produce, consume}});
+  passed &= check(addedEventLane && addedTokenLane,
+                  "protocol lanes can share physical actions across pools");
+  SyncCoverMechanismDescriptor ownership =
+      std::move(protocol).takeDescriptor();
+  passed &= check(ownership.actions.size() == 2 &&
+                      ownership.resourceUses.size() == 2 &&
+                      ownership.supplyBindings.size() == 2,
+                  "protocol builder does not duplicate shared actions");
+  const SyncCoverMechanismId protocolId = takeMechanismIndex(
+      universe.addVerifiedProtocol(ownership, [](const auto &) { return true; }),
+      passed, "add builder protocol");
+  for (std::size_t index = 0; index < 32; ++index) {
+    std::optional<SyncCoverMechanismDescriptor> candidate =
+        makeSyncCoverCanonicalEvent(domains[eventDomain], source, target, 0, 1,
+                                    600 + index);
+    passed &= check(candidate && universe.addMechanism(*candidate),
+                    "bulk candidate construction remains valid");
+  }
+  passed &= check(universe.getStatistics().fullValidations == 1,
+                  "candidate construction avoids per-addition validation");
+
+  SyncCoverMechanismDescriptorBuilder rejected(
+      SyncCoverMechanismKind::VerifiedProtocol, 503);
+  const SyncCoverDescriptorActionRef rejectedProduce = rejected.addAction(
+      SyncCoverResourceActionKind::Produce, 1,
+      {SyncCoverAnchorKind::AfterNode, source, 0});
+  const SyncCoverDescriptorActionRef rejectedConsume = rejected.addAction(
+      SyncCoverResourceActionKind::Consume, 2,
+      {SyncCoverAnchorKind::BeforeNode, target, 0});
+  const SyncCoverMechanismDescriptor before = rejected.getDescriptor();
+  passed &= check(!rejected.addProtocolLane(
+                      domains[eventDomain], 0, 0, 1,
+                      {rejectedProduce, rejectedConsume},
+                      {{completionEdge(source, target), rejectedProduce,
+                        SyncCoverDescriptorActionRef{99}}}),
+                  "builder rejects unknown typed action references");
+  passed &= check(rejected.getDescriptor().actions.size() ==
+                          before.actions.size() &&
+                      rejected.getDescriptor().resourceUses.empty() &&
+                      rejected.getDescriptor().supplyEdges.empty(),
+                  "failed builder additions leave the descriptor unchanged");
+
+  const SyncCoverSelectionEvaluator epoch(universe);
+  passed &= check(epoch && epoch.evaluate({eventId, protocolId}),
+                  "selection epoch accepts the completed builder universe");
+  passed &= check(universe.getStatistics().fullValidations == 2,
+                  "selection freezes one phase-boundary validation");
+  passed &= check(static_cast<bool>(graph.addNode(3, 1, 0, 2)),
+                  "externally extend graph after freezing an epoch");
+  passed &= check(!epoch && !epoch.evaluate({eventId, protocolId}),
+                  "graph generation invalidates a frozen selection epoch");
+  passed &= check(universe.validate(),
+                  "phase-boundary validation accepts a valid graph extension");
+  passed &= check(universe.validate() &&
+                      universe.getStatistics().fullValidations == 3,
+                  "unchanged graph and universe reuse cached validation");
+  return passed;
+}
+
 bool testAtomicSupplyAndCoverage() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -159,19 +262,23 @@ bool testAtomicFailureAndProtocolGate() {
   appendCanonicalUse(invalid, eventDomain, 1, 2, source, target);
   appendCanonicalUse(invalid, tokenDomain, 2, 2, target, target);
   const std::size_t edgeCount = graph.getEdges().size();
+  const std::size_t graphGeneration = graph.getGeneration();
   bool invalidVerifierCalled = false;
-  passed &= check(universe.addVerifiedProtocol(invalid,
-                                               [&](const auto &) {
-                                                 invalidVerifierCalled = true;
-                                                 return true;
-                                               })
-                          .error == SyncCoverMechanismError::InvalidSupply,
+  const SyncCoverMechanismResult invalidResult =
+      universe.addVerifiedProtocol(invalid, [&](const auto &) {
+        invalidVerifierCalled = true;
+        return true;
+      });
+  passed &= check(invalidResult.error == SyncCoverMechanismError::InvalidSupply,
                   "invalid second edge rejects the whole mechanism");
+  passed &= check(!invalidResult.index,
+                  "failed insertion does not report a pseudo-object index");
   passed &= check(!invalidVerifierCalled,
                   "generic validation precedes semantic verification");
   passed &= check(graph.getEdges().size() == edgeCount &&
+                      graph.getGeneration() == graphGeneration &&
                       universe.getMechanisms().empty(),
-                  "failed mechanism addition is atomic");
+                  "failed mechanism addition restores content and generation");
 
   SyncCoverMechanismDescriptor ownership;
   ownership.kind = SyncCoverMechanismKind::VerifiedProtocol;
@@ -180,17 +287,56 @@ bool testAtomicFailureAndProtocolGate() {
   passed &= check(universe.addMechanism(ownership).error ==
                       SyncCoverMechanismError::UnverifiedProtocol,
                   "ownership supply requires protocol verification");
+  const std::size_t preVerificationEdges = graph.getEdges().size();
+  const std::size_t preVerificationGeneration = graph.getGeneration();
+  bool verifierThrew = false;
+  try {
+    static_cast<void>(universe.addVerifiedProtocol(
+        ownership, [](const auto &) -> bool {
+          throw std::runtime_error("expected verifier failure");
+        }));
+  } catch (const std::runtime_error &) {
+    verifierThrew = true;
+  }
+  passed &= check(verifierThrew &&
+                      graph.getEdges().size() == preVerificationEdges &&
+                      graph.getGeneration() == preVerificationGeneration &&
+                      universe.getMechanisms().empty(),
+                  "throwing verifier cannot enter the graph transaction");
+  passed &= check(universe.addVerifiedProtocol(
+                      ownership, [](const auto &) { return false; })
+                          .error ==
+                      SyncCoverMechanismError::UnverifiedProtocol,
+                  "semantic protocol rejection fails closed");
+  passed &= check(graph.getEdges().size() == preVerificationEdges &&
+                      graph.getGeneration() == preVerificationGeneration &&
+                      universe.getMechanisms().empty(),
+                  "semantic rejection restores the graph checkpoint");
+  const std::size_t preMutationNodes = graph.getNodes().size();
+  const SyncCoverMechanismResult mutatingVerifier = universe.addVerifiedProtocol(
+      ownership, [&](const auto &) {
+        return static_cast<bool>(graph.addNode(3, 1, 0, 2));
+      });
+  passed &= check(mutatingVerifier.error == SyncCoverMechanismError::InvalidGraph &&
+                      graph.getEdges().size() == preVerificationEdges &&
+                      graph.getNodes().size() == preMutationNodes + 1 &&
+                      graph.getGeneration() == preVerificationGeneration + 1 &&
+                      universe.getMechanisms().empty(),
+                  "verifier graph mutation is detected without erasing it");
   bool verifierCalled = false;
   passed &= check(universe.addVerifiedProtocol(
                       ownership,
                       [&](const auto &submitted) {
                         verifierCalled = true;
+                        ownership.providerIdentity = 999;
                         return submitted.providerIdentity == 73 &&
                                submitted.supplyBindings.size() == 1;
                       }),
                   "verified ownership protocol is admitted atomically");
   passed &= check(verifierCalled,
                   "verification runs against the submitted descriptor");
+  passed &= check(universe.getMechanisms().back().providerIdentity == 73,
+                  "verification and commit use one descriptor snapshot");
   return passed;
 }
 
@@ -823,6 +969,7 @@ bool testRecurrenceUsesWholeScopePressure() {
 
 int main() {
   bool passed = true;
+  passed &= testDescriptorBuilderAndGraphEpoch();
   passed &= testAtomicSupplyAndCoverage();
   passed &= testAtomicFailureAndProtocolGate();
   passed &= testMultiEdgeAtomicSupply();

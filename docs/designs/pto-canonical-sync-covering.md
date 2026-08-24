@@ -61,6 +61,23 @@ representable. Directed event/token domains and their periodic lifetimes are
 stored independently of supply, while conflicts encode alternative protocol
 implementations. Ownership candidates are admitted only after their protocol
 verifier has accepted the complete prime/steady-state/drain lifecycle.
+Adapter code constructs these candidates through the descriptor builder:
+canonical events are one operation, while typed action references let protocol
+lanes share one physical action across event-ID and buffer-token uses. Adapter
+call sites never manipulate descriptor-local edge, action, use, or binding
+indices directly.
+
+Graph and universe construction are append-only. Candidate edges are normalized
+without mutation, the side-effect-free protocol verifier runs before commit,
+and an RAII graph transaction restores both edges and generation if the final
+non-allocating commit does not complete. The universe validates a construction
+epoch once, revalidates after external graph mutation, and performs full
+graph/universe validation at phase boundaries. Frozen selection evaluators
+record both graph and universe generations and fail closed after either changes.
+`SyncCoverMechanism.h` intentionally remains the universe API: mechanism
+descriptors, resource-feasibility results, and structural-cost results stay
+together because one selection evaluator produces the latter two from one
+authoritative coloring.
 Every non-barrier supply edge is bound to an event-ID or ownership-token
 lifetime with matching endpoints, scope, and recurrence distance. Event
 bundles use event-ID domains; verified ownership protocols may additionally

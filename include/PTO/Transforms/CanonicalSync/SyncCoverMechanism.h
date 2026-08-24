@@ -216,6 +216,9 @@ struct SyncCoverSelectionEvaluation {
 
 struct SyncCoverMechanismResult {
   SyncCoverMechanismError error = SyncCoverMechanismError::None;
+  /// On success, identifies the inserted or existing object. On failure,
+  /// identifies an existing invalid object when one is known; candidate
+  /// insertion positions are never reported as object identities.
   std::optional<std::size_t> index;
 
   explicit operator bool() const {
@@ -223,11 +226,15 @@ struct SyncCoverMechanismResult {
   }
 };
 
+struct SyncCoverUniverseStatistics {
+  std::size_t fullValidations = 0;
+};
+
 /// Owns mechanism identity and atomically attaches supplied completion edges
 /// to a SyncCoverGraph. Failed additions leave both objects unchanged.
 class SyncCoverMechanismUniverse {
 public:
-  explicit SyncCoverMechanismUniverse(SyncCoverGraph &graph) : graph_(graph) {}
+  explicit SyncCoverMechanismUniverse(SyncCoverGraph &graph);
 
   SyncCoverMechanismResult
   addResourceDomain(SyncCoverResourceKind kind, std::uint32_t sourceResource,
@@ -236,8 +243,9 @@ public:
                     std::vector<unsigned> reservedIds = {});
   SyncCoverMechanismResult
   addMechanism(const SyncCoverMechanismDescriptor &descriptor);
-  /// The verifier is trusted compiler infrastructure. It runs only after the
-  /// exact descriptor has passed generic structural validation.
+  /// The verifier is trusted, side-effect-free compiler infrastructure. It
+  /// runs after non-mutating structural validation and before the graph commit.
+  /// Mutating the graph or universe from the callback violates this contract.
   SyncCoverMechanismResult addVerifiedProtocol(
       const SyncCoverMechanismDescriptor &descriptor,
       const std::function<bool(const SyncCoverMechanismDescriptor &)> &verify);
@@ -256,6 +264,9 @@ public:
     return mechanisms_;
   }
   const SyncCoverGraph &getGraph() const { return graph_; }
+  SyncCoverUniverseStatistics getStatistics() const {
+    return {fullValidationCount_};
+  }
 
 private:
   friend class SyncCoverSelectionEvaluator;
@@ -264,6 +275,9 @@ private:
       const SyncCoverMechanismDescriptor &descriptor, bool protocolVerified,
       const std::function<bool(const SyncCoverMechanismDescriptor &)> &verify =
           {});
+  bool ensureConstructionState();
+  void noteSuccessfulMutation();
+  SyncCoverMechanismResult validateUncached() const;
   SyncCoverMechanismError validateResourceUse(
       const SyncCoverResourceUse &use, const std::vector<SyncCoverEdge> &edges,
       const std::vector<SyncCoverResourceAction> &actions) const;
@@ -286,6 +300,12 @@ private:
   std::vector<SyncCoverResourceDomain> domains_;
   std::vector<SyncCoverMechanism> mechanisms_;
   std::size_t version_ = 0;
+  std::size_t knownGraphGeneration_ = 0;
+  bool constructionValidated_ = false;
+  mutable std::optional<std::size_t> cachedValidationVersion_;
+  mutable std::size_t cachedGraphGeneration_ = 0;
+  mutable SyncCoverMechanismResult cachedValidation_;
+  mutable std::size_t fullValidationCount_ = 0;
 };
 
 /// Immutable phase-boundary evaluator. The universe is validated once; each
@@ -297,7 +317,8 @@ public:
       const SyncCoverMechanismUniverse &universe);
 
   explicit operator bool() const {
-    return valid_ && universe_.version_ == version_;
+    return valid_ && universe_.version_ == version_ &&
+           universe_.graph_.getGeneration() == graphGeneration_;
   }
 
   SyncCoverSelectionEvaluation
@@ -306,6 +327,7 @@ public:
 private:
   const SyncCoverMechanismUniverse &universe_;
   std::size_t version_ = 0;
+  std::size_t graphGeneration_ = 0;
   bool valid_ = false;
 };
 

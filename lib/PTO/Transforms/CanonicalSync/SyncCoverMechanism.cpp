@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <type_traits>
 #include <utility>
 
 using namespace mlir::pto;
@@ -24,44 +25,6 @@ SyncCoverMechanismResult makeResult(SyncCoverMechanismError error,
   result.error = error;
   result.index = index;
   return result;
-}
-
-bool scopeContains(const SyncCoverGraph &graph, SyncCoverScopeId ancestor,
-                   SyncCoverScopeId descendant) {
-  const std::vector<SyncCoverScope> &scopes = graph.getScopes();
-  const bool invalid = ancestor >= scopes.size() || descendant >= scopes.size();
-  if (invalid) {
-    return false;
-  }
-  while (descendant != ancestor && descendant != 0) {
-    descendant = scopes[descendant].parent;
-  }
-  return descendant == ancestor;
-}
-
-bool scopeMustExecuteWithin(const SyncCoverGraph &graph,
-                            SyncCoverScopeId ancestor,
-                            SyncCoverScopeId descendant) {
-  if (!scopeContains(graph, ancestor, descendant)) {
-    return false;
-  }
-  const std::vector<SyncCoverScope> &scopes = graph.getScopes();
-  while (descendant != ancestor) {
-    if (!scopes[descendant].mustExecuteWithinParent) {
-      return false;
-    }
-    descendant = scopes[descendant].parent;
-  }
-  return true;
-}
-
-bool scopeExecutesWhen(const SyncCoverGraph &graph,
-                       SyncCoverScopeId conditionScope,
-                       SyncCoverScopeId requiredScope) {
-  if (scopeContains(graph, requiredScope, conditionScope)) {
-    return true;
-  }
-  return scopeMustExecuteWithin(graph, conditionScope, requiredScope);
 }
 
 bool validDomainShape(SyncCoverResourceKind kind, std::uint32_t source,
@@ -132,7 +95,7 @@ bool actionOccursWithin(const SyncCoverGraph &graph,
     actionScope = action.anchor.scope;
     break;
   }
-  if (!scopeContains(graph, scope, actionScope)) {
+  if (!graph.scopeContains(scope, actionScope)) {
     return false;
   }
   const std::optional<SyncCoverTimelineInterval> &timeline =
@@ -189,8 +152,8 @@ bool validBarrierEdge(const SyncCoverGraph &graph,
                               target.guard.literals.end());
   const bool wrongScope =
       placement.scope != anchor.scope ||
-      !scopeContains(graph, edge.scope, placement.scope) ||
-      !scopeExecutesWhen(graph, target.scope, placement.scope);
+      !graph.scopeContains(edge.scope, placement.scope) ||
+      !graph.scopeExecutesWhen(target.scope, placement.scope);
   if (!sameResource || wrongScope ||
       !syncCoverGuardImplies(targetGuard, anchor.guard)) {
     return false;
@@ -204,6 +167,28 @@ bool validBarrierEdge(const SyncCoverGraph &graph,
 
 } // namespace
 
+SyncCoverMechanismUniverse::SyncCoverMechanismUniverse(SyncCoverGraph &graph)
+    : graph_(graph), knownGraphGeneration_(graph.getGeneration()) {}
+
+bool SyncCoverMechanismUniverse::ensureConstructionState() {
+  if (constructionValidated_ &&
+      knownGraphGeneration_ == graph_.getGeneration()) {
+    return true;
+  }
+  if (!validate()) {
+    return false;
+  }
+  knownGraphGeneration_ = graph_.getGeneration();
+  constructionValidated_ = true;
+  return true;
+}
+
+void SyncCoverMechanismUniverse::noteSuccessfulMutation() {
+  ++version_;
+  knownGraphGeneration_ = graph_.getGeneration();
+  constructionValidated_ = true;
+}
+
 SyncCoverMechanismResult SyncCoverMechanismUniverse::addResourceDomain(
     SyncCoverResourceKind kind, std::uint32_t sourceResource,
     std::uint32_t targetResource, unsigned budget, std::uint64_t poolIdentity,
@@ -213,7 +198,10 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addResourceDomain(
                     reservedIds.end());
   if (!validDomainShape(kind, sourceResource, targetResource, poolIdentity,
                         budget, reservedIds)) {
-    return makeResult(SyncCoverMechanismError::InvalidDomain, domains_.size());
+    return makeResult(SyncCoverMechanismError::InvalidDomain);
+  }
+  if (!ensureConstructionState()) {
+    return makeResult(SyncCoverMechanismError::InvalidGraph);
   }
   const auto duplicate =
       std::find_if(domains_.begin(), domains_.end(),
@@ -234,15 +222,14 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addResourceDomain(
   const SyncCoverResourceDomainId id = domains_.size();
   domains_.push_back({id, kind, sourceResource, targetResource, poolIdentity,
                       budget, std::move(reservedIds)});
-  ++version_;
+  noteSuccessfulMutation();
   return makeResult(SyncCoverMechanismError::None, id);
 }
 
 SyncCoverMechanismResult SyncCoverMechanismUniverse::addMechanism(
     const SyncCoverMechanismDescriptor &descriptor) {
   if (descriptor.kind == SyncCoverMechanismKind::VerifiedProtocol) {
-    return makeResult(SyncCoverMechanismError::UnverifiedProtocol,
-                      mechanisms_.size());
+    return makeResult(SyncCoverMechanismError::UnverifiedProtocol);
   }
   return addMechanismImpl(descriptor, false);
 }
@@ -253,8 +240,7 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addVerifiedProtocol(
   const bool validKind =
       descriptor.kind == SyncCoverMechanismKind::VerifiedProtocol;
   if (!validKind || !verify) {
-    return makeResult(SyncCoverMechanismError::UnverifiedProtocol,
-                      mechanisms_.size());
+    return makeResult(SyncCoverMechanismError::UnverifiedProtocol);
   }
   return addMechanismImpl(descriptor, true, verify);
 }
@@ -262,94 +248,121 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addVerifiedProtocol(
 SyncCoverMechanismResult SyncCoverMechanismUniverse::addMechanismImpl(
     const SyncCoverMechanismDescriptor &descriptor, bool protocolVerified,
     const std::function<bool(const SyncCoverMechanismDescriptor &)> &verify) {
-  if (!validate()) {
-    return makeResult(SyncCoverMechanismError::InvalidGraph,
-                      mechanisms_.size());
+  if (!ensureConstructionState()) {
+    return makeResult(SyncCoverMechanismError::InvalidGraph);
   }
-  if (descriptor.supplyEdges.empty()) {
-    return makeResult(SyncCoverMechanismError::EmptySupply, mechanisms_.size());
+  const SyncCoverMechanismDescriptor candidate = descriptor;
+  if (candidate.supplyEdges.empty()) {
+    return makeResult(SyncCoverMechanismError::EmptySupply);
   }
-  const bool barrierKind = descriptor.kind == SyncCoverMechanismKind::Barrier;
+  const bool barrierKind = candidate.kind == SyncCoverMechanismKind::Barrier;
   if (barrierKind) {
-    const SyncCoverMechanismError error = validateBarrier(descriptor);
+    const SyncCoverMechanismError error = validateBarrier(candidate);
     if (error != SyncCoverMechanismError::None) {
-      return makeResult(error, mechanisms_.size());
+      return makeResult(error);
     }
-  } else if (descriptor.barrier) {
-    return makeResult(SyncCoverMechanismError::InvalidMechanism,
-                      mechanisms_.size());
+  } else if (candidate.barrier) {
+    return makeResult(SyncCoverMechanismError::InvalidMechanism);
   }
-  if (!validResourceComposition(domains_, descriptor.kind, descriptor.actions,
-                                descriptor.resourceUses)) {
-    return makeResult(SyncCoverMechanismError::InvalidResourceUse,
-                      mechanisms_.size());
+  if (!validResourceComposition(domains_, candidate.kind, candidate.actions,
+                                candidate.resourceUses)) {
+    return makeResult(SyncCoverMechanismError::InvalidResourceUse);
   }
 
-  for (const SyncCoverResourceUse &use : descriptor.resourceUses) {
+  for (const SyncCoverResourceUse &use : candidate.resourceUses) {
     const SyncCoverMechanismError error =
-        validateResourceUse(use, descriptor.supplyEdges, descriptor.actions);
+        validateResourceUse(use, candidate.supplyEdges, candidate.actions);
     if (error != SyncCoverMechanismError::None) {
-      return makeResult(error, mechanisms_.size());
+      return makeResult(error);
     }
   }
   SyncCoverMechanismError descriptorError = validateActionAccounting(
-      domains_, descriptor.actions, descriptor.resourceUses);
+      domains_, candidate.actions, candidate.resourceUses);
   if (descriptorError == SyncCoverMechanismError::None) {
     std::vector<std::size_t> descriptorSupplyEdges(
-        descriptor.supplyEdges.size());
+        candidate.supplyEdges.size());
     for (std::size_t edge = 0; edge < descriptorSupplyEdges.size(); ++edge) {
       descriptorSupplyEdges[edge] = edge;
     }
     descriptorError = validateSupplyBindings(
-        descriptor.kind, descriptor.supplyEdges, descriptorSupplyEdges,
-        descriptor.actions, descriptor.resourceUses, descriptor.supplyBindings);
+        candidate.kind, candidate.supplyEdges, descriptorSupplyEdges,
+        candidate.actions, candidate.resourceUses, candidate.supplyBindings);
   }
   if (descriptorError != SyncCoverMechanismError::None) {
-    return makeResult(descriptorError, mechanisms_.size());
+    return makeResult(descriptorError);
   }
 
   const SyncCoverMechanismId id = mechanisms_.size();
-  const std::size_t firstEdge = graph_.getEdges().size();
-  SyncCoverGraph staged = graph_;
-  for (SyncCoverEdge edge : descriptor.supplyEdges) {
+  std::vector<SyncCoverEdge> preparedEdges = candidate.supplyEdges;
+  for (SyncCoverEdge &edge : preparedEdges) {
     if (edge.kind != SyncCoverEdgeKind::CompletionSupply || edge.mechanism) {
-      return makeResult(SyncCoverMechanismError::InvalidSupply, id);
+      return makeResult(SyncCoverMechanismError::InvalidSupply);
     }
     edge.mechanism = id;
-    if (!staged.addEdge(std::move(edge))) {
-      return makeResult(SyncCoverMechanismError::InvalidSupply, id);
+    if (!graph_.prepareEdge(edge)) {
+      return makeResult(SyncCoverMechanismError::InvalidSupply);
     }
   }
-  if (!staged.validate()) {
-    return makeResult(SyncCoverMechanismError::InvalidSupply, id);
+
+  const std::size_t preVerificationGeneration = graph_.getGeneration();
+  const std::size_t preVerificationVersion = version_;
+  const bool verified = !protocolVerified || verify(candidate);
+  if (version_ != preVerificationVersion) {
+    constructionValidated_ = false;
+    return makeResult(SyncCoverMechanismError::InvalidMechanism);
   }
-  if (protocolVerified && !verify(descriptor)) {
-    return makeResult(SyncCoverMechanismError::UnverifiedProtocol, id);
+  const bool graphMutated =
+      graph_.getGeneration() != preVerificationGeneration;
+  if (graphMutated) {
+    constructionValidated_ = false;
+    return makeResult(SyncCoverMechanismError::InvalidGraph);
+  }
+  if (!verified) {
+    return makeResult(SyncCoverMechanismError::UnverifiedProtocol);
   }
 
+  const std::size_t firstEdge = graph_.getEdges().size();
   SyncCoverMechanism mechanism;
   mechanism.id = id;
-  mechanism.kind = descriptor.kind;
-  mechanism.providerIdentity = descriptor.providerIdentity;
+  mechanism.kind = candidate.kind;
+  mechanism.providerIdentity = candidate.providerIdentity;
   mechanism.protocolVerified = protocolVerified;
-  mechanism.barrier = descriptor.barrier;
-  mechanism.actions = descriptor.actions;
-  mechanism.resourceUses = descriptor.resourceUses;
-  mechanism.supplyBindings = descriptor.supplyBindings;
+  mechanism.barrier = candidate.barrier;
+  mechanism.actions = candidate.actions;
+  mechanism.resourceUses = candidate.resourceUses;
+  mechanism.supplyBindings = candidate.supplyBindings;
   for (SyncCoverResourceUse &use : mechanism.resourceUses) {
     for (std::size_t &edge : use.supplyEdges) {
       edge += firstEdge;
     }
   }
-  for (std::size_t edge = 0; edge < descriptor.supplyEdges.size(); ++edge) {
+  for (std::size_t edge = 0; edge < preparedEdges.size(); ++edge) {
     mechanism.supplyEdges.push_back(firstEdge + edge);
   }
   for (SyncCoverSupplyBinding &binding : mechanism.supplyBindings) {
     binding.supplyEdge += firstEdge;
   }
-  graph_ = std::move(staged);
+
+  const bool mechanismCapacityExhausted =
+      mechanisms_.size() == mechanisms_.max_size();
+  if (mechanismCapacityExhausted) {
+    return makeResult(SyncCoverMechanismError::InvalidMechanism);
+  }
+  const bool edgesReserved =
+      graph_.reserveAdditionalEdges(preparedEdges.size());
+  if (!edgesReserved) {
+    return makeResult(SyncCoverMechanismError::InvalidMechanism);
+  }
+  mechanisms_.reserve(mechanisms_.size() + 1);
+  SyncCoverGraph::EdgeTransaction transaction(graph_);
+  for (SyncCoverEdge &edge : preparedEdges) {
+    transaction.append(std::move(edge));
+  }
+  static_assert(std::is_nothrow_move_constructible<SyncCoverMechanism>::value,
+                "reserved mechanism commit must not throw");
   mechanisms_.push_back(std::move(mechanism));
-  ++version_;
+  noteSuccessfulMutation();
+  transaction.commit();
   return makeResult(SyncCoverMechanismError::None, id);
 }
 
@@ -359,30 +372,58 @@ SyncCoverMechanismUniverse::addConflict(SyncCoverMechanismId first,
   const bool invalid = first >= mechanisms_.size() ||
                        second >= mechanisms_.size() || first == second;
   if (invalid) {
-    return makeResult(SyncCoverMechanismError::InvalidConflict,
-                      mechanisms_.size());
+    return makeResult(SyncCoverMechanismError::InvalidConflict);
   }
-  auto addOne = [&](SyncCoverMechanismId source, SyncCoverMechanismId target) {
-    std::vector<SyncCoverMechanismId> &conflicts =
-        mechanisms_[source].conflicts;
-    const auto position =
-        std::lower_bound(conflicts.begin(), conflicts.end(), target);
-    const bool missing = position == conflicts.end() || *position != target;
-    if (missing) {
-      conflicts.insert(position, target);
-    }
-    return missing;
-  };
-  const bool firstChanged = addOne(first, second);
-  const bool secondChanged = addOne(second, first);
-  const bool changed = firstChanged || secondChanged;
-  if (changed) {
-    ++version_;
+  if (!ensureConstructionState()) {
+    return makeResult(SyncCoverMechanismError::InvalidGraph);
   }
+  std::vector<SyncCoverMechanismId> &firstConflicts =
+      mechanisms_[first].conflicts;
+  std::vector<SyncCoverMechanismId> &secondConflicts =
+      mechanisms_[second].conflicts;
+  const auto firstPosition =
+      std::lower_bound(firstConflicts.begin(), firstConflicts.end(), second);
+  const auto secondPosition =
+      std::lower_bound(secondConflicts.begin(), secondConflicts.end(), first);
+  const bool firstMissing =
+      firstPosition == firstConflicts.end() || *firstPosition != second;
+  const bool secondMissing =
+      secondPosition == secondConflicts.end() || *secondPosition != first;
+  if (firstMissing != secondMissing) {
+    constructionValidated_ = false;
+    return makeResult(SyncCoverMechanismError::InvalidConflict);
+  }
+  if (!firstMissing) {
+    return makeResult(SyncCoverMechanismError::None, first);
+  }
+
+  firstConflicts.reserve(firstConflicts.size() + 1);
+  secondConflicts.reserve(secondConflicts.size() + 1);
+  const auto refreshedFirst =
+      std::lower_bound(firstConflicts.begin(), firstConflicts.end(), second);
+  const auto refreshedSecond =
+      std::lower_bound(secondConflicts.begin(), secondConflicts.end(), first);
+  firstConflicts.insert(refreshedFirst, second);
+  secondConflicts.insert(refreshedSecond, first);
+  noteSuccessfulMutation();
   return makeResult(SyncCoverMechanismError::None, first);
 }
 
 SyncCoverMechanismResult SyncCoverMechanismUniverse::validate() const {
+  const std::size_t graphGeneration = graph_.getGeneration();
+  if (cachedValidationVersion_ == version_ &&
+      cachedGraphGeneration_ == graphGeneration) {
+    return cachedValidation_;
+  }
+  cachedValidation_ = validateUncached();
+  cachedValidationVersion_ = version_;
+  cachedGraphGeneration_ = graphGeneration;
+  return cachedValidation_;
+}
+
+SyncCoverMechanismResult
+SyncCoverMechanismUniverse::validateUncached() const {
+  ++fullValidationCount_;
   if (!graph_.validate()) {
     return makeResult(SyncCoverMechanismError::InvalidGraph);
   }
@@ -619,8 +660,8 @@ SyncCoverMechanismError SyncCoverMechanismUniverse::validateBarrier(
   const bool invalidPlacement =
       placement.anchor >= graph_.getNodes().size() ||
       placement.scope >= graph_.getScopes().size() ||
-      !scopeContains(graph_, placement.scope,
-                     graph_.getNodes()[placement.anchor].scope);
+      !graph_.scopeContains(placement.scope,
+                            graph_.getNodes()[placement.anchor].scope);
   if (invalidPlacement) {
     return SyncCoverMechanismError::InvalidMechanism;
   }

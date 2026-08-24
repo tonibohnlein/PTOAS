@@ -62,25 +62,11 @@ struct PreparedDemand {
   std::vector<SyncCoverMechanismId> potentialMechanisms;
 };
 
-bool scopeContains(const SyncCoverGraph &graph, SyncCoverScopeId ancestor,
-                   SyncCoverScopeId descendant) {
-  const std::vector<SyncCoverScope> &scopes = graph.getScopes();
-  const bool invalidScope =
-      ancestor >= scopes.size() || descendant >= scopes.size();
-  if (invalidScope) {
-    return false;
-  }
-  while (descendant != ancestor && descendant != 0) {
-    descendant = scopes[descendant].parent;
-  }
-  return descendant == ancestor;
-}
-
 unsigned contextCopy(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
                      SyncCoverControlId control, unsigned copy) {
   const SyncCoverScopeId controlScope = graph.getControls()[control].scope;
   const bool perIteration =
-      demand.distance != 0 && scopeContains(graph, demand.scope, controlScope);
+      demand.distance != 0 && graph.scopeContains(demand.scope, controlScope);
   return perIteration ? copy : kStaticCopy;
 }
 
@@ -121,22 +107,6 @@ bool guardIsImplied(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
                        required.end());
 }
 
-bool scopeMustExecuteWithin(const SyncCoverGraph &graph,
-                            SyncCoverScopeId ancestor,
-                            SyncCoverScopeId descendant) {
-  if (!scopeContains(graph, ancestor, descendant)) {
-    return false;
-  }
-  const std::vector<SyncCoverScope> &scopes = graph.getScopes();
-  while (descendant != ancestor) {
-    if (!scopes[descendant].mustExecuteWithinParent) {
-      return false;
-    }
-    descendant = scopes[descendant].parent;
-  }
-  return true;
-}
-
 bool nodeInstanceAvailable(const SyncCoverGraph &graph,
                            const SyncCoverDemand &demand, SyncCoverNodeId node,
                            unsigned copy) {
@@ -145,8 +115,8 @@ bool nodeInstanceAvailable(const SyncCoverGraph &graph,
   if (isSource || isTarget) {
     return true;
   }
-  return scopeMustExecuteWithin(graph, demand.scope,
-                                graph.getNodes()[node].scope);
+  return graph.scopeMustExecuteWithin(demand.scope,
+                                      graph.getNodes()[node].scope);
 }
 
 std::vector<VirtualEdge>
