@@ -586,8 +586,13 @@ bool testResourceSelectionFeasibility() {
   passed &= check(universe.evaluateResourceSelection({17}).error ==
                       SyncCoverResourceSelectionError::InvalidSelection,
                   "unknown selection IDs fail closed");
+  const SyncCoverSelectionEvaluator epoch(universe);
+  passed &= check(epoch && epoch.evaluate({firstId}),
+                  "selection epoch validates the completed universe once");
   passed &= check(universe.addConflict(firstId, secondId),
                   "add pressure mechanism conflict");
+  passed &= check(!epoch.evaluate({firstId}),
+                  "selection epoch rejects later universe mutations");
   const SyncCoverResourceSelection conflict =
       universe.evaluateResourceSelection({firstId, secondId});
   passed &= check(conflict.error == SyncCoverResourceSelectionError::Conflict &&
@@ -797,8 +802,20 @@ bool testRecurrenceUsesWholeScopePressure() {
                   "deeper-loop physical actions dominate cost ordering");
   SyncCoverStructuralCost moreHeadroom = cost;
   moreHeadroom.minimumEventHeadroom = 1;
-  passed &= check(syncCoverStructuralCostLess(moreHeadroom, cost),
-                  "event headroom breaks otherwise equal structural costs");
+  moreHeadroom.peakEventPressure = 2;
+  passed &= check(!syncCoverStructuralCostLess(moreHeadroom, cost) &&
+                      !syncCoverStructuralCostLess(cost, moreHeadroom),
+                  "nonseparable pressure diagnostics do not order plans");
+  SyncCoverStructuralCost lowerTotalPressure = cost;
+  --lowerTotalPressure.totalEventPressure;
+  passed &=
+      check(!syncCoverStructuralCostLess(lowerTotalPressure, cost) &&
+                !syncCoverStructuralCostLess(cost, lowerTotalPressure),
+            "domain pressure remains a diagnostic rather than an objective");
+  SyncCoverStructuralCost fewerMechanisms = cost;
+  --fewerMechanisms.mechanismCount;
+  passed &= check(syncCoverStructuralCostLess(fewerMechanisms, cost),
+                  "mechanism count is the final separable cost metric");
   return passed;
 }
 

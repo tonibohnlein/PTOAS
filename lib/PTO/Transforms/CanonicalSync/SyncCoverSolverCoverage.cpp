@@ -1,0 +1,164 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+#include "SyncCoverSolverInternal.h"
+
+#include <algorithm>
+#include <optional>
+#include <tuple>
+#include <utility>
+
+using namespace mlir::pto;
+using namespace mlir::pto::sync_cover_internal;
+
+namespace {
+
+constexpr std::size_t kMaximumCachedWitnessesPerDemand = 4;
+
+bool isSubset(const std::vector<SyncCoverMechanismId> &subset,
+              const std::vector<SyncCoverMechanismId> &superset) {
+  return std::includes(superset.begin(), superset.end(), subset.begin(),
+                       subset.end());
+}
+
+} // namespace
+
+CoverageEvaluation
+CoverageEvaluator::evaluate(const std::vector<SyncCoverDemandId> &demands,
+                            const std::vector<SyncCoverMechanismId> &selected) {
+  CoverageEvaluation evaluation;
+  for (SyncCoverDemandId demand : demands) {
+    bool coveredByCache = false;
+    for (const auto &witness : witnesses_[demand]) {
+      if (isSubset(witness, selected)) {
+        coveredByCache = true;
+        break;
+      }
+    }
+    if (coveredByCache) {
+      continue;
+    }
+
+    const SyncCoverCoverageResult result =
+        oracle_.checkDemandCanonicalSelection(demand, selected);
+    if (!result) {
+      evaluation.valid = false;
+      return evaluation;
+    }
+    if (result.covered) {
+      auto &known = witnesses_[demand];
+      const bool impliedByKnown =
+          std::any_of(known.begin(), known.end(), [&](const auto &witness) {
+            return isSubset(witness, result.witnessMechanisms);
+          });
+      if (!impliedByKnown) {
+        known.erase(std::remove_if(known.begin(), known.end(),
+                                   [&](const auto &witness) {
+                                     return isSubset(result.witnessMechanisms,
+                                                     witness);
+                                   }),
+                    known.end());
+        known.push_back(result.witnessMechanisms);
+        std::sort(known.begin(), known.end(),
+                  [](const auto &first, const auto &second) {
+                    return std::make_tuple(first.size(), first) <
+                           std::make_tuple(second.size(), second);
+                  });
+        const bool exceedsWitnessLimit =
+            known.size() > kMaximumCachedWitnessesPerDemand;
+        if (exceedsWitnessLimit) {
+          known.resize(kMaximumCachedWitnessesPerDemand);
+        }
+      }
+      continue;
+    }
+    evaluation.uncovered.push_back(demand);
+    evaluation.cuts.emplace(demand, result.cutMechanisms);
+  }
+  return evaluation;
+}
+
+bool mlir::pto::sync_cover_internal::evaluateCompleteSelection(
+    const SyncCoverSelectionEvaluator &selectionEvaluator,
+    CoverageEvaluator &coverage,
+    const std::vector<SyncCoverDemandId> &activeDemands,
+    const std::vector<SyncCoverMechanismId> &selected,
+    SyncCoverStructuralCost &cost) {
+  const SyncCoverSelectionEvaluation selection =
+      selectionEvaluator.evaluate(selected);
+  if (!selection || !selection.resources.resourceFeasible) {
+    return false;
+  }
+  const CoverageEvaluation result = coverage.evaluate(activeDemands, selected);
+  if (!result.valid || !result.uncovered.empty()) {
+    return false;
+  }
+  cost = selection.cost;
+  return true;
+}
+
+void mlir::pto::sync_cover_internal::removeRedundantMechanisms(
+    const SyncCoverSelectionEvaluator &selectionEvaluator,
+    CoverageEvaluator &coverage,
+    const std::vector<SyncCoverDemandId> &activeDemands,
+    std::vector<SyncCoverMechanismId> &selected,
+    SyncCoverStructuralCost &cost) {
+  while (!selected.empty()) {
+    std::optional<std::vector<SyncCoverMechanismId>> bestSelection;
+    std::optional<SyncCoverStructuralCost> bestCost;
+    for (std::size_t index = 0; index < selected.size(); ++index) {
+      std::vector<SyncCoverMechanismId> candidate = selected;
+      candidate.erase(candidate.begin() + index);
+      SyncCoverStructuralCost candidateCost;
+      const bool complete =
+          evaluateCompleteSelection(selectionEvaluator, coverage, activeDemands,
+                                    candidate, candidateCost);
+      if (!complete || !syncCoverStructuralCostLess(candidateCost, cost)) {
+        continue;
+      }
+      if (!bestCost || syncCoverStructuralCostLess(candidateCost, *bestCost)) {
+        bestSelection = std::move(candidate);
+        bestCost = std::move(candidateCost);
+      }
+    }
+    if (!bestSelection) {
+      return;
+    }
+    selected = std::move(*bestSelection);
+    cost = std::move(*bestCost);
+  }
+}
+
+bool mlir::pto::sync_cover_internal::independentlyVerifySelection(
+    const SyncCoverMechanismUniverse &universe,
+    const std::vector<SyncCoverDemandId> &activeDemands,
+    const std::vector<SyncCoverMechanismId> &selected,
+    SyncCoverStructuralCost &cost) {
+  const SyncCoverSelectionEvaluator selectionEvaluator(universe);
+  if (!selectionEvaluator) {
+    return false;
+  }
+  const SyncCoverSelectionEvaluation selection =
+      selectionEvaluator.evaluate(selected);
+  if (!selection || !selection.resources.resourceFeasible) {
+    return false;
+  }
+
+  SyncCoverCoverageOracle coverage(universe.getGraph());
+  for (SyncCoverDemandId demand : activeDemands) {
+    const SyncCoverCoverageResult result =
+        coverage.checkDemandCanonicalSelection(demand, selected);
+    if (!result || !result.covered) {
+      return false;
+    }
+  }
+  cost = selection.cost;
+  return true;
+}

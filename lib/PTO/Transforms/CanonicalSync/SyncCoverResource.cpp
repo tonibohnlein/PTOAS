@@ -29,7 +29,7 @@ struct OwnedInterval {
   SyncCoverResourceWitnessUse owner;
 };
 
-std::optional<SyncInterval>
+std::optional<SyncCoverTimelineInterval>
 getResourceLifetime(const SyncCoverGraph &graph,
                     const SyncCoverMechanism &mechanism,
                     const SyncCoverResourceUse &use) {
@@ -42,7 +42,7 @@ getResourceLifetime(const SyncCoverGraph &graph,
     if (!timeline) {
       return std::nullopt;
     }
-    return SyncInterval{timeline->begin, timeline->end};
+    return *timeline;
   }
 
   std::optional<SyncCoverTimelinePosition> begin;
@@ -62,7 +62,7 @@ getResourceLifetime(const SyncCoverGraph &graph,
   if (!begin || !end) {
     return std::nullopt;
   }
-  return SyncInterval{*begin, *end};
+  return SyncCoverTimelineInterval{*begin, *end};
 }
 
 SyncCoverResourceSelection
@@ -155,7 +155,14 @@ bool SyncCoverResourceAllocation::operator==(
 SyncCoverResourceSelection
 SyncCoverMechanismUniverse::evaluateResourceSelection(
     const std::vector<SyncCoverMechanismId> &selected) const {
-  if (!validate()) {
+  return evaluateResourceSelectionImpl(selected, true);
+}
+
+SyncCoverResourceSelection
+SyncCoverMechanismUniverse::evaluateResourceSelectionImpl(
+    const std::vector<SyncCoverMechanismId> &selected,
+    bool validateUniverse) const {
+  if (validateUniverse && !validate()) {
     return makeSelectionError(SyncCoverResourceSelectionError::InvalidUniverse);
   }
 
@@ -198,14 +205,15 @@ SyncCoverMechanismUniverse::evaluateResourceSelection(
         return makeSelectionError(
             SyncCoverResourceSelectionError::InvalidUniverse);
       }
-      const std::optional<SyncInterval> lifetime =
+      const std::optional<SyncCoverTimelineInterval> lifetime =
           getResourceLifetime(graph_, mechanism, use);
       if (!lifetime) {
         return makeSelectionError(
             SyncCoverResourceSelectionError::InvalidUniverse);
       }
+      const SyncInterval interval{lifetime->begin, lifetime->end};
       intervals[use.domain].push_back(
-          {{*lifetime, use.width}, {mechanismId, useId, use.width}});
+          {{interval, use.width}, {mechanismId, useId, use.width}});
     }
   }
 
@@ -249,3 +257,15 @@ SyncCoverMechanismUniverse::evaluateResourceSelection(
   }
   return result;
 }
+
+std::optional<SyncCoverTimelineInterval>
+mlir::pto::getSyncCoverResourceLifetime(const SyncCoverGraph &graph,
+                                        const SyncCoverMechanism &mechanism,
+                                        const SyncCoverResourceUse &use) {
+  return getResourceLifetime(graph, mechanism, use);
+}
+
+SyncCoverSelectionEvaluator::SyncCoverSelectionEvaluator(
+    const SyncCoverMechanismUniverse &universe)
+    : universe_(universe), version_(universe.version_),
+      valid_(static_cast<bool>(universe.validate())) {}

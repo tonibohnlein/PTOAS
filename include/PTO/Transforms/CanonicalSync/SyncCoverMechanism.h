@@ -205,6 +205,15 @@ struct SyncCoverStructuralCost {
 bool syncCoverStructuralCostLess(const SyncCoverStructuralCost &first,
                                  const SyncCoverStructuralCost &second);
 
+struct SyncCoverSelectionEvaluation {
+  SyncCoverResourceSelection resources;
+  SyncCoverStructuralCost cost;
+
+  explicit operator bool() const {
+    return static_cast<bool>(resources) && static_cast<bool>(cost);
+  }
+};
+
 struct SyncCoverMechanismResult {
   SyncCoverMechanismError error = SyncCoverMechanismError::None;
   std::optional<std::size_t> index;
@@ -246,8 +255,11 @@ public:
   const std::vector<SyncCoverMechanism> &getMechanisms() const {
     return mechanisms_;
   }
+  const SyncCoverGraph &getGraph() const { return graph_; }
 
 private:
+  friend class SyncCoverSelectionEvaluator;
+
   SyncCoverMechanismResult addMechanismImpl(
       const SyncCoverMechanismDescriptor &descriptor, bool protocolVerified,
       const std::function<bool(const SyncCoverMechanismDescriptor &)> &verify =
@@ -263,11 +275,44 @@ private:
       const std::vector<SyncCoverSupplyBinding> &bindings) const;
   SyncCoverMechanismError
   validateBarrier(const SyncCoverMechanismDescriptor &descriptor) const;
+  SyncCoverResourceSelection evaluateResourceSelectionImpl(
+      const std::vector<SyncCoverMechanismId> &selected,
+      bool validateUniverse) const;
+  SyncCoverStructuralCost
+  evaluateStructuralCostImpl(const std::vector<SyncCoverMechanismId> &selected,
+                             const SyncCoverResourceSelection &resources) const;
 
   SyncCoverGraph &graph_;
   std::vector<SyncCoverResourceDomain> domains_;
   std::vector<SyncCoverMechanism> mechanisms_;
+  std::size_t version_ = 0;
 };
+
+/// Immutable phase-boundary evaluator. The universe is validated once; each
+/// selection is colored once and its structural cost is derived from that
+/// authoritative resource result.
+class SyncCoverSelectionEvaluator {
+public:
+  explicit SyncCoverSelectionEvaluator(
+      const SyncCoverMechanismUniverse &universe);
+
+  explicit operator bool() const {
+    return valid_ && universe_.version_ == version_;
+  }
+
+  SyncCoverSelectionEvaluation
+  evaluate(const std::vector<SyncCoverMechanismId> &selected) const;
+
+private:
+  const SyncCoverMechanismUniverse &universe_;
+  std::size_t version_ = 0;
+  bool valid_ = false;
+};
+
+std::optional<SyncCoverTimelineInterval>
+getSyncCoverResourceLifetime(const SyncCoverGraph &graph,
+                             const SyncCoverMechanism &mechanism,
+                             const SyncCoverResourceUse &use);
 
 } // namespace pto
 } // namespace mlir

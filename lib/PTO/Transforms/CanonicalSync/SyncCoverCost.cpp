@@ -100,28 +100,22 @@ bool mlir::pto::syncCoverStructuralCostLess(
   if (first.error != second.error) {
     return first.error < second.error;
   }
-  const auto firstPrefix =
-      std::tie(first.actionProfile, first.barrierActionProfile,
-               first.peakEventPressure, first.totalEventPressure);
-  const auto secondPrefix =
-      std::tie(second.actionProfile, second.barrierActionProfile,
-               second.peakEventPressure, second.totalEventPressure);
-  if (firstPrefix != secondPrefix) {
-    return firstPrefix < secondPrefix;
-  }
-  if (first.minimumEventHeadroom != second.minimumEventHeadroom) {
-    return first.minimumEventHeadroom > second.minimumEventHeadroom;
-  }
-  return std::tie(first.eventDomainCount, first.mechanismCount,
-                  first.signature) < std::tie(second.eventDomainCount,
-                                              second.mechanismCount,
-                                              second.signature);
+  return std::tie(first.actionProfile, first.barrierActionProfile,
+                  first.mechanismCount, first.signature) <
+         std::tie(second.actionProfile, second.barrierActionProfile,
+                  second.mechanismCount, second.signature);
 }
 
 SyncCoverStructuralCost SyncCoverMechanismUniverse::evaluateStructuralCost(
     const std::vector<SyncCoverMechanismId> &selected) const {
   const SyncCoverResourceSelection resources =
       evaluateResourceSelection(selected);
+  return evaluateStructuralCostImpl(selected, resources);
+}
+
+SyncCoverStructuralCost SyncCoverMechanismUniverse::evaluateStructuralCostImpl(
+    const std::vector<SyncCoverMechanismId> &selected,
+    const SyncCoverResourceSelection &resources) const {
   if (!resources) {
     return makeCostError(mapResourceError(resources.error));
   }
@@ -186,5 +180,19 @@ SyncCoverStructuralCost SyncCoverMechanismUniverse::evaluateStructuralCost(
   if (result.eventDomainCount == 0) {
     result.minimumEventHeadroom = 0;
   }
+  return result;
+}
+
+SyncCoverSelectionEvaluation SyncCoverSelectionEvaluator::evaluate(
+    const std::vector<SyncCoverMechanismId> &selected) const {
+  SyncCoverSelectionEvaluation result;
+  if (!valid_ || universe_.version_ != version_) {
+    result.resources.error = SyncCoverResourceSelectionError::InvalidUniverse;
+    result.cost.error = SyncCoverStructuralCostError::InvalidUniverse;
+    return result;
+  }
+  result.resources = universe_.evaluateResourceSelectionImpl(selected, false);
+  result.cost =
+      universe_.evaluateStructuralCostImpl(selected, result.resources);
   return result;
 }

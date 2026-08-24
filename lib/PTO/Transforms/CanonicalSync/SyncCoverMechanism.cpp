@@ -234,6 +234,7 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addResourceDomain(
   const SyncCoverResourceDomainId id = domains_.size();
   domains_.push_back({id, kind, sourceResource, targetResource, poolIdentity,
                       budget, std::move(reservedIds)});
+  ++version_;
   return makeResult(SyncCoverMechanismError::None, id);
 }
 
@@ -348,6 +349,7 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addMechanismImpl(
   }
   graph_ = std::move(staged);
   mechanisms_.push_back(std::move(mechanism));
+  ++version_;
   return makeResult(SyncCoverMechanismError::None, id);
 }
 
@@ -369,9 +371,14 @@ SyncCoverMechanismUniverse::addConflict(SyncCoverMechanismId first,
     if (missing) {
       conflicts.insert(position, target);
     }
+    return missing;
   };
-  addOne(first, second);
-  addOne(second, first);
+  const bool firstChanged = addOne(first, second);
+  const bool secondChanged = addOne(second, first);
+  const bool changed = firstChanged || secondChanged;
+  if (changed) {
+    ++version_;
+  }
   return makeResult(SyncCoverMechanismError::None, first);
 }
 

@@ -282,8 +282,10 @@ bool testExactRecurrenceScopeAndOuterControl() {
   outerEdge.scope = outer;
   outerEdge.distance = 1;
   passed &= check(graph.addEdge(outerEdge), "add outer recurrence edge");
-  passed &= check(oracle.checkDemand(0, {14}).covered,
-                  "shared outer control remains valid across recurrence");
+  passed &= check(!oracle.checkDemand(0, {14}).covered,
+                  "an oracle epoch is isolated from later graph mutations");
+  passed &= check(SyncCoverCoverageOracle(graph).checkDemand(0, {14}).covered,
+                  "a new epoch observes the outer recurrence edge");
   return passed;
 }
 
@@ -362,9 +364,25 @@ bool testAtomicBundleAndErrors() {
   passed &= check(oracle.checkDemand(1, {}).error ==
                       SyncCoverCoverageError::InvalidDemand,
                   "invalid demand index fails closed");
+  const std::vector<SyncCoverCoverageResult> all = oracle.checkAll({5});
+  passed &= check(all.size() == 1 && all[0].covered,
+                  "whole-graph coverage reuses prepared demand topology");
+  const SyncCoverDemandTopologyResult topology = oracle.getDemandTopology(0);
   passed &=
-      check(oracle.checkAll({5}).size() == 1 && oracle.checkAll({5})[0].covered,
-            "whole-graph coverage reuses one graph validation");
+      check(topology && topology.potentialMechanisms ==
+                            std::vector<SyncCoverMechanismId>({5}),
+            "demand topology reports selectable source-to-target mechanisms");
+  const SyncCoverCoverageStatistics statistics = oracle.getStatistics();
+  passed &= check(statistics.graphValidations == 1 &&
+                      statistics.demandPreparations == 1 &&
+                      statistics.coverageQueries == 2,
+                  "one oracle epoch validates and prepares each demand once");
+  passed &= check(oracle.getDemandTopology(1).error ==
+                      SyncCoverCoverageError::InvalidDemand,
+                  "invalid topology demand fails closed");
+  passed &= check(oracle.checkDemandCanonicalSelection(0, {5, 5}).error ==
+                      SyncCoverCoverageError::InvalidSelection,
+                  "search fast path rejects noncanonical selections");
   return passed;
 }
 

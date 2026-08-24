@@ -17,6 +17,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace mlir {
@@ -37,6 +38,7 @@ enum class SyncCoverCoverageError : std::uint8_t {
   None,
   InvalidGraph,
   InvalidDemand,
+  InvalidSelection,
   ExpansionLimitExceeded,
 };
 
@@ -52,23 +54,50 @@ struct SyncCoverCoverageResult {
   }
 };
 
+struct SyncCoverDemandTopologyResult {
+  SyncCoverCoverageError error = SyncCoverCoverageError::None;
+  std::vector<SyncCoverMechanismId> potentialMechanisms;
+
+  explicit operator bool() const {
+    return error == SyncCoverCoverageError::None;
+  }
+};
+
+struct SyncCoverCoverageStatistics {
+  std::size_t graphValidations = 0;
+  std::size_t demandPreparations = 0;
+  std::size_t coverageQueries = 0;
+};
+
 /// Checks completion-qualified reachability without mutating the graph. A
 /// selected mechanism enables every graph edge carrying its ID, so ownership
 /// protocols and other multi-edge mechanisms remain atomic.
 class SyncCoverCoverageOracle {
 public:
-  explicit SyncCoverCoverageOracle(const SyncCoverGraph &graph)
-      : graph_(graph) {}
+  /// Snapshot and validate the completed graph. Mechanisms added to the source
+  /// graph after construction intentionally do not change this oracle epoch.
+  explicit SyncCoverCoverageOracle(const SyncCoverGraph &graph);
 
   SyncCoverCoverageResult
   checkDemand(SyncCoverDemandId demand,
               const std::vector<SyncCoverMechanismId> &selected) const;
 
+  /// Search fast path. The selection must already be sorted and unique.
+  SyncCoverCoverageResult checkDemandCanonicalSelection(
+      SyncCoverDemandId demand,
+      const std::vector<SyncCoverMechanismId> &selected) const;
+
   std::vector<SyncCoverCoverageResult>
   checkAll(const std::vector<SyncCoverMechanismId> &selected) const;
 
+  SyncCoverDemandTopologyResult
+  getDemandTopology(SyncCoverDemandId demand) const;
+
+  SyncCoverCoverageStatistics getStatistics() const;
+
 private:
-  const SyncCoverGraph &graph_;
+  struct Implementation;
+  std::shared_ptr<Implementation> implementation_;
 };
 
 } // namespace pto

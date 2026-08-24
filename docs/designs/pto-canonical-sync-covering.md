@@ -99,7 +99,11 @@ For a demand at loop distance `d`, the coverage oracle evaluates a virtual
 `d+1`-copy DAG. Reachability state records whether the path has crossed a
 completion edge. A demand is covered only when its target is reachable with
 that completion state set. The oracle returns witnesses for covered demands
-and reachable-cut certificates for uncovered demands.
+and reachable-cut certificates for uncovered demands. One immutable oracle
+epoch validates the graph once and lazily caches each demand's virtual DAG.
+Its topology query conservatively ignores completion state while retaining
+only mechanisms on a structural source-to-target path; disconnected kernel
+regions therefore do not collapse into one search component.
 
 Coverage, token validity, and exact event-ID coloring are hard constraints.
 Structural cost is defined only for resource-feasible selections; infeasible
@@ -116,13 +120,47 @@ a candidate required to repair another plan.
 Small affected mechanism components use deterministic exact search. Larger
 components use a bounded deterministic beam guided by uncovered cuts. Every
 complete candidate receives exact coverage, protocol, and coloring checks.
+Components conservatively join demands and mechanisms whose lifetimes overlap
+inside one event/token domain or that carry an explicit conflict. Disjoint
+lifetimes in the same domain remain independent because their union cannot
+increase instantaneous pressure. Covered witnesses are reusable while all
+mechanisms in the witness remain selected; removing any witness mechanism
+causes an oracle query, while additions preserve the proof. The cache retains
+only a bounded antichain of small witnesses per demand.
+
+The direct-cover beam follows the legacy affected-slice search's bounded,
+stable-search discipline but does not call that helper directly. The legacy
+helper is coupled to MLIR-side mechanism references, static requirement
+support lists, and the legacy score. Direct covering instead branches on the
+current oracle cut, prunes hard resource failures, supports exact components,
+and keeps this layer free of MLIR data structures. Resource-feasible seeds are
+warm starts and incumbents, not recognizer authority: they are evaluated
+outside the exploration budget and remain available for the final score
+comparison. Over-budget conservative seeds are accepted as input but are not
+search states; the empty-state cut search repairs them from the candidate
+universe.
+After selection, redundancy removal considers complete atomic mechanisms and
+chooses the best valid single-mechanism deletion at each step.
+
+Exact components compose globally because the version-one ordering is limited
+to separable metrics: loop-aware event-action profile, barrier profile,
+mechanism count, and stable identity. Peak pressure, total domain pressure,
+event-domain count, and minimum headroom remain reported diagnostics; exact
+coloring is a hard constraint, but these nonseparable aggregates do not order
+plans. A future global Pareto combiner may promote them into the objective.
+Beam width, depth, and evaluation truncation are reported separately. Failure
+without truncation proves infeasibility; bounded failure reports incomplete
+search, and a bounded success does not claim optimality. Every returned plan
+is finally rechecked with fresh universe/resource and coverage epochs.
 
 The initial mechanism cost is symbolic rather than a runtime estimate. It
 counts each physical synchronization action once, even when one action carries
 both an event-ID and a buffer-token use. Profiles are compared from deepest
 loop nesting outward; loop-entry/exit prime and drain actions exclude the
-loop's own iteration depth. Barriers use a separate profile. Event pressure,
-headroom, mechanism count, and stable identities provide deterministic later
-tie breakers. Mutually exclusive guarded actions are counted separately.
+loop's own iteration depth. Barriers use a separate profile. Mechanism count
+and stable identities provide deterministic later tie breakers. Event pressure
+and headroom remain feasibility diagnostics because they do not compose across
+independent mechanism components. Mutually exclusive guarded actions are
+counted separately.
 Calibrated trip counts and target weights can replace this structural profile
 later without changing graph, mechanism, or feasibility contracts.
