@@ -42,6 +42,20 @@ add_test(NAME pto_sync_cover_coverage_unit
 )
 set_tests_properties(pto_sync_cover_coverage_unit PROPERTIES LABELS "PTO;unit")
 
+add_executable(pto-sync-cover-mechanism-unit-test
+  SyncCoverMechanismTest.cpp
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverCoverage.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverGraph.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverMechanism.cpp"
+)
+target_include_directories(pto-sync-cover-mechanism-unit-test PRIVATE
+  "${PROJECT_SOURCE_DIR}/include"
+)
+add_test(NAME pto_sync_cover_mechanism_unit
+  COMMAND pto-sync-cover-mechanism-unit-test
+)
+set_tests_properties(pto_sync_cover_mechanism_unit PROPERTIES LABELS "PTO;unit")
+
 add_executable(pto-canonical-sync-algorithms-unit-test
   CanonicalSyncAlgorithmsTest.cpp
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/CanonicalSyncColoring.cpp"

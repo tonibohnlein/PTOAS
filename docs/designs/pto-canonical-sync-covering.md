@@ -52,6 +52,21 @@ edges. A barrier contributes a completion cut on one pipe. Cyclic ownership
 protocols remain atomic candidates with independently verified token state,
 prime, steady-state, and drain actions.
 
+The mechanism universe assigns one dense identity to each event bundle,
+barrier, or ownership protocol. Adding a candidate atomically attaches all of
+its completion-supply edges to the graph; partial protocol selection is not
+representable. Directed event/token domains and their periodic lifetimes are
+stored independently of supply, while conflicts encode alternative protocol
+implementations. Ownership candidates are admitted only after their protocol
+verifier has accepted the complete prime/steady-state/drain lifecycle.
+Every non-barrier supply edge is bound to an event-ID or ownership-token
+lifetime with matching endpoints, scope, and recurrence distance. Event
+bundles use event-ID domains; verified ownership protocols may additionally
+use independent physical token pools. A barrier names a concrete same-pipe
+anchor and can cover an edge only when the covered target's scope and control
+guard guarantee that the anchor executes. Conditional and potentially
+zero-trip nested anchors therefore fail closed.
+
 For a demand at loop distance `d`, the coverage oracle evaluates a virtual
 `d+1`-copy DAG. Reachability state records whether the path has crossed a
 completion edge. A demand is covered only when its target is reachable with
