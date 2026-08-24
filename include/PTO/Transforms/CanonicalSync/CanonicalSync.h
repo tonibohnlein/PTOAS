@@ -38,6 +38,11 @@ enum class CanonicalDependencyKind : std::uint8_t {
   LoopCarriedSSA,
 };
 
+enum class CanonicalGMAliasPolicy : std::uint8_t {
+  MayAlias,
+  DistinctArgumentsNoAlias,
+};
+
 enum class CanonicalOwnershipKind : std::uint8_t {
   L0Operand,
   L1Tile,
@@ -280,12 +285,13 @@ public:
   ArrayRef<CanonicalOwnershipCycle> getOwnershipCycles() const {
     return ownershipCycles_;
   }
+  CanonicalGMAliasPolicy getGMAliasPolicy() const { return gmAliasPolicy_; }
   bool usedInfeasibleBootstrap() const { return usedInfeasibleBootstrap_; }
 
 private:
   friend class CanonicalSyncPlanBuilder;
-  friend FailureOr<CanonicalSyncPlan> buildCanonicalSyncPlan(func::FuncOp,
-                                                             unsigned);
+  friend FailureOr<CanonicalSyncPlan>
+  buildCanonicalSyncPlan(func::FuncOp, unsigned, CanonicalGMAliasPolicy);
 
   std::vector<CanonicalSyncNode> nodes_;
   std::vector<SyncGraphEdge> fixedEdges_;
@@ -297,15 +303,20 @@ private:
   std::vector<CanonicalEvent> events_;
   std::vector<CanonicalEventDomain> domains_;
   std::vector<CanonicalOwnershipCycle> ownershipCycles_;
+  CanonicalGMAliasPolicy gmAliasPolicy_ = CanonicalGMAliasPolicy::MayAlias;
   bool usedInfeasibleBootstrap_ = false;
 };
 
 FailureOr<CanonicalSyncPlan> buildCanonicalSyncPlan(func::FuncOp func,
-                                                    unsigned eventIdMax);
+                                                    unsigned eventIdMax,
+                                                    CanonicalGMAliasPolicy
+                                                        gmAliasPolicy =
+                                                            CanonicalGMAliasPolicy::MayAlias);
 LogicalResult emitCanonicalSyncPlan(func::FuncOp func,
                                     const CanonicalSyncPlan &plan);
 
 StringRef stringifyCanonicalDependencyKind(CanonicalDependencyKind kind);
+StringRef stringifyCanonicalGMAliasPolicy(CanonicalGMAliasPolicy policy);
 StringRef stringifyCanonicalOwnershipKind(CanonicalOwnershipKind kind);
 void printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
                             const CanonicalSyncPlan &plan, StringRef view);

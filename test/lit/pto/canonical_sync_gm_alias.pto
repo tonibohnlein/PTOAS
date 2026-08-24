@@ -13,6 +13,23 @@
 // RUN:   | FileCheck %s --check-prefix=PLAN
 // RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
 // RUN:   | FileCheck %s --check-prefix=IR
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=all assume-distinct-gm-args-noalias=true' \
+// RUN:   | FileCheck %s --check-prefix=ASSUME
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-canonical-sync=event-id-num-max=8 assume-distinct-gm-args-noalias=true' \
+// RUN:   | FileCheck %s --check-prefix=ASSUME-IR
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=dot view=plan assume-distinct-gm-args-noalias=true' \
+// RUN:   | FileCheck %s --check-prefix=ASSUME-DOT
+// RUN: ptoas %s --pto-level=level3 --pto-arch=a3 \
+// RUN:   --enable-canonical-sync \
+// RUN:   --canonical-sync-assume-distinct-gm-args-noalias -o - \
+// RUN:   | FileCheck %s --check-prefix=CLI-CPP
+// RUN: ptoas %s --pto-level=level3 --pto-arch=a3 --emit-pto-ir \
+// RUN:   --enable-canonical-sync \
+// RUN:   --canonical-sync-assume-distinct-gm-args-noalias -o - \
+// RUN:   | FileCheck %s --check-prefix=CLI-IR
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @external_may_alias(%first: !pto.ptr<f32>,
@@ -352,6 +369,28 @@ module attributes {pto.target_arch = "a2a3"} {
     return
   }
 
+  func.func @inttoptr_distinct_roundtrip(%first: !pto.ptr<ui32>,
+                                         %second: !pto.ptr<ui32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %addr0 = arith.constant 0 : i64
+    %view = pto.make_tensor_view %first,
+      shape = [%c1, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<1x16xui32>
+    %part = pto.partition_view %view,
+      offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<1x16xui32>
+     -> !pto.partition_tensor_view<1x16xui32>
+    %source = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x16xui32>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 1x16xui32>)
+               outs(%part : !pto.partition_tensor_view<1x16xui32>)
+    %address = pto.ptrtoint %second : !pto.ptr<ui32> -> i64
+    %roundtrip = pto.inttoptr %address : i64 -> !pto.ptr<ui32>
+    %value = pto.load_scalar %roundtrip[%c0] : !pto.ptr<ui32> -> ui32
+    return
+  }
+
   func.func @inttoptr_unknown(%base: !pto.ptr<ui32>, %address: i64) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
@@ -374,6 +413,7 @@ module attributes {pto.target_arch = "a2a3"} {
 }
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @external_may_alias
+// PLAN-SAME: gm-alias-policy=may-alias
 // PLAN-SAME: requirements=1 conservative-requirements=1
 // PLAN-SAME: events=1
 // PLAN-LABEL: PTOCanonicalSyncPlan @external_noalias
@@ -401,6 +441,9 @@ module attributes {pto.target_arch = "a2a3"} {
 // PLAN-LABEL: PTOCanonicalSyncPlan @inttoptr_noalias_roundtrip
 // PLAN-SAME: requirements=0 conservative-requirements=1
 // PLAN-SAME: events=0
+// PLAN-LABEL: PTOCanonicalSyncPlan @inttoptr_distinct_roundtrip
+// PLAN-SAME: requirements=1 conservative-requirements=1
+// PLAN-SAME: events=1
 // PLAN-LABEL: PTOCanonicalSyncPlan @inttoptr_unknown
 // PLAN-SAME: events=1
 
@@ -428,5 +471,66 @@ module attributes {pto.target_arch = "a2a3"} {
 // IR: pto.set_flag[<PIPE_MTE3>, <PIPE_S>,
 // IR-LABEL: func.func @inttoptr_noalias_roundtrip
 // IR-NOT: pto.set_flag
+// IR-LABEL: func.func @inttoptr_distinct_roundtrip
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_S>,
 // IR-LABEL: func.func @inttoptr_unknown
 // IR: pto.set_flag[<PIPE_MTE3>, <PIPE_S>,
+
+// ASSUME-LABEL: PTOCanonicalSyncPlan @external_may_alias
+// ASSUME-SAME: gm-alias-policy=distinct-args-noalias
+// ASSUME-SAME: requirements=0 conservative-requirements=1
+// ASSUME-SAME: events=0
+// ASSUME-LABEL: PTOCanonicalSyncPlan @external_noalias
+// ASSUME-SAME: requirements=0 conservative-requirements=1
+// ASSUME-SAME: events=0
+// ASSUME-LABEL: PTOCanonicalSyncPlan @addptr_adjacent
+// ASSUME-SAME: events=0
+// ASSUME-LABEL: PTOCanonicalSyncPlan @addptr_overlap
+// ASSUME-SAME: events=1
+// ASSUME-LABEL: PTOCanonicalSyncPlan @addptr_dynamic
+// ASSUME-SAME: events=1
+// ASSUME-LABEL: PTOCanonicalSyncPlan @partition_adjacent
+// ASSUME-SAME: events=0
+// ASSUME-LABEL: PTOCanonicalSyncPlan @partition_strided_holes
+// ASSUME-SAME: events=0
+// ASSUME-LABEL: PTOCanonicalSyncPlan @partition_overlap
+// ASSUME-SAME: events=1
+// ASSUME-LABEL: PTOCanonicalSyncPlan @scalar_addptr_adjacent
+// ASSUME-SAME: events=0
+// ASSUME-LABEL: PTOCanonicalSyncPlan @addptr_invalid_offsets
+// ASSUME-SAME: events=1
+// ASSUME-LABEL: PTOCanonicalSyncPlan @inttoptr_roundtrip
+// ASSUME-SAME: events=1
+// ASSUME-LABEL: PTOCanonicalSyncPlan @inttoptr_noalias_roundtrip
+// ASSUME-SAME: events=0
+// ASSUME-LABEL: PTOCanonicalSyncPlan @inttoptr_distinct_roundtrip
+// ASSUME-SAME: requirements=0 conservative-requirements=1
+// ASSUME-SAME: events=0
+// ASSUME-LABEL: PTOCanonicalSyncPlan @inttoptr_unknown
+// ASSUME-SAME: events=1
+
+// ASSUME-IR-LABEL: func.func @external_may_alias
+// ASSUME-IR-NOT: pto.set_flag
+// ASSUME-IR-LABEL: func.func @addptr_overlap
+// ASSUME-IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>,
+// ASSUME-IR-LABEL: func.func @inttoptr_roundtrip
+// ASSUME-IR: pto.set_flag[<PIPE_MTE3>, <PIPE_S>,
+// ASSUME-IR-LABEL: func.func @inttoptr_distinct_roundtrip
+// ASSUME-IR-NOT: pto.set_flag
+// ASSUME-IR-LABEL: func.func @inttoptr_unknown
+// ASSUME-IR: pto.set_flag[<PIPE_MTE3>, <PIPE_S>,
+
+// ASSUME-DOT-LABEL: digraph "external_may_alias"
+// ASSUME-DOT: graph [label="gm-alias-policy=distinct-args-noalias"
+
+// CLI-CPP-LABEL: AICORE void external_may_alias
+// CLI-CPP: TSTORE
+// CLI-CPP-NOT: set_flag
+// CLI-CPP-NOT: wait_flag
+// CLI-CPP: TLOAD
+
+// CLI-IR-LABEL: func.func @external_may_alias
+// CLI-IR: pto.tstore
+// CLI-IR-NOT: pto.set_flag
+// CLI-IR-NOT: pto.wait_flag
+// CLI-IR: pto.tload

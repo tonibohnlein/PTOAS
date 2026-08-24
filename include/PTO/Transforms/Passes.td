@@ -133,6 +133,11 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
     Option<"eventIdNumMax", "event-id-num-max", "int64_t",
            /*default=*/"8",
            "Maximum hardware EVENT_ID slots available to the planner.">,
+    Option<"assumeDistinctGmArgsNoAlias",
+           "assume-distinct-gm-args-noalias", "bool",
+           /*default=*/"false",
+           "Unsafely assume distinct GM pointer or view arguments never "
+           "alias; the caller must guarantee disjoint accessed storage.">,
   ];
 
   let dependentDialects = [
@@ -162,6 +167,11 @@ def PrintCanonicalSyncPlan
     Option<"eventIdNumMax", "event-id-num-max", "int64_t",
            /*default=*/"8",
            "Maximum hardware EVENT_ID slots available to the planner.">,
+    Option<"assumeDistinctGmArgsNoAlias",
+           "assume-distinct-gm-args-noalias", "bool",
+           /*default=*/"false",
+           "Unsafely assume distinct GM pointer or view arguments never "
+           "alias; the caller must guarantee disjoint accessed storage.">,
   ];
 
   let dependentDialects = [

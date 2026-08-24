@@ -34,6 +34,17 @@ mlir::pto::stringifyCanonicalDependencyKind(CanonicalDependencyKind kind) {
 }
 
 StringRef
+mlir::pto::stringifyCanonicalGMAliasPolicy(CanonicalGMAliasPolicy policy) {
+  switch (policy) {
+  case CanonicalGMAliasPolicy::MayAlias:
+    return "may-alias";
+  case CanonicalGMAliasPolicy::DistinctArgumentsNoAlias:
+    return "distinct-args-noalias";
+  }
+  return "unknown";
+}
+
+StringRef
 mlir::pto::stringifyCanonicalOwnershipKind(CanonicalOwnershipKind kind) {
   switch (kind) {
   case CanonicalOwnershipKind::L0Operand:
@@ -151,6 +162,8 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
                                        const CanonicalSyncPlan &plan,
                                        StringRef view) {
   os << "PTOCanonicalSyncPlan @" << func.getSymName()
+     << " gm-alias-policy="
+     << stringifyCanonicalGMAliasPolicy(plan.getGMAliasPolicy())
      << " nodes=" << plan.getNodes().size()
      << " fixed=" << plan.getFixedEdges().size()
      << " dependencies=" << plan.getDependencies().size()
@@ -308,7 +321,11 @@ void mlir::pto::printCanonicalSyncPlanDot(llvm::raw_ostream &os,
                                           StringRef view) {
   os << "digraph ";
   printQuoted(os, func.getSymName());
-  os << " {\n  rankdir=LR;\n"
+  os << " {\n  graph [label=";
+  printQuoted(os, (llvm::Twine("gm-alias-policy=") +
+                   stringifyCanonicalGMAliasPolicy(plan.getGMAliasPolicy()))
+                      .str());
+  os << ", labelloc=t];\n  rankdir=LR;\n"
         "  node [fontname=\"DejaVu Sans\", fontsize=10, shape=box];\n";
   const bool printNodes = includesDependencies(view) || includesPlan(view) ||
                           includesOwnership(view);

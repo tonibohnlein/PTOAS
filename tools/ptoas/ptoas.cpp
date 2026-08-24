@@ -561,6 +561,13 @@ static llvm::cl::opt<int> canonicalSyncEventIdMax(
                    "represent the required synchronization."),
     llvm::cl::init(kDefaultCanonicalSyncEventIdMax));
 
+static llvm::cl::opt<bool> canonicalSyncAssumeDistinctGmArgsNoAlias(
+    "canonical-sync-assume-distinct-gm-args-noalias",
+    llvm::cl::desc(
+        "Unsafely assume distinct GM pointer or view arguments never alias; "
+        "the caller must guarantee disjoint accessed storage."),
+    llvm::cl::init(false));
+
 static llvm::cl::opt<bool> enableTileOpExpand(
     "enable-tile-op-expand",
     llvm::cl::desc(
@@ -1340,10 +1347,11 @@ struct SerialAutoSyncPass
 
   enum class Mode { InsertSync, Bufid, BarrierAll, GraphSolver, Canonical };
 
-  SerialAutoSyncPass(Mode mode, bool enableBufidDebug,
-                     int64_t eventIdMax)
+  SerialAutoSyncPass(Mode mode, bool enableBufidDebug, int64_t eventIdMax,
+                     bool assumeDistinctGmArgsNoAlias = false)
       : mode(mode), enableBufidDebug(enableBufidDebug),
-        eventIdMax(eventIdMax) {}
+        eventIdMax(eventIdMax),
+        assumeDistinctGmArgsNoAlias(assumeDistinctGmArgsNoAlias) {}
 
   void runOnOperation() override {
     OpPassManager functionPM(func::FuncOp::getOperationName());
@@ -1369,6 +1377,7 @@ struct SerialAutoSyncPass
     case Mode::Canonical: {
       PTOCanonicalSyncOptions options;
       options.eventIdNumMax = eventIdMax;
+      options.assumeDistinctGmArgsNoAlias = assumeDistinctGmArgsNoAlias;
       functionPM.addPass(pto::createPTOCanonicalSyncPass(options));
       break;
     }
@@ -1387,6 +1396,7 @@ private:
   Mode mode;
   bool enableBufidDebug;
   int64_t eventIdMax;
+  bool assumeDistinctGmArgsNoAlias;
 };
 } // namespace
 
@@ -3763,10 +3773,13 @@ int mlir::pto::compilePTOASModule(
     if (emitMlirIR) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::Canonical, false,
-          canonicalSyncEventIdMax));
+          canonicalSyncEventIdMax,
+          canonicalSyncAssumeDistinctGmArgsNoAlias));
     } else {
       PTOCanonicalSyncOptions options;
       options.eventIdNumMax = canonicalSyncEventIdMax;
+      options.assumeDistinctGmArgsNoAlias =
+          canonicalSyncAssumeDistinctGmArgsNoAlias;
       pm.addNestedPass<func::FuncOp>(
           pto::createPTOCanonicalSyncPass(options));
     }

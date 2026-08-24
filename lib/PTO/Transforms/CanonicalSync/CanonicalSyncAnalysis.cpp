@@ -194,6 +194,7 @@ Region *getRegionUnder(Operation *operation, Operation *ancestor) {
 } // namespace
 
 FailureOr<CanonicalSyncPlan> CanonicalSyncPlanBuilder::build() {
+  plan_.gmAliasPolicy_ = gmAliasPolicy_;
   if (failed(validateInput())) {
     return failure();
   }
@@ -471,6 +472,14 @@ bool CanonicalSyncPlanBuilder::rootsAreNoAlias(Value first,
       secondArgument.getOwner()->getParentOp() != funcOperation_) {
     return false;
   }
+  const bool distinctGmArguments =
+      firstArgument != secondArgument &&
+      isGmPointerLikeArgument(firstArgument.getType()) &&
+      isGmPointerLikeArgument(secondArgument.getType());
+  if (gmAliasPolicy_ == CanonicalGMAliasPolicy::DistinctArgumentsNoAlias &&
+      distinctGmArguments) {
+    return true;
+  }
   const std::pair<unsigned, unsigned> pair =
       std::minmax(firstArgument.getArgNumber(), secondArgument.getArgNumber());
   return noAliasArgPairs_.find(pair) != noAliasArgPairs_.end();
@@ -537,6 +546,7 @@ bool CanonicalSyncPlanBuilder::mayExecuteTogether(Operation *first,
 }
 
 FailureOr<CanonicalSyncPlan>
-mlir::pto::buildCanonicalSyncPlan(func::FuncOp func, unsigned eventIdMax) {
-  return CanonicalSyncPlanBuilder(func, eventIdMax).build();
+mlir::pto::buildCanonicalSyncPlan(func::FuncOp func, unsigned eventIdMax,
+                                  CanonicalGMAliasPolicy gmAliasPolicy) {
+  return CanonicalSyncPlanBuilder(func, eventIdMax, gmAliasPolicy).build();
 }

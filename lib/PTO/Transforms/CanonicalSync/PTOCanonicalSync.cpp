@@ -81,8 +81,13 @@ struct PTOCanonicalSyncPass
       signalPassFailure();
       return;
     }
+    const auto gmAliasPolicy =
+        assumeDistinctGmArgsNoAlias
+            ? pto::CanonicalGMAliasPolicy::DistinctArgumentsNoAlias
+            : pto::CanonicalGMAliasPolicy::MayAlias;
     FailureOr<pto::CanonicalSyncPlan> plan =
-        pto::buildCanonicalSyncPlan(func, static_cast<unsigned>(eventIdNumMax));
+        pto::buildCanonicalSyncPlan(func, static_cast<unsigned>(eventIdNumMax),
+                                    gmAliasPolicy);
     if (failed(plan) || failed(pto::emitCanonicalSyncPlan(func, *plan))) {
       signalPassFailure();
     }
@@ -109,12 +114,16 @@ struct PrintCanonicalSyncPlanPass
       signalPassFailure();
       return;
     }
+    const auto gmAliasPolicy =
+        assumeDistinctGmArgsNoAlias
+            ? pto::CanonicalGMAliasPolicy::DistinctArgumentsNoAlias
+            : pto::CanonicalGMAliasPolicy::MayAlias;
     for (func::FuncOp func : module.getOps<func::FuncOp>()) {
       if (shouldSkipCanonicalSync(func)) {
         continue;
       }
       FailureOr<pto::CanonicalSyncPlan> plan = pto::buildCanonicalSyncPlan(
-          func, static_cast<unsigned>(eventIdNumMax));
+          func, static_cast<unsigned>(eventIdNumMax), gmAliasPolicy);
       if (failed(plan)) {
         signalPassFailure();
         return;

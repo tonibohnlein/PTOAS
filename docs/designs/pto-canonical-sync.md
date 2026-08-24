@@ -131,6 +131,18 @@ contract and has no runtime check. A frontend must emit it only when the
 promise is valid; otherwise generated synchronization may be insufficient.
 Unannotated distinct GM arguments remain `MayAlias`.
 
+For a trusted ABI that guarantees every distinct GM pointer or view argument
+accesses disjoint storage, callers may opt into
+`--canonical-sync-assume-distinct-gm-args-noalias` or the corresponding
+`assume-distinct-gm-args-noalias=true` pass option. The mode is equivalent to
+an implicit no-alias pair for every pair of distinct GM arguments. It does not
+separate views or pointers derived from the same argument, and it does not
+assign argument provenance to a raw `pto.inttoptr`. The option has no runtime
+check and is unsafe unless the caller enforces the stated ABI contract. The
+annotation-independent conservative requirement universe ignores both this
+mode and explicit `pto.noalias_pairs`; only the active requirement set applies
+them.
+
 The recurrence scan checks increasing distances through the physical slot
 count. The annotation-independent conservative requirement set records every
 aliasing distance for each hazard kind. The active set records only the first

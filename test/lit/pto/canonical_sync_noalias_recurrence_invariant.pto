@@ -17,6 +17,9 @@
 // RUN: pto-test-opt %s -pto-plan-memory \
 // RUN:   '-pto-print-canonical-sync-plan=format=text view=events event-id-num-max=2' \
 // RUN:   | FileCheck %s --check-prefix=MONOTONIC
+// RUN: pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=events event-id-num-max=2 assume-distinct-gm-args-noalias=true' \
+// RUN:   | FileCheck %s --check-prefix=MODE
 
 module {
   func.func @recurrence_mayalias(
@@ -229,6 +232,15 @@ module {
 // MONOTONIC-SAME: requirements=21 conservative-requirements=26
 // MONOTONIC-SAME: barriers=0 events=3 ownership-cycles=0 bootstrap=no
 // MONOTONIC: event{{.*}} PIPE_MTE3 -> PIPE_MTE2 {{.*}}recurrence=yes
+
+// MODE-LABEL: PTOCanonicalSyncPlan @recurrence_mayalias
+// MODE-SAME: gm-alias-policy=distinct-args-noalias
+// MODE-SAME: requirements=15 conservative-requirements=26
+// MODE-SAME: barriers=0 events=3 ownership-cycles=0 bootstrap=no
+// MODE: event{{.*}} PIPE_MTE3 -> PIPE_MTE2 {{.*}}recurrence=yes
+// MODE-LABEL: PTOCanonicalSyncPlan @recurrence_noalias
+// MODE-SAME: requirements=15 conservative-requirements=26
+// MODE-SAME: barriers=0 events=3 ownership-cycles=0 bootstrap=no
 // MONOTONIC-LABEL: PTOCanonicalSyncPlan @recurrence_noalias
 // MONOTONIC-SAME: requirements=15 conservative-requirements=26
 // MONOTONIC-SAME: barriers=0 events=3 ownership-cycles=0 bootstrap=no

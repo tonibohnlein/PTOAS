@@ -176,9 +176,11 @@ private:
 
 class CanonicalSyncPlanBuilder {
 public:
-  CanonicalSyncPlanBuilder(func::FuncOp func, unsigned eventIdMax)
+  CanonicalSyncPlanBuilder(func::FuncOp func, unsigned eventIdMax,
+                           CanonicalGMAliasPolicy gmAliasPolicy)
       : func_(func), funcOperation_(func.getOperation()),
         eventIdMax_(eventIdMax),
+        gmAliasPolicy_(gmAliasPolicy),
         translator_(syncIR_, memoryAnalyzer_, bufferMap_, func,
                     SyncAnalysisMode::CANONICALSYNC) {}
 
@@ -346,6 +348,7 @@ private:
   func::FuncOp func_;
   Operation *funcOperation_ = nullptr;
   unsigned eventIdMax_ = 0;
+  CanonicalGMAliasPolicy gmAliasPolicy_ = CanonicalGMAliasPolicy::MayAlias;
   CanonicalSyncPlan plan_;
   SyncIRs syncIR_;
   MemoryDependentAnalyzer memoryAnalyzer_;
