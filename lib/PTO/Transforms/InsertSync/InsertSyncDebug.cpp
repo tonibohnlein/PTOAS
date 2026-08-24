@@ -321,6 +321,7 @@ static void dumpSyncOp(llvm::raw_ostream &os, const SyncOperation *op,
   os << " <" << getPipelineName(op->GetSrcPipe()) << " -> "
      << getPipelineName(op->GetDstPipe()) << ">";
   os << " idx=" << op->GetSyncIndex();
+  os << " depNode=" << op->GetDepSyncIRIndex();
 
   if (op->GetForEndIndex().has_value())
     os << " forEnd=" << op->GetForEndIndex().value();
