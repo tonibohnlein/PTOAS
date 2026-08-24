@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- CanonicalSyncAlgorithms.h - Sync graph algorithms --------*- C++ -*-===//
 
@@ -35,6 +37,31 @@ struct SyncColoring {
   unsigned colorCount = 0;
 };
 
+struct SyncWeightedInterval {
+  SyncInterval interval;
+  std::size_t width = 1;
+};
+
+enum class SyncIntervalPressureError : std::uint8_t {
+  None,
+  InvalidInterval,
+  ArithmeticOverflow,
+};
+
+struct SyncIntervalPressure {
+  SyncIntervalPressureError error = SyncIntervalPressureError::None;
+  std::size_t required = 0;
+  std::size_t available = 0;
+  std::size_t overflow = 0;
+  std::optional<std::size_t> maximumPoint;
+  /// Input indices active at the deterministic maximum-pressure point.
+  std::vector<std::size_t> maximumClique;
+
+  explicit operator bool() const {
+    return error == SyncIntervalPressureError::None;
+  }
+};
+
 /// Optimally color inclusive intervals. Intervals that share an endpoint
 /// overlap and therefore receive different colors.
 SyncColoring colorSyncIntervals(const std::vector<SyncInterval> &intervals);
@@ -49,6 +76,14 @@ bool verifySyncIntervalAllocation(
 /// contains interval indices in ascending order. Inclusive endpoints overlap.
 std::vector<std::size_t>
 findMaximumIntervalClique(const std::vector<SyncInterval> &intervals);
+
+/// Compute exact pressure for inclusive weighted intervals. In-range reserved
+/// IDs reduce availability once; out-of-range IDs remain diagnostic only.
+/// Invalid intervals, zero widths, and active-width overflow fail closed.
+SyncIntervalPressure
+evaluateSyncIntervalPressure(const std::vector<SyncWeightedInterval> &intervals,
+                             std::size_t budget,
+                             const std::vector<unsigned> &reservedIds = {});
 
 enum class SyncGraphEdgeKind : std::uint8_t {
   /// Same-pipe issue order: completion of the later operation also proves

@@ -1,15 +1,18 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncAlgorithms.h"
 
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <numeric>
 #include <queue>
 #include <set>
@@ -121,4 +124,88 @@ std::vector<std::size_t> mlir::pto::findMaximumIntervalClique(
     }
   }
   return maximum;
+}
+
+SyncIntervalPressure mlir::pto::evaluateSyncIntervalPressure(
+    const std::vector<SyncWeightedInterval> &intervals, std::size_t budget,
+    const std::vector<unsigned> &reservedIds) {
+  SyncIntervalPressure result;
+  std::vector<unsigned> normalizedReservations = reservedIds;
+  std::sort(normalizedReservations.begin(), normalizedReservations.end());
+  normalizedReservations.erase(
+      std::unique(normalizedReservations.begin(), normalizedReservations.end()),
+      normalizedReservations.end());
+  const std::size_t effectiveReservations =
+      static_cast<std::size_t>(std::count_if(
+          normalizedReservations.begin(), normalizedReservations.end(),
+          [budget](unsigned id) { return id < budget; }));
+  result.available = budget - effectiveReservations;
+
+  std::vector<std::size_t> order(intervals.size());
+  std::iota(order.begin(), order.end(), 0);
+  for (const SyncWeightedInterval &interval : intervals) {
+    if (interval.width == 0 ||
+        interval.interval.begin > interval.interval.end) {
+      result.error = SyncIntervalPressureError::InvalidInterval;
+      return result;
+    }
+  }
+  std::stable_sort(order.begin(), order.end(),
+                   [&](std::size_t first, std::size_t second) {
+                     return std::tie(intervals[first].interval.begin,
+                                     intervals[first].interval.end, first) <
+                            std::tie(intervals[second].interval.begin,
+                                     intervals[second].interval.end, second);
+                   });
+
+  using ActiveInterval = std::pair<std::size_t, std::size_t>;
+  std::set<ActiveInterval> activeByEnd;
+  std::set<std::size_t> activeIndices;
+  std::size_t activeWidth = 0;
+  for (std::size_t position = 0; position < order.size();) {
+    const std::size_t point = intervals[order[position]].interval.begin;
+    while (true) {
+      const bool hasExpired =
+          !activeByEnd.empty() && activeByEnd.begin()->first < point;
+      if (!hasExpired) {
+        break;
+      }
+      activeWidth -= intervals[activeByEnd.begin()->second].width;
+      activeIndices.erase(activeByEnd.begin()->second);
+      activeByEnd.erase(activeByEnd.begin());
+    }
+    while (true) {
+      const bool startsAtPoint =
+          position < order.size() &&
+          intervals[order[position]].interval.begin == point;
+      if (!startsAtPoint) {
+        break;
+      }
+      const std::size_t interval = order[position++];
+      if (activeWidth >
+          std::numeric_limits<std::size_t>::max() - intervals[interval].width) {
+        result.error = SyncIntervalPressureError::ArithmeticOverflow;
+        result.required = 0;
+        result.overflow = 0;
+        result.maximumPoint.reset();
+        result.maximumClique.clear();
+        return result;
+      }
+      activeWidth += intervals[interval].width;
+      activeByEnd.emplace(intervals[interval].interval.end, interval);
+      activeIndices.insert(interval);
+    }
+    const std::vector<std::size_t> candidate(activeIndices.begin(),
+                                             activeIndices.end());
+    if (activeWidth > result.required ||
+        (activeWidth == result.required && candidate < result.maximumClique)) {
+      result.required = activeWidth;
+      result.maximumPoint = point;
+      result.maximumClique = candidate;
+    }
+  }
+  if (result.required > result.available) {
+    result.overflow = result.required - result.available;
+  }
+  return result;
 }

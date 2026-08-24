@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "CanonicalSyncInternal.h"
 
@@ -110,20 +112,21 @@ std::size_t calculateCost(const ScarcityState &state,
 void evaluateState(ScarcityState &state, ArrayRef<CanonicalEvent> originals,
                    ArrayRef<std::size_t> blockPipeRanks,
                    const CanonicalSyncLatencyContext &latencyContext) {
-  std::vector<SyncInterval> intervals;
-  SmallVector<std::size_t, 16> laneOwners;
-  for (auto [groupIndex, group] : llvm::enumerate(state.groups)) {
-    for (unsigned lane = 0; lane < group.event.width; ++lane) {
-      intervals.push_back({group.event.intervalBegin, group.event.intervalEnd});
-      laneOwners.push_back(groupIndex);
-    }
+  std::vector<SyncWeightedInterval> intervals;
+  for (const EventGroup &group : state.groups) {
+    intervals.push_back({{group.event.intervalBegin, group.event.intervalEnd},
+                         group.event.width});
   }
-  state.colorCount = colorSyncIntervals(intervals).colorCount;
-  std::set<std::size_t> hotspot;
-  for (std::size_t lane : findMaximumIntervalClique(intervals)) {
-    hotspot.insert(laneOwners[lane]);
+  const SyncIntervalPressure pressure = evaluateSyncIntervalPressure(
+      intervals, std::numeric_limits<unsigned>::max());
+  if (!pressure || pressure.required > std::numeric_limits<unsigned>::max()) {
+    state.colorCount = std::numeric_limits<unsigned>::max();
+    state.hotspotGroups.clear();
+  } else {
+    state.colorCount = static_cast<unsigned>(pressure.required);
+    state.hotspotGroups.assign(pressure.maximumClique.begin(),
+                               pressure.maximumClique.end());
   }
-  state.hotspotGroups.assign(hotspot.begin(), hotspot.end());
   state.serializationCost = calculateCost(state, originals, blockPipeRanks);
   SmallVector<CanonicalEvent, 16> events;
   for (const EventGroup &group : state.groups) {

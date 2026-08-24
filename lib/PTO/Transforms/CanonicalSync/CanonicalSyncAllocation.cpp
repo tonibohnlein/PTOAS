@@ -40,6 +40,13 @@ std::vector<unsigned> getAvailableIds(unsigned maximum,
 } // namespace
 
 LogicalResult CanonicalSyncPlanBuilder::allocateEvents() {
+  const std::optional<CanonicalEventColorPressureMap> pressure =
+      evaluateCanonicalEventColorPressure(plan_.events_, eventIdMax_,
+                                          reservedIds_);
+  if (!pressure) {
+    return func_.emitError()
+           << "canonical sync event lifetimes have invalid resource pressure";
+  }
   std::map<CanonicalEventDomainKey, SmallVector<std::size_t, 8>> eventsByDomain;
   for (auto [index, event] : llvm::enumerate(plan_.events_)) {
     eventsByDomain[{event.sourcePipe, event.targetPipe}].push_back(index);
@@ -67,6 +74,16 @@ LogicalResult CanonicalSyncPlanBuilder::allocateEvents() {
     const std::set<unsigned> &reserved = reservedIds_[key];
     const std::vector<unsigned> available =
         getAvailableIds(eventIdMax_, reserved);
+    auto pressureEntry = pressure->find(key);
+    const bool pressureMismatch =
+        pressureEntry == pressure->end() ||
+        pressureEntry->second.required != coloring.colorCount ||
+        pressureEntry->second.available != available.size();
+    if (pressureMismatch) {
+      return func_.emitError()
+             << "canonical sync resource pressure disagrees with physical "
+                "event coloring";
+    }
 
     CanonicalEventDomain domain;
     domain.sourcePipe = key.source;
@@ -89,7 +106,7 @@ LogicalResult CanonicalSyncPlanBuilder::allocateEvents() {
     domain.reservedIds.append(reserved.begin(), reserved.end());
     plan_.domains_.push_back(domain);
 
-    if (coloring.colorCount > available.size()) {
+    if (pressureEntry->second.overflow != 0) {
       func_.emitError() << "PTOCanonicalSync cannot allocate domain "
                         << stringifyPIPE(static_cast<PIPE>(key.source))
                         << " -> "

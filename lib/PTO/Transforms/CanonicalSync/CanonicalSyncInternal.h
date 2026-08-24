@@ -37,6 +37,10 @@ struct CanonicalEventDomainKey {
   bool operator<(const CanonicalEventDomainKey &other) const {
     return std::tie(source, target) < std::tie(other.source, other.target);
   }
+
+  bool operator==(const CanonicalEventDomainKey &other) const {
+    return source == other.source && target == other.target;
+  }
 };
 
 struct CanonicalScarcityStats {
@@ -46,6 +50,17 @@ struct CanonicalScarcityStats {
   std::uint64_t originalCriticalPathWeight = 0;
   std::uint64_t criticalPathWeight = 0;
 };
+
+struct CanonicalEventColorPressure {
+  std::size_t required = 0;
+  std::size_t available = 0;
+  std::size_t overflow = 0;
+  std::optional<std::size_t> maximumPoint;
+  std::vector<std::size_t> maximumCliqueEvents;
+};
+
+using CanonicalEventColorPressureMap =
+    std::map<CanonicalEventDomainKey, CanonicalEventColorPressure>;
 
 struct CanonicalEventBundleCandidate {
   std::size_t id = 0;
@@ -78,7 +93,7 @@ struct CanonicalMechanismPlanScore {
   std::vector<std::size_t> barrierActionProfile;
   std::size_t waitDistance = 0;
   std::size_t intervalSpan = 0;
-  unsigned peakColorPressure = 0;
+  std::size_t peakColorPressure = 0;
   std::size_t directedDomains = 0;
   std::size_t barrierCount = 0;
   std::vector<std::size_t> candidateSignature;
@@ -182,6 +197,11 @@ CanonicalAffectedSliceSearchResult searchCanonicalAffectedSliceCandidates(
         evaluate);
 
 std::size_t calculateCanonicalEventColorOverflow(
+    ArrayRef<CanonicalEvent> events, unsigned eventIdMax,
+    const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds);
+
+std::optional<CanonicalEventColorPressureMap>
+evaluateCanonicalEventColorPressure(
     ArrayRef<CanonicalEvent> events, unsigned eventIdMax,
     const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds);
 

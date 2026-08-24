@@ -100,9 +100,29 @@ bool testCompletionTransitionKinds() {
   passed &= check(preserving.addEdge(makeEdge(
                       second, third, SyncCoverEdgeKind::CompletionSupply, 3)),
                   "add completion supply");
+  passed &= check(
+      !SyncCoverCoverageOracle(preserving).checkDemand(0, {3}).covered,
+      "issue order cannot aggregate an uncompleted prefix into a later set");
+
+  SyncCoverGraph carried;
+  const SyncCoverNodeId carriedFirst =
+      takeIndex(carried.addNode(1, 1, 0, 0), passed, "add carried source");
+  const SyncCoverNodeId carriedSecond =
+      takeIndex(carried.addNode(2, 1, 0, 1), passed, "add carried middle");
+  const SyncCoverNodeId carriedThird =
+      takeIndex(carried.addNode(2, 1, 0, 2), passed, "add carried target");
+  passed &= check(carried.addDemand(makeDemand(carriedFirst, carriedThird)),
+                  "add carried demand");
   passed &=
-      check(SyncCoverCoverageOracle(preserving).checkDemand(0, {3}).covered,
-            "preserving issue path can reach a later completion supply");
+      check(carried.addEdge(makeEdge(carriedFirst, carriedSecond,
+                                     SyncCoverEdgeKind::CompletionSupply, 4)),
+            "add completion before issue order");
+  passed &= check(carried.addEdge(makeEdge(
+                      carriedSecond, carriedThird,
+                      SyncCoverEdgeKind::CompletionPreservingIssueOrder)),
+                  "add completion-carrying issue edge");
+  passed &= check(SyncCoverCoverageOracle(carried).checkDemand(0, {4}).covered,
+                  "issue order carries an already established completion fact");
 
   SyncCoverGraph issuing;
   const SyncCoverNodeId issueFirst =
@@ -130,7 +150,8 @@ bool testRecurrenceCopiesAndGuards() {
   bool passed = true;
   SyncCoverGraph graph;
   const SyncCoverScopeId loop =
-      takeIndex(graph.addScope(), passed, "add recurrence loop");
+      takeIndex(graph.addScope(0, false, std::nullopt, true), passed,
+                "add recurrence loop");
   const SyncCoverControlId branch =
       takeIndex(graph.addControl(2, loop), passed, "add loop-local branch");
   const SyncCoverNodeId source =
@@ -162,7 +183,8 @@ bool testIntermediateConditionalFailsClosed() {
   bool passed = true;
   SyncCoverGraph graph;
   const SyncCoverScopeId loop =
-      takeIndex(graph.addScope(), passed, "add conditional loop");
+      takeIndex(graph.addScope(0, false, std::nullopt, true), passed,
+                "add conditional loop");
   const SyncCoverControlId branch =
       takeIndex(graph.addControl(2, loop), passed, "add conditional control");
   const SyncCoverNodeId source =
@@ -196,7 +218,8 @@ bool testComposedRecurrencePath() {
   bool passed = true;
   SyncCoverGraph graph;
   const SyncCoverScopeId loop =
-      takeIndex(graph.addScope(), passed, "add composed loop");
+      takeIndex(graph.addScope(0, false, std::nullopt, true), passed,
+                "add composed loop");
   const SyncCoverNodeId source =
       takeIndex(graph.addNode(1, 1, loop, 0), passed, "add composed source");
   const SyncCoverNodeId middle =
@@ -227,9 +250,11 @@ bool testExactRecurrenceScopeAndOuterControl() {
   bool passed = true;
   SyncCoverGraph graph;
   const SyncCoverScopeId outer =
-      takeIndex(graph.addScope(), passed, "add outer recurrence scope");
+      takeIndex(graph.addScope(0, false, std::nullopt, true), passed,
+                "add outer recurrence scope");
   const SyncCoverScopeId inner =
-      takeIndex(graph.addScope(outer), passed, "add inner recurrence scope");
+      takeIndex(graph.addScope(outer, false, std::nullopt, true), passed,
+                "add inner recurrence scope");
   const SyncCoverControlId outerControl =
       takeIndex(graph.addControl(2), passed, "add outer control");
   const SyncCoverNodeId source =
@@ -264,10 +289,11 @@ bool testExactRecurrenceScopeAndOuterControl() {
 
 bool nestedScopeCoverage(bool mustExecute, bool &passed) {
   SyncCoverGraph graph;
-  const SyncCoverScopeId loop =
-      takeIndex(graph.addScope(), passed, "add parent loop");
+  const SyncCoverScopeId loop = takeIndex(
+      graph.addScope(0, false, std::nullopt, true), passed, "add parent loop");
   const SyncCoverScopeId nested =
-      takeIndex(graph.addScope(loop, mustExecute), passed, "add nested loop");
+      takeIndex(graph.addScope(loop, mustExecute, std::nullopt, true), passed,
+                "add nested loop");
   const SyncCoverNodeId source =
       takeIndex(graph.addNode(1, 1, loop, 0), passed, "add nested source");
   const SyncCoverNodeId middle =
@@ -277,14 +303,14 @@ bool nestedScopeCoverage(bool mustExecute, bool &passed) {
   SyncCoverDemand demand = makeDemand(source, target);
   demand.scope = loop;
   passed &= check(graph.addDemand(demand), "add nested-scope demand");
-  SyncCoverEdge first = makeEdge(
-      source, middle, SyncCoverEdgeKind::CompletionPreservingIssueOrder);
+  SyncCoverEdge first =
+      makeEdge(source, middle, SyncCoverEdgeKind::CompletionSupply);
   first.scope = loop;
-  passed &= check(graph.addEdge(first), "add nested path entry");
-  SyncCoverEdge second =
-      makeEdge(middle, target, SyncCoverEdgeKind::CompletionSupply);
+  passed &= check(graph.addEdge(first), "add nested completion entry");
+  SyncCoverEdge second = makeEdge(
+      middle, target, SyncCoverEdgeKind::CompletionPreservingIssueOrder);
   second.scope = loop;
-  passed &= check(graph.addEdge(second), "add nested path exit");
+  passed &= check(graph.addEdge(second), "add nested completion carry");
   return SyncCoverCoverageOracle(graph).checkDemand(0, {}).covered;
 }
 
@@ -297,7 +323,8 @@ bool testNestedExecutionAndExpansionLimit() {
 
   SyncCoverGraph graph;
   const SyncCoverScopeId loop =
-      takeIndex(graph.addScope(), passed, "add expansion loop");
+      takeIndex(graph.addScope(0, false, std::nullopt, true), passed,
+                "add expansion loop");
   const SyncCoverNodeId node =
       takeIndex(graph.addNode(1, 1, loop, 0), passed, "add expansion node");
   SyncCoverDemand huge = makeDemand(node, node);

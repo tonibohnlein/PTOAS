@@ -11,6 +11,7 @@
 #include "PTO/Transforms/CanonicalSync/SyncCoverGraph.h"
 
 #include <iostream>
+#include <limits>
 #include <string_view>
 
 namespace {
@@ -69,23 +70,26 @@ bool testZeroDistanceDag() {
                   "zero-distance self edge has a precise error");
   passed &= check(graph.getEdges().size() == edgeCount,
                   "failed edge insertion does not mutate the graph");
-  passed &=
-      check(graph.addEdge(makeEdge(third, first)), "cycle edge is admitted");
-  passed &=
-      check(graph.validate().error == SyncCoverGraphError::ZeroDistanceCycle,
-            "global zero-distance cycle is diagnosed by validate");
+  passed &= check(graph.addEdge(makeEdge(third, first)).error ==
+                      SyncCoverGraphError::InvalidOrder,
+                  "zero-distance edges must follow the global timeline");
+  passed &= check(graph.addDemand(makeDemand(third, first)).error ==
+                      SyncCoverGraphError::InvalidOrder,
+                  "zero-distance demands must follow the global timeline");
+  passed &= check(graph.validate(), "ordered zero-distance graph validates");
   return passed;
 }
 
 bool testRecurrenceScopes() {
   bool passed = true;
   SyncCoverGraph graph;
-  const SyncCoverScopeId outer =
-      takeIndex(graph.addScope(), passed, "add outer loop");
+  const SyncCoverScopeId outer = takeIndex(
+      graph.addScope(0, false, std::nullopt, true), passed, "add outer loop");
   const SyncCoverScopeId inner =
-      takeIndex(graph.addScope(outer), passed, "add inner loop");
-  const SyncCoverScopeId sibling =
-      takeIndex(graph.addScope(), passed, "add sibling loop");
+      takeIndex(graph.addScope(outer, false, std::nullopt, true), passed,
+                "add inner loop");
+  const SyncCoverScopeId sibling = takeIndex(
+      graph.addScope(0, false, std::nullopt, true), passed, "add sibling loop");
   const SyncCoverNodeId first =
       takeIndex(graph.addNode(1, 1, inner, 0), passed, "add nested node");
   const SyncCoverNodeId second = takeIndex(graph.addNode(2, 1, inner, 1),
@@ -136,6 +140,18 @@ bool testRecurrenceScopes() {
   passed &= check(graph.addEdge(missingScope).error ==
                       SyncCoverGraphError::InvalidDistance,
                   "positive distance requires a non-root recurrence scope");
+  const SyncCoverScopeId region =
+      takeIndex(graph.addScope(), passed, "add non-loop region");
+  const SyncCoverNodeId regionSource =
+      takeIndex(graph.addNode(6, 1, region, 4), passed, "add region source");
+  const SyncCoverNodeId regionTarget =
+      takeIndex(graph.addNode(7, 1, region, 5), passed, "add region target");
+  SyncCoverDemand nonLoopRecurrence = makeDemand(regionSource, regionTarget);
+  nonLoopRecurrence.scope = region;
+  nonLoopRecurrence.distance = 1;
+  passed &= check(graph.addDemand(nonLoopRecurrence).error ==
+                      SyncCoverGraphError::InvalidDistance,
+                  "positive distance requires an explicitly modeled loop");
   passed &= check(graph.addDemand(makeDemand(direct, direct)).error ==
                       SyncCoverGraphError::ZeroDistanceSelfDemand,
                   "zero-distance self-demand is rejected");
@@ -193,7 +209,8 @@ bool testRecurrenceGuardContexts() {
   bool passed = true;
   SyncCoverGraph graph;
   const SyncCoverScopeId loop =
-      takeIndex(graph.addScope(), passed, "add guard recurrence loop");
+      takeIndex(graph.addScope(0, false, std::nullopt, true), passed,
+                "add guard recurrence loop");
   const SyncCoverControlId outside =
       takeIndex(graph.addControl(2), passed, "add outside control");
   const SyncCoverControlId inside =
@@ -258,6 +275,60 @@ bool testInvalidReferencesDoNotMutate() {
   return passed;
 }
 
+bool testTimelineAnchorsAndCompletionCapabilities() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, false, SyncCoverTimelineInterval{2, 9}, true),
+                passed, "add explicit loop timeline");
+  const SyncCoverScopeId untimedChild =
+      takeIndex(graph.addScope(loop), passed, "add untimed child scope");
+  passed &=
+      check(graph.addScope(untimedChild, false, SyncCoverTimelineInterval{1, 4})
+                    .error == SyncCoverGraphError::InvalidTimeline,
+            "child timeline must fit the nearest timelined ancestor");
+  passed &= check(
+      graph.addScope(untimedChild, false, SyncCoverTimelineInterval{3, 4}),
+      "contained timeline may cross an untimed direct parent");
+  const SyncCoverScopeId unknown =
+      takeIndex(graph.addScope(), passed, "add unknown timeline scope");
+  const SyncCoverNodeId node =
+      takeIndex(graph.addNode(3, 1, loop, 1, {}, {7, 5, 7}), passed,
+                "add node with completion destinations");
+  passed &= check(graph.getNodes()[node].completionTargets ==
+                      std::vector<std::uint32_t>{5, 7},
+                  "completion destinations are normalized");
+  passed &= check(syncCoverNodeCanProduceCompletion(graph, node, 5) &&
+                      !syncCoverNodeCanProduceCompletion(graph, node, 6),
+                  "completion capability is destination-specific");
+
+  const SyncCoverAnchor before{SyncCoverAnchorKind::BeforeNode, node, 0};
+  const SyncCoverAnchor after{SyncCoverAnchorKind::AfterNode, node, 0};
+  const SyncCoverAnchor entry{SyncCoverAnchorKind::ScopeEntry, 0, loop};
+  const SyncCoverAnchor exit{SyncCoverAnchorKind::ScopeExit, 0, loop};
+  passed &= check(resolveSyncCoverAnchor(graph, before) == 2 &&
+                      resolveSyncCoverAnchor(graph, after) == 3 &&
+                      resolveSyncCoverAnchor(graph, entry) == 2 &&
+                      resolveSyncCoverAnchor(graph, exit) == 9,
+                  "node and scope anchors share one global timeline");
+  passed &= check(!resolveSyncCoverAnchor(
+                      graph, {SyncCoverAnchorKind::ScopeEntry, 0, unknown}),
+                  "missing scope timeline fails anchor resolution closed");
+  passed &= check(!resolveSyncCoverAnchor(
+                      graph, {SyncCoverAnchorKind::BeforeNode, node, loop}),
+                  "unused anchor fields are rejected");
+  passed &= check(graph.addNode(4, 1, loop, 5).error ==
+                      SyncCoverGraphError::InvalidTimeline,
+                  "node positions must fit every enclosing timeline");
+
+  const std::size_t maximum = std::numeric_limits<std::size_t>::max();
+  passed &= check(graph.addNode(4, 1, 0, maximum / 2 + 1).error ==
+                      SyncCoverGraphError::InvalidTimeline,
+                  "node timeline multiplication cannot overflow");
+  passed &= check(graph.validate(), "timeline graph validates");
+  return passed;
+}
+
 } // namespace
 
 int main() {
@@ -267,5 +338,6 @@ int main() {
   passed &= testStructuredGuards();
   passed &= testRecurrenceGuardContexts();
   passed &= testInvalidReferencesDoNotMutate();
+  passed &= testTimelineAnchorsAndCompletionCapabilities();
   return passed ? 0 : 1;
 }

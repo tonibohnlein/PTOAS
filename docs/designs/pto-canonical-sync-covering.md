@@ -36,9 +36,11 @@ provider; unknown or potentially zero-trip nested loops remain fail-closed.
 
 Structural edges have explicit temporal semantics. A completion-supply edge
 establishes completion. Completion-preserving issue order can carry an already
-established completion fact but cannot create one. Non-completion-preserving
-issue order cannot participate in a completion proof. This distinction avoids
-treating command issue order as hardware completion order.
+established completion fact but is not traversable before completion has been
+established. It therefore supports merged waits but cannot aggregate earlier
+operations into a later event set. Non-completion-preserving issue order cannot
+participate in a completion proof. This distinction avoids treating command
+issue order as hardware completion order.
 
 The graph stores immutable completion demands separately from structural
 edges. Physical overlap creates RAW, WAR, and WAW demands. SSA and architecture
@@ -67,6 +69,32 @@ anchor and can cover an edge only when the covered target's scope and control
 guard guarantee that the anchor executes. Conditional and potentially
 zero-trip nested anchors therefore fail closed.
 
+Ordinary event bundles are deliberately limited to distance-zero canonical
+actions: produce immediately after the supplied edge's source and consume
+immediately before its target. Positive-distance events require prime,
+steady-state, and drain behavior that these two anchors cannot describe. They
+therefore enter the universe as verified protocols, including the stock bare
+recurrence-event protocol that the CanonicalSync adapter will use.
+
+The protocol verifier is a soundness boundary. For a verified ownership or
+recurrence protocol, it certifies that the submitted actions implement every
+declared supply edge, including token state across prime, steady-state, branch,
+and drain paths. The generic oracle trusts those certified edges; it does not
+reconstruct their endpoint semantics from action anchors.
+
+Resource feasibility is exact for the modeled inclusive interval lifetimes:
+the maximum weighted overlap equals the required number of interchangeable
+IDs. Straight lifetimes span their bound physical actions. Positive-distance
+lifetimes conservatively span the complete explicit loop timeline in version
+one, so feasibility may reject a runtime-valid circular allocation but never
+accept one through interval splitting. Unique reservations inside the hardware
+budget reduce availability; out-of-range reservations remain diagnostic. The
+result includes the stable maximum-pressure point and
+`(mechanism, resource-use, width)` owners. Mutually exclusive guards are not
+used to share IDs in version one. A feasible result also carries the
+deterministic nonreserved physical-ID assignment; emission consumes that
+assignment rather than running a different allocator.
+
 For a demand at loop distance `d`, the coverage oracle evaluates a virtual
 `d+1`-copy DAG. Reachability state records whether the path has crossed a
 completion edge. A demand is covered only when its target is reachable with
@@ -74,6 +102,8 @@ that completion state set. The oracle returns witnesses for covered demands
 and reachable-cut certificates for uncovered demands.
 
 Coverage, token validity, and exact event-ID coloring are hard constraints.
+Structural cost is defined only for resource-feasible selections; infeasible
+partial search states require a separate overflow-first search heuristic.
 The final emitted plan is checked by a non-incremental verifier independently
 of the optimizing oracle.
 
@@ -87,7 +117,12 @@ Small affected mechanism components use deterministic exact search. Larger
 components use a bounded deterministic beam guided by uncovered cuts. Every
 complete candidate receives exact coverage, protocol, and coloring checks.
 
-The initial cost model uses one scalar unit weight per operation. It compares
-straight-line critical paths, periodic loop serialization, loop-aware dynamic
-set/wait actions, barrier drains, and event pressure. Calibrated target weights
-can replace unit weights without changing the graph or solver.
+The initial mechanism cost is symbolic rather than a runtime estimate. It
+counts each physical synchronization action once, even when one action carries
+both an event-ID and a buffer-token use. Profiles are compared from deepest
+loop nesting outward; loop-entry/exit prime and drain actions exclude the
+loop's own iteration depth. Barriers use a separate profile. Event pressure,
+headroom, mechanism count, and stable identities provide deterministic later
+tie breakers. Mutually exclusive guarded actions are counted separately.
+Calibrated trip counts and target weights can replace this structural profile
+later without changing graph, mechanism, or feasibility contracts.

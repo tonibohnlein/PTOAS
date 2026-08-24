@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncAlgorithms.h"
 
@@ -338,20 +340,24 @@ bool testAlternatingOwnershipTokenTrace() {
       {SyncTokenActionKind::Set, 0}, {SyncTokenActionKind::Wait, 0}};
   passed &= check(valid(readyOne), "one-trip ready protocol consumes lane 0");
   const std::vector<SyncTokenAction> readyTwo = {
-      {SyncTokenActionKind::Set, 0},  {SyncTokenActionKind::Wait, 0},
-      {SyncTokenActionKind::Set, 1},  {SyncTokenActionKind::Wait, 1}};
+      {SyncTokenActionKind::Set, 0},
+      {SyncTokenActionKind::Wait, 0},
+      {SyncTokenActionKind::Set, 1},
+      {SyncTokenActionKind::Wait, 1}};
   passed &= check(valid(readyTwo),
                   "two-trip ready protocol transfers lane 0 to lane 1");
   const std::vector<SyncTokenAction> readyThree = {
-      {SyncTokenActionKind::Set, 0},  {SyncTokenActionKind::Wait, 0},
-      {SyncTokenActionKind::Set, 1},  {SyncTokenActionKind::Wait, 1},
-      {SyncTokenActionKind::Set, 0},  {SyncTokenActionKind::Wait, 0}};
+      {SyncTokenActionKind::Set, 0}, {SyncTokenActionKind::Wait, 0},
+      {SyncTokenActionKind::Set, 1}, {SyncTokenActionKind::Wait, 1},
+      {SyncTokenActionKind::Set, 0}, {SyncTokenActionKind::Wait, 0}};
   passed &= check(valid(readyThree),
                   "multi-trip ready protocol alternates and terminates");
 
   const std::vector<SyncTokenAction> releaseOne = {
-      {SyncTokenActionKind::Set, 1},  {SyncTokenActionKind::Set, 0},
-      {SyncTokenActionKind::Wait, 0}, {SyncTokenActionKind::Wait, 1}};
+      {SyncTokenActionKind::Set, 1},
+      {SyncTokenActionKind::Set, 0},
+      {SyncTokenActionKind::Wait, 0},
+      {SyncTokenActionKind::Wait, 1}};
   passed &= check(valid(releaseOne),
                   "one-trip release protocol fills and drains both lanes");
   const std::vector<SyncTokenAction> releaseTwo = {
@@ -391,6 +397,84 @@ bool testSyncIntervalAllocationVerification() {
   return passed;
 }
 
+bool testWeightedIntervalPressure() {
+  using mlir::pto::SyncIntervalPressureError;
+  using mlir::pto::SyncWeightedInterval;
+  const std::vector<SyncWeightedInterval> intervals = {
+      {{3, 4}, 2}, {{4, 5}, 3}, {{0, 1}, 2}, {{1, 2}, 3}};
+  const auto pressure =
+      mlir::pto::evaluateSyncIntervalPressure(intervals, 8, {1, 1, 9});
+  bool passed =
+      check(pressure && pressure.required == 5 && pressure.available == 7 &&
+                pressure.overflow == 0 && pressure.maximumPoint == 4 &&
+                pressure.maximumClique == std::vector<std::size_t>({0, 1}),
+            "weighted pressure uses inclusive overlap and lexicographic "
+            "witness ties");
+
+  const auto scarce =
+      mlir::pto::evaluateSyncIntervalPressure(intervals, 5, {0});
+  passed &= check(scarce && scarce.required == 5 && scarce.available == 4 &&
+                      scarce.overflow == 1,
+                  "only unique in-range reservations reduce availability");
+  const auto invalid =
+      mlir::pto::evaluateSyncIntervalPressure({{{2, 1}, 1}, {{0, 1}, 0}}, 8);
+  passed &= check(invalid.error == SyncIntervalPressureError::InvalidInterval,
+                  "invalid intervals and zero widths fail closed");
+  const std::size_t maximum = std::numeric_limits<std::size_t>::max();
+  const auto overflow = mlir::pto::evaluateSyncIntervalPressure(
+      {{{0, 1}, maximum}, {{1, 2}, 1}}, maximum);
+  passed &=
+      check(overflow.error == SyncIntervalPressureError::ArithmeticOverflow &&
+                overflow.required == 0 && overflow.overflow == 0 &&
+                overflow.maximumClique.empty(),
+            "weighted active-width overflow reports no misleading pressure");
+  return passed;
+}
+
+bool testWeightedPressureDifferential() {
+  using mlir::pto::SyncAllocatedInterval;
+  using mlir::pto::SyncWeightedInterval;
+  const std::vector<SyncInterval> shapes = {{0, 0}, {0, 1}, {0, 2},
+                                            {1, 1}, {1, 2}, {2, 2}};
+  constexpr std::size_t variantsPerUse = 12;
+  constexpr std::size_t useCount = 3;
+  std::size_t caseCount = 1;
+  for (std::size_t use = 0; use < useCount; ++use) {
+    caseCount *= variantsPerUse;
+  }
+
+  for (std::size_t encoded = 0; encoded < caseCount; ++encoded) {
+    std::size_t remaining = encoded;
+    std::vector<SyncWeightedInterval> weighted;
+    std::vector<SyncInterval> expanded;
+    for (std::size_t use = 0; use < useCount; ++use) {
+      const std::size_t variant = remaining % variantsPerUse;
+      remaining /= variantsPerUse;
+      const SyncInterval interval = shapes[variant / 2];
+      const std::size_t width = variant % 2 + 1;
+      weighted.push_back({interval, width});
+      expanded.insert(expanded.end(), width, interval);
+    }
+
+    const auto pressure = mlir::pto::evaluateSyncIntervalPressure(weighted, 8);
+    const SyncColoring coloring = mlir::pto::colorSyncIntervals(expanded);
+    if (!check(pressure && pressure.required == coloring.colorCount,
+               "weighted pressure matches width-expanded interval coloring")) {
+      return false;
+    }
+    std::vector<SyncAllocatedInterval> allocated;
+    for (std::size_t interval = 0; interval < expanded.size(); ++interval) {
+      allocated.push_back({expanded[interval], coloring.colors[interval]});
+    }
+    if (!check(mlir::pto::verifySyncIntervalAllocation(coloring.colorCount, {},
+                                                       allocated),
+               "interval colorer output passes independent allocation check")) {
+      return false;
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -401,6 +485,7 @@ int main() {
       testInvalidCompletionRequirements() && testScopedCompletionReduction() &&
       testDenseCompletionReduction() && testCompletionCoverage() &&
       testSyncTokenTrace() && testAlternatingOwnershipTokenTrace() &&
-      testSyncIntervalAllocationVerification();
+      testSyncIntervalAllocationVerification() &&
+      testWeightedIntervalPressure() && testWeightedPressureDifferential();
   return passed ? 0 : 1;
 }

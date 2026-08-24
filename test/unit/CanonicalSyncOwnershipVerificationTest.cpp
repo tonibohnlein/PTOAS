@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "CanonicalSyncInternal.h"
 
@@ -147,8 +149,7 @@ bool testOwnershipPairVerification() {
   accumulator.paths.front().uses.resize(1);
   const CanonicalEvent accumulatorReady = makeReadyEvent(accumulator);
   const CanonicalEvent accumulatorRelease = makeReleaseEvent(accumulator);
-  passed &= check(verifyPair(accumulator, accumulatorReady,
-                             accumulatorRelease),
+  passed &= check(verifyPair(accumulator, accumulatorReady, accumulatorRelease),
                   "a one-lane L0C ownership lifecycle is valid");
   return passed;
 }
@@ -228,9 +229,9 @@ bool testEventBundleConstruction() {
   CanonicalEvent ownershipRelease = ownershipReady;
   ownershipRelease.ownershipRole = CanonicalOwnershipEventRole::Release;
 
-  const std::vector<CanonicalEvent> events = {
-      standalone, syntheticReady, ownershipReady, syntheticRelease,
-      ownershipRelease};
+  const std::vector<CanonicalEvent> events = {standalone, syntheticReady,
+                                              ownershipReady, syntheticRelease,
+                                              ownershipRelease};
   const std::vector<CanonicalEventBundleCandidate> bundles =
       buildCanonicalEventBundles(events);
   bool passed = check(bundles.size() == 3,
@@ -238,14 +239,13 @@ bool testEventBundleConstruction() {
   passed &= check(bundles[0].kind == CanonicalEventBundleKind::Standalone &&
                       bundles[0].events.size() == 1,
                   "a standalone event forms a one-event bundle");
-  passed &= check(
-      bundles[1].kind == CanonicalEventBundleKind::SyntheticRoundTrip &&
-          bundles[1].id == 1 && bundles[1].protocolIdentity == 3 &&
-          bundles[1].events.size() == 2,
-      "synthetic events are grouped by protocol identity");
+  passed &=
+      check(bundles[1].kind == CanonicalEventBundleKind::SyntheticRoundTrip &&
+                bundles[1].id == 1 && bundles[1].protocolIdentity == 3 &&
+                bundles[1].events.size() == 2,
+            "synthetic events are grouped by protocol identity");
   passed &= check(bundles[2].kind == CanonicalEventBundleKind::Ownership &&
-                      bundles[2].id == 2 &&
-                      bundles[2].protocolIdentity == 7 &&
+                      bundles[2].id == 2 && bundles[2].protocolIdentity == 7 &&
                       bundles[2].events.size() == 2,
                   "ownership ready and release form one atomic bundle");
 
@@ -253,11 +253,10 @@ bool testEventBundleConstruction() {
       flattenCanonicalEventBundles(bundles);
   passed &= check(flattened.size() == events.size(),
                   "flattening preserves every event");
-  passed &= check(flattened[1].protocolBundle == 3 &&
-                      flattened[2].protocolBundle == 3 &&
-                      flattened[3].ownershipCycle == 7 &&
-                      flattened[4].ownershipCycle == 7,
-                  "flattening keeps stable bundle order");
+  passed &= check(
+      flattened[1].protocolBundle == 3 && flattened[2].protocolBundle == 3 &&
+          flattened[3].ownershipCycle == 7 && flattened[4].ownershipCycle == 7,
+      "flattening keeps stable bundle order");
   return passed;
 }
 
@@ -323,9 +322,8 @@ bool testEventBundleIdentityRestoration() {
   const CanonicalOwnershipCycle cycle = makeCycle();
   CanonicalEvent ownershipReady = makeReadyEvent(cycle);
   CanonicalEvent ownershipRelease = makeReleaseEvent(cycle);
-  std::vector<CanonicalEventBundleCandidate> known =
-      buildCanonicalEventBundles({sourceToBridge, ownershipReady,
-                                  bridgeToTarget, ownershipRelease});
+  std::vector<CanonicalEventBundleCandidate> known = buildCanonicalEventBundles(
+      {sourceToBridge, ownershipReady, bridgeToTarget, ownershipRelease});
   auto knownSynthetic = llvm::find_if(known, [](const auto &bundle) {
     return bundle.kind == CanonicalEventBundleKind::SyntheticRoundTrip;
   });
@@ -349,9 +347,9 @@ bool testEventBundleIdentityRestoration() {
                                   newStandalone, sourceToBridge,
                                   ownershipReady});
   std::size_t nextId = 100;
-  bool passed = check(succeeded(restoreCanonicalEventBundleIdentities(
-                          rebuilt, known, nextId)),
-                      "scarcity reconciliation restores selected identities");
+  bool passed = check(
+      succeeded(restoreCanonicalEventBundleIdentities(rebuilt, known, nextId)),
+      "scarcity reconciliation restores selected identities");
   auto rebuiltSynthetic = llvm::find_if(rebuilt, [](const auto &bundle) {
     return bundle.kind == CanonicalEventBundleKind::SyntheticRoundTrip;
   });
@@ -398,9 +396,9 @@ bool testEventBundleIdentityRestoration() {
                   "the maximum stable identity is reserved as exhaustion");
   overflow = buildCanonicalEventBundles({newStandalone});
   nextId = std::numeric_limits<std::size_t>::max();
-  passed &= check(failed(restoreCanonicalEventBundleIdentities(
-                      overflow, {}, nextId)),
-                  "fresh identity exhaustion fails instead of wrapping");
+  passed &=
+      check(failed(restoreCanonicalEventBundleIdentities(overflow, {}, nextId)),
+            "fresh identity exhaustion fails instead of wrapping");
   return passed;
 }
 
@@ -502,16 +500,13 @@ bool testEventBundleAtomicExchange() {
   ownership.events.push_back(makeReleaseEvent(cycle));
   ownership.conflicts.push_back(conflicting.id);
 
-  bool passed = check(!appendCanonicalEventBundleCandidate(selected,
-                                                             ownership),
+  bool passed = check(!appendCanonicalEventBundleCandidate(selected, ownership),
                       "diagnostic append rejects a retained conflict");
-  passed &= check(selected.size() == 2 &&
-                      selected[0].id == conflicting.id &&
+  passed &= check(selected.size() == 2 && selected[0].id == conflicting.id &&
                       selected[1].id == unrelated.id,
                   "rejected diagnostic append preserves the selected plan");
-  passed &= check(exchangeCanonicalEventBundleCandidate(selected,
-                                                          ownership),
-                      "an ownership candidate can replace a conflict");
+  passed &= check(exchangeCanonicalEventBundleCandidate(selected, ownership),
+                  "an ownership candidate can replace a conflict");
   passed &= check(selected.size() == 2 && selected[0].id == unrelated.id &&
                       selected[1].id == ownership.id &&
                       selected[1].events.size() == 2 &&
@@ -522,8 +517,7 @@ bool testEventBundleAtomicExchange() {
                   "bundle exchange keeps the ownership pair atomic");
   passed &= check(canonicalEventBundlesHaveNoConflicts(selected),
                   "bundle exchange removes conflicts in both directions");
-  passed &= check(!exchangeCanonicalEventBundleCandidate(selected,
-                                                          ownership) &&
+  passed &= check(!exchangeCanonicalEventBundleCandidate(selected, ownership) &&
                       selected.size() == 2,
                   "reselecting an equivalent bundle is a no-op");
   return passed;
@@ -539,22 +533,97 @@ bool testReservedEventColorOverflow() {
   const CanonicalEventDomainKey key{event.sourcePipe, event.targetPipe};
   std::map<CanonicalEventDomainKey, std::set<unsigned>> reserved;
 
-  bool passed = check(calculateCanonicalEventColorOverflow({event}, 2,
-                                                            reserved) == 0,
-                      "two overlapping lanes fit two unreserved IDs");
+  bool passed =
+      check(calculateCanonicalEventColorOverflow({event}, 2, reserved) == 0,
+            "two overlapping lanes fit two unreserved IDs");
   reserved[key].insert(0);
-  passed &= check(calculateCanonicalEventColorOverflow({event}, 2,
-                                                        reserved) == 1,
-                  "a reserved in-range ID contributes exact overflow");
+  passed &=
+      check(calculateCanonicalEventColorOverflow({event}, 2, reserved) == 1,
+            "a reserved in-range ID contributes exact overflow");
   reserved[key].insert(7);
-  passed &= check(calculateCanonicalEventColorOverflow({event}, 2,
-                                                        reserved) == 1,
-                  "an out-of-range reservation does not reduce the budget");
+  passed &=
+      check(calculateCanonicalEventColorOverflow({event}, 2, reserved) == 1,
+            "an out-of-range reservation does not reduce the budget");
   reserved[key].insert(1);
-  passed &= check(calculateCanonicalEventColorOverflow({event}, 2,
-                                                        reserved) == 2,
-                  "reserving the full domain budget counts both lanes");
+  passed &=
+      check(calculateCanonicalEventColorOverflow({event}, 2, reserved) == 2,
+            "reserving the full domain budget counts both lanes");
+  const std::optional<CanonicalEventColorPressureMap> pressure =
+      evaluateCanonicalEventColorPressure({event}, 2, reserved);
+  passed &= check(
+      pressure && pressure->at(key).required == 2 &&
+          pressure->at(key).available == 0 && pressure->at(key).overflow == 2 &&
+          pressure->at(key).maximumPoint == 4 &&
+          pressure->at(key).maximumCliqueEvents == std::vector<std::size_t>{0},
+      "legacy pressure uses weighted event owners and stable witnesses");
   return passed;
+}
+
+bool testLegacyPressureDifferential() {
+  const std::vector<SyncInterval> shapes = {{0, 0}, {0, 1}, {0, 2},
+                                            {1, 1}, {1, 2}, {2, 2}};
+  const CanonicalEventDomainKey forward{PipelineType::PIPE_S,
+                                        PipelineType::PIPE_V};
+  const CanonicalEventDomainKey reverse{PipelineType::PIPE_V,
+                                        PipelineType::PIPE_S};
+  std::map<CanonicalEventDomainKey, std::set<unsigned>> reserved;
+  reserved[forward].insert(1);
+  constexpr unsigned budget = 3;
+  constexpr std::size_t caseCount = 512;
+
+  for (std::size_t encoded = 0; encoded < caseCount; ++encoded) {
+    std::size_t remaining = encoded;
+    std::vector<CanonicalEvent> events;
+    std::map<CanonicalEventDomainKey, std::vector<SyncInterval>> expanded;
+    for (std::size_t eventIndex = 0; eventIndex < 3; ++eventIndex) {
+      const std::size_t variant = remaining % 24;
+      remaining /= 24;
+      const CanonicalEventDomainKey domain = variant >= 12 ? reverse : forward;
+      const std::size_t local = variant % 12;
+      CanonicalEvent event;
+      event.sourcePipe = domain.source;
+      event.targetPipe = domain.target;
+      event.intervalBegin = shapes[local / 2].begin;
+      event.intervalEnd = shapes[local / 2].end;
+      event.width = static_cast<unsigned>(local % 2 + 1);
+      events.push_back(event);
+      expanded[domain].insert(expanded[domain].end(), event.width,
+                              shapes[local / 2]);
+    }
+
+    std::size_t expectedOverflow = 0;
+    std::map<CanonicalEventDomainKey, unsigned> expectedColors;
+    for (const auto &entry : expanded) {
+      const unsigned colors = colorSyncIntervals(entry.second).colorCount;
+      expectedColors[entry.first] = colors;
+      const unsigned available = entry.first == forward ? budget - 1 : budget;
+      expectedOverflow += colors > available ? colors - available : 0;
+    }
+    const bool overflowMatches =
+        calculateCanonicalEventColorOverflow(events, budget, reserved) ==
+        expectedOverflow;
+    if (!check(overflowMatches,
+               "legacy overflow matches width-expanded coloring")) {
+      return false;
+    }
+    const auto pressure =
+        evaluateCanonicalEventColorPressure(events, budget, reserved);
+    const bool domainCountMatches =
+        pressure && pressure->size() == expectedColors.size();
+    if (!check(domainCountMatches,
+               "legacy pressure reports every selected directed domain")) {
+      return false;
+    }
+    for (const auto &entry : expectedColors) {
+      const bool requiredMatches =
+          pressure->at(entry.first).required == entry.second;
+      if (!check(requiredMatches,
+                 "legacy domain pressure matches width-expanded coloring")) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 bool testMechanismPlanScoreOrdering() {
@@ -649,8 +718,7 @@ bool testCandidateFrontierTruncation() {
   const CanonicalEventBundleCandidate *candidates[] = {
       &standalone, &synthetic, &ownershipHigh, &ownershipLow};
 
-  const auto frontier =
-      selectCanonicalEventCandidateFrontier(candidates, 3);
+  const auto frontier = selectCanonicalEventCandidateFrontier(candidates, 3);
   bool passed = check(frontier.size() == 3,
                       "the candidate frontier obeys its explicit bound");
   passed &= check(frontier[0]->id == 2 && frontier[1]->id == 5 &&
@@ -975,8 +1043,9 @@ bool testAlternatingOwnershipPairVerification() {
   malformedCycle.paths[1].uses.front().producerLane = 1;
   auto [malformedReady, malformedRelease] =
       buildCanonicalOwnershipProtocols(malformedCycle);
-  passed &= check(!verifyPair(malformedCycle, malformedReady, malformedRelease),
-                  "an alternating cycle requires complementary path transitions");
+  passed &=
+      check(!verifyPair(malformedCycle, malformedReady, malformedRelease),
+            "an alternating cycle requires complementary path transitions");
 
   const CanonicalEvent *single[] = {&ready};
   passed &= check(!verifyCanonicalOwnershipEventPair(cycle, single),
@@ -994,7 +1063,7 @@ int main() {
       testEventBundleIdentityRestoration() && testEventBundleConflicts() &&
       testDiagnosticEventBundleEquivalence() &&
       testEventBundleAtomicExchange() && testReservedEventColorOverflow() &&
-      testMechanismPlanScoreOrdering() &&
+      testLegacyPressureDifferential() && testMechanismPlanScoreOrdering() &&
       testBarrierActionProfileConstruction() &&
       testCandidateFrontierTruncation() &&
       testAffectedSliceOriginProvenance() && testAffectedSliceEvictionSeeds() &&

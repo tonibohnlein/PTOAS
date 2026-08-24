@@ -11,6 +11,7 @@
 #include "PTO/Transforms/CanonicalSync/SyncCoverMechanism.h"
 
 #include <algorithm>
+#include <array>
 #include <utility>
 
 using namespace mlir::pto;
@@ -65,24 +66,30 @@ bool scopeExecutesWhen(const SyncCoverGraph &graph,
 
 bool validDomainShape(SyncCoverResourceKind kind, std::uint32_t source,
                       std::uint32_t target, std::uint64_t poolIdentity,
-                      unsigned budget) {
+                      unsigned budget,
+                      const std::vector<unsigned> &reservedIds) {
   if (budget == 0) {
     return false;
   }
   if (kind == SyncCoverResourceKind::EventId) {
-    return source != target && poolIdentity == 0;
+    return source != target && poolIdentity == 0 &&
+           std::is_sorted(reservedIds.begin(), reservedIds.end()) &&
+           std::adjacent_find(reservedIds.begin(), reservedIds.end()) ==
+               reservedIds.end();
   }
-  return true;
+  return reservedIds.empty();
 }
 
 bool validResourceComposition(
     const std::vector<SyncCoverResourceDomain> &domains,
     SyncCoverMechanismKind kind,
+    const std::vector<SyncCoverResourceAction> &actions,
     const std::vector<SyncCoverResourceUse> &uses) {
   if (kind == SyncCoverMechanismKind::Barrier) {
-    return uses.empty();
+    return actions.empty() && uses.empty();
   }
-  if (uses.empty()) {
+  const bool missingResourceModel = actions.empty() || uses.empty();
+  if (missingResourceModel) {
     return false;
   }
   if (kind == SyncCoverMechanismKind::EventBundle) {
@@ -92,6 +99,72 @@ bool validResourceComposition(
     });
   }
   return true;
+}
+
+bool containsIndex(const std::vector<std::size_t> &indices, std::size_t index) {
+  return std::find(indices.begin(), indices.end(), index) != indices.end();
+}
+
+bool canonicalActionIndices(const std::vector<std::size_t> &indices) {
+  return !indices.empty() && std::is_sorted(indices.begin(), indices.end()) &&
+         std::adjacent_find(indices.begin(), indices.end()) == indices.end();
+}
+
+bool actionOccursWithin(const SyncCoverGraph &graph,
+                        const SyncCoverResourceAction &action,
+                        SyncCoverScopeId scope) {
+  const std::optional<SyncCoverTimelinePosition> position =
+      resolveSyncCoverAnchor(graph, action.anchor);
+  if (!position || scope >= graph.getScopes().size()) {
+    return false;
+  }
+  SyncCoverScopeId actionScope = 0;
+  switch (action.anchor.kind) {
+  case SyncCoverAnchorKind::BeforeNode:
+  case SyncCoverAnchorKind::AfterNode:
+    actionScope = graph.getNodes()[action.anchor.node].scope;
+    if (graph.getNodes()[action.anchor.node].resource != action.resource) {
+      return false;
+    }
+    break;
+  case SyncCoverAnchorKind::ScopeEntry:
+  case SyncCoverAnchorKind::ScopeExit:
+    actionScope = action.anchor.scope;
+    break;
+  }
+  if (!scopeContains(graph, scope, actionScope)) {
+    return false;
+  }
+  const std::optional<SyncCoverTimelineInterval> &timeline =
+      graph.getScopes()[scope].timeline;
+  return !timeline ||
+         (timeline->begin <= *position && *position <= timeline->end);
+}
+
+SyncCoverMechanismError
+validateActionAccounting(const std::vector<SyncCoverResourceDomain> &domains,
+                         const std::vector<SyncCoverResourceAction> &actions,
+                         const std::vector<SyncCoverResourceUse> &uses) {
+  std::vector<std::array<unsigned, 2>> claims(actions.size(), {0, 0});
+  for (const SyncCoverResourceUse &use : uses) {
+    if (use.domain >= domains.size()) {
+      return SyncCoverMechanismError::InvalidDomain;
+    }
+    const std::size_t kind = static_cast<std::size_t>(domains[use.domain].kind);
+    for (std::size_t action : use.actions) {
+      const bool invalidClaim =
+          action >= actions.size() || ++claims[action][kind] > 1;
+      if (invalidClaim) {
+        return SyncCoverMechanismError::InvalidAction;
+      }
+    }
+  }
+  for (const auto &claim : claims) {
+    if (claim[0] == 0 && claim[1] == 0) {
+      return SyncCoverMechanismError::InvalidAction;
+    }
+  }
+  return SyncCoverMechanismError::None;
 }
 
 bool validBarrierEdge(const SyncCoverGraph &graph,
@@ -133,9 +206,13 @@ bool validBarrierEdge(const SyncCoverGraph &graph,
 
 SyncCoverMechanismResult SyncCoverMechanismUniverse::addResourceDomain(
     SyncCoverResourceKind kind, std::uint32_t sourceResource,
-    std::uint32_t targetResource, unsigned budget, std::uint64_t poolIdentity) {
+    std::uint32_t targetResource, unsigned budget, std::uint64_t poolIdentity,
+    std::vector<unsigned> reservedIds) {
+  std::sort(reservedIds.begin(), reservedIds.end());
+  reservedIds.erase(std::unique(reservedIds.begin(), reservedIds.end()),
+                    reservedIds.end());
   if (!validDomainShape(kind, sourceResource, targetResource, poolIdentity,
-                        budget)) {
+                        budget, reservedIds)) {
     return makeResult(SyncCoverMechanismError::InvalidDomain, domains_.size());
   }
   const auto duplicate =
@@ -149,20 +226,20 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addResourceDomain(
   if (duplicate != domains_.end()) {
     const std::size_t index =
         static_cast<std::size_t>(std::distance(domains_.begin(), duplicate));
-    if (duplicate->budget == budget) {
+    if (duplicate->budget == budget && duplicate->reservedIds == reservedIds) {
       return makeResult(SyncCoverMechanismError::None, index);
     }
     return makeResult(SyncCoverMechanismError::InvalidDomain, index);
   }
   const SyncCoverResourceDomainId id = domains_.size();
-  domains_.push_back(
-      {id, kind, sourceResource, targetResource, poolIdentity, budget});
+  domains_.push_back({id, kind, sourceResource, targetResource, poolIdentity,
+                      budget, std::move(reservedIds)});
   return makeResult(SyncCoverMechanismError::None, id);
 }
 
 SyncCoverMechanismResult SyncCoverMechanismUniverse::addMechanism(
     const SyncCoverMechanismDescriptor &descriptor) {
-  if (descriptor.kind == SyncCoverMechanismKind::OwnershipProtocol) {
+  if (descriptor.kind == SyncCoverMechanismKind::VerifiedProtocol) {
     return makeResult(SyncCoverMechanismError::UnverifiedProtocol,
                       mechanisms_.size());
   }
@@ -173,16 +250,17 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addVerifiedProtocol(
     const SyncCoverMechanismDescriptor &descriptor,
     const std::function<bool(const SyncCoverMechanismDescriptor &)> &verify) {
   const bool validKind =
-      descriptor.kind == SyncCoverMechanismKind::OwnershipProtocol;
-  if (!validKind || !verify || !verify(descriptor)) {
+      descriptor.kind == SyncCoverMechanismKind::VerifiedProtocol;
+  if (!validKind || !verify) {
     return makeResult(SyncCoverMechanismError::UnverifiedProtocol,
                       mechanisms_.size());
   }
-  return addMechanismImpl(descriptor, true);
+  return addMechanismImpl(descriptor, true, verify);
 }
 
 SyncCoverMechanismResult SyncCoverMechanismUniverse::addMechanismImpl(
-    const SyncCoverMechanismDescriptor &descriptor, bool protocolVerified) {
+    const SyncCoverMechanismDescriptor &descriptor, bool protocolVerified,
+    const std::function<bool(const SyncCoverMechanismDescriptor &)> &verify) {
   if (!validate()) {
     return makeResult(SyncCoverMechanismError::InvalidGraph,
                       mechanisms_.size());
@@ -200,27 +278,33 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addMechanismImpl(
     return makeResult(SyncCoverMechanismError::InvalidMechanism,
                       mechanisms_.size());
   }
-  if (!validResourceComposition(domains_, descriptor.kind,
+  if (!validResourceComposition(domains_, descriptor.kind, descriptor.actions,
                                 descriptor.resourceUses)) {
     return makeResult(SyncCoverMechanismError::InvalidResourceUse,
                       mechanisms_.size());
   }
 
-  std::vector<bool> boundSupply(descriptor.supplyEdges.size(), false);
   for (const SyncCoverResourceUse &use : descriptor.resourceUses) {
     const SyncCoverMechanismError error =
-        validateResourceUse(use, &descriptor.supplyEdges);
+        validateResourceUse(use, descriptor.supplyEdges, descriptor.actions);
     if (error != SyncCoverMechanismError::None) {
       return makeResult(error, mechanisms_.size());
     }
-    for (std::size_t edge : use.supplyEdges) {
-      boundSupply[edge] = true;
-    }
   }
-  if (!barrierKind && std::find(boundSupply.begin(), boundSupply.end(),
-                                false) != boundSupply.end()) {
-    return makeResult(SyncCoverMechanismError::InvalidResourceUse,
-                      mechanisms_.size());
+  SyncCoverMechanismError descriptorError = validateActionAccounting(
+      domains_, descriptor.actions, descriptor.resourceUses);
+  if (descriptorError == SyncCoverMechanismError::None) {
+    std::vector<std::size_t> descriptorSupplyEdges(
+        descriptor.supplyEdges.size());
+    for (std::size_t edge = 0; edge < descriptorSupplyEdges.size(); ++edge) {
+      descriptorSupplyEdges[edge] = edge;
+    }
+    descriptorError = validateSupplyBindings(
+        descriptor.kind, descriptor.supplyEdges, descriptorSupplyEdges,
+        descriptor.actions, descriptor.resourceUses, descriptor.supplyBindings);
+  }
+  if (descriptorError != SyncCoverMechanismError::None) {
+    return makeResult(descriptorError, mechanisms_.size());
   }
 
   const SyncCoverMechanismId id = mechanisms_.size();
@@ -238,6 +322,9 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addMechanismImpl(
   if (!staged.validate()) {
     return makeResult(SyncCoverMechanismError::InvalidSupply, id);
   }
+  if (protocolVerified && !verify(descriptor)) {
+    return makeResult(SyncCoverMechanismError::UnverifiedProtocol, id);
+  }
 
   SyncCoverMechanism mechanism;
   mechanism.id = id;
@@ -245,7 +332,9 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addMechanismImpl(
   mechanism.providerIdentity = descriptor.providerIdentity;
   mechanism.protocolVerified = protocolVerified;
   mechanism.barrier = descriptor.barrier;
+  mechanism.actions = descriptor.actions;
   mechanism.resourceUses = descriptor.resourceUses;
+  mechanism.supplyBindings = descriptor.supplyBindings;
   for (SyncCoverResourceUse &use : mechanism.resourceUses) {
     for (std::size_t &edge : use.supplyEdges) {
       edge += firstEdge;
@@ -253,6 +342,9 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addMechanismImpl(
   }
   for (std::size_t edge = 0; edge < descriptor.supplyEdges.size(); ++edge) {
     mechanism.supplyEdges.push_back(firstEdge + edge);
+  }
+  for (SyncCoverSupplyBinding &binding : mechanism.supplyBindings) {
+    binding.supplyEdge += firstEdge;
   }
   graph_ = std::move(staged);
   mechanisms_.push_back(std::move(mechanism));
@@ -289,10 +381,11 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::validate() const {
   }
   for (std::size_t index = 0; index < domains_.size(); ++index) {
     const SyncCoverResourceDomain &domain = domains_[index];
-    const bool invalid = domain.id != index ||
-                         !validDomainShape(domain.kind, domain.sourceResource,
-                                           domain.targetResource,
-                                           domain.poolIdentity, domain.budget);
+    const bool invalid =
+        domain.id != index ||
+        !validDomainShape(domain.kind, domain.sourceResource,
+                          domain.targetResource, domain.poolIdentity,
+                          domain.budget, domain.reservedIds);
     if (invalid) {
       return makeResult(SyncCoverMechanismError::InvalidDomain, index);
     }
@@ -308,24 +401,31 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::validate() const {
     if (barrierKind != mechanism.barrier.has_value()) {
       return makeResult(SyncCoverMechanismError::InvalidMechanism, index);
     }
-    if (mechanism.kind == SyncCoverMechanismKind::OwnershipProtocol &&
+    if (mechanism.kind == SyncCoverMechanismKind::VerifiedProtocol &&
         !mechanism.protocolVerified) {
       return makeResult(SyncCoverMechanismError::UnverifiedProtocol, index);
     }
-    if (!validResourceComposition(domains_, mechanism.kind,
+    if (!validResourceComposition(domains_, mechanism.kind, mechanism.actions,
                                   mechanism.resourceUses)) {
       return makeResult(SyncCoverMechanismError::InvalidResourceUse, index);
     }
 
-    std::vector<bool> boundSupply(graph_.getEdges().size(), false);
     for (const SyncCoverResourceUse &use : mechanism.resourceUses) {
-      const SyncCoverMechanismError error = validateResourceUse(use);
+      const SyncCoverMechanismError error =
+          validateResourceUse(use, graph_.getEdges(), mechanism.actions);
       if (error != SyncCoverMechanismError::None) {
         return makeResult(error, index);
       }
-      for (std::size_t edge : use.supplyEdges) {
-        boundSupply[edge] = true;
-      }
+    }
+    SyncCoverMechanismError mechanismError = validateActionAccounting(
+        domains_, mechanism.actions, mechanism.resourceUses);
+    if (mechanismError == SyncCoverMechanismError::None) {
+      mechanismError = validateSupplyBindings(
+          mechanism.kind, graph_.getEdges(), mechanism.supplyEdges,
+          mechanism.actions, mechanism.resourceUses, mechanism.supplyBindings);
+    }
+    if (mechanismError != SyncCoverMechanismError::None) {
+      return makeResult(mechanismError, index);
     }
     for (std::size_t edgeIndex : mechanism.supplyEdges) {
       const bool invalidEdge =
@@ -342,9 +442,6 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::validate() const {
       }
       if (barrierKind && !validBarrierEdge(graph_, *mechanism.barrier, edge)) {
         return makeResult(SyncCoverMechanismError::InvalidSupply, index);
-      }
-      if (!barrierKind && !boundSupply[edgeIndex]) {
-        return makeResult(SyncCoverMechanismError::InvalidResourceUse, index);
       }
       claimedEdges[edgeIndex] = true;
     }
@@ -371,48 +468,139 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::validate() const {
 }
 
 SyncCoverMechanismError SyncCoverMechanismUniverse::validateResourceUse(
-    const SyncCoverResourceUse &use,
-    const std::vector<SyncCoverEdge> *descriptorEdges) const {
+    const SyncCoverResourceUse &use, const std::vector<SyncCoverEdge> &edges,
+    const std::vector<SyncCoverResourceAction> &actions) const {
   if (use.domain >= domains_.size()) {
     return SyncCoverMechanismError::InvalidDomain;
   }
-  const bool invalidNode = use.begin >= graph_.getNodes().size() ||
-                           use.end >= graph_.getNodes().size();
-  const bool invalidShape = invalidNode || use.width == 0 ||
+  const bool invalidShape = use.width == 0 ||
                             use.scope >= graph_.getScopes().size() ||
-                            use.supplyEdges.empty();
+                            !canonicalActionIndices(use.actions) ||
+                            !canonicalActionIndices(use.supplyEdges);
   if (invalidShape) {
     return SyncCoverMechanismError::InvalidResourceUse;
   }
-  const SyncCoverResourceDomain &domain = domains_[use.domain];
-  const bool wrongResources =
-      domain.sourceResource != graph_.getNodes()[use.begin].resource ||
-      domain.targetResource != graph_.getNodes()[use.end].resource;
-  if (wrongResources) {
-    return SyncCoverMechanismError::InvalidResourceUse;
-  }
-  const bool invalidScope =
-      !scopeContains(graph_, use.scope, graph_.getNodes()[use.begin].scope) ||
-      !scopeContains(graph_, use.scope, graph_.getNodes()[use.end].scope);
-  if (invalidScope || (use.distance != 0 && use.scope == 0)) {
+  if (use.distance != 0 &&
+      (use.scope == 0 || !graph_.getScopes()[use.scope].timeline)) {
     return SyncCoverMechanismError::InvalidResourceUse;
   }
 
-  const std::vector<SyncCoverEdge> &edges =
-      descriptorEdges ? *descriptorEdges : graph_.getEdges();
+  const SyncCoverResourceDomain &domain = domains_[use.domain];
+  bool hasProduce = false;
+  bool hasConsume = false;
+  for (std::size_t actionIndex : use.actions) {
+    if (actionIndex >= actions.size()) {
+      return SyncCoverMechanismError::InvalidAction;
+    }
+    const SyncCoverResourceAction &action = actions[actionIndex];
+    const bool produce = action.kind == SyncCoverResourceActionKind::Produce;
+    const std::uint32_t expectedResource =
+        produce ? domain.sourceResource : domain.targetResource;
+    if (action.resource != expectedResource ||
+        !actionOccursWithin(graph_, action, use.scope)) {
+      return SyncCoverMechanismError::InvalidAction;
+    }
+    hasProduce |= produce;
+    hasConsume |= !produce;
+  }
+  if (!hasProduce || !hasConsume) {
+    return SyncCoverMechanismError::InvalidResourceUse;
+  }
+
   for (std::size_t edgeIndex : use.supplyEdges) {
     if (edgeIndex >= edges.size()) {
       return SyncCoverMechanismError::InvalidResourceUse;
     }
     const SyncCoverEdge &edge = edges[edgeIndex];
     const bool wrongLifetime =
-        edge.source != use.begin || edge.target != use.end ||
         edge.scope != use.scope || edge.distance != use.distance;
     if (wrongLifetime) {
       return SyncCoverMechanismError::InvalidResourceUse;
     }
   }
   return SyncCoverMechanismError::None;
+}
+
+SyncCoverMechanismError SyncCoverMechanismUniverse::validateSupplyBindings(
+    SyncCoverMechanismKind kind, const std::vector<SyncCoverEdge> &edges,
+    const std::vector<std::size_t> &supplyEdges,
+    const std::vector<SyncCoverResourceAction> &actions,
+    const std::vector<SyncCoverResourceUse> &uses,
+    const std::vector<SyncCoverSupplyBinding> &bindings) const {
+  if (kind == SyncCoverMechanismKind::Barrier) {
+    return bindings.empty() ? SyncCoverMechanismError::None
+                            : SyncCoverMechanismError::InvalidBinding;
+  }
+
+  std::vector<std::size_t> expectedEdges;
+  for (const SyncCoverResourceUse &use : uses) {
+    expectedEdges.insert(expectedEdges.end(), use.supplyEdges.begin(),
+                         use.supplyEdges.end());
+  }
+  std::sort(expectedEdges.begin(), expectedEdges.end());
+  expectedEdges.erase(std::unique(expectedEdges.begin(), expectedEdges.end()),
+                      expectedEdges.end());
+  if (expectedEdges != supplyEdges) {
+    return SyncCoverMechanismError::InvalidBinding;
+  }
+  const bool wrongBindingCount = bindings.size() != expectedEdges.size();
+  if (wrongBindingCount) {
+    return SyncCoverMechanismError::InvalidBinding;
+  }
+
+  std::vector<std::size_t> claimedEdges;
+  for (const SyncCoverSupplyBinding &binding : bindings) {
+    const bool invalidIndex = binding.supplyEdge >= edges.size() ||
+                              binding.resourceUse >= uses.size() ||
+                              binding.produceAction >= actions.size() ||
+                              binding.consumeAction >= actions.size();
+    if (invalidIndex) {
+      return SyncCoverMechanismError::InvalidBinding;
+    }
+    const SyncCoverResourceUse &use = uses[binding.resourceUse];
+    const bool invalidUse =
+        use.domain >= domains_.size() ||
+        !containsIndex(use.supplyEdges, binding.supplyEdge) ||
+        !containsIndex(use.actions, binding.produceAction) ||
+        !containsIndex(use.actions, binding.consumeAction);
+    if (invalidUse) {
+      return SyncCoverMechanismError::InvalidBinding;
+    }
+    const SyncCoverEdge &edge = edges[binding.supplyEdge];
+    const SyncCoverResourceAction &produce = actions[binding.produceAction];
+    const SyncCoverResourceAction &consume = actions[binding.consumeAction];
+    const bool wrongKinds =
+        produce.kind != SyncCoverResourceActionKind::Produce ||
+        consume.kind != SyncCoverResourceActionKind::Consume;
+    const bool wrongLifetime =
+        edge.scope != use.scope || edge.distance != use.distance;
+    if (wrongKinds || wrongLifetime) {
+      return SyncCoverMechanismError::InvalidBinding;
+    }
+
+    if (kind == SyncCoverMechanismKind::EventBundle) {
+      const SyncCoverResourceDomain &domain = domains_[use.domain];
+      const bool canonicalAnchors =
+          edge.source < graph_.getNodes().size() &&
+          edge.target < graph_.getNodes().size() &&
+          produce.anchor.kind == SyncCoverAnchorKind::AfterNode &&
+          produce.anchor.node == edge.source && produce.anchor.scope == 0 &&
+          consume.anchor.kind == SyncCoverAnchorKind::BeforeNode &&
+          consume.anchor.node == edge.target && consume.anchor.scope == 0;
+      const bool completionQualified =
+          canonicalAnchors && syncCoverNodeCanProduceCompletion(
+                                  graph_, edge.source, domain.targetResource);
+      if (domain.kind != SyncCoverResourceKind::EventId || edge.distance != 0 ||
+          use.distance != 0 || !completionQualified) {
+        return SyncCoverMechanismError::InvalidBinding;
+      }
+    }
+    claimedEdges.push_back(binding.supplyEdge);
+  }
+  std::sort(claimedEdges.begin(), claimedEdges.end());
+  return claimedEdges == expectedEdges
+             ? SyncCoverMechanismError::None
+             : SyncCoverMechanismError::InvalidBinding;
 }
 
 SyncCoverMechanismError SyncCoverMechanismUniverse::validateBarrier(

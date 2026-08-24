@@ -536,36 +536,6 @@ bool mlir::pto::appendCanonicalEventBundleCandidate(
   return false;
 }
 
-std::size_t mlir::pto::calculateCanonicalEventColorOverflow(
-    ArrayRef<CanonicalEvent> events, unsigned eventIdMax,
-    const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds) {
-  std::map<CanonicalEventDomainKey, std::vector<SyncInterval>> intervals;
-  for (const CanonicalEvent &event : events) {
-    auto &domain = intervals[{event.sourcePipe, event.targetPipe}];
-    for (unsigned lane = 0; lane < event.width; ++lane) {
-      domain.push_back({event.intervalBegin, event.intervalEnd});
-    }
-  }
-
-  std::size_t overflow = 0;
-  for (const auto &entry : intervals) {
-    unsigned reserved = 0;
-    auto reservedIt = reservedIds.find(entry.first);
-    if (reservedIt != reservedIds.end()) {
-      for (unsigned eventId : reservedIt->second) {
-        reserved += eventId < eventIdMax ? 1U : 0U;
-      }
-    }
-    const unsigned colors = colorSyncIntervals(entry.second).colorCount;
-    const unsigned available = eventIdMax - reserved;
-    if (colors > available) {
-      addSaturated(overflow,
-                   static_cast<std::size_t>(colors - available));
-    }
-  }
-  return overflow;
-}
-
 std::vector<std::size_t> mlir::pto::buildCanonicalBarrierActionProfile(
     ArrayRef<CanonicalBarrier> barriers, std::size_t maxLoopDepth) {
   std::vector<std::size_t> profile(maxLoopDepth + 1, 0);
@@ -923,7 +893,7 @@ CanonicalMechanismPlanScore CanonicalSyncPlanBuilder::scoreCandidatePlan(
   });
   score.dynamicActionProfile.assign(maxLoopDepth + 1, 0);
 
-  std::map<CanonicalEventDomainKey, std::vector<SyncInterval>> intervals;
+  std::vector<CanonicalEvent> scoredEvents;
   for (const CanonicalEventBundleCandidate &bundle : eventBundles) {
     score.candidateSignature.push_back(bundle.id);
     if (bundle.kind == CanonicalEventBundleKind::Ownership) {
@@ -931,6 +901,7 @@ CanonicalMechanismPlanScore CanonicalSyncPlanBuilder::scoreCandidatePlan(
       score.ownershipSignature.push_back(bundle.protocolIdentity);
     }
     for (const CanonicalEvent &event : bundle.events) {
+      scoredEvents.push_back(event);
       for (const CanonicalEventAction &action : event.actions) {
         const std::size_t depth = getEnclosingLoopDepth(action.anchor.operation);
         const std::size_t profileIndex = maxLoopDepth - depth;
@@ -949,20 +920,22 @@ CanonicalMechanismPlanScore CanonicalSyncPlanBuilder::scoreCandidatePlan(
                          ? waitPosition - targetPosition
                          : targetPosition - waitPosition);
       }
-      auto &domain = intervals[{event.sourcePipe, event.targetPipe}];
-      for (unsigned lane = 0; lane < event.width; ++lane) {
-        domain.push_back({event.intervalBegin, event.intervalEnd});
-      }
     }
   }
 
   llvm::sort(score.ownershipSignature);
   llvm::sort(score.candidateSignature);
-  score.directedDomains = intervals.size();
-  for (const auto &entry : intervals) {
-    score.peakColorPressure =
-        std::max(score.peakColorPressure,
-                 colorSyncIntervals(entry.second).colorCount);
+  const std::optional<CanonicalEventColorPressureMap> pressure =
+      evaluateCanonicalEventColorPressure(scoredEvents, eventIdMax_,
+                                          reservedIds_);
+  if (!pressure) {
+    score.peakColorPressure = std::numeric_limits<std::size_t>::max();
+  } else {
+    score.directedDomains = pressure->size();
+    for (const auto &entry : *pressure) {
+      score.peakColorPressure =
+          std::max(score.peakColorPressure, entry.second.required);
+    }
   }
   score.barrierCount = barriers.size();
   score.barrierActionProfile =
@@ -1584,47 +1557,44 @@ LogicalResult CanonicalSyncPlanBuilder::buildSelectionDiagnostics() {
                });
   }
 
-  const auto collectColorCounts = [&](ArrayRef<CanonicalEvent> events) {
-    std::map<CanonicalEventDomainKey, std::vector<SyncInterval>> intervals;
-    for (const CanonicalEvent &event : events) {
-      auto &domain = intervals[{event.sourcePipe, event.targetPipe}];
-      for (unsigned lane = 0; lane < event.width; ++lane) {
-        domain.push_back({event.intervalBegin, event.intervalEnd});
-      }
-    }
-    std::map<CanonicalEventDomainKey, unsigned> colors;
-    for (const auto &entry : intervals) {
-      colors[entry.first] = colorSyncIntervals(entry.second).colorCount;
-    }
-    return colors;
-  };
-  const auto beforeColors = collectColorCounts(plan_.events_);
-  const auto afterColors = collectColorCounts(remainingEvents);
+  const std::optional<CanonicalEventColorPressureMap> beforePressure =
+      evaluateCanonicalEventColorPressure(plan_.events_, eventIdMax_,
+                                          reservedIds_);
+  const std::optional<CanonicalEventColorPressureMap> afterPressure =
+      evaluateCanonicalEventColorPressure(remainingEvents, eventIdMax_,
+                                          reservedIds_);
+  if (!beforePressure || !afterPressure) {
+    return failure();
+  }
   std::set<CanonicalEventDomainKey> domains;
-  for (const auto &entry : beforeColors) {
+  for (const auto &entry : *beforePressure) {
     domains.insert(entry.first);
   }
-  for (const auto &entry : afterColors) {
+  for (const auto &entry : *afterPressure) {
     domains.insert(entry.first);
   }
   for (const auto &entry : reservedIds_) {
     domains.insert(entry.first);
   }
   for (const CanonicalEventDomainKey &domain : domains) {
-    unsigned reserved = 0;
+    std::vector<unsigned> reserved;
     auto reservedIt = reservedIds_.find(domain);
     if (reservedIt != reservedIds_.end()) {
-      reserved = llvm::count_if(reservedIt->second, [&](unsigned id) {
-        return id < eventIdMax_;
-      });
+      reserved.assign(reservedIt->second.begin(), reservedIt->second.end());
     }
-    const auto getColorCount = [&](const auto &colorCounts) {
-      auto entry = colorCounts.find(domain);
-      return entry == colorCounts.end() ? 0U : entry->second;
+    const SyncIntervalPressure availability =
+        evaluateSyncIntervalPressure({}, eventIdMax_, reserved);
+    if (!availability) {
+      return failure();
+    }
+    const auto getColorCount = [&](const auto &pressure) {
+      auto entry = pressure.find(domain);
+      return entry == pressure.end() ? std::size_t{0}
+                                     : entry->second.required;
     };
     diagnostic.colorPressure.push_back(
-        {domain.source, domain.target, getColorCount(beforeColors),
-         getColorCount(afterColors), eventIdMax_ - reserved});
+        {domain.source, domain.target, getColorCount(*beforePressure),
+         getColorCount(*afterPressure), availability.available});
   }
 
   plan_.selectionDiagnostics_.push_back(std::move(diagnostic));

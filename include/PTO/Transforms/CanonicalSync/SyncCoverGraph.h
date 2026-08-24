@@ -15,6 +15,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -25,6 +26,25 @@ using SyncCoverNodeId = std::size_t;
 using SyncCoverScopeId = std::size_t;
 using SyncCoverControlId = std::size_t;
 using SyncCoverMechanismId = std::size_t;
+using SyncCoverTimelinePosition = std::size_t;
+
+struct SyncCoverTimelineInterval {
+  SyncCoverTimelinePosition begin = 0;
+  SyncCoverTimelinePosition end = 0;
+};
+
+enum class SyncCoverAnchorKind : std::uint8_t {
+  BeforeNode,
+  AfterNode,
+  ScopeEntry,
+  ScopeExit,
+};
+
+struct SyncCoverAnchor {
+  SyncCoverAnchorKind kind = SyncCoverAnchorKind::BeforeNode;
+  SyncCoverNodeId node = 0;
+  SyncCoverScopeId scope = 0;
+};
 
 struct SyncCoverGuardLiteral {
   SyncCoverControlId control = 0;
@@ -42,7 +62,7 @@ struct SyncCoverGuard {
 
 enum class SyncCoverEdgeKind : std::uint8_t {
   /// Preserves an already-established completion fact but does not establish
-  /// one. This models in-order issue on a completion-ordered resource.
+  /// one. Its availability is an explicit operation/architecture capability.
   CompletionPreservingIssueOrder,
   /// Pure issue order that cannot carry a completion fact.
   NonCompletionPreservingIssueOrder,
@@ -64,6 +84,9 @@ struct SyncCoverNode {
   SyncCoverScopeId scope = 0;
   std::size_t order = 0;
   SyncCoverGuard guard;
+  /// Event destinations for which a Produce immediately after this node
+  /// observes this node's completion. The source resource is node.resource.
+  std::vector<std::uint32_t> completionTargets;
 };
 
 struct SyncCoverEdge {
@@ -91,6 +114,8 @@ struct SyncCoverScope {
   SyncCoverScopeId id = 0;
   SyncCoverScopeId parent = 0;
   bool mustExecuteWithinParent = false;
+  std::optional<SyncCoverTimelineInterval> timeline;
+  bool isLoop = false;
 };
 
 struct SyncCoverControl {
@@ -106,6 +131,8 @@ enum class SyncCoverGraphError : std::uint8_t {
   InvalidControl,
   InvalidGuard,
   InvalidDistance,
+  InvalidOrder,
+  InvalidTimeline,
   IncompatibleEndpoints,
   ZeroDistanceSelfEdge,
   ZeroDistanceSelfDemand,
@@ -124,13 +151,16 @@ struct SyncCoverGraphResult {
 
 class SyncCoverGraph {
 public:
-  SyncCoverGraphResult addScope(SyncCoverScopeId parent = 0,
-                                bool mustExecuteWithinParent = false);
+  SyncCoverGraphResult
+  addScope(SyncCoverScopeId parent = 0, bool mustExecuteWithinParent = false,
+           std::optional<SyncCoverTimelineInterval> timeline = std::nullopt,
+           bool isLoop = false);
   SyncCoverGraphResult addControl(unsigned alternatives,
                                   SyncCoverScopeId scope = 0);
-  SyncCoverGraphResult addNode(std::uint32_t resource, std::uint64_t weight,
-                               SyncCoverScopeId scope, std::size_t order,
-                               SyncCoverGuard guard = {});
+  SyncCoverGraphResult
+  addNode(std::uint32_t resource, std::uint64_t weight, SyncCoverScopeId scope,
+          std::size_t order, SyncCoverGuard guard = {},
+          std::vector<std::uint32_t> completionTargets = {});
   SyncCoverGraphResult addEdge(SyncCoverEdge edge);
   SyncCoverGraphResult addDemand(SyncCoverDemand demand);
 
@@ -159,7 +189,10 @@ private:
   std::vector<SyncCoverNode> nodes_;
   std::vector<SyncCoverEdge> edges_;
   std::vector<SyncCoverDemand> demands_;
-  std::vector<SyncCoverScope> scopes_{{0, 0, true}};
+  std::vector<SyncCoverScope> scopes_{
+      {0, 0, true,
+       SyncCoverTimelineInterval{0, std::numeric_limits<std::size_t>::max()},
+       false}};
   std::vector<SyncCoverControl> controls_;
 };
 
@@ -168,6 +201,12 @@ bool syncCoverGuardImplies(const SyncCoverGuard &condition,
                            const SyncCoverGuard &required);
 bool syncCoverGuardsCompatible(const SyncCoverGuard &first,
                                const SyncCoverGuard &second);
+std::optional<SyncCoverTimelinePosition>
+resolveSyncCoverAnchor(const SyncCoverGraph &graph,
+                       const SyncCoverAnchor &anchor);
+bool syncCoverNodeCanProduceCompletion(const SyncCoverGraph &graph,
+                                       SyncCoverNodeId node,
+                                       std::uint32_t targetResource);
 
 } // namespace pto
 } // namespace mlir

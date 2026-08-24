@@ -183,7 +183,9 @@ std::optional<std::size_t> transition(const VirtualEdge &edge,
   case SyncCoverEdgeKind::CompletionSupply:
     return stateIndex(edge.target, true);
   case SyncCoverEdgeKind::CompletionPreservingIssueOrder:
-    return stateIndex(edge.target, completion);
+    return completion
+               ? std::optional<std::size_t>(stateIndex(edge.target, true))
+               : std::nullopt;
   case SyncCoverEdgeKind::NonCompletionPreservingIssueOrder:
     return std::nullopt;
   }

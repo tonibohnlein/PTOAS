@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "CanonicalSyncInternal.h"
 
@@ -622,24 +624,21 @@ std::vector<CanonicalEvent> CanonicalSyncPlanBuilder::selectRequiredEvents(
   }
 
   const auto getOverBudgetDomains = [&]() {
-    std::map<CanonicalEventDomainKey, std::vector<SyncInterval>> intervals;
     std::vector<CanonicalEventDomainKey> overBudget;
-    for (const CanonicalEvent &event : selected) {
-      auto &domain = intervals[{event.sourcePipe, event.targetPipe}];
-      for (unsigned lane = 0; lane < event.width; ++lane) {
-        domain.push_back({event.intervalBegin, event.intervalEnd});
+    const std::optional<CanonicalEventColorPressureMap> pressure =
+        evaluateCanonicalEventColorPressure(selected, eventIdMax_,
+                                            reservedIds_);
+    if (!pressure) {
+      for (const CanonicalEvent &event : selected) {
+        overBudget.push_back({event.sourcePipe, event.targetPipe});
       }
+      llvm::sort(overBudget);
+      overBudget.erase(std::unique(overBudget.begin(), overBudget.end()),
+                       overBudget.end());
+      return overBudget;
     }
-    for (const auto &entry : intervals) {
-      unsigned reserved = 0;
-      auto reservedIt = reservedIds_.find(entry.first);
-      if (reservedIt != reservedIds_.end()) {
-        for (unsigned eventId : reservedIt->second) {
-          reserved += eventId < eventIdMax_ ? 1U : 0U;
-        }
-      }
-      if (colorSyncIntervals(entry.second).colorCount >
-          eventIdMax_ - reserved) {
+    for (const auto &entry : *pressure) {
+      if (entry.second.overflow != 0) {
         overBudget.push_back(entry.first);
       }
     }
@@ -725,8 +724,7 @@ std::size_t CanonicalSyncPlanBuilder::countUncoveredRequirements(
       auto [group, inserted] =
           forwardGroups.emplace(key, forwardRequirements.size());
       if (inserted) {
-        forwardRequirements.push_back(
-            {requirement.source, requirement.target});
+        forwardRequirements.push_back({requirement.source, requirement.target});
         forwardIndices.push_back(index);
         forwardEquivalentIndices.emplace_back();
       }
@@ -766,30 +764,16 @@ std::size_t CanonicalSyncPlanBuilder::countUncoveredRequirements(
 
 bool CanonicalSyncPlanBuilder::eventsFitBudget(
     ArrayRef<CanonicalEvent> events) const {
-  std::map<CanonicalEventDomainKey, std::vector<SyncInterval>> intervals;
   for (const CanonicalEvent &event : events) {
     if (event.width == 0 || event.width > kMaxMultiBufferCount) {
       return false;
     }
-    auto &domain = intervals[{event.sourcePipe, event.targetPipe}];
-    for (unsigned lane = 0; lane < event.width; ++lane) {
-      domain.push_back({event.intervalBegin, event.intervalEnd});
-    }
   }
-  for (const auto &entry : intervals) {
-    unsigned reserved = 0;
-    auto reservedIt = reservedIds_.find(entry.first);
-    if (reservedIt != reservedIds_.end()) {
-      for (unsigned eventId : reservedIt->second) {
-        reserved += eventId < eventIdMax_ ? 1U : 0U;
-      }
-    }
-    const unsigned available = eventIdMax_ - reserved;
-    if (colorSyncIntervals(entry.second).colorCount > available) {
-      return false;
-    }
-  }
-  return true;
+  const std::optional<CanonicalEventColorPressureMap> pressure =
+      evaluateCanonicalEventColorPressure(events, eventIdMax_, reservedIds_);
+  return pressure && llvm::all_of(*pressure, [](const auto &entry) {
+           return entry.second.overflow == 0;
+         });
 }
 
 void CanonicalSyncPlanBuilder::optimizeBarriers() {

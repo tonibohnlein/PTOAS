@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 // This file repairs event-id scarcity without changing operation order. It
 // searches deterministic coalescings of forward events and validates every
@@ -25,11 +27,14 @@ LogicalResult CanonicalSyncPlanBuilder::repairEventScarcity() {
     domains.insert({event.sourcePipe, event.targetPipe});
   }
   for (const CanonicalEventDomainKey &key : domains) {
-    unsigned reserved = 0;
-    for (unsigned eventId : reservedIds_[key]) {
-      reserved += eventId < eventIdMax_ ? 1U : 0U;
+    const std::vector<unsigned> reserved(reservedIds_[key].begin(),
+                                         reservedIds_[key].end());
+    const SyncIntervalPressure pressure =
+        evaluateSyncIntervalPressure({}, eventIdMax_, reserved);
+    if (!pressure) {
+      return failure();
     }
-    const unsigned available = eventIdMax_ - reserved;
+    const unsigned available = static_cast<unsigned>(pressure.available);
     if (failed(repairEventDomain(key, available))) {
       return failure();
     }

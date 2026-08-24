@@ -323,9 +323,9 @@ struct CanonicalSelectionRequirementDiagnostic {
 struct CanonicalSelectionColorPressure {
   PipelineType sourcePipe = PipelineType::PIPE_UNASSIGNED;
   PipelineType targetPipe = PipelineType::PIPE_UNASSIGNED;
-  unsigned beforeColors = 0;
-  unsigned afterColors = 0;
-  unsigned availableIds = 0;
+  std::size_t beforeColors = 0;
+  std::size_t afterColors = 0;
+  std::size_t availableIds = 0;
 };
 
 struct CanonicalSelectionDiagnostic {
