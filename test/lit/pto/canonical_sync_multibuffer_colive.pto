@@ -19,9 +19,9 @@
 // RUN:   | FileCheck %s --check-prefix=SCARCE
 
 // Two slots of one allocation are live in each iteration. The vector operation
-// reads both before the next iteration overwrites them in MTE2. The retained
-// edge sets lane i+1 and waits on lane i. Priming both lanes would therefore
-// double-set a live token; CanonicalSync safely falls back to one static lane.
+// reads both before the next iteration overwrites them in MTE2. The preserved
+// V -> MTE2 requirement is covered transitively through the existing
+// V -> MTE3 -> MTE2 store protocol, so no duplicate recurrence event is needed.
 
 module {
   func.func @colive_slots(
@@ -204,18 +204,20 @@ module {
 // PLAN-LABEL: PTOCanonicalSyncPlan @colive_slots
 // PLAN: dependency 2 -> 0 kind=memory-war distance=1 retained=yes
 // PLAN: dependency 2 -> 1 kind=memory-war distance=1 retained=no
-// PLAN: event{{\[[0-9]+\]}} PIPE_V -> PIPE_MTE2 source=2 target=0 width=1
+// PLAN: event{{\[[0-9]+\]}} PIPE_V -> PIPE_MTE3 source=2 target=3 width=1
+// PLAN: event{{\[[0-9]+\]}} PIPE_MTE3 -> PIPE_MTE2 source=3 target=0 width=1
 
 // IR-LABEL: func.func @colive_slots
-// IR: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
-// IR-NOT: pto.set_flag_dyn[<PIPE_V>, <PIPE_MTE2>
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
 // IR: scf.for
-// IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
 // IR: pto.tload
 // IR: pto.tload
 // IR: pto.tadd
-// IR: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
-// IR-NOT: pto.wait_flag_dyn[<PIPE_V>, <PIPE_MTE2>
+// IR: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// IR: pto.tstore
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
 // IR-LABEL: func.func @distance_two_short
 
 // SCARCE: error: PTOCanonicalSync cannot repair event-id scarcity in domain

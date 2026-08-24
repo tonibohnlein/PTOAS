@@ -34,7 +34,7 @@ LogicalResult CanonicalSyncPlanBuilder::repairEventScarcity() {
       return failure();
     }
   }
-  return success();
+  return refreshSelectedEventBundles();
 }
 
 std::optional<CanonicalEvent> CanonicalSyncPlanBuilder::coalesceForwardEvents(

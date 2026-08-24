@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=events event-id-num-max=2' \
+// RUN:   | FileCheck %s --check-prefix=PLAN
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=2' \
+// RUN:   | FileCheck %s --check-prefix=IR
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @reserved_scalar_to_vector_id() {
+    %addr0 = arith.constant 0 : i64
+    %addr128 = arith.constant 128 : i64
+    %addr256 = arith.constant 256 : i64
+    %addr384 = arith.constant 384 : i64
+    %compare = arith.constant 0.000000e+00 : f16
+    %scale = arith.constant 2 : i32
+    %src = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x32xf16>
+    %tmp = pto.alloc_tile addr = %addr128 : !pto.tile_buf<vec, 1x32xui8>
+    %dst = pto.alloc_tile addr = %addr256 : !pto.tile_buf<vec, 1x32xi32>
+    %count = pto.alloc_tile addr = %addr384 : !pto.tile_buf<vec, 1x32xi32>
+
+    pto.tgather ins(%src, %compare, %tmp :
+      !pto.tile_buf<vec, 1x32xf16>, f16, !pto.tile_buf<vec, 1x32xui8>)
+      outs(%dst, %count : !pto.tile_buf<vec, 1x32xi32>,
+                           !pto.tile_buf<vec, 1x32xi32>)
+    pto.tmuls ins(%count, %scale : !pto.tile_buf<vec, 1x32xi32>, i32)
+      outs(%count : !pto.tile_buf<vec, 1x32xi32>)
+    return
+  }
+}
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @reserved_scalar_to_vector_id
+// PLAN: event{{.*}} PIPE_S -> PIPE_V {{.*}}ids=[1]
+// PLAN: domain PIPE_S -> PIPE_V {{.*}}available=1 {{.*}}colors=1
+// PLAN-SAME: reserved=[0]
+
+// IR-LABEL: func.func @reserved_scalar_to_vector_id
+// IR: pto.set_flag[<PIPE_S>, <PIPE_V>, <EVENT_ID1>]
+// IR: pto.wait_flag[<PIPE_S>, <PIPE_V>, <EVENT_ID1>]
+// IR-NOT: pto.set_flag[<PIPE_S>, <PIPE_V>, <EVENT_ID0>]

@@ -991,46 +991,24 @@ void CanonicalSyncPlanBuilder::optimizeBarriers() {
     index = 0;
   }
   events = selectRequiredEvents(barriers, events);
-  SmallVector<std::size_t, 4> protocolBundles;
-  for (const CanonicalEvent &event : events) {
-    if (event.protocolBundle != 0 &&
-        !llvm::is_contained(protocolBundles, event.protocolBundle)) {
-      protocolBundles.push_back(event.protocolBundle);
-    }
-  }
-  for (std::size_t bundle : protocolBundles) {
-    std::vector<CanonicalEvent> reduced;
-    llvm::copy_if(events, std::back_inserter(reduced),
-                  [&](const CanonicalEvent &event) {
-                    return event.protocolBundle != bundle;
-                  });
-    if (planCoversRequirements(barriers, reduced)) {
-      events = std::move(reduced);
-    }
-  }
-  SmallVector<std::size_t, 4> ownershipCycles;
-  for (const CanonicalEvent &event : events) {
-    if (event.ownershipProtocol && event.ownershipCycle != 0 &&
-        !llvm::is_contained(ownershipCycles, event.ownershipCycle)) {
-      ownershipCycles.push_back(event.ownershipCycle);
-    }
-  }
-  for (std::size_t cycle : ownershipCycles) {
-    std::vector<CanonicalEvent> reduced;
-    llvm::copy_if(events, std::back_inserter(reduced),
-                  [&](const CanonicalEvent &event) {
-                    return !event.ownershipProtocol ||
-                           event.ownershipCycle != cycle;
-                  });
-    if (planCoversRequirements(barriers, reduced)) {
-      events = std::move(reduced);
-    }
-  }
   plan_.barriers_ = std::move(barriers);
   plan_.events_ = std::move(events);
+  removeRedundantMechanisms();
 }
 
 LogicalResult CanonicalSyncPlanBuilder::verifyFinalPlan() {
+  if (!canonicalEventBundleProjectionMatches(selectedEventBundles_,
+                                             plan_.events_)) {
+    return func_.emitError(
+        "internal error: canonical event bundle projection is stale");
+  }
+  if (!isCandidatePlanFeasible(plan_.barriers_, selectedEventBundles_,
+                               plan_.completionRequirements_,
+                               /*diagnose=*/true)) {
+    return func_.emitError(
+        "internal error: canonical synchronization candidate plan is "
+        "infeasible");
+  }
   if (failed(verifyEventProtocols(plan_.events_, /*requireAllocation=*/false,
                                   /*diagnose=*/true))) {
     return func_.emitError(

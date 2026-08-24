@@ -415,57 +415,91 @@ bool mlir::pto::tryCommitCanonicalOwnershipCandidate(
   return false;
 }
 
+std::optional<CanonicalEventBundleCandidate>
+CanonicalSyncPlanBuilder::buildOwnershipEventBundle(
+    const CanonicalOwnershipCycle &cycle) {
+  const bool supported = cycle.kind == CanonicalOwnershipKind::L0Operand ||
+                         cycle.kind == CanonicalOwnershipKind::L1Tile ||
+                         cycle.kind ==
+                             CanonicalOwnershipKind::L0Accumulator;
+  if (!supported) {
+    return std::nullopt;
+  }
+  auto [ready, release] = buildCanonicalOwnershipProtocols(cycle);
+  const auto sortTraceActions = [&](CanonicalEvent &event) {
+    for (CanonicalEventTrace &trace : event.traces) {
+      llvm::stable_sort(trace.actions, [&](unsigned first, unsigned second) {
+        const std::size_t firstPosition =
+            getAnchorPosition(event.actions[first].anchor);
+        const std::size_t secondPosition =
+            getAnchorPosition(event.actions[second].anchor);
+        return firstPosition < secondPosition;
+      });
+    }
+  };
+  sortTraceActions(ready);
+  sortTraceActions(release);
+  deriveEventInterval(ready);
+  deriveEventInterval(release);
+
+  if (failed(verifyEventProtocols({ready, release},
+                                  /*requireAllocation=*/false,
+                                  /*diagnose=*/false))) {
+    return std::nullopt;
+  }
+
+  CanonicalEventBundleCandidate bundle;
+  bundle.kind = CanonicalEventBundleKind::Ownership;
+  bundle.protocolIdentity = cycle.id;
+  bundle.events.push_back(std::move(ready));
+  bundle.events.push_back(std::move(release));
+  return bundle;
+}
+
 void CanonicalSyncPlanBuilder::synthesizeOwnershipProtocols() {
   const std::vector<CanonicalBarrier> baselineBarriers = plan_.barriers_;
   const std::vector<CanonicalEvent> baselineEvents = plan_.events_;
-  std::vector<CanonicalEvent> acceptedOwnership;
+  std::vector<CanonicalEvent> ownershipEvents;
+  for (const CanonicalEventBundleCandidate &bundle :
+       mechanismUniverse_.eventBundles) {
+    if (bundle.kind == CanonicalEventBundleKind::Ownership) {
+      ownershipEvents.insert(ownershipEvents.end(), bundle.events.begin(),
+                             bundle.events.end());
+    }
+  }
 
+  plan_.events_.insert(plan_.events_.end(), ownershipEvents.begin(),
+                       ownershipEvents.end());
+  optimizeBarriers();
+  if (isCandidatePlanFeasible(plan_.barriers_,
+                              buildCanonicalEventBundles(plan_.events_),
+                              plan_.completionRequirements_)) {
+    return;
+  }
+
+  std::vector<CanonicalEvent> acceptedOwnership;
+  plan_.barriers_ = baselineBarriers;
+  plan_.events_ = baselineEvents;
   optimizeBarriers();
 
-  for (const CanonicalOwnershipCycle &cycle : plan_.ownershipCycles_) {
-    const bool supported = cycle.kind == CanonicalOwnershipKind::L0Operand ||
-                           cycle.kind == CanonicalOwnershipKind::L1Tile ||
-                           cycle.kind ==
-                               CanonicalOwnershipKind::L0Accumulator;
-    if (!supported) {
-      continue;
-    }
-    auto [ready, release] = buildCanonicalOwnershipProtocols(cycle);
-    const auto sortTraceActions = [&](CanonicalEvent &event) {
-      for (CanonicalEventTrace &trace : event.traces) {
-        llvm::stable_sort(trace.actions, [&](unsigned first, unsigned second) {
-          const std::size_t firstPosition =
-              getAnchorPosition(event.actions[first].anchor);
-          const std::size_t secondPosition =
-              getAnchorPosition(event.actions[second].anchor);
-          return firstPosition < secondPosition;
-        });
-      }
-    };
-    sortTraceActions(ready);
-    sortTraceActions(release);
-    deriveEventInterval(ready);
-    deriveEventInterval(release);
-
-    if (failed(verifyEventProtocols({ready, release},
-                                    /*requireAllocation=*/false,
-                                    /*diagnose=*/false))) {
+  for (const CanonicalEventBundleCandidate &bundle :
+       mechanismUniverse_.eventBundles) {
+    if (bundle.kind != CanonicalEventBundleKind::Ownership ||
+        bundle.events.size() != 2) {
       continue;
     }
 
     tryCommitCanonicalOwnershipCandidate(
-        acceptedOwnership, plan_.barriers_, plan_.events_, std::move(ready),
-        std::move(release), [&]() {
+        acceptedOwnership, plan_.barriers_, plan_.events_, bundle.events[0],
+        bundle.events[1], [&]() {
           plan_.barriers_ = baselineBarriers;
           plan_.events_ = baselineEvents;
           plan_.events_.insert(plan_.events_.end(), acceptedOwnership.begin(),
                                acceptedOwnership.end());
           optimizeBarriers();
-          return eventsFitBudget(plan_.events_) &&
-                 succeeded(verifyEventProtocols(
-                     plan_.events_, /*requireAllocation=*/false,
-                     /*diagnose=*/false)) &&
-                 planCoversRequirements(plan_.barriers_, plan_.events_);
+          return isCandidatePlanFeasible(
+              plan_.barriers_, buildCanonicalEventBundles(plan_.events_),
+              plan_.completionRequirements_);
         });
   }
 }

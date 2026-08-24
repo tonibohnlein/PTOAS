@@ -132,9 +132,13 @@ promise is valid; otherwise generated synchronization may be insufficient.
 Unannotated distinct GM arguments remain `MayAlias`.
 
 The recurrence scan checks increasing distances through the physical slot
-count and retains the first aliasing distance for each hazard kind. This also
-captures reuse such as `consumer(i) -> producer(i + N)` for an `N`-slot ring;
-checking adjacent iterations alone is not sufficient. A recurrence is removed
+count. The annotation-independent conservative requirement set records every
+aliasing distance for each hazard kind. The active set records only the first
+distance that remains after applying proven no-alias facts, and is therefore a
+subset of the conservative set by construction. Recording the conservative
+distance frontier before active filtering also captures reuse such as
+`consumer(i) -> producer(i + N)` for an `N`-slot ring without allowing a
+no-alias annotation to change the candidate universe. A recurrence is removed
 when exact constant `scf.for` bounds and a positive constant step prove that
 the loop executes at most its iteration distance, because no source/target
 instance of that recurrence can then occur. Dynamic bounds, unknown steps, and
@@ -572,6 +576,163 @@ Development is intentionally staged:
 3. match the hand-synchronized GEMM with the existing protocol families; and
 4. only then mine the corpus and add UB or N-way protocols with focused device
    cases.
+
+### Joint mechanism selection
+
+Barrier and event construction must not determine which mechanisms are
+available to the optimizer. CanonicalSync therefore keeps four distinct
+internal objects while leaving the public `CanonicalSyncPlan` as the final
+selected output:
+
+1. `Rmax`, the immutable conservative completion requirements computed without
+   applying `pto.noalias_pairs`;
+2. `R`, the active immutable requirements after applying all proven no-alias
+   facts, where `R` is a subset of `Rmax`;
+3. a stable mechanism universe generated from `Rmax`, structured control flow,
+   and exact physical-slot ownership; and
+4. a selected mixed plan containing barrier candidates and complete event
+   bundles.
+
+Reduction may mark working dependencies inactive, but neither `Rmax` nor `R`
+is erased. Candidate generation is completed before a provisional barrier or
+event plan is optimized. In particular, local ownership discovery is already
+independent of GM aliasing because it examines exact local `MAT`, `LEFT`,
+`RIGHT`, and `ACC` slots. The selector must not make acceptance of such a local
+protocol depend on a conservative GM event being present in the provisional
+plan.
+
+An event bundle is the atomic unit of selection. A standalone forward or
+recurrence event forms a one-event bundle. A synthetic round trip is an
+explicit bundle with stable member identities and the barrier or completion
+requirement it is intended to replace. The ready and release events for one
+nonzero `ownershipCycle` form one ownership bundle. Ownership bundles enter the
+universe only after the ownership-pair verifier reconstructs and accepts the
+complete expected lifecycle. Synthetic bundles require an equivalent
+whole-bundle verifier; merely counting two events with one numeric bundle ID is
+not sufficient. No search, scarcity repair, or redundancy pass may retain or
+delete only one member of a multi-event bundle.
+
+After selection, the builder retains the selected bundle objects, including
+their stable candidate IDs, conflicts, and completion witnesses. The flat event
+vector is only an emission projection. If scarcity repair coalesces eligible
+standalone events, that projection is reconciled with the retained bundle set;
+final feasibility verifies the retained bundles rather than reconstructing
+anonymous candidates from event tags.
+
+Individually valid ownership bundles may still be incompatible. The mechanism
+universe therefore records a stable conflict relation for candidates that
+overlap physical slots or otherwise compete for one lifecycle. A selected plan
+may contain no conflicting pair. Discovery may conservatively omit ambiguous
+overlapping cycles, as it does today, but general candidate generation must not
+silently assume that independent protocol verification proves compatibility.
+
+One centralized feasibility function validates every complete candidate plan:
+
+- no selected candidates conflict;
+- every standalone event and complete synthetic or ownership bundle verifies;
+- every action and barrier uses a legal immutable structured-control anchor;
+- exact interval coloring fits the available IDs in every directed pipe
+  domain, after reserved IDs are removed; and
+- completion-qualified reachability covers every active requirement in `R`.
+
+After building the invariant mechanism universe, the planner runs the existing
+deterministic CanonicalSync construction on `Rmax`. If that covered plan fits
+the event budget, it becomes the initial incumbent and also covers every subset
+`R`. If the conservative plan is over budget, the planner constructs the
+ordinary covered direct barrier/event plan for `R` and uses it as an infeasible
+bootstrap state. A bounded bootstrap exchanges complete mechanisms until
+centralized feasibility finds an active-`R` incumbent; the existing scarcity
+repair remains the later coalescing fallback. Failure to find one remains
+fail-closed; the design does not claim a complete solution to event scarcity.
+Once a feasible incumbent exists, it is retained outside
+every bounded frontier or beam and can never be lost through pruning. This
+establishes monotonicity whenever the conservative input compiles while still
+allowing a more precise annotated input to compile when bounded active search
+succeeds. An optimization for `R` may remove redundant conservative
+mechanisms, but failure to improve returns the verified incumbent rather than
+rejecting the kernel.
+
+The bootstrap frontier contains only protocol-well-formed states that already
+cover every active requirement; event-ID overflow is the sole permitted
+infeasibility. A transition adds one complete universe bundle or barrier,
+protects that addition for the transition, and removes only mechanisms whose
+removal preserves complete coverage and protocol validity. Conflicting bundles
+are exchanged atomically. Partial states are ranked by exact aggregate color
+overflow, event-lane count, mechanism count, and stable candidate signature.
+The search uses the same four-round, eight-state bounds as joint selection
+(one round and one candidate per class above 1,024 requirements). The plan
+printer reports `bootstrap=yes` only when this path establishes the first
+centralized-feasible incumbent.
+
+Selection starts from that incumbent. A transition exchanges complete event
+bundles and barrier candidates drawn from the invariant mechanism universe; it
+does not search upward from an empty plan. Every complete candidate is checked
+by the centralized verifier and recolored exactly. Bounded search may rank
+covered exchange states by event-domain pressure, but only a feasible complete
+plan can replace the incumbent.
+
+Before joint exchange search, a deterministic redundancy sweep tries removing
+one complete bundle or barrier at a time. Each removal re-enters centralized
+feasibility. Individual set or wait actions are never deletion candidates.
+Scarcity coalescing remains a later transformation over standalone forward
+bundles and must re-enter the same verifier.
+
+Until calibrated hardware costs exist, ranking is explicitly structural rather
+than performance-optimal. Action frequency is derived from each emitted
+anchor's enclosing loop ancestry and protocol lifecycle, not only from
+`CanonicalEventActionPhase`: a `Straight` action anchored in a loop is still
+dynamically repeated. Candidate plans are compared by one total lexicographic
+order:
+
+1. maximize the number of verified ownership bundles that cover an active
+   requirement or enable a barrier removal;
+2. prefer the lexicographically smallest stable signatures of those useful
+   ownership bundles, resolving incompatible alternatives deterministically;
+3. minimize the symbolic set/wait profile from the deepest repeated anchor
+   scope outward;
+4. minimize the barrier profile from the deepest repeated anchor scope
+   outward, so an inner-loop barrier is not equivalent to a one-time outer
+   barrier;
+5. minimize wait distance from the protected reuse, total event-interval span,
+   peak exact color pressure, newly introduced directed domains, and total
+   barrier count, in that order; and
+6. prefer the lexicographically smallest complete candidate signature.
+
+The comparator is unit-tested independently before it controls plan selection.
+A calibrated latency model may later replace this ordering.
+
+A focused monotonicity regression is the historical GEMM with all three GM
+argument pairs declared no-alias. The unannotated input fits eight IDs, so the
+annotated input must also fit, preserve the four non-conflicting local ownership
+bundles, and remove only synchronization that centralized feasibility proves
+redundant.
+
+Implementation is split into reviewable stages:
+
+1. preserve separate `Rmax` and active `R` before dependency reduction,
+   including whether each deduplicated dependency has an active alias witness;
+2. add stable internal barrier candidates, atomic event bundles, whole-bundle
+   verification, and bundle conflicts without changing emitted plans;
+3. generate the invariant mechanism universe from `Rmax` and physical-slot
+   structure;
+4. centralize candidate-plan feasibility, construct the deterministic `Rmax`
+   seed or bounded active-`R` bootstrap, and retain any verified incumbent
+   outside bounded search;
+5. add whole-bundle redundancy deletion and tests for missing bundle halves,
+   overlapping ownership candidates, no-alias monotonicity, reserved IDs,
+   deterministic ties, and forced frontier truncation;
+6. unit-test the total structural comparator, then add incumbent-centered joint
+   exchange search and anchor-derived structural scoring; and
+7. compare the historical GEMM action profile and silicon performance against
+   InsertSync and the hand-synchronized kernel before adding more protocol
+   families.
+
+The initial selector implements stages 1-6 with at most eight event-bundle and
+eight barrier additions per round for four improvement rounds. Functions with
+more than 1,024 active requirements use one candidate of each class for one
+round until pressure-hotspot ranking can bound large candidate universes more
+selectively. Stage 7 remains a device evaluation requirement; the structural
+order is not a claim of latency optimality.
 
 ## Event feasibility boundary
 

@@ -253,6 +253,24 @@ void CanonicalSyncPlanBuilder::discardImpossibleRecurrences() {
     const std::optional<bool> canOccur =
         canRecurrenceOccur(forOp, dependency.iterationDistance);
     if (canOccur && !*canOccur) {
+      dependency.possible = false;
+      dependency.retained = false;
+    }
+  }
+}
+
+void CanonicalSyncPlanBuilder::preserveConservativeCompletionRequirements() {
+  plan_.conservativeCompletionRequirements_.clear();
+  for (CanonicalDependency &dependency : plan_.dependencies_) {
+    if (!dependency.possible) {
+      continue;
+    }
+    CanonicalDependency conservative = dependency;
+    conservative.active = true;
+    conservative.retained = true;
+    plan_.conservativeCompletionRequirements_.push_back(
+        std::move(conservative));
+    if (!dependency.active) {
       dependency.retained = false;
     }
   }
@@ -261,7 +279,8 @@ void CanonicalSyncPlanBuilder::discardImpossibleRecurrences() {
 void CanonicalSyncPlanBuilder::preserveForwardCompletionRequirements() {
   plan_.completionRequirements_.clear();
   for (const CanonicalDependency &dependency : plan_.dependencies_) {
-    if (dependency.retained && dependency.iterationDistance == 0) {
+    if (dependency.active && dependency.possible && dependency.retained &&
+        dependency.iterationDistance == 0) {
       plan_.completionRequirements_.push_back(dependency);
     }
   }
@@ -496,7 +515,8 @@ void CanonicalSyncPlanBuilder::reduceForwardDependencies() {
 
 void CanonicalSyncPlanBuilder::preserveRecurrenceCompletionRequirements() {
   for (const CanonicalDependency &dependency : plan_.dependencies_) {
-    if (dependency.retained && dependency.iterationDistance != 0) {
+    if (dependency.active && dependency.possible && dependency.retained &&
+        dependency.iterationDistance != 0) {
       plan_.completionRequirements_.push_back(dependency);
     }
   }
@@ -688,18 +708,41 @@ unsigned CanonicalSyncPlanBuilder::getRecurrenceWidth(
   return width;
 }
 
-void CanonicalSyncPlanBuilder::materializeSyncRequirements() {
+LogicalResult CanonicalSyncPlanBuilder::materializeSyncRequirements() {
   materializeBarriers();
   materializeEvents();
-  synthesizeOwnershipProtocols();
+  buildMechanismUniverse();
+
+  std::vector<CanonicalBarrier> conservativeBarriers;
+  std::vector<CanonicalEvent> conservativeEvents;
+  const bool hasConservativeOnlyDependencies =
+      llvm::any_of(plan_.dependencies_, [](const auto &dependency) {
+        return dependency.possible && !dependency.active;
+      });
+  const bool hasConservativeIncumbent =
+      hasConservativeOnlyDependencies &&
+      tryBuildConservativeIncumbent(conservativeBarriers, conservativeEvents);
+  if (hasConservativeIncumbent) {
+    plan_.barriers_ = std::move(conservativeBarriers);
+    plan_.events_ = std::move(conservativeEvents);
+    optimizeBarriers();
+  } else {
+    synthesizeOwnershipProtocols();
+  }
+  return optimizeMechanismSelection();
 }
 
 void CanonicalSyncPlanBuilder::materializeBarriers() {
   auto groups = groupDependencies(plan_.dependencies_);
   DenseMap<Operation *, std::size_t> operationOrders;
+  DenseMap<Operation *, std::size_t> recurrenceScopeIds;
   std::size_t nextOperationOrder = 0;
+  std::size_t nextRecurrenceScopeId = 1;
   func_.walk([&](Operation *operation) {
     operationOrders[operation] = nextOperationOrder++;
+    if (isa<LoopLikeOpInterface>(operation)) {
+      recurrenceScopeIds[operation] = nextRecurrenceScopeId++;
+    }
   });
   for (const auto &entry : groups) {
     if (!entry.first.owner ||
@@ -709,7 +752,7 @@ void CanonicalSyncPlanBuilder::materializeBarriers() {
       continue;
     }
     CanonicalRecurrenceScope scope;
-    scope.id = entry.first.ownerOrder;
+    scope.id = recurrenceScopeIds.lookup(entry.first.owner);
     scope.operation = entry.first.owner;
     scope.operationOrder = operationOrders.lookup(entry.first.owner);
     plan_.recurrenceScopes_.push_back(scope);
@@ -763,7 +806,8 @@ void CanonicalSyncPlanBuilder::materializeBarriers() {
                                  anchorNodes->second.end());
     }
     barrier.recurrenceLoop = dependency.recurrenceLoop;
-    barrier.recurrenceScope = entry.first.ownerOrder;
+    barrier.recurrenceScope =
+        recurrenceScopeIds.lookup(dependency.recurrenceLoop);
     for (auto [requirementId, requirement] :
          llvm::enumerate(plan_.completionRequirements_)) {
       if (requirement.source == entry.first.source &&

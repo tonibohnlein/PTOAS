@@ -24,40 +24,34 @@
 using namespace mlir;
 using namespace mlir::pto;
 
-void CanonicalSyncPlanBuilder::addAccessHazards(const CanonicalSyncNode &source,
-                                                const CanonicalSyncNode &target,
-                                                unsigned iterationDistance,
-                                                Operation *loop,
-                                                bool compareSlots) {
+namespace {
+
+struct MemoryHazardKinds {
+  bool raw = false;
+  bool war = false;
+  bool waw = false;
+};
+
+template <typename AliasPredicate>
+MemoryHazardKinds collectMemoryHazardKinds(
+    const CanonicalSyncNode &source, const CanonicalSyncNode &target,
+    AliasPredicate aliases) {
+  MemoryHazardKinds hazards;
   for (const CanonicalMemoryAccess &sourceAccess : source.accesses) {
     for (const CanonicalMemoryAccess &targetAccess : target.accesses) {
-      const bool aliases =
-          iterationDistance == 0
-              ? memoryAliases(sourceAccess, targetAccess, compareSlots)
-              : memoryAliasesAcrossIterations(sourceAccess, targetAccess, loop,
-                                              iterationDistance);
-      if (!aliases) {
+      if (!aliases(sourceAccess, targetAccess)) {
         continue;
       }
-      if (sourceAccess.writes && targetAccess.reads) {
-        addDependency(source.id, target.id, CanonicalDependencyKind::MemoryRAW,
-                      iterationDistance, loop);
-      }
-      if (sourceAccess.reads && targetAccess.writes) {
-        addDependency(source.id, target.id, CanonicalDependencyKind::MemoryWAR,
-                      iterationDistance, loop);
-      }
-      if (sourceAccess.writes && targetAccess.writes) {
-        addDependency(source.id, target.id, CanonicalDependencyKind::MemoryWAW,
-                      iterationDistance, loop);
-      }
+      hazards.raw |= sourceAccess.writes && targetAccess.reads;
+      hazards.war |= sourceAccess.reads && targetAccess.writes;
+      hazards.waw |= sourceAccess.writes && targetAccess.writes;
     }
   }
+  return hazards;
 }
 
-void CanonicalSyncPlanBuilder::addRecurrenceAccessHazards(
-    const CanonicalSyncNode &source, const CanonicalSyncNode &target,
-    Operation *loop) {
+unsigned getMaximumRecurrenceDistance(const CanonicalSyncNode &source,
+                                      const CanonicalSyncNode &target) {
   unsigned maximumDistance = 1;
   for (const CanonicalMemoryAccess &sourceAccess : source.accesses) {
     for (const CanonicalMemoryAccess &targetAccess : target.accesses) {
@@ -72,37 +66,79 @@ void CanonicalSyncPlanBuilder::addRecurrenceAccessHazards(
       }
     }
   }
+  return maximumDistance;
+}
 
-  bool foundRaw = false;
-  bool foundWar = false;
-  bool foundWaw = false;
-  for (unsigned distance = 1; distance <= maximumDistance; ++distance) {
-    for (const CanonicalMemoryAccess &sourceAccess : source.accesses) {
-      for (const CanonicalMemoryAccess &targetAccess : target.accesses) {
-        if (!memoryAliasesAcrossIterations(sourceAccess, targetAccess, loop,
-                                           distance)) {
-          continue;
-        }
-        if (!foundRaw && sourceAccess.writes && targetAccess.reads) {
-          addDependency(source.id, target.id,
-                        CanonicalDependencyKind::MemoryRAW, distance, loop);
-          foundRaw = true;
-        }
-        if (!foundWar && sourceAccess.reads && targetAccess.writes) {
-          addDependency(source.id, target.id,
-                        CanonicalDependencyKind::MemoryWAR, distance, loop);
-          foundWar = true;
-        }
-        if (!foundWaw && sourceAccess.writes && targetAccess.writes) {
-          addDependency(source.id, target.id,
-                        CanonicalDependencyKind::MemoryWAW, distance, loop);
-          foundWaw = true;
-        }
+} // namespace
+
+void CanonicalSyncPlanBuilder::addAccessHazards(const CanonicalSyncNode &source,
+                                                const CanonicalSyncNode &target,
+                                                unsigned iterationDistance,
+                                                Operation *loop,
+                                                bool compareSlots,
+                                                bool honorNoAlias,
+                                                bool activeWitness) {
+  for (const CanonicalMemoryAccess &sourceAccess : source.accesses) {
+    for (const CanonicalMemoryAccess &targetAccess : target.accesses) {
+      const bool aliases =
+          iterationDistance == 0
+              ? memoryAliases(sourceAccess, targetAccess, compareSlots,
+                              honorNoAlias)
+              : memoryAliasesAcrossIterations(sourceAccess, targetAccess, loop,
+                                              iterationDistance,
+                                              honorNoAlias);
+      if (!aliases) {
+        continue;
+      }
+      if (sourceAccess.writes && targetAccess.reads) {
+        addDependency(source.id, target.id, CanonicalDependencyKind::MemoryRAW,
+                      iterationDistance, loop, activeWitness);
+      }
+      if (sourceAccess.reads && targetAccess.writes) {
+        addDependency(source.id, target.id, CanonicalDependencyKind::MemoryWAR,
+                      iterationDistance, loop, activeWitness);
+      }
+      if (sourceAccess.writes && targetAccess.writes) {
+        addDependency(source.id, target.id, CanonicalDependencyKind::MemoryWAW,
+                      iterationDistance, loop, activeWitness);
       }
     }
-    if (foundRaw && foundWar && foundWaw) {
-      break;
+  }
+}
+
+void CanonicalSyncPlanBuilder::addRecurrenceAccessHazards(
+    const CanonicalSyncNode &source, const CanonicalSyncNode &target,
+    Operation *loop) {
+  MemoryHazardKinds activeHazards;
+  const unsigned maximumDistance = getMaximumRecurrenceDistance(source, target);
+  for (unsigned distance = 1; distance <= maximumDistance; ++distance) {
+    const auto collectAtDistance = [&](bool honorNoAlias) {
+      return collectMemoryHazardKinds(
+          source, target,
+          [&](const CanonicalMemoryAccess &sourceAccess,
+              const CanonicalMemoryAccess &targetAccess) {
+            return memoryAliasesAcrossIterations(
+                sourceAccess, targetAccess, loop, distance, honorNoAlias);
+          });
+    };
+    const MemoryHazardKinds conservative = collectAtDistance(false);
+    const MemoryHazardKinds active = collectAtDistance(true);
+
+    if (conservative.raw) {
+      addDependency(source.id, target.id, CanonicalDependencyKind::MemoryRAW,
+                    distance, loop, active.raw && !activeHazards.raw);
     }
+    if (conservative.war) {
+      addDependency(source.id, target.id, CanonicalDependencyKind::MemoryWAR,
+                    distance, loop, active.war && !activeHazards.war);
+    }
+    if (conservative.waw) {
+      addDependency(source.id, target.id, CanonicalDependencyKind::MemoryWAW,
+                    distance, loop, active.waw && !activeHazards.waw);
+    }
+    activeHazards.raw |= active.raw;
+    activeHazards.war |= active.war;
+    activeHazards.waw |= active.waw;
   }
 }
 
@@ -217,7 +253,11 @@ void CanonicalSyncPlanBuilder::addMemoryDependencies() {
         continue;
       }
       addAccessHazards(sourceNode, targetNode, 0, nullptr,
-                       /*compareSlots=*/true);
+                       /*compareSlots=*/true, /*honorNoAlias=*/false,
+                       /*activeWitness=*/false);
+      addAccessHazards(sourceNode, targetNode, 0, nullptr,
+                       /*compareSlots=*/true, /*honorNoAlias=*/true,
+                       /*activeWitness=*/true);
     }
   }
 
@@ -292,11 +332,25 @@ void CanonicalSyncPlanBuilder::addDependency(std::size_t source,
                                              std::size_t target,
                                              CanonicalDependencyKind kind,
                                              unsigned iterationDistance,
-                                             Operation *recurrenceLoop) {
-  if (dependencyKeys_
-          .insert({source, target, kind, iterationDistance, recurrenceLoop})
-          .second) {
-    plan_.dependencies_.push_back(
-        {source, target, kind, iterationDistance, recurrenceLoop, true});
+                                             Operation *recurrenceLoop,
+                                             bool activeWitness) {
+  const DependencyKey key{source, target, kind, iterationDistance,
+                          recurrenceLoop};
+  auto [position, inserted] =
+      dependencyIndices_.emplace(key, plan_.dependencies_.size());
+  if (!inserted) {
+    CanonicalDependency &dependency = plan_.dependencies_[position->second];
+    dependency.active |= activeWitness;
+    dependency.retained |= activeWitness;
+    return;
   }
+  CanonicalDependency dependency;
+  dependency.source = source;
+  dependency.target = target;
+  dependency.kind = kind;
+  dependency.iterationDistance = iterationDistance;
+  dependency.recurrenceLoop = recurrenceLoop;
+  dependency.active = activeWitness;
+  dependency.retained = activeWitness;
+  plan_.dependencies_.push_back(std::move(dependency));
 }

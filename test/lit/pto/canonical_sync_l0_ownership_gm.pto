@@ -18,7 +18,8 @@ module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<cub
   func.func @l0_ownership_gemm_branched(%arg0: !pto.ptr<f16, gm>, %arg1: !pto.ptr<f16, gm>,
                                         %arg2: !pto.ptr<f16, gm>, %arg3: !pto.ptr<f32, gm>,
                                         %arg4: index, %arg5: i1)
-      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>,
+                  pto.noalias_pairs = array<i64: 0, 1, 0, 3, 1, 3>} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c64 = arith.constant 64 : index
@@ -130,6 +131,7 @@ module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<cub
 // IR-NEXT: pto.tstore
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @l0_ownership_gemm_branched
+// PLAN-SAME: requirements={{[0-9]+}} conservative-requirements={{[1-9][0-9]+}}
 // PLAN: PIPE_M -> PIPE_FIX {{.*}}actions=2 completions=2 traces=1 ownership=no
 // PLAN: PIPE_MTE1 -> PIPE_M {{.*}}width=2{{.*}}completions=8 traces=2 ownership=yes ownership-cycle=1 ownership-role=ready
 // PLAN: PIPE_M -> PIPE_MTE1 {{.*}}width=2{{.*}}completions=16 traces=4 ownership=yes ownership-cycle=1 ownership-role=release

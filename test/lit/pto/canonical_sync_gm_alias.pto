@@ -374,8 +374,10 @@ module attributes {pto.target_arch = "a2a3"} {
 }
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @external_may_alias
+// PLAN-SAME: requirements=1 conservative-requirements=1
 // PLAN-SAME: events=1
 // PLAN-LABEL: PTOCanonicalSyncPlan @external_noalias
+// PLAN-SAME: requirements=0 conservative-requirements=1
 // PLAN-SAME: events=0
 // PLAN-LABEL: PTOCanonicalSyncPlan @addptr_adjacent
 // PLAN-SAME: events=0
@@ -397,6 +399,7 @@ module attributes {pto.target_arch = "a2a3"} {
 // PLAN-LABEL: PTOCanonicalSyncPlan @inttoptr_roundtrip
 // PLAN-SAME: events=1
 // PLAN-LABEL: PTOCanonicalSyncPlan @inttoptr_noalias_roundtrip
+// PLAN-SAME: requirements=0 conservative-requirements=1
 // PLAN-SAME: events=0
 // PLAN-LABEL: PTOCanonicalSyncPlan @inttoptr_unknown
 // PLAN-SAME: events=1

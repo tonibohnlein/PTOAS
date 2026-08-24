@@ -47,6 +47,90 @@ struct CanonicalScarcityStats {
   std::uint64_t criticalPathWeight = 0;
 };
 
+enum class CanonicalEventBundleKind : std::uint8_t {
+  Standalone,
+  SyntheticRoundTrip,
+  Ownership,
+};
+
+struct CanonicalEventBundleCandidate {
+  std::size_t id = 0;
+  std::size_t protocolIdentity = 0;
+  CanonicalEventBundleKind kind = CanonicalEventBundleKind::Standalone;
+  SmallVector<CanonicalEvent, 2> events;
+  SmallVector<std::size_t, 2> conflicts;
+  std::optional<CanonicalDependency> completionWitness;
+};
+
+struct CanonicalBarrierCandidate {
+  std::size_t id = 0;
+  CanonicalBarrier barrier;
+  SmallVector<std::size_t, 2> conflicts;
+};
+
+struct CanonicalMechanismUniverse {
+  std::vector<CanonicalBarrierCandidate> barriers;
+  std::vector<CanonicalEventBundleCandidate> eventBundles;
+};
+
+struct CanonicalMechanismPlanScore {
+  std::size_t usefulOwnershipBundles = 0;
+  std::vector<std::size_t> ownershipSignature;
+  std::vector<std::size_t> dynamicActionProfile;
+  std::vector<std::size_t> barrierActionProfile;
+  std::size_t waitDistance = 0;
+  std::size_t intervalSpan = 0;
+  unsigned peakColorPressure = 0;
+  std::size_t directedDomains = 0;
+  std::size_t barrierCount = 0;
+  std::vector<std::size_t> candidateSignature;
+};
+
+std::vector<CanonicalEventBundleCandidate>
+buildCanonicalEventBundles(ArrayRef<CanonicalEvent> events);
+
+std::vector<CanonicalEvent>
+flattenCanonicalEventBundles(ArrayRef<CanonicalEventBundleCandidate> bundles);
+
+bool canonicalEventBundleProjectionMatches(
+    ArrayRef<CanonicalEventBundleCandidate> bundles,
+    ArrayRef<CanonicalEvent> events);
+
+LogicalResult restoreCanonicalEventBundleIdentities(
+    std::vector<CanonicalEventBundleCandidate> &bundles,
+    ArrayRef<CanonicalEventBundleCandidate> knownBundles,
+    std::size_t &nextFreshId);
+
+bool verifyCanonicalSyntheticRoundTripBundle(
+    ArrayRef<const CanonicalEvent *> events);
+
+bool verifyCanonicalSyntheticRoundTripWitness(
+    ArrayRef<const CanonicalEvent *> events,
+    const CanonicalDependency &requirement);
+
+bool canonicalEventBundlesHaveNoConflicts(
+    ArrayRef<CanonicalEventBundleCandidate> bundles);
+
+bool exchangeCanonicalEventBundleCandidate(
+    std::vector<CanonicalEventBundleCandidate> &selected,
+    const CanonicalEventBundleCandidate &candidate);
+
+std::size_t calculateCanonicalEventColorOverflow(
+    ArrayRef<CanonicalEvent> events, unsigned eventIdMax,
+    const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds);
+
+std::vector<std::size_t> buildCanonicalBarrierActionProfile(
+    ArrayRef<CanonicalBarrier> barriers, std::size_t maxLoopDepth);
+
+bool canonicalMechanismPlanScoreLess(
+    const CanonicalMechanismPlanScore &first,
+    const CanonicalMechanismPlanScore &second);
+
+SmallVector<const CanonicalEventBundleCandidate *, 16>
+selectCanonicalEventCandidateFrontier(
+    ArrayRef<const CanonicalEventBundleCandidate *> candidates,
+    std::size_t limit);
+
 bool verifyCanonicalOwnershipEventPair(
     const CanonicalOwnershipCycle &cycle,
     ArrayRef<const CanonicalEvent *> events);
@@ -130,10 +214,11 @@ private:
   void addMemoryDependencies();
   LogicalResult addSSAAndRecurrenceDependencies();
   void discardImpossibleRecurrences();
+  void preserveConservativeCompletionRequirements();
   void preserveForwardCompletionRequirements();
   void reduceForwardDependencies();
   void preserveRecurrenceCompletionRequirements();
-  void materializeSyncRequirements();
+  LogicalResult materializeSyncRequirements();
   void materializeBarriers();
   void materializeEvents();
   void materializeEventsFrom(ArrayRef<CanonicalDependency> dependencies,
@@ -142,6 +227,15 @@ private:
   CanonicalEvent
   makeRecurrenceEvent(const CanonicalDependency &dependency) const;
   void analyzeOwnershipCycles();
+  std::optional<CanonicalEventBundleCandidate>
+  buildOwnershipEventBundle(const CanonicalOwnershipCycle &cycle);
+  void buildMechanismUniverse();
+  LogicalResult refreshSelectedEventBundles();
+  bool tryBuildConservativeIncumbent(
+      std::vector<CanonicalBarrier> &barriers,
+      std::vector<CanonicalEvent> &events);
+  void removeRedundantMechanisms();
+  LogicalResult optimizeMechanismSelection();
   void synthesizeOwnershipProtocols();
   LogicalResult verifyEventProtocols(ArrayRef<CanonicalEvent> events,
                                      bool requireAllocation,
@@ -182,6 +276,22 @@ private:
                                    std::size_t vertex,
                                    std::size_t nodeCount) const;
   bool eventsFitBudget(ArrayRef<CanonicalEvent> events) const;
+  bool isCandidatePlanFeasible(
+      ArrayRef<CanonicalBarrier> barriers,
+      ArrayRef<CanonicalEventBundleCandidate> eventBundles,
+      ArrayRef<CanonicalDependency> requirements,
+      bool diagnose = false) const;
+  bool isCandidatePlanWellFormed(
+      ArrayRef<CanonicalBarrier> barriers,
+      ArrayRef<CanonicalEventBundleCandidate> eventBundles,
+      ArrayRef<CanonicalDependency> requirements,
+      bool diagnose = false) const;
+  bool bootstrapFeasibleMechanismPlan(
+      std::vector<CanonicalBarrier> &barriers,
+      std::vector<CanonicalEventBundleCandidate> &eventBundles) const;
+  CanonicalMechanismPlanScore scoreCandidatePlan(
+      ArrayRef<CanonicalBarrier> barriers,
+      ArrayRef<CanonicalEventBundleCandidate> eventBundles) const;
   LogicalResult verifyFinalPlan();
   LogicalResult repairEventScarcity();
   LogicalResult repairEventDomain(const CanonicalEventDomainKey &key,
@@ -198,21 +308,25 @@ private:
   void addDependency(std::size_t source, std::size_t target,
                      CanonicalDependencyKind kind,
                      unsigned iterationDistance = 0,
-                     Operation *recurrenceLoop = nullptr);
+                     Operation *recurrenceLoop = nullptr,
+                     bool activeWitness = true);
   void addAccessHazards(const CanonicalSyncNode &source,
                         const CanonicalSyncNode &target,
                         unsigned iterationDistance, Operation *loop,
-                        bool compareSlots);
+                        bool compareSlots, bool honorNoAlias,
+                        bool activeWitness);
   void addRecurrenceAccessHazards(const CanonicalSyncNode &source,
                                   const CanonicalSyncNode &target,
                                   Operation *loop);
   bool memoryAliases(const CanonicalMemoryAccess &first,
                      const CanonicalMemoryAccess &second,
-                     bool compareSlots = true) const;
+                     bool compareSlots = true,
+                     bool honorNoAlias = true) const;
   bool memoryAliasesAcrossIterations(const CanonicalMemoryAccess &first,
                                      const CanonicalMemoryAccess &second,
                                      Operation *loop,
-                                     unsigned iterationDistance) const;
+                                     unsigned iterationDistance,
+                                     bool honorNoAlias = true) const;
   bool rootsAreNoAlias(Value first, Value second) const;
   SlotRelation compareSlotsAcrossIterations(const CanonicalMemoryAccess &first,
                                             const CanonicalMemoryAccess &second,
@@ -240,11 +354,13 @@ private:
   DenseMap<Operation *, SmallVector<std::size_t, 2>> operationNodes_;
   std::set<std::tuple<std::size_t, std::size_t, SyncGraphEdgeKind>>
       fixedEdgeKeys_;
-  std::set<DependencyKey> dependencyKeys_;
+  std::map<DependencyKey, std::size_t> dependencyIndices_;
   std::map<CanonicalEventDomainKey, std::set<unsigned>> reservedIds_;
   std::map<CanonicalEventDomainKey, CanonicalScarcityStats> scarcityStats_;
   std::set<std::pair<unsigned, unsigned>> noAliasArgPairs_;
   std::vector<CanonicalEvent> eventCandidates_;
+  CanonicalMechanismUniverse mechanismUniverse_;
+  std::vector<CanonicalEventBundleCandidate> selectedEventBundles_;
 };
 
 } // namespace pto

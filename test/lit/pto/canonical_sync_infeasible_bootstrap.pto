@@ -1,0 +1,97 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=events event-id-num-max=2' \
+// RUN:   | FileCheck %s --check-prefix=PLAN
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=2' \
+// RUN:   | FileCheck %s --check-prefix=IR
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=events event-id-num-max=2' \
+// RUN:   > %t.first
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=events event-id-num-max=2' \
+// RUN:   > %t.second
+// RUN: diff %t.first %t.second
+// RUN: not pto-test-opt %s '-pto-canonical-sync=event-id-num-max=1' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=SCARCE
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @two_independent_l1_cycles(%source0: !pto.ptr<f16, gm>,
+                                       %source1: !pto.ptr<f16, gm>,
+                                       %limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %addr0 = arith.constant 0 : i64
+    %addr16384 = arith.constant 16384 : i64
+    %addr32768 = arith.constant 32768 : i64
+    %view0 = pto.make_tensor_view %source0, shape = [%c128, %c128],
+      strides = [%c128, %c1] {layout = #pto.layout<nd>}
+      : !pto.tensor_view<?x?xf16>
+    %view1 = pto.make_tensor_view %source1, shape = [%c128, %c128],
+      strides = [%c128, %c1] {layout = #pto.layout<nd>}
+      : !pto.tensor_view<?x?xf16>
+    %part0 = pto.partition_view %view0, offsets = [%c0, %c0],
+      sizes = [%c128, %c128] : !pto.tensor_view<?x?xf16>
+    %part1 = pto.partition_view %view1, offsets = [%c0, %c0],
+      sizes = [%c128, %c128] : !pto.tensor_view<?x?xf16>
+    %mat0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %mat1 = pto.alloc_tile addr = %addr32768 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %left0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %left1 = pto.alloc_tile addr = %addr16384 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+
+    scf.for %i = %c0 to %limit step %c1 {
+      pto.tload ins(%part0 : !pto.partition_tensor_view<128x128xf16>)
+        outs(%mat0 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+      pto.tload ins(%part1 : !pto.partition_tensor_view<128x128xf16>)
+        outs(%mat1 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+      pto.textract ins(%mat0, %c0, %c0 :
+        !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+        outs(%left0 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+      pto.textract ins(%mat1, %c0, %c64 :
+        !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+        outs(%left1 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+    }
+    scf.for %i = %c0 to %limit step %c1 {
+      pto.tload ins(%part0 : !pto.partition_tensor_view<128x128xf16>)
+        outs(%mat0 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+      pto.tload ins(%part1 : !pto.partition_tensor_view<128x128xf16>)
+        outs(%mat1 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+      pto.textract ins(%mat0, %c0, %c0 :
+        !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+        outs(%left0 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+      pto.textract ins(%mat1, %c0, %c64 :
+        !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+        outs(%left1 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+    }
+    return
+  }
+}
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @two_independent_l1_cycles
+// PLAN-SAME: barriers=1 events=8 ownership-cycles=2 bootstrap=yes
+// PLAN: domain PIPE_MTE1 -> PIPE_MTE2 original-events=4 events=4 available=2
+// PLAN-SAME: original-colors=2 colors=2
+// PLAN: domain PIPE_MTE2 -> PIPE_MTE1 original-events=4 events=4 available=2
+// PLAN-SAME: original-colors=2 colors=2
+
+// IR-LABEL: func.func @two_independent_l1_cycles
+// IR: <EVENT_ID0>
+// IR: <EVENT_ID1>
+// IR-NOT: <EVENT_ID2>
+// IR: return
+
+// SCARCE: error: PTOCanonicalSync cannot repair event-id scarcity in domain

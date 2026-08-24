@@ -11,6 +11,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
 #include <iostream>
+#include <limits>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -212,6 +213,382 @@ bool testOwnershipCandidateTransaction() {
   return passed;
 }
 
+bool testEventBundleConstruction() {
+  CanonicalEvent standalone;
+
+  CanonicalEvent syntheticReady;
+  syntheticReady.protocolBundle = 3;
+  CanonicalEvent syntheticRelease;
+  syntheticRelease.protocolBundle = 3;
+
+  CanonicalEvent ownershipReady;
+  ownershipReady.ownershipProtocol = true;
+  ownershipReady.ownershipCycle = 7;
+  ownershipReady.ownershipRole = CanonicalOwnershipEventRole::Ready;
+  CanonicalEvent ownershipRelease = ownershipReady;
+  ownershipRelease.ownershipRole = CanonicalOwnershipEventRole::Release;
+
+  const std::vector<CanonicalEvent> events = {
+      standalone, syntheticReady, ownershipReady, syntheticRelease,
+      ownershipRelease};
+  const std::vector<CanonicalEventBundleCandidate> bundles =
+      buildCanonicalEventBundles(events);
+  bool passed = check(bundles.size() == 3,
+                      "standalone and paired protocols form three bundles");
+  passed &= check(bundles[0].kind == CanonicalEventBundleKind::Standalone &&
+                      bundles[0].events.size() == 1,
+                  "a standalone event forms a one-event bundle");
+  passed &= check(
+      bundles[1].kind == CanonicalEventBundleKind::SyntheticRoundTrip &&
+          bundles[1].id == 1 && bundles[1].protocolIdentity == 3 &&
+          bundles[1].events.size() == 2,
+      "synthetic events are grouped by protocol identity");
+  passed &= check(bundles[2].kind == CanonicalEventBundleKind::Ownership &&
+                      bundles[2].id == 2 &&
+                      bundles[2].protocolIdentity == 7 &&
+                      bundles[2].events.size() == 2,
+                  "ownership ready and release form one atomic bundle");
+
+  const std::vector<CanonicalEvent> flattened =
+      flattenCanonicalEventBundles(bundles);
+  passed &= check(flattened.size() == events.size(),
+                  "flattening preserves every event");
+  passed &= check(flattened[1].protocolBundle == 3 &&
+                      flattened[2].protocolBundle == 3 &&
+                      flattened[3].ownershipCycle == 7 &&
+                      flattened[4].ownershipCycle == 7,
+                  "flattening keeps stable bundle order");
+  return passed;
+}
+
+bool testSyntheticRoundTripVerification() {
+  CanonicalEvent sourceToBridge;
+  sourceToBridge.source = 1;
+  sourceToBridge.target = 2;
+  sourceToBridge.sourcePipe = PipelineType::PIPE_MTE3;
+  sourceToBridge.targetPipe = PipelineType::PIPE_V;
+  sourceToBridge.protocolBundle = 5;
+
+  CanonicalEvent bridgeToTarget;
+  bridgeToTarget.source = 2;
+  bridgeToTarget.target = 4;
+  bridgeToTarget.sourcePipe = PipelineType::PIPE_V;
+  bridgeToTarget.targetPipe = PipelineType::PIPE_MTE3;
+  bridgeToTarget.protocolBundle = 5;
+
+  const CanonicalEvent *valid[] = {&bridgeToTarget, &sourceToBridge};
+  bool passed = check(verifyCanonicalSyntheticRoundTripBundle(valid),
+                      "a complementary two-event chain is a round trip");
+  CanonicalDependency witness;
+  witness.source = 1;
+  witness.target = 4;
+  passed &= check(verifyCanonicalSyntheticRoundTripWitness(valid, witness),
+                  "a round trip verifies its same-pipe completion witness");
+
+  witness.target = 3;
+  passed &= check(!verifyCanonicalSyntheticRoundTripWitness(valid, witness),
+                  "a round trip cannot claim another completion witness");
+  witness.target = 4;
+  witness.iterationDistance = 1;
+  passed &= check(!verifyCanonicalSyntheticRoundTripWitness(valid, witness),
+                  "a forward round trip cannot claim a recurrence witness");
+
+  const CanonicalEvent *missingHalf[] = {&sourceToBridge};
+  passed &= check(!verifyCanonicalSyntheticRoundTripBundle(missingHalf),
+                  "a synthetic round trip requires both event halves");
+
+  CanonicalEvent wrongDirection = bridgeToTarget;
+  wrongDirection.targetPipe = PipelineType::PIPE_MTE2;
+  const CanonicalEvent *malformed[] = {&sourceToBridge, &wrongDirection};
+  passed &= check(!verifyCanonicalSyntheticRoundTripBundle(malformed),
+                  "a synthetic round trip requires complementary pipes");
+  return passed;
+}
+
+bool testEventBundleIdentityRestoration() {
+  CanonicalEvent sourceToBridge;
+  sourceToBridge.source = 1;
+  sourceToBridge.target = 2;
+  sourceToBridge.sourcePipe = PipelineType::PIPE_MTE3;
+  sourceToBridge.targetPipe = PipelineType::PIPE_V;
+  sourceToBridge.protocolBundle = 5;
+
+  CanonicalEvent bridgeToTarget;
+  bridgeToTarget.source = 2;
+  bridgeToTarget.target = 4;
+  bridgeToTarget.sourcePipe = PipelineType::PIPE_V;
+  bridgeToTarget.targetPipe = PipelineType::PIPE_MTE3;
+  bridgeToTarget.protocolBundle = 5;
+
+  const CanonicalOwnershipCycle cycle = makeCycle();
+  CanonicalEvent ownershipReady = makeReadyEvent(cycle);
+  CanonicalEvent ownershipRelease = makeReleaseEvent(cycle);
+  std::vector<CanonicalEventBundleCandidate> known =
+      buildCanonicalEventBundles({sourceToBridge, ownershipReady,
+                                  bridgeToTarget, ownershipRelease});
+  auto knownSynthetic = llvm::find_if(known, [](const auto &bundle) {
+    return bundle.kind == CanonicalEventBundleKind::SyntheticRoundTrip;
+  });
+  auto knownOwnership = llvm::find_if(known, [](const auto &bundle) {
+    return bundle.kind == CanonicalEventBundleKind::Ownership;
+  });
+  knownSynthetic->id = 41;
+  knownSynthetic->conflicts.push_back(42);
+  knownOwnership->id = 42;
+  knownOwnership->conflicts.push_back(41);
+  CanonicalDependency witness;
+  witness.source = 1;
+  witness.target = 4;
+  knownSynthetic->completionWitness = witness;
+
+  CanonicalEvent newStandalone;
+  newStandalone.source = 8;
+  newStandalone.target = 9;
+  std::vector<CanonicalEventBundleCandidate> rebuilt =
+      buildCanonicalEventBundles({bridgeToTarget, ownershipRelease,
+                                  newStandalone, sourceToBridge,
+                                  ownershipReady});
+  std::size_t nextId = 100;
+  bool passed = check(succeeded(restoreCanonicalEventBundleIdentities(
+                          rebuilt, known, nextId)),
+                      "scarcity reconciliation restores selected identities");
+  auto rebuiltSynthetic = llvm::find_if(rebuilt, [](const auto &bundle) {
+    return bundle.kind == CanonicalEventBundleKind::SyntheticRoundTrip;
+  });
+  auto rebuiltOwnership = llvm::find_if(rebuilt, [](const auto &bundle) {
+    return bundle.kind == CanonicalEventBundleKind::Ownership;
+  });
+  auto rebuiltStandalone = llvm::find_if(rebuilt, [](const auto &bundle) {
+    return bundle.kind == CanonicalEventBundleKind::Standalone;
+  });
+  passed &= check(rebuilt.size() == 3 && rebuiltSynthetic != rebuilt.end() &&
+                      rebuiltOwnership != rebuilt.end() &&
+                      rebuiltStandalone != rebuilt.end(),
+                  "reconciliation retains atomic pairs and a new standalone");
+  passed &= check(rebuiltSynthetic->id == 41 &&
+                      rebuiltSynthetic->conflicts.size() == 1 &&
+                      rebuiltSynthetic->conflicts.front() == 42 &&
+                      rebuiltSynthetic->completionWitness &&
+                      rebuiltSynthetic->completionWitness->source == 1 &&
+                      rebuiltSynthetic->completionWitness->target == 4,
+                  "a synthetic pair keeps its conflict and completion witness");
+  passed &= check(rebuiltOwnership->id == 42 &&
+                      rebuiltOwnership->conflicts.size() == 1 &&
+                      rebuiltOwnership->conflicts.front() == 41,
+                  "an ownership pair keeps its selected conflict identity");
+  passed &= check(rebuiltStandalone->id == 100 && nextId == 101,
+                  "a new standalone receives a fresh non-conflicting identity");
+
+  std::vector<CanonicalEvent> projection =
+      flattenCanonicalEventBundles(rebuilt);
+  passed &= check(canonicalEventBundleProjectionMatches(rebuilt, projection),
+                  "the selected bundle projection matches exactly");
+  projection.front().target += 1;
+  passed &= check(!canonicalEventBundleProjectionMatches(rebuilt, projection),
+                  "a stale non-empty event projection is rejected");
+  passed &= check(canonicalEventBundleProjectionMatches({}, {}),
+                  "an empty selected plan has an empty valid projection");
+
+  std::vector<CanonicalEventBundleCandidate> overflow = rebuilt;
+  std::vector<CanonicalEventBundleCandidate> exhaustedKnown = known;
+  exhaustedKnown.front().id = std::numeric_limits<std::size_t>::max();
+  nextId = 0;
+  passed &= check(failed(restoreCanonicalEventBundleIdentities(
+                      overflow, exhaustedKnown, nextId)),
+                  "the maximum stable identity is reserved as exhaustion");
+  overflow = buildCanonicalEventBundles({newStandalone});
+  nextId = std::numeric_limits<std::size_t>::max();
+  passed &= check(failed(restoreCanonicalEventBundleIdentities(
+                      overflow, {}, nextId)),
+                  "fresh identity exhaustion fails instead of wrapping");
+  return passed;
+}
+
+bool testEventBundleConflicts() {
+  CanonicalEventBundleCandidate first;
+  first.id = 1;
+  first.conflicts.push_back(2);
+  CanonicalEventBundleCandidate second;
+  second.id = 2;
+  bool passed = check(!canonicalEventBundlesHaveNoConflicts({first, second}),
+                      "selected conflicting bundles are rejected");
+  passed &= check(canonicalEventBundlesHaveNoConflicts({first}),
+                  "a conflict with an unselected bundle is harmless");
+  second.id = 1;
+  passed &= check(!canonicalEventBundlesHaveNoConflicts({first, second}),
+                  "duplicate stable bundle identities are rejected");
+  return passed;
+}
+
+bool testEventBundleAtomicExchange() {
+  CanonicalEventBundleCandidate conflicting;
+  conflicting.id = 1;
+  conflicting.conflicts.push_back(3);
+  CanonicalEventBundleCandidate unrelated;
+  unrelated.id = 2;
+  std::vector<CanonicalEventBundleCandidate> selected{conflicting, unrelated};
+
+  const CanonicalOwnershipCycle cycle = makeCycle();
+  CanonicalEventBundleCandidate ownership;
+  ownership.id = 3;
+  ownership.kind = CanonicalEventBundleKind::Ownership;
+  ownership.protocolIdentity = cycle.id;
+  ownership.events.push_back(makeReadyEvent(cycle));
+  ownership.events.push_back(makeReleaseEvent(cycle));
+  ownership.conflicts.push_back(conflicting.id);
+
+  bool passed = check(exchangeCanonicalEventBundleCandidate(selected,
+                                                             ownership),
+                      "an ownership candidate can replace a conflict");
+  passed &= check(selected.size() == 2 && selected[0].id == unrelated.id &&
+                      selected[1].id == ownership.id &&
+                      selected[1].events.size() == 2 &&
+                      selected[1].events[0].ownershipRole ==
+                          CanonicalOwnershipEventRole::Ready &&
+                      selected[1].events[1].ownershipRole ==
+                          CanonicalOwnershipEventRole::Release,
+                  "bundle exchange keeps the ownership pair atomic");
+  passed &= check(canonicalEventBundlesHaveNoConflicts(selected),
+                  "bundle exchange removes conflicts in both directions");
+  passed &= check(!exchangeCanonicalEventBundleCandidate(selected,
+                                                          ownership) &&
+                      selected.size() == 2,
+                  "reselecting an equivalent bundle is a no-op");
+  return passed;
+}
+
+bool testReservedEventColorOverflow() {
+  CanonicalEvent event;
+  event.sourcePipe = PipelineType::PIPE_S;
+  event.targetPipe = PipelineType::PIPE_V;
+  event.width = 2;
+  event.intervalBegin = 4;
+  event.intervalEnd = 9;
+  const CanonicalEventDomainKey key{event.sourcePipe, event.targetPipe};
+  std::map<CanonicalEventDomainKey, std::set<unsigned>> reserved;
+
+  bool passed = check(calculateCanonicalEventColorOverflow({event}, 2,
+                                                            reserved) == 0,
+                      "two overlapping lanes fit two unreserved IDs");
+  reserved[key].insert(0);
+  passed &= check(calculateCanonicalEventColorOverflow({event}, 2,
+                                                        reserved) == 1,
+                  "a reserved in-range ID contributes exact overflow");
+  reserved[key].insert(7);
+  passed &= check(calculateCanonicalEventColorOverflow({event}, 2,
+                                                        reserved) == 1,
+                  "an out-of-range reservation does not reduce the budget");
+  reserved[key].insert(1);
+  passed &= check(calculateCanonicalEventColorOverflow({event}, 2,
+                                                        reserved) == 2,
+                  "reserving the full domain budget counts both lanes");
+  return passed;
+}
+
+bool testMechanismPlanScoreOrdering() {
+  CanonicalMechanismPlanScore baseline;
+  baseline.dynamicActionProfile = {8, 2};
+  baseline.barrierCount = 1;
+  baseline.candidateSignature = {3};
+
+  CanonicalMechanismPlanScore ownership = baseline;
+  ownership.usefulOwnershipBundles = 1;
+  ownership.ownershipSignature = {7};
+  bool passed = check(canonicalMechanismPlanScoreLess(ownership, baseline),
+                      "useful ownership is the primary plan preference");
+
+  CanonicalMechanismPlanScore fewerInnerActions = baseline;
+  fewerInnerActions.dynamicActionProfile = {7, 100};
+  passed &= check(
+      canonicalMechanismPlanScoreLess(fewerInnerActions, baseline),
+      "the deepest repeated action count is minimized before outer actions");
+
+  CanonicalMechanismPlanScore fewerBarriers = baseline;
+  fewerBarriers.barrierCount = 0;
+  passed &= check(canonicalMechanismPlanScoreLess(fewerBarriers, baseline),
+                  "barrier count breaks otherwise equal structural scores");
+
+  CanonicalMechanismPlanScore innerBarrier = baseline;
+  innerBarrier.barrierActionProfile = {1, 0};
+  CanonicalMechanismPlanScore outerBarrier = baseline;
+  outerBarrier.barrierActionProfile = {0, 1};
+  passed &= check(canonicalMechanismPlanScoreLess(outerBarrier, innerBarrier),
+                  "an outer barrier is preferred to an inner-loop barrier");
+
+  CanonicalMechanismPlanScore stableTie = baseline;
+  stableTie.candidateSignature = {2};
+  passed &= check(canonicalMechanismPlanScoreLess(stableTie, baseline),
+                  "stable candidate identity resolves the final tie");
+  passed &= check(!canonicalMechanismPlanScoreLess(baseline, baseline),
+                  "the total plan order is irreflexive");
+  return passed;
+}
+
+bool testBarrierActionProfileConstruction() {
+  MLIRContext context;
+  context.getOrLoadDialect<scf::SCFDialect>();
+  const Location location = UnknownLoc::get(&context);
+
+  OperationState loopState(location, scf::ForOp::getOperationName());
+  loopState.addRegion();
+  Operation *loop = Operation::create(loopState);
+  Block *body = new Block();
+  loop->getRegion(0).push_back(body);
+  OperationState bodyAnchorState(location, scf::YieldOp::getOperationName());
+  Operation *bodyAnchor = Operation::create(bodyAnchorState);
+  body->push_back(bodyAnchor);
+
+  CanonicalBarrier outside;
+  outside.anchor = {loop, true};
+  CanonicalBarrier inside;
+  inside.anchor = {bodyAnchor, true};
+  const std::vector<std::size_t> outsideProfile =
+      buildCanonicalBarrierActionProfile({outside}, 1);
+  const std::vector<std::size_t> insideProfile =
+      buildCanonicalBarrierActionProfile({inside}, 1);
+
+  bool passed = check(outsideProfile == std::vector<std::size_t>({0, 1}),
+                      "a barrier before scf.for is in the outer bucket");
+  passed &= check(insideProfile == std::vector<std::size_t>({1, 0}),
+                  "a barrier in the loop body is in the repeated bucket");
+
+  CanonicalMechanismPlanScore outsideScore;
+  outsideScore.barrierActionProfile = outsideProfile;
+  CanonicalMechanismPlanScore insideScore;
+  insideScore.barrierActionProfile = insideProfile;
+  passed &= check(canonicalMechanismPlanScoreLess(outsideScore, insideScore),
+                  "the constructed outer profile wins the score tie");
+  loop->destroy();
+  return passed;
+}
+
+bool testCandidateFrontierTruncation() {
+  CanonicalEventBundleCandidate standalone;
+  standalone.id = 1;
+  standalone.kind = CanonicalEventBundleKind::Standalone;
+  CanonicalEventBundleCandidate synthetic;
+  synthetic.id = 9;
+  synthetic.kind = CanonicalEventBundleKind::SyntheticRoundTrip;
+  CanonicalEventBundleCandidate ownershipHigh;
+  ownershipHigh.id = 5;
+  ownershipHigh.kind = CanonicalEventBundleKind::Ownership;
+  CanonicalEventBundleCandidate ownershipLow = ownershipHigh;
+  ownershipLow.id = 2;
+  const CanonicalEventBundleCandidate *candidates[] = {
+      &standalone, &synthetic, &ownershipHigh, &ownershipLow};
+
+  const auto frontier =
+      selectCanonicalEventCandidateFrontier(candidates, 3);
+  bool passed = check(frontier.size() == 3,
+                      "the candidate frontier obeys its explicit bound");
+  passed &= check(frontier[0]->id == 2 && frontier[1]->id == 5 &&
+                      frontier[2]->id == 9,
+                  "frontier truncation uses protocol priority and stable ids");
+  passed &= check(selectCanonicalEventCandidateFrontier(candidates, 0).empty(),
+                  "a zero-width frontier deterministically selects nothing");
+  return passed;
+}
+
 bool testAlternatingOwnershipPairVerification() {
   MLIRContext context;
   context.getOrLoadDialect<scf::SCFDialect>();
@@ -303,6 +680,15 @@ bool testAlternatingOwnershipPairVerification() {
 int main() {
   const bool passed = testOwnershipPairVerification() &&
                       testOwnershipCandidateTransaction() &&
+                      testEventBundleConstruction() &&
+                      testSyntheticRoundTripVerification() &&
+                      testEventBundleIdentityRestoration() &&
+                      testEventBundleConflicts() &&
+                      testEventBundleAtomicExchange() &&
+                      testReservedEventColorOverflow() &&
+                      testMechanismPlanScoreOrdering() &&
+                      testBarrierActionProfileConstruction() &&
+                      testCandidateFrontierTruncation() &&
                       testAlternatingOwnershipPairVerification();
   return passed ? 0 : 1;
 }

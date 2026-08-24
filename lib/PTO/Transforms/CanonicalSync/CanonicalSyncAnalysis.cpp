@@ -203,12 +203,15 @@ FailureOr<CanonicalSyncPlan> CanonicalSyncPlanBuilder::build() {
     return failure();
   }
   discardImpossibleRecurrences();
+  preserveConservativeCompletionRequirements();
   preserveForwardCompletionRequirements();
   preserveRecurrenceCompletionRequirements();
   reduceForwardDependencies();
   reserveHiddenEventIds();
   analyzeOwnershipCycles();
-  materializeSyncRequirements();
+  if (failed(materializeSyncRequirements())) {
+    return failure();
+  }
   if (failed(repairEventScarcity())) {
     return failure();
   }
@@ -426,7 +429,7 @@ LogicalResult CanonicalSyncPlanBuilder::validateModeledEffects() {
 
 bool CanonicalSyncPlanBuilder::memoryAliases(
     const CanonicalMemoryAccess &first, const CanonicalMemoryAccess &second,
-    bool compareSlots) const {
+    bool compareSlots, bool honorNoAlias) const {
   if (first.space != second.space) {
     return false;
   }
@@ -445,7 +448,7 @@ bool CanonicalSyncPlanBuilder::memoryAliases(
     }
   }
   if (first.space == AddressSpace::GM) {
-    if (rootsAreNoAlias(first.root, second.root)) {
+    if (honorNoAlias && rootsAreNoAlias(first.root, second.root)) {
       return false;
     }
     return first.root != second.root || addressSetsOverlap(first, second);
@@ -475,8 +478,9 @@ bool CanonicalSyncPlanBuilder::rootsAreNoAlias(Value first,
 
 bool CanonicalSyncPlanBuilder::memoryAliasesAcrossIterations(
     const CanonicalMemoryAccess &first, const CanonicalMemoryAccess &second,
-    Operation *loop, unsigned iterationDistance) const {
-  const bool aliases = memoryAliases(first, second, /*compareSlots=*/false);
+    Operation *loop, unsigned iterationDistance, bool honorNoAlias) const {
+  const bool aliases = memoryAliases(first, second, /*compareSlots=*/false,
+                                     honorNoAlias);
   if (!aliases || first.root != second.root) {
     return aliases;
   }

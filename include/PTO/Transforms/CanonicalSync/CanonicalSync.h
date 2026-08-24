@@ -94,6 +94,8 @@ struct CanonicalDependency {
   CanonicalDependencyKind kind = CanonicalDependencyKind::SSA;
   unsigned iterationDistance = 0;
   Operation *recurrenceLoop = nullptr;
+  bool active = true;
+  bool possible = true;
   bool retained = true;
 };
 
@@ -266,6 +268,9 @@ public:
   ArrayRef<CanonicalDependency> getCompletionRequirements() const {
     return completionRequirements_;
   }
+  ArrayRef<CanonicalDependency> getConservativeCompletionRequirements() const {
+    return conservativeCompletionRequirements_;
+  }
   ArrayRef<CanonicalRecurrenceScope> getRecurrenceScopes() const {
     return recurrenceScopes_;
   }
@@ -275,6 +280,7 @@ public:
   ArrayRef<CanonicalOwnershipCycle> getOwnershipCycles() const {
     return ownershipCycles_;
   }
+  bool usedInfeasibleBootstrap() const { return usedInfeasibleBootstrap_; }
 
 private:
   friend class CanonicalSyncPlanBuilder;
@@ -284,12 +290,14 @@ private:
   std::vector<CanonicalSyncNode> nodes_;
   std::vector<SyncGraphEdge> fixedEdges_;
   std::vector<CanonicalDependency> dependencies_;
+  std::vector<CanonicalDependency> conservativeCompletionRequirements_;
   std::vector<CanonicalDependency> completionRequirements_;
   std::vector<CanonicalRecurrenceScope> recurrenceScopes_;
   std::vector<CanonicalBarrier> barriers_;
   std::vector<CanonicalEvent> events_;
   std::vector<CanonicalEventDomain> domains_;
   std::vector<CanonicalOwnershipCycle> ownershipCycles_;
+  bool usedInfeasibleBootstrap_ = false;
 };
 
 FailureOr<CanonicalSyncPlan> buildCanonicalSyncPlan(func::FuncOp func,

@@ -155,9 +155,13 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
      << " fixed=" << plan.getFixedEdges().size()
      << " dependencies=" << plan.getDependencies().size()
      << " requirements=" << plan.getCompletionRequirements().size()
+     << " conservative-requirements="
+     << plan.getConservativeCompletionRequirements().size()
      << " barriers=" << plan.getBarriers().size()
      << " events=" << plan.getEvents().size()
-     << " ownership-cycles=" << plan.getOwnershipCycles().size() << '\n';
+     << " ownership-cycles=" << plan.getOwnershipCycles().size()
+     << " bootstrap=" << (plan.usedInfeasibleBootstrap() ? "yes" : "no")
+     << '\n';
   if (includesDependencies(view)) {
     for (const CanonicalSyncNode &node : plan.getNodes()) {
       os << "  node[" << node.id
@@ -174,7 +178,10 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
       os << "  dependency " << dependency.source << " -> " << dependency.target
          << " kind=" << stringifyCanonicalDependencyKind(dependency.kind)
          << " distance=" << dependency.iterationDistance
-         << " retained=" << (dependency.retained ? "yes" : "no") << '\n';
+         << " retained=" << (dependency.retained ? "yes" : "no")
+         << " active=" << (dependency.active ? "yes" : "no")
+         << " possible=" << (dependency.possible ? "yes" : "no")
+         << '\n';
     }
   }
   const bool includeScopes = includesDependencies(view) || includesPlan(view);
