@@ -209,6 +209,62 @@ bool candidateBundlesEquivalent(const CanonicalEventBundleCandidate &first,
   return true;
 }
 
+bool sameDiagnosticEventProtocol(const CanonicalEvent &first,
+                                 const CanonicalEvent &second) {
+  return sameCandidateEventProtocol(first, second) &&
+         first.scopeLoop == second.scopeLoop &&
+         first.intervalBegin == second.intervalBegin &&
+         first.intervalEnd == second.intervalEnd &&
+         llvm::equal(first.actions, second.actions, sameEventAction) &&
+         llvm::equal(first.completions, second.completions,
+                     sameEventCompletion) &&
+         llvm::equal(first.traces, second.traces, sameEventTrace) &&
+         first.ownershipProtocol == second.ownershipProtocol;
+}
+
+bool sameCompletionWitness(
+    const std::optional<CanonicalDependency> &first,
+    const std::optional<CanonicalDependency> &second) {
+  const bool presenceDiffers = first.has_value() != second.has_value();
+  if (presenceDiffers) {
+    return false;
+  }
+  if (!first) {
+    return true;
+  }
+  return first->source == second->source && first->target == second->target &&
+         first->kind == second->kind &&
+         first->iterationDistance == second->iterationDistance &&
+         first->recurrenceLoop == second->recurrenceLoop;
+}
+
+bool sameDiagnosticBundleProtocol(
+    const CanonicalEventBundleCandidate &first,
+    const CanonicalEventBundleCandidate &second) {
+  if (first.kind != second.kind ||
+      first.events.size() != second.events.size() ||
+      !sameCompletionWitness(first.completionWitness,
+                             second.completionWitness)) {
+    return false;
+  }
+  SmallVector<bool, 2> matched(second.events.size(), false);
+  for (const CanonicalEvent &firstEvent : first.events) {
+    bool found = false;
+    for (auto [index, secondEvent] : llvm::enumerate(second.events)) {
+      if (!matched[index] &&
+          sameDiagnosticEventProtocol(firstEvent, secondEvent)) {
+        matched[index] = true;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool candidateBarriersEquivalent(const CanonicalBarrier &first,
                                  const CanonicalBarrier &second) {
   return first.pipe == second.pipe &&
@@ -354,6 +410,57 @@ bool mlir::pto::canonicalEventBundlesHaveNoConflicts(
   });
 }
 
+bool mlir::pto::canonicalDiagnosticEventBundlesEquivalent(
+    const CanonicalEventBundleCandidate &first,
+    const CanonicalEventBundleCandidate &second,
+    ArrayRef<CanonicalEventBundleCandidate> universe) {
+  const bool protocolsMatch = sameDiagnosticBundleProtocol(first, second);
+  const bool conflictCountsMatch =
+      first.conflicts.size() == second.conflicts.size();
+  if (!protocolsMatch || !conflictCountsMatch) {
+    return false;
+  }
+  const auto findCandidate = [&](std::size_t id) {
+    auto candidate = llvm::find_if(
+        universe, [&](const auto &entry) { return entry.id == id; });
+    return candidate == universe.end() ? nullptr : &*candidate;
+  };
+  SmallVector<bool, 4> matched(second.conflicts.size(), false);
+  for (std::size_t firstConflict : first.conflicts) {
+    const CanonicalEventBundleCandidate *firstCandidate =
+        findCandidate(firstConflict);
+    if (!firstCandidate) {
+      return false;
+    }
+    bool found = false;
+    for (auto [index, secondConflict] : llvm::enumerate(second.conflicts)) {
+      const CanonicalEventBundleCandidate *secondCandidate =
+          findCandidate(secondConflict);
+      if (!matched[index] && secondCandidate &&
+          sameDiagnosticBundleProtocol(*firstCandidate, *secondCandidate)) {
+        matched[index] = true;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool mlir::pto::canonicalDiagnosticEventBundleMatchesSelected(
+    const CanonicalEventBundleCandidate &candidate,
+    ArrayRef<CanonicalEventBundleCandidate> selected,
+    ArrayRef<CanonicalEventBundleCandidate> universe) {
+  return llvm::any_of(selected, [&](const auto &bundle) {
+    return bundle.id == candidate.id ||
+           canonicalDiagnosticEventBundlesEquivalent(bundle, candidate,
+                                                       universe);
+  });
+}
+
 bool mlir::pto::exchangeCanonicalEventBundleCandidate(
     std::vector<CanonicalEventBundleCandidate> &selected,
     const CanonicalEventBundleCandidate &candidate) {
@@ -375,6 +482,17 @@ bool mlir::pto::exchangeCanonicalEventBundleCandidate(
       selected.end());
   selected.push_back(candidate);
   return true;
+}
+
+bool mlir::pto::appendCanonicalEventBundleCandidate(
+    std::vector<CanonicalEventBundleCandidate> &selected,
+    const CanonicalEventBundleCandidate &candidate) {
+  selected.push_back(candidate);
+  if (canonicalEventBundlesHaveNoConflicts(selected)) {
+    return true;
+  }
+  selected.pop_back();
+  return false;
 }
 
 std::size_t mlir::pto::calculateCanonicalEventColorOverflow(
@@ -1126,6 +1244,306 @@ LogicalResult CanonicalSyncPlanBuilder::optimizeMechanismSelection() {
   plan_.barriers_ = std::move(incumbentBarriers);
   selectedEventBundles_ = std::move(incumbentBundles);
   plan_.events_ = flattenCanonicalEventBundles(selectedEventBundles_);
+  return success();
+}
+
+LogicalResult CanonicalSyncPlanBuilder::buildSelectionDiagnostics() {
+  CanonicalSelectionDiagnostic diagnostic;
+
+  const auto findBarrierCandidateId = [&](const CanonicalBarrier &barrier) {
+    auto candidate = llvm::find_if(
+        mechanismUniverse_.barriers, [&](const auto &entry) {
+          return candidateBarriersEquivalent(barrier, entry.barrier);
+        });
+    return candidate == mechanismUniverse_.barriers.end()
+               ? barrier.id
+               : candidate->id;
+  };
+  for (const CanonicalBarrier &barrier : plan_.barriers_) {
+    CanonicalSelectionMechanismSummary summary;
+    summary.mechanism = {CanonicalSelectionMechanismKind::Barrier,
+                         findBarrierCandidateId(barrier)};
+    diagnostic.selectedMechanisms.push_back(std::move(summary));
+  }
+  for (const CanonicalEventBundleCandidate &bundle : selectedEventBundles_) {
+    CanonicalSelectionMechanismSummary summary;
+    summary.mechanism = {CanonicalSelectionMechanismKind::EventBundle,
+                         bundle.id};
+    summary.eventBundleKind = bundle.kind;
+    std::set<CanonicalSelectionEventDomain> domains;
+    for (const CanonicalEvent &event : bundle.events) {
+      domains.insert({event.sourcePipe, event.targetPipe});
+      addSaturated(summary.actionSites, event.actions.size());
+      summary.eventLanes += event.width;
+    }
+    summary.eventDomains.append(domains.begin(), domains.end());
+    diagnostic.selectedMechanisms.push_back(std::move(summary));
+  }
+  llvm::sort(diagnostic.selectedMechanisms, [](const auto &first,
+                                               const auto &second) {
+    return first.mechanism < second.mechanism;
+  });
+
+  const bool hasEvictionRequest = !diagnosticRequest_.barrierIds.empty() ||
+                                  !diagnosticRequest_.eventBundleIds.empty();
+  if (!hasEvictionRequest) {
+    plan_.selectionDiagnostics_.push_back(std::move(diagnostic));
+    return success();
+  }
+
+  std::set<std::size_t> requestedBarriers;
+  std::set<std::size_t> requestedBundles;
+  for (std::size_t id : diagnosticRequest_.barrierIds) {
+    if (!requestedBarriers.insert(id).second) {
+      return func_.emitError() << "duplicate canonical barrier eviction id "
+                               << id;
+    }
+  }
+  for (std::size_t id : diagnosticRequest_.eventBundleIds) {
+    if (!requestedBundles.insert(id).second) {
+      return func_.emitError()
+             << "duplicate canonical event-bundle eviction id " << id;
+    }
+  }
+
+  std::vector<CanonicalBarrier> remainingBarriers;
+  for (const CanonicalBarrier &barrier : plan_.barriers_) {
+    const std::size_t id = findBarrierCandidateId(barrier);
+    const bool evictsBarrier = requestedBarriers.erase(id) != 0;
+    if (evictsBarrier) {
+      diagnostic.evictedMechanisms.push_back(
+          {CanonicalSelectionMechanismKind::Barrier, id});
+    } else {
+      remainingBarriers.push_back(barrier);
+    }
+  }
+  std::vector<CanonicalEventBundleCandidate> remainingBundles;
+  for (const CanonicalEventBundleCandidate &bundle : selectedEventBundles_) {
+    const bool evictsBundle = requestedBundles.erase(bundle.id) != 0;
+    if (evictsBundle) {
+      diagnostic.evictedMechanisms.push_back(
+          {CanonicalSelectionMechanismKind::EventBundle, bundle.id});
+    } else {
+      remainingBundles.push_back(bundle);
+    }
+  }
+  if (!requestedBarriers.empty()) {
+    return func_.emitError()
+           << "canonical barrier eviction id " << *requestedBarriers.begin()
+           << " is not selected";
+  }
+  if (!requestedBundles.empty()) {
+    return func_.emitError() << "canonical event-bundle eviction id "
+                             << *requestedBundles.begin()
+                             << " is not selected";
+  }
+  llvm::sort(diagnostic.evictedMechanisms);
+
+  if (!isCandidatePlanWellFormed(remainingBarriers, remainingBundles,
+                                 plan_.completionRequirements_)) {
+    return func_.emitError(
+        "internal error: canonical eviction damaged protocol structure");
+  }
+
+  const std::vector<CanonicalEvent> remainingEvents =
+      flattenCanonicalEventBundles(remainingBundles);
+  SmallVector<std::size_t, 16> uncoveredRequirements;
+  countUncoveredRequirements(remainingBarriers, remainingEvents,
+                             plan_.completionRequirements_,
+                             /*diagnose=*/false, &uncoveredRequirements);
+  llvm::sort(uncoveredRequirements);
+  uncoveredRequirements.erase(
+      std::unique(uncoveredRequirements.begin(), uncoveredRequirements.end()),
+      uncoveredRequirements.end());
+  diagnostic.exclusiveRequirements.append(uncoveredRequirements.begin(),
+                                          uncoveredRequirements.end());
+
+  const auto getRecurrenceScope = [&](const CanonicalDependency &requirement) {
+    Operation *owner = requirement.recurrenceLoop;
+    const bool hasValidEndpoints =
+        requirement.source < plan_.nodes_.size() &&
+        requirement.target < plan_.nodes_.size();
+    if (!owner && hasValidEndpoints) {
+      Operation *source = plan_.nodes_[requirement.source].operation;
+      Operation *target = plan_.nodes_[requirement.target].operation;
+      for (const CanonicalRecurrenceScope &scope : plan_.recurrenceScopes_) {
+        const bool isCommonNestedScope =
+            scope.operation->isAncestor(source) &&
+            scope.operation->isAncestor(target) &&
+            (!owner || owner->isAncestor(scope.operation));
+        if (isCommonNestedScope) {
+          owner = scope.operation;
+        }
+      }
+    }
+    auto scope = llvm::find_if(
+        plan_.recurrenceScopes_, [&](const CanonicalRecurrenceScope &entry) {
+          return entry.operation == owner;
+        });
+    return scope == plan_.recurrenceScopes_.end() ? 0U : scope->id;
+  };
+
+  SmallVector<CanonicalDependency, 16> affectedRequirements;
+  for (std::size_t requirementId : uncoveredRequirements) {
+    if (requirementId >= plan_.completionRequirements_.size()) {
+      return func_.emitError(
+          "internal error: canonical eviction requirement id is invalid");
+    }
+    const CanonicalDependency &requirement =
+        plan_.completionRequirements_[requirementId];
+    CanonicalSelectionRequirementDiagnostic requirementDiagnostic;
+    requirementDiagnostic.requirement = requirementId;
+    requirementDiagnostic.recurrenceScope =
+        getRecurrenceScope(requirement);
+    diagnostic.uncoveredRequirements.push_back(
+        std::move(requirementDiagnostic));
+    affectedRequirements.push_back(requirement);
+  }
+
+  const auto addCandidateCoverage =
+      [&](const CanonicalSelectionReplacementCandidate &candidate,
+          ArrayRef<std::size_t> stillUncovered) {
+        for (std::size_t index = 0; index < affectedRequirements.size();
+             ++index) {
+          if (!llvm::is_contained(stillUncovered, index)) {
+            diagnostic.uncoveredRequirements[index].candidates.push_back(
+                candidate);
+          }
+        }
+      };
+
+  for (const CanonicalBarrierCandidate &candidate :
+       mechanismUniverse_.barriers) {
+    const CanonicalSelectionMechanismRef mechanism{
+        CanonicalSelectionMechanismKind::Barrier, candidate.id};
+    const bool isIncumbentMechanism =
+        llvm::any_of(plan_.barriers_, [&](const auto &barrier) {
+          return candidateBarriersEquivalent(barrier, candidate.barrier);
+        });
+    if (isIncumbentMechanism) {
+      continue;
+    }
+    std::vector<CanonicalBarrier> barriers = remainingBarriers;
+    barriers.push_back(candidate.barrier);
+    if (!isCandidatePlanWellFormed(barriers, remainingBundles,
+                                   plan_.completionRequirements_)) {
+      continue;
+    }
+    SmallVector<std::size_t, 16> stillUncovered;
+    countUncoveredRequirements(barriers, remainingEvents,
+                               affectedRequirements,
+                               /*diagnose=*/false, &stillUncovered);
+    CanonicalSelectionReplacementCandidate replacement;
+    replacement.mechanism = mechanism;
+    replacement.barrierPipe = candidate.barrier.pipe;
+    replacement.colorOverflow = calculateCanonicalEventColorOverflow(
+        remainingEvents, eventIdMax_, reservedIds_);
+    addCandidateCoverage(replacement, stillUncovered);
+  }
+
+  SmallVector<const CanonicalEventBundleCandidate *, 64> uniqueCandidates;
+  for (const CanonicalEventBundleCandidate &candidate :
+       mechanismUniverse_.eventBundles) {
+    const bool duplicatesEarlier = llvm::any_of(
+        uniqueCandidates, [&](const auto *earlier) {
+          return canonicalDiagnosticEventBundlesEquivalent(
+              *earlier, candidate, mechanismUniverse_.eventBundles);
+        });
+    if (!duplicatesEarlier) {
+      uniqueCandidates.push_back(&candidate);
+    }
+  }
+  for (const CanonicalEventBundleCandidate *candidate : uniqueCandidates) {
+    const CanonicalSelectionMechanismRef mechanism{
+        CanonicalSelectionMechanismKind::EventBundle, candidate->id};
+    const bool isIncumbentMechanism =
+        canonicalDiagnosticEventBundleMatchesSelected(
+            *candidate, selectedEventBundles_, mechanismUniverse_.eventBundles);
+    if (isIncumbentMechanism) {
+      continue;
+    }
+    std::vector<CanonicalEventBundleCandidate> bundles = remainingBundles;
+    const bool appended =
+        appendCanonicalEventBundleCandidate(bundles, *candidate);
+    const bool wellFormed =
+        appended && isCandidatePlanWellFormed(
+                        remainingBarriers, bundles,
+                        plan_.completionRequirements_);
+    if (!wellFormed) {
+      continue;
+    }
+    const std::vector<CanonicalEvent> events =
+        flattenCanonicalEventBundles(bundles);
+    SmallVector<std::size_t, 16> stillUncovered;
+    countUncoveredRequirements(remainingBarriers, events,
+                               affectedRequirements,
+                               /*diagnose=*/false, &stillUncovered);
+    CanonicalSelectionReplacementCandidate replacement;
+    replacement.mechanism = mechanism;
+    replacement.eventBundleKind = candidate->kind;
+    std::set<CanonicalSelectionEventDomain> domains;
+    for (const CanonicalEvent &event : candidate->events) {
+      domains.insert({event.sourcePipe, event.targetPipe});
+    }
+    replacement.eventDomains.append(domains.begin(), domains.end());
+    replacement.colorOverflow = calculateCanonicalEventColorOverflow(
+        events, eventIdMax_, reservedIds_);
+    addCandidateCoverage(replacement, stillUncovered);
+  }
+
+  for (CanonicalSelectionRequirementDiagnostic &requirementDiagnostic :
+       diagnostic.uncoveredRequirements) {
+    llvm::sort(requirementDiagnostic.candidates,
+               [](const auto &first, const auto &second) {
+                 return std::tie(first.mechanism, first.colorOverflow) <
+                        std::tie(second.mechanism, second.colorOverflow);
+               });
+  }
+
+  const auto collectColorCounts = [&](ArrayRef<CanonicalEvent> events) {
+    std::map<CanonicalEventDomainKey, std::vector<SyncInterval>> intervals;
+    for (const CanonicalEvent &event : events) {
+      auto &domain = intervals[{event.sourcePipe, event.targetPipe}];
+      for (unsigned lane = 0; lane < event.width; ++lane) {
+        domain.push_back({event.intervalBegin, event.intervalEnd});
+      }
+    }
+    std::map<CanonicalEventDomainKey, unsigned> colors;
+    for (const auto &entry : intervals) {
+      colors[entry.first] = colorSyncIntervals(entry.second).colorCount;
+    }
+    return colors;
+  };
+  const auto beforeColors = collectColorCounts(plan_.events_);
+  const auto afterColors = collectColorCounts(remainingEvents);
+  std::set<CanonicalEventDomainKey> domains;
+  for (const auto &entry : beforeColors) {
+    domains.insert(entry.first);
+  }
+  for (const auto &entry : afterColors) {
+    domains.insert(entry.first);
+  }
+  for (const auto &entry : reservedIds_) {
+    domains.insert(entry.first);
+  }
+  for (const CanonicalEventDomainKey &domain : domains) {
+    unsigned reserved = 0;
+    auto reservedIt = reservedIds_.find(domain);
+    if (reservedIt != reservedIds_.end()) {
+      reserved = llvm::count_if(reservedIt->second, [&](unsigned id) {
+        return id < eventIdMax_;
+      });
+    }
+    const auto getColorCount = [&](const auto &colorCounts) {
+      auto entry = colorCounts.find(domain);
+      return entry == colorCounts.end() ? 0U : entry->second;
+    };
+    diagnostic.colorPressure.push_back(
+        {domain.source, domain.target, getColorCount(beforeColors),
+         getColorCount(afterColors), eventIdMax_ - reserved});
+  }
+
+  plan_.selectionDiagnostics_.push_back(std::move(diagnostic));
   return success();
 }
 

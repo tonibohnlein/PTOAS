@@ -35,7 +35,7 @@ constexpr std::int64_t kHardwareEventIdCount = 8;
 
 bool isValidView(StringRef view) {
   return view == "all" || view == "dependencies" || view == "plan" ||
-         view == "events" || view == "ownership";
+         view == "events" || view == "ownership" || view == "selection";
 }
 
 bool isKernelDispatchWrapper(func::FuncOp func) {
@@ -108,6 +108,19 @@ struct PrintCanonicalSyncPlanPass
       signalPassFailure();
       return;
     }
+    const bool hasEvictionRequest = !evictCanonicalBarrierIds.empty() ||
+                                    !evictCanonicalEventBundleIds.empty();
+    const bool invalidSelectionFormat =
+        view == "selection" && format != "text";
+    const bool evictionWithoutSelectionView =
+        hasEvictionRequest && view != "selection";
+    if (invalidSelectionFormat || evictionWithoutSelectionView) {
+      module.emitError()
+          << "canonical sync eviction diagnostics require format='text' "
+             "and view='selection'";
+      signalPassFailure();
+      return;
+    }
     if (eventIdNumMax <= 0 || eventIdNumMax > kHardwareEventIdCount) {
       module.emitError() << "event-id-num-max must be in [1, "
                          << kHardwareEventIdCount << ']';
@@ -118,12 +131,19 @@ struct PrintCanonicalSyncPlanPass
         assumeDistinctGmArgsNoAlias
             ? pto::CanonicalGMAliasPolicy::DistinctArgumentsNoAlias
             : pto::CanonicalGMAliasPolicy::MayAlias;
+    pto::CanonicalSelectionDiagnosticRequest diagnosticRequest;
+    diagnosticRequest.barrierIds.append(evictCanonicalBarrierIds.begin(),
+                                        evictCanonicalBarrierIds.end());
+    diagnosticRequest.eventBundleIds.append(
+        evictCanonicalEventBundleIds.begin(),
+        evictCanonicalEventBundleIds.end());
     for (func::FuncOp func : module.getOps<func::FuncOp>()) {
       if (shouldSkipCanonicalSync(func)) {
         continue;
       }
       FailureOr<pto::CanonicalSyncPlan> plan = pto::buildCanonicalSyncPlan(
-          func, static_cast<unsigned>(eventIdNumMax), gmAliasPolicy);
+          func, static_cast<unsigned>(eventIdNumMax), gmAliasPolicy,
+          view == "selection" ? &diagnosticRequest : nullptr);
       if (failed(plan)) {
         signalPassFailure();
         return;

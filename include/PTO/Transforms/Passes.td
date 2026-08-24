@@ -163,7 +163,8 @@ def PrintCanonicalSyncPlan
     Option<"format", "format", "std::string", "\"text\"",
            "Output format: text or dot.">,
     Option<"view", "view", "std::string", "\"all\"",
-           "Analysis view: all, dependencies, plan, events, or ownership.">,
+           "Analysis view: all, dependencies, plan, events, ownership, or "
+           "selection.">,
     Option<"eventIdNumMax", "event-id-num-max", "int64_t",
            /*default=*/"8",
            "Maximum hardware EVENT_ID slots available to the planner.">,
@@ -172,6 +173,14 @@ def PrintCanonicalSyncPlan
            /*default=*/"false",
            "Unsafely assume distinct GM pointer or view arguments never "
            "alias; the caller must guarantee disjoint accessed storage.">,
+    ListOption<"evictCanonicalBarrierIds", "evict-barrier-ids",
+               "unsigned",
+               "Selected canonical barrier IDs to evict atomically in the "
+               "selection diagnostic view.">,
+    ListOption<"evictCanonicalEventBundleIds", "evict-event-bundle-ids",
+               "unsigned",
+               "Selected canonical event-bundle IDs to evict atomically in "
+               "the selection diagnostic view.">,
   ];
 
   let dependentDialects = [

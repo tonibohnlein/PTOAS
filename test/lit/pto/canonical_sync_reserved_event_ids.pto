@@ -13,6 +13,9 @@
 // RUN:   | FileCheck %s --check-prefix=PLAN
 // RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=2' \
 // RUN:   | FileCheck %s --check-prefix=IR
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=selection event-id-num-max=2 evict-event-bundle-ids=0' \
+// RUN:   | FileCheck %s --check-prefix=SELECTION
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @reserved_scalar_to_vector_id() {
@@ -46,3 +49,9 @@ module attributes {pto.target_arch = "a2a3"} {
 // IR: pto.set_flag[<PIPE_S>, <PIPE_V>, <EVENT_ID1>]
 // IR: pto.wait_flag[<PIPE_S>, <PIPE_V>, <EVENT_ID1>]
 // IR-NOT: pto.set_flag[<PIPE_S>, <PIPE_V>, <EVENT_ID0>]
+
+// SELECTION-LABEL: PTOCanonicalSyncPlan @reserved_scalar_to_vector_id
+// SELECTION: eviction mechanisms=[event-bundle[0]]
+// SELECTION: color PIPE_S -> PIPE_V before=1 after=0 available=1
+// SELECTION: uncovered requirement[0] 3 -> 4 pipes=PIPE_S->PIPE_V kind=memory-raw
+// SELECTION-NEXT: uncovered requirement[1] 3 -> 4 pipes=PIPE_S->PIPE_V kind=memory-waw

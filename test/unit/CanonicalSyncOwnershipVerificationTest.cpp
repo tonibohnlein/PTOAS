@@ -420,6 +420,71 @@ bool testEventBundleConflicts() {
   return passed;
 }
 
+bool testDiagnosticEventBundleEquivalence() {
+  CanonicalEvent event;
+  event.source = 1;
+  event.target = 2;
+  event.sourcePipe = PipelineType::PIPE_MTE2;
+  event.targetPipe = PipelineType::PIPE_V;
+  event.intervalBegin = 3;
+  event.intervalEnd = 8;
+  CanonicalEventAction action;
+  action.kind = CanonicalEventActionKind::Set;
+  action.phase = CanonicalEventActionPhase::Straight;
+  event.actions.push_back(action);
+
+  CanonicalEventBundleCandidate first;
+  first.id = 1;
+  first.events.push_back(event);
+  CanonicalEventBundleCandidate second = first;
+  second.id = 2;
+  std::vector<CanonicalEventBundleCandidate> universe{first, second};
+  bool passed = check(canonicalDiagnosticEventBundlesEquivalent(
+                          universe[0], universe[1], universe),
+                      "stable IDs do not distinguish equivalent protocols");
+
+  universe[1].events.front().actions.front().phase =
+      CanonicalEventActionPhase::Body;
+  passed &= check(!canonicalDiagnosticEventBundlesEquivalent(
+                      universe[0], universe[1], universe),
+                  "different emitted actions are distinct protocols");
+  passed &= check(!canonicalDiagnosticEventBundleMatchesSelected(
+                      universe[1], ArrayRef(universe).take_front(), universe),
+                  "a distinct protocol variant remains non-incumbent");
+  universe[1].events.front().actions.front().phase =
+      CanonicalEventActionPhase::Straight;
+  passed &= check(canonicalDiagnosticEventBundleMatchesSelected(
+                      universe[1], ArrayRef(universe).take_front(), universe),
+                  "an equivalent selected protocol is incumbent");
+  universe[1] = second;
+  CanonicalDependency witness;
+  witness.source = 1;
+  witness.target = 4;
+  universe[0].completionWitness = witness;
+  passed &= check(!canonicalDiagnosticEventBundlesEquivalent(
+                      universe[0], universe[1], universe),
+                  "different completion witnesses are distinct protocols");
+
+  universe[0].completionWitness.reset();
+  CanonicalEventBundleCandidate firstConflict = first;
+  firstConflict.id = 3;
+  firstConflict.events.front().target = 5;
+  CanonicalEventBundleCandidate secondConflict = firstConflict;
+  secondConflict.id = 4;
+  universe.push_back(firstConflict);
+  universe.push_back(secondConflict);
+  universe[0].conflicts.push_back(firstConflict.id);
+  universe[1].conflicts.push_back(secondConflict.id);
+  passed &= check(canonicalDiagnosticEventBundlesEquivalent(
+                      universe[0], universe[1], universe),
+                  "equivalent conflict protocols preserve equivalence");
+  universe[3].events.front().target = 6;
+  passed &= check(!canonicalDiagnosticEventBundlesEquivalent(
+                      universe[0], universe[1], universe),
+                  "different conflict behavior is not deduplicated");
+  return passed;
+}
+
 bool testEventBundleAtomicExchange() {
   CanonicalEventBundleCandidate conflicting;
   conflicting.id = 1;
@@ -437,8 +502,15 @@ bool testEventBundleAtomicExchange() {
   ownership.events.push_back(makeReleaseEvent(cycle));
   ownership.conflicts.push_back(conflicting.id);
 
-  bool passed = check(exchangeCanonicalEventBundleCandidate(selected,
+  bool passed = check(!appendCanonicalEventBundleCandidate(selected,
                                                              ownership),
+                      "diagnostic append rejects a retained conflict");
+  passed &= check(selected.size() == 2 &&
+                      selected[0].id == conflicting.id &&
+                      selected[1].id == unrelated.id,
+                  "rejected diagnostic append preserves the selected plan");
+  passed &= check(exchangeCanonicalEventBundleCandidate(selected,
+                                                          ownership),
                       "an ownership candidate can replace a conflict");
   passed &= check(selected.size() == 2 && selected[0].id == unrelated.id &&
                       selected[1].id == ownership.id &&
@@ -684,6 +756,7 @@ int main() {
                       testSyntheticRoundTripVerification() &&
                       testEventBundleIdentityRestoration() &&
                       testEventBundleConflicts() &&
+                      testDiagnosticEventBundleEquivalence() &&
                       testEventBundleAtomicExchange() &&
                       testReservedEventColorOverflow() &&
                       testMechanismPlanScoreOrdering() &&

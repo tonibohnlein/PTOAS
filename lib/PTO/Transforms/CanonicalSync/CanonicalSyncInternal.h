@@ -47,12 +47,6 @@ struct CanonicalScarcityStats {
   std::uint64_t criticalPathWeight = 0;
 };
 
-enum class CanonicalEventBundleKind : std::uint8_t {
-  Standalone,
-  SyntheticRoundTrip,
-  Ownership,
-};
-
 struct CanonicalEventBundleCandidate {
   std::size_t id = 0;
   std::size_t protocolIdentity = 0;
@@ -111,7 +105,21 @@ bool verifyCanonicalSyntheticRoundTripWitness(
 bool canonicalEventBundlesHaveNoConflicts(
     ArrayRef<CanonicalEventBundleCandidate> bundles);
 
+bool canonicalDiagnosticEventBundlesEquivalent(
+    const CanonicalEventBundleCandidate &first,
+    const CanonicalEventBundleCandidate &second,
+    ArrayRef<CanonicalEventBundleCandidate> universe);
+
+bool canonicalDiagnosticEventBundleMatchesSelected(
+    const CanonicalEventBundleCandidate &candidate,
+    ArrayRef<CanonicalEventBundleCandidate> selected,
+    ArrayRef<CanonicalEventBundleCandidate> universe);
+
 bool exchangeCanonicalEventBundleCandidate(
+    std::vector<CanonicalEventBundleCandidate> &selected,
+    const CanonicalEventBundleCandidate &candidate);
+
+bool appendCanonicalEventBundleCandidate(
     std::vector<CanonicalEventBundleCandidate> &selected,
     const CanonicalEventBundleCandidate &candidate);
 
@@ -177,10 +185,15 @@ private:
 class CanonicalSyncPlanBuilder {
 public:
   CanonicalSyncPlanBuilder(func::FuncOp func, unsigned eventIdMax,
-                           CanonicalGMAliasPolicy gmAliasPolicy)
+                           CanonicalGMAliasPolicy gmAliasPolicy,
+                           const CanonicalSelectionDiagnosticRequest
+                               *diagnosticRequest)
       : func_(func), funcOperation_(func.getOperation()),
         eventIdMax_(eventIdMax),
         gmAliasPolicy_(gmAliasPolicy),
+        selectionDiagnosticsEnabled_(diagnosticRequest != nullptr),
+        diagnosticRequest_(diagnosticRequest ? *diagnosticRequest
+                                             : CanonicalSelectionDiagnosticRequest{}),
         translator_(syncIR_, memoryAnalyzer_, bufferMap_, func,
                     SyncAnalysisMode::CANONICALSYNC) {}
 
@@ -238,6 +251,7 @@ private:
       std::vector<CanonicalEvent> &events);
   void removeRedundantMechanisms();
   LogicalResult optimizeMechanismSelection();
+  LogicalResult buildSelectionDiagnostics();
   void synthesizeOwnershipProtocols();
   LogicalResult verifyEventProtocols(ArrayRef<CanonicalEvent> events,
                                      bool requireAllocation,
@@ -267,10 +281,12 @@ private:
                               bool diagnose = false) const;
   std::size_t countUncoveredRequirements(
       ArrayRef<CanonicalBarrier> barriers, ArrayRef<CanonicalEvent> events,
-      ArrayRef<CanonicalDependency> requirements, bool diagnose = false) const;
+      ArrayRef<CanonicalDependency> requirements, bool diagnose = false,
+      SmallVectorImpl<std::size_t> *uncoveredRequirements = nullptr) const;
   std::size_t countUncoveredRecurrenceRequirements(
       ArrayRef<CanonicalBarrier> barriers, ArrayRef<CanonicalEvent> events,
-      ArrayRef<CanonicalDependency> requirements, bool diagnose) const;
+      ArrayRef<CanonicalDependency> requirements, bool diagnose,
+      SmallVectorImpl<std::size_t> *uncoveredRequirements) const;
   bool isVacuousOwnedAlternatingRecurrence(
       ArrayRef<const CanonicalOwnershipCycle *> cycles,
       const CanonicalDependency &requirement) const;
@@ -349,6 +365,8 @@ private:
   Operation *funcOperation_ = nullptr;
   unsigned eventIdMax_ = 0;
   CanonicalGMAliasPolicy gmAliasPolicy_ = CanonicalGMAliasPolicy::MayAlias;
+  bool selectionDiagnosticsEnabled_ = false;
+  CanonicalSelectionDiagnosticRequest diagnosticRequest_;
   CanonicalSyncPlan plan_;
   SyncIRs syncIR_;
   MemoryDependentAnalyzer memoryAnalyzer_;

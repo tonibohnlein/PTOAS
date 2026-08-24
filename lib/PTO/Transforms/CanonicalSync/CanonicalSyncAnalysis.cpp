@@ -219,6 +219,9 @@ FailureOr<CanonicalSyncPlan> CanonicalSyncPlanBuilder::build() {
   if (failed(verifyFinalPlan())) {
     return failure();
   }
+  if (selectionDiagnosticsEnabled_ && failed(buildSelectionDiagnostics())) {
+    return failure();
+  }
   if (failed(allocateEvents())) {
     return failure();
   }
@@ -547,6 +550,10 @@ bool CanonicalSyncPlanBuilder::mayExecuteTogether(Operation *first,
 
 FailureOr<CanonicalSyncPlan>
 mlir::pto::buildCanonicalSyncPlan(func::FuncOp func, unsigned eventIdMax,
-                                  CanonicalGMAliasPolicy gmAliasPolicy) {
-  return CanonicalSyncPlanBuilder(func, eventIdMax, gmAliasPolicy).build();
+                                  CanonicalGMAliasPolicy gmAliasPolicy,
+                                  const CanonicalSelectionDiagnosticRequest
+                                      *diagnosticRequest) {
+  return CanonicalSyncPlanBuilder(func, eventIdMax, gmAliasPolicy,
+                                  diagnosticRequest)
+      .build();
 }

@@ -1,0 +1,96 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=selection event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=CATALOG
+// RUN: pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=selection event-id-num-max=8 evict-barrier-ids=0 evict-event-bundle-ids=0,12' \
+// RUN:   | FileCheck %s --check-prefix=EVICT
+// RUN: pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=selection event-id-num-max=8 evict-barrier-ids=0' \
+// RUN:   | FileCheck %s --check-prefix=BARRIER
+// RUN: not pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=selection evict-event-bundle-ids=0,0' \
+// RUN:   2>&1 | FileCheck %s --check-prefix=DUPLICATE
+// RUN: not pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=selection evict-barrier-ids=0,0' \
+// RUN:   2>&1 | FileCheck %s --check-prefix=DUPLICATE-BARRIER
+// RUN: not pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=selection evict-event-bundle-ids=99' \
+// RUN:   2>&1 | FileCheck %s --check-prefix=UNSELECTED
+// RUN: not pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-print-canonical-sync-plan=format=dot view=selection' \
+// RUN:   2>&1 | FileCheck %s --check-prefix=INVALID-VIEW
+// RUN: pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=selection event-id-num-max=8' \
+// RUN:   > %t.first
+// RUN: pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=selection event-id-num-max=8' \
+// RUN:   > %t.second
+// RUN: diff %t.first %t.second
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @loop_round_trip(
+      %input : !pto.partition_tensor_view<16x16xf32>,
+      %output : !pto.partition_tensor_view<16x16xf32>, %n : index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf32>
+
+    scf.for %i = %c0 to %n step %c1 {
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf32>)
+                outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tadds ins(%tile, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tadds ins(%tile, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf32>)
+    }
+    return
+  }
+}
+
+// CATALOG-LABEL: PTOCanonicalSyncPlan @loop_round_trip
+// CATALOG: selection scope[1] op=scf.for
+// CATALOG-SAME: parent-scope=0
+// CATALOG: selection barrier[0]
+// CATALOG: selection event-bundle[0] kind=standalone domains=[PIPE_MTE2->PIPE_V]
+// CATALOG-SAME: action-sites=2 lanes=1
+// CATALOG: selection event-bundle[10] kind=standalone domains=[PIPE_V->PIPE_MTE3]
+// CATALOG-SAME: action-sites=2 lanes=1
+// CATALOG: selection event-bundle[12] kind=standalone domains=[PIPE_MTE3->PIPE_MTE2]
+// CATALOG-SAME: action-sites=4 lanes=1
+// CATALOG-NOT: eviction mechanisms=
+
+// EVICT-LABEL: PTOCanonicalSyncPlan @loop_round_trip
+// EVICT: eviction mechanisms=[barrier[0], event-bundle[0], event-bundle[12]]
+// EVICT: color PIPE_MTE2 -> PIPE_V before=1 after=0 available=8
+// EVICT: color PIPE_MTE3 -> PIPE_MTE2 before=1 after=0 available=8
+// EVICT: uncovered requirement[0] 0 -> 1 pipes=PIPE_MTE2->PIPE_V
+// EVICT-SAME: kind=memory-raw distance=0 scope=1 candidates=[]
+// EVICT: uncovered requirement[6] 1 -> 2 pipes=PIPE_V->PIPE_V kind=memory-raw distance=0 scope=1 candidates=[]
+// EVICT-NEXT: uncovered requirement[7] 1 -> 2 pipes=PIPE_V->PIPE_V kind=memory-war distance=0 scope=1 candidates=[]
+// EVICT-NEXT: uncovered requirement[8] 1 -> 2 pipes=PIPE_V->PIPE_V kind=memory-waw distance=0 scope=1 candidates=[]
+// EVICT: uncovered requirement[20] 1 -> 1 pipes=PIPE_V->PIPE_V
+// EVICT-SAME: candidates=[event-bundle[13]:kind=standalone:domains=[PIPE_MTE3->PIPE_V]:overflow=0]
+
+// BARRIER-LABEL: PTOCanonicalSyncPlan @loop_round_trip
+// BARRIER: eviction mechanisms=[barrier[0]] exclusive-requirements=[6, 7, 8]
+// BARRIER: uncovered requirement[6] 1 -> 2 pipes=PIPE_V->PIPE_V kind=memory-raw distance=0 scope=1 candidates=[]
+// BARRIER-NEXT: uncovered requirement[7] 1 -> 2 pipes=PIPE_V->PIPE_V kind=memory-war distance=0 scope=1 candidates=[]
+// BARRIER-NEXT: uncovered requirement[8] 1 -> 2 pipes=PIPE_V->PIPE_V kind=memory-waw distance=0 scope=1 candidates=[]
+
+// DUPLICATE: error: duplicate canonical event-bundle eviction id 0
+// DUPLICATE-BARRIER: error: duplicate canonical barrier eviction id 0
+// UNSELECTED: error: canonical event-bundle eviction id 99 is not selected
+// INVALID-VIEW: error: canonical sync eviction diagnostics require format='text' and view='selection'

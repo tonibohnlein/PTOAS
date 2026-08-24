@@ -44,6 +44,30 @@ mlir::pto::stringifyCanonicalGMAliasPolicy(CanonicalGMAliasPolicy policy) {
   return "unknown";
 }
 
+StringRef mlir::pto::stringifyCanonicalEventBundleKind(
+    CanonicalEventBundleKind kind) {
+  switch (kind) {
+  case CanonicalEventBundleKind::Standalone:
+    return "standalone";
+  case CanonicalEventBundleKind::SyntheticRoundTrip:
+    return "synthetic-round-trip";
+  case CanonicalEventBundleKind::Ownership:
+    return "ownership";
+  }
+  return "unknown";
+}
+
+StringRef mlir::pto::stringifyCanonicalSelectionMechanismKind(
+    CanonicalSelectionMechanismKind kind) {
+  switch (kind) {
+  case CanonicalSelectionMechanismKind::Barrier:
+    return "barrier";
+  case CanonicalSelectionMechanismKind::EventBundle:
+    return "event-bundle";
+  }
+  return "unknown";
+}
+
 StringRef
 mlir::pto::stringifyCanonicalOwnershipKind(CanonicalOwnershipKind kind) {
   switch (kind) {
@@ -71,6 +95,10 @@ bool includesEvents(StringRef view) {
 
 bool includesOwnership(StringRef view) {
   return view == "all" || view == "ownership";
+}
+
+bool includesSelection(StringRef view) {
+  return view == "selection";
 }
 
 StringRef stringifyOwnershipAddressSpace(AddressSpace space) {
@@ -131,6 +159,12 @@ void printNodeIds(llvm::raw_ostream &os, ArrayRef<std::size_t> ids) {
   os << '[';
   llvm::interleaveComma(ids, os);
   os << ']';
+}
+
+void printMechanismRef(llvm::raw_ostream &os,
+                       const CanonicalSelectionMechanismRef &mechanism) {
+  os << stringifyCanonicalSelectionMechanismKind(mechanism.kind) << '['
+     << mechanism.id << ']';
 }
 
 std::size_t getRecurrenceScopeId(
@@ -310,6 +344,104 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
           }
           os << '\n';
         }
+      }
+    }
+  }
+  if (includesSelection(view)) {
+    for (const CanonicalRecurrenceScope &scope : plan.getRecurrenceScopes()) {
+      os << "  selection scope[" << scope.id << "] op="
+         << scope.operation->getName().getStringRef()
+         << " operation-order=" << scope.operationOrder
+         << " parent-scope=" << scope.parentScope << '\n';
+    }
+    for (const CanonicalSelectionDiagnostic &diagnostic :
+         plan.getSelectionDiagnostics()) {
+      for (const CanonicalSelectionMechanismSummary &mechanism :
+           diagnostic.selectedMechanisms) {
+        os << "  selection ";
+        printMechanismRef(os, mechanism.mechanism);
+        if (mechanism.mechanism.kind ==
+            CanonicalSelectionMechanismKind::EventBundle) {
+          os << " kind="
+             << stringifyCanonicalEventBundleKind(
+                    mechanism.eventBundleKind)
+             << " domains=[";
+          llvm::interleaveComma(
+              mechanism.eventDomains, os,
+              [&](const CanonicalSelectionEventDomain &domain) {
+                os << stringifyPIPE(static_cast<PIPE>(domain.sourcePipe))
+                   << "->"
+                   << stringifyPIPE(static_cast<PIPE>(domain.targetPipe));
+              });
+          os << "] action-sites=" << mechanism.actionSites
+             << " lanes=" << mechanism.eventLanes;
+        }
+        os << '\n';
+      }
+      if (diagnostic.evictedMechanisms.empty()) {
+        continue;
+      }
+      os << "  eviction mechanisms=[";
+      llvm::interleaveComma(
+          diagnostic.evictedMechanisms, os,
+          [&](const CanonicalSelectionMechanismRef &mechanism) {
+            printMechanismRef(os, mechanism);
+          });
+      os << "] exclusive-requirements=";
+      printNodeIds(os, diagnostic.exclusiveRequirements);
+      os << '\n';
+      for (const CanonicalSelectionColorPressure &pressure :
+           diagnostic.colorPressure) {
+        os << "    color "
+           << stringifyPIPE(static_cast<PIPE>(pressure.sourcePipe)) << " -> "
+           << stringifyPIPE(static_cast<PIPE>(pressure.targetPipe))
+           << " before=" << pressure.beforeColors
+           << " after=" << pressure.afterColors
+           << " available=" << pressure.availableIds << '\n';
+      }
+      for (const CanonicalSelectionRequirementDiagnostic &entry :
+           diagnostic.uncoveredRequirements) {
+        if (entry.requirement >= plan.getCompletionRequirements().size()) {
+          continue;
+        }
+        const CanonicalDependency &requirement =
+            plan.getCompletionRequirements()[entry.requirement];
+        const CanonicalSyncNode &source = plan.getNodes()[requirement.source];
+        const CanonicalSyncNode &target = plan.getNodes()[requirement.target];
+        os << "    uncovered requirement[" << entry.requirement << "] "
+           << requirement.source << " -> " << requirement.target
+           << " pipes=" << stringifyPIPE(static_cast<PIPE>(source.pipe))
+           << "->" << stringifyPIPE(static_cast<PIPE>(target.pipe))
+           << " kind=" << stringifyCanonicalDependencyKind(requirement.kind)
+           << " distance=" << requirement.iterationDistance
+           << " scope=" << entry.recurrenceScope << " candidates=[";
+        llvm::interleaveComma(
+            entry.candidates, os,
+            [&](const CanonicalSelectionReplacementCandidate &candidate) {
+              printMechanismRef(os, candidate.mechanism);
+              if (candidate.mechanism.kind ==
+                  CanonicalSelectionMechanismKind::Barrier) {
+                os << ":pipe="
+                   << stringifyPIPE(static_cast<PIPE>(candidate.barrierPipe));
+              } else {
+                os << ":kind="
+                   << stringifyCanonicalEventBundleKind(
+                          candidate.eventBundleKind)
+                   << ":domains=[";
+                llvm::interleaveComma(
+                    candidate.eventDomains, os,
+                    [&](const CanonicalSelectionEventDomain &domain) {
+                      os << stringifyPIPE(
+                                static_cast<PIPE>(domain.sourcePipe))
+                         << "->"
+                         << stringifyPIPE(
+                                static_cast<PIPE>(domain.targetPipe));
+                    });
+                os << ']';
+              }
+              os << ":overflow=" << candidate.colorOverflow;
+            });
+        os << "]\n";
       }
     }
   }

@@ -54,6 +54,17 @@ enum class CanonicalOwnershipProtocolKind : std::uint8_t {
   AlternatingPrefetch,
 };
 
+enum class CanonicalEventBundleKind : std::uint8_t {
+  Standalone,
+  SyntheticRoundTrip,
+  Ownership,
+};
+
+enum class CanonicalSelectionMechanismKind : std::uint8_t {
+  Barrier,
+  EventBundle,
+};
+
 struct CanonicalPhysicalSlot {
   AddressSpace space = AddressSpace::Zero;
   std::uint64_t address = 0;
@@ -261,6 +272,72 @@ struct CanonicalEventDomain {
   SmallVector<unsigned, 2> reservedIds;
 };
 
+struct CanonicalSelectionMechanismRef {
+  CanonicalSelectionMechanismKind kind =
+      CanonicalSelectionMechanismKind::Barrier;
+  std::size_t id = 0;
+
+  bool operator<(const CanonicalSelectionMechanismRef &other) const {
+    return std::tie(kind, id) < std::tie(other.kind, other.id);
+  }
+};
+
+struct CanonicalSelectionEventDomain {
+  PipelineType sourcePipe = PipelineType::PIPE_UNASSIGNED;
+  PipelineType targetPipe = PipelineType::PIPE_UNASSIGNED;
+
+  bool operator<(const CanonicalSelectionEventDomain &other) const {
+    return std::tie(sourcePipe, targetPipe) <
+           std::tie(other.sourcePipe, other.targetPipe);
+  }
+};
+
+struct CanonicalSelectionMechanismSummary {
+  CanonicalSelectionMechanismRef mechanism;
+  CanonicalEventBundleKind eventBundleKind =
+      CanonicalEventBundleKind::Standalone;
+  SmallVector<CanonicalSelectionEventDomain, 2> eventDomains;
+  std::size_t actionSites = 0;
+  unsigned eventLanes = 0;
+};
+
+struct CanonicalSelectionReplacementCandidate {
+  CanonicalSelectionMechanismRef mechanism;
+  CanonicalEventBundleKind eventBundleKind =
+      CanonicalEventBundleKind::Standalone;
+  PipelineType barrierPipe = PipelineType::PIPE_UNASSIGNED;
+  SmallVector<CanonicalSelectionEventDomain, 2> eventDomains;
+  std::size_t colorOverflow = 0;
+};
+
+struct CanonicalSelectionRequirementDiagnostic {
+  std::size_t requirement = 0;
+  std::size_t recurrenceScope = 0;
+  SmallVector<CanonicalSelectionReplacementCandidate, 4> candidates;
+};
+
+struct CanonicalSelectionColorPressure {
+  PipelineType sourcePipe = PipelineType::PIPE_UNASSIGNED;
+  PipelineType targetPipe = PipelineType::PIPE_UNASSIGNED;
+  unsigned beforeColors = 0;
+  unsigned afterColors = 0;
+  unsigned availableIds = 0;
+};
+
+struct CanonicalSelectionDiagnostic {
+  SmallVector<CanonicalSelectionMechanismSummary, 16> selectedMechanisms;
+  SmallVector<CanonicalSelectionMechanismRef, 4> evictedMechanisms;
+  SmallVector<std::size_t, 16> exclusiveRequirements;
+  SmallVector<CanonicalSelectionRequirementDiagnostic, 16>
+      uncoveredRequirements;
+  SmallVector<CanonicalSelectionColorPressure, 8> colorPressure;
+};
+
+struct CanonicalSelectionDiagnosticRequest {
+  SmallVector<std::size_t, 4> barrierIds;
+  SmallVector<std::size_t, 4> eventBundleIds;
+};
+
 class CanonicalSyncPlanBuilder;
 
 class CanonicalSyncPlan {
@@ -285,13 +362,17 @@ public:
   ArrayRef<CanonicalOwnershipCycle> getOwnershipCycles() const {
     return ownershipCycles_;
   }
+  ArrayRef<CanonicalSelectionDiagnostic> getSelectionDiagnostics() const {
+    return selectionDiagnostics_;
+  }
   CanonicalGMAliasPolicy getGMAliasPolicy() const { return gmAliasPolicy_; }
   bool usedInfeasibleBootstrap() const { return usedInfeasibleBootstrap_; }
 
 private:
   friend class CanonicalSyncPlanBuilder;
   friend FailureOr<CanonicalSyncPlan>
-  buildCanonicalSyncPlan(func::FuncOp, unsigned, CanonicalGMAliasPolicy);
+  buildCanonicalSyncPlan(func::FuncOp, unsigned, CanonicalGMAliasPolicy,
+                         const CanonicalSelectionDiagnosticRequest *);
 
   std::vector<CanonicalSyncNode> nodes_;
   std::vector<SyncGraphEdge> fixedEdges_;
@@ -303,6 +384,7 @@ private:
   std::vector<CanonicalEvent> events_;
   std::vector<CanonicalEventDomain> domains_;
   std::vector<CanonicalOwnershipCycle> ownershipCycles_;
+  std::vector<CanonicalSelectionDiagnostic> selectionDiagnostics_;
   CanonicalGMAliasPolicy gmAliasPolicy_ = CanonicalGMAliasPolicy::MayAlias;
   bool usedInfeasibleBootstrap_ = false;
 };
@@ -311,12 +393,18 @@ FailureOr<CanonicalSyncPlan> buildCanonicalSyncPlan(func::FuncOp func,
                                                     unsigned eventIdMax,
                                                     CanonicalGMAliasPolicy
                                                         gmAliasPolicy =
-                                                            CanonicalGMAliasPolicy::MayAlias);
+                                                            CanonicalGMAliasPolicy::MayAlias,
+                                                    const CanonicalSelectionDiagnosticRequest
+                                                        *diagnosticRequest =
+                                                            nullptr);
 LogicalResult emitCanonicalSyncPlan(func::FuncOp func,
                                     const CanonicalSyncPlan &plan);
 
 StringRef stringifyCanonicalDependencyKind(CanonicalDependencyKind kind);
 StringRef stringifyCanonicalGMAliasPolicy(CanonicalGMAliasPolicy policy);
+StringRef stringifyCanonicalEventBundleKind(CanonicalEventBundleKind kind);
+StringRef stringifyCanonicalSelectionMechanismKind(
+    CanonicalSelectionMechanismKind kind);
 StringRef stringifyCanonicalOwnershipKind(CanonicalOwnershipKind kind);
 void printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
                             const CanonicalSyncPlan &plan, StringRef view);

@@ -387,7 +387,8 @@ std::vector<SyncGraphEdge> CanonicalSyncPlanBuilder::buildEventCompletionEdges(
 
 std::size_t CanonicalSyncPlanBuilder::countUncoveredRecurrenceRequirements(
     ArrayRef<CanonicalBarrier> barriers, ArrayRef<CanonicalEvent> events,
-    ArrayRef<CanonicalDependency> requirements, bool diagnose) const {
+    ArrayRef<CanonicalDependency> requirements, bool diagnose,
+    SmallVectorImpl<std::size_t> *uncoveredRequirements) const {
   const SmallVector<const CanonicalOwnershipCycle *, 2> alternatingCycles =
       getVerifiedAlternatingCycles(plan_.ownershipCycles_, events);
   std::map<Operation *, std::map<unsigned, SmallVector<std::size_t, 8>>,
@@ -422,6 +423,10 @@ std::size_t CanonicalSyncPlanBuilder::countUncoveredRecurrenceRequirements(
           occurrenceCount >
               std::numeric_limits<std::size_t>::max() / nodeCount) {
         uncoveredCount += distanceEntry.second.size();
+        if (uncoveredRequirements) {
+          uncoveredRequirements->append(distanceEntry.second.begin(),
+                                        distanceEntry.second.end());
+        }
         continue;
       }
       const std::size_t expandedNodeCount = nodeCount * occurrenceCount;
@@ -540,6 +545,9 @@ std::size_t CanonicalSyncPlanBuilder::countUncoveredRecurrenceRequirements(
           continue;
         }
         ++uncoveredCount;
+        if (uncoveredRequirements) {
+          uncoveredRequirements->push_back(distanceEntry.second[index]);
+        }
         if (diagnose) {
           const CanonicalDependency &requirement =
               requirements[distanceEntry.second[index]];
@@ -695,7 +703,8 @@ bool CanonicalSyncPlanBuilder::planCoversRequirements(
 
 std::size_t CanonicalSyncPlanBuilder::countUncoveredRequirements(
     ArrayRef<CanonicalBarrier> barriers, ArrayRef<CanonicalEvent> events,
-    ArrayRef<CanonicalDependency> requirements, bool diagnose) const {
+    ArrayRef<CanonicalDependency> requirements, bool diagnose,
+    SmallVectorImpl<std::size_t> *uncoveredRequirements) const {
   std::vector<SyncGraphEdge> edges = plan_.fixedEdges_;
   std::vector<SyncGraphEdge> barrierEdges =
       buildBarrierCompletionEdges(barriers);
@@ -705,17 +714,23 @@ std::size_t CanonicalSyncPlanBuilder::countUncoveredRequirements(
 
   std::vector<CompletionRequirement> forwardRequirements;
   SmallVector<std::size_t, 16> forwardIndices;
+  SmallVector<SmallVector<std::size_t, 2>, 16> forwardEquivalentIndices;
   std::size_t uncoveredCount = countUncoveredRecurrenceRequirements(
-      barriers, events, requirements, diagnose);
-  std::set<std::pair<std::size_t, std::size_t>> seenForward;
+      barriers, events, requirements, diagnose, uncoveredRequirements);
+  std::map<std::pair<std::size_t, std::size_t>, std::size_t> forwardGroups;
   for (auto [index, requirement] : llvm::enumerate(requirements)) {
     if (requirement.iterationDistance == 0 &&
         !hasIntrinsicMmadAccumulatorOrdering(requirement)) {
-      if (!seenForward.emplace(requirement.source, requirement.target).second) {
-        continue;
+      const auto key = std::make_pair(requirement.source, requirement.target);
+      auto [group, inserted] =
+          forwardGroups.emplace(key, forwardRequirements.size());
+      if (inserted) {
+        forwardRequirements.push_back(
+            {requirement.source, requirement.target});
+        forwardIndices.push_back(index);
+        forwardEquivalentIndices.emplace_back();
       }
-      forwardRequirements.push_back({requirement.source, requirement.target});
-      forwardIndices.push_back(index);
+      forwardEquivalentIndices[group->second].push_back(index);
     }
   }
   const auto isVertexAvailable = [&](std::size_t requirement,
@@ -734,6 +749,14 @@ std::size_t CanonicalSyncPlanBuilder::countUncoveredRequirements(
         llvm::errs() << "uncovered canonical forward requirement "
                      << requirement.source << " -> " << requirement.target
                      << '\n';
+      }
+    }
+  }
+  if (uncoveredRequirements) {
+    for (std::size_t index = 0; index < covered.size(); ++index) {
+      if (!covered[index]) {
+        uncoveredRequirements->append(forwardEquivalentIndices[index].begin(),
+                                      forwardEquivalentIndices[index].end());
       }
     }
   }

@@ -746,6 +746,41 @@ round until pressure-hotspot ranking can bound large candidate universes more
 selectively. Stage 7 remains a device evaluation requirement; the structural
 order is not a claim of latency optimality.
 
+### Selection eviction diagnostics
+
+The plan printer has a text-only `selection` view. With no eviction options it
+lists the stable IDs, protocol kind, directed event domains, static action-site
+count, and event-lane count of every selected barrier or event bundle. A
+proposed mechanism set can then be removed atomically with
+`evict-barrier-ids` and `evict-event-bundle-ids`, for example:
+
+```text
+pto-test-opt kernel.pto -pto-plan-memory \
+  '-pto-print-canonical-sync-plan=format=text view=selection \
+   evict-event-bundle-ids=1533,1658'
+```
+
+This mode does not modify selection or emission. It reports the active
+requirements covered exclusively by the evicted set, including endpoint
+pipes, hazard kind, iteration distance, and owning recurrence scope. For every
+uncovered requirement it lists each distinct, non-incumbent universe mechanism
+that restores that requirement when added alone, together with the resulting
+whole-plan event-color overflow. It also reports the exact interval color count
+before and after eviction for every directed domain and the available hardware
+IDs after reservations.
+
+Candidate capability is a local affected-slice fact, not a claim that the
+candidate alone restores the whole plan. Multiple listed candidates can
+conflict or exceed the color budget when selected together. The subsequent
+affected-slice exchange search must therefore evaluate complete atomic
+combinations with centralized protocol, coverage, and exact-coloring checks.
+Protocol-equivalent universe entries are deduplicated for diagnostics so their
+stable first ID represents the whole equivalent class. Equivalence compares
+the complete emitted action, completion, trace, token, scope, witness, and
+semantic conflict protocols; endpoint equality alone is insufficient. A
+replacement that conflicts with any retained mechanism is not listed as an
+"added alone" candidate and is left for the later atomic exchange search.
+
 ## Event feasibility boundary
 
 Event IDs are independent per directed `(source pipe, target pipe)` domain.
