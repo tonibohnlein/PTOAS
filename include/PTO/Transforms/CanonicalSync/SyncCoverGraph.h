@@ -90,6 +90,7 @@ struct SyncCoverDemand {
 struct SyncCoverScope {
   SyncCoverScopeId id = 0;
   SyncCoverScopeId parent = 0;
+  bool mustExecuteWithinParent = false;
 };
 
 struct SyncCoverControl {
@@ -123,7 +124,8 @@ struct SyncCoverGraphResult {
 
 class SyncCoverGraph {
 public:
-  SyncCoverGraphResult addScope(SyncCoverScopeId parent = 0);
+  SyncCoverGraphResult addScope(SyncCoverScopeId parent = 0,
+                                bool mustExecuteWithinParent = false);
   SyncCoverGraphResult addControl(unsigned alternatives,
                                   SyncCoverScopeId scope = 0);
   SyncCoverGraphResult addNode(std::uint32_t resource, std::uint64_t weight,
@@ -157,7 +159,7 @@ private:
   std::vector<SyncCoverNode> nodes_;
   std::vector<SyncCoverEdge> edges_;
   std::vector<SyncCoverDemand> demands_;
-  std::vector<SyncCoverScope> scopes_{{0, 0}};
+  std::vector<SyncCoverScope> scopes_{{0, 0, true}};
   std::vector<SyncCoverControl> controls_;
 };
 

@@ -94,12 +94,13 @@ bool mlir::pto::syncCoverGuardsCompatible(const SyncCoverGuard &first,
   return true;
 }
 
-SyncCoverGraphResult SyncCoverGraph::addScope(SyncCoverScopeId parent) {
+SyncCoverGraphResult SyncCoverGraph::addScope(SyncCoverScopeId parent,
+                                              bool mustExecuteWithinParent) {
   if (!hasValidScope(parent)) {
     return {SyncCoverGraphError::InvalidScope, parent};
   }
   const SyncCoverScopeId id = scopes_.size();
-  scopes_.push_back({id, parent});
+  scopes_.push_back({id, parent, mustExecuteWithinParent});
   return {SyncCoverGraphError::None, id};
 }
 

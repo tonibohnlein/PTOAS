@@ -30,6 +30,9 @@ demand guards preserve source- and target-occurrence conditions separately.
 Controls inside the recurrence scope are contextualized per virtual copy,
 while outer controls remain shared. A path therefore cannot claim execution
 outside either endpoint or reject a valid `then(i) -> else(i+1)` recurrence.
+Nested scopes additionally carry a must-execute-within-parent fact. Coverage
+paths may traverse nested operations only when that fact is proven by the IR
+provider; unknown or potentially zero-trip nested loops remain fail-closed.
 
 Structural edges have explicit temporal semantics. A completion-supply edge
 establishes completion. Completion-preserving issue order can carry an already
