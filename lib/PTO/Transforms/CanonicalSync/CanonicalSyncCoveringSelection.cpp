@@ -16,11 +16,65 @@
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
+#include <map>
+#include <set>
 #include <utility>
 
 using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::canonical_sync_covering;
+
+BarrierFreeOwnershipProviderSet
+mlir::pto::canonical_sync_covering::buildBarrierFreeOwnershipProviderSet(
+    ArrayRef<CanonicalOwnershipCycle> cycles,
+    ArrayRef<CanonicalEventBundleCandidate> bundles) {
+  BarrierFreeOwnershipProviderSet result;
+  std::vector<const CanonicalEventBundleCandidate *> composites;
+  for (const CanonicalEventBundleCandidate &bundle : bundles) {
+    if (bundle.kind == CanonicalEventBundleKind::CompositeOwnership) {
+      composites.push_back(&bundle);
+    }
+  }
+  if (composites.empty()) {
+    return result;
+  }
+  result.applicable = true;
+  if (composites.size() != 1) {
+    return result;
+  }
+
+  std::set<std::size_t> compositeCycles;
+  for (const CanonicalEvent &event : composites.front()->events) {
+    if (event.ownershipProtocol) {
+      compositeCycles.insert(event.ownershipCycle);
+    }
+  }
+  result.providers.push_back({CanonicalSelectionMechanismKind::EventBundle,
+                              composites.front()->id});
+  for (const CanonicalOwnershipCycle &cycle : cycles) {
+    if (compositeCycles.count(cycle.id) != 0) {
+      continue;
+    }
+    std::vector<const CanonicalEventBundleCandidate *> matches;
+    for (const CanonicalEventBundleCandidate &bundle : bundles) {
+      const bool nativeProtocol =
+          bundle.kind == CanonicalEventBundleKind::Ownership &&
+          bundle.protocolIdentity == cycle.id &&
+          bundle.ownershipProtocol == cycle.protocol;
+      if (nativeProtocol) {
+        matches.push_back(&bundle);
+      }
+    }
+    if (matches.size() != 1) {
+      result.providers.clear();
+      return result;
+    }
+    result.providers.push_back({CanonicalSelectionMechanismKind::EventBundle,
+                                matches.front()->id});
+  }
+  result.complete = true;
+  return result;
+}
 
 LogicalResult MechanismAdapter::buildLegacySeed() {
   for (const CanonicalBarrier &barrier : plan_.getBarriers()) {
@@ -58,12 +112,248 @@ LogicalResult MechanismAdapter::buildLegacySeed() {
   return success();
 }
 
+LogicalResult MechanismAdapter::evaluateOwnershipMembership(
+    CanonicalSyncCoveringMembershipSnapshot &snapshot) {
+  const BarrierFreeOwnershipProviderSet providerSet =
+      buildBarrierFreeOwnershipProviderSet(plan_.getOwnershipCycles(),
+                                           eventBundles_);
+  if (!providerSet.applicable) {
+    return success();
+  }
+
+  snapshot.attempted = true;
+  if (!providerSet.complete) {
+    return success();
+  }
+
+  std::vector<SyncCoverMechanismId> selected;
+  for (const CanonicalSelectionMechanismRef &provider :
+       providerSet.providers) {
+    auto mechanism = providers_.find(provider);
+    if (mechanism == providers_.end()) {
+      return func_.emitError(
+          "internal error: ownership membership provider was not adapted");
+    }
+    selected.push_back(mechanism->second);
+    snapshot.selectedProviders.push_back({mechanism->second, provider});
+  }
+  llvm::sort(selected);
+  if (std::adjacent_find(selected.begin(), selected.end()) != selected.end()) {
+    return func_.emitError(
+        "internal error: ownership membership provider is duplicated");
+  }
+  llvm::sort(snapshot.selectedProviders, [](const auto &first,
+                                            const auto &second) {
+    return first.mechanism < second.mechanism;
+  });
+  snapshot.candidateSetComplete = true;
+  snapshot.selectedMechanisms = selected.size();
+
+  const SyncCoverMembershipResult membership =
+      evaluateSyncCoverMembership(universe_, activeDemands_, selected);
+  if (!membership) {
+    return func_.emitError()
+           << "internal error: ownership membership evaluation failed with "
+              "error "
+           << static_cast<unsigned>(membership.error);
+  }
+  snapshot.resourceError = membership.resources.error;
+  snapshot.resourceFeasible = membership.resources.resourceFeasible;
+  if (membership.cost) {
+    snapshot.actionProfile = membership.cost.actionProfile;
+    snapshot.barrierActionProfile = membership.cost.barrierActionProfile;
+  }
+  if (!membership.resources.isValid() ||
+      !membership.resources.resourceFeasible) {
+    return success();
+  }
+
+  std::map<SyncCoverMechanismId, CanonicalSelectionMechanismRef>
+      providerForMechanism;
+  for (const auto &[provider, mechanism] : providers_) {
+    if (!providerForMechanism.emplace(mechanism, provider).second) {
+      return func_.emitError(
+          "internal error: covering mechanism has multiple providers");
+    }
+  }
+  for (const SyncCoverMembershipDemand &uncovered :
+       membership.uncoveredDemands) {
+    CanonicalSyncCoveringMembershipCut cut;
+    cut.demand = uncovered.demand;
+    for (SyncCoverMechanismId mechanism : uncovered.cutMechanisms) {
+      auto provider = providerForMechanism.find(mechanism);
+      if (provider == providerForMechanism.end()) {
+        return func_.emitError(
+            "internal error: ownership membership cut has no provider");
+      }
+      cut.candidates.push_back({mechanism, provider->second});
+    }
+    snapshot.uncoveredDemands.push_back(std::move(cut));
+  }
+  snapshot.coverageComplete = membership.coverageComplete;
+
+  const auto findProvider = [&](SyncCoverMechanismId mechanism)
+      -> std::optional<CanonicalSyncCoveringSelectedProvider> {
+    auto provider = providerForMechanism.find(mechanism);
+    if (provider == providerForMechanism.end()) {
+      return std::nullopt;
+    }
+    return CanonicalSyncCoveringSelectedProvider{mechanism,
+                                                  provider->second};
+  };
+
+  if (plan_.getGMAliasPolicy() !=
+      CanonicalGMAliasPolicy::DistinctArgumentsNoAlias) {
+    return success();
+  }
+
+  if (snapshot.requested) {
+    snapshot.barrierFreeCensusAttempted = true;
+    std::vector<SyncCoverDemandId> censusDemands;
+    censusDemands.reserve(membership.uncoveredDemands.size());
+    for (const SyncCoverMembershipDemand &uncovered :
+         membership.uncoveredDemands) {
+      censusDemands.push_back(uncovered.demand);
+    }
+    const SyncCoverBarrierFreeCensusResult census =
+        evaluateSyncCoverBarrierFreeCensus(universe_, censusDemands);
+    if (!census) {
+      return func_.emitError()
+             << "internal error: barrier-free covering census failed with "
+                "error "
+             << static_cast<unsigned>(census.error)
+             << " coverage-error "
+             << static_cast<unsigned>(census.coverageError);
+    }
+    snapshot.barrierFreeCensusStatistics = census.coverageStatistics;
+    for (const SyncCoverBarrierFreeCensusEntry &entry : census.entries) {
+      CanonicalSyncCoveringBarrierFreeCensusEntry translated;
+      translated.demand = entry.demand;
+      translated.status = entry.status;
+      translated.reachableStates = entry.reachableStates;
+      translated.witnessResources = entry.witnessResources;
+      for (SyncCoverMechanismId mechanism : entry.witnessMechanisms) {
+        const auto provider = findProvider(mechanism);
+        if (!provider) {
+          return func_.emitError(
+              "internal error: barrier-free census witness has no provider");
+        }
+        translated.witness.push_back(*provider);
+      }
+      snapshot.barrierFreeCensus.push_back(std::move(translated));
+    }
+  }
+
+  snapshot.completionAttempted = true;
+  std::vector<SyncCoverMechanismId> allowed = selected;
+  for (const CanonicalEventBundleCandidate &bundle : eventBundles_) {
+    const CanonicalSelectionMechanismRef provider{
+        CanonicalSelectionMechanismKind::EventBundle, bundle.id};
+    auto mechanism = providers_.find(provider);
+    if (mechanism == providers_.end()) {
+      return func_.emitError(
+          "internal error: ownership completion provider was not adapted");
+    }
+    allowed.push_back(mechanism->second);
+  }
+  llvm::sort(allowed);
+  allowed.erase(std::unique(allowed.begin(), allowed.end()), allowed.end());
+  const SyncCoverCompletionResult completion = completeSyncCoverMembership(
+      universe_, activeDemands_, selected, allowed);
+  if (!completion) {
+    return func_.emitError()
+           << "internal error: ownership completion failed with error "
+           << static_cast<unsigned>(completion.error);
+  }
+  snapshot.completionFound = completion.complete;
+  snapshot.completionTruncated = completion.truncated;
+  snapshot.completionEvaluations = completion.evaluations;
+  snapshot.completionRejectionsTruncated =
+      completion.rejectionDiagnosticsTruncated;
+  snapshot.completionBlockedCutsTruncated =
+      completion.blockedCutDiagnosticsTruncated;
+  for (const SyncCoverCompletionRejection &rejection :
+       completion.rejections) {
+    const auto candidate = findProvider(rejection.mechanism);
+    if (!candidate) {
+      return func_.emitError(
+          "internal error: ownership completion rejection has no provider");
+    }
+    CanonicalSyncCoveringCompletionRejection translated;
+    translated.candidate = *candidate;
+    translated.kind = rejection.kind;
+    translated.resourceError = rejection.resourceError;
+    translated.domain = rejection.domain;
+    translated.required = rejection.required;
+    translated.available = rejection.available;
+    if (rejection.firstConflict) {
+      translated.firstConflict = findProvider(*rejection.firstConflict);
+      if (!translated.firstConflict) {
+        return func_.emitError(
+            "internal error: ownership completion conflict has no provider");
+      }
+    }
+    if (rejection.secondConflict) {
+      translated.secondConflict = findProvider(*rejection.secondConflict);
+      if (!translated.secondConflict) {
+        return func_.emitError(
+            "internal error: ownership completion conflict has no provider");
+      }
+    }
+    snapshot.completionRejections.push_back(std::move(translated));
+  }
+  for (const SyncCoverCompletionBlockedCut &blocked :
+       completion.blockedCuts) {
+    CanonicalSyncCoveringCompletionBlockedCut translated;
+    translated.demand = blocked.demand;
+    translated.reachableStates = blocked.reachableStates;
+    for (SyncCoverMechanismId mechanism : blocked.selected) {
+      const auto provider = findProvider(mechanism);
+      if (!provider) {
+        return func_.emitError(
+            "internal error: ownership completion blocked selection has no "
+            "provider");
+      }
+      translated.selected.push_back(*provider);
+    }
+    for (SyncCoverMechanismId mechanism : blocked.mechanisms) {
+      const auto provider = findProvider(mechanism);
+      if (!provider) {
+        return func_.emitError(
+            "internal error: ownership completion blocked cut has no "
+            "provider");
+      }
+      translated.candidates.push_back(*provider);
+    }
+    snapshot.completionBlockedCuts.push_back(std::move(translated));
+  }
+  if (!completion.complete) {
+    return success();
+  }
+  ownershipCompletionSeed_ = completion.mechanisms;
+  snapshot.completionActionProfile = completion.membership.cost.actionProfile;
+  snapshot.completionBarrierActionProfile =
+      completion.membership.cost.barrierActionProfile;
+  for (SyncCoverMechanismId mechanism : completion.mechanisms) {
+    auto provider = providerForMechanism.find(mechanism);
+    if (provider == providerForMechanism.end()) {
+      return func_.emitError(
+          "internal error: ownership completion has no provider");
+    }
+    snapshot.completionProviders.push_back({mechanism, provider->second});
+  }
+  return success();
+}
+
 LogicalResult
 MechanismAdapter::solve(CanonicalSyncCoveringShadowSnapshot &snapshot) {
   snapshot.selectionAttempted = true;
   const std::vector<SyncCoverDemandId> demands(activeDemands_.begin(),
                                                 activeDemands_.end());
-  const std::vector<SyncCoverSelectionSeed> seeds = {{1, legacySeed_}};
+  std::vector<SyncCoverSelectionSeed> seeds = {{1, legacySeed_}};
+  if (!ownershipCompletionSeed_.empty()) {
+    seeds.push_back({2, ownershipCompletionSeed_});
+  }
   const SyncCoverSelectionResult result =
       solveSyncCoverSelection(universe_, demands, seeds);
   snapshot.selectionError = result.error;
@@ -72,6 +362,7 @@ MechanismAdapter::solve(CanonicalSyncCoveringShadowSnapshot &snapshot) {
   snapshot.solverComponents = result.components.size();
   snapshot.solverEvaluations = result.evaluations;
   snapshot.redundancyEvaluations = result.redundancyEvaluations;
+  snapshot.exchangeStatistics = result.exchangeStatistics;
   snapshot.coverageStatistics = result.coverageStatistics;
   snapshot.finalVerificationStatistics = result.finalVerificationStatistics;
   if (!result) {

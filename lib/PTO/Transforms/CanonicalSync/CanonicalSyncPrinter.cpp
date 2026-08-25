@@ -55,6 +55,8 @@ StringRef mlir::pto::stringifyCanonicalEventBundleKind(
     return "synthetic-round-trip";
   case CanonicalEventBundleKind::Ownership:
     return "ownership";
+  case CanonicalEventBundleKind::CompositeOwnership:
+    return "composite-ownership";
   }
   return "unknown";
 }
@@ -103,6 +105,20 @@ bool includesSelection(StringRef view) {
   return view == "selection";
 }
 
+StringRef getOwnershipProtocolSuffix(CanonicalOwnershipProtocolKind kind) {
+  switch (kind) {
+  case CanonicalOwnershipProtocolKind::RoundTrip:
+    return "";
+  case CanonicalOwnershipProtocolKind::AlternatingPrefetch:
+    return " protocol=alternating-prefetch";
+  case CanonicalOwnershipProtocolKind::BoundaryGuardedRoundTrip:
+    return " protocol=boundary-guarded-round-trip";
+  case CanonicalOwnershipProtocolKind::HierarchicalOuterCarry:
+    return " protocol=hierarchical-outer-carry";
+  }
+  return " protocol=unknown";
+}
+
 bool includesCovering(StringRef view) {
   return view == "all" || view == "covering";
 }
@@ -113,6 +129,19 @@ StringRef stringifyCoveringResourceKind(SyncCoverResourceKind kind) {
     return "event-id";
   case SyncCoverResourceKind::BufferToken:
     return "buffer-token";
+  }
+  return "unknown";
+}
+
+StringRef stringifyBarrierFreeCensusStatus(
+    SyncCoverBarrierFreeCensusStatus status) {
+  switch (status) {
+  case SyncCoverBarrierFreeCensusStatus::Uncoverable:
+    return "uncoverable";
+  case SyncCoverBarrierFreeCensusStatus::FeasibleWitness:
+    return "feasible-witness";
+  case SyncCoverBarrierFreeCensusStatus::InfeasibleWitness:
+    return "infeasible-witness";
   }
   return "unknown";
 }
@@ -385,11 +414,7 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
          << stringifyPIPE(static_cast<PIPE>(cycle.producerPipe)) << " -> "
          << stringifyPIPE(static_cast<PIPE>(cycle.consumerPipe))
          << " lanes=" << cycle.lanes.size() << " paths=" << cycle.paths.size()
-         << (cycle.protocol ==
-                     CanonicalOwnershipProtocolKind::AlternatingPrefetch
-                 ? " protocol=alternating-prefetch"
-                 : "")
-         << '\n';
+         << getOwnershipProtocolSuffix(cycle.protocol) << '\n';
       for (const CanonicalOwnershipLane &lane : cycle.lanes) {
         os << "    lane[" << lane.id << "] slots=[";
         llvm::interleaveComma(lane.slots, os,
@@ -544,6 +569,10 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
        << " components=" << snapshot.solverComponents
        << " evaluations=" << snapshot.solverEvaluations
        << " redundancy-evaluations=" << snapshot.redundancyEvaluations
+       << " exchange-rounds=" << snapshot.exchangeStatistics.rounds
+       << " exchange-evictions=" << snapshot.exchangeStatistics.evictionSets
+       << " exchange-evaluations=" << snapshot.exchangeStatistics.evaluations
+       << " exchange-accepted=" << snapshot.exchangeStatistics.accepted
        << " truncated=" << (snapshot.searchTruncated ? "yes" : "no")
        << " optimal=" << (snapshot.optimalityProven ? "yes" : "no")
        << " actions=";
@@ -578,6 +607,179 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
        << snapshot.finalVerificationStatistics.graphValidations
        << " final-coverage-queries="
        << snapshot.finalVerificationStatistics.coverageQueries << '\n';
+    const CanonicalSyncCoveringMembershipSnapshot &membership =
+        snapshot.ownershipMembership;
+    os << "  covering-ownership-membership status="
+       << (membership.attempted ? "attempted" : "not-applicable")
+       << " candidates="
+       << (membership.candidateSetComplete ? "complete" : "incomplete")
+       << " mechanisms=" << membership.selectedMechanisms
+       << " resources="
+       << (membership.resourceFeasible ? "feasible" : "infeasible")
+       << " resource-error="
+       << static_cast<unsigned>(membership.resourceError)
+       << " coverage="
+       << (membership.coverageComplete ? "complete" : "incomplete")
+       << " uncovered=" << membership.uncoveredDemands.size()
+       << " actions=";
+    printNodeIds(os, membership.actionProfile);
+    os << " barriers=";
+    printNodeIds(os, membership.barrierActionProfile);
+    os << " providers=[";
+    llvm::interleaveComma(membership.selectedProviders, os,
+                          [&](const auto &selected) {
+                            os << "mechanism[" << selected.mechanism << "]=";
+                            printMechanismRef(os, selected.provider);
+                          });
+    os << "]\n";
+    for (const CanonicalSyncCoveringMembershipCut &cut :
+         membership.uncoveredDemands) {
+      os << "  covering-ownership-uncovered demand[" << cut.demand
+         << "] candidates=[";
+      llvm::interleaveComma(cut.candidates, os, [&](const auto &candidate) {
+        os << "mechanism[" << candidate.mechanism << "]=";
+        printMechanismRef(os, candidate.provider);
+      });
+      os << "]\n";
+    }
+    const std::size_t censusUncoverable = llvm::count_if(
+        membership.barrierFreeCensus, [](const auto &entry) {
+          return entry.status ==
+                 SyncCoverBarrierFreeCensusStatus::Uncoverable;
+        });
+    const std::size_t censusFeasible = llvm::count_if(
+        membership.barrierFreeCensus, [](const auto &entry) {
+          return entry.status ==
+                 SyncCoverBarrierFreeCensusStatus::FeasibleWitness;
+        });
+    const std::size_t censusInfeasible = llvm::count_if(
+        membership.barrierFreeCensus, [](const auto &entry) {
+          return entry.status ==
+                 SyncCoverBarrierFreeCensusStatus::InfeasibleWitness;
+        });
+    os << "  covering-barrier-free-census status="
+       << (membership.barrierFreeCensusAttempted ? "complete" : "not-run")
+       << " demands=" << membership.barrierFreeCensus.size()
+       << " uncoverable=" << censusUncoverable
+       << " feasible-witness=" << censusFeasible
+       << " infeasible-witness=" << censusInfeasible
+       << " coverage-queries="
+       << membership.barrierFreeCensusStatistics.coverageQueries << '\n';
+    for (const CanonicalSyncCoveringBarrierFreeCensusEntry &entry :
+         membership.barrierFreeCensus) {
+      os << "  covering-barrier-free-demand[" << entry.demand
+         << "] status=" << stringifyBarrierFreeCensusStatus(entry.status)
+         << " witness=[";
+      llvm::interleaveComma(entry.witness, os, [&](const auto &selected) {
+        os << "mechanism[" << selected.mechanism << "]=";
+        printMechanismRef(os, selected.provider);
+      });
+      os << "]";
+      if (entry.status ==
+          SyncCoverBarrierFreeCensusStatus::InfeasibleWitness) {
+        os << " resource-error="
+           << static_cast<unsigned>(entry.witnessResources.error)
+           << " overflows=[";
+        bool firstOverflow = true;
+        for (const SyncCoverDomainFeasibility &domain :
+             entry.witnessResources.domains) {
+          if (domain.overflow == 0) {
+            continue;
+          }
+          if (!firstOverflow) {
+            os << ", ";
+          }
+          firstOverflow = false;
+          os << "domain[" << domain.domain << "]=" << domain.required << '/'
+             << domain.available;
+        }
+        os << ']';
+        if (entry.witnessResources.firstConflict) {
+          os << " first-conflict=mechanism["
+             << *entry.witnessResources.firstConflict << ']';
+        }
+        if (entry.witnessResources.secondConflict) {
+          os << " second-conflict=mechanism["
+             << *entry.witnessResources.secondConflict << ']';
+        }
+      }
+      os << " reachable=[";
+      llvm::interleaveComma(entry.reachableStates, os,
+                            [&](const SyncCoverReachableState &state) {
+                              os << state.node << '@' << state.copy << ':'
+                                 << (state.hasCompletion ? 'c' : 'i');
+                            });
+      os << "]\n";
+    }
+    os << "  covering-ownership-completion status="
+       << (membership.completionAttempted ? "attempted" : "not-run")
+       << " found=" << (membership.completionFound ? "yes" : "no")
+       << " truncated="
+       << (membership.completionTruncated ? "yes" : "no")
+       << " evaluations=" << membership.completionEvaluations
+       << " actions=";
+    printNodeIds(os, membership.completionActionProfile);
+    os << " barriers=";
+    printNodeIds(os, membership.completionBarrierActionProfile);
+    os << " providers=[";
+    llvm::interleaveComma(membership.completionProviders, os,
+                          [&](const auto &selected) {
+                            os << "mechanism[" << selected.mechanism << "]=";
+                            printMechanismRef(os, selected.provider);
+                          });
+    os << "]\n";
+    for (const CanonicalSyncCoveringCompletionRejection &rejection :
+         membership.completionRejections) {
+      os << "  covering-ownership-rejection candidate=mechanism["
+         << rejection.candidate.mechanism << "]=";
+      printMechanismRef(os, rejection.candidate.provider);
+      os << " kind=" << static_cast<unsigned>(rejection.kind)
+         << " resource-error="
+         << static_cast<unsigned>(rejection.resourceError);
+      if (rejection.firstConflict) {
+        os << " first-conflict=mechanism["
+           << rejection.firstConflict->mechanism << "]=";
+        printMechanismRef(os, rejection.firstConflict->provider);
+      }
+      if (rejection.secondConflict) {
+        os << " second-conflict=mechanism["
+           << rejection.secondConflict->mechanism << "]=";
+        printMechanismRef(os, rejection.secondConflict->provider);
+      }
+      if (rejection.domain) {
+        os << " domain=" << *rejection.domain
+           << " required=" << rejection.required
+           << " available=" << rejection.available;
+      }
+      os << '\n';
+    }
+    if (membership.completionRejectionsTruncated) {
+      os << "  covering-ownership-rejection truncated=yes\n";
+    }
+    for (const CanonicalSyncCoveringCompletionBlockedCut &cut :
+         membership.completionBlockedCuts) {
+      os << "  covering-ownership-blocked demand[" << cut.demand
+         << "] selected=[";
+      llvm::interleaveComma(cut.selected, os, [&](const auto &selected) {
+        os << "mechanism[" << selected.mechanism << "]=";
+        printMechanismRef(os, selected.provider);
+      });
+      os << "] candidates=[";
+      llvm::interleaveComma(cut.candidates, os, [&](const auto &candidate) {
+        os << "mechanism[" << candidate.mechanism << "]=";
+        printMechanismRef(os, candidate.provider);
+      });
+      os << "] reachable=[";
+      llvm::interleaveComma(cut.reachableStates, os,
+                            [&](const SyncCoverReachableState &state) {
+                              os << state.node << '@' << state.copy << ':'
+                                 << (state.hasCompletion ? 'c' : 'i');
+                            });
+      os << "]\n";
+    }
+    if (membership.completionBlockedCutsTruncated) {
+      os << "  covering-ownership-blocked truncated=yes\n";
+    }
     for (const CanonicalSyncCoveringSelectedResourceUse &use :
          snapshot.selectedResourceUses) {
       os << "  covering-use mechanism[" << use.mechanism << "]=";

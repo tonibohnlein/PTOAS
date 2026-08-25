@@ -663,10 +663,19 @@ module attributes {pto.target_arch = "a2a3"} {
 // DIRECT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
 // DIRECT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
 // DIRECT-LABEL: func.func @nested_l0c_ownership
-// DIRECT: pto.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+// DIRECT-NOT: pto.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+// DIRECT: scf.for %[[OUTER:[^ ]+]] = %c0 to %[[LIMIT:[^ ]+]] step %c1
+// DIRECT-NEXT: %[[NOT_FIRST:[^ ]+]] = arith.cmpi ne, %[[OUTER]], %c0
+// DIRECT-NEXT: scf.if %[[NOT_FIRST]]
 // DIRECT: pto.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
 // DIRECT: pto.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
 // DIRECT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+// DIRECT: pto.tstore
+// DIRECT-NEXT: %[[NEXT:[^ ]+]] = arith.addi %[[OUTER]], %c1
+// DIRECT-NEXT: %[[HAS_SUCCESSOR:[^ ]+]] = arith.cmpi slt, %[[NEXT]], %[[LIMIT]]
+// DIRECT-NEXT: scf.if %[[HAS_SUCCESSOR]]
+// DIRECT: pto.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+// DIRECT-NOT: pto.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
 // DIRECT-LABEL: func.func @dynamic_address_l0c_refused
 // DIRECT: pto.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
 // DIRECT: pto.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]

@@ -29,6 +29,9 @@
 // RUN: sed -n '/^  barrier\[/,/^module /p' %t.unannotated.out | sed '$d' \
 // RUN:   > %t.unannotated.mechanisms
 // RUN: diff -u %t.annotated.mechanisms %t.unannotated.mechanisms
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=covering event-id-num-max=8 assume-distinct-gm-args-noalias=true' \
+// RUN:   | FileCheck %s --check-prefix=GLOBAL-NOALIAS
 
 module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
   func.func @matmul_kernel_ABt_autosync(%arg0: !pto.ptr<f16, gm>, %arg1: !pto.ptr<f16, gm>, %arg2: !pto.ptr<f16, gm>, %arg3: i32, %arg4: i32, %arg5: i32) attributes {pto.noalias_pairs = array<i64: 0, 1, 0, 2, 1, 2>} {
@@ -248,3 +251,9 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // UNANNOTATED: ownership[1] id=2 kind=l1-tile PIPE_MTE2 -> PIPE_MTE1 lanes=2 paths=2
 // UNANNOTATED: ownership[2] id=3 kind=l1-tile PIPE_MTE2 -> PIPE_MTE1 lanes=2 paths=2 protocol=alternating-prefetch
 // UNANNOTATED: ownership[3] id=4 kind=l0-accumulator PIPE_M -> PIPE_FIX lanes=1 paths=1
+
+// GLOBAL-NOALIAS-LABEL: PTOCanonicalSyncPlan @matmul_kernel_ABt_autosync
+// GLOBAL-NOALIAS-SAME: gm-alias-policy=distinct-args-noalias
+// GLOBAL-NOALIAS: covering-ownership-membership status=attempted candidates=complete mechanisms=2 resources=feasible
+// GLOBAL-NOALIAS: covering-barrier-free-census status=complete
+// GLOBAL-NOALIAS: covering-ownership-completion status=attempted

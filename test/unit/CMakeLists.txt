@@ -101,6 +101,26 @@ add_test(NAME pto_canonical_sync_covering_allocation_unit
 set_tests_properties(pto_canonical_sync_covering_allocation_unit
   PROPERTIES LABELS "PTO;unit")
 
+add_executable(pto-canonical-sync-covering-translation-unit-test
+  CanonicalSyncCoveringTranslationTest.cpp
+)
+target_include_directories(pto-canonical-sync-covering-translation-unit-test PRIVATE
+  "${PROJECT_SOURCE_DIR}/include"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync"
+)
+target_link_libraries(pto-canonical-sync-covering-translation-unit-test PRIVATE
+  MLIRArithDialect
+  MLIRFuncDialect
+  MLIRIR
+  PTOTransforms
+  LLVMSupport
+)
+add_test(NAME pto_canonical_sync_covering_translation_unit
+  COMMAND pto-canonical-sync-covering-translation-unit-test
+)
+set_tests_properties(pto_canonical_sync_covering_translation_unit
+  PROPERTIES LABELS "PTO;unit")
+
 add_executable(pto-canonical-sync-algorithms-unit-test
   CanonicalSyncAlgorithmsTest.cpp
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/CanonicalSyncColoring.cpp"

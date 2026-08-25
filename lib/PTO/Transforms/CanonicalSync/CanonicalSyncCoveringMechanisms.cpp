@@ -64,6 +64,13 @@ MechanismAdapter::build(CanonicalSyncCoveringShadowSnapshot &snapshot) {
   snapshot.eventBundleCandidates = eventBundles_.size();
   snapshot.candidateMechanisms = universe_.getMechanisms().size();
   snapshot.legacySeedMechanisms = legacySeed_.size();
+  const bool buildOwnershipCompletion =
+      plan_.getGMAliasPolicy() ==
+      CanonicalGMAliasPolicy::DistinctArgumentsNoAlias;
+  if ((snapshot.ownershipMembership.requested || buildOwnershipCompletion) &&
+      failed(evaluateOwnershipMembership(snapshot.ownershipMembership))) {
+    return failure();
+  }
   return solve(snapshot);
 }
 
@@ -253,12 +260,15 @@ LogicalResult MechanismAdapter::addEventBundles() {
             "internal error: canonical covering event protocol is "
             "unmappable");
       }
-      const SyncCoverMechanismDescriptor expected = translated->descriptor;
-      eventResourceUses = translated->eventResourceUses;
+      const TranslatedEventBundleMechanism expected = *translated;
+      eventResourceUses = expected.eventResourceUses;
       result = universe_.addVerifiedProtocol(
-          translated->descriptor, [&, expected](const auto &actual) {
-            return sameDescriptor(actual, expected) &&
-                   verifyBundleShape(bundle) &&
+          expected.descriptor, [&, expected](const auto &actual) {
+            return verifyTranslatedEventBundleCorrespondence(
+                       bundle, expected, actual, universe_, domains_,
+                       regionScopes_, loopScopes_, getAnchorPosition_) &&
+                   verifyBundleShape(bundle, plan_.getOwnershipCycles(),
+                                     plan_.getNodes()) &&
                    verifyEventProtocols_(bundle.events);
           });
     }
@@ -279,6 +289,8 @@ LogicalResult MechanismAdapter::addEventBundles() {
                    << event.target << " width=" << event.width
                    << " distance=" << event.iterationDistance
                    << " scope-loop=" << static_cast<bool>(event.scopeLoop)
+                   << " resource-scope-loop="
+                   << static_cast<bool>(event.resourceScopeLoop)
                    << " recurrence-loop="
                    << static_cast<bool>(event.recurrenceLoop)
                    << " drain-loop="

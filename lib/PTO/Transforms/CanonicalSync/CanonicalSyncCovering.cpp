@@ -403,18 +403,21 @@ private:
         return loop->emitError(
             "internal error: canonical covering recurrence scope is missing");
       }
+      std::map<PipelineType, SmallVector<const CanonicalSyncNode *, 32>>
+          loopNodesByPipe;
+      for (const CanonicalSyncNode &node : plan_.getNodes()) {
+        if (loop->isAncestor(node.operation)) {
+          loopNodesByPipe[node.pipe].push_back(&node);
+        }
+      }
       for (const CanonicalSyncNode &source : plan_.getNodes()) {
         if (!loop->isAncestor(source.operation)) {
           continue;
         }
-        for (const CanonicalSyncNode &target : plan_.getNodes()) {
-          if (source.pipe != target.pipe ||
-              !loop->isAncestor(target.operation)) {
-            continue;
-          }
+        for (const CanonicalSyncNode *target : loopNodesByPipe[source.pipe]) {
           SyncCoverEdge edge;
           edge.source = source.id;
-          edge.target = target.id;
+          edge.target = target->id;
           edge.kind = hasHardwareCompletion_(source.pipe)
                           ? SyncCoverEdgeKind::CompletionSupply
                           : SyncCoverEdgeKind::CompletionPreservingIssueOrder;
@@ -506,7 +509,7 @@ private:
   func::FuncOp func_;
   const CanonicalSyncPlan &plan_;
   const CanonicalMechanismUniverse &legacyUniverse_;
-  ArrayRef<CanonicalEventBundleCandidate> selectedEventBundles_;
+  std::vector<CanonicalEventBundleCandidate> selectedEventBundles_;
   unsigned eventIdMax_ = 0;
   const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds_;
   std::function<bool(PipelineType)> hasHardwareCompletion_;
@@ -528,6 +531,8 @@ private:
 
 LogicalResult CanonicalSyncPlanBuilder::buildCoveringShadowGraph() {
   CanonicalSyncCoveringShadowSnapshot snapshot;
+  snapshot.ownershipMembership.requested =
+      coveringMembershipProbeEnabled_;
   CanonicalSyncCoveringGraphAdapter adapter(
       func_, plan_, mechanismUniverse_, selectedEventBundles_, eventIdMax_,
       reservedIds_,

@@ -188,6 +188,7 @@ struct PrintCanonicalSyncPlanPass
       options.diagnosticRequest =
           view == "selection" ? &diagnosticRequest : nullptr;
       options.coveringShadow = coveringShadow || view == "covering";
+      options.coveringMembershipProbe = view == "covering";
       FailureOr<pto::CanonicalSyncPlan> plan =
           pto::buildCanonicalSyncPlan(func, options);
       if (failed(plan)) {
