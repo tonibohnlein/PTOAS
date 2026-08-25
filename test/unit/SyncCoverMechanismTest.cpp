@@ -13,15 +13,22 @@
 #include "PTO/Transforms/CanonicalSync/SyncCoverCoverage.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverDescriptorBuilder.h"
 
+#include <algorithm>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace {
 
 using namespace mlir::pto;
+
+static_assert(!std::is_copy_constructible<SyncCoverMechanismUniverse>::value,
+              "a mechanism universe must retain unique epoch ownership");
+static_assert(!std::is_move_constructible<SyncCoverMechanismUniverse>::value,
+              "moving a mechanism universe must not bypass epoch checks");
 
 bool check(bool condition, std::string_view message) {
   if (!condition) {
@@ -710,18 +717,21 @@ bool testMixedStartupAndRecurrenceProtocolLifetime() {
       graph.addScope(0, true, SyncCoverTimelineInterval{0, 15}, true), passed,
       "add mixed protocol loop");
   const SyncCoverScopeId startup = takeGraphIndex(
-      graph.addScope(loop, true, SyncCoverTimelineInterval{2, 9}), passed,
+      graph.addScope(loop, true, SyncCoverTimelineInterval{2, 13}), passed,
       "add mixed protocol startup scope");
+  const SyncCoverScopeId innerLoop = takeGraphIndex(
+      graph.addScope(startup, false, SyncCoverTimelineInterval{6, 13}, true),
+      passed, "add mixed protocol inner loop");
   const SyncCoverNodeId outerSource = takeGraphIndex(
       graph.addNode(1, 1, 0, 0), passed, "add outer startup source");
   const SyncCoverNodeId startupSource = takeGraphIndex(
       graph.addNode(1, 1, startup, 1), passed, "add startup source");
   const SyncCoverNodeId recurrenceTarget = takeGraphIndex(
-      graph.addNode(2, 1, loop, 2), passed, "add recurrence target");
+      graph.addNode(2, 1, innerLoop, 3), passed, "add recurrence target");
   const SyncCoverNodeId startupTarget = takeGraphIndex(
       graph.addNode(2, 1, startup, 4), passed, "add startup target");
   const SyncCoverNodeId recurrenceSource = takeGraphIndex(
-      graph.addNode(1, 1, loop, 6), passed, "add recurrence source");
+      graph.addNode(1, 1, innerLoop, 6), passed, "add recurrence source");
   const SyncCoverNodeId outerTarget = takeGraphIndex(
       graph.addNode(2, 1, 0, 7), passed, "add outer drain target");
   SyncCoverMechanismUniverse universe(graph);
@@ -754,7 +764,7 @@ bool testMixedStartupAndRecurrenceProtocolLifetime() {
   SyncCoverEdge startupEdge = completionEdge(startupSource, startupTarget);
   startupEdge.scope = startup;
   SyncCoverEdge recurrenceEdge =
-      completionEdge(recurrenceSource, recurrenceTarget, loop, 1);
+      completionEdge(recurrenceSource, recurrenceTarget, innerLoop, 1);
   SyncCoverEdge outerEdge = completionEdge(outerSource, outerTarget);
   passed &= check(
       builder.addProtocolLane(
@@ -763,13 +773,21 @@ bool testMixedStartupAndRecurrenceProtocolLifetime() {
           {{startupEdge, startupSet, startupWait},
            {recurrenceEdge, bodySet, bodyWait},
            {outerEdge, primeSet, drainWait}}),
-      "one cyclic lifetime accepts nested startup and recurrence supplies");
+      "one outer cyclic lifetime accepts descendant recurrence supplies");
   SyncCoverMechanismDescriptor descriptor =
       std::move(builder).takeDescriptor();
   passed &= check(
       universe.addVerifiedProtocol(descriptor,
                                    [](const auto &) { return true; }),
       "mixed startup and recurrence protocol validates atomically");
+
+  SyncCoverMechanismDescriptor invalidScope = descriptor;
+  invalidScope.supplyEdges[1].scope = 0;
+  passed &= check(
+      universe.addVerifiedProtocol(invalidScope,
+                                   [](const auto &) { return true; })
+              .error == SyncCoverMechanismError::InvalidResourceUse,
+      "outer lifetime rejects recurrence supplies outside its scope tree");
   return passed;
 }
 
@@ -1086,6 +1104,15 @@ bool testRecurrenceUsesWholeScopePressure() {
                      "add straight pressure source");
   const SyncCoverNodeId straightTarget = takeGraphIndex(
       graph.addNode(2, 1, loop, 4), passed, "add straight pressure target");
+  const SyncCoverNodeId outerEventSource = takeGraphIndex(
+      graph.addNode(1, 1, 0, 5, {}, {2}), passed,
+      "add outer cost event source");
+  const SyncCoverNodeId outerEventTarget = takeGraphIndex(
+      graph.addNode(2, 1, 0, 6), passed, "add outer cost event target");
+  const SyncCoverNodeId outerBarrierSource = takeGraphIndex(
+      graph.addNode(1, 1, 0, 7), passed, "add outer cost barrier source");
+  const SyncCoverNodeId outerBarrierTarget = takeGraphIndex(
+      graph.addNode(1, 1, 0, 8), passed, "add outer cost barrier target");
   SyncCoverMechanismUniverse universe(graph);
   const SyncCoverResourceDomainId domain = takeMechanismIndex(
       universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 3),
@@ -1143,6 +1170,21 @@ bool testRecurrenceUsesWholeScopePressure() {
   const SyncCoverMechanismId barrierId =
       takeMechanismIndex(universe.addMechanism(barrier), passed,
                          "add loop-local structural-cost barrier");
+  SyncCoverMechanismDescriptor outerEvent;
+  appendCanonicalUse(outerEvent, domain, 1, 2, outerEventSource,
+                     outerEventTarget);
+  const SyncCoverMechanismId outerEventId = takeMechanismIndex(
+      universe.addMechanism(outerEvent), passed,
+      "add outer structural-cost event");
+  SyncCoverMechanismDescriptor outerBarrier;
+  outerBarrier.kind = SyncCoverMechanismKind::Barrier;
+  outerBarrier.barrier =
+      SyncCoverBarrierPlacement{1, outerBarrierTarget, 0};
+  outerBarrier.supplyEdges.push_back(
+      completionEdge(outerBarrierSource, outerBarrierTarget));
+  const SyncCoverMechanismId outerBarrierId = takeMechanismIndex(
+      universe.addMechanism(outerBarrier), passed,
+      "add outer structural-cost barrier");
   const SyncCoverStructuralCost cost =
       universe.evaluateStructuralCost({barrierId, straightId, recurrenceId});
   passed &= check(
@@ -1159,6 +1201,56 @@ bool testRecurrenceUsesWholeScopePressure() {
   fewerBodyActions.minimumEventHeadroom = 0;
   passed &= check(syncCoverStructuralCostLess(fewerBodyActions, cost),
                   "deeper-loop physical actions dominate cost ordering");
+  SyncCoverStructuralCost bodyBarrier = cost;
+  bodyBarrier.actionProfile = {0, 0};
+  bodyBarrier.barrierActionProfile = {1, 0};
+  SyncCoverStructuralCost bodyEvents = bodyBarrier;
+  bodyEvents.actionProfile = {2, 0};
+  bodyEvents.barrierActionProfile = {0, 0};
+  passed &= check(
+      syncCoverStructuralCostLess(bodyEvents, bodyBarrier),
+      "same-depth event actions are preferable to a whole-pipe barrier");
+  SyncCoverStructuralCost deepEvent = bodyEvents;
+  deepEvent.actionProfile = {1, 0};
+  SyncCoverStructuralCost shallowBarrier = bodyBarrier;
+  shallowBarrier.barrierActionProfile = {0, 1};
+  passed &= check(
+      syncCoverStructuralCostLess(shallowBarrier, deepEvent),
+      "loop depth is compared before shallower barrier strength");
+  SyncCoverStructuralCost bodyBarrierWithAction = bodyBarrier;
+  bodyBarrierWithAction.actionProfile.front() = 1;
+  passed &= check(
+      !syncCoverStructuralCostLess(bodyBarrier, bodyBarrier) &&
+          syncCoverStructuralCostLess(bodyEvents, bodyBarrier) &&
+          !syncCoverStructuralCostLess(bodyBarrier, bodyEvents) &&
+          syncCoverStructuralCostLess(bodyBarrier, bodyBarrierWithAction) &&
+          syncCoverStructuralCostLess(bodyEvents, bodyBarrierWithAction),
+      "loop-profile ordering is irreflexive, asymmetric, and transitive");
+  SyncCoverStructuralCost shortProfiles = bodyEvents;
+  shortProfiles.actionProfile = {2};
+  shortProfiles.barrierActionProfile = {0};
+  passed &= check(
+      !syncCoverStructuralCostLess(shortProfiles, bodyEvents) &&
+          !syncCoverStructuralCostLess(bodyEvents, shortProfiles),
+      "missing trailing profile entries are equivalent to zero");
+
+  const auto additionIsMonotone = [&](SyncCoverMechanismId base,
+                                      SyncCoverMechanismId added) {
+    const SyncCoverStructuralCost baseCost =
+        universe.evaluateStructuralCost({base});
+    std::vector<SyncCoverMechanismId> combined{base, added};
+    std::sort(combined.begin(), combined.end());
+    const SyncCoverStructuralCost combinedCost =
+        universe.evaluateStructuralCost(combined);
+    return baseCost && combinedCost &&
+           !syncCoverStructuralCostLess(combinedCost, baseCost);
+  };
+  passed &= check(
+      additionIsMonotone(straightId, barrierId) &&
+          additionIsMonotone(barrierId, straightId) &&
+          additionIsMonotone(straightId, outerEventId) &&
+          additionIsMonotone(straightId, outerBarrierId),
+      "adding deep or shallow event and barrier mechanisms is monotone");
   SyncCoverStructuralCost moreHeadroom = cost;
   moreHeadroom.minimumEventHeadroom = 1;
   moreHeadroom.peakEventPressure = 2;

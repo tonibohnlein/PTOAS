@@ -101,7 +101,7 @@ bool testRecurrenceScopes() {
   const SyncCoverNodeId second = takeIndex(graph.addNode(2, 1, inner, 1),
                                            passed, "add second nested node");
   const SyncCoverNodeId siblingNode =
-      takeIndex(graph.addNode(3, 1, sibling, 0), passed, "add sibling node");
+      takeIndex(graph.addNode(3, 1, sibling, 6), passed, "add sibling node");
   const SyncCoverNodeId direct =
       takeIndex(graph.addNode(4, 1, outer, 2), passed, "add direct child node");
   const SyncCoverNodeId root =
@@ -378,6 +378,15 @@ bool testScopeQueriesAndGeneration() {
                       graph.getScopeLoopDepth(nestedLoop, false) == 1 &&
                       !graph.getScopeLoopDepth(99),
                   "shared loop-depth queries handle scope anchors and errors");
+
+  const SyncCoverNodeId first = takeIndex(
+      graph.addNode(1, 1, inner, 1), passed, "add timeline-order owner");
+  static_cast<void>(first);
+  passed &= check(graph.addNode(2, 1, inner, 1).error ==
+                      SyncCoverGraphError::InvalidOrder,
+                  "node order is injective within one owning timeline");
+  passed &= check(graph.addNode(2, 1, nestedLoop, 1),
+                  "nested timelines have independent node-order spaces");
   return passed;
 }
 

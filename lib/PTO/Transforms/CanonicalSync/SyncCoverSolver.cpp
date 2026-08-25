@@ -45,8 +45,16 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
   const bool invalidOptions =
       options.beamWidth == 0 || options.beamDepth == 0 ||
       options.evaluationLimit == 0 ||
+      options.exchangeEvictionCandidateLimit == 0 ||
+      options.exchangeCandidateLimit == 0 ||
+      options.exchangeRoundLimit == 0 ||
+      options.exchangeEvaluationLimit == 0 ||
       options.exactMechanismThreshold >
-          SyncCoverSolverOptions::maximumExactMechanismThreshold;
+          SyncCoverSolverOptions::maximumExactMechanismThreshold ||
+      options.exchangeCandidateLimit >
+          SyncCoverSolverOptions::maximumExchangeCandidateLimit ||
+      options.exchangeEvictionCandidateLimit >
+          SyncCoverSolverOptions::maximumExchangeCandidateLimit;
   if (invalidOptions) {
     return makeError(SyncCoverSelectionError::InvalidOptions);
   }
@@ -140,6 +148,20 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
       selected = seed.mechanisms;
       selectedCost = std::move(seedCost);
     }
+  }
+
+  if (!result.optimalityProven) {
+    AffectedSliceExchangeResult exchange = improveByAffectedSliceExchange(
+        universe, selectionEvaluator, oracle, coverage, demands, selected,
+        selectedCost, options, result.redundancyEvaluations);
+    selected = std::move(exchange.selected);
+    selectedCost = std::move(exchange.cost);
+    result.exchangeStatistics = exchange.statistics;
+    result.truncation.exchangeCandidateLimit =
+        exchange.candidateLimitReached;
+    result.truncation.exchangeEvaluationLimit =
+        exchange.evaluationLimitReached;
+    result.truncation.exchangeRoundLimit = exchange.roundLimitReached;
   }
 
   const SyncCoverCoverageStatistics searchCoverageStatistics =

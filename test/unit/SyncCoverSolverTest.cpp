@@ -234,6 +234,337 @@ bool testCutGuidedExactSelection() {
   return passed;
 }
 
+bool testExactMembershipClassification() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId firstSource = takeIndex(
+      graph.addNode(1, 1, 0, 0, {}, {2}), passed,
+      "add first membership source");
+  const SyncCoverNodeId secondSource = takeIndex(
+      graph.addNode(1, 1, 0, 1, {}, {2}), passed,
+      "add second membership source");
+  const SyncCoverNodeId secondTarget = takeIndex(
+      graph.addNode(2, 1, 0, 2), passed,
+      "add second membership target");
+  const SyncCoverNodeId firstTarget = takeIndex(
+      graph.addNode(2, 1, 0, 3), passed,
+      "add first membership target");
+  const SyncCoverDemandId firstDemand = takeIndex(
+      graph.addDemand(demand(firstSource, firstTarget)), passed,
+      "add first membership demand");
+  const SyncCoverDemandId secondDemand = takeIndex(
+      graph.addDemand(demand(secondSource, secondTarget)), passed,
+      "add second membership demand");
+  SyncCoverMechanismUniverse universe(graph);
+  const SyncCoverResourceDomainId domain = takeIndex(
+      universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 1),
+      passed, "add membership domain");
+  const SyncCoverMechanismId firstEvent = addEvent(
+      universe, domain, 1, 2, firstSource, firstTarget, passed);
+  const SyncCoverMechanismId secondEvent = addEvent(
+      universe, domain, 1, 2, secondSource, secondTarget, passed);
+
+  const SyncCoverMembershipResult incomplete =
+      evaluateSyncCoverMembership(universe, {firstDemand}, {});
+  passed &= check(
+      incomplete && incomplete.resources.resourceFeasible &&
+          !incomplete.coverageComplete &&
+          incomplete.uncoveredDemands.size() == 1 &&
+          incomplete.uncoveredDemands.front().cutMechanisms ==
+              std::vector<SyncCoverMechanismId>{firstEvent},
+      "membership separates an incomplete cover from resource feasibility");
+
+  const SyncCoverMembershipResult complete =
+      evaluateSyncCoverMembership(universe, {firstDemand}, {firstEvent});
+  passed &= check(complete && complete.resources.resourceFeasible &&
+                      complete.coverageComplete && complete.cost,
+                  "membership accepts a complete exactly colored plan");
+
+  const SyncCoverMembershipResult scarce = evaluateSyncCoverMembership(
+      universe, {firstDemand, secondDemand}, {firstEvent, secondEvent});
+  passed &= check(scarce && scarce.resources.isValid() &&
+                      !scarce.resources.resourceFeasible &&
+                      !scarce.coverageComplete,
+                  "membership reports coloring failure before coverage");
+
+  const SyncCoverMembershipResult duplicate = evaluateSyncCoverMembership(
+      universe, {firstDemand}, {firstEvent, firstEvent});
+  passed &= check(
+      duplicate.error == SyncCoverMembershipError::InvalidSelection,
+      "membership rejects a non-canonical mechanism set");
+
+  const SyncCoverCompletionResult completion = completeSyncCoverMembership(
+      universe, {firstDemand}, {}, {firstEvent});
+  passed &= check(completion && completion.complete &&
+                      completion.mechanisms ==
+                          std::vector<SyncCoverMechanismId>{firstEvent} &&
+                      completion.membership.coverageComplete,
+                  "bounded completion finds an allowed exact cover");
+  const SyncCoverCompletionResult fixedCompletion =
+      completeSyncCoverMembership(universe, {firstDemand}, {firstEvent},
+                                  {firstEvent});
+  passed &= check(fixedCompletion && fixedCompletion.complete &&
+                      fixedCompletion.mechanisms ==
+                          std::vector<SyncCoverMechanismId>{firstEvent},
+                  "bounded completion preserves the fixed seed");
+  SyncCoverCompletionOptions lastEvaluationOptions;
+  lastEvaluationOptions.evaluationLimit = 2;
+  const SyncCoverCompletionResult lastEvaluation =
+      completeSyncCoverMembership(universe, {firstDemand}, {}, {firstEvent},
+                                  lastEvaluationOptions);
+  passed &= check(lastEvaluation && lastEvaluation.complete &&
+                      lastEvaluation.truncated &&
+                      lastEvaluation.mechanisms ==
+                          std::vector<SyncCoverMechanismId>{firstEvent},
+                  "completion found at the evaluation limit is retained");
+
+  const SyncCoverMechanismId alternateEvent = addEvent(
+      universe, domain, 1, 2, firstSource, firstTarget, passed);
+  SyncCoverCompletionOptions clippedOptions;
+  clippedOptions.candidateLimit = 1;
+  const SyncCoverCompletionResult clipped = completeSyncCoverMembership(
+      universe, {firstDemand}, {}, {firstEvent, alternateEvent},
+      clippedOptions);
+  passed &= check(clipped && clipped.complete && clipped.truncated,
+                  "candidate clipping is reported on a successful cover");
+  const SyncCoverCompletionResult forbidden =
+      completeSyncCoverMembership(universe, {firstDemand}, {}, {});
+  passed &= check(forbidden && !forbidden.complete &&
+                      forbidden.mechanisms.empty() &&
+                      forbidden.blockedCuts.size() == 1 &&
+                      forbidden.blockedCuts.front().demand == firstDemand &&
+                      forbidden.blockedCuts.front().mechanisms ==
+                          std::vector<SyncCoverMechanismId>{firstEvent,
+                                                            alternateEvent},
+                  "bounded completion reports a forbidden frontier cut");
+
+  const SyncCoverCompletionResult scarceCompletion =
+      completeSyncCoverMembership(universe, {firstDemand, secondDemand},
+                                  {firstEvent}, {firstEvent, secondEvent});
+  passed &= check(
+      scarceCompletion && !scarceCompletion.complete &&
+          scarceCompletion.rejections.size() == 1 &&
+          scarceCompletion.rejections.front().mechanism == secondEvent &&
+          scarceCompletion.rejections.front().kind ==
+              SyncCoverCompletionRejectionKind::ResourceInfeasible &&
+          scarceCompletion.rejections.front().domain == domain &&
+          scarceCompletion.rejections.front().required == 2 &&
+          scarceCompletion.rejections.front().available == 1,
+      "bounded completion diagnoses exact resource pressure");
+
+  const SyncCoverMechanismId conflictingSecond = addEvent(
+      universe, domain, 1, 2, secondSource, secondTarget, passed);
+  passed &= check(
+      static_cast<bool>(universe.addConflict(firstEvent, conflictingSecond)),
+      "add completion diagnostic conflict");
+  const SyncCoverCompletionResult conflictCompletion =
+      completeSyncCoverMembership(
+          universe, {firstDemand, secondDemand}, {firstEvent},
+          {firstEvent, conflictingSecond});
+  passed &= check(
+      conflictCompletion && !conflictCompletion.complete &&
+          conflictCompletion.rejections.size() == 1 &&
+          conflictCompletion.rejections.front().mechanism ==
+              conflictingSecond &&
+          conflictCompletion.rejections.front().kind ==
+              SyncCoverCompletionRejectionKind::InvalidSelection &&
+          conflictCompletion.rejections.front().resourceError ==
+              SyncCoverResourceSelectionError::Conflict &&
+          conflictCompletion.rejections.front().firstConflict &&
+          conflictCompletion.rejections.front().secondConflict,
+      "bounded completion diagnoses explicit mechanism conflicts");
+  return passed;
+}
+
+bool testBarrierFreeCensus() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId feasibleSource = takeIndex(
+      graph.addNode(1, 1, 0, 0, {}, {2}), passed,
+      "add census feasible source");
+  const SyncCoverNodeId pressureSource = takeIndex(
+      graph.addNode(1, 1, 0, 1, {}, {2}), passed,
+      "add census pressure source");
+  const SyncCoverNodeId dummySource = takeIndex(
+      graph.addNode(1, 1, 0, 2, {}, {2}), passed,
+      "add census dummy source");
+  const SyncCoverNodeId pressureTarget = takeIndex(
+      graph.addNode(2, 1, 0, 3), passed,
+      "add census pressure target");
+  const SyncCoverNodeId dummyTarget = takeIndex(
+      graph.addNode(2, 1, 0, 4), passed, "add census dummy target");
+  const SyncCoverNodeId feasibleTarget = takeIndex(
+      graph.addNode(2, 1, 0, 5), passed,
+      "add census feasible target");
+  const SyncCoverNodeId uncoverableSource = takeIndex(
+      graph.addNode(1, 1, 0, 6, {}, {2}), passed,
+      "add census uncoverable source");
+  const SyncCoverNodeId uncoverableTarget = takeIndex(
+      graph.addNode(2, 1, 0, 7), passed,
+      "add census uncoverable target");
+  const SyncCoverDemandId feasibleDemand = takeIndex(
+      graph.addDemand(demand(feasibleSource, feasibleTarget)), passed,
+      "add census feasible demand");
+  const SyncCoverDemandId pressureDemand = takeIndex(
+      graph.addDemand(demand(pressureSource, pressureTarget)), passed,
+      "add census pressure demand");
+  const SyncCoverDemandId uncoverableDemand = takeIndex(
+      graph.addDemand(demand(uncoverableSource, uncoverableTarget)), passed,
+      "add census uncoverable demand");
+
+  SyncCoverMechanismUniverse universe(graph);
+  const SyncCoverResourceDomainId domain = takeIndex(
+      universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 1),
+      passed, "add census domain");
+  const SyncCoverMechanismId feasibleEvent = addEvent(
+      universe, domain, 1, 2, feasibleSource, feasibleTarget, passed);
+  SyncCoverMechanismDescriptor pressureBundle;
+  appendEventUse(pressureBundle, domain, 1, 2, pressureSource,
+                 pressureTarget);
+  appendEventUse(pressureBundle, domain, 1, 2, dummySource, dummyTarget);
+  const SyncCoverMechanismId pressureEvent = takeIndex(
+      universe.addMechanism(pressureBundle), passed,
+      "add census pressure bundle");
+  const SyncCoverMechanismId alternatePressureEvent = addEvent(
+      universe, domain, 1, 2, pressureSource, pressureTarget, passed);
+  SyncCoverMechanismDescriptor barrier;
+  barrier.kind = SyncCoverMechanismKind::Barrier;
+  barrier.barrier =
+      SyncCoverBarrierPlacement{1, uncoverableTarget, /*scope=*/0};
+  barrier.supplyEdges.push_back(
+      supply(uncoverableSource, uncoverableTarget));
+  takeIndex(universe.addMechanism(barrier), passed,
+            "add census excluded barrier");
+
+  const SyncCoverBarrierFreeCensusResult census =
+      evaluateSyncCoverBarrierFreeCensus(
+          universe, {feasibleDemand, pressureDemand, uncoverableDemand});
+  passed &= check(census && census.entries.size() == 3 &&
+                      census.coverageStatistics.coverageQueries == 3,
+                  "census evaluates every demand without search clipping");
+  if (census.entries.size() != 3) {
+    return false;
+  }
+  const SyncCoverBarrierFreeCensusEntry &feasible = census.entries[0];
+  passed &= check(
+      feasible.status == SyncCoverBarrierFreeCensusStatus::FeasibleWitness &&
+          feasible.witnessMechanisms ==
+              std::vector<SyncCoverMechanismId>{feasibleEvent} &&
+          feasible.witnessResources.resourceFeasible,
+      "census proves one exactly colorable barrier-free witness");
+  const SyncCoverBarrierFreeCensusEntry &pressure = census.entries[1];
+  const bool hasPressure =
+      pressure.witnessResources.domains.size() > domain;
+  passed &= check(
+      pressure.status ==
+              SyncCoverBarrierFreeCensusStatus::InfeasibleWitness &&
+          pressure.witnessMechanisms ==
+              std::vector<SyncCoverMechanismId>{pressureEvent} &&
+          hasPressure &&
+          pressure.witnessResources.domains[domain].required == 2 &&
+          pressure.witnessResources.domains[domain].available == 1,
+      "census preserves exact event-domain overflow for its witness");
+  const SyncCoverMembershipResult alternatePressure =
+      evaluateSyncCoverMembership(universe, {pressureDemand},
+                                  {alternatePressureEvent});
+  passed &= check(alternatePressure && alternatePressure.coverageComplete &&
+                      alternatePressure.resources.resourceFeasible,
+                  "an infeasible first witness does not imply that every "
+                  "witness is infeasible");
+  const SyncCoverBarrierFreeCensusEntry &uncoverable = census.entries[2];
+  passed &= check(
+      uncoverable.status ==
+              SyncCoverBarrierFreeCensusStatus::Uncoverable &&
+          uncoverable.witnessMechanisms.empty() &&
+          !uncoverable.reachableStates.empty(),
+      "census proves absence of a barrier-free completion path");
+  return passed;
+}
+
+bool testAtomicAffectedSliceExchange() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId firstSource = takeIndex(
+      graph.addNode(1, 1, 0, 0, {}, {2}), passed,
+      "add first exchange source");
+  const SyncCoverNodeId firstTarget = takeIndex(
+      graph.addNode(2, 1, 0, 1), passed, "add first exchange target");
+  const SyncCoverNodeId secondSource = takeIndex(
+      graph.addNode(1, 1, 0, 2, {}, {2}), passed,
+      "add second exchange source");
+  const SyncCoverNodeId secondTarget = takeIndex(
+      graph.addNode(2, 1, 0, 3), passed, "add second exchange target");
+  const SyncCoverNodeId firstDummySource = takeIndex(
+      graph.addNode(1, 1, 0, 4, {}, {2}), passed,
+      "add first exchange dummy source");
+  const SyncCoverNodeId firstDummyTarget = takeIndex(
+      graph.addNode(2, 1, 0, 5), passed,
+      "add first exchange dummy target");
+  const SyncCoverNodeId secondDummySource = takeIndex(
+      graph.addNode(1, 1, 0, 6, {}, {2}), passed,
+      "add second exchange dummy source");
+  const SyncCoverNodeId secondDummyTarget = takeIndex(
+      graph.addNode(2, 1, 0, 7), passed,
+      "add second exchange dummy target");
+  const SyncCoverDemandId firstDemand = takeIndex(
+      graph.addDemand(demand(firstSource, firstTarget)), passed,
+      "add first exchange demand");
+  const SyncCoverDemandId secondDemand = takeIndex(
+      graph.addDemand(demand(secondSource, secondTarget)), passed,
+      "add second exchange demand");
+
+  SyncCoverMechanismUniverse universe(graph);
+  const SyncCoverResourceDomainId domain = takeIndex(
+      universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 8),
+      passed, "add exchange event domain");
+  SyncCoverMechanismDescriptor firstSeed;
+  appendEventUse(firstSeed, domain, 1, 2, firstSource, firstTarget);
+  appendEventUse(firstSeed, domain, 1, 2, firstDummySource, firstDummyTarget);
+  const SyncCoverMechanismId firstSeedId = takeIndex(
+      universe.addMechanism(firstSeed), passed, "add first exchange seed");
+  SyncCoverMechanismDescriptor secondSeed;
+  appendEventUse(secondSeed, domain, 1, 2, secondSource, secondTarget);
+  appendEventUse(secondSeed, domain, 1, 2, secondDummySource,
+                 secondDummyTarget);
+  const SyncCoverMechanismId secondSeedId = takeIndex(
+      universe.addMechanism(secondSeed), passed, "add second exchange seed");
+  const SyncCoverMechanismId firstReplacement =
+      addEvent(universe, domain, 1, 2, firstSource, firstTarget, passed);
+  const SyncCoverMechanismId secondReplacement =
+      addEvent(universe, domain, 1, 2, secondSource, secondTarget, passed);
+  passed &= check(static_cast<bool>(
+                      universe.addConflict(secondSeedId, firstReplacement)),
+                  "block the first one-at-a-time exchange");
+  passed &= check(static_cast<bool>(
+                      universe.addConflict(firstSeedId, secondReplacement)),
+                  "block the second one-at-a-time exchange");
+
+  SyncCoverSolverOptions options;
+  options.exactMechanismThreshold = 0;
+  options.beamWidth = 1;
+  options.beamDepth = 1;
+  options.evaluationLimit = 8;
+  const std::vector<SyncCoverMechanismId> seed = {firstSeedId, secondSeedId};
+  const SyncCoverSelectionResult result = solveSyncCoverSelection(
+      universe, {firstDemand, secondDemand}, {{1, seed}}, options);
+  passed &= check(
+      result && result.mechanisms ==
+                    std::vector<SyncCoverMechanismId>({firstReplacement,
+                                                       secondReplacement}) &&
+          result.exchangeStatistics.accepted == 1,
+      "pair eviction installs the cheaper replacement atomically");
+
+  SyncCoverSolverOptions truncated = options;
+  truncated.exchangeEvaluationLimit = 1;
+  const SyncCoverSelectionResult bounded = solveSyncCoverSelection(
+      universe, {firstDemand, secondDemand}, {{1, seed}}, truncated);
+  passed &= check(
+      bounded && bounded.mechanisms == seed &&
+          bounded.truncation.exchangeEvaluationLimit,
+      "bounded exchange keeps the verified incumbent when search truncates");
+  return passed;
+}
+
 bool testAtomicProtocolAndScarcity() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -580,9 +911,12 @@ bool testManyDemandCache() {
 
 int main() {
   const bool passed =
-      testCutGuidedExactSelection() && testAtomicProtocolAndScarcity() &&
-      testComponentsConflictsAndFailure() && testBarrierSelection() &&
-      testBeamSeedsAndRedundancy() && testRecurrenceAndInputValidation() &&
-      testBoundedSearchDiagnostics() && testManyDemandCache();
+      testCutGuidedExactSelection() && testExactMembershipClassification() &&
+      testBarrierFreeCensus() &&
+      testAtomicAffectedSliceExchange() &&
+      testAtomicProtocolAndScarcity() && testComponentsConflictsAndFailure() &&
+      testBarrierSelection() && testBeamSeedsAndRedundancy() &&
+      testRecurrenceAndInputValidation() && testBoundedSearchDiagnostics() &&
+      testManyDemandCache();
   return passed ? 0 : 1;
 }

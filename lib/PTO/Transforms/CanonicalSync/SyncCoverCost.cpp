@@ -77,6 +77,33 @@ mapResourceError(SyncCoverResourceSelectionError error) {
   return SyncCoverStructuralCostError::InvalidUniverse;
 }
 
+int compareLoopProfiles(const SyncCoverStructuralCost &first,
+                        const SyncCoverStructuralCost &second) {
+  const std::size_t profileSize =
+      std::max({first.actionProfile.size(), first.barrierActionProfile.size(),
+                second.actionProfile.size(),
+                second.barrierActionProfile.size()});
+  const auto get = [](const std::vector<std::size_t> &profile,
+                      std::size_t index) {
+    return index < profile.size() ? profile[index] : 0;
+  };
+  for (std::size_t index = 0; index < profileSize; ++index) {
+    const auto firstDepth =
+        std::make_pair(get(first.barrierActionProfile, index),
+                       get(first.actionProfile, index));
+    const auto secondDepth =
+        std::make_pair(get(second.barrierActionProfile, index),
+                       get(second.actionProfile, index));
+    if (firstDepth < secondDepth) {
+      return -1;
+    }
+    if (secondDepth < firstDepth) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
 } // namespace
 
 bool mlir::pto::syncCoverStructuralCostLess(
@@ -85,10 +112,12 @@ bool mlir::pto::syncCoverStructuralCostLess(
   if (first.error != second.error) {
     return first.error < second.error;
   }
-  return std::tie(first.actionProfile, first.barrierActionProfile,
-                  first.mechanismCount, first.signature) <
-         std::tie(second.actionProfile, second.barrierActionProfile,
-                  second.mechanismCount, second.signature);
+  const int profileOrder = compareLoopProfiles(first, second);
+  if (profileOrder != 0) {
+    return profileOrder < 0;
+  }
+  return std::tie(first.mechanismCount, first.signature) <
+         std::tie(second.mechanismCount, second.signature);
 }
 
 SyncCoverStructuralCost SyncCoverMechanismUniverse::evaluateStructuralCost(

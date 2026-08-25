@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <set>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -76,6 +77,21 @@ bool nodeFitsScopeTimeline(const std::vector<SyncCoverScope> &scopes,
     scope = scopes[scope].parent;
   }
   return true;
+}
+
+std::optional<SyncCoverScopeId>
+getOwningTimelineScope(const std::vector<SyncCoverScope> &scopes,
+                       SyncCoverScopeId scope) {
+  if (scope >= scopes.size()) {
+    return std::nullopt;
+  }
+  while (!scopes[scope].timeline) {
+    if (scope == 0) {
+      return std::nullopt;
+    }
+    scope = scopes[scope].parent;
+  }
+  return scope;
 }
 
 } // namespace
@@ -217,6 +233,19 @@ SyncCoverGraph::addNode(std::uint32_t resource, std::uint64_t weight,
   if (!nodeFitsScopeTimeline(scopes_, node)) {
     return {SyncCoverGraphError::InvalidTimeline, id};
   }
+  const std::optional<SyncCoverScopeId> timeline =
+      getOwningTimelineScope(scopes_, scope);
+  const bool duplicateOrder =
+      timeline && std::any_of(nodes_.begin(), nodes_.end(),
+                             [&](const SyncCoverNode &existing) {
+                               return getOwningTimelineScope(
+                                          scopes_, existing.scope) ==
+                                          timeline &&
+                                      existing.order == order;
+                             });
+  if (duplicateOrder) {
+    return {SyncCoverGraphError::InvalidOrder, id};
+  }
   nodes_.push_back(std::move(node));
   ++generation_;
   return {SyncCoverGraphError::None, id};
@@ -331,6 +360,7 @@ SyncCoverGraphResult SyncCoverGraph::validate() const {
       return {SyncCoverGraphError::InvalidControl, index};
     }
   }
+  std::set<std::pair<SyncCoverScopeId, std::size_t>> timelineOrders;
   for (std::size_t index = 0; index < nodes_.size(); ++index) {
     const SyncCoverNode &node = nodes_[index];
     if (!hasValidScope(node.scope)) {
@@ -348,6 +378,11 @@ SyncCoverGraphResult SyncCoverGraph::validate() const {
     }
     if (invalidTargets) {
       return {SyncCoverGraphError::InvalidCompletionTargets, index};
+    }
+    const std::optional<SyncCoverScopeId> timeline =
+        getOwningTimelineScope(scopes_, node.scope);
+    if (!timeline || !timelineOrders.insert({*timeline, node.order}).second) {
+      return {SyncCoverGraphError::InvalidOrder, index};
     }
     SyncCoverGuard guard = node.guard;
     const SyncCoverGraphError error =
@@ -528,12 +563,12 @@ SyncCoverGraph::getScopeLoopDepth(SyncCoverScopeId scope,
 }
 
 SyncCoverGraph::EdgeCheckpoint SyncCoverGraph::checkpointEdges() const {
-  return {edges_.size(), generation_};
+  return {edges_.size()};
 }
 
 void SyncCoverGraph::rollbackEdges(EdgeCheckpoint checkpoint) {
   edges_.resize(checkpoint.edgeCount);
-  generation_ = checkpoint.generation;
+  ++generation_;
 }
 
 bool SyncCoverGraph::reserveAdditionalEdges(std::size_t additionalEdges) {

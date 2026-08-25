@@ -202,7 +202,6 @@ private:
 
   struct EdgeCheckpoint {
     std::size_t edgeCount = 0;
-    std::size_t generation = 0;
   };
 
   class EdgeTransaction {

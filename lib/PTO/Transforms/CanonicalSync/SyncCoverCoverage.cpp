@@ -446,7 +446,9 @@ bool SyncCoverReachableState::operator==(
 }
 
 SyncCoverCoverageOracle::SyncCoverCoverageOracle(const SyncCoverGraph &graph)
-    : implementation_(std::make_shared<Implementation>(graph)) {}
+    : implementation_(std::make_unique<Implementation>(graph)) {}
+
+SyncCoverCoverageOracle::~SyncCoverCoverageOracle() = default;
 
 SyncCoverCoverageResult SyncCoverCoverageOracle::checkDemand(
     SyncCoverDemandId demand,

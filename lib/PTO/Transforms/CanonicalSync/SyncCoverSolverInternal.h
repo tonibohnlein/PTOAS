@@ -25,6 +25,8 @@ struct CoverageEvaluation {
   bool valid = true;
   std::vector<SyncCoverDemandId> uncovered;
   std::map<SyncCoverDemandId, std::vector<SyncCoverMechanismId>> cuts;
+  std::map<SyncCoverDemandId, std::vector<SyncCoverReachableState>>
+      reachableStates;
 };
 
 class CoverageEvaluator {
@@ -53,6 +55,15 @@ struct ComponentSearchResult {
   std::size_t evaluations = 0;
   SyncCoverSearchTruncation truncation;
   bool optimalityProven = false;
+};
+
+struct AffectedSliceExchangeResult {
+  std::vector<SyncCoverMechanismId> selected;
+  SyncCoverStructuralCost cost;
+  SyncCoverExchangeStatistics statistics;
+  bool candidateLimitReached = false;
+  bool evaluationLimitReached = false;
+  bool roundLimitReached = false;
 };
 
 ComponentBuildResult
@@ -98,6 +109,17 @@ bool independentlyVerifySelection(
     const std::vector<SyncCoverMechanismId> &selected,
     SyncCoverStructuralCost &cost, SyncCoverResourceSelection &resources,
     SyncCoverCoverageStatistics &statistics);
+
+AffectedSliceExchangeResult improveByAffectedSliceExchange(
+    const SyncCoverMechanismUniverse &universe,
+    const SyncCoverSelectionEvaluator &selectionEvaluator,
+    SyncCoverCoverageOracle &oracle,
+    CoverageEvaluator &coverage,
+    const std::vector<SyncCoverDemandId> &activeDemands,
+    const std::vector<SyncCoverMechanismId> &incumbent,
+    const SyncCoverStructuralCost &incumbentCost,
+    const SyncCoverSolverOptions &options,
+    std::size_t &redundancyEvaluations);
 
 } // namespace sync_cover_internal
 } // namespace pto

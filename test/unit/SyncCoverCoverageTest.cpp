@@ -13,11 +13,17 @@
 #include <iostream>
 #include <limits>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace {
 
 using namespace mlir::pto;
+
+static_assert(!std::is_copy_constructible<SyncCoverCoverageOracle>::value,
+              "coverage caches must not be aliased by copying an oracle");
+static_assert(!std::is_move_constructible<SyncCoverCoverageOracle>::value,
+              "moving an oracle must not obscure cache ownership");
 
 bool check(bool condition, std::string_view message) {
   if (!condition) {

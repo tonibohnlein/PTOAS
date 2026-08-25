@@ -28,7 +28,138 @@ bool isSubset(const std::vector<SyncCoverMechanismId> &subset,
                        subset.end());
 }
 
+template <typename T>
+bool isCanonicalIdentitySet(const std::vector<T> &values) {
+  return std::is_sorted(values.begin(), values.end()) &&
+         std::adjacent_find(values.begin(), values.end()) == values.end();
+}
+
 } // namespace
+
+SyncCoverMembershipResult mlir::pto::evaluateSyncCoverMembership(
+    const SyncCoverMechanismUniverse &universe,
+    const std::vector<SyncCoverDemandId> &activeDemands,
+    const std::vector<SyncCoverMechanismId> &selected) {
+  SyncCoverMembershipResult result;
+  const SyncCoverSelectionEvaluator selectionEvaluator(universe);
+  if (!selectionEvaluator) {
+    result.error = SyncCoverMembershipError::InvalidUniverse;
+    return result;
+  }
+  const bool invalidDemands =
+      !isCanonicalIdentitySet(activeDemands) ||
+      (!activeDemands.empty() &&
+       activeDemands.back() >= universe.getGraph().getDemands().size());
+  if (invalidDemands) {
+    result.error = SyncCoverMembershipError::InvalidDemand;
+    return result;
+  }
+  const bool invalidSelection =
+      !isCanonicalIdentitySet(selected) ||
+      (!selected.empty() &&
+       selected.back() >= universe.getMechanisms().size());
+  if (invalidSelection) {
+    result.error = SyncCoverMembershipError::InvalidSelection;
+    return result;
+  }
+
+  const SyncCoverSelectionEvaluation evaluation =
+      selectionEvaluator.evaluate(selected);
+  result.resources = evaluation.resources;
+  result.cost = evaluation.cost;
+  if (!result.resources.isValid() || !result.resources.resourceFeasible) {
+    return result;
+  }
+
+  SyncCoverCoverageOracle oracle(universe.getGraph());
+  for (SyncCoverDemandId demand : activeDemands) {
+    const SyncCoverCoverageResult coverage =
+        oracle.checkDemandCanonicalSelection(demand, selected);
+    if (!coverage) {
+      result.error = SyncCoverMembershipError::CoverageFailure;
+      return result;
+    }
+    if (!coverage.covered) {
+      result.uncoveredDemands.push_back({demand, coverage.cutMechanisms});
+    }
+  }
+  result.coverageComplete = result.uncoveredDemands.empty();
+  result.coverageStatistics = oracle.getStatistics();
+  return result;
+}
+
+SyncCoverBarrierFreeCensusResult
+mlir::pto::evaluateSyncCoverBarrierFreeCensus(
+    const SyncCoverMechanismUniverse &universe,
+    const std::vector<SyncCoverDemandId> &activeDemands) {
+  SyncCoverBarrierFreeCensusResult result;
+  if (!universe.validate()) {
+    result.error = SyncCoverBarrierFreeCensusError::InvalidUniverse;
+    return result;
+  }
+  const bool invalidDemands =
+      !isCanonicalIdentitySet(activeDemands) ||
+      (!activeDemands.empty() &&
+       activeDemands.back() >= universe.getGraph().getDemands().size());
+  if (invalidDemands) {
+    result.error = SyncCoverBarrierFreeCensusError::InvalidDemand;
+    return result;
+  }
+
+  std::vector<SyncCoverMechanismId> barrierFree;
+  for (const SyncCoverMechanism &mechanism : universe.getMechanisms()) {
+    if (mechanism.kind != SyncCoverMechanismKind::Barrier) {
+      barrierFree.push_back(mechanism.id);
+    }
+  }
+
+  SyncCoverCoverageOracle oracle(universe.getGraph());
+  result.entries.reserve(activeDemands.size());
+  for (SyncCoverDemandId demand : activeDemands) {
+    const SyncCoverCoverageResult coverage =
+        oracle.checkDemandCanonicalSelection(demand, barrierFree);
+    if (!coverage) {
+      result.error = SyncCoverBarrierFreeCensusError::CoverageFailure;
+      result.failedDemand = demand;
+      result.coverageError = coverage.error;
+      result.coverageStatistics = oracle.getStatistics();
+      return result;
+    }
+
+    SyncCoverBarrierFreeCensusEntry entry;
+    entry.demand = demand;
+    entry.reachableStates = coverage.reachableStates;
+    if (!coverage.covered) {
+      result.entries.push_back(std::move(entry));
+      continue;
+    }
+
+    entry.witnessMechanisms = coverage.witnessMechanisms;
+    entry.witnessResources =
+        universe.evaluateResourceSelection(entry.witnessMechanisms);
+    switch (entry.witnessResources.error) {
+    case SyncCoverResourceSelectionError::None:
+    case SyncCoverResourceSelectionError::Conflict:
+      break;
+    case SyncCoverResourceSelectionError::InvalidUniverse:
+      result.error = SyncCoverBarrierFreeCensusError::InvalidUniverse;
+      return result;
+    case SyncCoverResourceSelectionError::InvalidSelection:
+      result.error = SyncCoverBarrierFreeCensusError::InvalidWitness;
+      return result;
+    case SyncCoverResourceSelectionError::ArithmeticOverflow:
+      result.error =
+          SyncCoverBarrierFreeCensusError::ResourceEvaluationFailed;
+      return result;
+    }
+    entry.status = entry.witnessResources
+                       ? SyncCoverBarrierFreeCensusStatus::FeasibleWitness
+                       : SyncCoverBarrierFreeCensusStatus::InfeasibleWitness;
+    result.entries.push_back(std::move(entry));
+  }
+  result.coverageStatistics = oracle.getStatistics();
+  return result;
+}
 
 CoverageEvaluation
 CoverageEvaluator::evaluate(const std::vector<SyncCoverDemandId> &demands,
@@ -81,6 +212,7 @@ CoverageEvaluator::evaluate(const std::vector<SyncCoverDemandId> &demands,
     }
     evaluation.uncovered.push_back(demand);
     evaluation.cuts.emplace(demand, result.cutMechanisms);
+    evaluation.reachableStates.emplace(demand, result.reachableStates);
   }
   return evaluation;
 }

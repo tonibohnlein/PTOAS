@@ -169,8 +169,7 @@ bool SyncCoverMechanismDescriptorBuilder::addLane(
     const bool invalidLifetime =
         straightLifetime
             ? supply.edge.distance != 0 || supply.edge.scope != scope
-            : supply.edge.distance > distance ||
-                  (supply.edge.distance != 0 && supply.edge.scope != scope);
+            : supply.edge.distance > distance;
     const bool invalidEdge =
         supply.edge.kind != SyncCoverEdgeKind::CompletionSupply ||
         supply.edge.mechanism || invalidLifetime;

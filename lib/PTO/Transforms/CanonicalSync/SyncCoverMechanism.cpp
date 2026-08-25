@@ -85,7 +85,7 @@ bool validResourceLifetime(const SyncCoverGraph &graph,
     return false;
   }
   if (edge.distance != 0) {
-    return edge.scope == use.scope;
+    return graph.scopeContains(use.scope, edge.scope);
   }
   return graph.scopeContains(use.scope, edge.scope) ||
          graph.scopeContains(edge.scope, use.scope);
@@ -610,7 +610,6 @@ SyncCoverMechanismError SyncCoverMechanismUniverse::validateResourceUse(
       (use.scope == 0 || !graph_.getScopes()[use.scope].timeline)) {
     return SyncCoverMechanismError::InvalidResourceUse;
   }
-
   const SyncCoverResourceDomain &domain = domains_[use.domain];
   bool hasProduce = false;
   bool hasConsume = false;

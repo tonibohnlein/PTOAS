@@ -168,7 +168,9 @@ add_mlir_dialect_library(PTOTransforms
   CanonicalSync/SyncCoverResource.cpp
   CanonicalSync/SyncCoverSolver.cpp
   CanonicalSync/SyncCoverSolverComponents.cpp
+  CanonicalSync/SyncCoverSolverCompletion.cpp
   CanonicalSync/SyncCoverSolverCoverage.cpp
+  CanonicalSync/SyncCoverSolverExchange.cpp
   CanonicalSync/SyncCoverSolverSearch.cpp
   CanonicalSync/CompletionReduction.cpp
   CanonicalSync/CanonicalSyncAnalysis.cpp

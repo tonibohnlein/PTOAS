@@ -55,7 +55,9 @@ public:
   /// physical action to be shared by EventId and BufferToken resource uses.
   /// A positive-distance lifetime may bind startup/drain distance-zero
   /// supplies in nested ancestor or descendant scopes and recurrence supplies
-  /// up to the declared distance.
+  /// in its own or a descendant loop scope up to the declared distance. The
+  /// completed universe validates the scope relationship; the protocol
+  /// verifier remains responsible for the cross-scope token lifecycle.
   bool addProtocolLane(
       const SyncCoverResourceDomain &domain, SyncCoverScopeId scope,
       unsigned distance, std::size_t width,

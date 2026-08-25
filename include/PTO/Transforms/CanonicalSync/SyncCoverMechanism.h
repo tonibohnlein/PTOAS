@@ -249,10 +249,17 @@ struct SyncCoverUniverseStatistics {
 };
 
 /// Owns mechanism identity and atomically attaches supplied completion edges
-/// to a SyncCoverGraph. Failed additions leave both objects unchanged.
+/// to a SyncCoverGraph. Failed additions leave both objects unchanged. This
+/// mutable construction object is not thread-safe.
 class SyncCoverMechanismUniverse {
 public:
   explicit SyncCoverMechanismUniverse(SyncCoverGraph &graph);
+  SyncCoverMechanismUniverse(const SyncCoverMechanismUniverse &) = delete;
+  SyncCoverMechanismUniverse(SyncCoverMechanismUniverse &&) = delete;
+  SyncCoverMechanismUniverse &
+  operator=(const SyncCoverMechanismUniverse &) = delete;
+  SyncCoverMechanismUniverse &operator=(SyncCoverMechanismUniverse &&) =
+      delete;
 
   SyncCoverMechanismResult
   addResourceDomain(SyncCoverResourceKind kind, std::uint32_t sourceResource,

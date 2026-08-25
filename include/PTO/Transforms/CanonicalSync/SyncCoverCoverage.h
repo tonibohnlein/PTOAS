@@ -75,12 +75,18 @@ struct SyncCoverCoverageStatistics {
 
 /// Checks completion-qualified reachability without mutating the graph. A
 /// selected mechanism enables every graph edge carrying its ID, so ownership
-/// protocols and other multi-edge mechanisms remain atomic.
+/// protocols and other multi-edge mechanisms remain atomic. Queries populate
+/// mutable caches, so one oracle must not be used concurrently.
 class SyncCoverCoverageOracle {
 public:
   /// Snapshot and validate the completed graph. Mechanisms added to the source
   /// graph after construction intentionally do not change this oracle epoch.
   explicit SyncCoverCoverageOracle(const SyncCoverGraph &graph);
+  ~SyncCoverCoverageOracle();
+  SyncCoverCoverageOracle(const SyncCoverCoverageOracle &) = delete;
+  SyncCoverCoverageOracle(SyncCoverCoverageOracle &&) = delete;
+  SyncCoverCoverageOracle &operator=(const SyncCoverCoverageOracle &) = delete;
+  SyncCoverCoverageOracle &operator=(SyncCoverCoverageOracle &&) = delete;
 
   SyncCoverCoverageResult
   checkDemand(SyncCoverDemandId demand,
@@ -101,7 +107,7 @@ public:
 
 private:
   struct Implementation;
-  std::shared_ptr<Implementation> implementation_;
+  std::unique_ptr<Implementation> implementation_;
 };
 
 } // namespace pto
