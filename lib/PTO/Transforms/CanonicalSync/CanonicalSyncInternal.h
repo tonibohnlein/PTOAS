@@ -11,6 +11,7 @@
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSync.h"
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncAlgorithms.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverCandidateIndex.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/SlotAffineAnalysis.h"
@@ -287,7 +288,6 @@ public:
         selectionDiagnosticsEnabled_(options.diagnosticRequest != nullptr),
         coveringShadowEnabled_(options.coveringShadow ||
                                options.solver == CanonicalSyncSolver::Covering),
-        coveringMembershipProbeEnabled_(options.coveringMembershipProbe),
         coveringEmissionEnabled_(options.solver ==
                                  CanonicalSyncSolver::Covering),
         diagnosticRequest_(
@@ -439,12 +439,16 @@ private:
                      CanonicalDependencyKind kind,
                      unsigned iterationDistance = 0,
                      Operation *recurrenceLoop = nullptr,
-                     bool activeWitness = true);
+                     bool activeWitness = true,
+                     CanonicalStorageProvenance storageProvenance =
+                         CanonicalStorageProvenance::NotApplicable,
+                     ArrayRef<CanonicalMemoryHazardWitness> storageWitnesses =
+                         {});
   void addAccessHazards(const CanonicalSyncNode &source,
                         const CanonicalSyncNode &target,
                         unsigned iterationDistance, Operation *loop,
                         bool compareSlots, bool honorNoAlias,
-                        bool activeWitness);
+                        bool activeWitness, bool captureStorageProvenance);
   void addRecurrenceAccessHazards(const CanonicalSyncNode &source,
                                   const CanonicalSyncNode &target,
                                   Operation *loop);
@@ -479,7 +483,6 @@ private:
   CanonicalGMAliasPolicy gmAliasPolicy_ = CanonicalGMAliasPolicy::MayAlias;
   bool selectionDiagnosticsEnabled_ = false;
   bool coveringShadowEnabled_ = false;
-  bool coveringMembershipProbeEnabled_ = false;
   bool coveringEmissionEnabled_ = false;
   CanonicalSelectionDiagnosticRequest diagnosticRequest_;
   CanonicalSyncPlan plan_;
@@ -505,7 +508,8 @@ LogicalResult runCanonicalSyncCoveringShadowSelection(
     ArrayRef<CanonicalEventBundleCandidate> selectedEventBundles,
     unsigned eventIdMax,
     const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
-    SyncCoverGraph &graph, ArrayRef<SyncCoverDemandId> activeDemands,
+    SyncCoverGraph &graph, const SyncCoverCandidateIndex &candidateIndex,
+    ArrayRef<SyncCoverDemandId> activeDemands,
     const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
         &regionScopes,
     const DenseMap<Operation *, SyncCoverScopeId> &loopScopes,

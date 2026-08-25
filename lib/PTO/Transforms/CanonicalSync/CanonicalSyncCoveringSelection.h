@@ -86,16 +86,6 @@ bool verifyTranslatedEventBundleCorrespondence(
     llvm::function_ref<std::size_t(const CanonicalAnchor &)>
         getAnchorPosition);
 
-struct BarrierFreeOwnershipProviderSet {
-  bool applicable = false;
-  bool complete = false;
-  std::vector<CanonicalSelectionMechanismRef> providers;
-};
-
-BarrierFreeOwnershipProviderSet buildBarrierFreeOwnershipProviderSet(
-    ArrayRef<CanonicalOwnershipCycle> cycles,
-    ArrayRef<CanonicalEventBundleCandidate> bundles);
-
 class MechanismAdapter {
 public:
   MechanismAdapter(
@@ -103,8 +93,9 @@ public:
       const CanonicalMechanismUniverse &legacyUniverse,
       ArrayRef<CanonicalEventBundleCandidate> selectedEventBundles,
       unsigned eventIdMax,
-      const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
-      SyncCoverGraph &graph, ArrayRef<SyncCoverDemandId> activeDemands,
+    const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
+      SyncCoverGraph &graph, const SyncCoverCandidateIndex &candidateIndex,
+      ArrayRef<SyncCoverDemandId> activeDemands,
       const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
           &regionScopes,
       const DenseMap<Operation *, SyncCoverScopeId> &loopScopes,
@@ -124,8 +115,6 @@ private:
   LogicalResult addEventBundles();
   LogicalResult addConflicts();
   LogicalResult buildLegacySeed();
-  LogicalResult evaluateOwnershipMembership(
-      CanonicalSyncCoveringMembershipSnapshot &snapshot);
   LogicalResult solve(CanonicalSyncCoveringShadowSnapshot &snapshot);
   LogicalResult validateSelectedResourceUsesAgainstUniverse(
       const CanonicalSyncCoveringShadowSnapshot &snapshot);
@@ -139,6 +128,7 @@ private:
   unsigned eventIdMax_ = 0;
   const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds_;
   SyncCoverMechanismUniverse universe_;
+  const SyncCoverCandidateIndex &candidateIndex_;
   const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
       &regionScopes_;
   const DenseMap<Operation *, SyncCoverScopeId> &loopScopes_;
@@ -152,7 +142,6 @@ private:
       eventResourceUses_;
   std::vector<CanonicalEventBundleCandidate> eventBundles_;
   std::vector<SyncCoverMechanismId> legacySeed_;
-  std::vector<SyncCoverMechanismId> ownershipCompletionSeed_;
   std::vector<SyncCoverDemandId> activeDemands_;
 };
 

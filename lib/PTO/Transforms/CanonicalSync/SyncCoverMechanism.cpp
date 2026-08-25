@@ -220,9 +220,15 @@ bool mlir::pto::syncCoverBarrierCanSupply(
 }
 
 SyncCoverMechanismUniverse::SyncCoverMechanismUniverse(SyncCoverGraph &graph)
-    : graph_(graph), knownGraphGeneration_(graph.getGeneration()) {}
+    : graph_(graph) {
+  initializationResult_ = graph_.freezeStructure();
+  knownGraphGeneration_ = graph_.getGeneration();
+}
 
 bool SyncCoverMechanismUniverse::ensureConstructionState() {
+  if (!initializationResult_ || !graph_.isStructureFrozen()) {
+    return false;
+  }
   if (constructionValidated_ &&
       knownGraphGeneration_ == graph_.getGeneration()) {
     return true;
@@ -490,7 +496,8 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::validate() const {
 SyncCoverMechanismResult
 SyncCoverMechanismUniverse::validateUncached() const {
   ++fullValidationCount_;
-  if (!graph_.validate()) {
+  const bool invalidGraph = !graph_.isStructureFrozen() || !graph_.validate();
+  if (invalidGraph) {
     return makeResult(SyncCoverMechanismError::InvalidGraph);
   }
   std::vector<std::uint64_t> tokenPools;

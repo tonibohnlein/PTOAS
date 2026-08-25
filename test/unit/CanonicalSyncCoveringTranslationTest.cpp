@@ -10,6 +10,8 @@
 
 #include "CanonicalSyncCoveringSelection.h"
 
+#include "PTO/Transforms/SlotAffineAnalysis.h"
+
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -186,67 +188,48 @@ bool testDescriptorAttestation() {
   return passed;
 }
 
-bool testBarrierFreeOwnershipProviderClassification() {
+bool testExactSlotOrdinalPairing() {
   bool passed = true;
-  CanonicalOwnershipCycle compositeCycle;
-  compositeCycle.id = 1;
-  CanonicalOwnershipCycle nativeCycle;
-  nativeCycle.id = 2;
-  nativeCycle.protocol = CanonicalOwnershipProtocolKind::RoundTrip;
+  MLIRContext context;
+  context.loadDialect<arith::ArithDialect, func::FuncDialect>();
+  const Location location = UnknownLoc::get(&context);
+  ModuleOp module = ModuleOp::create(location);
+  auto function = func::FuncOp::create(
+      location, "slot_pairing",
+      FunctionType::get(&context, TypeRange{IndexType::get(&context)},
+                        TypeRange{}));
+  module.push_back(function);
+  Block *body = function.addEntryBlock();
+  OpBuilder builder = OpBuilder::atBlockBegin(body);
+  Value two = builder.create<arith::ConstantIndexOp>(location, 2);
+  Value slot = builder.create<arith::RemUIOp>(location, body->getArgument(0),
+                                              two);
+  builder.create<func::ReturnOp>(location);
 
-  CanonicalEvent compositeEvent;
-  compositeEvent.ownershipProtocol = true;
-  compositeEvent.ownershipCycle = compositeCycle.id;
-  CanonicalEventBundleCandidate composite;
-  composite.id = 7;
-  composite.kind = CanonicalEventBundleKind::CompositeOwnership;
-  composite.events.push_back(compositeEvent);
-
-  CanonicalEventBundleCandidate native;
-  native.id = 9;
-  native.kind = CanonicalEventBundleKind::Ownership;
-  native.protocolIdentity = nativeCycle.id;
-  native.ownershipProtocol = nativeCycle.protocol;
-
-  const SmallVector<CanonicalOwnershipCycle, 2> cycles = {compositeCycle,
-                                                          nativeCycle};
-  const BarrierFreeOwnershipProviderSet complete =
-      buildBarrierFreeOwnershipProviderSet(cycles, {composite, native});
+  const auto distanceOne = enumerateSlotSSAOrdinalPairs(
+      slot, slot, 2, body->getArgument(0), 1);
+  const auto distanceTwo = enumerateSlotSSAOrdinalPairs(
+      slot, slot, 2, body->getArgument(0), 2);
   passed &= check(
-      complete.applicable && complete.complete &&
-          complete.providers ==
-              std::vector<CanonicalSelectionMechanismRef>(
-                  {{CanonicalSelectionMechanismKind::EventBundle, 7},
-                   {CanonicalSelectionMechanismKind::EventBundle, 9}}),
-      "composite and remaining native ownership form a complete seed");
-
-  const BarrierFreeOwnershipProviderSet missing =
-      buildBarrierFreeOwnershipProviderSet(cycles, {composite});
-  passed &= check(missing.applicable && !missing.complete &&
-                      missing.providers.empty(),
-                  "missing native ownership is classified as incomplete");
-
-  CanonicalEventBundleCandidate secondComposite = composite;
-  secondComposite.id = 8;
-  const BarrierFreeOwnershipProviderSet ambiguous =
-      buildBarrierFreeOwnershipProviderSet(
-          cycles, {composite, secondComposite, native});
-  passed &= check(ambiguous.applicable && !ambiguous.complete &&
-                      ambiguous.providers.empty(),
-                  "ambiguous composite ownership is classified as incomplete");
-
-  const BarrierFreeOwnershipProviderSet notApplicable =
-      buildBarrierFreeOwnershipProviderSet(cycles, {native});
-  passed &= check(!notApplicable.applicable && !notApplicable.complete,
-                  "membership is not applicable without a composite");
+      distanceOne &&
+          *distanceOne ==
+              SmallVector<SlotOrdinalPair, 4>{{0, 1}, {1, 0}},
+      "distance-one ping-pong accesses select disjoint ordinals");
+  passed &= check(
+      distanceTwo &&
+          *distanceTwo ==
+              SmallVector<SlotOrdinalPair, 4>{{0, 0}, {1, 1}},
+      "distance-two ping-pong accesses return to matching ordinals");
+  Value bare = body->getArgument(0);
+  passed &= check(!enumerateSlotSSAOrdinalPairs(bare, bare, 2),
+                  "unnormalized selectors fail exact pairing closed");
   return passed;
 }
 
 } // namespace
 
 int main() {
-  return testDescriptorAttestation() &&
-                 testBarrierFreeOwnershipProviderClassification()
+  return testDescriptorAttestation() && testExactSlotOrdinalPairing()
              ? 0
              : 1;
 }

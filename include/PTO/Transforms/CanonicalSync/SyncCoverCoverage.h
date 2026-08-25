@@ -39,6 +39,7 @@ enum class SyncCoverCoverageError : std::uint8_t {
   InvalidGraph,
   InvalidDemand,
   InvalidSelection,
+  InvalidBound,
   ExpansionLimitExceeded,
 };
 
@@ -63,10 +64,23 @@ struct SyncCoverDemandTopologyResult {
   }
 };
 
+/// Minimal mechanism sets that establish one demand from structural edges.
+/// This is a grounding result, not a selected-plan coverage query.
+struct SyncCoverMinimalWitnessResult {
+  SyncCoverCoverageError error = SyncCoverCoverageError::None;
+  bool truncated = false;
+  std::vector<std::vector<SyncCoverMechanismId>> witnesses;
+
+  explicit operator bool() const {
+    return error == SyncCoverCoverageError::None;
+  }
+};
+
 struct SyncCoverCoverageStatistics {
   std::size_t graphValidations = 0;
   std::size_t demandPreparations = 0;
   std::size_t coverageQueries = 0;
+  std::size_t groundingQueries = 0;
   std::size_t preparedVirtualNodes = 0;
   std::size_t preparedVirtualEdges = 0;
   std::size_t maximumVirtualNodes = 0;
@@ -102,6 +116,13 @@ public:
 
   SyncCoverDemandTopologyResult
   getDemandTopology(SyncCoverDemandId demand) const;
+
+  /// Enumerates the inclusion-minimal mechanism sets of at most
+  /// maximumMembers that establish the demand. The prepared topology is
+  /// traversed once; no selected-plan oracle query is issued per candidate.
+  SyncCoverMinimalWitnessResult getMinimalMechanismWitnesses(
+      SyncCoverDemandId demand, std::size_t maximumMembers,
+      std::size_t maximumLabelsPerState = 64) const;
 
   SyncCoverCoverageStatistics getStatistics() const;
 

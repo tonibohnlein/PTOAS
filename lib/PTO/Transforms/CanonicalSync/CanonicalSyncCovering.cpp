@@ -14,6 +14,7 @@
 
 #include "CanonicalSyncInternal.h"
 
+#include "PTO/Transforms/CanonicalSync/SyncCoverCandidateIndex.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverCoverage.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -31,6 +32,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <set>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -159,23 +161,34 @@ public:
     if (!graphBuilt) {
       return failure();
     }
-    const SyncCoverGraphResult validation = graph_.validate();
-    if (!validation) {
-      return emitGraphError("final graph validation", validation);
+    const SyncCoverGraphResult frozen = graph_.freezeStructure();
+    if (!frozen) {
+      return emitGraphError("structural graph freeze", frozen);
+    }
+    const SyncCoverCandidateIndex candidateIndex(graph_);
+    if (!candidateIndex) {
+      return func_.emitError()
+             << "internal error: canonical covering candidate index failed "
+                "with "
+             << static_cast<unsigned>(candidateIndex.getError());
     }
     for (const auto &entry : regionContexts_) {
       regionScopes_.emplace(entry.first, entry.second.scope);
     }
     if (failed(runCanonicalSyncCoveringShadowSelection(
             func_, plan_, legacyUniverse_, selectedEventBundles_, eventIdMax_,
-            reservedIds_, graph_, activeDemands_, regionScopes_, loopScopes_,
-            getAnchorPosition_, getBarrierCompletionEdges_,
+            reservedIds_, graph_, candidateIndex, activeDemands_,
+            regionScopes_, loopScopes_, getAnchorPosition_,
+            getBarrierCompletionEdges_,
             verifyEventProtocols_, snapshot))) {
       return failure();
     }
     snapshot.scopes = graph_.getScopes().size();
     snapshot.controls = graph_.getControls().size();
     snapshot.nodes = graph_.getNodes().size();
+    snapshot.storageDomains = graph_.getStorageDomains().size();
+    snapshot.storageAccesses = graph_.getStorageAccesses().size();
+    snapshot.storageWitnesses = graph_.getStorageWitnesses().size();
     snapshot.fixedEdges = plan_.getFixedEdges().size();
     snapshot.recurrenceCarryEdges = recurrenceCarryEdges_;
     snapshot.conservativeDemands = graph_.getDemands().size();
@@ -459,6 +472,9 @@ private:
         }
         demand.scope = *scope;
       }
+      if (failed(addStorageProvenance(requirement, demand))) {
+        return failure();
+      }
       const SyncCoverGraphResult result = graph_.addDemand(std::move(demand));
       if (!result || !result.index) {
         return emitGraphError("demand insertion", result);
@@ -470,6 +486,8 @@ private:
             "internal error: duplicate canonical covering demand identity");
       }
     }
+    // This list is captured after alias-contract filtering and before the
+    // legacy completion-reduction phase mutates the working dependencies.
     for (const CanonicalDependency &requirement :
          plan_.getCompletionRequirements()) {
       if (hasIntrinsicOrdering_(requirement)) {
@@ -490,6 +508,133 @@ private:
     if (duplicate != activeDemands_.end()) {
       return func_.emitError(
           "internal error: duplicate active canonical covering demand");
+    }
+    return success();
+  }
+
+  FailureOr<SyncCoverStorageDomainId>
+  getStorageDomain(AddressSpace space) {
+    auto existing = storageDomains_.find(space);
+    if (existing != storageDomains_.end()) {
+      return existing->second;
+    }
+    const SyncCoverGraphResult result = graph_.addStorageDomain();
+    if (!result || !result.index) {
+      static_cast<void>(emitGraphError("storage-domain insertion", result));
+      return failure();
+    }
+    storageDomains_.emplace(space, *result.index);
+    return *result.index;
+  }
+
+  FailureOr<SyncCoverStorageAccessId>
+  addStorageAccess(const CanonicalSyncNode &node, std::size_t accessIndex,
+                   unsigned addressOrdinal) {
+    if (accessIndex >= node.accesses.size()) {
+      return failure();
+    }
+    const CanonicalMemoryAccess &access = node.accesses[accessIndex];
+    const bool invalidOrdinal =
+        addressOrdinal >= access.addresses.size() || access.size == 0;
+    if (invalidOrdinal) {
+      return failure();
+    }
+    const std::uint64_t begin = access.addresses[addressOrdinal];
+    const bool addressOverflow =
+        access.size > std::numeric_limits<std::uint64_t>::max() - begin;
+    if (addressOverflow) {
+      return failure();
+    }
+    const std::tuple<std::size_t, std::size_t, unsigned> accessKey{
+        node.id, accessIndex, addressOrdinal};
+    auto knownAccess = storageAccessIds_.find(accessKey);
+    if (knownAccess != storageAccessIds_.end()) {
+      return knownAccess->second;
+    }
+    FailureOr<SyncCoverStorageDomainId> domain = getStorageDomain(access.space);
+    if (failed(domain)) {
+      return failure();
+    }
+    const std::pair<std::size_t, std::size_t> familyKey{node.id, accessIndex};
+    auto family = storageFamilies_.find(familyKey);
+    if (family == storageFamilies_.end()) {
+      family = storageFamilies_
+                   .emplace(familyKey,
+                            static_cast<SyncCoverStorageAccessFamilyId>(
+                                storageFamilies_.size()))
+                   .first;
+    }
+    const SyncCoverStorageAccessMode mode =
+        access.reads && access.writes
+            ? SyncCoverStorageAccessMode::ReadWrite
+            : access.writes ? SyncCoverStorageAccessMode::Write
+                            : SyncCoverStorageAccessMode::Read;
+    const SyncCoverGraphResult result = graph_.addStorageAccess(
+        node.id, *domain, family->second, {begin, begin + access.size}, mode,
+        addressOrdinal);
+    if (!result || !result.index) {
+      static_cast<void>(emitGraphError("storage-access insertion", result));
+      return failure();
+    }
+    storageAccessIds_.emplace(accessKey, *result.index);
+    return *result.index;
+  }
+
+  LogicalResult addStorageProvenance(const CanonicalDependency &requirement,
+                                     SyncCoverDemand &demand) {
+    if (requirement.kind == CanonicalDependencyKind::SSA ||
+        requirement.kind == CanonicalDependencyKind::LoopCarriedSSA) {
+      demand.storageProvenance = SyncCoverStorageProvenance::NotApplicable;
+      return success();
+    }
+    demand.storageProvenance =
+        requirement.storageProvenance == CanonicalStorageProvenance::Complete
+            ? SyncCoverStorageProvenance::Complete
+            : SyncCoverStorageProvenance::Incomplete;
+    const bool invalidRequirement =
+        requirement.source >= plan_.getNodes().size() ||
+        requirement.target >= plan_.getNodes().size();
+    if (invalidRequirement) {
+      return failure();
+    }
+    const CanonicalSyncNode &source = plan_.getNodes()[requirement.source];
+    const CanonicalSyncNode &target = plan_.getNodes()[requirement.target];
+    for (const CanonicalMemoryHazardWitness &witness :
+         requirement.storageWitnesses) {
+      FailureOr<SyncCoverStorageAccessId> sourceAccess = addStorageAccess(
+          source, witness.sourceAccess, witness.sourceAddressOrdinal);
+      FailureOr<SyncCoverStorageAccessId> targetAccess = addStorageAccess(
+          target, witness.targetAccess, witness.targetAddressOrdinal);
+      const bool invalidAccess = failed(sourceAccess) || failed(targetAccess);
+      if (invalidAccess) {
+        return func_.emitError(
+            "internal error: canonical covering storage witness access is "
+            "invalid");
+      }
+      const std::pair<SyncCoverStorageAccessId, SyncCoverStorageAccessId>
+          witnessKey{*sourceAccess, *targetAccess};
+      auto knownWitness = storageWitnessIds_.find(witnessKey);
+      SyncCoverGraphResult result;
+      if (knownWitness == storageWitnessIds_.end()) {
+        result = graph_.addStorageWitness(*sourceAccess, *targetAccess);
+        if (result && result.index) {
+          storageWitnessIds_.emplace(witnessKey, *result.index);
+        }
+      } else {
+        result = {SyncCoverGraphError::None, knownWitness->second};
+      }
+      if (!result || !result.index) {
+        return emitGraphError("storage-witness insertion", result);
+      }
+      const SyncCoverStorageWitness &stored =
+          graph_.getStorageWitnesses()[*result.index];
+      if (stored.overlap.begin != witness.overlapBegin ||
+          stored.overlap.end != witness.overlapEnd) {
+        return func_.emitError(
+            "internal error: canonical covering storage overlap changed "
+            "during translation");
+      }
+      demand.storageWitnesses.push_back(*result.index);
     }
     return success();
   }
@@ -522,6 +667,16 @@ private:
   std::map<Region *, RegionContext, std::less<Region *>> regionContexts_;
   std::map<Region *, SyncCoverScopeId, std::less<Region *>> regionScopes_;
   DenseMap<Operation *, SyncCoverScopeId> loopScopes_;
+  std::map<AddressSpace, SyncCoverStorageDomainId> storageDomains_;
+  std::map<std::pair<std::size_t, std::size_t>,
+           SyncCoverStorageAccessFamilyId>
+      storageFamilies_;
+  std::map<std::tuple<std::size_t, std::size_t, unsigned>,
+           SyncCoverStorageAccessId>
+      storageAccessIds_;
+  std::map<std::pair<SyncCoverStorageAccessId, SyncCoverStorageAccessId>,
+           SyncCoverStorageWitnessId>
+      storageWitnessIds_;
   std::vector<SyncCoverDemandId> activeDemands_;
   std::size_t recurrenceCarryEdges_ = 0;
   std::size_t intrinsicallySatisfiedDemands_ = 0;
@@ -531,8 +686,6 @@ private:
 
 LogicalResult CanonicalSyncPlanBuilder::buildCoveringShadowGraph() {
   CanonicalSyncCoveringShadowSnapshot snapshot;
-  snapshot.ownershipMembership.requested =
-      coveringMembershipProbeEnabled_;
   CanonicalSyncCoveringGraphAdapter adapter(
       func_, plan_, mechanismUniverse_, selectedEventBundles_, eventIdMax_,
       reservedIds_,

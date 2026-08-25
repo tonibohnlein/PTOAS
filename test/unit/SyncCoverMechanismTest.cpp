@@ -8,10 +8,11 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-#include "PTO/Transforms/CanonicalSync/SyncCoverMechanism.h"
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncAlgorithms.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverCandidateIndex.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverCoverage.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverDescriptorBuilder.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverMechanism.h"
 
 #include <algorithm>
 #include <iostream>
@@ -201,19 +202,46 @@ bool testDescriptorBuilderAndGraphEpoch() {
                   "failed builder additions leave the descriptor unchanged");
 
   const SyncCoverSelectionEvaluator epoch(universe);
+  const SyncCoverCandidateIndex candidateIndex(graph);
+  passed &= check(static_cast<bool>(universe.getInitializationResult()),
+                  "universe exposes a successful structural freeze");
   passed &= check(epoch && epoch.evaluate({eventId, protocolId}),
                   "selection epoch accepts the completed builder universe");
   passed &= check(universe.getStatistics().fullValidations == 2,
                   "selection freezes one phase-boundary validation");
-  passed &= check(static_cast<bool>(graph.addNode(3, 1, 0, 2)),
-                  "externally extend graph after freezing an epoch");
-  passed &= check(!epoch && !epoch.evaluate({eventId, protocolId}),
-                  "graph generation invalidates a frozen selection epoch");
+  passed &= check(graph.addNode(3, 1, 0, 2).error ==
+                      SyncCoverGraphError::StructureFrozen,
+                  "structural mutation is rejected after universe creation");
+  passed &= check(epoch && epoch.evaluate({eventId, protocolId}),
+                  "rejected structure changes preserve the selection epoch");
+  passed &= check(static_cast<bool>(candidateIndex),
+                  "mechanism supply edges preserve the candidate index epoch");
   passed &= check(universe.validate(),
-                  "phase-boundary validation accepts a valid graph extension");
+                  "phase-boundary validation accepts the frozen graph");
   passed &= check(universe.validate() &&
-                      universe.getStatistics().fullValidations == 3,
+                      universe.getStatistics().fullValidations == 2,
                   "unchanged graph and universe reuse cached validation");
+  return passed;
+}
+
+bool testUniverseReportsFreezeFailure() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source = takeGraphIndex(
+      graph.addNode(1, 1, 0, 0), passed, "add contaminated source");
+  const SyncCoverNodeId target = takeGraphIndex(
+      graph.addNode(2, 1, 0, 1), passed, "add contaminated target");
+  SyncCoverEdge edge = completionEdge(source, target);
+  edge.mechanism = 7;
+  passed &= check(static_cast<bool>(graph.addEdge(edge)),
+                  "add premature mechanism edge");
+  SyncCoverMechanismUniverse universe(graph);
+  const SyncCoverGraphResult initialization =
+      universe.getInitializationResult();
+  passed &= check(initialization.error ==
+                          SyncCoverGraphError::InvalidEdgeOwnership &&
+                      !universe.validate(),
+                  "universe preserves the structural freeze failure cause");
   return passed;
 }
 
@@ -334,6 +362,9 @@ bool testAtomicSupplyAndCoverage() {
       check(static_cast<bool>(graph.addDemand(makeDemand(source, target))),
             "add demand");
   SyncCoverMechanismUniverse universe(graph);
+  const SyncCoverCandidateIndex candidateIndex(graph);
+  passed &= check(static_cast<bool>(candidateIndex),
+                  "build candidate index before mechanism insertion");
   const SyncCoverResourceDomainId domain = takeMechanismIndex(
       universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 8),
       passed, "add event domain");
@@ -345,6 +376,8 @@ bool testAtomicSupplyAndCoverage() {
       universe.addMechanism(event), passed, "add event mechanism");
   passed &= check(eventId == 0 && graph.getEdges().size() == 1,
                   "universe assigns dense identity and attaches supply");
+  passed &= check(static_cast<bool>(candidateIndex),
+                  "mechanism-owned supply does not stale structural lookup");
   passed &=
       check(SyncCoverCoverageOracle(graph).checkDemand(0, {eventId}).covered,
             "selected atomic mechanism supplies graph completion");
@@ -430,12 +463,13 @@ bool testAtomicFailureAndProtocolGate() {
       ownership, [&](const auto &) {
         return static_cast<bool>(graph.addNode(3, 1, 0, 2));
       });
-  passed &= check(mutatingVerifier.error == SyncCoverMechanismError::InvalidGraph &&
+  passed &= check(mutatingVerifier.error ==
+                          SyncCoverMechanismError::UnverifiedProtocol &&
                       graph.getEdges().size() == preVerificationEdges &&
-                      graph.getNodes().size() == preMutationNodes + 1 &&
-                      graph.getGeneration() == preVerificationGeneration + 1 &&
+                      graph.getNodes().size() == preMutationNodes &&
+                      graph.getGeneration() == preVerificationGeneration &&
                       universe.getMechanisms().empty(),
-                  "verifier graph mutation is detected without erasing it");
+                  "verified-protocol callbacks cannot mutate frozen structure");
   bool verifierCalled = false;
   passed &= check(universe.addVerifiedProtocol(
                       ownership,
@@ -618,6 +652,14 @@ bool testActionAndBindingRejections() {
                      "add qualified source");
   const SyncCoverNodeId qualifiedTarget = takeGraphIndex(
       qualifiedGraph.addNode(2, 1, 0, 1), passed, "add qualified target");
+  const SyncCoverScopeId loop = takeGraphIndex(
+      qualifiedGraph.addScope(0, false, SyncCoverTimelineInterval{0, 5}, true),
+      passed, "add recurrence timeline");
+  const SyncCoverNodeId loopSource =
+      takeGraphIndex(qualifiedGraph.addNode(1, 1, loop, 1, {}, {2}), passed,
+                     "add recurrence source");
+  const SyncCoverNodeId loopTarget = takeGraphIndex(
+      qualifiedGraph.addNode(2, 1, loop, 2), passed, "add recurrence target");
   SyncCoverMechanismUniverse qualified(qualifiedGraph);
   const SyncCoverResourceDomainId qualifiedDomain = takeMechanismIndex(
       qualified.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 8),
@@ -641,14 +683,6 @@ bool testActionAndBindingRejections() {
                       SyncCoverMechanismError::InvalidBinding,
                   "supply binding requires distinct Produce and Consume");
 
-  const SyncCoverScopeId loop = takeGraphIndex(
-      qualifiedGraph.addScope(0, false, SyncCoverTimelineInterval{0, 5}, true),
-      passed, "add recurrence timeline");
-  const SyncCoverNodeId loopSource =
-      takeGraphIndex(qualifiedGraph.addNode(1, 1, loop, 1, {}, {2}), passed,
-                     "add recurrence source");
-  const SyncCoverNodeId loopTarget = takeGraphIndex(
-      qualifiedGraph.addNode(2, 1, loop, 2), passed, "add recurrence target");
   SyncCoverMechanismDescriptor recurrence;
   appendCanonicalUse(recurrence, qualifiedDomain, 1, 2, loopSource, loopTarget,
                      loop, 1);
@@ -835,6 +869,9 @@ bool testBarrierExecutionGuarantees() {
                        "add conditional anchor");
     const SyncCoverNodeId target = takeGraphIndex(
         graph.addNode(1, 1, 0, 2), passed, "add unconditional target");
+    const SyncCoverNodeId guardedTarget =
+        takeGraphIndex(graph.addNode(1, 1, 0, 3, branchGuard), passed,
+                       "add guarded barrier target");
     SyncCoverMechanismUniverse universe(graph);
     SyncCoverMechanismDescriptor barrier;
     barrier.kind = SyncCoverMechanismKind::Barrier;
@@ -844,9 +881,6 @@ bool testBarrierExecutionGuarantees() {
                         SyncCoverMechanismError::InvalidSupply,
                     "conditional barrier cannot cover unconditional target");
 
-    const SyncCoverNodeId guardedTarget =
-        takeGraphIndex(graph.addNode(1, 1, 0, 3, branchGuard), passed,
-                       "add guarded barrier target");
     barrier.supplyEdges.clear();
     barrier.supplyEdges.push_back(completionEdge(source, guardedTarget));
     passed &= check(universe.addMechanism(barrier),
@@ -1275,6 +1309,7 @@ bool testRecurrenceUsesWholeScopePressure() {
 int main() {
   bool passed = true;
   passed &= testDescriptorBuilderAndGraphEpoch();
+  passed &= testUniverseReportsFreezeFailure();
   passed &= testStockUnitRecurrenceProtocol();
   passed &= testAtomicSupplyAndCoverage();
   passed &= testAtomicFailureAndProtocolGate();

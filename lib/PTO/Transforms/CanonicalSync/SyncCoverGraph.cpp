@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <map>
 #include <set>
 #include <tuple>
 #include <type_traits>
@@ -35,6 +36,48 @@ getNodePosition(const SyncCoverNode &node, bool after) {
 bool intervalContains(const SyncCoverTimelineInterval &outer,
                       const SyncCoverTimelineInterval &inner) {
   return outer.begin <= inner.begin && inner.end <= outer.end;
+}
+
+bool validStorageInterval(const SyncCoverStorageInterval &interval) {
+  return interval.begin < interval.end;
+}
+
+std::optional<SyncCoverStorageInterval>
+intersectStorageIntervals(const SyncCoverStorageInterval &first,
+                          const SyncCoverStorageInterval &second) {
+  SyncCoverStorageInterval overlap{std::max(first.begin, second.begin),
+                                   std::min(first.end, second.end)};
+  if (!validStorageInterval(overlap)) {
+    return std::nullopt;
+  }
+  return overlap;
+}
+
+SyncCoverStorageAccessMode
+combineStorageModes(SyncCoverStorageAccessMode first,
+                    SyncCoverStorageAccessMode second) {
+  const auto combined = static_cast<std::uint8_t>(first) |
+                        static_cast<std::uint8_t>(second);
+  return static_cast<SyncCoverStorageAccessMode>(combined);
+}
+
+bool storageWitnessSupportsDemand(const SyncCoverStorageAccess &source,
+                                  const SyncCoverStorageAccess &target,
+                                  SyncCoverDemandKind kind) {
+  switch (kind) {
+  case SyncCoverDemandKind::SSA:
+    return false;
+  case SyncCoverDemandKind::MemoryRAW:
+    return syncCoverStorageModeWrites(source.mode) &&
+           syncCoverStorageModeReads(target.mode);
+  case SyncCoverDemandKind::MemoryWAR:
+    return syncCoverStorageModeReads(source.mode) &&
+           syncCoverStorageModeWrites(target.mode);
+  case SyncCoverDemandKind::MemoryWAW:
+    return syncCoverStorageModeWrites(source.mode) &&
+           syncCoverStorageModeWrites(target.mode);
+  }
+  return false;
 }
 
 bool timelineFitsAncestors(const std::vector<SyncCoverScope> &scopes,
@@ -80,8 +123,8 @@ bool nodeFitsScopeTimeline(const std::vector<SyncCoverScope> &scopes,
 }
 
 std::optional<SyncCoverScopeId>
-getOwningTimelineScope(const std::vector<SyncCoverScope> &scopes,
-                       SyncCoverScopeId scope) {
+findOwningTimelineScope(const std::vector<SyncCoverScope> &scopes,
+                        SyncCoverScopeId scope) {
   if (scope >= scopes.size()) {
     return std::nullopt;
   }
@@ -105,6 +148,16 @@ bool SyncCoverGuardLiteral::operator<(
 bool SyncCoverGuardLiteral::operator==(
     const SyncCoverGuardLiteral &other) const {
   return control == other.control && alternative == other.alternative;
+}
+
+bool mlir::pto::syncCoverStorageModeReads(SyncCoverStorageAccessMode mode) {
+  return (static_cast<std::uint8_t>(mode) &
+          static_cast<std::uint8_t>(SyncCoverStorageAccessMode::Read)) != 0;
+}
+
+bool mlir::pto::syncCoverStorageModeWrites(SyncCoverStorageAccessMode mode) {
+  return (static_cast<std::uint8_t>(mode) &
+          static_cast<std::uint8_t>(SyncCoverStorageAccessMode::Write)) != 0;
 }
 
 bool mlir::pto::normalizeSyncCoverGuard(SyncCoverGuard &guard) {
@@ -178,6 +231,9 @@ SyncCoverGraphResult
 SyncCoverGraph::addScope(SyncCoverScopeId parent, bool mustExecuteWithinParent,
                          std::optional<SyncCoverTimelineInterval> timeline,
                          bool isLoop) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen, scopes_.size()};
+  }
   if (!hasValidScope(parent)) {
     return {SyncCoverGraphError::InvalidScope, parent};
   }
@@ -188,12 +244,15 @@ SyncCoverGraph::addScope(SyncCoverScopeId parent, bool mustExecuteWithinParent,
   }
   const SyncCoverScopeId id = scopes_.size();
   scopes_.push_back({id, parent, mustExecuteWithinParent, timeline, isLoop});
-  ++generation_;
+  noteStructuralMutation();
   return {SyncCoverGraphError::None, id};
 }
 
 SyncCoverGraphResult SyncCoverGraph::addControl(unsigned alternatives,
                                                 SyncCoverScopeId scope) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen, controls_.size()};
+  }
   if (alternatives == 0) {
     return {SyncCoverGraphError::InvalidControl, controls_.size()};
   }
@@ -202,7 +261,7 @@ SyncCoverGraphResult SyncCoverGraph::addControl(unsigned alternatives,
   }
   const SyncCoverControlId id = controls_.size();
   controls_.push_back({id, alternatives, scope});
-  ++generation_;
+  noteStructuralMutation();
   return {SyncCoverGraphError::None, id};
 }
 
@@ -211,6 +270,9 @@ SyncCoverGraph::addNode(std::uint32_t resource, std::uint64_t weight,
                         SyncCoverScopeId scope, std::size_t order,
                         SyncCoverGuard guard,
                         std::vector<std::uint32_t> completionTargets) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen, nodes_.size()};
+  }
   if (!hasValidScope(scope)) {
     return {SyncCoverGraphError::InvalidScope, scope};
   }
@@ -234,11 +296,11 @@ SyncCoverGraph::addNode(std::uint32_t resource, std::uint64_t weight,
     return {SyncCoverGraphError::InvalidTimeline, id};
   }
   const std::optional<SyncCoverScopeId> timeline =
-      getOwningTimelineScope(scopes_, scope);
+      findOwningTimelineScope(scopes_, scope);
   const bool duplicateOrder =
       timeline && std::any_of(nodes_.begin(), nodes_.end(),
                              [&](const SyncCoverNode &existing) {
-                               return getOwningTimelineScope(
+                               return findOwningTimelineScope(
                                           scopes_, existing.scope) ==
                                           timeline &&
                                       existing.order == order;
@@ -247,18 +309,21 @@ SyncCoverGraph::addNode(std::uint32_t resource, std::uint64_t weight,
     return {SyncCoverGraphError::InvalidOrder, id};
   }
   nodes_.push_back(std::move(node));
-  ++generation_;
+  noteStructuralMutation();
   return {SyncCoverGraphError::None, id};
 }
 
 SyncCoverGraphResult SyncCoverGraph::addEdge(SyncCoverEdge edge) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen, edges_.size()};
+  }
   const SyncCoverGraphResult prepared = prepareEdge(edge);
   if (!prepared) {
     return prepared;
   }
   const std::size_t index = edges_.size();
   edges_.push_back(std::move(edge));
-  ++generation_;
+  noteStructuralMutation();
   return {SyncCoverGraphError::None, index};
 }
 
@@ -295,6 +360,9 @@ SyncCoverGraphResult SyncCoverGraph::prepareEdge(SyncCoverEdge &edge) const {
 }
 
 SyncCoverGraphResult SyncCoverGraph::addDemand(SyncCoverDemand demand) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen, demands_.size()};
+  }
   const bool invalidNode =
       demand.source >= nodes_.size() || demand.target >= nodes_.size();
   if (invalidNode) {
@@ -324,10 +392,153 @@ SyncCoverGraphResult SyncCoverGraph::addDemand(SyncCoverDemand demand) {
   if (error != SyncCoverGraphError::None) {
     return {error, demands_.size()};
   }
+  std::sort(demand.storageWitnesses.begin(), demand.storageWitnesses.end());
+  demand.storageWitnesses.erase(
+      std::unique(demand.storageWitnesses.begin(),
+                  demand.storageWitnesses.end()),
+      demand.storageWitnesses.end());
+  const bool isMemory = demand.kind != SyncCoverDemandKind::SSA;
+  const bool invalidApplicability =
+      (isMemory && demand.storageProvenance ==
+                       SyncCoverStorageProvenance::NotApplicable) ||
+      (!isMemory && (demand.storageProvenance !=
+                         SyncCoverStorageProvenance::NotApplicable ||
+                     !demand.storageWitnesses.empty())) ||
+      (demand.storageProvenance == SyncCoverStorageProvenance::Complete &&
+       demand.storageWitnesses.empty());
+  if (invalidApplicability) {
+    return {SyncCoverGraphError::InvalidStorageProvenance, demands_.size()};
+  }
+  for (SyncCoverStorageWitnessId witnessId : demand.storageWitnesses) {
+    if (witnessId >= storageWitnesses_.size()) {
+      return {SyncCoverGraphError::InvalidStorageWitness, demands_.size()};
+    }
+    const SyncCoverStorageWitness &witness = storageWitnesses_[witnessId];
+    const SyncCoverStorageAccess &source =
+        storageAccesses_[witness.sourceAccess];
+    const SyncCoverStorageAccess &target =
+        storageAccesses_[witness.targetAccess];
+    const bool invalidWitness =
+        source.node != demand.source || target.node != demand.target ||
+        !storageWitnessSupportsDemand(source, target, demand.kind);
+    if (invalidWitness) {
+      return {SyncCoverGraphError::InvalidStorageWitness, demands_.size()};
+    }
+  }
   const std::size_t index = demands_.size();
   demands_.push_back(std::move(demand));
-  ++generation_;
+  noteStructuralMutation();
   return {SyncCoverGraphError::None, index};
+}
+
+SyncCoverGraphResult SyncCoverGraph::addStorageDomain() {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen, storageDomains_.size()};
+  }
+  const SyncCoverStorageDomainId id = storageDomains_.size();
+  storageDomains_.push_back({id});
+  noteStructuralMutation();
+  return {SyncCoverGraphError::None, id};
+}
+
+SyncCoverGraphResult SyncCoverGraph::addStorageAccess(
+    SyncCoverNodeId node, SyncCoverStorageDomainId domain,
+    SyncCoverStorageAccessFamilyId family, SyncCoverStorageInterval extent,
+    SyncCoverStorageAccessMode mode, std::optional<unsigned> addressOrdinal) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen, storageAccesses_.size()};
+  }
+  if (node >= nodes_.size()) {
+    return {SyncCoverGraphError::InvalidNode, storageAccesses_.size()};
+  }
+  if (domain >= storageDomains_.size()) {
+    return {SyncCoverGraphError::InvalidStorageDomain,
+            storageAccesses_.size()};
+  }
+  const bool invalidExtent =
+      !validStorageInterval(extent) ||
+      (!syncCoverStorageModeReads(mode) &&
+       !syncCoverStorageModeWrites(mode));
+  if (invalidExtent) {
+    return {SyncCoverGraphError::InvalidStorageAccess,
+            storageAccesses_.size()};
+  }
+  const StorageAccessKey key{node, domain, family, extent.begin, extent.end,
+                             addressOrdinal};
+  auto existingId = storageAccessIds_.find(key);
+  if (existingId != storageAccessIds_.end()) {
+    SyncCoverStorageAccess &existing = storageAccesses_[existingId->second];
+    const SyncCoverStorageAccessMode combined =
+        combineStorageModes(existing.mode, mode);
+    if (combined != existing.mode) {
+      existing.mode = combined;
+      noteStructuralMutation();
+    }
+    return {SyncCoverGraphError::None, existing.id};
+  }
+  const SyncCoverStorageAccessId id = storageAccesses_.size();
+  storageAccesses_.push_back(
+      {id, node, domain, family, extent, mode, addressOrdinal});
+  storageAccessIds_.emplace(key, id);
+  noteStructuralMutation();
+  return {SyncCoverGraphError::None, id};
+}
+
+SyncCoverGraphResult
+SyncCoverGraph::addStorageWitness(SyncCoverStorageAccessId sourceAccess,
+                                  SyncCoverStorageAccessId targetAccess) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen, storageWitnesses_.size()};
+  }
+  const bool invalidAccess = sourceAccess >= storageAccesses_.size() ||
+                             targetAccess >= storageAccesses_.size();
+  if (invalidAccess) {
+    return {SyncCoverGraphError::InvalidStorageAccess,
+            storageWitnesses_.size()};
+  }
+  const SyncCoverStorageAccess &source = storageAccesses_[sourceAccess];
+  const SyncCoverStorageAccess &target = storageAccesses_[targetAccess];
+  const std::optional<SyncCoverStorageInterval> overlap =
+      source.domain == target.domain
+          ? intersectStorageIntervals(source.extent, target.extent)
+          : std::nullopt;
+  if (!overlap) {
+    return {SyncCoverGraphError::InvalidStorageWitness,
+            storageWitnesses_.size()};
+  }
+  const auto key = std::make_pair(sourceAccess, targetAccess);
+  auto existing = storageWitnessIds_.find(key);
+  if (existing != storageWitnessIds_.end()) {
+    return {SyncCoverGraphError::None, existing->second};
+  }
+  const SyncCoverStorageWitnessId id = storageWitnesses_.size();
+  storageWitnesses_.push_back({id, sourceAccess, targetAccess, *overlap});
+  storageWitnessIds_.emplace(key, id);
+  noteStructuralMutation();
+  return {SyncCoverGraphError::None, id};
+}
+
+SyncCoverGraphResult SyncCoverGraph::freezeStructure() {
+  if (structureFrozen_) {
+    return {SyncCoverGraphError::None, structuralEdgeCount_};
+  }
+  auto mechanismEdge = std::find_if(edges_.begin(), edges_.end(),
+                                    [](const SyncCoverEdge &edge) {
+                                      return edge.mechanism.has_value();
+                                    });
+  if (mechanismEdge != edges_.end()) {
+    return {SyncCoverGraphError::InvalidEdgeOwnership,
+            static_cast<std::size_t>(mechanismEdge - edges_.begin())};
+  }
+  const SyncCoverGraphResult validation = validate();
+  if (!validation) {
+    return validation;
+  }
+  structureFrozen_ = true;
+  structuralEdgeCount_ = edges_.size();
+  ++generation_;
+  ++structuralGeneration_;
+  return {SyncCoverGraphError::None, structuralEdgeCount_};
 }
 
 SyncCoverGraphResult SyncCoverGraph::validate() const {
@@ -360,6 +571,49 @@ SyncCoverGraphResult SyncCoverGraph::validate() const {
       return {SyncCoverGraphError::InvalidControl, index};
     }
   }
+  for (std::size_t index = 0; index < storageDomains_.size(); ++index) {
+    if (storageDomains_[index].id != index) {
+      return {SyncCoverGraphError::InvalidStorageDomain, index};
+    }
+  }
+  std::map<SyncCoverStorageAccessFamilyId, SyncCoverNodeId> familyNodes;
+  for (std::size_t index = 0; index < storageAccesses_.size(); ++index) {
+    const SyncCoverStorageAccess &access = storageAccesses_[index];
+    const bool invalid =
+        access.id != index || access.node >= nodes_.size() ||
+        access.domain >= storageDomains_.size() ||
+        !validStorageInterval(access.extent) ||
+        (!syncCoverStorageModeReads(access.mode) &&
+         !syncCoverStorageModeWrites(access.mode));
+    if (invalid) {
+      return {SyncCoverGraphError::InvalidStorageAccess, index};
+    }
+    auto [family, inserted] = familyNodes.emplace(access.family, access.node);
+    if (!inserted && family->second != access.node) {
+      return {SyncCoverGraphError::InvalidStorageAccess, index};
+    }
+  }
+  for (std::size_t index = 0; index < storageWitnesses_.size(); ++index) {
+    const SyncCoverStorageWitness &witness = storageWitnesses_[index];
+    const bool invalidAccess =
+        witness.id != index ||
+        witness.sourceAccess >= storageAccesses_.size() ||
+        witness.targetAccess >= storageAccesses_.size();
+    if (invalidAccess) {
+      return {SyncCoverGraphError::InvalidStorageWitness, index};
+    }
+    const SyncCoverStorageAccess &source =
+        storageAccesses_[witness.sourceAccess];
+    const SyncCoverStorageAccess &target =
+        storageAccesses_[witness.targetAccess];
+    const std::optional<SyncCoverStorageInterval> overlap =
+        source.domain == target.domain
+            ? intersectStorageIntervals(source.extent, target.extent)
+            : std::nullopt;
+    if (!overlap || witness.overlap != *overlap) {
+      return {SyncCoverGraphError::InvalidStorageWitness, index};
+    }
+  }
   std::set<std::pair<SyncCoverScopeId, std::size_t>> timelineOrders;
   for (std::size_t index = 0; index < nodes_.size(); ++index) {
     const SyncCoverNode &node = nodes_[index];
@@ -380,7 +634,7 @@ SyncCoverGraphResult SyncCoverGraph::validate() const {
       return {SyncCoverGraphError::InvalidCompletionTargets, index};
     }
     const std::optional<SyncCoverScopeId> timeline =
-        getOwningTimelineScope(scopes_, node.scope);
+        findOwningTimelineScope(scopes_, node.scope);
     if (!timeline || !timelineOrders.insert({*timeline, node.order}).second) {
       return {SyncCoverGraphError::InvalidOrder, index};
     }
@@ -424,12 +678,51 @@ SyncCoverGraphResult SyncCoverGraph::validate() const {
     if (error != SyncCoverGraphError::None) {
       return {error, index};
     }
+    const bool sortedWitnesses =
+        std::is_sorted(demand.storageWitnesses.begin(),
+                       demand.storageWitnesses.end()) &&
+        std::adjacent_find(demand.storageWitnesses.begin(),
+                           demand.storageWitnesses.end()) ==
+            demand.storageWitnesses.end();
+    const bool isMemory = demand.kind != SyncCoverDemandKind::SSA;
+    const bool invalidApplicability =
+        !sortedWitnesses ||
+        (isMemory && demand.storageProvenance ==
+                         SyncCoverStorageProvenance::NotApplicable) ||
+        (!isMemory && (demand.storageProvenance !=
+                           SyncCoverStorageProvenance::NotApplicable ||
+                       !demand.storageWitnesses.empty())) ||
+        (demand.storageProvenance == SyncCoverStorageProvenance::Complete &&
+         demand.storageWitnesses.empty());
+    if (invalidApplicability) {
+      return {SyncCoverGraphError::InvalidStorageProvenance, index};
+    }
+    for (SyncCoverStorageWitnessId witnessId : demand.storageWitnesses) {
+      if (witnessId >= storageWitnesses_.size()) {
+        return {SyncCoverGraphError::InvalidStorageWitness, index};
+      }
+      const SyncCoverStorageWitness &witness = storageWitnesses_[witnessId];
+      const SyncCoverStorageAccess &source =
+          storageAccesses_[witness.sourceAccess];
+      const SyncCoverStorageAccess &target =
+          storageAccesses_[witness.targetAccess];
+      if (source.node != demand.source || target.node != demand.target ||
+          !storageWitnessSupportsDemand(source, target, demand.kind)) {
+        return {SyncCoverGraphError::InvalidStorageWitness, index};
+      }
+    }
   }
 
   std::vector<std::vector<SyncCoverNodeId>> children(nodes_.size());
   std::vector<std::size_t> indegrees(nodes_.size(), 0);
   for (std::size_t index = 0; index < edges_.size(); ++index) {
     const SyncCoverEdge &edge = edges_[index];
+    const bool structuralEdge = index < structuralEdgeCount_;
+    const bool invalidOwnership =
+        structureFrozen_ && (structuralEdge == edge.mechanism.has_value());
+    if (invalidOwnership) {
+      return {SyncCoverGraphError::InvalidEdgeOwnership, index};
+    }
     const bool invalidNode =
         edge.source >= nodes_.size() || edge.target >= nodes_.size();
     if (invalidNode) {
@@ -486,6 +779,11 @@ SyncCoverGraphResult SyncCoverGraph::validate() const {
     return {SyncCoverGraphError::ZeroDistanceCycle, std::nullopt};
   }
   return {SyncCoverGraphError::None, std::nullopt};
+}
+
+void SyncCoverGraph::noteStructuralMutation() {
+  ++generation_;
+  ++structuralGeneration_;
 }
 
 bool SyncCoverGraph::hasValidScope(SyncCoverScopeId scope) const {
@@ -560,6 +858,11 @@ SyncCoverGraph::getScopeLoopDepth(SyncCoverScopeId scope,
     scope = scopes_[scope].parent;
   }
   return depth;
+}
+
+std::optional<SyncCoverScopeId>
+SyncCoverGraph::getOwningTimelineScope(SyncCoverScopeId scope) const {
+  return findOwningTimelineScope(scopes_, scope);
 }
 
 SyncCoverGraph::EdgeCheckpoint SyncCoverGraph::checkpointEdges() const {

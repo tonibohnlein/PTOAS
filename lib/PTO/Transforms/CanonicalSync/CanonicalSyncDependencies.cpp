@@ -14,12 +14,16 @@
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOSyncUtils.h"
 #include "PTO/Transforms/KernelScheduling/KernelScheduleGraph.h"
+#include "PTO/Transforms/SlotAffineAnalysis.h"
 
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
+#include <limits>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -31,6 +35,143 @@ struct MemoryHazardKinds {
   bool war = false;
   bool waw = false;
 };
+
+struct ExactHazardWitnesses {
+  bool complete = false;
+  SmallVector<CanonicalMemoryHazardWitness, 4> witnesses;
+};
+
+struct HazardStorageProvenance {
+  bool present = false;
+  CanonicalStorageProvenance provenance =
+      CanonicalStorageProvenance::NotApplicable;
+  SmallVector<CanonicalMemoryHazardWitness, 4> witnesses;
+
+  void add(const ExactHazardWitnesses &exact) {
+    present = true;
+    if (!exact.complete) {
+      provenance = CanonicalStorageProvenance::Incomplete;
+    } else if (provenance == CanonicalStorageProvenance::NotApplicable) {
+      provenance = CanonicalStorageProvenance::Complete;
+    }
+    witnesses.append(exact.witnesses.begin(), exact.witnesses.end());
+  }
+};
+
+struct MemoryHazardStorageProvenance {
+  HazardStorageProvenance raw;
+  HazardStorageProvenance war;
+  HazardStorageProvenance waw;
+};
+
+bool isExactLocalAccess(const CanonicalMemoryAccess &access) {
+  return access.space != AddressSpace::GM &&
+         access.space != AddressSpace::Zero && access.knownPhysical &&
+         !access.unknownRange && access.size != 0 &&
+         !access.addresses.empty();
+}
+
+std::optional<int64_t> getIterationOffset(Operation *loop,
+                                          unsigned iterationDistance) {
+  if (iterationDistance == 0) {
+    return 0;
+  }
+  auto forOp = dyn_cast_or_null<scf::ForOp>(loop);
+  APInt step;
+  const bool missingConstantStep =
+      !forOp || !matchPattern(forOp.getStep(), m_ConstantInt(&step));
+  if (missingConstantStep) {
+    return std::nullopt;
+  }
+  const bool invalidStep =
+      !step.isStrictlyPositive() || step.getActiveBits() > 63;
+  if (invalidStep) {
+    return std::nullopt;
+  }
+  const std::uint64_t unsignedStep = step.getZExtValue();
+  const std::uint64_t maximum =
+      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+  if (unsignedStep > maximum / iterationDistance) {
+    return std::nullopt;
+  }
+  return static_cast<std::int64_t>(
+      unsignedStep * static_cast<std::uint64_t>(iterationDistance));
+}
+
+ExactHazardWitnesses collectExactHazardWitnesses(
+    const CanonicalMemoryAccess &source,
+    const CanonicalMemoryAccess &target, std::size_t sourceAccess,
+    std::size_t targetAccess, unsigned iterationDistance, Operation *loop) {
+  ExactHazardWitnesses result;
+  const bool inexactAccess = !isExactLocalAccess(source) ||
+                             !isExactLocalAccess(target) ||
+                             source.space != target.space;
+  if (inexactAccess) {
+    return result;
+  }
+
+  const std::size_t slotCount =
+      std::max(source.addresses.size(), target.addresses.size());
+  SmallVector<SlotOrdinalPair, 4> ordinalPairs;
+  if (slotCount == 1) {
+    ordinalPairs.push_back({0, 0});
+  } else {
+    const bool invalidSlotCount =
+        source.addresses.size() != slotCount ||
+        target.addresses.size() != slotCount ||
+        slotCount > std::numeric_limits<std::uint32_t>::max();
+    if (invalidSlotCount) {
+      return result;
+    }
+    Value sourceSlot = findMultiTileSlotExpr(source.base);
+    Value targetSlot = findMultiTileSlotExpr(target.base);
+    const std::optional<int64_t> offset =
+        getIterationOffset(loop, iterationDistance);
+    if (!sourceSlot || !targetSlot || !offset) {
+      return result;
+    }
+    Value shiftedSymbol;
+    if (iterationDistance != 0) {
+      shiftedSymbol = cast<scf::ForOp>(loop).getInductionVar();
+    }
+    std::optional<SmallVector<SlotOrdinalPair, 4>> exactPairs =
+        enumerateSlotSSAOrdinalPairs(
+            sourceSlot, targetSlot, static_cast<std::uint32_t>(slotCount),
+            shiftedSymbol, *offset);
+    if (!exactPairs) {
+      return result;
+    }
+    ordinalPairs = std::move(*exactPairs);
+  }
+
+  result.complete = true;
+  const std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max();
+  for (const SlotOrdinalPair &pair : ordinalPairs) {
+    const bool invalidOrdinal = pair.first >= source.addresses.size() ||
+                                pair.second >= target.addresses.size();
+    if (invalidOrdinal) {
+      result.complete = false;
+      continue;
+    }
+    const std::uint64_t sourceBegin = source.addresses[pair.first];
+    const std::uint64_t targetBegin = target.addresses[pair.second];
+    if (source.size > maximum - sourceBegin ||
+        target.size > maximum - targetBegin) {
+      result.complete = false;
+      continue;
+    }
+    const std::uint64_t overlapBegin = std::max(sourceBegin, targetBegin);
+    const std::uint64_t overlapEnd =
+        std::min(sourceBegin + source.size, targetBegin + target.size);
+    if (overlapBegin < overlapEnd) {
+      result.witnesses.push_back(
+          {sourceAccess, targetAccess, pair.first, pair.second, overlapBegin,
+           overlapEnd});
+    }
+  }
+  result.complete &= !result.witnesses.empty();
+  return result;
+}
 
 template <typename AliasPredicate>
 MemoryHazardKinds collectMemoryHazardKinds(
@@ -77,9 +218,14 @@ void CanonicalSyncPlanBuilder::addAccessHazards(const CanonicalSyncNode &source,
                                                 Operation *loop,
                                                 bool compareSlots,
                                                 bool honorNoAlias,
-                                                bool activeWitness) {
-  for (const CanonicalMemoryAccess &sourceAccess : source.accesses) {
-    for (const CanonicalMemoryAccess &targetAccess : target.accesses) {
+                                                bool activeWitness,
+                                                bool captureStorageProvenance) {
+  for (std::size_t sourceIndex = 0; sourceIndex < source.accesses.size();
+       ++sourceIndex) {
+    const CanonicalMemoryAccess &sourceAccess = source.accesses[sourceIndex];
+    for (std::size_t targetIndex = 0; targetIndex < target.accesses.size();
+         ++targetIndex) {
+      const CanonicalMemoryAccess &targetAccess = target.accesses[targetIndex];
       const bool aliases =
           iterationDistance == 0
               ? memoryAliases(sourceAccess, targetAccess, compareSlots,
@@ -90,17 +236,31 @@ void CanonicalSyncPlanBuilder::addAccessHazards(const CanonicalSyncNode &source,
       if (!aliases) {
         continue;
       }
+      ExactHazardWitnesses exact;
+      if (captureStorageProvenance) {
+        exact = collectExactHazardWitnesses(
+            sourceAccess, targetAccess, sourceIndex, targetIndex,
+            iterationDistance, loop);
+      }
+      const CanonicalStorageProvenance provenance =
+          !captureStorageProvenance
+              ? CanonicalStorageProvenance::NotApplicable
+              : exact.complete ? CanonicalStorageProvenance::Complete
+                               : CanonicalStorageProvenance::Incomplete;
       if (sourceAccess.writes && targetAccess.reads) {
         addDependency(source.id, target.id, CanonicalDependencyKind::MemoryRAW,
-                      iterationDistance, loop, activeWitness);
+                      iterationDistance, loop, activeWitness, provenance,
+                      exact.witnesses);
       }
       if (sourceAccess.reads && targetAccess.writes) {
         addDependency(source.id, target.id, CanonicalDependencyKind::MemoryWAR,
-                      iterationDistance, loop, activeWitness);
+                      iterationDistance, loop, activeWitness, provenance,
+                      exact.witnesses);
       }
       if (sourceAccess.writes && targetAccess.writes) {
         addDependency(source.id, target.id, CanonicalDependencyKind::MemoryWAW,
-                      iterationDistance, loop, activeWitness);
+                      iterationDistance, loop, activeWitness, provenance,
+                      exact.witnesses);
       }
     }
   }
@@ -121,20 +281,54 @@ void CanonicalSyncPlanBuilder::addRecurrenceAccessHazards(
                 sourceAccess, targetAccess, loop, distance, honorNoAlias);
           });
     };
-    const MemoryHazardKinds conservative = collectAtDistance(false);
     const MemoryHazardKinds active = collectAtDistance(true);
 
-    if (conservative.raw) {
+    MemoryHazardStorageProvenance conservative;
+    for (std::size_t sourceIndex = 0; sourceIndex < source.accesses.size();
+         ++sourceIndex) {
+      const CanonicalMemoryAccess &sourceAccess =
+          source.accesses[sourceIndex];
+      for (std::size_t targetIndex = 0;
+           targetIndex < target.accesses.size(); ++targetIndex) {
+        const CanonicalMemoryAccess &targetAccess =
+            target.accesses[targetIndex];
+        if (!memoryAliasesAcrossIterations(sourceAccess, targetAccess, loop,
+                                           distance,
+                                           /*honorNoAlias=*/false)) {
+          continue;
+        }
+        const ExactHazardWitnesses exact = collectExactHazardWitnesses(
+            sourceAccess, targetAccess, sourceIndex, targetIndex, distance,
+            loop);
+        if (sourceAccess.writes && targetAccess.reads) {
+          conservative.raw.add(exact);
+        }
+        if (sourceAccess.reads && targetAccess.writes) {
+          conservative.war.add(exact);
+        }
+        if (sourceAccess.writes && targetAccess.writes) {
+          conservative.waw.add(exact);
+        }
+      }
+    }
+
+    if (conservative.raw.present) {
       addDependency(source.id, target.id, CanonicalDependencyKind::MemoryRAW,
-                    distance, loop, active.raw && !activeHazards.raw);
+                    distance, loop, active.raw && !activeHazards.raw,
+                    conservative.raw.provenance,
+                    conservative.raw.witnesses);
     }
-    if (conservative.war) {
+    if (conservative.war.present) {
       addDependency(source.id, target.id, CanonicalDependencyKind::MemoryWAR,
-                    distance, loop, active.war && !activeHazards.war);
+                    distance, loop, active.war && !activeHazards.war,
+                    conservative.war.provenance,
+                    conservative.war.witnesses);
     }
-    if (conservative.waw) {
+    if (conservative.waw.present) {
       addDependency(source.id, target.id, CanonicalDependencyKind::MemoryWAW,
-                    distance, loop, active.waw && !activeHazards.waw);
+                    distance, loop, active.waw && !activeHazards.waw,
+                    conservative.waw.provenance,
+                    conservative.waw.witnesses);
     }
     activeHazards.raw |= active.raw;
     activeHazards.war |= active.war;
@@ -254,10 +448,12 @@ void CanonicalSyncPlanBuilder::addMemoryDependencies() {
       }
       addAccessHazards(sourceNode, targetNode, 0, nullptr,
                        /*compareSlots=*/true, /*honorNoAlias=*/false,
-                       /*activeWitness=*/false);
+                       /*activeWitness=*/false,
+                       /*captureStorageProvenance=*/true);
       addAccessHazards(sourceNode, targetNode, 0, nullptr,
                        /*compareSlots=*/true, /*honorNoAlias=*/true,
-                       /*activeWitness=*/true);
+                       /*activeWitness=*/true,
+                       /*captureStorageProvenance=*/false);
     }
   }
 
@@ -333,7 +529,11 @@ void CanonicalSyncPlanBuilder::addDependency(std::size_t source,
                                              CanonicalDependencyKind kind,
                                              unsigned iterationDistance,
                                              Operation *recurrenceLoop,
-                                             bool activeWitness) {
+                                             bool activeWitness,
+                                             CanonicalStorageProvenance
+                                                 storageProvenance,
+                                             ArrayRef<CanonicalMemoryHazardWitness>
+                                                 storageWitnesses) {
   const DependencyKey key{source, target, kind, iterationDistance,
                           recurrenceLoop};
   auto [position, inserted] =
@@ -342,6 +542,20 @@ void CanonicalSyncPlanBuilder::addDependency(std::size_t source,
     CanonicalDependency &dependency = plan_.dependencies_[position->second];
     dependency.active |= activeWitness;
     dependency.retained |= activeWitness;
+    if (storageProvenance == CanonicalStorageProvenance::Incomplete) {
+      dependency.storageProvenance = CanonicalStorageProvenance::Incomplete;
+    } else if (storageProvenance == CanonicalStorageProvenance::Complete &&
+               dependency.storageProvenance ==
+                   CanonicalStorageProvenance::NotApplicable) {
+      dependency.storageProvenance = CanonicalStorageProvenance::Complete;
+    }
+    dependency.storageWitnesses.append(storageWitnesses.begin(),
+                                       storageWitnesses.end());
+    llvm::sort(dependency.storageWitnesses);
+    dependency.storageWitnesses.erase(
+        std::unique(dependency.storageWitnesses.begin(),
+                    dependency.storageWitnesses.end()),
+        dependency.storageWitnesses.end());
     return;
   }
   CanonicalDependency dependency;
@@ -352,5 +566,13 @@ void CanonicalSyncPlanBuilder::addDependency(std::size_t source,
   dependency.recurrenceLoop = recurrenceLoop;
   dependency.active = activeWitness;
   dependency.retained = activeWitness;
+  dependency.storageProvenance = storageProvenance;
+  dependency.storageWitnesses.append(storageWitnesses.begin(),
+                                     storageWitnesses.end());
+  llvm::sort(dependency.storageWitnesses);
+  dependency.storageWitnesses.erase(
+      std::unique(dependency.storageWitnesses.begin(),
+                  dependency.storageWitnesses.end()),
+      dependency.storageWitnesses.end());
   plan_.dependencies_.push_back(std::move(dependency));
 }

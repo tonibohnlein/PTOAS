@@ -8,6 +8,7 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
+#include "PTO/Transforms/CanonicalSync/SyncCoverCandidateIndex.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverGraph.h"
 
 #include <iostream>
@@ -390,6 +391,195 @@ bool testScopeQueriesAndGeneration() {
   return passed;
 }
 
+bool testStorageProvenanceContract() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add storage source");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add storage target");
+  const SyncCoverStorageDomainId domain = takeIndex(
+      graph.addStorageDomain(), passed, "add local storage domain");
+  const SyncCoverStorageDomainId otherDomain = takeIndex(
+      graph.addStorageDomain(), passed, "add second storage domain");
+  const SyncCoverStorageAccessId sourceWrite = takeIndex(
+      graph.addStorageAccess(source, domain, 10, {0, 16},
+                             SyncCoverStorageAccessMode::Write, 0),
+      passed, "add exact source write");
+  const SyncCoverStorageAccessId mergedSource = takeIndex(
+      graph.addStorageAccess(source, domain, 10, {0, 16},
+                             SyncCoverStorageAccessMode::Read, 0),
+      passed, "merge modes of one logical access");
+  passed &= check(sourceWrite == mergedSource &&
+                      graph.getStorageAccesses()[sourceWrite].mode ==
+                          SyncCoverStorageAccessMode::ReadWrite,
+                  "identical access records merge read-write mode");
+  const SyncCoverStorageAccessId reusedAddress = takeIndex(
+      graph.addStorageAccess(source, domain, 11, {0, 16},
+                             SyncCoverStorageAccessMode::Write, 0),
+      passed, "retain a distinct logical access family");
+  passed &= check(reusedAddress != sourceWrite,
+                  "physical reuse does not erase logical family identity");
+  const SyncCoverStorageAccessId targetRead = takeIndex(
+      graph.addStorageAccess(target, domain, 12, {8, 24},
+                             SyncCoverStorageAccessMode::Read, 1),
+      passed, "add exact target read");
+  const SyncCoverStorageAccessId adjacent = takeIndex(
+      graph.addStorageAccess(target, domain, 13, {16, 32},
+                             SyncCoverStorageAccessMode::Read, 2),
+      passed, "add adjacent access");
+  const SyncCoverStorageAccessId other = takeIndex(
+      graph.addStorageAccess(target, otherDomain, 14, {8, 24},
+                             SyncCoverStorageAccessMode::Read, 0),
+      passed, "add access in another domain");
+  const SyncCoverStorageWitnessId witness = takeIndex(
+      graph.addStorageWitness(sourceWrite, targetRead), passed,
+      "add exact overlap witness");
+  passed &= check(graph.getStorageWitnesses()[witness].overlap ==
+                      SyncCoverStorageInterval{8, 16},
+                  "witness stores the exact strict intersection");
+  passed &= check(graph.addStorageWitness(sourceWrite, adjacent).error ==
+                      SyncCoverGraphError::InvalidStorageWitness,
+                  "adjacent half-open intervals do not overlap");
+  passed &= check(graph.addStorageWitness(sourceWrite, other).error ==
+                      SyncCoverGraphError::InvalidStorageWitness,
+                  "witness endpoints must share a storage domain");
+
+  SyncCoverDemand raw = makeDemand(source, target);
+  raw.kind = SyncCoverDemandKind::MemoryRAW;
+  raw.storageProvenance = SyncCoverStorageProvenance::Complete;
+  raw.storageWitnesses = {witness, witness};
+  passed &= check(graph.addDemand(raw), "complete RAW provenance is valid");
+  passed &= check(graph.getDemands().back().storageWitnesses.size() == 1,
+                  "demand witness identities are normalized");
+
+  SyncCoverDemand incomplete = makeDemand(source, target);
+  incomplete.kind = SyncCoverDemandKind::MemoryWAR;
+  incomplete.storageProvenance = SyncCoverStorageProvenance::Incomplete;
+  passed &= check(graph.addDemand(incomplete),
+                  "unknown memory provenance remains representable");
+  SyncCoverDemand emptyComplete = incomplete;
+  emptyComplete.storageProvenance = SyncCoverStorageProvenance::Complete;
+  passed &= check(graph.addDemand(emptyComplete).error ==
+                      SyncCoverGraphError::InvalidStorageProvenance,
+                  "complete memory provenance requires a witness");
+  SyncCoverDemand invalidRole = raw;
+  invalidRole.kind = SyncCoverDemandKind::MemoryWAW;
+  passed &= check(graph.addDemand(invalidRole).error ==
+                      SyncCoverGraphError::InvalidStorageWitness,
+                  "witness access modes must implement the hazard direction");
+  SyncCoverDemand invalidSSA = makeDemand(source, target);
+  invalidSSA.storageWitnesses = {witness};
+  passed &= check(graph.addDemand(invalidSSA).error ==
+                      SyncCoverGraphError::InvalidStorageProvenance,
+                  "SSA demands cannot carry storage provenance");
+  passed &= check(graph.validate(), "storage provenance graph validates");
+  return passed;
+}
+
+bool testStructuralFreezeAndCandidateIndex() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverControlId branch =
+      takeIndex(graph.addControl(2), passed, "add index branch");
+  const SyncCoverNodeId first = takeIndex(
+      graph.addNode(1, 1, 0, 0, {{{branch, 0}}}), passed,
+      "add first indexed node");
+  const SyncCoverNodeId second = takeIndex(
+      graph.addNode(1, 1, 0, 1, {{{branch, 0}}}), passed,
+      "add second indexed node");
+  const SyncCoverNodeId alternative = takeIndex(
+      graph.addNode(1, 1, 0, 2, {{{branch, 1}}}), passed,
+      "add alternative indexed node");
+  const SyncCoverStorageDomainId domain = takeIndex(
+      graph.addStorageDomain(), passed, "add indexed storage domain");
+  const SyncCoverStorageAccessId firstAccess = takeIndex(
+      graph.addStorageAccess(first, domain, 1, {0, 8},
+                             SyncCoverStorageAccessMode::Write, 0),
+      passed, "add indexed source access");
+  const SyncCoverStorageAccessId secondAccess = takeIndex(
+      graph.addStorageAccess(second, domain, 2, {0, 8},
+                             SyncCoverStorageAccessMode::Read, 0),
+      passed, "add indexed target access");
+  const SyncCoverStorageWitnessId witness = takeIndex(
+      graph.addStorageWitness(firstAccess, secondAccess), passed,
+      "add indexed witness");
+  SyncCoverDemand demand = makeDemand(first, second);
+  demand.kind = SyncCoverDemandKind::MemoryRAW;
+  demand.storageProvenance = SyncCoverStorageProvenance::Complete;
+  demand.storageWitnesses = {witness};
+  passed &= check(graph.addDemand(demand), "add indexed demand");
+
+  const SyncCoverCandidateIndex unfrozen(graph);
+  passed &= check(unfrozen.getError() ==
+                      SyncCoverCandidateIndexError::StructureNotFrozen,
+                  "candidate indexes require a frozen structural prefix");
+  const std::size_t structuralGeneration = graph.getStructuralGeneration();
+  passed &= check(graph.freezeStructure(), "freeze structural graph");
+  passed &= check(graph.isStructureFrozen() &&
+                      graph.getStructuralEdgeCount() == graph.getEdges().size() &&
+                      graph.getStructuralGeneration() ==
+                          structuralGeneration + 1,
+                  "freeze records the immutable structural edge prefix");
+  const SyncCoverCandidateIndex index(graph);
+  passed &= check(static_cast<bool>(index),
+                  "build candidate index over frozen graph");
+  const auto timelines = index.getTimelines();
+  passed &= check(timelines && timelines.value->size() == 1,
+                  "one pipe timeline contains every structured alternative");
+  const auto firstPosition = index.getNodePosition(first);
+  const auto secondPosition = index.getNodePosition(second);
+  const auto alternativePosition = index.getNodePosition(alternative);
+  passed &= check(firstPosition && secondPosition && alternativePosition &&
+                      firstPosition.value->timeline ==
+                          secondPosition.value->timeline &&
+                      alternativePosition.value->timeline ==
+                          firstPosition.value->timeline &&
+                      firstPosition.value->ordinal == 0 &&
+                      secondPosition.value->ordinal == 1 &&
+                      alternativePosition.value->ordinal == 2,
+                  "index exposes complete ordered pipe timelines");
+  const auto accesses = index.getDomainAccesses(domain);
+  const auto witnesses = index.getDemandWitnesses(0);
+  passed &= check(accesses && accesses.value->size() == 2 && witnesses &&
+                      *witnesses.value ==
+                          std::vector<SyncCoverStorageWitnessId>{witness},
+                  "index exposes deterministic storage lookups");
+  const auto overlapGroups = index.getWitnessOverlapGroups();
+  passed &= check(overlapGroups && overlapGroups.value->size() == 1 &&
+                      overlapGroups.value->front().witnesses ==
+                          std::vector<SyncCoverStorageWitnessId>{witness} &&
+                      overlapGroups.value->front().demands ==
+                          std::vector<std::size_t>{0},
+                  "overlap groups retain witness-to-demand provenance");
+  passed &= check(graph.addNode(2, 1, 0, 3).error ==
+                      SyncCoverGraphError::StructureFrozen &&
+                      graph.addStorageDomain().error ==
+                          SyncCoverGraphError::StructureFrozen,
+                  "structural mutation is rejected after freezing");
+  passed &= check(static_cast<bool>(index),
+                  "rejected structural mutations do not stale the index");
+
+  SyncCoverGraph contaminated;
+  const SyncCoverNodeId contaminatedSource =
+      takeIndex(contaminated.addNode(1, 1, 0, 0), passed,
+                "add contaminated source");
+  const SyncCoverNodeId contaminatedTarget =
+      takeIndex(contaminated.addNode(2, 1, 0, 1), passed,
+                "add contaminated target");
+  SyncCoverEdge mechanismEdge =
+      makeEdge(contaminatedSource, contaminatedTarget);
+  mechanismEdge.kind = SyncCoverEdgeKind::CompletionSupply;
+  mechanismEdge.mechanism = 7;
+  passed &= check(contaminated.addEdge(mechanismEdge),
+                  "low-level graph accepts a selectable test edge");
+  passed &= check(contaminated.freezeStructure().error ==
+                      SyncCoverGraphError::InvalidEdgeOwnership &&
+                      !contaminated.isStructureFrozen(),
+                  "freeze rejects mechanism edges in the structural prefix");
+  return passed;
+}
+
 } // namespace
 
 int main() {
@@ -401,5 +591,7 @@ int main() {
   passed &= testInvalidReferencesDoNotMutate();
   passed &= testTimelineAnchorsAndCompletionCapabilities();
   passed &= testScopeQueriesAndGeneration();
+  passed &= testStorageProvenanceContract();
+  passed &= testStructuralFreezeAndCandidateIndex();
   return passed ? 0 : 1;
 }

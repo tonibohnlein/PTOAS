@@ -771,28 +771,6 @@ void CanonicalSyncPlanBuilder::buildMechanismUniverse() {
     }
     bundle->id = mechanismUniverse_.eventBundles.size();
     mechanismUniverse_.eventBundles.push_back(std::move(*bundle));
-
-    const bool hasBoundaryVariant =
-        cycle.kind == CanonicalOwnershipKind::L0Accumulator &&
-        cycle.protocol == CanonicalOwnershipProtocolKind::RoundTrip;
-    if (hasBoundaryVariant) {
-      std::optional<CanonicalEventBundleCandidate> boundary =
-          buildOwnershipEventBundle(
-              cycle,
-              CanonicalOwnershipProtocolKind::BoundaryGuardedRoundTrip);
-      if (boundary) {
-        boundary->id = mechanismUniverse_.eventBundles.size();
-        boundary->applicability =
-            CanonicalEventBundleApplicability::CoveringOnly;
-        mechanismUniverse_.eventBundles.push_back(std::move(*boundary));
-      }
-    }
-  }
-
-  if (std::optional<CanonicalEventBundleCandidate> composite =
-          buildCompositeOwnershipEventBundle()) {
-    composite->id = mechanismUniverse_.eventBundles.size();
-    mechanismUniverse_.eventBundles.push_back(std::move(*composite));
   }
 
   for (std::size_t first = 0;

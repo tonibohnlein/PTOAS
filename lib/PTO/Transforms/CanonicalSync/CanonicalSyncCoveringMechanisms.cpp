@@ -28,7 +28,8 @@ MechanismAdapter::MechanismAdapter(
     ArrayRef<CanonicalEventBundleCandidate> selectedEventBundles,
     unsigned eventIdMax,
     const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
-    SyncCoverGraph &graph, ArrayRef<SyncCoverDemandId> activeDemands,
+    SyncCoverGraph &graph, const SyncCoverCandidateIndex &candidateIndex,
+    ArrayRef<SyncCoverDemandId> activeDemands,
     const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
         &regionScopes,
     const DenseMap<Operation *, SyncCoverScopeId> &loopScopes,
@@ -39,6 +40,7 @@ MechanismAdapter::MechanismAdapter(
     : func_(func), plan_(plan), legacyUniverse_(legacyUniverse),
       selectedEventBundles_(selectedEventBundles), eventIdMax_(eventIdMax),
       reservedIds_(reservedIds), universe_(graph),
+      candidateIndex_(candidateIndex),
       regionScopes_(regionScopes), loopScopes_(loopScopes),
       getAnchorPosition_(std::move(getAnchorPosition)),
       getBarrierCompletionEdges_(std::move(getBarrierCompletionEdges)),
@@ -48,6 +50,7 @@ MechanismAdapter::MechanismAdapter(
 LogicalResult
 MechanismAdapter::build(CanonicalSyncCoveringShadowSnapshot &snapshot) {
   const bool buildFailed =
+      !candidateIndex_ ||
       failed(collectEventBundles()) || failed(addEventDomains()) ||
       failed(addBarriers()) || failed(addEventBundles()) ||
       failed(addConflicts()) || failed(buildLegacySeed());
@@ -64,13 +67,6 @@ MechanismAdapter::build(CanonicalSyncCoveringShadowSnapshot &snapshot) {
   snapshot.eventBundleCandidates = eventBundles_.size();
   snapshot.candidateMechanisms = universe_.getMechanisms().size();
   snapshot.legacySeedMechanisms = legacySeed_.size();
-  const bool buildOwnershipCompletion =
-      plan_.getGMAliasPolicy() ==
-      CanonicalGMAliasPolicy::DistinctArgumentsNoAlias;
-  if ((snapshot.ownershipMembership.requested || buildOwnershipCompletion) &&
-      failed(evaluateOwnershipMembership(snapshot.ownershipMembership))) {
-    return failure();
-  }
   return solve(snapshot);
 }
 

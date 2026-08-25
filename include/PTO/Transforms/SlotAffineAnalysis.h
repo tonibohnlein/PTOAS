@@ -23,7 +23,9 @@
 #define PTO_TRANSFORMS_SLOTAFFINEANALYSIS_H
 
 #include "mlir/IR/Value.h"
+#include "llvm/ADT/SmallVector.h"
 #include <cstdint>
+#include <optional>
 
 namespace mlir {
 namespace pto {
@@ -36,6 +38,15 @@ enum class SlotRelation {
   kEqual,    // a(iv) == b(iv)  (mod N) for every iv
   kDisjoint, // a(iv) != b(iv)  (mod N) for every iv
   kUnknown,  // can neither prove equal nor disjoint
+};
+
+struct SlotOrdinalPair {
+  std::uint32_t first = 0;
+  std::uint32_t second = 0;
+
+  bool operator==(const SlotOrdinalPair &other) const {
+    return first == other.first && second == other.second;
+  }
 };
 
 /// Return the slot SSA value carried by `pto.multi_tile_get`. Returns null
@@ -61,6 +72,15 @@ SlotRelation compareSlotSSA(mlir::Value a, mlir::Value b, uint32_t N);
 SlotRelation compareSlotSSAWithOffset(mlir::Value a, mlir::Value b, uint32_t N,
                                       mlir::Value shiftedSymbol,
                                       int64_t rhsSymbolOffset);
+
+/// Enumerate the exact selected ordinal pairs over every residue modulo `N`.
+/// Returns nullopt unless both expressions are normalized constants or
+/// modulo-N forms whose symbolic relationship is fully known. This is the
+/// stronger relation required when physical-slot provenance is recorded.
+std::optional<llvm::SmallVector<SlotOrdinalPair, 4>>
+enumerateSlotSSAOrdinalPairs(mlir::Value a, mlir::Value b, std::uint32_t N,
+                             mlir::Value shiftedSymbol = {},
+                             std::int64_t rhsSymbolOffset = 0);
 
 } // namespace pto
 } // namespace mlir

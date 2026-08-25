@@ -56,6 +56,8 @@ struct Predecessor {
   std::optional<SyncCoverMechanismId> mechanism;
 };
 
+using MechanismSet = std::vector<SyncCoverMechanismId>;
+
 struct PreparedDemand {
   SyncCoverCoverageError error = SyncCoverCoverageError::None;
   std::size_t nodeCount = 0;
@@ -387,6 +389,133 @@ checkDemandImpl(const PreparedDemand &prepared,
   return result;
 }
 
+bool isSubset(const MechanismSet &subset, const MechanismSet &superset) {
+  return std::includes(superset.begin(), superset.end(), subset.begin(),
+                       subset.end());
+}
+
+bool insertMinimalSet(std::vector<MechanismSet> &sets,
+                      MechanismSet candidate, std::size_t maximumLabels,
+                      bool &truncated) {
+  if (std::any_of(sets.begin(), sets.end(), [&](const MechanismSet &known) {
+        return isSubset(known, candidate);
+      })) {
+    return false;
+  }
+  sets.erase(std::remove_if(sets.begin(), sets.end(),
+                            [&](const MechanismSet &known) {
+                              return isSubset(candidate, known);
+                            }),
+             sets.end());
+  sets.push_back(candidate);
+  std::sort(sets.begin(), sets.end(), [](const MechanismSet &first,
+                                        const MechanismSet &second) {
+    return std::make_tuple(first.size(), first) <
+           std::make_tuple(second.size(), second);
+  });
+  const bool exceedsLabelLimit = sets.size() > maximumLabels;
+  if (exceedsLabelLimit) {
+    truncated = true;
+    const bool retained = sets.back() != candidate;
+    sets.pop_back();
+    return retained;
+  }
+  return true;
+}
+
+std::optional<MechanismSet>
+appendMechanism(const MechanismSet &members,
+                std::optional<SyncCoverMechanismId> mechanism,
+                std::size_t maximumMembers) {
+  if (!mechanism || std::binary_search(members.begin(), members.end(),
+                                       *mechanism)) {
+    return members;
+  }
+  const bool atMemberLimit = members.size() == maximumMembers;
+  if (atMemberLimit) {
+    return std::nullopt;
+  }
+  MechanismSet result = members;
+  result.insert(std::lower_bound(result.begin(), result.end(), *mechanism),
+                *mechanism);
+  return result;
+}
+
+std::vector<bool> computeCanReachTarget(const PreparedDemand &prepared) {
+  std::vector<std::vector<std::size_t>> incoming(prepared.stateCount);
+  for (std::size_t state = 0; state < prepared.stateCount; ++state) {
+    const std::size_t virtualNode = state / 2;
+    for (std::size_t edgeIndex : prepared.outgoing[virtualNode]) {
+      const std::optional<std::size_t> next =
+          transition(prepared.edges[edgeIndex], state);
+      if (next) {
+        incoming[*next].push_back(state);
+      }
+    }
+  }
+  std::vector<bool> reachable(prepared.stateCount, false);
+  std::vector<std::size_t> ready{prepared.target};
+  reachable[prepared.target] = true;
+  for (std::size_t index = 0; index < ready.size(); ++index) {
+    for (std::size_t predecessor : incoming[ready[index]]) {
+      if (!reachable[predecessor]) {
+        reachable[predecessor] = true;
+        ready.push_back(predecessor);
+      }
+    }
+  }
+  return reachable;
+}
+
+SyncCoverMinimalWitnessResult enumerateMinimalWitnesses(
+    const PreparedDemand &prepared, std::size_t maximumMembers,
+    std::size_t maximumLabelsPerState) {
+  SyncCoverMinimalWitnessResult result;
+  if (prepared.error != SyncCoverCoverageError::None) {
+    result.error = prepared.error;
+    return result;
+  }
+
+  struct PendingState {
+    std::size_t state = 0;
+    MechanismSet members;
+  };
+  const std::vector<bool> canReachTarget = computeCanReachTarget(prepared);
+  std::vector<std::vector<MechanismSet>> labels(prepared.stateCount);
+  std::vector<PendingState> ready{{prepared.start, {}}};
+  labels[prepared.start].push_back({});
+  for (std::size_t readyIndex = 0; readyIndex < ready.size(); ++readyIndex) {
+    const PendingState pending = ready[readyIndex];
+    const auto &currentLabels = labels[pending.state];
+    if (std::find(currentLabels.begin(), currentLabels.end(),
+                  pending.members) == currentLabels.end()) {
+      continue;
+    }
+    const std::size_t virtualNode = pending.state / 2;
+    for (std::size_t edgeIndex : prepared.outgoing[virtualNode]) {
+      const VirtualEdge &edge = prepared.edges[edgeIndex];
+      const std::optional<std::size_t> next =
+          transition(edge, pending.state);
+      if (!next) {
+        continue;
+      }
+      std::optional<MechanismSet> nextMembers = appendMechanism(
+          pending.members, edge.mechanism, maximumMembers);
+      if (!nextMembers) {
+        result.truncated |= canReachTarget[*next];
+        continue;
+      }
+      if (!insertMinimalSet(labels[*next], *nextMembers,
+                            maximumLabelsPerState, result.truncated)) {
+        continue;
+      }
+      ready.push_back({*next, std::move(*nextMembers)});
+    }
+  }
+  result.witnesses = std::move(labels[prepared.target]);
+  return result;
+}
+
 std::vector<SyncCoverMechanismId>
 normalizeSelection(const std::vector<SyncCoverMechanismId> &selected) {
   std::vector<SyncCoverMechanismId> result = selected;
@@ -508,6 +637,29 @@ SyncCoverCoverageOracle::getDemandTopology(SyncCoverDemandId demand) const {
   result.error = prepared.error;
   result.potentialMechanisms = prepared.potentialMechanisms;
   return result;
+}
+
+SyncCoverMinimalWitnessResult
+SyncCoverCoverageOracle::getMinimalMechanismWitnesses(
+    SyncCoverDemandId demand, std::size_t maximumMembers,
+    std::size_t maximumLabelsPerState) const {
+  SyncCoverMinimalWitnessResult result;
+  if (implementation_->validationError != SyncCoverCoverageError::None) {
+    result.error = implementation_->validationError;
+    return result;
+  }
+  if (demand >= implementation_->graph.getDemands().size()) {
+    result.error = SyncCoverCoverageError::InvalidDemand;
+    return result;
+  }
+  if (maximumMembers == 0 || maximumLabelsPerState == 0) {
+    result.error = SyncCoverCoverageError::InvalidBound;
+    return result;
+  }
+  ++implementation_->statistics.groundingQueries;
+  return enumerateMinimalWitnesses(
+      implementation_->getPreparedDemand(demand), maximumMembers,
+      maximumLabelsPerState);
 }
 
 SyncCoverCoverageStatistics SyncCoverCoverageOracle::getStatistics() const {

@@ -21,7 +21,9 @@
 #include "mlir/IR/Operation.h"
 #include "llvm/Support/MathExtras.h"
 
+#include <algorithm>
 #include <limits>
+#include <tuple>
 
 using namespace mlir;
 
@@ -66,6 +68,7 @@ struct SlotForm {
   Value innerSym; // null = constant-only form
   int64_t innerOffset{0};
   uint32_t N{0};
+  bool normalizedModuloN{false};
 };
 
 static bool tryGetConstantInt(Value v, int64_t &out) {
@@ -150,6 +153,7 @@ static bool extractSlotForm(Value slot, uint32_t expectN, SlotForm &out) {
       return false;
     }
     out.N = static_cast<uint32_t>(n);
+    out.normalizedModuloN = true;
     Value inner = remOp.getLhs();
     int64_t offset = 0;
     // Peel at most one add/sub of a constant.
@@ -182,6 +186,7 @@ static bool extractSlotForm(Value slot, uint32_t expectN, SlotForm &out) {
   if (tryGetConstantInt(slot, cst)) {
     out.innerSym = Value();
     out.innerOffset = cst;
+    out.normalizedModuloN = true;
     return true;
   }
 
@@ -275,6 +280,65 @@ SlotRelation compareSlotSSAWithOffset(Value a, Value b, uint32_t N,
     return compareSlotSSA(a, b, N);
   }
   return compareSlotForms(a, b, N, shiftedSymbol, rhsSymbolOffset);
+}
+
+std::optional<llvm::SmallVector<SlotOrdinalPair, 4>>
+enumerateSlotSSAOrdinalPairs(Value a, Value b, uint32_t N,
+                             Value shiftedSymbol,
+                             int64_t rhsSymbolOffset) {
+  constexpr uint32_t kMaximumEnumeratedSlotCount = 4096;
+  if (!a || !b || N == 0 || N > kMaximumEnumeratedSlotCount) {
+    return std::nullopt;
+  }
+  SlotForm first;
+  SlotForm second;
+  const bool invalidForm =
+      !extractSlotForm(a, N, first) || !extractSlotForm(b, N, second) ||
+      first.N != N || second.N != N || !first.normalizedModuloN ||
+      !second.normalizedModuloN;
+  if (invalidForm) {
+    return std::nullopt;
+  }
+  const bool firstSymbolic = static_cast<bool>(first.innerSym);
+  const bool secondSymbolic = static_cast<bool>(second.innerSym);
+  if (firstSymbolic && secondSymbolic &&
+      first.innerSym != second.innerSym) {
+    return std::nullopt;
+  }
+  if (rhsSymbolOffset != 0) {
+    const bool incompatibleShift =
+        (firstSymbolic || secondSymbolic) &&
+        (!shiftedSymbol ||
+         (firstSymbolic && first.innerSym != shiftedSymbol) ||
+         (secondSymbolic && second.innerSym != shiftedSymbol));
+    if (incompatibleShift) {
+      return std::nullopt;
+    }
+  }
+
+  const uint32_t residues = firstSymbolic || secondSymbolic ? N : 1;
+  llvm::SmallVector<SlotOrdinalPair, 4> pairs;
+  pairs.reserve(residues);
+  const int64_t firstOffset = pyMod(first.innerOffset, N);
+  const int64_t secondOffset = pyMod(second.innerOffset, N);
+  const int64_t shiftedOffset =
+      secondSymbolic ? pyMod(rhsSymbolOffset, N) : 0;
+  for (uint32_t residue = 0; residue < residues; ++residue) {
+    const int64_t firstBase = firstSymbolic ? residue : 0;
+    const int64_t secondBase = secondSymbolic ? residue : 0;
+    const int64_t firstOrdinal = pyMod(firstBase + firstOffset, N);
+    const int64_t secondOrdinal =
+        pyMod(secondBase + secondOffset + shiftedOffset, N);
+    pairs.push_back({static_cast<uint32_t>(firstOrdinal),
+                     static_cast<uint32_t>(secondOrdinal)});
+  }
+  std::sort(pairs.begin(), pairs.end(), [](const SlotOrdinalPair &lhs,
+                                           const SlotOrdinalPair &rhs) {
+    return std::tie(lhs.first, lhs.second) <
+           std::tie(rhs.first, rhs.second);
+  });
+  pairs.erase(std::unique(pairs.begin(), pairs.end()), pairs.end());
+  return pairs;
 }
 
 } // namespace pto

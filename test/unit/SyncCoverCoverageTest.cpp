@@ -555,6 +555,126 @@ bool testAtomicBundleAndErrors() {
   return passed;
 }
 
+bool testStorageMetadataDoesNotAffectCoverage() {
+  bool passed = true;
+  SyncCoverGraph incomplete;
+  const SyncCoverNodeId incompleteSource = takeIndex(
+      incomplete.addNode(1, 1, 0, 0), passed, "add incomplete source");
+  const SyncCoverNodeId incompleteTarget = takeIndex(
+      incomplete.addNode(2, 1, 0, 1), passed, "add incomplete target");
+  SyncCoverDemand incompleteDemand =
+      makeDemand(incompleteSource, incompleteTarget);
+  incompleteDemand.kind = SyncCoverDemandKind::MemoryRAW;
+  incompleteDemand.storageProvenance =
+      SyncCoverStorageProvenance::Incomplete;
+  passed &= check(incomplete.addDemand(incompleteDemand),
+                  "add incomplete storage demand");
+  passed &= check(incomplete.addEdge(makeEdge(
+                      incompleteSource, incompleteTarget,
+                      SyncCoverEdgeKind::CompletionSupply, 9)),
+                  "add incomplete storage completion");
+
+  SyncCoverGraph exact;
+  const SyncCoverNodeId exactSource =
+      takeIndex(exact.addNode(1, 1, 0, 0), passed, "add exact source");
+  const SyncCoverNodeId exactTarget =
+      takeIndex(exact.addNode(2, 1, 0, 1), passed, "add exact target");
+  const SyncCoverStorageDomainId domain = takeIndex(
+      exact.addStorageDomain(), passed, "add exact storage domain");
+  const SyncCoverStorageAccessId sourceAccess = takeIndex(
+      exact.addStorageAccess(exactSource, domain, 1, {0, 16},
+                             SyncCoverStorageAccessMode::Write, 0),
+      passed, "add exact write");
+  const SyncCoverStorageAccessId targetAccess = takeIndex(
+      exact.addStorageAccess(exactTarget, domain, 2, {8, 24},
+                             SyncCoverStorageAccessMode::Read, 0),
+      passed, "add exact read");
+  const SyncCoverStorageWitnessId witness = takeIndex(
+      exact.addStorageWitness(sourceAccess, targetAccess), passed,
+      "add exact storage witness");
+  SyncCoverDemand exactDemand = makeDemand(exactSource, exactTarget);
+  exactDemand.kind = SyncCoverDemandKind::MemoryRAW;
+  exactDemand.storageProvenance = SyncCoverStorageProvenance::Complete;
+  exactDemand.storageWitnesses = {witness};
+  passed &= check(exact.addDemand(exactDemand), "add exact storage demand");
+  passed &= check(exact.addEdge(makeEdge(exactSource, exactTarget,
+                                         SyncCoverEdgeKind::CompletionSupply,
+                                         9)),
+                  "add exact storage completion");
+
+  const SyncCoverCoverageResult incompleteMissing =
+      SyncCoverCoverageOracle(incomplete).checkDemand(0, {});
+  const SyncCoverCoverageResult exactMissing =
+      SyncCoverCoverageOracle(exact).checkDemand(0, {});
+  const SyncCoverCoverageResult incompleteSelected =
+      SyncCoverCoverageOracle(incomplete).checkDemand(0, {9});
+  const SyncCoverCoverageResult exactSelected =
+      SyncCoverCoverageOracle(exact).checkDemand(0, {9});
+  passed &= check(incompleteMissing.covered == exactMissing.covered &&
+                      incompleteMissing.cutMechanisms ==
+                          exactMissing.cutMechanisms &&
+                      incompleteSelected.covered == exactSelected.covered &&
+                      incompleteSelected.witnessMechanisms ==
+                          exactSelected.witnessMechanisms,
+                  "storage provenance is invisible to the coverage oracle");
+  return passed;
+}
+
+bool testMinimalWitnessGrounding() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add grounded source");
+  const SyncCoverNodeId middle =
+      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add grounded middle");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(3, 1, 0, 2), passed, "add grounded target");
+  passed &= check(graph.addDemand(makeDemand(source, target)),
+                  "add grounded demand");
+  passed &= check(graph.addEdge(makeEdge(
+                      source, target, SyncCoverEdgeKind::CompletionSupply, 1)),
+                  "add singleton grounded path");
+  passed &= check(graph.addEdge(makeEdge(
+                      source, middle, SyncCoverEdgeKind::CompletionSupply, 2)),
+                  "add first composite grounded path edge");
+  passed &= check(graph.addEdge(makeEdge(
+                      middle, target, SyncCoverEdgeKind::CompletionSupply, 3)),
+                  "add second composite grounded path edge");
+
+  SyncCoverCoverageOracle oracle(graph);
+  const SyncCoverMinimalWitnessResult singleton =
+      oracle.getMinimalMechanismWitnesses(0, 1);
+  passed &= check(singleton && singleton.truncated &&
+                      singleton.witnesses ==
+                          std::vector<std::vector<SyncCoverMechanismId>>{{1}},
+                  "bounded singleton grounding reports a reachable omitted "
+                  "composite cover");
+  const SyncCoverMinimalWitnessResult composite =
+      oracle.getMinimalMechanismWitnesses(0, 2);
+  passed &= check(
+      composite &&
+          composite.witnesses ==
+              std::vector<std::vector<SyncCoverMechanismId>>{{1}, {2, 3}},
+      "depth-two grounding retains the incomparable composite cover");
+  const SyncCoverMinimalWitnessResult bounded =
+      oracle.getMinimalMechanismWitnesses(0, 2, 1);
+  passed &= check(bounded && bounded.truncated &&
+                      bounded.witnesses ==
+                          std::vector<std::vector<SyncCoverMechanismId>>{{1}},
+                  "bounded grounding reports omitted labels as unknown");
+  passed &= check(
+      oracle.getMinimalMechanismWitnesses(0, 0).error ==
+          SyncCoverCoverageError::InvalidBound,
+      "zero-depth grounding fails closed");
+  const SyncCoverCoverageStatistics statistics = oracle.getStatistics();
+  passed &= check(statistics.groundingQueries == 3 &&
+                      statistics.coverageQueries == 0 &&
+                      statistics.demandPreparations == 1,
+                  "grounding reuses one prepared topology without selected-"
+                  "plan coverage queries");
+  return passed;
+}
+
 } // namespace
 
 int main() {
@@ -569,5 +689,7 @@ int main() {
   passed &= testExactRecurrenceScopeAndOuterControl();
   passed &= testNestedExecutionAndExpansionLimit();
   passed &= testAtomicBundleAndErrors();
+  passed &= testMinimalWitnessGrounding();
+  passed &= testStorageMetadataDoesNotAffectCoverage();
   return passed ? 0 : 1;
 }

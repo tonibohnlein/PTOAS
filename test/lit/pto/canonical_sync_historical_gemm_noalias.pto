@@ -254,6 +254,3 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 
 // GLOBAL-NOALIAS-LABEL: PTOCanonicalSyncPlan @matmul_kernel_ABt_autosync
 // GLOBAL-NOALIAS-SAME: gm-alias-policy=distinct-args-noalias
-// GLOBAL-NOALIAS: covering-ownership-membership status=attempted candidates=complete mechanisms=2 resources=feasible
-// GLOBAL-NOALIAS: covering-barrier-free-census status=complete
-// GLOBAL-NOALIAS: covering-ownership-completion status=attempted

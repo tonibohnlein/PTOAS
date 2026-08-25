@@ -115,6 +115,36 @@ struct CanonicalSyncNode {
   SmallVector<CanonicalMemoryAccess, 4> accesses;
 };
 
+enum class CanonicalStorageProvenance : std::uint8_t {
+  NotApplicable,
+  Complete,
+  Incomplete,
+};
+
+struct CanonicalMemoryHazardWitness {
+  std::size_t sourceAccess = 0;
+  std::size_t targetAccess = 0;
+  unsigned sourceAddressOrdinal = 0;
+  unsigned targetAddressOrdinal = 0;
+  std::uint64_t overlapBegin = 0;
+  std::uint64_t overlapEnd = 0;
+
+  bool operator<(const CanonicalMemoryHazardWitness &other) const {
+    return std::tie(sourceAccess, targetAccess, sourceAddressOrdinal,
+                    targetAddressOrdinal, overlapBegin, overlapEnd) <
+           std::tie(other.sourceAccess, other.targetAccess,
+                    other.sourceAddressOrdinal, other.targetAddressOrdinal,
+                    other.overlapBegin, other.overlapEnd);
+  }
+  bool operator==(const CanonicalMemoryHazardWitness &other) const {
+    return sourceAccess == other.sourceAccess &&
+           targetAccess == other.targetAccess &&
+           sourceAddressOrdinal == other.sourceAddressOrdinal &&
+           targetAddressOrdinal == other.targetAddressOrdinal &&
+           overlapBegin == other.overlapBegin && overlapEnd == other.overlapEnd;
+  }
+};
+
 struct CanonicalDependency {
   std::size_t source = 0;
   std::size_t target = 0;
@@ -124,6 +154,9 @@ struct CanonicalDependency {
   bool active = true;
   bool possible = true;
   bool retained = true;
+  CanonicalStorageProvenance storageProvenance =
+      CanonicalStorageProvenance::NotApplicable;
+  SmallVector<CanonicalMemoryHazardWitness, 2> storageWitnesses;
 };
 
 struct CanonicalAnchor {
@@ -348,76 +381,6 @@ struct CanonicalSyncCoveringSelectedResourceUse {
   std::optional<std::size_t> eventIndex;
 };
 
-struct CanonicalSyncCoveringMembershipCut {
-  SyncCoverDemandId demand = 0;
-  std::vector<CanonicalSyncCoveringSelectedProvider> candidates;
-};
-
-struct CanonicalSyncCoveringCompletionRejection {
-  CanonicalSyncCoveringSelectedProvider candidate;
-  SyncCoverCompletionRejectionKind kind =
-      SyncCoverCompletionRejectionKind::InvalidSelection;
-  SyncCoverResourceSelectionError resourceError =
-      SyncCoverResourceSelectionError::None;
-  std::optional<CanonicalSyncCoveringSelectedProvider> firstConflict;
-  std::optional<CanonicalSyncCoveringSelectedProvider> secondConflict;
-  std::optional<SyncCoverResourceDomainId> domain;
-  std::size_t required = 0;
-  std::size_t available = 0;
-};
-
-struct CanonicalSyncCoveringCompletionBlockedCut {
-  SyncCoverDemandId demand = 0;
-  std::vector<CanonicalSyncCoveringSelectedProvider> selected;
-  std::vector<CanonicalSyncCoveringSelectedProvider> candidates;
-  std::vector<SyncCoverReachableState> reachableStates;
-};
-
-struct CanonicalSyncCoveringBarrierFreeCensusEntry {
-  SyncCoverDemandId demand = 0;
-  SyncCoverBarrierFreeCensusStatus status =
-      SyncCoverBarrierFreeCensusStatus::Uncoverable;
-  std::vector<CanonicalSyncCoveringSelectedProvider> witness;
-  std::vector<SyncCoverReachableState> reachableStates;
-  SyncCoverResourceSelection witnessResources;
-};
-
-/// Exact feasibility certificate for the barrier-free ownership plan implied
-/// by one composite protocol and the native protocols of ownership cycles not
-/// contained in that composite. Under the explicit global GM no-alias mode, a
-/// verified event-only completion may also be offered to the solver as a seed.
-struct CanonicalSyncCoveringMembershipSnapshot {
-  bool requested = false;
-  bool attempted = false;
-  bool candidateSetComplete = false;
-  bool resourceFeasible = false;
-  bool coverageComplete = false;
-  SyncCoverResourceSelectionError resourceError =
-      SyncCoverResourceSelectionError::None;
-  std::size_t selectedMechanisms = 0;
-  std::vector<std::size_t> actionProfile;
-  std::vector<std::size_t> barrierActionProfile;
-  std::vector<CanonicalSyncCoveringSelectedProvider> selectedProviders;
-  std::vector<CanonicalSyncCoveringMembershipCut> uncoveredDemands;
-  bool completionAttempted = false;
-  bool completionFound = false;
-  bool completionTruncated = false;
-  std::size_t completionEvaluations = 0;
-  std::vector<std::size_t> completionActionProfile;
-  std::vector<std::size_t> completionBarrierActionProfile;
-  std::vector<CanonicalSyncCoveringSelectedProvider> completionProviders;
-  std::vector<CanonicalSyncCoveringCompletionRejection>
-      completionRejections;
-  bool completionRejectionsTruncated = false;
-  std::vector<CanonicalSyncCoveringCompletionBlockedCut>
-      completionBlockedCuts;
-  bool completionBlockedCutsTruncated = false;
-  bool barrierFreeCensusAttempted = false;
-  std::vector<CanonicalSyncCoveringBarrierFreeCensusEntry>
-      barrierFreeCensus;
-  SyncCoverCoverageStatistics barrierFreeCensusStatistics;
-};
-
 enum class CanonicalSyncCoveringAllocationError : std::uint8_t {
   None,
   SelectionNotReady,
@@ -510,6 +473,9 @@ struct CanonicalSyncCoveringShadowSnapshot {
   std::size_t conservativeDemands = 0;
   std::size_t activeDemands = 0;
   std::size_t intrinsicallySatisfiedDemands = 0;
+  std::size_t storageDomains = 0;
+  std::size_t storageAccesses = 0;
+  std::size_t storageWitnesses = 0;
   std::size_t resourceDomainCount = 0;
   std::size_t barrierCandidates = 0;
   std::size_t eventBundleCandidates = 0;
@@ -519,7 +485,6 @@ struct CanonicalSyncCoveringShadowSnapshot {
   std::size_t solverComponents = 0;
   std::size_t solverEvaluations = 0;
   std::size_t redundancyEvaluations = 0;
-  SyncCoverExchangeStatistics exchangeStatistics;
   SyncCoverSelectionError selectionError = SyncCoverSelectionError::None;
   bool selectionAttempted = false;
   bool searchTruncated = false;
@@ -533,7 +498,6 @@ struct CanonicalSyncCoveringShadowSnapshot {
   SyncCoverResourceSelection selectedResources;
   SyncCoverCoverageStatistics coverageStatistics;
   SyncCoverCoverageStatistics finalVerificationStatistics;
-  CanonicalSyncCoveringMembershipSnapshot ownershipMembership;
   std::vector<SyncCoverScope> scopeDetails;
   std::vector<SyncCoverControl> controlDetails;
   std::vector<SyncCoverNode> nodeDetails;
@@ -551,7 +515,6 @@ struct CanonicalSyncBuildOptions {
   /// Borrowed for buildCanonicalSyncPlan(); the builder copies the request.
   const CanonicalSelectionDiagnosticRequest *diagnosticRequest = nullptr;
   bool coveringShadow = false;
-  bool coveringMembershipProbe = false;
 };
 
 CanonicalSyncCoveringAllocationValidation

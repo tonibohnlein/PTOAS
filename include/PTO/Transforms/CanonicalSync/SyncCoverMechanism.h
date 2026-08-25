@@ -289,6 +289,10 @@ public:
     return mechanisms_;
   }
   const SyncCoverGraph &getGraph() const { return graph_; }
+  std::size_t getVersion() const { return version_; }
+  SyncCoverGraphResult getInitializationResult() const {
+    return initializationResult_;
+  }
   SyncCoverUniverseStatistics getStatistics() const {
     return {fullValidationCount_};
   }
@@ -323,6 +327,7 @@ private:
                              const SyncCoverResourceSelection &resources) const;
 
   SyncCoverGraph &graph_;
+  SyncCoverGraphResult initializationResult_;
   std::vector<SyncCoverResourceDomain> domains_;
   std::vector<SyncCoverMechanism> mechanisms_;
   std::size_t version_ = 0;

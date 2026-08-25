@@ -19,6 +19,7 @@ set_tests_properties(pto_schedule_graph_unit PROPERTIES LABELS "PTO;unit")
 
 add_executable(pto-sync-cover-graph-unit-test
   SyncCoverGraphTest.cpp
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverCandidateIndex.cpp"
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverGraph.cpp"
 )
 target_include_directories(pto-sync-cover-graph-unit-test PRIVATE
@@ -42,8 +43,28 @@ add_test(NAME pto_sync_cover_coverage_unit
 )
 set_tests_properties(pto_sync_cover_coverage_unit PROPERTIES LABELS "PTO;unit")
 
+add_executable(pto-sync-cover-grounded-unit-test
+  SyncCoverGroundedTest.cpp
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverCoverage.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverCost.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverGraph.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverGrounded.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverMechanism.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverResource.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/CanonicalSyncColoring.cpp"
+)
+target_include_directories(pto-sync-cover-grounded-unit-test PRIVATE
+  "${PROJECT_SOURCE_DIR}/include"
+)
+add_test(NAME pto_sync_cover_grounded_unit
+  COMMAND pto-sync-cover-grounded-unit-test
+)
+set_tests_properties(pto_sync_cover_grounded_unit
+  PROPERTIES LABELS "PTO;unit")
+
 add_executable(pto-sync-cover-mechanism-unit-test
   SyncCoverMechanismTest.cpp
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverCandidateIndex.cpp"
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverCoverage.cpp"
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverCost.cpp"
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverDescriptorBuilder.cpp"
@@ -66,14 +87,11 @@ add_executable(pto-sync-cover-solver-unit-test
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverCost.cpp"
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverDescriptorBuilder.cpp"
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverGraph.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverGrounded.cpp"
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverMechanism.cpp"
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverResource.cpp"
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverSolver.cpp"
-  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverSolverComponents.cpp"
-  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverSolverCompletion.cpp"
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverSolverCoverage.cpp"
-  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverSolverExchange.cpp"
-  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverSolverSearch.cpp"
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/CanonicalSyncColoring.cpp"
 )
 target_include_directories(pto-sync-cover-solver-unit-test PRIVATE
