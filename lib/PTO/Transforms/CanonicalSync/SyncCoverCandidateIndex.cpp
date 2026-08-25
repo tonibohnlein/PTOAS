@@ -128,6 +128,52 @@ SyncCoverCandidateIndex::SyncCoverCandidateIndex(const SyncCoverGraph &graph)
                                      std::move(entry.second),
                                      std::move(demands)});
   }
+
+  demandOpportunities_.resize(graph.getDemands().size());
+  for (std::size_t demandId = 0; demandId < graph.getDemands().size();
+       ++demandId) {
+    const SyncCoverDemand &demand = graph.getDemands()[demandId];
+    const auto appendOpportunity =
+        [&](std::optional<SyncCoverStorageWitnessId> witnessId) {
+          SyncCoverCandidateOpportunity opportunity;
+          opportunity.id = opportunities_.size();
+          opportunity.demand = demandId;
+          opportunity.kind = demand.kind;
+          opportunity.source = demand.source;
+          opportunity.target = demand.target;
+          opportunity.sourceResource = graph.getNodes()[demand.source].resource;
+          opportunity.targetResource = graph.getNodes()[demand.target].resource;
+          opportunity.sourcePosition = *nodePositions_[demand.source];
+          opportunity.targetPosition = *nodePositions_[demand.target];
+          opportunity.scope = demand.scope;
+          opportunity.distance = demand.distance;
+          opportunity.sourceGuard = demand.sourceGuard;
+          opportunity.targetGuard = demand.targetGuard;
+          opportunity.storageProvenance = demand.storageProvenance;
+          if (witnessId) {
+            const SyncCoverStorageWitness &witness =
+                graph.getStorageWitnesses()[*witnessId];
+            const SyncCoverStorageAccess &source =
+                graph.getStorageAccesses()[witness.sourceAccess];
+            const SyncCoverStorageAccess &target =
+                graph.getStorageAccesses()[witness.targetAccess];
+            opportunity.slot = SyncCoverCandidateSlot{
+                source.domain, witness.overlap, source.extent, target.extent,
+                source.id, target.id, source.family, target.family,
+                source.mode, target.mode, source.addressOrdinal,
+                target.addressOrdinal};
+          }
+          demandOpportunities_[opportunity.demand].push_back(opportunity.id);
+          opportunities_.push_back(std::move(opportunity));
+        };
+    if (demand.storageProvenance != SyncCoverStorageProvenance::Complete) {
+      appendOpportunity(std::nullopt);
+      continue;
+    }
+    for (SyncCoverStorageWitnessId witness : demand.storageWitnesses) {
+      appendOpportunity(witness);
+    }
+  }
 }
 
 SyncCoverCandidateIndex::operator bool() const {
@@ -203,4 +249,24 @@ SyncCoverCandidateIndex::getWitnessOverlapGroups() const {
   return {error, error == SyncCoverCandidateIndexError::None
                      ? &witnessOverlapGroups_
                      : nullptr};
+}
+
+SyncCoverCandidateLookup<std::vector<SyncCoverCandidateOpportunity>>
+SyncCoverCandidateIndex::getOpportunities() const {
+  const SyncCoverCandidateIndexError error = currentError();
+  return {error, error == SyncCoverCandidateIndexError::None ? &opportunities_
+                                                             : nullptr};
+}
+
+SyncCoverCandidateLookup<std::vector<SyncCoverCandidateOpportunityId>>
+SyncCoverCandidateIndex::getDemandOpportunities(std::size_t demand) const {
+  const SyncCoverCandidateIndexError error = currentError();
+  if (error != SyncCoverCandidateIndexError::None) {
+    return {error, nullptr};
+  }
+  if (demand >= demandOpportunities_.size()) {
+    return {SyncCoverCandidateIndexError::InvalidIndex, nullptr};
+  }
+  return {SyncCoverCandidateIndexError::None,
+          &demandOpportunities_[demand]};
 }

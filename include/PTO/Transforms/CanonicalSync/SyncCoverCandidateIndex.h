@@ -24,6 +24,7 @@ namespace mlir {
 namespace pto {
 
 using SyncCoverCandidateTimelineId = std::size_t;
+using SyncCoverCandidateOpportunityId = std::size_t;
 
 enum class SyncCoverCandidateIndexError : std::uint8_t {
   None,
@@ -58,6 +59,43 @@ struct SyncCoverCandidateNodePosition {
   std::size_t ordinal = 0;
 };
 
+struct SyncCoverCandidateSlot {
+  SyncCoverStorageDomainId domain = 0;
+  SyncCoverStorageInterval overlap;
+  SyncCoverStorageInterval sourceExtent;
+  SyncCoverStorageInterval targetExtent;
+  SyncCoverStorageAccessId sourceAccess = 0;
+  SyncCoverStorageAccessId targetAccess = 0;
+  SyncCoverStorageAccessFamilyId sourceFamily = 0;
+  SyncCoverStorageAccessFamilyId targetFamily = 0;
+  SyncCoverStorageAccessMode sourceMode = SyncCoverStorageAccessMode::Read;
+  SyncCoverStorageAccessMode targetMode = SyncCoverStorageAccessMode::Read;
+  std::optional<unsigned> sourceAddressOrdinal;
+  std::optional<unsigned> targetAddressOrdinal;
+};
+
+/// Selection-independent opportunity presented to candidate factories. An
+/// exact memory demand has one opportunity per physical-overlap witness;
+/// non-memory and conservatively modeled demands have one slot-less record.
+struct SyncCoverCandidateOpportunity {
+  SyncCoverCandidateOpportunityId id = 0;
+  std::size_t demand = 0;
+  SyncCoverDemandKind kind = SyncCoverDemandKind::SSA;
+  SyncCoverNodeId source = 0;
+  SyncCoverNodeId target = 0;
+  std::uint32_t sourceResource = 0;
+  std::uint32_t targetResource = 0;
+  SyncCoverCandidateNodePosition sourcePosition;
+  SyncCoverCandidateNodePosition targetPosition;
+  SyncCoverScopeId scope = 0;
+  unsigned distance = 0;
+  SyncCoverGuard sourceGuard;
+  SyncCoverGuard targetGuard;
+  SyncCoverStorageProvenance storageProvenance =
+      SyncCoverStorageProvenance::NotApplicable;
+  std::optional<SyncCoverCandidateSlot> slot;
+};
+
 template <typename T> struct SyncCoverCandidateLookup {
   SyncCoverCandidateIndexError error = SyncCoverCandidateIndexError::None;
   const T *value = nullptr;
@@ -88,6 +126,10 @@ public:
   SyncCoverCandidateLookup<
       std::vector<SyncCoverCandidateWitnessOverlapGroup>>
   getWitnessOverlapGroups() const;
+  SyncCoverCandidateLookup<std::vector<SyncCoverCandidateOpportunity>>
+  getOpportunities() const;
+  SyncCoverCandidateLookup<std::vector<SyncCoverCandidateOpportunityId>>
+  getDemandOpportunities(std::size_t demand) const;
 
 private:
   SyncCoverCandidateIndexError currentError() const;
@@ -101,6 +143,9 @@ private:
   std::vector<std::vector<SyncCoverStorageAccessId>> domainAccesses_;
   std::vector<std::vector<SyncCoverStorageWitnessId>> demandWitnesses_;
   std::vector<SyncCoverCandidateWitnessOverlapGroup> witnessOverlapGroups_;
+  std::vector<SyncCoverCandidateOpportunity> opportunities_;
+  std::vector<std::vector<SyncCoverCandidateOpportunityId>>
+      demandOpportunities_;
 };
 
 } // namespace pto

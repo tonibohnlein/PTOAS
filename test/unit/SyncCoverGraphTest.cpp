@@ -477,6 +477,64 @@ bool testStorageProvenanceContract() {
   return passed;
 }
 
+bool testCandidateOpportunityRecurrenceContext() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop = takeIndex(
+      graph.addScope(0, true, SyncCoverTimelineInterval{2, 9}, true), passed,
+      "add opportunity loop");
+  const SyncCoverControlId branch =
+      takeIndex(graph.addControl(2, loop), passed, "add opportunity branch");
+  const SyncCoverNodeId source = takeIndex(
+      graph.addNode(7, 1, loop, 2, {{{branch, 0}}}), passed,
+      "add opportunity source");
+  const SyncCoverNodeId target = takeIndex(
+      graph.addNode(9, 1, loop, 4, {{{branch, 1}}}), passed,
+      "add opportunity target");
+  const SyncCoverStorageDomainId domain = takeIndex(
+      graph.addStorageDomain(), passed, "add opportunity storage domain");
+  const SyncCoverStorageAccessId sourceAccess = takeIndex(
+      graph.addStorageAccess(source, domain, 10, {16, 32},
+                             SyncCoverStorageAccessMode::Read, 0),
+      passed, "add opportunity source access");
+  const SyncCoverStorageAccessId targetAccess = takeIndex(
+      graph.addStorageAccess(target, domain, 11, {16, 32},
+                             SyncCoverStorageAccessMode::Write, 1),
+      passed, "add opportunity target access");
+  const SyncCoverStorageWitnessId witness = takeIndex(
+      graph.addStorageWitness(sourceAccess, targetAccess), passed,
+      "add opportunity recurrence witness");
+  SyncCoverDemand recurrence = makeDemand(source, target);
+  recurrence.kind = SyncCoverDemandKind::MemoryWAR;
+  recurrence.scope = loop;
+  recurrence.distance = 1;
+  recurrence.storageProvenance = SyncCoverStorageProvenance::Complete;
+  recurrence.storageWitnesses = {witness};
+  passed &= check(graph.addDemand(recurrence),
+                  "add opportunity recurrence demand");
+  passed &= check(graph.freezeStructure(), "freeze opportunity graph");
+
+  const SyncCoverCandidateIndex index(graph);
+  const auto opportunities = index.getOpportunities();
+  const bool exactContext =
+      opportunities && opportunities.value->size() == 1 &&
+      opportunities.value->front().sourceResource == 7 &&
+      opportunities.value->front().targetResource == 9 &&
+      opportunities.value->front().scope == loop &&
+      opportunities.value->front().distance == 1 &&
+      opportunities.value->front().sourceGuard.literals ==
+          std::vector<SyncCoverGuardLiteral>{{branch, 0}} &&
+      opportunities.value->front().targetGuard.literals ==
+          std::vector<SyncCoverGuardLiteral>{{branch, 1}} &&
+      opportunities.value->front().slot &&
+      opportunities.value->front().slot->sourceAddressOrdinal == 0 &&
+      opportunities.value->front().slot->targetAddressOrdinal == 1;
+  passed &= check(exactContext,
+                  "candidate opportunities preserve recurrence context and "
+                  "per-occurrence guards");
+  return passed;
+}
+
 bool testStructuralFreezeAndCandidateIndex() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -509,6 +567,14 @@ bool testStructuralFreezeAndCandidateIndex() {
   demand.storageProvenance = SyncCoverStorageProvenance::Complete;
   demand.storageWitnesses = {witness};
   passed &= check(graph.addDemand(demand), "add indexed demand");
+  passed &= check(graph.addDemand(makeDemand(first, second)),
+                  "add slot-less indexed demand");
+  SyncCoverDemand incomplete = makeDemand(first, second);
+  incomplete.kind = SyncCoverDemandKind::MemoryRAW;
+  incomplete.storageProvenance = SyncCoverStorageProvenance::Incomplete;
+  incomplete.storageWitnesses = {witness};
+  passed &= check(graph.addDemand(incomplete),
+                  "add incomplete-storage indexed demand");
 
   const SyncCoverCandidateIndex unfrozen(graph);
   passed &= check(unfrozen.getError() ==
@@ -550,8 +616,53 @@ bool testStructuralFreezeAndCandidateIndex() {
                       overlapGroups.value->front().witnesses ==
                           std::vector<SyncCoverStorageWitnessId>{witness} &&
                       overlapGroups.value->front().demands ==
-                          std::vector<std::size_t>{0},
+                          std::vector<std::size_t>{0, 2},
                   "overlap groups retain witness-to-demand provenance");
+  const auto opportunities = index.getOpportunities();
+  const auto exactOpportunities = index.getDemandOpportunities(0);
+  const auto slotlessOpportunities = index.getDemandOpportunities(1);
+  const bool exactShape =
+      opportunities && opportunities.value->size() == 3 &&
+      exactOpportunities && exactOpportunities.value->size() == 1 &&
+      opportunities.value->front().demand == 0 &&
+      opportunities.value->front().source == first &&
+      opportunities.value->front().target == second &&
+      opportunities.value->front().sourceResource == 1 &&
+      opportunities.value->front().targetResource == 1 &&
+      opportunities.value->front().sourcePosition.ordinal == 0 &&
+      opportunities.value->front().targetPosition.ordinal == 1 &&
+      opportunities.value->front().slot &&
+      opportunities.value->front().slot->domain == domain &&
+      opportunities.value->front().slot->overlap ==
+          SyncCoverStorageInterval{0, 8} &&
+      opportunities.value->front().slot->sourceExtent ==
+          SyncCoverStorageInterval{0, 8} &&
+      opportunities.value->front().slot->targetExtent ==
+          SyncCoverStorageInterval{0, 8} &&
+      opportunities.value->front().slot->sourceFamily == 1 &&
+      opportunities.value->front().slot->targetFamily == 2 &&
+      opportunities.value->front().slot->sourceMode ==
+          SyncCoverStorageAccessMode::Write &&
+      opportunities.value->front().slot->targetMode ==
+          SyncCoverStorageAccessMode::Read;
+  passed &= check(exactShape,
+                  "candidate opportunities retain context, positions, and "
+                  "exact physical slots");
+  passed &= check(
+      slotlessOpportunities && slotlessOpportunities.value->size() == 1 &&
+          !(*opportunities.value)[1].slot &&
+          (*opportunities.value)[1].kind == SyncCoverDemandKind::SSA,
+      "non-memory opportunities remain explicit without invented slots");
+  const auto incompleteOpportunities = index.getDemandOpportunities(2);
+  passed &= check(
+      incompleteOpportunities && incompleteOpportunities.value->size() == 1 &&
+          !opportunities.value->back().slot &&
+          opportunities.value->back().storageProvenance ==
+              SyncCoverStorageProvenance::Incomplete,
+      "incomplete memory provenance remains slot-less and fail closed");
+  passed &= check(index.getDemandOpportunities(3).error ==
+                      SyncCoverCandidateIndexError::InvalidIndex,
+                  "opportunity lookup rejects an unknown demand");
   passed &= check(graph.addNode(2, 1, 0, 3).error ==
                       SyncCoverGraphError::StructureFrozen &&
                       graph.addStorageDomain().error ==
@@ -592,6 +703,7 @@ int main() {
   passed &= testTimelineAnchorsAndCompletionCapabilities();
   passed &= testScopeQueriesAndGeneration();
   passed &= testStorageProvenanceContract();
+  passed &= testCandidateOpportunityRecurrenceContext();
   passed &= testStructuralFreezeAndCandidateIndex();
   return passed ? 0 : 1;
 }
