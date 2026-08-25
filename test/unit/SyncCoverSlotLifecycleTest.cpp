@@ -9,6 +9,8 @@
 // for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverSlotLifecycle.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverSlotProtocol.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverDescriptorBuilder.h"
 
 #include <iostream>
 #include <optional>
@@ -26,6 +28,11 @@ bool check(bool condition, const std::string &message) {
 }
 
 bool check(const SyncCoverGraphResult &result, const std::string &message) {
+  return check(static_cast<bool>(result), message);
+}
+
+bool check(const SyncCoverMechanismResult &result,
+           const std::string &message) {
   return check(static_cast<bool>(result), message);
 }
 
@@ -90,7 +97,7 @@ bool testExactRoundTripDiscovery() {
                   "add ready demand");
   passed &= check(graph.addDemand(demand(consumer, producer,
                                           SyncCoverDemandKind::MemoryWAR, loop,
-                                          2, releaseWitness)),
+                                          1, releaseWitness)),
                   "add release demand");
   passed &= check(graph.freezeStructure(), "freeze exact lifecycle graph");
 
@@ -107,7 +114,7 @@ bool testExactRoundTripDiscovery() {
                         lifecycle.producerResource == 1 &&
                         lifecycle.consumerResource == 2 &&
                         lifecycle.recurrenceScope == loop &&
-                        lifecycle.distance == 2 &&
+                        lifecycle.distance == 1 &&
                         lifecycle.ready ==
                             std::vector<SyncCoverCandidateOpportunityId>{0} &&
                         lifecycle.release ==
@@ -119,6 +126,11 @@ bool testExactRoundTripDiscovery() {
                         !lifecycle.requiresPathSensitiveProof,
                     "retain slot, pipe, recurrence, and opportunity identity");
   }
+  const SyncCoverSlotProtocolResult openProtocols =
+      buildSyncCoverSlotProtocolCandidates(graph, index, result);
+  passed &= check(openProtocols && openProtocols.candidates.empty() &&
+                      openProtocols.accessOpenLifecycles == 1,
+                  "protocol factory rejects an unrepresented writer");
   SyncCoverSlotLifecycleOptions noCandidates;
   noCandidates.maximumLifecycles = 0;
   const SyncCoverSlotLifecycleResult capped =
@@ -173,6 +185,11 @@ bool testFailClosedEvidence() {
   passed &= check(result && result.lifecycles.empty() &&
                       result.partialSlotOpportunities == 2,
                   "partial overlaps cannot establish slot ownership");
+  const SyncCoverSlotProtocolResult protocols =
+      buildSyncCoverSlotProtocolCandidates(graph, index, result);
+  passed &= check(protocols && protocols.candidates.empty() &&
+                      protocols.partialSlotOpportunities == 2,
+                  "protocol factory preserves partial-view diagnostics");
   return passed;
 }
 
@@ -242,6 +259,19 @@ bool testGuardedRoundTripDiscovery() {
                       !result.lifecycles.front().hasUnrepresentedAccesses &&
                       result.lifecycles.front().requiresPathSensitiveProof,
                   "retain guarded lifecycle for independent protocol proof");
+  const SyncCoverSlotProtocolResult protocols =
+      buildSyncCoverSlotProtocolCandidates(graph, index, result);
+  passed &= check(protocols && protocols.candidates.empty() &&
+                      protocols.pathSensitiveLifecycles == 1,
+                  "protocol factory defers path-sensitive lifecycles");
+  SyncCoverSlotLifecycleResult effectOnly = result;
+  effectOnly.lifecycles.front().requiresPathSensitiveProof = false;
+  const SyncCoverSlotProtocolResult unsupportedEffect =
+      buildSyncCoverSlotProtocolCandidates(graph, index, effectOnly);
+  passed &= check(unsupportedEffect &&
+                      unsupportedEffect.candidates.empty() &&
+                      unsupportedEffect.unsupportedEffectLifecycles == 1,
+                  "protocol factory rejects non-exact access effects");
   return passed;
 }
 
@@ -292,12 +322,145 @@ bool testNestedLoopRequiresPathProof() {
   return passed;
 }
 
+bool testUnitReleaseProtocolFactory() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop = takeIndex(
+      graph.addScope(0, true, SyncCoverTimelineInterval{2, 80}, true), passed,
+      "add protocol loop");
+  const SyncCoverNodeId producer =
+      takeIndex(graph.addNode(7, 1, loop, 10), passed, "add protocol producer");
+  const SyncCoverNodeId consumer = takeIndex(
+      graph.addNode(8, 1, loop, 20, {}, {7}), passed,
+      "add protocol consumer");
+  const SyncCoverNodeId lateConsumer = takeIndex(
+      graph.addNode(8, 1, loop, 25, {}, {7}), passed,
+      "add late protocol consumer");
+  const SyncCoverStorageDomainId domain =
+      takeIndex(graph.addStorageDomain(), passed, "add protocol domain");
+  const SyncCoverStorageAccessId write = takeIndex(
+      graph.addStorageAccess(producer, domain, 50, {384, 448},
+                             SyncCoverStorageAccessMode::Write),
+      passed, "add protocol write");
+  const SyncCoverStorageAccessId read = takeIndex(
+      graph.addStorageAccess(consumer, domain, 51, {384, 448},
+                             SyncCoverStorageAccessMode::Read),
+      passed, "add protocol read");
+  const SyncCoverStorageAccessId lateRead = takeIndex(
+      graph.addStorageAccess(lateConsumer, domain, 52, {384, 448},
+                             SyncCoverStorageAccessMode::Read),
+      passed, "add late protocol read");
+  const SyncCoverStorageWitnessId readyWitness = takeIndex(
+      graph.addStorageWitness(write, read), passed, "add protocol ready");
+  const SyncCoverStorageWitnessId releaseWitness = takeIndex(
+      graph.addStorageWitness(read, write), passed, "add protocol release");
+  const SyncCoverStorageWitnessId lateReadyWitness = takeIndex(
+      graph.addStorageWitness(write, lateRead), passed,
+      "add late protocol ready");
+  const SyncCoverStorageWitnessId lateReleaseWitness = takeIndex(
+      graph.addStorageWitness(lateRead, write), passed,
+      "add late protocol release");
+  passed &= check(graph.addDemand(demand(producer, consumer,
+                                          SyncCoverDemandKind::MemoryRAW, loop,
+                                          0, readyWitness)),
+                  "add protocol ready demand");
+  passed &= check(graph.addDemand(demand(consumer, producer,
+                                          SyncCoverDemandKind::MemoryWAR, loop,
+                                          1, releaseWitness)),
+                  "add protocol release demand");
+  passed &= check(graph.addDemand(demand(consumer, producer,
+                                          SyncCoverDemandKind::MemoryWAR, loop,
+                                          2, releaseWitness)),
+                  "add non-unit protocol release demand");
+  passed &= check(graph.addDemand(demand(producer, lateConsumer,
+                                          SyncCoverDemandKind::MemoryRAW, loop,
+                                          0, lateReadyWitness)),
+                  "add late protocol ready demand");
+  passed &= check(graph.addDemand(demand(lateConsumer, producer,
+                                          SyncCoverDemandKind::MemoryWAR, loop,
+                                          1, lateReleaseWitness)),
+                  "add late protocol release demand");
+  passed &= check(graph.freezeStructure(), "freeze protocol graph");
+
+  const SyncCoverCandidateIndex index(graph);
+  const SyncCoverSlotLifecycleResult lifecycles =
+      discoverSyncCoverSlotLifecycles(graph, index);
+  const SyncCoverSlotProtocolResult protocols =
+      buildSyncCoverSlotProtocolCandidates(graph, index, lifecycles);
+  passed &= check(protocols && protocols.candidates.size() == 1 &&
+                      protocols.pathSensitiveLifecycles == 0 &&
+                      protocols.accessOpenLifecycles == 0 &&
+                      protocols.unsupportedEffectLifecycles == 0 &&
+                      protocols.unsupportedDistanceReleases == 1 &&
+                      protocols.partialSlotOpportunities == 0 &&
+                      protocols.nonBoundaryReleases == 1 &&
+                      !protocols.truncated,
+                  "build one access-closed unit release protocol");
+  if (!protocols.candidates.empty()) {
+    const SyncCoverSlotProtocolCandidate &candidate =
+        protocols.candidates.front();
+    passed &= check(candidate.lifecycle == 0 && candidate.release == 4 &&
+                        candidate.source == lateConsumer &&
+                        candidate.target == producer &&
+                        candidate.sourceResource == 8 &&
+                        candidate.targetResource == 7 &&
+                        candidate.recurrenceScope == loop &&
+                        candidate.distance == 1 &&
+                        verifySyncCoverSlotProtocolCandidate(
+                            graph, index, lifecycles.lifecycles.front(),
+                            candidate),
+                    "unit protocol candidate preserves the verified release");
+    SyncCoverMechanismUniverse universe(graph);
+    const SyncCoverMechanismResult eventDomain = universe.addResourceDomain(
+        SyncCoverResourceKind::EventId, 8, 7, 8);
+    passed &= check(eventDomain && eventDomain.index,
+                    "add unit release event domain");
+    if (eventDomain && eventDomain.index) {
+      const auto descriptor = makeSyncCoverUnitRecurrenceEvent(
+          universe.getResourceDomains()[*eventDomain.index], candidate.source,
+          candidate.target, candidate.recurrenceScope, 91);
+      passed &= check(descriptor.has_value(),
+                      "build stock unit recurrence descriptor");
+      if (descriptor) {
+        passed &= check(
+            universe.addVerifiedProtocol(
+                *descriptor, [&](const auto &actual) {
+                  return verifySyncCoverSlotProtocolCandidate(
+                             graph, index, lifecycles.lifecycles.front(),
+                             candidate) &&
+                         verifySyncCoverUnitRecurrenceEvent(universe, actual);
+                }),
+            "factory candidate passes the delegated stock token verifier");
+      }
+    }
+  }
+  SyncCoverSlotProtocolOptions capped;
+  capped.maximumCandidates = 0;
+  const SyncCoverSlotProtocolResult truncated =
+      buildSyncCoverSlotProtocolCandidates(graph, index, lifecycles, capped);
+  passed &= check(truncated && truncated.candidates.empty() &&
+                      truncated.truncated,
+                  "protocol factory reports an explicit candidate cap");
+  SyncCoverSlotProtocolOptions noEvaluations;
+  noEvaluations.maximumEvaluations = 0;
+  const SyncCoverSlotProtocolResult evaluationLimited =
+      buildSyncCoverSlotProtocolCandidates(graph, index, lifecycles,
+                                           noEvaluations);
+  passed &= check(evaluationLimited &&
+                      evaluationLimited.candidates.empty() &&
+                      evaluationLimited.evaluations == 0 &&
+                      evaluationLimited.truncated,
+                  "protocol factory reports an explicit evaluation cap");
+  return passed;
+}
+
 } // namespace
 
 int main() {
   return testExactRoundTripDiscovery() && testFailClosedEvidence() &&
                  testGuardedRoundTripDiscovery() &&
-                 testNestedLoopRequiresPathProof()
+                 testNestedLoopRequiresPathProof() &&
+                 testUnitReleaseProtocolFactory()
              ? 0
              : 1;
 }
