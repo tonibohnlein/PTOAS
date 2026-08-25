@@ -16,6 +16,7 @@
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverCandidateIndex.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverSlotLifecycle.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverSlotProtocol.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverCoverage.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -201,6 +202,28 @@ public:
         llvm::count_if(lifecycleResult.lifecycles, [](const auto &lifecycle) {
           return lifecycle.requiresPathSensitiveProof;
         }));
+    const SyncCoverSlotProtocolResult protocolResult =
+        buildSyncCoverSlotProtocolCandidates(graph_, candidateIndex,
+                                             lifecycleResult);
+    if (!protocolResult) {
+      return func_.emitError()
+             << "internal error: canonical covering slot-protocol generation "
+                "failed with "
+             << static_cast<unsigned>(protocolResult.error);
+    }
+    snapshot.slotProtocolCandidates = protocolResult.candidates.size();
+    snapshot.pathSensitiveSlotProtocolLifecycles =
+        protocolResult.pathSensitiveLifecycles;
+    snapshot.accessOpenSlotProtocolLifecycles =
+        protocolResult.accessOpenLifecycles;
+    snapshot.unsupportedEffectSlotProtocolLifecycles =
+        protocolResult.unsupportedEffectLifecycles;
+    snapshot.unsupportedDistanceSlotProtocolReleases =
+        protocolResult.unsupportedDistanceReleases;
+    snapshot.nonBoundarySlotProtocolReleases =
+        protocolResult.nonBoundaryReleases;
+    snapshot.slotProtocolEvaluations = protocolResult.evaluations;
+    snapshot.slotProtocolGenerationTruncated = protocolResult.truncated;
     for (const auto &entry : regionContexts_) {
       regionScopes_.emplace(entry.first, entry.second.scope);
     }

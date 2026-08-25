@@ -498,6 +498,14 @@ struct CanonicalSyncCoveringShadowSnapshot {
   std::size_t pathSensitiveSlotLifecycles = 0;
   std::size_t partialSlotOpportunities = 0;
   bool slotLifecycleDiscoveryTruncated = false;
+  std::size_t slotProtocolCandidates = 0;
+  std::size_t pathSensitiveSlotProtocolLifecycles = 0;
+  std::size_t accessOpenSlotProtocolLifecycles = 0;
+  std::size_t unsupportedEffectSlotProtocolLifecycles = 0;
+  std::size_t unsupportedDistanceSlotProtocolReleases = 0;
+  std::size_t nonBoundarySlotProtocolReleases = 0;
+  std::size_t slotProtocolEvaluations = 0;
+  bool slotProtocolGenerationTruncated = false;
   std::size_t resourceDomainCount = 0;
   std::size_t barrierCandidates = 0;
   std::size_t eventBundleCandidates = 0;

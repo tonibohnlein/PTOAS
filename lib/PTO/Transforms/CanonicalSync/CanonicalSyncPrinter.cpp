@@ -572,6 +572,21 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
          << " path-sensitive="
          << (lifecycle.requiresPathSensitiveProof ? "yes" : "no") << '\n';
     }
+    os << "  covering-slot-protocols candidates="
+       << snapshot.slotProtocolCandidates
+       << " path-sensitive-lifecycles="
+       << snapshot.pathSensitiveSlotProtocolLifecycles
+       << " access-open-lifecycles="
+       << snapshot.accessOpenSlotProtocolLifecycles
+       << " unsupported-effect-lifecycles="
+       << snapshot.unsupportedEffectSlotProtocolLifecycles
+       << " unsupported-distance-releases="
+       << snapshot.unsupportedDistanceSlotProtocolReleases
+       << " non-boundary-releases="
+       << snapshot.nonBoundarySlotProtocolReleases
+       << " evaluations=" << snapshot.slotProtocolEvaluations
+       << " truncated="
+       << (snapshot.slotProtocolGenerationTruncated ? "yes" : "no") << '\n';
     os << "  covering-selection status="
        << (snapshot.selectionAttempted ? "ready" : "not-run")
        << " error=" << stringifyCoveringSelectionError(snapshot.selectionError)
