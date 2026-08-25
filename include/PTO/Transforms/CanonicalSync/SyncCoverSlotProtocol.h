@@ -13,16 +13,23 @@
 #ifndef PTO_TRANSFORMS_CANONICALSYNC_SYNCCOVERSLOTPROTOCOL_H
 #define PTO_TRANSFORMS_CANONICALSYNC_SYNCCOVERSLOTPROTOCOL_H
 
+#include "PTO/Transforms/CanonicalSync/SyncCoverDescriptorBuilder.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverSlotLifecycle.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace mlir {
 namespace pto {
 
 using SyncCoverSlotProtocolCandidateId = std::size_t;
+
+enum class SyncCoverSlotProtocolKind : std::uint8_t {
+  UnitRelease,
+  HierarchicalRelease,
+};
 
 enum class SyncCoverSlotProtocolError : std::uint8_t {
   None,
@@ -33,22 +40,26 @@ enum class SyncCoverSlotProtocolError : std::uint8_t {
 
 struct SyncCoverSlotProtocolOptions {
   std::size_t maximumCandidates = 4096;
+  /// Upper bound on precharged opportunity/access inspection units.
   std::size_t maximumEvaluations = 8192;
 };
 
-/// A verified factory result for one unit-distance release handoff. The
-/// adapter may lower this into the stock prime/body/drain recurrence event.
+/// A verified factory result for one unit-distance release handoff. A unit
+/// release waits at its first producer node. A hierarchical release waits once
+/// at a nested-loop entry and supplies every guarded producer in that loop.
 /// Candidate verification proves physical-access closure and correspondence;
-/// the stock recurrence verifier remains responsible for token correctness.
+/// descriptor verification independently proves prime/body/drain structure.
 struct SyncCoverSlotProtocolCandidate {
   SyncCoverSlotProtocolCandidateId id = 0;
+  SyncCoverSlotProtocolKind kind = SyncCoverSlotProtocolKind::UnitRelease;
   SyncCoverSlotLifecycleId lifecycle = 0;
-  SyncCoverCandidateOpportunityId release = 0;
+  std::vector<SyncCoverCandidateOpportunityId> releases;
   SyncCoverNodeId source = 0;
-  SyncCoverNodeId target = 0;
+  std::vector<SyncCoverNodeId> targets;
   std::uint32_t sourceResource = 0;
   std::uint32_t targetResource = 0;
   SyncCoverScopeId recurrenceScope = 0;
+  std::optional<SyncCoverScopeId> targetLoop;
   unsigned distance = 0;
 };
 
@@ -73,6 +84,19 @@ bool verifySyncCoverSlotProtocolCandidate(
     const SyncCoverGraph &graph, const SyncCoverCandidateIndex &index,
     const SyncCoverSlotLifecycle &lifecycle,
     const SyncCoverSlotProtocolCandidate &candidate);
+
+std::optional<SyncCoverMechanismDescriptor>
+makeSyncCoverSlotProtocolDescriptor(
+    const SyncCoverResourceDomain &domain,
+    const SyncCoverSlotProtocolCandidate &candidate,
+    std::uint64_t providerIdentity);
+
+bool verifySyncCoverSlotProtocol(
+    const SyncCoverCandidateIndex &index,
+    const SyncCoverSlotLifecycle &lifecycle,
+    const SyncCoverMechanismUniverse &universe,
+    const SyncCoverSlotProtocolCandidate &candidate,
+    const SyncCoverMechanismDescriptor &descriptor);
 
 SyncCoverSlotProtocolResult buildSyncCoverSlotProtocolCandidates(
     const SyncCoverGraph &graph, const SyncCoverCandidateIndex &index,

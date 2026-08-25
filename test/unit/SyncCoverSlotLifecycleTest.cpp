@@ -399,9 +399,12 @@ bool testUnitReleaseProtocolFactory() {
   if (!protocols.candidates.empty()) {
     const SyncCoverSlotProtocolCandidate &candidate =
         protocols.candidates.front();
-    passed &= check(candidate.lifecycle == 0 && candidate.release == 4 &&
+    passed &= check(candidate.lifecycle == 0 &&
+                        candidate.releases ==
+                            std::vector<SyncCoverCandidateOpportunityId>{4} &&
                         candidate.source == lateConsumer &&
-                        candidate.target == producer &&
+                        candidate.targets ==
+                            std::vector<SyncCoverNodeId>{producer} &&
                         candidate.sourceResource == 8 &&
                         candidate.targetResource == 7 &&
                         candidate.recurrenceScope == loop &&
@@ -416,19 +419,17 @@ bool testUnitReleaseProtocolFactory() {
     passed &= check(eventDomain && eventDomain.index,
                     "add unit release event domain");
     if (eventDomain && eventDomain.index) {
-      const auto descriptor = makeSyncCoverUnitRecurrenceEvent(
-          universe.getResourceDomains()[*eventDomain.index], candidate.source,
-          candidate.target, candidate.recurrenceScope, 91);
+      const auto descriptor = makeSyncCoverSlotProtocolDescriptor(
+          universe.getResourceDomains()[*eventDomain.index], candidate, 91);
       passed &= check(descriptor.has_value(),
                       "build stock unit recurrence descriptor");
       if (descriptor) {
         passed &= check(
             universe.addVerifiedProtocol(
                 *descriptor, [&](const auto &actual) {
-                  return verifySyncCoverSlotProtocolCandidate(
-                             graph, index, lifecycles.lifecycles.front(),
-                             candidate) &&
-                         verifySyncCoverUnitRecurrenceEvent(universe, actual);
+                  return verifySyncCoverSlotProtocol(
+                      index, lifecycles.lifecycles.front(), universe, candidate,
+                      actual);
                 }),
             "factory candidate passes the delegated stock token verifier");
       }
@@ -454,13 +455,271 @@ bool testUnitReleaseProtocolFactory() {
   return passed;
 }
 
+bool testHierarchicalReleaseProtocolFactory() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId outer = takeIndex(
+      graph.addScope(0, true, SyncCoverTimelineInterval{2, 240}, true), passed,
+      "add hierarchical outer loop");
+  const SyncCoverScopeId inner = takeIndex(
+      graph.addScope(outer, false, SyncCoverTimelineInterval{10, 70}, true),
+      passed, "add zero-trip-capable inner loop");
+  const SyncCoverControlId branch =
+      takeIndex(graph.addControl(2, inner), passed, "add MMAD branch");
+  const SyncCoverGuard firstGuard{{SyncCoverGuardLiteral{branch, 0}}};
+  const SyncCoverGuard secondGuard{{SyncCoverGuardLiteral{branch, 1}}};
+  const SyncCoverNodeId firstMmad = takeIndex(
+      graph.addNode(7, 1, inner, 20, firstGuard), passed,
+      "add first guarded MMAD");
+  const SyncCoverNodeId secondMmad = takeIndex(
+      graph.addNode(7, 1, inner, 30, secondGuard), passed,
+      "add second guarded MMAD");
+  const SyncCoverNodeId fix = takeIndex(
+      graph.addNode(9, 1, outer, 90, {}, {7}), passed,
+      "add outer FIX release");
+  const SyncCoverStorageDomainId domain =
+      takeIndex(graph.addStorageDomain(), passed, "add accumulator domain");
+  const SyncCoverStorageAccessId firstAccumulator = takeIndex(
+      graph.addStorageAccess(firstMmad, domain, 60, {0, 128},
+                             SyncCoverStorageAccessMode::ReadWrite, 0),
+      passed, "add first accumulator update");
+  const SyncCoverStorageAccessId secondAccumulator = takeIndex(
+      graph.addStorageAccess(secondMmad, domain, 61, {0, 128},
+                             SyncCoverStorageAccessMode::ReadWrite, 0),
+      passed, "add second accumulator update");
+  const SyncCoverStorageAccessId fixRead = takeIndex(
+      graph.addStorageAccess(fix, domain, 62, {0, 128},
+                             SyncCoverStorageAccessMode::Read, 0),
+      passed, "add FIX accumulator read");
+  const SyncCoverStorageWitnessId firstReady = takeIndex(
+      graph.addStorageWitness(firstAccumulator, fixRead), passed,
+      "add first ready witness");
+  const SyncCoverStorageWitnessId secondReady = takeIndex(
+      graph.addStorageWitness(secondAccumulator, fixRead), passed,
+      "add second ready witness");
+  const SyncCoverStorageWitnessId firstRelease = takeIndex(
+      graph.addStorageWitness(fixRead, firstAccumulator), passed,
+      "add first release witness");
+  const SyncCoverStorageWitnessId secondRelease = takeIndex(
+      graph.addStorageWitness(fixRead, secondAccumulator), passed,
+      "add second release witness");
+  passed &= check(graph.addDemand(demand(firstMmad, fix,
+                                          SyncCoverDemandKind::MemoryRAW,
+                                          outer, 0, firstReady)),
+                  "add first ready demand");
+  passed &= check(graph.addDemand(demand(secondMmad, fix,
+                                          SyncCoverDemandKind::MemoryRAW,
+                                          outer, 0, secondReady)),
+                  "add second ready demand");
+  passed &= check(graph.addDemand(demand(fix, firstMmad,
+                                          SyncCoverDemandKind::MemoryWAR,
+                                          outer, 1, firstRelease)),
+                  "add first guarded release demand");
+  passed &= check(graph.addDemand(demand(fix, secondMmad,
+                                          SyncCoverDemandKind::MemoryWAR,
+                                          outer, 1, secondRelease)),
+                  "add second guarded release demand");
+  passed &= check(graph.freezeStructure(), "freeze hierarchical graph");
+
+  const SyncCoverCandidateIndex index(graph);
+  const SyncCoverSlotLifecycleResult lifecycles =
+      discoverSyncCoverSlotLifecycles(graph, index);
+  const SyncCoverSlotProtocolResult protocols =
+      buildSyncCoverSlotProtocolCandidates(graph, index, lifecycles);
+  passed &= check(lifecycles && lifecycles.lifecycles.size() == 1 &&
+                      lifecycles.lifecycles.front().requiresPathSensitiveProof,
+                  "discover guarded nested accumulator lifecycle");
+  passed &= check(protocols && protocols.candidates.size() == 1 &&
+                      protocols.pathSensitiveLifecycles == 0,
+                  "build one hierarchical release candidate");
+  SyncCoverSlotProtocolOptions limited;
+  limited.maximumEvaluations = 2;
+  const SyncCoverSlotProtocolResult truncated =
+      buildSyncCoverSlotProtocolCandidates(graph, index, lifecycles, limited);
+  passed &= check(truncated && truncated.candidates.empty() &&
+                      truncated.evaluations == 0 && truncated.truncated,
+                  "bound hierarchical release-edge evaluation explicitly");
+  if (protocols.candidates.empty()) {
+    return false;
+  }
+  const SyncCoverSlotProtocolCandidate &candidate =
+      protocols.candidates.front();
+  passed &= check(
+      candidate.kind == SyncCoverSlotProtocolKind::HierarchicalRelease &&
+          candidate.source == fix && candidate.targets ==
+              std::vector<SyncCoverNodeId>{firstMmad, secondMmad} &&
+          candidate.recurrenceScope == outer &&
+          candidate.targetLoop == inner && candidate.distance == 1 &&
+          verifySyncCoverSlotProtocolCandidate(
+              graph, index, lifecycles.lifecycles.front(), candidate),
+      "hierarchical candidate covers every guarded MMAD from loop entry");
+
+  SyncCoverMechanismUniverse universe(graph);
+  const SyncCoverMechanismResult eventDomain = universe.addResourceDomain(
+      SyncCoverResourceKind::EventId, 9, 7, 8);
+  passed &= check(eventDomain && eventDomain.index,
+                  "add hierarchical event domain");
+  if (eventDomain && eventDomain.index) {
+    const auto descriptor = makeSyncCoverSlotProtocolDescriptor(
+        universe.getResourceDomains()[*eventDomain.index], candidate, 101);
+    passed &= check(descriptor.has_value(),
+                    "build hierarchical prime/body/drain descriptor");
+    if (descriptor) {
+      passed &= check(
+          universe.addVerifiedProtocol(
+              *descriptor, [&](const auto &actual) {
+                return verifySyncCoverSlotProtocol(
+                    index, lifecycles.lifecycles.front(), universe, candidate,
+                    actual);
+              }),
+          "admit independently verified hierarchical protocol");
+      SyncCoverMechanismDescriptor malformed = *descriptor;
+      malformed.actions[1].anchor.scope = outer;
+      passed &= check(
+          !verifySyncCoverSlotProtocol(
+              index, lifecycles.lifecycles.front(), universe, candidate,
+              malformed),
+          "reject a wait that moved outside the nested-loop boundary");
+      malformed = *descriptor;
+      malformed.actions[0].anchor.kind = SyncCoverAnchorKind::ScopeExit;
+      passed &= check(
+          !verifySyncCoverSlotProtocol(
+              index, lifecycles.lifecycles.front(), universe, candidate,
+              malformed),
+          "reject a malformed hierarchical prime");
+      malformed = *descriptor;
+      malformed.supplyBindings.front().consumeAction = 3;
+      passed &= check(
+          !verifySyncCoverSlotProtocol(
+              index, lifecycles.lifecycles.front(), universe, candidate,
+              malformed),
+          "reject a malformed hierarchical supply binding");
+      SyncCoverGraph unrelated;
+      passed &= check(unrelated.freezeStructure(),
+                      "freeze unrelated protocol graph");
+      SyncCoverMechanismUniverse unrelatedUniverse(unrelated);
+      passed &= check(
+          !verifySyncCoverSlotProtocol(
+              index, lifecycles.lifecycles.front(), unrelatedUniverse,
+              candidate, *descriptor),
+          "reject protocol evidence from a different graph");
+      SyncCoverSlotProtocolCandidate outOfRange = candidate;
+      outOfRange.source = graph.getNodes().size();
+      passed &= check(
+          !verifySyncCoverSlotProtocolCandidate(
+              graph, index, lifecycles.lifecycles.front(), outOfRange),
+          "reject an out-of-range hierarchical release source");
+    }
+  }
+  return passed;
+}
+
+bool testHierarchicalReleaseRejectsUnsafeNesting() {
+  bool passed = true;
+  enum class Scenario {
+    InterveningLoop,
+    OptionalParent,
+    EarlyFix,
+    ExtraAccess,
+  };
+  const Scenario scenarios[] = {Scenario::InterveningLoop,
+                                Scenario::OptionalParent,
+                                Scenario::EarlyFix, Scenario::ExtraAccess};
+  for (Scenario scenario : scenarios) {
+    SyncCoverGraph graph;
+    const SyncCoverScopeId outer = takeIndex(
+        graph.addScope(0, true, SyncCoverTimelineInterval{2, 300}, true),
+        passed, "add rejected outer loop");
+    SyncCoverScopeId parent = outer;
+    if (scenario == Scenario::InterveningLoop) {
+      parent = takeIndex(
+          graph.addScope(outer, true, SyncCoverTimelineInterval{20, 180},
+                         true),
+          passed, "add intervening loop");
+    } else if (scenario == Scenario::OptionalParent) {
+      parent = takeIndex(
+          graph.addScope(outer, false, SyncCoverTimelineInterval{20, 180},
+                         false),
+          passed, "add optional target-loop parent");
+    }
+    const SyncCoverTimelineInterval innerTimeline =
+        scenario == Scenario::EarlyFix
+            ? SyncCoverTimelineInterval{40, 200}
+            : SyncCoverTimelineInterval{40, 140};
+    const SyncCoverScopeId inner = takeIndex(
+        graph.addScope(parent, false, innerTimeline, true), passed,
+        "add rejected target loop");
+    const SyncCoverNodeId mmad = takeIndex(
+        graph.addNode(7, 1, inner, 60), passed, "add rejected MMAD");
+    if (scenario == Scenario::EarlyFix) {
+      static_cast<void>(takeIndex(graph.addNode(11, 1, inner, 90), passed,
+                                  "add late inner operation"));
+    }
+    const std::size_t fixOrder =
+        scenario == Scenario::EarlyFix ? 80 : 120;
+    const SyncCoverNodeId fix = takeIndex(
+        graph.addNode(9, 1, outer, fixOrder, {}, {7}), passed,
+        "add rejected FIX");
+    const SyncCoverStorageDomainId domain = takeIndex(
+        graph.addStorageDomain(), passed, "add rejected accumulator domain");
+    const SyncCoverStorageAccessId accumulator = takeIndex(
+        graph.addStorageAccess(mmad, domain, 70, {0, 128},
+                               SyncCoverStorageAccessMode::ReadWrite, 0),
+        passed, "add rejected accumulator update");
+    const SyncCoverStorageAccessId fixRead = takeIndex(
+        graph.addStorageAccess(fix, domain, 71, {0, 128},
+                               SyncCoverStorageAccessMode::Read, 0),
+        passed, "add rejected FIX read");
+    if (scenario == Scenario::ExtraAccess) {
+      const SyncCoverNodeId extra = takeIndex(
+          graph.addNode(12, 1, outer, 100), passed,
+          "add unrepresented slot accessor");
+      static_cast<void>(takeIndex(
+          graph.addStorageAccess(extra, domain, 72, {0, 128},
+                                 SyncCoverStorageAccessMode::Read, 0),
+          passed, "add unrepresented overlapping access"));
+    }
+    const SyncCoverStorageWitnessId ready = takeIndex(
+        graph.addStorageWitness(accumulator, fixRead), passed,
+        "add rejected ready witness");
+    const SyncCoverStorageWitnessId release = takeIndex(
+        graph.addStorageWitness(fixRead, accumulator), passed,
+        "add rejected release witness");
+    passed &= check(graph.addDemand(demand(mmad, fix,
+                                            SyncCoverDemandKind::MemoryRAW,
+                                            outer, 0, ready)),
+                    "add rejected ready demand");
+    passed &= check(graph.addDemand(demand(fix, mmad,
+                                            SyncCoverDemandKind::MemoryWAR,
+                                            outer, 1, release)),
+                    "add rejected release demand");
+    passed &= check(graph.freezeStructure(), "freeze rejected graph");
+    const SyncCoverCandidateIndex index(graph);
+    const SyncCoverSlotLifecycleResult lifecycles =
+        discoverSyncCoverSlotLifecycles(graph, index);
+    const SyncCoverSlotProtocolResult protocols =
+        buildSyncCoverSlotProtocolCandidates(graph, index, lifecycles);
+    const bool classifiedSafely =
+        scenario == Scenario::ExtraAccess
+            ? protocols.accessOpenLifecycles == 1
+            : protocols.pathSensitiveLifecycles == 1;
+    passed &= check(lifecycles && lifecycles.lifecycles.size() == 1 &&
+                        protocols && protocols.candidates.empty() &&
+                        classifiedSafely,
+                    "reject unsafe hierarchical execution cardinality");
+  }
+  return passed;
+}
+
 } // namespace
 
 int main() {
   return testExactRoundTripDiscovery() && testFailClosedEvidence() &&
                  testGuardedRoundTripDiscovery() &&
                  testNestedLoopRequiresPathProof() &&
-                 testUnitReleaseProtocolFactory()
+                 testUnitReleaseProtocolFactory() &&
+                 testHierarchicalReleaseProtocolFactory() &&
+                 testHierarchicalReleaseRejectsUnsafeNesting()
              ? 0
              : 1;
 }
