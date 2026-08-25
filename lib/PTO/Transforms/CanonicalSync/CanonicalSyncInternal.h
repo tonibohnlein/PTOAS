@@ -62,10 +62,19 @@ struct CanonicalEventColorPressure {
 using CanonicalEventColorPressureMap =
     std::map<CanonicalEventDomainKey, CanonicalEventColorPressure>;
 
+enum class CanonicalEventBundleApplicability : std::uint8_t {
+  LegacyAndCovering,
+  CoveringOnly,
+};
+
 struct CanonicalEventBundleCandidate {
   std::size_t id = 0;
   std::size_t protocolIdentity = 0;
   CanonicalEventBundleKind kind = CanonicalEventBundleKind::Standalone;
+  CanonicalEventBundleApplicability applicability =
+      CanonicalEventBundleApplicability::LegacyAndCovering;
+  CanonicalOwnershipProtocolKind ownershipProtocol =
+      CanonicalOwnershipProtocolKind::RoundTrip;
   SmallVector<CanonicalEvent, 2> events;
   SmallVector<std::size_t, 2> conflicts;
   std::optional<CanonicalDependency> completionWitness;
@@ -137,6 +146,9 @@ buildCanonicalEventBundles(ArrayRef<CanonicalEvent> events);
 
 std::vector<CanonicalEvent>
 flattenCanonicalEventBundles(ArrayRef<CanonicalEventBundleCandidate> bundles);
+
+bool supportsCanonicalLegacySelection(
+    const CanonicalEventBundleCandidate &bundle);
 
 bool canonicalEventBundleProjectionMatches(
     ArrayRef<CanonicalEventBundleCandidate> bundles,
@@ -221,6 +233,11 @@ bool verifyCanonicalOwnershipEventPair(
     const CanonicalOwnershipCycle &cycle,
     ArrayRef<const CanonicalEvent *> events);
 
+bool verifyCanonicalCompositeOwnershipBundle(
+    const CanonicalEventBundleCandidate &bundle,
+    ArrayRef<CanonicalOwnershipCycle> cycles,
+    ArrayRef<CanonicalSyncNode> nodes);
+
 bool verifyCanonicalAlternatingPathMapping(
     const CanonicalOwnershipCycle &cycle);
 
@@ -270,6 +287,7 @@ public:
         selectionDiagnosticsEnabled_(options.diagnosticRequest != nullptr),
         coveringShadowEnabled_(options.coveringShadow ||
                                options.solver == CanonicalSyncSolver::Covering),
+        coveringMembershipProbeEnabled_(options.coveringMembershipProbe),
         coveringEmissionEnabled_(options.solver ==
                                  CanonicalSyncSolver::Covering),
         diagnosticRequest_(
@@ -325,7 +343,10 @@ private:
   makeRecurrenceEvent(const CanonicalDependency &dependency) const;
   void analyzeOwnershipCycles();
   std::optional<CanonicalEventBundleCandidate>
-  buildOwnershipEventBundle(const CanonicalOwnershipCycle &cycle);
+  buildOwnershipEventBundle(const CanonicalOwnershipCycle &cycle,
+                            CanonicalOwnershipProtocolKind protocol);
+  std::optional<CanonicalEventBundleCandidate>
+  buildCompositeOwnershipEventBundle();
   void buildMechanismUniverse();
   LogicalResult refreshSelectedEventBundles();
   bool tryBuildConservativeIncumbent(
@@ -458,6 +479,7 @@ private:
   CanonicalGMAliasPolicy gmAliasPolicy_ = CanonicalGMAliasPolicy::MayAlias;
   bool selectionDiagnosticsEnabled_ = false;
   bool coveringShadowEnabled_ = false;
+  bool coveringMembershipProbeEnabled_ = false;
   bool coveringEmissionEnabled_ = false;
   CanonicalSelectionDiagnosticRequest diagnosticRequest_;
   CanonicalSyncPlan plan_;

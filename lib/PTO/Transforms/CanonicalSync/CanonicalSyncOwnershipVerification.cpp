@@ -12,6 +12,7 @@
 
 #include "llvm/ADT/STLExtras.h"
 
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -34,7 +35,9 @@ bool matchesAction(const CanonicalEventAction &action,
          anchorsEqual(action.anchor, anchor) && action.lane.kind == laneKind &&
          (laneKind != CanonicalEventLaneKind::Static ||
           action.lane.index == lane) &&
-         !action.lane.selector && !action.nonEmptyLoopGuard;
+         !action.lane.selector &&
+         action.guard.kind == CanonicalEventExecutionGuardKind::None &&
+         !action.guard.loop;
 }
 
 bool isGuardedAction(const CanonicalEventAction &action,
@@ -42,13 +45,27 @@ bool isGuardedAction(const CanonicalEventAction &action,
                      CanonicalEventActionPhase phase, Operation *loop,
                      CanonicalEventLaneKind laneKind, unsigned lane = 0) {
   return action.kind == kind && action.phase == phase &&
-         action.nonEmptyLoopGuard == loop &&
+         action.guard.kind ==
+             CanonicalEventExecutionGuardKind::LoopNonEmpty &&
+         action.guard.loop == loop &&
          action.anchor.operation == loop &&
          action.anchor.before == (phase == CanonicalEventActionPhase::Prime) &&
          action.lane.kind == laneKind &&
          (laneKind != CanonicalEventLaneKind::Static ||
           action.lane.index == lane) &&
          !action.lane.selector;
+}
+
+bool matchesBoundaryAction(const CanonicalEventAction &action,
+                           CanonicalEventActionKind kind,
+                           const CanonicalAnchor &anchor, unsigned lane,
+                           CanonicalEventExecutionGuardKind guard) {
+  return action.kind == kind &&
+         action.phase == CanonicalEventActionPhase::Body &&
+         anchorsEqual(action.anchor, anchor) &&
+         action.lane.kind == CanonicalEventLaneKind::Static &&
+         action.lane.index == lane && !action.lane.selector &&
+         action.guard.kind == guard && action.guard.loop != nullptr;
 }
 
 bool hasValidAlternatingLifecycle(const CanonicalOwnershipCycle &cycle,
@@ -316,6 +333,7 @@ bool matchesCycle(const CanonicalEvent &event,
                   const CanonicalOwnershipCycle &cycle) {
   const bool commonShape = event.ownershipProtocol &&
                            event.ownershipCycle == cycle.id &&
+                           event.ownershipProtocolKind == cycle.protocol &&
                            event.scopeLoop == cycle.loop &&
                            event.width == cycle.lanes.size() &&
                            !event.forwardDrainLoop;
@@ -339,6 +357,67 @@ bool matchesCycle(const CanonicalEvent &event,
   return false;
 }
 
+bool hasValidBoundaryGuardedLifecycle(
+    const CanonicalOwnershipCycle &cycle, const CanonicalEvent &ready,
+    const CanonicalEvent &release) {
+  auto loop = dyn_cast_or_null<scf::ForOp>(cycle.loop);
+  const bool validCycle =
+      cycle.kind == CanonicalOwnershipKind::L0Accumulator && loop &&
+      !cycle.lanes.empty() &&
+      cycle.paths.size() == 1 &&
+      cycle.paths.front().region == &loop.getRegion() &&
+      cycle.paths.front().uses.size() == cycle.lanes.size();
+  const bool validReleaseShape =
+      release.ownershipProtocol && release.ownershipCycle == cycle.id &&
+      release.ownershipProtocolKind == cycle.protocol &&
+      release.ownershipRole == CanonicalOwnershipEventRole::Release &&
+      release.sourcePipe == cycle.consumerPipe &&
+      release.targetPipe == cycle.producerPipe &&
+      release.recurrenceLoop == cycle.loop && release.scopeLoop == cycle.loop &&
+      release.iterationDistance == 1 &&
+      release.width == cycle.lanes.size() && !release.forwardDrainLoop &&
+      release.actions.size() == cycle.lanes.size() * 2;
+  const bool invalidLifecycle =
+      !validCycle || !matchesCycle(ready, cycle) || !validReleaseShape;
+  if (invalidLifecycle) {
+    return false;
+  }
+
+  SmallVector<CanonicalEventCompletion, 8> expectedCompletions;
+  SmallVector<bool, 8> seenLanes(cycle.lanes.size(), false);
+  for (auto [useIndex, use] :
+       llvm::enumerate(cycle.paths.front().uses)) {
+    const bool invalidUse =
+        use.lane >= cycle.lanes.size() || seenLanes[use.lane];
+    if (invalidUse) {
+      return false;
+    }
+    seenLanes[use.lane] = true;
+    const unsigned wait = useIndex * 2;
+    const unsigned set = wait + 1;
+    const bool validActions =
+        matchesBoundaryAction(
+            release.actions[wait], CanonicalEventActionKind::Wait,
+            use.writeAcquireAnchor, use.lane,
+            CanonicalEventExecutionGuardKind::NotFirstIteration) &&
+        matchesBoundaryAction(
+            release.actions[set], CanonicalEventActionKind::Set,
+            use.releaseAnchor, use.lane,
+            CanonicalEventExecutionGuardKind::HasSuccessor);
+    if (!validActions) {
+      return false;
+    }
+    for (std::size_t consumer : use.consumers) {
+      for (std::size_t producer : use.producers) {
+        expectedCompletions.push_back(
+            {consumer, producer, 1, cycle.loop, set, wait});
+      }
+    }
+  }
+  return llvm::all_of(seenLanes, [](bool seen) { return seen; }) &&
+         completionsEqual(release.completions, expectedCompletions);
+}
+
 bool lanesEqual(const CanonicalEventLane &first,
                 const CanonicalEventLane &second) {
   return first.kind == second.kind && first.index == second.index &&
@@ -350,7 +429,8 @@ bool actionsEqual(const CanonicalEventAction &first,
   return first.kind == second.kind && first.phase == second.phase &&
          anchorsEqual(first.anchor, second.anchor) &&
          lanesEqual(first.lane, second.lane) &&
-         first.nonEmptyLoopGuard == second.nonEmptyLoopGuard;
+         first.guard.kind == second.guard.kind &&
+         first.guard.loop == second.guard.loop;
 }
 
 bool completionsEqual(const CanonicalEventCompletion &first,
@@ -366,6 +446,8 @@ bool tracesEqual(const CanonicalEventTrace &first,
                  const CanonicalEventTrace &second) {
   return first.kind == second.kind && first.actions == second.actions &&
          first.controlRegion == second.controlRegion &&
+         first.guard.kind == second.guard.kind &&
+         first.guard.loop == second.guard.loop &&
          first.hasExplicitTokenState == second.hasExplicitTokenState &&
          first.initialTokens == second.initialTokens &&
          first.expectedTokens == second.expectedTokens;
@@ -382,10 +464,12 @@ bool eventsEqual(const CanonicalEvent &actual,
       actual.recurrenceLoop == expected.recurrenceLoop &&
       actual.forwardDrainLoop == expected.forwardDrainLoop &&
       actual.scopeLoop == expected.scopeLoop &&
+      actual.resourceScopeLoop == expected.resourceScopeLoop &&
       actual.iterationDistance == expected.iterationDistance &&
       actual.width == expected.width &&
       actual.protocolBundle == expected.protocolBundle &&
       actual.ownershipCycle == expected.ownershipCycle &&
+      actual.ownershipProtocolKind == expected.ownershipProtocolKind &&
       actual.ownershipRole == expected.ownershipRole &&
       actual.ownershipProtocol == expected.ownershipProtocol &&
       actual.actions.size() == expected.actions.size() &&
@@ -409,6 +493,147 @@ bool eventsEqual(const CanonicalEvent &actual,
                         return tracesEqual(std::get<0>(entry),
                                            std::get<1>(entry));
                       });
+}
+
+bool slotsEqual(const CanonicalPhysicalSlot &first,
+                const CanonicalPhysicalSlot &second) {
+  return first.space == second.space && first.address == second.address &&
+         first.size == second.size;
+}
+
+bool rangesOverlap(std::uint64_t address, std::uint64_t size,
+                   const CanonicalPhysicalSlot &slot) {
+  if (size == 0 || slot.size == 0) {
+    return false;
+  }
+  if (address <= slot.address) {
+    return slot.address - address < size;
+  }
+  return address - slot.address < slot.size;
+}
+
+struct ExpectedManagedAccess {
+  CanonicalPhysicalSlot slot;
+  bool reads = false;
+  bool writes = false;
+};
+
+bool ownsEveryManagedL1Access(
+    ArrayRef<const CanonicalOwnershipCycle *> cycles, scf::ForOp outer,
+    ArrayRef<CanonicalSyncNode> nodes) {
+  SmallVector<CanonicalPhysicalSlot, 8> managedSlots;
+  std::map<std::size_t, SmallVector<ExpectedManagedAccess, 4>> expected;
+  const auto addExpected = [&](const CanonicalOwnershipCycle &cycle,
+                               unsigned lane,
+                               ArrayRef<std::size_t> nodeIds, bool reads,
+                               bool writes) {
+    if (lane >= cycle.lanes.size()) {
+      return false;
+    }
+    for (std::size_t node : nodeIds) {
+      SmallVector<ExpectedManagedAccess, 4> &accesses = expected[node];
+      for (const CanonicalPhysicalSlot &slot : cycle.lanes[lane].slots) {
+        if (slot.space != AddressSpace::MAT || slot.size == 0) {
+          return false;
+        }
+        auto known = llvm::find_if(accesses, [&](const auto &access) {
+          return slotsEqual(access.slot, slot);
+        });
+        if (known == accesses.end()) {
+          accesses.push_back({slot, reads, writes});
+        } else {
+          known->reads |= reads;
+          known->writes |= writes;
+        }
+      }
+    }
+    return true;
+  };
+
+  for (const CanonicalOwnershipCycle *cycle : cycles) {
+    if (!cycle) {
+      return false;
+    }
+    for (const CanonicalOwnershipLane &lane : cycle->lanes) {
+      managedSlots.append(lane.slots.begin(), lane.slots.end());
+    }
+    const bool invalidInitial =
+        !cycle->initialProducers.empty() &&
+        !addExpected(*cycle, cycle->initialReadyLane,
+                     cycle->initialProducers, /*reads=*/false,
+                     /*writes=*/true);
+    if (invalidInitial) {
+      return false;
+    }
+    for (const CanonicalOwnershipPath &path : cycle->paths) {
+      for (const CanonicalOwnershipUse &use : path.uses) {
+        const bool invalidUse =
+            !addExpected(*cycle, use.producerLane, use.producers,
+                         /*reads=*/false, /*writes=*/true) ||
+            !addExpected(*cycle, use.lane, use.consumers,
+                         /*reads=*/true, /*writes=*/false);
+        if (invalidUse) {
+          return false;
+        }
+      }
+    }
+  }
+
+  std::map<std::size_t, SmallVector<bool, 4>> observed;
+  for (const auto &[node, accesses] : expected) {
+    const bool invalidExpectedNode =
+        node >= nodes.size() || accesses.empty();
+    if (invalidExpectedNode) {
+      return false;
+    }
+    observed[node].resize(accesses.size(), false);
+  }
+
+  for (const CanonicalSyncNode &node : nodes) {
+    if (!node.operation || !outer->isAncestor(node.operation)) {
+      continue;
+    }
+    for (const CanonicalMemoryAccess &access : node.accesses) {
+      if (access.space != AddressSpace::MAT) {
+        continue;
+      }
+      if (!access.knownPhysical || access.unknownRange || access.size == 0 ||
+          access.addresses.empty()) {
+        return false;
+      }
+      for (std::uint64_t address : access.addresses) {
+        const bool touchesManaged =
+            llvm::any_of(managedSlots, [&](const auto &slot) {
+              return rangesOverlap(address, access.size, slot);
+            });
+        if (!touchesManaged) {
+          continue;
+        }
+        auto expectedNode = expected.find(node.id);
+        if (expectedNode == expected.end()) {
+          return false;
+        }
+        auto expectedAccess =
+            llvm::find_if(expectedNode->second, [&](const auto &entry) {
+              return entry.slot.space == access.space &&
+                     entry.slot.address == address &&
+                     entry.slot.size == access.size &&
+                     (!entry.reads || access.reads) &&
+                     (!entry.writes || access.writes);
+        });
+        if (expectedAccess == expectedNode->second.end()) {
+          return false;
+        }
+        const std::size_t index =
+            static_cast<std::size_t>(expectedAccess -
+                                     expectedNode->second.begin());
+        observed[node.id][index] = true;
+      }
+    }
+  }
+  return llvm::all_of(observed, [](const auto &entry) {
+    return llvm::all_of(entry.second, [](bool value) { return value; });
+  });
 }
 
 } // namespace
@@ -447,12 +672,119 @@ bool mlir::pto::verifyCanonicalOwnershipEventPair(
     return false;
   }
   if (cycle.protocol ==
+          CanonicalOwnershipProtocolKind::BoundaryGuardedRoundTrip &&
+      !hasValidBoundaryGuardedLifecycle(cycle, *ready, *release)) {
+    return false;
+  }
+  if (cycle.protocol ==
           CanonicalOwnershipProtocolKind::AlternatingPrefetch &&
       !hasValidAlternatingLifecycle(cycle, *ready, *release)) {
+    return false;
+  }
+  if (cycle.protocol ==
+          CanonicalOwnershipProtocolKind::HierarchicalOuterCarry &&
+      cycle.kind != CanonicalOwnershipKind::L1Tile) {
     return false;
   }
   auto [expectedReady, expectedRelease] =
       buildCanonicalOwnershipProtocols(cycle);
   return eventsEqual(*ready, expectedReady) &&
          eventsEqual(*release, expectedRelease);
+}
+
+bool mlir::pto::verifyCanonicalCompositeOwnershipBundle(
+    const CanonicalEventBundleCandidate &bundle,
+    ArrayRef<CanonicalOwnershipCycle> cycles,
+    ArrayRef<CanonicalSyncNode> nodes) {
+  const bool invalidBundle =
+      bundle.kind != CanonicalEventBundleKind::CompositeOwnership ||
+      bundle.events.size() != 6;
+  if (invalidBundle) {
+    return false;
+  }
+  std::map<std::size_t, SmallVector<const CanonicalEvent *, 2>> grouped;
+  for (const CanonicalEvent &event : bundle.events) {
+    if (!event.ownershipProtocol || event.ownershipCycle == 0) {
+      return false;
+    }
+    grouped[event.ownershipCycle].push_back(&event);
+  }
+  const bool wrongGroupCount = grouped.size() != 3;
+  if (wrongGroupCount) {
+    return false;
+  }
+
+  SmallVector<const CanonicalOwnershipCycle *, 2> l1Cycles;
+  const CanonicalOwnershipCycle *accumulator = nullptr;
+  for (const auto &[cycleId, events] : grouped) {
+    auto cycle = llvm::find_if(cycles, [&](const auto &candidate) {
+      return candidate.id == cycleId;
+    });
+    const bool invalidCycle =
+        cycle == cycles.end() || events.size() != 2 ||
+        events[0]->ownershipProtocolKind !=
+            events[1]->ownershipProtocolKind;
+    if (invalidCycle) {
+      return false;
+    }
+    CanonicalOwnershipCycle protocolCycle = *cycle;
+    protocolCycle.protocol = events.front()->ownershipProtocolKind;
+    if (!verifyCanonicalOwnershipEventPair(protocolCycle, events)) {
+      return false;
+    }
+    if (cycle->kind == CanonicalOwnershipKind::L1Tile &&
+        protocolCycle.protocol ==
+            CanonicalOwnershipProtocolKind::HierarchicalOuterCarry) {
+      l1Cycles.push_back(&*cycle);
+      continue;
+    }
+    if (cycle->kind == CanonicalOwnershipKind::L0Accumulator &&
+        protocolCycle.protocol ==
+            CanonicalOwnershipProtocolKind::BoundaryGuardedRoundTrip &&
+        !accumulator) {
+      accumulator = &*cycle;
+      continue;
+    }
+    return false;
+  }
+  const bool invalidComposition =
+      l1Cycles.size() != 2 || !accumulator ||
+      l1Cycles[0]->loop != l1Cycles[1]->loop;
+  if (invalidComposition) {
+    return false;
+  }
+  auto inner = dyn_cast_or_null<scf::ForOp>(l1Cycles[0]->loop);
+  auto outer = inner ? inner->getParentOfType<scf::ForOp>() : scf::ForOp{};
+  const bool oneAlternating =
+      l1Cycles[0]->initialProducers.empty() !=
+      l1Cycles[1]->initialProducers.empty();
+  if (!outer || accumulator->loop != outer || !oneAlternating) {
+    return false;
+  }
+  if (!ownsEveryManagedL1Access(l1Cycles, outer, nodes)) {
+    return false;
+  }
+
+  const auto slotsOverlap = [](const CanonicalPhysicalSlot &first,
+                               const CanonicalPhysicalSlot &second) {
+    if (first.space != second.space || first.size == 0 || second.size == 0) {
+      return false;
+    }
+    if (first.address <= second.address) {
+      return second.address - first.address < first.size;
+    }
+    return first.address - second.address < second.size;
+  };
+  for (const CanonicalOwnershipLane &first : l1Cycles[0]->lanes) {
+    for (const CanonicalOwnershipLane &second : l1Cycles[1]->lanes) {
+      for (const CanonicalPhysicalSlot &firstSlot : first.slots) {
+        for (const CanonicalPhysicalSlot &secondSlot : second.slots) {
+          if (slotsOverlap(firstSlot, secondSlot)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+  return true;
 }

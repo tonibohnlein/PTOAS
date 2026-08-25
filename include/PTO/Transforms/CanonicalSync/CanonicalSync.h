@@ -60,12 +60,15 @@ enum class CanonicalOwnershipKind : std::uint8_t {
 enum class CanonicalOwnershipProtocolKind : std::uint8_t {
   RoundTrip,
   AlternatingPrefetch,
+  BoundaryGuardedRoundTrip,
+  HierarchicalOuterCarry,
 };
 
 enum class CanonicalEventBundleKind : std::uint8_t {
   Standalone,
   SyntheticRoundTrip,
   Ownership,
+  CompositeOwnership,
 };
 
 enum class CanonicalSelectionMechanismKind : std::uint8_t {
@@ -160,6 +163,7 @@ struct CanonicalOwnershipCycle {
   SmallVector<CanonicalOwnershipLane, 2> lanes;
   SmallVector<CanonicalOwnershipPath, 2> paths;
   SmallVector<std::size_t, 2> initialProducers;
+  CanonicalAnchor initialWriteAcquireAnchor;
   CanonicalAnchor initialReadyAnchor;
   unsigned initialReadyLane = 0;
   SmallVector<unsigned, 2> initiallyFreeLanes;
@@ -192,6 +196,14 @@ enum class CanonicalEventActionPhase : std::uint8_t {
   Drain,
 };
 
+enum class CanonicalEventExecutionGuardKind : std::uint8_t {
+  None,
+  LoopNonEmpty,
+  LoopEmpty,
+  NotFirstIteration,
+  HasSuccessor,
+};
+
 enum class CanonicalEventLaneKind : std::uint8_t { Static, Dynamic, All };
 
 enum class CanonicalEventTraceKind : std::uint8_t {
@@ -213,12 +225,18 @@ struct CanonicalEventLane {
   Value selector;
 };
 
+struct CanonicalEventExecutionGuard {
+  CanonicalEventExecutionGuardKind kind =
+      CanonicalEventExecutionGuardKind::None;
+  Operation *loop = nullptr;
+};
+
 struct CanonicalEventAction {
   CanonicalEventActionKind kind = CanonicalEventActionKind::Set;
   CanonicalEventActionPhase phase = CanonicalEventActionPhase::Straight;
   CanonicalAnchor anchor;
   CanonicalEventLane lane;
-  Operation *nonEmptyLoopGuard = nullptr;
+  CanonicalEventExecutionGuard guard;
 };
 
 struct CanonicalEventCompletion {
@@ -234,6 +252,7 @@ struct CanonicalEventTrace {
   CanonicalEventTraceKind kind = CanonicalEventTraceKind::Straight;
   SmallVector<unsigned, 8> actions;
   Region *controlRegion = nullptr;
+  CanonicalEventExecutionGuard guard;
   bool hasExplicitTokenState = false;
   SmallVector<unsigned, 8> initialTokens;
   SmallVector<unsigned, 8> expectedTokens;
@@ -249,6 +268,7 @@ struct CanonicalEvent {
   Operation *recurrenceLoop = nullptr;
   Operation *forwardDrainLoop = nullptr;
   Operation *scopeLoop = nullptr;
+  Operation *resourceScopeLoop = nullptr;
   unsigned iterationDistance = 0;
   Value setSlot;
   Value waitSlot;
@@ -261,6 +281,8 @@ struct CanonicalEvent {
   SmallVector<CanonicalEventTrace, 4> traces;
   std::size_t protocolBundle = 0;
   std::size_t ownershipCycle = 0;
+  CanonicalOwnershipProtocolKind ownershipProtocolKind =
+      CanonicalOwnershipProtocolKind::RoundTrip;
   CanonicalOwnershipEventRole ownershipRole =
       CanonicalOwnershipEventRole::None;
   bool ownershipProtocol = false;
@@ -324,6 +346,76 @@ struct CanonicalSyncCoveringSelectedResourceUse {
   std::size_t width = 0;
   SyncCoverTimelineInterval lifetime;
   std::optional<std::size_t> eventIndex;
+};
+
+struct CanonicalSyncCoveringMembershipCut {
+  SyncCoverDemandId demand = 0;
+  std::vector<CanonicalSyncCoveringSelectedProvider> candidates;
+};
+
+struct CanonicalSyncCoveringCompletionRejection {
+  CanonicalSyncCoveringSelectedProvider candidate;
+  SyncCoverCompletionRejectionKind kind =
+      SyncCoverCompletionRejectionKind::InvalidSelection;
+  SyncCoverResourceSelectionError resourceError =
+      SyncCoverResourceSelectionError::None;
+  std::optional<CanonicalSyncCoveringSelectedProvider> firstConflict;
+  std::optional<CanonicalSyncCoveringSelectedProvider> secondConflict;
+  std::optional<SyncCoverResourceDomainId> domain;
+  std::size_t required = 0;
+  std::size_t available = 0;
+};
+
+struct CanonicalSyncCoveringCompletionBlockedCut {
+  SyncCoverDemandId demand = 0;
+  std::vector<CanonicalSyncCoveringSelectedProvider> selected;
+  std::vector<CanonicalSyncCoveringSelectedProvider> candidates;
+  std::vector<SyncCoverReachableState> reachableStates;
+};
+
+struct CanonicalSyncCoveringBarrierFreeCensusEntry {
+  SyncCoverDemandId demand = 0;
+  SyncCoverBarrierFreeCensusStatus status =
+      SyncCoverBarrierFreeCensusStatus::Uncoverable;
+  std::vector<CanonicalSyncCoveringSelectedProvider> witness;
+  std::vector<SyncCoverReachableState> reachableStates;
+  SyncCoverResourceSelection witnessResources;
+};
+
+/// Exact feasibility certificate for the barrier-free ownership plan implied
+/// by one composite protocol and the native protocols of ownership cycles not
+/// contained in that composite. Under the explicit global GM no-alias mode, a
+/// verified event-only completion may also be offered to the solver as a seed.
+struct CanonicalSyncCoveringMembershipSnapshot {
+  bool requested = false;
+  bool attempted = false;
+  bool candidateSetComplete = false;
+  bool resourceFeasible = false;
+  bool coverageComplete = false;
+  SyncCoverResourceSelectionError resourceError =
+      SyncCoverResourceSelectionError::None;
+  std::size_t selectedMechanisms = 0;
+  std::vector<std::size_t> actionProfile;
+  std::vector<std::size_t> barrierActionProfile;
+  std::vector<CanonicalSyncCoveringSelectedProvider> selectedProviders;
+  std::vector<CanonicalSyncCoveringMembershipCut> uncoveredDemands;
+  bool completionAttempted = false;
+  bool completionFound = false;
+  bool completionTruncated = false;
+  std::size_t completionEvaluations = 0;
+  std::vector<std::size_t> completionActionProfile;
+  std::vector<std::size_t> completionBarrierActionProfile;
+  std::vector<CanonicalSyncCoveringSelectedProvider> completionProviders;
+  std::vector<CanonicalSyncCoveringCompletionRejection>
+      completionRejections;
+  bool completionRejectionsTruncated = false;
+  std::vector<CanonicalSyncCoveringCompletionBlockedCut>
+      completionBlockedCuts;
+  bool completionBlockedCutsTruncated = false;
+  bool barrierFreeCensusAttempted = false;
+  std::vector<CanonicalSyncCoveringBarrierFreeCensusEntry>
+      barrierFreeCensus;
+  SyncCoverCoverageStatistics barrierFreeCensusStatistics;
 };
 
 enum class CanonicalSyncCoveringAllocationError : std::uint8_t {
@@ -427,6 +519,7 @@ struct CanonicalSyncCoveringShadowSnapshot {
   std::size_t solverComponents = 0;
   std::size_t solverEvaluations = 0;
   std::size_t redundancyEvaluations = 0;
+  SyncCoverExchangeStatistics exchangeStatistics;
   SyncCoverSelectionError selectionError = SyncCoverSelectionError::None;
   bool selectionAttempted = false;
   bool searchTruncated = false;
@@ -440,6 +533,7 @@ struct CanonicalSyncCoveringShadowSnapshot {
   SyncCoverResourceSelection selectedResources;
   SyncCoverCoverageStatistics coverageStatistics;
   SyncCoverCoverageStatistics finalVerificationStatistics;
+  CanonicalSyncCoveringMembershipSnapshot ownershipMembership;
   std::vector<SyncCoverScope> scopeDetails;
   std::vector<SyncCoverControl> controlDetails;
   std::vector<SyncCoverNode> nodeDetails;
@@ -457,6 +551,7 @@ struct CanonicalSyncBuildOptions {
   /// Borrowed for buildCanonicalSyncPlan(); the builder copies the request.
   const CanonicalSelectionDiagnosticRequest *diagnosticRequest = nullptr;
   bool coveringShadow = false;
+  bool coveringMembershipProbe = false;
 };
 
 CanonicalSyncCoveringAllocationValidation

@@ -101,11 +101,35 @@ void emitEventAction(IRRewriter &rewriter, const CanonicalEvent &event,
   setInsertionPoint(rewriter, action.anchor);
   const bool set = action.kind == CanonicalEventActionKind::Set;
   const Location location = action.anchor.operation->getLoc();
-  if (action.nonEmptyLoopGuard) {
-    auto loop = cast<scf::ForOp>(action.nonEmptyLoopGuard);
-    Value condition = rewriter.create<arith::CmpIOp>(
-        location, arith::CmpIPredicate::slt, loop.getLowerBound(),
-        loop.getUpperBound());
+  if (action.guard.kind != CanonicalEventExecutionGuardKind::None) {
+    auto loop = cast<scf::ForOp>(action.guard.loop);
+    Value condition;
+    switch (action.guard.kind) {
+    case CanonicalEventExecutionGuardKind::None:
+      llvm_unreachable("unguarded action reached guarded emission");
+    case CanonicalEventExecutionGuardKind::LoopNonEmpty:
+      condition = rewriter.create<arith::CmpIOp>(
+          location, arith::CmpIPredicate::slt, loop.getLowerBound(),
+          loop.getUpperBound());
+      break;
+    case CanonicalEventExecutionGuardKind::LoopEmpty:
+      condition = rewriter.create<arith::CmpIOp>(
+          location, arith::CmpIPredicate::sge, loop.getLowerBound(),
+          loop.getUpperBound());
+      break;
+    case CanonicalEventExecutionGuardKind::NotFirstIteration:
+      condition = rewriter.create<arith::CmpIOp>(
+          location, arith::CmpIPredicate::ne, loop.getInductionVar(),
+          loop.getLowerBound());
+      break;
+    case CanonicalEventExecutionGuardKind::HasSuccessor:
+      Value nextIteration = rewriter.create<arith::AddIOp>(
+          location, loop.getInductionVar(), loop.getStep());
+      condition = rewriter.create<arith::CmpIOp>(
+          location, arith::CmpIPredicate::slt, nextIteration,
+          loop.getUpperBound());
+      break;
+    }
     auto guard = rewriter.create<scf::IfOp>(
         location, TypeRange{}, condition, /*withElseRegion=*/false);
     markGenerated(guard, rewriter);

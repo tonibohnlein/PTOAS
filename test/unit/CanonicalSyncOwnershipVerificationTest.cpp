@@ -10,7 +10,10 @@
 
 #include "CanonicalSyncInternal.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Builders.h"
 
 #include <iostream>
 #include <limits>
@@ -331,6 +334,8 @@ bool testEventBundleIdentityRestoration() {
     return bundle.kind == CanonicalEventBundleKind::Ownership;
   });
   knownSynthetic->id = 41;
+  knownSynthetic->applicability =
+      CanonicalEventBundleApplicability::CoveringOnly;
   knownSynthetic->conflicts.push_back(42);
   knownOwnership->id = 42;
   knownOwnership->conflicts.push_back(41);
@@ -364,12 +369,15 @@ bool testEventBundleIdentityRestoration() {
                       rebuiltStandalone != rebuilt.end(),
                   "reconciliation retains atomic pairs and a new standalone");
   passed &= check(rebuiltSynthetic->id == 41 &&
+                      rebuiltSynthetic->applicability ==
+                          CanonicalEventBundleApplicability::CoveringOnly &&
                       rebuiltSynthetic->conflicts.size() == 1 &&
                       rebuiltSynthetic->conflicts.front() == 42 &&
                       rebuiltSynthetic->completionWitness &&
                       rebuiltSynthetic->completionWitness->source == 1 &&
                       rebuiltSynthetic->completionWitness->target == 4,
-                  "a synthetic pair keeps its conflict and completion witness");
+                  "a synthetic pair keeps its applicability, conflict, and "
+                  "completion witness");
   passed &= check(rebuiltOwnership->id == 42 &&
                       rebuiltOwnership->conflicts.size() == 1 &&
                       rebuiltOwnership->conflicts.front() == 41,
@@ -1015,12 +1023,12 @@ bool testAlternatingOwnershipPairVerification() {
                   "unrelated regions cannot prove an alternating path mapping");
 
   CanonicalEvent malformed = ready;
-  malformed.actions.front().nonEmptyLoopGuard = nullptr;
+  malformed.actions.front().guard = {};
   passed &= check(!verifyPair(cycle, malformed, release),
                   "an alternating ready prime requires a non-empty guard");
 
   malformed = release;
-  malformed.actions.front().nonEmptyLoopGuard = nullptr;
+  malformed.actions.front().guard = {};
   passed &= check(!verifyPair(cycle, ready, malformed),
                   "an alternating release prime requires a non-empty guard");
 
@@ -1035,7 +1043,7 @@ bool testAlternatingOwnershipPairVerification() {
                   "an alternating release protocol requires its drain");
 
   malformed = release;
-  malformed.actions.back().nonEmptyLoopGuard = nullptr;
+  malformed.actions.back().guard = {};
   passed &= check(!verifyPair(cycle, ready, malformed),
                   "an alternating release drain requires a non-empty guard");
 
@@ -1054,6 +1062,387 @@ bool testAlternatingOwnershipPairVerification() {
   return passed;
 }
 
+CanonicalOwnershipUse makeNestedOwnershipUse(
+    unsigned lane, unsigned producerLane, std::size_t producer,
+    std::size_t consumer, Operation *producerAnchor,
+    Operation *consumerAnchor) {
+  CanonicalOwnershipUse use;
+  use.lane = lane;
+  use.producerLane = producerLane;
+  use.producers.push_back(producer);
+  use.consumers.push_back(consumer);
+  use.writeAcquireAnchor = {producerAnchor, true};
+  use.readyAnchor = {producerAnchor, false};
+  use.readAcquireAnchor = {consumerAnchor, true};
+  use.releaseAnchor = {consumerAnchor, false};
+  return use;
+}
+
+bool testHierarchicalCompositeOwnershipVerification() {
+  MLIRContext context;
+  context.getOrLoadDialect<arith::ArithDialect>();
+  context.getOrLoadDialect<scf::SCFDialect>();
+  OpBuilder builder(&context);
+  const Location location = UnknownLoc::get(&context);
+  ModuleOp module = ModuleOp::create(location);
+  builder.setInsertionPointToStart(module.getBody());
+  Value zero = builder.create<arith::ConstantIndexOp>(location, 0);
+  Value one = builder.create<arith::ConstantIndexOp>(location, 1);
+  Value two = builder.create<arith::ConstantIndexOp>(location, 2);
+  scf::ForOp outer = builder.create<scf::ForOp>(location, zero, two, one);
+  builder.setInsertionPointToStart(outer.getBody());
+  Operation *initialProducer =
+      builder.create<arith::ConstantIndexOp>(location, 7);
+  scf::ForOp inner = builder.create<scf::ForOp>(location, zero, two, one);
+  builder.setInsertionPointToStart(inner.getBody());
+  Value remainder = builder.create<arith::RemSIOp>(
+      location, inner.getInductionVar(), two);
+  Value condition = builder.create<arith::CmpIOp>(
+      location, arith::CmpIPredicate::eq, remainder, zero);
+  scf::IfOp parity = builder.create<scf::IfOp>(
+      location, TypeRange{}, condition, /*withElseRegion=*/true);
+  builder.setInsertionPointToStart(&parity.getThenRegion().front());
+  Operation *thenProducer =
+      builder.create<arith::ConstantIndexOp>(location, 11);
+  Operation *thenConsumer =
+      builder.create<arith::ConstantIndexOp>(location, 12);
+  builder.setInsertionPointToStart(&parity.getElseRegion().front());
+  Operation *elseProducer =
+      builder.create<arith::ConstantIndexOp>(location, 13);
+  Operation *elseConsumer =
+      builder.create<arith::ConstantIndexOp>(location, 14);
+
+  CanonicalOwnershipCycle stable;
+  stable.id = 21;
+  stable.kind = CanonicalOwnershipKind::L1Tile;
+  stable.protocol = CanonicalOwnershipProtocolKind::RoundTrip;
+  stable.loop = inner;
+  stable.producerPipe = PipelineType::PIPE_MTE2;
+  stable.consumerPipe = PipelineType::PIPE_MTE1;
+  stable.lanes = {{0, {{AddressSpace::MAT, 0, 64}}},
+                  {1, {{AddressSpace::MAT, 64, 64}}}};
+  stable.paths.resize(2);
+  stable.paths[0].region = &parity.getThenRegion();
+  stable.paths[1].region = &parity.getElseRegion();
+  for (unsigned lane = 0; lane < 2; ++lane) {
+    stable.paths[0].uses.push_back(makeNestedOwnershipUse(
+        lane, lane, lane * 4, lane * 4 + 1, thenProducer, thenConsumer));
+    stable.paths[1].uses.push_back(makeNestedOwnershipUse(
+        lane, lane, lane * 4 + 2, lane * 4 + 3, elseProducer, elseConsumer));
+  }
+
+  CanonicalOwnershipCycle alternating;
+  alternating.id = 22;
+  alternating.kind = CanonicalOwnershipKind::L1Tile;
+  alternating.protocol =
+      CanonicalOwnershipProtocolKind::AlternatingPrefetch;
+  alternating.loop = inner;
+  alternating.producerPipe = PipelineType::PIPE_MTE2;
+  alternating.consumerPipe = PipelineType::PIPE_MTE1;
+  alternating.lanes = {{0, {{AddressSpace::MAT, 128, 64}}},
+                       {1, {{AddressSpace::MAT, 192, 64}}}};
+  alternating.paths.resize(2);
+  alternating.paths[0].region = &parity.getThenRegion();
+  alternating.paths[1].region = &parity.getElseRegion();
+  alternating.paths[0].uses.push_back(makeNestedOwnershipUse(
+      0, 1, 8, 9, thenProducer, thenConsumer));
+  alternating.paths[1].uses.push_back(makeNestedOwnershipUse(
+      1, 0, 10, 11, elseProducer, elseConsumer));
+  alternating.initialProducers.push_back(12);
+  alternating.initialWriteAcquireAnchor = {initialProducer, true};
+  alternating.initialReadyAnchor = {inner, true};
+  alternating.initialReadyLane = 0;
+  alternating.initiallyFreeLanes.push_back(1);
+
+  CanonicalOwnershipCycle accumulator;
+  accumulator.id = 23;
+  accumulator.kind = CanonicalOwnershipKind::L0Accumulator;
+  accumulator.protocol = CanonicalOwnershipProtocolKind::RoundTrip;
+  accumulator.loop = outer;
+  accumulator.producerPipe = PipelineType::PIPE_M;
+  accumulator.consumerPipe = PipelineType::PIPE_FIX;
+  accumulator.lanes = {{0, {{AddressSpace::ACC, 0, 128}}}};
+  accumulator.paths.resize(1);
+  accumulator.paths.front().region = &outer.getRegion();
+  accumulator.paths.front().uses.push_back(makeNestedOwnershipUse(
+      0, 0, 13, 14, initialProducer, inner));
+
+  CanonicalOwnershipCycle hierarchicalStable = stable;
+  hierarchicalStable.protocol =
+      CanonicalOwnershipProtocolKind::HierarchicalOuterCarry;
+  auto [stableReady, stableRelease] =
+      buildCanonicalOwnershipProtocols(hierarchicalStable);
+  CanonicalOwnershipCycle hierarchicalAlternating = alternating;
+  hierarchicalAlternating.protocol =
+      CanonicalOwnershipProtocolKind::HierarchicalOuterCarry;
+  auto [alternatingReady, alternatingRelease] =
+      buildCanonicalOwnershipProtocols(hierarchicalAlternating);
+  CanonicalOwnershipCycle boundaryAccumulator = accumulator;
+  boundaryAccumulator.protocol =
+      CanonicalOwnershipProtocolKind::BoundaryGuardedRoundTrip;
+  auto [accumulatorReady, accumulatorRelease] =
+      buildCanonicalOwnershipProtocols(boundaryAccumulator);
+
+  bool passed = check(
+      verifyPair(hierarchicalStable, stableReady, stableRelease) &&
+          verifyPair(hierarchicalAlternating, alternatingReady,
+                     alternatingRelease) &&
+          verifyPair(boundaryAccumulator, accumulatorReady,
+                     accumulatorRelease),
+      "each child lifecycle has an exact protocol proof");
+  passed &= check(
+      alternatingReady.scopeLoop == inner &&
+          alternatingReady.resourceScopeLoop == outer &&
+          llvm::any_of(alternatingReady.actions, [](const auto &action) {
+            return action.guard.kind ==
+                   CanonicalEventExecutionGuardKind::LoopEmpty;
+          }) &&
+          llvm::any_of(alternatingRelease.actions, [](const auto &action) {
+            return action.guard.kind ==
+                       CanonicalEventExecutionGuardKind::LoopEmpty &&
+                   !action.anchor.before;
+          }),
+      "the hierarchical alternating lifecycle owns its outer lifetime and "
+      "repairs the zero-trip token state after the empty loop");
+  const unsigned alternatingFinalTraces = llvm::count_if(
+      alternatingRelease.traces, [](const CanonicalEventTrace &trace) {
+        return trace.kind == CanonicalEventTraceKind::Final;
+      });
+  passed &= check(
+      alternatingFinalTraces == alternating.paths.size() + 1,
+      "the alternating release proves every final path and the zero-trip "
+      "drain");
+  passed &= check(
+      llvm::any_of(stableRelease.completions, [&](const auto &completion) {
+        return completion.recurrenceLoop == outer;
+      }) &&
+          llvm::any_of(alternatingRelease.completions,
+                       [&](const auto &completion) {
+                         return completion.recurrenceLoop == outer;
+                       }),
+      "both L1 releases carry ownership across the outer loop");
+
+  CanonicalEventBundleCandidate composite;
+  composite.kind = CanonicalEventBundleKind::CompositeOwnership;
+  composite.events = {stableReady, stableRelease, alternatingReady,
+                      alternatingRelease, accumulatorReady,
+                      accumulatorRelease};
+  const CanonicalOwnershipCycle cycles[] = {stable, alternating, accumulator};
+  std::vector<CanonicalSyncNode> nodes(15);
+  const auto addLaneAccess = [&](const CanonicalOwnershipCycle &cycle,
+                                 unsigned lane, std::size_t nodeId,
+                                 Operation *operation, bool reads,
+                                 bool writes) {
+    nodes[nodeId].id = nodeId;
+    nodes[nodeId].operation = operation;
+    for (const CanonicalPhysicalSlot &slot : cycle.lanes[lane].slots) {
+      CanonicalMemoryAccess access;
+      access.space = slot.space;
+      access.addresses.push_back(slot.address);
+      access.size = slot.size;
+      access.knownPhysical = true;
+      access.reads = reads;
+      access.writes = writes;
+      nodes[nodeId].accesses.push_back(std::move(access));
+    }
+  };
+  for (const CanonicalOwnershipCycle *cycle :
+       {&stable, &alternating}) {
+    for (const CanonicalOwnershipPath &path : cycle->paths) {
+      for (const CanonicalOwnershipUse &use : path.uses) {
+        for (std::size_t producer : use.producers) {
+          addLaneAccess(*cycle, use.producerLane, producer,
+                        path.region == &parity.getThenRegion() ? thenProducer
+                                                              : elseProducer,
+                        /*reads=*/false, /*writes=*/true);
+        }
+        for (std::size_t consumer : use.consumers) {
+          addLaneAccess(*cycle, use.lane, consumer,
+                        path.region == &parity.getThenRegion() ? thenConsumer
+                                                              : elseConsumer,
+                        /*reads=*/true, /*writes=*/false);
+        }
+      }
+    }
+  }
+  for (std::size_t producer : alternating.initialProducers) {
+    addLaneAccess(alternating, alternating.initialReadyLane, producer,
+                  initialProducer, /*reads=*/false, /*writes=*/true);
+  }
+  nodes[13].id = 13;
+  nodes[13].operation = initialProducer;
+  nodes[14].id = 14;
+  nodes[14].operation = inner;
+
+  passed &= check(
+      verifyCanonicalCompositeOwnershipBundle(composite, cycles, nodes),
+      "the three lifecycles form one verified composite");
+
+  CanonicalEventBundleCandidate missingBypass = composite;
+  auto emptyAction = llvm::find_if(
+      missingBypass.events[2].actions, [](const auto &action) {
+        return action.guard.kind == CanonicalEventExecutionGuardKind::LoopEmpty;
+      });
+  emptyAction->guard = {};
+  passed &= check(
+      !verifyCanonicalCompositeOwnershipBundle(missingBypass, cycles, nodes),
+      "removing zero-trip recovery invalidates the complete composite");
+
+  CanonicalEventBundleCandidate missingFinalPath = composite;
+  auto finalTrace = llvm::find_if(
+      missingFinalPath.events[3].traces, [](const CanonicalEventTrace &trace) {
+        return trace.kind == CanonicalEventTraceKind::Final &&
+               trace.guard.kind == CanonicalEventExecutionGuardKind::None &&
+               trace.actions.size() == 2;
+      });
+  missingFinalPath.events[3].traces.erase(finalTrace);
+  passed &= check(
+      !verifyCanonicalCompositeOwnershipBundle(missingFinalPath, cycles,
+                                               nodes),
+      "removing a final-path release proof invalidates the composite");
+
+  CanonicalEventBundleCandidate missingDrain = composite;
+  auto drainTrace = llvm::find_if(
+      missingDrain.events[3].traces, [](const CanonicalEventTrace &trace) {
+        return trace.kind == CanonicalEventTraceKind::Final &&
+               trace.actions.size() == 1;
+      });
+  missingDrain.events[3].traces.erase(drainTrace);
+  passed &= check(
+      !verifyCanonicalCompositeOwnershipBundle(missingDrain, cycles, nodes),
+      "removing the all-token drain proof invalidates zero-trip handling");
+
+  std::vector<CanonicalSyncNode> nodesWithUnknownAccess = nodes;
+  CanonicalMemoryAccess unknown;
+  unknown.space = AddressSpace::MAT;
+  unknown.unknownRange = true;
+  unknown.reads = true;
+  nodesWithUnknownAccess[8].accesses.push_back(std::move(unknown));
+  passed &= check(
+      !verifyCanonicalCompositeOwnershipBundle(composite, cycles,
+                                               nodesWithUnknownAccess),
+      "an unrepresented MAT access cannot pass final ownership attestation");
+
+  std::vector<CanonicalSyncNode> nodesWithWrongRole = nodes;
+  nodesWithWrongRole[8].accesses.front().writes = false;
+  nodesWithWrongRole[8].accesses.front().reads = true;
+  passed &= check(
+      !verifyCanonicalCompositeOwnershipBundle(composite, cycles,
+                                               nodesWithWrongRole),
+      "a producer without a MAT write cannot pass final attestation");
+
+  CanonicalOwnershipCycle overlapping = alternating;
+  overlapping.lanes.front().slots.front().address = 32;
+  const CanonicalOwnershipCycle overlappingCycles[] = {stable, overlapping,
+                                                        accumulator};
+  passed &= check(
+      !verifyCanonicalCompositeOwnershipBundle(composite, overlappingCycles,
+                                               nodes),
+      "overlapping L1 pools cannot share an ownership composite");
+
+  module->destroy();
+  return passed;
+}
+
+bool testBoundaryGuardedOwnershipPairVerification() {
+  MLIRContext context;
+  context.getOrLoadDialect<scf::SCFDialect>();
+  OperationState loopState(UnknownLoc::get(&context),
+                           scf::ForOp::getOperationName());
+  loopState.addRegion();
+  Operation *loop = Operation::create(loopState);
+  Block *body = new Block();
+  loop->getRegion(0).push_back(body);
+  OperationState anchorState(UnknownLoc::get(&context),
+                             scf::YieldOp::getOperationName());
+  Operation *anchor = Operation::create(anchorState);
+  body->push_back(anchor);
+
+  CanonicalOwnershipCycle cycle;
+  cycle.id = 12;
+  cycle.kind = CanonicalOwnershipKind::L0Accumulator;
+  cycle.protocol =
+      CanonicalOwnershipProtocolKind::BoundaryGuardedRoundTrip;
+  cycle.producerPipe = PipelineType::PIPE_M;
+  cycle.consumerPipe = PipelineType::PIPE_FIX;
+  cycle.loop = loop;
+  cycle.lanes.resize(1);
+  cycle.lanes.front().id = 0;
+  CanonicalOwnershipUse use;
+  use.lane = 0;
+  use.producers.push_back(3);
+  use.consumers.push_back(4);
+  use.writeAcquireAnchor = {anchor, true};
+  use.readyAnchor = {anchor, false};
+  use.readAcquireAnchor = {anchor, true};
+  use.releaseAnchor = {anchor, false};
+  CanonicalOwnershipPath path;
+  path.region = &loop->getRegion(0);
+  path.uses.push_back(std::move(use));
+  cycle.paths.push_back(std::move(path));
+
+  auto [ready, release] = buildCanonicalOwnershipProtocols(cycle);
+  bool passed = check(verifyPair(cycle, ready, release),
+                      "a boundary-guarded accumulator lifecycle is valid");
+  passed &= check(release.actions.size() == 2 &&
+                      release.actions[0].guard.kind ==
+                          CanonicalEventExecutionGuardKind::NotFirstIteration &&
+                      release.actions[1].guard.kind ==
+                          CanonicalEventExecutionGuardKind::HasSuccessor,
+                  "the release waits after the first and sets before the last");
+  passed &= check(release.traces.size() == 4 &&
+                      release.traces.front().actions.empty() &&
+                      release.traces.front().hasExplicitTokenState,
+                  "the zero-token prime state emits no physical action");
+
+  CanonicalEvent malformed = release;
+  malformed.actions[0].guard.kind =
+      CanonicalEventExecutionGuardKind::HasSuccessor;
+  passed &= check(!verifyPair(cycle, ready, malformed),
+                  "the next-iteration wait requires the not-first guard");
+
+  malformed = release;
+  malformed.actions[1].guard.kind =
+      CanonicalEventExecutionGuardKind::NotFirstIteration;
+  passed &= check(!verifyPair(cycle, ready, malformed),
+                  "the release set requires the has-successor guard");
+
+  malformed = release;
+  malformed.actions[0].guard =
+      {CanonicalEventExecutionGuardKind::LoopNonEmpty, loop};
+  passed &= check(!verifyPair(cycle, ready, malformed),
+                  "a boundary action cannot use a non-empty-loop guard");
+
+  CanonicalOwnershipCycle wrongKind = cycle;
+  wrongKind.kind = CanonicalOwnershipKind::L1Tile;
+  auto [wrongReady, wrongRelease] =
+      buildCanonicalOwnershipProtocols(wrongKind);
+  passed &= check(wrongReady.actions.empty() && wrongRelease.actions.empty(),
+                  "boundary-guarded ownership is restricted to accumulators");
+
+  Region conditionalPath;
+  CanonicalOwnershipCycle conditional = cycle;
+  conditional.paths.front().region = &conditionalPath;
+  auto [conditionalReady, conditionalRelease] =
+      buildCanonicalOwnershipProtocols(conditional);
+  passed &=
+      check(conditionalReady.actions.empty() &&
+                conditionalRelease.actions.empty(),
+            "a conditional path cannot claim a must-execute boundary token");
+  loop->destroy();
+  return passed;
+}
+
+bool testEventBundleApplicability() {
+  CanonicalEventBundleCandidate ordinary;
+  CanonicalEventBundleCandidate boundary;
+  boundary.applicability = CanonicalEventBundleApplicability::CoveringOnly;
+  return check(supportsCanonicalLegacySelection(ordinary),
+               "ordinary providers remain available to legacy selection") &&
+         check(!supportsCanonicalLegacySelection(boundary),
+               "covering-only providers cannot enter legacy selection");
+}
+
 } // namespace
 
 int main() {
@@ -1068,6 +1457,9 @@ int main() {
       testCandidateFrontierTruncation() &&
       testAffectedSliceOriginProvenance() && testAffectedSliceEvictionSeeds() &&
       testAffectedSliceCooperativeSearch() && testAffectedSliceSearchBudget() &&
-      testAlternatingOwnershipPairVerification();
+      testAlternatingOwnershipPairVerification() &&
+      testHierarchicalCompositeOwnershipVerification() &&
+      testBoundaryGuardedOwnershipPairVerification() &&
+      testEventBundleApplicability();
   return passed ? 0 : 1;
 }

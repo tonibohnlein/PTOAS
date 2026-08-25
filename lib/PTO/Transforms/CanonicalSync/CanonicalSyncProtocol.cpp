@@ -165,17 +165,25 @@ std::optional<unsigned> getWhileRegionOrder(Operation *operation,
 
 bool hasValidPhaseAnchor(const CanonicalEvent &event,
                          const CanonicalEventAction &action) {
+  const bool hierarchical =
+      event.ownershipProtocol &&
+      event.ownershipProtocolKind ==
+          CanonicalOwnershipProtocolKind::HierarchicalOuterCarry;
+  Operation *lifecycleLoop =
+      hierarchical && event.scopeLoop ? event.scopeLoop : event.recurrenceLoop;
   switch (action.phase) {
   case CanonicalEventActionPhase::Straight:
     return !event.recurrenceLoop && !event.forwardDrainLoop;
   case CanonicalEventActionPhase::Prime:
-    return event.recurrenceLoop &&
-           action.anchor.operation == event.recurrenceLoop &&
+    return lifecycleLoop && action.anchor.operation == lifecycleLoop &&
            action.anchor.before;
   case CanonicalEventActionPhase::Body:
-    return isAnchoredIn(action.anchor.operation, event.recurrenceLoop
-                                                     ? event.recurrenceLoop
-                                                     : event.forwardDrainLoop);
+    return isAnchoredIn(
+        action.anchor.operation,
+        hierarchical && event.scopeLoop
+            ? event.scopeLoop
+            : (event.recurrenceLoop ? event.recurrenceLoop
+                                    : event.forwardDrainLoop));
   case CanonicalEventActionPhase::Condition:
     return isa_and_nonnull<scf::WhileOp>(event.recurrenceLoop
                                              ? event.recurrenceLoop
@@ -184,10 +192,9 @@ bool hasValidPhaseAnchor(const CanonicalEvent &event,
                                                      ? event.recurrenceLoop
                                                      : event.forwardDrainLoop);
   case CanonicalEventActionPhase::Drain:
-    return (event.recurrenceLoop || event.forwardDrainLoop) &&
-           action.anchor.operation == (event.recurrenceLoop
-                                           ? event.recurrenceLoop
-                                           : event.forwardDrainLoop) &&
+    return (lifecycleLoop || event.forwardDrainLoop) &&
+           action.anchor.operation ==
+               (lifecycleLoop ? lifecycleLoop : event.forwardDrainLoop) &&
            !action.anchor.before;
   }
   return false;
@@ -331,7 +338,10 @@ void CanonicalSyncPlanBuilder::deriveEventInterval(
     event.intervalBegin = std::min(event.intervalBegin, position);
     event.intervalEnd = std::max(event.intervalEnd, position);
   }
-  Operation *scope = event.scopeLoop ? event.scopeLoop : event.forwardDrainLoop;
+  Operation *scope = event.resourceScopeLoop
+                         ? event.resourceScopeLoop
+                         : (event.scopeLoop ? event.scopeLoop
+                                            : event.forwardDrainLoop);
   if (scope) {
     event.intervalBegin =
         std::min(event.intervalBegin, getAnchorPosition({scope, true}));
@@ -361,6 +371,22 @@ bool CanonicalSyncPlanBuilder::verifyEventProtocol(const CanonicalEvent &event,
       event.ownershipProtocol != hasOwnershipRole) {
     return reject("ownership protocol has no unique cycle identity");
   }
+  if (event.resourceScopeLoop) {
+    const bool invalidResourceScope =
+        !event.ownershipProtocol ||
+        !isa<scf::ForOp>(event.resourceScopeLoop) ||
+        (event.scopeLoop && event.scopeLoop != event.resourceScopeLoop &&
+         !event.resourceScopeLoop->isAncestor(event.scopeLoop)) ||
+        (event.recurrenceLoop &&
+         event.recurrenceLoop != event.resourceScopeLoop &&
+         !event.resourceScopeLoop->isAncestor(event.recurrenceLoop)) ||
+        (event.forwardDrainLoop &&
+         event.forwardDrainLoop != event.resourceScopeLoop &&
+         !event.resourceScopeLoop->isAncestor(event.forwardDrainLoop));
+    if (invalidResourceScope) {
+      return reject("event resource lifetime is outside its protocol scope");
+    }
+  }
   if (requireAllocation) {
     if (event.eventIds.size() != event.width ||
         llvm::any_of(event.eventIds,
@@ -375,19 +401,44 @@ bool CanonicalSyncPlanBuilder::verifyEventProtocol(const CanonicalEvent &event,
   }
 
   for (const CanonicalEventAction &action : event.actions) {
-    const bool validNonEmptyGuard =
-        !action.nonEmptyLoopGuard ||
-        (event.ownershipProtocol &&
-         action.nonEmptyLoopGuard == event.recurrenceLoop &&
-         isa<scf::ForOp>(action.nonEmptyLoopGuard) &&
-         (action.phase == CanonicalEventActionPhase::Prime ||
-          action.phase == CanonicalEventActionPhase::Drain));
+    const bool hierarchical =
+        event.ownershipProtocol &&
+        event.ownershipProtocolKind ==
+            CanonicalOwnershipProtocolKind::HierarchicalOuterCarry;
+    bool validGuard = false;
+    switch (action.guard.kind) {
+    case CanonicalEventExecutionGuardKind::None:
+      validGuard = !action.guard.loop;
+      break;
+    case CanonicalEventExecutionGuardKind::LoopNonEmpty:
+    case CanonicalEventExecutionGuardKind::LoopEmpty:
+      validGuard =
+          event.ownershipProtocol && action.guard.loop == event.recurrenceLoop &&
+          isa_and_nonnull<scf::ForOp>(action.guard.loop) &&
+          (action.phase == CanonicalEventActionPhase::Prime ||
+           action.phase == CanonicalEventActionPhase::Drain ||
+           (hierarchical &&
+            action.phase == CanonicalEventActionPhase::Body));
+      break;
+    case CanonicalEventExecutionGuardKind::NotFirstIteration:
+    case CanonicalEventExecutionGuardKind::HasSuccessor:
+      validGuard =
+          event.ownershipProtocol &&
+          event.ownershipProtocolKind ==
+              CanonicalOwnershipProtocolKind::BoundaryGuardedRoundTrip &&
+          action.guard.loop == event.recurrenceLoop &&
+          isa_and_nonnull<scf::ForOp>(action.guard.loop) &&
+          action.phase == CanonicalEventActionPhase::Body &&
+          action.anchor.operation &&
+          action.guard.loop->isAncestor(action.anchor.operation);
+      break;
+    }
     if (!action.anchor.operation ||
         (action.lane.kind == CanonicalEventLaneKind::Static &&
          action.lane.index >= event.width) ||
         (action.lane.kind == CanonicalEventLaneKind::Dynamic &&
          (!action.lane.selector || event.width <= 1)) ||
-        !validNonEmptyGuard) {
+        !validGuard) {
       return reject("invalid action anchor or lane selector");
     }
     if (!hasValidPhaseAnchor(event, action) ||
@@ -454,7 +505,11 @@ bool CanonicalSyncPlanBuilder::verifyEventProtocol(const CanonicalEvent &event,
             "completion actions are conditional for an unconditional edge");
       }
     } else if (!completion.recurrenceLoop ||
-               completion.recurrenceLoop != event.recurrenceLoop ||
+               (completion.recurrenceLoop != event.recurrenceLoop &&
+                !(event.ownershipProtocol && event.scopeLoop &&
+                  event.ownershipProtocolKind ==
+                      CanonicalOwnershipProtocolKind::HierarchicalOuterCarry &&
+                  completion.recurrenceLoop == event.scopeLoop)) ||
                !completion.recurrenceLoop->isAncestor(
                    plan_.nodes_[completion.source].operation) ||
                !completion.recurrenceLoop->isAncestor(
@@ -491,6 +546,20 @@ bool CanonicalSyncPlanBuilder::verifyEventProtocol(const CanonicalEvent &event,
   unsigned finalCount = 0;
   bool hasExplicitStateTrace = false;
   for (const CanonicalEventTrace &trace : event.traces) {
+    const bool validTraceGuard =
+        (trace.guard.kind == CanonicalEventExecutionGuardKind::None &&
+         !trace.guard.loop) ||
+        ((trace.guard.kind ==
+              CanonicalEventExecutionGuardKind::LoopNonEmpty ||
+          trace.guard.kind == CanonicalEventExecutionGuardKind::LoopEmpty) &&
+         event.ownershipProtocol &&
+         event.ownershipProtocolKind ==
+             CanonicalOwnershipProtocolKind::HierarchicalOuterCarry &&
+         trace.guard.loop == event.recurrenceLoop &&
+         isa_and_nonnull<scf::ForOp>(trace.guard.loop));
+    if (!validTraceGuard) {
+      return reject("event trace has an invalid execution guard");
+    }
     SmallVector<CanonicalEventAction, 16> actions;
     SmallVector<bool, 16> seen(event.actions.size(), false);
     const CanonicalEventAction *previousAction = nullptr;
@@ -629,8 +698,14 @@ CanonicalSyncPlanBuilder::verifyEventProtocols(ArrayRef<CanonicalEvent> events,
       }
       return failure();
     }
+    const bool hasOneProtocolKind =
+        entry.second[0]->ownershipProtocolKind ==
+        entry.second[1]->ownershipProtocolKind;
+    CanonicalOwnershipCycle protocolCycle = *cycle;
+    protocolCycle.protocol = entry.second[0]->ownershipProtocolKind;
     const bool validPair =
-        verifyCanonicalOwnershipEventPair(*cycle, entry.second);
+        hasOneProtocolKind &&
+        verifyCanonicalOwnershipEventPair(protocolCycle, entry.second);
     if (!validPair) {
       if (diagnose) {
         llvm::errs() << "invalid canonical ownership event lifecycle\n";

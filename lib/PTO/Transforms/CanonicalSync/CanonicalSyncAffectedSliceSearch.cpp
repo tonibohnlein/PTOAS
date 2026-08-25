@@ -545,7 +545,8 @@ void CanonicalSyncPlanBuilder::optimizeAffectedSliceExchanges(
     eligible.push_back(std::move(mechanism));
   }
   for (const CanonicalEventBundleCandidate &bundle : incumbentBundles) {
-    if (bundle.kind == CanonicalEventBundleKind::Ownership) {
+    if (bundle.kind == CanonicalEventBundleKind::Ownership ||
+        !supportsCanonicalLegacySelection(bundle)) {
       continue;
     }
     auto candidate = llvm::find_if(
@@ -684,6 +685,9 @@ void CanonicalSyncPlanBuilder::optimizeAffectedSliceExchanges(
     }
     for (const CanonicalEventBundleCandidate &candidate :
          mechanismUniverse_.eventBundles) {
+      if (!supportsCanonicalLegacySelection(candidate)) {
+        continue;
+      }
       const CanonicalSelectionMechanismRef mechanism{
           CanonicalSelectionMechanismKind::EventBundle, candidate.id};
       const bool unavailable =

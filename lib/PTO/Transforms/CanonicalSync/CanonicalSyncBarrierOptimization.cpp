@@ -184,7 +184,9 @@ bool sameEventProtocol(const CanonicalEvent &first,
   if (first.sourcePipe != second.sourcePipe ||
       first.targetPipe != second.targetPipe || first.width != second.width ||
       first.scopeLoop != second.scopeLoop ||
+      first.resourceScopeLoop != second.resourceScopeLoop ||
       first.ownershipCycle != second.ownershipCycle ||
+      first.ownershipProtocolKind != second.ownershipProtocolKind ||
       first.ownershipRole != second.ownershipRole ||
       first.actions.size() != second.actions.size() ||
       first.completions.size() != second.completions.size() ||
@@ -197,7 +199,9 @@ bool sameEventProtocol(const CanonicalEvent &first,
         left.anchor.before != right.anchor.before ||
         left.lane.kind != right.lane.kind ||
         left.lane.index != right.lane.index ||
-        left.lane.selector != right.lane.selector) {
+        left.lane.selector != right.lane.selector ||
+        left.guard.kind != right.guard.kind ||
+        left.guard.loop != right.guard.loop) {
       return false;
     }
   }
@@ -212,7 +216,9 @@ bool sameEventProtocol(const CanonicalEvent &first,
   }
   for (auto [left, right] : llvm::zip(first.traces, second.traces)) {
     if (left.kind != right.kind || left.actions != right.actions ||
-        left.controlRegion != right.controlRegion) {
+        left.controlRegion != right.controlRegion ||
+        left.guard.kind != right.guard.kind ||
+        left.guard.loop != right.guard.loop) {
       return false;
     }
   }

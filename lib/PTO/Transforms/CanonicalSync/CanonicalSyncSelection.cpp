@@ -79,6 +79,7 @@ bool sameCandidateEventProtocol(const CanonicalEvent &first,
          first.setSlot == second.setSlot && first.waitSlot == second.waitSlot &&
          first.width == second.width &&
          first.ownershipCycle == second.ownershipCycle &&
+         first.ownershipProtocolKind == second.ownershipProtocolKind &&
          first.ownershipRole == second.ownershipRole;
 }
 
@@ -132,7 +133,8 @@ bool sameEventAction(const CanonicalEventAction &first,
          first.lane.kind == second.lane.kind &&
          first.lane.index == second.lane.index &&
          first.lane.selector == second.lane.selector &&
-         first.nonEmptyLoopGuard == second.nonEmptyLoopGuard;
+         first.guard.kind == second.guard.kind &&
+         first.guard.loop == second.guard.loop;
 }
 
 bool sameEventCompletion(const CanonicalEventCompletion &first,
@@ -148,6 +150,8 @@ bool sameEventTrace(const CanonicalEventTrace &first,
                     const CanonicalEventTrace &second) {
   return first.kind == second.kind && first.actions == second.actions &&
          first.controlRegion == second.controlRegion &&
+         first.guard.kind == second.guard.kind &&
+         first.guard.loop == second.guard.loop &&
          first.hasExplicitTokenState == second.hasExplicitTokenState &&
          first.initialTokens == second.initialTokens &&
          first.expectedTokens == second.expectedTokens;
@@ -163,6 +167,7 @@ bool sameEventProjection(const CanonicalEvent &first,
          first.recurrenceLoop == second.recurrenceLoop &&
          first.forwardDrainLoop == second.forwardDrainLoop &&
          first.scopeLoop == second.scopeLoop &&
+         first.resourceScopeLoop == second.resourceScopeLoop &&
          first.iterationDistance == second.iterationDistance &&
          first.setSlot == second.setSlot && first.waitSlot == second.waitSlot &&
          first.width == second.width && first.eventIds == second.eventIds &&
@@ -174,6 +179,7 @@ bool sameEventProjection(const CanonicalEvent &first,
          llvm::equal(first.traces, second.traces, sameEventTrace) &&
          first.protocolBundle == second.protocolBundle &&
          first.ownershipCycle == second.ownershipCycle &&
+         first.ownershipProtocolKind == second.ownershipProtocolKind &&
          first.ownershipRole == second.ownershipRole &&
          first.ownershipProtocol == second.ownershipProtocol;
 }
@@ -252,6 +258,7 @@ bool sameDiagnosticEventProtocol(const CanonicalEvent &first,
                                  const CanonicalEvent &second) {
   return sameCandidateEventProtocol(first, second) &&
          first.scopeLoop == second.scopeLoop &&
+         first.resourceScopeLoop == second.resourceScopeLoop &&
          first.intervalBegin == second.intervalBegin &&
          first.intervalEnd == second.intervalEnd &&
          llvm::equal(first.actions, second.actions, sameEventAction) &&
@@ -281,6 +288,7 @@ bool sameDiagnosticBundleProtocol(
     const CanonicalEventBundleCandidate &first,
     const CanonicalEventBundleCandidate &second) {
   if (first.kind != second.kind ||
+      first.ownershipProtocol != second.ownershipProtocol ||
       first.events.size() != second.events.size() ||
       !sameCompletionWitness(first.completionWitness,
                              second.completionWitness)) {
@@ -329,6 +337,12 @@ void addSaturated(T &total, T value) {
 
 } // namespace
 
+bool mlir::pto::supportsCanonicalLegacySelection(
+    const CanonicalEventBundleCandidate &bundle) {
+  return bundle.applicability ==
+         CanonicalEventBundleApplicability::LegacyAndCovering;
+}
+
 std::vector<CanonicalEventBundleCandidate>
 mlir::pto::buildCanonicalEventBundles(ArrayRef<CanonicalEvent> events) {
   std::vector<CanonicalEventBundleCandidate> bundles;
@@ -341,6 +355,9 @@ mlir::pto::buildCanonicalEventBundles(ArrayRef<CanonicalEvent> events) {
       bundle.id = bundles.size();
       bundle.protocolIdentity = key.second;
       bundle.kind = key.first;
+      if (event.ownershipProtocol) {
+        bundle.ownershipProtocol = event.ownershipProtocolKind;
+      }
       bundles.push_back(std::move(bundle));
     }
     bundles[position->second].events.push_back(event);
@@ -384,6 +401,8 @@ LogicalResult mlir::pto::restoreCanonicalEventBundleIdentities(
     if (known != knownBundles.end()) {
       bundle.id = known->id;
       bundle.protocolIdentity = known->protocolIdentity;
+      bundle.applicability = known->applicability;
+      bundle.ownershipProtocol = known->ownershipProtocol;
       bundle.conflicts = known->conflicts;
       bundle.completionWitness = known->completionWitness;
       bundle.originRequirements = known->originRequirements;
@@ -576,6 +595,7 @@ mlir::pto::selectCanonicalEventCandidateFrontier(
     const auto priority = [](CanonicalEventBundleKind kind) {
       switch (kind) {
       case CanonicalEventBundleKind::Ownership:
+      case CanonicalEventBundleKind::CompositeOwnership:
         return 0;
       case CanonicalEventBundleKind::SyntheticRoundTrip:
         return 1;
@@ -745,12 +765,34 @@ void CanonicalSyncPlanBuilder::buildMechanismUniverse() {
 
   for (const CanonicalOwnershipCycle &cycle : plan_.ownershipCycles_) {
     std::optional<CanonicalEventBundleCandidate> bundle =
-        buildOwnershipEventBundle(cycle);
+        buildOwnershipEventBundle(cycle, cycle.protocol);
     if (!bundle) {
       continue;
     }
     bundle->id = mechanismUniverse_.eventBundles.size();
     mechanismUniverse_.eventBundles.push_back(std::move(*bundle));
+
+    const bool hasBoundaryVariant =
+        cycle.kind == CanonicalOwnershipKind::L0Accumulator &&
+        cycle.protocol == CanonicalOwnershipProtocolKind::RoundTrip;
+    if (hasBoundaryVariant) {
+      std::optional<CanonicalEventBundleCandidate> boundary =
+          buildOwnershipEventBundle(
+              cycle,
+              CanonicalOwnershipProtocolKind::BoundaryGuardedRoundTrip);
+      if (boundary) {
+        boundary->id = mechanismUniverse_.eventBundles.size();
+        boundary->applicability =
+            CanonicalEventBundleApplicability::CoveringOnly;
+        mechanismUniverse_.eventBundles.push_back(std::move(*boundary));
+      }
+    }
+  }
+
+  if (std::optional<CanonicalEventBundleCandidate> composite =
+          buildCompositeOwnershipEventBundle()) {
+    composite->id = mechanismUniverse_.eventBundles.size();
+    mechanismUniverse_.eventBundles.push_back(std::move(*composite));
   }
 
   for (std::size_t first = 0;
@@ -769,19 +811,30 @@ void CanonicalSyncPlanBuilder::buildMechanismUniverse() {
                 });
           });
       bool sharesOwnership = false;
-      if (firstBundle.kind == CanonicalEventBundleKind::Ownership &&
-          secondBundle.kind == CanonicalEventBundleKind::Ownership) {
-        auto firstCycle = llvm::find_if(
-            plan_.ownershipCycles_, [&](const CanonicalOwnershipCycle &cycle) {
-              return cycle.id == firstBundle.protocolIdentity;
-            });
-        auto secondCycle = llvm::find_if(
-            plan_.ownershipCycles_, [&](const CanonicalOwnershipCycle &cycle) {
-              return cycle.id == secondBundle.protocolIdentity;
-            });
-        sharesOwnership = firstCycle != plan_.ownershipCycles_.end() &&
-                          secondCycle != plan_.ownershipCycles_.end() &&
-                          ownershipCyclesConflict(*firstCycle, *secondCycle);
+      for (const CanonicalEvent &firstEvent : firstBundle.events) {
+        if (!firstEvent.ownershipProtocol) {
+          continue;
+        }
+        for (const CanonicalEvent &secondEvent : secondBundle.events) {
+          if (!secondEvent.ownershipProtocol) {
+            continue;
+          }
+          auto firstCycle = llvm::find_if(
+              plan_.ownershipCycles_, [&](const auto &cycle) {
+                return cycle.id == firstEvent.ownershipCycle;
+              });
+          auto secondCycle = llvm::find_if(
+              plan_.ownershipCycles_, [&](const auto &cycle) {
+                return cycle.id == secondEvent.ownershipCycle;
+              });
+          const bool knownCycles =
+              firstCycle != plan_.ownershipCycles_.end() &&
+              secondCycle != plan_.ownershipCycles_.end();
+          sharesOwnership |=
+              knownCycles &&
+              (firstCycle->id == secondCycle->id ||
+               ownershipCyclesConflict(*firstCycle, *secondCycle));
+        }
       }
       if (sharesProtocol || sharesOwnership) {
         addBundleConflict(firstBundle, secondBundle);
@@ -896,9 +949,20 @@ CanonicalMechanismPlanScore CanonicalSyncPlanBuilder::scoreCandidatePlan(
   std::vector<CanonicalEvent> scoredEvents;
   for (const CanonicalEventBundleCandidate &bundle : eventBundles) {
     score.candidateSignature.push_back(bundle.id);
-    if (bundle.kind == CanonicalEventBundleKind::Ownership) {
+    if (bundle.kind == CanonicalEventBundleKind::Ownership ||
+        bundle.kind == CanonicalEventBundleKind::CompositeOwnership) {
       ++score.usefulOwnershipBundles;
-      score.ownershipSignature.push_back(bundle.protocolIdentity);
+      if (bundle.kind == CanonicalEventBundleKind::Ownership) {
+        score.ownershipSignature.push_back(bundle.protocolIdentity);
+      } else {
+        for (const CanonicalEvent &event : bundle.events) {
+          if (event.ownershipProtocol &&
+              !llvm::is_contained(score.ownershipSignature,
+                                  event.ownershipCycle)) {
+            score.ownershipSignature.push_back(event.ownershipCycle);
+          }
+        }
+      }
     }
     for (const CanonicalEvent &event : bundle.events) {
       scoredEvents.push_back(event);
@@ -1091,6 +1155,9 @@ bool CanonicalSyncPlanBuilder::bootstrapFeasibleMechanismPlan(
       SmallVector<const CanonicalEventBundleCandidate *, 16> eventCandidates;
       for (const CanonicalEventBundleCandidate &candidate :
            mechanismUniverse_.eventBundles) {
+        if (!supportsCanonicalLegacySelection(candidate)) {
+          continue;
+        }
         const bool selected = llvm::any_of(
             state.bundles, [&](const auto &bundle) {
               return bundle.id == candidate.id ||
@@ -1229,6 +1296,9 @@ LogicalResult CanonicalSyncPlanBuilder::optimizeMechanismSelection() {
     SmallVector<const CanonicalEventBundleCandidate *, 16> eventCandidates;
     for (const CanonicalEventBundleCandidate &candidate :
          mechanismUniverse_.eventBundles) {
+      if (!supportsCanonicalLegacySelection(candidate)) {
+        continue;
+      }
       const bool selected = llvm::any_of(
           incumbentBundles, [&](const auto &bundle) {
             return bundle.id == candidate.id ||
@@ -1501,6 +1571,9 @@ LogicalResult CanonicalSyncPlanBuilder::buildSelectionDiagnostics() {
   SmallVector<const CanonicalEventBundleCandidate *, 64> uniqueCandidates;
   for (const CanonicalEventBundleCandidate &candidate :
        mechanismUniverse_.eventBundles) {
+    if (!supportsCanonicalLegacySelection(candidate)) {
+      continue;
+    }
     const bool duplicatesEarlier = llvm::any_of(
         uniqueCandidates, [&](const auto *earlier) {
           return canonicalDiagnosticEventBundlesEquivalent(
@@ -1674,12 +1747,25 @@ bool CanonicalSyncPlanBuilder::isCandidatePlanWellFormed(
       continue;
     }
 
+    if (bundle.kind == CanonicalEventBundleKind::CompositeOwnership) {
+      if (!verifyCanonicalCompositeOwnershipBundle(
+              bundle, plan_.ownershipCycles_, plan_.nodes_)) {
+        return false;
+      }
+      continue;
+    }
+
     auto cycle = llvm::find_if(plan_.ownershipCycles_, [&](const auto &entry) {
       return entry.id == bundle.protocolIdentity;
     });
+    CanonicalOwnershipCycle protocolCycle;
+    if (cycle != plan_.ownershipCycles_.end()) {
+      protocolCycle = *cycle;
+      protocolCycle.protocol = bundle.ownershipProtocol;
+    }
     const bool malformedOwnership =
         cycle == plan_.ownershipCycles_.end() ||
-        !verifyCanonicalOwnershipEventPair(*cycle, eventPointers);
+        !verifyCanonicalOwnershipEventPair(protocolCycle, eventPointers);
     if (malformedOwnership) {
       return false;
     }

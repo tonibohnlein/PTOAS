@@ -949,6 +949,8 @@ SmallVector<CanonicalOwnershipCycle, 2> recognizeParityL1Cycles(
     return result;
   }
   prefetch.initialProducers.push_back(*initialProducer);
+  prefetch.initialWriteAcquireAnchor =
+      {planNodes[*initialProducer].operation, true};
   prefetch.initialReadyAnchor = {loop, true};
   prefetch.initialReadyLane = firstPathUse.lane;
   prefetch.initiallyFreeLanes.push_back(firstPathUse.producerLane);
@@ -967,6 +969,10 @@ bool ownershipCyclesEqual(const CanonicalOwnershipCycle &first,
       first.consumerPipe != second.consumerPipe ||
       first.lanes.size() != second.lanes.size() ||
       first.initialProducers != second.initialProducers ||
+      first.initialWriteAcquireAnchor.operation !=
+          second.initialWriteAcquireAnchor.operation ||
+      first.initialWriteAcquireAnchor.before !=
+          second.initialWriteAcquireAnchor.before ||
       first.initialReadyAnchor.operation !=
           second.initialReadyAnchor.operation ||
       first.initialReadyAnchor.before != second.initialReadyAnchor.before ||
