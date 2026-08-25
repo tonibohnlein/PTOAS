@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- CanonicalSync.h - Canonical synchronization planning ------*- C++
 //-*-===//
@@ -317,8 +319,7 @@ struct CanonicalEvent {
   std::size_t ownershipCycle = 0;
   CanonicalOwnershipProtocolKind ownershipProtocolKind =
       CanonicalOwnershipProtocolKind::RoundTrip;
-  CanonicalOwnershipEventRole ownershipRole =
-      CanonicalOwnershipEventRole::None;
+  CanonicalOwnershipEventRole ownershipRole = CanonicalOwnershipEventRole::None;
   bool ownershipProtocol = false;
 };
 
@@ -380,6 +381,15 @@ struct CanonicalSyncCoveringSelectedResourceUse {
   std::size_t width = 0;
   SyncCoverTimelineInterval lifetime;
   std::optional<std::size_t> materializationEventIndex;
+};
+
+/// Emission recipe for one selected verified slot protocol. The event remains
+/// unallocated until materialization binds its single resource use.
+struct CanonicalSyncCoveringSelectedSlotProtocol {
+  SyncCoverMechanismId mechanism = 0;
+  CanonicalSelectionMechanismRef provider;
+  std::size_t resourceUse = 0;
+  CanonicalEvent event;
 };
 
 enum class CanonicalSyncCoveringAllocationError : std::uint8_t {
@@ -507,6 +517,7 @@ struct CanonicalSyncCoveringShadowSnapshot {
   std::size_t nonBoundarySlotProtocolReleases = 0;
   std::size_t slotProtocolEvaluations = 0;
   bool slotProtocolGenerationTruncated = false;
+  std::size_t unmaterializableSlotProtocolCandidates = 0;
   std::size_t resourceDomainCount = 0;
   std::size_t barrierCandidates = 0;
   std::size_t eventBundleCandidates = 0;
@@ -525,6 +536,7 @@ struct CanonicalSyncCoveringShadowSnapshot {
   std::vector<std::size_t> barrierActionProfile;
   std::vector<CanonicalSyncCoveringSelectedProvider> selectedProviders;
   std::vector<CanonicalSyncCoveringSelectedResourceUse> selectedResourceUses;
+  std::vector<CanonicalSyncCoveringSelectedSlotProtocol> selectedSlotProtocols;
   std::vector<CanonicalSyncCoveringResourceAllocation> selectedAllocations;
   std::vector<SyncCoverResourceDomain> resourceDomainDetails;
   SyncCoverResourceSelection selectedResources;
@@ -623,8 +635,8 @@ LogicalResult emitCanonicalSyncPlan(func::FuncOp func,
 StringRef stringifyCanonicalDependencyKind(CanonicalDependencyKind kind);
 StringRef stringifyCanonicalGMAliasPolicy(CanonicalGMAliasPolicy policy);
 StringRef stringifyCanonicalEventBundleKind(CanonicalEventBundleKind kind);
-StringRef stringifyCanonicalSelectionMechanismKind(
-    CanonicalSelectionMechanismKind kind);
+StringRef
+stringifyCanonicalSelectionMechanismKind(CanonicalSelectionMechanismKind kind);
 StringRef stringifyCanonicalOwnershipKind(CanonicalOwnershipKind kind);
 void printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
                             const CanonicalSyncPlan &plan, StringRef view);

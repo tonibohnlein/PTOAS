@@ -15,9 +15,9 @@
 #include "CanonicalSyncInternal.h"
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverCandidateIndex.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverCoverage.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverSlotLifecycle.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverSlotProtocol.h"
-#include "PTO/Transforms/CanonicalSync/SyncCoverCoverage.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Matchers.h"
@@ -25,8 +25,8 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/FunctionExtras.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -134,7 +134,7 @@ public:
       func::FuncOp func, const CanonicalSyncPlan &plan,
       const CanonicalMechanismUniverse &legacyUniverse,
       ArrayRef<CanonicalEventBundleCandidate> selectedEventBundles,
-      unsigned eventIdMax, bool registerShadowSlotProtocols,
+      unsigned eventIdMax,
       const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
       std::function<bool(PipelineType)> hasHardwareCompletion,
       std::function<bool(const CanonicalDependency &)> hasIntrinsicOrdering,
@@ -144,7 +144,6 @@ public:
       std::function<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols)
       : func_(func), plan_(plan), legacyUniverse_(legacyUniverse),
         selectedEventBundles_(selectedEventBundles), eventIdMax_(eventIdMax),
-        registerShadowSlotProtocols_(registerShadowSlotProtocols),
         reservedIds_(reservedIds),
         hasHardwareCompletion_(std::move(hasHardwareCompletion)),
         hasIntrinsicOrdering_(std::move(hasIntrinsicOrdering)),
@@ -154,13 +153,13 @@ public:
 
   LogicalResult build(CanonicalSyncCoveringShadowSnapshot &snapshot) {
     regionContexts_[&func_.getBody()] = {};
-    if (failed(buildRegionScopes(func_.getBody(), regionContexts_.at(
-                                                     &func_.getBody())))) {
+    if (failed(buildRegionScopes(func_.getBody(),
+                                 regionContexts_.at(&func_.getBody())))) {
       return failure();
     }
-    const bool graphBuilt = succeeded(addNodes()) && succeeded(addFixedEdges()) &&
-                            succeeded(addRecurrenceCarryEdges()) &&
-                            succeeded(addDemands());
+    const bool graphBuilt =
+        succeeded(addNodes()) && succeeded(addFixedEdges()) &&
+        succeeded(addRecurrenceCarryEdges()) && succeeded(addDemands());
     if (!graphBuilt) {
       return failure();
     }
@@ -185,8 +184,7 @@ public:
     }
     snapshot.slotLifecycleDetails.clear();
     snapshot.slotLifecycleDetails.reserve(lifecycleResult.lifecycles.size());
-    for (const SyncCoverSlotLifecycle &lifecycle :
-         lifecycleResult.lifecycles) {
+    for (const SyncCoverSlotLifecycle &lifecycle : lifecycleResult.lifecycles) {
       snapshot.slotLifecycleDetails.push_back(
           {lifecycle.id, lifecycle.slot.domain, lifecycle.slot.extent,
            lifecycle.producerResource, lifecycle.consumerResource,
@@ -229,12 +227,11 @@ public:
       regionScopes_.emplace(entry.first, entry.second.scope);
     }
     if (failed(runCanonicalSyncCoveringShadowSelection(
-        func_, plan_, legacyUniverse_, selectedEventBundles_, eventIdMax_,
+            func_, plan_, legacyUniverse_, selectedEventBundles_, eventIdMax_,
             reservedIds_, graph_, candidateIndex, lifecycleResult,
-            protocolResult, registerShadowSlotProtocols_, activeDemands_,
-            regionScopes_, loopScopes_, getAnchorPosition_,
-            getBarrierCompletionEdges_,
-            verifyEventProtocols_, snapshot))) {
+            protocolResult, activeDemands_, regionScopes_, loopScopes_,
+            getAnchorPosition_,
+            getBarrierCompletionEdges_, verifyEventProtocols_, snapshot))) {
       return failure();
     }
     snapshot.scopes = graph_.getScopes().size();
@@ -261,7 +258,8 @@ private:
   std::optional<SyncCoverTimelineInterval>
   getOperationTimeline(Operation *operation) const {
     return getTimeline([&](const CanonicalSyncNode &node) {
-      return operation == node.operation || operation->isAncestor(node.operation);
+      return operation == node.operation ||
+             operation->isAncestor(node.operation);
     });
   }
 
@@ -319,10 +317,10 @@ private:
         const bool isLoop = isa<LoopLikeOpInterface>(&operation);
         const bool containerMustExecute =
             !isLoop || hasStaticallyPositiveTripCount(&operation);
-        FailureOr<SyncCoverScopeId> containerScope = addScope(
-            context.scope, containerMustExecute,
-            getOperationTimeline(&operation), isLoop,
-            "structured-container scope insertion");
+        FailureOr<SyncCoverScopeId> containerScope =
+            addScope(context.scope, containerMustExecute,
+                     getOperationTimeline(&operation), isLoop,
+                     "structured-container scope insertion");
         if (failed(containerScope)) {
           return failure();
         }
@@ -332,8 +330,8 @@ private:
 
         std::optional<SyncCoverControlId> control;
         if (isa<scf::IfOp>(&operation)) {
-          const SyncCoverGraphResult result = graph_.addControl(
-              operation.getNumRegions(), *containerScope);
+          const SyncCoverGraphResult result =
+              graph_.addControl(operation.getNumRegions(), *containerScope);
           if (!result || !result.index) {
             return emitGraphError("structured-control insertion", result);
           }
@@ -382,8 +380,7 @@ private:
     const auto collectCompletionTargets = [&](const auto &bundles) {
       for (const CanonicalEventBundleCandidate &bundle : bundles) {
         for (const CanonicalEvent &event : bundle.events) {
-          for (const CanonicalEventCompletion &completion :
-               event.completions) {
+          for (const CanonicalEventCompletion &completion : event.completions) {
             completionTargets[completion.source].insert(
                 static_cast<std::uint32_t>(event.targetPipe));
           }
@@ -566,8 +563,7 @@ private:
     return success();
   }
 
-  FailureOr<SyncCoverStorageDomainId>
-  getStorageDomain(AddressSpace space) {
+  FailureOr<SyncCoverStorageDomainId> getStorageDomain(AddressSpace space) {
     auto existing = storageDomains_.find(space);
     if (existing != storageDomains_.end()) {
       return existing->second;
@@ -612,17 +608,16 @@ private:
     const std::pair<std::size_t, std::size_t> familyKey{node.id, accessIndex};
     auto family = storageFamilies_.find(familyKey);
     if (family == storageFamilies_.end()) {
-      family = storageFamilies_
-                   .emplace(familyKey,
-                            static_cast<SyncCoverStorageAccessFamilyId>(
-                                storageFamilies_.size()))
-                   .first;
+      family =
+          storageFamilies_
+              .emplace(familyKey, static_cast<SyncCoverStorageAccessFamilyId>(
+                                      storageFamilies_.size()))
+              .first;
     }
     const SyncCoverStorageAccessMode mode =
-        access.reads && access.writes
-            ? SyncCoverStorageAccessMode::ReadWrite
-            : access.writes ? SyncCoverStorageAccessMode::Write
-                            : SyncCoverStorageAccessMode::Read;
+        access.reads && access.writes ? SyncCoverStorageAccessMode::ReadWrite
+        : access.writes               ? SyncCoverStorageAccessMode::Write
+                                      : SyncCoverStorageAccessMode::Read;
     const SyncCoverGraphResult result = graph_.addStorageAccess(
         node.id, *domain, family->second, {begin, begin + access.size}, mode,
         addressOrdinal);
@@ -710,7 +705,6 @@ private:
   const CanonicalMechanismUniverse &legacyUniverse_;
   std::vector<CanonicalEventBundleCandidate> selectedEventBundles_;
   unsigned eventIdMax_ = 0;
-  bool registerShadowSlotProtocols_ = false;
   const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds_;
   std::function<bool(PipelineType)> hasHardwareCompletion_;
   std::function<bool(const CanonicalDependency &)> hasIntrinsicOrdering_;
@@ -723,8 +717,7 @@ private:
   std::map<Region *, SyncCoverScopeId, std::less<Region *>> regionScopes_;
   DenseMap<Operation *, SyncCoverScopeId> loopScopes_;
   std::map<AddressSpace, SyncCoverStorageDomainId> storageDomains_;
-  std::map<std::pair<std::size_t, std::size_t>,
-           SyncCoverStorageAccessFamilyId>
+  std::map<std::pair<std::size_t, std::size_t>, SyncCoverStorageAccessFamilyId>
       storageFamilies_;
   std::map<std::tuple<std::size_t, std::size_t, unsigned>,
            SyncCoverStorageAccessId>
@@ -743,7 +736,7 @@ LogicalResult CanonicalSyncPlanBuilder::buildCoveringShadowGraph() {
   CanonicalSyncCoveringShadowSnapshot snapshot;
   CanonicalSyncCoveringGraphAdapter adapter(
       func_, plan_, mechanismUniverse_, selectedEventBundles_, eventIdMax_,
-      !coveringEmissionEnabled_, reservedIds_,
+      reservedIds_,
       [&](PipelineType pipe) { return hasHardwareCompletion(pipe); },
       [&](const CanonicalDependency &dependency) {
         return hasIntrinsicMmadAccumulatorOrdering(dependency);

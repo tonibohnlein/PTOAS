@@ -14,6 +14,7 @@
 #ifndef PTO_LIB_TRANSFORMS_CANONICALSYNC_COVERINGSELECTION_H
 #define PTO_LIB_TRANSFORMS_CANONICALSYNC_COVERINGSELECTION_H
 
+#include "CanonicalSyncCoveringSlotRecipe.h"
 #include "CanonicalSyncInternal.h"
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverSlotProtocol.h"
@@ -32,8 +33,7 @@ namespace canonical_sync_covering {
 
 using ProviderMap =
     std::map<CanonicalSelectionMechanismRef, SyncCoverMechanismId>;
-using DomainMap =
-    std::map<CanonicalEventDomainKey, SyncCoverResourceDomainId>;
+using DomainMap = std::map<CanonicalEventDomainKey, SyncCoverResourceDomainId>;
 
 std::optional<std::uint64_t>
 encodeProviderIdentity(CanonicalSelectionMechanismKind kind, std::size_t id);
@@ -44,9 +44,9 @@ bool sameDescriptor(const SyncCoverMechanismDescriptor &first,
 bool barriersEquivalent(const CanonicalBarrier &first,
                         const CanonicalBarrier &second);
 
-std::optional<SyncCoverScopeId>
-getEndpointScope(const SyncCoverGraph &graph, std::size_t source,
-                 std::size_t target);
+std::optional<SyncCoverScopeId> getEndpointScope(const SyncCoverGraph &graph,
+                                                 std::size_t source,
+                                                 std::size_t target);
 
 std::optional<SyncCoverScopeId> getAnchorOccurrenceScope(
     const CanonicalAnchor &anchor,
@@ -55,8 +55,7 @@ std::optional<SyncCoverScopeId> getAnchorOccurrenceScope(
 
 bool isCanonicalForwardEvent(
     const CanonicalEventBundleCandidate &bundle, const SyncCoverGraph &graph,
-    llvm::function_ref<std::size_t(const CanonicalAnchor &)>
-        getAnchorPosition);
+    llvm::function_ref<std::size_t(const CanonicalAnchor &)> getAnchorPosition);
 
 struct TranslatedEventBundleMechanism {
   SyncCoverMechanismDescriptor descriptor;
@@ -69,8 +68,7 @@ std::optional<TranslatedEventBundleMechanism> translateVerifiedEventBundle(
     const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
         &regionScopes,
     const DenseMap<Operation *, SyncCoverScopeId> &loopScopes,
-    llvm::function_ref<std::size_t(const CanonicalAnchor &)>
-        getAnchorPosition);
+    llvm::function_ref<std::size_t(const CanonicalAnchor &)> getAnchorPosition);
 
 bool verifyBundleShape(const CanonicalEventBundleCandidate &bundle,
                        ArrayRef<CanonicalOwnershipCycle> cycles,
@@ -84,8 +82,7 @@ bool verifyTranslatedEventBundleCorrespondence(
     const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
         &regionScopes,
     const DenseMap<Operation *, SyncCoverScopeId> &loopScopes,
-    llvm::function_ref<std::size_t(const CanonicalAnchor &)>
-        getAnchorPosition);
+    llvm::function_ref<std::size_t(const CanonicalAnchor &)> getAnchorPosition);
 
 class MechanismAdapter {
 public:
@@ -98,7 +95,6 @@ public:
       SyncCoverGraph &graph, const SyncCoverCandidateIndex &candidateIndex,
       const SyncCoverSlotLifecycleResult &slotLifecycles,
       const SyncCoverSlotProtocolResult &slotProtocols,
-      bool registerShadowSlotProtocols,
       ArrayRef<SyncCoverDemandId> activeDemands,
       const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
           &regionScopes,
@@ -123,8 +119,8 @@ private:
   LogicalResult solve(CanonicalSyncCoveringShadowSnapshot &snapshot);
   LogicalResult validateSelectedResourceUsesAgainstUniverse(
       const CanonicalSyncCoveringShadowSnapshot &snapshot);
-  LogicalResult emitMechanismError(
-      StringRef context, const SyncCoverMechanismResult &result);
+  LogicalResult emitMechanismError(StringRef context,
+                                   const SyncCoverMechanismResult &result);
 
   func::FuncOp func_;
   const CanonicalSyncPlan &plan_;
@@ -136,7 +132,6 @@ private:
   const SyncCoverCandidateIndex &candidateIndex_;
   const SyncCoverSlotLifecycleResult &slotLifecycles_;
   const SyncCoverSlotProtocolResult &slotProtocols_;
-  bool registerShadowSlotProtocols_ = false;
   const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
       &regionScopes_;
   const DenseMap<Operation *, SyncCoverScopeId> &loopScopes_;
@@ -146,11 +141,14 @@ private:
   std::function<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols_;
   DomainMap domains_;
   ProviderMap providers_;
+  std::map<CanonicalSelectionMechanismRef, SlotProtocolRecipe>
+      slotProtocolRecipes_;
   std::map<std::pair<SyncCoverMechanismId, std::size_t>, std::size_t>
       eventResourceUses_;
   std::vector<CanonicalEventBundleCandidate> eventBundles_;
   std::vector<SyncCoverMechanismId> legacySeed_;
   std::vector<SyncCoverDemandId> activeDemands_;
+  std::size_t unmaterializableSlotProtocols_ = 0;
 };
 
 } // namespace canonical_sync_covering

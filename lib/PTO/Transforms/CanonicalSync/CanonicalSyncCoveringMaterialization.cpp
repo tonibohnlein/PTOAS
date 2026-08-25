@@ -9,9 +9,11 @@
 // for the full text of the License.
 
 #include "CanonicalSyncInternal.h"
+#include "CanonicalSyncCoveringSlotRecipe.h"
 
 #include "llvm/ADT/STLExtras.h"
 
+#include <algorithm>
 #include <limits>
 #include <map>
 #include <set>
@@ -25,27 +27,51 @@ namespace {
 
 using ResourceOwner = std::pair<SyncCoverMechanismId, std::size_t>;
 
-const CanonicalEventBundleCandidate *findEventBundleProvider(
-    const CanonicalMechanismUniverse &universe,
-    ArrayRef<CanonicalEventBundleCandidate> selected, std::size_t id) {
+const CanonicalEventBundleCandidate *
+findEventBundleProvider(const CanonicalMechanismUniverse &universe,
+                        ArrayRef<CanonicalEventBundleCandidate> selected,
+                        std::size_t id) {
   auto candidate = llvm::find_if(
-      universe.eventBundles,
-      [&](const CanonicalEventBundleCandidate &bundle) { return bundle.id == id; });
+      universe.eventBundles, [&](const CanonicalEventBundleCandidate &bundle) {
+        return bundle.id == id;
+      });
   if (candidate != universe.eventBundles.end()) {
     return &*candidate;
   }
-  auto fallback = llvm::find_if(
-      selected,
-      [&](const CanonicalEventBundleCandidate &bundle) { return bundle.id == id; });
+  auto fallback =
+      llvm::find_if(selected, [&](const CanonicalEventBundleCandidate &bundle) {
+        return bundle.id == id;
+      });
   return fallback == selected.end() ? nullptr : &*fallback;
 }
 
-const CanonicalBarrierCandidate *findBarrierProvider(
-    const CanonicalMechanismUniverse &universe, std::size_t id) {
-  auto candidate = llvm::find_if(
-      universe.barriers,
-      [&](const CanonicalBarrierCandidate &barrier) { return barrier.id == id; });
+const CanonicalBarrierCandidate *
+findBarrierProvider(const CanonicalMechanismUniverse &universe,
+                    std::size_t id) {
+  auto candidate = llvm::find_if(universe.barriers,
+                                 [&](const CanonicalBarrierCandidate &barrier) {
+                                   return barrier.id == id;
+                                 });
   return candidate == universe.barriers.end() ? nullptr : &*candidate;
+}
+
+std::optional<std::size_t>
+getFirstSyntheticBundleId(const CanonicalMechanismUniverse &universe,
+                          ArrayRef<CanonicalEventBundleCandidate> selected) {
+  std::size_t next = 0;
+  const auto account = [&](const CanonicalEventBundleCandidate &bundle) {
+    if (bundle.id == std::numeric_limits<std::size_t>::max()) {
+      return false;
+    }
+    next = std::max(next, bundle.id + 1);
+    return true;
+  };
+  const bool identityOverflow = !llvm::all_of(universe.eventBundles, account) ||
+                                !llvm::all_of(selected, account);
+  if (identityOverflow) {
+    return std::nullopt;
+  }
+  return next;
 }
 
 } // namespace
@@ -60,11 +86,10 @@ LogicalResult CanonicalSyncPlanBuilder::materializeCoveringSelection() {
   const CanonicalSyncCoveringAllocationValidation allocationValidation =
       validateCanonicalSyncCoveringAllocation(snapshot);
   if (!allocationValidation) {
-    InFlightDiagnostic diagnostic = func_.emitError()
-                                    << "internal error: covering emission "
-                                       "allocation is invalid: "
-                                    << static_cast<unsigned>(
-                                           allocationValidation.error);
+    InFlightDiagnostic diagnostic =
+        func_.emitError() << "internal error: covering emission "
+                             "allocation is invalid: "
+                          << static_cast<unsigned>(allocationValidation.error);
     if (allocationValidation.mechanism) {
       diagnostic << " mechanism=" << *allocationValidation.mechanism;
     }
@@ -84,9 +109,9 @@ LogicalResult CanonicalSyncPlanBuilder::materializeCoveringSelection() {
       allocations;
   for (const CanonicalSyncCoveringResourceAllocation &allocation :
        snapshot.selectedAllocations) {
-    allocations.emplace(ResourceOwner{allocation.mechanism,
-                                      allocation.resourceUse},
-                        &allocation);
+    allocations.emplace(
+        ResourceOwner{allocation.mechanism, allocation.resourceUse},
+        &allocation);
   }
   std::map<CanonicalSelectionMechanismRef,
            std::vector<const CanonicalSyncCoveringSelectedResourceUse *>>
@@ -94,6 +119,22 @@ LogicalResult CanonicalSyncPlanBuilder::materializeCoveringSelection() {
   for (const CanonicalSyncCoveringSelectedResourceUse &use :
        snapshot.selectedResourceUses) {
     usesByProvider[use.provider].push_back(&use);
+  }
+  std::map<CanonicalSelectionMechanismRef,
+           const CanonicalSyncCoveringSelectedSlotProtocol *>
+      slotProtocols;
+  for (const CanonicalSyncCoveringSelectedSlotProtocol &recipe :
+       snapshot.selectedSlotProtocols) {
+    if (!slotProtocols.emplace(recipe.provider, &recipe).second) {
+      return func_.emitError(
+          "internal error: covering slot protocol recipe is duplicated");
+    }
+  }
+  std::optional<std::size_t> nextSyntheticBundle =
+      getFirstSyntheticBundleId(mechanismUniverse_, selectedEventBundles_);
+  if (!nextSyntheticBundle) {
+    return func_.emitError(
+        "internal error: covering slot protocol bundle identity overflow");
   }
 
   std::vector<CanonicalBarrier> barriers;
@@ -114,9 +155,35 @@ LogicalResult CanonicalSyncPlanBuilder::materializeCoveringSelection() {
     }
     if (selected.provider.kind ==
         CanonicalSelectionMechanismKind::SlotProtocol) {
-      return func_.emitError(
-          "internal error: shadow-only slot protocol reached covering "
-          "materialization");
+      auto recipe = slotProtocols.find(selected.provider);
+      const bool invalidRecipe =
+          recipe == slotProtocols.end() || !hasUses ||
+          uses->second.size() != 1 ||
+          recipe->second->mechanism != selected.mechanism ||
+          !(recipe->second->provider == selected.provider) ||
+          recipe->second->resourceUse != uses->second.front()->resourceUse;
+      if (invalidRecipe) {
+        return func_.emitError(
+            "internal error: covering slot protocol recipe is invalid");
+      }
+      const CanonicalSyncCoveringSelectedResourceUse &use =
+          *uses->second.front();
+      auto allocation =
+          allocations.find(ResourceOwner{use.mechanism, use.resourceUse});
+      if (allocation == allocations.end()) {
+        return func_.emitError(
+            "internal error: covering slot protocol allocation is invalid");
+      }
+      std::optional<CanonicalEventBundleCandidate> bundle =
+          canonical_sync_covering::materializeSlotProtocolBundle(
+              *recipe->second, use, *allocation->second, *nextSyntheticBundle);
+      if (!bundle) {
+        return func_.emitError(
+            "internal error: covering slot protocol allocation is invalid");
+      }
+      ++*nextSyntheticBundle;
+      bundles.push_back(std::move(*bundle));
+      continue;
     }
 
     const CanonicalEventBundleCandidate *candidate = findEventBundleProvider(
@@ -236,8 +303,7 @@ LogicalResult CanonicalSyncPlanBuilder::materializeCoveringSelection() {
     domain.targetPipe = key.target;
     domain.originalEventCount = eventCount;
     domain.eventCount = static_cast<unsigned>(eventCount);
-    domain.availableIds =
-        static_cast<unsigned>(pressure->second->available);
+    domain.availableIds = static_cast<unsigned>(pressure->second->available);
     domain.originalColorCount =
         static_cast<unsigned>(pressure->second->required);
     domain.colorCount = static_cast<unsigned>(pressure->second->required);

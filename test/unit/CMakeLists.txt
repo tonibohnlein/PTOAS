@@ -153,6 +153,7 @@ target_link_libraries(pto-canonical-sync-covering-translation-unit-test PRIVATE
   MLIRArithDialect
   MLIRFuncDialect
   MLIRIR
+  MLIRSCFDialect
   PTOTransforms
   LLVMSupport
 )

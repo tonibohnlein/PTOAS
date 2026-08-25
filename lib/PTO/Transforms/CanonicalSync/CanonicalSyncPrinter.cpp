@@ -588,7 +588,9 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
        << snapshot.nonBoundarySlotProtocolReleases
        << " evaluations=" << snapshot.slotProtocolEvaluations
        << " truncated="
-       << (snapshot.slotProtocolGenerationTruncated ? "yes" : "no") << '\n';
+       << (snapshot.slotProtocolGenerationTruncated ? "yes" : "no")
+       << " unmaterializable-candidates="
+       << snapshot.unmaterializableSlotProtocolCandidates << '\n';
     os << "  covering-selection status="
        << (snapshot.selectionAttempted ? "ready" : "not-run")
        << " error=" << stringifyCoveringSelectionError(snapshot.selectionError)

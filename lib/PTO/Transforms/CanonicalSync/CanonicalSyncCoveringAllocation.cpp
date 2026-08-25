@@ -23,12 +23,12 @@ namespace {
 
 using ResourceOwner = std::pair<SyncCoverMechanismId, std::size_t>;
 
-CanonicalSyncCoveringAllocationValidation makeError(
-    CanonicalSyncCoveringAllocationError error,
-    std::optional<SyncCoverMechanismId> mechanism = std::nullopt,
-    std::optional<std::size_t> resourceUse = std::nullopt,
-    std::optional<SyncCoverResourceDomainId> domain = std::nullopt,
-    std::optional<unsigned> physicalId = std::nullopt) {
+CanonicalSyncCoveringAllocationValidation
+makeError(CanonicalSyncCoveringAllocationError error,
+          std::optional<SyncCoverMechanismId> mechanism = std::nullopt,
+          std::optional<std::size_t> resourceUse = std::nullopt,
+          std::optional<SyncCoverResourceDomainId> domain = std::nullopt,
+          std::optional<unsigned> physicalId = std::nullopt) {
   return {error, mechanism, resourceUse, domain, physicalId};
 }
 
@@ -62,8 +62,7 @@ mlir::pto::validateCanonicalSyncCoveringAllocation(
       snapshot.selectionError == SyncCoverSelectionError::None &&
       static_cast<bool>(snapshot.selectedResources);
   if (!selectionReady) {
-    return makeError(
-        CanonicalSyncCoveringAllocationError::SelectionNotReady);
+    return makeError(CanonicalSyncCoveringAllocationError::SelectionNotReady);
   }
 
   std::map<SyncCoverMechanismId, CanonicalSelectionMechanismRef> providers;
@@ -85,9 +84,43 @@ mlir::pto::validateCanonicalSyncCoveringAllocation(
     return makeError(CanonicalSyncCoveringAllocationError::InvalidProvider);
   }
 
+  std::map<SyncCoverMechanismId,
+           const CanonicalSyncCoveringSelectedSlotProtocol *>
+      slotProtocols;
+  std::set<CanonicalSelectionMechanismRef> slotProtocolProviders;
+  for (const CanonicalSyncCoveringSelectedSlotProtocol &recipe :
+       snapshot.selectedSlotProtocols) {
+    auto provider = providers.find(recipe.mechanism);
+    const bool providerValid =
+        provider != providers.end() && provider->second == recipe.provider &&
+        recipe.provider.kind == CanonicalSelectionMechanismKind::SlotProtocol;
+    const bool recipeValid =
+        recipe.event.eventIds.empty() && recipe.event.width == 1 &&
+        recipe.event.iterationDistance == 1 && recipe.event.recurrenceLoop &&
+        recipe.event.scopeLoop == recipe.event.recurrenceLoop &&
+        !recipe.event.resourceScopeLoop;
+    const bool uniqueMechanism =
+        slotProtocols.emplace(recipe.mechanism, &recipe).second;
+    const bool uniqueProvider =
+        slotProtocolProviders.insert(recipe.provider).second;
+    if (!providerValid || !recipeValid || !uniqueMechanism || !uniqueProvider) {
+      return makeError(CanonicalSyncCoveringAllocationError::InvalidProvider,
+                       recipe.mechanism, recipe.resourceUse);
+    }
+  }
+  for (const auto &[mechanism, provider] : providers) {
+    const bool isSlot =
+        provider.kind == CanonicalSelectionMechanismKind::SlotProtocol;
+    const bool slotRecipePresenceMismatch =
+        isSlot != (slotProtocols.count(mechanism) != 0);
+    if (slotRecipePresenceMismatch) {
+      return makeError(CanonicalSyncCoveringAllocationError::InvalidProvider,
+                       mechanism);
+    }
+  }
+
   std::map<SyncCoverResourceDomainId, const SyncCoverResourceDomain *> domains;
-  for (const SyncCoverResourceDomain &domain :
-       snapshot.resourceDomainDetails) {
+  for (const SyncCoverResourceDomain &domain : snapshot.resourceDomainDetails) {
     const bool uniqueDomain = domains.emplace(domain.id, &domain).second;
     const bool reservationsValid =
         std::is_sorted(domain.reservedIds.begin(), domain.reservedIds.end()) &&
@@ -117,13 +150,13 @@ mlir::pto::validateCanonicalSyncCoveringAllocation(
                        std::nullopt, std::nullopt, entry.domain);
     }
   }
-  const bool allDomainsHaveFeasibility =
-      feasibility.size() == domains.size();
+  const bool allDomainsHaveFeasibility = feasibility.size() == domains.size();
   if (!allDomainsHaveFeasibility) {
     return makeError(CanonicalSyncCoveringAllocationError::InvalidDomain);
   }
 
-  std::map<ResourceOwner, const CanonicalSyncCoveringSelectedResourceUse *> uses;
+  std::map<ResourceOwner, const CanonicalSyncCoveringSelectedResourceUse *>
+      uses;
   std::map<SyncCoverResourceDomainId, std::vector<SyncWeightedInterval>>
       intervals;
   for (const CanonicalSyncCoveringSelectedResourceUse &use :
@@ -131,8 +164,8 @@ mlir::pto::validateCanonicalSyncCoveringAllocation(
     const ResourceOwner owner{use.mechanism, use.resourceUse};
     auto provider = providers.find(use.mechanism);
     auto domain = domains.find(use.domain);
-    const bool providerMatches =
-        provider != providers.end() && sameProvider(provider->second, use.provider);
+    const bool providerMatches = provider != providers.end() &&
+                                 sameProvider(provider->second, use.provider);
     const bool domainMatches =
         domain != domains.end() && domain->second->kind == use.kind &&
         domain->second->sourceResource == use.sourceResource &&
@@ -140,11 +173,10 @@ mlir::pto::validateCanonicalSyncCoveringAllocation(
         domain->second->poolIdentity == use.poolIdentity;
     const bool validLifetime = use.lifetime.begin <= use.lifetime.end;
     const bool uniqueUse = uses.emplace(owner, &use).second;
-    if (!providerMatches || !domainMatches || !validLifetime || use.width == 0 ||
-        !uniqueUse) {
-      return makeError(
-          CanonicalSyncCoveringAllocationError::InvalidResourceUse,
-          use.mechanism, use.resourceUse, use.domain);
+    if (!providerMatches || !domainMatches || !validLifetime ||
+        use.width == 0 || !uniqueUse) {
+      return makeError(CanonicalSyncCoveringAllocationError::InvalidResourceUse,
+                       use.mechanism, use.resourceUse, use.domain);
     }
     const bool eventMappingValid =
         provider->second.kind == CanonicalSelectionMechanismKind::EventBundle
@@ -157,6 +189,22 @@ mlir::pto::validateCanonicalSyncCoveringAllocation(
       return makeError(
           CanonicalSyncCoveringAllocationError::UnsupportedResourceKind,
           use.mechanism, use.resourceUse, use.domain);
+    }
+    if (provider->second.kind ==
+        CanonicalSelectionMechanismKind::SlotProtocol) {
+      auto recipe = slotProtocols.find(use.mechanism);
+      const bool recipeMatches =
+          recipe != slotProtocols.end() &&
+          recipe->second->resourceUse == use.resourceUse && use.width == 1 &&
+          static_cast<std::uint32_t>(recipe->second->event.sourcePipe) ==
+              use.sourceResource &&
+          static_cast<std::uint32_t>(recipe->second->event.targetPipe) ==
+              use.targetResource;
+      if (!recipeMatches) {
+        return makeError(
+            CanonicalSyncCoveringAllocationError::InvalidResourceUse,
+            use.mechanism, use.resourceUse, use.domain);
+      }
     }
     intervals[use.domain].push_back(
         {{use.lifetime.begin, use.lifetime.end}, use.width});
@@ -174,19 +222,20 @@ mlir::pto::validateCanonicalSyncCoveringAllocation(
                                 allocation.owner.resourceUse};
       const bool uniqueAllocation =
           authoritative
-              .emplace(owner, AuthoritativeAllocation{
-                                  domainId, allocation.owner.width,
-                                  &allocation.ids})
+              .emplace(owner,
+                       AuthoritativeAllocation{domainId, allocation.owner.width,
+                                               &allocation.ids})
               .second;
       if (!uniqueAllocation) {
-        return makeError(CanonicalSyncCoveringAllocationError::InvalidAllocation,
-                         owner.first, owner.second, domainId);
+        return makeError(
+            CanonicalSyncCoveringAllocationError::InvalidAllocation,
+            owner.first, owner.second, domainId);
       }
     }
   }
 
-  std::map<ResourceOwner,
-           const CanonicalSyncCoveringResourceAllocation *> allocations;
+  std::map<ResourceOwner, const CanonicalSyncCoveringResourceAllocation *>
+      allocations;
   std::map<SyncCoverResourceDomainId,
            std::map<unsigned, std::vector<SyncCoverTimelineInterval>>>
       assignedLifetimes;
@@ -196,10 +245,11 @@ mlir::pto::validateCanonicalSyncCoveringAllocation(
     auto use = uses.find(owner);
     auto domain = domains.find(allocation.domain);
     auto finalAllocation = authoritative.find(owner);
-    const bool uniqueAllocation = allocations.emplace(owner, &allocation).second;
-    const bool referencesKnownObjects =
-        use != uses.end() && domain != domains.end() &&
-        finalAllocation != authoritative.end();
+    const bool uniqueAllocation =
+        allocations.emplace(owner, &allocation).second;
+    const bool referencesKnownObjects = use != uses.end() &&
+                                        domain != domains.end() &&
+                                        finalAllocation != authoritative.end();
     if (!uniqueAllocation || !referencesKnownObjects) {
       return makeError(CanonicalSyncCoveringAllocationError::InvalidAllocation,
                        allocation.mechanism, allocation.resourceUse,
@@ -263,11 +313,11 @@ mlir::pto::validateCanonicalSyncCoveringAllocation(
 
   for (auto &[domainId, byId] : assignedLifetimes) {
     for (auto &[id, lifetimes] : byId) {
-      std::sort(lifetimes.begin(), lifetimes.end(), [](const auto &first,
-                                                       const auto &second) {
-        return std::tie(first.begin, first.end) <
-               std::tie(second.begin, second.end);
-      });
+      std::sort(lifetimes.begin(), lifetimes.end(),
+                [](const auto &first, const auto &second) {
+                  return std::tie(first.begin, first.end) <
+                         std::tie(second.begin, second.end);
+                });
       for (std::size_t index = 1; index < lifetimes.size(); ++index) {
         if (lifetimes[index - 1].end >= lifetimes[index].begin) {
           return makeError(

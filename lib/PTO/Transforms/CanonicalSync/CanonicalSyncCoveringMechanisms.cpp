@@ -31,7 +31,6 @@ MechanismAdapter::MechanismAdapter(
     SyncCoverGraph &graph, const SyncCoverCandidateIndex &candidateIndex,
     const SyncCoverSlotLifecycleResult &slotLifecycles,
     const SyncCoverSlotProtocolResult &slotProtocols,
-    bool registerShadowSlotProtocols,
     ArrayRef<SyncCoverDemandId> activeDemands,
     const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
         &regionScopes,
@@ -45,7 +44,6 @@ MechanismAdapter::MechanismAdapter(
       reservedIds_(reservedIds), universe_(graph),
       candidateIndex_(candidateIndex), slotLifecycles_(slotLifecycles),
       slotProtocols_(slotProtocols),
-      registerShadowSlotProtocols_(registerShadowSlotProtocols),
       regionScopes_(regionScopes), loopScopes_(loopScopes),
       getAnchorPosition_(std::move(getAnchorPosition)),
       getBarrierCompletionEdges_(std::move(getBarrierCompletionEdges)),
@@ -54,12 +52,11 @@ MechanismAdapter::MechanismAdapter(
 
 LogicalResult
 MechanismAdapter::build(CanonicalSyncCoveringShadowSnapshot &snapshot) {
-  const bool buildFailed =
-      !candidateIndex_ ||
-      failed(collectEventBundles()) || failed(addEventDomains()) ||
-      failed(addBarriers()) || failed(addEventBundles()) ||
-      failed(addSlotProtocols()) || failed(addConflicts()) ||
-      failed(buildLegacySeed());
+  const bool buildFailed = !candidateIndex_ || failed(collectEventBundles()) ||
+                           failed(addEventDomains()) || failed(addBarriers()) ||
+                           failed(addSlotProtocols()) ||
+                           failed(addEventBundles()) ||
+                           failed(addConflicts()) || failed(buildLegacySeed());
   if (buildFailed) {
     return failure();
   }
@@ -71,11 +68,13 @@ MechanismAdapter::build(CanonicalSyncCoveringShadowSnapshot &snapshot) {
   snapshot.resourceDomainDetails = universe_.getResourceDomains();
   snapshot.barrierCandidates = legacyUniverse_.barriers.size();
   snapshot.eventBundleCandidates = eventBundles_.size();
-  snapshot.slotProtocolMechanismCandidates = llvm::count_if(
-      providers_, [](const auto &entry) {
+  snapshot.slotProtocolMechanismCandidates =
+      llvm::count_if(providers_, [](const auto &entry) {
         return entry.first.kind ==
                CanonicalSelectionMechanismKind::SlotProtocol;
       });
+  snapshot.unmaterializableSlotProtocolCandidates =
+      unmaterializableSlotProtocols_;
   snapshot.candidateMechanisms = universe_.getMechanisms().size();
   snapshot.legacySeedMechanisms = legacySeed_.size();
   return solve(snapshot);
@@ -83,8 +82,7 @@ MechanismAdapter::build(CanonicalSyncCoveringShadowSnapshot &snapshot) {
 
 LogicalResult MechanismAdapter::collectEventBundles() {
   eventBundles_ = legacyUniverse_.eventBundles;
-  for (const CanonicalEventBundleCandidate &selected :
-       selectedEventBundles_) {
+  for (const CanonicalEventBundleCandidate &selected : selectedEventBundles_) {
     const bool known = llvm::any_of(eventBundles_, [&](const auto &candidate) {
       return candidate.id == selected.id;
     });
@@ -95,11 +93,11 @@ LogicalResult MechanismAdapter::collectEventBundles() {
   llvm::sort(eventBundles_, [](const auto &first, const auto &second) {
     return first.id < second.id;
   });
-  const auto duplicate = std::adjacent_find(
-      eventBundles_.begin(), eventBundles_.end(),
-      [](const auto &first, const auto &second) {
-        return first.id == second.id;
-      });
+  const auto duplicate =
+      std::adjacent_find(eventBundles_.begin(), eventBundles_.end(),
+                         [](const auto &first, const auto &second) {
+                           return first.id == second.id;
+                         });
   if (duplicate != eventBundles_.end()) {
     return func_.emitError(
         "internal error: duplicate canonical covering event provider");
@@ -114,12 +112,13 @@ LogicalResult MechanismAdapter::addEventDomains() {
       keys.insert({event.sourcePipe, event.targetPipe});
     }
   }
-  if (registerShadowSlotProtocols_) {
-    for (const SyncCoverSlotProtocolCandidate &candidate :
-         slotProtocols_.candidates) {
-      keys.insert({static_cast<PipelineType>(candidate.sourceResource),
-                   static_cast<PipelineType>(candidate.targetResource)});
+  for (const SyncCoverSlotProtocolCandidate &candidate :
+       slotProtocols_.candidates) {
+    if (!canBuildSlotProtocolRecipe(candidate, loopScopes_)) {
+      continue;
     }
+    keys.insert({static_cast<PipelineType>(candidate.sourceResource),
+                 static_cast<PipelineType>(candidate.targetResource)});
   }
   for (const CanonicalEventDomainKey &key : keys) {
     std::vector<unsigned> reserved;
@@ -128,8 +127,7 @@ LogicalResult MechanismAdapter::addEventDomains() {
       reserved.assign(hidden->second.begin(), hidden->second.end());
     }
     const SyncCoverMechanismResult result = universe_.addResourceDomain(
-        SyncCoverResourceKind::EventId,
-        static_cast<std::uint32_t>(key.source),
+        SyncCoverResourceKind::EventId, static_cast<std::uint32_t>(key.source),
         static_cast<std::uint32_t>(key.target), eventIdMax_, 0,
         std::move(reserved));
     if (!result || !result.index) {
@@ -142,8 +140,8 @@ LogicalResult MechanismAdapter::addEventDomains() {
 
 std::optional<SyncCoverEdge>
 MechanismAdapter::translateBarrierEdge(const SyncGraphEdge &legacy) const {
-  const std::optional<SyncCoverScopeId> scope = getEndpointScope(
-      universe_.getGraph(), legacy.source, legacy.target);
+  const std::optional<SyncCoverScopeId> scope =
+      getEndpointScope(universe_.getGraph(), legacy.source, legacy.target);
   if (!scope) {
     return std::nullopt;
   }
@@ -156,8 +154,7 @@ MechanismAdapter::translateBarrierEdge(const SyncGraphEdge &legacy) const {
 }
 
 LogicalResult MechanismAdapter::addBarriers() {
-  for (const CanonicalBarrierCandidate &candidate :
-       legacyUniverse_.barriers) {
+  for (const CanonicalBarrierCandidate &candidate : legacyUniverse_.barriers) {
     const CanonicalSelectionMechanismRef provider{
         CanonicalSelectionMechanismKind::Barrier, candidate.id};
     const std::optional<std::uint64_t> identity =
@@ -172,21 +169,20 @@ LogicalResult MechanismAdapter::addBarriers() {
     SyncCoverMechanismDescriptor descriptor;
     descriptor.kind = SyncCoverMechanismKind::Barrier;
     descriptor.providerIdentity = *identity;
-    const SyncCoverAnchor anchor{
-        SyncCoverAnchorKind::TimelinePoint, 0, *anchorScope,
-        getAnchorPosition_(candidate.barrier.anchor)};
+    const SyncCoverAnchor anchor{SyncCoverAnchorKind::TimelinePoint, 0,
+                                 *anchorScope,
+                                 getAnchorPosition_(candidate.barrier.anchor)};
     descriptor.barrier = SyncCoverBarrierPlacement{
         static_cast<std::uint32_t>(candidate.barrier.pipe), anchor,
         *anchorScope};
-    std::set<std::tuple<std::size_t, std::size_t, unsigned,
-                        SyncCoverScopeId>>
+    std::set<std::tuple<std::size_t, std::size_t, unsigned, SyncCoverScopeId>>
         seen;
     for (const SyncGraphEdge &legacy :
          getBarrierCompletionEdges_(candidate.barrier)) {
       const std::optional<SyncCoverEdge> edge = translateBarrierEdge(legacy);
-      const bool supplies = edge && syncCoverBarrierCanSupply(
-                                        universe_.getGraph(),
-                                        *descriptor.barrier, *edge);
+      const bool supplies =
+          edge && syncCoverBarrierCanSupply(universe_.getGraph(),
+                                            *descriptor.barrier, *edge);
       if (supplies &&
           seen.emplace(edge->source, edge->target, 0, edge->scope).second) {
         descriptor.supplyEdges.push_back(*edge);
@@ -211,16 +207,15 @@ LogicalResult MechanismAdapter::addBarriers() {
       edge.kind = SyncCoverEdgeKind::CompletionSupply;
       edge.scope = demand.scope;
       edge.distance = demand.distance;
-      if (!syncCoverBarrierCanSupply(universe_.getGraph(),
-                                     *descriptor.barrier, edge)) {
+      if (!syncCoverBarrierCanSupply(universe_.getGraph(), *descriptor.barrier,
+                                     edge)) {
         return func_.emitError(
             "internal error: canonical covering barrier cannot supply its "
             "declared requirement");
       }
       descriptor.supplyEdges.push_back(std::move(edge));
     }
-    const SyncCoverMechanismResult result =
-        universe_.addMechanism(descriptor);
+    const SyncCoverMechanismResult result = universe_.addMechanism(descriptor);
     if (!result || !result.index) {
       return emitMechanismError("barrier insertion", result);
     }
@@ -247,8 +242,8 @@ LogicalResult MechanismAdapter::addEventBundles() {
                                 getAnchorPosition_)) {
       const CanonicalEvent &event = bundle.events.front();
       const CanonicalEventDomainKey key{event.sourcePipe, event.targetPipe};
-      const std::optional<SyncCoverScopeId> scope = getEndpointScope(
-          universe_.getGraph(), event.source, event.target);
+      const std::optional<SyncCoverScopeId> scope =
+          getEndpointScope(universe_.getGraph(), event.source, event.target);
       auto domain = domains_.find(key);
       if (!scope || domain == domains_.end()) {
         return func_.emitError(
@@ -287,12 +282,11 @@ LogicalResult MechanismAdapter::addEventBundles() {
           });
     }
     if (!result || !result.index) {
-      InFlightDiagnostic diagnostic = func_.emitError()
-                                      << "canonical covering event-bundle["
-                                      << bundle.id
-                                      << "] insertion failed with mechanism "
-                                         "error "
-                                      << static_cast<unsigned>(result.error);
+      InFlightDiagnostic diagnostic =
+          func_.emitError() << "canonical covering event-bundle[" << bundle.id
+                            << "] insertion failed with mechanism "
+                               "error "
+                            << static_cast<unsigned>(result.error);
       if (result.index) {
         diagnostic << " at index " << *result.index;
       }
@@ -306,8 +300,7 @@ LogicalResult MechanismAdapter::addEventBundles() {
                    << " resource-scope-loop="
                    << static_cast<bool>(event.resourceScopeLoop)
                    << " recurrence-loop="
-                   << static_cast<bool>(event.recurrenceLoop)
-                   << " drain-loop="
+                   << static_cast<bool>(event.recurrenceLoop) << " drain-loop="
                    << static_cast<bool>(event.forwardDrainLoop)
                    << " completions=" << event.completions.size();
         for (const CanonicalEventCompletion &completion : event.completions) {
@@ -322,8 +315,7 @@ LogicalResult MechanismAdapter::addEventBundles() {
       return func_.emitError(
           "internal error: canonical covering event/use mapping is incomplete");
     }
-    for (auto [eventIndex, resourceUse] :
-         llvm::enumerate(eventResourceUses)) {
+    for (auto [eventIndex, resourceUse] : llvm::enumerate(eventResourceUses)) {
       const bool unique =
           eventResourceUses_
               .emplace(std::make_pair(*result.index, resourceUse), eventIndex)
@@ -339,17 +331,17 @@ LogicalResult MechanismAdapter::addEventBundles() {
 }
 
 LogicalResult MechanismAdapter::addSlotProtocols() {
-  if (!registerShadowSlotProtocols_) {
-    return success();
-  }
   if (!slotLifecycles_ || !slotProtocols_) {
     return func_.emitError(
         "internal error: canonical covering slot protocol universe is "
         "incomplete");
   }
   for (auto indexedCandidate : llvm::enumerate(slotProtocols_.candidates)) {
-    const SyncCoverSlotProtocolCandidate &candidate =
-        indexedCandidate.value();
+    const SyncCoverSlotProtocolCandidate &candidate = indexedCandidate.value();
+    if (!canBuildSlotProtocolRecipe(candidate, loopScopes_)) {
+      ++unmaterializableSlotProtocols_;
+      continue;
+    }
     const bool invalidCandidate =
         candidate.id != indexedCandidate.index() ||
         candidate.lifecycle >= slotLifecycles_.lifecycles.size();
@@ -380,17 +372,33 @@ LogicalResult MechanismAdapter::addSlotProtocols() {
     }
     const SyncCoverSlotLifecycle &lifecycle =
         slotLifecycles_.lifecycles[candidate.lifecycle];
-    const SyncCoverMechanismResult result = universe_.addVerifiedProtocol(
-        *descriptor, [&](const auto &actual) {
+    const SyncCoverMechanismResult result =
+        universe_.addVerifiedProtocol(*descriptor, [&](const auto &actual) {
           return verifySyncCoverSlotProtocol(candidateIndex_, lifecycle,
                                              universe_, candidate, actual);
         });
     if (!result || !result.index) {
       return emitMechanismError("slot-protocol insertion", result);
     }
+    const SyncCoverMechanism &mechanism =
+        universe_.getMechanisms()[*result.index];
+    const std::optional<SlotProtocolRecipe> recipe =
+        buildSlotProtocolRecipe(plan_.getNodes(), universe_, candidate,
+                                mechanism, loopScopes_, getAnchorPosition_);
+    if (!recipe ||
+        !verifySlotProtocolRecipeCorrespondence(
+            plan_.getNodes(), universe_, candidate, mechanism, loopScopes_,
+            getAnchorPosition_, *recipe) ||
+        !verifyEventProtocols_({recipe->event})) {
+      return func_.emitError(
+          "internal error: canonical covering slot protocol has no verified "
+          "emission recipe");
+    }
     const bool providerUnique =
         providers_.emplace(provider, *result.index).second;
-    if (!providerUnique) {
+    const bool recipeUnique =
+        slotProtocolRecipes_.emplace(provider, *recipe).second;
+    if (!providerUnique || !recipeUnique) {
       return func_.emitError(
           "internal error: duplicate canonical covering slot protocol");
     }

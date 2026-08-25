@@ -157,6 +157,7 @@ add_mlir_dialect_library(PTOTransforms
   CanonicalSync/CanonicalSyncCoveringMechanisms.cpp
   CanonicalSync/CanonicalSyncCoveringMaterialization.cpp
   CanonicalSync/CanonicalSyncCoveringSelection.cpp
+  CanonicalSync/CanonicalSyncCoveringSlotRecipe.cpp
   CanonicalSync/CanonicalSyncCoveringTranslation.cpp
   CanonicalSync/CanonicalSyncLatency.cpp
   CanonicalSync/CanonicalSyncPressure.cpp

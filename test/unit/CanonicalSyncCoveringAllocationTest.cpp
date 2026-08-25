@@ -10,6 +10,9 @@
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSync.h"
 
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/MLIRContext.h"
+
 #include <iostream>
 #include <string_view>
 #include <vector>
@@ -97,39 +100,38 @@ bool hasError(const CanonicalSyncCoveringShadowSnapshot &snapshot,
 }
 
 bool testValidAndExactAllocation() {
-  bool passed = check(static_cast<bool>(
-                          validateCanonicalSyncCoveringAllocation(
-                              makeValidSnapshot())),
+  bool passed = check(static_cast<bool>(validateCanonicalSyncCoveringAllocation(
+                          makeValidSnapshot())),
                       "non-overlapping uses may reuse one physical ID");
 
   CanonicalSyncCoveringShadowSnapshot mismatch = makeValidSnapshot();
   mismatch.selectedAllocations[1].ids = {1};
-  passed &= check(hasError(mismatch,
-                           CanonicalSyncCoveringAllocationError::InvalidAllocation),
-                  "translated IDs must equal the final solver allocation");
+  passed &=
+      check(hasError(mismatch,
+                     CanonicalSyncCoveringAllocationError::InvalidAllocation),
+            "translated IDs must equal the final solver allocation");
   return passed;
 }
 
 bool testOwnerSetValidation() {
   CanonicalSyncCoveringShadowSnapshot missing = makeValidSnapshot();
   missing.selectedAllocations.pop_back();
-  bool passed = check(
-      hasError(missing,
-               CanonicalSyncCoveringAllocationError::InvalidAllocation),
-      "every selected resource use requires an allocation");
+  bool passed =
+      check(hasError(missing,
+                     CanonicalSyncCoveringAllocationError::InvalidAllocation),
+            "every selected resource use requires an allocation");
 
   CanonicalSyncCoveringShadowSnapshot duplicate = makeValidSnapshot();
   duplicate.selectedAllocations.push_back(duplicate.selectedAllocations.back());
-  passed &= check(
-      hasError(duplicate,
-               CanonicalSyncCoveringAllocationError::InvalidAllocation),
-      "duplicate allocation owners fail closed");
+  passed &=
+      check(hasError(duplicate,
+                     CanonicalSyncCoveringAllocationError::InvalidAllocation),
+            "duplicate allocation owners fail closed");
 
   CanonicalSyncCoveringShadowSnapshot stale = makeValidSnapshot();
   stale.selectedAllocations[1].mechanism = 7;
   passed &= check(
-      hasError(stale,
-               CanonicalSyncCoveringAllocationError::InvalidAllocation),
+      hasError(stale, CanonicalSyncCoveringAllocationError::InvalidAllocation),
       "allocations for unselected mechanisms fail closed");
   return passed;
 }
@@ -137,10 +139,10 @@ bool testOwnerSetValidation() {
 bool testPhysicalIdValidation() {
   CanonicalSyncCoveringShadowSnapshot reserved = makeValidSnapshot();
   reserved.resourceDomainDetails[0].reservedIds = {0};
-  bool passed = check(
-      hasError(reserved,
-               CanonicalSyncCoveringAllocationError::InvalidAllocation),
-      "reserved physical IDs cannot be assigned");
+  bool passed =
+      check(hasError(reserved,
+                     CanonicalSyncCoveringAllocationError::InvalidAllocation),
+            "reserved physical IDs cannot be assigned");
 
   CanonicalSyncCoveringShadowSnapshot conflict = makeValidSnapshot();
   conflict.resourceDomainDetails[0].reservedIds.clear();
@@ -156,10 +158,10 @@ bool testPhysicalIdValidation() {
   outOfRange.resourceDomainDetails[0].reservedIds.clear();
   outOfRange.selectedAllocations[0].ids = {2};
   outOfRange.selectedResources.domains[0].allocations[0].ids = {2};
-  passed &= check(
-      hasError(outOfRange,
-               CanonicalSyncCoveringAllocationError::InvalidAllocation),
-      "physical IDs outside the domain budget fail closed");
+  passed &=
+      check(hasError(outOfRange,
+                     CanonicalSyncCoveringAllocationError::InvalidAllocation),
+            "physical IDs outside the domain budget fail closed");
 
   CanonicalSyncCoveringShadowSnapshot duplicateLane = makeValidSnapshot();
   duplicateLane.resourceDomainDetails[0].reservedIds.clear();
@@ -167,10 +169,10 @@ bool testPhysicalIdValidation() {
   duplicateLane.selectedAllocations[0].ids = {0, 0};
   duplicateLane.selectedResources.domains[0].allocations[0].owner.width = 2;
   duplicateLane.selectedResources.domains[0].allocations[0].ids = {0, 0};
-  passed &= check(
-      hasError(duplicateLane,
-               CanonicalSyncCoveringAllocationError::InvalidAllocation),
-      "one width-N use cannot repeat a physical ID");
+  passed &=
+      check(hasError(duplicateLane,
+                     CanonicalSyncCoveringAllocationError::InvalidAllocation),
+            "one width-N use cannot repeat a physical ID");
   return passed;
 }
 
@@ -178,8 +180,7 @@ bool testDomainAndKindValidation() {
   CanonicalSyncCoveringShadowSnapshot pressure = makeValidSnapshot();
   pressure.selectedResources.domains[0].required = 2;
   bool passed = check(
-      hasError(pressure,
-               CanonicalSyncCoveringAllocationError::InvalidPressure),
+      hasError(pressure, CanonicalSyncCoveringAllocationError::InvalidPressure),
       "stored feasibility pressure must match selected lifetimes");
 
   CanonicalSyncCoveringShadowSnapshot token = makeValidSnapshot();
@@ -201,9 +202,41 @@ bool testDomainAndKindValidation() {
   slot.selectedResourceUses[0].provider = slotProvider;
   slot.selectedResourceUses[0].materializationEventIndex.reset();
   slot.selectedAllocations[0].provider = slotProvider;
-  passed &= check(
-      static_cast<bool>(validateCanonicalSyncCoveringAllocation(slot)),
-      "shadow-only slot protocols do not require an emission event index");
+  mlir::MLIRContext context;
+  mlir::OwningOpRef<mlir::ModuleOp> loop(
+      mlir::ModuleOp::create(mlir::UnknownLoc::get(&context)));
+  CanonicalEvent slotEvent;
+  slotEvent.sourcePipe = static_cast<PipelineType>(1);
+  slotEvent.targetPipe = static_cast<PipelineType>(2);
+  slotEvent.recurrenceLoop = loop->getOperation();
+  slotEvent.scopeLoop = slotEvent.recurrenceLoop;
+  slotEvent.iterationDistance = 1;
+  slot.selectedSlotProtocols.push_back({0, slotProvider, 0, slotEvent});
+  passed &=
+      check(static_cast<bool>(validateCanonicalSyncCoveringAllocation(slot)),
+            "slot protocols carry one unallocated emission recipe");
+
+  CanonicalSyncCoveringShadowSnapshot missingRecipe = slot;
+  missingRecipe.selectedSlotProtocols.clear();
+  passed &=
+      check(hasError(missingRecipe,
+                     CanonicalSyncCoveringAllocationError::InvalidProvider),
+            "selected slot protocols require one emission recipe");
+
+  CanonicalSyncCoveringShadowSnapshot duplicateRecipe = slot;
+  duplicateRecipe.selectedSlotProtocols.push_back(
+      duplicateRecipe.selectedSlotProtocols.front());
+  passed &=
+      check(hasError(duplicateRecipe,
+                     CanonicalSyncCoveringAllocationError::InvalidProvider),
+            "slot protocol recipes are one-to-one with selected providers");
+
+  CanonicalSyncCoveringShadowSnapshot allocatedRecipe = slot;
+  allocatedRecipe.selectedSlotProtocols[0].event.eventIds.push_back(0);
+  passed &=
+      check(hasError(allocatedRecipe,
+                     CanonicalSyncCoveringAllocationError::InvalidProvider),
+            "slot protocol recipes remain unallocated until materialization");
 
   CanonicalSyncCoveringShadowSnapshot slotWithEvent = slot;
   slotWithEvent.selectedResourceUses[0].materializationEventIndex = 0;
@@ -229,12 +262,12 @@ bool testLiveLifetimeAuthentication() {
   live.scope = selected.scope;
   live.distance = selected.distance;
   live.width = selected.width;
-  bool passed = check(
-      canonicalSyncCoveringResourceUseMatches(selected, live, {0, 1}),
-      "stored use agrees with its live mechanism lifetime");
-  passed &= check(
-      !canonicalSyncCoveringResourceUseMatches(selected, live, {0, 0}),
-      "shortened stored lifetimes cannot authenticate");
+  bool passed =
+      check(canonicalSyncCoveringResourceUseMatches(selected, live, {0, 1}),
+            "stored use agrees with its live mechanism lifetime");
+  passed &=
+      check(!canonicalSyncCoveringResourceUseMatches(selected, live, {0, 0}),
+            "shortened stored lifetimes cannot authenticate");
   return passed;
 }
 

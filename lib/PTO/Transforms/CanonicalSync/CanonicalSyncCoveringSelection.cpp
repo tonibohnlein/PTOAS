@@ -26,8 +26,8 @@ using namespace mlir::pto::canonical_sync_covering;
 
 LogicalResult MechanismAdapter::buildLegacySeed() {
   for (const CanonicalBarrier &barrier : plan_.getBarriers()) {
-    auto candidate = llvm::find_if(
-        legacyUniverse_.barriers, [&](const auto &entry) {
+    auto candidate =
+        llvm::find_if(legacyUniverse_.barriers, [&](const auto &entry) {
           return barriersEquivalent(barrier, entry.barrier);
         });
     if (candidate == legacyUniverse_.barriers.end()) {
@@ -64,15 +64,15 @@ LogicalResult
 MechanismAdapter::solve(CanonicalSyncCoveringShadowSnapshot &snapshot) {
   snapshot.selectionAttempted = true;
   const std::vector<SyncCoverDemandId> demands(activeDemands_.begin(),
-                                                activeDemands_.end());
+                                               activeDemands_.end());
   std::vector<SyncCoverSelectionSeed> seeds = {{1, legacySeed_}};
   const SyncCoverSelectionResult result =
       solveSyncCoverSelection(universe_, demands, seeds);
   snapshot.selectionError = result.error;
   snapshot.searchTruncated = static_cast<bool>(result.truncation);
   const bool candidateUniverseComplete =
-      !registerShadowSlotProtocols_ ||
-      (!slotLifecycles_.truncated && !slotProtocols_.truncated);
+      !slotLifecycles_.truncated && !slotProtocols_.truncated &&
+      unmaterializableSlotProtocols_ == 0;
   snapshot.optimalityProven =
       result.optimalityProven && candidateUniverseComplete;
   snapshot.solverComponents = result.components.size();
@@ -106,6 +106,17 @@ MechanismAdapter::solve(CanonicalSyncCoveringShadowSnapshot &snapshot) {
           "internal error: selected covering mechanism has no provider");
     }
     snapshot.selectedProviders.push_back({mechanism, provider->second});
+    if (provider->second.kind ==
+        CanonicalSelectionMechanismKind::SlotProtocol) {
+      auto recipe = slotProtocolRecipes_.find(provider->second);
+      if (recipe == slotProtocolRecipes_.end()) {
+        return func_.emitError(
+            "internal error: selected slot protocol has no emission recipe");
+      }
+      snapshot.selectedSlotProtocols.push_back({mechanism, provider->second,
+                                                recipe->second.resourceUse,
+                                                recipe->second.event});
+    }
     const SyncCoverMechanism &selected = universe_.getMechanisms()[mechanism];
     for (auto [resourceUse, use] : llvm::enumerate(selected.resourceUses)) {
       if (use.domain >= universe_.getResourceDomains().size()) {
@@ -125,19 +136,17 @@ MechanismAdapter::solve(CanonicalSyncCoveringShadowSnapshot &snapshot) {
       const auto event =
           eventResourceUses_.find(std::make_pair(mechanism, resourceUse));
       const bool materializesAsEvent =
-          provider->second.kind ==
-          CanonicalSelectionMechanismKind::EventBundle;
-      const bool shadowOnlyProtocol =
+          provider->second.kind == CanonicalSelectionMechanismKind::EventBundle;
+      const bool generatedProtocol =
           provider->second.kind ==
           CanonicalSelectionMechanismKind::SlotProtocol;
       const bool hasEventMapping = event != eventResourceUses_.end();
       const bool eventMappingValid =
           materializesAsEvent ? hasEventMapping
-                              : shadowOnlyProtocol && !hasEventMapping;
+                              : generatedProtocol && !hasEventMapping;
       const bool eventMappingInvalid =
-          domain.kind == SyncCoverResourceKind::EventId
-              ? !eventMappingValid
-              : hasEventMapping;
+          domain.kind == SyncCoverResourceKind::EventId ? !eventMappingValid
+                                                        : hasEventMapping;
       if (eventMappingInvalid) {
         return func_.emitError(
             "internal error: selected covering resource use has invalid "
@@ -236,8 +245,9 @@ LogicalResult MechanismAdapter::validateSelectedResourceUsesAgainstUniverse(
   return success();
 }
 
-LogicalResult MechanismAdapter::emitMechanismError(
-    StringRef context, const SyncCoverMechanismResult &result) {
+LogicalResult
+MechanismAdapter::emitMechanismError(StringRef context,
+                                     const SyncCoverMechanismResult &result) {
   InFlightDiagnostic diagnostic = func_.emitError()
                                   << "canonical covering " << context
                                   << " failed with mechanism error "
@@ -257,7 +267,6 @@ LogicalResult mlir::pto::runCanonicalSyncCoveringShadowSelection(
     SyncCoverGraph &graph, const SyncCoverCandidateIndex &candidateIndex,
     const SyncCoverSlotLifecycleResult &slotLifecycles,
     const SyncCoverSlotProtocolResult &slotProtocols,
-    bool registerShadowSlotProtocols,
     ArrayRef<SyncCoverDemandId> activeDemands,
     const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
         &regionScopes,
@@ -269,8 +278,8 @@ LogicalResult mlir::pto::runCanonicalSyncCoveringShadowSelection(
     CanonicalSyncCoveringShadowSnapshot &snapshot) {
   MechanismAdapter adapter(
       func, plan, legacyUniverse, selectedEventBundles, eventIdMax, reservedIds,
-      graph, candidateIndex, slotLifecycles, slotProtocols,
-      registerShadowSlotProtocols, activeDemands, regionScopes, loopScopes,
+      graph, candidateIndex, slotLifecycles, slotProtocols, activeDemands,
+      regionScopes, loopScopes,
       std::move(getAnchorPosition), std::move(getBarrierCompletionEdges),
       std::move(verifyEventProtocols));
   return adapter.build(snapshot);

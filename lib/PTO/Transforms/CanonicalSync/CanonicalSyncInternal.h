@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #ifndef PTO_TRANSFORMS_CANONICALSYNC_CANONICALSYNCINTERNAL_H
 #define PTO_TRANSFORMS_CANONICALSYNC_CANONICALSYNCINTERNAL_H
@@ -221,21 +223,20 @@ evaluateCanonicalEventColorPressure(
     ArrayRef<CanonicalEvent> events, unsigned eventIdMax,
     const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds);
 
-std::vector<std::size_t> buildCanonicalBarrierActionProfile(
-    ArrayRef<CanonicalBarrier> barriers, std::size_t maxLoopDepth);
+std::vector<std::size_t>
+buildCanonicalBarrierActionProfile(ArrayRef<CanonicalBarrier> barriers,
+                                   std::size_t maxLoopDepth);
 
-bool canonicalMechanismPlanScoreLess(
-    const CanonicalMechanismPlanScore &first,
-    const CanonicalMechanismPlanScore &second);
+bool canonicalMechanismPlanScoreLess(const CanonicalMechanismPlanScore &first,
+                                     const CanonicalMechanismPlanScore &second);
 
 SmallVector<const CanonicalEventBundleCandidate *, 16>
 selectCanonicalEventCandidateFrontier(
     ArrayRef<const CanonicalEventBundleCandidate *> candidates,
     std::size_t limit);
 
-bool verifyCanonicalOwnershipEventPair(
-    const CanonicalOwnershipCycle &cycle,
-    ArrayRef<const CanonicalEvent *> events);
+bool verifyCanonicalOwnershipEventPair(const CanonicalOwnershipCycle &cycle,
+                                       ArrayRef<const CanonicalEvent *> events);
 
 bool verifyCanonicalCompositeOwnershipBundle(
     const CanonicalEventBundleCandidate &bundle,
@@ -286,17 +287,15 @@ public:
   CanonicalSyncPlanBuilder(func::FuncOp func,
                            const CanonicalSyncBuildOptions &options)
       : func_(func), funcOperation_(func.getOperation()),
-        eventIdMax_(options.eventIdMax),
-        gmAliasPolicy_(options.gmAliasPolicy),
+        eventIdMax_(options.eventIdMax), gmAliasPolicy_(options.gmAliasPolicy),
         selectionDiagnosticsEnabled_(options.diagnosticRequest != nullptr),
         coveringShadowEnabled_(options.coveringShadow ||
                                options.solver == CanonicalSyncSolver::Covering),
         coveringEmissionEnabled_(options.solver ==
                                  CanonicalSyncSolver::Covering),
-        diagnosticRequest_(
-            options.diagnosticRequest
-                ? *options.diagnosticRequest
-                : CanonicalSelectionDiagnosticRequest{}),
+        diagnosticRequest_(options.diagnosticRequest
+                               ? *options.diagnosticRequest
+                               : CanonicalSelectionDiagnosticRequest{}),
         translator_(syncIR_, memoryAnalyzer_, bufferMap_, func,
                     SyncAnalysisMode::CANONICALSYNC) {}
 
@@ -352,9 +351,8 @@ private:
   buildCompositeOwnershipEventBundle();
   void buildMechanismUniverse();
   LogicalResult refreshSelectedEventBundles();
-  bool tryBuildConservativeIncumbent(
-      std::vector<CanonicalBarrier> &barriers,
-      std::vector<CanonicalEvent> &events);
+  bool tryBuildConservativeIncumbent(std::vector<CanonicalBarrier> &barriers,
+                                     std::vector<CanonicalEvent> &events);
   void removeRedundantMechanisms();
   LogicalResult optimizeMechanismSelection();
   void optimizeAffectedSliceExchanges(
@@ -403,20 +401,18 @@ private:
       ArrayRef<const CanonicalOwnershipCycle *> cycles,
       const CanonicalDependency &requirement) const;
   bool isRecurrenceVertexAvailable(const CanonicalDependency &requirement,
-                                   std::size_t vertex,
-                                   std::size_t nodeCount,
+                                   std::size_t vertex, std::size_t nodeCount,
                                    bool usePositiveTripFacts) const;
   bool eventsFitBudget(ArrayRef<CanonicalEvent> events) const;
-  bool isCandidatePlanFeasible(
-      ArrayRef<CanonicalBarrier> barriers,
-      ArrayRef<CanonicalEventBundleCandidate> eventBundles,
-      ArrayRef<CanonicalDependency> requirements,
-      bool diagnose = false) const;
+  bool
+  isCandidatePlanFeasible(ArrayRef<CanonicalBarrier> barriers,
+                          ArrayRef<CanonicalEventBundleCandidate> eventBundles,
+                          ArrayRef<CanonicalDependency> requirements,
+                          bool diagnose = false) const;
   bool isCandidatePlanWellFormed(
       ArrayRef<CanonicalBarrier> barriers,
       ArrayRef<CanonicalEventBundleCandidate> eventBundles,
-      ArrayRef<CanonicalDependency> requirements,
-      bool diagnose = false) const;
+      ArrayRef<CanonicalDependency> requirements, bool diagnose = false) const;
   bool bootstrapFeasibleMechanismPlan(
       std::vector<CanonicalBarrier> &barriers,
       std::vector<CanonicalEventBundleCandidate> &eventBundles) const;
@@ -438,15 +434,13 @@ private:
   void initializeRecurrenceProtocol(CanonicalEvent &event) const;
   void deriveEventInterval(CanonicalEvent &event) const;
 
-  void addDependency(std::size_t source, std::size_t target,
-                     CanonicalDependencyKind kind,
-                     unsigned iterationDistance = 0,
-                     Operation *recurrenceLoop = nullptr,
-                     bool activeWitness = true,
-                     CanonicalStorageProvenance storageProvenance =
-                         CanonicalStorageProvenance::NotApplicable,
-                     ArrayRef<CanonicalMemoryHazardWitness> storageWitnesses =
-                         {});
+  void
+  addDependency(std::size_t source, std::size_t target,
+                CanonicalDependencyKind kind, unsigned iterationDistance = 0,
+                Operation *recurrenceLoop = nullptr, bool activeWitness = true,
+                CanonicalStorageProvenance storageProvenance =
+                    CanonicalStorageProvenance::NotApplicable,
+                ArrayRef<CanonicalMemoryHazardWitness> storageWitnesses = {});
   void addAccessHazards(const CanonicalSyncNode &source,
                         const CanonicalSyncNode &target,
                         unsigned iterationDistance, Operation *loop,
@@ -457,8 +451,7 @@ private:
                                   Operation *loop);
   bool memoryAliases(const CanonicalMemoryAccess &first,
                      const CanonicalMemoryAccess &second,
-                     bool compareSlots = true,
-                     bool honorNoAlias = true) const;
+                     bool compareSlots = true, bool honorNoAlias = true) const;
   bool memoryAliasesAcrossIterations(const CanonicalMemoryAccess &first,
                                      const CanonicalMemoryAccess &second,
                                      Operation *loop,
@@ -514,7 +507,6 @@ LogicalResult runCanonicalSyncCoveringShadowSelection(
     SyncCoverGraph &graph, const SyncCoverCandidateIndex &candidateIndex,
     const SyncCoverSlotLifecycleResult &slotLifecycles,
     const SyncCoverSlotProtocolResult &slotProtocols,
-    bool registerShadowSlotProtocols,
     ArrayRef<SyncCoverDemandId> activeDemands,
     const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
         &regionScopes,
