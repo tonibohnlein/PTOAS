@@ -14,6 +14,7 @@
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncAlgorithms.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverGraph.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverSolver.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -288,6 +289,22 @@ struct CanonicalSelectionMechanismRef {
   }
 };
 
+struct CanonicalSyncCoveringSelectedProvider {
+  SyncCoverMechanismId mechanism = 0;
+  CanonicalSelectionMechanismRef provider;
+};
+
+struct CanonicalSyncCoveringResourceAllocation {
+  SyncCoverMechanismId mechanism = 0;
+  CanonicalSelectionMechanismRef provider;
+  std::size_t resourceUse = 0;
+  SyncCoverResourceDomainId domain = 0;
+  SyncCoverResourceKind kind = SyncCoverResourceKind::EventId;
+  std::uint32_t sourceResource = 0;
+  std::uint32_t targetResource = 0;
+  std::vector<unsigned> ids;
+};
+
 struct CanonicalSelectionEventDomain {
   PipelineType sourcePipe = PipelineType::PIPE_UNASSIGNED;
   PipelineType targetPipe = PipelineType::PIPE_UNASSIGNED;
@@ -344,8 +361,7 @@ struct CanonicalSelectionDiagnosticRequest {
   SmallVector<std::size_t, 4> eventBundleIds;
 };
 
-/// Non-emitting direct-cover translation diagnostics. This is intentionally
-/// graph-only until mechanism adaptation passes independent review.
+/// Non-emitting direct-cover translation and selection diagnostics.
 struct CanonicalSyncCoveringShadowSnapshot {
   std::size_t scopes = 0;
   std::size_t controls = 0;
@@ -355,6 +371,26 @@ struct CanonicalSyncCoveringShadowSnapshot {
   std::size_t conservativeDemands = 0;
   std::size_t activeDemands = 0;
   std::size_t intrinsicallySatisfiedDemands = 0;
+  std::size_t resourceDomains = 0;
+  std::size_t barrierCandidates = 0;
+  std::size_t eventBundleCandidates = 0;
+  std::size_t candidateMechanisms = 0;
+  std::size_t legacySeedMechanisms = 0;
+  std::size_t selectedMechanisms = 0;
+  std::size_t solverComponents = 0;
+  std::size_t solverEvaluations = 0;
+  std::size_t redundancyEvaluations = 0;
+  SyncCoverSelectionError selectionError = SyncCoverSelectionError::None;
+  bool selectionAttempted = false;
+  bool searchTruncated = false;
+  bool optimalityProven = false;
+  std::vector<std::size_t> actionProfile;
+  std::vector<std::size_t> barrierActionProfile;
+  std::vector<CanonicalSyncCoveringSelectedProvider> selectedProviders;
+  std::vector<CanonicalSyncCoveringResourceAllocation> selectedAllocations;
+  SyncCoverResourceSelection selectedResources;
+  SyncCoverCoverageStatistics coverageStatistics;
+  SyncCoverCoverageStatistics finalVerificationStatistics;
   std::vector<SyncCoverScope> scopeDetails;
   std::vector<SyncCoverControl> controlDetails;
   std::vector<SyncCoverNode> nodeDetails;

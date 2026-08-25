@@ -76,9 +76,12 @@ struct SyncCoverSelectionResult {
   SyncCoverStructuralCost cost;
   std::vector<SyncCoverSelectionComponent> components;
   std::size_t evaluations = 0;
+  std::size_t redundancyEvaluations = 0;
   SyncCoverSearchTruncation truncation;
   bool optimalityProven = false;
+  SyncCoverResourceSelection resources;
   SyncCoverCoverageStatistics coverageStatistics;
+  SyncCoverCoverageStatistics finalVerificationStatistics;
 
   explicit operator bool() const {
     return error == SyncCoverSelectionError::None;
@@ -88,8 +91,9 @@ struct SyncCoverSelectionResult {
 /// Select an atomic synchronization cover for the active immutable demands.
 /// Components conservatively include conflict and shared-resource coupling.
 /// Exact search is cut-guided; larger components use a bounded deterministic
-/// beam. Every returned result passes a fresh coverage, protocol, conflict,
-/// coloring, and structural-cost verification epoch.
+/// beam. Every returned result passes fresh graph, protocol, conflict,
+/// coloring, and structural-cost validation plus a second exact coverage
+/// traversal over the immutable prepared demand topology.
 SyncCoverSelectionResult
 solveSyncCoverSelection(const SyncCoverMechanismUniverse &universe,
                         const std::vector<SyncCoverDemandId> &activeDemands,

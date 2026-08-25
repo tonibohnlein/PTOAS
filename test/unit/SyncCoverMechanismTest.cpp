@@ -703,8 +703,106 @@ bool testSharedPhysicalActionsAcrossResourceKinds() {
   return passed;
 }
 
+bool testMixedStartupAndRecurrenceProtocolLifetime() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop = takeGraphIndex(
+      graph.addScope(0, true, SyncCoverTimelineInterval{0, 15}, true), passed,
+      "add mixed protocol loop");
+  const SyncCoverScopeId startup = takeGraphIndex(
+      graph.addScope(loop, true, SyncCoverTimelineInterval{2, 9}), passed,
+      "add mixed protocol startup scope");
+  const SyncCoverNodeId outerSource = takeGraphIndex(
+      graph.addNode(1, 1, 0, 0), passed, "add outer startup source");
+  const SyncCoverNodeId startupSource = takeGraphIndex(
+      graph.addNode(1, 1, startup, 1), passed, "add startup source");
+  const SyncCoverNodeId recurrenceTarget = takeGraphIndex(
+      graph.addNode(2, 1, loop, 2), passed, "add recurrence target");
+  const SyncCoverNodeId startupTarget = takeGraphIndex(
+      graph.addNode(2, 1, startup, 4), passed, "add startup target");
+  const SyncCoverNodeId recurrenceSource = takeGraphIndex(
+      graph.addNode(1, 1, loop, 6), passed, "add recurrence source");
+  const SyncCoverNodeId outerTarget = takeGraphIndex(
+      graph.addNode(2, 1, 0, 7), passed, "add outer drain target");
+  SyncCoverMechanismUniverse universe(graph);
+  const SyncCoverResourceDomainId eventDomain = takeMechanismIndex(
+      universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 8),
+      passed, "add mixed protocol domain");
+  const SyncCoverResourceDomain &domain =
+      universe.getResourceDomains()[eventDomain];
+
+  SyncCoverMechanismDescriptorBuilder builder(
+      SyncCoverMechanismKind::VerifiedProtocol, 8801);
+  const SyncCoverDescriptorActionRef startupSet = builder.addAction(
+      SyncCoverResourceActionKind::Produce, 1,
+      {SyncCoverAnchorKind::AfterNode, startupSource, 0});
+  const SyncCoverDescriptorActionRef startupWait = builder.addAction(
+      SyncCoverResourceActionKind::Consume, 2,
+      {SyncCoverAnchorKind::BeforeNode, startupTarget, 0});
+  const SyncCoverDescriptorActionRef bodySet = builder.addAction(
+      SyncCoverResourceActionKind::Produce, 1,
+      {SyncCoverAnchorKind::AfterNode, recurrenceSource, 0});
+  const SyncCoverDescriptorActionRef bodyWait = builder.addAction(
+      SyncCoverResourceActionKind::Consume, 2,
+      {SyncCoverAnchorKind::BeforeNode, recurrenceTarget, 0});
+  const SyncCoverDescriptorActionRef primeSet = builder.addAction(
+      SyncCoverResourceActionKind::Produce, 1,
+      {SyncCoverAnchorKind::ScopeEntry, 0, loop});
+  const SyncCoverDescriptorActionRef drainWait = builder.addAction(
+      SyncCoverResourceActionKind::Consume, 2,
+      {SyncCoverAnchorKind::ScopeExit, 0, loop});
+  SyncCoverEdge startupEdge = completionEdge(startupSource, startupTarget);
+  startupEdge.scope = startup;
+  SyncCoverEdge recurrenceEdge =
+      completionEdge(recurrenceSource, recurrenceTarget, loop, 1);
+  SyncCoverEdge outerEdge = completionEdge(outerSource, outerTarget);
+  passed &= check(
+      builder.addProtocolLane(
+          domain, loop, 1, 1,
+          {startupSet, startupWait, bodySet, bodyWait, primeSet, drainWait},
+          {{startupEdge, startupSet, startupWait},
+           {recurrenceEdge, bodySet, bodyWait},
+           {outerEdge, primeSet, drainWait}}),
+      "one cyclic lifetime accepts nested startup and recurrence supplies");
+  SyncCoverMechanismDescriptor descriptor =
+      std::move(builder).takeDescriptor();
+  passed &= check(
+      universe.addVerifiedProtocol(descriptor,
+                                   [](const auto &) { return true; }),
+      "mixed startup and recurrence protocol validates atomically");
+  return passed;
+}
+
 bool testBarrierExecutionGuarantees() {
   bool passed = true;
+
+  {
+    SyncCoverGraph graph;
+    const SyncCoverNodeId source = takeGraphIndex(
+        graph.addNode(1, 1, 0, 0), passed, "add exact barrier source");
+    const SyncCoverNodeId target = takeGraphIndex(
+        graph.addNode(1, 1, 0, 2), passed, "add exact barrier target");
+    const SyncCoverNodeId crossPipeTarget = takeGraphIndex(
+        graph.addNode(2, 1, 0, 3), passed,
+        "add exact cross-pipe barrier target");
+    SyncCoverMechanismUniverse universe(graph);
+    SyncCoverMechanismDescriptor barrier;
+    barrier.kind = SyncCoverMechanismKind::Barrier;
+    barrier.barrier = SyncCoverBarrierPlacement{
+        1, {SyncCoverAnchorKind::TimelinePoint, 0, 0, 2}, 0};
+    barrier.supplyEdges.push_back(completionEdge(source, target));
+    passed &= check(universe.addMechanism(barrier),
+                    "barrier may occupy an exact structured timeline point");
+
+    SyncCoverMechanismDescriptor crossPipeBarrier = barrier;
+    crossPipeBarrier.providerIdentity = 1;
+    crossPipeBarrier.supplyEdges.clear();
+    crossPipeBarrier.supplyEdges.push_back(
+        completionEdge(source, crossPipeTarget));
+    passed &= check(
+        universe.addMechanism(crossPipeBarrier),
+        "barrier completion may supply a later cross-pipe consumer");
+  }
 
   {
     SyncCoverGraph graph;
@@ -1092,6 +1190,7 @@ int main() {
   passed &= testDomainsBarriersAndConflicts();
   passed &= testActionAndBindingRejections();
   passed &= testSharedPhysicalActionsAcrossResourceKinds();
+  passed &= testMixedStartupAndRecurrenceProtocolLifetime();
   passed &= testBarrierExecutionGuarantees();
   passed &= testResourceSelectionFeasibility();
   passed &= testIndependentDomainsReuseAndOverflow();

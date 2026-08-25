@@ -312,11 +312,17 @@ bool testTimelineAnchorsAndCompletionCapabilities() {
   const SyncCoverAnchor after{SyncCoverAnchorKind::AfterNode, node, 0};
   const SyncCoverAnchor entry{SyncCoverAnchorKind::ScopeEntry, 0, loop};
   const SyncCoverAnchor exit{SyncCoverAnchorKind::ScopeExit, 0, loop};
+  const SyncCoverAnchor point{SyncCoverAnchorKind::TimelinePoint, 0, loop, 6};
   passed &= check(resolveSyncCoverAnchor(graph, before) == 2 &&
                       resolveSyncCoverAnchor(graph, after) == 3 &&
                       resolveSyncCoverAnchor(graph, entry) == 2 &&
-                      resolveSyncCoverAnchor(graph, exit) == 9,
-                  "node and scope anchors share one global timeline");
+                      resolveSyncCoverAnchor(graph, exit) == 9 &&
+                      resolveSyncCoverAnchor(graph, point) == 6,
+                  "node, scope, and exact anchors share one global timeline");
+  passed &= check(
+      !resolveSyncCoverAnchor(
+          graph, {SyncCoverAnchorKind::TimelinePoint, 0, loop, 10}),
+      "timeline-point anchors must fit their occurrence scope");
   passed &= check(!resolveSyncCoverAnchor(
                       graph, {SyncCoverAnchorKind::ScopeEntry, 0, unknown}),
                   "missing scope timeline fails anchor resolution closed");

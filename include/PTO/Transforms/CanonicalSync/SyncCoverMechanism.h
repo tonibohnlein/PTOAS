@@ -93,8 +93,17 @@ struct SyncCoverSupplyBinding {
 
 struct SyncCoverBarrierPlacement {
   std::uint32_t resource = 0;
-  SyncCoverNodeId anchor = 0;
+  SyncCoverAnchor anchor;
   SyncCoverScopeId scope = 0;
+
+  SyncCoverBarrierPlacement() = default;
+  SyncCoverBarrierPlacement(std::uint32_t resource, SyncCoverNodeId anchor,
+                            SyncCoverScopeId scope)
+      : resource(resource),
+        anchor{SyncCoverAnchorKind::BeforeNode, anchor, 0, 0}, scope(scope) {}
+  SyncCoverBarrierPlacement(std::uint32_t resource, SyncCoverAnchor anchor,
+                            SyncCoverScopeId scope)
+      : resource(resource), anchor(anchor), scope(scope) {}
 };
 
 struct SyncCoverMechanismDescriptor {
@@ -288,7 +297,8 @@ private:
   void noteSuccessfulMutation();
   SyncCoverMechanismResult validateUncached() const;
   SyncCoverMechanismError validateResourceUse(
-      const SyncCoverResourceUse &use, const std::vector<SyncCoverEdge> &edges,
+      SyncCoverMechanismKind kind, const SyncCoverResourceUse &use,
+      const std::vector<SyncCoverEdge> &edges,
       const std::vector<SyncCoverResourceAction> &actions) const;
   SyncCoverMechanismError validateSupplyBindings(
       SyncCoverMechanismKind kind, const std::vector<SyncCoverEdge> &edges,
@@ -344,6 +354,12 @@ std::optional<SyncCoverTimelineInterval>
 getSyncCoverResourceLifetime(const SyncCoverGraph &graph,
                              const SyncCoverMechanism &mechanism,
                              const SyncCoverResourceUse &use);
+
+/// Returns whether a barrier at the exact placement can supply the completion
+/// edge without relying on a control path on which the barrier may not run.
+bool syncCoverBarrierCanSupply(const SyncCoverGraph &graph,
+                               const SyncCoverBarrierPlacement &placement,
+                               const SyncCoverEdge &edge);
 
 } // namespace pto
 } // namespace mlir

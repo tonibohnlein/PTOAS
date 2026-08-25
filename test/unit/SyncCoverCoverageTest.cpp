@@ -534,7 +534,11 @@ bool testAtomicBundleAndErrors() {
   const SyncCoverCoverageStatistics statistics = oracle.getStatistics();
   passed &= check(statistics.graphValidations == 1 &&
                       statistics.demandPreparations == 1 &&
-                      statistics.coverageQueries == 2,
+                      statistics.coverageQueries == 2 &&
+                      statistics.preparedVirtualNodes == 3 &&
+                      statistics.preparedVirtualEdges == 2 &&
+                      statistics.maximumVirtualNodes == 3 &&
+                      statistics.maximumVirtualEdges == 2,
                   "one oracle epoch validates and prepares each demand once");
   passed &= check(oracle.getDemandTopology(1).error ==
                       SyncCoverCoverageError::InvalidDemand,

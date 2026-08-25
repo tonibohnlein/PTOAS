@@ -642,7 +642,8 @@ mlir::pto::resolveSyncCoverAnchor(const SyncCoverGraph &graph,
   case SyncCoverAnchorKind::BeforeNode:
   case SyncCoverAnchorKind::AfterNode: {
     const bool invalidNodeAnchor =
-        anchor.node >= nodes.size() || anchor.scope != 0;
+        anchor.node >= nodes.size() || anchor.scope != 0 ||
+        anchor.position != 0;
     if (invalidNodeAnchor) {
       return std::nullopt;
     }
@@ -652,7 +653,7 @@ mlir::pto::resolveSyncCoverAnchor(const SyncCoverGraph &graph,
   case SyncCoverAnchorKind::ScopeEntry:
   case SyncCoverAnchorKind::ScopeExit: {
     const bool invalidScopeAnchor = anchor.scope >= scopes.size() ||
-                                    anchor.node != 0 ||
+                                    anchor.node != 0 || anchor.position != 0 ||
                                     !scopes[anchor.scope].timeline;
     if (invalidScopeAnchor) {
       return std::nullopt;
@@ -660,6 +661,18 @@ mlir::pto::resolveSyncCoverAnchor(const SyncCoverGraph &graph,
     return anchor.kind == SyncCoverAnchorKind::ScopeEntry
                ? scopes[anchor.scope].timeline->begin
                : scopes[anchor.scope].timeline->end;
+  }
+  case SyncCoverAnchorKind::TimelinePoint: {
+    const bool invalidPoint = anchor.scope >= scopes.size() ||
+                              anchor.node != 0 ||
+                              !scopes[anchor.scope].timeline ||
+                              anchor.position <
+                                  scopes[anchor.scope].timeline->begin ||
+                              anchor.position >
+                                  scopes[anchor.scope].timeline->end;
+    return invalidPoint
+               ? std::nullopt
+               : std::optional<SyncCoverTimelinePosition>(anchor.position);
   }
   }
   return std::nullopt;

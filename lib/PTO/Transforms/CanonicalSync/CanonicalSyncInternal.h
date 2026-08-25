@@ -468,6 +468,22 @@ private:
   std::vector<CanonicalEventBundleCandidate> selectedEventBundles_;
 };
 
+LogicalResult runCanonicalSyncCoveringShadowSelection(
+    func::FuncOp func, const CanonicalSyncPlan &plan,
+    const CanonicalMechanismUniverse &legacyUniverse,
+    ArrayRef<CanonicalEventBundleCandidate> selectedEventBundles,
+    unsigned eventIdMax,
+    const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
+    SyncCoverGraph &graph, ArrayRef<SyncCoverDemandId> activeDemands,
+    const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
+        &regionScopes,
+    const DenseMap<Operation *, SyncCoverScopeId> &loopScopes,
+    llvm::function_ref<std::size_t(const CanonicalAnchor &)> getAnchorPosition,
+    llvm::function_ref<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
+        getBarrierCompletionEdges,
+    llvm::function_ref<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols,
+    CanonicalSyncCoveringShadowSnapshot &snapshot);
+
 } // namespace pto
 } // namespace mlir
 

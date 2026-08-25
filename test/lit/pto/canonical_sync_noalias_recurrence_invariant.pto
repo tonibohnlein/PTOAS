@@ -260,6 +260,7 @@ module {
 // COVERING: covering-shadow status=graph-ready scopes=3 controls=0 nodes=4
 // COVERING-SAME: fixed-edges=1 recurrence-carries=6
 // COVERING-SAME: conservative-demands=26 active-demands=21 intrinsic-demands=0
+// COVERING: covering-selection status=ready error=none
 // COVERING: covering-demand[1] 0 -> 3 kind=memory-war scope=2 distance=0 active=yes
 // COVERING: covering-demand[9] 0 -> 3 kind=memory-war scope=1 distance=1 active=yes
 // COVERING: covering-demand[22] 3 -> 0 kind=memory-raw scope=1 distance=1 active=yes
@@ -267,6 +268,7 @@ module {
 // COVERING: covering-shadow status=graph-ready scopes=3 controls=0 nodes=4
 // COVERING-SAME: fixed-edges=1 recurrence-carries=6
 // COVERING-SAME: conservative-demands=26 active-demands=15 intrinsic-demands=0
+// COVERING: covering-selection status=ready error=none
 // COVERING: covering-demand[1] 0 -> 3 kind=memory-war scope=2 distance=0 active=no
 // COVERING: covering-demand[9] 0 -> 3 kind=memory-war scope=1 distance=1 active=no
 // COVERING: covering-demand[22] 3 -> 0 kind=memory-raw scope=1 distance=1 active=no

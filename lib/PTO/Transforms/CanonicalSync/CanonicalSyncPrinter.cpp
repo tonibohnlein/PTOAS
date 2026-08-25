@@ -107,6 +107,16 @@ bool includesCovering(StringRef view) {
   return view == "all" || view == "covering";
 }
 
+StringRef stringifyCoveringResourceKind(SyncCoverResourceKind kind) {
+  switch (kind) {
+  case SyncCoverResourceKind::EventId:
+    return "event-id";
+  case SyncCoverResourceKind::BufferToken:
+    return "buffer-token";
+  }
+  return "unknown";
+}
+
 StringRef stringifyOwnershipAddressSpace(AddressSpace space) {
   switch (space) {
   case AddressSpace::Zero:
@@ -177,6 +187,28 @@ StringRef stringifyCoveringDemandKind(SyncCoverDemandKind kind) {
     return "memory-war";
   case SyncCoverDemandKind::MemoryWAW:
     return "memory-waw";
+  }
+  return "unknown";
+}
+
+StringRef stringifyCoveringSelectionError(SyncCoverSelectionError error) {
+  switch (error) {
+  case SyncCoverSelectionError::None:
+    return "none";
+  case SyncCoverSelectionError::InvalidUniverse:
+    return "invalid-universe";
+  case SyncCoverSelectionError::InvalidDemand:
+    return "invalid-demand";
+  case SyncCoverSelectionError::InvalidSeed:
+    return "invalid-seed";
+  case SyncCoverSelectionError::InvalidOptions:
+    return "invalid-options";
+  case SyncCoverSelectionError::ProvenInfeasible:
+    return "proven-infeasible";
+  case SyncCoverSelectionError::SearchIncomplete:
+    return "search-incomplete";
+  case SyncCoverSelectionError::FinalVerificationFailed:
+    return "final-verification-failed";
   }
   return "unknown";
 }
@@ -500,6 +532,70 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
        << " active-demands=" << snapshot.activeDemands
        << " intrinsic-demands=" << snapshot.intrinsicallySatisfiedDemands
        << '\n';
+    os << "  covering-selection status="
+       << (snapshot.selectionAttempted ? "ready" : "not-run")
+       << " error=" << stringifyCoveringSelectionError(snapshot.selectionError)
+       << " domains=" << snapshot.resourceDomains
+       << " barrier-candidates=" << snapshot.barrierCandidates
+       << " event-bundle-candidates=" << snapshot.eventBundleCandidates
+       << " mechanisms=" << snapshot.candidateMechanisms
+       << " legacy-seed=" << snapshot.legacySeedMechanisms
+       << " selected=" << snapshot.selectedMechanisms
+       << " components=" << snapshot.solverComponents
+       << " evaluations=" << snapshot.solverEvaluations
+       << " redundancy-evaluations=" << snapshot.redundancyEvaluations
+       << " truncated=" << (snapshot.searchTruncated ? "yes" : "no")
+       << " optimal=" << (snapshot.optimalityProven ? "yes" : "no")
+       << " actions=";
+    printNodeIds(os, snapshot.actionProfile);
+    os << " barriers=";
+    printNodeIds(os, snapshot.barrierActionProfile);
+    os << " providers=[";
+    llvm::interleaveComma(snapshot.selectedProviders, os,
+                          [&](const auto &selected) {
+                            os << "mechanism[" << selected.mechanism << "]=";
+                            printMechanismRef(os, selected.provider);
+                          });
+    os << "]\n";
+    os << "  covering-selection-topology prepared-demands="
+       << snapshot.coverageStatistics.demandPreparations
+       << " virtual-nodes="
+       << snapshot.coverageStatistics.preparedVirtualNodes
+       << " virtual-edges="
+       << snapshot.coverageStatistics.preparedVirtualEdges
+       << " max-virtual-nodes="
+       << snapshot.coverageStatistics.maximumVirtualNodes
+       << " max-virtual-edges="
+       << snapshot.coverageStatistics.maximumVirtualEdges
+       << " coverage-queries=" << snapshot.coverageStatistics.coverageQueries
+       << " final-prepared-demands="
+       << snapshot.finalVerificationStatistics.demandPreparations
+       << " final-virtual-nodes="
+       << snapshot.finalVerificationStatistics.preparedVirtualNodes
+       << " final-virtual-edges="
+       << snapshot.finalVerificationStatistics.preparedVirtualEdges
+       << " final-validations="
+       << snapshot.finalVerificationStatistics.graphValidations
+       << " final-coverage-queries="
+       << snapshot.finalVerificationStatistics.coverageQueries << '\n';
+    for (const CanonicalSyncCoveringResourceAllocation &allocation :
+         snapshot.selectedAllocations) {
+      os << "  covering-allocation mechanism[" << allocation.mechanism << "]=";
+      printMechanismRef(os, allocation.provider);
+      os << " use=" << allocation.resourceUse
+         << " domain=" << allocation.domain << " kind="
+         << stringifyCoveringResourceKind(allocation.kind) << " resources=";
+      if (allocation.kind == SyncCoverResourceKind::EventId) {
+        os << stringifyPIPE(static_cast<PIPE>(allocation.sourceResource))
+           << "->"
+           << stringifyPIPE(static_cast<PIPE>(allocation.targetResource));
+      } else {
+        os << allocation.sourceResource << "->" << allocation.targetResource;
+      }
+      os << " ids=";
+      printIds(os, allocation.ids);
+      os << '\n';
+    }
     for (const SyncCoverScope &scope : snapshot.scopeDetails) {
       os << "  covering-scope[" << scope.id << "] parent=" << scope.parent
          << " must-execute="
@@ -532,7 +628,10 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
          << edge.target << " kind=" << stringifyCoveringEdgeKind(edge.kind)
          << " scope=" << edge.scope << " distance=" << edge.distance
          << " origin="
-         << (edgeId < snapshot.fixedEdges ? "fixed" : "recurrence-carry")
+         << (edge.mechanism
+                 ? "mechanism"
+                 : (edgeId < snapshot.fixedEdges ? "fixed"
+                                                 : "recurrence-carry"))
          << " source-guard=";
       printCoveringGuard(os, edge.sourceGuard);
       os << " target-guard=";

@@ -169,9 +169,29 @@ bool testCutGuidedExactSelection() {
                   "exact search prefers the cheaper direct cover");
   passed &= check(findBruteForceOptimum(universe) == result.mechanisms,
                   "exact solver matches exhaustive subset enumeration");
+  const bool hasDirectAllocation =
+      result.resources && result.resources.domains.size() > directDomain;
+  passed &= check(hasDirectAllocation,
+                  "final verification returns resource domains");
+  if (hasDirectAllocation) {
+    const SyncCoverDomainFeasibility &directAllocation =
+        result.resources.domains[directDomain];
+    passed &= check(directAllocation.allocations.size() == 1 &&
+                        directAllocation.allocations.front().owner.mechanism ==
+                            direct &&
+                        directAllocation.allocations.front().ids ==
+                            std::vector<unsigned>{0},
+                    "final verification preserves the exact physical ID");
+  }
   passed &= check(result.coverageStatistics.graphValidations == 1 &&
-                      result.coverageStatistics.demandPreparations == 1,
-                  "solver validates and prepares each oracle epoch once");
+                      result.coverageStatistics.demandPreparations == 1 &&
+                      result.coverageStatistics.preparedVirtualNodes == 3 &&
+                      result.finalVerificationStatistics.graphValidations ==
+                          1 &&
+                      result.finalVerificationStatistics.demandPreparations ==
+                          0 &&
+                      result.finalVerificationStatistics.coverageQueries == 1,
+                  "solver independently revalidates the cached topology");
 
   SyncCoverSolverOptions beamOptions;
   beamOptions.exactMechanismThreshold = 0;

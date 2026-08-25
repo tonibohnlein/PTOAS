@@ -16,6 +16,9 @@
 // RUN: pto-test-opt %s \
 // RUN:   '-pto-print-canonical-sync-plan=format=text view=ownership' \
 // RUN:   | FileCheck %s --check-prefix=OWNERSHIP
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=covering' \
+// RUN:   | FileCheck %s --check-prefix=COVERING
 // RUN: not pto-test-opt %s \
 // RUN:   '-pto-canonical-sync=event-id-num-max=1' 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SCARCE
@@ -316,6 +319,17 @@ module attributes {pto.target_arch = "a2a3"} {
 // OWNERSHIP: use[1] lane=1 producers=[4, 5] consumers=[6, 7]
 // OWNERSHIP-LABEL: PTOCanonicalSyncPlan @overlapping_l0_slots_refused
 // OWNERSHIP-SAME: ownership-cycles=0
+
+// COVERING-LABEL: PTOCanonicalSyncPlan @two_slot_l0_ownership
+// COVERING: covering-selection status=ready error=none
+// COVERING-SAME: legacy-seed=1 selected=1
+// COVERING-SAME: providers=[mechanism[{{[0-9]+}}]=event-bundle[{{[0-9]+}}]]
+// COVERING: covering-allocation mechanism[{{[0-9]+}}]=event-bundle[{{[0-9]+}}]
+// COVERING-LABEL: PTOCanonicalSyncPlan @branched_two_slot_l0_ownership
+// COVERING: covering-selection status=ready error=none
+// COVERING-SAME: legacy-seed=1 selected=1
+// COVERING-SAME: providers=[mechanism[{{[0-9]+}}]=event-bundle[{{[0-9]+}}]]
+// COVERING: covering-allocation mechanism[{{[0-9]+}}]=event-bundle[{{[0-9]+}}]
 
 // SCARCE: error: PTOCanonicalSync cannot repair event-id scarcity in domain
 // SCARCE-SAME: PIPE_M -> PIPE_MTE1

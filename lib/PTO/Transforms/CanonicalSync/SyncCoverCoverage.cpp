@@ -23,6 +23,11 @@ namespace {
 constexpr unsigned kStaticCopy = std::numeric_limits<unsigned>::max();
 constexpr std::size_t kMaxVirtualNodes = 1U << 20;
 
+void addSaturated(std::size_t value, std::size_t &total) {
+  const std::size_t maximum = std::numeric_limits<std::size_t>::max();
+  total = value > maximum - total ? maximum : total + value;
+}
+
 struct ContextLiteral {
   SyncCoverControlId control = 0;
   unsigned copy = 0;
@@ -406,9 +411,20 @@ struct SyncCoverCoverageOracle::Implementation {
     std::optional<PreparedDemand> &entry = prepared[demand];
     if (!entry) {
       entry = prepareDemand(graph, demand);
-      ++statistics.demandPreparations;
+      recordPreparation(*entry);
     }
     return *entry;
+  }
+
+  void recordPreparation(const PreparedDemand &entry) const {
+    ++statistics.demandPreparations;
+    const std::size_t virtualNodes = entry.stateCount / 2;
+    addSaturated(virtualNodes, statistics.preparedVirtualNodes);
+    addSaturated(entry.edges.size(), statistics.preparedVirtualEdges);
+    statistics.maximumVirtualNodes =
+        std::max(statistics.maximumVirtualNodes, virtualNodes);
+    statistics.maximumVirtualEdges =
+        std::max(statistics.maximumVirtualEdges, entry.edges.size());
   }
 
   SyncCoverGraph graph;

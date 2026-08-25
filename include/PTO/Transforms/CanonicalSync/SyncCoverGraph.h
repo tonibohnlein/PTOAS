@@ -40,12 +40,14 @@ enum class SyncCoverAnchorKind : std::uint8_t {
   AfterNode,
   ScopeEntry,
   ScopeExit,
+  TimelinePoint,
 };
 
 struct SyncCoverAnchor {
   SyncCoverAnchorKind kind = SyncCoverAnchorKind::BeforeNode;
   SyncCoverNodeId node = 0;
   SyncCoverScopeId scope = 0;
+  SyncCoverTimelinePosition position = 0;
 };
 
 struct SyncCoverGuardLiteral {

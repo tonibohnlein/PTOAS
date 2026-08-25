@@ -88,13 +88,16 @@ void removeRedundantMechanisms(
     const SyncCoverSelectionEvaluator &selectionEvaluator,
     CoverageEvaluator &coverage,
     const std::vector<SyncCoverDemandId> &activeDemands,
-    std::vector<SyncCoverMechanismId> &selected, SyncCoverStructuralCost &cost);
+    std::vector<SyncCoverMechanismId> &selected, SyncCoverStructuralCost &cost,
+    std::size_t &evaluations);
 
 bool independentlyVerifySelection(
     const SyncCoverMechanismUniverse &universe,
+    SyncCoverCoverageOracle &coverage,
     const std::vector<SyncCoverDemandId> &activeDemands,
     const std::vector<SyncCoverMechanismId> &selected,
-    SyncCoverStructuralCost &cost);
+    SyncCoverStructuralCost &cost, SyncCoverResourceSelection &resources,
+    SyncCoverCoverageStatistics &statistics);
 
 } // namespace sync_cover_internal
 } // namespace pto

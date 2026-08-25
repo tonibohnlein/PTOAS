@@ -84,8 +84,9 @@ bundles use event-ID domains; verified ownership protocols may additionally
 use independent physical token pools. Buffer-token pool identities are unique
 in version one; a shared pool spanning multiple resource domains is rejected
 until coloring and component decomposition can model it jointly. A barrier
-names a concrete same-pipe anchor and can cover an edge only when the covered
-target's scope and control guard guarantee that the anchor executes.
+names a concrete anchor on the source pipe that it drains. The covered target
+may be on another pipe, but its timeline position, scope, and control guard
+must guarantee that the barrier executes before it.
 Conditional and potentially zero-trip nested anchors therefore fail closed.
 
 Ordinary event bundles are deliberately limited to distance-zero canonical
@@ -100,6 +101,12 @@ straight child scopes but not nested loops, whose execution multiplicity needs
 an explicit proof. Wider, longer-distance, conditional, nested-loop, or
 ownership recurrences require an adapter verifier for the exact submitted
 descriptor; there is no permissive generic fallback.
+
+A verified cyclic lifetime may bind distance-zero startup or drain supplies in
+a nested ancestor or descendant scope when all physical actions remain within
+the lifecycle timeline. This represents one event ID across preheader,
+steady-state, and epilogue phases. Unverified and ordinary event bundles still
+require exact scope and distance matching.
 
 The protocol verifier is a soundness boundary. For a verified ownership or
 recurrence protocol, it certifies that the submitted actions implement every
@@ -133,8 +140,8 @@ regions therefore do not collapse into one search component.
 Coverage, token validity, and exact event-ID coloring are hard constraints.
 Structural cost is defined only for resource-feasible selections; infeasible
 partial search states require a separate overflow-first search heuristic.
-The final emitted plan is checked by a non-incremental verifier independently
-of the optimizing oracle.
+The final selected plan is checked by fresh graph/resource validation and a
+second exact coverage traversal that bypasses the optimizer's witness cache.
 
 ## Selection and cost
 
@@ -178,9 +185,12 @@ without truncation proves infeasibility; bounded failure reports incomplete
 search, and a bounded success does not claim optimality. Exact and beam search
 both obey the per-component evaluation budget; seed evaluation remains outside
 that budget so a valid incumbent is not discarded by truncation. Every
-returned plan is finally rechecked with fresh universe/resource and coverage
-epochs. Invalid or incomplete results carry an explicitly unevaluated cost,
-never a valid-looking zero cost.
+returned plan is finally rechecked with fresh graph/resource validation and a
+second exact coverage traversal over the immutable prepared demand topology.
+The traversal bypasses search witness caches; only deterministic virtual-graph
+expansion is shared to avoid retaining a second full topology cache. Invalid or
+incomplete results carry an explicitly unevaluated cost, never a valid-looking
+zero cost.
 
 The initial mechanism cost is symbolic rather than a runtime estimate. It
 counts each physical synchronization action once, even when one action carries

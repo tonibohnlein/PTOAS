@@ -1,0 +1,175 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// Runs direct-cover selection over the translated universe without changing
+// CanonicalSync emission.
+
+#include "CanonicalSyncCoveringSelection.h"
+
+#include "llvm/ADT/STLExtras.h"
+
+#include <algorithm>
+#include <utility>
+
+using namespace mlir;
+using namespace mlir::pto;
+using namespace mlir::pto::canonical_sync_covering;
+
+LogicalResult MechanismAdapter::buildLegacySeed() {
+  for (const CanonicalBarrier &barrier : plan_.getBarriers()) {
+    auto candidate = llvm::find_if(
+        legacyUniverse_.barriers, [&](const auto &entry) {
+          return barriersEquivalent(barrier, entry.barrier);
+        });
+    if (candidate == legacyUniverse_.barriers.end()) {
+      return func_.emitError(
+          "internal error: selected canonical barrier has no covering "
+          "provider");
+    }
+    const CanonicalSelectionMechanismRef provider{
+        CanonicalSelectionMechanismKind::Barrier, candidate->id};
+    auto mechanism = providers_.find(provider);
+    if (mechanism == providers_.end()) {
+      return func_.emitError(
+          "internal error: selected canonical barrier was not adapted");
+    }
+    legacySeed_.push_back(mechanism->second);
+  }
+  for (const CanonicalEventBundleCandidate &bundle : selectedEventBundles_) {
+    const CanonicalSelectionMechanismRef provider{
+        CanonicalSelectionMechanismKind::EventBundle, bundle.id};
+    auto mechanism = providers_.find(provider);
+    if (mechanism == providers_.end()) {
+      return func_.emitError(
+          "internal error: selected canonical event bundle was not adapted");
+    }
+    legacySeed_.push_back(mechanism->second);
+  }
+  llvm::sort(legacySeed_);
+  legacySeed_.erase(std::unique(legacySeed_.begin(), legacySeed_.end()),
+                    legacySeed_.end());
+  return success();
+}
+
+LogicalResult
+MechanismAdapter::solve(CanonicalSyncCoveringShadowSnapshot &snapshot) {
+  snapshot.selectionAttempted = true;
+  const std::vector<SyncCoverDemandId> demands(activeDemands_.begin(),
+                                                activeDemands_.end());
+  const std::vector<SyncCoverSelectionSeed> seeds = {{1, legacySeed_}};
+  const SyncCoverSelectionResult result =
+      solveSyncCoverSelection(universe_, demands, seeds);
+  snapshot.selectionError = result.error;
+  snapshot.searchTruncated = static_cast<bool>(result.truncation);
+  snapshot.optimalityProven = result.optimalityProven;
+  snapshot.solverComponents = result.components.size();
+  snapshot.solverEvaluations = result.evaluations;
+  snapshot.redundancyEvaluations = result.redundancyEvaluations;
+  snapshot.coverageStatistics = result.coverageStatistics;
+  snapshot.finalVerificationStatistics = result.finalVerificationStatistics;
+  if (!result) {
+    return func_.emitError()
+           << "canonical covering shadow selection failed with error "
+           << static_cast<unsigned>(result.error);
+  }
+  snapshot.selectedMechanisms = result.mechanisms.size();
+  snapshot.actionProfile = result.cost.actionProfile;
+  snapshot.barrierActionProfile = result.cost.barrierActionProfile;
+  snapshot.selectedResources = result.resources;
+  std::map<SyncCoverMechanismId, CanonicalSelectionMechanismRef>
+      providerForMechanism;
+  for (const auto &[provider, mechanism] : providers_) {
+    const bool unique =
+        providerForMechanism.emplace(mechanism, provider).second;
+    if (!unique) {
+      return func_.emitError(
+          "internal error: covering mechanism has multiple providers");
+    }
+  }
+  for (SyncCoverMechanismId mechanism : result.mechanisms) {
+    auto provider = providerForMechanism.find(mechanism);
+    if (provider == providerForMechanism.end()) {
+      return func_.emitError(
+          "internal error: selected covering mechanism has no provider");
+    }
+    snapshot.selectedProviders.push_back({mechanism, provider->second});
+  }
+  for (const SyncCoverDomainFeasibility &feasibility :
+       result.resources.domains) {
+    if (feasibility.domain >= universe_.getResourceDomains().size()) {
+      return func_.emitError(
+          "internal error: selected covering resource domain is invalid");
+    }
+    const SyncCoverResourceDomain &domain =
+        universe_.getResourceDomains()[feasibility.domain];
+    for (const SyncCoverResourceAllocation &allocation :
+         feasibility.allocations) {
+      auto provider = providerForMechanism.find(allocation.owner.mechanism);
+      const bool providerMissing = provider == providerForMechanism.end();
+      const bool mechanismMissing =
+          allocation.owner.mechanism >= universe_.getMechanisms().size();
+      if (providerMissing || mechanismMissing) {
+        return func_.emitError(
+            "internal error: covering allocation has no provider");
+      }
+      const SyncCoverMechanism &mechanism =
+          universe_.getMechanisms()[allocation.owner.mechanism];
+      const bool useMissing =
+          allocation.owner.resourceUse >= mechanism.resourceUses.size();
+      if (useMissing ||
+          mechanism.resourceUses[allocation.owner.resourceUse].domain !=
+              feasibility.domain) {
+        return func_.emitError(
+            "internal error: covering allocation has no matching resource "
+            "use");
+      }
+      snapshot.selectedAllocations.push_back(
+          {allocation.owner.mechanism, provider->second,
+           allocation.owner.resourceUse, feasibility.domain, domain.kind,
+           domain.sourceResource, domain.targetResource, allocation.ids});
+    }
+  }
+  return success();
+}
+
+LogicalResult MechanismAdapter::emitMechanismError(
+    StringRef context, const SyncCoverMechanismResult &result) {
+  InFlightDiagnostic diagnostic = func_.emitError()
+                                  << "canonical covering " << context
+                                  << " failed with mechanism error "
+                                  << static_cast<unsigned>(result.error);
+  if (result.index) {
+    diagnostic << " at index " << *result.index;
+  }
+  return failure();
+}
+
+LogicalResult mlir::pto::runCanonicalSyncCoveringShadowSelection(
+    func::FuncOp func, const CanonicalSyncPlan &plan,
+    const CanonicalMechanismUniverse &legacyUniverse,
+    ArrayRef<CanonicalEventBundleCandidate> selectedEventBundles,
+    unsigned eventIdMax,
+    const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
+    SyncCoverGraph &graph, ArrayRef<SyncCoverDemandId> activeDemands,
+    const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
+        &regionScopes,
+    const DenseMap<Operation *, SyncCoverScopeId> &loopScopes,
+    llvm::function_ref<std::size_t(const CanonicalAnchor &)>
+        getAnchorPosition,
+    llvm::function_ref<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
+        getBarrierCompletionEdges,
+    llvm::function_ref<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols,
+    CanonicalSyncCoveringShadowSnapshot &snapshot) {
+  MechanismAdapter adapter(
+      func, plan, legacyUniverse, selectedEventBundles, eventIdMax, reservedIds,
+      graph, activeDemands, regionScopes, loopScopes, getAnchorPosition,
+      getBarrierCompletionEdges, verifyEventProtocols);
+  return adapter.build(snapshot);
+}

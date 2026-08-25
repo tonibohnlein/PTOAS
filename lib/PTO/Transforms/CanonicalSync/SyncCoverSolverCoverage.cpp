@@ -109,7 +109,7 @@ void mlir::pto::sync_cover_internal::removeRedundantMechanisms(
     CoverageEvaluator &coverage,
     const std::vector<SyncCoverDemandId> &activeDemands,
     std::vector<SyncCoverMechanismId> &selected,
-    SyncCoverStructuralCost &cost) {
+    SyncCoverStructuralCost &cost, std::size_t &evaluations) {
   while (!selected.empty()) {
     std::optional<std::vector<SyncCoverMechanismId>> bestSelection;
     std::optional<SyncCoverStructuralCost> bestCost;
@@ -117,6 +117,7 @@ void mlir::pto::sync_cover_internal::removeRedundantMechanisms(
       std::vector<SyncCoverMechanismId> candidate = selected;
       candidate.erase(candidate.begin() + index);
       SyncCoverStructuralCost candidateCost;
+      ++evaluations;
       const bool complete =
           evaluateCompleteSelection(selectionEvaluator, coverage, activeDemands,
                                     candidate, candidateCost);
@@ -138,11 +139,14 @@ void mlir::pto::sync_cover_internal::removeRedundantMechanisms(
 
 bool mlir::pto::sync_cover_internal::independentlyVerifySelection(
     const SyncCoverMechanismUniverse &universe,
+    SyncCoverCoverageOracle &coverage,
     const std::vector<SyncCoverDemandId> &activeDemands,
     const std::vector<SyncCoverMechanismId> &selected,
-    SyncCoverStructuralCost &cost) {
+    SyncCoverStructuralCost &cost, SyncCoverResourceSelection &resources,
+    SyncCoverCoverageStatistics &statistics) {
+  const SyncCoverGraphResult graphValidation = universe.getGraph().validate();
   const SyncCoverSelectionEvaluator selectionEvaluator(universe);
-  if (!selectionEvaluator) {
+  if (!graphValidation || !selectionEvaluator) {
     return false;
   }
   const SyncCoverSelectionEvaluation selection =
@@ -151,7 +155,7 @@ bool mlir::pto::sync_cover_internal::independentlyVerifySelection(
     return false;
   }
 
-  SyncCoverCoverageOracle coverage(universe.getGraph());
+  const SyncCoverCoverageStatistics before = coverage.getStatistics();
   for (SyncCoverDemandId demand : activeDemands) {
     const SyncCoverCoverageResult result =
         coverage.checkDemandCanonicalSelection(demand, selected);
@@ -159,6 +163,11 @@ bool mlir::pto::sync_cover_internal::independentlyVerifySelection(
       return false;
     }
   }
+  const SyncCoverCoverageStatistics after = coverage.getStatistics();
+  statistics.graphValidations = 1;
+  statistics.coverageQueries =
+      after.coverageQueries - before.coverageQueries;
   cost = selection.cost;
+  resources = selection.resources;
   return true;
 }

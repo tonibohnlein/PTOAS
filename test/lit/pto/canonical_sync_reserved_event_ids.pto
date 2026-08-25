@@ -16,6 +16,9 @@
 // RUN: pto-test-opt %s \
 // RUN:   '-pto-print-canonical-sync-plan=format=text view=selection event-id-num-max=2 evict-event-bundle-ids=0' \
 // RUN:   | FileCheck %s --check-prefix=SELECTION
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=covering event-id-num-max=2' \
+// RUN:   | FileCheck %s --check-prefix=COVERING
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @reserved_scalar_to_vector_id() {
@@ -34,6 +37,8 @@ module attributes {pto.target_arch = "a2a3"} {
       !pto.tile_buf<vec, 1x32xf16>, f16, !pto.tile_buf<vec, 1x32xui8>)
       outs(%dst, %count : !pto.tile_buf<vec, 1x32xi32>,
                            !pto.tile_buf<vec, 1x32xi32>)
+    pto.tmuls ins(%count, %scale : !pto.tile_buf<vec, 1x32xi32>, i32)
+      outs(%count : !pto.tile_buf<vec, 1x32xi32>)
     pto.tmuls ins(%count, %scale : !pto.tile_buf<vec, 1x32xi32>, i32)
       outs(%count : !pto.tile_buf<vec, 1x32xi32>)
     return
@@ -55,3 +60,9 @@ module attributes {pto.target_arch = "a2a3"} {
 // SELECTION: color PIPE_S -> PIPE_V before=1 after=0 available=1
 // SELECTION: uncovered requirement[0] 3 -> 4 pipes=PIPE_S->PIPE_V kind=memory-raw
 // SELECTION-NEXT: uncovered requirement[1] 3 -> 4 pipes=PIPE_S->PIPE_V kind=memory-waw
+
+// COVERING-LABEL: PTOCanonicalSyncPlan @reserved_scalar_to_vector_id
+// COVERING: covering-selection status=ready error=none
+// COVERING-SAME: providers=[mechanism[0]=barrier[0], mechanism[1]=event-bundle[0]]
+// COVERING: covering-allocation mechanism[1]=event-bundle[0]
+// COVERING-SAME: use=0 domain={{[0-9]+}} kind=event-id resources=PIPE_S->PIPE_V ids=[1]

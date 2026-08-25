@@ -165,10 +165,15 @@ bool SyncCoverMechanismDescriptorBuilder::addLane(
             SyncCoverResourceActionKind::Produce ||
         descriptor_.actions[supply.consumeAction.index].kind !=
             SyncCoverResourceActionKind::Consume;
+    const bool straightLifetime = distance == 0;
+    const bool invalidLifetime =
+        straightLifetime
+            ? supply.edge.distance != 0 || supply.edge.scope != scope
+            : supply.edge.distance > distance ||
+                  (supply.edge.distance != 0 && supply.edge.scope != scope);
     const bool invalidEdge =
         supply.edge.kind != SyncCoverEdgeKind::CompletionSupply ||
-        supply.edge.mechanism || supply.edge.scope != scope ||
-        supply.edge.distance != distance;
+        supply.edge.mechanism || invalidLifetime;
     if (invalidActions || invalidEdge) {
       return false;
     }

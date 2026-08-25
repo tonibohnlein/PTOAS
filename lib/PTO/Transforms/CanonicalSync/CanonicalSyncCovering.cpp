@@ -127,12 +127,26 @@ class CanonicalSyncCoveringGraphAdapter {
 public:
   CanonicalSyncCoveringGraphAdapter(
       func::FuncOp func, const CanonicalSyncPlan &plan,
+      const CanonicalMechanismUniverse &legacyUniverse,
+      ArrayRef<CanonicalEventBundleCandidate> selectedEventBundles,
+      unsigned eventIdMax,
+      const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
       llvm::function_ref<bool(PipelineType)> hasHardwareCompletion,
       llvm::function_ref<bool(const CanonicalDependency &)>
-          hasIntrinsicOrdering)
-      : func_(func), plan_(plan),
+          hasIntrinsicOrdering,
+      llvm::function_ref<std::size_t(const CanonicalAnchor &)>
+          getAnchorPosition,
+      llvm::function_ref<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
+          getBarrierCompletionEdges,
+      llvm::function_ref<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols)
+      : func_(func), plan_(plan), legacyUniverse_(legacyUniverse),
+        selectedEventBundles_(selectedEventBundles), eventIdMax_(eventIdMax),
+        reservedIds_(reservedIds),
         hasHardwareCompletion_(hasHardwareCompletion),
-        hasIntrinsicOrdering_(hasIntrinsicOrdering) {}
+        hasIntrinsicOrdering_(hasIntrinsicOrdering),
+        getAnchorPosition_(getAnchorPosition),
+        getBarrierCompletionEdges_(getBarrierCompletionEdges),
+        verifyEventProtocols_(verifyEventProtocols) {}
 
   LogicalResult build(CanonicalSyncCoveringShadowSnapshot &snapshot) {
     regionContexts_[&func_.getBody()] = {};
@@ -149,6 +163,16 @@ public:
     const SyncCoverGraphResult validation = graph_.validate();
     if (!validation) {
       return emitGraphError("final graph validation", validation);
+    }
+    for (const auto &entry : regionContexts_) {
+      regionScopes_.emplace(entry.first, entry.second.scope);
+    }
+    if (failed(runCanonicalSyncCoveringShadowSelection(
+            func_, plan_, legacyUniverse_, selectedEventBundles_, eventIdMax_,
+            reservedIds_, graph_, activeDemands_, regionScopes_, loopScopes_,
+            getAnchorPosition_, getBarrierCompletionEdges_,
+            verifyEventProtocols_, snapshot))) {
+      return failure();
     }
     snapshot.scopes = graph_.getScopes().size();
     snapshot.controls = graph_.getControls().size();
@@ -288,6 +312,20 @@ private:
   }
 
   LogicalResult addNodes() {
+    std::map<std::size_t, std::set<std::uint32_t>> completionTargets;
+    const auto collectCompletionTargets = [&](const auto &bundles) {
+      for (const CanonicalEventBundleCandidate &bundle : bundles) {
+        for (const CanonicalEvent &event : bundle.events) {
+          for (const CanonicalEventCompletion &completion :
+               event.completions) {
+            completionTargets[completion.source].insert(
+                static_cast<std::uint32_t>(event.targetPipe));
+          }
+        }
+      }
+    };
+    collectCompletionTargets(legacyUniverse_.eventBundles);
+    collectCompletionTargets(selectedEventBundles_);
     for (const CanonicalSyncNode &node : plan_.getNodes()) {
       auto context = regionContexts_.find(node.operation->getParentRegion());
       const bool wrongIdentity = node.id != graph_.getNodes().size();
@@ -296,9 +334,14 @@ private:
         return func_.emitError(
             "internal error: canonical covering node scope is unavailable");
       }
+      std::vector<std::uint32_t> targets;
+      auto completion = completionTargets.find(node.id);
+      if (completion != completionTargets.end()) {
+        targets.assign(completion->second.begin(), completion->second.end());
+      }
       const SyncCoverGraphResult result = graph_.addNode(
           static_cast<std::uint32_t>(node.pipe), 1, context->second.scope,
-          node.order, context->second.guard);
+          node.order, context->second.guard, std::move(targets));
       if (!result || !result.index || *result.index != node.id) {
         return emitGraphError("node insertion", result);
       }
@@ -463,10 +506,19 @@ private:
 
   func::FuncOp func_;
   const CanonicalSyncPlan &plan_;
+  const CanonicalMechanismUniverse &legacyUniverse_;
+  ArrayRef<CanonicalEventBundleCandidate> selectedEventBundles_;
+  unsigned eventIdMax_ = 0;
+  const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds_;
   llvm::function_ref<bool(PipelineType)> hasHardwareCompletion_;
   llvm::function_ref<bool(const CanonicalDependency &)> hasIntrinsicOrdering_;
+  llvm::function_ref<std::size_t(const CanonicalAnchor &)> getAnchorPosition_;
+  llvm::function_ref<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
+      getBarrierCompletionEdges_;
+  llvm::function_ref<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols_;
   SyncCoverGraph graph_;
   std::map<Region *, RegionContext, std::less<Region *>> regionContexts_;
+  std::map<Region *, SyncCoverScopeId, std::less<Region *>> regionScopes_;
   DenseMap<Operation *, SyncCoverScopeId> loopScopes_;
   std::vector<SyncCoverDemandId> activeDemands_;
   std::size_t recurrenceCarryEdges_ = 0;
@@ -477,12 +529,25 @@ private:
 
 LogicalResult CanonicalSyncPlanBuilder::buildCoveringShadowGraph() {
   CanonicalSyncCoveringShadowSnapshot snapshot;
-  CanonicalSyncCoveringGraphAdapter adapter(
-      func_, plan_,
-      [&](PipelineType pipe) { return hasHardwareCompletion(pipe); },
+  const auto hasCompletion =
+      [&](PipelineType pipe) { return hasHardwareCompletion(pipe); };
+  const auto hasIntrinsicOrdering =
       [&](const CanonicalDependency &dependency) {
         return hasIntrinsicMmadAccumulatorOrdering(dependency);
-      });
+      };
+  const auto anchorPosition =
+      [&](const CanonicalAnchor &anchor) { return getAnchorPosition(anchor); };
+  const auto barrierCompletionEdges = [&](const CanonicalBarrier &barrier) {
+    return buildBarrierCompletionEdges({barrier});
+  };
+  const auto verifiesEventProtocols = [&](ArrayRef<CanonicalEvent> events) {
+    return succeeded(verifyEventProtocols(events, /*requireAllocation=*/false,
+                                          /*diagnose=*/false));
+  };
+  CanonicalSyncCoveringGraphAdapter adapter(
+      func_, plan_, mechanismUniverse_, selectedEventBundles_, eventIdMax_,
+      reservedIds_, hasCompletion, hasIntrinsicOrdering, anchorPosition,
+      barrierCompletionEdges, verifiesEventProtocols);
   if (failed(adapter.build(snapshot))) {
     return failure();
   }

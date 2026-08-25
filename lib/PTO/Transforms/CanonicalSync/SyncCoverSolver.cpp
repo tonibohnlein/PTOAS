@@ -130,7 +130,7 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
     return result;
   }
   removeRedundantMechanisms(selectionEvaluator, coverage, demands, selected,
-                            selectedCost);
+                            selectedCost, result.redundancyEvaluations);
 
   for (const SyncCoverSelectionSeed &seed : seeds) {
     SyncCoverStructuralCost seedCost;
@@ -142,16 +142,19 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
     }
   }
 
-  if (!independentlyVerifySelection(universe, demands, selected,
-                                    selectedCost)) {
+  const SyncCoverCoverageStatistics searchCoverageStatistics =
+      oracle.getStatistics();
+  if (!independentlyVerifySelection(
+          universe, oracle, demands, selected, selectedCost, result.resources,
+          result.finalVerificationStatistics)) {
     result.error = SyncCoverSelectionError::FinalVerificationFailed;
     result.optimalityProven = false;
-    result.coverageStatistics = oracle.getStatistics();
+    result.coverageStatistics = searchCoverageStatistics;
     return result;
   }
 
   result.mechanisms = std::move(selected);
   result.cost = std::move(selectedCost);
-  result.coverageStatistics = oracle.getStatistics();
+  result.coverageStatistics = searchCoverageStatistics;
   return result;
 }

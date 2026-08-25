@@ -38,6 +38,7 @@ getActionLoopDepth(const SyncCoverGraph &graph,
     return graph.getScopeLoopDepth(graph.getNodes()[action.anchor.node].scope);
   case SyncCoverAnchorKind::ScopeEntry:
   case SyncCoverAnchorKind::ScopeExit:
+  case SyncCoverAnchorKind::TimelinePoint:
     if (action.anchor.scope >= graph.getScopes().size()) {
       return std::nullopt;
     }
@@ -135,12 +136,8 @@ SyncCoverStructuralCost SyncCoverMechanismUniverse::evaluateStructuralCostImpl(
       }
     }
     if (mechanism.barrier) {
-      const SyncCoverNodeId anchor = mechanism.barrier->anchor;
-      if (anchor >= graph_.getNodes().size()) {
-        return makeCostError(SyncCoverStructuralCostError::InvalidUniverse);
-      }
       const std::optional<std::size_t> depth =
-          graph_.getScopeLoopDepth(graph_.getNodes()[anchor].scope);
+          graph_.getScopeLoopDepth(mechanism.barrier->scope);
       if (!depth || !incrementProfile(result.barrierActionProfile,
                                       maximumDepth, *depth)) {
         return makeCostError(SyncCoverStructuralCostError::ArithmeticOverflow);

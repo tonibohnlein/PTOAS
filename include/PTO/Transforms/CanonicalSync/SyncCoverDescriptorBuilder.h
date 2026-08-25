@@ -51,8 +51,11 @@ public:
                          SyncCoverNodeId source, SyncCoverNodeId target,
                          SyncCoverScopeId scope = 0, std::size_t width = 1);
 
-  /// Adds one verified protocol lane. Existing action references allow a
+  /// Adds one verified protocol lifetime. Existing action references allow a
   /// physical action to be shared by EventId and BufferToken resource uses.
+  /// A positive-distance lifetime may bind startup/drain distance-zero
+  /// supplies in nested ancestor or descendant scopes and recurrence supplies
+  /// up to the declared distance.
   bool addProtocolLane(
       const SyncCoverResourceDomain &domain, SyncCoverScopeId scope,
       unsigned distance, std::size_t width,

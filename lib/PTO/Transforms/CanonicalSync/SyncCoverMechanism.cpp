@@ -73,6 +73,24 @@ bool canonicalActionIndices(const std::vector<std::size_t> &indices) {
          std::adjacent_find(indices.begin(), indices.end()) == indices.end();
 }
 
+bool validResourceLifetime(const SyncCoverGraph &graph,
+                           SyncCoverMechanismKind kind,
+                           const SyncCoverResourceUse &use,
+                           const SyncCoverEdge &edge) {
+  if (edge.scope == use.scope && edge.distance == use.distance) {
+    return true;
+  }
+  if (kind != SyncCoverMechanismKind::VerifiedProtocol || use.distance == 0 ||
+      edge.distance > use.distance) {
+    return false;
+  }
+  if (edge.distance != 0) {
+    return edge.scope == use.scope;
+  }
+  return graph.scopeContains(use.scope, edge.scope) ||
+         graph.scopeContains(edge.scope, use.scope);
+}
+
 bool actionOccursWithin(const SyncCoverGraph &graph,
                         const SyncCoverResourceAction &action,
                         SyncCoverScopeId scope) {
@@ -92,6 +110,7 @@ bool actionOccursWithin(const SyncCoverGraph &graph,
     break;
   case SyncCoverAnchorKind::ScopeEntry:
   case SyncCoverAnchorKind::ScopeExit:
+  case SyncCoverAnchorKind::TimelinePoint:
     actionScope = action.anchor.scope;
     break;
   }
@@ -102,6 +121,26 @@ bool actionOccursWithin(const SyncCoverGraph &graph,
       graph.getScopes()[scope].timeline;
   return !timeline ||
          (timeline->begin <= *position && *position <= timeline->end);
+}
+
+std::optional<SyncCoverScopeId>
+getAnchorScope(const SyncCoverGraph &graph, const SyncCoverAnchor &anchor) {
+  switch (anchor.kind) {
+  case SyncCoverAnchorKind::BeforeNode:
+  case SyncCoverAnchorKind::AfterNode:
+    if (anchor.node >= graph.getNodes().size()) {
+      return std::nullopt;
+    }
+    return graph.getNodes()[anchor.node].scope;
+  case SyncCoverAnchorKind::ScopeEntry:
+  case SyncCoverAnchorKind::ScopeExit:
+  case SyncCoverAnchorKind::TimelinePoint:
+    if (anchor.scope >= graph.getScopes().size()) {
+      return std::nullopt;
+    }
+    return anchor.scope;
+  }
+  return std::nullopt;
 }
 
 SyncCoverMechanismError
@@ -134,38 +173,51 @@ bool validBarrierEdge(const SyncCoverGraph &graph,
                       const SyncCoverBarrierPlacement &placement,
                       const SyncCoverEdge &edge) {
   const std::vector<SyncCoverNode> &nodes = graph.getNodes();
-  const bool invalidNode = placement.anchor >= nodes.size() ||
-                           edge.source >= nodes.size() ||
+  const bool invalidNode = edge.source >= nodes.size() ||
                            edge.target >= nodes.size();
   if (invalidNode) {
     return false;
   }
-  const bool sameResource =
-      nodes[placement.anchor].resource == placement.resource &&
-      nodes[edge.source].resource == placement.resource &&
-      nodes[edge.target].resource == placement.resource;
-  const SyncCoverNode &anchor = nodes[placement.anchor];
+  const std::optional<SyncCoverTimelinePosition> position =
+      resolveSyncCoverAnchor(graph, placement.anchor);
+  if (!position) {
+    return false;
+  }
+  const bool drainsSourceResource =
+      nodes[edge.source].resource == placement.resource;
   const SyncCoverNode &target = nodes[edge.target];
   SyncCoverGuard targetGuard = edge.targetGuard;
   targetGuard.literals.insert(targetGuard.literals.end(),
                               target.guard.literals.begin(),
                               target.guard.literals.end());
-  const bool wrongScope =
-      placement.scope != anchor.scope ||
-      !graph.scopeContains(edge.scope, placement.scope) ||
+  SyncCoverGuard placementGuard;
+  if (placement.anchor.kind == SyncCoverAnchorKind::BeforeNode ||
+      placement.anchor.kind == SyncCoverAnchorKind::AfterNode) {
+    placementGuard = nodes[placement.anchor.node].guard;
+  }
+  const bool wrongScope = !graph.scopeContains(edge.scope, placement.scope) ||
       !graph.scopeExecutesWhen(target.scope, placement.scope);
-  if (!sameResource || wrongScope ||
-      !syncCoverGuardImplies(targetGuard, anchor.guard)) {
+  if (!drainsSourceResource || wrongScope ||
+      !syncCoverGuardImplies(targetGuard, placementGuard)) {
     return false;
   }
-  if (nodes[edge.target].order < nodes[placement.anchor].order) {
+  const SyncCoverTimelinePosition targetPosition =
+      nodes[edge.target].order * 2;
+  if (targetPosition < *position) {
     return false;
   }
-  return edge.distance != 0 ||
-         nodes[edge.source].order < nodes[placement.anchor].order;
+  const SyncCoverTimelinePosition sourcePosition =
+      nodes[edge.source].order * 2 + 1;
+  return edge.distance != 0 || sourcePosition <= *position;
 }
 
 } // namespace
+
+bool mlir::pto::syncCoverBarrierCanSupply(
+    const SyncCoverGraph &graph, const SyncCoverBarrierPlacement &placement,
+    const SyncCoverEdge &edge) {
+  return validBarrierEdge(graph, placement, edge);
+}
 
 SyncCoverMechanismUniverse::SyncCoverMechanismUniverse(SyncCoverGraph &graph)
     : graph_(graph), knownGraphGeneration_(graph.getGeneration()) {}
@@ -284,7 +336,8 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addMechanismImpl(
 
   for (const SyncCoverResourceUse &use : candidate.resourceUses) {
     const SyncCoverMechanismError error =
-        validateResourceUse(use, candidate.supplyEdges, candidate.actions);
+        validateResourceUse(candidate.kind, use, candidate.supplyEdges,
+                            candidate.actions);
     if (error != SyncCoverMechanismError::None) {
       return makeResult(error);
     }
@@ -483,7 +536,8 @@ SyncCoverMechanismUniverse::validateUncached() const {
 
     for (const SyncCoverResourceUse &use : mechanism.resourceUses) {
       const SyncCoverMechanismError error =
-          validateResourceUse(use, graph_.getEdges(), mechanism.actions);
+          validateResourceUse(mechanism.kind, use, graph_.getEdges(),
+                              mechanism.actions);
       if (error != SyncCoverMechanismError::None) {
         return makeResult(error, index);
       }
@@ -539,7 +593,8 @@ SyncCoverMechanismUniverse::validateUncached() const {
 }
 
 SyncCoverMechanismError SyncCoverMechanismUniverse::validateResourceUse(
-    const SyncCoverResourceUse &use, const std::vector<SyncCoverEdge> &edges,
+    SyncCoverMechanismKind kind, const SyncCoverResourceUse &use,
+    const std::vector<SyncCoverEdge> &edges,
     const std::vector<SyncCoverResourceAction> &actions) const {
   if (use.domain >= domains_.size()) {
     return SyncCoverMechanismError::InvalidDomain;
@@ -583,9 +638,7 @@ SyncCoverMechanismError SyncCoverMechanismUniverse::validateResourceUse(
       return SyncCoverMechanismError::InvalidResourceUse;
     }
     const SyncCoverEdge &edge = edges[edgeIndex];
-    const bool wrongLifetime =
-        edge.scope != use.scope || edge.distance != use.distance;
-    if (wrongLifetime) {
+    if (!validResourceLifetime(graph_, kind, use, edge)) {
       return SyncCoverMechanismError::InvalidResourceUse;
     }
   }
@@ -643,9 +696,7 @@ SyncCoverMechanismError SyncCoverMechanismUniverse::validateSupplyBindings(
     const bool wrongKinds =
         produce.kind != SyncCoverResourceActionKind::Produce ||
         consume.kind != SyncCoverResourceActionKind::Consume;
-    const bool wrongLifetime =
-        edge.scope != use.scope || edge.distance != use.distance;
-    if (wrongKinds || wrongLifetime) {
+    if (wrongKinds || !validResourceLifetime(graph_, kind, use, edge)) {
       return SyncCoverMechanismError::InvalidBinding;
     }
 
@@ -680,16 +731,17 @@ SyncCoverMechanismError SyncCoverMechanismUniverse::validateBarrier(
     return SyncCoverMechanismError::InvalidMechanism;
   }
   const SyncCoverBarrierPlacement &placement = *descriptor.barrier;
+  const std::optional<SyncCoverScopeId> anchorScope =
+      getAnchorScope(graph_, placement.anchor);
   const bool invalidPlacement =
-      placement.anchor >= graph_.getNodes().size() ||
       placement.scope >= graph_.getScopes().size() ||
-      !graph_.scopeContains(placement.scope,
-                            graph_.getNodes()[placement.anchor].scope);
+      !resolveSyncCoverAnchor(graph_, placement.anchor) || !anchorScope ||
+      *anchorScope != placement.scope;
   if (invalidPlacement) {
     return SyncCoverMechanismError::InvalidMechanism;
   }
   for (const SyncCoverEdge &edge : descriptor.supplyEdges) {
-    if (!validBarrierEdge(graph_, placement, edge)) {
+    if (!syncCoverBarrierCanSupply(graph_, placement, edge)) {
       return SyncCoverMechanismError::InvalidSupply;
     }
   }

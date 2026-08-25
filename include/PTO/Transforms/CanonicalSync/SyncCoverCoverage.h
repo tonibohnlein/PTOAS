@@ -67,6 +67,10 @@ struct SyncCoverCoverageStatistics {
   std::size_t graphValidations = 0;
   std::size_t demandPreparations = 0;
   std::size_t coverageQueries = 0;
+  std::size_t preparedVirtualNodes = 0;
+  std::size_t preparedVirtualEdges = 0;
+  std::size_t maximumVirtualNodes = 0;
+  std::size_t maximumVirtualEdges = 0;
 };
 
 /// Checks completion-qualified reachability without mutating the graph. A
