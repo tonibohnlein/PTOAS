@@ -134,7 +134,7 @@ public:
       func::FuncOp func, const CanonicalSyncPlan &plan,
       const CanonicalMechanismUniverse &legacyUniverse,
       ArrayRef<CanonicalEventBundleCandidate> selectedEventBundles,
-      unsigned eventIdMax,
+      unsigned eventIdMax, bool registerShadowSlotProtocols,
       const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
       std::function<bool(PipelineType)> hasHardwareCompletion,
       std::function<bool(const CanonicalDependency &)> hasIntrinsicOrdering,
@@ -144,6 +144,7 @@ public:
       std::function<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols)
       : func_(func), plan_(plan), legacyUniverse_(legacyUniverse),
         selectedEventBundles_(selectedEventBundles), eventIdMax_(eventIdMax),
+        registerShadowSlotProtocols_(registerShadowSlotProtocols),
         reservedIds_(reservedIds),
         hasHardwareCompletion_(std::move(hasHardwareCompletion)),
         hasIntrinsicOrdering_(std::move(hasIntrinsicOrdering)),
@@ -228,8 +229,9 @@ public:
       regionScopes_.emplace(entry.first, entry.second.scope);
     }
     if (failed(runCanonicalSyncCoveringShadowSelection(
-            func_, plan_, legacyUniverse_, selectedEventBundles_, eventIdMax_,
-            reservedIds_, graph_, candidateIndex, activeDemands_,
+        func_, plan_, legacyUniverse_, selectedEventBundles_, eventIdMax_,
+            reservedIds_, graph_, candidateIndex, lifecycleResult,
+            protocolResult, registerShadowSlotProtocols_, activeDemands_,
             regionScopes_, loopScopes_, getAnchorPosition_,
             getBarrierCompletionEdges_,
             verifyEventProtocols_, snapshot))) {
@@ -708,6 +710,7 @@ private:
   const CanonicalMechanismUniverse &legacyUniverse_;
   std::vector<CanonicalEventBundleCandidate> selectedEventBundles_;
   unsigned eventIdMax_ = 0;
+  bool registerShadowSlotProtocols_ = false;
   const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds_;
   std::function<bool(PipelineType)> hasHardwareCompletion_;
   std::function<bool(const CanonicalDependency &)> hasIntrinsicOrdering_;
@@ -740,7 +743,7 @@ LogicalResult CanonicalSyncPlanBuilder::buildCoveringShadowGraph() {
   CanonicalSyncCoveringShadowSnapshot snapshot;
   CanonicalSyncCoveringGraphAdapter adapter(
       func_, plan_, mechanismUniverse_, selectedEventBundles_, eventIdMax_,
-      reservedIds_,
+      !coveringEmissionEnabled_, reservedIds_,
       [&](PipelineType pipe) { return hasHardwareCompletion(pipe); },
       [&](const CanonicalDependency &dependency) {
         return hasIntrinsicMmadAccumulatorOrdering(dependency);

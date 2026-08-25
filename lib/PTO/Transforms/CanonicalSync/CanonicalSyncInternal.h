@@ -31,6 +31,9 @@
 namespace mlir {
 namespace pto {
 
+struct SyncCoverSlotLifecycleResult;
+struct SyncCoverSlotProtocolResult;
+
 struct CanonicalEventDomainKey {
   PipelineType source = PipelineType::PIPE_UNASSIGNED;
   PipelineType target = PipelineType::PIPE_UNASSIGNED;
@@ -509,6 +512,9 @@ LogicalResult runCanonicalSyncCoveringShadowSelection(
     unsigned eventIdMax,
     const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
     SyncCoverGraph &graph, const SyncCoverCandidateIndex &candidateIndex,
+    const SyncCoverSlotLifecycleResult &slotLifecycles,
+    const SyncCoverSlotProtocolResult &slotProtocols,
+    bool registerShadowSlotProtocols,
     ArrayRef<SyncCoverDemandId> activeDemands,
     const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
         &regionScopes,

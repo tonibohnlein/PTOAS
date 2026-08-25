@@ -150,14 +150,26 @@ std::optional<SyncCoverEdge> translateCompletion(
 std::optional<std::uint64_t>
 mlir::pto::canonical_sync_covering::encodeProviderIdentity(
     CanonicalSelectionMechanismKind kind, std::size_t id) {
-  constexpr std::uint64_t kKindCount = 2;
-  const std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max();
-  const bool identityOverflows = id > (maximum - 1) / kKindCount;
-  if (identityOverflows) {
+  constexpr std::uint64_t kLegacyKindCount = 2;
+  constexpr std::uint64_t kSlotProtocolTag = std::uint64_t{1} << 63;
+  const std::uint64_t numericId = static_cast<std::uint64_t>(id);
+  if (kind == CanonicalSelectionMechanismKind::SlotProtocol) {
+    if (numericId >= kSlotProtocolTag - 1) {
+      return std::nullopt;
+    }
+    return kSlotProtocolTag + numericId + 1;
+  }
+  if (kind != CanonicalSelectionMechanismKind::Barrier &&
+      kind != CanonicalSelectionMechanismKind::EventBundle) {
     return std::nullopt;
   }
-  return static_cast<std::uint64_t>(id) * kKindCount +
-         static_cast<std::uint64_t>(kind) + 1;
+  const std::uint64_t kindOffset = static_cast<std::uint64_t>(kind) + 1;
+  const std::uint64_t maximumLegacyId =
+      (kSlotProtocolTag - 1 - kindOffset) / kLegacyKindCount;
+  if (numericId > maximumLegacyId) {
+    return std::nullopt;
+  }
+  return numericId * kLegacyKindCount + kindOffset;
 }
 
 bool mlir::pto::canonical_sync_covering::sameDescriptor(

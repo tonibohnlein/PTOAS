@@ -29,6 +29,9 @@ MechanismAdapter::MechanismAdapter(
     unsigned eventIdMax,
     const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
     SyncCoverGraph &graph, const SyncCoverCandidateIndex &candidateIndex,
+    const SyncCoverSlotLifecycleResult &slotLifecycles,
+    const SyncCoverSlotProtocolResult &slotProtocols,
+    bool registerShadowSlotProtocols,
     ArrayRef<SyncCoverDemandId> activeDemands,
     const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
         &regionScopes,
@@ -40,7 +43,9 @@ MechanismAdapter::MechanismAdapter(
     : func_(func), plan_(plan), legacyUniverse_(legacyUniverse),
       selectedEventBundles_(selectedEventBundles), eventIdMax_(eventIdMax),
       reservedIds_(reservedIds), universe_(graph),
-      candidateIndex_(candidateIndex),
+      candidateIndex_(candidateIndex), slotLifecycles_(slotLifecycles),
+      slotProtocols_(slotProtocols),
+      registerShadowSlotProtocols_(registerShadowSlotProtocols),
       regionScopes_(regionScopes), loopScopes_(loopScopes),
       getAnchorPosition_(std::move(getAnchorPosition)),
       getBarrierCompletionEdges_(std::move(getBarrierCompletionEdges)),
@@ -53,7 +58,8 @@ MechanismAdapter::build(CanonicalSyncCoveringShadowSnapshot &snapshot) {
       !candidateIndex_ ||
       failed(collectEventBundles()) || failed(addEventDomains()) ||
       failed(addBarriers()) || failed(addEventBundles()) ||
-      failed(addConflicts()) || failed(buildLegacySeed());
+      failed(addSlotProtocols()) || failed(addConflicts()) ||
+      failed(buildLegacySeed());
   if (buildFailed) {
     return failure();
   }
@@ -65,6 +71,11 @@ MechanismAdapter::build(CanonicalSyncCoveringShadowSnapshot &snapshot) {
   snapshot.resourceDomainDetails = universe_.getResourceDomains();
   snapshot.barrierCandidates = legacyUniverse_.barriers.size();
   snapshot.eventBundleCandidates = eventBundles_.size();
+  snapshot.slotProtocolMechanismCandidates = llvm::count_if(
+      providers_, [](const auto &entry) {
+        return entry.first.kind ==
+               CanonicalSelectionMechanismKind::SlotProtocol;
+      });
   snapshot.candidateMechanisms = universe_.getMechanisms().size();
   snapshot.legacySeedMechanisms = legacySeed_.size();
   return solve(snapshot);
@@ -101,6 +112,13 @@ LogicalResult MechanismAdapter::addEventDomains() {
   for (const CanonicalEventBundleCandidate &bundle : eventBundles_) {
     for (const CanonicalEvent &event : bundle.events) {
       keys.insert({event.sourcePipe, event.targetPipe});
+    }
+  }
+  if (registerShadowSlotProtocols_) {
+    for (const SyncCoverSlotProtocolCandidate &candidate :
+         slotProtocols_.candidates) {
+      keys.insert({static_cast<PipelineType>(candidate.sourceResource),
+                   static_cast<PipelineType>(candidate.targetResource)});
     }
   }
   for (const CanonicalEventDomainKey &key : keys) {
@@ -316,6 +334,66 @@ LogicalResult MechanismAdapter::addEventBundles() {
       }
     }
     providers_.emplace(provider, *result.index);
+  }
+  return success();
+}
+
+LogicalResult MechanismAdapter::addSlotProtocols() {
+  if (!registerShadowSlotProtocols_) {
+    return success();
+  }
+  if (!slotLifecycles_ || !slotProtocols_) {
+    return func_.emitError(
+        "internal error: canonical covering slot protocol universe is "
+        "incomplete");
+  }
+  for (auto indexedCandidate : llvm::enumerate(slotProtocols_.candidates)) {
+    const SyncCoverSlotProtocolCandidate &candidate =
+        indexedCandidate.value();
+    const bool invalidCandidate =
+        candidate.id != indexedCandidate.index() ||
+        candidate.lifecycle >= slotLifecycles_.lifecycles.size();
+    if (invalidCandidate) {
+      return func_.emitError(
+          "internal error: canonical covering slot protocol identity is "
+          "invalid");
+    }
+    const CanonicalSelectionMechanismRef provider{
+        CanonicalSelectionMechanismKind::SlotProtocol, candidate.id};
+    const std::optional<std::uint64_t> identity =
+        encodeProviderIdentity(provider.kind, provider.id);
+    const CanonicalEventDomainKey key{
+        static_cast<PipelineType>(candidate.sourceResource),
+        static_cast<PipelineType>(candidate.targetResource)};
+    auto domain = domains_.find(key);
+    if (!identity || domain == domains_.end()) {
+      return func_.emitError(
+          "internal error: canonical covering slot protocol domain is "
+          "invalid");
+    }
+    const auto descriptor = makeSyncCoverSlotProtocolDescriptor(
+        universe_.getResourceDomains()[domain->second], candidate, *identity);
+    if (!descriptor) {
+      return func_.emitError(
+          "internal error: canonical covering slot protocol descriptor is "
+          "invalid");
+    }
+    const SyncCoverSlotLifecycle &lifecycle =
+        slotLifecycles_.lifecycles[candidate.lifecycle];
+    const SyncCoverMechanismResult result = universe_.addVerifiedProtocol(
+        *descriptor, [&](const auto &actual) {
+          return verifySyncCoverSlotProtocol(candidateIndex_, lifecycle,
+                                             universe_, candidate, actual);
+        });
+    if (!result || !result.index) {
+      return emitMechanismError("slot-protocol insertion", result);
+    }
+    const bool providerUnique =
+        providers_.emplace(provider, *result.index).second;
+    if (!providerUnique) {
+      return func_.emitError(
+          "internal error: duplicate canonical covering slot protocol");
+    }
   }
   return success();
 }

@@ -70,7 +70,11 @@ MechanismAdapter::solve(CanonicalSyncCoveringShadowSnapshot &snapshot) {
       solveSyncCoverSelection(universe_, demands, seeds);
   snapshot.selectionError = result.error;
   snapshot.searchTruncated = static_cast<bool>(result.truncation);
-  snapshot.optimalityProven = result.optimalityProven;
+  const bool candidateUniverseComplete =
+      !registerShadowSlotProtocols_ ||
+      (!slotLifecycles_.truncated && !slotProtocols_.truncated);
+  snapshot.optimalityProven =
+      result.optimalityProven && candidateUniverseComplete;
   snapshot.solverComponents = result.components.size();
   snapshot.solverEvaluations = result.evaluations;
   snapshot.redundancyEvaluations = result.redundancyEvaluations;
@@ -120,23 +124,34 @@ MechanismAdapter::solve(CanonicalSyncCoveringShadowSnapshot &snapshot) {
       }
       const auto event =
           eventResourceUses_.find(std::make_pair(mechanism, resourceUse));
+      const bool materializesAsEvent =
+          provider->second.kind ==
+          CanonicalSelectionMechanismKind::EventBundle;
+      const bool shadowOnlyProtocol =
+          provider->second.kind ==
+          CanonicalSelectionMechanismKind::SlotProtocol;
+      const bool hasEventMapping = event != eventResourceUses_.end();
+      const bool eventMappingValid =
+          materializesAsEvent ? hasEventMapping
+                              : shadowOnlyProtocol && !hasEventMapping;
       const bool eventMappingInvalid =
           domain.kind == SyncCoverResourceKind::EventId
-              ? event == eventResourceUses_.end()
-              : event != eventResourceUses_.end();
+              ? !eventMappingValid
+              : hasEventMapping;
       if (eventMappingInvalid) {
         return func_.emitError(
             "internal error: selected covering resource use has invalid "
             "event mapping");
       }
-      std::optional<std::size_t> eventIndex;
+      std::optional<std::size_t> materializationEventIndex;
       if (event != eventResourceUses_.end()) {
-        eventIndex = event->second;
+        materializationEventIndex = event->second;
       }
       snapshot.selectedResourceUses.push_back(
           {mechanism, provider->second, resourceUse, use.domain, domain.kind,
            domain.sourceResource, domain.targetResource, domain.poolIdentity,
-           use.scope, use.distance, use.width, *lifetime, eventIndex});
+           use.scope, use.distance, use.width, *lifetime,
+           materializationEventIndex});
     }
   }
   for (const SyncCoverDomainFeasibility &feasibility :
@@ -240,6 +255,9 @@ LogicalResult mlir::pto::runCanonicalSyncCoveringShadowSelection(
     unsigned eventIdMax,
     const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
     SyncCoverGraph &graph, const SyncCoverCandidateIndex &candidateIndex,
+    const SyncCoverSlotLifecycleResult &slotLifecycles,
+    const SyncCoverSlotProtocolResult &slotProtocols,
+    bool registerShadowSlotProtocols,
     ArrayRef<SyncCoverDemandId> activeDemands,
     const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
         &regionScopes,
@@ -251,7 +269,8 @@ LogicalResult mlir::pto::runCanonicalSyncCoveringShadowSelection(
     CanonicalSyncCoveringShadowSnapshot &snapshot) {
   MechanismAdapter adapter(
       func, plan, legacyUniverse, selectedEventBundles, eventIdMax, reservedIds,
-      graph, candidateIndex, activeDemands, regionScopes, loopScopes,
+      graph, candidateIndex, slotLifecycles, slotProtocols,
+      registerShadowSlotProtocols, activeDemands, regionScopes, loopScopes,
       std::move(getAnchorPosition), std::move(getBarrierCompletionEdges),
       std::move(verifyEventProtocols));
   return adapter.build(snapshot);

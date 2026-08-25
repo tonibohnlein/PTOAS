@@ -19,6 +19,9 @@
 // RUN: pto-test-opt %s \
 // RUN:   '-pto-print-canonical-sync-plan=format=text view=covering' \
 // RUN:   | FileCheck %s --check-prefix=COVERING
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-canonical-sync=event-id-num-max=8 solver=covering' \
+// RUN:   | FileCheck %s
 // RUN: not pto-test-opt %s \
 // RUN:   '-pto-canonical-sync=event-id-num-max=1' 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SCARCE
@@ -327,13 +330,17 @@ module attributes {pto.target_arch = "a2a3"} {
 // COVERING-SAME: extra-accesses=no path-sensitive=no
 // COVERING: covering-slot-protocols candidates=4 path-sensitive-lifecycles=0 access-open-lifecycles=0 unsupported-effect-lifecycles=0 unsupported-distance-releases=0 non-boundary-releases=0 evaluations={{[1-9][0-9]*}} truncated=no
 // COVERING: covering-selection status=ready error=none
+// COVERING-SAME: slot-protocol-candidates=4
+// COVERING-SAME: mechanisms=21
 // COVERING-SAME: legacy-seed=1 selected=1
 // COVERING-SAME: providers=[mechanism[{{[0-9]+}}]=event-bundle[{{[0-9]+}}]]
+// COVERING: covering-selection-topology {{.*}}grounding-queries=20 coverage-queries=0
 // COVERING: covering-allocation mechanism[{{[0-9]+}}]=event-bundle[{{[0-9]+}}]
 // COVERING-LABEL: PTOCanonicalSyncPlan @branched_two_slot_l0_ownership
 // COVERING: covering-slot-lifecycles candidates=4 path-sensitive=4 partial-opportunities=0 truncated=no
 // COVERING: covering-slot-protocols candidates=0 path-sensitive-lifecycles=4 access-open-lifecycles=0 unsupported-effect-lifecycles=0 unsupported-distance-releases=0 non-boundary-releases=0 evaluations={{[1-9][0-9]*}} truncated=no
 // COVERING: covering-selection status=ready error=none
+// COVERING-SAME: slot-protocol-candidates=0
 // COVERING-SAME: legacy-seed=1 selected=1
 // COVERING-SAME: providers=[mechanism[{{[0-9]+}}]=event-bundle[{{[0-9]+}}]]
 // COVERING: covering-allocation mechanism[{{[0-9]+}}]=event-bundle[{{[0-9]+}}]

@@ -146,8 +146,14 @@ mlir::pto::validateCanonicalSyncCoveringAllocation(
           CanonicalSyncCoveringAllocationError::InvalidResourceUse,
           use.mechanism, use.resourceUse, use.domain);
     }
+    const bool eventMappingValid =
+        provider->second.kind == CanonicalSelectionMechanismKind::EventBundle
+            ? use.materializationEventIndex.has_value()
+            : provider->second.kind ==
+                      CanonicalSelectionMechanismKind::SlotProtocol &&
+                  !use.materializationEventIndex.has_value();
     if (use.kind != SyncCoverResourceKind::EventId || use.poolIdentity != 0 ||
-        !use.eventIndex) {
+        !eventMappingValid) {
       return makeError(
           CanonicalSyncCoveringAllocationError::UnsupportedResourceKind,
           use.mechanism, use.resourceUse, use.domain);

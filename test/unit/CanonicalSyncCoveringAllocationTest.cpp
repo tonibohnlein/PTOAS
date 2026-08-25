@@ -187,12 +187,37 @@ bool testDomainAndKindValidation() {
   token.resourceDomainDetails[0].poolIdentity = 9;
   token.selectedResourceUses[0].kind = SyncCoverResourceKind::BufferToken;
   token.selectedResourceUses[0].poolIdentity = 9;
-  token.selectedResourceUses[0].eventIndex.reset();
+  token.selectedResourceUses[0].materializationEventIndex.reset();
   token.selectedAllocations[0].kind = SyncCoverResourceKind::BufferToken;
   passed &= check(
       hasError(token,
                CanonicalSyncCoveringAllocationError::UnsupportedResourceKind),
       "BufferToken emission is rejected in version one");
+
+  CanonicalSyncCoveringShadowSnapshot slot = makeValidSnapshot();
+  const CanonicalSelectionMechanismRef slotProvider{
+      CanonicalSelectionMechanismKind::SlotProtocol, 0};
+  slot.selectedProviders[0].provider = slotProvider;
+  slot.selectedResourceUses[0].provider = slotProvider;
+  slot.selectedResourceUses[0].materializationEventIndex.reset();
+  slot.selectedAllocations[0].provider = slotProvider;
+  passed &= check(
+      static_cast<bool>(validateCanonicalSyncCoveringAllocation(slot)),
+      "shadow-only slot protocols do not require an emission event index");
+
+  CanonicalSyncCoveringShadowSnapshot slotWithEvent = slot;
+  slotWithEvent.selectedResourceUses[0].materializationEventIndex = 0;
+  passed &= check(
+      hasError(slotWithEvent,
+               CanonicalSyncCoveringAllocationError::UnsupportedResourceKind),
+      "slot protocols cannot claim a legacy event index");
+
+  CanonicalSyncCoveringShadowSnapshot eventWithoutIndex = makeValidSnapshot();
+  eventWithoutIndex.selectedResourceUses[0].materializationEventIndex.reset();
+  passed &= check(
+      hasError(eventWithoutIndex,
+               CanonicalSyncCoveringAllocationError::UnsupportedResourceKind),
+      "event bundles require a materialization event index");
   return passed;
 }
 

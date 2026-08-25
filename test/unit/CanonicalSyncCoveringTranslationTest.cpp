@@ -18,6 +18,7 @@
 #include "mlir/IR/Builders.h"
 
 #include <iostream>
+#include <limits>
 #include <string_view>
 
 namespace {
@@ -226,10 +227,49 @@ bool testExactSlotOrdinalPairing() {
   return passed;
 }
 
+bool testProviderIdentityNamespaces() {
+  constexpr std::uint64_t kSlotProtocolTag = std::uint64_t{1} << 63;
+  const auto barrierZero = encodeProviderIdentity(
+      CanonicalSelectionMechanismKind::Barrier, 0);
+  const auto eventZero = encodeProviderIdentity(
+      CanonicalSelectionMechanismKind::EventBundle, 0);
+  const auto slotZero = encodeProviderIdentity(
+      CanonicalSelectionMechanismKind::SlotProtocol, 0);
+  bool passed = check(barrierZero == 1 && eventZero == 2 &&
+                          slotZero == kSlotProtocolTag + 1,
+                      "provider namespaces preserve legacy identities");
+  passed &= check(
+      !encodeProviderIdentity(
+          static_cast<CanonicalSelectionMechanismKind>(255), 0),
+      "unknown provider kinds are rejected");
+  const bool hasWideSize =
+      std::numeric_limits<std::size_t>::max() >= kSlotProtocolTag - 1;
+  const std::size_t slotOverflowId =
+      static_cast<std::size_t>(kSlotProtocolTag - 1);
+  const std::size_t maximumEventId =
+      static_cast<std::size_t>((kSlotProtocolTag - 3) / 2);
+  passed &= check(
+      !hasWideSize ||
+          !encodeProviderIdentity(
+              CanonicalSelectionMechanismKind::SlotProtocol, slotOverflowId),
+      "slot protocol provider overflow is rejected");
+  passed &= check(
+      !hasWideSize ||
+          (encodeProviderIdentity(
+               CanonicalSelectionMechanismKind::EventBundle, maximumEventId)
+               .has_value() &&
+           !encodeProviderIdentity(
+               CanonicalSelectionMechanismKind::EventBundle,
+               maximumEventId + 1)),
+      "legacy provider identities cannot enter the slot namespace");
+  return passed;
+}
+
 } // namespace
 
 int main() {
-  return testDescriptorAttestation() && testExactSlotOrdinalPairing()
+  return testDescriptorAttestation() && testExactSlotOrdinalPairing() &&
+                 testProviderIdentityNamespaces()
              ? 0
              : 1;
 }

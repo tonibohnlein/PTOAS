@@ -74,6 +74,7 @@ enum class CanonicalEventBundleKind : std::uint8_t {
 enum class CanonicalSelectionMechanismKind : std::uint8_t {
   Barrier,
   EventBundle,
+  SlotProtocol,
 };
 
 struct CanonicalPhysicalSlot {
@@ -378,7 +379,7 @@ struct CanonicalSyncCoveringSelectedResourceUse {
   unsigned distance = 0;
   std::size_t width = 0;
   SyncCoverTimelineInterval lifetime;
-  std::optional<std::size_t> eventIndex;
+  std::optional<std::size_t> materializationEventIndex;
 };
 
 enum class CanonicalSyncCoveringAllocationError : std::uint8_t {
@@ -509,6 +510,7 @@ struct CanonicalSyncCoveringShadowSnapshot {
   std::size_t resourceDomainCount = 0;
   std::size_t barrierCandidates = 0;
   std::size_t eventBundleCandidates = 0;
+  std::size_t slotProtocolMechanismCandidates = 0;
   std::size_t candidateMechanisms = 0;
   std::size_t legacySeedMechanisms = 0;
   std::size_t selectedMechanisms = 0;

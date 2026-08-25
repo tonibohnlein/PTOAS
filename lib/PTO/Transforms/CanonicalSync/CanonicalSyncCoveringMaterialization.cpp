@@ -112,6 +112,12 @@ LogicalResult CanonicalSyncPlanBuilder::materializeCoveringSelection() {
       barriers.push_back(candidate->barrier);
       continue;
     }
+    if (selected.provider.kind ==
+        CanonicalSelectionMechanismKind::SlotProtocol) {
+      return func_.emitError(
+          "internal error: shadow-only slot protocol reached covering "
+          "materialization");
+    }
 
     const CanonicalEventBundleCandidate *candidate = findEventBundleProvider(
         mechanismUniverse_, selectedEventBundles_, selected.provider.id);
@@ -126,14 +132,15 @@ LogicalResult CanonicalSyncPlanBuilder::materializeCoveringSelection() {
     }
     for (const CanonicalSyncCoveringSelectedResourceUse *use : uses->second) {
       const bool eventInvalid =
-          use->kind != SyncCoverResourceKind::EventId || !use->eventIndex ||
-          *use->eventIndex >= bundle.events.size() ||
-          assigned[*use->eventIndex];
+          use->kind != SyncCoverResourceKind::EventId ||
+          !use->materializationEventIndex ||
+          *use->materializationEventIndex >= bundle.events.size() ||
+          assigned[*use->materializationEventIndex];
       if (eventInvalid) {
         return func_.emitError(
             "internal error: covering event/use mapping is invalid");
       }
-      CanonicalEvent &event = bundle.events[*use->eventIndex];
+      CanonicalEvent &event = bundle.events[*use->materializationEventIndex];
       const bool eventShapeMismatch =
           static_cast<std::uint32_t>(event.sourcePipe) != use->sourceResource ||
           static_cast<std::uint32_t>(event.targetPipe) != use->targetResource ||
@@ -147,7 +154,7 @@ LogicalResult CanonicalSyncPlanBuilder::materializeCoveringSelection() {
       }
       event.eventIds.assign(allocation->second->ids.begin(),
                             allocation->second->ids.end());
-      assigned[*use->eventIndex] = true;
+      assigned[*use->materializationEventIndex] = true;
     }
     const bool hasUnassignedEvent =
         llvm::any_of(assigned, [](bool value) { return !value; });

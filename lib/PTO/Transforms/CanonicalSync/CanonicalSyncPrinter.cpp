@@ -68,6 +68,8 @@ StringRef mlir::pto::stringifyCanonicalSelectionMechanismKind(
     return "barrier";
   case CanonicalSelectionMechanismKind::EventBundle:
     return "event-bundle";
+  case CanonicalSelectionMechanismKind::SlotProtocol:
+    return "slot-protocol";
   }
   return "unknown";
 }
@@ -593,6 +595,8 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
        << " domains=" << snapshot.resourceDomainCount
        << " barrier-candidates=" << snapshot.barrierCandidates
        << " event-bundle-candidates=" << snapshot.eventBundleCandidates
+       << " slot-protocol-candidates="
+       << snapshot.slotProtocolMechanismCandidates
        << " mechanisms=" << snapshot.candidateMechanisms
        << " legacy-seed=" << snapshot.legacySeedMechanisms
        << " selected=" << snapshot.selectedMechanisms
@@ -643,8 +647,8 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
          << " kind=" << stringifyCoveringResourceKind(use.kind)
          << " width=" << use.width << " lifetime=[" << use.lifetime.begin
          << ',' << use.lifetime.end << "] event=";
-      if (use.eventIndex) {
-        os << *use.eventIndex;
+      if (use.materializationEventIndex) {
+        os << *use.materializationEventIndex;
       } else {
         os << "none";
       }

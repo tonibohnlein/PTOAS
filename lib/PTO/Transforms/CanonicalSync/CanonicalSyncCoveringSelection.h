@@ -16,6 +16,7 @@
 
 #include "CanonicalSyncInternal.h"
 
+#include "PTO/Transforms/CanonicalSync/SyncCoverSlotProtocol.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverSolver.h"
 
 #include <cstdint>
@@ -93,8 +94,11 @@ public:
       const CanonicalMechanismUniverse &legacyUniverse,
       ArrayRef<CanonicalEventBundleCandidate> selectedEventBundles,
       unsigned eventIdMax,
-    const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
+      const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
       SyncCoverGraph &graph, const SyncCoverCandidateIndex &candidateIndex,
+      const SyncCoverSlotLifecycleResult &slotLifecycles,
+      const SyncCoverSlotProtocolResult &slotProtocols,
+      bool registerShadowSlotProtocols,
       ArrayRef<SyncCoverDemandId> activeDemands,
       const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
           &regionScopes,
@@ -113,6 +117,7 @@ private:
   translateBarrierEdge(const SyncGraphEdge &legacy) const;
   LogicalResult addBarriers();
   LogicalResult addEventBundles();
+  LogicalResult addSlotProtocols();
   LogicalResult addConflicts();
   LogicalResult buildLegacySeed();
   LogicalResult solve(CanonicalSyncCoveringShadowSnapshot &snapshot);
@@ -129,6 +134,9 @@ private:
   const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds_;
   SyncCoverMechanismUniverse universe_;
   const SyncCoverCandidateIndex &candidateIndex_;
+  const SyncCoverSlotLifecycleResult &slotLifecycles_;
+  const SyncCoverSlotProtocolResult &slotProtocols_;
+  bool registerShadowSlotProtocols_ = false;
   const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
       &regionScopes_;
   const DenseMap<Operation *, SyncCoverScopeId> &loopScopes_;

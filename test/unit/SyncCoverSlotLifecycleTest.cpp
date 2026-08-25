@@ -8,6 +8,7 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
+#include "PTO/Transforms/CanonicalSync/SyncCoverGrounded.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverSlotLifecycle.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverSlotProtocol.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverDescriptorBuilder.h"
@@ -424,14 +425,40 @@ bool testUnitReleaseProtocolFactory() {
       passed &= check(descriptor.has_value(),
                       "build stock unit recurrence descriptor");
       if (descriptor) {
-        passed &= check(
-            universe.addVerifiedProtocol(
-                *descriptor, [&](const auto &actual) {
-                  return verifySyncCoverSlotProtocol(
-                      index, lifecycles.lifecycles.front(), universe, candidate,
-                      actual);
-                }),
-            "factory candidate passes the delegated stock token verifier");
+        const SyncCoverMechanismResult inserted =
+            universe.addVerifiedProtocol(*descriptor, [&](const auto &actual) {
+              return verifySyncCoverSlotProtocol(
+                  index, lifecycles.lifecycles.front(), universe, candidate,
+                  actual);
+            });
+        passed &= check(inserted && inserted.index,
+                        "factory candidate passes the delegated stock token "
+                        "verifier");
+        if (inserted && inserted.index) {
+          const std::vector<SyncCoverMechanismId> selected{*inserted.index};
+          const SyncCoverGroundingResult grounded =
+              groundSyncCoverInstance(universe, {4});
+          const SyncCoverResourceSelection resources =
+              universe.evaluateResourceSelection(selected);
+          const SyncCoverCoverageOracle finalVerifier(universe.getGraph());
+          const SyncCoverCoverageResult coverage =
+              finalVerifier.checkDemand(4, selected);
+          passed &= check(static_cast<bool>(grounded),
+                          "ground the slot protocol column");
+          const bool groundedProtocol = grounded &&
+                                        grounded.instance.coversAll(selected);
+          passed &= check(groundedProtocol,
+                          "grounded slot protocol covers its release demand");
+          const bool allocatedProtocol =
+              resources && resources.domains.size() == 1 &&
+              resources.domains.front().allocations.size() == 1 &&
+              resources.domains.front().allocations.front().owner.mechanism ==
+                  *inserted.index;
+          passed &= check(allocatedProtocol,
+                          "allocate the forced slot protocol selection");
+          passed &= check(coverage && coverage.covered,
+                          "finally verify the forced slot protocol");
+        }
       }
     }
   }
