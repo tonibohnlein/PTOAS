@@ -462,6 +462,24 @@ struct CanonicalSelectionDiagnosticRequest {
   SmallVector<std::size_t, 4> eventBundleIds;
 };
 
+/// Stable diagnostic copy of a discovered exact-range lifecycle. Keeping the
+/// analyzer's private representation out of this public plan header avoids
+/// rebuilding every CanonicalSync translation unit when factories evolve.
+struct CanonicalSyncCoveringSlotLifecycle {
+  std::size_t id = 0;
+  SyncCoverStorageDomainId domain = 0;
+  SyncCoverStorageInterval extent;
+  std::uint32_t producerResource = 0;
+  std::uint32_t consumerResource = 0;
+  SyncCoverScopeId recurrenceScope = 0;
+  unsigned distance = 0;
+  std::vector<std::size_t> ready;
+  std::vector<std::size_t> release;
+  std::vector<SyncCoverStorageAccessId> managedAccesses;
+  bool hasUnrepresentedAccesses = false;
+  bool requiresPathSensitiveProof = false;
+};
+
 /// Direct-cover translation, selection diagnostics, and optional emission
 /// handoff. Shadow mode records it without changing the emitted legacy plan.
 struct CanonicalSyncCoveringShadowSnapshot {
@@ -476,6 +494,10 @@ struct CanonicalSyncCoveringShadowSnapshot {
   std::size_t storageDomains = 0;
   std::size_t storageAccesses = 0;
   std::size_t storageWitnesses = 0;
+  std::size_t slotLifecycleCandidates = 0;
+  std::size_t pathSensitiveSlotLifecycles = 0;
+  std::size_t partialSlotOpportunities = 0;
+  bool slotLifecycleDiscoveryTruncated = false;
   std::size_t resourceDomainCount = 0;
   std::size_t barrierCandidates = 0;
   std::size_t eventBundleCandidates = 0;
@@ -504,6 +526,7 @@ struct CanonicalSyncCoveringShadowSnapshot {
   std::vector<SyncCoverEdge> edgeDetails;
   std::vector<SyncCoverDemand> demandDetails;
   std::vector<std::size_t> activeDemandIds;
+  std::vector<CanonicalSyncCoveringSlotLifecycle> slotLifecycleDetails;
 };
 
 /// Configuration for CanonicalSync plan construction. Callers set the event

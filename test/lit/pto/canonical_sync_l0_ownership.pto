@@ -321,11 +321,16 @@ module attributes {pto.target_arch = "a2a3"} {
 // OWNERSHIP-SAME: ownership-cycles=0
 
 // COVERING-LABEL: PTOCanonicalSyncPlan @two_slot_l0_ownership
+// COVERING: covering-slot-lifecycles candidates=4 path-sensitive=0 partial-opportunities=0 truncated=no
+// COVERING: covering-slot-lifecycle[0] domain=0 extent=[0,16384) PIPE_MTE1->PIPE_M
+// COVERING-SAME: ready=[{{[0-9, ]+}}] release=[{{[0-9, ]+}}] accesses=[{{[0-9, ]+}}]
+// COVERING-SAME: extra-accesses=no path-sensitive=no
 // COVERING: covering-selection status=ready error=none
 // COVERING-SAME: legacy-seed=1 selected=1
 // COVERING-SAME: providers=[mechanism[{{[0-9]+}}]=event-bundle[{{[0-9]+}}]]
 // COVERING: covering-allocation mechanism[{{[0-9]+}}]=event-bundle[{{[0-9]+}}]
 // COVERING-LABEL: PTOCanonicalSyncPlan @branched_two_slot_l0_ownership
+// COVERING: covering-slot-lifecycles candidates=4 path-sensitive=4 partial-opportunities=0 truncated=no
 // COVERING: covering-selection status=ready error=none
 // COVERING-SAME: legacy-seed=1 selected=1
 // COVERING-SAME: providers=[mechanism[{{[0-9]+}}]=event-bundle[{{[0-9]+}}]]

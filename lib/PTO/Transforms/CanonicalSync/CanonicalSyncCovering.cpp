@@ -15,6 +15,7 @@
 #include "CanonicalSyncInternal.h"
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverCandidateIndex.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverSlotLifecycle.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverCoverage.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -172,6 +173,34 @@ public:
                 "with "
              << static_cast<unsigned>(candidateIndex.getError());
     }
+    const SyncCoverSlotLifecycleResult lifecycleResult =
+        discoverSyncCoverSlotLifecycles(graph_, candidateIndex);
+    if (!lifecycleResult) {
+      return func_.emitError()
+             << "internal error: canonical covering slot-lifecycle discovery "
+                "failed with "
+             << static_cast<unsigned>(lifecycleResult.error);
+    }
+    snapshot.slotLifecycleDetails.clear();
+    snapshot.slotLifecycleDetails.reserve(lifecycleResult.lifecycles.size());
+    for (const SyncCoverSlotLifecycle &lifecycle :
+         lifecycleResult.lifecycles) {
+      snapshot.slotLifecycleDetails.push_back(
+          {lifecycle.id, lifecycle.slot.domain, lifecycle.slot.extent,
+           lifecycle.producerResource, lifecycle.consumerResource,
+           lifecycle.recurrenceScope, lifecycle.distance, lifecycle.ready,
+           lifecycle.release, lifecycle.managedAccesses,
+           lifecycle.hasUnrepresentedAccesses,
+           lifecycle.requiresPathSensitiveProof});
+    }
+    snapshot.slotLifecycleCandidates = lifecycleResult.lifecycles.size();
+    snapshot.partialSlotOpportunities =
+        lifecycleResult.partialSlotOpportunities;
+    snapshot.slotLifecycleDiscoveryTruncated = lifecycleResult.truncated;
+    snapshot.pathSensitiveSlotLifecycles = static_cast<std::size_t>(
+        llvm::count_if(lifecycleResult.lifecycles, [](const auto &lifecycle) {
+          return lifecycle.requiresPathSensitiveProof;
+        }));
     for (const auto &entry : regionContexts_) {
       regionScopes_.emplace(entry.first, entry.second.scope);
     }

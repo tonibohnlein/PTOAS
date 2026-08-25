@@ -544,6 +544,34 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
        << " active-demands=" << snapshot.activeDemands
        << " intrinsic-demands=" << snapshot.intrinsicallySatisfiedDemands
        << '\n';
+    os << "  covering-slot-lifecycles candidates="
+       << snapshot.slotLifecycleCandidates
+       << " path-sensitive=" << snapshot.pathSensitiveSlotLifecycles
+       << " partial-opportunities=" << snapshot.partialSlotOpportunities
+       << " truncated="
+       << (snapshot.slotLifecycleDiscoveryTruncated ? "yes" : "no")
+       << '\n';
+    for (const CanonicalSyncCoveringSlotLifecycle &lifecycle :
+         snapshot.slotLifecycleDetails) {
+      os << "  covering-slot-lifecycle[" << lifecycle.id << "] domain="
+         << lifecycle.domain << " extent=[" << lifecycle.extent.begin << ','
+         << lifecycle.extent.end << ") "
+         << stringifyPIPE(static_cast<PIPE>(lifecycle.producerResource))
+         << "->"
+         << stringifyPIPE(static_cast<PIPE>(lifecycle.consumerResource))
+         << " scope=" << lifecycle.recurrenceScope
+         << " distance=" << lifecycle.distance
+         << " ready=";
+      printNodeIds(os, lifecycle.ready);
+      os << " release=";
+      printNodeIds(os, lifecycle.release);
+      os << " accesses=";
+      printNodeIds(os, lifecycle.managedAccesses);
+      os << " extra-accesses="
+         << (lifecycle.hasUnrepresentedAccesses ? "yes" : "no")
+         << " path-sensitive="
+         << (lifecycle.requiresPathSensitiveProof ? "yes" : "no") << '\n';
+    }
     os << "  covering-selection status="
        << (snapshot.selectionAttempted ? "ready" : "not-run")
        << " error=" << stringifyCoveringSelectionError(snapshot.selectionError)
