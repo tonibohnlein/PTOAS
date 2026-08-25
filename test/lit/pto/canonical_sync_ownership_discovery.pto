@@ -22,6 +22,9 @@
 // RUN:   | FileCheck %s --check-prefix=L0C-IR
 // RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
 // RUN:   | FileCheck %s --check-prefix=L1-IR
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-canonical-sync=event-id-num-max=8 solver=covering' \
+// RUN:   | FileCheck %s --check-prefix=DIRECT
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @nested_l1_ownership(%source0: !pto.ptr<f16, gm>,
@@ -653,3 +656,19 @@ module attributes {pto.target_arch = "a2a3"} {
 // L1-IR-NEXT: scf.if %[[NONEMPTY_DRAIN]]
 // L1-IR: pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <[[A0_READY]]>]
 // L1-IR: pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <[[A1_FREE]]>]
+
+// DIRECT-LABEL: func.func @nested_l1_ownership
+// DIRECT: pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID0>]
+// DIRECT: pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID1>]
+// DIRECT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+// DIRECT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
+// DIRECT-LABEL: func.func @nested_l0c_ownership
+// DIRECT: pto.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+// DIRECT: pto.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+// DIRECT: pto.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+// DIRECT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+// DIRECT-LABEL: func.func @dynamic_address_l0c_refused
+// DIRECT: pto.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+// DIRECT: pto.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+// DIRECT-NOT: pto.barrier <PIPE_FIX>
+// DIRECT-LABEL: func.func @multiple_l0c_consumers_refused

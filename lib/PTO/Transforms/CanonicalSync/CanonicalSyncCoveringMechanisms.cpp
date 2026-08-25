@@ -59,7 +59,8 @@ MechanismAdapter::build(CanonicalSyncCoveringShadowSnapshot &snapshot) {
   if (!validation) {
     return emitMechanismError("universe validation", validation);
   }
-  snapshot.resourceDomains = universe_.getResourceDomains().size();
+  snapshot.resourceDomainCount = universe_.getResourceDomains().size();
+  snapshot.resourceDomainDetails = universe_.getResourceDomains();
   snapshot.barrierCandidates = legacyUniverse_.barriers.size();
   snapshot.eventBundleCandidates = eventBundles_.size();
   snapshot.candidateMechanisms = universe_.getMechanisms().size();
@@ -221,6 +222,7 @@ LogicalResult MechanismAdapter::addEventBundles() {
     }
 
     SyncCoverMechanismResult result;
+    std::vector<std::size_t> eventResourceUses;
     if (isCanonicalForwardEvent(bundle, universe_.getGraph(),
                                 getAnchorPosition_)) {
       const CanonicalEvent &event = bundle.events.front();
@@ -241,19 +243,21 @@ LogicalResult MechanismAdapter::addEventBundles() {
             "internal error: canonical covering standalone event is "
             "invalid");
       }
+      eventResourceUses.push_back(0);
       result = universe_.addMechanism(*descriptor);
     } else {
-      const auto descriptor = translateVerifiedEventBundle(
+      const auto translated = translateVerifiedEventBundle(
           bundle, *identity, domains_, universe_, regionScopes_, loopScopes_,
           getAnchorPosition_);
-      if (!descriptor) {
+      if (!translated) {
         return func_.emitError(
             "internal error: canonical covering event protocol is "
             "unmappable");
       }
-      const SyncCoverMechanismDescriptor expected = *descriptor;
+      const SyncCoverMechanismDescriptor expected = translated->descriptor;
+      eventResourceUses = translated->eventResourceUses;
       result = universe_.addVerifiedProtocol(
-          *descriptor, [&, expected](const auto &actual) {
+          translated->descriptor, [&, expected](const auto &actual) {
             return sameDescriptor(actual, expected) &&
                    verifyBundleShape(bundle) &&
                    verifyEventProtocols_(bundle.events);
@@ -286,6 +290,23 @@ LogicalResult MechanismAdapter::addEventBundles() {
         }
       }
       return failure();
+    }
+    const bool eventMappingComplete =
+        eventResourceUses.size() == bundle.events.size();
+    if (!eventMappingComplete) {
+      return func_.emitError(
+          "internal error: canonical covering event/use mapping is incomplete");
+    }
+    for (auto [eventIndex, resourceUse] :
+         llvm::enumerate(eventResourceUses)) {
+      const bool unique =
+          eventResourceUses_
+              .emplace(std::make_pair(*result.index, resourceUse), eventIndex)
+              .second;
+      if (!unique) {
+        return func_.emitError(
+            "internal error: duplicate canonical covering event/use mapping");
+      }
     }
     providers_.emplace(provider, *result.index);
   }

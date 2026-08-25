@@ -268,7 +268,10 @@ public:
         eventIdMax_(options.eventIdMax),
         gmAliasPolicy_(options.gmAliasPolicy),
         selectionDiagnosticsEnabled_(options.diagnosticRequest != nullptr),
-        coveringShadowEnabled_(options.coveringShadow),
+        coveringShadowEnabled_(options.coveringShadow ||
+                               options.solver == CanonicalSyncSolver::Covering),
+        coveringEmissionEnabled_(options.solver ==
+                                 CanonicalSyncSolver::Covering),
         diagnosticRequest_(
             options.diagnosticRequest
                 ? *options.diagnosticRequest
@@ -360,21 +363,25 @@ private:
                                                Operation *loop) const;
   bool planCoversRequirements(ArrayRef<CanonicalBarrier> barriers,
                               ArrayRef<CanonicalEvent> events,
-                              bool diagnose = false) const;
+                              bool diagnose = false,
+                              bool usePositiveTripFacts = false) const;
   std::size_t countUncoveredRequirements(
       ArrayRef<CanonicalBarrier> barriers, ArrayRef<CanonicalEvent> events,
       ArrayRef<CanonicalDependency> requirements, bool diagnose = false,
-      SmallVectorImpl<std::size_t> *uncoveredRequirements = nullptr) const;
+      SmallVectorImpl<std::size_t> *uncoveredRequirements = nullptr,
+      bool usePositiveTripFacts = false) const;
   std::size_t countUncoveredRecurrenceRequirements(
       ArrayRef<CanonicalBarrier> barriers, ArrayRef<CanonicalEvent> events,
       ArrayRef<CanonicalDependency> requirements, bool diagnose,
-      SmallVectorImpl<std::size_t> *uncoveredRequirements) const;
+      SmallVectorImpl<std::size_t> *uncoveredRequirements,
+      bool usePositiveTripFacts) const;
   bool isVacuousOwnedAlternatingRecurrence(
       ArrayRef<const CanonicalOwnershipCycle *> cycles,
       const CanonicalDependency &requirement) const;
   bool isRecurrenceVertexAvailable(const CanonicalDependency &requirement,
                                    std::size_t vertex,
-                                   std::size_t nodeCount) const;
+                                   std::size_t nodeCount,
+                                   bool usePositiveTripFacts) const;
   bool eventsFitBudget(ArrayRef<CanonicalEvent> events) const;
   bool isCandidatePlanFeasible(
       ArrayRef<CanonicalBarrier> barriers,
@@ -394,6 +401,7 @@ private:
       ArrayRef<CanonicalEventBundleCandidate> eventBundles) const;
   LogicalResult verifyFinalPlan();
   LogicalResult buildCoveringShadowGraph();
+  LogicalResult materializeCoveringSelection();
   LogicalResult repairEventScarcity();
   LogicalResult repairEventDomain(const CanonicalEventDomainKey &key,
                                   unsigned availableIds);
@@ -450,6 +458,7 @@ private:
   CanonicalGMAliasPolicy gmAliasPolicy_ = CanonicalGMAliasPolicy::MayAlias;
   bool selectionDiagnosticsEnabled_ = false;
   bool coveringShadowEnabled_ = false;
+  bool coveringEmissionEnabled_ = false;
   CanonicalSelectionDiagnosticRequest diagnosticRequest_;
   CanonicalSyncPlan plan_;
   SyncIRs syncIR_;

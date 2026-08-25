@@ -535,7 +535,7 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
     os << "  covering-selection status="
        << (snapshot.selectionAttempted ? "ready" : "not-run")
        << " error=" << stringifyCoveringSelectionError(snapshot.selectionError)
-       << " domains=" << snapshot.resourceDomains
+       << " domains=" << snapshot.resourceDomainCount
        << " barrier-candidates=" << snapshot.barrierCandidates
        << " event-bundle-candidates=" << snapshot.eventBundleCandidates
        << " mechanisms=" << snapshot.candidateMechanisms
@@ -578,6 +578,21 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
        << snapshot.finalVerificationStatistics.graphValidations
        << " final-coverage-queries="
        << snapshot.finalVerificationStatistics.coverageQueries << '\n';
+    for (const CanonicalSyncCoveringSelectedResourceUse &use :
+         snapshot.selectedResourceUses) {
+      os << "  covering-use mechanism[" << use.mechanism << "]=";
+      printMechanismRef(os, use.provider);
+      os << " use=" << use.resourceUse << " domain=" << use.domain
+         << " kind=" << stringifyCoveringResourceKind(use.kind)
+         << " width=" << use.width << " lifetime=[" << use.lifetime.begin
+         << ',' << use.lifetime.end << "] event=";
+      if (use.eventIndex) {
+        os << *use.eventIndex;
+      } else {
+        os << "none";
+      }
+      os << '\n';
+    }
     for (const CanonicalSyncCoveringResourceAllocation &allocation :
          snapshot.selectedAllocations) {
       os << "  covering-allocation mechanism[" << allocation.mechanism << "]=";

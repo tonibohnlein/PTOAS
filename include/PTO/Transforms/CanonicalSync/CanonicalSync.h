@@ -46,6 +46,11 @@ enum class CanonicalGMAliasPolicy : std::uint8_t {
   DistinctArgumentsNoAlias,
 };
 
+enum class CanonicalSyncSolver : std::uint8_t {
+  Legacy,
+  Covering,
+};
+
 enum class CanonicalOwnershipKind : std::uint8_t {
   L0Operand,
   L1Tile,
@@ -305,6 +310,47 @@ struct CanonicalSyncCoveringResourceAllocation {
   std::vector<unsigned> ids;
 };
 
+struct CanonicalSyncCoveringSelectedResourceUse {
+  SyncCoverMechanismId mechanism = 0;
+  CanonicalSelectionMechanismRef provider;
+  std::size_t resourceUse = 0;
+  SyncCoverResourceDomainId domain = 0;
+  SyncCoverResourceKind kind = SyncCoverResourceKind::EventId;
+  std::uint32_t sourceResource = 0;
+  std::uint32_t targetResource = 0;
+  std::uint64_t poolIdentity = 0;
+  SyncCoverScopeId scope = 0;
+  unsigned distance = 0;
+  std::size_t width = 0;
+  SyncCoverTimelineInterval lifetime;
+  std::optional<std::size_t> eventIndex;
+};
+
+enum class CanonicalSyncCoveringAllocationError : std::uint8_t {
+  None,
+  SelectionNotReady,
+  InvalidProvider,
+  InvalidDomain,
+  InvalidResourceUse,
+  InvalidAllocation,
+  UnsupportedResourceKind,
+  InvalidPressure,
+  ConflictingAssignment,
+};
+
+struct CanonicalSyncCoveringAllocationValidation {
+  CanonicalSyncCoveringAllocationError error =
+      CanonicalSyncCoveringAllocationError::None;
+  std::optional<SyncCoverMechanismId> mechanism;
+  std::optional<std::size_t> resourceUse;
+  std::optional<SyncCoverResourceDomainId> domain;
+  std::optional<unsigned> physicalId;
+
+  explicit operator bool() const {
+    return error == CanonicalSyncCoveringAllocationError::None;
+  }
+};
+
 struct CanonicalSelectionEventDomain {
   PipelineType sourcePipe = PipelineType::PIPE_UNASSIGNED;
   PipelineType targetPipe = PipelineType::PIPE_UNASSIGNED;
@@ -361,7 +407,8 @@ struct CanonicalSelectionDiagnosticRequest {
   SmallVector<std::size_t, 4> eventBundleIds;
 };
 
-/// Non-emitting direct-cover translation and selection diagnostics.
+/// Direct-cover translation, selection diagnostics, and optional emission
+/// handoff. Shadow mode records it without changing the emitted legacy plan.
 struct CanonicalSyncCoveringShadowSnapshot {
   std::size_t scopes = 0;
   std::size_t controls = 0;
@@ -371,7 +418,7 @@ struct CanonicalSyncCoveringShadowSnapshot {
   std::size_t conservativeDemands = 0;
   std::size_t activeDemands = 0;
   std::size_t intrinsicallySatisfiedDemands = 0;
-  std::size_t resourceDomains = 0;
+  std::size_t resourceDomainCount = 0;
   std::size_t barrierCandidates = 0;
   std::size_t eventBundleCandidates = 0;
   std::size_t candidateMechanisms = 0;
@@ -387,7 +434,9 @@ struct CanonicalSyncCoveringShadowSnapshot {
   std::vector<std::size_t> actionProfile;
   std::vector<std::size_t> barrierActionProfile;
   std::vector<CanonicalSyncCoveringSelectedProvider> selectedProviders;
+  std::vector<CanonicalSyncCoveringSelectedResourceUse> selectedResourceUses;
   std::vector<CanonicalSyncCoveringResourceAllocation> selectedAllocations;
+  std::vector<SyncCoverResourceDomain> resourceDomainDetails;
   SyncCoverResourceSelection selectedResources;
   SyncCoverCoverageStatistics coverageStatistics;
   SyncCoverCoverageStatistics finalVerificationStatistics;
@@ -404,10 +453,20 @@ struct CanonicalSyncCoveringShadowSnapshot {
 struct CanonicalSyncBuildOptions {
   unsigned eventIdMax = 0;
   CanonicalGMAliasPolicy gmAliasPolicy = CanonicalGMAliasPolicy::MayAlias;
+  CanonicalSyncSolver solver = CanonicalSyncSolver::Legacy;
   /// Borrowed for buildCanonicalSyncPlan(); the builder copies the request.
   const CanonicalSelectionDiagnosticRequest *diagnosticRequest = nullptr;
   bool coveringShadow = false;
 };
+
+CanonicalSyncCoveringAllocationValidation
+validateCanonicalSyncCoveringAllocation(
+    const CanonicalSyncCoveringShadowSnapshot &snapshot);
+
+bool canonicalSyncCoveringResourceUseMatches(
+    const CanonicalSyncCoveringSelectedResourceUse &selected,
+    const SyncCoverResourceUse &live,
+    const SyncCoverTimelineInterval &liveLifetime);
 
 class CanonicalSyncPlanBuilder;
 

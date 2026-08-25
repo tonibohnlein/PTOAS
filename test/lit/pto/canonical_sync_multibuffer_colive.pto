@@ -14,6 +14,9 @@
 // RUN: pto-test-opt %s -pto-plan-memory \
 // RUN:   '-pto-canonical-sync=event-id-num-max=8' \
 // RUN:   | FileCheck %s --check-prefix=IR
+// RUN: pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-canonical-sync=event-id-num-max=8 solver=covering' \
+// RUN:   | FileCheck %s --check-prefix=DIRECT
 // RUN: not pto-test-opt %s -pto-plan-memory \
 // RUN:   '-pto-canonical-sync=event-id-num-max=1' 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SCARCE
@@ -219,6 +222,15 @@ module {
 // IR: pto.tstore
 // IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
 // IR-LABEL: func.func @distance_two_short
+
+// DIRECT-LABEL: func.func @colive_slots
+// DIRECT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// DIRECT: scf.for
+// DIRECT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// DIRECT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// DIRECT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// DIRECT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// DIRECT-LABEL: func.func @distance_two_short
 
 // SCARCE: error: PTOCanonicalSync cannot repair event-id scarcity in domain
 // SCARCE-SAME: PIPE_V -> PIPE_MTE2

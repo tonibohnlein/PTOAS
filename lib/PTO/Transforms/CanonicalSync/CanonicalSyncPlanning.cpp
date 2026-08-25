@@ -538,7 +538,7 @@ bool CanonicalSyncPlanBuilder::isForwardVertexAvailable(
 
 bool CanonicalSyncPlanBuilder::isRecurrenceVertexAvailable(
     const CanonicalDependency &requirement, std::size_t vertex,
-    std::size_t nodeCount) const {
+    std::size_t nodeCount, bool usePositiveTripFacts) const {
   if (requirement.iterationDistance == 0 || !requirement.recurrenceLoop ||
       nodeCount == 0 || requirement.source >= nodeCount ||
       requirement.target >= nodeCount ||
@@ -553,7 +553,7 @@ bool CanonicalSyncPlanBuilder::isRecurrenceVertexAvailable(
   return isGuaranteedInContext(
       operation, occurrence, plan_.nodes_[requirement.source].operation, 0,
       plan_.nodes_[requirement.target].operation, requirement.iterationDistance,
-      requirement.recurrenceLoop);
+      requirement.recurrenceLoop, usePositiveTripFacts);
 }
 
 bool CanonicalSyncPlanBuilder::isAnchorGuaranteedForRequirement(

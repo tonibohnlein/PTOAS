@@ -390,7 +390,8 @@ std::vector<SyncGraphEdge> CanonicalSyncPlanBuilder::buildEventCompletionEdges(
 std::size_t CanonicalSyncPlanBuilder::countUncoveredRecurrenceRequirements(
     ArrayRef<CanonicalBarrier> barriers, ArrayRef<CanonicalEvent> events,
     ArrayRef<CanonicalDependency> requirements, bool diagnose,
-    SmallVectorImpl<std::size_t> *uncoveredRequirements) const {
+    SmallVectorImpl<std::size_t> *uncoveredRequirements,
+    bool usePositiveTripFacts) const {
   const SmallVector<const CanonicalOwnershipCycle *, 2> alternatingCycles =
       getVerifiedAlternatingCycles(plan_.ownershipCycles_, events);
   std::map<Operation *, std::map<unsigned, SmallVector<std::size_t, 8>>,
@@ -537,7 +538,7 @@ std::size_t CanonicalSyncPlanBuilder::countUncoveredRecurrenceRequirements(
         return requirement < distanceEntry.second.size() &&
                isRecurrenceVertexAvailable(
                    requirements[distanceEntry.second[requirement]], vertex,
-                   nodeCount);
+                   nodeCount, usePositiveTripFacts);
       };
       const std::vector<bool> covered = getCompletionRequirementCoverage(
           expandedNodeCount, expandedEdges, expandedRequirements,
@@ -695,15 +696,17 @@ std::vector<CanonicalEvent> CanonicalSyncPlanBuilder::selectRequiredEvents(
 
 bool CanonicalSyncPlanBuilder::planCoversRequirements(
     ArrayRef<CanonicalBarrier> barriers, ArrayRef<CanonicalEvent> events,
-    bool diagnose) const {
+    bool diagnose, bool usePositiveTripFacts) const {
   return countUncoveredRequirements(
-             barriers, events, plan_.completionRequirements_, diagnose) == 0;
+             barriers, events, plan_.completionRequirements_, diagnose,
+             nullptr, usePositiveTripFacts) == 0;
 }
 
 std::size_t CanonicalSyncPlanBuilder::countUncoveredRequirements(
     ArrayRef<CanonicalBarrier> barriers, ArrayRef<CanonicalEvent> events,
     ArrayRef<CanonicalDependency> requirements, bool diagnose,
-    SmallVectorImpl<std::size_t> *uncoveredRequirements) const {
+    SmallVectorImpl<std::size_t> *uncoveredRequirements,
+    bool usePositiveTripFacts) const {
   std::vector<SyncGraphEdge> edges = plan_.fixedEdges_;
   std::vector<SyncGraphEdge> barrierEdges =
       buildBarrierCompletionEdges(barriers);
@@ -715,7 +718,8 @@ std::size_t CanonicalSyncPlanBuilder::countUncoveredRequirements(
   SmallVector<std::size_t, 16> forwardIndices;
   SmallVector<SmallVector<std::size_t, 2>, 16> forwardEquivalentIndices;
   std::size_t uncoveredCount = countUncoveredRecurrenceRequirements(
-      barriers, events, requirements, diagnose, uncoveredRequirements);
+      barriers, events, requirements, diagnose, uncoveredRequirements,
+      usePositiveTripFacts);
   std::map<std::pair<std::size_t, std::size_t>, std::size_t> forwardGroups;
   for (auto [index, requirement] : llvm::enumerate(requirements)) {
     if (requirement.iterationDistance == 0 &&

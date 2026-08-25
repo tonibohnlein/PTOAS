@@ -142,6 +142,10 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
            /*default=*/"false",
            "Build and verify the non-emitting direct-cover graph in parallel "
            "with the legacy canonical synchronization plan.">,
+    Option<"solver", "solver", "std::string", "\"legacy\"",
+           "Synchronization selection and emission solver: legacy or "
+           "covering. Covering is opt-in and may emit a sound truncated "
+           "selection whose optimality is not proven.">,
   ];
 
   let dependentDialects = [
@@ -181,6 +185,8 @@ def PrintCanonicalSyncPlan
            /*default=*/"false",
            "Build and verify the non-emitting direct-cover graph in parallel "
            "with the legacy canonical synchronization plan.">,
+    Option<"solver", "solver", "std::string", "\"legacy\"",
+           "Plan materialization solver: legacy or covering.">,
     ListOption<"evictCanonicalBarrierIds", "evict-barrier-ids",
                "unsigned",
                "Selected canonical barrier IDs to evict atomically in the "

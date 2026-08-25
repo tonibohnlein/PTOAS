@@ -100,6 +100,42 @@ MechanismAdapter::solve(CanonicalSyncCoveringShadowSnapshot &snapshot) {
           "internal error: selected covering mechanism has no provider");
     }
     snapshot.selectedProviders.push_back({mechanism, provider->second});
+    const SyncCoverMechanism &selected = universe_.getMechanisms()[mechanism];
+    for (auto [resourceUse, use] : llvm::enumerate(selected.resourceUses)) {
+      if (use.domain >= universe_.getResourceDomains().size()) {
+        return func_.emitError(
+            "internal error: selected covering resource use has invalid "
+            "domain");
+      }
+      const SyncCoverResourceDomain &domain =
+          universe_.getResourceDomains()[use.domain];
+      const std::optional<SyncCoverTimelineInterval> lifetime =
+          getSyncCoverResourceLifetime(universe_.getGraph(), selected, use);
+      if (!lifetime) {
+        return func_.emitError(
+            "internal error: selected covering resource use has invalid "
+            "lifetime");
+      }
+      const auto event =
+          eventResourceUses_.find(std::make_pair(mechanism, resourceUse));
+      const bool eventMappingInvalid =
+          domain.kind == SyncCoverResourceKind::EventId
+              ? event == eventResourceUses_.end()
+              : event != eventResourceUses_.end();
+      if (eventMappingInvalid) {
+        return func_.emitError(
+            "internal error: selected covering resource use has invalid "
+            "event mapping");
+      }
+      std::optional<std::size_t> eventIndex;
+      if (event != eventResourceUses_.end()) {
+        eventIndex = event->second;
+      }
+      snapshot.selectedResourceUses.push_back(
+          {mechanism, provider->second, resourceUse, use.domain, domain.kind,
+           domain.sourceResource, domain.targetResource, domain.poolIdentity,
+           use.scope, use.distance, use.width, *lifetime, eventIndex});
+    }
   }
   for (const SyncCoverDomainFeasibility &feasibility :
        result.resources.domains) {
@@ -134,6 +170,50 @@ MechanismAdapter::solve(CanonicalSyncCoveringShadowSnapshot &snapshot) {
           {allocation.owner.mechanism, provider->second,
            allocation.owner.resourceUse, feasibility.domain, domain.kind,
            domain.sourceResource, domain.targetResource, allocation.ids});
+    }
+  }
+  if (failed(validateSelectedResourceUsesAgainstUniverse(snapshot))) {
+    return failure();
+  }
+  const CanonicalSyncCoveringAllocationValidation allocationValidation =
+      validateCanonicalSyncCoveringAllocation(snapshot);
+  if (!allocationValidation) {
+    return func_.emitError()
+           << "internal error: selected covering allocation is invalid: "
+           << static_cast<unsigned>(allocationValidation.error);
+  }
+  return success();
+}
+
+LogicalResult MechanismAdapter::validateSelectedResourceUsesAgainstUniverse(
+    const CanonicalSyncCoveringShadowSnapshot &snapshot) {
+  for (const CanonicalSyncCoveringSelectedResourceUse &selected :
+       snapshot.selectedResourceUses) {
+    const bool mechanismMissing =
+        selected.mechanism >= universe_.getMechanisms().size();
+    if (mechanismMissing) {
+      return func_.emitError(
+          "internal error: selected covering resource use has no mechanism");
+    }
+    const SyncCoverMechanism &mechanism =
+        universe_.getMechanisms()[selected.mechanism];
+    const bool useMissing =
+        selected.resourceUse >= mechanism.resourceUses.size();
+    if (useMissing) {
+      return func_.emitError(
+          "internal error: selected covering resource use is out of range");
+    }
+    const SyncCoverResourceUse &use =
+        mechanism.resourceUses[selected.resourceUse];
+    const std::optional<SyncCoverTimelineInterval> lifetime =
+        getSyncCoverResourceLifetime(universe_.getGraph(), mechanism, use);
+    const bool useMismatch =
+        !lifetime ||
+        !canonicalSyncCoveringResourceUseMatches(selected, use, *lifetime);
+    if (useMismatch) {
+      return func_.emitError(
+          "internal error: selected covering resource use disagrees with "
+          "the live mechanism universe");
     }
   }
   return success();

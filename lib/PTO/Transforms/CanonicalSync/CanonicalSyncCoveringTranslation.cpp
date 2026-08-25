@@ -215,7 +215,7 @@ bool mlir::pto::canonical_sync_covering::isCanonicalForwardEvent(
              graph.getNodes()[event.target].order * 2;
 }
 
-std::optional<SyncCoverMechanismDescriptor>
+std::optional<TranslatedEventBundleMechanism>
 mlir::pto::canonical_sync_covering::translateVerifiedEventBundle(
     const CanonicalEventBundleCandidate &bundle, std::uint64_t provider,
     const DomainMap &domains, const SyncCoverMechanismUniverse &universe,
@@ -226,6 +226,8 @@ mlir::pto::canonical_sync_covering::translateVerifiedEventBundle(
         getAnchorPosition) {
   SyncCoverMechanismDescriptorBuilder builder(
       SyncCoverMechanismKind::VerifiedProtocol, provider);
+  std::vector<std::size_t> eventResourceUses;
+  eventResourceUses.reserve(bundle.events.size());
   for (const CanonicalEvent &event : bundle.events) {
     const CanonicalEventDomainKey key{event.sourcePipe, event.targetPipe};
     auto domainId = domains.find(key);
@@ -295,12 +297,20 @@ mlir::pto::canonical_sync_covering::translateVerifiedEventBundle(
         return std::nullopt;
       }
     }
-    if (!builder.addProtocolLane(domain, useScope, useDistance, event.width,
-                                 std::move(actions), std::move(supplies))) {
+    const std::size_t resourceUse =
+        builder.getDescriptor().resourceUses.size();
+    const bool added = builder.addProtocolLane(
+        domain, useScope, useDistance, event.width, std::move(actions),
+        std::move(supplies));
+    const bool oneUseAdded =
+        builder.getDescriptor().resourceUses.size() == resourceUse + 1;
+    if (!added || !oneUseAdded) {
       return std::nullopt;
     }
+    eventResourceUses.push_back(resourceUse);
   }
-  return std::move(builder).takeDescriptor();
+  return TranslatedEventBundleMechanism{
+      std::move(builder).takeDescriptor(), std::move(eventResourceUses)};
 }
 
 bool mlir::pto::canonical_sync_covering::verifyBundleShape(

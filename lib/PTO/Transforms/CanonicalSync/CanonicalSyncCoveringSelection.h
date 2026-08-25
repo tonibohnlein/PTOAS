@@ -56,7 +56,12 @@ bool isCanonicalForwardEvent(
     llvm::function_ref<std::size_t(const CanonicalAnchor &)>
         getAnchorPosition);
 
-std::optional<SyncCoverMechanismDescriptor> translateVerifiedEventBundle(
+struct TranslatedEventBundleMechanism {
+  SyncCoverMechanismDescriptor descriptor;
+  std::vector<std::size_t> eventResourceUses;
+};
+
+std::optional<TranslatedEventBundleMechanism> translateVerifiedEventBundle(
     const CanonicalEventBundleCandidate &bundle, std::uint64_t provider,
     const DomainMap &domains, const SyncCoverMechanismUniverse &universe,
     const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
@@ -97,6 +102,8 @@ private:
   LogicalResult addConflicts();
   LogicalResult buildLegacySeed();
   LogicalResult solve(CanonicalSyncCoveringShadowSnapshot &snapshot);
+  LogicalResult validateSelectedResourceUsesAgainstUniverse(
+      const CanonicalSyncCoveringShadowSnapshot &snapshot);
   LogicalResult emitMechanismError(
       StringRef context, const SyncCoverMechanismResult &result);
 
@@ -117,6 +124,8 @@ private:
   llvm::function_ref<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols_;
   DomainMap domains_;
   ProviderMap providers_;
+  std::map<std::pair<SyncCoverMechanismId, std::size_t>, std::size_t>
+      eventResourceUses_;
   std::vector<CanonicalEventBundleCandidate> eventBundles_;
   std::vector<SyncCoverMechanismId> legacySeed_;
   ArrayRef<SyncCoverDemandId> activeDemands_;

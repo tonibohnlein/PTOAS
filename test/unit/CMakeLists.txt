@@ -82,6 +82,23 @@ add_test(NAME pto_sync_cover_solver_unit
 )
 set_tests_properties(pto_sync_cover_solver_unit PROPERTIES LABELS "PTO;unit")
 
+add_executable(pto-canonical-sync-covering-allocation-unit-test
+  CanonicalSyncCoveringAllocationTest.cpp
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/CanonicalSyncColoring.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/CanonicalSyncCoveringAllocation.cpp"
+)
+target_include_directories(pto-canonical-sync-covering-allocation-unit-test PRIVATE
+  "${PROJECT_SOURCE_DIR}/include"
+)
+target_link_libraries(pto-canonical-sync-covering-allocation-unit-test PRIVATE
+  MLIRIR
+)
+add_test(NAME pto_canonical_sync_covering_allocation_unit
+  COMMAND pto-canonical-sync-covering-allocation-unit-test
+)
+set_tests_properties(pto_canonical_sync_covering_allocation_unit
+  PROPERTIES LABELS "PTO;unit")
+
 add_executable(pto-canonical-sync-algorithms-unit-test
   CanonicalSyncAlgorithmsTest.cpp
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/CanonicalSyncColoring.cpp"

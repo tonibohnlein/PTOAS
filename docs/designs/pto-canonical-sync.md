@@ -14,6 +14,12 @@ The pass is selected with `ptoas --enable-canonical-sync`. The direct MLIR
 entry points are `pto-canonical-sync` and
 `pto-print-canonical-sync-plan`.
 
+The legacy selector remains the default. `--canonical-sync-solver=covering`
+selects direct synchronization covering and is valid only together with
+`--enable-canonical-sync`. The equivalent pass option is `solver=covering`.
+The direct solver consumes its own exact physical event-ID allocation; it does
+not recolor the selected plan through the legacy allocator.
+
 ## Pipeline position
 
 The driver runs the pass after `PlanMemory`, reserved-buffer resolution, and

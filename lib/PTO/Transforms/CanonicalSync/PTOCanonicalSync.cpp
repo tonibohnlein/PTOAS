@@ -17,6 +17,8 @@
 
 #include "llvm/Support/raw_ostream.h"
 
+#include <optional>
+
 namespace mlir {
 namespace pto {
 namespace func = ::mlir::func;
@@ -32,6 +34,17 @@ using namespace mlir;
 namespace {
 
 constexpr std::int64_t kHardwareEventIdCount = 8;
+
+std::optional<pto::CanonicalSyncSolver> parseCanonicalSyncSolver(
+    StringRef solver) {
+  if (solver == "legacy") {
+    return pto::CanonicalSyncSolver::Legacy;
+  }
+  if (solver == "covering") {
+    return pto::CanonicalSyncSolver::Covering;
+  }
+  return std::nullopt;
+}
 
 bool isValidView(StringRef view) {
   return view == "all" || view == "dependencies" || view == "plan" ||
@@ -86,9 +99,17 @@ struct PTOCanonicalSyncPass
         assumeDistinctGmArgsNoAlias
             ? pto::CanonicalGMAliasPolicy::DistinctArgumentsNoAlias
             : pto::CanonicalGMAliasPolicy::MayAlias;
+    const std::optional<pto::CanonicalSyncSolver> selectedSolver =
+        parseCanonicalSyncSolver(solver);
+    if (!selectedSolver) {
+      func.emitError() << "solver must be 'legacy' or 'covering'";
+      signalPassFailure();
+      return;
+    }
     pto::CanonicalSyncBuildOptions options;
     options.eventIdMax = static_cast<unsigned>(eventIdNumMax);
     options.gmAliasPolicy = gmAliasPolicy;
+    options.solver = *selectedSolver;
     options.coveringShadow = coveringShadow;
     FailureOr<pto::CanonicalSyncPlan> plan =
         pto::buildCanonicalSyncPlan(func, options);
@@ -143,6 +164,13 @@ struct PrintCanonicalSyncPlanPass
         assumeDistinctGmArgsNoAlias
             ? pto::CanonicalGMAliasPolicy::DistinctArgumentsNoAlias
             : pto::CanonicalGMAliasPolicy::MayAlias;
+    const std::optional<pto::CanonicalSyncSolver> selectedSolver =
+        parseCanonicalSyncSolver(solver);
+    if (!selectedSolver) {
+      module.emitError() << "solver must be 'legacy' or 'covering'";
+      signalPassFailure();
+      return;
+    }
     pto::CanonicalSelectionDiagnosticRequest diagnosticRequest;
     diagnosticRequest.barrierIds.append(evictCanonicalBarrierIds.begin(),
                                         evictCanonicalBarrierIds.end());
@@ -156,6 +184,7 @@ struct PrintCanonicalSyncPlanPass
       pto::CanonicalSyncBuildOptions options;
       options.eventIdMax = static_cast<unsigned>(eventIdNumMax);
       options.gmAliasPolicy = gmAliasPolicy;
+      options.solver = *selectedSolver;
       options.diagnosticRequest =
           view == "selection" ? &diagnosticRequest : nullptr;
       options.coveringShadow = coveringShadow || view == "covering";

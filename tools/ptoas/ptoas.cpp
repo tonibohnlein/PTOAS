@@ -574,6 +574,19 @@ static llvm::cl::opt<bool> canonicalSyncCoveringShadow(
                    "alongside CanonicalSync."),
     llvm::cl::init(false));
 
+enum class CanonicalSyncSolverMode { Legacy, Covering };
+
+static llvm::cl::opt<CanonicalSyncSolverMode> canonicalSyncSolver(
+    "canonical-sync-solver",
+    llvm::cl::desc("Canonical synchronization selection and emission solver."),
+    llvm::cl::values(
+        clEnumValN(CanonicalSyncSolverMode::Legacy, "legacy",
+                   "Use the legacy canonical selector and emission path."),
+        clEnumValN(CanonicalSyncSolverMode::Covering, "covering",
+                   "Use direct synchronization covering and its verified "
+                   "physical event-ID assignment.")),
+    llvm::cl::init(CanonicalSyncSolverMode::Legacy));
+
 static llvm::cl::opt<bool> enableTileOpExpand(
     "enable-tile-op-expand",
     llvm::cl::desc(
@@ -1355,11 +1368,12 @@ struct SerialAutoSyncPass
 
   SerialAutoSyncPass(Mode mode, bool enableBufidDebug, int64_t eventIdMax,
                      bool assumeDistinctGmArgsNoAlias = false,
-                     bool coveringShadow = false)
+                     bool coveringShadow = false,
+                     bool coveringSolver = false)
       : mode(mode), enableBufidDebug(enableBufidDebug),
         eventIdMax(eventIdMax),
         assumeDistinctGmArgsNoAlias(assumeDistinctGmArgsNoAlias),
-        coveringShadow(coveringShadow) {}
+        coveringShadow(coveringShadow), coveringSolver(coveringSolver) {}
 
   void runOnOperation() override {
     OpPassManager functionPM(func::FuncOp::getOperationName());
@@ -1387,6 +1401,7 @@ struct SerialAutoSyncPass
       options.eventIdNumMax = eventIdMax;
       options.assumeDistinctGmArgsNoAlias = assumeDistinctGmArgsNoAlias;
       options.coveringShadow = coveringShadow;
+      options.solver = coveringSolver ? "covering" : "legacy";
       functionPM.addPass(pto::createPTOCanonicalSyncPass(options));
       break;
     }
@@ -1407,6 +1422,7 @@ private:
   int64_t eventIdMax;
   bool assumeDistinctGmArgsNoAlias;
   bool coveringShadow;
+  bool coveringSolver;
 };
 } // namespace
 
@@ -3535,6 +3551,14 @@ int mlir::pto::compilePTOASModule(
                     "--enable-canonical-sync are mutually exclusive.\n";
     return 1;
   }
+  const bool coveringSolverWithoutCanonical =
+      canonicalSyncSolver == CanonicalSyncSolverMode::Covering &&
+      !enableCanonicalSync;
+  if (coveringSolverWithoutCanonical) {
+    llvm::errs() << "Error: --canonical-sync-solver=covering requires "
+                    "--enable-canonical-sync.\n";
+    return 1;
+  }
   if (hasTAssign && enableInjectBarrierAllSync) {
     llvm::errs() << "Error: pto.tassign requires "
                     "--enable-inject-barrier-all-sync to be disabled.\n";
@@ -3785,13 +3809,17 @@ int mlir::pto::compilePTOASModule(
           SerialAutoSyncPass::Mode::Canonical, false,
           canonicalSyncEventIdMax,
           canonicalSyncAssumeDistinctGmArgsNoAlias,
-          canonicalSyncCoveringShadow));
+          canonicalSyncCoveringShadow,
+          canonicalSyncSolver == CanonicalSyncSolverMode::Covering));
     } else {
       PTOCanonicalSyncOptions options;
       options.eventIdNumMax = canonicalSyncEventIdMax;
       options.assumeDistinctGmArgsNoAlias =
           canonicalSyncAssumeDistinctGmArgsNoAlias;
       options.coveringShadow = canonicalSyncCoveringShadow;
+      options.solver = canonicalSyncSolver == CanonicalSyncSolverMode::Covering
+                           ? "covering"
+                           : "legacy";
       pm.addNestedPass<func::FuncOp>(
           pto::createPTOCanonicalSyncPass(options));
     }

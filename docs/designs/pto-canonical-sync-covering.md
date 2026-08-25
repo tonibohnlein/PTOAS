@@ -143,6 +143,37 @@ partial search states require a separate overflow-first search heuristic.
 The final selected plan is checked by fresh graph/resource validation and a
 second exact coverage traversal that bypasses the optimizer's witness cache.
 
+## CanonicalSync adapter and emission
+
+The CanonicalSync adapter translates the conservative completion requirements,
+fixed issue-order graph, barriers, ordinary event bundles, bare recurrence
+events, synthetic bundles, and verified ownership protocols into one mechanism
+universe. Active requirements retain their conservative identities, so
+deactivating a no-alias requirement cannot remove candidates needed by another
+plan. Shadow mode builds and solves this universe but leaves legacy emission
+unchanged.
+
+Direct emission is explicitly selected with `solver=covering` or the driver
+option `--canonical-sync-solver=covering`. It authenticates every selected
+resource use against the immutable mechanism universe, requires exact equality
+with the solver's final allocation, and validates physical ID reuse over the
+inclusive lifetimes. Event-ID uses carry an explicit provider-local event
+index; materialization never infers the mapping from vector position or event
+direction. Buffer-token allocation is rejected in version one.
+
+Selected providers are materialized atomically. Barriers, event bundles,
+flattened events, event domains, and exact IDs are replaced together only
+after bundle projection, allocated protocol verification, direct final
+coverage, and the CanonicalSync whole-plan coverage check succeed. A sound
+truncated solver result may be emitted, but its diagnostics retain
+`truncated=yes` and do not claim optimality. The direct path is opt-in; the
+legacy selector and emitter remain the default.
+
+Version one still constructs the legacy seed before direct selection. It
+therefore cannot rescue a kernel that fails during an earlier legacy scarcity
+repair. Removing that bootstrap dependency requires moving conservative
+candidate generation ahead of all legacy feasibility decisions.
+
 ## Selection and cost
 
 The mechanism universe is generated from the conservative demand set before

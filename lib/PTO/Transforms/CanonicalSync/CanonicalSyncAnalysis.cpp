@@ -222,16 +222,20 @@ FailureOr<CanonicalSyncPlan> CanonicalSyncPlanBuilder::build() {
   if (selectionDiagnosticsEnabled_ && failed(buildSelectionDiagnostics())) {
     return failure();
   }
-  if (failed(allocateEvents())) {
+  if (coveringShadowEnabled_ && failed(buildCoveringShadowGraph())) {
+    return failure();
+  }
+  if (coveringEmissionEnabled_) {
+    if (failed(materializeCoveringSelection())) {
+      return failure();
+    }
+  } else if (failed(allocateEvents())) {
     return failure();
   }
   if (failed(verifyEventProtocols(plan_.events_, /*requireAllocation=*/true,
                                   /*diagnose=*/true))) {
     return func_.emitError(
         "internal error: allocated canonical event protocol is invalid");
-  }
-  if (coveringShadowEnabled_ && failed(buildCoveringShadowGraph())) {
-    return failure();
   }
   return std::move(plan_);
 }
