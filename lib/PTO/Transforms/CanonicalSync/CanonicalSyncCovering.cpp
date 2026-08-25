@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <map>
 #include <optional>
@@ -131,22 +132,20 @@ public:
       ArrayRef<CanonicalEventBundleCandidate> selectedEventBundles,
       unsigned eventIdMax,
       const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
-      llvm::function_ref<bool(PipelineType)> hasHardwareCompletion,
-      llvm::function_ref<bool(const CanonicalDependency &)>
-          hasIntrinsicOrdering,
-      llvm::function_ref<std::size_t(const CanonicalAnchor &)>
-          getAnchorPosition,
-      llvm::function_ref<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
+      std::function<bool(PipelineType)> hasHardwareCompletion,
+      std::function<bool(const CanonicalDependency &)> hasIntrinsicOrdering,
+      std::function<std::size_t(const CanonicalAnchor &)> getAnchorPosition,
+      std::function<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
           getBarrierCompletionEdges,
-      llvm::function_ref<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols)
+      std::function<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols)
       : func_(func), plan_(plan), legacyUniverse_(legacyUniverse),
         selectedEventBundles_(selectedEventBundles), eventIdMax_(eventIdMax),
         reservedIds_(reservedIds),
-        hasHardwareCompletion_(hasHardwareCompletion),
-        hasIntrinsicOrdering_(hasIntrinsicOrdering),
-        getAnchorPosition_(getAnchorPosition),
-        getBarrierCompletionEdges_(getBarrierCompletionEdges),
-        verifyEventProtocols_(verifyEventProtocols) {}
+        hasHardwareCompletion_(std::move(hasHardwareCompletion)),
+        hasIntrinsicOrdering_(std::move(hasIntrinsicOrdering)),
+        getAnchorPosition_(std::move(getAnchorPosition)),
+        getBarrierCompletionEdges_(std::move(getBarrierCompletionEdges)),
+        verifyEventProtocols_(std::move(verifyEventProtocols)) {}
 
   LogicalResult build(CanonicalSyncCoveringShadowSnapshot &snapshot) {
     regionContexts_[&func_.getBody()] = {};
@@ -510,12 +509,12 @@ private:
   ArrayRef<CanonicalEventBundleCandidate> selectedEventBundles_;
   unsigned eventIdMax_ = 0;
   const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds_;
-  llvm::function_ref<bool(PipelineType)> hasHardwareCompletion_;
-  llvm::function_ref<bool(const CanonicalDependency &)> hasIntrinsicOrdering_;
-  llvm::function_ref<std::size_t(const CanonicalAnchor &)> getAnchorPosition_;
-  llvm::function_ref<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
+  std::function<bool(PipelineType)> hasHardwareCompletion_;
+  std::function<bool(const CanonicalDependency &)> hasIntrinsicOrdering_;
+  std::function<std::size_t(const CanonicalAnchor &)> getAnchorPosition_;
+  std::function<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
       getBarrierCompletionEdges_;
-  llvm::function_ref<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols_;
+  std::function<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols_;
   SyncCoverGraph graph_;
   std::map<Region *, RegionContext, std::less<Region *>> regionContexts_;
   std::map<Region *, SyncCoverScopeId, std::less<Region *>> regionScopes_;
@@ -529,25 +528,22 @@ private:
 
 LogicalResult CanonicalSyncPlanBuilder::buildCoveringShadowGraph() {
   CanonicalSyncCoveringShadowSnapshot snapshot;
-  const auto hasCompletion =
-      [&](PipelineType pipe) { return hasHardwareCompletion(pipe); };
-  const auto hasIntrinsicOrdering =
-      [&](const CanonicalDependency &dependency) {
-        return hasIntrinsicMmadAccumulatorOrdering(dependency);
-      };
-  const auto anchorPosition =
-      [&](const CanonicalAnchor &anchor) { return getAnchorPosition(anchor); };
-  const auto barrierCompletionEdges = [&](const CanonicalBarrier &barrier) {
-    return buildBarrierCompletionEdges({barrier});
-  };
-  const auto verifiesEventProtocols = [&](ArrayRef<CanonicalEvent> events) {
-    return succeeded(verifyEventProtocols(events, /*requireAllocation=*/false,
-                                          /*diagnose=*/false));
-  };
   CanonicalSyncCoveringGraphAdapter adapter(
       func_, plan_, mechanismUniverse_, selectedEventBundles_, eventIdMax_,
-      reservedIds_, hasCompletion, hasIntrinsicOrdering, anchorPosition,
-      barrierCompletionEdges, verifiesEventProtocols);
+      reservedIds_,
+      [&](PipelineType pipe) { return hasHardwareCompletion(pipe); },
+      [&](const CanonicalDependency &dependency) {
+        return hasIntrinsicMmadAccumulatorOrdering(dependency);
+      },
+      [&](const CanonicalAnchor &anchor) { return getAnchorPosition(anchor); },
+      [&](const CanonicalBarrier &barrier) {
+        return buildBarrierCompletionEdges({barrier});
+      },
+      [&](ArrayRef<CanonicalEvent> events) {
+        return succeeded(verifyEventProtocols(events,
+                                              /*requireAllocation=*/false,
+                                              /*diagnose=*/false));
+      });
   if (failed(adapter.build(snapshot))) {
     return failure();
   }

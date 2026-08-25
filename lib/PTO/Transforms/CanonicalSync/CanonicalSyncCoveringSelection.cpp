@@ -241,15 +241,15 @@ LogicalResult mlir::pto::runCanonicalSyncCoveringShadowSelection(
     const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
         &regionScopes,
     const DenseMap<Operation *, SyncCoverScopeId> &loopScopes,
-    llvm::function_ref<std::size_t(const CanonicalAnchor &)>
-        getAnchorPosition,
-    llvm::function_ref<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
+    std::function<std::size_t(const CanonicalAnchor &)> getAnchorPosition,
+    std::function<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
         getBarrierCompletionEdges,
-    llvm::function_ref<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols,
+    std::function<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols,
     CanonicalSyncCoveringShadowSnapshot &snapshot) {
   MechanismAdapter adapter(
       func, plan, legacyUniverse, selectedEventBundles, eventIdMax, reservedIds,
-      graph, activeDemands, regionScopes, loopScopes, getAnchorPosition,
-      getBarrierCompletionEdges, verifyEventProtocols);
+      graph, activeDemands, regionScopes, loopScopes,
+      std::move(getAnchorPosition), std::move(getBarrierCompletionEdges),
+      std::move(verifyEventProtocols));
   return adapter.build(snapshot);
 }

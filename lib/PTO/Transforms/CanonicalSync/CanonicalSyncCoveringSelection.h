@@ -19,6 +19,7 @@
 #include "PTO/Transforms/CanonicalSync/SyncCoverSolver.h"
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -84,11 +85,10 @@ public:
       const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
           &regionScopes,
       const DenseMap<Operation *, SyncCoverScopeId> &loopScopes,
-      llvm::function_ref<std::size_t(const CanonicalAnchor &)>
-          getAnchorPosition,
-      llvm::function_ref<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
+      std::function<std::size_t(const CanonicalAnchor &)> getAnchorPosition,
+      std::function<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
           getBarrierCompletionEdges,
-      llvm::function_ref<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols);
+      std::function<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols);
 
   LogicalResult build(CanonicalSyncCoveringShadowSnapshot &snapshot);
 
@@ -117,11 +117,10 @@ private:
   const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
       &regionScopes_;
   const DenseMap<Operation *, SyncCoverScopeId> &loopScopes_;
-  llvm::function_ref<std::size_t(const CanonicalAnchor &)>
-      getAnchorPosition_;
-  llvm::function_ref<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
+  std::function<std::size_t(const CanonicalAnchor &)> getAnchorPosition_;
+  std::function<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
       getBarrierCompletionEdges_;
-  llvm::function_ref<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols_;
+  std::function<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols_;
   DomainMap domains_;
   ProviderMap providers_;
   std::map<std::pair<SyncCoverMechanismId, std::size_t>, std::size_t>

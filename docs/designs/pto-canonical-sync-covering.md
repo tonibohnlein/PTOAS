@@ -153,6 +153,10 @@ deactivating a no-alias requirement cannot remove candidates needed by another
 plan. Shadow mode builds and solves this universe but leaves legacy emission
 unchanged.
 
+The graph and mechanism adapters own every callback they retain. Non-owning
+`llvm::function_ref` views are limited to helper calls that complete before the
+view's caller returns; they are never stored in an adapter member.
+
 Direct emission is explicitly selected with `solver=covering` or the driver
 option `--canonical-sync-solver=covering`. It authenticates every selected
 resource use against the immutable mechanism universe, requires exact equality

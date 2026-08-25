@@ -32,18 +32,17 @@ MechanismAdapter::MechanismAdapter(
     const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
         &regionScopes,
     const DenseMap<Operation *, SyncCoverScopeId> &loopScopes,
-    llvm::function_ref<std::size_t(const CanonicalAnchor &)>
-        getAnchorPosition,
-    llvm::function_ref<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
+    std::function<std::size_t(const CanonicalAnchor &)> getAnchorPosition,
+    std::function<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
         getBarrierCompletionEdges,
-    llvm::function_ref<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols)
+    std::function<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols)
     : func_(func), plan_(plan), legacyUniverse_(legacyUniverse),
       selectedEventBundles_(selectedEventBundles), eventIdMax_(eventIdMax),
       reservedIds_(reservedIds), universe_(graph),
       regionScopes_(regionScopes), loopScopes_(loopScopes),
-      getAnchorPosition_(getAnchorPosition),
-      getBarrierCompletionEdges_(getBarrierCompletionEdges),
-      verifyEventProtocols_(verifyEventProtocols),
+      getAnchorPosition_(std::move(getAnchorPosition)),
+      getBarrierCompletionEdges_(std::move(getBarrierCompletionEdges)),
+      verifyEventProtocols_(std::move(verifyEventProtocols)),
       activeDemands_(activeDemands) {}
 
 LogicalResult

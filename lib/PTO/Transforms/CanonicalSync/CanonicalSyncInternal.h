@@ -487,10 +487,10 @@ LogicalResult runCanonicalSyncCoveringShadowSelection(
     const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
         &regionScopes,
     const DenseMap<Operation *, SyncCoverScopeId> &loopScopes,
-    llvm::function_ref<std::size_t(const CanonicalAnchor &)> getAnchorPosition,
-    llvm::function_ref<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
+    std::function<std::size_t(const CanonicalAnchor &)> getAnchorPosition,
+    std::function<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
         getBarrierCompletionEdges,
-    llvm::function_ref<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols,
+    std::function<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols,
     CanonicalSyncCoveringShadowSnapshot &snapshot);
 
 } // namespace pto
