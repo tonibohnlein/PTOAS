@@ -184,6 +184,11 @@ SyncCoverCandidateIndexError SyncCoverCandidateIndex::getError() const {
   return currentError();
 }
 
+bool SyncCoverCandidateIndex::isCurrentFor(const SyncCoverGraph &graph) const {
+  return &graph == &graph_ &&
+         currentError() == SyncCoverCandidateIndexError::None;
+}
+
 SyncCoverCandidateIndexError SyncCoverCandidateIndex::currentError() const {
   if (buildError_ != SyncCoverCandidateIndexError::None) {
     return buildError_;

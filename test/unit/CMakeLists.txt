@@ -30,6 +30,21 @@ add_test(NAME pto_sync_cover_graph_unit
 )
 set_tests_properties(pto_sync_cover_graph_unit PROPERTIES LABELS "PTO;unit")
 
+add_executable(pto-sync-cover-slot-lifecycle-unit-test
+  SyncCoverSlotLifecycleTest.cpp
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverCandidateIndex.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverGraph.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverSlotLifecycle.cpp"
+)
+target_include_directories(pto-sync-cover-slot-lifecycle-unit-test PRIVATE
+  "${PROJECT_SOURCE_DIR}/include"
+)
+add_test(NAME pto_sync_cover_slot_lifecycle_unit
+  COMMAND pto-sync-cover-slot-lifecycle-unit-test
+)
+set_tests_properties(pto_sync_cover_slot_lifecycle_unit
+  PROPERTIES LABELS "PTO;unit")
+
 add_executable(pto-sync-cover-coverage-unit-test
   SyncCoverCoverageTest.cpp
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverCoverage.cpp"

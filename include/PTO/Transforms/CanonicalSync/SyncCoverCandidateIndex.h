@@ -114,6 +114,7 @@ public:
 
   explicit operator bool() const;
   SyncCoverCandidateIndexError getError() const;
+  bool isCurrentFor(const SyncCoverGraph &graph) const;
 
   SyncCoverCandidateLookup<std::vector<SyncCoverCandidateTimeline>>
   getTimelines() const;
