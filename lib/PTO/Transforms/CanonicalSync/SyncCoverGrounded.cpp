@@ -379,6 +379,7 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
   for (std::size_t localDemand = 0; localDemand < activeDemands.size();
        ++localDemand) {
     if (fineGrainedCovered.contains(localDemand)) {
+      instance.pricingRestricted = true;
       continue;
     }
     if (pricedDemands == options.maximumPricingDemands) {

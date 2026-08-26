@@ -136,9 +136,9 @@ bool componentCovered(const SyncCoverGroundedInstance &instance,
 }
 
 std::optional<std::size_t>
-mostConstrainedUncoveredDemand(const SyncCoverGroundedInstance &instance,
-                               const SyncCoverSelectionComponent &component,
-                               const SyncCoverDemandSet &covered) {
+firstUncoveredDemand(const SyncCoverGroundedInstance &instance,
+                     const SyncCoverSelectionComponent &component,
+                     const SyncCoverDemandSet &covered) {
   for (SyncCoverDemandId demand : component.demands) {
     const std::size_t local = localDemand(instance, demand);
     if (!covered.contains(local)) {
@@ -146,6 +146,26 @@ mostConstrainedUncoveredDemand(const SyncCoverGroundedInstance &instance,
     }
   }
   return std::nullopt;
+}
+
+std::optional<std::size_t>
+mostConstrainedUncoveredDemand(const SyncCoverGroundedInstance &instance,
+                               const SyncCoverSelectionComponent &component,
+                               const SyncCoverDemandSet &covered) {
+  std::optional<std::size_t> best;
+  std::size_t bestColumns = 0;
+  for (SyncCoverDemandId demand : component.demands) {
+    const std::size_t local = localDemand(instance, demand);
+    if (covered.contains(local)) {
+      continue;
+    }
+    const std::size_t columns = instance.demandColumns[local].size();
+    if (!best || columns < bestColumns) {
+      best = local;
+      bestColumns = columns;
+    }
+  }
+  return best;
 }
 
 std::optional<SearchEvaluation>
@@ -270,8 +290,15 @@ void greedySearch(const SyncCoverSelectionEvaluator &evaluator,
     return;
   }
   while (!componentCovered(instance, component, evaluation->covered)) {
-    const std::optional<std::size_t> demand = mostConstrainedUncoveredDemand(
-        instance, component, evaluation->covered);
+    // Anchor each round on the first uncovered demand in component order.
+    // Anchoring on the most-constrained demand front-loads the demands
+    // whose only columns are fat fallback barriers and shadows cheaper
+    // shared covers; ranking every uncovered demand's columns instead
+    // degenerates under the per-depth ratio order (top-level one-demand
+    // columns always beat in-loop bundles) and exhausts the evaluation
+    // budget. A principled global-density greedy needs a scalar density.
+    const std::optional<std::size_t> demand =
+        firstUncoveredDemand(instance, component, evaluation->covered);
     if (!demand) {
       return;
     }
@@ -849,7 +876,8 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
   result.components =
       buildComponents(instance, options.exactMechanismThreshold);
   result.optimalityProven = instance.demandsNeedingPricing.empty() &&
-                            !instance.columnsTruncated;
+                            !instance.columnsTruncated &&
+                            !instance.pricingRestricted;
   std::vector<SyncCoverMechanismId> selected;
   for (const SyncCoverSelectionComponent &component : result.components) {
     ComponentSearchResult componentResult =
