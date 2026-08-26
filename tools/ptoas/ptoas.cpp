@@ -98,6 +98,7 @@ namespace {
 
 constexpr unsigned kSeenCalleeInlineCapacity = 8;
 constexpr int kDefaultGraphSyncSolverEventIdMax = 8;
+constexpr int kDefaultCanonicalSyncEventIdMax = 8;
 constexpr unsigned kStringRefInlineCapacity = 4;
 constexpr unsigned kEmptyExpressionInlineCapacity = 8;
 constexpr unsigned kBranchInlineCapacity = 16;
@@ -569,6 +570,34 @@ static llvm::cl::opt<int> graphSyncSolverEventIdMax(
         "Maximum EVENT_ID slots for the graph sync solver (default 8). "
         "Lower values exercise the PIPE_ALL coloring fallback sooner."),
     llvm::cl::init(kDefaultGraphSyncSolverEventIdMax));
+
+static llvm::cl::opt<bool> enableCanonicalSync(
+    "enable-canonical-sync",
+    llvm::cl::desc("Enable dependence-driven canonical synchronization "
+                   "insertion (experimental). Mutually exclusive with the "
+                   "other automatic synchronization modes."),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<int> canonicalSyncEventIdMax(
+    "canonical-sync-event-id-max",
+    llvm::cl::desc("Maximum EVENT_ID slots for canonical synchronization "
+                   "(default 8). The pass fails when this budget cannot "
+                   "represent the required synchronization."),
+    llvm::cl::init(kDefaultCanonicalSyncEventIdMax));
+
+static llvm::cl::opt<bool> canonicalSyncAssumeDistinctGmArgsNoAlias(
+    "canonical-sync-assume-distinct-gm-args-noalias",
+    llvm::cl::desc(
+        "Unsafely assume distinct GM pointer or view arguments never alias; "
+        "the caller must guarantee disjoint accessed storage."),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<bool> canonicalSyncAssumeAllGmAccessesNoAlias(
+    "canonical-sync-assume-all-gm-accesses-noalias",
+    llvm::cl::desc(
+        "Unsafely assume all GM accesses are disjoint, including accesses "
+        "derived from the same argument and across loop iterations."),
+    llvm::cl::init(false));
 
 static llvm::cl::opt<bool> enableTileOpExpand(
     "enable-tile-op-expand",
@@ -1347,12 +1376,15 @@ struct SerialAutoSyncPass
     : public PassWrapper<SerialAutoSyncPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SerialAutoSyncPass)
 
-  enum class Mode { InsertSync, Bufid, BarrierAll, GraphSolver };
+  enum class Mode { InsertSync, Bufid, BarrierAll, GraphSolver, Canonical };
 
-  SerialAutoSyncPass(Mode mode, bool enableBufidDebug,
-                     int64_t graphEventIdMax)
+  SerialAutoSyncPass(Mode mode, bool enableBufidDebug, int64_t eventIdMax,
+                     bool assumeDistinctGmArgsNoAlias = false,
+                     bool assumeAllGmAccessesNoAlias = false)
       : mode(mode), enableBufidDebug(enableBufidDebug),
-        graphEventIdMax(graphEventIdMax) {}
+        eventIdMax(eventIdMax),
+        assumeDistinctGmArgsNoAlias(assumeDistinctGmArgsNoAlias),
+        assumeAllGmAccessesNoAlias(assumeAllGmAccessesNoAlias) {}
 
   void runOnOperation() override {
     OpPassManager functionPM(func::FuncOp::getOperationName());
@@ -1371,8 +1403,16 @@ struct SerialAutoSyncPass
       break;
     case Mode::GraphSolver: {
       PTOGraphSyncSolverOptions options;
-      options.eventIdNumMax = graphEventIdMax;
+      options.eventIdNumMax = eventIdMax;
       functionPM.addPass(pto::createPTOGraphSyncSolverPass(options));
+      break;
+    }
+    case Mode::Canonical: {
+      PTOCanonicalSyncOptions options;
+      options.eventIdNumMax = eventIdMax;
+      options.assumeDistinctGmArgsNoAlias = assumeDistinctGmArgsNoAlias;
+      options.assumeAllGmAccessesNoAlias = assumeAllGmAccessesNoAlias;
+      functionPM.addPass(pto::createPTOCanonicalSyncPass(options));
       break;
     }
     }
@@ -1389,7 +1429,9 @@ struct SerialAutoSyncPass
 private:
   Mode mode;
   bool enableBufidDebug;
-  int64_t graphEventIdMax;
+  int64_t eventIdMax;
+  bool assumeDistinctGmArgsNoAlias;
+  bool assumeAllGmAccessesNoAlias;
 };
 } // namespace
 
@@ -3509,11 +3551,13 @@ int mlir::pto::compilePTOASModule(
 
   int enabledAutoSyncModes =
       (enableInsertSync ? 1 : 0) + (enableBufidSync ? 1 : 0) +
-      (enableInjectBarrierAllSync ? 1 : 0) + (enableGraphSyncSolver ? 1 : 0);
+      (enableInjectBarrierAllSync ? 1 : 0) +
+      (enableGraphSyncSolver ? 1 : 0) + (enableCanonicalSync ? 1 : 0);
   if (enabledAutoSyncModes > 1) {
     llvm::errs() << "Error: --enable-insert-sync, --enable-bufid_sync, "
                     "--enable-inject-barrier-all-sync, and "
-                    "--enable-graph-sync-solver are mutually exclusive.\n";
+                    "--enable-graph-sync-solver, and "
+                    "--enable-canonical-sync are mutually exclusive.\n";
     return 1;
   }
   if (hasTAssign && enableInjectBarrierAllSync) {
@@ -3524,6 +3568,11 @@ int mlir::pto::compilePTOASModule(
   if (hasTAssign && enableGraphSyncSolver) {
     llvm::errs() << "Error: pto.tassign requires --enable-graph-sync-solver "
                     "to be disabled.\n";
+    return 1;
+  }
+  if (hasTAssign && enableCanonicalSync) {
+    llvm::errs() << "Error: pto.tassign requires --enable-canonical-sync to "
+                    "be disabled.\n";
     return 1;
   }
   if (hasTAssign && enableBufidSync) {
@@ -3715,11 +3764,12 @@ int mlir::pto::compilePTOASModule(
   pm.addNestedPass<mlir::func::FuncOp>(pto::createPTORemoveIdentityTMovPass());
 
   // Conditionally add one automatic synchronization mode. Barrier-all is a
-  // conservative standalone pass; InsertSync and GraphSyncSolver are set/wait
-  // solvers. Sync runs BEFORE PTOResolveBufferSelect so it sees per-use
+  // conservative standalone pass; InsertSync, GraphSyncSolver, and
+  // PTOCanonicalSync are set/wait solvers. Sync runs BEFORE
+  // PTOResolveBufferSelect so it sees per-use
   // `pto.multi_tile_get` operations and keeps their slot identity for alias
-  // and event-id analysis.
-  // solvers, while BufidSync is A5-only get_buf/rls_buf synchronization.
+  // and event-id analysis. BufidSync is A5-only get_buf/rls_buf
+  // synchronization.
   if (enableInsertSync) {
     if (emitMlirIR)
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
@@ -3753,6 +3803,23 @@ int mlir::pto::compilePTOASModule(
       options.eventIdNumMax = graphSyncSolverEventIdMax;
       pm.addNestedPass<func::FuncOp>(
           pto::createPTOGraphSyncSolverPass(options));
+    }
+  } else if (enableCanonicalSync) {
+    if (emitMlirIR) {
+      pm.addPass(std::make_unique<SerialAutoSyncPass>(
+          SerialAutoSyncPass::Mode::Canonical, false,
+          canonicalSyncEventIdMax,
+          canonicalSyncAssumeDistinctGmArgsNoAlias,
+          canonicalSyncAssumeAllGmAccessesNoAlias));
+    } else {
+      PTOCanonicalSyncOptions options;
+      options.eventIdNumMax = canonicalSyncEventIdMax;
+      options.assumeDistinctGmArgsNoAlias =
+          canonicalSyncAssumeDistinctGmArgsNoAlias;
+      options.assumeAllGmAccessesNoAlias =
+          canonicalSyncAssumeAllGmAccessesNoAlias;
+      pm.addNestedPass<func::FuncOp>(
+          pto::createPTOCanonicalSyncPass(options));
     }
   }
 

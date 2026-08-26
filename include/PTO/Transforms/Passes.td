@@ -115,6 +115,85 @@ def PTOGraphSyncSolver : Pass<"pto-graph-sync-solver", "func::FuncOp"> {
   ];
 }
 
+def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
+  let summary = "Insert synchronization from canonical physical dependences";
+  let description = [{
+    Builds the sound dependence graph implied by fixed operation order and
+    planned physical memory addresses, generates barriers, events, and
+    verified ownership protocols, solves a grounded constrained set-cover
+    instance, allocates event IDs, and verifies the selected plan against the
+    dependence graph before emission.
+  }];
+
+  let constructor = "mlir::pto::createPTOCanonicalSyncPass()";
+
+  let options = [
+    Option<"eventIdNumMax", "event-id-num-max", "int64_t",
+           /*default=*/"8",
+           "Maximum hardware EVENT_ID slots available to the planner.">,
+    Option<"assumeDistinctGmArgsNoAlias",
+           "assume-distinct-gm-args-noalias", "bool",
+           /*default=*/"false",
+           "Unsafely assume distinct GM pointer or view arguments never "
+           "alias; the caller must guarantee disjoint accessed storage.">,
+    Option<"assumeAllGmAccessesNoAlias",
+           "assume-all-gm-accesses-noalias", "bool",
+           /*default=*/"false",
+           "Unsafely assume all GM memory accesses are disjoint; the caller "
+           "must guarantee this even for accesses derived from the same "
+           "argument and across loop iterations.">,
+  ];
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::memref::MemRefDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::func::FuncDialect"
+  ];
+}
+
+def PrintCanonicalSyncPlan
+    : Pass<"pto-print-canonical-sync-plan", "ModuleOp"> {
+  let summary = "Print the canonical synchronization analysis and plan";
+  let description = [{
+    Runs canonical synchronization analysis without mutating the function and
+    prints either text or DOT for the selected analysis view.
+  }];
+
+  let constructor = "mlir::pto::createPrintCanonicalSyncPlanPass()";
+
+  let options = [
+    Option<"format", "format", "std::string", "\"text\"",
+           "Output format: text or dot.">,
+    Option<"view", "view", "std::string", "\"all\"",
+           "Analysis view: all, dependencies, plan, events, ownership, "
+           "or covering.">,
+    Option<"eventIdNumMax", "event-id-num-max", "int64_t",
+           /*default=*/"8",
+           "Maximum hardware EVENT_ID slots available to the planner.">,
+    Option<"assumeDistinctGmArgsNoAlias",
+           "assume-distinct-gm-args-noalias", "bool",
+           /*default=*/"false",
+           "Unsafely assume distinct GM pointer or view arguments never "
+           "alias; the caller must guarantee disjoint accessed storage.">,
+    Option<"assumeAllGmAccessesNoAlias",
+           "assume-all-gm-accesses-noalias", "bool",
+           /*default=*/"false",
+           "Unsafely assume all GM memory accesses are disjoint; the caller "
+           "must guarantee this even for accesses derived from the same "
+           "argument and across loop iterations.">,
+  ];
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::memref::MemRefDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::func::FuncDialect"
+  ];
+}
+
 def ConvertToPTOOp : Pass<"convert-to-pto-op"> {
   let summary = "Convert Ops from other dialects to PTO Ops";
   let constructor = "mlir::pto::createConvertToPTOOpPass()";

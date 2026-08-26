@@ -1,0 +1,584 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+#include "CanonicalSyncCoveringSelection.h"
+
+#include "PTO/Transforms/CanonicalSync/SyncCoverDescriptorBuilder.h"
+
+#include "llvm/ADT/STLExtras.h"
+
+#include <algorithm>
+#include <limits>
+#include <utility>
+
+using namespace mlir;
+using namespace mlir::pto;
+using namespace mlir::pto::canonical_sync_covering;
+
+namespace {
+
+bool sameAnchor(const SyncCoverAnchor &first, const SyncCoverAnchor &second) {
+  return first.kind == second.kind && first.node == second.node &&
+         first.scope == second.scope && first.position == second.position;
+}
+
+bool sameEdge(const SyncCoverEdge &first, const SyncCoverEdge &second) {
+  return first.source == second.source && first.target == second.target &&
+         first.kind == second.kind && first.scope == second.scope &&
+         first.distance == second.distance &&
+         first.sourceGuard.literals == second.sourceGuard.literals &&
+         first.targetGuard.literals == second.targetGuard.literals &&
+         first.mechanism == second.mechanism;
+}
+
+bool sameAction(const SyncCoverResourceAction &first,
+                const SyncCoverResourceAction &second) {
+  return first.kind == second.kind && first.resource == second.resource &&
+         sameAnchor(first.anchor, second.anchor);
+}
+
+bool sameUse(const SyncCoverResourceUse &first,
+             const SyncCoverResourceUse &second) {
+  return first.domain == second.domain && first.scope == second.scope &&
+         first.distance == second.distance && first.width == second.width &&
+         first.actions == second.actions &&
+         first.supplyEdges == second.supplyEdges;
+}
+
+bool sameBinding(const SyncCoverSupplyBinding &first,
+                 const SyncCoverSupplyBinding &second) {
+  return first.supplyEdge == second.supplyEdge &&
+         first.resourceUse == second.resourceUse &&
+         first.produceAction == second.produceAction &&
+         first.consumeAction == second.consumeAction;
+}
+
+std::optional<SyncCoverTimelineInterval> getDescriptorResourceLifetime(
+    const SyncCoverGraph &graph, const SyncCoverMechanismDescriptor &descriptor,
+    const SyncCoverResourceUse &use) {
+  if (use.distance != 0) {
+    if (use.scope >= graph.getScopes().size()) {
+      return std::nullopt;
+    }
+    return graph.getScopes()[use.scope].timeline;
+  }
+
+  std::optional<SyncCoverTimelinePosition> begin;
+  std::optional<SyncCoverTimelinePosition> end;
+  for (std::size_t actionIndex : use.actions) {
+    if (actionIndex >= descriptor.actions.size()) {
+      return std::nullopt;
+    }
+    const std::optional<SyncCoverTimelinePosition> position =
+        resolveSyncCoverAnchor(graph, descriptor.actions[actionIndex].anchor);
+    if (!position) {
+      return std::nullopt;
+    }
+    begin = begin ? std::min(*begin, *position) : *position;
+    end = end ? std::max(*end, *position) : *position;
+  }
+  if (!begin || !end) {
+    return std::nullopt;
+  }
+  return SyncCoverTimelineInterval{*begin, *end};
+}
+
+std::optional<SyncCoverAnchor> translateActionAnchor(
+    const CanonicalEventAction &action, Operation *protocolLoop,
+    const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
+        &regionScopes,
+    const DenseMap<Operation *, SyncCoverScopeId> &loopScopes,
+    llvm::function_ref<std::size_t(const CanonicalAnchor &)>
+        getAnchorPosition) {
+  if (protocolLoop && action.phase == CanonicalEventActionPhase::Prime) {
+    auto loop = loopScopes.find(protocolLoop);
+    if (loop != loopScopes.end()) {
+      return SyncCoverAnchor{SyncCoverAnchorKind::ScopeEntry, 0, loop->second,
+                             0};
+    }
+  }
+  if (protocolLoop && action.phase == CanonicalEventActionPhase::Drain) {
+    auto loop = loopScopes.find(protocolLoop);
+    if (loop != loopScopes.end()) {
+      return SyncCoverAnchor{SyncCoverAnchorKind::ScopeExit, 0, loop->second,
+                             0};
+    }
+  }
+  const std::optional<SyncCoverScopeId> scope =
+      getAnchorOccurrenceScope(action.anchor, regionScopes);
+  if (!scope) {
+    return std::nullopt;
+  }
+  return SyncCoverAnchor{SyncCoverAnchorKind::TimelinePoint, 0, *scope,
+                         getAnchorPosition(action.anchor)};
+}
+
+std::optional<SyncCoverEdge> translateCompletion(
+    const CanonicalEventCompletion &completion, const SyncCoverGraph &graph,
+    const DenseMap<Operation *, SyncCoverScopeId> &loopScopes) {
+  SyncCoverEdge edge;
+  edge.source = completion.source;
+  edge.target = completion.target;
+  edge.kind = SyncCoverEdgeKind::CompletionSupply;
+  edge.distance = completion.iterationDistance;
+  if (edge.distance != 0) {
+    auto loop = loopScopes.find(completion.recurrenceLoop);
+    if (loop == loopScopes.end()) {
+      return std::nullopt;
+    }
+    edge.scope = loop->second;
+    return edge;
+  }
+  const std::optional<SyncCoverScopeId> scope =
+      getEndpointScope(graph, edge.source, edge.target);
+  if (!scope) {
+    return std::nullopt;
+  }
+  edge.scope = *scope;
+  return edge;
+}
+
+} // namespace
+
+std::optional<std::uint64_t>
+mlir::pto::canonical_sync_covering::encodeProviderIdentity(
+    CanonicalSelectionMechanismKind kind, std::size_t id) {
+  constexpr std::uint64_t kLegacyKindCount = 2;
+  constexpr std::uint64_t kSlotProtocolTag = std::uint64_t{1} << 63;
+  const std::uint64_t numericId = static_cast<std::uint64_t>(id);
+  if (kind == CanonicalSelectionMechanismKind::SlotProtocol) {
+    if (numericId >= kSlotProtocolTag - 1) {
+      return std::nullopt;
+    }
+    return kSlotProtocolTag + numericId + 1;
+  }
+  if (kind != CanonicalSelectionMechanismKind::Barrier &&
+      kind != CanonicalSelectionMechanismKind::EventBundle) {
+    return std::nullopt;
+  }
+  const std::uint64_t kindOffset = static_cast<std::uint64_t>(kind) + 1;
+  const std::uint64_t maximumLegacyId =
+      (kSlotProtocolTag - 1 - kindOffset) / kLegacyKindCount;
+  if (numericId > maximumLegacyId) {
+    return std::nullopt;
+  }
+  return numericId * kLegacyKindCount + kindOffset;
+}
+
+bool mlir::pto::canonical_sync_covering::sameDescriptor(
+    const SyncCoverMechanismDescriptor &first,
+    const SyncCoverMechanismDescriptor &second) {
+  const bool sameBarrier =
+      first.barrier.has_value() == second.barrier.has_value() &&
+      (!first.barrier ||
+       (first.barrier->resource == second.barrier->resource &&
+        first.barrier->scope == second.barrier->scope &&
+        sameAnchor(first.barrier->anchor, second.barrier->anchor)));
+  return first.kind == second.kind &&
+         first.providerIdentity == second.providerIdentity && sameBarrier &&
+         llvm::equal(first.supplyEdges, second.supplyEdges, sameEdge) &&
+         llvm::equal(first.verifiedCoverageEdges,
+                     second.verifiedCoverageEdges, sameEdge) &&
+         llvm::equal(first.actions, second.actions, sameAction) &&
+         llvm::equal(first.resourceUses, second.resourceUses, sameUse) &&
+         llvm::equal(first.supplyBindings, second.supplyBindings, sameBinding);
+}
+
+bool mlir::pto::canonical_sync_covering::barriersEquivalent(
+    const CanonicalBarrier &first, const CanonicalBarrier &second) {
+  return first.pipe == second.pipe &&
+         first.anchor.operation == second.anchor.operation &&
+         first.anchor.before == second.anchor.before &&
+         first.recurrenceLoop == second.recurrenceLoop;
+}
+
+std::optional<SyncCoverScopeId>
+mlir::pto::canonical_sync_covering::getEndpointScope(
+    const SyncCoverGraph &graph, std::size_t source, std::size_t target) {
+  const bool endpointMissing = source >= graph.getNodes().size() ||
+                               target >= graph.getNodes().size();
+  if (endpointMissing) {
+    return std::nullopt;
+  }
+  return graph.getLowestCommonScope(graph.getNodes()[source].scope,
+                                    graph.getNodes()[target].scope);
+}
+
+std::optional<SyncCoverScopeId>
+mlir::pto::canonical_sync_covering::getAnchorOccurrenceScope(
+    const CanonicalAnchor &anchor,
+    const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
+        &regionScopes) {
+  if (!anchor.operation) {
+    return std::nullopt;
+  }
+  auto scope = regionScopes.find(anchor.operation->getParentRegion());
+  return scope == regionScopes.end()
+             ? std::nullopt
+             : std::optional<SyncCoverScopeId>(scope->second);
+}
+
+bool mlir::pto::canonical_sync_covering::isCanonicalForwardEvent(
+    const CanonicalEventBundleCandidate &bundle, const SyncCoverGraph &graph,
+    llvm::function_ref<std::size_t(const CanonicalAnchor &)>
+        getAnchorPosition) {
+  if (bundle.kind != CanonicalEventBundleKind::Standalone ||
+      bundle.events.size() != 1) {
+    return false;
+  }
+  const CanonicalEvent &event = bundle.events.front();
+  if (event.recurrenceLoop || event.scopeLoop || event.resourceScopeLoop ||
+      event.forwardDrainLoop ||
+      event.width != 1 || event.actions.size() != 2 ||
+      event.completions.size() != 1 ||
+      event.source >= graph.getNodes().size() ||
+      event.target >= graph.getNodes().size()) {
+    return false;
+  }
+  const CanonicalEventCompletion &completion = event.completions.front();
+  return completion.source == event.source &&
+         completion.target == event.target &&
+         completion.iterationDistance == 0 && completion.setAction == 0 &&
+         completion.waitAction == 1 &&
+         event.actions[0].kind == CanonicalEventActionKind::Set &&
+         event.actions[1].kind == CanonicalEventActionKind::Wait &&
+         event.setAnchor.operation && event.waitAnchor.operation &&
+         event.setAnchor.operation == event.actions[0].anchor.operation &&
+         event.setAnchor.before == event.actions[0].anchor.before &&
+         event.waitAnchor.operation == event.actions[1].anchor.operation &&
+         event.waitAnchor.before == event.actions[1].anchor.before &&
+         getAnchorPosition(event.setAnchor) ==
+             graph.getNodes()[event.source].order * 2 + 1 &&
+         getAnchorPosition(event.waitAnchor) ==
+             graph.getNodes()[event.target].order * 2;
+}
+
+std::optional<TranslatedEventBundleMechanism>
+mlir::pto::canonical_sync_covering::translateVerifiedEventBundle(
+    const CanonicalEventBundleCandidate &bundle, std::uint64_t provider,
+    const DomainMap &domains, const SyncCoverMechanismUniverse &universe,
+    const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
+        &regionScopes,
+    const DenseMap<Operation *, SyncCoverScopeId> &loopScopes,
+    llvm::function_ref<std::size_t(const CanonicalAnchor &)>
+        getAnchorPosition) {
+  SyncCoverMechanismDescriptorBuilder builder(
+      SyncCoverMechanismKind::VerifiedProtocol, provider);
+  std::vector<std::size_t> eventResourceUses;
+  eventResourceUses.reserve(bundle.events.size());
+  for (const CanonicalEvent &event : bundle.events) {
+    const CanonicalEventDomainKey key{event.sourcePipe, event.targetPipe};
+    auto domainId = domains.find(key);
+    if (domainId == domains.end()) {
+      return std::nullopt;
+    }
+    const SyncCoverResourceDomain &domain =
+        universe.getResourceDomains()[domainId->second];
+    Operation *protocolLoop = event.scopeLoop
+                                  ? event.scopeLoop
+                                  : (event.recurrenceLoop
+                                         ? event.recurrenceLoop
+                                         : event.forwardDrainLoop);
+    Operation *resourceLoop =
+        event.resourceScopeLoop ? event.resourceScopeLoop : protocolLoop;
+    SyncCoverScopeId useScope = 0;
+    unsigned useDistance = 0;
+    if (resourceLoop) {
+      auto loop = loopScopes.find(resourceLoop);
+      if (loop == loopScopes.end()) {
+        return std::nullopt;
+      }
+      useScope = loop->second;
+      useDistance = std::max(1U, event.iterationDistance);
+    }
+
+    std::vector<SyncCoverDescriptorActionRef> actions;
+    actions.reserve(event.actions.size());
+    for (const CanonicalEventAction &action : event.actions) {
+      const std::optional<SyncCoverAnchor> anchor = translateActionAnchor(
+          action, protocolLoop, regionScopes, loopScopes, getAnchorPosition);
+      if (!anchor) {
+        return std::nullopt;
+      }
+      const bool produce = action.kind == CanonicalEventActionKind::Set;
+      actions.push_back(builder.addAction(
+          produce ? SyncCoverResourceActionKind::Produce
+                  : SyncCoverResourceActionKind::Consume,
+          produce ? domain.sourceResource : domain.targetResource, *anchor));
+    }
+
+    std::vector<SyncCoverProtocolSupply> supplies;
+    supplies.reserve(event.completions.size());
+    for (const CanonicalEventCompletion &completion : event.completions) {
+      const bool actionMissing = completion.setAction >= actions.size() ||
+                                 completion.waitAction >= actions.size();
+      if (actionMissing) {
+        return std::nullopt;
+      }
+      const std::optional<SyncCoverEdge> edge =
+          translateCompletion(completion, universe.getGraph(), loopScopes);
+      if (!edge) {
+        return std::nullopt;
+      }
+      useDistance = std::max(useDistance, completion.iterationDistance);
+      supplies.push_back(
+          {*edge, actions[completion.setAction], actions[completion.waitAction]});
+    }
+    if (supplies.empty()) {
+      return std::nullopt;
+    }
+    if (!protocolLoop) {
+      useScope = supplies.front().edge.scope;
+      const bool inconsistentScope = llvm::any_of(
+          supplies, [&](const SyncCoverProtocolSupply &supply) {
+            return supply.edge.scope != useScope || supply.edge.distance != 0;
+          });
+      if (inconsistentScope) {
+        return std::nullopt;
+      }
+    }
+    const std::size_t resourceUse =
+        builder.getDescriptor().resourceUses.size();
+    const bool added = builder.addProtocolLane(
+        domain, useScope, useDistance, event.width, std::move(actions),
+        std::move(supplies));
+    const bool oneUseAdded =
+        builder.getDescriptor().resourceUses.size() == resourceUse + 1;
+    if (!added || !oneUseAdded) {
+      return std::nullopt;
+    }
+    eventResourceUses.push_back(resourceUse);
+  }
+  return TranslatedEventBundleMechanism{
+      std::move(builder).takeDescriptor(), std::move(eventResourceUses)};
+}
+
+bool mlir::pto::canonical_sync_covering::verifyBundleShape(
+    const CanonicalEventBundleCandidate &bundle,
+    ArrayRef<CanonicalOwnershipCycle> cycles,
+    ArrayRef<CanonicalSyncNode> nodes) {
+  SmallVector<const CanonicalEvent *, 2> events;
+  for (const CanonicalEvent &event : bundle.events) {
+    events.push_back(&event);
+  }
+  switch (bundle.kind) {
+  case CanonicalEventBundleKind::Standalone:
+    return bundle.events.size() == 1 &&
+           !bundle.events.front().ownershipProtocol &&
+           bundle.events.front().ownershipCycle == 0;
+  case CanonicalEventBundleKind::Ownership: {
+    const bool invalidOwnershipShape =
+        bundle.events.size() != 2 || bundle.protocolIdentity == 0;
+    if (invalidOwnershipShape) {
+      return false;
+    }
+    const bool eventIdentityMatches =
+        llvm::all_of(bundle.events, [&](const CanonicalEvent &event) {
+      return event.ownershipProtocol &&
+             event.ownershipCycle == bundle.protocolIdentity &&
+             event.ownershipProtocolKind == bundle.ownershipProtocol;
+    });
+    auto cycle = llvm::find_if(cycles, [&](const auto &candidate) {
+      return candidate.id == bundle.protocolIdentity;
+    });
+    if (!eventIdentityMatches || cycle == cycles.end()) {
+      return false;
+    }
+    CanonicalOwnershipCycle protocolCycle = *cycle;
+    protocolCycle.protocol = bundle.ownershipProtocol;
+    return verifyCanonicalOwnershipEventPair(protocolCycle, events);
+  }
+  case CanonicalEventBundleKind::CompositeOwnership:
+    return verifyCanonicalCompositeOwnershipBundle(bundle, cycles, nodes);
+  }
+  return false;
+}
+
+bool mlir::pto::canonical_sync_covering::
+    verifyTranslatedEventBundleCorrespondence(
+        const CanonicalEventBundleCandidate &bundle,
+        const TranslatedEventBundleMechanism &translated,
+        const SyncCoverMechanismDescriptor &actual,
+        const SyncCoverMechanismUniverse &universe, const DomainMap &domains,
+        const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
+            &regionScopes,
+        const DenseMap<Operation *, SyncCoverScopeId> &loopScopes,
+        llvm::function_ref<std::size_t(const CanonicalAnchor &)>
+            getAnchorPosition) {
+  const bool invalidDescriptor =
+      !sameDescriptor(actual, translated.descriptor) ||
+      translated.eventResourceUses.size() != bundle.events.size() ||
+      actual.resourceUses.size() != bundle.events.size();
+  if (invalidDescriptor) {
+    return false;
+  }
+
+  std::vector<bool> claimedUses(actual.resourceUses.size(), false);
+  std::vector<bool> claimedActions(actual.actions.size(), false);
+  std::vector<bool> claimedSupplies(actual.supplyEdges.size(), false);
+  std::vector<bool> claimedBindings(actual.supplyBindings.size(), false);
+  std::size_t expectedActions = 0;
+  std::size_t expectedSupplies = 0;
+  for (auto [eventIndex, event] : llvm::enumerate(bundle.events)) {
+    const std::size_t useIndex = translated.eventResourceUses[eventIndex];
+    const bool invalidUseIndex =
+        useIndex >= actual.resourceUses.size() || claimedUses[useIndex];
+    if (invalidUseIndex) {
+      return false;
+    }
+    claimedUses[useIndex] = true;
+    const SyncCoverResourceUse &use = actual.resourceUses[useIndex];
+    const CanonicalEventDomainKey key{event.sourcePipe, event.targetPipe};
+    auto domain = domains.find(key);
+    const bool invalidDomain =
+        domain == domains.end() ||
+        domain->second >= universe.getResourceDomains().size();
+    if (invalidDomain) {
+      return false;
+    }
+    const SyncCoverResourceDomain &resourceDomain =
+        universe.getResourceDomains()[domain->second];
+    const bool wrongDomainResources =
+        resourceDomain.kind != SyncCoverResourceKind::EventId ||
+        resourceDomain.sourceResource !=
+            static_cast<std::uint32_t>(event.sourcePipe) ||
+        resourceDomain.targetResource !=
+            static_cast<std::uint32_t>(event.targetPipe);
+    if (wrongDomainResources) {
+      return false;
+    }
+    const bool invalidUse =
+        use.domain != domain->second ||
+        use.width != event.width ||
+        use.actions.size() != event.actions.size() ||
+        use.supplyEdges.size() != event.completions.size();
+    if (invalidUse) {
+      return false;
+    }
+
+    Operation *protocolLoop = event.scopeLoop
+                                  ? event.scopeLoop
+                                  : (event.recurrenceLoop
+                                         ? event.recurrenceLoop
+                                         : event.forwardDrainLoop);
+    Operation *resourceLoop =
+        event.resourceScopeLoop ? event.resourceScopeLoop : protocolLoop;
+    SyncCoverScopeId expectedScope = 0;
+    unsigned expectedDistance = 0;
+    if (resourceLoop) {
+      auto loop = loopScopes.find(resourceLoop);
+      if (loop == loopScopes.end()) {
+        return false;
+      }
+      expectedScope = loop->second;
+      expectedDistance = std::max(1U, event.iterationDistance);
+    }
+
+    for (auto [actionIndex, canonicalAction] :
+         llvm::enumerate(event.actions)) {
+      const std::size_t descriptorAction = use.actions[actionIndex];
+      const bool invalidActionIndex =
+          descriptorAction >= actual.actions.size() ||
+          claimedActions[descriptorAction];
+      if (invalidActionIndex) {
+        return false;
+      }
+      claimedActions[descriptorAction] = true;
+      const std::optional<SyncCoverAnchor> expectedAnchor =
+          translateActionAnchor(canonicalAction, protocolLoop, regionScopes,
+                                loopScopes, getAnchorPosition);
+      if (!expectedAnchor) {
+        return false;
+      }
+      const bool produce =
+          canonicalAction.kind == CanonicalEventActionKind::Set;
+      const SyncCoverResourceAction expectedAction{
+          produce ? SyncCoverResourceActionKind::Produce
+                  : SyncCoverResourceActionKind::Consume,
+          produce ? resourceDomain.sourceResource
+                  : resourceDomain.targetResource,
+          *expectedAnchor};
+      if (!sameAction(actual.actions[descriptorAction], expectedAction)) {
+        return false;
+      }
+    }
+
+    for (auto [completionIndex, completion] :
+         llvm::enumerate(event.completions)) {
+      const std::size_t descriptorSupply = use.supplyEdges[completionIndex];
+      const bool invalidSupplyIndex =
+          descriptorSupply >= actual.supplyEdges.size() ||
+          claimedSupplies[descriptorSupply];
+      if (invalidSupplyIndex) {
+        return false;
+      }
+      claimedSupplies[descriptorSupply] = true;
+      const std::optional<SyncCoverEdge> expectedEdge =
+          translateCompletion(completion, universe.getGraph(), loopScopes);
+      if (!expectedEdge ||
+          !sameEdge(actual.supplyEdges[descriptorSupply], *expectedEdge)) {
+        return false;
+      }
+      expectedDistance =
+          std::max(expectedDistance, completion.iterationDistance);
+      if (!protocolLoop) {
+        if (expectedEdge->distance != 0) {
+          return false;
+        }
+        if (completionIndex == 0) {
+          expectedScope = expectedEdge->scope;
+        } else if (expectedEdge->scope != expectedScope) {
+          return false;
+        }
+      }
+      const bool invalidCompletionAction =
+          completion.setAction >= use.actions.size() ||
+          completion.waitAction >= use.actions.size();
+      if (invalidCompletionAction) {
+        return false;
+      }
+      const SyncCoverSupplyBinding expectedBinding{
+          descriptorSupply, useIndex, use.actions[completion.setAction],
+          use.actions[completion.waitAction]};
+      auto bindings = llvm::enumerate(actual.supplyBindings);
+      auto binding = llvm::find_if(bindings, [&](const auto &entry) {
+        return !claimedBindings[entry.index()] &&
+               sameBinding(entry.value(), expectedBinding);
+      });
+      if (binding == bindings.end()) {
+        return false;
+      }
+      claimedBindings[(*binding).index()] = true;
+    }
+    if (use.scope != expectedScope || use.distance != expectedDistance) {
+      return false;
+    }
+    const std::optional<SyncCoverTimelineInterval> lifetime =
+        getDescriptorResourceLifetime(universe.getGraph(), actual, use);
+    const bool invalidLifetime =
+        !lifetime || lifetime->begin != event.intervalBegin ||
+        lifetime->end != event.intervalEnd;
+    if (invalidLifetime) {
+      return false;
+    }
+    expectedActions += event.actions.size();
+    expectedSupplies += event.completions.size();
+  }
+  return llvm::all_of(claimedUses, [](bool claimed) { return claimed; }) &&
+         llvm::all_of(claimedActions,
+                      [](bool claimed) { return claimed; }) &&
+         llvm::all_of(claimedSupplies,
+                      [](bool claimed) { return claimed; }) &&
+         llvm::all_of(claimedBindings,
+                      [](bool claimed) { return claimed; }) &&
+         actual.actions.size() == expectedActions &&
+         actual.supplyEdges.size() == expectedSupplies &&
+         actual.supplyBindings.size() == expectedSupplies;
+}

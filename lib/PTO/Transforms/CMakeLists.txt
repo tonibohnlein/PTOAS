@@ -152,6 +152,13 @@ add_mlir_dialect_library(PTOTransforms
   GraphSyncSolver/SyncSolver.cpp
   GraphSyncSolver/SyncSolverCodeGen.cpp
   CanonicalSync/CanonicalSyncColoring.cpp
+  CanonicalSync/CanonicalSyncCovering.cpp
+  CanonicalSync/CanonicalSyncCoveringAllocation.cpp
+  CanonicalSync/CanonicalSyncCoveringMechanisms.cpp
+  CanonicalSync/CanonicalSyncCoveringMaterialization.cpp
+  CanonicalSync/CanonicalSyncCoveringSelection.cpp
+  CanonicalSync/CanonicalSyncCoveringSlotRecipe.cpp
+  CanonicalSync/CanonicalSyncCoveringTranslation.cpp
   CanonicalSync/SyncCoverCoverage.cpp
   CanonicalSync/SyncCoverCandidateIndex.cpp
   CanonicalSync/SyncCoverColumnGeneration.cpp
@@ -177,6 +184,7 @@ add_mlir_dialect_library(PTOTransforms
   CanonicalSync/CanonicalSyncToken.cpp
   CanonicalSync/CanonicalSyncCodegen.cpp
   CanonicalSync/CanonicalSyncPrinter.cpp
+  CanonicalSync/PTOCanonicalSync.cpp
   LoweringSyncToPipe.cpp
   PTOVerifyTFreePass.cpp
 
