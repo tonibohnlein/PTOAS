@@ -229,9 +229,9 @@ bool testGreedyDirectSelection() {
                 "add chain drain fallback");
   const SyncCoverSelectionResult chain =
       solveSyncCoverSelection(chainUniverse, {chainDemand});
-  // TODO(sync-cover): the round-trip mechanism generator will admit the
-  // verified {chainFirst, chainSecond} composition as an atomic column and
-  // replace this drain.
+  // The bare solver sees only grounded columns; in production the adapter
+  // proposes the verified {chainFirst, chainSecond} round-trip column and
+  // the drain is replaced there.
   passed &= check(chain &&
                       chain.mechanisms ==
                           std::vector<SyncCoverMechanismId>{chainDrain} &&
@@ -406,9 +406,9 @@ bool testDeclaredCoverageSelection() {
 
   const SyncCoverSelectionResult result =
       solveSyncCoverSelection(universe, {firstDemand, secondDemand});
-  // TODO(sync-cover): the round-trip mechanism generator will admit the
-  // verified forward/reverse compositions as atomic columns and replace
-  // this barrier.
+  // The bare solver sees only grounded columns; in production the adapter
+  // proposes the verified forward/reverse round-trip columns and this
+  // barrier is replaced there.
   passed &= check(result &&
                       result.mechanisms ==
                           std::vector<SyncCoverMechanismId>{barrier} &&

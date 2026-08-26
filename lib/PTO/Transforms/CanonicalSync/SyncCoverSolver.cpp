@@ -104,12 +104,31 @@ std::size_t countNewCoverage(const SyncCoverDemandSet &covered,
 GreedyCandidate makeGreedyCandidate(
     const SyncCoverGroundedInstance &instance,
     const std::vector<SyncCoverMechanismId> &selected,
-    const SyncCoverDemandSet &covered, SyncCoverGroundedColumnId columnId) {
+    const SyncCoverDemandSet &covered,
+    const SyncCoverDemandSet &eventCoverable,
+    SyncCoverGroundedColumnId columnId) {
   const SyncCoverGroundedColumn &column = instance.columns[columnId];
   GreedyCandidate result;
   result.column = columnId;
   result.successor = addMembers(selected, column.members);
-  result.newCoverage = countNewCoverage(covered, column.coverage);
+  const bool usesBarrier = std::any_of(
+      column.members.begin(), column.members.end(),
+      [&](SyncCoverMechanismId member) {
+        return instance.mechanisms[member].kind ==
+               SyncCoverMechanismKind::Barrier;
+      });
+  if (usesBarrier) {
+    // A barrier's breadth only counts demands no event column can take;
+    // coverage that events can supply must not justify a broad drain.
+    SyncCoverDemandSet forced = column.coverage;
+    forced.subtract(eventCoverable);
+    result.newCoverage = countNewCoverage(covered, forced);
+    if (result.newCoverage == 0) {
+      result.newCoverage = 1;
+    }
+  } else {
+    result.newCoverage = countNewCoverage(covered, column.coverage);
+  }
   const std::size_t profileSize = instance.mechanisms.empty()
                                       ? 0
                                       : instance.mechanisms.front()
@@ -189,6 +208,18 @@ greedySelect(const SyncCoverSelectionEvaluator &evaluator,
   if (!evaluation) {
     return std::nullopt;
   }
+  SyncCoverDemandSet eventCoverable(instance.demands.size());
+  for (const SyncCoverGroundedColumn &column : instance.columns) {
+    const bool barrierFree = std::none_of(
+        column.members.begin(), column.members.end(),
+        [&](SyncCoverMechanismId member) {
+          return instance.mechanisms[member].kind ==
+                 SyncCoverMechanismKind::Barrier;
+        });
+    if (barrierFree) {
+      eventCoverable.unite(column.coverage);
+    }
+  }
   while (evaluation->covered.count() != instance.demands.size()) {
     std::optional<std::size_t> demand;
     for (std::size_t local = 0; local < instance.demands.size(); ++local) {
@@ -204,7 +235,7 @@ greedySelect(const SyncCoverSelectionEvaluator &evaluator,
     for (SyncCoverGroundedColumnId columnId :
          instance.demandColumns[*demand]) {
       GreedyCandidate candidate = makeGreedyCandidate(
-          instance, selected, evaluation->covered, columnId);
+          instance, selected, evaluation->covered, eventCoverable, columnId);
       if (candidate.successor == selected || candidate.newCoverage == 0) {
         continue;
       }

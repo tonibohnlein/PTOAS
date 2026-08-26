@@ -37,6 +37,7 @@ public:
   bool containsAll(const SyncCoverDemandSet &other) const;
   bool intersects(const SyncCoverDemandSet &other) const;
   void unite(const SyncCoverDemandSet &other);
+  void subtract(const SyncCoverDemandSet &other);
   std::size_t count() const;
   std::size_t size() const { return size_; }
   const std::vector<std::uint64_t> &getWords() const { return words_; }

@@ -187,6 +187,15 @@ void SyncCoverDemandSet::unite(const SyncCoverDemandSet &other) {
   }
 }
 
+void SyncCoverDemandSet::subtract(const SyncCoverDemandSet &other) {
+  if (size_ != other.size_) {
+    return;
+  }
+  for (std::size_t index = 0; index < words_.size(); ++index) {
+    words_[index] &= ~other.words_[index];
+  }
+}
+
 std::size_t SyncCoverDemandSet::count() const {
   std::size_t result = 0;
   for (std::uint64_t word : words_) {

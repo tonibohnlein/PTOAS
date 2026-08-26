@@ -134,19 +134,16 @@ Candidate sources, in construction order:
   group `(target, recurrence scope, distance)`, anchored before the target
   and marked as draining all resources. Candidates at the same loop depth
   whose active-demand coverage is a subset of another's are dominance-pruned.
-- **Generated columns.** `SyncCoverColumnGeneration` factories run over the
-  universe, gated by `SyncCoverTargetCapabilities`. The pass wires exactly
-  three generators into production: `canonical` (per-demand cross-pipe
-  events), `merged-prefix` (one event covering a source prefix, gated on
-  per-pipe prefix-set evidence, which is currently
-  `SyncCoverEvidenceLevel::None` on every target, so the generator is
-  inactive), and `pierce-barrier` (same-pipe barriers on pipes without
-  hardware completion, each covering every demand whose interval crosses the
-  anchor). The unit-recurrence, ring-release, and buffer-token ring
-  generators exist for analysis clients but are deliberately not wired into
-  the production universe until their physical actions have emission
-  recipes. Hardware-completion resources come from the pass's per-arch
-  predicate, and the event-ID budget is `event-id-num-max`.
+- **Generated mechanisms.** `SyncCoverColumnGeneration` factories run over
+  the universe, gated by `SyncCoverTargetCapabilities`. The pass wires
+  exactly two generators into production: `canonical` (per-demand cross-pipe
+  events) and `pierce-barrier` (same-pipe barriers on pipes without hardware
+  completion, each covering every demand whose interval crosses the anchor).
+  A merged-prefix generator existed but was removed: prefix-set completion
+  semantics carry no evidence on any supported target, so it could never
+  activate; it returns only with a hardware microbenchmark.
+  Hardware-completion resources come from the pass's per-arch predicate, and
+  the event-ID budget is `event-id-num-max`.
 
 Every admitted mechanism must have a verified emission recipe expressed in
 the CanonicalBarrier/CanonicalEvent vocabulary before selection: generated
@@ -168,40 +165,36 @@ cover the lifecycle's ready demands (extended to demands whose witnesses are
 exactly the managed slot extent), and per-recurrence-scope pipeline merges of
 those columns.
 
-Depth-two pair pricing is restricted to demands left without any barrier-free
-column, and priced pairs that contain a barrier are discarded. Skipping an
-already-covered demand sets `pricingRestricted`: the witness universe is then
-incomplete by construction, so optimality over the instance must not be
-reported as true optimality. Truncation caps are `maximumColumns` (65536),
-`maximumPricingDemands` (256), and `maximumPairsPerDemand` (1024); hitting a
-cap sets `columnsTruncated` and is never interpreted as infeasibility. A
+Composite coverage is proposed structurally, never searched for: the adapter
+enumerates round-trip columns — a carried supply mechanism paired with the
+event bundle that exactly reverses its endpoints, joined to the demand by
+fixed issue-order paths on either leg — for every recurrence demand, ranked
+tight-anchored and specific-mechanism first and capped at 512 columns with at
+most four distinct pairs per demand. The claims are untrusted: grounding
+proves every claimed demand with an oracle witness and silently keeps only
+what it proves. The only grounding cap is `maximumColumns` (65536); hitting
+it sets `columnsTruncated` and is never interpreted as infeasibility. A
 demand with no column at all fails selection as incomplete search, distinct
 from proven-uncoverable demands, which fail as proven infeasibility.
 
 ## Selection and cost
 
-The solver decomposes the instance into connected components with union-find
-over three couplings: column incidence (a column joins its members and the
-demands it covers), explicit conflicts, and overlapping resource-use
-lifetimes within one domain. Disjoint lifetimes in the same domain remain
-independent because their union cannot increase instantaneous pressure.
-
-Components with at most `exactMechanismThreshold` mechanisms (default 12,
-hard cap 24) use exhaustive column-guided search: branch on the
-most-constrained uncovered demand's columns, deduplicate visited states, and
-prune states whose cost already fails the incumbent. Larger components stop
-after deterministic greedy selection anchored on the first uncovered demand
-in component order, ranking that demand's columns by per-depth
-action-per-new-coverage ratios; there is no beam. Both searches share one
-per-component bounded evaluation budget (`evaluationLimit`, default 512).
-Every evaluated state runs the frozen evaluator: exact per-domain
-weighted-interval pressure feasibility plus structural cost; infeasible
-states are pruned, never costed. After components are combined, a
-single-deletion sweep (`removeRedundant`) and a grounded-column exchange
-(`improveWithGroundedColumns`) improve the plan; both re-evaluate full
-feasibility before accepting. Seed plumbing exists in the solver interface
-and in the adapter, but nothing populates the incumbent set today, so no
-seed reaches the solver.
+Selection is one deterministic global greedy pass over the grounded bitsets:
+anchor each round on the first uncovered demand in instance order and adopt
+the cheapest feasible column covering it, ranking that demand's columns by
+per-depth action-per-new-coverage ratios. A column that uses a barrier only
+counts coverage of demands no barrier-free column can take, so breadth that
+events could supply never justifies a broad drain. Fallback barrier columns
+hold no event resources, so the pass completes whenever every demand has a
+column; there is no exact search, no component decomposition, no evaluation
+budget, and no rescue path — earlier revisions carried all four, and every
+production kernel was solved by this greedy anyway. Every evaluated state
+runs the frozen evaluator: exact per-domain weighted-interval pressure
+feasibility plus structural cost; infeasible states are pruned, never
+costed. A single-deletion sweep (`removeRedundant`), a grounded-column
+exchange (`improveWithGroundedColumns`), and a bounded oracle-checked
+deletion pass (`oracleRedundancyLimit`, default 32) then improve the plan;
+each re-evaluates full feasibility before accepting.
 
 Every returned plan passes one final verification with a fresh evaluator and
 a fresh coverage-oracle traversal over the deduplicated active demands;
@@ -238,12 +231,9 @@ verifier-proved hierarchical ownership consequences.
 
 ## Diagnostics and honesty
 
-The covering diagnostics never overstate the result. `optimal=yes` requires
-all of: no demands needing pricing, no column truncation, no pricing
-restriction, every component solved exactly within the evaluation budget,
-complete slot-lifecycle and slot-protocol discovery, and no unmaterializable
-slot-protocol candidate. A sound truncated result may still be emitted, but
-its diagnostics retain `truncated=yes` and demote optimality. The topology
+The covering diagnostics never overstate the result. The greedy selector
+never claims optimality, so no `optimal=` field is reported; plan quality is
+pinned by the regression corpus instead. The topology
 line proves the grounded-search contract: `grounding-queries` is positive,
 `coverage-queries=0` during search (structural coverage is grounded once and
 searched over bitsets), and `final-validations=1` with the final traversal's
