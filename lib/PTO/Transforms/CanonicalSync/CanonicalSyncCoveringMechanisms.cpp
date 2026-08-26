@@ -881,7 +881,7 @@ LogicalResult MechanismAdapter::addEventBundles() {
               universe_.getGraph(), activeDemands_);
       eventResourceUses = expected.eventResourceUses;
       result = universe_.addVerifiedProtocol(
-          expected.descriptor, [&, expected](const auto &actual) {
+          expected.descriptor, [&](const auto &actual) {
             const std::vector<SyncCoverEdge> verifiedCoverage =
                 deriveOwnershipCoverageEdges(
                     bundle, plan_.getOwnershipCycles(), plan_.getNodes(),

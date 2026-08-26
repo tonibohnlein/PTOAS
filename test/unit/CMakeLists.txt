@@ -190,7 +190,6 @@ set_tests_properties(pto_canonical_sync_covering_translation_unit
 add_executable(pto-canonical-sync-algorithms-unit-test
   CanonicalSyncAlgorithmsTest.cpp
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/CanonicalSyncColoring.cpp"
-  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/CanonicalSyncCriticalPath.cpp"
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/CanonicalSyncToken.cpp"
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/CompletionReduction.cpp"
 )
@@ -203,20 +202,20 @@ add_test(NAME pto_canonical_sync_algorithms_unit
 set_tests_properties(pto_canonical_sync_algorithms_unit
   PROPERTIES LABELS "PTO;unit")
 
-add_executable(pto-canonical-sync-ownership-verification-unit-test
+add_executable(pto-canonical-sync-protocol-verification-unit-test
   CanonicalSyncProtocolVerificationTest.cpp
 )
-target_include_directories(pto-canonical-sync-ownership-verification-unit-test PRIVATE
+target_include_directories(pto-canonical-sync-protocol-verification-unit-test PRIVATE
   "${PROJECT_SOURCE_DIR}/include"
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync"
 )
-target_link_libraries(pto-canonical-sync-ownership-verification-unit-test PRIVATE
+target_link_libraries(pto-canonical-sync-protocol-verification-unit-test PRIVATE
   MLIRIR
   PTOTransforms
   LLVMSupport
 )
-add_test(NAME pto_canonical_sync_ownership_verification_unit
-  COMMAND pto-canonical-sync-ownership-verification-unit-test
+add_test(NAME pto_canonical_sync_protocol_verification_unit
+  COMMAND pto-canonical-sync-protocol-verification-unit-test
 )
-set_tests_properties(pto_canonical_sync_ownership_verification_unit
+set_tests_properties(pto_canonical_sync_protocol_verification_unit
   PROPERTIES LABELS "PTO;unit")

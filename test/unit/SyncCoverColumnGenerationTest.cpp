@@ -349,6 +349,54 @@ bool testCapabilitiesAndMergedEvents() {
                   "merged verifier rejects a wait ordered before its set");
   passed &= check(!verifyMergedShape(1, 2, conservative),
                   "merged verifier rejects an untrusted prefix protocol");
+
+  const auto verifyMergedSupplies =
+      [&](bool dominatedMembers, bool anchorIsMember) {
+        SyncCoverGraph graph;
+        const SyncCoverGraphResult earlySource =
+            graph.addNode(kPipeMTE2, 1, 0, 0, {}, {kPipeM});
+        const SyncCoverGraphResult set =
+            graph.addNode(kPipeMTE2, 1, 0, 1, {}, {kPipeM});
+        const SyncCoverGraphResult lateSource =
+            graph.addNode(kPipeMTE2, 1, 0, 2, {}, {kPipeM});
+        const SyncCoverGraphResult wait = graph.addNode(kPipeM, 1, 0, 3);
+        const SyncCoverGraphResult lateTarget = graph.addNode(kPipeM, 1, 0, 4);
+        if (!earlySource.index || !set.index || !lateSource.index ||
+            !wait.index || !lateTarget.index || !graph.freezeStructure()) {
+          return false;
+        }
+        SyncCoverResourceDomain domain;
+        domain.kind = SyncCoverResourceKind::EventId;
+        domain.sourceResource = kPipeMTE2;
+        domain.targetResource = kPipeM;
+        domain.budget = 8;
+        SyncCoverMechanismDescriptor descriptor;
+        descriptor.kind = SyncCoverMechanismKind::VerifiedProtocol;
+        descriptor.actions = {
+            {SyncCoverResourceActionKind::Produce, kPipeMTE2,
+             {SyncCoverAnchorKind::AfterNode, *set.index, 0}},
+            {SyncCoverResourceActionKind::Consume, kPipeM,
+             {SyncCoverAnchorKind::BeforeNode, *wait.index, 0}}};
+        const std::size_t firstSource =
+            anchorIsMember ? *set.index : *earlySource.index;
+        const std::size_t secondSource =
+            dominatedMembers ? *earlySource.index : *lateSource.index;
+        descriptor.supplyEdges = {
+            {firstSource, *wait.index, SyncCoverEdgeKind::CompletionSupply, 0,
+             0},
+            {secondSource, *lateTarget.index,
+             SyncCoverEdgeKind::CompletionSupply, 0, 0}};
+        descriptor.resourceUses = {{0, 0, 0, 1, {0, 1}, {0, 1}}};
+        descriptor.supplyBindings = {{0, 0, 0, 1}, {1, 0, 0, 1}};
+        return verifySyncCoverMergedPrefixEvent(graph, domain, descriptor,
+                                                measured);
+      };
+  passed &= check(verifyMergedSupplies(true, true),
+                  "merged verifier accepts dominated anchored members");
+  passed &= check(!verifyMergedSupplies(false, true),
+                  "merged verifier rejects a member set after the anchor");
+  passed &= check(!verifyMergedSupplies(true, false),
+                  "merged verifier rejects a set anchor outside the members");
   return passed;
 }
 

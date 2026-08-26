@@ -21,49 +21,6 @@
 
 using namespace mlir::pto;
 
-SyncColoring
-mlir::pto::colorSyncIntervals(const std::vector<SyncInterval> &intervals) {
-  SyncColoring result;
-  result.colors.resize(intervals.size());
-
-  std::vector<std::size_t> order(intervals.size());
-  std::iota(order.begin(), order.end(), 0);
-  std::stable_sort(order.begin(), order.end(),
-                   [&](std::size_t first, std::size_t second) {
-                     if (intervals[first].begin != intervals[second].begin) {
-                       return intervals[first].begin < intervals[second].begin;
-                     }
-                     if (intervals[first].end != intervals[second].end) {
-                       return intervals[first].end < intervals[second].end;
-                     }
-                     return first < second;
-                   });
-
-  using ActiveColor = std::pair<std::size_t, unsigned>;
-  std::priority_queue<ActiveColor, std::vector<ActiveColor>,
-                      std::greater<ActiveColor>>
-      active;
-  std::priority_queue<unsigned, std::vector<unsigned>, std::greater<unsigned>>
-      available;
-  for (std::size_t intervalIndex : order) {
-    const SyncInterval &interval = intervals[intervalIndex];
-    while (!active.empty() && active.top().first < interval.begin) {
-      available.push(active.top().second);
-      active.pop();
-    }
-    unsigned color = 0;
-    if (available.empty()) {
-      color = result.colorCount++;
-    } else {
-      color = available.top();
-      available.pop();
-    }
-    result.colors[intervalIndex] = color;
-    active.emplace(interval.end, color);
-  }
-  return result;
-}
-
 bool mlir::pto::verifySyncIntervalAllocation(
     unsigned eventIdMax, const std::vector<unsigned> &reservedIds,
     const std::vector<SyncAllocatedInterval> &allocation) {

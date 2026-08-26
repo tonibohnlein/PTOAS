@@ -833,7 +833,7 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
       groundSyncCoverInstance(universe, demands, factoryColumns);
   if (!grounding) {
     SyncCoverSelectionResult result =
-        makeError(SyncCoverSelectionError::InvalidUniverse);
+        makeError(SyncCoverSelectionError::GroundingFailed);
     result.coverageStatistics = grounding.statistics;
     return result;
   }

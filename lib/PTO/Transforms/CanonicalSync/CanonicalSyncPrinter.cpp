@@ -223,6 +223,8 @@ StringRef stringifyCoveringSelectionError(SyncCoverSelectionError error) {
     return "search-incomplete";
   case SyncCoverSelectionError::FinalVerificationFailed:
     return "final-verification-failed";
+  case SyncCoverSelectionError::GroundingFailed:
+    return "grounding-failed";
   }
   return "unknown";
 }

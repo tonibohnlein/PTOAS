@@ -57,6 +57,7 @@ enum class SyncCoverSelectionError : std::uint8_t {
   ProvenInfeasible,
   SearchIncomplete,
   FinalVerificationFailed,
+  GroundingFailed,
 };
 
 struct SyncCoverSearchTruncation {

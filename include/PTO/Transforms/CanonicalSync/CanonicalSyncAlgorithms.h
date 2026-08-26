@@ -32,11 +32,6 @@ struct SyncAllocatedInterval {
   unsigned eventId = 0;
 };
 
-struct SyncColoring {
-  std::vector<unsigned> colors;
-  unsigned colorCount = 0;
-};
-
 struct SyncWeightedInterval {
   SyncInterval interval;
   std::size_t width = 1;
@@ -61,10 +56,6 @@ struct SyncIntervalPressure {
     return error == SyncIntervalPressureError::None;
   }
 };
-
-/// Optimally color inclusive intervals. Intervals that share an endpoint
-/// overlap and therefore receive different colors.
-SyncColoring colorSyncIntervals(const std::vector<SyncInterval> &intervals);
 
 /// Verify a physical-ID assignment for one pipe domain. Interval endpoints
 /// are inclusive, and reserved IDs cannot be assigned.
@@ -101,14 +92,6 @@ struct SyncGraphEdge {
   SyncGraphEdgeKind kind = SyncGraphEdgeKind::IssueOrder;
 };
 
-/// Return the maximum sum of vertex weights along any path in a DAG. Each
-/// operation is represented by one vertex and one scalar weight. Invalid
-/// endpoints and cycles return std::nullopt. Addition saturates at uint64_t's
-/// maximum so large target-model estimates cannot wrap around.
-std::optional<std::uint64_t>
-calculateWeightedCriticalPath(const std::vector<std::uint64_t> &vertexWeights,
-                              const std::vector<SyncGraphEdge> &edges);
-
 struct CompletionRequirement {
   std::size_t source = 0;
   std::size_t target = 0;
@@ -140,13 +123,6 @@ using CompletionVertexFilter =
 /// to execute in that requirement's control-flow context.
 std::vector<bool> reduceCompletionRequirements(
     std::size_t vertexCount, const std::vector<SyncGraphEdge> &fixedEdges,
-    const std::vector<CompletionRequirement> &requirements,
-    const CompletionVertexFilter &isVertexAvailable = {});
-
-/// Return one coverage bit per requirement. A requirement is covered only when
-/// its source reaches its target through a path containing a completion edge.
-std::vector<bool> getCompletionRequirementCoverage(
-    std::size_t vertexCount, const std::vector<SyncGraphEdge> &edges,
     const std::vector<CompletionRequirement> &requirements,
     const CompletionVertexFilter &isVertexAvailable = {});
 
