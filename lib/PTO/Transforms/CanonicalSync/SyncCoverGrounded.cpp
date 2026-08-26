@@ -363,11 +363,6 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
     }
   }
 
-  // Composition columns are priced lazily by the solver, only for demands
-  // whose every selected cover uses a barrier; the grounded witness universe
-  // is therefore restricted by construction and never certifies optimality.
-  instance.pricingRestricted = !activeDemands.empty();
-
   if (grounded.size() > options.maximumColumns) {
     instance.columnsTruncated = true;
   }

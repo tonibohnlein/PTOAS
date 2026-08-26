@@ -85,78 +85,6 @@ bool testSharedExpansionRequiresFrozenStructure() {
   return passed;
 }
 
-bool testCutGuidedFactoryWitnesses() {
-  bool passed = true;
-  SyncCoverGraph graph;
-  const SyncCoverNodeId source =
-      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add factory source");
-  const SyncCoverNodeId middle =
-      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add factory middle");
-  const SyncCoverNodeId target =
-      takeIndex(graph.addNode(3, 1, 0, 2), passed, "add factory target");
-  passed &= check(graph.addDemand(makeDemand(source, target)),
-                  "add factory demand");
-  for (SyncCoverMechanismId mechanism : {0U, 1U}) {
-    passed &= check(graph.addEdge(makeEdge(
-                        source, middle, SyncCoverEdgeKind::CompletionSupply,
-                        mechanism)),
-                    "add first-frontier mechanism");
-  }
-  for (SyncCoverMechanismId mechanism : {2U, 3U}) {
-    passed &= check(graph.addEdge(makeEdge(
-                        middle, target, SyncCoverEdgeKind::CompletionSupply,
-                        mechanism)),
-                    "add second-frontier mechanism");
-  }
-
-  LegacyCoverageOracle oracle(graph);
-  const SyncCoverFactoryWitnessResult complete =
-      oracle.getFactoryMechanismWitnesses(0, 4, 8);
-  std::vector<std::vector<SyncCoverMechanismId>> bruteForce;
-  for (SyncCoverMechanismId first = 0; first < 4; ++first) {
-    for (SyncCoverMechanismId second = first + 1; second < 4; ++second) {
-      if (oracle.checkDemand(0, {first, second}).covered) {
-        bruteForce.push_back({first, second});
-      }
-    }
-  }
-  passed &= check(complete && !complete.truncated &&
-                      complete.singletons.empty() &&
-                      complete.pairs == bruteForce,
-                  "cut-guided pairs match exhaustive two-mechanism coverage");
-
-  const SyncCoverFactoryWitnessResult bounded =
-      oracle.getFactoryMechanismWitnesses(0, 4, 1);
-  passed &= check(bounded && bounded.truncated && bounded.pairs.size() == 1,
-                  "factory witness cap reports unknown through truncation");
-  passed &= check(oracle.getFactoryMechanismWitnesses(0, 4, 0).error ==
-                      SyncCoverCoverageError::InvalidBound,
-                  "zero factory bound is rejected explicitly");
-
-  SyncCoverGraph deadEnds;
-  const SyncCoverNodeId deadSource = takeIndex(
-      deadEnds.addNode(1, 1, 0, 0), passed, "add dead-end source");
-  const SyncCoverNodeId deadMiddle = takeIndex(
-      deadEnds.addNode(2, 1, 0, 1), passed, "add dead-end middle");
-  const SyncCoverNodeId deadTarget = takeIndex(
-      deadEnds.addNode(3, 1, 0, 2), passed, "add dead-end target");
-  passed &= check(deadEnds.addDemand(makeDemand(deadSource, deadTarget)),
-                  "add dead-end demand");
-  for (SyncCoverMechanismId mechanism = 0; mechanism < 9; ++mechanism) {
-    passed &= check(deadEnds.addEdge(makeEdge(
-                        deadSource, deadMiddle,
-                        SyncCoverEdgeKind::CompletionSupply, mechanism)),
-                    "add dead-end first-frontier mechanism");
-  }
-  LegacyCoverageOracle deadEndOracle(deadEnds);
-  const SyncCoverFactoryWitnessResult deadEndResult =
-      deadEndOracle.getFactoryMechanismWitnesses(0, 9, 1);
-  passed &= check(deadEndResult && deadEndResult.truncated &&
-                      deadEndResult.pairs.empty(),
-                  "first-frontier closure budget bounds dead-end mechanisms");
-  return passed;
-}
-
 bool testSelectedCompletionAndCut() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -796,7 +724,6 @@ bool testContextCacheSharesAcrossDemands() {
 int main() {
   bool passed = true;
   passed &= testSharedExpansionRequiresFrozenStructure();
-  passed &= testCutGuidedFactoryWitnesses();
   passed &= testSelectedCompletionAndCut();
   passed &= testContextCacheSharesAcrossDemands();
   passed &= testCompletionTransitionKinds();

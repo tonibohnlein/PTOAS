@@ -135,7 +135,7 @@ findBruteForceOptimum(const SyncCoverMechanismUniverse &universe) {
   return best;
 }
 
-bool testCutGuidedExactSelection() {
+bool testGreedyDirectSelection() {
   bool passed = true;
   SyncCoverGraph graph;
   const SyncCoverNodeId first =
@@ -166,9 +166,9 @@ bool testCutGuidedExactSelection() {
   const SyncCoverSelectionResult result =
       solveSyncCoverSelection(universe, {demandId});
   passed &= check(result && result.mechanisms == std::vector{direct},
-                  "exact search prefers the cheaper direct cover");
+                  "greedy selection prefers the cheaper direct cover");
   passed &= check(findBruteForceOptimum(universe) == result.mechanisms,
-                  "exact solver matches exhaustive subset enumeration");
+                  "greedy selection matches exhaustive subset enumeration");
   const bool hasDirectAllocation =
       result.resources && result.resources.domains.size() > directDomain;
   passed &= check(hasDirectAllocation,
@@ -197,18 +197,6 @@ bool testCutGuidedExactSelection() {
                   "post-search oracle between the oracle-checked redundancy "
                   "pass and final verification");
 
-  SyncCoverSolverOptions greedyOptions;
-  greedyOptions.exactMechanismThreshold = 0;
-  const SyncCoverSelectionResult greedyResult =
-      solveSyncCoverSelection(universe, {demandId}, greedyOptions);
-  passed &= check(greedyResult && !greedyResult.optimalityProven &&
-                      !greedyResult.truncation &&
-                      findBruteForceOptimum(universe) ==
-                          greedyResult.mechanisms,
-                  "grounded greedy search matches exhaustive enumeration on "
-                  "the "
-                  "representative component");
-
   SyncCoverGraph chainGraph;
   const SyncCoverNodeId chainSource = takeIndex(
       chainGraph.addNode(1, 1, 0, 0, {}, {2}), passed, "add chain source");
@@ -236,18 +224,20 @@ bool testCutGuidedExactSelection() {
   chainPlacement.drainsAllResources = true;
   chainDrainDescriptor.barrier = chainPlacement;
   chainDrainDescriptor.supplyEdges.push_back(supply(chainSource, chainTarget));
-  takeIndex(chainUniverse.addMechanism(chainDrainDescriptor), passed,
-            "add chain drain fallback");
+  const SyncCoverMechanismId chainDrain =
+      takeIndex(chainUniverse.addMechanism(chainDrainDescriptor), passed,
+                "add chain drain fallback");
   const SyncCoverSelectionResult chain =
       solveSyncCoverSelection(chainUniverse, {chainDemand});
-  passed &= check(
-      chain && chain.mechanisms ==
-                   std::vector<SyncCoverMechanismId>{chainFirst,
-                                                     chainSecond} &&
-          chain.missingFactoryDemands.empty() &&
-          chain.pricedDemands == 1 && chain.pricedImprovements == 1 &&
-          chain.coverageStatistics.coverageQueries == 0,
-      "lazy pricing swaps the selected drain for the composite pair");
+  // TODO(sync-cover): the round-trip mechanism generator will admit the
+  // verified {chainFirst, chainSecond} composition as an atomic column and
+  // replace this drain.
+  passed &= check(chain &&
+                      chain.mechanisms ==
+                          std::vector<SyncCoverMechanismId>{chainDrain} &&
+                      chain.missingFactoryDemands.empty() &&
+                      chain.coverageStatistics.coverageQueries == 0,
+                  "a composite-only demand keeps its drain fallback");
   passed &= check(chainFirst == 0 && chainSecond == 1,
                   "chain mechanism identities remain deterministic");
   passed &= check(firstHalf == 0 && secondHalf == 1,
@@ -301,7 +291,7 @@ bool testAtomicProtocolAndScarcity() {
   return passed;
 }
 
-bool testComponentsConflictsAndFailure() {
+bool testConflictsFailClosed() {
   bool passed = true;
   SyncCoverGraph graph;
   const SyncCoverNodeId firstSource =
@@ -326,11 +316,10 @@ bool testComponentsConflictsAndFailure() {
       addEvent(universe, firstDomain, 1, 2, secondSource, secondTarget, passed);
   const SyncCoverSelectionResult independent =
       solveSyncCoverSelection(universe, {0, 1});
-  passed &= check(independent && independent.components.size() == 2,
-                  "disjoint lifetimes in one domain form separate components");
   passed &=
-      check(findBruteForceOptimum(universe) == independent.mechanisms,
-            "independent component composition matches global enumeration");
+      check(independent &&
+                findBruteForceOptimum(universe) == independent.mechanisms,
+            "independent demand coverage matches global enumeration");
 
   passed &= check(static_cast<bool>(universe.addConflict(first, second)),
                   "add conflict");
@@ -338,10 +327,9 @@ bool testComponentsConflictsAndFailure() {
       solveSyncCoverSelection(universe, {0, 1});
   passed &= check(!conflicting &&
                       conflicting.error ==
-                          SyncCoverSelectionError::SearchIncomplete &&
-                      conflicting.components.size() == 1,
-                  "conflicts join components and fail closed without "
-                  "overclaiming infeasibility");
+                          SyncCoverSelectionError::SearchIncomplete,
+                  "conflicting mechanisms fail closed without overclaiming "
+                  "infeasibility");
   return passed;
 }
 
@@ -367,69 +355,6 @@ bool testBarrierSelection() {
       check(result && result.mechanisms == std::vector{barrier} &&
                 result.cost.barrierActionProfile == std::vector<std::size_t>{1},
             "direct covering selects a same-resource barrier");
-  SyncCoverSolverOptions beamOptions;
-  beamOptions.exactMechanismThreshold = 0;
-  const SyncCoverSelectionResult beam =
-      solveSyncCoverSelection(universe, {demandId}, beamOptions);
-  passed &= check(beam && beam.mechanisms == std::vector{barrier},
-                  "bounded covering also selects a same-resource barrier");
-  return passed;
-}
-
-bool testTruncationRescuedByBarrierFallback() {
-  bool passed = true;
-  SyncCoverGraph graph;
-  // Interleaved orders make the two event lifetimes overlap in one domain,
-  // fusing both demands into a single component whose greedy search needs
-  // two rounds; a one-evaluation budget then truncates after the first.
-  const SyncCoverNodeId firstSource = takeIndex(
-      graph.addNode(1, 1, 0, 0, {}, {2}), passed, "add first rescue source");
-  const SyncCoverNodeId secondSource = takeIndex(
-      graph.addNode(1, 1, 0, 1, {}, {2}), passed, "add second rescue source");
-  const SyncCoverNodeId firstTarget =
-      takeIndex(graph.addNode(2, 1, 0, 2), passed, "add first rescue target");
-  const SyncCoverNodeId secondTarget =
-      takeIndex(graph.addNode(2, 1, 0, 3), passed, "add second rescue target");
-  const SyncCoverDemandId firstDemand =
-      takeIndex(graph.addDemand(demand(firstSource, firstTarget)), passed,
-                "add first rescue demand");
-  const SyncCoverDemandId secondDemand =
-      takeIndex(graph.addDemand(demand(secondSource, secondTarget)), passed,
-                "add second rescue demand");
-  SyncCoverMechanismUniverse universe(graph);
-  const SyncCoverResourceDomainId domain = takeIndex(
-      universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 8),
-      passed, "add rescue domain");
-  const SyncCoverMechanismId firstRescueEvent =
-      addEvent(universe, domain, 1, 2, firstSource, firstTarget, passed);
-  const SyncCoverMechanismId secondRescueEvent =
-      addEvent(universe, domain, 1, 2, secondSource, secondTarget, passed);
-  SyncCoverMechanismDescriptor descriptor;
-  descriptor.kind = SyncCoverMechanismKind::Barrier;
-  SyncCoverBarrierPlacement placement{1, firstTarget, 0};
-  placement.drainsAllResources = true;
-  descriptor.barrier = placement;
-  descriptor.supplyEdges.push_back(supply(firstSource, firstTarget));
-  descriptor.supplyEdges.push_back(supply(secondSource, secondTarget));
-  takeIndex(universe.addMechanism(descriptor), passed, "add rescue barrier");
-
-  SyncCoverSolverOptions truncated;
-  truncated.exactMechanismThreshold = 0;
-  truncated.evaluationLimit = 1;
-  const SyncCoverSelectionResult rescued = solveSyncCoverSelection(
-      universe, {firstDemand, secondDemand}, truncated);
-  passed &= check(static_cast<bool>(rescued),
-                  "budget-one truncation is rescued, not failed");
-  passed &= check(rescued.mechanisms ==
-                      std::vector<SyncCoverMechanismId>{firstRescueEvent,
-                                                        secondRescueEvent},
-                  "lazy pricing upgrades the rescue barrier to events");
-  passed &= check(rescued.rescuedComponents == 1 &&
-                      rescued.pricedImprovements == 1 &&
-                      rescued.truncation.evaluationLimit &&
-                      !rescued.optimalityProven,
-                  "the rescue and its pricing are reported; optimality "
-                  "stays demoted");
   return passed;
 }
 
@@ -479,20 +404,17 @@ bool testDeclaredCoverageSelection() {
       universe.addMechanism(barrierDescriptor), passed,
       "add broad barrier candidate");
 
-  SyncCoverSolverOptions options;
-  options.exactMechanismThreshold = 0;
-  const SyncCoverSelectionResult result = solveSyncCoverSelection(
-      universe, {firstDemand, secondDemand}, options);
+  const SyncCoverSelectionResult result =
+      solveSyncCoverSelection(universe, {firstDemand, secondDemand});
+  // TODO(sync-cover): the round-trip mechanism generator will admit the
+  // verified forward/reverse compositions as atomic columns and replace
+  // this barrier.
   passed &= check(result &&
                       result.mechanisms ==
-                          std::vector<SyncCoverMechanismId>{
-                              firstForward, firstReverse, secondForward,
-                              secondReverse},
-                  "lazy pricing replaces the broad barrier with round trips");
-  passed &= check(result &&
+                          std::vector<SyncCoverMechanismId>{barrier} &&
                       result.cost.barrierActionProfile ==
-                          std::vector<std::size_t>{0},
-                  "barrier-first cost prefers fine-grained round trips");
+                          std::vector<std::size_t>{1},
+                  "composite-only demands keep the broad barrier");
   passed &= check(firstForward == 0 && firstReverse == 1 &&
                       secondForward == 2 && secondReverse == 3,
                   "event candidates retain deterministic identities");
@@ -500,7 +422,7 @@ bool testDeclaredCoverageSelection() {
   return passed;
 }
 
-bool testBeamSeedsAndRedundancy() {
+bool testGreedyDeterminism() {
   bool passed = true;
   SyncCoverGraph graph;
   const SyncCoverNodeId source =
@@ -515,22 +437,15 @@ bool testBeamSeedsAndRedundancy() {
   const SyncCoverMechanismId first =
       addEvent(universe, domain, 1, 2, source, target, passed);
   addEvent(universe, domain, 1, 2, source, target, passed);
-  SyncCoverSolverOptions options;
-  options.exactMechanismThreshold = 0;
-  options.evaluationLimit = 1;
   const SyncCoverSelectionResult firstRun =
-      solveSyncCoverSelection(universe, {0}, options);
+      solveSyncCoverSelection(universe, {0});
   const SyncCoverSelectionResult secondRun =
-      solveSyncCoverSelection(universe, {0}, options);
+      solveSyncCoverSelection(universe, {0});
   passed &= check(firstRun && firstRun.mechanisms == std::vector{first},
-                  "bounded greedy covers within a one-evaluation limit");
-  passed &= check(!firstRun.truncation.evaluationLimit &&
-                      !firstRun.optimalityProven,
-                  "large-component greedy selection does not claim "
-                  "optimality");
+                  "greedy covers with the first equivalent candidate");
   passed &= check(firstRun.mechanisms == secondRun.mechanisms &&
                       firstRun.evaluations == secondRun.evaluations,
-                  "bounded greedy selection is deterministic");
+                  "greedy selection is deterministic");
   return passed;
 }
 
@@ -568,58 +483,6 @@ bool testRecurrenceAndInputValidation() {
   passed &= check(solveSyncCoverSelection(universe, {1}).error ==
                       SyncCoverSelectionError::InvalidDemand,
                   "unknown active demands are rejected");
-  SyncCoverSolverOptions invalid;
-  invalid.evaluationLimit = 0;
-  passed &= check(solveSyncCoverSelection(universe, {0}, invalid).error ==
-                      SyncCoverSelectionError::InvalidOptions,
-                  "invalid search bounds are rejected");
-  invalid = {};
-  invalid.exactMechanismThreshold =
-      SyncCoverSolverOptions::maximumExactMechanismThreshold + 1;
-  passed &= check(solveSyncCoverSelection(universe, {0}, invalid).error ==
-                      SyncCoverSelectionError::InvalidOptions,
-                  "unsafe exact-search thresholds are rejected");
-  return passed;
-}
-
-bool testBoundedSearchDiagnostics() {
-  bool passed = true;
-  SyncCoverGraph graph;
-  const SyncCoverNodeId source =
-      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}), passed, "add source");
-  const SyncCoverNodeId target =
-      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add target");
-  takeIndex(graph.addDemand(demand(source, target)), passed, "add demand");
-  SyncCoverMechanismUniverse universe(graph);
-  const auto domain = takeIndex(
-      universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 8),
-      passed, "add domain");
-  addEvent(universe, domain, 1, 2, source, target, passed);
-
-  SyncCoverSolverOptions options;
-  options.exactMechanismThreshold = 0;
-  options.evaluationLimit = 1;
-  const SyncCoverSelectionResult incomplete =
-      solveSyncCoverSelection(universe, {0}, options);
-  passed &= check(incomplete &&
-                      incomplete.mechanisms ==
-                          std::vector<SyncCoverMechanismId>{0} &&
-                      !incomplete.truncation.evaluationLimit &&
-                      !incomplete.optimalityProven,
-                  "a complete large-component greedy result is retained");
-  passed &= check(static_cast<bool>(incomplete.cost),
-                  "a successful truncated search returns its valid cost");
-
-  options = {};
-  options.evaluationLimit = 1;
-  const SyncCoverSelectionResult exactIncomplete =
-      solveSyncCoverSelection(universe, {0}, options);
-  passed &= check(exactIncomplete &&
-                      exactIncomplete.mechanisms ==
-                          std::vector<SyncCoverMechanismId>{0} &&
-                      exactIncomplete.truncation.evaluationLimit &&
-                      !exactIncomplete.optimalityProven,
-                  "exact search keeps the greedy incumbent at its budget");
   return passed;
 }
 
@@ -661,8 +524,7 @@ bool testManyDemandCache() {
   const SyncCoverSelectionResult result =
       solveSyncCoverSelection(universe, demands);
   passed &=
-      check(result && result.components.size() == kDemandCount &&
-                result.coverageStatistics.graphValidations == 1 &&
+      check(result && result.coverageStatistics.graphValidations == 1 &&
                 result.coverageStatistics.demandPreparations == 1 &&
                 result.coverageStatistics.groundingQueries == kDemandCount &&
                 result.coverageStatistics.coverageQueries == 0 &&
@@ -687,7 +549,6 @@ bool testMissingFactoryDemand() {
   passed &= check(!result &&
                       result.error ==
                           SyncCoverSelectionError::SearchIncomplete &&
-                      !result.optimalityProven &&
                       result.missingFactoryDemands ==
                           std::vector<SyncCoverDemandId>{0},
                   "missing factory coverage is not called infeasible");
@@ -698,12 +559,10 @@ bool testMissingFactoryDemand() {
 
 int main() {
   const bool passed =
-      testCutGuidedExactSelection() &&
-      testAtomicProtocolAndScarcity() && testComponentsConflictsAndFailure() &&
-      testBarrierSelection() && testTruncationRescuedByBarrierFallback() &&
-      testDeclaredCoverageSelection() &&
-      testBeamSeedsAndRedundancy() && testRecurrenceAndInputValidation() &&
-      testBoundedSearchDiagnostics() && testManyDemandCache() &&
+      testGreedyDirectSelection() && testAtomicProtocolAndScarcity() &&
+      testConflictsFailClosed() && testBarrierSelection() &&
+      testDeclaredCoverageSelection() && testGreedyDeterminism() &&
+      testRecurrenceAndInputValidation() && testManyDemandCache() &&
       testMissingFactoryDemand();
   return passed ? 0 : 1;
 }

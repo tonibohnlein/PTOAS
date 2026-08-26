@@ -200,8 +200,6 @@ StringRef stringifyCoveringSelectionError(SyncCoverSelectionError error) {
     return "invalid-universe";
   case SyncCoverSelectionError::InvalidDemand:
     return "invalid-demand";
-  case SyncCoverSelectionError::InvalidOptions:
-    return "invalid-options";
   case SyncCoverSelectionError::SearchIncomplete:
     return "search-incomplete";
   case SyncCoverSelectionError::FinalVerificationFailed:
@@ -454,16 +452,10 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
        << (snapshot.columnGenerationTruncated ? "yes" : "no")
        << " mechanisms=" << snapshot.candidateMechanisms
        << " selected=" << snapshot.selectedMechanisms
-       << " components=" << snapshot.solverComponents
        << " evaluations=" << snapshot.solverEvaluations
        << " redundancy-evaluations=" << snapshot.redundancyEvaluations
        << " oracle-redundancy-checks=" << snapshot.oracleRedundancyChecks
-       << " rescued-components=" << snapshot.rescuedComponents
-       << " priced-demands=" << snapshot.pricedDemands
-       << " priced-improvements=" << snapshot.pricedImprovements
        << " event-uncovered=" << snapshot.demandsWithoutEventColumn.size()
-       << " truncated=" << (snapshot.searchTruncated ? "yes" : "no")
-       << " optimal=" << (snapshot.optimalityProven ? "yes" : "no")
        << " actions=";
     printNodeIds(os, snapshot.actionProfile);
     os << " barriers=";

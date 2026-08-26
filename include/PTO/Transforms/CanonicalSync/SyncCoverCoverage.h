@@ -94,20 +94,6 @@ struct SyncCoverSelectionWitnessResult {
   }
 };
 
-/// Bounded structural columns for the common completion and round-trip path
-/// shapes. Pairs are sorted and unique. The topology is released after the
-/// call, so grounding memory is bounded by one demand expansion.
-struct SyncCoverFactoryWitnessResult {
-  SyncCoverCoverageError error = SyncCoverCoverageError::None;
-  bool truncated = false;
-  std::vector<SyncCoverMechanismId> singletons;
-  std::vector<std::vector<SyncCoverMechanismId>> pairs;
-
-  explicit operator bool() const {
-    return error == SyncCoverCoverageError::None;
-  }
-};
-
 struct SyncCoverCoverageStatistics {
   std::size_t graphValidations = 0;
   std::size_t demandPreparations = 0;
@@ -175,10 +161,6 @@ public:
       const std::vector<SyncCoverDemandId> &demands,
       const std::vector<std::vector<SyncCoverMechanismId>> &selections,
       std::size_t mechanismCount) const;
-
-  SyncCoverFactoryWitnessResult getFactoryMechanismWitnesses(
-      SyncCoverDemandId demand, std::size_t mechanismCount,
-      std::size_t maximumPairs = 1024) const;
 
   SyncCoverCoverageStatistics getStatistics() const;
 

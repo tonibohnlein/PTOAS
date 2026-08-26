@@ -291,16 +291,9 @@ bool testExpansionOverlayEpoch() {
       shared.getSingletonMechanismWitnesses(0);
   const SyncCoverSingletonWitnessResult legacySingleton =
       legacy.getSingletonMechanismWitnesses(0);
-  const SyncCoverFactoryWitnessResult sharedFactory =
-      shared.getFactoryMechanismWitnesses(0, 1);
-  const SyncCoverFactoryWitnessResult legacyFactory =
-      legacy.getFactoryMechanismWitnesses(0, 1);
   passed &= check(sharedSingleton.error == legacySingleton.error &&
                       sharedSingleton.mechanisms ==
-                          legacySingleton.mechanisms &&
-                      sharedFactory.error == legacyFactory.error &&
-                      sharedFactory.singletons == legacyFactory.singletons &&
-                      sharedFactory.pairs == legacyFactory.pairs,
+                          legacySingleton.mechanisms,
                   "shared and legacy grounding agree on the same frozen graph");
   return passed;
 }

@@ -253,8 +253,6 @@ bool testMissingFactoryCoverage() {
     passed &= check(grounded.statistics.coverageQueries == 0 &&
                         grounded.statistics.groundingQueries == 2,
                     "grounding queries each demand once and prices nothing");
-    passed &= check(grounded.instance.pricingRestricted,
-                    "the witness universe reports itself as restricted");
   }
   return passed;
 }
@@ -294,10 +292,8 @@ bool testPricesBarrierOnlyCoverage() {
         return column.members == eventPair && column.coverage.contains(0);
       });
   passed &= check(grounded && !hasPair &&
-                      grounded.instance.coversAll({barrier}) &&
-                      grounded.instance.pricingRestricted,
-                  "grounding declares no composite columns; the solver "
-                  "prices barrier-covered demands lazily");
+                      grounded.instance.coversAll({barrier}),
+                  "grounding declares no composite columns");
   return passed;
 }
 

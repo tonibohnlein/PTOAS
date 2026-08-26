@@ -255,19 +255,9 @@ MechanismAdapter::solve(CanonicalSyncCoveringSnapshot &snapshot) {
   const SyncCoverSelectionResult result =
       solveSyncCoverSelection(universe_, demands, {}, protocolColumns);
   snapshot.selectionError = result.error;
-  snapshot.searchTruncated = static_cast<bool>(result.truncation);
-  const bool candidateUniverseComplete =
-      !slotLifecycles_.truncated && !slotProtocols_.truncated &&
-      unmaterializableSlotProtocols_ == 0;
-  snapshot.optimalityProven =
-      result.optimalityProven && candidateUniverseComplete;
-  snapshot.solverComponents = result.components.size();
   snapshot.solverEvaluations = result.evaluations;
   snapshot.redundancyEvaluations = result.redundancyEvaluations;
   snapshot.oracleRedundancyChecks = result.oracleRedundancyChecks;
-  snapshot.rescuedComponents = result.rescuedComponents;
-  snapshot.pricedDemands = result.pricedDemands;
-  snapshot.pricedImprovements = result.pricedImprovements;
   snapshot.demandsWithoutEventColumn = result.demandsWithoutEventColumn;
   snapshot.coverageStatistics = result.coverageStatistics;
   snapshot.finalVerificationStatistics = result.finalVerificationStatistics;
@@ -275,22 +265,7 @@ MechanismAdapter::solve(CanonicalSyncCoveringSnapshot &snapshot) {
     InFlightDiagnostic diagnostic =
         func_.emitError() << "canonical covering selection failed with error "
                           << static_cast<unsigned>(result.error)
-                          << "; components=" << result.components.size()
                           << "; evaluations=" << result.evaluations
-                          << "; truncated="
-                          << static_cast<bool>(result.truncation)
-                          << "; failed-component=";
-    if (result.failedComponent) {
-      diagnostic << *result.failedComponent;
-      const SyncCoverSelectionComponent &component =
-          result.components[*result.failedComponent];
-      diagnostic << " demands=" << component.demands.size()
-                 << " mechanisms=" << component.mechanisms.size()
-                 << " columns=" << component.columns.size();
-    } else {
-      diagnostic << "none";
-    }
-    diagnostic
                           << "; missing-factory-demands="
                           << result.missingFactoryDemands.size();
     constexpr std::size_t kDiagnosticLimit = 16;

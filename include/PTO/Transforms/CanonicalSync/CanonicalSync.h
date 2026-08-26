@@ -471,18 +471,12 @@ struct CanonicalSyncCoveringSnapshot {
   std::size_t generatedColumns = 0;
   bool columnGenerationTruncated = false;
   std::size_t selectedMechanisms = 0;
-  std::size_t solverComponents = 0;
   std::size_t solverEvaluations = 0;
   std::size_t redundancyEvaluations = 0;
   std::size_t oracleRedundancyChecks = 0;
-  std::size_t rescuedComponents = 0;
-  std::size_t pricedDemands = 0;
-  std::size_t pricedImprovements = 0;
   std::vector<std::size_t> demandsWithoutEventColumn;
   SyncCoverSelectionError selectionError = SyncCoverSelectionError::None;
   bool selectionAttempted = false;
-  bool searchTruncated = false;
-  bool optimalityProven = false;
   std::vector<std::size_t> actionProfile;
   std::vector<std::size_t> barrierActionProfile;
   std::vector<CanonicalSyncCoveringSelectedProvider> selectedProviders;
