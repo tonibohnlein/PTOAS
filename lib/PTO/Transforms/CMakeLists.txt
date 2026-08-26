@@ -166,7 +166,17 @@ add_mlir_dialect_library(PTOTransforms
   CanonicalSync/SyncCoverSlotLifecycle.cpp
   CanonicalSync/SyncCoverSlotProtocol.cpp
   CanonicalSync/CompletionReduction.cpp
+  CanonicalSync/CanonicalSyncAnalysis.cpp
+  CanonicalSync/CanonicalSyncDependencies.cpp
+  CanonicalSync/CanonicalSyncMechanismGeneration.cpp
+  CanonicalSync/CanonicalSyncOwnership.cpp
+  CanonicalSync/CanonicalSyncOwnershipAnalysis.cpp
+  CanonicalSync/CanonicalSyncOwnershipVerification.cpp
+  CanonicalSync/CanonicalSyncPlanning.cpp
+  CanonicalSync/CanonicalSyncProtocol.cpp
   CanonicalSync/CanonicalSyncToken.cpp
+  CanonicalSync/CanonicalSyncCodegen.cpp
+  CanonicalSync/CanonicalSyncPrinter.cpp
   LoweringSyncToPipe.cpp
   PTOVerifyTFreePass.cpp
 
