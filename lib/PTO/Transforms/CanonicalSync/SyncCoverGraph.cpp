@@ -879,7 +879,15 @@ bool SyncCoverGraph::reserveAdditionalEdges(std::size_t additionalEdges) {
   if (overflow) {
     return false;
   }
-  edges_.reserve(edges_.size() + additionalEdges);
+  const std::size_t required = edges_.size() + additionalEdges;
+  if (required > edges_.capacity()) {
+    // Grow geometrically: an exact-size reserve would defeat amortized
+    // growth and relocate the whole vector on every mechanism insertion.
+    const std::size_t doubled =
+        edges_.capacity() > edges_.max_size() / 2 ? edges_.max_size()
+                                                  : edges_.capacity() * 2;
+    edges_.reserve(std::max(required, doubled));
+  }
   return true;
 }
 
