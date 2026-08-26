@@ -20,27 +20,13 @@
 namespace mlir {
 namespace pto {
 
-enum class SyncCoverEvidenceLevel : std::uint8_t {
-  None,
-  VendorKernels,
-  Measured,
-  Documented,
-};
-
 /// Target facts that may change which synchronization mechanisms are sound.
 /// Resource identifiers deliberately remain independent of PipelineType so
 /// the covering core and its unit tests stay MLIR-free.
 struct SyncCoverTargetCapabilities {
   std::string name;
-  std::set<std::uint32_t> prefixSetResources;
-  SyncCoverEvidenceLevel prefixEvidence = SyncCoverEvidenceLevel::None;
   std::set<std::uint32_t> hardwareCompletionResources;
   unsigned eventIdBudget = 8;
-
-  bool hasPrefixSetSemantics(std::uint32_t resource) const {
-    return prefixEvidence != SyncCoverEvidenceLevel::None &&
-           prefixSetResources.count(resource) != 0;
-  }
 
   bool hasHardwareCompletion(std::uint32_t resource) const {
     return hardwareCompletionResources.count(resource) != 0;

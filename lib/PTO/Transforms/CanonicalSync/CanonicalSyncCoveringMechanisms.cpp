@@ -708,7 +708,6 @@ LogicalResult MechanismAdapter::addGeneratedColumns(
   // actions can be materialized and independently verified here.
   std::vector<std::unique_ptr<SyncCoverColumnGenerator>> generators;
   generators.push_back(makeSyncCoverCanonicalEventGenerator());
-  generators.push_back(makeSyncCoverMergedPrefixEventGenerator());
   generators.push_back(makeSyncCoverPiercedBarrierGenerator());
   const SyncCoverColumnGenerationResult generated =
       runSyncCoverColumnGenerators(context, universe_, generators);

@@ -80,14 +80,7 @@ SyncCoverColumnGenerationResult runSyncCoverColumnGenerators(
 std::unique_ptr<SyncCoverColumnGenerator>
 makeSyncCoverCanonicalEventGenerator();
 std::unique_ptr<SyncCoverColumnGenerator>
-makeSyncCoverMergedPrefixEventGenerator();
-std::unique_ptr<SyncCoverColumnGenerator>
 makeSyncCoverPiercedBarrierGenerator();
-
-bool verifySyncCoverMergedPrefixEvent(
-    const SyncCoverGraph &graph, const SyncCoverResourceDomain &domain,
-    const SyncCoverMechanismDescriptor &descriptor,
-    const SyncCoverTargetCapabilities &target);
 
 } // namespace pto
 } // namespace mlir

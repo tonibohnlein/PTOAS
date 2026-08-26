@@ -24,7 +24,6 @@ using namespace mlir::pto;
 namespace {
 
 constexpr std::uint64_t kCanonicalTag = 0x43414e4fULL;
-constexpr std::uint64_t kMergedTag = 0x4d455247ULL;
 constexpr std::uint64_t kBarrierTag = 0x42415252ULL;
 
 std::uint64_t makeProviderIdentity(std::uint64_t tag, std::size_t ordinal) {
@@ -157,37 +156,6 @@ groupLinearCrossPipeDemands(
   return groups;
 }
 
-std::optional<SyncCoverMechanismDescriptor>
-makeMergedDescriptor(const SyncCoverResourceDomain &domain,
-                     const std::vector<LinearDemand> &members,
-                     SyncCoverNodeId setAfter, SyncCoverNodeId waitBefore,
-                     SyncCoverScopeId scope,
-                     std::uint64_t providerIdentity) {
-  SyncCoverMechanismDescriptorBuilder builder(
-      SyncCoverMechanismKind::VerifiedProtocol, providerIdentity);
-  const SyncCoverDescriptorActionRef produce = builder.addAction(
-      SyncCoverResourceActionKind::Produce, domain.sourceResource,
-      {SyncCoverAnchorKind::AfterNode, setAfter, 0, 0});
-  const SyncCoverDescriptorActionRef consume = builder.addAction(
-      SyncCoverResourceActionKind::Consume, domain.targetResource,
-      {SyncCoverAnchorKind::BeforeNode, waitBefore, 0, 0});
-  std::vector<SyncCoverProtocolSupply> supplies;
-  supplies.reserve(members.size());
-  for (const LinearDemand &member : members) {
-    SyncCoverEdge edge;
-    edge.source = member.source;
-    edge.target = member.target;
-    edge.kind = SyncCoverEdgeKind::CompletionSupply;
-    edge.scope = scope;
-    supplies.push_back({edge, produce, consume});
-  }
-  if (!builder.addProtocolLane(domain, scope, 0, 1, {produce, consume},
-                               std::move(supplies))) {
-    return std::nullopt;
-  }
-  return std::move(builder).takeDescriptor();
-}
-
 class CanonicalEventGenerator final : public SyncCoverColumnGenerator {
 public:
   const char *name() const override { return "canonical"; }
@@ -221,82 +189,6 @@ public:
                        : SyncCoverMechanismResult{
                              SyncCoverMechanismError::InvalidMechanism,
                              std::nullopt};
-        if (added && added.index) {
-          ++report.admitted;
-        } else {
-          ++report.rejectedByVerifier;
-        }
-      }
-    }
-    return report;
-  }
-};
-
-class MergedPrefixEventGenerator final : public SyncCoverColumnGenerator {
-public:
-  const char *name() const override { return "merged-prefix"; }
-
-  SyncCoverColumnGeneratorReport
-  generate(const SyncCoverColumnGenerationContext &context,
-           SyncCoverMechanismUniverse &universe) const override {
-    SyncCoverColumnGeneratorReport report;
-    report.generator = name();
-    const SyncCoverGraph &graph = universe.getGraph();
-    const auto groups = groupLinearCrossPipeDemands(graph, context, report);
-    if (!groups) {
-      return report;
-    }
-    std::size_t ordinal = 0;
-    for (const auto &entry : *groups) {
-      const auto [scope, source, target] = entry.first;
-      if (!context.target.hasPrefixSetSemantics(source)) {
-        report.skippedByCapability += entry.second.size();
-        continue;
-      }
-      const SyncCoverResourceDomain *domain = findDomain(
-          universe, SyncCoverResourceKind::EventId, source, target);
-      if (!domain) {
-        continue;
-      }
-      const std::vector<LinearDemand> &points = entry.second;
-      if (points.size() < 2) {
-        continue;
-      }
-      std::size_t minimumTargetOrder = points.front().targetOrder;
-      SyncCoverNodeId minimumTarget = points.front().target;
-      std::vector<LinearDemand> prefix;
-      for (std::size_t index = 0; index < points.size(); ++index) {
-        prefix.push_back(points[index]);
-        if (points[index].targetOrder < minimumTargetOrder) {
-          minimumTargetOrder = points[index].targetOrder;
-          minimumTarget = points[index].target;
-        }
-        const bool sourceBoundary =
-            index + 1 == points.size() ||
-            points[index + 1].sourceOrder != points[index].sourceOrder;
-        if (!sourceBoundary || prefix.size() < 2) {
-          continue;
-        }
-        if (points[index].sourceOrder >= minimumTargetOrder) {
-          continue;
-        }
-        if (!chargeCandidate(report, context.options, prefix.size())) {
-          return report;
-        }
-        const auto descriptor = makeMergedDescriptor(
-            *domain, prefix, points[index].source, minimumTarget, scope,
-            makeProviderIdentity(kMergedTag, ordinal++));
-        const SyncCoverMechanismResult added =
-            descriptor
-                ? universe.addVerifiedProtocol(
-                      *descriptor,
-                      [&](const SyncCoverMechanismDescriptor &actual) {
-                        return verifySyncCoverMergedPrefixEvent(
-                            graph, *domain, actual, context.target);
-                      })
-                : SyncCoverMechanismResult{
-                      SyncCoverMechanismError::InvalidMechanism,
-                      std::nullopt};
         if (added && added.index) {
           ++report.admitted;
         } else {
@@ -400,69 +292,6 @@ public:
 
 } // namespace
 
-bool mlir::pto::verifySyncCoverMergedPrefixEvent(
-    const SyncCoverGraph &graph, const SyncCoverResourceDomain &domain,
-    const SyncCoverMechanismDescriptor &descriptor,
-    const SyncCoverTargetCapabilities &target) {
-  if (!target.hasPrefixSetSemantics(domain.sourceResource) ||
-      descriptor.kind != SyncCoverMechanismKind::VerifiedProtocol ||
-      descriptor.actions.size() != 2 || descriptor.supplyEdges.size() < 2 ||
-      descriptor.resourceUses.size() != 1) {
-    return false;
-  }
-  const SyncCoverResourceAction &produce = descriptor.actions[0];
-  const SyncCoverResourceAction &consume = descriptor.actions[1];
-  const auto &nodes = graph.getNodes();
-  const bool actionShape =
-      produce.kind == SyncCoverResourceActionKind::Produce &&
-      consume.kind == SyncCoverResourceActionKind::Consume &&
-      produce.anchor.kind == SyncCoverAnchorKind::AfterNode &&
-      consume.anchor.kind == SyncCoverAnchorKind::BeforeNode &&
-      produce.anchor.node < nodes.size() &&
-      consume.anchor.node < nodes.size() &&
-      produce.resource == domain.sourceResource &&
-      consume.resource == domain.targetResource &&
-      domain.kind == SyncCoverResourceKind::EventId &&
-      domain.sourceResource != domain.targetResource;
-  if (!actionShape) {
-    return false;
-  }
-  const SyncCoverNode &setNode = nodes[produce.anchor.node];
-  const SyncCoverNode &waitNode = nodes[consume.anchor.node];
-  if (setNode.resource != domain.sourceResource ||
-      waitNode.resource != domain.targetResource ||
-      setNode.order >= waitNode.order ||
-      setNode.scope != waitNode.scope || !hasEmptyGuard(setNode.guard) ||
-      !hasEmptyGuard(waitNode.guard) ||
-      !syncCoverNodeCanProduceCompletion(graph, produce.anchor.node,
-                                         domain.targetResource)) {
-    return false;
-  }
-  bool anchorIsProducer = false;
-  bool anchorIsConsumer = false;
-  for (const SyncCoverEdge &edge : descriptor.supplyEdges) {
-    if (edge.kind != SyncCoverEdgeKind::CompletionSupply ||
-        edge.distance != 0 || edge.source >= nodes.size() ||
-        edge.target >= nodes.size() || edge.scope != setNode.scope) {
-      return false;
-    }
-    const SyncCoverNode &source = nodes[edge.source];
-    const SyncCoverNode &targetNode = nodes[edge.target];
-    const bool dominated =
-        source.resource == domain.sourceResource &&
-        targetNode.resource == domain.targetResource &&
-        source.scope == setNode.scope && targetNode.scope == setNode.scope &&
-        hasEmptyGuard(source.guard) && hasEmptyGuard(targetNode.guard) &&
-        source.order <= setNode.order && waitNode.order <= targetNode.order;
-    if (!dominated) {
-      return false;
-    }
-    anchorIsProducer |= edge.source == produce.anchor.node;
-    anchorIsConsumer |= edge.target == consume.anchor.node;
-  }
-  return anchorIsProducer && anchorIsConsumer;
-}
-
 SyncCoverColumnGenerationResult mlir::pto::runSyncCoverColumnGenerators(
     const SyncCoverColumnGenerationContext &context,
     SyncCoverMechanismUniverse &universe,
@@ -480,11 +309,6 @@ SyncCoverColumnGenerationResult mlir::pto::runSyncCoverColumnGenerators(
 std::unique_ptr<SyncCoverColumnGenerator>
 mlir::pto::makeSyncCoverCanonicalEventGenerator() {
   return std::make_unique<CanonicalEventGenerator>();
-}
-
-std::unique_ptr<SyncCoverColumnGenerator>
-mlir::pto::makeSyncCoverMergedPrefixEventGenerator() {
-  return std::make_unique<MergedPrefixEventGenerator>();
 }
 
 std::unique_ptr<SyncCoverColumnGenerator>
