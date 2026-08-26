@@ -677,9 +677,85 @@ bool testMinimalWitnessGrounding() {
 
 } // namespace
 
+bool sameCoverage(const SyncCoverCoverageResult &first,
+                  const SyncCoverCoverageResult &second) {
+  return first.error == second.error && first.covered == second.covered &&
+         first.witnessMechanisms == second.witnessMechanisms &&
+         first.reachableStates == second.reachableStates &&
+         first.cutMechanisms == second.cutMechanisms;
+}
+
+/// The prepared-topology cache is keyed by coverage context, so demands with
+/// DIFFERENT endpoints sharing one key reuse a topology first prepared for
+/// another demand. Every cached answer must match a fresh oracle regardless
+/// of query order.
+bool testContextCacheSharesAcrossDemands() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop = takeIndex(
+      graph.addScope(0, false, std::nullopt, true), passed, "add loop scope");
+  const SyncCoverNodeId firstSource =
+      takeIndex(graph.addNode(1, 1, loop, 0), passed, "add first source");
+  const SyncCoverNodeId firstTarget =
+      takeIndex(graph.addNode(2, 1, loop, 1), passed, "add first target");
+  const SyncCoverNodeId secondSource =
+      takeIndex(graph.addNode(1, 1, loop, 2), passed, "add second source");
+  const SyncCoverNodeId secondTarget =
+      takeIndex(graph.addNode(2, 1, loop, 3), passed, "add second target");
+  // Same scope, distance, and (empty) guards: one context key, four distinct
+  // endpoint pairs across forward and distance-one recurrence demands.
+  for (unsigned distance : {0U, 1U}) {
+    SyncCoverDemand first = makeDemand(firstSource, firstTarget);
+    first.scope = loop;
+    first.distance = distance;
+    SyncCoverDemand second = makeDemand(secondSource, secondTarget);
+    second.scope = loop;
+    second.distance = distance;
+    passed &= check(graph.addDemand(first), "add first demand");
+    passed &= check(graph.addDemand(second), "add second demand");
+  }
+  SyncCoverEdge covering = makeEdge(
+      firstSource, firstTarget, SyncCoverEdgeKind::CompletionSupply, 3);
+  covering.scope = loop;
+  passed &= check(graph.addEdge(covering), "add first covering edge");
+  SyncCoverEdge carried = makeEdge(
+      secondSource, secondTarget, SyncCoverEdgeKind::CompletionSupply, 4);
+  carried.scope = loop;
+  carried.distance = 1;
+  passed &= check(graph.addEdge(carried), "add carried covering edge");
+
+  const std::vector<SyncCoverMechanismId> selected{3, 4};
+  const std::vector<std::vector<SyncCoverDemandId>> orders = {
+      {0, 1, 2, 3}, {3, 2, 1, 0}, {1, 3, 0, 2}};
+  for (const std::vector<SyncCoverDemandId> &order : orders) {
+    SyncCoverCoverageOracle shared(graph);
+    for (SyncCoverDemandId demand : order) {
+      const SyncCoverCoverageResult cached =
+          shared.checkDemand(demand, selected);
+      const SyncCoverCoverageResult fresh =
+          SyncCoverCoverageOracle(graph).checkDemand(demand, selected);
+      passed &= check(sameCoverage(cached, fresh),
+                      "context-cached coverage matches a fresh oracle for "
+                      "every demand order");
+      const SyncCoverSingletonWitnessResult cachedWitnesses =
+          shared.getSingletonMechanismWitnesses(demand);
+      const SyncCoverSingletonWitnessResult freshWitnesses =
+          SyncCoverCoverageOracle(graph).getSingletonMechanismWitnesses(
+              demand);
+      passed &= check(cachedWitnesses.error == freshWitnesses.error &&
+                          cachedWitnesses.mechanisms ==
+                              freshWitnesses.mechanisms,
+                      "context-cached singleton witnesses match a fresh "
+                      "oracle for every demand order");
+    }
+  }
+  return passed;
+}
+
 int main() {
   bool passed = true;
   passed &= testSelectedCompletionAndCut();
+  passed &= testContextCacheSharesAcrossDemands();
   passed &= testCompletionTransitionKinds();
   passed &= testRecurrenceCopiesAndGuards();
   passed &= testIntermediateConditionalFailsClosed();

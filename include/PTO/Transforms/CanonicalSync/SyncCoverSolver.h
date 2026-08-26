@@ -46,6 +46,11 @@ struct SyncCoverSolverOptions {
   /// Seed evaluation is outside this limit so a valid incumbent survives
   /// truncation.
   std::size_t evaluationLimit = 512;
+  /// Upper bound on post-search oracle-checked redundancy deletions. The
+  /// search itself never queries the oracle; this bounds the one polish pass
+  /// over the final selection so its cost stays proportional to the emitted
+  /// plan, not to the candidate universe.
+  std::size_t oracleRedundancyLimit = 32;
 };
 
 enum class SyncCoverSelectionError : std::uint8_t {
@@ -73,6 +78,9 @@ struct SyncCoverSelectionResult {
   std::vector<SyncCoverSelectionComponent> components;
   std::size_t evaluations = 0;
   std::size_t redundancyEvaluations = 0;
+  /// Components whose truncated search was rescued by the all-barrier
+  /// fallback instead of a searched selection.
+  std::size_t rescuedComponents = 0;
   SyncCoverSearchTruncation truncation;
   bool optimalityProven = false;
   std::vector<SyncCoverDemandId> missingFactoryDemands;

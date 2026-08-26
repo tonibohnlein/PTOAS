@@ -428,6 +428,58 @@ bool testBarrierSelection() {
   return passed;
 }
 
+bool testTruncationRescuedByBarrierFallback() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  // Interleaved orders make the two event lifetimes overlap in one domain,
+  // fusing both demands into a single component whose greedy search needs
+  // two rounds; a one-evaluation budget then truncates after the first.
+  const SyncCoverNodeId firstSource = takeIndex(
+      graph.addNode(1, 1, 0, 0, {}, {2}), passed, "add first rescue source");
+  const SyncCoverNodeId secondSource = takeIndex(
+      graph.addNode(1, 1, 0, 1, {}, {2}), passed, "add second rescue source");
+  const SyncCoverNodeId firstTarget =
+      takeIndex(graph.addNode(2, 1, 0, 2), passed, "add first rescue target");
+  const SyncCoverNodeId secondTarget =
+      takeIndex(graph.addNode(2, 1, 0, 3), passed, "add second rescue target");
+  const SyncCoverDemandId firstDemand =
+      takeIndex(graph.addDemand(demand(firstSource, firstTarget)), passed,
+                "add first rescue demand");
+  const SyncCoverDemandId secondDemand =
+      takeIndex(graph.addDemand(demand(secondSource, secondTarget)), passed,
+                "add second rescue demand");
+  SyncCoverMechanismUniverse universe(graph);
+  const SyncCoverResourceDomainId domain = takeIndex(
+      universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 8),
+      passed, "add rescue domain");
+  addEvent(universe, domain, 1, 2, firstSource, firstTarget, passed);
+  addEvent(universe, domain, 1, 2, secondSource, secondTarget, passed);
+  SyncCoverMechanismDescriptor descriptor;
+  descriptor.kind = SyncCoverMechanismKind::Barrier;
+  SyncCoverBarrierPlacement placement{1, firstTarget, 0};
+  placement.drainsAllResources = true;
+  descriptor.barrier = placement;
+  descriptor.supplyEdges.push_back(supply(firstSource, firstTarget));
+  descriptor.supplyEdges.push_back(supply(secondSource, secondTarget));
+  const SyncCoverMechanismId barrier = takeIndex(
+      universe.addMechanism(descriptor), passed, "add rescue barrier");
+
+  SyncCoverSolverOptions truncated;
+  truncated.exactMechanismThreshold = 0;
+  truncated.evaluationLimit = 1;
+  const SyncCoverSelectionResult rescued = solveSyncCoverSelection(
+      universe, {firstDemand, secondDemand}, {}, truncated);
+  passed &= check(static_cast<bool>(rescued),
+                  "budget-one truncation is rescued, not failed");
+  passed &= check(rescued.mechanisms == std::vector{barrier},
+                  "the rescue selects the all-barrier column");
+  passed &= check(rescued.rescuedComponents == 1 &&
+                      rescued.truncation.evaluationLimit &&
+                      !rescued.optimalityProven,
+                  "the rescue is reported and demotes optimality");
+  return passed;
+}
+
 bool testDeclaredCoverageSelection() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -708,7 +760,8 @@ int main() {
   const bool passed =
       testCutGuidedExactSelection() && testExactMembershipClassification() &&
       testAtomicProtocolAndScarcity() && testComponentsConflictsAndFailure() &&
-      testBarrierSelection() && testDeclaredCoverageSelection() &&
+      testBarrierSelection() && testTruncationRescuedByBarrierFallback() &&
+      testDeclaredCoverageSelection() &&
       testBeamSeedsAndRedundancy() && testRecurrenceAndInputValidation() &&
       testBoundedSearchDiagnostics() && testManyDemandCache() &&
       testMissingFactoryDemand();

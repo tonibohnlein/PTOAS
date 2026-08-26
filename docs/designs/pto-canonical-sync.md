@@ -188,5 +188,5 @@ global graph reconstruction. In particular:
   of `pto-insert-sync`, not minutes.
 
 The historical no-alias GEMM regression requires a complete eight-ID plan with
-54 set/wait pairs, zero planned body barriers, deterministic output, and one
+53 set/wait pairs, zero planned body barriers, deterministic output, and one
 successful final verification.

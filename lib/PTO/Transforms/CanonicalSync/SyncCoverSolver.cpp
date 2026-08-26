@@ -792,9 +792,11 @@ void oracleRemoveRedundant(const SyncCoverSelectionEvaluator &evaluator,
                            const SyncCoverGroundedInstance &instance,
                            const SyncCoverCoverageOracle &oracle,
                            const std::vector<SyncCoverDemandId> &uniqueDemands,
+                           const SyncCoverSolverOptions &options,
                            std::vector<SyncCoverMechanismId> &selected,
                            SyncCoverStructuralCost &cost,
                            std::size_t &evaluations) {
+  std::size_t oracleChecks = 0;
   for (std::size_t index = selected.size(); index > 0; --index) {
     std::vector<SyncCoverMechanismId> candidate = selected;
     candidate.erase(candidate.begin() + static_cast<std::ptrdiff_t>(index - 1));
@@ -806,8 +808,18 @@ void oracleRemoveRedundant(const SyncCoverSelectionEvaluator &evaluator,
     if (!improves) {
       continue;
     }
-    if (instance.coversAll(candidate) ||
-        oracleCoversAll(oracle, uniqueDemands, candidate)) {
+    if (instance.coversAll(candidate)) {
+      selected = std::move(candidate);
+      cost = evaluation->cost;
+      continue;
+    }
+    // The grounded bitsets rejected the deletion; one bounded oracle pass
+    // can still prove it covered through paths outside the column universe.
+    if (oracleChecks == options.oracleRedundancyLimit) {
+      continue;
+    }
+    ++oracleChecks;
+    if (oracleCoversAll(oracle, uniqueDemands, candidate)) {
       selected = std::move(candidate);
       cost = evaluation->cost;
     }
@@ -931,11 +943,17 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
         componentResult.truncation.evaluationLimit;
     result.optimalityProven &= componentResult.optimalityProven;
     if (!componentResult.selected) {
-      // Safety net for evaluation-budget truncation: cover every demand in
-      // the component with an all-barrier column (barriers hold no event
-      // IDs, so this is always resource-feasible). Optimality is already
-      // demoted by the truncation above; only fail when a demand has no
-      // barrier-only column at all.
+      // Safety net for evaluation-budget truncation ONLY: cover every demand
+      // in the component with an all-barrier column (barriers hold no event
+      // IDs, so this is always resource-feasible). A component search that
+      // fails without hitting its budget indicates a solver defect and must
+      // stay a hard failure rather than be masked by a barrier plan.
+      if (!componentResult.truncation.evaluationLimit) {
+        result.error = SyncCoverSelectionError::SearchIncomplete;
+        result.optimalityProven = false;
+        result.failedComponent = component.id;
+        return result;
+      }
       std::vector<SyncCoverMechanismId> fallback;
       bool rescued = true;
       for (SyncCoverDemandId demand : component.demands) {
@@ -966,6 +984,7 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
         return result;
       }
       result.optimalityProven = false;
+      ++result.rescuedComponents;
       selected.insert(selected.end(), fallback.begin(), fallback.end());
       continue;
     }
@@ -1008,7 +1027,8 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
   const std::vector<SyncCoverDemandId> uniqueDemands =
       uniqueCoverageDemands(universe, demands);
   oracleRemoveRedundant(evaluator, instance, finalOracle, uniqueDemands,
-                        selected, selectedCost, result.redundancyEvaluations);
+                        options, selected, selectedCost,
+                        result.redundancyEvaluations);
 
   result.mechanisms = selected;
   if (!finalVerify(universe, finalOracle, uniqueDemands, result.mechanisms,

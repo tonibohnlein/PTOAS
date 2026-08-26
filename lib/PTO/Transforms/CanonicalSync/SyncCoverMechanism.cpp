@@ -439,7 +439,11 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addMechanismImpl(
   if (mechanisms_.size() == mechanisms_.capacity()) {
     // Geometric growth; an exact-size reserve would relocate every
     // mechanism (eight inner vectors each) on every insertion.
-    mechanisms_.reserve(std::max<std::size_t>(16, mechanisms_.size() * 2));
+    const std::size_t doubled =
+        mechanisms_.size() > mechanisms_.max_size() / 2
+            ? mechanisms_.max_size()
+            : std::max<std::size_t>(16, mechanisms_.size() * 2);
+    mechanisms_.reserve(doubled);
   }
   SyncCoverGraph::EdgeTransaction transaction(graph_);
   for (SyncCoverEdge &edge : preparedEdges) {
@@ -484,13 +488,18 @@ SyncCoverMechanismUniverse::addConflict(SyncCoverMechanismId first,
     return makeResult(SyncCoverMechanismError::None, first);
   }
 
-  if (firstConflicts.size() == firstConflicts.capacity()) {
-    firstConflicts.reserve(std::max<std::size_t>(4, firstConflicts.size() * 2));
-  }
-  if (secondConflicts.size() == secondConflicts.capacity()) {
-    secondConflicts.reserve(
-        std::max<std::size_t>(4, secondConflicts.size() * 2));
-  }
+  const auto growConflicts = [](std::vector<SyncCoverMechanismId> &conflicts) {
+    if (conflicts.size() != conflicts.capacity()) {
+      return;
+    }
+    const std::size_t doubled =
+        conflicts.size() > conflicts.max_size() / 2
+            ? conflicts.max_size()
+            : std::max<std::size_t>(4, conflicts.size() * 2);
+    conflicts.reserve(doubled);
+  };
+  growConflicts(firstConflicts);
+  growConflicts(secondConflicts);
   const auto refreshedFirst =
       std::lower_bound(firstConflicts.begin(), firstConflicts.end(), second);
   const auto refreshedSecond =

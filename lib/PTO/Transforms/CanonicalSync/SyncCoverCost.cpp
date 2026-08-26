@@ -156,12 +156,16 @@ SyncCoverStructuralCost SyncCoverMechanismUniverse::evaluateStructuralCostImpl(
   result.actionProfile.assign(maximumDepth + 1, 0);
   result.barrierActionProfile.assign(maximumDepth + 1, 0);
 
-  std::set<std::uint32_t> issueResources;
-  for (const SyncCoverNode &node : graph_.getNodes()) {
-    issueResources.insert(node.resource);
+  if (cachedIssueResourceNodes_ != graph_.getNodes().size()) {
+    std::set<std::uint32_t> issueResources;
+    for (const SyncCoverNode &node : graph_.getNodes()) {
+      issueResources.insert(node.resource);
+    }
+    cachedIssueResourceNodes_ = graph_.getNodes().size();
+    cachedIssueResourceCount_ = issueResources.size();
   }
   const std::size_t allResourceBarrierWeight =
-      std::max<std::size_t>(issueResources.size(), 2);
+      std::max<std::size_t>(cachedIssueResourceCount_, 2);
 
   for (SyncCoverMechanismId mechanismId : result.signature) {
     const SyncCoverMechanism &mechanism = mechanisms_[mechanismId];

@@ -150,4 +150,3 @@ std::vector<bool> mlir::pto::reduceCompletionRequirements(
   }
   return keep;
 }
-

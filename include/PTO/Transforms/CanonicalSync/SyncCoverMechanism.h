@@ -346,6 +346,10 @@ private:
   mutable std::size_t cachedGraphGeneration_ = 0;
   mutable SyncCoverMechanismResult cachedValidation_;
   mutable std::size_t fullValidationCount_ = 0;
+  /// Nodes are append-only, so the node count keys the cached count of
+  /// distinct issue resources used by the structural cost.
+  mutable std::optional<std::size_t> cachedIssueResourceNodes_;
+  mutable std::size_t cachedIssueResourceCount_ = 0;
 };
 
 /// Immutable phase-boundary evaluator. The universe is validated once; each
