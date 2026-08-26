@@ -313,10 +313,18 @@ MechanismAdapter::solve(CanonicalSyncCoveringSnapshot &snapshot) {
     std::size_t totalClaims = 0;
     std::map<std::vector<SyncCoverMechanismId>, std::vector<SyncCoverDemandId>>
         roundTrips;
+    std::set<SyncCoverDemandCoverageKey> proposedKeys;
     for (SyncCoverDemandId demand : demands) {
       const SyncCoverDemand &requirement = graph.getDemands()[demand];
       if (requirement.distance == 0 ||
           totalClaims == kMaximumRoundTripClaims) {
+        continue;
+      }
+      // One proposal round per coverage key: duplicate demands share the
+      // grounded row, so claiming the first is claiming them all.
+      if (!proposedKeys
+               .insert(makeSyncCoverDemandCoverageKey(graph, demand))
+               .second) {
         continue;
       }
       const auto carried = suppliesByDistance.find(requirement.distance);

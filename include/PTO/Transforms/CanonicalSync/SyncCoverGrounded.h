@@ -98,9 +98,36 @@ struct SyncCoverVerifiedFactoryColumn {
   std::vector<SyncCoverDemandId> demands;
 };
 
+/// Coverage is a pure function of a demand's endpoints, scope, distance, and
+/// guards over the frozen graph: two demands with equal keys are covered by
+/// exactly the same selections. Demand kind and provenance do not enter
+/// reachability.
+struct SyncCoverDemandCoverageKey {
+  SyncCoverNodeId source = 0;
+  SyncCoverNodeId target = 0;
+  SyncCoverScopeId scope = 0;
+  unsigned distance = 0;
+  std::vector<SyncCoverGuardLiteral> sourceGuard;
+  std::vector<SyncCoverGuardLiteral> targetGuard;
+
+  bool operator<(const SyncCoverDemandCoverageKey &other) const {
+    return std::tie(source, target, scope, distance, sourceGuard,
+                    targetGuard) <
+           std::tie(other.source, other.target, other.scope, other.distance,
+                    other.sourceGuard, other.targetGuard);
+  }
+};
+
+SyncCoverDemandCoverageKey
+makeSyncCoverDemandCoverageKey(const SyncCoverGraph &graph,
+                               SyncCoverDemandId demand);
+
 struct SyncCoverGroundedInstance {
   std::size_t universeVersion = 0;
   std::size_t graphGeneration = 0;
+  /// Skylined rows: one representative demand per distinct coverage key.
+  /// Covering the representative covers every active demand sharing its key;
+  /// the final oracle verification still spans the deduplicated originals.
   std::vector<SyncCoverDemandId> demands;
   std::vector<SyncCoverGroundedColumn> columns;
   std::vector<std::vector<SyncCoverGroundedColumnId>> demandColumns;

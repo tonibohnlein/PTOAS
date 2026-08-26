@@ -298,10 +298,73 @@ bool testPricesBarrierOnlyCoverage() {
 
 } // namespace
 
+bool testSkylineCollapsesDuplicateKeys() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}), passed,
+                "add skyline source");
+  const SyncCoverNodeId middle =
+      takeIndex(graph.addNode(2, 1, 0, 1, {}, {3}), passed,
+                "add skyline middle");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(3, 1, 0, 2), passed, "add skyline target");
+  // Three demands with distinct kinds share one coverage key; one demand on
+  // different endpoints keeps its own row.
+  SyncCoverDemand raw = demand(source, target);
+  raw.kind = SyncCoverDemandKind::MemoryRAW;
+  raw.storageProvenance = SyncCoverStorageProvenance::Incomplete;
+  SyncCoverDemand war = demand(source, target);
+  war.kind = SyncCoverDemandKind::MemoryWAR;
+  war.storageProvenance = SyncCoverStorageProvenance::Incomplete;
+  SyncCoverDemand waw = demand(source, target);
+  waw.kind = SyncCoverDemandKind::MemoryWAW;
+  waw.storageProvenance = SyncCoverStorageProvenance::Incomplete;
+  const SyncCoverDemandId first =
+      takeIndex(graph.addDemand(raw), passed, "add raw demand");
+  takeIndex(graph.addDemand(war), passed, "add war demand");
+  const SyncCoverDemandId duplicate =
+      takeIndex(graph.addDemand(waw), passed, "add waw demand");
+  const SyncCoverDemandId distinct = takeIndex(
+      graph.addDemand(demand(source, middle)), passed, "add distinct demand");
+  SyncCoverMechanismUniverse universe(graph);
+  const auto firstDomain = takeIndex(
+      universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 8),
+      passed, "add skyline first domain");
+  const auto secondDomain = takeIndex(
+      universe.addResourceDomain(SyncCoverResourceKind::EventId, 2, 3, 8),
+      passed, "add skyline second domain");
+  const SyncCoverMechanismId forward =
+      addEvent(universe, firstDomain, 1, 2, source, middle, passed);
+  const SyncCoverMechanismId bridge =
+      addEvent(universe, secondDomain, 2, 3, middle, target, passed);
+
+  // A factory column may claim any duplicate; the claim lands on the key row.
+  SyncCoverVerifiedFactoryColumn composite;
+  composite.members = {forward, bridge};
+  composite.demands = {duplicate};
+  const SyncCoverGroundingResult grounded =
+      groundSyncCoverInstance(universe, {0, 1, 2, 3}, {composite});
+  passed &= check(static_cast<bool>(grounded), "skyline grounding succeeds");
+  passed &= check(grounded.instance.demands ==
+                      std::vector<SyncCoverDemandId>{first, distinct},
+                  "duplicate-key demands collapse onto one representative "
+                  "row");
+  passed &= check(grounded.instance.demandColumns.size() == 2,
+                  "the instance carries one column list per key row");
+  passed &= check(grounded.instance.coversAll({forward, bridge}),
+                  "a claim on a duplicate demand covers its key row");
+  passed &= check(grounded.statistics.groundingQueries == 3,
+                  "grounding queries once per key row plus one factory "
+                  "claim, never once per duplicate demand");
+  return passed;
+}
+
 int main() {
   return testDemandSet() && testGroundedColumnsAndMetadata() &&
                  testMissingFactoryCoverage() &&
-                 testPricesBarrierOnlyCoverage()
+                 testPricesBarrierOnlyCoverage() &&
+                 testSkylineCollapsesDuplicateKeys()
              ? 0
              : 1;
 }

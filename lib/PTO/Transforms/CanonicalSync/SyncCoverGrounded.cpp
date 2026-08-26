@@ -72,37 +72,6 @@ bool increment(std::vector<std::size_t> &profile, std::size_t maximumDepth,
   return true;
 }
 
-/// Coverage is a pure function of the demand's endpoints, scope, distance,
-/// and guards over the frozen graph: two demands with equal keys are covered
-/// by exactly the same selections, so oracle queries are issued once per key
-/// and fanned out. Demand kind and provenance do not enter reachability.
-struct DemandCoverageKey {
-  SyncCoverNodeId source = 0;
-  SyncCoverNodeId target = 0;
-  SyncCoverScopeId scope = 0;
-  unsigned distance = 0;
-  std::vector<SyncCoverGuardLiteral> sourceGuard;
-  std::vector<SyncCoverGuardLiteral> targetGuard;
-
-  bool operator<(const DemandCoverageKey &other) const {
-    return std::tie(source, target, scope, distance, sourceGuard,
-                    targetGuard) <
-           std::tie(other.source, other.target, other.scope, other.distance,
-                    other.sourceGuard, other.targetGuard);
-  }
-};
-
-DemandCoverageKey makeCoverageKey(const SyncCoverGraph &graph,
-                                  SyncCoverDemandId demand) {
-  const SyncCoverDemand &requirement = graph.getDemands()[demand];
-  return {requirement.source,
-          requirement.target,
-          requirement.scope,
-          requirement.distance,
-          requirement.sourceGuard.literals,
-          requirement.targetGuard.literals};
-}
-
 SyncCoverGroundingError snapshotMechanisms(
     const SyncCoverMechanismUniverse &universe,
     SyncCoverGroundedInstance &instance) {
@@ -230,6 +199,18 @@ SyncCoverDemandSet SyncCoverGroundedInstance::coveredBy(
   return result;
 }
 
+SyncCoverDemandCoverageKey
+mlir::pto::makeSyncCoverDemandCoverageKey(const SyncCoverGraph &graph,
+                                          SyncCoverDemandId demand) {
+  const SyncCoverDemand &requirement = graph.getDemands()[demand];
+  return {requirement.source,
+          requirement.target,
+          requirement.scope,
+          requirement.distance,
+          requirement.sourceGuard.literals,
+          requirement.targetGuard.literals};
+}
+
 bool SyncCoverGroundedInstance::coversAll(
     const std::vector<SyncCoverMechanismId> &selected) const {
   return coveredBy(selected).count() == demands.size();
@@ -268,8 +249,6 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
   SyncCoverGroundedInstance &instance = result.instance;
   instance.universeVersion = universe.getVersion();
   instance.graphGeneration = universe.getGraph().getGeneration();
-  instance.demands = activeDemands;
-  instance.demandColumns.resize(activeDemands.size());
   result.error = snapshotMechanisms(universe, instance);
   if (result.error != SyncCoverGroundingError::None) {
     return result;
@@ -287,34 +266,40 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
   // is evaluated simultaneously and the result is cached as a set-cover
   // column before the solver starts.
   SyncCoverCoverageOracle incidence(universe.getGraph());
-  std::map<DemandCoverageKey, std::size_t> keyIndex;
+  std::map<SyncCoverDemandCoverageKey, std::size_t> keyIndex;
   std::vector<SyncCoverDemandId> keyRepresentatives;
   std::vector<std::size_t> localKey(activeDemands.size(), 0);
   for (std::size_t localDemand = 0; localDemand < activeDemands.size();
        ++localDemand) {
     const auto insertion = keyIndex.emplace(
-        makeCoverageKey(universe.getGraph(), activeDemands[localDemand]),
+        makeSyncCoverDemandCoverageKey(universe.getGraph(),
+                                       activeDemands[localDemand]),
         keyRepresentatives.size());
     if (insertion.second) {
       keyRepresentatives.push_back(activeDemands[localDemand]);
     }
     localKey[localDemand] = insertion.first->second;
   }
+  // Skyline: the instance carries one row per distinct coverage key. Every
+  // duplicate active demand is represented by its key row; the final oracle
+  // verification still spans the deduplicated original demand set.
+  const std::size_t rowCount = keyRepresentatives.size();
+  instance.demands = keyRepresentatives;
+  instance.demandColumns.resize(rowCount);
   const auto singletonWitnesses =
       incidence.getSingletonMechanismWitnessesForDemands(
           keyRepresentatives, universe.getMechanisms().size());
-  if (singletonWitnesses.size() != keyRepresentatives.size()) {
+  if (singletonWitnesses.size() != rowCount) {
     result.error = SyncCoverGroundingError::CoverageFailure;
     result.statistics = incidence.getStatistics();
     return result;
   }
-  for (std::size_t localDemand = 0; localDemand < activeDemands.size();
-       ++localDemand) {
+  for (std::size_t row = 0; row < rowCount; ++row) {
     const SyncCoverSingletonWitnessResult &witnesses =
-        singletonWitnesses[localKey[localDemand]];
+        singletonWitnesses[row];
     if (!witnesses) {
       result.error = SyncCoverGroundingError::CoverageFailure;
-      result.failedDemand = activeDemands[localDemand];
+      result.failedDemand = keyRepresentatives[row];
       result.coverageError = witnesses.error;
       result.statistics = incidence.getStatistics();
       return result;
@@ -322,8 +307,8 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
     for (SyncCoverMechanismId mechanism : witnesses.mechanisms) {
       auto insertion = grounded.emplace(
           std::vector<SyncCoverMechanismId>{mechanism},
-          SyncCoverDemandSet(activeDemands.size()));
-      insertion.first->second.add(localDemand);
+          SyncCoverDemandSet(rowCount));
+      insertion.first->second.add(row);
     }
   }
 
@@ -354,16 +339,17 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
       result.error = SyncCoverGroundingError::InvalidMechanism;
       return result;
     }
-    SyncCoverDemandSet coverage(activeDemands.size());
+    SyncCoverDemandSet coverage(rowCount);
     for (SyncCoverMechanismId member : column.members) {
       auto singleton = grounded.find({member});
       if (singleton != grounded.end()) {
         coverage.unite(singleton->second);
       }
     }
-    std::map<std::size_t, std::size_t> keyQuery;
+    std::map<std::size_t, std::size_t> rowQuery;
     std::vector<SyncCoverDemandId> queried;
-    std::vector<std::size_t> claimKey(column.demands.size(), 0);
+    std::vector<std::size_t> claimQuery(column.demands.size(), 0);
+    std::vector<std::size_t> claimRow(column.demands.size(), 0);
     bool unknownClaim = false;
     for (std::size_t index = 0; index < column.demands.size(); ++index) {
       const SyncCoverDemandId demand = column.demands[index];
@@ -374,12 +360,13 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
         unknownClaim = true;
         break;
       }
-      const auto insertion =
-          keyQuery.emplace(localKey[local->second], queried.size());
+      const std::size_t row = localKey[local->second];
+      claimRow[index] = row;
+      const auto insertion = rowQuery.emplace(row, queried.size());
       if (insertion.second) {
-        queried.push_back(demand);
+        queried.push_back(keyRepresentatives[row]);
       }
-      claimKey[index] = insertion.first->second;
+      claimQuery[index] = insertion.first->second;
     }
     if (unknownClaim) {
       return result;
@@ -392,23 +379,22 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
       return result;
     }
     for (std::size_t index = 0; index < column.demands.size(); ++index) {
-      const SyncCoverDemandId demand = column.demands[index];
       const SyncCoverSelectionWitnessResult &verified =
-          verifiedCoverage[claimKey[index]];
+          verifiedCoverage[claimQuery[index]];
       if (verified.error != SyncCoverCoverageError::None) {
         result.error = SyncCoverGroundingError::CoverageFailure;
-        result.failedDemand = demand;
+        result.failedDemand = column.demands[index];
         result.coverageError = verified.error;
         result.statistics = incidence.getStatistics();
         return result;
       }
       if (!verified.selections.empty()) {
-        coverage.add(activeLocal.find(demand)->second);
+        coverage.add(claimRow[index]);
       }
     }
     if (coverage.count() != 0) {
       auto insertion = grounded.emplace(
-          column.members, SyncCoverDemandSet(activeDemands.size()));
+          column.members, SyncCoverDemandSet(rowCount));
       insertion.first->second.unite(coverage);
     }
   }
@@ -425,17 +411,16 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
     column.id = instance.columns.size();
     column.members = entry.first;
     column.coverage = std::move(entry.second);
-    for (std::size_t demand = 0; demand < activeDemands.size(); ++demand) {
-      if (column.coverage.contains(demand)) {
-        instance.demandColumns[demand].push_back(column.id);
+    for (std::size_t row = 0; row < rowCount; ++row) {
+      if (column.coverage.contains(row)) {
+        instance.demandColumns[row].push_back(column.id);
       }
     }
     instance.columns.push_back(std::move(column));
   }
-  for (std::size_t localDemand = 0; localDemand < activeDemands.size();
-       ++localDemand) {
-    if (instance.demandColumns[localDemand].empty()) {
-      instance.demandsNeedingPricing.push_back(activeDemands[localDemand]);
+  for (std::size_t row = 0; row < rowCount; ++row) {
+    if (instance.demandColumns[row].empty()) {
+      instance.demandsNeedingPricing.push_back(keyRepresentatives[row]);
     }
   }
   result.statistics = incidence.getStatistics();

@@ -29,22 +29,6 @@ struct SearchEvaluation {
   SyncCoverStructuralCost cost;
 };
 
-struct DemandCoverageKey {
-  SyncCoverNodeId source = 0;
-  SyncCoverNodeId target = 0;
-  SyncCoverScopeId scope = 0;
-  unsigned distance = 0;
-  std::vector<SyncCoverGuardLiteral> sourceGuard;
-  std::vector<SyncCoverGuardLiteral> targetGuard;
-
-  bool operator<(const DemandCoverageKey &other) const {
-    return std::tie(source, target, scope, distance, sourceGuard,
-                    targetGuard) <
-           std::tie(other.source, other.target, other.scope, other.distance,
-                    other.sourceGuard, other.targetGuard);
-  }
-};
-
 template <typename T> bool normalizeUnique(std::vector<T> &values) {
   std::sort(values.begin(), values.end());
   const auto duplicate = std::adjacent_find(values.begin(), values.end());
@@ -467,19 +451,14 @@ void improveWithGroundedColumns(
 std::vector<SyncCoverDemandId>
 uniqueCoverageDemands(const SyncCoverMechanismUniverse &universe,
                       const std::vector<SyncCoverDemandId> &demands) {
-  std::set<DemandCoverageKey> verified;
+  std::set<SyncCoverDemandCoverageKey> verified;
   std::vector<SyncCoverDemandId> uniqueDemands;
   uniqueDemands.reserve(demands.size());
   for (SyncCoverDemandId demand : demands) {
-    const SyncCoverDemand &requirement =
-        universe.getGraph().getDemands()[demand];
-    DemandCoverageKey key{requirement.source,
-                          requirement.target,
-                          requirement.scope,
-                          requirement.distance,
-                          requirement.sourceGuard.literals,
-                          requirement.targetGuard.literals};
-    if (verified.insert(std::move(key)).second) {
+    if (verified
+            .insert(makeSyncCoverDemandCoverageKey(universe.getGraph(),
+                                                   demand))
+            .second) {
       uniqueDemands.push_back(demand);
     }
   }

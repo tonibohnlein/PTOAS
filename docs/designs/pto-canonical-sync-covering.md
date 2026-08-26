@@ -155,10 +155,15 @@ a hard internal error.
 
 `groundSyncCoverInstance` grounds structural coverage once; the search
 consumes only bitset columns and immutable mechanism metadata and never
-invokes the graph oracle. Grounding builds singleton columns from one
-context-batched propagation that evaluates every mechanism simultaneously per
-demand, then adds independently verified factory columns whose declared extra
-coverage is re-proved by the oracle. The adapter contributes those factory
+invokes the graph oracle. Coverage is a pure function of a demand's
+endpoints, scope, distance, and guards over the frozen graph, so the
+instance is skylined: one row per distinct coverage key, represented by its
+first active demand, with oracle queries issued once per key. Covering a
+row covers every duplicate demand behind it; the final verification still
+spans the deduplicated original demand set. Grounding builds singleton
+columns from one context-batched propagation that evaluates every mechanism
+simultaneously per key, then adds independently verified factory columns
+whose declared extra coverage is re-proved by the oracle. The adapter contributes those factory
 columns: resource-feasible pairs of ownership/slot protocols, one column per
 slot protocol bundling its release with greedily chosen event bundles that
 cover the lifecycle's ready demands (extended to demands whose witnesses are
