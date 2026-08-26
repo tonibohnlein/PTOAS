@@ -31,6 +31,14 @@ namespace {
 
 constexpr unsigned kHardwareEventIdCount = 8;
 
+/// Operations CanonicalSync itself emits or whose resources it allocates.
+/// Input already containing any of them is rejected: the pass would either
+/// duplicate the synchronization or hand out an event ID the input already
+/// uses. Cross-core rendezvous and pure memory fences are deliberately NOT
+/// listed - they hold no pipe event IDs and order whole cores rather than
+/// pipes, so they are orthogonal to the intra-core synchronization inserted
+/// here. Those operations still have to survive the modeled-effect
+/// validation like any other input operation.
 bool isManualSync(Operation *op) {
   const StringRef name = op->getName().getStringRef();
   return llvm::StringSwitch<bool>(name)
@@ -40,8 +48,7 @@ bool isManualSync(Operation *op) {
              SetFlagDynOp::getOperationName(), true)
       .Cases(WaitFlagDynOp::getOperationName(), BarrierOp::getOperationName(),
              TSyncOp::getOperationName(), true)
-      .Cases(FenceBarrierAllOp::getOperationName(),
-             GetBufOp::getOperationName(), GetBufDynOp::getOperationName(),
+      .Cases(GetBufOp::getOperationName(), GetBufDynOp::getOperationName(),
              true)
       .Cases(RlsBufOp::getOperationName(), RlsBufDynOp::getOperationName(),
              DeclareEventIdArrayOp::getOperationName(), true)
@@ -54,7 +61,9 @@ bool isManualSync(Operation *op) {
       .Cases(MakePrefetchAsyncContextOp::getOperationName(),
              GetPrefetchAsyncSessionOp::getOperationName(),
              TPrefetchAsyncOp::getOperationName(), true)
-      .Cases(SyncAllOp::getOperationName(), SyncSetOp::getOperationName(),
+      // pto.sync.set and pto.sync.wait carry event_id operands from the
+      // pool this pass allocates; pto.syncall does not and stays accepted.
+      .Cases(SyncSetOp::getOperationName(),
              SyncWaitOp::getOperationName(), true)
       .Cases(SetCrossBlockOp::getOperationName(),
              WaitCrossBlockOp::getOperationName(),
