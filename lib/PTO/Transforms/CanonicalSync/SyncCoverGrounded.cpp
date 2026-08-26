@@ -72,6 +72,37 @@ bool increment(std::vector<std::size_t> &profile, std::size_t maximumDepth,
   return true;
 }
 
+/// Coverage is a pure function of the demand's endpoints, scope, distance,
+/// and guards over the frozen graph: two demands with equal keys are covered
+/// by exactly the same selections, so oracle queries are issued once per key
+/// and fanned out. Demand kind and provenance do not enter reachability.
+struct DemandCoverageKey {
+  SyncCoverNodeId source = 0;
+  SyncCoverNodeId target = 0;
+  SyncCoverScopeId scope = 0;
+  unsigned distance = 0;
+  std::vector<SyncCoverGuardLiteral> sourceGuard;
+  std::vector<SyncCoverGuardLiteral> targetGuard;
+
+  bool operator<(const DemandCoverageKey &other) const {
+    return std::tie(source, target, scope, distance, sourceGuard,
+                    targetGuard) <
+           std::tie(other.source, other.target, other.scope, other.distance,
+                    other.sourceGuard, other.targetGuard);
+  }
+};
+
+DemandCoverageKey makeCoverageKey(const SyncCoverGraph &graph,
+                                  SyncCoverDemandId demand) {
+  const SyncCoverDemand &requirement = graph.getDemands()[demand];
+  return {requirement.source,
+          requirement.target,
+          requirement.scope,
+          requirement.distance,
+          requirement.sourceGuard.literals,
+          requirement.targetGuard.literals};
+}
+
 SyncCoverGroundingError snapshotMechanisms(
     const SyncCoverMechanismUniverse &universe,
     SyncCoverGroundedInstance &instance) {
@@ -283,20 +314,39 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
   // is evaluated simultaneously and the result is cached as a set-cover
   // column before the solver starts.
   SyncCoverCoverageOracle incidence(universe.getGraph());
+  std::map<DemandCoverageKey, std::size_t> keyIndex;
+  std::vector<SyncCoverDemandId> keyRepresentatives;
+  std::vector<std::size_t> localKey(activeDemands.size(), 0);
+  for (std::size_t localDemand = 0; localDemand < activeDemands.size();
+       ++localDemand) {
+    const auto insertion = keyIndex.emplace(
+        makeCoverageKey(universe.getGraph(), activeDemands[localDemand]),
+        keyRepresentatives.size());
+    if (insertion.second) {
+      keyRepresentatives.push_back(activeDemands[localDemand]);
+    }
+    localKey[localDemand] = insertion.first->second;
+  }
   const auto singletonWitnesses =
       incidence.getSingletonMechanismWitnessesForDemands(
-          activeDemands, universe.getMechanisms().size());
-  for (std::size_t localDemand = 0; localDemand < singletonWitnesses.size();
+          keyRepresentatives, universe.getMechanisms().size());
+  if (singletonWitnesses.size() != keyRepresentatives.size()) {
+    result.error = SyncCoverGroundingError::CoverageFailure;
+    result.statistics = incidence.getStatistics();
+    return result;
+  }
+  for (std::size_t localDemand = 0; localDemand < activeDemands.size();
        ++localDemand) {
-    if (!singletonWitnesses[localDemand]) {
+    const SyncCoverSingletonWitnessResult &witnesses =
+        singletonWitnesses[localKey[localDemand]];
+    if (!witnesses) {
       result.error = SyncCoverGroundingError::CoverageFailure;
       result.failedDemand = activeDemands[localDemand];
-      result.coverageError = singletonWitnesses[localDemand].error;
+      result.coverageError = witnesses.error;
       result.statistics = incidence.getStatistics();
       return result;
     }
-    for (SyncCoverMechanismId mechanism :
-         singletonWitnesses[localDemand].mechanisms) {
+    for (SyncCoverMechanismId mechanism : witnesses.mechanisms) {
       auto insertion = grounded.emplace(
           std::vector<SyncCoverMechanismId>{mechanism},
           SyncCoverDemandSet(activeDemands.size()));
@@ -338,31 +388,49 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
         coverage.unite(singleton->second);
       }
     }
-    const std::vector<SyncCoverSelectionWitnessResult> verifiedCoverage =
-        incidence.getSelectionWitnessesForDemands(
-            column.demands, {column.members},
-            universe.getMechanisms().size());
-    if (verifiedCoverage.size() != column.demands.size()) {
-      result.error = SyncCoverGroundingError::CoverageFailure;
-      return result;
-    }
+    std::map<std::size_t, std::size_t> keyQuery;
+    std::vector<SyncCoverDemandId> queried;
+    std::vector<std::size_t> claimKey(column.demands.size(), 0);
+    bool unknownClaim = false;
     for (std::size_t index = 0; index < column.demands.size(); ++index) {
       const SyncCoverDemandId demand = column.demands[index];
       auto local = activeLocal.find(demand);
       if (local == activeLocal.end()) {
         result.error = SyncCoverGroundingError::InvalidDemand;
         result.failedDemand = demand;
-        return result;
+        unknownClaim = true;
+        break;
       }
-      if (verifiedCoverage[index].error != SyncCoverCoverageError::None) {
+      const auto insertion =
+          keyQuery.emplace(localKey[local->second], queried.size());
+      if (insertion.second) {
+        queried.push_back(demand);
+      }
+      claimKey[index] = insertion.first->second;
+    }
+    if (unknownClaim) {
+      return result;
+    }
+    const std::vector<SyncCoverSelectionWitnessResult> verifiedCoverage =
+        incidence.getSelectionWitnessesForDemands(
+            queried, {column.members}, universe.getMechanisms().size());
+    if (verifiedCoverage.size() != queried.size()) {
+      result.error = SyncCoverGroundingError::CoverageFailure;
+      return result;
+    }
+    for (std::size_t index = 0; index < column.demands.size(); ++index) {
+      const SyncCoverDemandId demand = column.demands[index];
+      const SyncCoverSelectionWitnessResult &verified =
+          verifiedCoverage[claimKey[index]];
+      if (verified.error != SyncCoverCoverageError::None) {
         result.error = SyncCoverGroundingError::CoverageFailure;
         result.failedDemand = demand;
-        result.coverageError = verifiedCoverage[index].error;
+        result.coverageError = verified.error;
         result.statistics = incidence.getStatistics();
         return result;
       }
-      if (!verifiedCoverage[index].selections.empty()) {
-        coverage.add(local->second);
+      if (!verified.selections.empty()) {
+        coverage.add(activeLocal.find(demand)->second);
       }
     }
     if (coverage.count() != 0) {
