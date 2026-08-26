@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace mlir {
@@ -44,6 +45,11 @@ struct SyncCoverSlotProtocolOptions {
   std::size_t maximumEvaluations = 8192;
 };
 
+struct SyncCoverSlotProtocolPath {
+  std::vector<SyncCoverNodeId> sources;
+  SyncCoverNodeId waitTarget = 0;
+};
+
 /// A verified factory result for one unit-distance release handoff. A unit
 /// release waits at its first producer node. A hierarchical release waits once
 /// at a nested-loop entry and supplies every guarded producer in that loop.
@@ -54,13 +60,22 @@ struct SyncCoverSlotProtocolCandidate {
   SyncCoverSlotProtocolKind kind = SyncCoverSlotProtocolKind::UnitRelease;
   SyncCoverSlotLifecycleId lifecycle = 0;
   std::vector<SyncCoverCandidateOpportunityId> releases;
+  std::vector<std::pair<SyncCoverNodeId, SyncCoverNodeId>> completionEdges;
+  std::vector<SyncCoverNodeId> sources;
+  std::vector<unsigned> sourceLanes;
+  /// Representative source retained for unit-release compatibility.
   SyncCoverNodeId source = 0;
   std::vector<SyncCoverNodeId> targets;
+  /// When present, the release is consumed once before this nested loop.
+  /// Otherwise targetWaits identifies the first operation on each guarded path.
+  std::optional<SyncCoverScopeId> waitScope;
+  std::vector<SyncCoverNodeId> targetWaits;
+  std::vector<SyncCoverSlotProtocolPath> paths;
   std::uint32_t sourceResource = 0;
   std::uint32_t targetResource = 0;
   SyncCoverScopeId recurrenceScope = 0;
-  std::optional<SyncCoverScopeId> targetLoop;
   unsigned distance = 0;
+  unsigned width = 1;
 };
 
 struct SyncCoverSlotProtocolResult {

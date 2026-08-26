@@ -42,6 +42,8 @@ mlir::pto::stringifyCanonicalGMAliasPolicy(CanonicalGMAliasPolicy policy) {
     return "may-alias";
   case CanonicalGMAliasPolicy::DistinctArgumentsNoAlias:
     return "distinct-args-noalias";
+  case CanonicalGMAliasPolicy::AllAccessesNoAlias:
+    return "all-accesses-noalias";
   }
   return "unknown";
 }
@@ -51,8 +53,6 @@ StringRef mlir::pto::stringifyCanonicalEventBundleKind(
   switch (kind) {
   case CanonicalEventBundleKind::Standalone:
     return "standalone";
-  case CanonicalEventBundleKind::SyntheticRoundTrip:
-    return "synthetic-round-trip";
   case CanonicalEventBundleKind::Ownership:
     return "ownership";
   case CanonicalEventBundleKind::CompositeOwnership:
@@ -101,10 +101,6 @@ bool includesEvents(StringRef view) {
 
 bool includesOwnership(StringRef view) {
   return view == "all" || view == "ownership";
-}
-
-bool includesSelection(StringRef view) {
-  return view == "selection";
 }
 
 StringRef getOwnershipProtocolSuffix(CanonicalOwnershipProtocolKind kind) {
@@ -258,14 +254,6 @@ void printMechanismRef(llvm::raw_ostream &os,
      << mechanism.id << ']';
 }
 
-std::size_t getRecurrenceScopeId(
-    Operation *operation, ArrayRef<CanonicalRecurrenceScope> scopes) {
-  auto scope = llvm::find_if(scopes, [&](const auto &candidate) {
-    return candidate.operation == operation;
-  });
-  return scope == scopes.end() ? 0 : scope->id;
-}
-
 void printQuoted(llvm::raw_ostream &os, StringRef text) {
   os << '"';
   for (char character : text) {
@@ -297,9 +285,7 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
      << plan.getConservativeCompletionRequirements().size()
      << " barriers=" << plan.getBarriers().size()
      << " events=" << plan.getEvents().size()
-     << " ownership-cycles=" << plan.getOwnershipCycles().size()
-     << " bootstrap=" << (plan.usedInfeasibleBootstrap() ? "yes" : "no")
-     << '\n';
+     << " ownership-cycles=" << plan.getOwnershipCycles().size() << '\n';
   if (includesDependencies(view)) {
     for (const CanonicalSyncNode &node : plan.getNodes()) {
       os << "  node[" << node.id
@@ -324,12 +310,6 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
   }
   const bool includeScopes = includesDependencies(view) || includesPlan(view);
   if (includeScopes) {
-    for (const CanonicalRecurrenceScope &scope : plan.getRecurrenceScopes()) {
-      os << "  scope[" << scope.id << "] op="
-         << scope.operation->getName().getStringRef()
-         << " operation-order=" << scope.operationOrder
-         << " parent-scope=" << scope.parentScope << '\n';
-    }
     for (auto [requirementId, requirement] :
          llvm::enumerate(plan.getCompletionRequirements())) {
       os << "  requirement[" << requirementId << "] " << requirement.source
@@ -337,9 +317,6 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
          << " kind=" << stringifyCanonicalDependencyKind(requirement.kind)
          << " distance=" << requirement.iterationDistance
          << " recurrence=" << (requirement.recurrenceLoop ? "yes" : "no")
-         << " scope="
-         << getRecurrenceScopeId(requirement.recurrenceLoop,
-                                 plan.getRecurrenceScopes())
          << '\n';
     }
   }
@@ -374,7 +351,7 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
          << " ownership=" << (event.ownershipProtocol ? "yes" : "no")
          << " ownership-cycle=" << event.ownershipCycle
          << " ownership-role=" << stringifyOwnershipRole(event.ownershipRole)
-         << " bundle=" << event.protocolBundle << '\n';
+         << '\n';
     }
   }
   if (includesEvents(view)) {
@@ -434,110 +411,12 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
       }
     }
   }
-  if (includesSelection(view)) {
-    for (const CanonicalRecurrenceScope &scope : plan.getRecurrenceScopes()) {
-      os << "  selection scope[" << scope.id << "] op="
-         << scope.operation->getName().getStringRef()
-         << " operation-order=" << scope.operationOrder
-         << " parent-scope=" << scope.parentScope << '\n';
-    }
-    for (const CanonicalSelectionDiagnostic &diagnostic :
-         plan.getSelectionDiagnostics()) {
-      for (const CanonicalSelectionMechanismSummary &mechanism :
-           diagnostic.selectedMechanisms) {
-        os << "  selection ";
-        printMechanismRef(os, mechanism.mechanism);
-        if (mechanism.mechanism.kind ==
-            CanonicalSelectionMechanismKind::EventBundle) {
-          os << " kind="
-             << stringifyCanonicalEventBundleKind(
-                    mechanism.eventBundleKind)
-             << " domains=[";
-          llvm::interleaveComma(
-              mechanism.eventDomains, os,
-              [&](const CanonicalSelectionEventDomain &domain) {
-                os << stringifyPIPE(static_cast<PIPE>(domain.sourcePipe))
-                   << "->"
-                   << stringifyPIPE(static_cast<PIPE>(domain.targetPipe));
-              });
-          os << "] action-sites=" << mechanism.actionSites
-             << " lanes=" << mechanism.eventLanes;
-        }
-        os << '\n';
-      }
-      if (diagnostic.evictedMechanisms.empty()) {
-        continue;
-      }
-      os << "  eviction mechanisms=[";
-      llvm::interleaveComma(
-          diagnostic.evictedMechanisms, os,
-          [&](const CanonicalSelectionMechanismRef &mechanism) {
-            printMechanismRef(os, mechanism);
-          });
-      os << "] exclusive-requirements=";
-      printNodeIds(os, diagnostic.exclusiveRequirements);
-      os << '\n';
-      for (const CanonicalSelectionColorPressure &pressure :
-           diagnostic.colorPressure) {
-        os << "    color "
-           << stringifyPIPE(static_cast<PIPE>(pressure.sourcePipe)) << " -> "
-           << stringifyPIPE(static_cast<PIPE>(pressure.targetPipe))
-           << " before=" << pressure.beforeColors
-           << " after=" << pressure.afterColors
-           << " available=" << pressure.availableIds << '\n';
-      }
-      for (const CanonicalSelectionRequirementDiagnostic &entry :
-           diagnostic.uncoveredRequirements) {
-        if (entry.requirement >= plan.getCompletionRequirements().size()) {
-          continue;
-        }
-        const CanonicalDependency &requirement =
-            plan.getCompletionRequirements()[entry.requirement];
-        const CanonicalSyncNode &source = plan.getNodes()[requirement.source];
-        const CanonicalSyncNode &target = plan.getNodes()[requirement.target];
-        os << "    uncovered requirement[" << entry.requirement << "] "
-           << requirement.source << " -> " << requirement.target
-           << " pipes=" << stringifyPIPE(static_cast<PIPE>(source.pipe))
-           << "->" << stringifyPIPE(static_cast<PIPE>(target.pipe))
-           << " kind=" << stringifyCanonicalDependencyKind(requirement.kind)
-           << " distance=" << requirement.iterationDistance
-           << " scope=" << entry.recurrenceScope << " candidates=[";
-        llvm::interleaveComma(
-            entry.candidates, os,
-            [&](const CanonicalSelectionReplacementCandidate &candidate) {
-              printMechanismRef(os, candidate.mechanism);
-              if (candidate.mechanism.kind ==
-                  CanonicalSelectionMechanismKind::Barrier) {
-                os << ":pipe="
-                   << stringifyPIPE(static_cast<PIPE>(candidate.barrierPipe));
-              } else {
-                os << ":kind="
-                   << stringifyCanonicalEventBundleKind(
-                          candidate.eventBundleKind)
-                   << ":domains=[";
-                llvm::interleaveComma(
-                    candidate.eventDomains, os,
-                    [&](const CanonicalSelectionEventDomain &domain) {
-                      os << stringifyPIPE(
-                                static_cast<PIPE>(domain.sourcePipe))
-                         << "->"
-                         << stringifyPIPE(
-                                static_cast<PIPE>(domain.targetPipe));
-                    });
-                os << ']';
-              }
-              os << ":overflow=" << candidate.colorOverflow;
-            });
-        os << "]\n";
-      }
-    }
-  }
   const bool includeCovering = includesCovering(view);
-  const bool hasCoveringSnapshot = plan.getCoveringShadowSnapshot().has_value();
+  const bool hasCoveringSnapshot = plan.getCoveringSnapshot().has_value();
   if (includeCovering && hasCoveringSnapshot) {
-    const CanonicalSyncCoveringShadowSnapshot &snapshot =
-        *plan.getCoveringShadowSnapshot();
-    os << "  covering-shadow status=graph-ready"
+    const CanonicalSyncCoveringSnapshot &snapshot =
+        *plan.getCoveringSnapshot();
+    os << "  covering status=graph-ready"
        << " scopes=" << snapshot.scopes
        << " controls=" << snapshot.controls << " nodes=" << snapshot.nodes
        << " fixed-edges=" << snapshot.fixedEdges
@@ -599,12 +478,16 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
        << " event-bundle-candidates=" << snapshot.eventBundleCandidates
        << " slot-protocol-candidates="
        << snapshot.slotProtocolMechanismCandidates
+       << " generated-candidates=" << snapshot.generatedColumnCandidates
+       << " generated=" << snapshot.generatedColumns
+       << " generation-truncated="
+       << (snapshot.columnGenerationTruncated ? "yes" : "no")
        << " mechanisms=" << snapshot.candidateMechanisms
-       << " legacy-seed=" << snapshot.legacySeedMechanisms
        << " selected=" << snapshot.selectedMechanisms
        << " components=" << snapshot.solverComponents
        << " evaluations=" << snapshot.solverEvaluations
        << " redundancy-evaluations=" << snapshot.redundancyEvaluations
+       << " event-uncovered=" << snapshot.demandsWithoutEventColumn.size()
        << " truncated=" << (snapshot.searchTruncated ? "yes" : "no")
        << " optimal=" << (snapshot.optimalityProven ? "yes" : "no")
        << " actions=";
@@ -618,6 +501,9 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
                             printMechanismRef(os, selected.provider);
                           });
     os << "]\n";
+    os << "  covering-event-uncovered demands=";
+    printNodeIds(os, snapshot.demandsWithoutEventColumn);
+    os << '\n';
     os << "  covering-selection-topology prepared-demands="
        << snapshot.coverageStatistics.demandPreparations
        << " virtual-nodes="
@@ -707,10 +593,13 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
          << " scope=" << edge.scope << " distance=" << edge.distance
          << " origin="
          << (edge.mechanism
-                 ? "mechanism"
+                 ? "mechanism["
                  : (edgeId < snapshot.fixedEdges ? "fixed"
-                                                 : "recurrence-carry"))
-         << " source-guard=";
+                                                 : "recurrence-carry"));
+      if (edge.mechanism) {
+        os << *edge.mechanism << ']';
+      }
+      os << " source-guard=";
       printCoveringGuard(os, edge.sourceGuard);
       os << " target-guard=";
       printCoveringGuard(os, edge.targetGuard);

@@ -210,26 +210,11 @@ FailureOr<CanonicalSyncPlan> CanonicalSyncPlanBuilder::build() {
   reduceForwardDependencies();
   reserveHiddenEventIds();
   analyzeOwnershipCycles();
-  if (failed(materializeSyncRequirements())) {
+  buildMechanismUniverse();
+  if (failed(buildCoveringGraph())) {
     return failure();
   }
-  if (failed(repairEventScarcity())) {
-    return failure();
-  }
-  if (failed(verifyFinalPlan())) {
-    return failure();
-  }
-  if (selectionDiagnosticsEnabled_ && failed(buildSelectionDiagnostics())) {
-    return failure();
-  }
-  if (coveringShadowEnabled_ && failed(buildCoveringShadowGraph())) {
-    return failure();
-  }
-  if (coveringEmissionEnabled_) {
-    if (failed(materializeCoveringSelection())) {
-      return failure();
-    }
-  } else if (failed(allocateEvents())) {
+  if (failed(materializeCoveringSelection())) {
     return failure();
   }
   if (failed(verifyEventProtocols(plan_.events_, /*requireAllocation=*/true,
@@ -459,6 +444,10 @@ bool CanonicalSyncPlanBuilder::memoryAliases(
     }
   }
   if (first.space == AddressSpace::GM) {
+    if (honorNoAlias &&
+        gmAliasPolicy_ == CanonicalGMAliasPolicy::AllAccessesNoAlias) {
+      return false;
+    }
     if (honorNoAlias && rootsAreNoAlias(first.root, second.root)) {
       return false;
     }

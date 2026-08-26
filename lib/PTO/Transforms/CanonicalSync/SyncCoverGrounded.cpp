@@ -13,7 +13,6 @@
 #include <algorithm>
 #include <limits>
 #include <map>
-#include <numeric>
 #include <optional>
 #include <tuple>
 #include <utility>
@@ -233,13 +232,11 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
 SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
     const SyncCoverMechanismUniverse &universe,
     const std::vector<SyncCoverDemandId> &activeDemands,
-    const std::vector<std::vector<SyncCoverMechanismId>> &selectionColumns,
+    const std::vector<SyncCoverVerifiedFactoryColumn> &factoryColumns,
     const SyncCoverGroundingOptions &options) {
   SyncCoverGroundingResult result;
-  if (options.maximumMembers == 0 || options.maximumMembers > 2 ||
-      options.maximumPricingMembers < options.maximumMembers ||
-      options.maximumPricingMembers > 4 ||
-      options.maximumLabelsPerState == 0) {
+  if (options.maximumColumns == 0 || options.maximumPricingDemands == 0 ||
+      options.maximumPairsPerDemand == 0) {
     result.error = SyncCoverGroundingError::InvalidOptions;
     return result;
   }
@@ -267,122 +264,166 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
   }
 
   std::map<std::vector<SyncCoverMechanismId>, SyncCoverDemandSet> grounded;
-  SyncCoverCoverageOracle topology(universe.getGraph());
-  std::vector<SyncCoverMechanismId> allMechanisms(
-      universe.getMechanisms().size());
-  std::iota(allMechanisms.begin(), allMechanisms.end(), 0);
+  std::map<SyncCoverDemandId, std::size_t> activeLocal;
   for (std::size_t localDemand = 0; localDemand < activeDemands.size();
        ++localDemand) {
-    const SyncCoverDemandId demand = activeDemands[localDemand];
-    SyncCoverMinimalWitnessResult witnesses =
-        topology.getMinimalMechanismWitnesses(demand,
-                                              options.maximumMembers,
-                                              options.maximumLabelsPerState);
-    if (!witnesses) {
+    activeLocal.emplace(activeDemands[localDemand], localDemand);
+  }
+
+  // Construct every singleton incidence in one context-batched propagation.
+  // This is opportunity grounding, not selected-plan search: each mechanism
+  // is evaluated simultaneously and the result is cached as a set-cover
+  // column before the solver starts.
+  SyncCoverCoverageOracle incidence(universe.getGraph());
+  const auto singletonWitnesses =
+      incidence.getSingletonMechanismWitnessesForDemands(
+          activeDemands, universe.getMechanisms().size());
+  for (std::size_t localDemand = 0; localDemand < singletonWitnesses.size();
+       ++localDemand) {
+    if (!singletonWitnesses[localDemand]) {
       result.error = SyncCoverGroundingError::CoverageFailure;
-      result.failedDemand = demand;
-      result.coverageError = witnesses.error;
-      result.statistics = topology.getStatistics();
+      result.failedDemand = activeDemands[localDemand];
+      result.coverageError = singletonWitnesses[localDemand].error;
+      result.statistics = incidence.getStatistics();
       return result;
     }
-    const bool needsPricing =
-        witnesses.witnesses.empty() || witnesses.truncated;
-    instance.columnsTruncated |= witnesses.truncated;
-    if (needsPricing &&
-        options.maximumPricingMembers > options.maximumMembers) {
-      SyncCoverMinimalWitnessResult priced =
-          topology.getMinimalMechanismWitnesses(
-              demand, options.maximumPricingMembers,
-              options.maximumLabelsPerState);
-      if (!priced) {
-        result.error = SyncCoverGroundingError::CoverageFailure;
-        result.failedDemand = demand;
-        result.coverageError = priced.error;
-        result.statistics = topology.getStatistics();
-        return result;
-      }
-      instance.columnsTruncated |= priced.truncated;
-      witnesses = std::move(priced);
-    }
-    const bool unresolved =
-        witnesses.witnesses.empty() || witnesses.truncated;
-    if (unresolved) {
-      const SyncCoverCoverageResult fullUniverse =
-          topology.checkDemandCanonicalSelection(demand, allMechanisms);
-      if (!fullUniverse) {
-        result.error = SyncCoverGroundingError::CoverageFailure;
-        result.failedDemand = demand;
-        result.coverageError = fullUniverse.error;
-        result.statistics = topology.getStatistics();
-        return result;
-      }
-      if (!fullUniverse.covered) {
-        instance.provenUncoverableDemands.push_back(demand);
-      } else if (witnesses.witnesses.empty() || witnesses.truncated) {
-        instance.demandsNeedingPricing.push_back(demand);
-      }
-    }
-    for (const std::vector<SyncCoverMechanismId> &members :
-         witnesses.witnesses) {
-      const bool invalidMembers =
-          !canonicalIdentitySet(members) ||
-          (!members.empty() &&
-           members.back() >= universe.getMechanisms().size());
-      if (invalidMembers) {
-        result.error = SyncCoverGroundingError::InvalidMechanism;
-        result.failedDemand = demand;
-        result.statistics = topology.getStatistics();
-        return result;
-      }
+    for (SyncCoverMechanismId mechanism :
+         singletonWitnesses[localDemand].mechanisms) {
       auto insertion = grounded.emplace(
-          members, SyncCoverDemandSet(activeDemands.size()));
+          std::vector<SyncCoverMechanismId>{mechanism},
+          SyncCoverDemandSet(activeDemands.size()));
       insertion.first->second.add(localDemand);
     }
   }
 
-  for (const std::vector<SyncCoverMechanismId> &selection : selectionColumns) {
-    const bool invalidSelection =
-        !canonicalIdentitySet(selection) ||
-        (!selection.empty() &&
-         selection.back() >= universe.getMechanisms().size());
-    if (invalidSelection) {
+  std::vector<SyncCoverVerifiedFactoryColumn> candidates;
+  candidates.reserve(factoryColumns.size());
+  for (const SyncCoverVerifiedFactoryColumn &column : factoryColumns) {
+    if (column.members.size() > 1 || !column.demands.empty()) {
+      candidates.push_back(column);
+    }
+  }
+  std::sort(candidates.begin(), candidates.end(), [](const auto &first,
+                                                     const auto &second) {
+    return std::tie(first.members, first.demands) <
+           std::tie(second.members, second.demands);
+  });
+  candidates.erase(
+      std::unique(candidates.begin(), candidates.end(), [](const auto &first,
+                                                           const auto &second) {
+        return first.members == second.members && first.demands == second.demands;
+      }),
+      candidates.end());
+
+  for (const SyncCoverVerifiedFactoryColumn &column : candidates) {
+    if (column.members.empty() ||
+        column.members.back() >= universe.getMechanisms().size() ||
+        !canonicalIdentitySet(column.members) ||
+        !canonicalIdentitySet(column.demands)) {
       result.error = SyncCoverGroundingError::InvalidMechanism;
-      result.statistics = topology.getStatistics();
       return result;
     }
-    SyncCoverDemandSet selectionCoverage(activeDemands.size());
-    for (const auto &[members, coverage] : grounded) {
-      if (std::includes(selection.begin(), selection.end(), members.begin(),
-                        members.end())) {
-        selectionCoverage.unite(coverage);
+    SyncCoverDemandSet coverage(activeDemands.size());
+    for (SyncCoverMechanismId member : column.members) {
+      auto singleton = grounded.find({member});
+      if (singleton != grounded.end()) {
+        coverage.unite(singleton->second);
       }
     }
-    for (std::size_t localDemand = 0; localDemand < activeDemands.size();
-         ++localDemand) {
-      if (selectionCoverage.contains(localDemand)) {
-        continue;
-      }
-      const SyncCoverCoverageResult coverage =
-          topology.checkDemandCanonicalSelection(activeDemands[localDemand],
-                                                 selection);
-      if (!coverage) {
-        result.error = SyncCoverGroundingError::CoverageFailure;
-        result.failedDemand = activeDemands[localDemand];
-        result.coverageError = coverage.error;
-        result.statistics = topology.getStatistics();
+    const std::vector<SyncCoverSelectionWitnessResult> verifiedCoverage =
+        incidence.getSelectionWitnessesForDemands(
+            column.demands, {column.members},
+            universe.getMechanisms().size());
+    if (verifiedCoverage.size() != column.demands.size()) {
+      result.error = SyncCoverGroundingError::CoverageFailure;
+      return result;
+    }
+    for (std::size_t index = 0; index < column.demands.size(); ++index) {
+      const SyncCoverDemandId demand = column.demands[index];
+      auto local = activeLocal.find(demand);
+      if (local == activeLocal.end()) {
+        result.error = SyncCoverGroundingError::InvalidDemand;
+        result.failedDemand = demand;
         return result;
       }
-      if (coverage.covered) {
-        selectionCoverage.add(localDemand);
+      if (verifiedCoverage[index].error != SyncCoverCoverageError::None) {
+        result.error = SyncCoverGroundingError::CoverageFailure;
+        result.failedDemand = demand;
+        result.coverageError = verifiedCoverage[index].error;
+        result.statistics = incidence.getStatistics();
+        return result;
+      }
+      if (!verifiedCoverage[index].selections.empty()) {
+        coverage.add(local->second);
       }
     }
-    auto insertion = grounded.emplace(
-        selection, SyncCoverDemandSet(activeDemands.size()));
-    insertion.first->second.unite(selectionCoverage);
+    if (coverage.count() != 0) {
+      auto insertion = grounded.emplace(
+          column.members, SyncCoverDemandSet(activeDemands.size()));
+      insertion.first->second.unite(coverage);
+    }
   }
 
-  instance.columns.reserve(grounded.size());
+  SyncCoverDemandSet fineGrainedCovered(activeDemands.size());
+  for (const auto &[members, coverage] : grounded) {
+    const bool usesBarrier = std::any_of(
+        members.begin(), members.end(), [&](SyncCoverMechanismId mechanism) {
+          return universe.getMechanisms()[mechanism].kind ==
+                 SyncCoverMechanismKind::Barrier;
+        });
+    if (!usesBarrier) {
+      fineGrainedCovered.unite(coverage);
+    }
+  }
+  std::size_t pricedDemands = 0;
+  for (std::size_t localDemand = 0; localDemand < activeDemands.size();
+       ++localDemand) {
+    if (fineGrainedCovered.contains(localDemand)) {
+      continue;
+    }
+    if (pricedDemands == options.maximumPricingDemands) {
+      instance.columnsTruncated = true;
+      break;
+    }
+    ++pricedDemands;
+    const SyncCoverFactoryWitnessResult priced =
+        incidence.getFactoryMechanismWitnesses(
+            activeDemands[localDemand], universe.getMechanisms().size());
+    if (!priced) {
+      result.error = SyncCoverGroundingError::CoverageFailure;
+      result.failedDemand = activeDemands[localDemand];
+      result.coverageError = priced.error;
+      result.statistics = incidence.getStatistics();
+      return result;
+    }
+    const std::size_t pairCount =
+        std::min(priced.pairs.size(), options.maximumPairsPerDemand);
+    instance.columnsTruncated |= pairCount != priced.pairs.size();
+    for (std::size_t pairIndex = 0; pairIndex < pairCount; ++pairIndex) {
+      const std::vector<SyncCoverMechanismId> &pair =
+          priced.pairs[pairIndex];
+      const bool usesBarrier = std::any_of(
+          pair.begin(), pair.end(), [&](SyncCoverMechanismId mechanism) {
+            return universe.getMechanisms()[mechanism].kind ==
+                   SyncCoverMechanismKind::Barrier;
+          });
+      if (usesBarrier) {
+        continue;
+      }
+      auto insertion = grounded.emplace(
+          pair, SyncCoverDemandSet(activeDemands.size()));
+      insertion.first->second.add(localDemand);
+    }
+  }
+
+  if (grounded.size() > options.maximumColumns) {
+    instance.columnsTruncated = true;
+  }
+  instance.columns.reserve(std::min(grounded.size(), options.maximumColumns));
   for (auto &entry : grounded) {
+    if (instance.columns.size() == options.maximumColumns) {
+      break;
+    }
     SyncCoverGroundedColumn column;
     column.id = instance.columns.size();
     column.members = entry.first;
@@ -394,6 +435,12 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
     }
     instance.columns.push_back(std::move(column));
   }
-  result.statistics = topology.getStatistics();
+  for (std::size_t localDemand = 0; localDemand < activeDemands.size();
+       ++localDemand) {
+    if (instance.demandColumns[localDemand].empty()) {
+      instance.demandsNeedingPricing.push_back(activeDemands[localDemand]);
+    }
+  }
+  result.statistics = incidence.getStatistics();
   return result;
 }

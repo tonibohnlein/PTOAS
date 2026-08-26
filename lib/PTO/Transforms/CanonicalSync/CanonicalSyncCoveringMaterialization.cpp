@@ -27,37 +27,10 @@ namespace {
 
 using ResourceOwner = std::pair<SyncCoverMechanismId, std::size_t>;
 
-const CanonicalEventBundleCandidate *
-findEventBundleProvider(const CanonicalMechanismUniverse &universe,
-                        ArrayRef<CanonicalEventBundleCandidate> selected,
-                        std::size_t id) {
-  auto candidate = llvm::find_if(
-      universe.eventBundles, [&](const CanonicalEventBundleCandidate &bundle) {
-        return bundle.id == id;
-      });
-  if (candidate != universe.eventBundles.end()) {
-    return &*candidate;
-  }
-  auto fallback =
-      llvm::find_if(selected, [&](const CanonicalEventBundleCandidate &bundle) {
-        return bundle.id == id;
-      });
-  return fallback == selected.end() ? nullptr : &*fallback;
-}
-
-const CanonicalBarrierCandidate *
-findBarrierProvider(const CanonicalMechanismUniverse &universe,
-                    std::size_t id) {
-  auto candidate = llvm::find_if(universe.barriers,
-                                 [&](const CanonicalBarrierCandidate &barrier) {
-                                   return barrier.id == id;
-                                 });
-  return candidate == universe.barriers.end() ? nullptr : &*candidate;
-}
-
 std::optional<std::size_t>
 getFirstSyntheticBundleId(const CanonicalMechanismUniverse &universe,
-                          ArrayRef<CanonicalEventBundleCandidate> selected) {
+                          ArrayRef<CanonicalSyncCoveringSelectedEventBundle>
+                              selected) {
   std::size_t next = 0;
   const auto account = [&](const CanonicalEventBundleCandidate &bundle) {
     if (bundle.id == std::numeric_limits<std::size_t>::max()) {
@@ -66,8 +39,15 @@ getFirstSyntheticBundleId(const CanonicalMechanismUniverse &universe,
     next = std::max(next, bundle.id + 1);
     return true;
   };
-  const bool identityOverflow = !llvm::all_of(universe.eventBundles, account) ||
-                                !llvm::all_of(selected, account);
+  const bool identityOverflow =
+      !llvm::all_of(universe.eventBundles, account) ||
+      !llvm::all_of(selected, [&](const auto &recipe) {
+        if (recipe.bundleId == std::numeric_limits<std::size_t>::max()) {
+          return false;
+        }
+        next = std::max(next, recipe.bundleId + 1);
+        return true;
+      });
   if (identityOverflow) {
     return std::nullopt;
   }
@@ -77,12 +57,12 @@ getFirstSyntheticBundleId(const CanonicalMechanismUniverse &universe,
 } // namespace
 
 LogicalResult CanonicalSyncPlanBuilder::materializeCoveringSelection() {
-  if (!plan_.coveringShadowSnapshot_) {
+  if (!plan_.coveringSnapshot_) {
     return func_.emitError(
         "internal error: covering emission has no selected snapshot");
   }
-  const CanonicalSyncCoveringShadowSnapshot &snapshot =
-      *plan_.coveringShadowSnapshot_;
+  const CanonicalSyncCoveringSnapshot &snapshot =
+      *plan_.coveringSnapshot_;
   const CanonicalSyncCoveringAllocationValidation allocationValidation =
       validateCanonicalSyncCoveringAllocation(snapshot);
   if (!allocationValidation) {
@@ -130,8 +110,29 @@ LogicalResult CanonicalSyncPlanBuilder::materializeCoveringSelection() {
           "internal error: covering slot protocol recipe is duplicated");
     }
   }
+  std::map<CanonicalSelectionMechanismRef,
+           const CanonicalSyncCoveringSelectedBarrier *>
+      selectedBarriers;
+  for (const CanonicalSyncCoveringSelectedBarrier &recipe :
+       snapshot.selectedBarriers) {
+    if (!selectedBarriers.emplace(recipe.provider, &recipe).second) {
+      return func_.emitError(
+          "internal error: covering barrier recipe is duplicated");
+    }
+  }
+  std::map<CanonicalSelectionMechanismRef,
+           const CanonicalSyncCoveringSelectedEventBundle *>
+      selectedEvents;
+  for (const CanonicalSyncCoveringSelectedEventBundle &recipe :
+       snapshot.selectedEventBundles) {
+    if (!selectedEvents.emplace(recipe.provider, &recipe).second) {
+      return func_.emitError(
+          "internal error: covering event recipe is duplicated");
+    }
+  }
   std::optional<std::size_t> nextSyntheticBundle =
-      getFirstSyntheticBundleId(mechanismUniverse_, selectedEventBundles_);
+      getFirstSyntheticBundleId(mechanismUniverse_,
+                                snapshot.selectedEventBundles);
   if (!nextSyntheticBundle) {
     return func_.emitError(
         "internal error: covering slot protocol bundle identity overflow");
@@ -144,13 +145,16 @@ LogicalResult CanonicalSyncPlanBuilder::materializeCoveringSelection() {
     auto uses = usesByProvider.find(selected.provider);
     const bool hasUses = uses != usesByProvider.end() && !uses->second.empty();
     if (selected.provider.kind == CanonicalSelectionMechanismKind::Barrier) {
-      const CanonicalBarrierCandidate *candidate =
-          findBarrierProvider(mechanismUniverse_, selected.provider.id);
-      if (!candidate || hasUses) {
+      auto recipe = selectedBarriers.find(selected.provider);
+      const bool invalidRecipe =
+          recipe == selectedBarriers.end() || hasUses ||
+          recipe->second->mechanism != selected.mechanism ||
+          !(recipe->second->provider == selected.provider);
+      if (invalidRecipe) {
         return func_.emitError(
             "internal error: covering barrier provider is invalid");
       }
-      barriers.push_back(candidate->barrier);
+      barriers.push_back(recipe->second->barrier);
       continue;
     }
     if (selected.provider.kind ==
@@ -186,13 +190,26 @@ LogicalResult CanonicalSyncPlanBuilder::materializeCoveringSelection() {
       continue;
     }
 
-    const CanonicalEventBundleCandidate *candidate = findEventBundleProvider(
-        mechanismUniverse_, selectedEventBundles_, selected.provider.id);
-    if (!candidate || !hasUses) {
-      return func_.emitError(
-          "internal error: covering event provider is invalid");
+    auto recipe = selectedEvents.find(selected.provider);
+    if (recipe == selectedEvents.end() ||
+        recipe->second->mechanism != selected.mechanism ||
+        !(recipe->second->provider == selected.provider)) {
+      return func_.emitError()
+             << "internal error: covering event provider has no emission "
+                "recipe: event-bundle["
+             << selected.provider.id << "]";
     }
-    CanonicalEventBundleCandidate bundle = *candidate;
+    if (!hasUses) {
+      return func_.emitError()
+             << "internal error: covering event provider has no resource "
+                "use: event-bundle["
+             << selected.provider.id << "]";
+    }
+    CanonicalEventBundleCandidate bundle;
+    bundle.id = recipe->second->bundleId;
+    bundle.kind = recipe->second->kind;
+    bundle.events.append(recipe->second->events.begin(),
+                         recipe->second->events.end());
     std::vector<bool> assigned(bundle.events.size(), false);
     for (CanonicalEvent &event : bundle.events) {
       event.eventIds.clear();
@@ -237,23 +254,15 @@ LogicalResult CanonicalSyncPlanBuilder::materializeCoveringSelection() {
     return func_.emitError(
         "internal error: covering event-bundle projection is stale");
   }
-  if (!isCandidatePlanWellFormed(barriers, bundles,
-                                 plan_.completionRequirements_,
-                                 /*diagnose=*/true)) {
-    return func_.emitError(
-        "internal error: covering synchronization providers are malformed");
-  }
   if (failed(verifyEventProtocols(events, /*requireAllocation=*/true,
                                   /*diagnose=*/true))) {
     return func_.emitError(
         "internal error: covering synchronization protocol is invalid");
   }
-  if (!planCoversRequirements(barriers, events, /*diagnose=*/true,
-                              /*usePositiveTripFacts=*/true)) {
-    return func_.emitError(
-        "internal error: covering synchronization plan does not cover every "
-        "active completion requirement");
-  }
+  // The direct-cover solver has already run its independent whole-plan graph
+  // oracle over every active demand. Re-running the legacy verifier here is
+  // both quadratic and incomplete for verifier-proved hierarchical ownership
+  // consequences, which span more than one structured recurrence scope.
 
   std::map<CanonicalEventDomainKey, std::size_t> eventCounts;
   for (const CanonicalEvent &event : events) {

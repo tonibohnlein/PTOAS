@@ -233,14 +233,14 @@ module attributes {pto.target_arch = "a5"} {
 // A5-PLAN: barrier{{.*}}pipe=PIPE_M
 
 // COVERING-LABEL: PTOCanonicalSyncPlan @same_l0c_accumulator_order
-// COVERING: covering-shadow status=graph-ready scopes=3 controls=0 nodes=3
+// COVERING: covering status=graph-ready scopes=3 controls=0 nodes=3
 // COVERING-SAME: fixed-edges=3 recurrence-carries=1
 // COVERING-SAME: conservative-demands=10 active-demands=0 intrinsic-demands=10
 // COVERING: covering-edge[3] 2 -> 2 kind=completion-preserving-issue-order scope=1 distance=1 origin=recurrence-carry
 // COVERING: covering-demand[0] 0 -> 1 kind=memory-raw scope=0 distance=0 active=no
 // COVERING: covering-demand[9] 2 -> 2 kind=memory-waw scope=1 distance=1 active=no
 // COVERING-LABEL: PTOCanonicalSyncPlan @non_accumulating_mmad_keeps_barrier
-// COVERING: covering-shadow status=graph-ready scopes=1 controls=0 nodes=2
+// COVERING: covering status=graph-ready scopes=1 controls=0 nodes=2
 // COVERING-SAME: fixed-edges=1 recurrence-carries=0
 // COVERING-SAME: conservative-demands=1 active-demands=1 intrinsic-demands=0
 // COVERING: covering-demand[0] 0 -> 1 kind=memory-waw scope=0 distance=0 active=yes

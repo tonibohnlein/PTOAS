@@ -68,6 +68,18 @@ SyncCoverMechanismId addEvent(SyncCoverMechanismUniverse &universe,
                    "add event mechanism");
 }
 
+SyncCoverMechanismId addBarrier(SyncCoverMechanismUniverse &universe,
+                                std::uint32_t resource,
+                                SyncCoverNodeId source,
+                                SyncCoverNodeId target, bool &passed) {
+  SyncCoverMechanismDescriptor descriptor;
+  descriptor.kind = SyncCoverMechanismKind::Barrier;
+  descriptor.barrier = SyncCoverBarrierPlacement{resource, target, 0};
+  descriptor.supplyEdges.push_back(supply(source, target));
+  return takeIndex(universe.addMechanism(descriptor), passed,
+                   "add barrier mechanism");
+}
+
 bool testDemandSet() {
   bool passed = true;
   SyncCoverDemandSet first(130);
@@ -119,9 +131,9 @@ bool testGroundedColumnsAndMetadata() {
 
   const SyncCoverGroundingResult grounded =
       groundSyncCoverInstance(universe, {longDemand, shortDemand});
-  passed &= check(grounded && grounded.instance.columns.size() == 3 &&
+  passed &= check(grounded && grounded.instance.columns.size() == 2 &&
                       grounded.instance.demandsNeedingPricing.empty(),
-                  "grounding materializes singleton and depth-two columns");
+                  "grounding materializes factory-declared singleton columns");
   if (!grounded) {
     return false;
   }
@@ -130,37 +142,34 @@ bool testGroundedColumnsAndMetadata() {
                           std::vector<SyncCoverMechanismId>{first} &&
                       instance.columns[0].coverage.contains(1) &&
                       instance.columns[1].members ==
-                          std::vector<SyncCoverMechanismId>{first, second} &&
-                      instance.columns[1].coverage.contains(0) &&
-                      instance.columns[2].members ==
-                          std::vector<SyncCoverMechanismId>{direct},
+                          std::vector<SyncCoverMechanismId>{direct} &&
+                      instance.columns[1].coverage.contains(0),
                   "columns are deterministic and retain exact demand sets");
-  passed &= check(instance.coversAll({first, second}) &&
+  passed &= check(!instance.coversAll({first, second}) &&
                       instance.coveredBy({direct}).count() == 1,
-                  "shared members are charged once while activating columns");
+                  "grounding does not infer undeclared transitive coverage");
   passed &= check(instance.mechanisms.size() == 3 &&
                       instance.mechanisms[first].resourceUses.size() == 1 &&
                       instance.resourceDomains.size() == 3,
                   "resource lifetimes and domains are attached once");
   passed &= check(grounded.statistics.groundingQueries == 2 &&
                       grounded.statistics.coverageQueries == 0,
-                  "instance construction performs no selection queries");
+                  "singleton incidence is built in one batched grounding "
+                  "traversal without selected-plan queries");
   passed &= check(instance.isCurrent(universe),
                   "fresh instance matches its universe epoch");
 
   SyncCoverGroundingOptions boundedOptions;
-  boundedOptions.maximumLabelsPerState = 1;
+  boundedOptions.maximumColumns = 1;
   const SyncCoverGroundingResult bounded = groundSyncCoverInstance(
       universe, {longDemand, shortDemand}, boundedOptions);
   passed &= check(bounded && bounded.instance.columnsTruncated &&
                       !bounded.instance.demandsNeedingPricing.empty(),
                   "column caps produce an explicit pricing requirement");
 
-  SyncCoverGroundingOptions seedOptions;
-  seedOptions.maximumMembers = 1;
-  seedOptions.maximumPricingMembers = 1;
   const SyncCoverGroundingResult seeded = groundSyncCoverInstance(
-      universe, {longDemand, shortDemand}, {{first, second}}, seedOptions);
+      universe, {longDemand, shortDemand},
+      {{{first, second}, {longDemand}}});
   const bool hasSeedColumn = seeded && std::any_of(
       seeded.instance.columns.begin(), seeded.instance.columns.end(),
       [&](const SyncCoverGroundedColumn &column) {
@@ -169,12 +178,16 @@ bool testGroundedColumnsAndMetadata() {
       });
   passed &= check(seeded && seeded.instance.coversAll({first, second}) &&
                       hasSeedColumn,
-                  "an exact seed column preserves a bounded transitive "
-                  "incumbent");
-  passed &= check(
-      seeded.statistics.coverageQueries == 2,
-      "seed grounding reuses known columns and queries only unresolved "
-      "transitive coverage");
+                  "verified columns attach declared transitive coverage");
+  passed &= check(seeded.statistics.groundingQueries == 3 &&
+                      seeded.statistics.coverageQueries == 0,
+                  "shared-cost columns use batched grounding verification");
+
+  const SyncCoverGroundingResult overclaimed = groundSyncCoverInstance(
+      universe, {longDemand, shortDemand}, {{{first}, {longDemand}}});
+  passed &= check(overclaimed && !overclaimed.instance.coversAll({first}) &&
+                      overclaimed.instance.coveredBy({first}).count() == 1,
+                  "factory declarations cannot overclaim oracle coverage");
 
   addEvent(universe, directDomain, 1, 3, source, target, passed);
   passed &= check(!instance.isCurrent(universe),
@@ -187,7 +200,7 @@ bool testGroundedColumnsAndMetadata() {
   return passed;
 }
 
-bool testBoundedPricingAndUncoverableDemand() {
+bool testMissingFactoryCoverage() {
   bool passed = true;
   SyncCoverGraph graph;
   const SyncCoverNodeId source = takeIndex(
@@ -226,20 +239,63 @@ bool testBoundedPricingAndUncoverableDemand() {
   const SyncCoverGroundingResult grounded = groundSyncCoverInstance(
       universe, {pricedDemand, unreachableDemand});
   passed &= check(
-      grounded && grounded.instance.demandsNeedingPricing.empty() &&
-          grounded.instance.provenUncoverableDemands ==
-              std::vector<SyncCoverDemandId>{unreachableDemand},
-      "bounded pricing distinguishes a three-member column from an "
-      "uncoverable demand");
+      grounded &&
+          grounded.instance.demandsNeedingPricing ==
+              std::vector<SyncCoverDemandId>{pricedDemand,
+                                             unreachableDemand} &&
+          grounded.instance.provenUncoverableDemands.empty(),
+      "missing factories are reported without claiming infeasibility");
   if (grounded) {
     passed &= check(
-        grounded.instance.coveredBy({first, second, third}).contains(
+        !grounded.instance.coveredBy({first, second, third}).contains(
             pricedDemand) &&
-            grounded.instance.demandColumns[pricedDemand].size() == 1,
-        "pricing grounds the depth-three path exactly once");
-    passed &= check(grounded.statistics.coverageQueries == 1,
-                    "only the unresolved demand uses the completeness oracle");
+            grounded.instance.demandColumns[pricedDemand].empty(),
+        "selection never invents undeclared transitive coverage");
+    passed &= check(grounded.statistics.coverageQueries == 0 &&
+                        grounded.statistics.groundingQueries == 4,
+                    "bounded pricing touches only demands without columns");
   }
+  return passed;
+}
+
+bool testPricesBarrierOnlyCoverage() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source = takeIndex(
+      graph.addNode(1, 1, 0, 0, {}, {2}), passed, "add cycle source");
+  const SyncCoverNodeId middle = takeIndex(
+      graph.addNode(2, 1, 0, 1, {}, {1}), passed, "add cycle middle");
+  const SyncCoverNodeId target = takeIndex(
+      graph.addNode(1, 1, 0, 2), passed, "add cycle target");
+  const SyncCoverDemandId demandId = takeIndex(
+      graph.addDemand(demand(source, target)), passed, "add cycle demand");
+
+  SyncCoverMechanismUniverse universe(graph);
+  const SyncCoverResourceDomainId forwardDomain = takeIndex(
+      universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 8),
+      passed, "add forward domain");
+  const SyncCoverResourceDomainId reverseDomain = takeIndex(
+      universe.addResourceDomain(SyncCoverResourceKind::EventId, 2, 1, 8),
+      passed, "add reverse domain");
+  const SyncCoverMechanismId barrier =
+      addBarrier(universe, 1, source, target, passed);
+  const SyncCoverMechanismId forward =
+      addEvent(universe, forwardDomain, 1, 2, source, middle, passed);
+  const SyncCoverMechanismId reverse =
+      addEvent(universe, reverseDomain, 2, 1, middle, target, passed);
+
+  const SyncCoverGroundingResult grounded =
+      groundSyncCoverInstance(universe, {demandId});
+  const std::vector<SyncCoverMechanismId> eventPair{forward, reverse};
+  const bool hasPair = grounded && std::any_of(
+      grounded.instance.columns.begin(), grounded.instance.columns.end(),
+      [&](const SyncCoverGroundedColumn &column) {
+        return column.members == eventPair && column.coverage.contains(0);
+      });
+  passed &= check(grounded && hasPair &&
+                      grounded.instance.coversAll({barrier}) &&
+                      grounded.instance.coversAll(eventPair),
+                  "barrier-only demands price a barrier-free event path");
   return passed;
 }
 
@@ -247,7 +303,8 @@ bool testBoundedPricingAndUncoverableDemand() {
 
 int main() {
   return testDemandSet() && testGroundedColumnsAndMetadata() &&
-                 testBoundedPricingAndUncoverableDemand()
+                 testMissingFactoryCoverage() &&
+                 testPricesBarrierOnlyCoverage()
              ? 0
              : 1;
 }

@@ -56,7 +56,7 @@ bool mlir::pto::canonicalSyncCoveringResourceUseMatches(
 
 CanonicalSyncCoveringAllocationValidation
 mlir::pto::validateCanonicalSyncCoveringAllocation(
-    const CanonicalSyncCoveringShadowSnapshot &snapshot) {
+    const CanonicalSyncCoveringSnapshot &snapshot) {
   const bool selectionReady =
       snapshot.selectionAttempted &&
       snapshot.selectionError == SyncCoverSelectionError::None &&
@@ -95,7 +95,7 @@ mlir::pto::validateCanonicalSyncCoveringAllocation(
         provider != providers.end() && provider->second == recipe.provider &&
         recipe.provider.kind == CanonicalSelectionMechanismKind::SlotProtocol;
     const bool recipeValid =
-        recipe.event.eventIds.empty() && recipe.event.width == 1 &&
+        recipe.event.eventIds.empty() && recipe.event.width != 0 &&
         recipe.event.iterationDistance == 1 && recipe.event.recurrenceLoop &&
         recipe.event.scopeLoop == recipe.event.recurrenceLoop &&
         !recipe.event.resourceScopeLoop;
@@ -195,7 +195,8 @@ mlir::pto::validateCanonicalSyncCoveringAllocation(
       auto recipe = slotProtocols.find(use.mechanism);
       const bool recipeMatches =
           recipe != slotProtocols.end() &&
-          recipe->second->resourceUse == use.resourceUse && use.width == 1 &&
+          recipe->second->resourceUse == use.resourceUse &&
+          use.width == recipe->second->event.width &&
           static_cast<std::uint32_t>(recipe->second->event.sourcePipe) ==
               use.sourceResource &&
           static_cast<std::uint32_t>(recipe->second->event.targetPipe) ==

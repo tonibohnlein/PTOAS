@@ -85,6 +85,30 @@ add_test(NAME pto_sync_cover_grounded_unit
 set_tests_properties(pto_sync_cover_grounded_unit
   PROPERTIES LABELS "PTO;unit")
 
+add_executable(pto-sync-cover-column-generation-unit-test
+  SyncCoverColumnGenerationTest.cpp
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverCandidateIndex.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverColumnGeneration.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverCoverage.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverCost.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverDescriptorBuilder.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverGraph.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverGrounded.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverMechanism.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverResource.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverSolver.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverSolverCoverage.cpp"
+  "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/CanonicalSyncColoring.cpp"
+)
+target_include_directories(pto-sync-cover-column-generation-unit-test PRIVATE
+  "${PROJECT_SOURCE_DIR}/include"
+)
+add_test(NAME pto_sync_cover_column_generation_unit
+  COMMAND pto-sync-cover-column-generation-unit-test
+)
+set_tests_properties(pto_sync_cover_column_generation_unit
+  PROPERTIES LABELS "PTO;unit")
+
 add_executable(pto-sync-cover-mechanism-unit-test
   SyncCoverMechanismTest.cpp
   "${PROJECT_SOURCE_DIR}/lib/PTO/Transforms/CanonicalSync/SyncCoverCandidateIndex.cpp"
@@ -180,7 +204,7 @@ set_tests_properties(pto_canonical_sync_algorithms_unit
   PROPERTIES LABELS "PTO;unit")
 
 add_executable(pto-canonical-sync-ownership-verification-unit-test
-  CanonicalSyncOwnershipVerificationTest.cpp
+  CanonicalSyncProtocolVerificationTest.cpp
 )
 target_include_directories(pto-canonical-sync-ownership-verification-unit-test PRIVATE
   "${PROJECT_SOURCE_DIR}/include"

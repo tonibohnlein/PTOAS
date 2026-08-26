@@ -342,8 +342,13 @@ bool testSlotProtocolRecipeAttestation() {
   SyncCoverSlotProtocolCandidate unit;
   unit.kind = SyncCoverSlotProtocolKind::UnitRelease;
   unit.releases = {0};
+  unit.completionEdges = {{sourceNode, unitTargetNode}};
+  unit.sources = {sourceNode};
+  unit.sourceLanes = {0};
   unit.source = sourceNode;
   unit.targets = {unitTargetNode};
+  unit.targetWaits = {unitTargetNode};
+  unit.paths = {{{sourceNode}, unitTargetNode}};
   unit.sourceResource = sourceResource;
   unit.targetResource = targetResource;
   unit.recurrenceScope = outerScope;
@@ -367,8 +372,12 @@ bool testSlotProtocolRecipeAttestation() {
   hierarchical.id = 1;
   hierarchical.kind = SyncCoverSlotProtocolKind::HierarchicalRelease;
   hierarchical.releases = {1, 2};
+  hierarchical.completionEdges = {
+      {sourceNode, firstNestedNode}, {sourceNode, secondNestedNode}};
   hierarchical.targets = {firstNestedNode, secondNestedNode};
-  hierarchical.targetLoop = innerScope;
+  hierarchical.waitScope = innerScope;
+  hierarchical.targetWaits = {firstNestedNode, firstNestedNode};
+  hierarchical.paths = {{{sourceNode}, firstNestedNode}};
   const std::optional<SyncCoverMechanismId> hierarchicalMechanismId =
       addProtocol(hierarchical, 502);
   if (!hierarchicalMechanismId) {
@@ -380,7 +389,7 @@ bool testSlotProtocolRecipeAttestation() {
       nodes, universe, hierarchical, hierarchicalMechanism, loopScopes,
       getAnchorPosition);
   passed &= check(
-      hierarchicalRecipe &&
+          hierarchicalRecipe &&
           hierarchicalRecipe->event.actions[1].anchor.operation ==
               inner.getOperation() &&
           hierarchicalRecipe->event.actions[1].anchor.before &&
@@ -422,8 +431,6 @@ bool testSlotProtocolRecipeAttestation() {
   passed &= check(
       materialized && materialized->id == 900 &&
           materialized->kind == CanonicalEventBundleKind::Standalone &&
-          materialized->applicability ==
-              CanonicalEventBundleApplicability::CoveringOnly &&
           materialized->events.size() == 1 &&
           materialized->events.front().eventIds ==
               SmallVector<unsigned, 2>{6} &&
@@ -484,7 +491,7 @@ bool testSlotProtocolRecipeAttestation() {
           getAnchorPosition, *hierarchicalRecipe),
       "reject a recipe backed by a moved mechanism action");
   DenseMap<Operation *, SyncCoverScopeId> missingLoopScopes = loopScopes;
-  missingLoopScopes.erase(inner.getOperation());
+  missingLoopScopes.erase(outer.getOperation());
   passed &= check(!canBuildSlotProtocolRecipe(hierarchical,
                                                missingLoopScopes),
                   "skip an unmaterializable hierarchical loop");

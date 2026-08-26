@@ -760,25 +760,6 @@ mlir::pto::buildCanonicalOwnershipProtocols(
   return buildRoundTripOwnershipProtocols(cycle);
 }
 
-bool mlir::pto::tryCommitCanonicalOwnershipCandidate(
-    std::vector<CanonicalEvent> &acceptedOwnership,
-    std::vector<CanonicalBarrier> &currentBarriers,
-    std::vector<CanonicalEvent> &currentEvents, CanonicalEvent ready,
-    CanonicalEvent release, llvm::function_ref<bool()> evaluate) {
-  const std::size_t previousOwnershipSize = acceptedOwnership.size();
-  const std::vector<CanonicalBarrier> previousBarriers = currentBarriers;
-  const std::vector<CanonicalEvent> previousEvents = currentEvents;
-  acceptedOwnership.push_back(std::move(ready));
-  acceptedOwnership.push_back(std::move(release));
-  if (evaluate()) {
-    return true;
-  }
-  acceptedOwnership.resize(previousOwnershipSize);
-  currentBarriers = previousBarriers;
-  currentEvents = previousEvents;
-  return false;
-}
-
 std::optional<CanonicalEventBundleCandidate>
 CanonicalSyncPlanBuilder::buildOwnershipEventBundle(
     const CanonicalOwnershipCycle &cycle,
@@ -874,8 +855,6 @@ CanonicalSyncPlanBuilder::buildCompositeOwnershipEventBundle() {
         }
         CanonicalEventBundleCandidate composite;
         composite.kind = CanonicalEventBundleKind::CompositeOwnership;
-        composite.applicability =
-            CanonicalEventBundleApplicability::CoveringOnly;
         composite.events.append(stableBundle->events.begin(),
                                 stableBundle->events.end());
         composite.events.append(alternatingBundle->events.begin(),
@@ -894,56 +873,4 @@ CanonicalSyncPlanBuilder::buildCompositeOwnershipEventBundle() {
     }
   }
   return result;
-}
-
-void CanonicalSyncPlanBuilder::synthesizeOwnershipProtocols() {
-  const std::vector<CanonicalBarrier> baselineBarriers = plan_.barriers_;
-  const std::vector<CanonicalEvent> baselineEvents = plan_.events_;
-  std::vector<CanonicalEvent> ownershipEvents;
-  for (const CanonicalEventBundleCandidate &bundle :
-       mechanismUniverse_.eventBundles) {
-    const bool legacyOwnership =
-        bundle.kind == CanonicalEventBundleKind::Ownership &&
-        supportsCanonicalLegacySelection(bundle);
-    if (legacyOwnership) {
-      ownershipEvents.insert(ownershipEvents.end(), bundle.events.begin(),
-                             bundle.events.end());
-    }
-  }
-
-  plan_.events_.insert(plan_.events_.end(), ownershipEvents.begin(),
-                       ownershipEvents.end());
-  optimizeBarriers();
-  if (isCandidatePlanFeasible(plan_.barriers_,
-                              buildCanonicalEventBundles(plan_.events_),
-                              plan_.completionRequirements_)) {
-    return;
-  }
-
-  std::vector<CanonicalEvent> acceptedOwnership;
-  plan_.barriers_ = baselineBarriers;
-  plan_.events_ = baselineEvents;
-  optimizeBarriers();
-
-  for (const CanonicalEventBundleCandidate &bundle :
-       mechanismUniverse_.eventBundles) {
-    if (bundle.kind != CanonicalEventBundleKind::Ownership ||
-        bundle.events.size() != 2 ||
-        !supportsCanonicalLegacySelection(bundle)) {
-      continue;
-    }
-
-    tryCommitCanonicalOwnershipCandidate(
-        acceptedOwnership, plan_.barriers_, plan_.events_, bundle.events[0],
-        bundle.events[1], [&]() {
-          plan_.barriers_ = baselineBarriers;
-          plan_.events_ = baselineEvents;
-          plan_.events_.insert(plan_.events_.end(), acceptedOwnership.begin(),
-                               acceptedOwnership.end());
-          optimizeBarriers();
-          return isCandidatePlanFeasible(
-              plan_.barriers_, buildCanonicalEventBundles(plan_.events_),
-              plan_.completionRequirements_);
-        });
-  }
 }

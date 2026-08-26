@@ -467,7 +467,6 @@ bool eventsEqual(const CanonicalEvent &actual,
       actual.resourceScopeLoop == expected.resourceScopeLoop &&
       actual.iterationDistance == expected.iterationDistance &&
       actual.width == expected.width &&
-      actual.protocolBundle == expected.protocolBundle &&
       actual.ownershipCycle == expected.ownershipCycle &&
       actual.ownershipProtocolKind == expected.ownershipProtocolKind &&
       actual.ownershipRole == expected.ownershipRole &&

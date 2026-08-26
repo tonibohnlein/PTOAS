@@ -184,6 +184,8 @@ bool mlir::pto::canonical_sync_covering::sameDescriptor(
   return first.kind == second.kind &&
          first.providerIdentity == second.providerIdentity && sameBarrier &&
          llvm::equal(first.supplyEdges, second.supplyEdges, sameEdge) &&
+         llvm::equal(first.verifiedCoverageEdges,
+                     second.verifiedCoverageEdges, sameEdge) &&
          llvm::equal(first.actions, second.actions, sameAction) &&
          llvm::equal(first.resourceUses, second.resourceUses, sameUse) &&
          llvm::equal(first.supplyBindings, second.supplyBindings, sameBinding);
@@ -371,24 +373,27 @@ bool mlir::pto::canonical_sync_covering::verifyBundleShape(
     return bundle.events.size() == 1 &&
            !bundle.events.front().ownershipProtocol &&
            bundle.events.front().ownershipCycle == 0;
-  case CanonicalEventBundleKind::SyntheticRoundTrip:
-    if (!verifyCanonicalSyntheticRoundTripBundle(events)) {
-      return false;
-    }
-    return !bundle.completionWitness ||
-           verifyCanonicalSyntheticRoundTripWitness(
-               events, *bundle.completionWitness);
   case CanonicalEventBundleKind::Ownership: {
     const bool invalidOwnershipShape =
         bundle.events.size() != 2 || bundle.protocolIdentity == 0;
     if (invalidOwnershipShape) {
       return false;
     }
-    return llvm::all_of(bundle.events, [&](const CanonicalEvent &event) {
+    const bool eventIdentityMatches =
+        llvm::all_of(bundle.events, [&](const CanonicalEvent &event) {
       return event.ownershipProtocol &&
              event.ownershipCycle == bundle.protocolIdentity &&
              event.ownershipProtocolKind == bundle.ownershipProtocol;
     });
+    auto cycle = llvm::find_if(cycles, [&](const auto &candidate) {
+      return candidate.id == bundle.protocolIdentity;
+    });
+    if (!eventIdentityMatches || cycle == cycles.end()) {
+      return false;
+    }
+    CanonicalOwnershipCycle protocolCycle = *cycle;
+    protocolCycle.protocol = bundle.ownershipProtocol;
+    return verifyCanonicalOwnershipEventPair(protocolCycle, events);
   }
   case CanonicalEventBundleKind::CompositeOwnership:
     return verifyCanonicalCompositeOwnershipBundle(bundle, cycles, nodes);

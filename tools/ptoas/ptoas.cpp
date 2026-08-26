@@ -568,24 +568,12 @@ static llvm::cl::opt<bool> canonicalSyncAssumeDistinctGmArgsNoAlias(
         "the caller must guarantee disjoint accessed storage."),
     llvm::cl::init(false));
 
-static llvm::cl::opt<bool> canonicalSyncCoveringShadow(
-    "canonical-sync-covering-shadow",
-    llvm::cl::desc("Build and verify the non-emitting direct-cover graph "
-                   "alongside CanonicalSync."),
+static llvm::cl::opt<bool> canonicalSyncAssumeAllGmAccessesNoAlias(
+    "canonical-sync-assume-all-gm-accesses-noalias",
+    llvm::cl::desc(
+        "Unsafely assume all GM accesses are disjoint, including accesses "
+        "derived from the same argument and across loop iterations."),
     llvm::cl::init(false));
-
-enum class CanonicalSyncSolverMode { Legacy, Covering };
-
-static llvm::cl::opt<CanonicalSyncSolverMode> canonicalSyncSolver(
-    "canonical-sync-solver",
-    llvm::cl::desc("Canonical synchronization selection and emission solver."),
-    llvm::cl::values(
-        clEnumValN(CanonicalSyncSolverMode::Legacy, "legacy",
-                   "Use the legacy canonical selector and emission path."),
-        clEnumValN(CanonicalSyncSolverMode::Covering, "covering",
-                   "Use direct synchronization covering and its verified "
-                   "physical event-ID assignment.")),
-    llvm::cl::init(CanonicalSyncSolverMode::Legacy));
 
 static llvm::cl::opt<bool> enableTileOpExpand(
     "enable-tile-op-expand",
@@ -1368,12 +1356,11 @@ struct SerialAutoSyncPass
 
   SerialAutoSyncPass(Mode mode, bool enableBufidDebug, int64_t eventIdMax,
                      bool assumeDistinctGmArgsNoAlias = false,
-                     bool coveringShadow = false,
-                     bool coveringSolver = false)
+                     bool assumeAllGmAccessesNoAlias = false)
       : mode(mode), enableBufidDebug(enableBufidDebug),
         eventIdMax(eventIdMax),
         assumeDistinctGmArgsNoAlias(assumeDistinctGmArgsNoAlias),
-        coveringShadow(coveringShadow), coveringSolver(coveringSolver) {}
+        assumeAllGmAccessesNoAlias(assumeAllGmAccessesNoAlias) {}
 
   void runOnOperation() override {
     OpPassManager functionPM(func::FuncOp::getOperationName());
@@ -1400,8 +1387,7 @@ struct SerialAutoSyncPass
       PTOCanonicalSyncOptions options;
       options.eventIdNumMax = eventIdMax;
       options.assumeDistinctGmArgsNoAlias = assumeDistinctGmArgsNoAlias;
-      options.coveringShadow = coveringShadow;
-      options.solver = coveringSolver ? "covering" : "legacy";
+      options.assumeAllGmAccessesNoAlias = assumeAllGmAccessesNoAlias;
       functionPM.addPass(pto::createPTOCanonicalSyncPass(options));
       break;
     }
@@ -1421,8 +1407,7 @@ private:
   bool enableBufidDebug;
   int64_t eventIdMax;
   bool assumeDistinctGmArgsNoAlias;
-  bool coveringShadow;
-  bool coveringSolver;
+  bool assumeAllGmAccessesNoAlias;
 };
 } // namespace
 
@@ -3551,14 +3536,6 @@ int mlir::pto::compilePTOASModule(
                     "--enable-canonical-sync are mutually exclusive.\n";
     return 1;
   }
-  const bool coveringSolverWithoutCanonical =
-      canonicalSyncSolver == CanonicalSyncSolverMode::Covering &&
-      !enableCanonicalSync;
-  if (coveringSolverWithoutCanonical) {
-    llvm::errs() << "Error: --canonical-sync-solver=covering requires "
-                    "--enable-canonical-sync.\n";
-    return 1;
-  }
   if (hasTAssign && enableInjectBarrierAllSync) {
     llvm::errs() << "Error: pto.tassign requires "
                     "--enable-inject-barrier-all-sync to be disabled.\n";
@@ -3809,17 +3786,14 @@ int mlir::pto::compilePTOASModule(
           SerialAutoSyncPass::Mode::Canonical, false,
           canonicalSyncEventIdMax,
           canonicalSyncAssumeDistinctGmArgsNoAlias,
-          canonicalSyncCoveringShadow,
-          canonicalSyncSolver == CanonicalSyncSolverMode::Covering));
+          canonicalSyncAssumeAllGmAccessesNoAlias));
     } else {
       PTOCanonicalSyncOptions options;
       options.eventIdNumMax = canonicalSyncEventIdMax;
       options.assumeDistinctGmArgsNoAlias =
           canonicalSyncAssumeDistinctGmArgsNoAlias;
-      options.coveringShadow = canonicalSyncCoveringShadow;
-      options.solver = canonicalSyncSolver == CanonicalSyncSolverMode::Covering
-                           ? "covering"
-                           : "legacy";
+      options.assumeAllGmAccessesNoAlias =
+          canonicalSyncAssumeAllGmAccessesNoAlias;
       pm.addNestedPass<func::FuncOp>(
           pto::createPTOCanonicalSyncPass(options));
     }

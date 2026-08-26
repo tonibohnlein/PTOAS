@@ -132,7 +132,9 @@ module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<cub
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @l0_ownership_gemm_branched
 // PLAN-SAME: requirements={{[0-9]+}} conservative-requirements={{[1-9][0-9]+}}
-// PLAN: PIPE_M -> PIPE_FIX {{.*}}actions=2 completions=2 traces=1 ownership=no
+// PLAN-SAME: barriers=0 events=9 ownership-cycles=1
+// PLAN: PIPE_M -> PIPE_FIX {{.*}}actions=2 completions=1 traces=1 ownership=no
+// PLAN: PIPE_M -> PIPE_FIX {{.*}}actions=2 completions=4 traces=1 ownership=no
 // PLAN: PIPE_MTE1 -> PIPE_M {{.*}}width=2{{.*}}completions=8 traces=2 ownership=yes ownership-cycle=1 ownership-role=ready
 // PLAN: PIPE_M -> PIPE_MTE1 {{.*}}width=2{{.*}}completions=16 traces=4 ownership=yes ownership-cycle=1 ownership-role=release
 // PLAN: domain PIPE_M -> PIPE_MTE1 original-events=2 events=2 available=8 original-colors=3 colors=3

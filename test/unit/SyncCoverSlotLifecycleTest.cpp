@@ -556,9 +556,12 @@ bool testHierarchicalReleaseProtocolFactory() {
   passed &= check(lifecycles && lifecycles.lifecycles.size() == 1 &&
                       lifecycles.lifecycles.front().requiresPathSensitiveProof,
                   "discover guarded nested accumulator lifecycle");
-  passed &= check(protocols && protocols.candidates.size() == 1 &&
-                      protocols.pathSensitiveLifecycles == 0,
+  passed &= check(static_cast<bool>(protocols),
+                  "build hierarchical release candidates");
+  passed &= check(protocols.candidates.size() == 1,
                   "build one hierarchical release candidate");
+  passed &= check(protocols.pathSensitiveLifecycles == 0,
+                  "prove the guarded release paths");
   SyncCoverSlotProtocolOptions limited;
   limited.maximumEvaluations = 2;
   const SyncCoverSlotProtocolResult truncated =
@@ -576,10 +579,13 @@ bool testHierarchicalReleaseProtocolFactory() {
           candidate.source == fix && candidate.targets ==
               std::vector<SyncCoverNodeId>{firstMmad, secondMmad} &&
           candidate.recurrenceScope == outer &&
-          candidate.targetLoop == inner && candidate.distance == 1 &&
+          candidate.waitScope == inner &&
+          candidate.targetWaits ==
+              std::vector<SyncCoverNodeId>{firstMmad, firstMmad} &&
+          candidate.paths.size() == 1 && candidate.distance == 1 &&
           verifySyncCoverSlotProtocolCandidate(
               graph, index, lifecycles.lifecycles.front(), candidate),
-      "hierarchical candidate covers every guarded MMAD from loop entry");
+      "hierarchical candidate covers every guarded MMAD from its path wait");
 
   SyncCoverMechanismUniverse universe(graph);
   const SyncCoverMechanismResult eventDomain = universe.addResourceDomain(
@@ -606,7 +612,7 @@ bool testHierarchicalReleaseProtocolFactory() {
           !verifySyncCoverSlotProtocol(
               index, lifecycles.lifecycles.front(), universe, candidate,
               malformed),
-          "reject a wait that moved outside the nested-loop boundary");
+          "reject a wait that moved away from the nested-loop entry");
       malformed = *descriptor;
       malformed.actions[0].anchor.kind = SyncCoverAnchorKind::ScopeExit;
       passed &= check(

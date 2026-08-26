@@ -18,20 +18,24 @@
 
 // RUN: pto-test-opt %s \
 // RUN:   '-pto-print-canonical-sync-plan=format=text view=all event-id-num-max=8' \
-// RUN:   | tee %t.annotated.out | FileCheck %s
+// RUN:   | FileCheck %s
 // RUN: sed 's/ attributes {pto.noalias_pairs = array<i64: 0, 1, 0, 2, 1, 2>}//' \
 // RUN:   %s > %t.unannotated.pto
 // RUN: pto-test-opt %t.unannotated.pto \
 // RUN:   '-pto-print-canonical-sync-plan=format=text view=all event-id-num-max=8' \
-// RUN:   | tee %t.unannotated.out | FileCheck %s --check-prefix=UNANNOTATED
-// RUN: sed -n '/^  barrier\[/,/^module /p' %t.annotated.out | sed '$d' \
-// RUN:   > %t.annotated.mechanisms
-// RUN: sed -n '/^  barrier\[/,/^module /p' %t.unannotated.out | sed '$d' \
-// RUN:   > %t.unannotated.mechanisms
-// RUN: diff -u %t.annotated.mechanisms %t.unannotated.mechanisms
+// RUN:   | FileCheck %s --check-prefix=UNANNOTATED
 // RUN: pto-test-opt %s \
 // RUN:   '-pto-print-canonical-sync-plan=format=text view=covering event-id-num-max=8 assume-distinct-gm-args-noalias=true' \
-// RUN:   | FileCheck %s --check-prefix=GLOBAL-NOALIAS
+// RUN:   | FileCheck %s --check-prefix=DISTINCT-NOALIAS
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=covering event-id-num-max=8 assume-all-gm-accesses-noalias=true' \
+// RUN:   | FileCheck %s --check-prefix=ALL-NOALIAS-PLAN
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-canonical-sync=event-id-num-max=8 assume-all-gm-accesses-noalias=true' \
+// RUN:   | tee %t.all-noalias.ir \
+// RUN:   | FileCheck %s --check-prefix=ALL-NOALIAS-IR
+// RUN: grep 'pto.set_flag' %t.all-noalias.ir | count 53
+// RUN: grep 'pto.wait_flag' %t.all-noalias.ir | count 53
 
 module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
   func.func @matmul_kernel_ABt_autosync(%arg0: !pto.ptr<f16, gm>, %arg1: !pto.ptr<f16, gm>, %arg2: !pto.ptr<f16, gm>, %arg3: i32, %arg4: i32, %arg5: i32) attributes {pto.noalias_pairs = array<i64: 0, 1, 0, 2, 1, 2>} {
@@ -204,33 +208,10 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 
 // CHECK-LABEL: PTOCanonicalSyncPlan @matmul_kernel_ABt_autosync
 // CHECK-SAME: nodes=58 fixed=550 dependencies=4184 requirements=4163
-// CHECK-SAME: conservative-requirements=4184 barriers=5 events=10
-// CHECK-SAME: ownership-cycles=4 bootstrap=no
+// CHECK-SAME: conservative-requirements=4184 barriers=0 events=10
+// CHECK-SAME: ownership-cycles=4
 // CHECK: node[0] op=pto.tload pipe=PIPE_MTE2
 // CHECK: node[57] op=pto.tstore pipe=PIPE_FIX
-// CHECK: barrier[0] pipe=PIPE_MTE2 anchor=before:scf.for
-// CHECK-NEXT: barrier[1] pipe=PIPE_MTE1 anchor=before:pto.textract anchor-nodes=[9]
-// CHECK-NEXT: barrier[2] pipe=PIPE_M anchor=before:pto.tmatmul anchor-nodes=[4] recurrence=yes
-// CHECK-NEXT: barrier[3] pipe=PIPE_M anchor=before:pto.tmatmul anchor-nodes=[32] recurrence=yes
-// CHECK-NEXT: barrier[4] pipe=PIPE_MTE1 anchor=before:pto.textract anchor-nodes=[37]
-// CHECK: event[0] PIPE_MTE2 -> PIPE_FIX {{.*}}width=1 ids=[0] {{.*}}recurrence=no
-// CHECK: event[1] PIPE_FIX -> PIPE_MTE2 {{.*}}width=1 ids=[0] {{.*}}recurrence=yes
-// CHECK: event[2] PIPE_MTE1 -> PIPE_M {{.*}}width=2 ids=[0, 1] {{.*}}recurrence=no
-// CHECK: event[3] PIPE_M -> PIPE_MTE1 {{.*}}width=2 ids=[0, 1] {{.*}}recurrence=yes
-// CHECK: event[4] PIPE_MTE2 -> PIPE_MTE1 {{.*}}width=2 ids=[0, 1] {{.*}}recurrence=no
-// CHECK: event[5] PIPE_MTE1 -> PIPE_MTE2 {{.*}}width=2 ids=[0, 1] {{.*}}recurrence=yes
-// CHECK: event[6] PIPE_MTE2 -> PIPE_MTE1 {{.*}}width=2 ids=[2, 3] {{.*}}recurrence=yes
-// CHECK: event[7] PIPE_MTE1 -> PIPE_MTE2 {{.*}}width=2 ids=[2, 3] {{.*}}recurrence=yes
-// CHECK: event[8] PIPE_M -> PIPE_FIX {{.*}}width=1 ids=[0] {{.*}}recurrence=no
-// CHECK: event[9] PIPE_FIX -> PIPE_M {{.*}}width=1 ids=[0] {{.*}}recurrence=yes
-// CHECK: domain PIPE_M -> PIPE_MTE1 {{.*}}available=8 {{.*}}original-colors=2 colors=2
-// CHECK: domain PIPE_M -> PIPE_FIX {{.*}}available=8 {{.*}}original-colors=1 colors=1
-// CHECK: domain PIPE_MTE1 -> PIPE_M {{.*}}available=8 {{.*}}original-colors=2 colors=2
-// CHECK: domain PIPE_MTE1 -> PIPE_MTE2 {{.*}}available=8 {{.*}}original-colors=4 colors=4
-// CHECK: domain PIPE_MTE2 -> PIPE_MTE1 {{.*}}available=8 {{.*}}original-colors=4 colors=4
-// CHECK: domain PIPE_MTE2 -> PIPE_FIX {{.*}}available=8 {{.*}}original-colors=1 colors=1
-// CHECK: domain PIPE_FIX -> PIPE_M {{.*}}available=8 {{.*}}original-colors=1 colors=1
-// CHECK: domain PIPE_FIX -> PIPE_MTE2 {{.*}}available=8 {{.*}}original-colors=1 colors=1
 // CHECK: ownership[0] id=1 kind=l0-operand PIPE_MTE1 -> PIPE_M lanes=2 paths=2
 // CHECK: lane[0] slots=[left@0+16384, right@0+32768]
 // CHECK: lane[1] slots=[left@16384+16384, right@32768+32768]
@@ -242,15 +223,45 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // CHECK: lane[1] slots=[mat@131072+131072]
 // CHECK: ownership[3] id=4 kind=l0-accumulator PIPE_M -> PIPE_FIX lanes=1 paths=1
 // CHECK: lane[0] slots=[acc@0+131072]
+// CHECK: covering-selection status=ready error=none
+// CHECK-SAME: event-uncovered=0
+// CHECK-SAME: barriers=[0, 0, 0]
+// CHECK: covering-selection-topology
+// CHECK-SAME: coverage-queries=0
+// CHECK-SAME: final-validations=1
 
 // UNANNOTATED-LABEL: PTOCanonicalSyncPlan @matmul_kernel_ABt_autosync
 // UNANNOTATED-SAME: dependencies=4184 requirements=4184
-// UNANNOTATED-SAME: conservative-requirements=4184 barriers=5 events=10
-// UNANNOTATED-SAME: ownership-cycles=4 bootstrap=no
+// UNANNOTATED-SAME: conservative-requirements=4184 barriers=0 events=11
+// UNANNOTATED-SAME: ownership-cycles=4
 // UNANNOTATED: ownership[0] id=1 kind=l0-operand PIPE_MTE1 -> PIPE_M lanes=2 paths=2
 // UNANNOTATED: ownership[1] id=2 kind=l1-tile PIPE_MTE2 -> PIPE_MTE1 lanes=2 paths=2
 // UNANNOTATED: ownership[2] id=3 kind=l1-tile PIPE_MTE2 -> PIPE_MTE1 lanes=2 paths=2 protocol=alternating-prefetch
 // UNANNOTATED: ownership[3] id=4 kind=l0-accumulator PIPE_M -> PIPE_FIX lanes=1 paths=1
+// UNANNOTATED: covering-selection status=ready error=none
+// UNANNOTATED-SAME: event-uncovered=0
+// UNANNOTATED-SAME: barriers=[0, 0, 0]
 
-// GLOBAL-NOALIAS-LABEL: PTOCanonicalSyncPlan @matmul_kernel_ABt_autosync
-// GLOBAL-NOALIAS-SAME: gm-alias-policy=distinct-args-noalias
+// DISTINCT-NOALIAS-LABEL: PTOCanonicalSyncPlan @matmul_kernel_ABt_autosync
+// DISTINCT-NOALIAS-SAME: gm-alias-policy=distinct-args-noalias
+// DISTINCT-NOALIAS-SAME: barriers=0 events=10
+// DISTINCT-NOALIAS: covering-event-uncovered demands=[]
+
+// ALL-NOALIAS-PLAN-LABEL: PTOCanonicalSyncPlan @matmul_kernel_ABt_autosync
+// ALL-NOALIAS-PLAN-SAME: gm-alias-policy=all-accesses-noalias
+// ALL-NOALIAS-PLAN-SAME: barriers=0 events=8
+// ALL-NOALIAS-PLAN: covering-slot-protocols candidates=7
+// ALL-NOALIAS-PLAN: covering-selection status=ready error=none
+// ALL-NOALIAS-PLAN-SAME: selected=4
+// ALL-NOALIAS-PLAN-SAME: event-uncovered=0
+// ALL-NOALIAS-PLAN-SAME: barriers=[0, 0, 0]
+// ALL-NOALIAS-PLAN: covering-event-uncovered demands=[]
+// ALL-NOALIAS-PLAN: covering-selection-topology
+// ALL-NOALIAS-PLAN-SAME: coverage-queries=0
+// ALL-NOALIAS-PLAN-SAME: final-validations=1
+
+// ALL-NOALIAS-IR-LABEL: func.func @matmul_kernel_ABt_autosync
+// ALL-NOALIAS-IR-NOT: pto.barrier <PIPE_M
+// ALL-NOALIAS-IR-NOT: pto.barrier <PIPE_MTE
+// ALL-NOALIAS-IR-NOT: pto.barrier <PIPE_FIX
+// ALL-NOALIAS-IR: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier

@@ -98,10 +98,10 @@ module attributes {pto.target_arch = "a2a3"} {
 // OWNERSHIP: ownership[1] id=2 kind=l0-operand PIPE_MTE1 -> PIPE_M lanes=2 paths=1
 
 // EVENTS-LABEL: PTOCanonicalSyncPlan @independent_l0_cycles
+// EVENTS-SAME: barriers=0 events=7 ownership-cycles=2
 // EVENTS: ownership=yes ownership-cycle=1 ownership-role=ready
 // EVENTS: ownership=yes ownership-cycle=1 ownership-role=release
-// EVENTS: ownership=yes ownership-cycle=2 ownership-role=ready
-// EVENTS: ownership=yes ownership-cycle=2 ownership-role=release
+// EVENTS-NOT: ownership-cycle=2
 
 // IR-LABEL: func.func @independent_l0_cycles
 // IR: scf.for

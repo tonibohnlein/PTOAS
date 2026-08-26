@@ -29,8 +29,8 @@ bool check(bool condition, std::string_view message) {
   return condition;
 }
 
-CanonicalSyncCoveringShadowSnapshot makeValidSnapshot() {
-  CanonicalSyncCoveringShadowSnapshot snapshot;
+CanonicalSyncCoveringSnapshot makeValidSnapshot() {
+  CanonicalSyncCoveringSnapshot snapshot;
   snapshot.selectionAttempted = true;
   snapshot.selectionError = SyncCoverSelectionError::None;
   snapshot.selectedMechanisms = 2;
@@ -94,7 +94,7 @@ CanonicalSyncCoveringShadowSnapshot makeValidSnapshot() {
   return snapshot;
 }
 
-bool hasError(const CanonicalSyncCoveringShadowSnapshot &snapshot,
+bool hasError(const CanonicalSyncCoveringSnapshot &snapshot,
               CanonicalSyncCoveringAllocationError expected) {
   return validateCanonicalSyncCoveringAllocation(snapshot).error == expected;
 }
@@ -104,7 +104,7 @@ bool testValidAndExactAllocation() {
                           makeValidSnapshot())),
                       "non-overlapping uses may reuse one physical ID");
 
-  CanonicalSyncCoveringShadowSnapshot mismatch = makeValidSnapshot();
+  CanonicalSyncCoveringSnapshot mismatch = makeValidSnapshot();
   mismatch.selectedAllocations[1].ids = {1};
   passed &=
       check(hasError(mismatch,
@@ -114,21 +114,21 @@ bool testValidAndExactAllocation() {
 }
 
 bool testOwnerSetValidation() {
-  CanonicalSyncCoveringShadowSnapshot missing = makeValidSnapshot();
+  CanonicalSyncCoveringSnapshot missing = makeValidSnapshot();
   missing.selectedAllocations.pop_back();
   bool passed =
       check(hasError(missing,
                      CanonicalSyncCoveringAllocationError::InvalidAllocation),
             "every selected resource use requires an allocation");
 
-  CanonicalSyncCoveringShadowSnapshot duplicate = makeValidSnapshot();
+  CanonicalSyncCoveringSnapshot duplicate = makeValidSnapshot();
   duplicate.selectedAllocations.push_back(duplicate.selectedAllocations.back());
   passed &=
       check(hasError(duplicate,
                      CanonicalSyncCoveringAllocationError::InvalidAllocation),
             "duplicate allocation owners fail closed");
 
-  CanonicalSyncCoveringShadowSnapshot stale = makeValidSnapshot();
+  CanonicalSyncCoveringSnapshot stale = makeValidSnapshot();
   stale.selectedAllocations[1].mechanism = 7;
   passed &= check(
       hasError(stale, CanonicalSyncCoveringAllocationError::InvalidAllocation),
@@ -137,14 +137,14 @@ bool testOwnerSetValidation() {
 }
 
 bool testPhysicalIdValidation() {
-  CanonicalSyncCoveringShadowSnapshot reserved = makeValidSnapshot();
+  CanonicalSyncCoveringSnapshot reserved = makeValidSnapshot();
   reserved.resourceDomainDetails[0].reservedIds = {0};
   bool passed =
       check(hasError(reserved,
                      CanonicalSyncCoveringAllocationError::InvalidAllocation),
             "reserved physical IDs cannot be assigned");
 
-  CanonicalSyncCoveringShadowSnapshot conflict = makeValidSnapshot();
+  CanonicalSyncCoveringSnapshot conflict = makeValidSnapshot();
   conflict.resourceDomainDetails[0].reservedIds.clear();
   conflict.selectedResources.domains[0].available = 2;
   conflict.selectedResources.domains[0].required = 2;
@@ -154,7 +154,7 @@ bool testPhysicalIdValidation() {
                CanonicalSyncCoveringAllocationError::ConflictingAssignment),
       "overlapping closed lifetimes cannot share one physical ID");
 
-  CanonicalSyncCoveringShadowSnapshot outOfRange = makeValidSnapshot();
+  CanonicalSyncCoveringSnapshot outOfRange = makeValidSnapshot();
   outOfRange.resourceDomainDetails[0].reservedIds.clear();
   outOfRange.selectedAllocations[0].ids = {2};
   outOfRange.selectedResources.domains[0].allocations[0].ids = {2};
@@ -163,7 +163,7 @@ bool testPhysicalIdValidation() {
                      CanonicalSyncCoveringAllocationError::InvalidAllocation),
             "physical IDs outside the domain budget fail closed");
 
-  CanonicalSyncCoveringShadowSnapshot duplicateLane = makeValidSnapshot();
+  CanonicalSyncCoveringSnapshot duplicateLane = makeValidSnapshot();
   duplicateLane.resourceDomainDetails[0].reservedIds.clear();
   duplicateLane.selectedResourceUses[0].width = 2;
   duplicateLane.selectedAllocations[0].ids = {0, 0};
@@ -177,13 +177,13 @@ bool testPhysicalIdValidation() {
 }
 
 bool testDomainAndKindValidation() {
-  CanonicalSyncCoveringShadowSnapshot pressure = makeValidSnapshot();
+  CanonicalSyncCoveringSnapshot pressure = makeValidSnapshot();
   pressure.selectedResources.domains[0].required = 2;
   bool passed = check(
       hasError(pressure, CanonicalSyncCoveringAllocationError::InvalidPressure),
       "stored feasibility pressure must match selected lifetimes");
 
-  CanonicalSyncCoveringShadowSnapshot token = makeValidSnapshot();
+  CanonicalSyncCoveringSnapshot token = makeValidSnapshot();
   token.resourceDomainDetails[0].kind = SyncCoverResourceKind::BufferToken;
   token.resourceDomainDetails[0].poolIdentity = 9;
   token.selectedResourceUses[0].kind = SyncCoverResourceKind::BufferToken;
@@ -195,7 +195,7 @@ bool testDomainAndKindValidation() {
                CanonicalSyncCoveringAllocationError::UnsupportedResourceKind),
       "BufferToken emission is rejected in version one");
 
-  CanonicalSyncCoveringShadowSnapshot slot = makeValidSnapshot();
+  CanonicalSyncCoveringSnapshot slot = makeValidSnapshot();
   const CanonicalSelectionMechanismRef slotProvider{
       CanonicalSelectionMechanismKind::SlotProtocol, 0};
   slot.selectedProviders[0].provider = slotProvider;
@@ -216,14 +216,14 @@ bool testDomainAndKindValidation() {
       check(static_cast<bool>(validateCanonicalSyncCoveringAllocation(slot)),
             "slot protocols carry one unallocated emission recipe");
 
-  CanonicalSyncCoveringShadowSnapshot missingRecipe = slot;
+  CanonicalSyncCoveringSnapshot missingRecipe = slot;
   missingRecipe.selectedSlotProtocols.clear();
   passed &=
       check(hasError(missingRecipe,
                      CanonicalSyncCoveringAllocationError::InvalidProvider),
             "selected slot protocols require one emission recipe");
 
-  CanonicalSyncCoveringShadowSnapshot duplicateRecipe = slot;
+  CanonicalSyncCoveringSnapshot duplicateRecipe = slot;
   duplicateRecipe.selectedSlotProtocols.push_back(
       duplicateRecipe.selectedSlotProtocols.front());
   passed &=
@@ -231,21 +231,21 @@ bool testDomainAndKindValidation() {
                      CanonicalSyncCoveringAllocationError::InvalidProvider),
             "slot protocol recipes are one-to-one with selected providers");
 
-  CanonicalSyncCoveringShadowSnapshot allocatedRecipe = slot;
+  CanonicalSyncCoveringSnapshot allocatedRecipe = slot;
   allocatedRecipe.selectedSlotProtocols[0].event.eventIds.push_back(0);
   passed &=
       check(hasError(allocatedRecipe,
                      CanonicalSyncCoveringAllocationError::InvalidProvider),
             "slot protocol recipes remain unallocated until materialization");
 
-  CanonicalSyncCoveringShadowSnapshot slotWithEvent = slot;
+  CanonicalSyncCoveringSnapshot slotWithEvent = slot;
   slotWithEvent.selectedResourceUses[0].materializationEventIndex = 0;
   passed &= check(
       hasError(slotWithEvent,
                CanonicalSyncCoveringAllocationError::UnsupportedResourceKind),
       "slot protocols cannot claim a legacy event index");
 
-  CanonicalSyncCoveringShadowSnapshot eventWithoutIndex = makeValidSnapshot();
+  CanonicalSyncCoveringSnapshot eventWithoutIndex = makeValidSnapshot();
   eventWithoutIndex.selectedResourceUses[0].materializationEventIndex.reset();
   passed &= check(
       hasError(eventWithoutIndex,

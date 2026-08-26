@@ -46,11 +46,7 @@ enum class CanonicalDependencyKind : std::uint8_t {
 enum class CanonicalGMAliasPolicy : std::uint8_t {
   MayAlias,
   DistinctArgumentsNoAlias,
-};
-
-enum class CanonicalSyncSolver : std::uint8_t {
-  Legacy,
-  Covering,
+  AllAccessesNoAlias,
 };
 
 enum class CanonicalOwnershipKind : std::uint8_t {
@@ -68,7 +64,6 @@ enum class CanonicalOwnershipProtocolKind : std::uint8_t {
 
 enum class CanonicalEventBundleKind : std::uint8_t {
   Standalone,
-  SyntheticRoundTrip,
   Ownership,
   CompositeOwnership,
 };
@@ -205,13 +200,6 @@ struct CanonicalOwnershipCycle {
   SmallVector<unsigned, 2> initiallyFreeLanes;
 };
 
-struct CanonicalRecurrenceScope {
-  std::size_t id = 0;
-  Operation *operation = nullptr;
-  std::size_t operationOrder = 0;
-  std::size_t parentScope = 0;
-};
-
 struct CanonicalBarrier {
   std::size_t id = 0;
   PipelineType pipe = PipelineType::PIPE_UNASSIGNED;
@@ -315,7 +303,6 @@ struct CanonicalEvent {
   SmallVector<CanonicalEventAction, 8> actions;
   SmallVector<CanonicalEventCompletion, 4> completions;
   SmallVector<CanonicalEventTrace, 4> traces;
-  std::size_t protocolBundle = 0;
   std::size_t ownershipCycle = 0;
   CanonicalOwnershipProtocolKind ownershipProtocolKind =
       CanonicalOwnershipProtocolKind::RoundTrip;
@@ -354,6 +341,20 @@ struct CanonicalSelectionMechanismRef {
 struct CanonicalSyncCoveringSelectedProvider {
   SyncCoverMechanismId mechanism = 0;
   CanonicalSelectionMechanismRef provider;
+};
+
+struct CanonicalSyncCoveringSelectedBarrier {
+  SyncCoverMechanismId mechanism = 0;
+  CanonicalSelectionMechanismRef provider;
+  CanonicalBarrier barrier;
+};
+
+struct CanonicalSyncCoveringSelectedEventBundle {
+  SyncCoverMechanismId mechanism = 0;
+  CanonicalSelectionMechanismRef provider;
+  std::size_t bundleId = 0;
+  CanonicalEventBundleKind kind = CanonicalEventBundleKind::Standalone;
+  std::vector<CanonicalEvent> events;
 };
 
 struct CanonicalSyncCoveringResourceAllocation {
@@ -417,62 +418,6 @@ struct CanonicalSyncCoveringAllocationValidation {
   }
 };
 
-struct CanonicalSelectionEventDomain {
-  PipelineType sourcePipe = PipelineType::PIPE_UNASSIGNED;
-  PipelineType targetPipe = PipelineType::PIPE_UNASSIGNED;
-
-  bool operator<(const CanonicalSelectionEventDomain &other) const {
-    return std::tie(sourcePipe, targetPipe) <
-           std::tie(other.sourcePipe, other.targetPipe);
-  }
-};
-
-struct CanonicalSelectionMechanismSummary {
-  CanonicalSelectionMechanismRef mechanism;
-  CanonicalEventBundleKind eventBundleKind =
-      CanonicalEventBundleKind::Standalone;
-  SmallVector<CanonicalSelectionEventDomain, 2> eventDomains;
-  std::size_t actionSites = 0;
-  unsigned eventLanes = 0;
-};
-
-struct CanonicalSelectionReplacementCandidate {
-  CanonicalSelectionMechanismRef mechanism;
-  CanonicalEventBundleKind eventBundleKind =
-      CanonicalEventBundleKind::Standalone;
-  PipelineType barrierPipe = PipelineType::PIPE_UNASSIGNED;
-  SmallVector<CanonicalSelectionEventDomain, 2> eventDomains;
-  std::size_t colorOverflow = 0;
-};
-
-struct CanonicalSelectionRequirementDiagnostic {
-  std::size_t requirement = 0;
-  std::size_t recurrenceScope = 0;
-  SmallVector<CanonicalSelectionReplacementCandidate, 4> candidates;
-};
-
-struct CanonicalSelectionColorPressure {
-  PipelineType sourcePipe = PipelineType::PIPE_UNASSIGNED;
-  PipelineType targetPipe = PipelineType::PIPE_UNASSIGNED;
-  std::size_t beforeColors = 0;
-  std::size_t afterColors = 0;
-  std::size_t availableIds = 0;
-};
-
-struct CanonicalSelectionDiagnostic {
-  SmallVector<CanonicalSelectionMechanismSummary, 16> selectedMechanisms;
-  SmallVector<CanonicalSelectionMechanismRef, 4> evictedMechanisms;
-  SmallVector<std::size_t, 16> exclusiveRequirements;
-  SmallVector<CanonicalSelectionRequirementDiagnostic, 16>
-      uncoveredRequirements;
-  SmallVector<CanonicalSelectionColorPressure, 8> colorPressure;
-};
-
-struct CanonicalSelectionDiagnosticRequest {
-  SmallVector<std::size_t, 4> barrierIds;
-  SmallVector<std::size_t, 4> eventBundleIds;
-};
-
 /// Stable diagnostic copy of a discovered exact-range lifecycle. Keeping the
 /// analyzer's private representation out of this public plan header avoids
 /// rebuilding every CanonicalSync translation unit when factories evolve.
@@ -491,9 +436,8 @@ struct CanonicalSyncCoveringSlotLifecycle {
   bool requiresPathSensitiveProof = false;
 };
 
-/// Direct-cover translation, selection diagnostics, and optional emission
-/// handoff. Shadow mode records it without changing the emitted legacy plan.
-struct CanonicalSyncCoveringShadowSnapshot {
+/// Direct-cover translation, selection diagnostics, and emission handoff.
+struct CanonicalSyncCoveringSnapshot {
   std::size_t scopes = 0;
   std::size_t controls = 0;
   std::size_t nodes = 0;
@@ -523,11 +467,14 @@ struct CanonicalSyncCoveringShadowSnapshot {
   std::size_t eventBundleCandidates = 0;
   std::size_t slotProtocolMechanismCandidates = 0;
   std::size_t candidateMechanisms = 0;
-  std::size_t legacySeedMechanisms = 0;
+  std::size_t generatedColumnCandidates = 0;
+  std::size_t generatedColumns = 0;
+  bool columnGenerationTruncated = false;
   std::size_t selectedMechanisms = 0;
   std::size_t solverComponents = 0;
   std::size_t solverEvaluations = 0;
   std::size_t redundancyEvaluations = 0;
+  std::vector<std::size_t> demandsWithoutEventColumn;
   SyncCoverSelectionError selectionError = SyncCoverSelectionError::None;
   bool selectionAttempted = false;
   bool searchTruncated = false;
@@ -535,6 +482,9 @@ struct CanonicalSyncCoveringShadowSnapshot {
   std::vector<std::size_t> actionProfile;
   std::vector<std::size_t> barrierActionProfile;
   std::vector<CanonicalSyncCoveringSelectedProvider> selectedProviders;
+  std::vector<CanonicalSyncCoveringSelectedBarrier> selectedBarriers;
+  std::vector<CanonicalSyncCoveringSelectedEventBundle>
+      selectedEventBundles;
   std::vector<CanonicalSyncCoveringSelectedResourceUse> selectedResourceUses;
   std::vector<CanonicalSyncCoveringSelectedSlotProtocol> selectedSlotProtocols;
   std::vector<CanonicalSyncCoveringResourceAllocation> selectedAllocations;
@@ -556,15 +506,11 @@ struct CanonicalSyncCoveringShadowSnapshot {
 struct CanonicalSyncBuildOptions {
   unsigned eventIdMax = 0;
   CanonicalGMAliasPolicy gmAliasPolicy = CanonicalGMAliasPolicy::MayAlias;
-  CanonicalSyncSolver solver = CanonicalSyncSolver::Legacy;
-  /// Borrowed for buildCanonicalSyncPlan(); the builder copies the request.
-  const CanonicalSelectionDiagnosticRequest *diagnosticRequest = nullptr;
-  bool coveringShadow = false;
 };
 
 CanonicalSyncCoveringAllocationValidation
 validateCanonicalSyncCoveringAllocation(
-    const CanonicalSyncCoveringShadowSnapshot &snapshot);
+    const CanonicalSyncCoveringSnapshot &snapshot);
 
 bool canonicalSyncCoveringResourceUseMatches(
     const CanonicalSyncCoveringSelectedResourceUse &selected,
@@ -586,24 +532,17 @@ public:
   ArrayRef<CanonicalDependency> getConservativeCompletionRequirements() const {
     return conservativeCompletionRequirements_;
   }
-  ArrayRef<CanonicalRecurrenceScope> getRecurrenceScopes() const {
-    return recurrenceScopes_;
-  }
   ArrayRef<CanonicalBarrier> getBarriers() const { return barriers_; }
   ArrayRef<CanonicalEvent> getEvents() const { return events_; }
   ArrayRef<CanonicalEventDomain> getDomains() const { return domains_; }
   ArrayRef<CanonicalOwnershipCycle> getOwnershipCycles() const {
     return ownershipCycles_;
   }
-  ArrayRef<CanonicalSelectionDiagnostic> getSelectionDiagnostics() const {
-    return selectionDiagnostics_;
-  }
-  const std::optional<CanonicalSyncCoveringShadowSnapshot> &
-  getCoveringShadowSnapshot() const {
-    return coveringShadowSnapshot_;
+  const std::optional<CanonicalSyncCoveringSnapshot> &
+  getCoveringSnapshot() const {
+    return coveringSnapshot_;
   }
   CanonicalGMAliasPolicy getGMAliasPolicy() const { return gmAliasPolicy_; }
-  bool usedInfeasibleBootstrap() const { return usedInfeasibleBootstrap_; }
 
 private:
   friend class CanonicalSyncPlanBuilder;
@@ -615,15 +554,12 @@ private:
   std::vector<CanonicalDependency> dependencies_;
   std::vector<CanonicalDependency> conservativeCompletionRequirements_;
   std::vector<CanonicalDependency> completionRequirements_;
-  std::vector<CanonicalRecurrenceScope> recurrenceScopes_;
   std::vector<CanonicalBarrier> barriers_;
   std::vector<CanonicalEvent> events_;
   std::vector<CanonicalEventDomain> domains_;
   std::vector<CanonicalOwnershipCycle> ownershipCycles_;
-  std::vector<CanonicalSelectionDiagnostic> selectionDiagnostics_;
-  std::optional<CanonicalSyncCoveringShadowSnapshot> coveringShadowSnapshot_;
+  std::optional<CanonicalSyncCoveringSnapshot> coveringSnapshot_;
   CanonicalGMAliasPolicy gmAliasPolicy_ = CanonicalGMAliasPolicy::MayAlias;
-  bool usedInfeasibleBootstrap_ = false;
 };
 
 FailureOr<CanonicalSyncPlan>

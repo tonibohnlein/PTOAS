@@ -119,12 +119,10 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
   let summary = "Insert synchronization from canonical physical dependences";
   let description = [{
     Builds the sound dependence graph implied by fixed operation order and
-    planned physical memory addresses, reduces completion-qualified
-    synchronization requirements, structurally coalesces covered forward
-    events when the exact interval coloring exceeds the hardware budget, ranks
-    scarcity candidates by a one-node weighted critical-path estimate, and
-    allocates the available event IDs. The pass fails without changing the IR
-    when bounded scarcity repair cannot produce a covered plan.
+    planned physical memory addresses, generates barriers, events, and
+    verified ownership protocols, solves a grounded constrained set-cover
+    instance, allocates event IDs, and verifies the selected plan against the
+    dependence graph before emission.
   }];
 
   let constructor = "mlir::pto::createPTOCanonicalSyncPass()";
@@ -138,14 +136,12 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
            /*default=*/"false",
            "Unsafely assume distinct GM pointer or view arguments never "
            "alias; the caller must guarantee disjoint accessed storage.">,
-    Option<"coveringShadow", "covering-shadow", "bool",
+    Option<"assumeAllGmAccessesNoAlias",
+           "assume-all-gm-accesses-noalias", "bool",
            /*default=*/"false",
-           "Build and verify the non-emitting direct-cover graph in parallel "
-           "with the legacy canonical synchronization plan.">,
-    Option<"solver", "solver", "std::string", "\"legacy\"",
-           "Synchronization selection and emission solver: legacy or "
-           "covering. Covering is opt-in and may emit a sound truncated "
-           "selection whose optimality is not proven.">,
+           "Unsafely assume all GM memory accesses are disjoint; the caller "
+           "must guarantee this even for accesses derived from the same "
+           "argument and across loop iterations.">,
   ];
 
   let dependentDialects = [
@@ -172,7 +168,7 @@ def PrintCanonicalSyncPlan
            "Output format: text or dot.">,
     Option<"view", "view", "std::string", "\"all\"",
            "Analysis view: all, dependencies, plan, events, ownership, "
-           "selection, or covering.">,
+           "or covering.">,
     Option<"eventIdNumMax", "event-id-num-max", "int64_t",
            /*default=*/"8",
            "Maximum hardware EVENT_ID slots available to the planner.">,
@@ -181,20 +177,12 @@ def PrintCanonicalSyncPlan
            /*default=*/"false",
            "Unsafely assume distinct GM pointer or view arguments never "
            "alias; the caller must guarantee disjoint accessed storage.">,
-    Option<"coveringShadow", "covering-shadow", "bool",
+    Option<"assumeAllGmAccessesNoAlias",
+           "assume-all-gm-accesses-noalias", "bool",
            /*default=*/"false",
-           "Build and verify the non-emitting direct-cover graph in parallel "
-           "with the legacy canonical synchronization plan.">,
-    Option<"solver", "solver", "std::string", "\"legacy\"",
-           "Plan materialization solver: legacy or covering.">,
-    ListOption<"evictCanonicalBarrierIds", "evict-barrier-ids",
-               "unsigned",
-               "Selected canonical barrier IDs to evict atomically in the "
-               "selection diagnostic view.">,
-    ListOption<"evictCanonicalEventBundleIds", "evict-event-bundle-ids",
-               "unsigned",
-               "Selected canonical event-bundle IDs to evict atomically in "
-               "the selection diagnostic view.">,
+           "Unsafely assume all GM memory accesses are disjoint; the caller "
+           "must guarantee this even for accesses derived from the same "
+           "argument and across loop iterations.">,
   ];
 
   let dependentDialects = [

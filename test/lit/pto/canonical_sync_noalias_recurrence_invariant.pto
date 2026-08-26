@@ -233,21 +233,21 @@ module {
 
 // MONOTONIC-LABEL: PTOCanonicalSyncPlan @recurrence_mayalias
 // MONOTONIC-SAME: requirements=21 conservative-requirements=26
-// MONOTONIC-SAME: barriers=0 events=3 ownership-cycles=0 bootstrap=no
+// MONOTONIC-SAME: barriers=0 events=8 ownership-cycles=0
 // MONOTONIC: event{{.*}} PIPE_MTE3 -> PIPE_MTE2 {{.*}}recurrence=yes
 
 // MODE-LABEL: PTOCanonicalSyncPlan @recurrence_mayalias
 // MODE-SAME: gm-alias-policy=distinct-args-noalias
 // MODE-SAME: requirements=15 conservative-requirements=26
-// MODE-SAME: barriers=0 events=3 ownership-cycles=0 bootstrap=no
-// MODE: event{{.*}} PIPE_MTE3 -> PIPE_MTE2 {{.*}}recurrence=yes
+// MODE-SAME: barriers=0 events=5 ownership-cycles=0
+// MODE: event{{.*}} PIPE_V -> PIPE_MTE2 {{.*}}recurrence=yes
 // MODE-LABEL: PTOCanonicalSyncPlan @recurrence_noalias
 // MODE-SAME: requirements=15 conservative-requirements=26
-// MODE-SAME: barriers=0 events=3 ownership-cycles=0 bootstrap=no
+// MODE-SAME: barriers=0 events=5 ownership-cycles=0
 // MONOTONIC-LABEL: PTOCanonicalSyncPlan @recurrence_noalias
 // MONOTONIC-SAME: requirements=15 conservative-requirements=26
-// MONOTONIC-SAME: barriers=0 events=3 ownership-cycles=0 bootstrap=no
-// MONOTONIC: event{{.*}} PIPE_MTE3 -> PIPE_MTE2 {{.*}}recurrence=yes
+// MONOTONIC-SAME: barriers=0 events=5 ownership-cycles=0
+// MONOTONIC: event{{.*}} PIPE_V -> PIPE_MTE2 {{.*}}recurrence=yes
 
 // IR-LABEL: func.func @recurrence_mayalias
 // IR: scf.for
@@ -257,7 +257,7 @@ module {
 // IR: pto.tstore
 
 // COVERING-LABEL: PTOCanonicalSyncPlan @recurrence_mayalias
-// COVERING: covering-shadow status=graph-ready scopes=3 controls=0 nodes=4
+// COVERING: covering status=graph-ready scopes=3 controls=0 nodes=4
 // COVERING-SAME: fixed-edges=1 recurrence-carries=6
 // COVERING-SAME: conservative-demands=26 active-demands=21 intrinsic-demands=0
 // COVERING: covering-selection status=ready error=none
@@ -265,7 +265,7 @@ module {
 // COVERING: covering-demand[9] 0 -> 3 kind=memory-war scope=1 distance=1 active=yes
 // COVERING: covering-demand[22] 3 -> 0 kind=memory-raw scope=1 distance=1 active=yes
 // COVERING-LABEL: PTOCanonicalSyncPlan @recurrence_noalias
-// COVERING: covering-shadow status=graph-ready scopes=3 controls=0 nodes=4
+// COVERING: covering status=graph-ready scopes=3 controls=0 nodes=4
 // COVERING-SAME: fixed-edges=1 recurrence-carries=6
 // COVERING-SAME: conservative-demands=26 active-demands=15 intrinsic-demands=0
 // COVERING: covering-selection status=ready error=none

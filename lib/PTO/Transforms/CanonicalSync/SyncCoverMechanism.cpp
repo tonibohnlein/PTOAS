@@ -184,6 +184,7 @@ bool validBarrierEdge(const SyncCoverGraph &graph,
     return false;
   }
   const bool drainsSourceResource =
+      placement.drainsAllResources ||
       nodes[edge.source].resource == placement.resource;
   const SyncCoverNode &target = nodes[edge.target];
   SyncCoverGuard targetGuard = edge.targetGuard;
@@ -323,8 +324,11 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addMechanismImpl(
     return makeResult(SyncCoverMechanismError::InvalidGraph);
   }
   const SyncCoverMechanismDescriptor candidate = descriptor;
-  if (candidate.supplyEdges.empty()) {
+  if (candidate.supplyEdges.empty() && candidate.verifiedCoverageEdges.empty()) {
     return makeResult(SyncCoverMechanismError::EmptySupply);
+  }
+  if (!protocolVerified && !candidate.verifiedCoverageEdges.empty()) {
+    return makeResult(SyncCoverMechanismError::UnverifiedProtocol);
   }
   const bool barrierKind = candidate.kind == SyncCoverMechanismKind::Barrier;
   if (barrierKind) {
@@ -366,6 +370,9 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addMechanismImpl(
 
   const SyncCoverMechanismId id = mechanisms_.size();
   std::vector<SyncCoverEdge> preparedEdges = candidate.supplyEdges;
+  preparedEdges.insert(preparedEdges.end(),
+                       candidate.verifiedCoverageEdges.begin(),
+                       candidate.verifiedCoverageEdges.end());
   for (SyncCoverEdge &edge : preparedEdges) {
     if (edge.kind != SyncCoverEdgeKind::CompletionSupply || edge.mechanism) {
       return makeResult(SyncCoverMechanismError::InvalidSupply);
@@ -409,7 +416,11 @@ SyncCoverMechanismResult SyncCoverMechanismUniverse::addMechanismImpl(
     }
   }
   for (std::size_t edge = 0; edge < preparedEdges.size(); ++edge) {
-    mechanism.supplyEdges.push_back(firstEdge + edge);
+    if (edge < candidate.supplyEdges.size()) {
+      mechanism.supplyEdges.push_back(firstEdge + edge);
+    } else {
+      mechanism.verifiedCoverageEdges.push_back(firstEdge + edge);
+    }
   }
   for (SyncCoverSupplyBinding &binding : mechanism.supplyBindings) {
     binding.supplyEdge += firstEdge;
@@ -525,7 +536,9 @@ SyncCoverMechanismUniverse::validateUncached() const {
   std::vector<bool> claimedEdges(graph_.getEdges().size(), false);
   for (std::size_t index = 0; index < mechanisms_.size(); ++index) {
     const SyncCoverMechanism &mechanism = mechanisms_[index];
-    if (mechanism.id != index || mechanism.supplyEdges.empty()) {
+    if (mechanism.id != index ||
+        (mechanism.supplyEdges.empty() &&
+         mechanism.verifiedCoverageEdges.empty())) {
       return makeResult(SyncCoverMechanismError::InvalidMechanism, index);
     }
     const bool barrierKind = mechanism.kind == SyncCoverMechanismKind::Barrier;
@@ -534,6 +547,10 @@ SyncCoverMechanismUniverse::validateUncached() const {
     }
     if (mechanism.kind == SyncCoverMechanismKind::VerifiedProtocol &&
         !mechanism.protocolVerified) {
+      return makeResult(SyncCoverMechanismError::UnverifiedProtocol, index);
+    }
+    if (mechanism.kind != SyncCoverMechanismKind::VerifiedProtocol &&
+        !mechanism.verifiedCoverageEdges.empty()) {
       return makeResult(SyncCoverMechanismError::UnverifiedProtocol, index);
     }
     if (!validResourceComposition(domains_, mechanism.kind, mechanism.actions,
@@ -554,7 +571,8 @@ SyncCoverMechanismUniverse::validateUncached() const {
     if (mechanismError == SyncCoverMechanismError::None) {
       mechanismError = validateSupplyBindings(
           mechanism.kind, graph_.getEdges(), mechanism.supplyEdges,
-          mechanism.actions, mechanism.resourceUses, mechanism.supplyBindings);
+          mechanism.actions, mechanism.resourceUses,
+          mechanism.supplyBindings);
     }
     if (mechanismError != SyncCoverMechanismError::None) {
       return makeResult(mechanismError, index);
@@ -573,6 +591,19 @@ SyncCoverMechanismUniverse::validateUncached() const {
         return makeResult(SyncCoverMechanismError::InvalidSupply, index);
       }
       if (barrierKind && !validBarrierEdge(graph_, *mechanism.barrier, edge)) {
+        return makeResult(SyncCoverMechanismError::InvalidSupply, index);
+      }
+      claimedEdges[edgeIndex] = true;
+    }
+    for (std::size_t edgeIndex : mechanism.verifiedCoverageEdges) {
+      const bool invalidEdge =
+          edgeIndex >= graph_.getEdges().size() || claimedEdges[edgeIndex];
+      if (invalidEdge) {
+        return makeResult(SyncCoverMechanismError::InvalidSupply, index);
+      }
+      const SyncCoverEdge &edge = graph_.getEdges()[edgeIndex];
+      if (edge.kind != SyncCoverEdgeKind::CompletionSupply ||
+          edge.mechanism != mechanism.id) {
         return makeResult(SyncCoverMechanismError::InvalidSupply, index);
       }
       claimedEdges[edgeIndex] = true;

@@ -20,8 +20,8 @@
 // RUN:   '-pto-print-canonical-sync-plan=format=text view=events event-id-num-max=2' \
 // RUN:   > %t.second
 // RUN: diff %t.first %t.second
-// RUN: not pto-test-opt %s '-pto-canonical-sync=event-id-num-max=1' 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=SCARCE
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=1' \
+// RUN:   | FileCheck %s --check-prefix=ONE
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @two_independent_l1_cycles(%source0: !pto.ptr<f16, gm>,
@@ -82,10 +82,10 @@ module attributes {pto.target_arch = "a2a3"} {
 }
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @two_independent_l1_cycles
-// PLAN-SAME: barriers=1 events=8 ownership-cycles=2 bootstrap=yes
-// PLAN: domain PIPE_MTE1 -> PIPE_MTE2 original-events=4 events=4 available=2
+// PLAN-SAME: barriers=1 events=4 ownership-cycles=2
+// PLAN: domain PIPE_MTE1 -> PIPE_MTE2 original-events=1 events=1 available=2
 // PLAN-SAME: original-colors=2 colors=2
-// PLAN: domain PIPE_MTE2 -> PIPE_MTE1 original-events=4 events=4 available=2
+// PLAN: domain PIPE_MTE2 -> PIPE_MTE1 original-events=3 events=3 available=2
 // PLAN-SAME: original-colors=2 colors=2
 
 // IR-LABEL: func.func @two_independent_l1_cycles
@@ -94,4 +94,7 @@ module attributes {pto.target_arch = "a2a3"} {
 // IR-NOT: <EVENT_ID2>
 // IR: return
 
-// SCARCE: error: PTOCanonicalSync cannot repair event-id scarcity in domain
+// ONE-LABEL: func.func @two_independent_l1_cycles
+// ONE-NOT: pto.set_flag
+// ONE: pto.barrier
+// ONE-NOT: pto.wait_flag

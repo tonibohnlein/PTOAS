@@ -656,29 +656,15 @@ LogicalResult
 CanonicalSyncPlanBuilder::verifyEventProtocols(ArrayRef<CanonicalEvent> events,
                                                bool requireAllocation,
                                                bool diagnose) const {
-  std::map<std::size_t, unsigned> protocolBundles;
   std::map<std::size_t, SmallVector<const CanonicalEvent *, 2>>
       ownershipEvents;
   for (const CanonicalEvent &event : events) {
     if (!verifyEventProtocol(event, requireAllocation, diagnose)) {
       return failure();
     }
-    if (event.protocolBundle != 0) {
-      ++protocolBundles[event.protocolBundle];
-    }
     if (event.ownershipCycle != 0) {
       ownershipEvents[event.ownershipCycle].push_back(&event);
     }
-  }
-  const auto incompletePair =
-      [](const auto &entry) { return entry.second != 2; };
-  const bool hasIncompleteProtocol =
-      llvm::any_of(protocolBundles, incompletePair);
-  if (hasIncompleteProtocol) {
-    if (diagnose) {
-      llvm::errs() << "invalid canonical event protocol bundle\n";
-    }
-    return failure();
   }
   for (const auto &entry : ownershipEvents) {
     const CanonicalOwnershipCycle *cycle = nullptr;

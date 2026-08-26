@@ -41,11 +41,11 @@ struct SyncCoverSelectionComponent {
 struct SyncCoverSolverOptions {
   static constexpr std::size_t maximumExactMechanismThreshold = 24;
 
-  std::size_t exactMechanismThreshold = 18;
+  std::size_t exactMechanismThreshold = 12;
   /// Per-component bounded-state evaluation limit for exact and greedy search.
   /// Seed evaluation is outside this limit so a valid incumbent survives
   /// truncation.
-  std::size_t evaluationLimit = 4096;
+  std::size_t evaluationLimit = 512;
 };
 
 enum class SyncCoverSelectionError : std::uint8_t {
@@ -74,6 +74,10 @@ struct SyncCoverSelectionResult {
   std::size_t redundancyEvaluations = 0;
   SyncCoverSearchTruncation truncation;
   bool optimalityProven = false;
+  std::vector<SyncCoverDemandId> missingFactoryDemands;
+  std::vector<SyncCoverDemandId> demandsWithoutEventColumn;
+  std::optional<SyncCoverComponentId> failedComponent;
+  std::optional<SyncCoverDemandId> failedFinalDemand;
   SyncCoverResourceSelection resources;
   SyncCoverCoverageStatistics coverageStatistics;
   SyncCoverCoverageStatistics finalVerificationStatistics;
@@ -128,7 +132,9 @@ SyncCoverSelectionResult
 solveSyncCoverSelection(const SyncCoverMechanismUniverse &universe,
                         const std::vector<SyncCoverDemandId> &activeDemands,
                         const std::vector<SyncCoverSelectionSeed> &seeds = {},
-                        const SyncCoverSolverOptions &options = {});
+                        const SyncCoverSolverOptions &options = {},
+                        const std::vector<SyncCoverVerifiedFactoryColumn>
+                            &factoryColumns = {});
 
 } // namespace pto
 } // namespace mlir

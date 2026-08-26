@@ -149,6 +149,10 @@ bool matchesReleaseCandidate(
       candidate.kind != SyncCoverSlotProtocolKind::UnitRelease ||
       candidate.lifecycle != lifecycle.id ||
       candidate.releases.size() != 1 || candidate.targets.size() != 1 ||
+      candidate.sources != std::vector<SyncCoverNodeId>({candidate.source}) ||
+      candidate.completionEdges !=
+          std::vector<std::pair<SyncCoverNodeId, SyncCoverNodeId>>(
+              {{candidate.source, candidate.targets.front()}}) ||
       candidate.releases.front() >= opportunities.size() ||
       std::find(lifecycle.release.begin(), lifecycle.release.end(),
                 candidate.releases.front()) == lifecycle.release.end();
@@ -218,10 +222,20 @@ bool hasCompletionTarget(const SyncCoverNode &node, std::uint32_t target) {
                             node.completionTargets.end(), target);
 }
 
+bool guardMatches(const SyncCoverGuard &guard,
+                  const std::map<SyncCoverControlId, unsigned> &assignment) {
+  return std::all_of(
+      guard.literals.begin(), guard.literals.end(),
+      [&](const SyncCoverGuardLiteral &literal) {
+        auto value = assignment.find(literal.control);
+        return value != assignment.end() && value->second == literal.alternative;
+      });
+}
+
 bool verifyStockPrerequisites(
     const SyncCoverGraph &graph,
     const SyncCoverSlotProtocolCandidate &candidate) {
-  const bool invalid = candidate.targets.size() != 1 || candidate.targetLoop ||
+  const bool invalid = candidate.targets.size() != 1 ||
                        candidate.source >= graph.getNodes().size() ||
                        candidate.targets.front() >= graph.getNodes().size() ||
                        candidate.sourceResource == candidate.targetResource;
@@ -266,30 +280,198 @@ bool verifyCandidateBoundaryClosure(
   return true;
 }
 
+struct GuardedLifecyclePath {
+  std::vector<SyncCoverNodeId> sources;
+  SyncCoverNodeId waitTarget = 0;
+};
+
+struct GuardedLifecycleLayout {
+  unsigned width = 0;
+  std::map<SyncCoverNodeId, unsigned> sourceLanes;
+  std::map<SyncCoverNodeId, SyncCoverNodeId> targetWaits;
+  std::vector<GuardedLifecyclePath> paths;
+};
+
 std::optional<SyncCoverScopeId> findCommonNestedTargetLoop(
     const SyncCoverGraph &graph, SyncCoverScopeId recurrenceScope,
     const std::vector<SyncCoverNodeId> &targets) {
-  std::optional<SyncCoverScopeId> best;
-  std::size_t bestDepth = 0;
+  std::optional<SyncCoverScopeId> result;
+  std::size_t resultDepth = 0;
   for (const SyncCoverScope &scope : graph.getScopes()) {
     if (!scope.isLoop || scope.id == recurrenceScope ||
         !graph.scopeContains(recurrenceScope, scope.id)) {
       continue;
     }
-    const bool containsEveryTarget =
-        std::all_of(targets.begin(), targets.end(), [&](SyncCoverNodeId target) {
+    const bool containsEveryTarget = std::all_of(
+        targets.begin(), targets.end(), [&](SyncCoverNodeId target) {
           return target < graph.getNodes().size() &&
-                 graph.scopeContains(scope.id,
-                                     graph.getNodes()[target].scope);
+                 graph.scopeContains(scope.id, graph.getNodes()[target].scope);
         });
     const std::optional<std::size_t> depth =
         graph.getScopeLoopDepth(scope.id);
-    if (containsEveryTarget && depth && (!best || *depth > bestDepth)) {
-      best = scope.id;
-      bestDepth = *depth;
+    if (containsEveryTarget && depth && (!result || *depth > resultDepth)) {
+      result = scope.id;
+      resultDepth = *depth;
     }
   }
-  return best;
+  return result;
+}
+
+std::optional<GuardedLifecycleLayout> deriveGuardedLifecycleLayout(
+    const SyncCoverGraph &graph, SyncCoverScopeId recurrenceScope,
+    const std::vector<SyncCoverNodeId> &sources,
+    const std::vector<SyncCoverNodeId> &targets) {
+  if (sources.empty() || targets.empty()) {
+    return std::nullopt;
+  }
+  const std::optional<std::size_t> recurrenceDepth =
+      graph.getScopeLoopDepth(recurrenceScope);
+  if (!recurrenceDepth) {
+    return std::nullopt;
+  }
+  std::vector<SyncCoverNodeId> endpoints = sources;
+  endpoints.insert(endpoints.end(), targets.begin(), targets.end());
+  std::vector<SyncCoverGuard> guards;
+  guards.reserve(endpoints.size());
+  for (SyncCoverNodeId endpoint : endpoints) {
+    if (endpoint >= graph.getNodes().size()) {
+      return std::nullopt;
+    }
+    guards.push_back(graph.getNodes()[endpoint].guard);
+  }
+
+  std::vector<SyncCoverGuardLiteral> common = guards.front().literals;
+  for (const SyncCoverGuard &guard : guards) {
+    std::vector<SyncCoverGuardLiteral> intersection;
+    std::set_intersection(common.begin(), common.end(),
+                          guard.literals.begin(), guard.literals.end(),
+                          std::back_inserter(intersection));
+    common = std::move(intersection);
+  }
+  std::vector<SyncCoverControlId> controls;
+  for (SyncCoverGuard &guard : guards) {
+    std::vector<SyncCoverGuardLiteral> reduced;
+    std::set_difference(guard.literals.begin(), guard.literals.end(),
+                        common.begin(), common.end(),
+                        std::back_inserter(reduced));
+    guard.literals = std::move(reduced);
+    for (const SyncCoverGuardLiteral &literal : guard.literals) {
+      controls.push_back(literal.control);
+    }
+  }
+  std::sort(controls.begin(), controls.end());
+  controls.erase(std::unique(controls.begin(), controls.end()), controls.end());
+
+  constexpr std::size_t kMaximumAssignments = 4096;
+  std::size_t assignmentCount = 1;
+  for (SyncCoverControlId control : controls) {
+    if (control >= graph.getControls().size()) {
+      return std::nullopt;
+    }
+    const unsigned alternatives = graph.getControls()[control].alternatives;
+    if (alternatives == 0 ||
+        assignmentCount > kMaximumAssignments / alternatives) {
+      return std::nullopt;
+    }
+    assignmentCount *= alternatives;
+  }
+
+  GuardedLifecycleLayout result;
+  std::set<std::pair<std::vector<SyncCoverNodeId>, SyncCoverNodeId>>
+      uniquePaths;
+  for (std::size_t ordinal = 0; ordinal < assignmentCount; ++ordinal) {
+    std::size_t remaining = ordinal;
+    std::map<SyncCoverControlId, unsigned> assignment;
+    for (SyncCoverControlId control : controls) {
+      const unsigned alternatives = graph.getControls()[control].alternatives;
+      assignment.emplace(control,
+                         static_cast<unsigned>(remaining % alternatives));
+      remaining /= alternatives;
+    }
+    std::vector<SyncCoverNodeId> pathSources;
+    std::vector<SyncCoverNodeId> pathTargets;
+    for (std::size_t index = 0; index < sources.size(); ++index) {
+      if (guardMatches(guards[index], assignment)) {
+        pathSources.push_back(sources[index]);
+      }
+    }
+    for (std::size_t index = 0; index < targets.size(); ++index) {
+      if (guardMatches(guards[sources.size() + index], assignment)) {
+        pathTargets.push_back(targets[index]);
+      }
+    }
+    if (pathSources.empty() || pathTargets.empty()) {
+      return std::nullopt;
+    }
+    std::sort(pathSources.begin(), pathSources.end(),
+              [&](SyncCoverNodeId first, SyncCoverNodeId second) {
+                return std::tie(graph.getNodes()[first].order, first) <
+                       std::tie(graph.getNodes()[second].order, second);
+              });
+    const bool endpointsAreLocal =
+        std::all_of(pathSources.begin(), pathSources.end(),
+                    [&](SyncCoverNodeId source) {
+                      return graph.getScopeLoopDepth(
+                                 graph.getNodes()[source].scope) ==
+                                 recurrenceDepth &&
+                             graph.scopeContains(
+                                 recurrenceScope,
+                                 graph.getNodes()[source].scope);
+                    }) &&
+        std::all_of(pathTargets.begin(), pathTargets.end(),
+                    [&](SyncCoverNodeId target) {
+                      return graph.getScopeLoopDepth(
+                                 graph.getNodes()[target].scope) ==
+                                 recurrenceDepth &&
+                             graph.scopeContains(
+                                 recurrenceScope,
+                                 graph.getNodes()[target].scope);
+                    });
+    if (!endpointsAreLocal) {
+      return std::nullopt;
+    }
+    std::sort(pathTargets.begin(), pathTargets.end(),
+              [&](SyncCoverNodeId first, SyncCoverNodeId second) {
+                return std::tie(graph.getNodes()[first].order, first) <
+                       std::tie(graph.getNodes()[second].order, second);
+              });
+    const SyncCoverNodeId waitTarget = pathTargets.front();
+    const bool waitPrecedesReleases = std::all_of(
+        pathSources.begin(), pathSources.end(), [&](SyncCoverNodeId source) {
+          return graph.getNodes()[waitTarget].order <
+                 graph.getNodes()[source].order;
+        });
+    if (!waitPrecedesReleases) {
+      return std::nullopt;
+    }
+    if (result.width == 0) {
+      result.width = static_cast<unsigned>(pathSources.size());
+    }
+    if (pathSources.size() != result.width) {
+      return std::nullopt;
+    }
+    for (std::size_t lane = 0; lane < pathSources.size(); ++lane) {
+      auto [entry, inserted] = result.sourceLanes.emplace(
+          pathSources[lane], static_cast<unsigned>(lane));
+      if (!inserted && entry->second != lane) {
+        return std::nullopt;
+      }
+    }
+    for (SyncCoverNodeId target : pathTargets) {
+      auto [entry, inserted] = result.targetWaits.emplace(target, waitTarget);
+      if (!inserted && entry->second != waitTarget) {
+        return std::nullopt;
+      }
+    }
+    if (uniquePaths.emplace(pathSources, waitTarget).second) {
+      result.paths.push_back({std::move(pathSources), waitTarget});
+    }
+  }
+  if (result.width == 0 || result.sourceLanes.size() != sources.size() ||
+      result.targetWaits.size() != targets.size()) {
+    return std::nullopt;
+  }
+  return result;
 }
 
 bool verifyHierarchicalAccessBoundary(
@@ -297,18 +479,15 @@ bool verifyHierarchicalAccessBoundary(
     const std::vector<SyncCoverStorageAccessId> &managed,
     const SyncCoverSlotLifecycle &lifecycle,
     const SyncCoverSlotProtocolCandidate &candidate) {
-  const bool invalidCandidate =
-      candidate.source >= graph.getNodes().size() ||
-      !candidate.targetLoop ||
-      *candidate.targetLoop >= graph.getScopes().size();
+  const bool invalidCandidate = candidate.sources.empty() ||
+      candidate.source != candidate.sources.front() ||
+      candidate.sourceLanes.size() != candidate.sources.size() ||
+      candidate.targetWaits.size() != candidate.targets.size();
   if (invalidCandidate) {
     return false;
   }
-  const SyncCoverNode &releaseSource = graph.getNodes()[candidate.source];
-  if (releaseSource.resource != lifecycle.consumerResource ||
-      !releaseSource.guard.literals.empty()) {
-    return false;
-  }
+  const std::set<SyncCoverNodeId> sourceNodes(candidate.sources.begin(),
+                                              candidate.sources.end());
   std::set<SyncCoverNodeId> producerNodes;
   for (SyncCoverStorageAccessId accessId : managed) {
     if (accessId >= graph.getStorageAccesses().size()) {
@@ -318,24 +497,51 @@ bool verifyHierarchicalAccessBoundary(
         graph.getStorageAccesses()[accessId];
     const SyncCoverNode &node = graph.getNodes()[access.node];
     if (node.resource == lifecycle.producerResource) {
+      const auto target = std::lower_bound(candidate.targets.begin(),
+                                           candidate.targets.end(), access.node);
+      const std::size_t targetIndex =
+          static_cast<std::size_t>(target - candidate.targets.begin());
+      bool waitPrecedesAccess = false;
+      if (candidate.waitScope) {
+        waitPrecedesAccess =
+            *candidate.waitScope < graph.getScopes().size() &&
+            graph.scopeContains(*candidate.waitScope, node.scope);
+      } else if (targetIndex < candidate.targetWaits.size() &&
+                 candidate.targetWaits[targetIndex] < graph.getNodes().size()) {
+        waitPrecedesAccess =
+            graph.getNodes()[candidate.targetWaits[targetIndex]].order <=
+            node.order;
+      }
       const bool invalidProducerAccess =
           !syncCoverStorageModeWrites(access.mode) ||
-          !graph.scopeContains(*candidate.targetLoop, node.scope);
+          target == candidate.targets.end() || *target != access.node ||
+          !waitPrecedesAccess;
       if (invalidProducerAccess) {
         return false;
       }
       producerNodes.insert(access.node);
       continue;
     }
+    const bool isDeclaredConsumer =
+        sourceNodes.find(access.node) != sourceNodes.end();
     if (node.resource != lifecycle.consumerResource ||
         access.mode != SyncCoverStorageAccessMode::Read ||
-        access.node != candidate.source) {
+        !isDeclaredConsumer) {
       return false;
     }
   }
   const std::set<SyncCoverNodeId> targets(candidate.targets.begin(),
                                           candidate.targets.end());
-  return !producerNodes.empty() && producerNodes == targets;
+  if (producerNodes.empty() || producerNodes != targets) {
+    return false;
+  }
+  if (candidate.waitScope) {
+    return candidate.sources.size() == 1 &&
+           graph.getNodes()[candidate.source].guard.literals.empty();
+  }
+  return deriveGuardedLifecycleLayout(graph, candidate.recurrenceScope,
+                                      candidate.sources, candidate.targets)
+      .has_value();
 }
 
 bool verifyHierarchicalCandidateShape(
@@ -347,41 +553,82 @@ bool verifyHierarchicalCandidateShape(
       candidate.kind != SyncCoverSlotProtocolKind::HierarchicalRelease ||
       candidate.lifecycle != lifecycle.id || candidate.distance != 1 ||
       lifecycle.distance != 1 || candidate.releases.empty() ||
-      candidate.targets.empty() ||
-      candidate.releases.size() != candidate.targets.size() ||
-      candidate.source >= graph.getNodes().size() ||
+      candidate.sources.empty() || candidate.targets.empty() ||
+      candidate.source != candidate.sources.front() ||
+      candidate.sourceLanes.size() != candidate.sources.size() ||
+      candidate.targetWaits.size() != candidate.targets.size() ||
+      candidate.paths.empty() ||
       candidate.sourceResource != lifecycle.consumerResource ||
       candidate.targetResource != lifecycle.producerResource ||
       candidate.recurrenceScope != lifecycle.recurrenceScope ||
-      !candidate.targetLoop;
+      candidate.width == 0;
   const std::set<SyncCoverCandidateOpportunityId> distinctReleases(
       candidate.releases.begin(), candidate.releases.end());
+  const std::set<SyncCoverNodeId> distinctSources(candidate.sources.begin(),
+                                                   candidate.sources.end());
   const std::set<SyncCoverNodeId> distinctTargets(candidate.targets.begin(),
                                                    candidate.targets.end());
+  const std::set<std::pair<SyncCoverNodeId, SyncCoverNodeId>>
+      declaredCompletions(candidate.completionEdges.begin(),
+                          candidate.completionEdges.end());
   const bool invalidIdentity =
       invalid || distinctReleases.size() != candidate.releases.size() ||
-      distinctTargets.size() != candidate.targets.size();
+      distinctSources.size() != candidate.sources.size() ||
+      distinctTargets.size() != candidate.targets.size() ||
+      declaredCompletions.size() != candidate.completionEdges.size();
   if (invalidIdentity) {
     return false;
   }
-  const std::optional<SyncCoverScopeId> targetLoop =
-      findCommonNestedTargetLoop(graph, lifecycle.recurrenceScope,
-                                 candidate.targets);
-  // ScopeEntry is emitted before the nested loop. Its parent must execute on
-  // every outer iteration even though the nested loop itself may be zero-trip.
-  const bool invalidTargetLoop =
-      !targetLoop || !candidate.targetLoop ||
-      *targetLoop != *candidate.targetLoop ||
-      !graph.getScopes()[*candidate.targetLoop].isLoop ||
-      !graph.scopeMustExecuteWithin(
-          lifecycle.recurrenceScope,
-          graph.getScopes()[*candidate.targetLoop].parent);
-  if (invalidTargetLoop) {
-    return false;
+  std::optional<GuardedLifecycleLayout> layout;
+  if (candidate.waitScope) {
+    const std::optional<SyncCoverScopeId> targetLoop =
+        findCommonNestedTargetLoop(graph, lifecycle.recurrenceScope,
+                                   candidate.targets);
+    const bool invalidNestedLayout =
+        !targetLoop || *targetLoop != *candidate.waitScope ||
+        candidate.sources.size() != 1 || candidate.width != 1 ||
+        candidate.sourceLanes != std::vector<unsigned>{0} ||
+        candidate.paths.size() != 1 ||
+        candidate.paths.front().sources != candidate.sources ||
+        candidate.targetWaits !=
+            std::vector<SyncCoverNodeId>(candidate.targets.size(),
+                                         candidate.targets.front()) ||
+        candidate.paths.front().waitTarget != candidate.targets.front();
+    if (invalidNestedLayout) {
+      return false;
+    }
+  } else {
+    layout = deriveGuardedLifecycleLayout(graph, lifecycle.recurrenceScope,
+                                          candidate.sources,
+                                          candidate.targets);
+    if (!layout || layout->width != candidate.width ||
+        candidate.paths.size() != layout->paths.size()) {
+      return false;
+    }
+    for (std::size_t index = 0; index < candidate.paths.size(); ++index) {
+      if (candidate.paths[index].sources != layout->paths[index].sources ||
+          candidate.paths[index].waitTarget !=
+              layout->paths[index].waitTarget) {
+        return false;
+      }
+    }
+    for (std::size_t index = 0; index < candidate.sources.size(); ++index) {
+      const auto lane = layout->sourceLanes.find(candidate.sources[index]);
+      if (lane == layout->sourceLanes.end() ||
+          lane->second != candidate.sourceLanes[index]) {
+        return false;
+      }
+    }
+    for (std::size_t index = 0; index < candidate.targets.size(); ++index) {
+      const auto wait = layout->targetWaits.find(candidate.targets[index]);
+      if (wait == layout->targetWaits.end() ||
+          wait->second != candidate.targetWaits[index]) {
+        return false;
+      }
+    }
   }
-  for (std::size_t index = 0; index < candidate.releases.size(); ++index) {
-    const SyncCoverCandidateOpportunityId releaseId =
-        candidate.releases[index];
+  std::set<std::pair<SyncCoverNodeId, SyncCoverNodeId>> releasePairs;
+  for (SyncCoverCandidateOpportunityId releaseId : candidate.releases) {
     const bool missingRelease =
         releaseId >= opportunities.size() ||
         std::find(lifecycle.release.begin(), lifecycle.release.end(),
@@ -394,33 +641,67 @@ bool verifyHierarchicalCandidateShape(
         !isExactSlotOpportunity(release, lifecycle.slot) ||
         release.kind != SyncCoverDemandKind::MemoryWAR ||
         release.distance != 1 || release.scope != lifecycle.recurrenceScope ||
-        release.source != candidate.source ||
-        release.target != candidate.targets[index] || !release.slot ||
+        distinctSources.find(release.source) == distinctSources.end() ||
+        distinctTargets.find(release.target) == distinctTargets.end() ||
+        !release.slot ||
         release.slot->sourceMode != SyncCoverStorageAccessMode::Read ||
         !syncCoverStorageModeWrites(release.slot->targetMode);
     if (mismatch) {
       return false;
     }
+    releasePairs.emplace(release.source, release.target);
   }
-  const SyncCoverNode &source = graph.getNodes()[candidate.source];
   const std::optional<std::size_t> recurrenceDepth =
       graph.getScopeLoopDepth(candidate.recurrenceScope);
-  const std::optional<std::size_t> sourceDepth =
-      graph.getScopeLoopDepth(source.scope);
-  const std::optional<std::size_t> targetDepth =
-      graph.getScopeLoopDepth(*candidate.targetLoop);
-  const std::optional<SyncCoverTimelinePosition> sourceAfter =
-      resolveSyncCoverAnchor(
-          graph, {SyncCoverAnchorKind::AfterNode, candidate.source, 0});
-  const std::optional<SyncCoverTimelineInterval> targetTimeline =
-      graph.getScopes()[*candidate.targetLoop].timeline;
-  return recurrenceDepth && sourceDepth == recurrenceDepth && targetDepth &&
-         *targetDepth > *recurrenceDepth &&
-         *targetDepth - *recurrenceDepth == 1 && sourceAfter &&
-         targetTimeline && targetTimeline->end < *sourceAfter &&
-         graph.scopeMustExecuteWithin(candidate.recurrenceScope,
-                                      source.scope) &&
-         hasCompletionTarget(source, candidate.targetResource);
+  if (!recurrenceDepth) {
+    return false;
+  }
+  for (SyncCoverNodeId sourceId : candidate.sources) {
+    if (sourceId >= graph.getNodes().size()) {
+      return false;
+    }
+    const SyncCoverNode &source = graph.getNodes()[sourceId];
+    const std::optional<std::size_t> sourceDepth =
+        graph.getScopeLoopDepth(source.scope);
+    const std::optional<SyncCoverTimelinePosition> sourceAfter =
+        resolveSyncCoverAnchor(
+            graph, {SyncCoverAnchorKind::AfterNode, sourceId, 0});
+    if (!sourceAfter) {
+      return false;
+    }
+    bool followsOneWait = false;
+    if (candidate.waitScope) {
+      const SyncCoverScope &waitScope = graph.getScopes()[*candidate.waitScope];
+      const std::optional<std::size_t> waitDepth =
+          graph.getScopeLoopDepth(*candidate.waitScope);
+      followsOneWait = waitScope.timeline && waitDepth && recurrenceDepth &&
+                       *waitDepth == *recurrenceDepth + 1 &&
+                       waitScope.timeline->end < *sourceAfter &&
+                       graph.scopeMustExecuteWithin(
+                           candidate.recurrenceScope, waitScope.parent);
+    } else {
+      followsOneWait = std::any_of(
+          layout->paths.begin(), layout->paths.end(),
+          [&](const GuardedLifecyclePath &path) {
+            if (std::find(path.sources.begin(), path.sources.end(), sourceId) ==
+                path.sources.end()) {
+              return false;
+            }
+            const std::optional<SyncCoverTimelinePosition> waitBefore =
+                resolveSyncCoverAnchor(
+                    graph,
+                    {SyncCoverAnchorKind::BeforeNode, path.waitTarget, 0});
+            return waitBefore && *waitBefore < *sourceAfter;
+          });
+    }
+    if (source.resource != lifecycle.consumerResource ||
+        sourceDepth != recurrenceDepth || !followsOneWait ||
+        !hasCompletionTarget(source, candidate.targetResource)) {
+      return false;
+    }
+  }
+  return releasePairs.size() == candidate.releases.size() &&
+         releasePairs == declaredCompletions;
 }
 
 std::optional<SyncCoverSlotProtocolCandidate>
@@ -433,8 +714,11 @@ buildHierarchicalCandidate(
   if (lifecycle.distance != 1 || lifecycle.release.empty()) {
     return std::nullopt;
   }
-  std::map<SyncCoverNodeId, SyncCoverCandidateOpportunityId> targetReleases;
-  std::optional<SyncCoverNodeId> source;
+  std::map<std::pair<SyncCoverNodeId, SyncCoverNodeId>,
+           SyncCoverCandidateOpportunityId>
+      releasePairs;
+  std::set<SyncCoverNodeId> sourceSet;
+  std::set<SyncCoverNodeId> targetSet;
   for (SyncCoverCandidateOpportunityId releaseId : lifecycle.release) {
     if (releaseId >= opportunities.size()) {
       return std::nullopt;
@@ -448,43 +732,75 @@ buildHierarchicalCandidate(
         release.targetResource != lifecycle.producerResource || !release.slot ||
         release.slot->sourceMode != SyncCoverStorageAccessMode::Read ||
         !syncCoverStorageModeWrites(release.slot->targetMode);
-    if (invalid || (source && *source != release.source)) {
+    if (invalid) {
       return std::nullopt;
     }
-    source = release.source;
-    targetReleases.emplace(release.target, releaseId);
+    sourceSet.insert(release.source);
+    targetSet.insert(release.target);
+    releasePairs.emplace(std::make_pair(release.source, release.target),
+                         releaseId);
   }
-  if (!source || targetReleases.empty()) {
+  if (sourceSet.empty() || targetSet.empty() || releasePairs.empty()) {
     return std::nullopt;
   }
-  std::vector<SyncCoverNodeId> targets;
+  std::vector<SyncCoverNodeId> sources(sourceSet.begin(), sourceSet.end());
+  std::vector<SyncCoverNodeId> targets(targetSet.begin(), targetSet.end());
   std::vector<SyncCoverCandidateOpportunityId> releases;
-  targets.reserve(targetReleases.size());
-  releases.reserve(targetReleases.size());
-  for (const auto &[target, release] : targetReleases) {
-    targets.push_back(target);
+  releases.reserve(releasePairs.size());
+  for (const auto &[endpoints, release] : releasePairs) {
+    (void)endpoints;
     releases.push_back(release);
-  }
-  const std::optional<SyncCoverScopeId> targetLoop =
-      findCommonNestedTargetLoop(graph, lifecycle.recurrenceScope, targets);
-  if (!targetLoop) {
-    return std::nullopt;
   }
   SyncCoverSlotProtocolCandidate candidate;
   candidate.id = id;
   candidate.kind = SyncCoverSlotProtocolKind::HierarchicalRelease;
   candidate.lifecycle = lifecycle.id;
   candidate.releases = std::move(releases);
-  candidate.source = *source;
+  for (const auto &[endpoints, release] : releasePairs) {
+    (void)release;
+    candidate.completionEdges.push_back(endpoints);
+  }
+  candidate.sources = std::move(sources);
+  candidate.source = candidate.sources.front();
   candidate.targets = std::move(targets);
+  const std::optional<SyncCoverScopeId> targetLoop =
+      findCommonNestedTargetLoop(graph, lifecycle.recurrenceScope,
+                                 candidate.targets);
+  if (targetLoop && candidate.sources.size() == 1) {
+    candidate.waitScope = *targetLoop;
+    candidate.sourceLanes = {0};
+    candidate.targetWaits.assign(candidate.targets.size(),
+                                 candidate.targets.front());
+    candidate.paths.push_back(
+        {candidate.sources, candidate.targets.front()});
+    candidate.width = 1;
+  } else {
+    const std::optional<GuardedLifecycleLayout> layout =
+        deriveGuardedLifecycleLayout(graph, lifecycle.recurrenceScope,
+                                     candidate.sources, candidate.targets);
+    if (!layout) {
+      return std::nullopt;
+    }
+    for (SyncCoverNodeId source : candidate.sources) {
+      candidate.sourceLanes.push_back(layout->sourceLanes.at(source));
+    }
+    for (SyncCoverNodeId target : candidate.targets) {
+      candidate.targetWaits.push_back(layout->targetWaits.at(target));
+    }
+    for (const GuardedLifecyclePath &path : layout->paths) {
+      candidate.paths.push_back({path.sources, path.waitTarget});
+    }
+    candidate.width = layout->width;
+  }
   candidate.sourceResource = lifecycle.consumerResource;
   candidate.targetResource = lifecycle.producerResource;
   candidate.recurrenceScope = lifecycle.recurrenceScope;
-  candidate.targetLoop = *targetLoop;
   candidate.distance = 1;
   if (!verifyHierarchicalCandidateShape(graph, opportunities, lifecycle,
-                                        candidate) ||
-      !verifyHierarchicalAccessBoundary(graph, managed, lifecycle, candidate)) {
+                                        candidate)) {
+    return std::nullopt;
+  }
+  if (!verifyHierarchicalAccessBoundary(graph, managed, lifecycle, candidate)) {
     return std::nullopt;
   }
   return candidate;
@@ -584,9 +900,11 @@ mlir::pto::makeSyncCoverSlotProtocolDescriptor(
       domain.kind != SyncCoverResourceKind::EventId ||
       domain.sourceResource != candidate.sourceResource ||
       domain.targetResource != candidate.targetResource ||
-      candidate.releases.empty() || candidate.targets.empty() ||
-      candidate.releases.size() != candidate.targets.size() ||
-      !candidate.targetLoop) {
+      candidate.releases.empty() || candidate.sources.empty() ||
+      candidate.targets.empty() || candidate.completionEdges.empty() ||
+      candidate.sourceLanes.size() != candidate.sources.size() ||
+      candidate.targetWaits.size() != candidate.targets.size() ||
+      candidate.width == 0) {
     return std::nullopt;
   }
   SyncCoverMechanismDescriptorBuilder builder(
@@ -594,28 +912,81 @@ mlir::pto::makeSyncCoverSlotProtocolDescriptor(
   const SyncCoverDescriptorActionRef prime = builder.addAction(
       SyncCoverResourceActionKind::Produce, domain.sourceResource,
       {SyncCoverAnchorKind::ScopeEntry, 0, candidate.recurrenceScope});
-  const SyncCoverDescriptorActionRef bodyWait = builder.addAction(
-      SyncCoverResourceActionKind::Consume, domain.targetResource,
-      {SyncCoverAnchorKind::ScopeEntry, 0, *candidate.targetLoop});
-  const SyncCoverDescriptorActionRef bodySet = builder.addAction(
-      SyncCoverResourceActionKind::Produce, domain.sourceResource,
-      {SyncCoverAnchorKind::AfterNode, candidate.source, 0});
+  std::set<SyncCoverNodeId> uniqueWaitTargets(candidate.targetWaits.begin(),
+                                              candidate.targetWaits.end());
+  std::map<std::pair<SyncCoverNodeId, unsigned>,
+           SyncCoverDescriptorActionRef>
+      bodyWaits;
+  for (SyncCoverNodeId waitTarget : uniqueWaitTargets) {
+    for (unsigned lane = 0; lane < candidate.width; ++lane) {
+      const SyncCoverAnchor anchor = candidate.waitScope
+                                         ? SyncCoverAnchor{
+                                               SyncCoverAnchorKind::ScopeEntry,
+                                               0, *candidate.waitScope}
+                                         : SyncCoverAnchor{
+                                               SyncCoverAnchorKind::BeforeNode,
+                                               waitTarget, 0};
+      bodyWaits.emplace(
+          std::make_pair(waitTarget, lane),
+          builder.addAction(SyncCoverResourceActionKind::Consume,
+                            domain.targetResource, anchor));
+    }
+  }
+  std::map<SyncCoverNodeId, SyncCoverDescriptorActionRef> bodySets;
+  for (SyncCoverNodeId source : candidate.sources) {
+    bodySets.emplace(
+        source,
+        builder.addAction(SyncCoverResourceActionKind::Produce,
+                          domain.sourceResource,
+                          {SyncCoverAnchorKind::AfterNode, source, 0}));
+  }
   const SyncCoverDescriptorActionRef drain = builder.addAction(
       SyncCoverResourceActionKind::Consume, domain.targetResource,
       {SyncCoverAnchorKind::ScopeExit, 0, candidate.recurrenceScope});
   std::vector<SyncCoverProtocolSupply> supplies;
-  supplies.reserve(candidate.targets.size());
-  for (SyncCoverNodeId target : candidate.targets) {
+  supplies.reserve(candidate.completionEdges.size());
+  for (const auto &[source, target] : candidate.completionEdges) {
+    auto bodySet = bodySets.find(source);
+    auto sourcePosition = std::lower_bound(candidate.sources.begin(),
+                                           candidate.sources.end(), source);
+    auto targetPosition = std::lower_bound(candidate.targets.begin(),
+                                           candidate.targets.end(), target);
+    if (bodySet == bodySets.end() ||
+        sourcePosition == candidate.sources.end() ||
+        *sourcePosition != source || targetPosition == candidate.targets.end() ||
+        *targetPosition != target) {
+      return std::nullopt;
+    }
+    const std::size_t sourceIndex = static_cast<std::size_t>(
+        sourcePosition - candidate.sources.begin());
+    const std::size_t targetIndex = static_cast<std::size_t>(
+        targetPosition - candidate.targets.begin());
+    const auto bodyWait = bodyWaits.find(
+        {candidate.targetWaits[targetIndex], candidate.sourceLanes[sourceIndex]});
+    if (bodyWait == bodyWaits.end()) {
+      return std::nullopt;
+    }
     SyncCoverEdge edge;
-    edge.source = candidate.source;
+    edge.source = source;
     edge.target = target;
     edge.kind = SyncCoverEdgeKind::CompletionSupply;
     edge.scope = candidate.recurrenceScope;
     edge.distance = 1;
-    supplies.push_back({edge, bodySet, bodyWait});
+    supplies.push_back({edge, bodySet->second, bodyWait->second});
   }
-  if (!builder.addProtocolLane(domain, candidate.recurrenceScope, 1, 1,
-                               {prime, bodyWait, bodySet, drain},
+  std::vector<SyncCoverDescriptorActionRef> actions{prime};
+  for (const auto &[key, action] : bodyWaits) {
+    (void)key;
+    actions.push_back(action);
+  }
+  for (const auto &[source, action] : bodySets) {
+    (void)source;
+    actions.push_back(action);
+  }
+  actions.push_back(drain);
+  if (!builder.addProtocolLane(domain, candidate.recurrenceScope, 1,
+                               candidate.width,
+                               std::move(actions),
                                std::move(supplies))) {
     return std::nullopt;
   }
@@ -639,12 +1010,17 @@ bool mlir::pto::verifySyncCoverSlotProtocol(
   if (candidate.kind != SyncCoverSlotProtocolKind::HierarchicalRelease) {
     return false;
   }
+  const std::set<SyncCoverNodeId> uniqueWaitTargets(
+      candidate.targetWaits.begin(), candidate.targetWaits.end());
+  const std::size_t waitCount = uniqueWaitTargets.size() * candidate.width;
+  const std::size_t firstSetAction = 1 + waitCount;
+  const std::size_t drainAction = firstSetAction + candidate.sources.size();
   const bool invalidCardinality =
       descriptor.kind != SyncCoverMechanismKind::VerifiedProtocol ||
-      descriptor.barrier || descriptor.actions.size() != 4 ||
+      descriptor.barrier || descriptor.actions.size() != drainAction + 1 ||
       descriptor.resourceUses.size() != 1 ||
-      descriptor.supplyEdges.size() != candidate.targets.size() ||
-      descriptor.supplyBindings.size() != candidate.targets.size();
+      descriptor.supplyEdges.size() != candidate.completionEdges.size() ||
+      descriptor.supplyBindings.size() != candidate.completionEdges.size();
   if (invalidCardinality) {
     return false;
   }
@@ -659,41 +1035,96 @@ bool mlir::pto::verifySyncCoverSlotProtocol(
       domain.sourceResource != candidate.sourceResource ||
       domain.targetResource != candidate.targetResource ||
       use.scope != candidate.recurrenceScope || use.distance != 1 ||
-      use.width != 1 || use.actions != std::vector<std::size_t>({0, 1, 2, 3});
+      use.width != candidate.width ||
+      use.actions.size() != descriptor.actions.size();
   const bool invalidResourceUse =
-      invalidUse || use.supplyEdges.size() != candidate.targets.size();
+      invalidUse || use.supplyEdges.size() != candidate.completionEdges.size();
   if (invalidResourceUse) {
     return false;
   }
-  for (std::size_t index = 0; index < candidate.targets.size(); ++index) {
+  for (std::size_t action = 0; action < use.actions.size(); ++action) {
+    if (use.actions[action] != action) {
+      return false;
+    }
+  }
+  std::map<std::pair<SyncCoverNodeId, unsigned>, std::size_t> waitActions;
+  std::size_t nextWait = 1;
+  for (SyncCoverNodeId waitTarget : uniqueWaitTargets) {
+    for (unsigned lane = 0; lane < candidate.width; ++lane) {
+      waitActions.emplace(std::make_pair(waitTarget, lane), nextWait++);
+    }
+  }
+  std::map<SyncCoverNodeId, std::size_t> setActions;
+  for (std::size_t source = 0; source < candidate.sources.size(); ++source) {
+    setActions.emplace(candidate.sources[source], firstSetAction + source);
+  }
+  for (std::size_t index = 0; index < candidate.completionEdges.size();
+       ++index) {
     const bool invalidEdgeIndex = use.supplyEdges[index] != index;
     const SyncCoverEdge &edge = descriptor.supplyEdges[index];
     const SyncCoverSupplyBinding &binding = descriptor.supplyBindings[index];
+    const auto &[source, target] = candidate.completionEdges[index];
+    auto setAction = setActions.find(source);
+    auto sourcePosition = std::lower_bound(candidate.sources.begin(),
+                                           candidate.sources.end(), source);
+    auto targetPosition = std::lower_bound(candidate.targets.begin(),
+                                           candidate.targets.end(), target);
+    if (sourcePosition == candidate.sources.end() ||
+        *sourcePosition != source || targetPosition == candidate.targets.end() ||
+        *targetPosition != target) {
+      return false;
+    }
+    const std::size_t sourceIndex = static_cast<std::size_t>(
+        sourcePosition - candidate.sources.begin());
+    const std::size_t targetIndex = static_cast<std::size_t>(
+        targetPosition - candidate.targets.begin());
+    auto waitAction = waitActions.find(
+        {candidate.targetWaits[targetIndex], candidate.sourceLanes[sourceIndex]});
     const bool invalidEdge =
-        edge.source != candidate.source ||
-        edge.target != candidate.targets[index] ||
+        edge.source != source || edge.target != target ||
         edge.kind != SyncCoverEdgeKind::CompletionSupply || edge.mechanism ||
         edge.scope != candidate.recurrenceScope || edge.distance != 1;
     const bool invalidBinding =
         binding.supplyEdge != index || binding.resourceUse != 0 ||
-        binding.produceAction != 2 || binding.consumeAction != 1;
+        setAction == setActions.end() || waitAction == waitActions.end() ||
+        binding.produceAction != setAction->second ||
+        binding.consumeAction != waitAction->second;
     if (invalidEdgeIndex || invalidEdge || invalidBinding) {
       return false;
     }
   }
   const auto &actions = descriptor.actions;
-  return hasAnchor(actions[0], SyncCoverResourceActionKind::Produce,
-                   candidate.sourceResource, SyncCoverAnchorKind::ScopeEntry,
-                   0, candidate.recurrenceScope) &&
-         hasAnchor(actions[1], SyncCoverResourceActionKind::Consume,
-                   candidate.targetResource, SyncCoverAnchorKind::ScopeEntry,
-                   0, *candidate.targetLoop) &&
-         hasAnchor(actions[2], SyncCoverResourceActionKind::Produce,
+  if (!hasAnchor(actions[0], SyncCoverResourceActionKind::Produce,
+                 candidate.sourceResource, SyncCoverAnchorKind::ScopeEntry, 0,
+                 candidate.recurrenceScope) ||
+      !hasAnchor(actions[drainAction], SyncCoverResourceActionKind::Consume,
+                 candidate.targetResource, SyncCoverAnchorKind::ScopeExit, 0,
+                 candidate.recurrenceScope)) {
+    return false;
+  }
+  for (const auto &[key, action] : waitActions) {
+    const SyncCoverAnchorKind anchorKind =
+        candidate.waitScope ? SyncCoverAnchorKind::ScopeEntry
+                            : SyncCoverAnchorKind::BeforeNode;
+    const SyncCoverNodeId anchorNode = candidate.waitScope ? 0 : key.first;
+    const SyncCoverScopeId anchorScope = candidate.waitScope
+                                             ? *candidate.waitScope
+                                             : SyncCoverScopeId{0};
+    if (!hasAnchor(actions[action], SyncCoverResourceActionKind::Consume,
+                   candidate.targetResource, anchorKind, anchorNode,
+                   anchorScope)) {
+      return false;
+    }
+  }
+  for (std::size_t index = 0; index < candidate.sources.size(); ++index) {
+    if (!hasAnchor(actions[firstSetAction + index],
+                   SyncCoverResourceActionKind::Produce,
                    candidate.sourceResource, SyncCoverAnchorKind::AfterNode,
-                   candidate.source, 0) &&
-         hasAnchor(actions[3], SyncCoverResourceActionKind::Consume,
-                   candidate.targetResource, SyncCoverAnchorKind::ScopeExit,
-                   0, candidate.recurrenceScope);
+                   candidate.sources[index], 0)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 SyncCoverSlotProtocolResult mlir::pto::buildSyncCoverSlotProtocolCandidates(
@@ -810,6 +1241,9 @@ SyncCoverSlotProtocolResult mlir::pto::buildSyncCoverSlotProtocolCandidates(
       candidate.kind = SyncCoverSlotProtocolKind::UnitRelease;
       candidate.lifecycle = lifecycle.id;
       candidate.releases = {releaseId};
+      candidate.completionEdges = {{release.source, release.target}};
+      candidate.sources = {release.source};
+      candidate.sourceLanes = {0};
       candidate.source = release.source;
       candidate.targets = {release.target};
       candidate.sourceResource = release.sourceResource;

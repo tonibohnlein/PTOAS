@@ -159,10 +159,9 @@ add_mlir_dialect_library(PTOTransforms
   CanonicalSync/CanonicalSyncCoveringSelection.cpp
   CanonicalSync/CanonicalSyncCoveringSlotRecipe.cpp
   CanonicalSync/CanonicalSyncCoveringTranslation.cpp
-  CanonicalSync/CanonicalSyncLatency.cpp
-  CanonicalSync/CanonicalSyncPressure.cpp
   CanonicalSync/SyncCoverCoverage.cpp
   CanonicalSync/SyncCoverCandidateIndex.cpp
+  CanonicalSync/SyncCoverColumnGeneration.cpp
   CanonicalSync/SyncCoverCost.cpp
   CanonicalSync/SyncCoverDescriptorBuilder.cpp
   CanonicalSync/SyncCoverGrounded.cpp
@@ -175,19 +174,14 @@ add_mlir_dialect_library(PTOTransforms
   CanonicalSync/SyncCoverSlotProtocol.cpp
   CanonicalSync/CompletionReduction.cpp
   CanonicalSync/CanonicalSyncAnalysis.cpp
-  CanonicalSync/CanonicalSyncBarrierOptimization.cpp
   CanonicalSync/CanonicalSyncDependencies.cpp
+  CanonicalSync/CanonicalSyncMechanismGeneration.cpp
   CanonicalSync/CanonicalSyncOwnership.cpp
   CanonicalSync/CanonicalSyncOwnershipAnalysis.cpp
   CanonicalSync/CanonicalSyncOwnershipVerification.cpp
   CanonicalSync/CanonicalSyncPlanning.cpp
   CanonicalSync/CanonicalSyncProtocol.cpp
-  CanonicalSync/CanonicalSyncScarcity.cpp
-  CanonicalSync/CanonicalSyncScarcitySearch.cpp
-  CanonicalSync/CanonicalSyncAffectedSliceSearch.cpp
-  CanonicalSync/CanonicalSyncSelection.cpp
   CanonicalSync/CanonicalSyncToken.cpp
-  CanonicalSync/CanonicalSyncAllocation.cpp
   CanonicalSync/CanonicalSyncCodegen.cpp
   CanonicalSync/CanonicalSyncPrinter.cpp
   CanonicalSync/PTOCanonicalSync.cpp

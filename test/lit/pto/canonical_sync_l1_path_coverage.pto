@@ -105,15 +105,15 @@ module attributes {pto.target_arch = "a2a3"} {
 }
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @verified_alternating_l1_coverage
-// PLAN-SAME: barriers=2 events=2 ownership-cycles=1
+// PLAN-SAME: barriers=1 events=2 ownership-cycles=1
 // PLAN: ownership=yes ownership-cycle=1 ownership-role=ready
 // PLAN: ownership=yes ownership-cycle=1 ownership-role=release
 // PLAN-LABEL: PTOCanonicalSyncPlan @arbitrary_branch_keeps_l1_barriers
-// PLAN-SAME: barriers=5 events=4 ownership-cycles=0
+// PLAN-SAME: barriers=2 events=0 ownership-cycles=0
 
 // IR-LABEL: func.func @verified_alternating_l1_coverage
 // IR-NOT: pto.barrier <PIPE_MTE2>
 // IR: pto.barrier <PIPE_MTE1>
 // IR: pto.barrier <PIPE_ALL>
 // IR-LABEL: func.func @arbitrary_branch_keeps_l1_barriers
-// IR: pto.barrier <PIPE_MTE2>
+// IR: pto.barrier <PIPE_ALL>

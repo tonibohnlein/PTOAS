@@ -9,7 +9,7 @@
 // for the full text of the License.
 
 // Internal ownership boundary for translating CanonicalSync mechanisms into
-// the MLIR-free SyncCover universe and running shadow selection.
+// the MLIR-free SyncCover universe and running direct selection.
 
 #ifndef PTO_LIB_TRANSFORMS_CANONICALSYNC_COVERINGSELECTION_H
 #define PTO_LIB_TRANSFORMS_CANONICALSYNC_COVERINGSELECTION_H
@@ -88,7 +88,7 @@ class MechanismAdapter {
 public:
   MechanismAdapter(
       func::FuncOp func, const CanonicalSyncPlan &plan,
-      const CanonicalMechanismUniverse &legacyUniverse,
+      const CanonicalMechanismUniverse &candidateUniverse,
       ArrayRef<CanonicalEventBundleCandidate> selectedEventBundles,
       unsigned eventIdMax,
       const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
@@ -104,7 +104,7 @@ public:
           getBarrierCompletionEdges,
       std::function<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols);
 
-  LogicalResult build(CanonicalSyncCoveringShadowSnapshot &snapshot);
+  LogicalResult build(CanonicalSyncCoveringSnapshot &snapshot);
 
 private:
   LogicalResult collectEventBundles();
@@ -114,17 +114,18 @@ private:
   LogicalResult addBarriers();
   LogicalResult addEventBundles();
   LogicalResult addSlotProtocols();
+  LogicalResult addGeneratedColumns(
+      CanonicalSyncCoveringSnapshot &snapshot);
   LogicalResult addConflicts();
-  LogicalResult buildLegacySeed();
-  LogicalResult solve(CanonicalSyncCoveringShadowSnapshot &snapshot);
+  LogicalResult solve(CanonicalSyncCoveringSnapshot &snapshot);
   LogicalResult validateSelectedResourceUsesAgainstUniverse(
-      const CanonicalSyncCoveringShadowSnapshot &snapshot);
+      const CanonicalSyncCoveringSnapshot &snapshot);
   LogicalResult emitMechanismError(StringRef context,
                                    const SyncCoverMechanismResult &result);
 
   func::FuncOp func_;
   const CanonicalSyncPlan &plan_;
-  const CanonicalMechanismUniverse &legacyUniverse_;
+  const CanonicalMechanismUniverse &candidateUniverse_;
   std::vector<CanonicalEventBundleCandidate> selectedEventBundles_;
   unsigned eventIdMax_ = 0;
   const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds_;
@@ -143,10 +144,11 @@ private:
   ProviderMap providers_;
   std::map<CanonicalSelectionMechanismRef, SlotProtocolRecipe>
       slotProtocolRecipes_;
+  std::map<CanonicalSelectionMechanismRef, CanonicalBarrier> barrierRecipes_;
   std::map<std::pair<SyncCoverMechanismId, std::size_t>, std::size_t>
       eventResourceUses_;
   std::vector<CanonicalEventBundleCandidate> eventBundles_;
-  std::vector<SyncCoverMechanismId> legacySeed_;
+  std::set<CanonicalSelectionMechanismRef> incumbentProviders_;
   std::vector<SyncCoverDemandId> activeDemands_;
   std::size_t unmaterializableSlotProtocols_ = 0;
 };

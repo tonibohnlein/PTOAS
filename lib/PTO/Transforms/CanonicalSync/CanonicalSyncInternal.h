@@ -49,102 +49,25 @@ struct CanonicalEventDomainKey {
   }
 };
 
-struct CanonicalScarcityStats {
-  std::size_t originalEventCount = 0;
-  unsigned originalColorCount = 0;
-  std::size_t serializationCost = 0;
-  std::uint64_t originalCriticalPathWeight = 0;
-  std::uint64_t criticalPathWeight = 0;
-};
-
-struct CanonicalEventColorPressure {
-  std::size_t required = 0;
-  std::size_t available = 0;
-  std::size_t overflow = 0;
-  std::optional<std::size_t> maximumPoint;
-  std::vector<std::size_t> maximumCliqueEvents;
-};
-
-using CanonicalEventColorPressureMap =
-    std::map<CanonicalEventDomainKey, CanonicalEventColorPressure>;
-
-enum class CanonicalEventBundleApplicability : std::uint8_t {
-  LegacyAndCovering,
-  CoveringOnly,
-};
-
 struct CanonicalEventBundleCandidate {
   std::size_t id = 0;
   std::size_t protocolIdentity = 0;
   CanonicalEventBundleKind kind = CanonicalEventBundleKind::Standalone;
-  CanonicalEventBundleApplicability applicability =
-      CanonicalEventBundleApplicability::LegacyAndCovering;
   CanonicalOwnershipProtocolKind ownershipProtocol =
       CanonicalOwnershipProtocolKind::RoundTrip;
   SmallVector<CanonicalEvent, 2> events;
   SmallVector<std::size_t, 2> conflicts;
-  std::optional<CanonicalDependency> completionWitness;
-  SmallVector<CanonicalDependency, 4> originRequirements;
-  bool hasCompleteOriginProvenance = false;
 };
 
 struct CanonicalBarrierCandidate {
   std::size_t id = 0;
   CanonicalBarrier barrier;
   SmallVector<std::size_t, 2> conflicts;
-  SmallVector<CanonicalDependency, 4> originRequirements;
-  bool hasCompleteOriginProvenance = false;
 };
 
 struct CanonicalMechanismUniverse {
   std::vector<CanonicalBarrierCandidate> barriers;
   std::vector<CanonicalEventBundleCandidate> eventBundles;
-};
-
-struct CanonicalMechanismPlanScore {
-  std::size_t usefulOwnershipBundles = 0;
-  std::vector<std::size_t> ownershipSignature;
-  std::vector<std::size_t> dynamicActionProfile;
-  std::vector<std::size_t> barrierActionProfile;
-  std::size_t waitDistance = 0;
-  std::size_t intervalSpan = 0;
-  std::size_t peakColorPressure = 0;
-  std::size_t directedDomains = 0;
-  std::size_t barrierCount = 0;
-  std::vector<std::size_t> candidateSignature;
-};
-
-struct CanonicalAffectedSliceEvictionMechanism {
-  CanonicalSelectionMechanismRef mechanism;
-  std::vector<std::size_t> actionProfile;
-  std::vector<std::size_t> barrierProfile;
-};
-
-struct CanonicalAffectedSliceEvictionSeed {
-  SmallVector<CanonicalSelectionMechanismRef, 2> mechanisms;
-  std::vector<std::size_t> actionProfile;
-  std::vector<std::size_t> barrierProfile;
-};
-
-struct CanonicalAffectedSliceSearchCandidate {
-  CanonicalSelectionMechanismRef mechanism;
-  std::vector<std::size_t> coveredRequirements;
-};
-
-struct CanonicalAffectedSliceSearchEvaluation {
-  std::vector<std::size_t> uncoveredRequirements;
-  CanonicalMechanismPlanScore score;
-};
-
-struct CanonicalAffectedSliceSearchComplete {
-  std::vector<CanonicalSelectionMechanismRef> mechanisms;
-  CanonicalMechanismPlanScore score;
-};
-
-struct CanonicalAffectedSliceSearchResult {
-  std::vector<CanonicalAffectedSliceSearchComplete> complete;
-  std::size_t evaluations = 0;
-  bool budgetExhausted = false;
 };
 
 std::vector<CanonicalEventBundleCandidate>
@@ -153,87 +76,9 @@ buildCanonicalEventBundles(ArrayRef<CanonicalEvent> events);
 std::vector<CanonicalEvent>
 flattenCanonicalEventBundles(ArrayRef<CanonicalEventBundleCandidate> bundles);
 
-bool supportsCanonicalLegacySelection(
-    const CanonicalEventBundleCandidate &bundle);
-
 bool canonicalEventBundleProjectionMatches(
     ArrayRef<CanonicalEventBundleCandidate> bundles,
     ArrayRef<CanonicalEvent> events);
-
-LogicalResult restoreCanonicalEventBundleIdentities(
-    std::vector<CanonicalEventBundleCandidate> &bundles,
-    ArrayRef<CanonicalEventBundleCandidate> knownBundles,
-    std::size_t &nextFreshId);
-
-bool verifyCanonicalSyntheticRoundTripBundle(
-    ArrayRef<const CanonicalEvent *> events);
-
-bool verifyCanonicalSyntheticRoundTripWitness(
-    ArrayRef<const CanonicalEvent *> events,
-    const CanonicalDependency &requirement);
-
-bool canonicalEventBundlesHaveNoConflicts(
-    ArrayRef<CanonicalEventBundleCandidate> bundles);
-
-bool canonicalDiagnosticEventBundlesEquivalent(
-    const CanonicalEventBundleCandidate &first,
-    const CanonicalEventBundleCandidate &second,
-    ArrayRef<CanonicalEventBundleCandidate> universe);
-
-bool canonicalDiagnosticEventBundleMatchesSelected(
-    const CanonicalEventBundleCandidate &candidate,
-    ArrayRef<CanonicalEventBundleCandidate> selected,
-    ArrayRef<CanonicalEventBundleCandidate> universe);
-
-bool exchangeCanonicalEventBundleCandidate(
-    std::vector<CanonicalEventBundleCandidate> &selected,
-    const CanonicalEventBundleCandidate &candidate);
-
-bool appendCanonicalEventBundleCandidate(
-    std::vector<CanonicalEventBundleCandidate> &selected,
-    const CanonicalEventBundleCandidate &candidate);
-
-bool canonicalMechanismOriginsAreInactive(
-    bool hasCompleteOriginProvenance,
-    ArrayRef<CanonicalDependency> originRequirements,
-    ArrayRef<CanonicalDependency> activeRequirements);
-
-std::vector<CanonicalAffectedSliceEvictionSeed>
-buildCanonicalAffectedSliceEvictionSeeds(
-    ArrayRef<CanonicalAffectedSliceEvictionMechanism> mechanisms,
-    std::size_t exhaustiveMechanismThreshold,
-    std::size_t mechanismFrontierLimit, std::size_t seedLimit);
-
-CanonicalAffectedSliceSearchResult searchCanonicalAffectedSliceCandidates(
-    ArrayRef<CanonicalAffectedSliceSearchCandidate> candidates,
-    std::size_t requirementCount,
-    const CanonicalMechanismPlanScore &initialScore, std::size_t beamWidth,
-    std::size_t depthLimit, std::size_t evaluationLimit,
-    std::size_t completeCandidateLimit,
-    llvm::function_ref<std::optional<CanonicalAffectedSliceSearchEvaluation>(
-        ArrayRef<CanonicalSelectionMechanismRef>)>
-        evaluate);
-
-std::size_t calculateCanonicalEventColorOverflow(
-    ArrayRef<CanonicalEvent> events, unsigned eventIdMax,
-    const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds);
-
-std::optional<CanonicalEventColorPressureMap>
-evaluateCanonicalEventColorPressure(
-    ArrayRef<CanonicalEvent> events, unsigned eventIdMax,
-    const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds);
-
-std::vector<std::size_t>
-buildCanonicalBarrierActionProfile(ArrayRef<CanonicalBarrier> barriers,
-                                   std::size_t maxLoopDepth);
-
-bool canonicalMechanismPlanScoreLess(const CanonicalMechanismPlanScore &first,
-                                     const CanonicalMechanismPlanScore &second);
-
-SmallVector<const CanonicalEventBundleCandidate *, 16>
-selectCanonicalEventCandidateFrontier(
-    ArrayRef<const CanonicalEventBundleCandidate *> candidates,
-    std::size_t limit);
 
 bool verifyCanonicalOwnershipEventPair(const CanonicalOwnershipCycle &cycle,
                                        ArrayRef<const CanonicalEvent *> events);
@@ -249,53 +94,12 @@ bool verifyCanonicalAlternatingPathMapping(
 std::pair<CanonicalEvent, CanonicalEvent>
 buildCanonicalOwnershipProtocols(const CanonicalOwnershipCycle &cycle);
 
-bool tryCommitCanonicalOwnershipCandidate(
-    std::vector<CanonicalEvent> &acceptedOwnership,
-    std::vector<CanonicalBarrier> &currentBarriers,
-    std::vector<CanonicalEvent> &currentEvents, CanonicalEvent ready,
-    CanonicalEvent release, llvm::function_ref<bool()> evaluate);
-
-class CanonicalSyncLatencyContext {
-public:
-  CanonicalSyncLatencyContext(const CanonicalSyncPlan &plan,
-                              ArrayRef<CanonicalEvent> domainEvents,
-                              const CanonicalEventDomainKey &domain);
-
-  std::uint64_t
-  calculateCriticalPathWeight(ArrayRef<CanonicalEvent> domainEvents) const;
-
-private:
-  struct BlockGraph {
-    std::vector<std::uint64_t> weights;
-    std::vector<SyncGraphEdge> baseEdges;
-  };
-
-  using NodeLocation = std::pair<std::size_t, std::size_t>;
-
-  std::optional<std::pair<std::size_t, SyncGraphEdge>>
-  localizeEdge(std::size_t source, std::size_t target) const;
-  void addNodes(const CanonicalSyncPlan &plan,
-                const std::set<Block *> &affectedBlocks);
-  void addBaseEdge(std::size_t source, std::size_t target);
-
-  std::vector<BlockGraph> blocks_;
-  std::map<std::size_t, NodeLocation> nodeLocations_;
-};
-
 class CanonicalSyncPlanBuilder {
 public:
   CanonicalSyncPlanBuilder(func::FuncOp func,
                            const CanonicalSyncBuildOptions &options)
       : func_(func), funcOperation_(func.getOperation()),
         eventIdMax_(options.eventIdMax), gmAliasPolicy_(options.gmAliasPolicy),
-        selectionDiagnosticsEnabled_(options.diagnosticRequest != nullptr),
-        coveringShadowEnabled_(options.coveringShadow ||
-                               options.solver == CanonicalSyncSolver::Covering),
-        coveringEmissionEnabled_(options.solver ==
-                                 CanonicalSyncSolver::Covering),
-        diagnosticRequest_(options.diagnosticRequest
-                               ? *options.diagnosticRequest
-                               : CanonicalSelectionDiagnosticRequest{}),
         translator_(syncIR_, memoryAnalyzer_, bufferMap_, func,
                     SyncAnalysisMode::CANONICALSYNC) {}
 
@@ -335,9 +139,6 @@ private:
   void preserveForwardCompletionRequirements();
   void reduceForwardDependencies();
   void preserveRecurrenceCompletionRequirements();
-  LogicalResult materializeSyncRequirements();
-  void materializeBarriers();
-  void materializeEvents();
   void materializeEventsFrom(ArrayRef<CanonicalDependency> dependencies,
                              std::vector<CanonicalEvent> &events);
   CanonicalEvent makeForwardEvent(std::size_t source, std::size_t target) const;
@@ -350,31 +151,13 @@ private:
   std::optional<CanonicalEventBundleCandidate>
   buildCompositeOwnershipEventBundle();
   void buildMechanismUniverse();
-  LogicalResult refreshSelectedEventBundles();
-  bool tryBuildConservativeIncumbent(std::vector<CanonicalBarrier> &barriers,
-                                     std::vector<CanonicalEvent> &events);
-  void removeRedundantMechanisms();
-  LogicalResult optimizeMechanismSelection();
-  void optimizeAffectedSliceExchanges(
-      std::vector<CanonicalBarrier> &incumbentBarriers,
-      std::vector<CanonicalEventBundleCandidate> &incumbentBundles) const;
-  LogicalResult buildSelectionDiagnostics();
-  void synthesizeOwnershipProtocols();
   LogicalResult verifyEventProtocols(ArrayRef<CanonicalEvent> events,
                                      bool requireAllocation,
                                      bool diagnose) const;
   bool verifyEventProtocol(const CanonicalEvent &event, bool requireAllocation,
                            bool diagnose) const;
-  void optimizeBarriers();
   std::vector<SyncGraphEdge>
   buildBarrierCompletionEdges(ArrayRef<CanonicalBarrier> barriers) const;
-  std::vector<SyncGraphEdge>
-  buildEventCompletionEdges(ArrayRef<CanonicalEvent> events) const;
-  std::vector<CanonicalEvent>
-  selectRequiredEvents(ArrayRef<CanonicalBarrier> barriers,
-                       ArrayRef<CanonicalEvent> candidates) const;
-  bool isForwardVertexAvailable(const CanonicalDependency &requirement,
-                                std::size_t vertex) const;
   bool isAnchorGuaranteedForRequirement(const CanonicalAnchor &anchor,
                                         std::size_t source,
                                         std::size_t target) const;
@@ -383,53 +166,8 @@ private:
                                                std::size_t endpoint,
                                                unsigned endpointOccurrence,
                                                Operation *loop) const;
-  bool planCoversRequirements(ArrayRef<CanonicalBarrier> barriers,
-                              ArrayRef<CanonicalEvent> events,
-                              bool diagnose = false,
-                              bool usePositiveTripFacts = false) const;
-  std::size_t countUncoveredRequirements(
-      ArrayRef<CanonicalBarrier> barriers, ArrayRef<CanonicalEvent> events,
-      ArrayRef<CanonicalDependency> requirements, bool diagnose = false,
-      SmallVectorImpl<std::size_t> *uncoveredRequirements = nullptr,
-      bool usePositiveTripFacts = false) const;
-  std::size_t countUncoveredRecurrenceRequirements(
-      ArrayRef<CanonicalBarrier> barriers, ArrayRef<CanonicalEvent> events,
-      ArrayRef<CanonicalDependency> requirements, bool diagnose,
-      SmallVectorImpl<std::size_t> *uncoveredRequirements,
-      bool usePositiveTripFacts) const;
-  bool isVacuousOwnedAlternatingRecurrence(
-      ArrayRef<const CanonicalOwnershipCycle *> cycles,
-      const CanonicalDependency &requirement) const;
-  bool isRecurrenceVertexAvailable(const CanonicalDependency &requirement,
-                                   std::size_t vertex, std::size_t nodeCount,
-                                   bool usePositiveTripFacts) const;
-  bool eventsFitBudget(ArrayRef<CanonicalEvent> events) const;
-  bool
-  isCandidatePlanFeasible(ArrayRef<CanonicalBarrier> barriers,
-                          ArrayRef<CanonicalEventBundleCandidate> eventBundles,
-                          ArrayRef<CanonicalDependency> requirements,
-                          bool diagnose = false) const;
-  bool isCandidatePlanWellFormed(
-      ArrayRef<CanonicalBarrier> barriers,
-      ArrayRef<CanonicalEventBundleCandidate> eventBundles,
-      ArrayRef<CanonicalDependency> requirements, bool diagnose = false) const;
-  bool bootstrapFeasibleMechanismPlan(
-      std::vector<CanonicalBarrier> &barriers,
-      std::vector<CanonicalEventBundleCandidate> &eventBundles) const;
-  CanonicalMechanismPlanScore scoreCandidatePlan(
-      ArrayRef<CanonicalBarrier> barriers,
-      ArrayRef<CanonicalEventBundleCandidate> eventBundles) const;
-  LogicalResult verifyFinalPlan();
-  LogicalResult buildCoveringShadowGraph();
+  LogicalResult buildCoveringGraph();
   LogicalResult materializeCoveringSelection();
-  LogicalResult repairEventScarcity();
-  LogicalResult repairEventDomain(const CanonicalEventDomainKey &key,
-                                  unsigned availableIds);
-  std::optional<CanonicalEvent>
-  coalesceForwardEvents(ArrayRef<CanonicalEvent> events) const;
-  bool coversCoalescedEvents(const CanonicalEvent &candidate,
-                             ArrayRef<CanonicalEvent> originals) const;
-  LogicalResult allocateEvents();
   void initializeForwardProtocol(CanonicalEvent &event) const;
   void initializeRecurrenceProtocol(CanonicalEvent &event) const;
   void deriveEventInterval(CanonicalEvent &event) const;
@@ -477,10 +215,6 @@ private:
   Operation *funcOperation_ = nullptr;
   unsigned eventIdMax_ = 0;
   CanonicalGMAliasPolicy gmAliasPolicy_ = CanonicalGMAliasPolicy::MayAlias;
-  bool selectionDiagnosticsEnabled_ = false;
-  bool coveringShadowEnabled_ = false;
-  bool coveringEmissionEnabled_ = false;
-  CanonicalSelectionDiagnosticRequest diagnosticRequest_;
   CanonicalSyncPlan plan_;
   SyncIRs syncIR_;
   MemoryDependentAnalyzer memoryAnalyzer_;
@@ -491,16 +225,14 @@ private:
       fixedEdgeKeys_;
   std::map<DependencyKey, std::size_t> dependencyIndices_;
   std::map<CanonicalEventDomainKey, std::set<unsigned>> reservedIds_;
-  std::map<CanonicalEventDomainKey, CanonicalScarcityStats> scarcityStats_;
   std::set<std::pair<unsigned, unsigned>> noAliasArgPairs_;
-  std::vector<CanonicalEvent> eventCandidates_;
   CanonicalMechanismUniverse mechanismUniverse_;
   std::vector<CanonicalEventBundleCandidate> selectedEventBundles_;
 };
 
-LogicalResult runCanonicalSyncCoveringShadowSelection(
+LogicalResult runCanonicalSyncCoveringSelection(
     func::FuncOp func, const CanonicalSyncPlan &plan,
-    const CanonicalMechanismUniverse &legacyUniverse,
+    const CanonicalMechanismUniverse &candidateUniverse,
     ArrayRef<CanonicalEventBundleCandidate> selectedEventBundles,
     unsigned eventIdMax,
     const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
@@ -515,7 +247,7 @@ LogicalResult runCanonicalSyncCoveringShadowSelection(
     std::function<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
         getBarrierCompletionEdges,
     std::function<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols,
-    CanonicalSyncCoveringShadowSnapshot &snapshot);
+    CanonicalSyncCoveringSnapshot &snapshot);
 
 } // namespace pto
 } // namespace mlir

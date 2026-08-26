@@ -64,6 +64,42 @@ struct SyncCoverDemandTopologyResult {
   }
 };
 
+/// All individual mechanisms that establish one demand. The implementation
+/// propagates mechanism bitsets through the prepared structural topology in
+/// one pass; it does not issue one coverage query per mechanism.
+struct SyncCoverSingletonWitnessResult {
+  SyncCoverCoverageError error = SyncCoverCoverageError::None;
+  std::vector<SyncCoverMechanismId> mechanisms;
+
+  explicit operator bool() const {
+    return error == SyncCoverCoverageError::None;
+  }
+};
+
+/// Candidate member sets that establish one demand. All candidates are
+/// propagated simultaneously as bitsets through one prepared topology.
+struct SyncCoverSelectionWitnessResult {
+  SyncCoverCoverageError error = SyncCoverCoverageError::None;
+  std::vector<std::size_t> selections;
+
+  explicit operator bool() const {
+    return error == SyncCoverCoverageError::None;
+  }
+};
+
+/// Bounded structural columns for the common completion and round-trip path
+/// shapes. Pairs are sorted and unique. The topology is released after the
+/// call, so grounding memory is bounded by one demand expansion.
+struct SyncCoverFactoryWitnessResult {
+  SyncCoverCoverageError error = SyncCoverCoverageError::None;
+  std::vector<SyncCoverMechanismId> singletons;
+  std::vector<std::vector<SyncCoverMechanismId>> pairs;
+
+  explicit operator bool() const {
+    return error == SyncCoverCoverageError::None;
+  }
+};
+
 /// Minimal mechanism sets that establish one demand from structural edges.
 /// This is a grounding result, not a selected-plan coverage query.
 struct SyncCoverMinimalWitnessResult {
@@ -111,11 +147,50 @@ public:
       SyncCoverDemandId demand,
       const std::vector<SyncCoverMechanismId> &selected) const;
 
+  /// Final-verification path. The prepared product graph is released before
+  /// returning, so checking a large demand set has bounded peak memory.
+  /// The selection must already be sorted and unique.
+  SyncCoverCoverageResult checkDemandStreamingCanonicalSelection(
+      SyncCoverDemandId demand,
+      const std::vector<SyncCoverMechanismId> &selected) const;
+
   std::vector<SyncCoverCoverageResult>
   checkAll(const std::vector<SyncCoverMechanismId> &selected) const;
 
+  /// Checks a demand subset by sharing immutable virtual topologies between
+  /// demands with identical execution contexts. Results correspond to the
+  /// input order. The selection must already be sorted and unique.
+  std::vector<SyncCoverCoverageResult> checkDemandsCanonicalSelection(
+      const std::vector<SyncCoverDemandId> &demands,
+      const std::vector<SyncCoverMechanismId> &selected) const;
+
   SyncCoverDemandTopologyResult
   getDemandTopology(SyncCoverDemandId demand) const;
+
+  SyncCoverSingletonWitnessResult
+  getSingletonMechanismWitnesses(SyncCoverDemandId demand) const;
+
+  /// Batched singleton grounding. Demands with a shared execution context and
+  /// source reuse one mechanism-bitset propagation.
+  std::vector<SyncCoverSingletonWitnessResult>
+  getSingletonMechanismWitnessesForDemands(
+      const std::vector<SyncCoverDemandId> &demands,
+      std::size_t mechanismCount) const;
+
+  SyncCoverSelectionWitnessResult getSelectionWitnesses(
+      SyncCoverDemandId demand,
+      const std::vector<std::vector<SyncCoverMechanismId>> &selections,
+      std::size_t mechanismCount) const;
+
+  /// Batched counterpart to getSelectionWitnesses. Results correspond to the
+  /// demand order and share one prepared topology per execution context.
+  std::vector<SyncCoverSelectionWitnessResult> getSelectionWitnessesForDemands(
+      const std::vector<SyncCoverDemandId> &demands,
+      const std::vector<std::vector<SyncCoverMechanismId>> &selections,
+      std::size_t mechanismCount) const;
+
+  SyncCoverFactoryWitnessResult getFactoryMechanismWitnesses(
+      SyncCoverDemandId demand, std::size_t mechanismCount) const;
 
   /// Enumerates the inclusion-minimal mechanism sets of at most
   /// maximumMembers that establish the demand. The prepared topology is

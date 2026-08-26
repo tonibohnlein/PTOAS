@@ -35,21 +35,23 @@ namespace {
 
 constexpr std::int64_t kHardwareEventIdCount = 8;
 
-std::optional<pto::CanonicalSyncSolver> parseCanonicalSyncSolver(
-    StringRef solver) {
-  if (solver == "legacy") {
-    return pto::CanonicalSyncSolver::Legacy;
-  }
-  if (solver == "covering") {
-    return pto::CanonicalSyncSolver::Covering;
-  }
-  return std::nullopt;
-}
-
 bool isValidView(StringRef view) {
   return view == "all" || view == "dependencies" || view == "plan" ||
-         view == "events" || view == "ownership" || view == "selection" ||
-         view == "covering";
+         view == "events" || view == "ownership" || view == "covering";
+}
+
+std::optional<pto::CanonicalGMAliasPolicy>
+getGMAliasPolicy(bool distinctArguments, bool allAccesses) {
+  if (distinctArguments && allAccesses) {
+    return std::nullopt;
+  }
+  if (allAccesses) {
+    return pto::CanonicalGMAliasPolicy::AllAccessesNoAlias;
+  }
+  if (distinctArguments) {
+    return pto::CanonicalGMAliasPolicy::DistinctArgumentsNoAlias;
+  }
+  return pto::CanonicalGMAliasPolicy::MayAlias;
 }
 
 bool isKernelDispatchWrapper(func::FuncOp func) {
@@ -95,22 +97,17 @@ struct PTOCanonicalSyncPass
       signalPassFailure();
       return;
     }
-    const auto gmAliasPolicy =
-        assumeDistinctGmArgsNoAlias
-            ? pto::CanonicalGMAliasPolicy::DistinctArgumentsNoAlias
-            : pto::CanonicalGMAliasPolicy::MayAlias;
-    const std::optional<pto::CanonicalSyncSolver> selectedSolver =
-        parseCanonicalSyncSolver(solver);
-    if (!selectedSolver) {
-      func.emitError() << "solver must be 'legacy' or 'covering'";
+    const std::optional<pto::CanonicalGMAliasPolicy> gmAliasPolicy =
+        getGMAliasPolicy(assumeDistinctGmArgsNoAlias,
+                         assumeAllGmAccessesNoAlias);
+    if (!gmAliasPolicy) {
+      func.emitError() << "GM no-alias modes are mutually exclusive";
       signalPassFailure();
       return;
     }
     pto::CanonicalSyncBuildOptions options;
     options.eventIdMax = static_cast<unsigned>(eventIdNumMax);
-    options.gmAliasPolicy = gmAliasPolicy;
-    options.solver = *selectedSolver;
-    options.coveringShadow = coveringShadow;
+    options.gmAliasPolicy = *gmAliasPolicy;
     FailureOr<pto::CanonicalSyncPlan> plan =
         pto::buildCanonicalSyncPlan(func, options);
     if (failed(plan) || failed(pto::emitCanonicalSyncPlan(func, *plan))) {
@@ -133,21 +130,8 @@ struct PrintCanonicalSyncPlanPass
       signalPassFailure();
       return;
     }
-    const bool hasEvictionRequest = !evictCanonicalBarrierIds.empty() ||
-                                    !evictCanonicalEventBundleIds.empty();
-    const bool invalidSelectionFormat =
-        view == "selection" && format != "text";
     const bool invalidCoveringFormat =
         view == "covering" && format != "text";
-    const bool evictionWithoutSelectionView =
-        hasEvictionRequest && view != "selection";
-    if (invalidSelectionFormat || evictionWithoutSelectionView) {
-      module.emitError()
-          << "canonical sync eviction diagnostics require format='text' "
-             "and view='selection'";
-      signalPassFailure();
-      return;
-    }
     if (invalidCoveringFormat) {
       module.emitError()
           << "canonical sync covering diagnostics require format='text'";
@@ -160,34 +144,21 @@ struct PrintCanonicalSyncPlanPass
       signalPassFailure();
       return;
     }
-    const auto gmAliasPolicy =
-        assumeDistinctGmArgsNoAlias
-            ? pto::CanonicalGMAliasPolicy::DistinctArgumentsNoAlias
-            : pto::CanonicalGMAliasPolicy::MayAlias;
-    const std::optional<pto::CanonicalSyncSolver> selectedSolver =
-        parseCanonicalSyncSolver(solver);
-    if (!selectedSolver) {
-      module.emitError() << "solver must be 'legacy' or 'covering'";
+    const std::optional<pto::CanonicalGMAliasPolicy> gmAliasPolicy =
+        getGMAliasPolicy(assumeDistinctGmArgsNoAlias,
+                         assumeAllGmAccessesNoAlias);
+    if (!gmAliasPolicy) {
+      module.emitError() << "GM no-alias modes are mutually exclusive";
       signalPassFailure();
       return;
     }
-    pto::CanonicalSelectionDiagnosticRequest diagnosticRequest;
-    diagnosticRequest.barrierIds.append(evictCanonicalBarrierIds.begin(),
-                                        evictCanonicalBarrierIds.end());
-    diagnosticRequest.eventBundleIds.append(
-        evictCanonicalEventBundleIds.begin(),
-        evictCanonicalEventBundleIds.end());
     for (func::FuncOp func : module.getOps<func::FuncOp>()) {
       if (shouldSkipCanonicalSync(func)) {
         continue;
       }
       pto::CanonicalSyncBuildOptions options;
       options.eventIdMax = static_cast<unsigned>(eventIdNumMax);
-      options.gmAliasPolicy = gmAliasPolicy;
-      options.solver = *selectedSolver;
-      options.diagnosticRequest =
-          view == "selection" ? &diagnosticRequest : nullptr;
-      options.coveringShadow = coveringShadow || view == "covering";
+      options.gmAliasPolicy = *gmAliasPolicy;
       FailureOr<pto::CanonicalSyncPlan> plan =
           pto::buildCanonicalSyncPlan(func, options);
       if (failed(plan)) {

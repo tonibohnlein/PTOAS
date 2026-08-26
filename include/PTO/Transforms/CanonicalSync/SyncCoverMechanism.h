@@ -95,6 +95,7 @@ struct SyncCoverBarrierPlacement {
   std::uint32_t resource = 0;
   SyncCoverAnchor anchor;
   SyncCoverScopeId scope = 0;
+  bool drainsAllResources = false;
 
   SyncCoverBarrierPlacement() = default;
   SyncCoverBarrierPlacement(std::uint32_t resource, SyncCoverNodeId anchor,
@@ -102,15 +103,22 @@ struct SyncCoverBarrierPlacement {
       : resource(resource),
         anchor{SyncCoverAnchorKind::BeforeNode, anchor, 0, 0}, scope(scope) {}
   SyncCoverBarrierPlacement(std::uint32_t resource, SyncCoverAnchor anchor,
-                            SyncCoverScopeId scope)
-      : resource(resource), anchor(anchor), scope(scope) {}
+                            SyncCoverScopeId scope,
+                            bool drainsAllResources = false)
+      : resource(resource), anchor(anchor), scope(scope),
+        drainsAllResources(drainsAllResources) {}
 };
 
 struct SyncCoverMechanismDescriptor {
   SyncCoverMechanismKind kind = SyncCoverMechanismKind::EventBundle;
   std::uint64_t providerIdentity = 0;
   std::optional<SyncCoverBarrierPlacement> barrier;
+  /// Physical completion edges bound to concrete synchronization actions.
   std::vector<SyncCoverEdge> supplyEdges;
+  /// Logical consequences established by the complete protocol. These edges
+  /// are admitted only through addVerifiedProtocol and are not independently
+  /// bound to one action pair.
+  std::vector<SyncCoverEdge> verifiedCoverageEdges;
   std::vector<SyncCoverResourceAction> actions;
   std::vector<SyncCoverResourceUse> resourceUses;
   std::vector<SyncCoverSupplyBinding> supplyBindings;
@@ -123,6 +131,7 @@ struct SyncCoverMechanism {
   bool protocolVerified = false;
   std::optional<SyncCoverBarrierPlacement> barrier;
   std::vector<std::size_t> supplyEdges;
+  std::vector<std::size_t> verifiedCoverageEdges;
   std::vector<SyncCoverResourceAction> actions;
   std::vector<SyncCoverResourceUse> resourceUses;
   std::vector<SyncCoverSupplyBinding> supplyBindings;

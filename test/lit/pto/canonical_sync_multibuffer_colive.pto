@@ -15,16 +15,16 @@
 // RUN:   '-pto-canonical-sync=event-id-num-max=8' \
 // RUN:   | FileCheck %s --check-prefix=IR
 // RUN: pto-test-opt %s -pto-plan-memory \
-// RUN:   '-pto-canonical-sync=event-id-num-max=8 solver=covering' \
+// RUN:   '-pto-canonical-sync=event-id-num-max=8' \
 // RUN:   | FileCheck %s --check-prefix=DIRECT
-// RUN: not pto-test-opt %s -pto-plan-memory \
+// RUN: pto-test-opt %s -pto-plan-memory \
 // RUN:   '-pto-canonical-sync=event-id-num-max=1' 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SCARCE
 
 // Two slots of one allocation are live in each iteration. The vector operation
 // reads both before the next iteration overwrites them in MTE2. The preserved
-// V -> MTE2 requirement is covered transitively through the existing
-// V -> MTE3 -> MTE2 store protocol, so no duplicate recurrence event is needed.
+// V -> MTE2 recurrence and the existing forward events form a barrier-free
+// completion path for both slots.
 
 module {
   func.func @colive_slots(
@@ -207,35 +207,36 @@ module {
 // PLAN-LABEL: PTOCanonicalSyncPlan @colive_slots
 // PLAN: dependency 2 -> 0 kind=memory-war distance=1 retained=yes
 // PLAN: dependency 2 -> 1 kind=memory-war distance=1 retained=no
+// PLAN: event{{\[[0-9]+\]}} PIPE_V -> PIPE_MTE2 source=2 target=0 width=1
+// PLAN-SAME: recurrence=yes distance=1
 // PLAN: event{{\[[0-9]+\]}} PIPE_V -> PIPE_MTE3 source=2 target=3 width=1
-// PLAN: event{{\[[0-9]+\]}} PIPE_MTE3 -> PIPE_MTE2 source=3 target=0 width=1
 
 // IR-LABEL: func.func @colive_slots
-// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// IR: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
 // IR: scf.for
-// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
 // IR: pto.tload
 // IR: pto.tload
 // IR: pto.tadd
 // IR: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// IR: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
 // IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
 // IR: pto.tstore
-// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
 // IR-LABEL: func.func @distance_two_short
 
 // DIRECT-LABEL: func.func @colive_slots
-// DIRECT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// DIRECT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
 // DIRECT: scf.for
-// DIRECT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// DIRECT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
 // DIRECT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// DIRECT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
 // DIRECT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
-// DIRECT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
 // DIRECT-LABEL: func.func @distance_two_short
 
-// SCARCE: error: PTOCanonicalSync cannot repair event-id scarcity in domain
-// SCARCE-SAME: PIPE_V -> PIPE_MTE2
-// SCARCE-SAME: 2 colors requested but only 1 event IDs are available
-// SCARCE-SAME: bounded structural coalescing found no completion-covered plan
+// SCARCE-LABEL: func.func @colive_slots
+// SCARCE: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// SCARCE: pto.barrier <PIPE_ALL>
+// SCARCE-NOT: EVENT_ID1
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @distance_two_short
 // PLAN: dependency 2 -> 0 kind=memory-war distance=2 retained=no

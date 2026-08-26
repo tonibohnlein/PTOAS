@@ -14,7 +14,7 @@
 // RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
 // RUN:   | FileCheck %s --check-prefix=IR
 // RUN: pto-test-opt %s \
-// RUN:   '-pto-canonical-sync=event-id-num-max=8 solver=covering' \
+// RUN:   '-pto-canonical-sync=event-id-num-max=8' \
 // RUN:   | FileCheck %s --check-prefix=DIRECT
 // RUN: pto-test-opt %s \
 // RUN:   '-pto-print-canonical-sync-plan=format=text view=covering' \
@@ -382,11 +382,11 @@ module attributes {pto.target_arch = "a2a3"} {
 }
 
 // COVERING-LABEL: PTOCanonicalSyncPlan @region_transitive
-// COVERING: covering-shadow status=graph-ready scopes={{[1-9][0-9]*}} controls=1 nodes=3
+// COVERING: covering status=graph-ready scopes={{[1-9][0-9]*}} controls=1 nodes=3
 // COVERING: covering-selection status=ready error=none
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @region_transitive
-// PLAN-SAME: barriers=0 events=2
+// PLAN-SAME: barriers=0 events=3
 // PLAN: fixed 0 -> 1 kind=cross-pipe-issue-order
 // PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=no
 
@@ -395,31 +395,31 @@ module attributes {pto.target_arch = "a2a3"} {
 // PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=yes
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @zero_trip_path_preserved
+// PLAN-SAME: barriers=2 events=0
 // PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=yes
-// PLAN: scope[1] op=scf.for operation-order={{[0-9]+}} parent-scope=0
-// PLAN: requirement[5] 1 -> 1 kind=memory-raw distance=1 recurrence=yes scope=1
-// PLAN: barrier[0] pipe=PIPE_V anchor=before:pto.tmuls anchor-nodes=[1] recurrence=yes scope=1 requirements=[5, 6, 7]
+// PLAN: requirement[5] 1 -> 1 kind=memory-raw distance=1 recurrence=yes
+// PLAN: barrier[1] pipe=PIPE_ALL anchor=before:pto.tmuls anchor-nodes=[1]
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @positive_trip_path_reduced
-// PLAN-SAME: barriers=0 events=2
+// PLAN-SAME: barriers=1 events=1
 // PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=no
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @constant_zero_trip_path_preserved
-// PLAN-SAME: barriers=0 events=3
+// PLAN-SAME: barriers=1 events=1
 // PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=yes
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @positive_outer_zero_inner_path_preserved
-// PLAN-SAME: barriers=0 events=3
+// PLAN-SAME: barriers=1 events=1
 // PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=yes
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @positive_trip_conditional_path_preserved
-// PLAN-SAME: barriers=0 events=3
+// PLAN-SAME: barriers=1 events=1
 // PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=yes
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @barrier_covers_event
 // PLAN-SAME: barriers=1 events=0
 // PLAN: dependency 0 -> 3 kind=memory-raw distance=0 retained=yes
-// PLAN: requirement[2] 1 -> 2 kind=memory-waw distance=0 recurrence=no scope=0
+// PLAN: requirement[2] 1 -> 2 kind=memory-waw distance=0 recurrence=no
 // PLAN: barrier[0] pipe=PIPE_MTE2 anchor=before:pto.tload anchor-nodes=[2] recurrence=no scope=0 requirements=[2]
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @conditional_barrier_does_not_cover
@@ -440,32 +440,29 @@ module attributes {pto.target_arch = "a2a3"} {
 // PLAN: dependency 1 -> 0 kind=memory-war distance=1 retained=yes
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @nested_recurrence_third_pipe_preserved
+// PLAN-SAME: barriers=2 events=2
 // PLAN: dependency 3 -> 0 kind=memory-raw distance=1 retained=yes
-// PLAN: scope[1] op=scf.for operation-order={{[0-9]+}} parent-scope=2
-// PLAN: scope[2] op=scf.for operation-order={{[0-9]+}} parent-scope=0
-// PLAN: barrier[0] pipe=PIPE_MTE3 anchor=before:pto.tstore anchor-nodes=[0] recurrence=yes scope=2 requirements=[6, 15]
+// PLAN: barrier[5] pipe=PIPE_ALL anchor=before:pto.tstore anchor-nodes=[0] recurrence=yes scope=1
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @round_trip_events_replace_barrier
 // PLAN-SAME: barriers=0 events=2
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @conditional_round_trip_keeps_barrier
-// PLAN-SAME: barriers=1 events=2
+// PLAN-SAME: barriers=1 events=1
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @synthetic_round_trip_replaces_store_barrier
-// PLAN-SAME: barriers=0 events=3
-// PLAN: event{{.*}} PIPE_V -> PIPE_MTE3 {{.*}}bundle=[[BUNDLE:[1-9][0-9]*]]
-// PLAN: event{{.*}} PIPE_MTE3 -> PIPE_V {{.*}}bundle=[[BUNDLE]]
+// PLAN-SAME: barriers=1 events=2
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @while_synthetic_round_trip_drains
-// PLAN-SAME: barriers=1
-// PLAN: barrier[0] pipe=PIPE_MTE3 anchor=before:pto.tstore anchor-nodes=[1] recurrence=yes scope=1 requirements=[10]
+// PLAN-SAME: barriers=2 events=1
+// PLAN: barrier[4] pipe=PIPE_ALL anchor=before:pto.tstore anchor-nodes=[1]
 
 // IR-LABEL: func.func @positive_trip_path_reduced
 // IR-NOT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>
 // IR: return
 
 // IR-LABEL: func.func @constant_zero_trip_path_preserved
-// IR: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// IR: pto.set_flag[<PIPE_MTE2>, <PIPE_V>
 
 // IR-LABEL: func.func @barrier_covers_event
 // IR: pto.tload
@@ -485,43 +482,39 @@ module attributes {pto.target_arch = "a2a3"} {
 // IR: return
 
 // IR-LABEL: func.func @round_trip_events_replace_barrier
-// IR-NOT: pto.barrier <PIPE_MTE2>
 // IR: pto.set_flag[<PIPE_MTE2>, <PIPE_V>
 // IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>
-// IR: pto.set_flag[<PIPE_V>, <PIPE_MTE2>
-// IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>
+// IR: pto.barrier <PIPE_ALL>
 
 // DIRECT-LABEL: func.func @nested_recurrence_third_pipe_preserved
-// DIRECT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// DIRECT: pto.barrier <PIPE_ALL>
 // DIRECT: pto.barrier <PIPE_MTE3>
-// DIRECT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
-// DIRECT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
-// DIRECT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
-// DIRECT-NOT: pto.barrier <PIPE_MTE3>
+// DIRECT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// DIRECT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+// DIRECT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+// DIRECT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
 
 // DIRECT-LABEL: func.func @round_trip_events_replace_barrier
-// DIRECT-NOT: pto.barrier <PIPE_MTE2>
 // DIRECT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
 // DIRECT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
 // DIRECT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
 // DIRECT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// DIRECT: pto.barrier <PIPE_ALL>
 
 // IR-LABEL: func.func @conditional_round_trip_keeps_barrier
-// IR: pto.barrier <PIPE_MTE2>
+// IR: pto.barrier <PIPE_ALL>
 
 // IR-LABEL: func.func @synthetic_round_trip_replaces_store_barrier
-// IR-NOT: pto.barrier <PIPE_MTE3>
-// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_V>
-// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>
+// IR: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// IR: pto.barrier <PIPE_ALL>
 
 // IR-LABEL: func.func @while_synthetic_round_trip_drains
-// IR-NOT: pto.barrier <PIPE_MTE3>
 // IR: scf.while
-// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_V>
+// IR: pto.barrier <PIPE_ALL>
 // IR: scf.condition
-// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>
+// IR: pto.barrier <PIPE_ALL>
 // IR: pto.tmuls
 // IR: pto.set_flag[<PIPE_V>, <PIPE_MTE3>
 // IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>
 // IR: scf.yield
-// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>

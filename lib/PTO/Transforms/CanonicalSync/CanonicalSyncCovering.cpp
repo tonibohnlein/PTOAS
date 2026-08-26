@@ -8,7 +8,7 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-// This file is the MLIR-to-SyncCover trust boundary. The shadow adapter first
+// This file is the MLIR-to-SyncCover trust boundary. The adapter first
 // translates only immutable structure and demands. Mechanism translation and
 // emission remain separate rollout stages.
 
@@ -132,7 +132,7 @@ class CanonicalSyncCoveringGraphAdapter {
 public:
   CanonicalSyncCoveringGraphAdapter(
       func::FuncOp func, const CanonicalSyncPlan &plan,
-      const CanonicalMechanismUniverse &legacyUniverse,
+      const CanonicalMechanismUniverse &candidateUniverse,
       ArrayRef<CanonicalEventBundleCandidate> selectedEventBundles,
       unsigned eventIdMax,
       const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds,
@@ -142,7 +142,7 @@ public:
       std::function<std::vector<SyncGraphEdge>(const CanonicalBarrier &)>
           getBarrierCompletionEdges,
       std::function<bool(ArrayRef<CanonicalEvent>)> verifyEventProtocols)
-      : func_(func), plan_(plan), legacyUniverse_(legacyUniverse),
+      : func_(func), plan_(plan), candidateUniverse_(candidateUniverse),
         selectedEventBundles_(selectedEventBundles), eventIdMax_(eventIdMax),
         reservedIds_(reservedIds),
         hasHardwareCompletion_(std::move(hasHardwareCompletion)),
@@ -151,7 +151,7 @@ public:
         getBarrierCompletionEdges_(std::move(getBarrierCompletionEdges)),
         verifyEventProtocols_(std::move(verifyEventProtocols)) {}
 
-  LogicalResult build(CanonicalSyncCoveringShadowSnapshot &snapshot) {
+  LogicalResult build(CanonicalSyncCoveringSnapshot &snapshot) {
     regionContexts_[&func_.getBody()] = {};
     if (failed(buildRegionScopes(func_.getBody(),
                                  regionContexts_.at(&func_.getBody())))) {
@@ -226,8 +226,8 @@ public:
     for (const auto &entry : regionContexts_) {
       regionScopes_.emplace(entry.first, entry.second.scope);
     }
-    if (failed(runCanonicalSyncCoveringShadowSelection(
-            func_, plan_, legacyUniverse_, selectedEventBundles_, eventIdMax_,
+    if (failed(runCanonicalSyncCoveringSelection(
+            func_, plan_, candidateUniverse_, selectedEventBundles_, eventIdMax_,
             reservedIds_, graph_, candidateIndex, lifecycleResult,
             protocolResult, activeDemands_, regionScopes_, loopScopes_,
             getAnchorPosition_,
@@ -387,7 +387,7 @@ private:
         }
       }
     };
-    collectCompletionTargets(legacyUniverse_.eventBundles);
+    collectCompletionTargets(candidateUniverse_.eventBundles);
     collectCompletionTargets(selectedEventBundles_);
     for (const CanonicalSyncNode &node : plan_.getNodes()) {
       auto context = regionContexts_.find(node.operation->getParentRegion());
@@ -702,7 +702,7 @@ private:
 
   func::FuncOp func_;
   const CanonicalSyncPlan &plan_;
-  const CanonicalMechanismUniverse &legacyUniverse_;
+  const CanonicalMechanismUniverse &candidateUniverse_;
   std::vector<CanonicalEventBundleCandidate> selectedEventBundles_;
   unsigned eventIdMax_ = 0;
   const std::map<CanonicalEventDomainKey, std::set<unsigned>> &reservedIds_;
@@ -732,8 +732,8 @@ private:
 
 } // namespace
 
-LogicalResult CanonicalSyncPlanBuilder::buildCoveringShadowGraph() {
-  CanonicalSyncCoveringShadowSnapshot snapshot;
+LogicalResult CanonicalSyncPlanBuilder::buildCoveringGraph() {
+  CanonicalSyncCoveringSnapshot snapshot;
   CanonicalSyncCoveringGraphAdapter adapter(
       func_, plan_, mechanismUniverse_, selectedEventBundles_, eventIdMax_,
       reservedIds_,
@@ -753,6 +753,6 @@ LogicalResult CanonicalSyncPlanBuilder::buildCoveringShadowGraph() {
   if (failed(adapter.build(snapshot))) {
     return failure();
   }
-  plan_.coveringShadowSnapshot_ = std::move(snapshot);
+  plan_.coveringSnapshot_ = std::move(snapshot);
   return success();
 }

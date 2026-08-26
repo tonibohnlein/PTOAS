@@ -18,12 +18,6 @@
 // RUN:   > %t.covering-second
 // RUN: diff %t.covering-first %t.covering-second
 // RUN: FileCheck %s --check-prefix=COVERING < %t.covering-first
-// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
-// RUN:   > %t.legacy
-// RUN: pto-test-opt %s \
-// RUN:   '-pto-canonical-sync=event-id-num-max=8 covering-shadow=true' \
-// RUN:   > %t.shadow
-// RUN: diff %t.legacy %t.shadow
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @if_branch_anchors(
@@ -137,7 +131,7 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>,
 
 // COVERING-LABEL: PTOCanonicalSyncPlan @if_branch_anchors
-// COVERING: covering-shadow status=graph-ready scopes=4 controls=1 nodes=3
+// COVERING: covering status=graph-ready scopes=4 controls=1 nodes=3
 // COVERING-SAME: fixed-edges=2 recurrence-carries=0
 // COVERING-SAME: conservative-demands=3 active-demands=3 intrinsic-demands=0
 // COVERING: covering-selection status=ready error=none
@@ -164,7 +158,7 @@ module attributes {pto.target_arch = "a2a3"} {
 // COVERING: covering-demand[7] 1 -> 1 kind=memory-raw scope=1 distance=1 active=yes
 
 // COVERING-LABEL: PTOCanonicalSyncPlan @section_scope
-// COVERING: covering-shadow status=graph-ready scopes=3 controls=0 nodes=2
+// COVERING: covering status=graph-ready scopes=3 controls=0 nodes=2
 // COVERING: covering-selection status=ready error=none
 // COVERING: covering-scope[1] parent=0 must-execute=yes loop=no
 // COVERING: covering-scope[2] parent=1 must-execute=yes loop=no

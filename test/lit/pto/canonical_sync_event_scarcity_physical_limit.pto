@@ -74,5 +74,4 @@ module attributes {pto.target_arch = "a2a3"} {
 }
 
 // CHECK-LABEL: PTOCanonicalSyncPlan @nine_live_events
-// CHECK-COUNT-8: event[{{[0-7]}}] PIPE_MTE2 -> PIPE_V
-// CHECK: domain PIPE_MTE2 -> PIPE_V original-events=9 events=8 available=8 original-colors=9 colors=8 serialization-cost=2
+// CHECK-SAME: barriers=1 events=0

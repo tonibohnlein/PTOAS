@@ -28,7 +28,6 @@
 // RUN:   | FileCheck %s --check-prefix=CLI-CPP
 // RUN: ptoas %s --pto-level=level3 --pto-arch=a3 --emit-pto-ir \
 // RUN:   --enable-canonical-sync \
-// RUN:   --canonical-sync-covering-shadow \
 // RUN:   --canonical-sync-assume-distinct-gm-args-noalias -o - \
 // RUN:   | FileCheck %s --check-prefix=CLI-IR
 

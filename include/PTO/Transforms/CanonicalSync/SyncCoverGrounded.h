@@ -86,11 +86,21 @@ enum class SyncCoverGroundingError : std::uint8_t {
 };
 
 struct SyncCoverGroundingOptions {
-  /// Eager columns contain at most this many distinct mechanisms.
-  std::size_t maximumMembers = 2;
-  /// Only demands not settled by eager grounding are priced with this bound.
-  std::size_t maximumPricingMembers = 3;
-  std::size_t maximumLabelsPerState = 64;
+  /// Hard cap on factory-declared columns. Hitting the cap is reported as
+  /// incomplete grounding; it is never interpreted as infeasibility.
+  std::size_t maximumColumns = 65536;
+  /// Depth-two structural pricing is restricted to demands left without any
+  /// barrier-free singleton or verified-factory column.
+  std::size_t maximumPricingDemands = 256;
+  std::size_t maximumPairsPerDemand = 1024;
+};
+
+/// A candidate factory's independently verified incidence declaration. Members
+/// identify the physical mechanisms charged and emitted together. Demands list
+/// additional transitive coverage proved by that factory's structural verifier.
+struct SyncCoverVerifiedFactoryColumn {
+  std::vector<SyncCoverMechanismId> members;
+  std::vector<SyncCoverDemandId> demands;
 };
 
 struct SyncCoverGroundedInstance {
@@ -130,13 +140,13 @@ SyncCoverGroundingResult groundSyncCoverInstance(
     const std::vector<SyncCoverDemandId> &activeDemands,
     const SyncCoverGroundingOptions &options = {});
 
-/// Grounds caller-supplied complete selections as additional shared-member
-/// columns. This preserves known-valid incumbents whose transitive witness
-/// uses more members than bounded pricing enumerates.
+/// Grounds independently verified shared-cost columns. Selection never expands
+/// or re-proves these declarations. The independent final oracle still checks
+/// the complete selected plan before it can be emitted.
 SyncCoverGroundingResult groundSyncCoverInstance(
     const SyncCoverMechanismUniverse &universe,
     const std::vector<SyncCoverDemandId> &activeDemands,
-    const std::vector<std::vector<SyncCoverMechanismId>> &selectionColumns,
+    const std::vector<SyncCoverVerifiedFactoryColumn> &factoryColumns,
     const SyncCoverGroundingOptions &options = {});
 
 } // namespace pto

@@ -12,7 +12,7 @@
 // RUN:   '-pto-print-canonical-sync-plan=format=text view=covering' \
 // RUN:   | FileCheck %s --check-prefix=PLAN
 // RUN: pto-test-opt %s \
-// RUN:   '-pto-canonical-sync=event-id-num-max=8 solver=covering' \
+// RUN:   '-pto-canonical-sync=event-id-num-max=8' \
 // RUN:   | FileCheck %s --check-prefix=DIRECT
 
 module attributes {pto.target_arch = "a2a3"} {
