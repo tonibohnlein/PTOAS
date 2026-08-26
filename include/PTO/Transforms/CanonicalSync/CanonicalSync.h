@@ -578,8 +578,6 @@ stringifyCanonicalSelectionMechanismKind(CanonicalSelectionMechanismKind kind);
 StringRef stringifyCanonicalOwnershipKind(CanonicalOwnershipKind kind);
 void printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
                             const CanonicalSyncPlan &plan, StringRef view);
-void printCanonicalSyncPlanDot(llvm::raw_ostream &os, func::FuncOp func,
-                               const CanonicalSyncPlan &plan, StringRef view);
 
 } // namespace pto
 } // namespace mlir

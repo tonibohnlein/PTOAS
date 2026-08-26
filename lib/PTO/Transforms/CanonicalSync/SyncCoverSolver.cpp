@@ -492,40 +492,12 @@ void exactSearch(const SyncCoverSelectionEvaluator &evaluator,
   }
 }
 
-std::vector<std::vector<SyncCoverMechanismId>> componentSeeds(
-    const SyncCoverSelectionComponent &component,
-    const std::vector<SyncCoverSelectionSeed> &seeds) {
-  std::vector<std::vector<SyncCoverMechanismId>> result{{}};
-  for (const SyncCoverSelectionSeed &seed : seeds) {
-    std::vector<SyncCoverMechanismId> selected;
-    std::set_intersection(seed.mechanisms.begin(), seed.mechanisms.end(),
-                          component.mechanisms.begin(),
-                          component.mechanisms.end(),
-                          std::back_inserter(selected));
-    result.push_back(std::move(selected));
-  }
-  std::sort(result.begin(), result.end());
-  result.erase(std::unique(result.begin(), result.end()), result.end());
-  return result;
-}
-
 ComponentSearchResult searchComponent(
     const SyncCoverSelectionEvaluator &evaluator,
     const SyncCoverGroundedInstance &instance,
     const SyncCoverSelectionComponent &component,
-    const std::vector<SyncCoverSelectionSeed> &seeds,
     const SyncCoverSolverOptions &options) {
   ComponentSearchResult result;
-  const auto starts = componentSeeds(component, seeds);
-  for (const auto &start : starts) {
-    const std::optional<SearchEvaluation> evaluation =
-        evaluateSelection(evaluator, instance, start);
-    ++result.evaluations;
-    if (evaluation && componentCovered(instance, component,
-                                       evaluation->covered)) {
-      considerComplete(start, evaluation->cost, result.selected, result.cost);
-    }
-  }
   greedySearch(evaluator, instance, component, options, result);
   if (component.exact) {
     std::set<std::vector<SyncCoverMechanismId>> seen;
@@ -851,7 +823,6 @@ bool finalVerify(const SyncCoverMechanismUniverse &universe,
 SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
     const SyncCoverMechanismUniverse &universe,
     const std::vector<SyncCoverDemandId> &activeDemands,
-    const std::vector<SyncCoverSelectionSeed> &inputSeeds,
     const SyncCoverSolverOptions &options,
     const std::vector<SyncCoverVerifiedFactoryColumn> &factoryColumns) {
   const bool invalidOptions =
@@ -869,22 +840,6 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
   if (invalidDemandOrder || invalidDemandId) {
     return makeError(SyncCoverSelectionError::InvalidDemand);
   }
-  std::vector<SyncCoverSelectionSeed> seeds = inputSeeds;
-  for (SyncCoverSelectionSeed &seed : seeds) {
-    const bool invalidSeedOrder = !normalizeUnique(seed.mechanisms);
-    const bool invalidMechanism =
-        !seed.mechanisms.empty() &&
-        seed.mechanisms.back() >= universe.getMechanisms().size();
-    if (invalidSeedOrder || invalidMechanism) {
-      return makeError(SyncCoverSelectionError::InvalidSeed);
-    }
-  }
-  std::sort(seeds.begin(), seeds.end(), [](const auto &first,
-                                           const auto &second) {
-    return std::tie(first.identity, first.mechanisms) <
-           std::tie(second.identity, second.mechanisms);
-  });
-
   const SyncCoverGroundingResult grounding =
       groundSyncCoverInstance(universe, demands, factoryColumns);
   if (!grounding) {
@@ -924,11 +879,6 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
     result.optimalityProven = false;
     return result;
   }
-  if (!instance.provenUncoverableDemands.empty()) {
-    result.error = SyncCoverSelectionError::ProvenInfeasible;
-    result.optimalityProven = true;
-    return result;
-  }
   result.components =
       buildComponents(instance, options.exactMechanismThreshold);
   result.optimalityProven = instance.demandsNeedingPricing.empty() &&
@@ -937,7 +887,7 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
   std::vector<SyncCoverMechanismId> selected;
   for (const SyncCoverSelectionComponent &component : result.components) {
     ComponentSearchResult componentResult =
-        searchComponent(evaluator, instance, component, seeds, options);
+        searchComponent(evaluator, instance, component, options);
     result.evaluations += componentResult.evaluations;
     result.truncation.evaluationLimit |=
         componentResult.truncation.evaluationLimit;
@@ -1007,18 +957,6 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
                   result.redundancyEvaluations);
   improveWithGroundedColumns(evaluator, instance, selected, selectedCost,
                              result.redundancyEvaluations);
-  for (const SyncCoverSelectionSeed &seed : seeds) {
-    const std::optional<SearchEvaluation> seedEvaluation =
-        evaluateSelection(evaluator, instance, seed.mechanisms);
-    const bool improves =
-        seedEvaluation && instance.coversAll(seed.mechanisms) &&
-        syncCoverStructuralCostLess(seedEvaluation->cost, selectedCost);
-    if (improves) {
-      selected = seed.mechanisms;
-      selectedCost = seedEvaluation->cost;
-    }
-  }
-
   // The post-search oracle is prepared fresh from the graph, independent of
   // the grounded bitsets the search consumed: both the oracle-checked
   // redundancy pass and the final whole-plan verification see topologies the

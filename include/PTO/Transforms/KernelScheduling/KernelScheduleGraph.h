@@ -91,8 +91,6 @@ StringRef stringifyScheduleNodeKind(ScheduleNodeKind kind);
 StringRef stringifyScheduleDependencyKind(ScheduleDependencyKind kind);
 void printKernelScheduleGraph(llvm::raw_ostream &os, func::FuncOp func,
                               const KernelScheduleGraph &graph);
-void printKernelScheduleGraphDot(llvm::raw_ostream &os, func::FuncOp func,
-                                 const KernelScheduleGraph &graph);
 
 } // namespace pto
 } // namespace mlir

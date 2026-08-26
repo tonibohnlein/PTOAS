@@ -158,14 +158,14 @@ def PrintCanonicalSyncPlan
   let summary = "Print the canonical synchronization analysis and plan";
   let description = [{
     Runs canonical synchronization analysis without mutating the function and
-    prints either text or DOT for the selected analysis view.
+    prints stable text for the selected analysis view.
   }];
 
   let constructor = "mlir::pto::createPrintCanonicalSyncPlanPass()";
 
   let options = [
     Option<"format", "format", "std::string", "\"text\"",
-           "Output format: text or dot.">,
+           "Output format: text.">,
     Option<"view", "view", "std::string", "\"all\"",
            "Analysis view: all, dependencies, plan, events, ownership, "
            "or covering.">,
@@ -352,12 +352,12 @@ def PrintKernelScheduleGraph
     Builds an analysis-only graph of schedulable PTO compute and transfer
     operations. Nodes are typed by the hardware pipe obtained through
     OpPipeInterface. Edges capture SSA, memory, structured-control, and
-    loop-carried dependencies. The graph can be printed as stable text or DOT.
+    loop-carried dependencies. The graph is printed as stable text.
   }];
   let constructor = "mlir::pto::createPrintKernelScheduleGraphPass()";
   let options = [
     Option<"format", "format", "std::string", "\"text\"",
-           "Output format: text or dot">
+           "Output format: text">
   ];
   let dependentDialects = ["mlir::pto::PTODialect"];
 }

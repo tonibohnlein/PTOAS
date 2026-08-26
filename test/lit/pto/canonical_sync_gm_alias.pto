@@ -19,9 +19,6 @@
 // RUN: pto-test-opt %s \
 // RUN:   '-pto-canonical-sync=event-id-num-max=8 assume-distinct-gm-args-noalias=true' \
 // RUN:   | FileCheck %s --check-prefix=ASSUME-IR
-// RUN: pto-test-opt %s \
-// RUN:   '-pto-print-canonical-sync-plan=format=dot view=plan assume-distinct-gm-args-noalias=true' \
-// RUN:   | FileCheck %s --check-prefix=ASSUME-DOT
 // RUN: ptoas %s --pto-level=level3 --pto-arch=a3 \
 // RUN:   --enable-canonical-sync \
 // RUN:   --canonical-sync-assume-distinct-gm-args-noalias -o - \
@@ -520,8 +517,6 @@ module attributes {pto.target_arch = "a2a3"} {
 // ASSUME-IR-LABEL: func.func @inttoptr_unknown
 // ASSUME-IR: pto.set_flag[<PIPE_MTE3>, <PIPE_S>,
 
-// ASSUME-DOT-LABEL: digraph "external_may_alias"
-// ASSUME-DOT: graph [label="gm-alias-policy=distinct-args-noalias"
 
 // CLI-CPP-LABEL: AICORE void external_may_alias
 // CLI-CPP: TSTORE

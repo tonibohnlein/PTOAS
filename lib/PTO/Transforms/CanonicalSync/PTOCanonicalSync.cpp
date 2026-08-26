@@ -123,18 +123,10 @@ struct PrintCanonicalSyncPlanPass
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
-    if ((format != "text" && format != "dot") || !isValidView(view)) {
+    if (format != "text" || !isValidView(view)) {
       module.emitError()
           << "unsupported canonical sync print selection: format='" << format
           << "', view='" << view << "'";
-      signalPassFailure();
-      return;
-    }
-    const bool invalidCoveringFormat =
-        view == "covering" && format != "text";
-    if (invalidCoveringFormat) {
-      module.emitError()
-          << "canonical sync covering diagnostics require format='text'";
       signalPassFailure();
       return;
     }
@@ -165,11 +157,7 @@ struct PrintCanonicalSyncPlanPass
         signalPassFailure();
         return;
       }
-      if (format == "dot") {
-        pto::printCanonicalSyncPlanDot(llvm::outs(), func, *plan, view);
-      } else {
-        pto::printCanonicalSyncPlan(llvm::outs(), func, *plan, view);
-      }
+      pto::printCanonicalSyncPlan(llvm::outs(), func, *plan, view);
     }
     markAllAnalysesPreserved();
   }

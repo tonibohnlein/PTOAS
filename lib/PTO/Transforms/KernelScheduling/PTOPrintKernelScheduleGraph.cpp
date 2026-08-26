@@ -34,9 +34,9 @@ struct PrintKernelScheduleGraphPass
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
-    if (format != "text" && format != "dot") {
+    if (format != "text") {
       module.emitError() << "unsupported kernel schedule graph format '"
-                         << format << "'; expected 'text' or 'dot'";
+                         << format << "'; expected 'text'";
       signalPassFailure();
       return;
     }
@@ -51,11 +51,7 @@ struct PrintKernelScheduleGraphPass
         signalPassFailure();
         return;
       }
-      if (format == "dot") {
-        pto::printKernelScheduleGraphDot(llvm::outs(), func, *graph);
-      } else {
-        pto::printKernelScheduleGraph(llvm::outs(), func, *graph);
-      }
+      pto::printKernelScheduleGraph(llvm::outs(), func, *graph);
     }
     markAllAnalysesPreserved();
   }

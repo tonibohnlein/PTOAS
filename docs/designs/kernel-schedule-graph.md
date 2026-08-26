@@ -75,10 +75,3 @@ Stable text output:
 pto-test-opt input.pto '-pto-print-kernel-schedule-graph=format=text'
 ```
 
-Graphviz output:
-
-```bash
-pto-test-opt input.pto '-pto-print-kernel-schedule-graph=format=dot' \
-  | sed -n '/^digraph /,/^}$/p' > schedule.dot
-dot -Tsvg schedule.dot -o schedule.svg
-```

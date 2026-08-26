@@ -94,9 +94,6 @@ MechanismAdapter::solve(CanonicalSyncCoveringSnapshot &snapshot) {
   snapshot.selectionAttempted = true;
   const std::vector<SyncCoverDemandId> demands(activeDemands_.begin(),
                                                activeDemands_.end());
-  // No external incumbent exists since the legacy selector's removal; the
-  // solver's own fallback-barrier net catches component-search truncation.
-  const std::vector<SyncCoverSelectionSeed> seeds;
   std::vector<SyncCoverMechanismId> protocolMechanisms;
   for (const CanonicalEventBundleCandidate &bundle : eventBundles_) {
     const bool ownershipProtocol =
@@ -256,7 +253,7 @@ MechanismAdapter::solve(CanonicalSyncCoveringSnapshot &snapshot) {
                   }),
       protocolColumns.end());
   const SyncCoverSelectionResult result =
-      solveSyncCoverSelection(universe_, demands, seeds, {}, protocolColumns);
+      solveSyncCoverSelection(universe_, demands, {}, protocolColumns);
   snapshot.selectionError = result.error;
   snapshot.searchTruncated = static_cast<bool>(result.truncation);
   const bool candidateUniverseComplete =

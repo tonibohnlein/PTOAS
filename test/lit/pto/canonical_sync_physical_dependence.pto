@@ -11,9 +11,6 @@
 // RUN:   | FileCheck %s --check-prefix=PLAN
 // RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
 // RUN:   | FileCheck %s --check-prefix=IR
-// RUN: pto-test-opt %s \
-// RUN:   '-pto-print-canonical-sync-plan=format=dot view=events' \
-// RUN:   | FileCheck %s --check-prefix=DOT
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
 // RUN:   --emit-pto-ir %s | FileCheck %s --check-prefix=DRIVER
 
@@ -93,5 +90,3 @@ module attributes {pto.target_arch = "a2a3"} {
 // DRIVER: pto.set_flag[<PIPE_MTE3>, <PIPE_V>
 // DRIVER: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>
 
-// DOT-LABEL: digraph "overlap_reuse" {
-// DOT: e{{[0-9]+}} [shape=ellipse, label="event

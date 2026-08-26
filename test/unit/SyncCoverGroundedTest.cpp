@@ -242,8 +242,7 @@ bool testMissingFactoryCoverage() {
       grounded &&
           grounded.instance.demandsNeedingPricing ==
               std::vector<SyncCoverDemandId>{pricedDemand,
-                                             unreachableDemand} &&
-          grounded.instance.provenUncoverableDemands.empty(),
+                                             unreachableDemand},
       "missing factories are reported without claiming infeasibility");
   if (grounded) {
     passed &= check(

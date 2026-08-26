@@ -35,10 +35,7 @@ struct SyncCoverTargetCapabilities {
   std::set<std::uint32_t> prefixSetResources;
   SyncCoverEvidenceLevel prefixEvidence = SyncCoverEvidenceLevel::None;
   std::set<std::uint32_t> hardwareCompletionResources;
-  bool supportsBufferTokens = false;
-  unsigned bufferTokenBudget = 0;
   unsigned eventIdBudget = 8;
-  bool unitFlagAccumulator = false;
 
   bool hasPrefixSetSemantics(std::uint32_t resource) const {
     return prefixEvidence != SyncCoverEvidenceLevel::None &&

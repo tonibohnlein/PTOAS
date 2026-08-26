@@ -213,12 +213,8 @@ StringRef stringifyCoveringSelectionError(SyncCoverSelectionError error) {
     return "invalid-universe";
   case SyncCoverSelectionError::InvalidDemand:
     return "invalid-demand";
-  case SyncCoverSelectionError::InvalidSeed:
-    return "invalid-seed";
   case SyncCoverSelectionError::InvalidOptions:
     return "invalid-options";
-  case SyncCoverSelectionError::ProvenInfeasible:
-    return "proven-infeasible";
   case SyncCoverSelectionError::SearchIncomplete:
     return "search-incomplete";
   case SyncCoverSelectionError::FinalVerificationFailed:
@@ -254,21 +250,6 @@ void printMechanismRef(llvm::raw_ostream &os,
                        const CanonicalSelectionMechanismRef &mechanism) {
   os << stringifyCanonicalSelectionMechanismKind(mechanism.kind) << '['
      << mechanism.id << ']';
-}
-
-void printQuoted(llvm::raw_ostream &os, StringRef text) {
-  os << '"';
-  for (char character : text) {
-    if (character == '"' || character == '\\') {
-      os << '\\';
-    }
-    if (character == '\n') {
-      os << "\\n";
-    } else {
-      os << character;
-    }
-  }
-  os << '"';
 }
 
 } // namespace
@@ -626,92 +607,3 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
   }
 }
 
-void mlir::pto::printCanonicalSyncPlanDot(llvm::raw_ostream &os,
-                                          func::FuncOp func,
-                                          const CanonicalSyncPlan &plan,
-                                          StringRef view) {
-  os << "digraph ";
-  printQuoted(os, func.getSymName());
-  os << " {\n  graph [label=";
-  printQuoted(os, (llvm::Twine("gm-alias-policy=") +
-                   stringifyCanonicalGMAliasPolicy(plan.getGMAliasPolicy()))
-                      .str());
-  os << ", labelloc=t];\n  rankdir=LR;\n"
-        "  node [fontname=\"DejaVu Sans\", fontsize=10, shape=box];\n";
-  const bool printNodes = includesDependencies(view) || includesPlan(view) ||
-                          includesOwnership(view);
-  if (printNodes) {
-    for (const CanonicalSyncNode &node : plan.getNodes()) {
-      os << "  n" << node.id << " [label=";
-      printQuoted(os, (llvm::Twine(node.id) + ": " +
-                       node.operation->getName().getStringRef() + "\n" +
-                       stringifyPIPE(static_cast<PIPE>(node.pipe)))
-                          .str());
-      os << "];\n";
-    }
-    for (const SyncGraphEdge &edge : plan.getFixedEdges()) {
-      os << "  n" << edge.source << " -> n" << edge.target << " [label=";
-      printQuoted(os, stringifyFixedEdgeKind(edge.kind));
-      os << ", color=\"#6B7280\"];\n";
-    }
-    for (const CanonicalDependency &dependency : plan.getDependencies()) {
-      os << "  n" << dependency.source << " -> n" << dependency.target
-         << " [label=";
-      printQuoted(os, stringifyCanonicalDependencyKind(dependency.kind));
-      os << ", style="
-         << (dependency.retained
-                 ? (dependency.iterationDistance ? "dashed" : "solid")
-                 : "dotted")
-         << "];\n";
-    }
-  }
-  if (includesPlan(view) || includesEvents(view)) {
-    for (auto [index, event] : llvm::enumerate(plan.getEvents())) {
-      os << "  e" << index << " [shape=ellipse, label=";
-      printQuoted(os,
-                  (llvm::Twine("event ") + llvm::Twine(index) + "\n" +
-                   stringifyPIPE(static_cast<PIPE>(event.sourcePipe)) + " -> " +
-                   stringifyPIPE(static_cast<PIPE>(event.targetPipe)))
-                      .str());
-      os << "];\n";
-    }
-    for (std::size_t first = 0; first < plan.getEvents().size(); ++first) {
-      for (std::size_t second = first + 1; second < plan.getEvents().size();
-           ++second) {
-        const CanonicalEvent &left = plan.getEvents()[first];
-        const CanonicalEvent &right = plan.getEvents()[second];
-        const bool sameDomain = left.sourcePipe == right.sourcePipe &&
-                                left.targetPipe == right.targetPipe;
-        const bool overlaps = !(left.intervalEnd < right.intervalBegin ||
-                                right.intervalEnd < left.intervalBegin);
-        if (sameDomain && overlaps) {
-          os << "  e" << first << " -> e" << second
-             << " [dir=none, color=\"#9C2F45\"];\n";
-        }
-      }
-    }
-  }
-  if (includesOwnership(view)) {
-    for (auto [cycleIndex, cycle] :
-         llvm::enumerate(plan.getOwnershipCycles())) {
-      os << "  o" << cycleIndex << " [shape=diamond, label=";
-      printQuoted(os, (llvm::Twine("ownership ") + llvm::Twine(cycleIndex) +
-                       "\n" + stringifyCanonicalOwnershipKind(cycle.kind))
-                          .str());
-      os << "];\n";
-      for (const CanonicalOwnershipPath &path : cycle.paths) {
-        for (const CanonicalOwnershipUse &use : path.uses) {
-          for (std::size_t producer : use.producers) {
-            os << "  n" << producer << " -> o" << cycleIndex
-               << " [style=dotted];\n";
-          }
-          for (std::size_t consumer : use.consumers) {
-            os << "  o" << cycleIndex << " -> n" << consumer
-               << " [style=dotted];\n";
-          }
-        }
-      }
-    }
-  }
-  os << "}\n";
-}

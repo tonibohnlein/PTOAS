@@ -7,7 +7,6 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: pto-test-opt %s '-pto-print-kernel-schedule-graph=format=text' | FileCheck %s --check-prefix=TEXT
-// RUN: pto-test-opt %s '-pto-print-kernel-schedule-graph=format=dot' | FileCheck %s --check-prefix=DOT
 // RUN: not pto-test-opt %s '-pto-print-kernel-schedule-graph=format=json' 2>&1 | FileCheck %s --check-prefix=INVALID
 // RUN: pto-test-opt %s \
 // RUN:   '-pto-print-canonical-sync-plan=format=text view=dependencies' \
@@ -67,13 +66,8 @@ module {
 // TEXT-DAG: edge 2 -> 2 kind=memory-waw distance=1
 // TEXT-DAG: edge 3 -> 2 kind=memory-war distance=1
 
-// DOT-LABEL: digraph "kernel_schedule_graph" {
-// DOT: n2 [label="2: pto.tload\nPIPE_MTE2 / transfer", fillcolor="#DCEBFA"];
-// DOT: n3 [label="3: pto.trelu\nPIPE_V / compute", fillcolor="#FDE7C8"];
-// DOT: n2 -> n2 [label="memory-waw, d=1, loop-depth=1", color="#9C2F45"
-// DOT-SAME: style=dashed];
 
-// INVALID: error: unsupported kernel schedule graph format 'json'; expected 'text' or 'dot'
+// INVALID: error: unsupported kernel schedule graph format 'json'; expected 'text'
 
 // CANONICAL-LABEL: PTOCanonicalSyncPlan @kernel_schedule_graph
 // CANONICAL-DAG: dependency 0 -> 1 kind=ssa distance=0

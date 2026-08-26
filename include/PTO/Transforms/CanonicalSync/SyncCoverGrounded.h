@@ -112,7 +112,6 @@ struct SyncCoverGroundedInstance {
   std::vector<SyncCoverGroundedMechanism> mechanisms;
   std::vector<SyncCoverResourceDomain> resourceDomains;
   std::vector<SyncCoverDemandId> demandsNeedingPricing;
-  std::vector<SyncCoverDemandId> provenUncoverableDemands;
   bool columnsTruncated = false;
   /// True when at least one demand was excluded from pair pricing because a
   /// barrier-free column already covered it. The witness universe is then

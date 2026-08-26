@@ -200,7 +200,7 @@ bool testCutGuidedExactSelection() {
   SyncCoverSolverOptions greedyOptions;
   greedyOptions.exactMechanismThreshold = 0;
   const SyncCoverSelectionResult greedyResult =
-      solveSyncCoverSelection(universe, {demandId}, {}, greedyOptions);
+      solveSyncCoverSelection(universe, {demandId}, greedyOptions);
   passed &= check(greedyResult && !greedyResult.optimalityProven &&
                       !greedyResult.truncation &&
                       findBruteForceOptimum(universe) ==
@@ -247,67 +247,6 @@ bool testCutGuidedExactSelection() {
   return passed;
 }
 
-bool testExactMembershipClassification() {
-  bool passed = true;
-  SyncCoverGraph graph;
-  const SyncCoverNodeId firstSource = takeIndex(
-      graph.addNode(1, 1, 0, 0, {}, {2}), passed,
-      "add first membership source");
-  const SyncCoverNodeId secondSource = takeIndex(
-      graph.addNode(1, 1, 0, 1, {}, {2}), passed,
-      "add second membership source");
-  const SyncCoverNodeId secondTarget = takeIndex(
-      graph.addNode(2, 1, 0, 2), passed,
-      "add second membership target");
-  const SyncCoverNodeId firstTarget = takeIndex(
-      graph.addNode(2, 1, 0, 3), passed,
-      "add first membership target");
-  const SyncCoverDemandId firstDemand = takeIndex(
-      graph.addDemand(demand(firstSource, firstTarget)), passed,
-      "add first membership demand");
-  const SyncCoverDemandId secondDemand = takeIndex(
-      graph.addDemand(demand(secondSource, secondTarget)), passed,
-      "add second membership demand");
-  SyncCoverMechanismUniverse universe(graph);
-  const SyncCoverResourceDomainId domain = takeIndex(
-      universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 1),
-      passed, "add membership domain");
-  const SyncCoverMechanismId firstEvent = addEvent(
-      universe, domain, 1, 2, firstSource, firstTarget, passed);
-  const SyncCoverMechanismId secondEvent = addEvent(
-      universe, domain, 1, 2, secondSource, secondTarget, passed);
-
-  const SyncCoverMembershipResult incomplete =
-      evaluateSyncCoverMembership(universe, {firstDemand}, {});
-  passed &= check(
-      incomplete && incomplete.resources.resourceFeasible &&
-          !incomplete.coverageComplete &&
-          incomplete.uncoveredDemands.size() == 1 &&
-          incomplete.uncoveredDemands.front().cutMechanisms ==
-              std::vector<SyncCoverMechanismId>{firstEvent},
-      "membership separates an incomplete cover from resource feasibility");
-
-  const SyncCoverMembershipResult complete =
-      evaluateSyncCoverMembership(universe, {firstDemand}, {firstEvent});
-  passed &= check(complete && complete.resources.resourceFeasible &&
-                      complete.coverageComplete && complete.cost,
-                  "membership accepts a complete exactly colored plan");
-
-  const SyncCoverMembershipResult scarce = evaluateSyncCoverMembership(
-      universe, {firstDemand, secondDemand}, {firstEvent, secondEvent});
-  passed &= check(scarce && scarce.resources.isValid() &&
-                      !scarce.resources.resourceFeasible &&
-                      !scarce.coverageComplete,
-                  "membership reports coloring failure before coverage");
-
-  const SyncCoverMembershipResult duplicate = evaluateSyncCoverMembership(
-      universe, {firstDemand}, {firstEvent, firstEvent});
-  passed &= check(
-      duplicate.error == SyncCoverMembershipError::InvalidSelection,
-      "membership rejects a non-canonical mechanism set");
-  return passed;
-}
-
 bool testAtomicProtocolAndScarcity() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -344,10 +283,10 @@ bool testAtomicProtocolAndScarcity() {
       universe.addVerifiedProtocol(protocol, [](const auto &) { return true; }),
       passed, "add atomic shared protocol");
 
-  const SyncCoverSelectionResult result = solveSyncCoverSelection(
-      universe, {firstDemand, secondDemand}, {{17, {first, second}}});
+  const SyncCoverSelectionResult result =
+      solveSyncCoverSelection(universe, {firstDemand, secondDemand});
   passed &= check(result && result.mechanisms == std::vector{protocolId},
-                  "atomic protocol repairs an over-budget conservative seed");
+                  "atomic protocol replaces an over-budget event pair");
   passed &= check(
       !universe.evaluateResourceSelection({first, second}).resourceFeasible,
       "independent events exceed the shared event budget");
@@ -423,7 +362,7 @@ bool testBarrierSelection() {
   SyncCoverSolverOptions beamOptions;
   beamOptions.exactMechanismThreshold = 0;
   const SyncCoverSelectionResult beam =
-      solveSyncCoverSelection(universe, {demandId}, {}, beamOptions);
+      solveSyncCoverSelection(universe, {demandId}, beamOptions);
   passed &= check(beam && beam.mechanisms == std::vector{barrier},
                   "bounded covering also selects a same-resource barrier");
   return passed;
@@ -469,7 +408,7 @@ bool testTruncationRescuedByBarrierFallback() {
   truncated.exactMechanismThreshold = 0;
   truncated.evaluationLimit = 1;
   const SyncCoverSelectionResult rescued = solveSyncCoverSelection(
-      universe, {firstDemand, secondDemand}, {}, truncated);
+      universe, {firstDemand, secondDemand}, truncated);
   passed &= check(static_cast<bool>(rescued),
                   "budget-one truncation is rescued, not failed");
   passed &= check(rescued.mechanisms == std::vector{barrier},
@@ -530,7 +469,7 @@ bool testDeclaredCoverageSelection() {
   SyncCoverSolverOptions options;
   options.exactMechanismThreshold = 0;
   const SyncCoverSelectionResult result = solveSyncCoverSelection(
-      universe, {firstDemand, secondDemand}, {}, options);
+      universe, {firstDemand, secondDemand}, options);
   passed &= check(result &&
                       result.mechanisms ==
                           std::vector<SyncCoverMechanismId>{
@@ -562,17 +501,16 @@ bool testBeamSeedsAndRedundancy() {
       passed, "add domain");
   const SyncCoverMechanismId first =
       addEvent(universe, domain, 1, 2, source, target, passed);
-  const SyncCoverMechanismId redundant =
-      addEvent(universe, domain, 1, 2, source, target, passed);
+  addEvent(universe, domain, 1, 2, source, target, passed);
   SyncCoverSolverOptions options;
   options.exactMechanismThreshold = 0;
   options.evaluationLimit = 1;
-  const SyncCoverSelectionResult firstRun = solveSyncCoverSelection(
-      universe, {0}, {{7, {first, redundant}}}, options);
-  const SyncCoverSelectionResult secondRun = solveSyncCoverSelection(
-      universe, {0}, {{7, {first, redundant}}}, options);
+  const SyncCoverSelectionResult firstRun =
+      solveSyncCoverSelection(universe, {0}, options);
+  const SyncCoverSelectionResult secondRun =
+      solveSyncCoverSelection(universe, {0}, options);
   passed &= check(firstRun && firstRun.mechanisms == std::vector{first},
-                  "feasible seed survives a one-evaluation exploration limit");
+                  "bounded greedy covers within a one-evaluation limit");
   passed &= check(!firstRun.truncation.evaluationLimit &&
                       !firstRun.optimalityProven,
                   "large-component greedy selection does not claim "
@@ -619,18 +557,15 @@ bool testRecurrenceAndInputValidation() {
                   "unknown active demands are rejected");
   SyncCoverSolverOptions invalid;
   invalid.evaluationLimit = 0;
-  passed &= check(solveSyncCoverSelection(universe, {0}, {}, invalid).error ==
+  passed &= check(solveSyncCoverSelection(universe, {0}, invalid).error ==
                       SyncCoverSelectionError::InvalidOptions,
                   "invalid search bounds are rejected");
   invalid = {};
   invalid.exactMechanismThreshold =
       SyncCoverSolverOptions::maximumExactMechanismThreshold + 1;
-  passed &= check(solveSyncCoverSelection(universe, {0}, {}, invalid).error ==
+  passed &= check(solveSyncCoverSelection(universe, {0}, invalid).error ==
                       SyncCoverSelectionError::InvalidOptions,
                   "unsafe exact-search thresholds are rejected");
-  passed &= check(solveSyncCoverSelection(universe, {0}, {{0, {7}}}).error ==
-                      SyncCoverSelectionError::InvalidSeed,
-                  "unknown seed mechanisms are rejected");
   return passed;
 }
 
@@ -652,7 +587,7 @@ bool testBoundedSearchDiagnostics() {
   options.exactMechanismThreshold = 0;
   options.evaluationLimit = 1;
   const SyncCoverSelectionResult incomplete =
-      solveSyncCoverSelection(universe, {0}, {}, options);
+      solveSyncCoverSelection(universe, {0}, options);
   passed &= check(incomplete &&
                       incomplete.mechanisms ==
                           std::vector<SyncCoverMechanismId>{0} &&
@@ -665,22 +600,13 @@ bool testBoundedSearchDiagnostics() {
   options = {};
   options.evaluationLimit = 1;
   const SyncCoverSelectionResult exactIncomplete =
-      solveSyncCoverSelection(universe, {0}, {}, options);
+      solveSyncCoverSelection(universe, {0}, options);
   passed &= check(exactIncomplete &&
                       exactIncomplete.mechanisms ==
                           std::vector<SyncCoverMechanismId>{0} &&
                       exactIncomplete.truncation.evaluationLimit &&
                       !exactIncomplete.optimalityProven,
                   "exact search keeps the greedy incumbent at its budget");
-  const SyncCoverSelectionResult seededExact =
-      solveSyncCoverSelection(universe, {0}, {{3, {0}}}, options);
-  passed &= check(seededExact &&
-                      seededExact.mechanisms ==
-                          std::vector<SyncCoverMechanismId>{0} &&
-                      seededExact.truncation.evaluationLimit &&
-                      !seededExact.optimalityProven,
-                  "an exact-search seed survives budget truncation");
-
   return passed;
 }
 
@@ -759,7 +685,7 @@ bool testMissingFactoryDemand() {
 
 int main() {
   const bool passed =
-      testCutGuidedExactSelection() && testExactMembershipClassification() &&
+      testCutGuidedExactSelection() &&
       testAtomicProtocolAndScarcity() && testComponentsConflictsAndFailure() &&
       testBarrierSelection() && testTruncationRescuedByBarrierFallback() &&
       testDeclaredCoverageSelection() &&

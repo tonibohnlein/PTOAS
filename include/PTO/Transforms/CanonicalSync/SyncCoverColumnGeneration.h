@@ -80,19 +80,10 @@ SyncCoverColumnGenerationResult runSyncCoverColumnGenerators(
     SyncCoverMechanismUniverse &universe,
     const std::vector<std::unique_ptr<SyncCoverColumnGenerator>> &generators);
 
-std::vector<std::unique_ptr<SyncCoverColumnGenerator>>
-makeDefaultSyncCoverColumnGenerators();
-
 std::unique_ptr<SyncCoverColumnGenerator>
 makeSyncCoverCanonicalEventGenerator();
 std::unique_ptr<SyncCoverColumnGenerator>
 makeSyncCoverMergedPrefixEventGenerator();
-std::unique_ptr<SyncCoverColumnGenerator>
-makeSyncCoverUnitRecurrenceEventGenerator();
-std::unique_ptr<SyncCoverColumnGenerator>
-makeSyncCoverRingReleaseEventGenerator();
-std::unique_ptr<SyncCoverColumnGenerator>
-makeSyncCoverBufferTokenRingGenerator();
 std::unique_ptr<SyncCoverColumnGenerator>
 makeSyncCoverPiercedBarrierGenerator();
 
@@ -100,10 +91,6 @@ bool verifySyncCoverMergedPrefixEvent(
     const SyncCoverGraph &graph, const SyncCoverResourceDomain &domain,
     const SyncCoverMechanismDescriptor &descriptor,
     const SyncCoverTargetCapabilities &target);
-
-bool verifySyncCoverRingReleaseProtocol(
-    const SyncCoverGraph &graph, const SyncCoverResourceDomain &domain,
-    const SyncCoverMechanismDescriptor &descriptor);
 
 } // namespace pto
 } // namespace mlir

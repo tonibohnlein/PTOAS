@@ -620,61 +620,6 @@ bool testStorageMetadataDoesNotAffectCoverage() {
   return passed;
 }
 
-bool testMinimalWitnessGrounding() {
-  bool passed = true;
-  SyncCoverGraph graph;
-  const SyncCoverNodeId source =
-      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add grounded source");
-  const SyncCoverNodeId middle =
-      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add grounded middle");
-  const SyncCoverNodeId target =
-      takeIndex(graph.addNode(3, 1, 0, 2), passed, "add grounded target");
-  passed &= check(graph.addDemand(makeDemand(source, target)),
-                  "add grounded demand");
-  passed &= check(graph.addEdge(makeEdge(
-                      source, target, SyncCoverEdgeKind::CompletionSupply, 1)),
-                  "add singleton grounded path");
-  passed &= check(graph.addEdge(makeEdge(
-                      source, middle, SyncCoverEdgeKind::CompletionSupply, 2)),
-                  "add first composite grounded path edge");
-  passed &= check(graph.addEdge(makeEdge(
-                      middle, target, SyncCoverEdgeKind::CompletionSupply, 3)),
-                  "add second composite grounded path edge");
-
-  SyncCoverCoverageOracle oracle(graph);
-  const SyncCoverMinimalWitnessResult singleton =
-      oracle.getMinimalMechanismWitnesses(0, 1);
-  passed &= check(singleton && singleton.truncated &&
-                      singleton.witnesses ==
-                          std::vector<std::vector<SyncCoverMechanismId>>{{1}},
-                  "bounded singleton grounding reports a reachable omitted "
-                  "composite cover");
-  const SyncCoverMinimalWitnessResult composite =
-      oracle.getMinimalMechanismWitnesses(0, 2);
-  passed &= check(
-      composite &&
-          composite.witnesses ==
-              std::vector<std::vector<SyncCoverMechanismId>>{{1}, {2, 3}},
-      "depth-two grounding retains the incomparable composite cover");
-  const SyncCoverMinimalWitnessResult bounded =
-      oracle.getMinimalMechanismWitnesses(0, 2, 1);
-  passed &= check(bounded && bounded.truncated &&
-                      bounded.witnesses ==
-                          std::vector<std::vector<SyncCoverMechanismId>>{{1}},
-                  "bounded grounding reports omitted labels as unknown");
-  passed &= check(
-      oracle.getMinimalMechanismWitnesses(0, 0).error ==
-          SyncCoverCoverageError::InvalidBound,
-      "zero-depth grounding fails closed");
-  const SyncCoverCoverageStatistics statistics = oracle.getStatistics();
-  passed &= check(statistics.groundingQueries == 3 &&
-                      statistics.coverageQueries == 0 &&
-                      statistics.demandPreparations == 1,
-                  "grounding reuses one prepared topology without selected-"
-                  "plan coverage queries");
-  return passed;
-}
-
 } // namespace
 
 bool sameCoverage(const SyncCoverCoverageResult &first,
@@ -765,7 +710,6 @@ int main() {
   passed &= testExactRecurrenceScopeAndOuterControl();
   passed &= testNestedExecutionAndExpansionLimit();
   passed &= testAtomicBundleAndErrors();
-  passed &= testMinimalWitnessGrounding();
   passed &= testStorageMetadataDoesNotAffectCoverage();
   return passed ? 0 : 1;
 }

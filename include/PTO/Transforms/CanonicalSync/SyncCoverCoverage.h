@@ -100,18 +100,6 @@ struct SyncCoverFactoryWitnessResult {
   }
 };
 
-/// Minimal mechanism sets that establish one demand from structural edges.
-/// This is a grounding result, not a selected-plan coverage query.
-struct SyncCoverMinimalWitnessResult {
-  SyncCoverCoverageError error = SyncCoverCoverageError::None;
-  bool truncated = false;
-  std::vector<std::vector<SyncCoverMechanismId>> witnesses;
-
-  explicit operator bool() const {
-    return error == SyncCoverCoverageError::None;
-  }
-};
-
 struct SyncCoverCoverageStatistics {
   std::size_t graphValidations = 0;
   std::size_t demandPreparations = 0;
@@ -147,13 +135,6 @@ public:
       SyncCoverDemandId demand,
       const std::vector<SyncCoverMechanismId> &selected) const;
 
-  /// Final-verification path. The prepared product graph is released before
-  /// returning, so checking a large demand set has bounded peak memory.
-  /// The selection must already be sorted and unique.
-  SyncCoverCoverageResult checkDemandStreamingCanonicalSelection(
-      SyncCoverDemandId demand,
-      const std::vector<SyncCoverMechanismId> &selected) const;
-
   std::vector<SyncCoverCoverageResult>
   checkAll(const std::vector<SyncCoverMechanismId> &selected) const;
 
@@ -177,11 +158,6 @@ public:
       const std::vector<SyncCoverDemandId> &demands,
       std::size_t mechanismCount) const;
 
-  SyncCoverSelectionWitnessResult getSelectionWitnesses(
-      SyncCoverDemandId demand,
-      const std::vector<std::vector<SyncCoverMechanismId>> &selections,
-      std::size_t mechanismCount) const;
-
   /// Batched counterpart to getSelectionWitnesses. Results correspond to the
   /// demand order and share one prepared topology per execution context.
   std::vector<SyncCoverSelectionWitnessResult> getSelectionWitnessesForDemands(
@@ -191,13 +167,6 @@ public:
 
   SyncCoverFactoryWitnessResult getFactoryMechanismWitnesses(
       SyncCoverDemandId demand, std::size_t mechanismCount) const;
-
-  /// Enumerates the inclusion-minimal mechanism sets of at most
-  /// maximumMembers that establish the demand. The prepared topology is
-  /// traversed once; no selected-plan oracle query is issued per candidate.
-  SyncCoverMinimalWitnessResult getMinimalMechanismWitnesses(
-      SyncCoverDemandId demand, std::size_t maximumMembers,
-      std::size_t maximumLabelsPerState = 64) const;
 
   SyncCoverCoverageStatistics getStatistics() const;
 

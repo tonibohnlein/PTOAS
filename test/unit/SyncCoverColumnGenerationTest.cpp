@@ -43,17 +43,6 @@ SyncCoverTargetCapabilities makeA2A3Capabilities(bool trustPrefix = false) {
   return target;
 }
 
-SyncCoverTargetCapabilities makeA5Capabilities() {
-  SyncCoverTargetCapabilities target;
-  target.name = "a5";
-  target.hardwareCompletionResources = {kPipeS, kPipeV};
-  target.prefixSetResources = {kPipeMTE2};
-  target.prefixEvidence = SyncCoverEvidenceLevel::VendorKernels;
-  target.supportsBufferTokens = true;
-  target.bufferTokenBudget = 32;
-  return target;
-}
-
 const SyncCoverColumnGeneratorReport *
 findReport(const SyncCoverColumnGenerationResult &result,
            std::string_view name) {
@@ -199,55 +188,6 @@ Scenario buildSamePipeScenario(std::uint32_t pipe) {
     }
     scenario.demands.push_back(*added.index);
   }
-  scenario.ok = static_cast<bool>(scenario.graph.freezeStructure());
-  return scenario;
-}
-
-Scenario buildRecurrenceScenario(unsigned distance) {
-  Scenario scenario;
-  auto loop = scenario.graph.addScope(
-      0, true, SyncCoverTimelineInterval{18, 25}, true);
-  if (!loop || !loop.index) {
-    return scenario;
-  }
-  auto producer = scenario.graph.addNode(kPipeMTE2, 1, *loop.index, 10, {},
-                                         {kPipeM});
-  auto consumer = scenario.graph.addNode(kPipeM, 1, *loop.index, 11, {},
-                                         {kPipeMTE2});
-  if (!producer || !producer.index || !consumer || !consumer.index) {
-    return scenario;
-  }
-  auto storage = scenario.graph.addStorageDomain();
-  if (!storage || !storage.index) {
-    return scenario;
-  }
-  auto write = scenario.graph.addStorageAccess(
-      *producer.index, *storage.index, 0, {0, 256},
-      SyncCoverStorageAccessMode::Write);
-  auto read = scenario.graph.addStorageAccess(
-      *consumer.index, *storage.index, 1, {0, 256},
-      SyncCoverStorageAccessMode::Read);
-  if (!write || !write.index || !read || !read.index) {
-    return scenario;
-  }
-  auto witness =
-      scenario.graph.addStorageWitness(*read.index, *write.index);
-  if (!witness || !witness.index) {
-    return scenario;
-  }
-  SyncCoverDemand demand;
-  demand.source = *consumer.index;
-  demand.target = *producer.index;
-  demand.kind = SyncCoverDemandKind::MemoryWAR;
-  demand.scope = *loop.index;
-  demand.distance = distance;
-  demand.storageProvenance = SyncCoverStorageProvenance::Complete;
-  demand.storageWitnesses.push_back(*witness.index);
-  auto added = scenario.graph.addDemand(demand);
-  if (!added || !added.index) {
-    return scenario;
-  }
-  scenario.demands.push_back(*added.index);
   scenario.ok = static_cast<bool>(scenario.graph.freezeStructure());
   return scenario;
 }
@@ -424,10 +364,13 @@ bool testPiercingAndDeterminism() {
     SyncCoverMechanismUniverse localUniverse(scenario.graph);
     localUniverse.addResourceDomain(SyncCoverResourceKind::EventId,
                                     kPipeMTE2, kPipeM, 8);
-    const SyncCoverTargetCapabilities localTarget = makeA5Capabilities();
+    const SyncCoverTargetCapabilities localTarget = makeA2A3Capabilities(true);
     SyncCoverColumnGenerationContext localContext{localTarget,
                                                   scenario.demands};
-    const auto localGenerators = makeDefaultSyncCoverColumnGenerators();
+    std::vector<std::unique_ptr<SyncCoverColumnGenerator>> localGenerators;
+    localGenerators.push_back(makeSyncCoverCanonicalEventGenerator());
+    localGenerators.push_back(makeSyncCoverMergedPrefixEventGenerator());
+    localGenerators.push_back(makeSyncCoverPiercedBarrierGenerator());
     const auto result = runSyncCoverColumnGenerators(
         localContext, localUniverse, localGenerators);
     std::vector<std::size_t> shape;
@@ -443,102 +386,12 @@ bool testPiercingAndDeterminism() {
   return passed;
 }
 
-bool testRecurrenceGenerators() {
-  bool passed = true;
-  {
-    Scenario scenario = buildRecurrenceScenario(1);
-    passed &= check(scenario.ok, "unit recurrence scenario builds");
-    SyncCoverMechanismUniverse universe(scenario.graph);
-    const SyncCoverTargetCapabilities target = makeA2A3Capabilities();
-    SyncCoverColumnGenerationContext context{target, scenario.demands};
-    std::vector<std::unique_ptr<SyncCoverColumnGenerator>> generators;
-    generators.push_back(makeSyncCoverUnitRecurrenceEventGenerator());
-    const auto generated =
-        runSyncCoverColumnGenerators(context, universe, generators);
-    const auto *report = findReport(generated, "unit-recurrence");
-    const SyncCoverSelectionResult selection =
-        solveSyncCoverSelection(universe, scenario.demands);
-    passed &= check(report && report->admitted == 1 && selection &&
-                        selection.mechanisms.size() == 1,
-                    "unit recurrence is generated, verified, and selected");
-  }
-
-  for (bool onA5 : {false, true}) {
-    Scenario scenario = buildRecurrenceScenario(2);
-    passed &= check(scenario.ok, "ring recurrence scenario builds");
-    SyncCoverMechanismUniverse universe(scenario.graph);
-    const SyncCoverTargetCapabilities target =
-        onA5 ? makeA5Capabilities() : makeA2A3Capabilities();
-    SyncCoverColumnGenerationContext context{target, scenario.demands};
-    std::vector<std::unique_ptr<SyncCoverColumnGenerator>> generators;
-    generators.push_back(makeSyncCoverRingReleaseEventGenerator());
-    generators.push_back(makeSyncCoverBufferTokenRingGenerator());
-    const auto generated =
-        runSyncCoverColumnGenerators(context, universe, generators);
-    const auto *ring = findReport(generated, "ring-release");
-    const auto *token = findReport(generated, "token-ring");
-    const SyncCoverSelectionResult selection =
-        solveSyncCoverSelection(universe, scenario.demands);
-    passed &= check(ring && ring->admitted == 1 && selection &&
-                        selection.mechanisms.size() == 1,
-                    "distance-two recurrence is solved by one ring");
-    passed &= check(onA5 ? token && token->admitted == 1
-                         : token && token->admitted == 0 &&
-                               token->skippedByCapability == 1,
-                    "buffer-token rings are capability gated");
-  }
-
-  Scenario scenario = buildRecurrenceScenario(2);
-  SyncCoverMechanismUniverse universe(scenario.graph);
-  const auto domainResult = universe.addResourceDomain(
-      SyncCoverResourceKind::EventId, kPipeM, kPipeMTE2, 8);
-  passed &= check(domainResult && domainResult.index,
-                  "ring verifier domain registers");
-  if (domainResult && domainResult.index) {
-    const SyncCoverResourceDomain &domain =
-        universe.getResourceDomains()[*domainResult.index];
-    const SyncCoverDemand &demand =
-        scenario.graph.getDemands()[scenario.demands.front()];
-    SyncCoverMechanismDescriptorBuilder builder(
-        SyncCoverMechanismKind::VerifiedProtocol, 99);
-    const auto prime = builder.addAction(
-        SyncCoverResourceActionKind::Produce, domain.sourceResource,
-        {SyncCoverAnchorKind::ScopeEntry, 0, demand.scope});
-    const auto consume = builder.addAction(
-        SyncCoverResourceActionKind::Consume, domain.targetResource,
-        {SyncCoverAnchorKind::BeforeNode, demand.target, 0});
-    const auto produce = builder.addAction(
-        SyncCoverResourceActionKind::Produce, domain.sourceResource,
-        {SyncCoverAnchorKind::AfterNode, demand.source, 0});
-    const auto drain = builder.addAction(
-        SyncCoverResourceActionKind::Consume, domain.targetResource,
-        {SyncCoverAnchorKind::ScopeExit, 0, demand.scope});
-    SyncCoverEdge edge;
-    edge.source = demand.source;
-    edge.target = demand.target;
-    edge.kind = SyncCoverEdgeKind::CompletionSupply;
-    edge.scope = demand.scope;
-    edge.distance = 2;
-    passed &= check(builder.addProtocolLane(
-                        domain, demand.scope, 2, 2,
-                        {prime, consume, produce, drain},
-                        {{edge, produce, consume}}),
-                    "under-primed ring remains structurally constructible");
-    passed &= check(!verifySyncCoverRingReleaseProtocol(
-                        scenario.graph, domain,
-                        std::move(builder).takeDescriptor()),
-                    "ring verifier rejects an under-primed protocol");
-  }
-  return passed;
-}
-
 } // namespace
 
 int main() {
   bool passed = true;
   passed &= testCapabilitiesAndMergedEvents();
   passed &= testPiercingAndDeterminism();
-  passed &= testRecurrenceGenerators();
   std::cout << (passed ? "SyncCoverColumnGenerationTest PASS"
                        : "SyncCoverColumnGenerationTest FAIL")
             << std::endl;
