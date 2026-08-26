@@ -1036,8 +1036,10 @@ struct SyncCoverCoverageOracle::Implementation {
     if (entry == preparedContexts.end()) {
       PreparedDemand prepared =
           backend == SyncCoverCoverageBackend::SharedExpansion
-              ? prepareDemandShared(graph, *expansion, demandId)
-              : prepareDemandLegacy(graph, demandId);
+              ? prepareDemandShared(graph, *expansion, demandId,
+                                    /*collectPotential=*/false)
+              : prepareDemandLegacy(graph, demandId,
+                                    /*collectPotential=*/false);
       entry = preparedContexts.emplace(key, std::move(prepared)).first;
       recordPreparation(entry->second);
       return entry->second;
@@ -1062,7 +1064,6 @@ struct SyncCoverCoverageOracle::Implementation {
       }
       prepared.start = stateIndex(source, false);
       prepared.target = stateIndex(target, true);
-      prepared.potentialMechanisms = collectPotentialMechanisms(prepared);
     }
     return prepared;
   }
@@ -1237,7 +1238,9 @@ SyncCoverCoverageOracle::getDemandTopology(SyncCoverDemandId demand) const {
   }
   const PreparedDemand &prepared = implementation_->getPreparedDemand(demand);
   result.error = prepared.error;
-  result.potentialMechanisms = prepared.potentialMechanisms;
+  if (prepared.error == SyncCoverCoverageError::None) {
+    result.potentialMechanisms = collectPotentialMechanisms(prepared);
+  }
   return result;
 }
 
