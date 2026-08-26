@@ -89,4 +89,3 @@ module attributes {pto.target_arch = "a2a3"} {
 // DRIVER-LABEL: func.func @overlap_reuse
 // DRIVER: pto.set_flag[<PIPE_MTE3>, <PIPE_V>
 // DRIVER: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>
-

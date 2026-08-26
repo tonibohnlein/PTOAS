@@ -12,6 +12,7 @@
 #include "PTO/Transforms/CanonicalSync/SyncCoverCandidateIndex.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverCoverage.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverDescriptorBuilder.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverExpansion.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverMechanism.h"
 
 #include <algorithm>
@@ -221,6 +222,313 @@ bool testDescriptorBuilderAndGraphEpoch() {
   passed &= check(universe.validate() &&
                       universe.getStatistics().fullValidations == 2,
                   "unchanged graph and universe reuse cached validation");
+  return passed;
+}
+
+bool testExpansionOverlayEpoch() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source = takeGraphIndex(
+      graph.addNode(1, 1, 0, 0, {}, {2}), passed,
+      "add expansion source");
+  const SyncCoverNodeId target = takeGraphIndex(
+      graph.addNode(2, 1, 0, 1), passed, "add expansion target");
+  passed &= check(static_cast<bool>(
+                      graph.addDemand(makeDemand(source, target))),
+                  "add expansion demand");
+  SyncCoverMechanismUniverse universe(graph);
+  const SyncCoverResourceDomainId domain = takeMechanismIndex(
+      universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 8),
+      passed, "add expansion event domain");
+  SyncCoverExpandedProgram expansion(graph);
+  passed &= check(expansion && expansion.isCurrent(graph),
+                  "initial expansion matches its empty overlay epoch");
+
+  const std::optional<SyncCoverMechanismDescriptor> event =
+      makeSyncCoverCanonicalEvent(universe.getResourceDomains()[domain],
+                                  source, target, 0, 1, 801);
+  passed &= check(event.has_value(), "build expansion event");
+  if (!event) {
+    return false;
+  }
+  passed &= check(universe.addMechanism(*event), "add expansion event");
+  passed &= check(expansion.isStructuralCurrent(graph) &&
+                      !expansion.isCurrent(graph),
+                  "mechanism insertion invalidates only the overlay epoch");
+  passed &= check(expansion.refreshMechanismOverlay(graph) ==
+                          SyncCoverExpansionError::None &&
+                      expansion.isCurrent(graph),
+                  "mechanism overlay refresh restores the current epoch");
+  const auto &overlay =
+      expansion.getBaseArena().getMechanismEdges().getEdges();
+  passed &= check(overlay.size() == 1 &&
+                      overlay.front().graphEdge ==
+                          graph.getStructuralEdgeCount(),
+                  "refreshed overlay contains only mechanism-supplied edges");
+
+  const SyncCoverMechanismId mechanism =
+      universe.getMechanisms().front().id;
+  SyncCoverCoverageOracle shared(
+      graph, SyncCoverCoverageBackend::SharedExpansion);
+  SyncCoverCoverageOracle legacy(
+      graph, SyncCoverCoverageBackend::LegacyPerContext);
+  const SyncCoverCoverageResult sharedCovered =
+      shared.checkDemand(0, {mechanism});
+  const SyncCoverCoverageResult legacyCovered =
+      legacy.checkDemand(0, {mechanism});
+  const SyncCoverCoverageResult sharedUncovered = shared.checkDemand(0, {});
+  const SyncCoverCoverageResult legacyUncovered = legacy.checkDemand(0, {});
+  passed &= check(sharedCovered.error == legacyCovered.error &&
+                      sharedCovered.covered == legacyCovered.covered &&
+                      sharedCovered.witnessMechanisms ==
+                          legacyCovered.witnessMechanisms &&
+                      sharedUncovered.error == legacyUncovered.error &&
+                      sharedUncovered.covered == legacyUncovered.covered &&
+                      sharedUncovered.cutMechanisms ==
+                          legacyUncovered.cutMechanisms,
+                  "shared and legacy coverage agree on the same frozen graph");
+  const SyncCoverSingletonWitnessResult sharedSingleton =
+      shared.getSingletonMechanismWitnesses(0);
+  const SyncCoverSingletonWitnessResult legacySingleton =
+      legacy.getSingletonMechanismWitnesses(0);
+  const SyncCoverFactoryWitnessResult sharedFactory =
+      shared.getFactoryMechanismWitnesses(0, 1);
+  const SyncCoverFactoryWitnessResult legacyFactory =
+      legacy.getFactoryMechanismWitnesses(0, 1);
+  passed &= check(sharedSingleton.error == legacySingleton.error &&
+                      sharedSingleton.mechanisms ==
+                          legacySingleton.mechanisms &&
+                      sharedFactory.error == legacyFactory.error &&
+                      sharedFactory.singletons == legacyFactory.singletons &&
+                      sharedFactory.pairs == legacyFactory.pairs,
+                  "shared and legacy grounding agree on the same frozen graph");
+  return passed;
+}
+
+bool testSharedRecurrenceCoverageParity() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop = takeGraphIndex(
+      graph.addScope(0, false, SyncCoverTimelineInterval{0, 12}, true), passed,
+      "add parity recurrence loop");
+  const SyncCoverScopeId body = takeGraphIndex(
+      graph.addScope(loop, true, SyncCoverTimelineInterval{1, 11}), passed,
+      "add parity recurrence body");
+  const SyncCoverNodeId target = takeGraphIndex(
+      graph.addNode(2, 1, body, 1), passed, "add parity target");
+  const SyncCoverNodeId source = takeGraphIndex(
+      graph.addNode(1, 1, body, 2, {}, {2}), passed,
+      "add parity source");
+  const SyncCoverNodeId secondTarget = takeGraphIndex(
+      graph.addNode(2, 1, body, 3), passed, "add second parity target");
+  const SyncCoverNodeId secondSource = takeGraphIndex(
+      graph.addNode(1, 1, body, 4, {}, {2}), passed,
+      "add second parity source");
+  SyncCoverDemand recurrence = makeDemand(source, target);
+  recurrence.scope = loop;
+  recurrence.distance = 1;
+  passed &= check(static_cast<bool>(graph.addDemand(recurrence)),
+                  "add parity recurrence demand");
+  SyncCoverDemand secondRecurrence =
+      makeDemand(secondSource, secondTarget);
+  secondRecurrence.scope = loop;
+  secondRecurrence.distance = 1;
+  passed &= check(static_cast<bool>(graph.addDemand(secondRecurrence)),
+                  "add second parity recurrence demand");
+
+  SyncCoverMechanismUniverse universe(graph);
+  const SyncCoverResourceDomainId domain = takeMechanismIndex(
+      universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 8),
+      passed, "add parity recurrence domain");
+  const auto descriptor = makeSyncCoverUnitRecurrenceEvent(
+      universe.getResourceDomains()[domain], source, target, loop, 811);
+  passed &= check(descriptor.has_value(), "build parity recurrence protocol");
+  if (!descriptor) {
+    return false;
+  }
+  const SyncCoverMechanismId mechanism = takeMechanismIndex(
+      universe.addVerifiedProtocol(
+          *descriptor, [&](const auto &candidate) {
+            return verifySyncCoverUnitRecurrenceEvent(universe, candidate);
+          }),
+      passed, "add parity recurrence protocol");
+  const auto secondDescriptor = makeSyncCoverUnitRecurrenceEvent(
+      universe.getResourceDomains()[domain], secondSource, secondTarget, loop,
+      812);
+  passed &= check(secondDescriptor.has_value(),
+                  "build second parity recurrence protocol");
+  if (!secondDescriptor) {
+    return false;
+  }
+  const SyncCoverMechanismId secondMechanism = takeMechanismIndex(
+      universe.addVerifiedProtocol(
+          *secondDescriptor, [&](const auto &candidate) {
+            return verifySyncCoverUnitRecurrenceEvent(universe, candidate);
+          }),
+      passed, "add second parity recurrence protocol");
+
+  SyncCoverCoverageOracle shared(
+      graph, SyncCoverCoverageBackend::SharedExpansion);
+  SyncCoverCoverageOracle legacy(
+      graph, SyncCoverCoverageBackend::LegacyPerContext);
+  const std::vector<SyncCoverMechanismId> selected{mechanism,
+                                                   secondMechanism};
+  for (SyncCoverDemandId demand : {1U, 0U, 1U}) {
+    const SyncCoverCoverageResult sharedCovered =
+        shared.checkDemand(demand, selected);
+    const SyncCoverCoverageResult legacyCovered =
+        legacy.checkDemand(demand, selected);
+    const SyncCoverCoverageResult sharedUncovered =
+        shared.checkDemand(demand, {});
+    const SyncCoverCoverageResult legacyUncovered =
+        legacy.checkDemand(demand, {});
+    passed &= check(sharedCovered.error == legacyCovered.error &&
+                        sharedCovered.covered == legacyCovered.covered &&
+                        sharedCovered.witnessMechanisms ==
+                            legacyCovered.witnessMechanisms &&
+                        sharedUncovered.error == legacyUncovered.error &&
+                        sharedUncovered.covered == legacyUncovered.covered &&
+                        sharedUncovered.cutMechanisms ==
+                            legacyUncovered.cutMechanisms,
+                    "shared recurrence cache matches legacy for each demand");
+  }
+  return passed;
+}
+
+bool testSharedGuardedContextParity() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverControlId control = takeGraphIndex(
+      graph.addControl(2), passed, "add guarded parity control");
+  const SyncCoverGuard guard{{{control, 0}}};
+  const SyncCoverNodeId firstSource = takeGraphIndex(
+      graph.addNode(1, 1, 0, 0, guard, {2}), passed,
+      "add first guarded source");
+  const SyncCoverNodeId firstTarget = takeGraphIndex(
+      graph.addNode(2, 1, 0, 1, guard), passed,
+      "add first guarded target");
+  const SyncCoverNodeId secondSource = takeGraphIndex(
+      graph.addNode(1, 1, 0, 2, guard, {2}), passed,
+      "add second guarded source");
+  const SyncCoverNodeId secondTarget = takeGraphIndex(
+      graph.addNode(2, 1, 0, 3, guard), passed,
+      "add second guarded target");
+  passed &= check(static_cast<bool>(
+                      graph.addDemand(makeDemand(firstSource, firstTarget))),
+                  "add first guarded demand");
+  passed &= check(static_cast<bool>(
+                      graph.addDemand(makeDemand(secondSource, secondTarget))),
+                  "add second guarded demand");
+
+  SyncCoverMechanismUniverse universe(graph);
+  const SyncCoverResourceDomainId domain = takeMechanismIndex(
+      universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 8),
+      passed, "add guarded parity domain");
+  const auto firstEvent = makeSyncCoverCanonicalEvent(
+      universe.getResourceDomains()[domain], firstSource, firstTarget, 0, 1,
+      821);
+  const auto secondEvent = makeSyncCoverCanonicalEvent(
+      universe.getResourceDomains()[domain], secondSource, secondTarget, 0, 1,
+      822);
+  passed &= check(firstEvent && secondEvent, "build guarded parity events");
+  if (!firstEvent || !secondEvent) {
+    return false;
+  }
+  const SyncCoverMechanismId firstMechanism = takeMechanismIndex(
+      universe.addMechanism(*firstEvent), passed, "add first guarded event");
+  const SyncCoverMechanismId secondMechanism = takeMechanismIndex(
+      universe.addMechanism(*secondEvent), passed, "add second guarded event");
+
+  SyncCoverCoverageOracle shared(
+      graph, SyncCoverCoverageBackend::SharedExpansion);
+  SyncCoverCoverageOracle legacy(
+      graph, SyncCoverCoverageBackend::LegacyPerContext);
+  const std::vector<SyncCoverMechanismId> selected{firstMechanism,
+                                                   secondMechanism};
+  for (SyncCoverDemandId demand : {1U, 0U, 1U}) {
+    const SyncCoverCoverageResult sharedResult =
+        shared.checkDemand(demand, selected);
+    const SyncCoverCoverageResult legacyResult =
+        legacy.checkDemand(demand, selected);
+    passed &= check(sharedResult.error == legacyResult.error &&
+                        sharedResult.covered == legacyResult.covered &&
+                        sharedResult.witnessMechanisms ==
+                            legacyResult.witnessMechanisms,
+                    "shared guarded cache matches legacy for each demand");
+  }
+  return passed;
+}
+
+bool testSharedAncestorBoundaryParity() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop = takeGraphIndex(
+      graph.addScope(0, false, SyncCoverTimelineInterval{0, 12}, true), passed,
+      "add ancestor-boundary loop");
+  const SyncCoverScopeId body = takeGraphIndex(
+      graph.addScope(loop, true, SyncCoverTimelineInterval{1, 11}), passed,
+      "add ancestor-boundary body");
+  const SyncCoverNodeId recurrenceTarget = takeGraphIndex(
+      graph.addNode(2, 1, body, 1), passed,
+      "add recurrence protocol target");
+  const SyncCoverNodeId ancestor = takeGraphIndex(
+      graph.addNode(2, 1, 0, 2), passed, "add ancestor-scope boundary");
+  const SyncCoverNodeId demandTarget = takeGraphIndex(
+      graph.addNode(2, 1, body, 3), passed, "add boundary demand target");
+  const SyncCoverNodeId source = takeGraphIndex(
+      graph.addNode(1, 1, body, 4, {}, {2}), passed,
+      "add boundary recurrence source");
+  SyncCoverEdge toAncestor;
+  toAncestor.source = recurrenceTarget;
+  toAncestor.target = ancestor;
+  toAncestor.kind = SyncCoverEdgeKind::CompletionPreservingIssueOrder;
+  passed &= check(static_cast<bool>(graph.addEdge(toAncestor)),
+                  "add issue edge to ancestor scope");
+  SyncCoverEdge fromAncestor;
+  fromAncestor.source = ancestor;
+  fromAncestor.target = demandTarget;
+  fromAncestor.kind = SyncCoverEdgeKind::CompletionPreservingIssueOrder;
+  passed &= check(static_cast<bool>(graph.addEdge(fromAncestor)),
+                  "add issue edge from ancestor scope");
+  SyncCoverDemand demand = makeDemand(source, demandTarget);
+  demand.scope = loop;
+  demand.distance = 1;
+  passed &= check(static_cast<bool>(graph.addDemand(demand)),
+                  "add ancestor-boundary recurrence demand");
+
+  SyncCoverMechanismUniverse universe(graph);
+  const SyncCoverResourceDomainId domain = takeMechanismIndex(
+      universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 8),
+      passed, "add ancestor-boundary domain");
+  const auto descriptor = makeSyncCoverUnitRecurrenceEvent(
+      universe.getResourceDomains()[domain], source, recurrenceTarget, loop,
+      831);
+  passed &= check(descriptor.has_value(),
+                  "build ancestor-boundary recurrence protocol");
+  if (!descriptor) {
+    return false;
+  }
+  const SyncCoverMechanismId mechanism = takeMechanismIndex(
+      universe.addVerifiedProtocol(
+          *descriptor, [&](const auto &candidate) {
+            return verifySyncCoverUnitRecurrenceEvent(universe, candidate);
+          }),
+      passed, "add ancestor-boundary recurrence protocol");
+
+  SyncCoverCoverageOracle shared(
+      graph, SyncCoverCoverageBackend::SharedExpansion);
+  SyncCoverCoverageOracle legacy(
+      graph, SyncCoverCoverageBackend::LegacyPerContext);
+  const SyncCoverCoverageResult sharedResult =
+      shared.checkDemand(0, {mechanism});
+  const SyncCoverCoverageResult legacyResult =
+      legacy.checkDemand(0, {mechanism});
+  passed &= check(sharedResult.error == legacyResult.error &&
+                      sharedResult.covered && legacyResult.covered &&
+                      sharedResult.witnessMechanisms ==
+                          legacyResult.witnessMechanisms,
+                  "shared expansion preserves ancestor-boundary recurrence "
+                  "coverage");
   return passed;
 }
 
@@ -1309,6 +1617,10 @@ bool testRecurrenceUsesWholeScopePressure() {
 int main() {
   bool passed = true;
   passed &= testDescriptorBuilderAndGraphEpoch();
+  passed &= testExpansionOverlayEpoch();
+  passed &= testSharedRecurrenceCoverageParity();
+  passed &= testSharedGuardedContextParity();
+  passed &= testSharedAncestorBoundaryParity();
   passed &= testUniverseReportsFreezeFailure();
   passed &= testStockUnitRecurrenceProtocol();
   passed &= testAtomicSupplyAndCoverage();

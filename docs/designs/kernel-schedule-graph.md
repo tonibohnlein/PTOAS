@@ -74,4 +74,3 @@ Stable text output:
 ```bash
 pto-test-opt input.pto '-pto-print-kernel-schedule-graph=format=text'
 ```
-

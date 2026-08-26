@@ -20,9 +20,16 @@ namespace {
 
 using namespace mlir::pto;
 
-static_assert(!std::is_copy_constructible<SyncCoverCoverageOracle>::value,
+class LegacyCoverageOracle : public mlir::pto::SyncCoverCoverageOracle {
+public:
+  explicit LegacyCoverageOracle(const SyncCoverGraph &graph)
+      : SyncCoverCoverageOracle(
+            graph, SyncCoverCoverageBackend::LegacyPerContext) {}
+};
+
+static_assert(!std::is_copy_constructible<LegacyCoverageOracle>::value,
               "coverage caches must not be aliased by copying an oracle");
-static_assert(!std::is_move_constructible<SyncCoverCoverageOracle>::value,
+static_assert(!std::is_move_constructible<LegacyCoverageOracle>::value,
               "moving an oracle must not obscure cache ownership");
 
 bool check(bool condition, std::string_view message) {
@@ -61,6 +68,95 @@ SyncCoverDemand makeDemand(SyncCoverNodeId source, SyncCoverNodeId target) {
   return demand;
 }
 
+bool testSharedExpansionRequiresFrozenStructure() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add mutable source");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add mutable target");
+  passed &= check(graph.addDemand(makeDemand(source, target)),
+                  "add mutable demand");
+  mlir::pto::SyncCoverCoverageOracle shared(
+      graph, SyncCoverCoverageBackend::SharedExpansion);
+  passed &= check(shared.checkDemand(0, {}).error ==
+                      SyncCoverCoverageError::InvalidGraph,
+                  "shared expansion rejects an unfrozen structure");
+  return passed;
+}
+
+bool testCutGuidedFactoryWitnesses() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add factory source");
+  const SyncCoverNodeId middle =
+      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add factory middle");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(3, 1, 0, 2), passed, "add factory target");
+  passed &= check(graph.addDemand(makeDemand(source, target)),
+                  "add factory demand");
+  for (SyncCoverMechanismId mechanism : {0U, 1U}) {
+    passed &= check(graph.addEdge(makeEdge(
+                        source, middle, SyncCoverEdgeKind::CompletionSupply,
+                        mechanism)),
+                    "add first-frontier mechanism");
+  }
+  for (SyncCoverMechanismId mechanism : {2U, 3U}) {
+    passed &= check(graph.addEdge(makeEdge(
+                        middle, target, SyncCoverEdgeKind::CompletionSupply,
+                        mechanism)),
+                    "add second-frontier mechanism");
+  }
+
+  LegacyCoverageOracle oracle(graph);
+  const SyncCoverFactoryWitnessResult complete =
+      oracle.getFactoryMechanismWitnesses(0, 4, 8);
+  std::vector<std::vector<SyncCoverMechanismId>> bruteForce;
+  for (SyncCoverMechanismId first = 0; first < 4; ++first) {
+    for (SyncCoverMechanismId second = first + 1; second < 4; ++second) {
+      if (oracle.checkDemand(0, {first, second}).covered) {
+        bruteForce.push_back({first, second});
+      }
+    }
+  }
+  passed &= check(complete && !complete.truncated &&
+                      complete.singletons.empty() &&
+                      complete.pairs == bruteForce,
+                  "cut-guided pairs match exhaustive two-mechanism coverage");
+
+  const SyncCoverFactoryWitnessResult bounded =
+      oracle.getFactoryMechanismWitnesses(0, 4, 1);
+  passed &= check(bounded && bounded.truncated && bounded.pairs.size() == 1,
+                  "factory witness cap reports unknown through truncation");
+  passed &= check(oracle.getFactoryMechanismWitnesses(0, 4, 0).error ==
+                      SyncCoverCoverageError::InvalidBound,
+                  "zero factory bound is rejected explicitly");
+
+  SyncCoverGraph deadEnds;
+  const SyncCoverNodeId deadSource = takeIndex(
+      deadEnds.addNode(1, 1, 0, 0), passed, "add dead-end source");
+  const SyncCoverNodeId deadMiddle = takeIndex(
+      deadEnds.addNode(2, 1, 0, 1), passed, "add dead-end middle");
+  const SyncCoverNodeId deadTarget = takeIndex(
+      deadEnds.addNode(3, 1, 0, 2), passed, "add dead-end target");
+  passed &= check(deadEnds.addDemand(makeDemand(deadSource, deadTarget)),
+                  "add dead-end demand");
+  for (SyncCoverMechanismId mechanism = 0; mechanism < 9; ++mechanism) {
+    passed &= check(deadEnds.addEdge(makeEdge(
+                        deadSource, deadMiddle,
+                        SyncCoverEdgeKind::CompletionSupply, mechanism)),
+                    "add dead-end first-frontier mechanism");
+  }
+  LegacyCoverageOracle deadEndOracle(deadEnds);
+  const SyncCoverFactoryWitnessResult deadEndResult =
+      deadEndOracle.getFactoryMechanismWitnesses(0, 9, 1);
+  passed &= check(deadEndResult && deadEndResult.truncated &&
+                      deadEndResult.pairs.empty(),
+                  "first-frontier closure budget bounds dead-end mechanisms");
+  return passed;
+}
+
 bool testSelectedCompletionAndCut() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -73,14 +169,14 @@ bool testSelectedCompletionAndCut() {
                       source, target, SyncCoverEdgeKind::CompletionSupply, 7)),
                   "add selectable completion edge");
 
-  SyncCoverCoverageOracle oracle(graph);
+  LegacyCoverageOracle oracle(graph);
   const SyncCoverCoverageResult missing = oracle.checkDemand(0, {});
   passed &= check(missing && !missing.covered,
                   "unselected completion does not cover demand");
   passed &= check(missing.cutMechanisms == std::vector<SyncCoverMechanismId>{7},
                   "unselected crossing mechanism is reported in the cut");
   const SyncCoverCoverageResult freshMissing =
-      SyncCoverCoverageOracle(graph).checkDemand(0, {});
+      LegacyCoverageOracle(graph).checkDemand(0, {});
   passed &= check(missing.error == freshMissing.error &&
                       missing.covered == freshMissing.covered &&
                       missing.reachableStates == freshMissing.reachableStates &&
@@ -94,7 +190,7 @@ bool testSelectedCompletionAndCut() {
             "coverage returns a deterministic mechanism witness");
   const SyncCoverCoverageResult cached = oracle.checkDemand(0, {7});
   const SyncCoverCoverageResult uncached =
-      SyncCoverCoverageOracle(graph).checkDemand(0, {7});
+      LegacyCoverageOracle(graph).checkDemand(0, {7});
   passed &= check(cached.error == uncached.error &&
                       cached.covered == uncached.covered &&
                       cached.witnessMechanisms == uncached.witnessMechanisms &&
@@ -123,7 +219,7 @@ bool testCompletionTransitionKinds() {
                       second, third, SyncCoverEdgeKind::CompletionSupply, 3)),
                   "add completion supply");
   passed &= check(
-      !SyncCoverCoverageOracle(preserving).checkDemand(0, {3}).covered,
+      !LegacyCoverageOracle(preserving).checkDemand(0, {3}).covered,
       "issue order cannot aggregate an uncompleted prefix into a later set");
 
   SyncCoverGraph carried;
@@ -143,7 +239,7 @@ bool testCompletionTransitionKinds() {
                       carriedSecond, carriedThird,
                       SyncCoverEdgeKind::CompletionPreservingIssueOrder)),
                   "add completion-carrying issue edge");
-  passed &= check(SyncCoverCoverageOracle(carried).checkDemand(0, {4}).covered,
+  passed &= check(LegacyCoverageOracle(carried).checkDemand(0, {4}).covered,
                   "issue order carries an already established completion fact");
 
   SyncCoverGraph issuing;
@@ -163,7 +259,7 @@ bool testCompletionTransitionKinds() {
       check(issuing.addEdge(makeEdge(issueSecond, issueThird,
                                      SyncCoverEdgeKind::CompletionSupply, 3)),
             "add downstream completion supply");
-  passed &= check(!SyncCoverCoverageOracle(issuing).checkDemand(0, {3}).covered,
+  passed &= check(!LegacyCoverageOracle(issuing).checkDemand(0, {3}).covered,
                   "pure issue order cannot transfer completion provenance");
   return passed;
 }
@@ -193,7 +289,7 @@ bool testRecurrenceCopiesAndGuards() {
   passed &= check(graph.addEdge(completion), "add distance-two completion");
 
   const SyncCoverCoverageResult result =
-      SyncCoverCoverageOracle(graph).checkDemand(0, {9});
+      LegacyCoverageOracle(graph).checkDemand(0, {9});
   passed &= check(result.covered,
                   "copy-contextualized endpoint guards cover recurrence");
   passed &= check(result.reachableStates.back().copy == 2,
@@ -231,7 +327,7 @@ bool testIntermediateConditionalFailsClosed() {
   second.scope = loop;
   second.distance = 1;
   passed &= check(graph.addEdge(second), "add guarded second half");
-  passed &= check(!SyncCoverCoverageOracle(graph).checkDemand(0, {11}).covered,
+  passed &= check(!LegacyCoverageOracle(graph).checkDemand(0, {11}).covered,
                   "conditional intermediate cannot cover outer demand");
   return passed;
 }
@@ -266,7 +362,7 @@ bool testEndpointImpliedOptionalScopes() {
                       SyncCoverEdgeKind::CompletionPreservingIssueOrder)),
                   "add target-implied carry");
   passed &= check(
-      SyncCoverCoverageOracle(targetGuarded).checkDemand(0, {}).covered,
+      LegacyCoverageOracle(targetGuarded).checkDemand(0, {}).covered,
       "target execution makes an intermediate in the same arm available");
 
   SyncCoverGraph sourceGuarded;
@@ -297,7 +393,7 @@ bool testEndpointImpliedOptionalScopes() {
                       SyncCoverEdgeKind::CompletionPreservingIssueOrder)),
                   "add source-implied carry");
   passed &= check(
-      SyncCoverCoverageOracle(sourceGuarded).checkDemand(0, {}).covered,
+      LegacyCoverageOracle(sourceGuarded).checkDemand(0, {}).covered,
       "source execution makes an intermediate in the same arm available");
 
   SyncCoverGraph nestedLoops;
@@ -333,7 +429,7 @@ bool testEndpointImpliedOptionalScopes() {
                       SyncCoverEdgeKind::CompletionPreservingIssueOrder)),
                   "add nested-loop carry");
   passed &= check(
-      SyncCoverCoverageOracle(nestedLoops).checkDemand(0, {}).covered,
+      LegacyCoverageOracle(nestedLoops).checkDemand(0, {}).covered,
       "nested-loop target execution implies its enclosing loop scopes");
   return passed;
 }
@@ -374,7 +470,7 @@ bool testEndpointImpliedScopeDoesNotCrossRecurrenceCopies() {
   passed &= check(graph.addEdge(second), "add optional second recurrence hop");
 
   passed &= check(
-      !SyncCoverCoverageOracle(graph).checkDemand(0, {13}).covered,
+      !LegacyCoverageOracle(graph).checkDemand(0, {13}).covered,
       "endpoint-implied optional scope is unavailable in another copy");
   return passed;
 }
@@ -406,7 +502,7 @@ bool testComposedRecurrencePath() {
   second.scope = loop;
   second.distance = 1;
   passed &= check(graph.addEdge(second), "add second recurrence hop");
-  passed &= check(SyncCoverCoverageOracle(graph).checkDemand(0, {12}).covered,
+  passed &= check(LegacyCoverageOracle(graph).checkDemand(0, {12}).covered,
                   "d+1 window composes two distance-one edges");
   return passed;
 }
@@ -438,7 +534,7 @@ bool testExactRecurrenceScopeAndOuterControl() {
   innerEdge.scope = inner;
   innerEdge.distance = 1;
   passed &= check(graph.addEdge(innerEdge), "add inner recurrence edge");
-  SyncCoverCoverageOracle oracle(graph);
+  LegacyCoverageOracle oracle(graph);
   passed &= check(!oracle.checkDemand(0, {13}).covered,
                   "inner recurrence cannot discharge outer recurrence");
 
@@ -449,7 +545,7 @@ bool testExactRecurrenceScopeAndOuterControl() {
   passed &= check(graph.addEdge(outerEdge), "add outer recurrence edge");
   passed &= check(!oracle.checkDemand(0, {14}).covered,
                   "an oracle epoch is isolated from later graph mutations");
-  passed &= check(SyncCoverCoverageOracle(graph).checkDemand(0, {14}).covered,
+  passed &= check(LegacyCoverageOracle(graph).checkDemand(0, {14}).covered,
                   "a new epoch observes the outer recurrence edge");
   return passed;
 }
@@ -478,7 +574,7 @@ bool nestedScopeCoverage(bool mustExecute, bool &passed) {
       middle, target, SyncCoverEdgeKind::CompletionPreservingIssueOrder);
   second.scope = loop;
   passed &= check(graph.addEdge(second), "add nested completion carry");
-  return SyncCoverCoverageOracle(graph).checkDemand(0, {}).covered;
+  return LegacyCoverageOracle(graph).checkDemand(0, {}).covered;
 }
 
 bool testNestedExecutionAndExpansionLimit() {
@@ -498,7 +594,7 @@ bool testNestedExecutionAndExpansionLimit() {
   huge.scope = loop;
   huge.distance = std::numeric_limits<unsigned>::max();
   passed &= check(graph.addDemand(huge), "add bounded-expansion probe");
-  passed &= check(SyncCoverCoverageOracle(graph).checkDemand(0, {}).error ==
+  passed &= check(LegacyCoverageOracle(graph).checkDemand(0, {}).error ==
                       SyncCoverCoverageError::ExpansionLimitExceeded,
                   "oversized virtual expansion fails before allocation");
   return passed;
@@ -522,7 +618,7 @@ bool testAtomicBundleAndErrors() {
                       middle, target,
                       SyncCoverEdgeKind::CompletionPreservingIssueOrder, 5)),
                   "add second bundle edge");
-  SyncCoverCoverageOracle oracle(graph);
+  LegacyCoverageOracle oracle(graph);
   const SyncCoverCoverageResult covered = oracle.checkDemand(0, {5});
   passed &= check(covered.covered && covered.witnessMechanisms.size() == 1,
                   "one mechanism ID enables an atomic multi-edge bundle");
@@ -603,13 +699,13 @@ bool testStorageMetadataDoesNotAffectCoverage() {
                   "add exact storage completion");
 
   const SyncCoverCoverageResult incompleteMissing =
-      SyncCoverCoverageOracle(incomplete).checkDemand(0, {});
+      LegacyCoverageOracle(incomplete).checkDemand(0, {});
   const SyncCoverCoverageResult exactMissing =
-      SyncCoverCoverageOracle(exact).checkDemand(0, {});
+      LegacyCoverageOracle(exact).checkDemand(0, {});
   const SyncCoverCoverageResult incompleteSelected =
-      SyncCoverCoverageOracle(incomplete).checkDemand(0, {9});
+      LegacyCoverageOracle(incomplete).checkDemand(0, {9});
   const SyncCoverCoverageResult exactSelected =
-      SyncCoverCoverageOracle(exact).checkDemand(0, {9});
+      LegacyCoverageOracle(exact).checkDemand(0, {9});
   passed &= check(incompleteMissing.covered == exactMissing.covered &&
                       incompleteMissing.cutMechanisms ==
                           exactMissing.cutMechanisms &&
@@ -673,19 +769,19 @@ bool testContextCacheSharesAcrossDemands() {
   const std::vector<std::vector<SyncCoverDemandId>> orders = {
       {0, 1, 2, 3}, {3, 2, 1, 0}, {1, 3, 0, 2}};
   for (const std::vector<SyncCoverDemandId> &order : orders) {
-    SyncCoverCoverageOracle shared(graph);
+    LegacyCoverageOracle shared(graph);
     for (SyncCoverDemandId demand : order) {
       const SyncCoverCoverageResult cached =
           shared.checkDemand(demand, selected);
       const SyncCoverCoverageResult fresh =
-          SyncCoverCoverageOracle(graph).checkDemand(demand, selected);
+          LegacyCoverageOracle(graph).checkDemand(demand, selected);
       passed &= check(sameCoverage(cached, fresh),
                       "context-cached coverage matches a fresh oracle for "
                       "every demand order");
       const SyncCoverSingletonWitnessResult cachedWitnesses =
           shared.getSingletonMechanismWitnesses(demand);
       const SyncCoverSingletonWitnessResult freshWitnesses =
-          SyncCoverCoverageOracle(graph).getSingletonMechanismWitnesses(
+          LegacyCoverageOracle(graph).getSingletonMechanismWitnesses(
               demand);
       passed &= check(cachedWitnesses.error == freshWitnesses.error &&
                           cachedWitnesses.mechanisms ==
@@ -699,6 +795,8 @@ bool testContextCacheSharesAcrossDemands() {
 
 int main() {
   bool passed = true;
+  passed &= testSharedExpansionRequiresFrozenStructure();
+  passed &= testCutGuidedFactoryWitnesses();
   passed &= testSelectedCompletionAndCut();
   passed &= testContextCacheSharesAcrossDemands();
   passed &= testCompletionTransitionKinds();

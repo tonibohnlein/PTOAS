@@ -18,11 +18,6 @@
 // RUN: pto-test-opt %s \
 // RUN:   '-pto-print-canonical-sync-plan=format=text view=all' > %t.text.2
 // RUN: diff %t.text.1 %t.text.2
-// RUN: pto-test-opt %s \
-// RUN:   '-pto-print-canonical-sync-plan=format=text view=all' > %t.text.1
-// RUN: pto-test-opt %s \
-// RUN:   '-pto-print-canonical-sync-plan=format=text view=all' > %t.text.2
-// RUN: diff %t.text.1 %t.text.2
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @partial_raw(%src: !pto.partition_tensor_view<16x16xf32>) {

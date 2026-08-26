@@ -606,4 +606,3 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
     }
   }
 }
-

@@ -43,6 +43,13 @@ enum class SyncCoverCoverageError : std::uint8_t {
   ExpansionLimitExceeded,
 };
 
+/// The legacy backend is retained only for differential tests while the shared
+/// expansion is integrated. Shared expansion requires a frozen structure.
+enum class SyncCoverCoverageBackend : std::uint8_t {
+  SharedExpansion,
+  LegacyPerContext,
+};
+
 struct SyncCoverCoverageResult {
   SyncCoverCoverageError error = SyncCoverCoverageError::None;
   bool covered = false;
@@ -92,6 +99,7 @@ struct SyncCoverSelectionWitnessResult {
 /// call, so grounding memory is bounded by one demand expansion.
 struct SyncCoverFactoryWitnessResult {
   SyncCoverCoverageError error = SyncCoverCoverageError::None;
+  bool truncated = false;
   std::vector<SyncCoverMechanismId> singletons;
   std::vector<std::vector<SyncCoverMechanismId>> pairs;
 
@@ -119,7 +127,10 @@ class SyncCoverCoverageOracle {
 public:
   /// Snapshot and validate the completed graph. Mechanisms added to the source
   /// graph after construction intentionally do not change this oracle epoch.
-  explicit SyncCoverCoverageOracle(const SyncCoverGraph &graph);
+  explicit SyncCoverCoverageOracle(
+      const SyncCoverGraph &graph,
+      SyncCoverCoverageBackend backend =
+          SyncCoverCoverageBackend::SharedExpansion);
   ~SyncCoverCoverageOracle();
   SyncCoverCoverageOracle(const SyncCoverCoverageOracle &) = delete;
   SyncCoverCoverageOracle(SyncCoverCoverageOracle &&) = delete;
@@ -166,7 +177,8 @@ public:
       std::size_t mechanismCount) const;
 
   SyncCoverFactoryWitnessResult getFactoryMechanismWitnesses(
-      SyncCoverDemandId demand, std::size_t mechanismCount) const;
+      SyncCoverDemandId demand, std::size_t mechanismCount,
+      std::size_t maximumPairs = 1024) const;
 
   SyncCoverCoverageStatistics getStatistics() const;
 

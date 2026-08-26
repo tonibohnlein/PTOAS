@@ -160,6 +160,7 @@ add_mlir_dialect_library(PTOTransforms
   CanonicalSync/CanonicalSyncCoveringSlotRecipe.cpp
   CanonicalSync/CanonicalSyncCoveringTranslation.cpp
   CanonicalSync/SyncCoverCoverage.cpp
+  CanonicalSync/SyncCoverExpansion.cpp
   CanonicalSync/SyncCoverCandidateIndex.cpp
   CanonicalSync/SyncCoverColumnGeneration.cpp
   CanonicalSync/SyncCoverCost.cpp

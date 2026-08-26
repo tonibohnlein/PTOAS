@@ -9,6 +9,7 @@
 // for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverCoverage.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverExpansion.h"
 
 #include <algorithm>
 #include <limits>
@@ -67,6 +68,11 @@ struct PreparedDemand {
   std::size_t target = 0;
   std::vector<VirtualEdge> edges;
   std::vector<std::vector<std::size_t>> outgoing;
+  const SyncCoverGraph *graph = nullptr;
+  const SyncCoverExpandedArena *arena = nullptr;
+  std::vector<std::uint8_t> structuralEdgeMask;
+  std::vector<std::uint8_t> mechanismEdgeMask;
+  std::size_t activeEdgeCount = 0;
   std::vector<SyncCoverMechanismId> potentialMechanisms;
 };
 
@@ -204,8 +210,90 @@ buildVirtualEdges(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
   return result;
 }
 
+VirtualEdge makeVirtualEdge(const SyncCoverGraph &graph,
+                            const SyncCoverExpandedEdge &expanded) {
+  const SyncCoverEdge &edge = graph.getEdges()[expanded.graphEdge];
+  return {expanded.source, expanded.target, edge.kind, edge.mechanism};
+}
+
+template <typename Visitor>
+void visitExpandedOutgoing(const PreparedDemand &prepared,
+                           const SyncCoverExpandedAdjacency &adjacency,
+                           const std::vector<std::uint8_t> &mask,
+                           std::size_t virtualNode, Visitor &&visitor) {
+  const auto &edges = adjacency.getEdges();
+  for (const SyncCoverExpandedEdge &expanded :
+       adjacency.getOutgoingEdges(virtualNode)) {
+    const std::size_t index =
+        static_cast<std::size_t>(&expanded - edges.data());
+    if (index < mask.size() && mask[index] != 0) {
+      visitor(makeVirtualEdge(*prepared.graph, expanded));
+    }
+  }
+}
+
+template <typename Visitor>
+void visitOutgoing(const PreparedDemand &prepared, std::size_t virtualNode,
+                   Visitor &&visitor) {
+  if (!prepared.arena) {
+    for (std::size_t edgeIndex : prepared.outgoing[virtualNode]) {
+      visitor(prepared.edges[edgeIndex]);
+    }
+    return;
+  }
+  visitExpandedOutgoing(prepared, prepared.arena->getStructuralEdges(),
+                        prepared.structuralEdgeMask, virtualNode, visitor);
+  visitExpandedOutgoing(prepared, prepared.arena->getMechanismEdges(),
+                        prepared.mechanismEdgeMask, virtualNode, visitor);
+}
+
+template <typename Visitor>
+void visitExpandedEdges(const PreparedDemand &prepared,
+                        const SyncCoverExpandedAdjacency &adjacency,
+                        const std::vector<std::uint8_t> &mask,
+                        Visitor &&visitor) {
+  const auto &edges = adjacency.getEdges();
+  for (std::size_t index = 0; index < edges.size(); ++index) {
+    if (index < mask.size() && mask[index] != 0) {
+      visitor(makeVirtualEdge(*prepared.graph, edges[index]));
+    }
+  }
+}
+
+template <typename Visitor>
+void visitEdges(const PreparedDemand &prepared, Visitor &&visitor) {
+  if (!prepared.arena) {
+    for (const VirtualEdge &edge : prepared.edges) {
+      visitor(edge);
+    }
+    return;
+  }
+  visitExpandedEdges(prepared, prepared.arena->getStructuralEdges(),
+                     prepared.structuralEdgeMask, visitor);
+  visitExpandedEdges(prepared, prepared.arena->getMechanismEdges(),
+                     prepared.mechanismEdgeMask, visitor);
+}
+
 std::size_t stateIndex(std::size_t virtualNode, bool completion) {
   return virtualNode * 2 + static_cast<std::size_t>(completion);
+}
+
+std::optional<std::size_t> preparedStateIndex(const PreparedDemand &prepared,
+                                              SyncCoverNodeId node,
+                                              unsigned copy,
+                                              bool completion) {
+  if (prepared.arena) {
+    const std::optional<std::size_t> virtualNode =
+        prepared.arena->getVirtualNode(node, copy);
+    return virtualNode ? std::optional<std::size_t>(
+                             stateIndex(*virtualNode, completion))
+                       : std::nullopt;
+  }
+  if (node >= prepared.nodeCount) {
+    return std::nullopt;
+  }
+  return stateIndex(static_cast<std::size_t>(copy) * prepared.nodeCount + node,
+                    completion);
 }
 
 std::optional<std::size_t> transition(const VirtualEdge &edge,
@@ -228,29 +316,28 @@ std::vector<SyncCoverMechanismId>
 collectPotentialMechanisms(const PreparedDemand &prepared) {
   const std::size_t virtualNodeCount = prepared.stateCount / 2;
   std::vector<std::vector<std::size_t>> incoming(virtualNodeCount);
-  for (std::size_t edge = 0; edge < prepared.edges.size(); ++edge) {
-    incoming[prepared.edges[edge].target].push_back(edge);
-  }
+  visitEdges(prepared, [&](const VirtualEdge &edge) {
+    incoming[edge.target].push_back(edge.source);
+  });
 
   std::vector<bool> reachableFromSource(virtualNodeCount, false);
   std::vector<std::size_t> ready{prepared.start / 2};
   reachableFromSource[ready.front()] = true;
   for (std::size_t index = 0; index < ready.size(); ++index) {
-    for (std::size_t edge : prepared.outgoing[ready[index]]) {
-      const std::size_t target = prepared.edges[edge].target;
+    visitOutgoing(prepared, ready[index], [&](const VirtualEdge &edge) {
+      const std::size_t target = edge.target;
       if (!reachableFromSource[target]) {
         reachableFromSource[target] = true;
         ready.push_back(target);
       }
-    }
+    });
   }
 
   std::vector<bool> reachesTarget(virtualNodeCount, false);
   ready = {prepared.target / 2};
   reachesTarget[ready.front()] = true;
   for (std::size_t index = 0; index < ready.size(); ++index) {
-    for (std::size_t edge : incoming[ready[index]]) {
-      const std::size_t source = prepared.edges[edge].source;
+    for (std::size_t source : incoming[ready[index]]) {
       if (!reachesTarget[source]) {
         reachesTarget[source] = true;
         ready.push_back(source);
@@ -259,12 +346,12 @@ collectPotentialMechanisms(const PreparedDemand &prepared) {
   }
 
   std::vector<SyncCoverMechanismId> result;
-  for (const VirtualEdge &edge : prepared.edges) {
+  visitEdges(prepared, [&](const VirtualEdge &edge) {
     if (edge.mechanism && reachableFromSource[edge.source] &&
         reachesTarget[edge.target]) {
       result.push_back(*edge.mechanism);
     }
-  }
+  });
   std::sort(result.begin(), result.end());
   result.erase(std::unique(result.begin(), result.end()), result.end());
   return result;
@@ -301,9 +388,81 @@ std::optional<std::size_t> getVirtualNodeCount(const SyncCoverGraph &graph,
   return virtualNodeCount;
 }
 
-PreparedDemand prepareDemand(const SyncCoverGraph &graph,
-                             SyncCoverDemandId demandId,
-                             bool collectPotential = true) {
+std::vector<std::uint8_t> buildExpandedEdgeMask(
+    const SyncCoverGraph &graph, const SyncCoverDemand &demand,
+    const std::vector<ContextLiteral> &condition,
+    const SyncCoverExpandedAdjacency &adjacency) {
+  std::vector<std::uint8_t> result(adjacency.getEdges().size(), 0);
+  for (std::size_t index = 0; index < adjacency.getEdges().size(); ++index) {
+    const SyncCoverExpandedEdge &expanded = adjacency.getEdges()[index];
+    const SyncCoverEdge &edge = graph.getEdges()[expanded.graphEdge];
+    if (expanded.targetCopy > demand.distance ||
+        !nodeInstanceAvailable(graph, demand, edge.source,
+                               expanded.sourceCopy) ||
+        !nodeInstanceAvailable(graph, demand, edge.target,
+                               expanded.targetCopy) ||
+        !guardIsImplied(graph, demand, condition, edge, expanded.sourceCopy,
+                        expanded.targetCopy)) {
+      continue;
+    }
+    result[index] = 1;
+  }
+  return result;
+}
+
+PreparedDemand prepareDemandShared(const SyncCoverGraph &graph,
+                                   const SyncCoverExpandedProgram &expansion,
+                                   SyncCoverDemandId demandId,
+                                   bool collectPotential = true) {
+  PreparedDemand prepared;
+  const SyncCoverDemand &demand = graph.getDemands()[demandId];
+  std::vector<ContextLiteral> condition;
+  const bool sourceValid =
+      appendGuard(graph, demand, demand.sourceGuard, 0, condition);
+  const bool targetValid = appendGuard(graph, demand, demand.targetGuard,
+                                       demand.distance, condition);
+  const SyncCoverExpandedArena *arena = expansion.getArena(demand);
+  if (!sourceValid || !targetValid || !arena) {
+    prepared.error = !arena ? SyncCoverCoverageError::ExpansionLimitExceeded
+                            : SyncCoverCoverageError::InvalidGraph;
+    return prepared;
+  }
+
+  const std::optional<std::size_t> source =
+      arena->getVirtualNode(demand.source, 0);
+  const std::optional<std::size_t> target =
+      arena->getVirtualNode(demand.target, demand.distance);
+  if (!source || !target) {
+    prepared.error = SyncCoverCoverageError::InvalidDemand;
+    return prepared;
+  }
+  prepared.graph = &graph;
+  prepared.arena = arena;
+  prepared.nodeCount = arena->getNodeCount();
+  prepared.stateCount =
+      (static_cast<std::size_t>(demand.distance) + 1) *
+      prepared.nodeCount * 2;
+  prepared.start = stateIndex(*source, false);
+  prepared.target = stateIndex(*target, true);
+  prepared.structuralEdgeMask = buildExpandedEdgeMask(
+      graph, demand, condition, arena->getStructuralEdges());
+  prepared.mechanismEdgeMask = buildExpandedEdgeMask(
+      graph, demand, condition, arena->getMechanismEdges());
+  prepared.activeEdgeCount = static_cast<std::size_t>(std::count(
+                                 prepared.structuralEdgeMask.begin(),
+                                 prepared.structuralEdgeMask.end(), 1)) +
+                             static_cast<std::size_t>(std::count(
+                                 prepared.mechanismEdgeMask.begin(),
+                                 prepared.mechanismEdgeMask.end(), 1));
+  if (collectPotential) {
+    prepared.potentialMechanisms = collectPotentialMechanisms(prepared);
+  }
+  return prepared;
+}
+
+PreparedDemand prepareDemandLegacy(const SyncCoverGraph &graph,
+                                   SyncCoverDemandId demandId,
+                                   bool collectPotential = true) {
   PreparedDemand prepared;
   const SyncCoverDemand &demand = graph.getDemands()[demandId];
   std::vector<ContextLiteral> condition;
@@ -336,6 +495,7 @@ PreparedDemand prepareDemand(const SyncCoverGraph &graph,
                                    demand.target,
                                true);
   prepared.stateCount = *virtualNodeCount * 2;
+  prepared.activeEdgeCount = prepared.edges.size();
   if (collectPotential) {
     prepared.potentialMechanisms = collectPotentialMechanisms(prepared);
   }
@@ -357,19 +517,18 @@ checkDemandImpl(const PreparedDemand &prepared,
   for (std::size_t readyIndex = 0; readyIndex < ready.size(); ++readyIndex) {
     const std::size_t state = ready[readyIndex];
     const std::size_t virtualNode = state / 2;
-    for (std::size_t edgeIndex : prepared.outgoing[virtualNode]) {
-      const VirtualEdge &edge = prepared.edges[edgeIndex];
+    visitOutgoing(prepared, virtualNode, [&](const VirtualEdge &edge) {
       if (!mechanismSelected(selected, edge.mechanism)) {
-        continue;
+        return;
       }
       const std::optional<std::size_t> next = transition(edge, state);
       if (!next || reachable[*next]) {
-        continue;
+        return;
       }
       reachable[*next] = true;
       predecessors[*next] = {state, edge.mechanism};
       ready.push_back(*next);
-    }
+    });
   }
 
   SyncCoverCoverageResult result;
@@ -379,8 +538,12 @@ checkDemandImpl(const PreparedDemand &prepared,
       continue;
     }
     const std::size_t virtualNode = state / 2;
+    const std::size_t localNode = virtualNode % prepared.nodeCount;
+    const SyncCoverNodeId graphNode =
+        prepared.arena ? prepared.arena->getGlobalNodes()[localNode]
+                       : localNode;
     result.reachableStates.push_back(
-        {virtualNode % prepared.nodeCount,
+        {graphNode,
          static_cast<unsigned>(virtualNode / prepared.nodeCount),
          (state % 2) != 0});
   }
@@ -400,9 +563,9 @@ checkDemandImpl(const PreparedDemand &prepared,
     return result;
   }
 
-  for (const VirtualEdge &edge : prepared.edges) {
+  visitEdges(prepared, [&](const VirtualEdge &edge) {
     if (!edge.mechanism || mechanismSelected(selected, edge.mechanism)) {
-      continue;
+      return;
     }
     for (bool completion : {false, true}) {
       const std::size_t sourceState = stateIndex(edge.source, completion);
@@ -414,7 +577,7 @@ checkDemandImpl(const PreparedDemand &prepared,
         result.cutMechanisms.push_back(*edge.mechanism);
       }
     }
-  }
+  });
   std::sort(result.cutMechanisms.begin(), result.cutMechanisms.end());
   result.cutMechanisms.erase(
       std::unique(result.cutMechanisms.begin(), result.cutMechanisms.end()),
@@ -435,18 +598,17 @@ computeReachableStates(const PreparedDemand &prepared, std::size_t start,
   for (std::size_t readyIndex = 0; readyIndex < ready.size(); ++readyIndex) {
     const std::size_t state = ready[readyIndex];
     const std::size_t virtualNode = state / 2;
-    for (std::size_t edgeIndex : prepared.outgoing[virtualNode]) {
-      const VirtualEdge &edge = prepared.edges[edgeIndex];
+    visitOutgoing(prepared, virtualNode, [&](const VirtualEdge &edge) {
       if (!mechanismSelected(selected, edge.mechanism)) {
-        continue;
+        return;
       }
       const std::optional<std::size_t> next = transition(edge, state);
       if (!next || reachable[*next]) {
-        continue;
+        return;
       }
       reachable[*next] = true;
       ready.push_back(*next);
-    }
+    });
   }
   return reachable;
 }
@@ -484,21 +646,23 @@ SingletonReachability computeSingletonReachability(
   std::vector<bool> queued(prepared.stateCount, false);
   queued[start] = true;
   for (std::size_t index = 0; index < ready.size(); ++index) {
+    if (result.error != SyncCoverCoverageError::None) {
+      break;
+    }
     const std::size_t state = ready[index];
     queued[state] = false;
     const std::size_t virtualNode = state / 2;
-    for (std::size_t edgeIndex : prepared.outgoing[virtualNode]) {
-      const VirtualEdge &edge = prepared.edges[edgeIndex];
+    visitOutgoing(prepared, virtualNode, [&](const VirtualEdge &edge) {
       const std::optional<std::size_t> next = transition(edge, state);
       if (!next) {
-        continue;
+        return;
       }
       bool changed = false;
       if (edge.mechanism) {
         const std::size_t mechanism = *edge.mechanism;
         if (mechanism >= mechanismCount) {
           result.error = SyncCoverCoverageError::InvalidGraph;
-          return result;
+          return;
         }
         const std::size_t word = mechanism / kWordBits;
         const std::uint64_t bit =
@@ -523,7 +687,7 @@ SingletonReachability computeSingletonReachability(
         queued[*next] = true;
         ready.push_back(*next);
       }
-    }
+    });
   }
 
   return result;
@@ -619,14 +783,16 @@ SyncCoverSelectionWitnessResult collectSelectionWitnesses(
   std::vector<bool> queued(prepared.stateCount, false);
   queued[start] = true;
   for (std::size_t index = 0; index < ready.size(); ++index) {
+    if (result.error != SyncCoverCoverageError::None) {
+      break;
+    }
     const std::size_t state = ready[index];
     queued[state] = false;
     const std::size_t virtualNode = state / 2;
-    for (std::size_t edgeIndex : prepared.outgoing[virtualNode]) {
-      const VirtualEdge &edge = prepared.edges[edgeIndex];
+    visitOutgoing(prepared, virtualNode, [&](const VirtualEdge &edge) {
       const std::optional<std::size_t> next = transition(edge, state);
       if (!next) {
-        continue;
+        return;
       }
       bool changed = false;
       for (std::size_t word = 0; word < wordCount; ++word) {
@@ -634,7 +800,7 @@ SyncCoverSelectionWitnessResult collectSelectionWitnesses(
         if (edge.mechanism) {
           if (*edge.mechanism >= mechanismCount) {
             result.error = SyncCoverCoverageError::InvalidGraph;
-            return result;
+            return;
           }
           additions &= mechanismSelections[*edge.mechanism][word];
         }
@@ -648,7 +814,11 @@ SyncCoverSelectionWitnessResult collectSelectionWitnesses(
         queued[*next] = true;
         ready.push_back(*next);
       }
-    }
+    });
+  }
+
+  if (result.error != SyncCoverCoverageError::None) {
+    return result;
   }
 
   for (std::size_t selection = 0; selection < selections.size(); ++selection) {
@@ -663,137 +833,151 @@ SyncCoverSelectionWitnessResult collectSelectionWitnesses(
   return result;
 }
 
-std::vector<bool> computeFixedCanReachTarget(const PreparedDemand &prepared) {
-  std::vector<std::vector<std::size_t>> incoming(prepared.stateCount);
+std::vector<SyncCoverMechanismId> collectFrontierMechanisms(
+    const PreparedDemand &prepared, const std::vector<bool> &reachable,
+    const std::vector<SyncCoverMechanismId> &selected,
+    std::size_t mechanismCount, SyncCoverCoverageError &error) {
+  std::vector<SyncCoverMechanismId> result;
   for (std::size_t state = 0; state < prepared.stateCount; ++state) {
+    if (!reachable[state]) {
+      continue;
+    }
     const std::size_t virtualNode = state / 2;
-    for (std::size_t edgeIndex : prepared.outgoing[virtualNode]) {
-      const VirtualEdge &edge = prepared.edges[edgeIndex];
-      if (edge.mechanism) {
-        continue;
+    visitOutgoing(prepared, virtualNode, [&](const VirtualEdge &edge) {
+      if (!edge.mechanism ||
+          std::binary_search(selected.begin(), selected.end(),
+                             *edge.mechanism)) {
+        return;
+      }
+      if (*edge.mechanism >= mechanismCount) {
+        error = SyncCoverCoverageError::InvalidGraph;
+        return;
       }
       const std::optional<std::size_t> next = transition(edge, state);
-      if (next) {
-        incoming[*next].push_back(state);
+      if (next && !reachable[*next]) {
+        result.push_back(*edge.mechanism);
       }
+    });
+    if (error != SyncCoverCoverageError::None) {
+      return {};
     }
   }
-  std::vector<bool> result(prepared.stateCount, false);
-  std::vector<std::size_t> ready{prepared.target};
-  result[prepared.target] = true;
-  for (std::size_t index = 0; index < ready.size(); ++index) {
-    for (std::size_t state : incoming[ready[index]]) {
-      if (!result[state]) {
-        result[state] = true;
-        ready.push_back(state);
-      }
-    }
-  }
+  std::sort(result.begin(), result.end());
+  result.erase(std::unique(result.begin(), result.end()), result.end());
   return result;
 }
 
-SyncCoverFactoryWitnessResult
-collectFactoryWitnesses(const PreparedDemand &prepared,
-                        std::size_t mechanismCount) {
+SyncCoverFactoryWitnessResult collectFactoryWitnesses(
+    const PreparedDemand &prepared, std::size_t mechanismCount,
+    std::size_t maximumPairs) {
   SyncCoverFactoryWitnessResult result;
-  const SyncCoverSingletonWitnessResult singletons =
-      collectSingletonWitnesses(prepared, mechanismCount);
-  if (!singletons) {
-    result.error = singletons.error;
+  if (prepared.error != SyncCoverCoverageError::None) {
+    result.error = prepared.error;
     return result;
   }
-  result.singletons = singletons.mechanisms;
-  if (mechanismCount == 0) {
+  if (maximumPairs == 0) {
+    result.error = SyncCoverCoverageError::InvalidBound;
     return result;
   }
 
-  constexpr std::size_t kWordBits = 64;
-  const std::size_t wordCount = mechanismCount / kWordBits +
-                                (mechanismCount % kWordBits == 0 ? 0 : 1);
-  std::vector<std::vector<std::uint64_t>> usedReachable(
-      prepared.stateCount, std::vector<std::uint64_t>(wordCount, 0));
-  std::vector<bool> fixedReachable(prepared.stateCount, false);
-  fixedReachable[prepared.start] = true;
-  std::vector<std::size_t> ready{prepared.start};
-  std::vector<bool> queued(prepared.stateCount, false);
-  queued[prepared.start] = true;
-  for (std::size_t index = 0; index < ready.size(); ++index) {
-    const std::size_t state = ready[index];
-    queued[state] = false;
-    const std::size_t virtualNode = state / 2;
-    for (std::size_t edgeIndex : prepared.outgoing[virtualNode]) {
-      const VirtualEdge &edge = prepared.edges[edgeIndex];
-      const std::optional<std::size_t> next = transition(edge, state);
-      if (!next) {
-        continue;
-      }
-      bool changed = false;
-      if (edge.mechanism) {
-        const std::size_t mechanism = *edge.mechanism;
-        if (mechanism >= mechanismCount) {
-          result.error = SyncCoverCoverageError::InvalidGraph;
-          return result;
-        }
-        const std::size_t word = mechanism / kWordBits;
-        const std::uint64_t bit =
-            std::uint64_t{1}
-            << static_cast<unsigned>(mechanism % kWordBits);
-        const bool canUseMechanism = fixedReachable[state] ||
-                                     (usedReachable[state][word] & bit) != 0;
-        if (canUseMechanism &&
-            (usedReachable[*next][word] & bit) == 0) {
-          usedReachable[*next][word] |= bit;
-          changed = true;
-        }
-      } else {
-        if (fixedReachable[state] && !fixedReachable[*next]) {
-          fixedReachable[*next] = true;
-          changed = true;
-        }
-        for (std::size_t word = 0; word < wordCount; ++word) {
-          const std::uint64_t additions =
-              usedReachable[state][word] & ~usedReachable[*next][word];
-          if (additions != 0) {
-            usedReachable[*next][word] |= additions;
-            changed = true;
-          }
-        }
-      }
-      if (changed && !queued[*next]) {
-        queued[*next] = true;
-        ready.push_back(*next);
-      }
-    }
+  const std::vector<bool> fixedReachable =
+      computeReachableStates(prepared, prepared.start, {});
+  if (fixedReachable.empty() || fixedReachable[prepared.target]) {
+    return result;
+  }
+  std::vector<SyncCoverMechanismId> firstFrontier = collectFrontierMechanisms(
+      prepared, fixedReachable, {}, mechanismCount, result.error);
+  if (result.error != SyncCoverCoverageError::None) {
+    return result;
   }
 
-  const std::vector<bool> fixedCanReachTarget =
-      computeFixedCanReachTarget(prepared);
-  std::set<std::pair<SyncCoverMechanismId, SyncCoverMechanismId>> pairs;
-  for (std::size_t state = 0; state < prepared.stateCount; ++state) {
-    const std::size_t virtualNode = state / 2;
-    for (std::size_t edgeIndex : prepared.outgoing[virtualNode]) {
-      const VirtualEdge &edge = prepared.edges[edgeIndex];
-      if (!edge.mechanism) {
+  const std::size_t maximumCandidatePairs =
+      maximumPairs > std::numeric_limits<std::size_t>::max() / 8
+          ? std::numeric_limits<std::size_t>::max()
+          : maximumPairs * 8;
+  const std::size_t maximumFirstClosures = maximumCandidatePairs;
+  std::set<std::pair<SyncCoverMechanismId, SyncCoverMechanismId>> candidates;
+  std::size_t firstClosures = 0;
+  for (SyncCoverMechanismId first : firstFrontier) {
+    if (firstClosures == maximumFirstClosures) {
+      result.truncated = true;
+      break;
+    }
+    ++firstClosures;
+    const std::vector<SyncCoverMechanismId> firstSelection{first};
+    const std::vector<bool> reachable =
+        computeReachableStates(prepared, prepared.start, firstSelection);
+    if (reachable.empty()) {
+      result.error = SyncCoverCoverageError::InvalidGraph;
+      return result;
+    }
+    if (reachable[prepared.target]) {
+      result.singletons.push_back(first);
+      continue;
+    }
+    const std::vector<SyncCoverMechanismId> secondFrontier =
+        collectFrontierMechanisms(prepared, reachable, firstSelection,
+                                  mechanismCount, result.error);
+    if (result.error != SyncCoverCoverageError::None) {
+      return result;
+    }
+    for (SyncCoverMechanismId second : secondFrontier) {
+      const auto pair = std::minmax(first, second);
+      if (pair.first == pair.second || candidates.count(pair) != 0) {
         continue;
       }
-      const std::optional<std::size_t> next = transition(edge, state);
-      if (!next || !fixedCanReachTarget[*next]) {
-        continue;
+      if (candidates.size() == maximumCandidatePairs) {
+        result.truncated = true;
+        break;
       }
-      const SyncCoverMechanismId second = *edge.mechanism;
-      for (std::size_t first = 0; first < mechanismCount; ++first) {
-        const std::size_t word = first / kWordBits;
-        const std::uint64_t bit =
-            std::uint64_t{1} << static_cast<unsigned>(first % kWordBits);
-        if (first != second && (usedReachable[state][word] & bit) != 0) {
-          pairs.emplace(std::min(first, second), std::max(first, second));
-        }
-      }
+      candidates.insert(pair);
+    }
+    if (result.truncated) {
+      break;
     }
   }
-  result.pairs.reserve(pairs.size());
-  for (const auto &[first, second] : pairs) {
-    result.pairs.push_back({first, second});
+  std::sort(result.singletons.begin(), result.singletons.end());
+  result.singletons.erase(
+      std::unique(result.singletons.begin(), result.singletons.end()),
+      result.singletons.end());
+
+  std::vector<std::vector<SyncCoverMechanismId>> pairBatch;
+  constexpr std::size_t kPairBatchSize = 64;
+  auto verifyBatch = [&]() {
+    const SyncCoverSelectionWitnessResult verified = collectSelectionWitnesses(
+        prepared, pairBatch, mechanismCount);
+    if (!verified) {
+      result.error = verified.error;
+      return false;
+    }
+    for (std::size_t selection : verified.selections) {
+      if (selection >= pairBatch.size()) {
+        result.error = SyncCoverCoverageError::InvalidGraph;
+        return false;
+      }
+      if (result.pairs.size() == maximumPairs) {
+        result.truncated = true;
+        return false;
+      }
+      result.pairs.push_back(pairBatch[selection]);
+    }
+    pairBatch.clear();
+    return true;
+  };
+  for (const auto &[first, second] : candidates) {
+    if (std::binary_search(result.singletons.begin(), result.singletons.end(),
+                           first) ||
+        std::binary_search(result.singletons.begin(), result.singletons.end(),
+                           second)) {
+      continue;
+    }
+    pairBatch.push_back({first, second});
+    if (pairBatch.size() == kPairBatchSize && !verifyBatch()) {
+      return result;
+    }
+  }
+  if (!pairBatch.empty()) {
+    verifyBatch();
   }
   return result;
 }
@@ -809,10 +993,27 @@ normalizeSelection(const std::vector<SyncCoverMechanismId> &selected) {
 } // namespace
 
 struct SyncCoverCoverageOracle::Implementation {
-  explicit Implementation(const SyncCoverGraph &source) : graph(source) {
+  explicit Implementation(const SyncCoverGraph &source,
+                          SyncCoverCoverageBackend requestedBackend)
+      : graph(source), backend(requestedBackend) {
     ++statistics.graphValidations;
     if (!graph.validate()) {
       validationError = SyncCoverCoverageError::InvalidGraph;
+      return;
+    }
+    if (backend == SyncCoverCoverageBackend::SharedExpansion) {
+      if (!graph.isStructureFrozen()) {
+        validationError = SyncCoverCoverageError::InvalidGraph;
+        return;
+      }
+      expansion = std::make_unique<SyncCoverExpandedProgram>(graph);
+      if (!*expansion) {
+        validationError =
+            expansion->getError() ==
+                    SyncCoverExpansionError::ExpansionLimitExceeded
+                ? SyncCoverCoverageError::ExpansionLimitExceeded
+                : SyncCoverCoverageError::InvalidGraph;
+      }
       return;
     }
   }
@@ -833,18 +1034,34 @@ struct SyncCoverCoverageOracle::Implementation {
     const CoverageContextKey key = makeCoverageContextKey(graph, demand);
     auto entry = preparedContexts.find(key);
     if (entry == preparedContexts.end()) {
-      entry = preparedContexts.emplace(key, prepareDemand(graph, demandId))
-                  .first;
+      PreparedDemand prepared =
+          backend == SyncCoverCoverageBackend::SharedExpansion
+              ? prepareDemandShared(graph, *expansion, demandId)
+              : prepareDemandLegacy(graph, demandId);
+      entry = preparedContexts.emplace(key, std::move(prepared)).first;
       recordPreparation(entry->second);
       return entry->second;
     }
     PreparedDemand &prepared = entry->second;
     if (prepared.error == SyncCoverCoverageError::None) {
-      prepared.start = stateIndex(demand.source, false);
-      prepared.target = stateIndex(
-          static_cast<std::size_t>(demand.distance) * prepared.nodeCount +
-              demand.target,
-          true);
+      std::size_t source = demand.source;
+      std::size_t target = static_cast<std::size_t>(demand.distance) *
+                               prepared.nodeCount +
+                           demand.target;
+      if (prepared.arena) {
+        const std::optional<std::size_t> localSource =
+            prepared.arena->getVirtualNode(demand.source, 0);
+        const std::optional<std::size_t> localTarget =
+            prepared.arena->getVirtualNode(demand.target, demand.distance);
+        if (!localSource || !localTarget) {
+          prepared.error = SyncCoverCoverageError::InvalidDemand;
+          return prepared;
+        }
+        source = *localSource;
+        target = *localTarget;
+      }
+      prepared.start = stateIndex(source, false);
+      prepared.target = stateIndex(target, true);
       prepared.potentialMechanisms = collectPotentialMechanisms(prepared);
     }
     return prepared;
@@ -854,14 +1071,17 @@ struct SyncCoverCoverageOracle::Implementation {
     ++statistics.demandPreparations;
     const std::size_t virtualNodes = entry.stateCount / 2;
     addSaturated(virtualNodes, statistics.preparedVirtualNodes);
-    addSaturated(entry.edges.size(), statistics.preparedVirtualEdges);
+    addSaturated(entry.activeEdgeCount, statistics.preparedVirtualEdges);
     statistics.maximumVirtualNodes =
         std::max(statistics.maximumVirtualNodes, virtualNodes);
     statistics.maximumVirtualEdges =
-        std::max(statistics.maximumVirtualEdges, entry.edges.size());
+        std::max(statistics.maximumVirtualEdges, entry.activeEdgeCount);
   }
 
   SyncCoverGraph graph;
+  SyncCoverCoverageBackend backend =
+      SyncCoverCoverageBackend::LegacyPerContext;
+  std::unique_ptr<SyncCoverExpandedProgram> expansion;
   SyncCoverCoverageError validationError = SyncCoverCoverageError::None;
   mutable std::map<CoverageContextKey, PreparedDemand> preparedContexts;
   mutable SyncCoverCoverageStatistics statistics;
@@ -879,8 +1099,9 @@ bool SyncCoverReachableState::operator==(
          hasCompletion == other.hasCompletion;
 }
 
-SyncCoverCoverageOracle::SyncCoverCoverageOracle(const SyncCoverGraph &graph)
-    : implementation_(std::make_unique<Implementation>(graph)) {}
+SyncCoverCoverageOracle::SyncCoverCoverageOracle(
+    const SyncCoverGraph &graph, SyncCoverCoverageBackend backend)
+    : implementation_(std::make_unique<Implementation>(graph, backend)) {}
 
 SyncCoverCoverageOracle::~SyncCoverCoverageOracle() = default;
 
@@ -976,25 +1197,28 @@ SyncCoverCoverageOracle::checkDemandsCanonicalSelection(
       ++implementation_->statistics.coverageQueries;
       const SyncCoverDemand &demand =
           implementation_->graph.getDemands()[demandId];
+      const std::optional<std::size_t> sourceState =
+          preparedStateIndex(prepared, demand.source, 0, false);
+      const std::optional<std::size_t> targetState = preparedStateIndex(
+          prepared, demand.target, demand.distance, true);
+      if (!sourceState || !targetState) {
+        results[index] = makeError(SyncCoverCoverageError::InvalidDemand);
+        continue;
+      }
       auto reachable = reachableBySource.find(demand.source);
       if (reachable == reachableBySource.end()) {
         reachable = reachableBySource
                         .emplace(demand.source,
-                                 computeReachableStates(
-                                     prepared, stateIndex(demand.source, false),
-                                     selected))
+                                 computeReachableStates(prepared, *sourceState,
+                                                        selected))
                         .first;
       }
       if (reachable->second.empty()) {
         results[index] = makeError(prepared.error);
         continue;
       }
-      const std::size_t target = stateIndex(
-          static_cast<std::size_t>(demand.distance) * prepared.nodeCount +
-              demand.target,
-          true);
-      results[index].covered = target < reachable->second.size() &&
-                               reachable->second[target];
+      results[index].covered = *targetState < reachable->second.size() &&
+                               reachable->second[*targetState];
     }
   }
   return results;
@@ -1084,13 +1308,20 @@ SyncCoverCoverageOracle::getSingletonMechanismWitnessesForDemands(
       }
       const SyncCoverDemand &demand =
           implementation_->graph.getDemands()[demandId];
+      const std::optional<std::size_t> sourceState =
+          preparedStateIndex(context, demand.source, 0, false);
+      const std::optional<std::size_t> targetState = preparedStateIndex(
+          context, demand.target, demand.distance, true);
+      if (!sourceState || !targetState) {
+        results[index].error = SyncCoverCoverageError::InvalidDemand;
+        continue;
+      }
       auto reachable = reachableBySource.find(demand.source);
       if (reachable == reachableBySource.end()) {
         reachable = reachableBySource
                         .emplace(demand.source,
                                  computeSingletonReachability(
-                                     context, stateIndex(demand.source, false),
-                                     mechanismCount))
+                                     context, *sourceState, mechanismCount))
                         .first;
       }
       if (reachable->second.error != SyncCoverCoverageError::None) {
@@ -1100,11 +1331,7 @@ SyncCoverCoverageOracle::getSingletonMechanismWitnessesForDemands(
       if (mechanismCount == 0) {
         continue;
       }
-      const std::size_t target = stateIndex(
-          static_cast<std::size_t>(demand.distance) * context.nodeCount +
-              demand.target,
-          true);
-      if (target >= reachable->second.states.size()) {
+      if (*targetState >= reachable->second.states.size()) {
         results[index].error = SyncCoverCoverageError::InvalidDemand;
         continue;
       }
@@ -1114,7 +1341,7 @@ SyncCoverCoverageOracle::getSingletonMechanismWitnessesForDemands(
         const std::uint64_t bit =
             std::uint64_t{1}
             << static_cast<unsigned>(mechanism % kWordBits);
-        if ((reachable->second.states[target][word] & bit) != 0) {
+        if ((reachable->second.states[*targetState][word] & bit) != 0) {
           results[index].mechanisms.push_back(mechanism);
         }
       }
@@ -1160,13 +1387,16 @@ SyncCoverCoverageOracle::getSelectionWitnessesForDemands(
       }
       const SyncCoverDemand &demand =
           implementation_->graph.getDemands()[demandId];
-      const std::size_t start = stateIndex(demand.source, false);
-      const std::size_t target = stateIndex(
-          static_cast<std::size_t>(demand.distance) * context.nodeCount +
-              demand.target,
-          true);
+      const std::optional<std::size_t> start =
+          preparedStateIndex(context, demand.source, 0, false);
+      const std::optional<std::size_t> target = preparedStateIndex(
+          context, demand.target, demand.distance, true);
+      if (!start || !target) {
+        results[index].error = SyncCoverCoverageError::InvalidDemand;
+        continue;
+      }
       results[index] = collectSelectionWitnesses(
-          context, selections, mechanismCount, start, target);
+          context, selections, mechanismCount, *start, *target);
     }
   }
   return results;
@@ -1174,7 +1404,8 @@ SyncCoverCoverageOracle::getSelectionWitnessesForDemands(
 
 SyncCoverFactoryWitnessResult
 SyncCoverCoverageOracle::getFactoryMechanismWitnesses(
-    SyncCoverDemandId demand, std::size_t mechanismCount) const {
+    SyncCoverDemandId demand, std::size_t mechanismCount,
+    std::size_t maximumPairs) const {
   SyncCoverFactoryWitnessResult result;
   if (implementation_->validationError != SyncCoverCoverageError::None) {
     result.error = implementation_->validationError;
@@ -1186,7 +1417,7 @@ SyncCoverCoverageOracle::getFactoryMechanismWitnesses(
   }
   ++implementation_->statistics.groundingQueries;
   const PreparedDemand &prepared = implementation_->getPreparedContext(demand);
-  return collectFactoryWitnesses(prepared, mechanismCount);
+  return collectFactoryWitnesses(prepared, mechanismCount, maximumPairs);
 }
 
 SyncCoverCoverageStatistics SyncCoverCoverageOracle::getStatistics() const {

@@ -389,7 +389,8 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
     ++pricedDemands;
     const SyncCoverFactoryWitnessResult priced =
         incidence.getFactoryMechanismWitnesses(
-            activeDemands[localDemand], universe.getMechanisms().size());
+            activeDemands[localDemand], universe.getMechanisms().size(),
+            options.maximumPairsPerDemand);
     if (!priced) {
       result.error = SyncCoverGroundingError::CoverageFailure;
       result.failedDemand = activeDemands[localDemand];
@@ -397,6 +398,7 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
       result.statistics = incidence.getStatistics();
       return result;
     }
+    instance.columnsTruncated |= priced.truncated;
     const std::size_t pairCount =
         std::min(priced.pairs.size(), options.maximumPairsPerDemand);
     instance.columnsTruncated |= pairCount != priced.pairs.size();
