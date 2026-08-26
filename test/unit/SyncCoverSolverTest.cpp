@@ -230,6 +230,14 @@ bool testCutGuidedExactSelection() {
       chainUniverse, chainFirstDomain, 1, 2, chainSource, chainMiddle, passed);
   const SyncCoverMechanismId chainSecond = addEvent(
       chainUniverse, chainSecondDomain, 2, 3, chainMiddle, chainTarget, passed);
+  SyncCoverMechanismDescriptor chainDrainDescriptor;
+  chainDrainDescriptor.kind = SyncCoverMechanismKind::Barrier;
+  SyncCoverBarrierPlacement chainPlacement{1, chainTarget, 0};
+  chainPlacement.drainsAllResources = true;
+  chainDrainDescriptor.barrier = chainPlacement;
+  chainDrainDescriptor.supplyEdges.push_back(supply(chainSource, chainTarget));
+  takeIndex(chainUniverse.addMechanism(chainDrainDescriptor), passed,
+            "add chain drain fallback");
   const SyncCoverSelectionResult chain =
       solveSyncCoverSelection(chainUniverse, {chainDemand});
   passed &= check(
@@ -237,9 +245,9 @@ bool testCutGuidedExactSelection() {
                    std::vector<SyncCoverMechanismId>{chainFirst,
                                                      chainSecond} &&
           chain.missingFactoryDemands.empty() &&
-          chain.coverageStatistics.groundingQueries == 2 &&
+          chain.pricedDemands == 1 && chain.pricedImprovements == 1 &&
           chain.coverageStatistics.coverageQueries == 0,
-      "depth-two pricing grounds a missing composite path before search");
+      "lazy pricing swaps the selected drain for the composite pair");
   passed &= check(chainFirst == 0 && chainSecond == 1,
                   "chain mechanism identities remain deterministic");
   passed &= check(firstHalf == 0 && secondHalf == 1,
@@ -392,8 +400,10 @@ bool testTruncationRescuedByBarrierFallback() {
   const SyncCoverResourceDomainId domain = takeIndex(
       universe.addResourceDomain(SyncCoverResourceKind::EventId, 1, 2, 8),
       passed, "add rescue domain");
-  addEvent(universe, domain, 1, 2, firstSource, firstTarget, passed);
-  addEvent(universe, domain, 1, 2, secondSource, secondTarget, passed);
+  const SyncCoverMechanismId firstRescueEvent =
+      addEvent(universe, domain, 1, 2, firstSource, firstTarget, passed);
+  const SyncCoverMechanismId secondRescueEvent =
+      addEvent(universe, domain, 1, 2, secondSource, secondTarget, passed);
   SyncCoverMechanismDescriptor descriptor;
   descriptor.kind = SyncCoverMechanismKind::Barrier;
   SyncCoverBarrierPlacement placement{1, firstTarget, 0};
@@ -401,8 +411,7 @@ bool testTruncationRescuedByBarrierFallback() {
   descriptor.barrier = placement;
   descriptor.supplyEdges.push_back(supply(firstSource, firstTarget));
   descriptor.supplyEdges.push_back(supply(secondSource, secondTarget));
-  const SyncCoverMechanismId barrier = takeIndex(
-      universe.addMechanism(descriptor), passed, "add rescue barrier");
+  takeIndex(universe.addMechanism(descriptor), passed, "add rescue barrier");
 
   SyncCoverSolverOptions truncated;
   truncated.exactMechanismThreshold = 0;
@@ -411,12 +420,16 @@ bool testTruncationRescuedByBarrierFallback() {
       universe, {firstDemand, secondDemand}, truncated);
   passed &= check(static_cast<bool>(rescued),
                   "budget-one truncation is rescued, not failed");
-  passed &= check(rescued.mechanisms == std::vector{barrier},
-                  "the rescue selects the all-barrier column");
+  passed &= check(rescued.mechanisms ==
+                      std::vector<SyncCoverMechanismId>{firstRescueEvent,
+                                                        secondRescueEvent},
+                  "lazy pricing upgrades the rescue barrier to events");
   passed &= check(rescued.rescuedComponents == 1 &&
+                      rescued.pricedImprovements == 1 &&
                       rescued.truncation.evaluationLimit &&
                       !rescued.optimalityProven,
-                  "the rescue is reported and demotes optimality");
+                  "the rescue and its pricing are reported; optimality "
+                  "stays demoted");
   return passed;
 }
 
@@ -475,7 +488,7 @@ bool testDeclaredCoverageSelection() {
                           std::vector<SyncCoverMechanismId>{
                               firstForward, firstReverse, secondForward,
                               secondReverse},
-                  "bounded selection consumes priced event-path columns");
+                  "lazy pricing replaces the broad barrier with round trips");
   passed &= check(result &&
                       result.cost.barrierActionProfile ==
                           std::vector<std::size_t>{0},

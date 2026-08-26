@@ -251,8 +251,10 @@ bool testMissingFactoryCoverage() {
             grounded.instance.demandColumns[pricedDemand].empty(),
         "selection never invents undeclared transitive coverage");
     passed &= check(grounded.statistics.coverageQueries == 0 &&
-                        grounded.statistics.groundingQueries == 4,
-                    "bounded pricing touches only demands without columns");
+                        grounded.statistics.groundingQueries == 2,
+                    "grounding queries each demand once and prices nothing");
+    passed &= check(grounded.instance.pricingRestricted,
+                    "the witness universe reports itself as restricted");
   }
   return passed;
 }
@@ -291,10 +293,11 @@ bool testPricesBarrierOnlyCoverage() {
       [&](const SyncCoverGroundedColumn &column) {
         return column.members == eventPair && column.coverage.contains(0);
       });
-  passed &= check(grounded && hasPair &&
+  passed &= check(grounded && !hasPair &&
                       grounded.instance.coversAll({barrier}) &&
-                      grounded.instance.coversAll(eventPair),
-                  "barrier-only demands price a barrier-free event path");
+                      grounded.instance.pricingRestricted,
+                  "grounding declares no composite columns; the solver "
+                  "prices barrier-covered demands lazily");
   return passed;
 }
 

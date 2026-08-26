@@ -45,6 +45,14 @@ struct SyncCoverSolverOptions {
   /// over the final selection so its cost stays proportional to the emitted
   /// plan, not to the candidate universe.
   std::size_t oracleRedundancyLimit = 32;
+  /// Lazy composition pricing runs only for demands whose every selected
+  /// cover uses a barrier: at most this many demands are priced (deepest
+  /// loops first), trying at most pricingCoverLimit priced covers each.
+  std::size_t pricingDemandLimit = 32;
+  std::size_t pricingCoverLimit = 4;
+  /// Candidate pair budget handed to the frontier witness search per priced
+  /// demand.
+  std::size_t pricingPairLimit = 32;
 };
 
 enum class SyncCoverSelectionError : std::uint8_t {
@@ -75,6 +83,10 @@ struct SyncCoverSelectionResult {
   /// Components whose truncated search was rescued by the all-barrier
   /// fallback instead of a searched selection.
   std::size_t rescuedComponents = 0;
+  /// Demands priced lazily because their selected cover used barriers, and
+  /// how many of those pricings improved the plan.
+  std::size_t pricedDemands = 0;
+  std::size_t pricedImprovements = 0;
   SyncCoverSearchTruncation truncation;
   bool optimalityProven = false;
   std::vector<SyncCoverDemandId> missingFactoryDemands;

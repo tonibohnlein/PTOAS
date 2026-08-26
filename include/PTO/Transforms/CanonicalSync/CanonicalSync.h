@@ -476,6 +476,8 @@ struct CanonicalSyncCoveringSnapshot {
   std::size_t redundancyEvaluations = 0;
   std::size_t oracleRedundancyChecks = 0;
   std::size_t rescuedComponents = 0;
+  std::size_t pricedDemands = 0;
+  std::size_t pricedImprovements = 0;
   std::vector<std::size_t> demandsWithoutEventColumn;
   SyncCoverSelectionError selectionError = SyncCoverSelectionError::None;
   bool selectionAttempted = false;

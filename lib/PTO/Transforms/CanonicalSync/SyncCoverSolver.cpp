@@ -20,8 +20,6 @@
 #include <utility>
 #include <vector>
 
-
-
 using namespace mlir::pto;
 
 namespace {
@@ -798,6 +796,336 @@ void oracleRemoveRedundant(const SyncCoverSelectionEvaluator &evaluator,
   }
 }
 
+/// Composition columns are not enumerated at grounding. Price them lazily,
+/// only for demands whose every selected cover uses a barrier (the cost
+/// order already treats barriers as the last resort): search frontier
+/// witnesses for such a demand, then exchange the superseded barriers for
+/// the witness cover. Every drop is justified constructively — each demand
+/// must keep a selected grounded column or an independently verified
+/// witness cover — so the exchange never queries the oracle; the frontier
+/// search is the only oracle work, bounded by the pricing options. Pricing
+/// never fails the solve (an unpriceable demand just keeps its barrier).
+void lazyPriceBarrierCovered(const SyncCoverSelectionEvaluator &evaluator,
+                             const SyncCoverGroundedInstance &instance,
+                             const SyncCoverMechanismUniverse &universe,
+                             const SyncCoverCoverageOracle &oracle,
+                             const SyncCoverSolverOptions &options,
+                             std::vector<SyncCoverMechanismId> &selected,
+                             SyncCoverStructuralCost &cost,
+                             SyncCoverSelectionResult &result) {
+  const auto isBarrier = [&](SyncCoverMechanismId mechanism) {
+    return universe.getMechanisms()[mechanism].kind ==
+           SyncCoverMechanismKind::Barrier;
+  };
+  const auto barrierOnlyDemands = [&]() {
+    SyncCoverDemandSet coveredBarrierFree(instance.demands.size());
+    for (const SyncCoverGroundedColumn &column : instance.columns) {
+      const bool columnSelected = std::all_of(
+          column.members.begin(), column.members.end(),
+          [&](SyncCoverMechanismId member) {
+            return std::binary_search(selected.begin(), selected.end(),
+                                      member);
+          });
+      if (!columnSelected) {
+        continue;
+      }
+      const bool usesBarrier =
+          std::any_of(column.members.begin(), column.members.end(), isBarrier);
+      if (!usesBarrier) {
+        coveredBarrierFree.unite(column.coverage);
+      }
+    }
+    std::vector<std::size_t> demandsOnBarriers;
+    for (std::size_t local = 0; local < instance.demands.size(); ++local) {
+      if (!coveredBarrierFree.contains(local)) {
+        demandsOnBarriers.push_back(local);
+      }
+    }
+    return demandsOnBarriers;
+  };
+
+  std::vector<std::size_t> candidates = barrierOnlyDemands();
+  if (candidates.empty()) {
+    return;
+  }
+  const SyncCoverGraph &graph = universe.getGraph();
+  std::stable_sort(candidates.begin(), candidates.end(),
+                   [&](std::size_t first, std::size_t second) {
+                     const auto depth = [&](std::size_t local) {
+                       return graph
+                           .getScopeLoopDepth(
+                               graph.getDemands()[instance.demands[local]]
+                                   .scope)
+                           .value_or(0);
+                     };
+                     return depth(first) > depth(second);
+                   });
+
+  // Every witness the frontier search returns is an independently verified
+  // coverage fact for its demand; the pool persists across exchanges so a
+  // later exchange can lean on an earlier demand's witnesses.
+  struct VerifiedCover {
+    std::size_t local = 0;
+    std::vector<SyncCoverMechanismId> members;
+  };
+  std::vector<VerifiedCover> verified;
+
+  struct ExchangeOutcome {
+    std::vector<SyncCoverMechanismId> selection;
+    SyncCoverStructuralCost cost;
+  };
+  // Add the cover to the selection, then drop every superseded barrier whose
+  // removal keeps each demand justified by a selected grounded column or a
+  // verified witness cover — pure bitset-and-count arithmetic, no oracle.
+  const auto tryExchange = [&](const std::vector<SyncCoverMechanismId> &cover,
+                               const std::vector<std::size_t> &pricedLocals)
+      -> std::optional<ExchangeOutcome> {
+    std::vector<SyncCoverMechanismId> candidate = selected;
+    candidate.insert(candidate.end(), cover.begin(), cover.end());
+    std::sort(candidate.begin(), candidate.end());
+    candidate.erase(std::unique(candidate.begin(), candidate.end()),
+                    candidate.end());
+    const auto inCandidate = [&](SyncCoverMechanismId mechanism) {
+      return std::binary_search(candidate.begin(), candidate.end(),
+                                mechanism);
+    };
+    // Justification counts per demand over the columns and witnesses whose
+    // members all sit inside the candidate.
+    std::vector<std::size_t> support(instance.demands.size(), 0);
+    std::vector<signed char> columnIncluded(instance.columns.size(), -1);
+    std::vector<SyncCoverGroundedColumnId> includedColumns;
+    std::vector<std::vector<std::size_t>> columnDemands(
+        instance.columns.size());
+    for (std::size_t local = 0; local < instance.demands.size(); ++local) {
+      for (SyncCoverGroundedColumnId columnId :
+           instance.demandColumns[local]) {
+        signed char &memo = columnIncluded[columnId];
+        if (memo < 0) {
+          const auto &members = instance.columns[columnId].members;
+          memo = std::all_of(members.begin(), members.end(), inCandidate)
+                     ? 1
+                     : 0;
+          if (memo == 1) {
+            includedColumns.push_back(columnId);
+          }
+        }
+        if (memo == 1) {
+          ++support[local];
+          columnDemands[columnId].push_back(local);
+        }
+      }
+    }
+    std::vector<std::size_t> includedWitnesses;
+    for (std::size_t index = 0; index < verified.size(); ++index) {
+      const VerifiedCover &witness = verified[index];
+      if (std::all_of(witness.members.begin(), witness.members.end(),
+                      inCandidate)) {
+        ++support[witness.local];
+        includedWitnesses.push_back(index);
+      }
+    }
+
+    // Only barriers appearing in the priced demands' selected covers are
+    // superseded; other barriers belong to the redundancy passes.
+    std::vector<SyncCoverMechanismId> drops;
+    for (std::size_t local : pricedLocals) {
+      for (SyncCoverGroundedColumnId columnId :
+           instance.demandColumns[local]) {
+        if (columnIncluded[columnId] != 1) {
+          continue;
+        }
+        for (SyncCoverMechanismId member :
+             instance.columns[columnId].members) {
+          if (isBarrier(member)) {
+            drops.push_back(member);
+          }
+        }
+      }
+    }
+    std::sort(drops.begin(), drops.end());
+    drops.erase(std::unique(drops.begin(), drops.end()), drops.end());
+
+    std::vector<signed char> columnDropped(instance.columns.size(), 0);
+    std::vector<signed char> witnessDropped(verified.size(), 0);
+    bool dropped = false;
+    for (SyncCoverMechanismId barrier : drops) {
+      std::vector<std::size_t> decremented;
+      std::vector<SyncCoverGroundedColumnId> droppedColumns;
+      std::vector<std::size_t> droppedWitnesses;
+      for (SyncCoverGroundedColumnId columnId : includedColumns) {
+        if (columnDropped[columnId]) {
+          continue;
+        }
+        const auto &members = instance.columns[columnId].members;
+        if (std::find(members.begin(), members.end(), barrier) ==
+            members.end()) {
+          continue;
+        }
+        droppedColumns.push_back(columnId);
+        for (std::size_t local : columnDemands[columnId]) {
+          --support[local];
+          decremented.push_back(local);
+        }
+      }
+      for (std::size_t index : includedWitnesses) {
+        if (witnessDropped[index]) {
+          continue;
+        }
+        const VerifiedCover &witness = verified[index];
+        if (std::find(witness.members.begin(), witness.members.end(),
+                      barrier) == witness.members.end()) {
+          continue;
+        }
+        droppedWitnesses.push_back(index);
+        --support[witness.local];
+        decremented.push_back(witness.local);
+      }
+      const bool justified =
+          std::all_of(decremented.begin(), decremented.end(),
+                      [&](std::size_t local) { return support[local] != 0; });
+      if (justified) {
+        candidate.erase(std::lower_bound(candidate.begin(), candidate.end(),
+                                         barrier));
+        for (SyncCoverGroundedColumnId columnId : droppedColumns) {
+          columnDropped[columnId] = 1;
+        }
+        for (std::size_t index : droppedWitnesses) {
+          witnessDropped[index] = 1;
+        }
+        dropped = true;
+      } else {
+        for (std::size_t local : decremented) {
+          ++support[local];
+        }
+      }
+    }
+
+    if (!dropped && candidate == selected) {
+      return std::nullopt;
+    }
+    const std::optional<SearchEvaluation> evaluation =
+        evaluateSelection(evaluator, instance, candidate);
+    ++result.redundancyEvaluations;
+    if (!evaluation) {
+      return std::nullopt;
+    }
+    return ExchangeOutcome{std::move(candidate), evaluation->cost};
+  };
+
+  std::vector<SyncCoverMechanismId> combinedCover;
+  std::vector<std::size_t> combinedLocals;
+  std::size_t priced = 0;
+  for (std::size_t local : candidates) {
+    if (priced == options.pricingDemandLimit) {
+      break;
+    }
+    ++priced;
+    ++result.pricedDemands;
+    const SyncCoverFactoryWitnessResult witnesses =
+        oracle.getFactoryMechanismWitnesses(instance.demands[local],
+                                            universe.getMechanisms().size(),
+                                            options.pricingPairLimit);
+    if (!witnesses) {
+      continue;
+    }
+    // A cover leaning on a selected barrier re-justifies the demand through
+    // that barrier and can never help drop it; only barrier-free covers and
+    // narrower unselected barriers are exchange candidates. Every witness
+    // still enters the verified pool.
+    const auto reusesSelectedBarrier =
+        [&](const std::vector<SyncCoverMechanismId> &members) {
+          return std::any_of(members.begin(), members.end(),
+                             [&](SyncCoverMechanismId member) {
+                               return isBarrier(member) &&
+                                      std::binary_search(selected.begin(),
+                                                         selected.end(),
+                                                         member);
+                             });
+        };
+    std::vector<std::vector<SyncCoverMechanismId>> covers;
+    for (SyncCoverMechanismId singleton : witnesses.singletons) {
+      verified.push_back({local, {singleton}});
+      if (!reusesSelectedBarrier({singleton})) {
+        covers.push_back({singleton});
+      }
+    }
+    for (const std::vector<SyncCoverMechanismId> &pair : witnesses.pairs) {
+      verified.push_back({local, pair});
+      if (!reusesSelectedBarrier(pair)) {
+        covers.push_back(pair);
+      }
+    }
+    // Covers reusing already-selected mechanisms come first: they add the
+    // fewest actions for the same coverage.
+    const auto addedMembers = [&](const std::vector<SyncCoverMechanismId>
+                                      &members) {
+      return std::count_if(members.begin(), members.end(),
+                           [&](SyncCoverMechanismId member) {
+                             return !std::binary_search(selected.begin(),
+                                                        selected.end(),
+                                                        member);
+                           });
+    };
+    std::stable_sort(covers.begin(), covers.end(),
+                     [&](const std::vector<SyncCoverMechanismId> &first,
+                         const std::vector<SyncCoverMechanismId> &second) {
+                       return addedMembers(first) < addedMembers(second);
+                     });
+    std::optional<ExchangeOutcome> best;
+    std::size_t attempted = 0;
+    for (const std::vector<SyncCoverMechanismId> &cover : covers) {
+      if (attempted == options.pricingCoverLimit) {
+        break;
+      }
+      ++attempted;
+      std::optional<ExchangeOutcome> outcome = tryExchange(cover, {local});
+      if (outcome &&
+          syncCoverStructuralCostLess(outcome->cost,
+                                      best ? best->cost : cost)) {
+        best = std::move(outcome);
+      }
+    }
+    if (best) {
+      selected = std::move(best->selection);
+      cost = best->cost;
+      ++result.pricedImprovements;
+    } else if (!covers.empty()) {
+      // A barrier covering several priced demands cannot be dropped by any
+      // single demand's exchange; remember the cheapest cover for one
+      // combined attempt after the loop.
+      combinedCover.insert(combinedCover.end(), covers.front().begin(),
+                           covers.front().end());
+      combinedLocals.push_back(local);
+    }
+  }
+  if (!combinedLocals.empty()) {
+    std::optional<ExchangeOutcome> outcome =
+        tryExchange(combinedCover, combinedLocals);
+    if (outcome && syncCoverStructuralCostLess(outcome->cost, cost)) {
+      selected = std::move(outcome->selection);
+      cost = outcome->cost;
+      ++result.pricedImprovements;
+    }
+  }
+
+  // A verified barrier-free witness settles the demand's event coverage the
+  // same way an eager composite column would have.
+  if (!result.demandsWithoutEventColumn.empty() && !verified.empty()) {
+    const auto eventWitnessed = [&](SyncCoverDemandId demand) {
+      return std::any_of(
+          verified.begin(), verified.end(), [&](const VerifiedCover &witness) {
+            return instance.demands[witness.local] == demand &&
+                   std::none_of(witness.members.begin(),
+                                witness.members.end(), isBarrier);
+          });
+    };
+    auto &uncovered = result.demandsWithoutEventColumn;
+    uncovered.erase(
+        std::remove_if(uncovered.begin(), uncovered.end(), eventWitnessed),
+        uncovered.end());
+  }
+}
+
 bool finalVerify(const SyncCoverMechanismUniverse &universe,
                  const SyncCoverCoverageOracle &oracle,
                  const std::vector<SyncCoverDemandId> &uniqueDemands,
@@ -964,6 +1292,8 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
   SyncCoverCoverageOracle finalOracle(universe.getGraph());
   const std::vector<SyncCoverDemandId> uniqueDemands =
       uniqueCoverageDemands(universe, demands);
+  lazyPriceBarrierCovered(evaluator, instance, universe, finalOracle, options,
+                          selected, selectedCost, result);
   oracleRemoveRedundant(evaluator, instance, finalOracle, uniqueDemands,
                         options, selected, selectedCost,
                         result.redundancyEvaluations,

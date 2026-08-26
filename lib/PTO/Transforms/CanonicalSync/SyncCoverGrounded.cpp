@@ -235,8 +235,7 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
     const std::vector<SyncCoverVerifiedFactoryColumn> &factoryColumns,
     const SyncCoverGroundingOptions &options) {
   SyncCoverGroundingResult result;
-  if (options.maximumColumns == 0 || options.maximumPricingDemands == 0 ||
-      options.maximumPairsPerDemand == 0) {
+  if (options.maximumColumns == 0) {
     result.error = SyncCoverGroundingError::InvalidOptions;
     return result;
   }
@@ -364,60 +363,10 @@ SyncCoverGroundingResult mlir::pto::groundSyncCoverInstance(
     }
   }
 
-  SyncCoverDemandSet fineGrainedCovered(activeDemands.size());
-  for (const auto &[members, coverage] : grounded) {
-    const bool usesBarrier = std::any_of(
-        members.begin(), members.end(), [&](SyncCoverMechanismId mechanism) {
-          return universe.getMechanisms()[mechanism].kind ==
-                 SyncCoverMechanismKind::Barrier;
-        });
-    if (!usesBarrier) {
-      fineGrainedCovered.unite(coverage);
-    }
-  }
-  std::size_t pricedDemands = 0;
-  for (std::size_t localDemand = 0; localDemand < activeDemands.size();
-       ++localDemand) {
-    if (fineGrainedCovered.contains(localDemand)) {
-      instance.pricingRestricted = true;
-      continue;
-    }
-    if (pricedDemands == options.maximumPricingDemands) {
-      instance.columnsTruncated = true;
-      break;
-    }
-    ++pricedDemands;
-    const SyncCoverFactoryWitnessResult priced =
-        incidence.getFactoryMechanismWitnesses(
-            activeDemands[localDemand], universe.getMechanisms().size(),
-            options.maximumPairsPerDemand);
-    if (!priced) {
-      result.error = SyncCoverGroundingError::CoverageFailure;
-      result.failedDemand = activeDemands[localDemand];
-      result.coverageError = priced.error;
-      result.statistics = incidence.getStatistics();
-      return result;
-    }
-    instance.columnsTruncated |= priced.truncated;
-    const std::size_t pairCount =
-        std::min(priced.pairs.size(), options.maximumPairsPerDemand);
-    instance.columnsTruncated |= pairCount != priced.pairs.size();
-    for (std::size_t pairIndex = 0; pairIndex < pairCount; ++pairIndex) {
-      const std::vector<SyncCoverMechanismId> &pair =
-          priced.pairs[pairIndex];
-      const bool usesBarrier = std::any_of(
-          pair.begin(), pair.end(), [&](SyncCoverMechanismId mechanism) {
-            return universe.getMechanisms()[mechanism].kind ==
-                   SyncCoverMechanismKind::Barrier;
-          });
-      if (usesBarrier) {
-        continue;
-      }
-      auto insertion = grounded.emplace(
-          pair, SyncCoverDemandSet(activeDemands.size()));
-      insertion.first->second.add(localDemand);
-    }
-  }
+  // Composition columns are priced lazily by the solver, only for demands
+  // whose every selected cover uses a barrier; the grounded witness universe
+  // is therefore restricted by construction and never certifies optimality.
+  instance.pricingRestricted = !activeDemands.empty();
 
   if (grounded.size() > options.maximumColumns) {
     instance.columnsTruncated = true;

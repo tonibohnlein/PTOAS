@@ -89,10 +89,6 @@ struct SyncCoverGroundingOptions {
   /// Hard cap on factory-declared columns. Hitting the cap is reported as
   /// incomplete grounding; it is never interpreted as infeasibility.
   std::size_t maximumColumns = 65536;
-  /// Depth-two structural pricing is restricted to demands left without any
-  /// barrier-free singleton or verified-factory column.
-  std::size_t maximumPricingDemands = 256;
-  std::size_t maximumPairsPerDemand = 1024;
 };
 
 /// A candidate factory's independently verified incidence declaration. Members
