@@ -62,15 +62,6 @@ struct SyncCoverCoverageResult {
   }
 };
 
-struct SyncCoverDemandTopologyResult {
-  SyncCoverCoverageError error = SyncCoverCoverageError::None;
-  std::vector<SyncCoverMechanismId> potentialMechanisms;
-
-  explicit operator bool() const {
-    return error == SyncCoverCoverageError::None;
-  }
-};
-
 /// All individual mechanisms that establish one demand. The implementation
 /// propagates mechanism bitsets through the prepared structural topology in
 /// one pass; it does not issue one coverage query per mechanism.
@@ -132,18 +123,12 @@ public:
       SyncCoverDemandId demand,
       const std::vector<SyncCoverMechanismId> &selected) const;
 
-  std::vector<SyncCoverCoverageResult>
-  checkAll(const std::vector<SyncCoverMechanismId> &selected) const;
-
   /// Checks a demand subset by sharing immutable virtual topologies between
   /// demands with identical execution contexts. Results correspond to the
   /// input order. The selection must already be sorted and unique.
   std::vector<SyncCoverCoverageResult> checkDemandsCanonicalSelection(
       const std::vector<SyncCoverDemandId> &demands,
       const std::vector<SyncCoverMechanismId> &selected) const;
-
-  SyncCoverDemandTopologyResult
-  getDemandTopology(SyncCoverDemandId demand) const;
 
   SyncCoverSingletonWitnessResult
   getSingletonMechanismWitnesses(SyncCoverDemandId demand) const;

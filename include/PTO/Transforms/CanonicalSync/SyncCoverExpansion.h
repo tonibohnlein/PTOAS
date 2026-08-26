@@ -125,7 +125,6 @@ public:
     return error_ == SyncCoverExpansionError::None;
   }
   SyncCoverExpansionError getError() const { return error_; }
-  std::size_t getGraphGeneration() const { return graphGeneration_; }
   std::size_t getStructuralGeneration() const {
     return structuralGeneration_;
   }

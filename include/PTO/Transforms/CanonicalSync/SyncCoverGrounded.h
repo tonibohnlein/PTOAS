@@ -34,8 +34,6 @@ public:
 
   bool add(std::size_t demand);
   bool contains(std::size_t demand) const;
-  bool containsAll(const SyncCoverDemandSet &other) const;
-  bool intersects(const SyncCoverDemandSet &other) const;
   void unite(const SyncCoverDemandSet &other);
   void subtract(const SyncCoverDemandSet &other);
   std::size_t count() const;

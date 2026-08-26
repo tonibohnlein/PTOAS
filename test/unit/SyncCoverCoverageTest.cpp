@@ -553,14 +553,10 @@ bool testAtomicBundleAndErrors() {
   passed &= check(oracle.checkDemand(1, {}).error ==
                       SyncCoverCoverageError::InvalidDemand,
                   "invalid demand index fails closed");
-  const std::vector<SyncCoverCoverageResult> all = oracle.checkAll({5});
+  const std::vector<SyncCoverCoverageResult> all =
+      oracle.checkDemandsCanonicalSelection({0}, {5});
   passed &= check(all.size() == 1 && all[0].covered,
-                  "whole-graph coverage reuses prepared demand topology");
-  const SyncCoverDemandTopologyResult topology = oracle.getDemandTopology(0);
-  passed &=
-      check(topology && topology.potentialMechanisms ==
-                            std::vector<SyncCoverMechanismId>({5}),
-            "demand topology reports selectable source-to-target mechanisms");
+                  "batched coverage reuses the prepared demand topology");
   const SyncCoverCoverageStatistics statistics = oracle.getStatistics();
   passed &= check(statistics.graphValidations == 1 &&
                       statistics.demandPreparations == 1 &&
@@ -570,9 +566,6 @@ bool testAtomicBundleAndErrors() {
                       statistics.maximumVirtualNodes == 3 &&
                       statistics.maximumVirtualEdges == 2,
                   "one oracle epoch validates and prepares each demand once");
-  passed &= check(oracle.getDemandTopology(1).error ==
-                      SyncCoverCoverageError::InvalidDemand,
-                  "invalid topology demand fails closed");
   passed &= check(oracle.checkDemandCanonicalSelection(0, {5, 5}).error ==
                       SyncCoverCoverageError::InvalidSelection,
                   "search fast path rejects noncanonical selections");

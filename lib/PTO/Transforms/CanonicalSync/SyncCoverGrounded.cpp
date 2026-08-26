@@ -182,33 +182,6 @@ bool SyncCoverDemandSet::contains(std::size_t demand) const {
              0;
 }
 
-bool SyncCoverDemandSet::containsAll(const SyncCoverDemandSet &other) const {
-  if (size_ != other.size_) {
-    return false;
-  }
-  for (std::size_t index = 0; index < words_.size(); ++index) {
-    const bool missingWord =
-        (words_[index] & other.words_[index]) != other.words_[index];
-    if (missingWord) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool SyncCoverDemandSet::intersects(const SyncCoverDemandSet &other) const {
-  if (size_ != other.size_) {
-    return false;
-  }
-  for (std::size_t index = 0; index < words_.size(); ++index) {
-    const bool sharesWord = (words_[index] & other.words_[index]) != 0;
-    if (sharesWord) {
-      return true;
-    }
-  }
-  return false;
-}
-
 void SyncCoverDemandSet::unite(const SyncCoverDemandSet &other) {
   if (size_ != other.size_) {
     return;

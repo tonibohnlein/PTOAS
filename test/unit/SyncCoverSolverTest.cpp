@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <numeric>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -120,8 +121,11 @@ findBruteForceOptimum(const SyncCoverMechanismUniverse &universe) {
     if (!evaluation || !evaluation.resources.resourceFeasible) {
       continue;
     }
+    std::vector<SyncCoverDemandId> allDemands(
+        universe.getGraph().getDemands().size());
+    std::iota(allDemands.begin(), allDemands.end(), 0);
     const std::vector<SyncCoverCoverageResult> demands =
-        coverage.checkAll(selected);
+        coverage.checkDemandsCanonicalSelection(allDemands, selected);
     const bool covered =
         std::all_of(demands.begin(), demands.end(), [](const auto &item) {
           return static_cast<bool>(item) && item.covered;
