@@ -547,6 +547,7 @@ LogicalResult mlir::pto::runCanonicalSyncCoveringSelection(
     SyncCoverGraph &graph, const SyncCoverCandidateIndex &candidateIndex,
     const SyncCoverSlotLifecycleResult &slotLifecycles,
     const SyncCoverSlotProtocolResult &slotProtocols,
+    SyncCoverTargetCapabilities target,
     ArrayRef<SyncCoverDemandId> activeDemands,
     const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
         &regionScopes,
@@ -559,7 +560,8 @@ LogicalResult mlir::pto::runCanonicalSyncCoveringSelection(
   MechanismAdapter adapter(
       func, plan, candidateUniverse, selectedEventBundles, eventIdMax,
       reservedIds,
-      graph, candidateIndex, slotLifecycles, slotProtocols, activeDemands,
+      graph, candidateIndex, slotLifecycles, slotProtocols, std::move(target),
+      activeDemands,
       regionScopes, loopScopes,
       std::move(getAnchorPosition), std::move(getBarrierCompletionEdges),
       std::move(verifyEventProtocols));

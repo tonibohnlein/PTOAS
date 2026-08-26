@@ -672,7 +672,10 @@ module attributes {pto.target_arch = "a2a3"} {
 // DIRECT-NEXT: pto.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
 // DIRECT: pto.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
 // DIRECT-LABEL: func.func @dynamic_address_l0c_refused
-// DIRECT-NOT: pto.set_flag
-// DIRECT-COUNT-2: pto.barrier <PIPE_ALL> {pto.canonical_sync}
-// DIRECT-NOT: pto.wait_flag
+// DIRECT: pto.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+// DIRECT: pto.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+// DIRECT: pto.barrier <PIPE_M> {pto.canonical_sync}
+// DIRECT: pto.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+// DIRECT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+// DIRECT-NOT: pto.barrier <PIPE_ALL> {pto.canonical_sync}
 // DIRECT-LABEL: func.func @multiple_l0c_consumers_refused

@@ -226,11 +226,26 @@ public:
     for (const auto &entry : regionContexts_) {
       regionScopes_.emplace(entry.first, entry.second.scope);
     }
+    // Target facts for column generation. Hardware completion is a sound
+    // per-arch property the pass already relies on; prefix set semantics and
+    // buffer tokens stay off until per-pipe evidence is recorded.
+    SyncCoverTargetCapabilities target;
+    target.name = "arch-hardware-completion";
+    for (PipelineType pipe :
+         {PipelineType::PIPE_S, PipelineType::PIPE_V, PipelineType::PIPE_M,
+          PipelineType::PIPE_MTE1, PipelineType::PIPE_MTE2,
+          PipelineType::PIPE_MTE3, PipelineType::PIPE_FIX}) {
+      if (hasHardwareCompletion_(pipe)) {
+        target.hardwareCompletionResources.insert(
+            static_cast<std::uint32_t>(pipe));
+      }
+    }
+    target.eventIdBudget = eventIdMax_;
     if (failed(runCanonicalSyncCoveringSelection(
             func_, plan_, candidateUniverse_, selectedEventBundles_, eventIdMax_,
             reservedIds_, graph_, candidateIndex, lifecycleResult,
-            protocolResult, activeDemands_, regionScopes_, loopScopes_,
-            getAnchorPosition_,
+            protocolResult, std::move(target), activeDemands_, regionScopes_,
+            loopScopes_, getAnchorPosition_,
             getBarrierCompletionEdges_, verifyEventProtocols_, snapshot))) {
       return failure();
     }

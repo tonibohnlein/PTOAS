@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <limits>
 #include <optional>
+#include <set>
 #include <tuple>
 #include <vector>
 
@@ -48,15 +49,16 @@ getActionLoopDepth(const SyncCoverGraph &graph,
 }
 
 bool incrementProfile(std::vector<std::size_t> &profile,
-                      std::size_t maximumDepth, std::size_t depth) {
+                      std::size_t maximumDepth, std::size_t depth,
+                      std::size_t amount = 1) {
   if (depth > maximumDepth) {
     return false;
   }
   std::size_t &count = profile[maximumDepth - depth];
-  if (count == std::numeric_limits<std::size_t>::max()) {
+  if (amount > std::numeric_limits<std::size_t>::max() - count) {
     return false;
   }
-  ++count;
+  count += amount;
   return true;
 }
 
@@ -154,6 +156,13 @@ SyncCoverStructuralCost SyncCoverMechanismUniverse::evaluateStructuralCostImpl(
   result.actionProfile.assign(maximumDepth + 1, 0);
   result.barrierActionProfile.assign(maximumDepth + 1, 0);
 
+  std::set<std::uint32_t> issueResources;
+  for (const SyncCoverNode &node : graph_.getNodes()) {
+    issueResources.insert(node.resource);
+  }
+  const std::size_t allResourceBarrierWeight =
+      std::max<std::size_t>(issueResources.size(), 2);
+
   for (SyncCoverMechanismId mechanismId : result.signature) {
     const SyncCoverMechanism &mechanism = mechanisms_[mechanismId];
     for (const SyncCoverResourceAction &action : mechanism.actions) {
@@ -167,8 +176,14 @@ SyncCoverStructuralCost SyncCoverMechanismUniverse::evaluateStructuralCostImpl(
     if (mechanism.barrier) {
       const std::optional<std::size_t> depth =
           graph_.getScopeLoopDepth(mechanism.barrier->scope);
+      // A barrier that drains every issue resource stalls all pipes, not
+      // one; weight it by the number of distinct issue resources so the
+      // solver never prefers it over a same-depth targeted barrier.
+      const std::size_t weight = mechanism.barrier->drainsAllResources
+                                     ? allResourceBarrierWeight
+                                     : 1;
       if (!depth || !incrementProfile(result.barrierActionProfile,
-                                      maximumDepth, *depth)) {
+                                      maximumDepth, *depth, weight)) {
         return makeCostError(SyncCoverStructuralCostError::ArithmeticOverflow);
       }
     }

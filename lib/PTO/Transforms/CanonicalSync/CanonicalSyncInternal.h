@@ -14,6 +14,7 @@
 #include "PTO/Transforms/CanonicalSync/CanonicalSync.h"
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncAlgorithms.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverCandidateIndex.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverTargetCapabilities.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/SlotAffineAnalysis.h"
@@ -239,6 +240,7 @@ LogicalResult runCanonicalSyncCoveringSelection(
     SyncCoverGraph &graph, const SyncCoverCandidateIndex &candidateIndex,
     const SyncCoverSlotLifecycleResult &slotLifecycles,
     const SyncCoverSlotProtocolResult &slotProtocols,
+    SyncCoverTargetCapabilities target,
     ArrayRef<SyncCoverDemandId> activeDemands,
     const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
         &regionScopes,

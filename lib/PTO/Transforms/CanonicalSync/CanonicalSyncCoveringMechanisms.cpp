@@ -262,6 +262,7 @@ MechanismAdapter::MechanismAdapter(
     SyncCoverGraph &graph, const SyncCoverCandidateIndex &candidateIndex,
     const SyncCoverSlotLifecycleResult &slotLifecycles,
     const SyncCoverSlotProtocolResult &slotProtocols,
+    SyncCoverTargetCapabilities target,
     ArrayRef<SyncCoverDemandId> activeDemands,
     const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
         &regionScopes,
@@ -274,7 +275,7 @@ MechanismAdapter::MechanismAdapter(
       selectedEventBundles_(selectedEventBundles), eventIdMax_(eventIdMax),
       reservedIds_(reservedIds), universe_(graph),
       candidateIndex_(candidateIndex), slotLifecycles_(slotLifecycles),
-      slotProtocols_(slotProtocols),
+      slotProtocols_(slotProtocols), target_(std::move(target)),
       regionScopes_(regionScopes), loopScopes_(loopScopes),
       getAnchorPosition_(std::move(getAnchorPosition)),
       getBarrierCompletionEdges_(std::move(getBarrierCompletionEdges)),
@@ -697,8 +698,7 @@ LogicalResult MechanismAdapter::addBarriers() {
 
 LogicalResult MechanismAdapter::addGeneratedColumns(
     CanonicalSyncCoveringSnapshot &snapshot) {
-  SyncCoverTargetCapabilities target;
-  target.name = "conservative";
+  SyncCoverTargetCapabilities target = target_;
   target.eventIdBudget = eventIdMax_;
   const SyncCoverColumnGenerationContext context{target, activeDemands_};
   const std::size_t oldMechanismCount = universe_.getMechanisms().size();

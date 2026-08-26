@@ -395,10 +395,11 @@ module attributes {pto.target_arch = "a2a3"} {
 // PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=yes
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @zero_trip_path_preserved
-// PLAN-SAME: barriers=2 events=0
+// PLAN-SAME: barriers=2 events=1
 // PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=yes
 // PLAN: requirement[5] 1 -> 1 kind=memory-raw distance=1 recurrence=yes
-// PLAN: barrier[1] pipe=PIPE_ALL anchor=before:pto.tmuls anchor-nodes=[1]
+// PLAN: barrier[0] pipe=PIPE_V anchor=before:pto.tmuls anchor-nodes=[1] recurrence=yes
+// PLAN: barrier[2] pipe=PIPE_ALL anchor=before:pto.tstore anchor-nodes=[2]
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @positive_trip_path_reduced
 // PLAN-SAME: barriers=1 events=1
@@ -448,14 +449,14 @@ module attributes {pto.target_arch = "a2a3"} {
 // PLAN-SAME: barriers=0 events=2
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @conditional_round_trip_keeps_barrier
-// PLAN-SAME: barriers=1 events=1
+// PLAN-SAME: barriers=1 events=2
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @synthetic_round_trip_replaces_store_barrier
 // PLAN-SAME: barriers=1 events=2
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @while_synthetic_round_trip_drains
-// PLAN-SAME: barriers=2 events=1
-// PLAN: barrier[4] pipe=PIPE_ALL anchor=before:pto.tstore anchor-nodes=[1]
+// PLAN-SAME: barriers=2 events=2
+// PLAN: barrier[1] pipe=PIPE_MTE3 anchor=before:pto.tstore anchor-nodes=[1]
 
 // IR-LABEL: func.func @positive_trip_path_reduced
 // IR-NOT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>
@@ -510,8 +511,10 @@ module attributes {pto.target_arch = "a2a3"} {
 // IR: pto.barrier <PIPE_ALL>
 
 // IR-LABEL: func.func @while_synthetic_round_trip_drains
+// IR: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>
 // IR: scf.while
-// IR: pto.barrier <PIPE_ALL>
+// IR: pto.barrier <PIPE_MTE3>
 // IR: scf.condition
 // IR: pto.barrier <PIPE_ALL>
 // IR: pto.tmuls

@@ -19,6 +19,7 @@
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverSlotProtocol.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverSolver.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverTargetCapabilities.h"
 
 #include <cstdint>
 #include <functional>
@@ -95,6 +96,7 @@ public:
       SyncCoverGraph &graph, const SyncCoverCandidateIndex &candidateIndex,
       const SyncCoverSlotLifecycleResult &slotLifecycles,
       const SyncCoverSlotProtocolResult &slotProtocols,
+      SyncCoverTargetCapabilities target,
       ArrayRef<SyncCoverDemandId> activeDemands,
       const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
           &regionScopes,
@@ -133,6 +135,7 @@ private:
   const SyncCoverCandidateIndex &candidateIndex_;
   const SyncCoverSlotLifecycleResult &slotLifecycles_;
   const SyncCoverSlotProtocolResult &slotProtocols_;
+  SyncCoverTargetCapabilities target_;
   const std::map<Region *, SyncCoverScopeId, std::less<Region *>>
       &regionScopes_;
   const DenseMap<Operation *, SyncCoverScopeId> &loopScopes_;
