@@ -311,14 +311,18 @@ MechanismAdapter::solve(CanonicalSyncCoveringSnapshot &snapshot) {
     constexpr std::size_t kMaximumPairsPerDemand = 4;
     constexpr std::size_t kMaximumRoundTripClaims = 16384;
     std::size_t totalClaims = 0;
+    bool roundTripsTruncated = false;
     std::map<std::vector<SyncCoverMechanismId>, std::vector<SyncCoverDemandId>>
         roundTrips;
     std::set<SyncCoverDemandCoverageKey> proposedKeys;
     for (SyncCoverDemandId demand : demands) {
       const SyncCoverDemand &requirement = graph.getDemands()[demand];
-      if (requirement.distance == 0 ||
-          totalClaims == kMaximumRoundTripClaims) {
+      if (requirement.distance == 0) {
         continue;
+      }
+      if (totalClaims == kMaximumRoundTripClaims) {
+        roundTripsTruncated = true;
+        break;
       }
       // One proposal round per coverage key: duplicate demands share the
       // grounded row, so claiming the first is claiming them all.
@@ -396,6 +400,7 @@ MechanismAdapter::solve(CanonicalSyncCoveringSnapshot &snapshot) {
             continue;
           }
           if (roundTrips.size() == kMaximumRoundTripColumns) {
+            roundTripsTruncated = true;
             continue;
           }
           ++totalClaims;
@@ -412,6 +417,9 @@ MechanismAdapter::solve(CanonicalSyncCoveringSnapshot &snapshot) {
                     claimed.end());
       protocolColumns.push_back({entry.first, std::move(claimed)});
     }
+    // A capped enumeration can leave sound but barrier-heavier plans;
+    // report it, never hide it.
+    snapshot.columnGenerationTruncated |= roundTripsTruncated;
   }
   llvm::sort(protocolColumns, [](const auto &first, const auto &second) {
     return std::tie(first.members, first.demands) <

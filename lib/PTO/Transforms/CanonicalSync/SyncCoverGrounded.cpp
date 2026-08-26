@@ -14,6 +14,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <set>
 #include <tuple>
 #include <utility>
 
@@ -60,15 +61,15 @@ getActionLoopDepth(const SyncCoverGraph &graph,
 }
 
 bool increment(std::vector<std::size_t> &profile, std::size_t maximumDepth,
-               std::size_t depth) {
+               std::size_t depth, std::size_t weight = 1) {
   if (depth > maximumDepth) {
     return false;
   }
   std::size_t &value = profile[maximumDepth - depth];
-  if (value == std::numeric_limits<std::size_t>::max()) {
+  if (value > std::numeric_limits<std::size_t>::max() - weight) {
     return false;
   }
-  ++value;
+  value += weight;
   return true;
 }
 
@@ -85,6 +86,15 @@ SyncCoverGroundingError snapshotMechanisms(
     }
     maximumDepth = std::max(maximumDepth, *depth);
   }
+  // Mirror the authoritative cost model: a barrier that drains every issue
+  // resource stalls all pipes, so the greedy ranking must see the same
+  // weight the final cost charges, never a flat single action.
+  std::set<std::uint32_t> issueResources;
+  for (const SyncCoverNode &node : graph.getNodes()) {
+    issueResources.insert(node.resource);
+  }
+  const std::size_t allResourceBarrierWeight =
+      std::max<std::size_t>(issueResources.size(), 2);
 
   instance.mechanisms.reserve(universe.getMechanisms().size());
   for (const SyncCoverMechanism &mechanism : universe.getMechanisms()) {
@@ -105,8 +115,11 @@ SyncCoverGroundingError snapshotMechanisms(
     if (mechanism.barrier) {
       const std::optional<std::size_t> depth =
           graph.getScopeLoopDepth(mechanism.barrier->scope);
-      if (!depth ||
-          !increment(grounded.barrierActionProfile, maximumDepth, *depth)) {
+      const std::size_t weight = mechanism.barrier->drainsAllResources
+                                     ? allResourceBarrierWeight
+                                     : 1;
+      if (!depth || !increment(grounded.barrierActionProfile, maximumDepth,
+                               *depth, weight)) {
         return SyncCoverGroundingError::ArithmeticOverflow;
       }
     }

@@ -435,11 +435,8 @@ module attributes {pto.target_arch = "a2a3"} {
 // PLAN-SAME: barriers=1 events=0
 // PLAN: dependency 0 -> 3 kind=memory-raw distance=0 retained=yes
 
-// TODO(sync-cover): nested-recurrence and shared-member round trips need a
-// sharing-aware pair choice; the plans below are sound but one step more
-// conservative than the retired eager pricing found.
 // PLAN-LABEL: PTOCanonicalSyncPlan @nested_recurrence_not_summarized
-// PLAN-SAME: barriers=1 events=1
+// PLAN-SAME: barriers=0 events=3
 // PLAN: dependency 1 -> 0 kind=memory-war distance=1 retained=yes
 // PLAN: dependency 1 -> 0 kind=memory-war distance=1 retained=yes
 
@@ -458,7 +455,7 @@ module attributes {pto.target_arch = "a2a3"} {
 // PLAN-SAME: barriers=1 events=3
 
 // PLAN-LABEL: PTOCanonicalSyncPlan @while_synthetic_round_trip_drains
-// PLAN-SAME: barriers=2 events=2
+// PLAN-SAME: barriers=2 events=4
 // PLAN: barrier[1] pipe=PIPE_MTE3 anchor=before:pto.tstore anchor-nodes=[1]
 
 // IR-LABEL: func.func @positive_trip_path_reduced
@@ -519,8 +516,8 @@ module attributes {pto.target_arch = "a2a3"} {
 // IR: scf.while
 // IR: pto.barrier <PIPE_MTE3>
 // IR: scf.condition
-// IR: pto.barrier <PIPE_ALL>
 // IR: pto.tmuls
 // IR: pto.set_flag[<PIPE_V>, <PIPE_MTE3>
+// IR: pto.barrier <PIPE_MTE3>
 // IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>
 // IR: scf.yield
