@@ -942,16 +942,39 @@ struct SyncCoverCoverageOracle::Implementation {
       validationError = SyncCoverCoverageError::InvalidGraph;
       return;
     }
-    prepared.resize(graph.getDemands().size());
   }
 
   const PreparedDemand &getPreparedDemand(SyncCoverDemandId demand) const {
-    std::optional<PreparedDemand> &entry = prepared[demand];
-    if (!entry) {
-      entry = prepareDemand(graph, demand);
-      recordPreparation(*entry);
+    return getPreparedContext(demand);
+  }
+
+  /// Demands sharing a CoverageContextKey have identical virtual topologies
+  /// (endpoint-specific availability is subsumed by the scope-level rules),
+  /// so one prepared product graph serves every demand in the context. The
+  /// batch APIs relied on this within a call; caching extends the sharing
+  /// across calls on this oracle. The endpoint-derived fields (start, target,
+  /// potential mechanisms) are re-derived per demand on access: the oracle
+  /// is single-consumer, so fixing up the cached entry in place is safe.
+  const PreparedDemand &getPreparedContext(SyncCoverDemandId demandId) const {
+    const SyncCoverDemand &demand = graph.getDemands()[demandId];
+    const CoverageContextKey key = makeCoverageContextKey(graph, demand);
+    auto entry = preparedContexts.find(key);
+    if (entry == preparedContexts.end()) {
+      entry = preparedContexts.emplace(key, prepareDemand(graph, demandId))
+                  .first;
+      recordPreparation(entry->second);
+      return entry->second;
     }
-    return *entry;
+    PreparedDemand &prepared = entry->second;
+    if (prepared.error == SyncCoverCoverageError::None) {
+      prepared.start = stateIndex(demand.source, false);
+      prepared.target = stateIndex(
+          static_cast<std::size_t>(demand.distance) * prepared.nodeCount +
+              demand.target,
+          true);
+      prepared.potentialMechanisms = collectPotentialMechanisms(prepared);
+    }
+    return prepared;
   }
 
   void recordPreparation(const PreparedDemand &entry) const {
@@ -967,7 +990,7 @@ struct SyncCoverCoverageOracle::Implementation {
 
   SyncCoverGraph graph;
   SyncCoverCoverageError validationError = SyncCoverCoverageError::None;
-  mutable std::vector<std::optional<PreparedDemand>> prepared;
+  mutable std::map<CoverageContextKey, PreparedDemand> preparedContexts;
   mutable SyncCoverCoverageStatistics statistics;
 };
 
@@ -1090,10 +1113,8 @@ SyncCoverCoverageOracle::checkDemandsCanonicalSelection(
 
   for (const auto &[key, contextDemands] : contexts) {
     (void)key;
-    const PreparedDemand prepared = prepareDemand(
-        implementation_->graph, contextDemands.front().second,
-        /*collectPotential=*/false);
-    implementation_->recordPreparation(prepared);
+    const PreparedDemand &prepared =
+        implementation_->getPreparedContext(contextDemands.front().second);
     if (prepared.error != SyncCoverCoverageError::None) {
       for (const auto &[index, demand] : contextDemands) {
         (void)demand;
@@ -1172,8 +1193,7 @@ SyncCoverCoverageOracle::getSingletonMechanismWitnesses(
       mechanismCount = std::max(mechanismCount, *edge.mechanism + 1);
     }
   }
-  const PreparedDemand prepared = prepareDemand(implementation_->graph, demand);
-  implementation_->recordPreparation(prepared);
+  const PreparedDemand &prepared = implementation_->getPreparedContext(demand);
   return collectSingletonWitnesses(prepared, mechanismCount);
 }
 
@@ -1204,10 +1224,8 @@ SyncCoverCoverageOracle::getSingletonMechanismWitnessesForDemands(
   constexpr std::size_t kWordBits = 64;
   for (const auto &[key, contextDemands] : contexts) {
     (void)key;
-    const PreparedDemand context = prepareDemand(
-        implementation_->graph, contextDemands.front().second,
-        /*collectPotential=*/false);
-    implementation_->recordPreparation(context);
+    const PreparedDemand &context =
+        implementation_->getPreparedContext(contextDemands.front().second);
     std::map<SyncCoverNodeId, SingletonReachability> reachableBySource;
     for (const auto &[index, demandId] : contextDemands) {
       ++implementation_->statistics.groundingQueries;
@@ -1270,9 +1288,7 @@ SyncCoverSelectionWitnessResult SyncCoverCoverageOracle::getSelectionWitnesses(
     return result;
   }
   ++implementation_->statistics.groundingQueries;
-  const PreparedDemand prepared =
-      prepareDemand(implementation_->graph, demand, false);
-  implementation_->recordPreparation(prepared);
+  const PreparedDemand &prepared = implementation_->getPreparedContext(demand);
   return collectSelectionWitnesses(prepared, selections, mechanismCount);
 }
 
@@ -1303,10 +1319,8 @@ SyncCoverCoverageOracle::getSelectionWitnessesForDemands(
   }
   for (const auto &[key, contextDemands] : contexts) {
     (void)key;
-    const PreparedDemand context = prepareDemand(
-        implementation_->graph, contextDemands.front().second,
-        /*collectPotential=*/false);
-    implementation_->recordPreparation(context);
+    const PreparedDemand &context =
+        implementation_->getPreparedContext(contextDemands.front().second);
     for (const auto &[index, demandId] : contextDemands) {
       ++implementation_->statistics.groundingQueries;
       if (context.error != SyncCoverCoverageError::None) {
@@ -1340,8 +1354,7 @@ SyncCoverCoverageOracle::getFactoryMechanismWitnesses(
     return result;
   }
   ++implementation_->statistics.groundingQueries;
-  const PreparedDemand prepared = prepareDemand(implementation_->graph, demand);
-  implementation_->recordPreparation(prepared);
+  const PreparedDemand &prepared = implementation_->getPreparedContext(demand);
   return collectFactoryWitnesses(prepared, mechanismCount);
 }
 

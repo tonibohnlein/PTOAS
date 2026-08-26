@@ -349,6 +349,21 @@ void CanonicalSyncPlanBuilder::reduceForwardDependencies() {
       requirementKeys.push_back(entry.first);
     }
   }
+  // The availability filter runs per (requirement, vertex, BFS edge) and all
+  // occurrences are zero, so the execution-condition region list per
+  // operation is invariant: derive it once instead of re-walking parent
+  // chains inside the reduction.
+  DenseMap<Operation *, SmallVector<Region *, 4>> conditionRegions;
+  for (const CanonicalSyncNode &node : plan_.nodes_) {
+    auto insertion = conditionRegions.try_emplace(node.operation);
+    if (!insertion.second) {
+      continue;
+    }
+    for (const ExecutionCondition &condition :
+         getExecutionConditions(node.operation, 0, nullptr, true)) {
+      insertion.first->second.push_back(condition.region);
+    }
+  }
   const auto isForwardVertexAvailable = [&](std::size_t requirement,
                                             std::size_t vertex) {
     const bool isInvalid =
@@ -357,9 +372,21 @@ void CanonicalSyncPlanBuilder::reduceForwardDependencies() {
       return false;
     }
     const DependencyGroupKey &key = requirementKeys[requirement];
-    return isGuaranteedInContext(
-        plan_.nodes_[vertex].operation, 0, plan_.nodes_[key.source].operation,
-        0, plan_.nodes_[key.target].operation, 0, nullptr, true);
+    const auto vertexRegions =
+        conditionRegions.find(plan_.nodes_[vertex].operation);
+    const auto sourceRegions =
+        conditionRegions.find(plan_.nodes_[key.source].operation);
+    const auto targetRegions =
+        conditionRegions.find(plan_.nodes_[key.target].operation);
+    if (vertexRegions == conditionRegions.end() ||
+        sourceRegions == conditionRegions.end() ||
+        targetRegions == conditionRegions.end()) {
+      return false;
+    }
+    return llvm::all_of(vertexRegions->second, [&](Region *region) {
+      return llvm::is_contained(sourceRegions->second, region) ||
+             llvm::is_contained(targetRegions->second, region);
+    });
   };
   std::vector<bool> keep =
       reduceCompletionRequirements(plan_.nodes_.size(), plan_.fixedEdges_,

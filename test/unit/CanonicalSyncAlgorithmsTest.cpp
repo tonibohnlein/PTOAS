@@ -13,8 +13,12 @@
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include <numeric>
 #include <optional>
+#include <queue>
 #include <string_view>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -33,8 +37,49 @@ bool check(bool condition, std::string_view message) {
   return condition;
 }
 
-bool intervalsOverlap(const SyncInterval &first, const SyncInterval &second) {
-  return !(first.end < second.begin || second.end < first.begin);
+struct ReferenceColoring {
+  std::vector<unsigned> colors;
+  unsigned colorCount = 0;
+};
+
+/// Test-local reference colorer (greedy left-to-right, optimal on interval
+/// graphs) used to cross-check evaluateSyncIntervalPressure differentially.
+ReferenceColoring colorReferenceIntervals(
+    const std::vector<SyncInterval> &intervals) {
+  ReferenceColoring result;
+  result.colors.resize(intervals.size());
+  std::vector<std::size_t> order(intervals.size());
+  std::iota(order.begin(), order.end(), 0);
+  std::stable_sort(order.begin(), order.end(),
+                   [&](std::size_t first, std::size_t second) {
+                     return std::tie(intervals[first].begin,
+                                     intervals[first].end, first) <
+                            std::tie(intervals[second].begin,
+                                     intervals[second].end, second);
+                   });
+  using ActiveColor = std::pair<std::size_t, unsigned>;
+  std::priority_queue<ActiveColor, std::vector<ActiveColor>,
+                      std::greater<ActiveColor>>
+      active;
+  std::priority_queue<unsigned, std::vector<unsigned>, std::greater<unsigned>>
+      available;
+  for (std::size_t intervalIndex : order) {
+    const SyncInterval &interval = intervals[intervalIndex];
+    while (!active.empty() && active.top().first < interval.begin) {
+      available.push(active.top().second);
+      active.pop();
+    }
+    unsigned color = 0;
+    if (available.empty()) {
+      color = result.colorCount++;
+    } else {
+      color = available.top();
+      available.pop();
+    }
+    result.colors[intervalIndex] = color;
+    active.emplace(interval.end, color);
+  }
+  return result;
 }
 
 bool testMaximumIntervalClique() {
@@ -310,7 +355,7 @@ bool testWeightedPressureDifferential() {
     }
 
     const auto pressure = mlir::pto::evaluateSyncIntervalPressure(weighted, 8);
-    const SyncColoring coloring = mlir::pto::colorSyncIntervals(expanded);
+    const ReferenceColoring coloring = colorReferenceIntervals(expanded);
     if (!check(pressure && pressure.required == coloring.colorCount,
                "weighted pressure matches width-expanded interval coloring")) {
       return false;
