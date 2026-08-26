@@ -14,6 +14,7 @@
 #define PTO_TRANSFORMS_CANONICALSYNC_SYNC_COVER_COLUMN_GENERATION_H
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverCoverage.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverGrounded.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverMechanism.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverTargetCapabilities.h"
 
@@ -76,6 +77,31 @@ SyncCoverColumnGenerationResult runSyncCoverColumnGenerators(
     const SyncCoverColumnGenerationContext &context,
     SyncCoverMechanismUniverse &universe,
     const std::vector<std::unique_ptr<SyncCoverColumnGenerator>> &generators);
+
+struct SyncCoverRoundTripOptions {
+  std::size_t maximumColumns = 512;
+  std::size_t maximumPairsPerDemand = 8;
+  std::size_t maximumClaims = 16384;
+};
+
+struct SyncCoverRoundTripResult {
+  std::vector<SyncCoverVerifiedFactoryColumn> columns;
+  /// True only when a concrete distinct closing pair was discarded by a cap,
+  /// never merely because a cap value was reached.
+  bool truncated = false;
+};
+
+/// Round-trip composition columns: a recurrence demand can be covered by a
+/// carried supply mechanism composed with the event that exactly reverses
+/// its endpoints, joined to the demand endpoints by fixed issue-order
+/// paths. Enumeration is structural and per coverage key; the claims are
+/// untrusted, and grounding proves every claimed demand with an oracle
+/// witness before any coverage is granted.
+SyncCoverRoundTripResult collectSyncCoverRoundTripColumns(
+    const SyncCoverGraph &graph,
+    const std::vector<SyncCoverMechanism> &mechanisms,
+    const std::vector<SyncCoverDemandId> &demands,
+    const SyncCoverRoundTripOptions &options = {});
 
 std::unique_ptr<SyncCoverColumnGenerator>
 makeSyncCoverCanonicalEventGenerator();

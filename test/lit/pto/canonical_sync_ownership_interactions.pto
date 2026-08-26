@@ -14,6 +14,9 @@
 // RUN:   | FileCheck %s --check-prefix=EVENTS
 // RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
 // RUN:   | FileCheck %s --check-prefix=IR
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=covering' \
+// RUN:   | FileCheck %s --check-prefix=GEN
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @independent_l0_cycles(%limit: index) {
@@ -91,6 +94,12 @@ module attributes {pto.target_arch = "a2a3"} {
     return
   }
 }
+
+// The full candidate universe of this fixture fits the round-trip caps;
+// a truncated enumeration here is a regression, not a statistic.
+// GEN-LABEL: PTOCanonicalSyncPlan @independent_l0_cycles
+// GEN: covering-selection status=ready error=none
+// GEN-SAME: generation-truncated=no
 
 // OWNERSHIP-LABEL: PTOCanonicalSyncPlan @independent_l0_cycles
 // OWNERSHIP-SAME: ownership-cycles=2

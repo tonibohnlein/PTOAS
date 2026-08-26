@@ -13,6 +13,8 @@
 
 #include "CanonicalSyncCoveringSelection.h"
 
+#include "PTO/Transforms/CanonicalSync/SyncCoverColumnGeneration.h"
+
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
@@ -241,187 +243,19 @@ MechanismAdapter::solve(CanonicalSyncCoveringSnapshot &snapshot) {
       protocolColumns.push_back(std::move(pipeline));
     }
   }
-  // Round-trip composition columns: a recurrence demand can be covered by a
-  // carried supply mechanism composed with a reverse distance-zero event
-  // (the classic cross-pipe round trip), joined to the demand endpoints by
-  // fixed issue-order paths. Enumerate those shapes structurally; the claims
-  // are not trusted here: grounding proves every claimed demand with an
-  // oracle witness and keeps only what it proves, so an unsound proposal
-  // costs one grounding query.
+  // Round-trip composition columns, enumerated structurally per coverage
+  // key; the claims are untrusted, and grounding proves every claimed demand
+  // with an oracle witness. A capped enumeration can leave sound but
+  // barrier-heavier plans; the truncation diagnostic reports it, never
+  // hides it.
   {
-    const SyncCoverGraph &graph = universe_.getGraph();
-    const std::size_t nodeCount = graph.getNodes().size();
-    // Forward reachability over distance-zero fixed edges.
-    std::vector<llvm::SmallVector<SyncCoverNodeId, 8>> successors(nodeCount);
-    for (const SyncCoverEdge &edge : graph.getEdges()) {
-      if (!edge.mechanism && edge.distance == 0 && edge.source < nodeCount &&
-          edge.target < nodeCount) {
-        successors[edge.source].push_back(edge.target);
-      }
-    }
-    const std::size_t words = (nodeCount + 63) / 64;
-    std::vector<std::uint64_t> reachable(nodeCount * words, 0);
-    const auto markReachable = [&](std::size_t from, std::size_t to) {
-      reachable[from * words + to / 64] |= std::uint64_t{1} << (to % 64);
-    };
-    const auto reaches = [&](std::size_t from, std::size_t to) {
-      return from == to ||
-             (reachable[from * words + to / 64] &
-              (std::uint64_t{1} << (to % 64))) != 0;
-    };
-    for (std::size_t node = 0; node < nodeCount; ++node) {
-      llvm::SmallVector<SyncCoverNodeId, 16> stack(successors[node].begin(),
-                                                   successors[node].end());
-      while (!stack.empty()) {
-        const SyncCoverNodeId next = stack.pop_back_val();
-        if (reaches(node, next)) {
-          continue;
-        }
-        markReachable(node, next);
-        stack.append(successors[next].begin(), successors[next].end());
-      }
-    }
-    struct SupplyEntry {
-      SyncCoverNodeId source = 0;
-      SyncCoverNodeId target = 0;
-      SyncCoverMechanismId mechanism = 0;
-    };
-    std::map<unsigned, std::vector<SupplyEntry>> suppliesByDistance;
-    std::map<std::pair<SyncCoverNodeId, SyncCoverNodeId>,
-             llvm::SmallVector<SyncCoverMechanismId, 2>>
-        forwardByEndpoints;
-    for (const SyncCoverMechanism &mechanism : universe_.getMechanisms()) {
-      if (mechanism.kind == SyncCoverMechanismKind::Barrier) {
-        continue;
-      }
-      for (std::size_t edgeIndex : mechanism.supplyEdges) {
-        if (edgeIndex >= graph.getEdges().size()) {
-          continue;
-        }
-        const SyncCoverEdge &edge = graph.getEdges()[edgeIndex];
-        suppliesByDistance[edge.distance].push_back(
-            {edge.source, edge.target, mechanism.id});
-        if (edge.distance == 0) {
-          forwardByEndpoints[{edge.source, edge.target}].push_back(
-              mechanism.id);
-        }
-      }
-    }
-    constexpr std::size_t kMaximumRoundTripColumns = 512;
-    constexpr std::size_t kMaximumPairsPerDemand = 4;
-    constexpr std::size_t kMaximumRoundTripClaims = 16384;
-    std::size_t totalClaims = 0;
-    bool roundTripsTruncated = false;
-    std::map<std::vector<SyncCoverMechanismId>, std::vector<SyncCoverDemandId>>
-        roundTrips;
-    std::set<SyncCoverDemandCoverageKey> proposedKeys;
-    for (SyncCoverDemandId demand : demands) {
-      const SyncCoverDemand &requirement = graph.getDemands()[demand];
-      if (requirement.distance == 0) {
-        continue;
-      }
-      if (totalClaims == kMaximumRoundTripClaims) {
-        roundTripsTruncated = true;
-        break;
-      }
-      // One proposal round per coverage key: duplicate demands share the
-      // grounded row, so claiming the first is claiming them all.
-      if (!proposedKeys
-               .insert(makeSyncCoverDemandCoverageKey(graph, demand))
-               .second) {
-        continue;
-      }
-      const auto carried = suppliesByDistance.find(requirement.distance);
-      if (carried == suppliesByDistance.end()) {
-        continue;
-      }
-      // Tight anchors first: a ring sharing the demand's own endpoints is
-      // the shape the composition was observed to need; transitively placed
-      // rings only fill the remaining proposal budget.
-      llvm::SmallVector<std::tuple<unsigned, std::size_t, std::size_t>, 8>
-          rankedRings;
-      for (std::size_t index = 0; index < carried->second.size(); ++index) {
-        const SupplyEntry &ring = carried->second[index];
-        // The demand source must fixed-reach the ring source; speculative
-        // entries through the forward event traded one recovered plan for
-        // two regressions, so composite shapes beyond this stay with the
-        // sharing-aware follow-up.
-        if (!reaches(requirement.source, ring.source)) {
-          continue;
-        }
-        // Tight anchors and specific mechanisms first: a single-supply ring
-        // on the demand's own endpoints is the observed composition shape;
-        // broad carried mechanisms only fill the remaining budget.
-        const unsigned rank =
-            (ring.source == requirement.source ? 0u : 1u) +
-            (ring.target == requirement.target ? 0u : 1u);
-        const std::size_t breadth =
-            universe_.getMechanisms()[ring.mechanism].supplyEdges.size();
-        rankedRings.push_back({rank, breadth, index});
-      }
-      llvm::stable_sort(rankedRings);
-      llvm::SmallVector<std::vector<SyncCoverMechanismId>, 4> proposed;
-      for (const auto &ranked : rankedRings) {
-        if (proposed.size() == kMaximumPairsPerDemand ||
-            totalClaims == kMaximumRoundTripClaims) {
-          roundTripsTruncated = true;
-          break;
-        }
-        const SupplyEntry &ring = carried->second[std::get<2>(ranked)];
-        const auto reversing =
-            forwardByEndpoints.find({ring.target, ring.source});
-        if (reversing == forwardByEndpoints.end()) {
-          continue;
-        }
-        const bool reachesTarget =
-            reaches(ring.target, requirement.target) ||
-            reaches(ring.source, requirement.target);
-        if (!reachesTarget) {
-          continue;
-        }
-        for (SyncCoverMechanismId forwardMechanism : reversing->second) {
-          if (proposed.size() == kMaximumPairsPerDemand ||
-              totalClaims == kMaximumRoundTripClaims) {
-            roundTripsTruncated = true;
-            break;
-          }
-          if (forwardMechanism == ring.mechanism) {
-            continue;
-          }
-          std::vector<SyncCoverMechanismId> members{
-              std::min(ring.mechanism, forwardMechanism),
-              std::max(ring.mechanism, forwardMechanism)};
-          if (llvm::is_contained(proposed, members)) {
-            continue;
-          }
-          const auto existing = roundTrips.find(members);
-          if (existing != roundTrips.end()) {
-            existing->second.push_back(demand);
-            ++totalClaims;
-            proposed.push_back(std::move(members));
-            continue;
-          }
-          if (roundTrips.size() == kMaximumRoundTripColumns) {
-            roundTripsTruncated = true;
-            continue;
-          }
-          ++totalClaims;
-          proposed.push_back(members);
-          roundTrips.emplace(std::move(members),
-                             std::vector<SyncCoverDemandId>{demand});
-        }
-      }
-    }
-    for (auto &entry : roundTrips) {
-      std::vector<SyncCoverDemandId> claimed = std::move(entry.second);
-      std::sort(claimed.begin(), claimed.end());
-      claimed.erase(std::unique(claimed.begin(), claimed.end()),
-                    claimed.end());
-      protocolColumns.push_back({entry.first, std::move(claimed)});
-    }
-    // A capped enumeration can leave sound but barrier-heavier plans;
-    // report it, never hide it.
-    snapshot.columnGenerationTruncated |= roundTripsTruncated;
+    const SyncCoverRoundTripResult roundTrips =
+        collectSyncCoverRoundTripColumns(universe_.getGraph(),
+                                         universe_.getMechanisms(), demands);
+    protocolColumns.insert(protocolColumns.end(),
+                           roundTrips.columns.begin(),
+                           roundTrips.columns.end());
+    snapshot.columnGenerationTruncated |= roundTrips.truncated;
   }
   llvm::sort(protocolColumns, [](const auto &first, const auto &second) {
     return std::tie(first.members, first.demands) <

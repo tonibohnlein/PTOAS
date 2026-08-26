@@ -143,10 +143,13 @@ bool greedyCandidateLess(const GreedyCandidate &first,
   // added-mechanism ratio.
   const auto ratioCompare = [&](std::size_t firstValue,
                                 std::size_t secondValue) {
-    const unsigned long long lhs =
-        static_cast<unsigned long long>(firstValue) * second.newCoverage;
-    const unsigned long long rhs =
-        static_cast<unsigned long long>(secondValue) * first.newCoverage;
+    // 128-bit products: neither action profiles nor row counts have a
+    // proven bound whose 64-bit product cannot overflow, and an overflow
+    // would silently break strict weak ordering again.
+    const unsigned __int128 lhs =
+        static_cast<unsigned __int128>(firstValue) * second.newCoverage;
+    const unsigned __int128 rhs =
+        static_cast<unsigned __int128>(secondValue) * first.newCoverage;
     return lhs < rhs ? -1 : (rhs < lhs ? 1 : 0);
   };
   for (std::size_t index = 0; index < first.barrierActions.size(); ++index) {
@@ -174,14 +177,14 @@ struct GreedySelection {
   SyncCoverStructuralCost cost;
 };
 
-/// One deterministic greedy pass over the grounded coverage bitsets: anchor
-/// each round on the first uncovered demand in instance order and adopt the
-/// cheapest feasible column that covers it. Anchoring on the
-/// most-constrained demand front-loads the demands whose only columns are
-/// fat fallback barriers and shadows cheaper shared covers; ranking every
-/// uncovered demand's columns instead degenerates under the per-depth ratio
-/// order. Fallback barrier columns hold no event resources, so the pass
-/// completes whenever every demand has a column.
+/// One deterministic greedy pass over the grounded coverage bitsets. The
+/// anchor policy is DELIBERATELY the first uncovered row in instance order,
+/// not the most-constrained row: most-constrained anchoring was tried and
+/// front-loads the demands whose only columns are fat fallback barriers,
+/// shadowing cheaper shared covers, and ranking every uncovered demand's
+/// columns globally degenerates under the per-depth ratio order. Fallback
+/// barrier columns hold no event resources, so the pass completes whenever
+/// every demand has a column.
 std::optional<GreedySelection>
 greedySelect(const SyncCoverSelectionEvaluator &evaluator,
              const SyncCoverGroundedInstance &instance,

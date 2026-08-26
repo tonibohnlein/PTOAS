@@ -256,11 +256,122 @@ bool testPiercingAndDeterminism() {
   return passed;
 }
 
+bool testRoundTripCapsSetTruncation() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const auto loop = graph.addScope(0, false, SyncCoverTimelineInterval{0, 6},
+                                   true);
+  passed &= check(static_cast<bool>(loop) && loop.index.has_value(),
+                  "round-trip loop scope registers");
+  const SyncCoverScopeId scope = loop.index.value_or(0);
+  const auto nodeA = graph.addNode(kPipeMTE2, 1, scope, 1, {}, {kPipeM});
+  const auto nodeB = graph.addNode(kPipeM, 1, scope, 2, {}, {kPipeMTE2});
+  passed &= check(nodeA.index.has_value() && nodeB.index.has_value(),
+                  "round-trip nodes register");
+  const SyncCoverNodeId a = nodeA.index.value_or(0);
+  const SyncCoverNodeId b = nodeB.index.value_or(0);
+  SyncCoverDemand carried;
+  carried.source = b;
+  carried.target = a;
+  carried.scope = scope;
+  carried.distance = 1;
+  const auto demandId = graph.addDemand(carried);
+  passed &= check(demandId.index.has_value(), "recurrence demand registers");
+  SyncCoverMechanismUniverse universe(graph);
+  const auto forwardDomain = universe.addResourceDomain(
+      SyncCoverResourceKind::EventId, kPipeMTE2, kPipeM, 8);
+  const auto reverseDomain = universe.addResourceDomain(
+      SyncCoverResourceKind::EventId, kPipeM, kPipeMTE2, 8);
+  passed &= check(forwardDomain.index.has_value() &&
+                      reverseDomain.index.has_value(),
+                  "round-trip domains register");
+  const auto addSupplyMechanism = [&](SyncCoverResourceDomainId domain,
+                                      std::uint32_t sourceResource,
+                                      std::uint32_t targetResource,
+                                      SyncCoverNodeId source,
+                                      SyncCoverNodeId target,
+                                      unsigned distance) {
+    SyncCoverMechanismDescriptor descriptor;
+    SyncCoverEdge edge;
+    edge.source = source;
+    edge.target = target;
+    edge.kind = SyncCoverEdgeKind::CompletionSupply;
+    edge.scope = scope;
+    edge.distance = distance;
+    descriptor.supplyEdges.push_back(edge);
+    descriptor.actions.push_back(
+        {SyncCoverResourceActionKind::Produce, sourceResource,
+         {SyncCoverAnchorKind::AfterNode, source, 0, 0}});
+    descriptor.actions.push_back(
+        {SyncCoverResourceActionKind::Consume, targetResource,
+         {SyncCoverAnchorKind::BeforeNode, target, 0, 0}});
+    descriptor.resourceUses.push_back(
+        {domain, scope, distance, 1, {0, 1}, {0}});
+    descriptor.supplyBindings.push_back({0, 0, 0, 1});
+    const auto added = universe.addMechanism(descriptor);
+    passed &= check(added.index.has_value(), "round-trip mechanism registers");
+    return added.index.value_or(0);
+  };
+  const auto ringDescriptor = makeSyncCoverUnitRecurrenceEvent(
+      universe.getResourceDomains()[reverseDomain.index.value_or(0)], b, a,
+      scope);
+  passed &= check(ringDescriptor.has_value(),
+                  "unit recurrence ring descriptor builds");
+  const auto ringAdded = universe.addVerifiedProtocol(
+      ringDescriptor.value_or(SyncCoverMechanismDescriptor{}),
+      [&](const SyncCoverMechanismDescriptor &candidate) {
+        return verifySyncCoverUnitRecurrenceEvent(universe, candidate);
+      });
+  passed &= check(ringAdded.index.has_value(),
+                  "unit recurrence ring registers");
+  const SyncCoverMechanismId ring = ringAdded.index.value_or(0);
+  const SyncCoverMechanismId forwardOne = addSupplyMechanism(
+      forwardDomain.index.value_or(0), kPipeMTE2, kPipeM, a, b, 0);
+  const SyncCoverMechanismId forwardTwo = addSupplyMechanism(
+      forwardDomain.index.value_or(0), kPipeMTE2, kPipeM, a, b, 0);
+  const std::vector<SyncCoverDemandId> demands{demandId.index.value_or(0)};
+
+  const SyncCoverRoundTripResult unlimited = collectSyncCoverRoundTripColumns(
+      graph, universe.getMechanisms(), demands);
+  passed &= check(unlimited.columns.size() == 2 && !unlimited.truncated,
+                  "both distinct closing pairs are proposed untruncated");
+  passed &= check(
+      unlimited.columns.front().members ==
+              std::vector<SyncCoverMechanismId>{ring, forwardOne} ||
+          unlimited.columns.front().members ==
+              std::vector<SyncCoverMechanismId>{forwardOne, ring},
+      "the first proposed column pairs the ring with a reversing event");
+
+  SyncCoverRoundTripOptions pairCapped;
+  pairCapped.maximumPairsPerDemand = 1;
+  const SyncCoverRoundTripResult perDemand = collectSyncCoverRoundTripColumns(
+      graph, universe.getMechanisms(), demands, pairCapped);
+  passed &= check(perDemand.columns.size() == 1 && perDemand.truncated,
+                  "the per-demand pair cap reports its discarded pair");
+
+  SyncCoverRoundTripOptions columnCapped;
+  columnCapped.maximumColumns = 1;
+  const SyncCoverRoundTripResult columns = collectSyncCoverRoundTripColumns(
+      graph, universe.getMechanisms(), demands, columnCapped);
+  passed &= check(columns.columns.size() == 1 && columns.truncated,
+                  "the global column cap reports its discarded pair");
+
+  SyncCoverRoundTripOptions claimCapped;
+  claimCapped.maximumClaims = 1;
+  const SyncCoverRoundTripResult claims = collectSyncCoverRoundTripColumns(
+      graph, universe.getMechanisms(), demands, claimCapped);
+  passed &= check(claims.columns.size() == 1 && claims.truncated,
+                  "the global claim cap reports its discarded pair");
+  (void)forwardTwo;
+  return passed;
+}
+
 } // namespace
 
 int main() {
   bool passed = true;
   passed &= testBudgetOneScarcityFailsClosed();
+  passed &= testRoundTripCapsSetTruncation();
   passed &= testPiercingAndDeterminism();
   std::cout << (passed ? "SyncCoverColumnGenerationTest PASS"
                        : "SyncCoverColumnGenerationTest FAIL")

@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <optional>
 #include <tuple>
 #include <utility>
@@ -302,6 +303,178 @@ SyncCoverColumnGenerationResult mlir::pto::runSyncCoverColumnGenerators(
         generator->generate(context, universe);
     result.totalAdmitted += report.admitted;
     result.reports.push_back(std::move(report));
+  }
+  return result;
+}
+
+
+SyncCoverRoundTripResult mlir::pto::collectSyncCoverRoundTripColumns(
+    const SyncCoverGraph &graph,
+    const std::vector<SyncCoverMechanism> &mechanisms,
+    const std::vector<SyncCoverDemandId> &demands,
+    const SyncCoverRoundTripOptions &options) {
+  SyncCoverRoundTripResult result;
+  const std::size_t nodeCount = graph.getNodes().size();
+  // Forward reachability over distance-zero fixed edges.
+  std::vector<std::vector<SyncCoverNodeId>> successors(nodeCount);
+  for (const SyncCoverEdge &edge : graph.getEdges()) {
+    if (!edge.mechanism && edge.distance == 0 && edge.source < nodeCount &&
+        edge.target < nodeCount) {
+      successors[edge.source].push_back(edge.target);
+    }
+  }
+  const std::size_t words = (nodeCount + 63) / 64;
+  std::vector<std::uint64_t> reachable(nodeCount * words, 0);
+  const auto markReachable = [&](std::size_t from, std::size_t to) {
+    reachable[from * words + to / 64] |= std::uint64_t{1} << (to % 64);
+  };
+  const auto reaches = [&](std::size_t from, std::size_t to) {
+    return from == to ||
+           (reachable[from * words + to / 64] &
+            (std::uint64_t{1} << (to % 64))) != 0;
+  };
+  for (std::size_t node = 0; node < nodeCount; ++node) {
+    std::vector<SyncCoverNodeId> stack(successors[node].begin(),
+                                       successors[node].end());
+    while (!stack.empty()) {
+      const SyncCoverNodeId next = stack.back();
+      stack.pop_back();
+      if (reaches(node, next)) {
+        continue;
+      }
+      markReachable(node, next);
+      stack.insert(stack.end(), successors[next].begin(),
+                   successors[next].end());
+    }
+  }
+  struct SupplyEntry {
+    SyncCoverNodeId source = 0;
+    SyncCoverNodeId target = 0;
+    SyncCoverMechanismId mechanism = 0;
+  };
+  std::map<unsigned, std::vector<SupplyEntry>> suppliesByDistance;
+  std::map<std::pair<SyncCoverNodeId, SyncCoverNodeId>,
+           std::vector<SyncCoverMechanismId>>
+      forwardByEndpoints;
+  for (const SyncCoverMechanism &mechanism : mechanisms) {
+    if (mechanism.kind == SyncCoverMechanismKind::Barrier) {
+      continue;
+    }
+    for (std::size_t edgeIndex : mechanism.supplyEdges) {
+      if (edgeIndex >= graph.getEdges().size()) {
+        continue;
+      }
+      const SyncCoverEdge &edge = graph.getEdges()[edgeIndex];
+      suppliesByDistance[edge.distance].push_back(
+          {edge.source, edge.target, mechanism.id});
+      if (edge.distance == 0) {
+        forwardByEndpoints[{edge.source, edge.target}].push_back(
+            mechanism.id);
+      }
+    }
+  }
+  std::size_t totalClaims = 0;
+  std::map<std::vector<SyncCoverMechanismId>, std::vector<SyncCoverDemandId>>
+      roundTrips;
+  std::set<SyncCoverDemandCoverageKey> proposedKeys;
+  for (SyncCoverDemandId demand : demands) {
+    const SyncCoverDemand &requirement = graph.getDemands()[demand];
+    if (requirement.distance == 0) {
+      continue;
+    }
+    // One proposal round per coverage key: duplicate demands share the
+    // grounded row, so claiming the first is claiming them all.
+    if (!proposedKeys
+             .insert(makeSyncCoverDemandCoverageKey(graph, demand))
+             .second) {
+      continue;
+    }
+    const auto carried = suppliesByDistance.find(requirement.distance);
+    if (carried == suppliesByDistance.end()) {
+      continue;
+    }
+    // Tight anchors and specific mechanisms first: a single-supply ring on
+    // the demand's own endpoints is the observed composition shape; broad
+    // carried mechanisms only fill the remaining budget.
+    std::vector<std::tuple<unsigned, std::size_t, std::size_t>> rankedRings;
+    for (std::size_t index = 0; index < carried->second.size(); ++index) {
+      const SupplyEntry &ring = carried->second[index];
+      // The demand source must fixed-reach the ring source; speculative
+      // entries through the forward event traded one recovered plan for two
+      // regressions, so composite shapes beyond this stay with the
+      // sharing-aware follow-up.
+      if (!reaches(requirement.source, ring.source)) {
+        continue;
+      }
+      const unsigned rank =
+          (ring.source == requirement.source ? 0u : 1u) +
+          (ring.target == requirement.target ? 0u : 1u);
+      const std::size_t breadth =
+          mechanisms[ring.mechanism].supplyEdges.size();
+      rankedRings.push_back({rank, breadth, index});
+    }
+    std::stable_sort(rankedRings.begin(), rankedRings.end());
+    std::vector<std::vector<SyncCoverMechanismId>> proposed;
+    for (const auto &ranked : rankedRings) {
+      const SupplyEntry &ring = carried->second[std::get<2>(ranked)];
+      const auto reversing =
+          forwardByEndpoints.find({ring.target, ring.source});
+      if (reversing == forwardByEndpoints.end()) {
+        continue;
+      }
+      const bool reachesTarget =
+          reaches(ring.target, requirement.target) ||
+          reaches(ring.source, requirement.target);
+      if (!reachesTarget) {
+        continue;
+      }
+      for (SyncCoverMechanismId forwardMechanism : reversing->second) {
+        if (forwardMechanism == ring.mechanism) {
+          continue;
+        }
+        std::vector<SyncCoverMechanismId> members{
+            std::min(ring.mechanism, forwardMechanism),
+            std::max(ring.mechanism, forwardMechanism)};
+        if (std::find(proposed.begin(), proposed.end(), members) !=
+            proposed.end()) {
+          continue;
+        }
+        // Every cap check sits behind a concrete distinct closing pair, so
+        // the truncation diagnostic reports actual discards only.
+        if (proposed.size() == options.maximumPairsPerDemand ||
+            totalClaims == options.maximumClaims) {
+          result.truncated = true;
+          break;
+        }
+        const auto existing = roundTrips.find(members);
+        if (existing != roundTrips.end()) {
+          existing->second.push_back(demand);
+          ++totalClaims;
+          proposed.push_back(std::move(members));
+          continue;
+        }
+        if (roundTrips.size() == options.maximumColumns) {
+          result.truncated = true;
+          continue;
+        }
+        ++totalClaims;
+        proposed.push_back(members);
+        roundTrips.emplace(std::move(members),
+                           std::vector<SyncCoverDemandId>{demand});
+      }
+      if (proposed.size() == options.maximumPairsPerDemand ||
+          totalClaims == options.maximumClaims) {
+        break;
+      }
+    }
+  }
+  result.columns.reserve(roundTrips.size());
+  for (auto &entry : roundTrips) {
+    std::vector<SyncCoverDemandId> claimed = std::move(entry.second);
+    std::sort(claimed.begin(), claimed.end());
+    claimed.erase(std::unique(claimed.begin(), claimed.end()),
+                  claimed.end());
+    result.columns.push_back({entry.first, std::move(claimed)});
   }
   return result;
 }
