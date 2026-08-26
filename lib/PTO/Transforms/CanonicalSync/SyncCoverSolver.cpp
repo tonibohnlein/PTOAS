@@ -795,8 +795,8 @@ void oracleRemoveRedundant(const SyncCoverSelectionEvaluator &evaluator,
                            const SyncCoverSolverOptions &options,
                            std::vector<SyncCoverMechanismId> &selected,
                            SyncCoverStructuralCost &cost,
-                           std::size_t &evaluations) {
-  std::size_t oracleChecks = 0;
+                           std::size_t &evaluations,
+                           std::size_t &oracleChecks) {
   for (std::size_t index = selected.size(); index > 0; --index) {
     std::vector<SyncCoverMechanismId> candidate = selected;
     candidate.erase(candidate.begin() + static_cast<std::ptrdiff_t>(index - 1));
@@ -1028,7 +1028,8 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
       uniqueCoverageDemands(universe, demands);
   oracleRemoveRedundant(evaluator, instance, finalOracle, uniqueDemands,
                         options, selected, selectedCost,
-                        result.redundancyEvaluations);
+                        result.redundancyEvaluations,
+                        result.oracleRedundancyChecks);
 
   result.mechanisms = selected;
   if (!finalVerify(universe, finalOracle, uniqueDemands, result.mechanisms,

@@ -267,6 +267,8 @@ MechanismAdapter::solve(CanonicalSyncCoveringSnapshot &snapshot) {
   snapshot.solverComponents = result.components.size();
   snapshot.solverEvaluations = result.evaluations;
   snapshot.redundancyEvaluations = result.redundancyEvaluations;
+  snapshot.oracleRedundancyChecks = result.oracleRedundancyChecks;
+  snapshot.rescuedComponents = result.rescuedComponents;
   snapshot.demandsWithoutEventColumn = result.demandsWithoutEventColumn;
   snapshot.coverageStatistics = result.coverageStatistics;
   snapshot.finalVerificationStatistics = result.finalVerificationStatistics;

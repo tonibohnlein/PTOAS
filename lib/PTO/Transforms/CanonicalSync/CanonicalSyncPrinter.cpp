@@ -489,6 +489,8 @@ void mlir::pto::printCanonicalSyncPlan(llvm::raw_ostream &os, func::FuncOp func,
        << " components=" << snapshot.solverComponents
        << " evaluations=" << snapshot.solverEvaluations
        << " redundancy-evaluations=" << snapshot.redundancyEvaluations
+       << " oracle-redundancy-checks=" << snapshot.oracleRedundancyChecks
+       << " rescued-components=" << snapshot.rescuedComponents
        << " event-uncovered=" << snapshot.demandsWithoutEventColumn.size()
        << " truncated=" << (snapshot.searchTruncated ? "yes" : "no")
        << " optimal=" << (snapshot.optimalityProven ? "yes" : "no")

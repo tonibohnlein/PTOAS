@@ -78,6 +78,8 @@ struct SyncCoverSelectionResult {
   std::vector<SyncCoverSelectionComponent> components;
   std::size_t evaluations = 0;
   std::size_t redundancyEvaluations = 0;
+  /// Whole-demand oracle checks used by the bounded post-search polish.
+  std::size_t oracleRedundancyChecks = 0;
   /// Components whose truncated search was rescued by the all-barrier
   /// fallback instead of a searched selection.
   std::size_t rescuedComponents = 0;
