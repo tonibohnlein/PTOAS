@@ -710,8 +710,11 @@ collectFactoryWitnesses(const PreparedDemand &prepared,
   constexpr std::size_t kWordBits = 64;
   const std::size_t wordCount = mechanismCount / kWordBits +
                                 (mechanismCount % kWordBits == 0 ? 0 : 1);
-  std::vector<std::vector<std::uint64_t>> usedReachable(
-      prepared.stateCount, std::vector<std::uint64_t>(wordCount, 0));
+  // One flat allocation; per-state rows are wordCount-wide slices.
+  std::vector<std::uint64_t> usedReachable(prepared.stateCount * wordCount, 0);
+  const auto usedRow = [&](std::size_t state) {
+    return usedReachable.data() + state * wordCount;
+  };
   std::vector<bool> fixedReachable(prepared.stateCount, false);
   fixedReachable[prepared.start] = true;
   std::vector<std::size_t> ready{prepared.start};
@@ -739,10 +742,9 @@ collectFactoryWitnesses(const PreparedDemand &prepared,
             std::uint64_t{1}
             << static_cast<unsigned>(mechanism % kWordBits);
         const bool canUseMechanism = fixedReachable[state] ||
-                                     (usedReachable[state][word] & bit) != 0;
-        if (canUseMechanism &&
-            (usedReachable[*next][word] & bit) == 0) {
-          usedReachable[*next][word] |= bit;
+                                     (usedRow(state)[word] & bit) != 0;
+        if (canUseMechanism && (usedRow(*next)[word] & bit) == 0) {
+          usedRow(*next)[word] |= bit;
           changed = true;
         }
       } else {
@@ -750,11 +752,12 @@ collectFactoryWitnesses(const PreparedDemand &prepared,
           fixedReachable[*next] = true;
           changed = true;
         }
+        const std::uint64_t *sourceRow = usedRow(state);
+        std::uint64_t *nextRow = usedRow(*next);
         for (std::size_t word = 0; word < wordCount; ++word) {
-          const std::uint64_t additions =
-              usedReachable[state][word] & ~usedReachable[*next][word];
+          const std::uint64_t additions = sourceRow[word] & ~nextRow[word];
           if (additions != 0) {
-            usedReachable[*next][word] |= additions;
+            nextRow[word] |= additions;
             changed = true;
           }
         }
@@ -781,12 +784,17 @@ collectFactoryWitnesses(const PreparedDemand &prepared,
         continue;
       }
       const SyncCoverMechanismId second = *edge.mechanism;
-      for (std::size_t first = 0; first < mechanismCount; ++first) {
-        const std::size_t word = first / kWordBits;
-        const std::uint64_t bit =
-            std::uint64_t{1} << static_cast<unsigned>(first % kWordBits);
-        if (first != second && (usedReachable[state][word] & bit) != 0) {
-          pairs.emplace(std::min(first, second), std::max(first, second));
+      const std::uint64_t *row = usedRow(state);
+      for (std::size_t word = 0; word < wordCount; ++word) {
+        std::uint64_t bits = row[word];
+        while (bits != 0) {
+          const unsigned offset =
+              static_cast<unsigned>(__builtin_ctzll(bits));
+          bits &= bits - 1;
+          const std::size_t first = word * kWordBits + offset;
+          if (first != second) {
+            pairs.emplace(std::min(first, second), std::max(first, second));
+          }
         }
       }
     }
@@ -833,7 +841,9 @@ struct SyncCoverCoverageOracle::Implementation {
     const CoverageContextKey key = makeCoverageContextKey(graph, demand);
     auto entry = preparedContexts.find(key);
     if (entry == preparedContexts.end()) {
-      entry = preparedContexts.emplace(key, prepareDemand(graph, demandId))
+      entry = preparedContexts
+                  .emplace(key, prepareDemand(graph, demandId,
+                                              /*collectPotential=*/false))
                   .first;
       recordPreparation(entry->second);
       return entry->second;
@@ -845,7 +855,6 @@ struct SyncCoverCoverageOracle::Implementation {
           static_cast<std::size_t>(demand.distance) * prepared.nodeCount +
               demand.target,
           true);
-      prepared.potentialMechanisms = collectPotentialMechanisms(prepared);
     }
     return prepared;
   }
@@ -1013,7 +1022,9 @@ SyncCoverCoverageOracle::getDemandTopology(SyncCoverDemandId demand) const {
   }
   const PreparedDemand &prepared = implementation_->getPreparedDemand(demand);
   result.error = prepared.error;
-  result.potentialMechanisms = prepared.potentialMechanisms;
+  if (prepared.error == SyncCoverCoverageError::None) {
+    result.potentialMechanisms = collectPotentialMechanisms(prepared);
+  }
   return result;
 }
 
