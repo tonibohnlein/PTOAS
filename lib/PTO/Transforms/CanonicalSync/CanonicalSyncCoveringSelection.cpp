@@ -94,24 +94,9 @@ MechanismAdapter::solve(CanonicalSyncCoveringSnapshot &snapshot) {
   snapshot.selectionAttempted = true;
   const std::vector<SyncCoverDemandId> demands(activeDemands_.begin(),
                                                activeDemands_.end());
-  SyncCoverSelectionSeed incumbent;
-  incumbent.identity = 1;
-  for (const CanonicalSelectionMechanismRef &provider : incumbentProviders_) {
-    auto mechanism = providers_.find(provider);
-    if (mechanism == providers_.end()) {
-      return func_.emitError(
-          "internal error: canonical covering incumbent provider is missing");
-    }
-    incumbent.mechanisms.push_back(mechanism->second);
-  }
-  llvm::sort(incumbent.mechanisms);
-  incumbent.mechanisms.erase(
-      std::unique(incumbent.mechanisms.begin(), incumbent.mechanisms.end()),
-      incumbent.mechanisms.end());
-  const std::vector<SyncCoverSelectionSeed> seeds =
-      incumbent.mechanisms.empty()
-          ? std::vector<SyncCoverSelectionSeed>{}
-          : std::vector<SyncCoverSelectionSeed>{std::move(incumbent)};
+  // No external incumbent exists since the legacy selector's removal; the
+  // solver's own fallback-barrier net catches component-search truncation.
+  const std::vector<SyncCoverSelectionSeed> seeds;
   std::vector<SyncCoverMechanismId> protocolMechanisms;
   for (const CanonicalEventBundleCandidate &bundle : eventBundles_) {
     const bool ownershipProtocol =

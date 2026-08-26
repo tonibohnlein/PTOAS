@@ -151,7 +151,6 @@ private:
   std::map<std::pair<SyncCoverMechanismId, std::size_t>, std::size_t>
       eventResourceUses_;
   std::vector<CanonicalEventBundleCandidate> eventBundles_;
-  std::set<CanonicalSelectionMechanismRef> incumbentProviders_;
   std::vector<SyncCoverDemandId> activeDemands_;
   std::size_t unmaterializableSlotProtocols_ = 0;
 };

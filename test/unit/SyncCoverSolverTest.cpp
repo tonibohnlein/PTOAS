@@ -191,9 +191,10 @@ bool testCutGuidedExactSelection() {
                           1 &&
                       result.finalVerificationStatistics.demandPreparations ==
                           1 &&
-                      result.finalVerificationStatistics.coverageQueries == 1,
-                  "solver batches incidence once and uses one independent "
-                  "final verification");
+                      result.finalVerificationStatistics.coverageQueries == 2,
+                  "solver batches incidence once and shares one independent "
+                  "post-search oracle between the oracle-checked redundancy "
+                  "pass and final verification");
 
   SyncCoverSolverOptions greedyOptions;
   greedyOptions.exactMechanismThreshold = 0;

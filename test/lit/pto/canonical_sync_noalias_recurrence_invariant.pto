@@ -233,7 +233,7 @@ module {
 
 // MONOTONIC-LABEL: PTOCanonicalSyncPlan @recurrence_mayalias
 // MONOTONIC-SAME: requirements=21 conservative-requirements=26
-// MONOTONIC-SAME: barriers=0 events=8 ownership-cycles=0
+// MONOTONIC-SAME: barriers=0 events=4 ownership-cycles=0
 // MONOTONIC: event{{.*}} PIPE_MTE3 -> PIPE_MTE2 {{.*}}recurrence=yes
 
 // MODE-LABEL: PTOCanonicalSyncPlan @recurrence_mayalias

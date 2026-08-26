@@ -740,19 +740,9 @@ void improveWithGroundedColumns(
   }
 }
 
-bool finalVerify(const SyncCoverMechanismUniverse &universe,
-                 const std::vector<SyncCoverDemandId> &demands,
-                 const std::vector<SyncCoverMechanismId> &selected,
-                 SyncCoverResourceSelection &resources,
-                 SyncCoverStructuralCost &cost,
-                 SyncCoverCoverageStatistics &statistics,
-                 std::optional<SyncCoverDemandId> &failedDemand) {
-  const SyncCoverSelectionEvaluator evaluator(universe);
-  const SyncCoverSelectionEvaluation evaluation = evaluator.evaluate(selected);
-  if (!evaluation) {
-    return false;
-  }
-  SyncCoverCoverageOracle oracle(universe.getGraph());
+std::vector<SyncCoverDemandId>
+uniqueCoverageDemands(const SyncCoverMechanismUniverse &universe,
+                      const std::vector<SyncCoverDemandId> &demands) {
   std::set<DemandCoverageKey> verified;
   std::vector<SyncCoverDemandId> uniqueDemands;
   uniqueDemands.reserve(demands.size());
@@ -765,28 +755,82 @@ bool finalVerify(const SyncCoverMechanismUniverse &universe,
                           requirement.distance,
                           requirement.sourceGuard.literals,
                           requirement.targetGuard.literals};
-    if (!verified.insert(std::move(key)).second) {
-      continue;
+    if (verified.insert(std::move(key)).second) {
+      uniqueDemands.push_back(demand);
     }
-    uniqueDemands.push_back(demand);
   }
+  return uniqueDemands;
+}
+
+bool oracleCoversAll(const SyncCoverCoverageOracle &oracle,
+                     const std::vector<SyncCoverDemandId> &uniqueDemands,
+                     const std::vector<SyncCoverMechanismId> &selected,
+                     std::optional<SyncCoverDemandId> *failedDemand = nullptr) {
   const std::vector<SyncCoverCoverageResult> coverages =
       oracle.checkDemandsCanonicalSelection(uniqueDemands, selected);
   if (coverages.size() != uniqueDemands.size()) {
-    statistics = oracle.getStatistics();
     return false;
   }
   for (std::size_t index = 0; index < coverages.size(); ++index) {
     const SyncCoverCoverageResult &coverage = coverages[index];
     if (!coverage || !coverage.covered) {
-      failedDemand = uniqueDemands[index];
-      statistics = oracle.getStatistics();
+      if (failedDemand) {
+        *failedDemand = uniqueDemands[index];
+      }
       return false;
     }
   }
+  return true;
+}
+
+/// Grounded bitsets under-approximate coverage: transitive covers absent
+/// from the column universe are invisible to removeRedundant. Re-check the
+/// rejected deletions of the final, small selection against the oracle so a
+/// mechanism whose demands are covered through paths outside the grounded
+/// columns can still be dropped.
+void oracleRemoveRedundant(const SyncCoverSelectionEvaluator &evaluator,
+                           const SyncCoverGroundedInstance &instance,
+                           const SyncCoverCoverageOracle &oracle,
+                           const std::vector<SyncCoverDemandId> &uniqueDemands,
+                           std::vector<SyncCoverMechanismId> &selected,
+                           SyncCoverStructuralCost &cost,
+                           std::size_t &evaluations) {
+  for (std::size_t index = selected.size(); index > 0; --index) {
+    std::vector<SyncCoverMechanismId> candidate = selected;
+    candidate.erase(candidate.begin() + static_cast<std::ptrdiff_t>(index - 1));
+    ++evaluations;
+    const std::optional<SearchEvaluation> evaluation =
+        evaluateSelection(evaluator, instance, candidate);
+    const bool improves =
+        evaluation && syncCoverStructuralCostLess(evaluation->cost, cost);
+    if (!improves) {
+      continue;
+    }
+    if (instance.coversAll(candidate) ||
+        oracleCoversAll(oracle, uniqueDemands, candidate)) {
+      selected = std::move(candidate);
+      cost = evaluation->cost;
+    }
+  }
+}
+
+bool finalVerify(const SyncCoverMechanismUniverse &universe,
+                 const SyncCoverCoverageOracle &oracle,
+                 const std::vector<SyncCoverDemandId> &uniqueDemands,
+                 const std::vector<SyncCoverMechanismId> &selected,
+                 SyncCoverResourceSelection &resources,
+                 SyncCoverStructuralCost &cost,
+                 std::optional<SyncCoverDemandId> &failedDemand) {
+  const SyncCoverSelectionEvaluator evaluator(universe);
+  const SyncCoverSelectionEvaluation evaluation = evaluator.evaluate(selected);
+  if (!evaluation) {
+    return false;
+  }
+  if (!oracleCoversAll(oracle, uniqueDemands, selected, &failedDemand)) {
+    return false;
+  }
   resources = evaluation.resources;
   cost = evaluation.cost;
-  statistics = oracle.getStatistics();
   return true;
 }
 
@@ -887,10 +931,43 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
         componentResult.truncation.evaluationLimit;
     result.optimalityProven &= componentResult.optimalityProven;
     if (!componentResult.selected) {
-      result.error = SyncCoverSelectionError::SearchIncomplete;
+      // Safety net for evaluation-budget truncation: cover every demand in
+      // the component with an all-barrier column (barriers hold no event
+      // IDs, so this is always resource-feasible). Optimality is already
+      // demoted by the truncation above; only fail when a demand has no
+      // barrier-only column at all.
+      std::vector<SyncCoverMechanismId> fallback;
+      bool rescued = true;
+      for (SyncCoverDemandId demand : component.demands) {
+        const std::size_t local = localDemand(instance, demand);
+        const auto barrierOnly = [&](SyncCoverGroundedColumnId columnId) {
+          const SyncCoverGroundedColumn &column = instance.columns[columnId];
+          return std::all_of(column.members.begin(), column.members.end(),
+                             [&](SyncCoverMechanismId member) {
+                               return instance.mechanisms[member].kind ==
+                                      SyncCoverMechanismKind::Barrier;
+                             });
+        };
+        const auto column =
+            std::find_if(instance.demandColumns[local].begin(),
+                         instance.demandColumns[local].end(), barrierOnly);
+        if (column == instance.demandColumns[local].end()) {
+          rescued = false;
+          break;
+        }
+        const SyncCoverGroundedColumn &members = instance.columns[*column];
+        fallback.insert(fallback.end(), members.members.begin(),
+                        members.members.end());
+      }
+      if (!rescued) {
+        result.error = SyncCoverSelectionError::SearchIncomplete;
+        result.optimalityProven = false;
+        result.failedComponent = component.id;
+        return result;
+      }
       result.optimalityProven = false;
-      result.failedComponent = component.id;
-      return result;
+      selected.insert(selected.end(), fallback.begin(), fallback.end());
+      continue;
     }
     selected.insert(selected.end(), componentResult.selected->begin(),
                     componentResult.selected->end());
@@ -923,14 +1000,26 @@ SyncCoverSelectionResult mlir::pto::solveSyncCoverSelection(
     }
   }
 
+  // The post-search oracle is prepared fresh from the graph, independent of
+  // the grounded bitsets the search consumed: both the oracle-checked
+  // redundancy pass and the final whole-plan verification see topologies the
+  // search never touched.
+  SyncCoverCoverageOracle finalOracle(universe.getGraph());
+  const std::vector<SyncCoverDemandId> uniqueDemands =
+      uniqueCoverageDemands(universe, demands);
+  oracleRemoveRedundant(evaluator, instance, finalOracle, uniqueDemands,
+                        selected, selectedCost, result.redundancyEvaluations);
+
   result.mechanisms = selected;
-  if (!finalVerify(universe, demands, result.mechanisms, result.resources,
-                   selectedCost, result.finalVerificationStatistics,
+  if (!finalVerify(universe, finalOracle, uniqueDemands, result.mechanisms,
+                   result.resources, selectedCost,
                    result.failedFinalDemand)) {
+    result.finalVerificationStatistics = finalOracle.getStatistics();
     result.error = SyncCoverSelectionError::FinalVerificationFailed;
     result.optimalityProven = false;
     return result;
   }
+  result.finalVerificationStatistics = finalOracle.getStatistics();
   result.cost = std::move(selectedCost);
   return result;
 }
