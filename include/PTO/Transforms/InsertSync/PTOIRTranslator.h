@@ -21,6 +21,9 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <memory>
+#include <vector>
  
 namespace mlir {
 namespace pto {
@@ -63,6 +66,8 @@ private:
   Buffer2MemInfoMap &buffer2MemInfoMap_;
   MemoryDependentAnalyzer &memAnalyzer_;
   SyncAnalysisMode mode_;
+  bool usePreciseGmRanges_ = false;
+  std::vector<std::unique_ptr<BaseMemInfo>> operationMemInfos_;
  
   // --- 递归遍历逻辑 ---
   void RecursionIR(Region *region);
@@ -77,6 +82,9 @@ private:
   // 处理 View/Alias (MakeTensorView, Subview, Mov)
   void UpdateAliasBufferInfo(Value result, Value source);
   void UpdateConservativeAliasBufferInfo(Value result, Value source);
+  void UpdateAddPtrAliasBufferInfo(pto::AddPtrOp op);
+  void UpdateMakeTensorViewAliasBufferInfo(pto::MakeTensorViewOp op);
+  void UpdatePartitionViewAliasBufferInfo(pto::PartitionViewOp op);
   void UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op);
   LogicalResult UpdateIntToPtrOpMemInfo(pto::IntToPtrOp op);
   void UpdateMultiTileGetAliasBufferInfo(pto::MultiTileGetOp op);
@@ -93,6 +101,8 @@ private:
   void UpdatePTOOpInfo(Operation *op);
   void UpdatePTOOpInfoWithPipeline(Operation *op, PipelineType pipe,
                                    bool skipIfNoMemInfo = false);
+  void UpdateScalarAccessInfo(Value pointer, Value offset,
+                              SmallVector<const BaseMemInfo *> &accesses);
   void UpdateMacroOpInfo(Operation *op);
   void MakeMacroCompound(Operation *op, PipelineType pipe, ValueRange defValues,
                          ValueRange useValues, int macroPhaseId);
