@@ -81,12 +81,6 @@ TEXT_RULES = (
              "prefer a scoped lock wrapper"),
     TextRule(CPP, re.compile(r"\b(?:0[xX][0-9A-Fa-f]+|\d+)l+\b"), "warning", "G.CNS.01-CPP",
              "use an uppercase L integer suffix"),
-    TextRule(CPP, re.compile(r"^\s*(?:if|for|while)\s*\([^;]*\)\s*$"), "error", "G.FMT.11-CPP",
-             "put the control-statement body in braces"),
-    TextRule(CPP, re.compile(r"^\s*(?:else|do)\s*$"), "error", "G.FMT.11-CPP",
-             "put the control-statement body in braces"),
-    TextRule(CPP, re.compile(r"^\s*(?:if|for|while)\s*\([^;]*\)\s+[^{\s].*$"), "error",
-             "G.FMT.11-CPP", "put the control-statement body in braces"),
     TextRule(PYTHON, re.compile(r"\b(?:eval|exec)\s*\("), "error", "G.EDV.01",
              "do not evaluate code from data"),
     TextRule(PYTHON, re.compile(r"shell\s*=\s*" + r"True"), "error", "G.EDV.04",
@@ -261,6 +255,127 @@ def scan_changed_lines(lines: list[ChangedLine]) -> list[Finding]:
     return findings
 
 
+CPP_CONTROL_START = re.compile(r"^\s*(?:(?:else\s+)?if|for|while)\b")
+CPP_BARE_BRANCH = re.compile(r"^\s*(?:else|do)\s*(?://.*)?$")
+
+
+def first_cpp_token(text: str) -> str:
+    """Return the first non-comment token character in a C++ suffix."""
+    index = 0
+    while index < len(text):
+        if text[index].isspace():
+            index += 1
+            continue
+        if text.startswith("//", index):
+            newline = text.find("\n", index + 2)
+            if newline < 0:
+                return ""
+            index = newline + 1
+            continue
+        if text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            if end < 0:
+                return ""
+            index = end + 2
+            continue
+        return text[index]
+    return ""
+
+
+def cpp_control_body_is_braced(lines: list[str], start: int) -> bool:
+    """Check one if/for/while header using balanced condition parentheses."""
+    text = "\n".join(lines[start:])
+    match = CPP_CONTROL_START.match(text)
+    if match is None:
+        return True
+    opening = text.find("(", match.end())
+    if opening < 0:
+        return True
+
+    depth = 0
+    quote = ""
+    escaped = False
+    line_comment = False
+    block_comment = False
+    index = opening
+    while index < len(text):
+        character = text[index]
+        following = text[index + 1] if index + 1 < len(text) else ""
+        if line_comment:
+            if character == "\n":
+                line_comment = False
+            index += 1
+            continue
+        if block_comment:
+            if character == "*" and following == "/":
+                block_comment = False
+                index += 2
+            else:
+                index += 1
+            continue
+        if quote:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = ""
+            index += 1
+            continue
+        if character == "/" and following == "/":
+            line_comment = True
+            index += 2
+            continue
+        if character == "/" and following == "*":
+            block_comment = True
+            index += 2
+            continue
+        if character in {'"', "'"}:
+            quote = character
+            index += 1
+            continue
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                return first_cpp_token(text[index + 1:]) == "{"
+        index += 1
+    return True
+
+
+def scan_cpp_control_braces(repo: Path, changed_lines: list[ChangedLine]) -> list[Finding]:
+    """Check changed C++ controls without misreading nested call parentheses."""
+    findings: list[Finding] = []
+    contents: dict[Path, list[str]] = {}
+    seen: set[tuple[Path, int]] = set()
+    for changed in changed_lines:
+        key = (changed.path, changed.number)
+        if key in seen or language_for(changed.path) != "cpp":
+            continue
+        seen.add(key)
+        if not CPP_CONTROL_START.match(changed.text) and not CPP_BARE_BRANCH.match(changed.text):
+            continue
+        if changed.path not in contents:
+            content = read_text_file(repo, changed.path)
+            if content is None:
+                continue
+            contents[changed.path] = content.splitlines()
+        lines = contents[changed.path]
+        start = changed.number - 1
+        if start < 0 or start >= len(lines):
+            continue
+        if CPP_BARE_BRANCH.match(changed.text):
+            suffix = "\n".join(lines[start + 1:])
+            braced = first_cpp_token(suffix) == "{"
+        else:
+            braced = cpp_control_body_is_braced(lines, start)
+        if not braced:
+            findings.append(Finding(changed.path, changed.number, "error", "G.FMT.11-CPP",
+                                    "put the control-statement body in braces"))
+    return findings
+
+
 def first_content_line(content: str) -> str:
     lines = content.splitlines()
     return lines[0] if lines else ""
@@ -328,7 +443,8 @@ def main() -> int:
     untracked = added - nul_paths(run_git(repo, ["diff", "--name-only", "--diff-filter=A", "-z",
                                                  base, "--"]))
     lines = parse_diff(tracked_diff) + untracked_lines(repo, untracked)
-    findings = scan_changed_lines(lines) + scan_file_constraints(repo, supported, added)
+    findings = (scan_changed_lines(lines) + scan_cpp_control_braces(repo, lines) +
+                scan_file_constraints(repo, supported, added))
     severity_order = {"error": 0, "warning": 1, "note": 2}
     findings.sort(key=lambda item: (item.path.as_posix(), item.line, severity_order[item.severity], item.rule))
     for finding in findings:

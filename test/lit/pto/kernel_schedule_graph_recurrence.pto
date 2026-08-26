@@ -66,7 +66,7 @@ module {
 // CANONICAL-DAG: dependency 0 -> 0 kind=memory-waw distance=1
 
 // COVERING-LABEL: PTOCanonicalSyncPlan @scalar_recurrence
-// COVERING: covering-shadow status=graph-ready scopes=3 controls=0 nodes=4
+// COVERING: covering status=graph-ready scopes=3 controls=0 nodes=4
 // COVERING-SAME: fixed-edges=10 recurrence-carries=4
 // COVERING-SAME: conservative-demands=9 active-demands=9 intrinsic-demands=0
 // COVERING: covering-scope[1] parent=0 must-execute=yes loop=yes
@@ -76,7 +76,7 @@ module {
 // COVERING: covering-edge[10] 1 -> 1 kind=completion-supply scope=1 distance=1 origin=recurrence-carry
 // COVERING: covering-demand[8] 2 -> 1 kind=ssa scope=1 distance=1 active=yes
 // COVERING-LABEL: PTOCanonicalSyncPlan @nested_recurrence_owners
-// COVERING: covering-shadow status=graph-ready scopes=5 controls=0 nodes=1
+// COVERING: covering status=graph-ready scopes=5 controls=0 nodes=1
 // COVERING-SAME: fixed-edges=0 recurrence-carries=2
 // COVERING-SAME: conservative-demands=6 active-demands=6 intrinsic-demands=0
 // COVERING: covering-scope[1] parent=0 must-execute=yes loop=yes
