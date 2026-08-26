@@ -42,12 +42,9 @@ struct SyncCoverColumnGeneratorReport {
   std::size_t admitted = 0;
   std::size_t rejectedByVerifier = 0;
   std::size_t skippedByCapability = 0;
-  std::size_t skippedByContext = 0;
-  std::size_t skippedByMissingDomain = 0;
   std::size_t inspections = 0;
   std::size_t supplyEdges = 0;
   bool truncated = false;
-  std::vector<SyncCoverMechanismId> admittedIds;
 };
 
 class SyncCoverColumnGenerator {
