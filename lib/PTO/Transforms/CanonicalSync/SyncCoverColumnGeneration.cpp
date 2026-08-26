@@ -137,7 +137,6 @@ groupLinearCrossPipeDemands(
     const std::optional<LinearDemand> demand =
         getLinearDemand(context, graph, demandId);
     if (!demand) {
-      ++report.skippedByContext;
       continue;
     }
     if (demand->sourceResource == demand->targetResource) {
@@ -208,7 +207,6 @@ public:
       const SyncCoverResourceDomain *domain = findDomain(
           universe, SyncCoverResourceKind::EventId, source, target);
       if (!domain) {
-        report.skippedByMissingDomain += entry.second.size();
         continue;
       }
       for (const LinearDemand &demand : entry.second) {
@@ -225,7 +223,6 @@ public:
                              std::nullopt};
         if (added && added.index) {
           ++report.admitted;
-          report.admittedIds.push_back(*added.index);
         } else {
           ++report.rejectedByVerifier;
         }
@@ -259,7 +256,6 @@ public:
       const SyncCoverResourceDomain *domain = findDomain(
           universe, SyncCoverResourceKind::EventId, source, target);
       if (!domain) {
-        report.skippedByMissingDomain += entry.second.size();
         continue;
       }
       const std::vector<LinearDemand> &points = entry.second;
@@ -282,7 +278,6 @@ public:
           continue;
         }
         if (points[index].sourceOrder >= minimumTargetOrder) {
-          ++report.skippedByContext;
           continue;
         }
         if (!chargeCandidate(report, context.options, prefix.size())) {
@@ -304,7 +299,6 @@ public:
                       std::nullopt};
         if (added && added.index) {
           ++report.admitted;
-          report.admittedIds.push_back(*added.index);
         } else {
           ++report.rejectedByVerifier;
         }
@@ -333,7 +327,6 @@ public:
       const std::optional<LinearDemand> demand =
           getLinearDemand(context, graph, demandId);
       if (!demand) {
-        ++report.skippedByContext;
         continue;
       }
       if (demand->sourceResource != demand->targetResource) {
@@ -395,7 +388,6 @@ public:
             universe.addMechanism(descriptor);
         if (added && added.index) {
           ++report.admitted;
-          report.admittedIds.push_back(*added.index);
         } else {
           ++report.rejectedByVerifier;
         }

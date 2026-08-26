@@ -572,7 +572,6 @@ LogicalResult emitCanonicalSyncPlan(func::FuncOp func,
 
 StringRef stringifyCanonicalDependencyKind(CanonicalDependencyKind kind);
 StringRef stringifyCanonicalGMAliasPolicy(CanonicalGMAliasPolicy policy);
-StringRef stringifyCanonicalEventBundleKind(CanonicalEventBundleKind kind);
 StringRef
 stringifyCanonicalSelectionMechanismKind(CanonicalSelectionMechanismKind kind);
 StringRef stringifyCanonicalOwnershipKind(CanonicalOwnershipKind kind);

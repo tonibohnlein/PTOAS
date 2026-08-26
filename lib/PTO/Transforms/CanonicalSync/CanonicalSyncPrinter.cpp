@@ -48,19 +48,6 @@ mlir::pto::stringifyCanonicalGMAliasPolicy(CanonicalGMAliasPolicy policy) {
   return "unknown";
 }
 
-StringRef mlir::pto::stringifyCanonicalEventBundleKind(
-    CanonicalEventBundleKind kind) {
-  switch (kind) {
-  case CanonicalEventBundleKind::Standalone:
-    return "standalone";
-  case CanonicalEventBundleKind::Ownership:
-    return "ownership";
-  case CanonicalEventBundleKind::CompositeOwnership:
-    return "composite-ownership";
-  }
-  return "unknown";
-}
-
 StringRef mlir::pto::stringifyCanonicalSelectionMechanismKind(
     CanonicalSelectionMechanismKind kind) {
   switch (kind) {
