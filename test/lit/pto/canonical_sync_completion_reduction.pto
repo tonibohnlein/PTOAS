@@ -1,0 +1,523 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=all' \
+// RUN:   | FileCheck %s --check-prefix=PLAN
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=IR
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=DIRECT
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=covering' \
+// RUN:   | FileCheck %s --check-prefix=COVERING
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @region_transitive(
+      %src: !pto.partition_tensor_view<16x16xf32>,
+      %dst: !pto.partition_tensor_view<16x16xf32>, %condition: i1) {
+    %addr0 = arith.constant 0 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %shared = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    scf.if %condition {
+      pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    pto.tmuls ins(%shared, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+               outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tstore ins(%shared : !pto.tile_buf<vec, 16x16xf32>)
+               outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+    return
+  }
+
+  func.func @conditional_path_preserved(
+      %src: !pto.partition_tensor_view<16x16xf32>,
+      %dst: !pto.partition_tensor_view<16x16xf32>, %condition: i1) {
+    %addr0 = arith.constant 0 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %shared = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+              outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    scf.if %condition {
+      pto.tmuls ins(%shared, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    pto.tstore ins(%shared : !pto.tile_buf<vec, 16x16xf32>)
+               outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+    return
+  }
+
+  func.func @zero_trip_path_preserved(
+      %src: !pto.partition_tensor_view<16x16xf32>,
+      %dst: !pto.partition_tensor_view<16x16xf32>, %limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %shared = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+              outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    scf.for %i = %c0 to %limit step %c1 {
+      pto.tmuls ins(%shared, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    pto.tstore ins(%shared : !pto.tile_buf<vec, 16x16xf32>)
+               outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+    return
+  }
+
+  func.func @positive_trip_path_reduced(
+      %src: !pto.partition_tensor_view<16x16xf32>,
+      %dst: !pto.partition_tensor_view<16x16xf32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %shared = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+              outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    scf.for %i = %c0 to %c1 step %c1 {
+      pto.tmuls ins(%shared, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    pto.tstore ins(%shared : !pto.tile_buf<vec, 16x16xf32>)
+               outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+    return
+  }
+
+  func.func @constant_zero_trip_path_preserved(
+      %src: !pto.partition_tensor_view<16x16xf32>,
+      %dst: !pto.partition_tensor_view<16x16xf32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %shared = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+              outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    scf.for %i = %c0 to %c0 step %c1 {
+      pto.tmuls ins(%shared, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    pto.tstore ins(%shared : !pto.tile_buf<vec, 16x16xf32>)
+               outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+    return
+  }
+
+  func.func @positive_outer_zero_inner_path_preserved(
+      %src: !pto.partition_tensor_view<16x16xf32>,
+      %dst: !pto.partition_tensor_view<16x16xf32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %shared = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+              outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    scf.for %outer = %c0 to %c1 step %c1 {
+      scf.for %inner = %c0 to %c0 step %c1 {
+        pto.tmuls ins(%shared, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                   outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+      }
+    }
+    pto.tstore ins(%shared : !pto.tile_buf<vec, 16x16xf32>)
+               outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+    return
+  }
+
+  func.func @positive_trip_conditional_path_preserved(
+      %src: !pto.partition_tensor_view<16x16xf32>,
+      %dst: !pto.partition_tensor_view<16x16xf32>, %condition: i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %shared = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+              outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    scf.for %i = %c0 to %c1 step %c1 {
+      scf.if %condition {
+        pto.tmuls ins(%shared, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                   outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+      }
+    }
+    pto.tstore ins(%shared : !pto.tile_buf<vec, 16x16xf32>)
+               outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+    return
+  }
+
+  func.func @barrier_covers_event(
+      %src_a: !pto.partition_tensor_view<16x16xf32>,
+      %src_x0: !pto.partition_tensor_view<16x16xf32>,
+      %src_x1: !pto.partition_tensor_view<16x16xf32>) {
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %a = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %x0 = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    %x1 = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src_a : !pto.partition_tensor_view<16x16xf32>)
+              outs(%a : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tload ins(%src_x0 : !pto.partition_tensor_view<16x16xf32>)
+              outs(%x0 : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tload ins(%src_x1 : !pto.partition_tensor_view<16x16xf32>)
+              outs(%x1 : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tmuls ins(%a, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+               outs(%a : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+
+  func.func @conditional_barrier_does_not_cover(
+      %src_a: !pto.partition_tensor_view<16x16xf32>,
+      %src_x0: !pto.partition_tensor_view<16x16xf32>,
+      %src_x1: !pto.partition_tensor_view<16x16xf32>, %condition: i1) {
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %a = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %x0 = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    %x1 = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src_a : !pto.partition_tensor_view<16x16xf32>)
+              outs(%a : !pto.tile_buf<vec, 16x16xf32>)
+    scf.if %condition {
+      pto.tload ins(%src_x0 : !pto.partition_tensor_view<16x16xf32>)
+                outs(%x0 : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tload ins(%src_x1 : !pto.partition_tensor_view<16x16xf32>)
+                outs(%x1 : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    pto.tmuls ins(%a, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+               outs(%a : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+
+  func.func @zero_trip_barrier_does_not_cover(
+      %src_a: !pto.partition_tensor_view<16x16xf32>,
+      %src_x0: !pto.partition_tensor_view<16x16xf32>,
+      %src_x1: !pto.partition_tensor_view<16x16xf32>, %limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %a = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %x0 = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    %x1 = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src_a : !pto.partition_tensor_view<16x16xf32>)
+              outs(%a : !pto.tile_buf<vec, 16x16xf32>)
+    scf.for %i = %c0 to %limit step %c1 {
+      pto.tload ins(%src_x0 : !pto.partition_tensor_view<16x16xf32>)
+                outs(%x0 : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tload ins(%src_x1 : !pto.partition_tensor_view<16x16xf32>)
+                outs(%x1 : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    pto.tmuls ins(%a, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+               outs(%a : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+
+  func.func @positive_trip_barrier_covers_event(
+      %src_a: !pto.partition_tensor_view<16x16xf32>,
+      %src_x0: !pto.partition_tensor_view<16x16xf32>,
+      %src_x1: !pto.partition_tensor_view<16x16xf32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %a = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %x0 = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    %x1 = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src_a : !pto.partition_tensor_view<16x16xf32>)
+              outs(%a : !pto.tile_buf<vec, 16x16xf32>)
+    scf.for %i = %c0 to %c1 step %c1 {
+      pto.tload ins(%src_x0 : !pto.partition_tensor_view<16x16xf32>)
+                outs(%x0 : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tload ins(%src_x1 : !pto.partition_tensor_view<16x16xf32>)
+                outs(%x1 : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    pto.tmuls ins(%a, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+               outs(%a : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+
+  func.func @nested_recurrence_not_summarized(
+      %src: !pto.partition_tensor_view<16x16xf32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %loaded = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %computed = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    scf.for %outer = %c0 to %c2 step %c1 {
+      scf.for %inner = %c0 to %c2 step %c1 {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%loaded : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%loaded, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                   outs(%computed : !pto.tile_buf<vec, 16x16xf32>)
+      }
+    }
+    return
+  }
+
+  func.func @nested_recurrence_third_pipe_preserved(
+      %src: !pto.partition_tensor_view<16x16xf32>,
+      %dst_x: !pto.partition_tensor_view<16x16xf32>,
+      %dst_y: !pto.partition_tensor_view<16x16xf32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %x = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %y = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    scf.for %outer = %c0 to %c2 step %c1 {
+      pto.tstore ins(%y : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%dst_y : !pto.partition_tensor_view<16x16xf32>)
+      scf.for %inner = %c0 to %c1 step %c1 {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%x : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tstore ins(%x : !pto.tile_buf<vec, 16x16xf32>)
+                   outs(%dst_x : !pto.partition_tensor_view<16x16xf32>)
+        pto.tmuls ins(%x, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                   outs(%y : !pto.tile_buf<vec, 16x16xf32>)
+      }
+    }
+    return
+  }
+
+  func.func @round_trip_events_replace_barrier(
+      %src0: !pto.partition_tensor_view<16x16xf32>,
+      %src1: !pto.partition_tensor_view<16x16xf32>) {
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %shared = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %computed = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src0 : !pto.partition_tensor_view<16x16xf32>)
+              outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tmuls ins(%shared, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+               outs(%computed : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tload ins(%src1 : !pto.partition_tensor_view<16x16xf32>)
+              outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+
+  func.func @conditional_round_trip_keeps_barrier(
+      %src0: !pto.partition_tensor_view<16x16xf32>,
+      %src1: !pto.partition_tensor_view<16x16xf32>, %condition: i1) {
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %shared = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %computed = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src0 : !pto.partition_tensor_view<16x16xf32>)
+              outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    scf.if %condition {
+      pto.tmuls ins(%shared, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%computed : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    pto.tload ins(%src1 : !pto.partition_tensor_view<16x16xf32>)
+              outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+
+  func.func @synthetic_round_trip_replaces_store_barrier(
+      %src: !pto.partition_tensor_view<16x16xf32>,
+      %dst: !pto.partition_tensor_view<16x16xf32>) {
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %input = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %computed = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+              outs(%input : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tstore ins(%input : !pto.tile_buf<vec, 16x16xf32>)
+               outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+    pto.tmuls ins(%input, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+               outs(%computed : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tstore ins(%computed : !pto.tile_buf<vec, 16x16xf32>)
+               outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+    return
+  }
+
+  func.func @while_synthetic_round_trip_drains(
+      %src: !pto.partition_tensor_view<16x16xf32>,
+      %dst: !pto.partition_tensor_view<16x16xf32>, %limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %computed = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %input = pto.alloc_tile addr = %addr4096 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+              outs(%input : !pto.tile_buf<vec, 16x16xf32>)
+    %final = scf.while (%i = %c0) : (index) -> index {
+      %go = arith.cmpi slt, %i, %limit : index
+      pto.tstore ins(%input : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+      scf.condition(%go) %i : index
+    } do {
+    ^bb0(%i: index):
+      pto.tmuls ins(%input, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%computed : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tstore ins(%computed : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+      %next = arith.addi %i, %c1 : index
+      scf.yield %next : index
+    }
+    return
+  }
+}
+
+// COVERING-LABEL: PTOCanonicalSyncPlan @region_transitive
+// COVERING: covering status=graph-ready scopes={{[1-9][0-9]*}} controls=1 nodes=3
+// COVERING: covering-selection status=ready error=none
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @region_transitive
+// PLAN-SAME: barriers=0 events=2
+// PLAN: fixed 0 -> 1 kind=cross-pipe-issue-order
+// PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=no
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @conditional_path_preserved
+// PLAN: fixed 0 -> 1 kind=cross-pipe-issue-order
+// PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=yes
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @zero_trip_path_preserved
+// PLAN-SAME: barriers=2 events=1
+// PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=yes
+// PLAN: requirement[5] 1 -> 1 kind=memory-raw distance=1 recurrence=yes
+// PLAN: barrier[0] pipe=PIPE_V anchor=before:pto.tmuls anchor-nodes=[1] recurrence=yes
+// PLAN: barrier[2] pipe=PIPE_ALL anchor=before:pto.tstore anchor-nodes=[2]
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @positive_trip_path_reduced
+// PLAN-SAME: barriers=1 events=1
+// PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=no
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @constant_zero_trip_path_preserved
+// PLAN-SAME: barriers=1 events=1
+// PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=yes
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @positive_outer_zero_inner_path_preserved
+// PLAN-SAME: barriers=1 events=1
+// PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=yes
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @positive_trip_conditional_path_preserved
+// PLAN-SAME: barriers=1 events=1
+// PLAN: dependency 0 -> 2 kind=memory-raw distance=0 retained=yes
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @barrier_covers_event
+// PLAN-SAME: barriers=1 events=0
+// PLAN: dependency 0 -> 3 kind=memory-raw distance=0 retained=yes
+// PLAN: requirement[2] 1 -> 2 kind=memory-waw distance=0 recurrence=no
+// PLAN: barrier[0] pipe=PIPE_MTE2 anchor=before:pto.tload anchor-nodes=[2] recurrence=no scope=0 requirements=[2]
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @conditional_barrier_does_not_cover
+// PLAN-SAME: barriers=1 events=1
+// PLAN: dependency 0 -> 3 kind=memory-raw distance=0 retained=yes
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @zero_trip_barrier_does_not_cover
+// PLAN-SAME: barriers=2 events=1
+// PLAN: dependency 0 -> 3 kind=memory-raw distance=0 retained=yes
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @positive_trip_barrier_covers_event
+// PLAN-SAME: barriers=1 events=0
+// PLAN: dependency 0 -> 3 kind=memory-raw distance=0 retained=yes
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @nested_recurrence_not_summarized
+// PLAN-SAME: barriers=0 events=3
+// PLAN: dependency 1 -> 0 kind=memory-war distance=1 retained=yes
+// PLAN: dependency 1 -> 0 kind=memory-war distance=1 retained=yes
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @nested_recurrence_third_pipe_preserved
+// PLAN-SAME: barriers=2 events=2
+// PLAN: dependency 3 -> 0 kind=memory-raw distance=1 retained=yes
+// PLAN: barrier[5] pipe=PIPE_ALL anchor=before:pto.tstore anchor-nodes=[0] recurrence=yes scope=1
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @round_trip_events_replace_barrier
+// PLAN-SAME: barriers=0 events=2
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @conditional_round_trip_keeps_barrier
+// PLAN-SAME: barriers=1 events=2
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @synthetic_round_trip_replaces_store_barrier
+// PLAN-SAME: barriers=1 events=2
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @while_synthetic_round_trip_drains
+// PLAN-SAME: barriers=2 events=2
+// PLAN: barrier[1] pipe=PIPE_MTE3 anchor=before:pto.tstore anchor-nodes=[1]
+
+// IR-LABEL: func.func @positive_trip_path_reduced
+// IR-NOT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// IR: return
+
+// IR-LABEL: func.func @constant_zero_trip_path_preserved
+// IR: pto.set_flag[<PIPE_MTE2>, <PIPE_V>
+
+// IR-LABEL: func.func @barrier_covers_event
+// IR: pto.tload
+// IR: pto.barrier <PIPE_MTE2>
+// IR-NOT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>
+// IR: pto.tmuls
+
+// IR-LABEL: func.func @conditional_barrier_does_not_cover
+// IR: pto.set_flag[<PIPE_MTE2>, <PIPE_V>
+// IR: scf.if
+// IR: pto.barrier <PIPE_MTE2>
+// IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>
+// IR-NEXT: pto.tmuls
+
+// IR-LABEL: func.func @positive_trip_barrier_covers_event
+// IR-NOT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>
+// IR: return
+
+// IR-LABEL: func.func @round_trip_events_replace_barrier
+// IR: pto.set_flag[<PIPE_MTE2>, <PIPE_V>
+// IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>
+// IR: pto.barrier <PIPE_ALL>
+
+// DIRECT-LABEL: func.func @nested_recurrence_third_pipe_preserved
+// DIRECT: pto.barrier <PIPE_ALL>
+// DIRECT: pto.barrier <PIPE_MTE3>
+// DIRECT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// DIRECT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+// DIRECT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+// DIRECT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+
+// DIRECT-LABEL: func.func @round_trip_events_replace_barrier
+// DIRECT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// DIRECT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// DIRECT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// DIRECT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// DIRECT: pto.barrier <PIPE_ALL>
+
+// IR-LABEL: func.func @conditional_round_trip_keeps_barrier
+// IR: pto.barrier <PIPE_ALL>
+
+// IR-LABEL: func.func @synthetic_round_trip_replaces_store_barrier
+// IR: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// IR: pto.barrier <PIPE_ALL>
+
+// IR-LABEL: func.func @while_synthetic_round_trip_drains
+// IR: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// IR: scf.while
+// IR: pto.barrier <PIPE_MTE3>
+// IR: scf.condition
+// IR: pto.barrier <PIPE_ALL>
+// IR: pto.tmuls
+// IR: pto.set_flag[<PIPE_V>, <PIPE_MTE3>
+// IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>
+// IR: scf.yield

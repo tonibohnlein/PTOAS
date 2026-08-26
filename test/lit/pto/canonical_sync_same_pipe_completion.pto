@@ -1,0 +1,63 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: pto-test-opt %t/a3.pto '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=A3
+// RUN: pto-test-opt %t/a5.pto '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=A5
+// RUN: pto-test-opt %t/a5.pto \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=covering' \
+// RUN:   | FileCheck %s --check-prefix=COVERING
+
+//--- a3.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @same_vector_pipe() {
+    %addr0 = arith.constant 0 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %tile = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tmuls ins(%tile, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+               outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tmuls ins(%tile, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+               outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+}
+
+//--- a5.pto
+module attributes {pto.target_arch = "a5"} {
+  func.func @same_vector_pipe() {
+    %addr0 = arith.constant 0 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %tile = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tmuls ins(%tile, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+               outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tmuls ins(%tile, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+               outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+}
+
+// A3-LABEL: func.func @same_vector_pipe
+// A3: pto.tmuls
+// A3-NEXT: pto.barrier <PIPE_V>
+// A3-NEXT: pto.tmuls
+
+// A5-LABEL: func.func @same_vector_pipe
+// A5: pto.tmuls
+// A5-NOT: pto.barrier <PIPE_V>
+// A5: pto.tmuls
+
+// COVERING-LABEL: PTOCanonicalSyncPlan @same_vector_pipe
+// COVERING: covering status=graph-ready scopes=1 controls=0 nodes=2
+// COVERING-SAME: fixed-edges=1 recurrence-carries=0
+// COVERING-SAME: conservative-demands=3 active-demands=3 intrinsic-demands=0
+// COVERING: covering-edge[0] 0 -> 1 kind=completion-supply scope=0 distance=0 origin=fixed
+// COVERING: covering-demand[2] 0 -> 1 kind=memory-waw scope=0 distance=0 active=yes

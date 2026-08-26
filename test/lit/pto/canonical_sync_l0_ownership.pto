@@ -1,0 +1,351 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=events' \
+// RUN:   | FileCheck %s --check-prefix=PLAN
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=ownership' \
+// RUN:   | FileCheck %s --check-prefix=OWNERSHIP
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=covering' \
+// RUN:   | FileCheck %s --check-prefix=COVERING
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-canonical-sync=event-id-num-max=1' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=SCARCE
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @two_slot_l0_ownership(%limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %addr0 = arith.constant 0 : i64
+    %addr16384 = arith.constant 16384 : i64
+    %addr32768 = arith.constant 32768 : i64
+
+    %left_source = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %right_source = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x256xf16, slayout=col_major>
+    %left0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %left1 = pto.alloc_tile addr = %addr16384 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %right0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+    %right1 = pto.alloc_tile addr = %addr32768 :
+      !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+    %acc = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>
+
+    scf.for %i = %c0 to %limit step %c1 {
+      pto.textract ins(%left_source, %c0, %c0 :
+        !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+        outs(%left0 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+      pto.textract ins(%right_source, %c0, %c0 :
+        !pto.tile_buf<mat, 128x256xf16, slayout=col_major>, index, index)
+        outs(%right0 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+      pto.tmatmul.acc ins(%acc, %left0, %right0 :
+        !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+        !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+        !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+        outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+      pto.textract ins(%left_source, %c0, %c64 :
+        !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+        outs(%left1 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+      pto.textract ins(%right_source, %c64, %c0 :
+        !pto.tile_buf<mat, 128x256xf16, slayout=col_major>, index, index)
+        outs(%right1 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+      pto.tmatmul.acc ins(%acc, %left1, %right1 :
+        !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+        !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+        !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+        outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+    }
+    return
+  }
+
+  func.func @branched_two_slot_l0_ownership(%limit: index, %condition: i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %addr0 = arith.constant 0 : i64
+    %addr16384 = arith.constant 16384 : i64
+    %addr32768 = arith.constant 32768 : i64
+
+    %left_source = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %right_source = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x256xf16, slayout=col_major>
+    %left0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %left1 = pto.alloc_tile addr = %addr16384 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %right0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+    %right1 = pto.alloc_tile addr = %addr32768 :
+      !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+    %acc = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>
+
+    scf.for %i = %c0 to %limit step %c1 {
+      scf.if %condition {
+        pto.textract ins(%left_source, %c0, %c0 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left0 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        pto.textract ins(%right_source, %c0, %c0 :
+          !pto.tile_buf<mat, 128x256xf16, slayout=col_major>, index, index)
+          outs(%right0 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+        pto.tmatmul.acc ins(%acc, %left0, %right0 :
+          !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+        pto.textract ins(%left_source, %c0, %c64 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left1 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        pto.textract ins(%right_source, %c64, %c0 :
+          !pto.tile_buf<mat, 128x256xf16, slayout=col_major>, index, index)
+          outs(%right1 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+        pto.tmatmul.acc ins(%acc, %left1, %right1 :
+          !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+      } else {
+        pto.textract ins(%left_source, %c0, %c64 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left1 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        pto.textract ins(%right_source, %c64, %c0 :
+          !pto.tile_buf<mat, 128x256xf16, slayout=col_major>, index, index)
+          outs(%right1 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+        pto.tmatmul.acc ins(%acc, %left1, %right1 :
+          !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+        pto.textract ins(%left_source, %c0, %c0 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left0 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        pto.textract ins(%right_source, %c0, %c0 :
+          !pto.tile_buf<mat, 128x256xf16, slayout=col_major>, index, index)
+          outs(%right0 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+        pto.tmatmul.acc ins(%acc, %left0, %right0 :
+          !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+      }
+    }
+    return
+  }
+
+  func.func @nested_consumer_l0_ownership(%limit: index, %condition: i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %addr0 = arith.constant 0 : i64
+    %addr16384 = arith.constant 16384 : i64
+    %addr32768 = arith.constant 32768 : i64
+
+    %left_source = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %right_source = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x256xf16, slayout=col_major>
+    %left0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %left1 = pto.alloc_tile addr = %addr16384 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %right0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+    %right1 = pto.alloc_tile addr = %addr32768 :
+      !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+    %acc = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>
+
+    scf.for %i = %c0 to %limit step %c1 {
+      pto.textract ins(%left_source, %c0, %c0 :
+        !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+        outs(%left0 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+      pto.textract ins(%right_source, %c0, %c0 :
+        !pto.tile_buf<mat, 128x256xf16, slayout=col_major>, index, index)
+        outs(%right0 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+      scf.if %condition {
+        pto.tmatmul.acc ins(%acc, %left0, %right0 :
+          !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+      } else {
+        pto.tmatmul.acc ins(%acc, %left0, %right0 :
+          !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+      }
+      pto.textract ins(%left_source, %c0, %c64 :
+        !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+        outs(%left1 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+      pto.textract ins(%right_source, %c64, %c0 :
+        !pto.tile_buf<mat, 128x256xf16, slayout=col_major>, index, index)
+        outs(%right1 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+      scf.if %condition {
+        pto.tmatmul.acc ins(%acc, %left1, %right1 :
+          !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+      } else {
+        pto.tmatmul.acc ins(%acc, %left1, %right1 :
+          !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+      }
+    }
+    return
+  }
+
+  func.func @overlapping_l0_slots_refused(%limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %addr0 = arith.constant 0 : i64
+    %addr8192 = arith.constant 8192 : i64
+    %addr32768 = arith.constant 32768 : i64
+
+    %left_source = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %right_source = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x256xf16, slayout=col_major>
+    %left0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %left1 = pto.alloc_tile addr = %addr8192 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %right0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+    %right1 = pto.alloc_tile addr = %addr32768 :
+      !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+    %acc = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>
+
+    scf.for %i = %c0 to %limit step %c1 {
+      pto.textract ins(%left_source, %c0, %c0 :
+        !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+        outs(%left0 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+      pto.textract ins(%right_source, %c0, %c0 :
+        !pto.tile_buf<mat, 128x256xf16, slayout=col_major>, index, index)
+        outs(%right0 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+      pto.tmatmul.acc ins(%acc, %left0, %right0 :
+        !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+        !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+        !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+        outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+      pto.textract ins(%left_source, %c0, %c64 :
+        !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+        outs(%left1 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+      pto.textract ins(%right_source, %c64, %c0 :
+        !pto.tile_buf<mat, 128x256xf16, slayout=col_major>, index, index)
+        outs(%right1 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+      pto.tmatmul.acc ins(%acc, %left1, %right1 :
+        !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+        !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+        !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+        outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @two_slot_l0_ownership
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+// CHECK-NEXT: pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+// CHECK: scf.for
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+// CHECK: pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+// CHECK: pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+// CHECK: pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
+// CHECK: pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+// CHECK-LABEL: func.func @branched_two_slot_l0_ownership
+// CHECK: scf.if
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+// CHECK: pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+// CHECK: } else {
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+// CHECK: pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @two_slot_l0_ownership
+// PLAN: PIPE_MTE1 -> PIPE_M {{.*}}width=2{{.*}}traces=1 ownership=yes ownership-cycle=1 ownership-role=ready
+// PLAN: PIPE_M -> PIPE_MTE1 {{.*}}width=2{{.*}}traces=3 ownership=yes ownership-cycle=1 ownership-role=release
+// PLAN-LABEL: PTOCanonicalSyncPlan @branched_two_slot_l0_ownership
+// PLAN: PIPE_MTE1 -> PIPE_M {{.*}}width=2{{.*}}traces=2 ownership=yes ownership-cycle=1 ownership-role=ready
+// PLAN: PIPE_M -> PIPE_MTE1 {{.*}}width=2{{.*}}traces=4 ownership=yes ownership-cycle=1 ownership-role=release
+// PLAN-LABEL: PTOCanonicalSyncPlan @nested_consumer_l0_ownership
+// PLAN: PIPE_MTE1 -> PIPE_M {{.*}}width=2{{.*}}completions=8 traces=1 ownership=yes
+// PLAN: PIPE_M -> PIPE_MTE1 {{.*}}width=2{{.*}}completions=8 traces=3 ownership=yes
+// PLAN-LABEL: PTOCanonicalSyncPlan @overlapping_l0_slots_refused
+// PLAN-NOT: ownership=yes
+
+// OWNERSHIP-LABEL: PTOCanonicalSyncPlan @two_slot_l0_ownership
+// OWNERSHIP-SAME: ownership-cycles=1
+// OWNERSHIP: ownership[0] id=1 kind=l0-operand PIPE_MTE1 -> PIPE_M lanes=2 paths=1
+// OWNERSHIP: lane[0] slots=[left@0+16384, right@0+32768]
+// OWNERSHIP: lane[1] slots=[left@16384+16384, right@32768+32768]
+// OWNERSHIP: path[0] uses=2 lane-order=[0, 1]
+// OWNERSHIP-LABEL: PTOCanonicalSyncPlan @branched_two_slot_l0_ownership
+// OWNERSHIP-SAME: ownership-cycles=1
+// OWNERSHIP: ownership[0] id=1 kind=l0-operand PIPE_MTE1 -> PIPE_M lanes=2 paths=2
+// OWNERSHIP: path[0] uses=2 lane-order=[0, 1]
+// OWNERSHIP: path[1] uses=2 lane-order=[1, 0]
+// OWNERSHIP-LABEL: PTOCanonicalSyncPlan @nested_consumer_l0_ownership
+// OWNERSHIP-SAME: ownership-cycles=1
+// OWNERSHIP: ownership[0] id=1 kind=l0-operand PIPE_MTE1 -> PIPE_M lanes=2 paths=1
+// OWNERSHIP: path[0] uses=2 lane-order=[0, 1]
+// OWNERSHIP: use[0] lane=0 producers=[0, 1] consumers=[2, 3]
+// OWNERSHIP: use[1] lane=1 producers=[4, 5] consumers=[6, 7]
+// OWNERSHIP-LABEL: PTOCanonicalSyncPlan @overlapping_l0_slots_refused
+// OWNERSHIP-SAME: ownership-cycles=0
+
+// COVERING-LABEL: PTOCanonicalSyncPlan @two_slot_l0_ownership
+// COVERING: covering-slot-lifecycles candidates=4 path-sensitive=0 partial-opportunities=0 truncated=no
+// COVERING: covering-slot-lifecycle[0] domain=0 extent=[0,16384) PIPE_MTE1->PIPE_M
+// COVERING-SAME: ready=[{{[0-9, ]+}}] release=[{{[0-9, ]+}}] accesses=[{{[0-9, ]+}}]
+// COVERING-SAME: extra-accesses=no path-sensitive=no
+// COVERING: covering-slot-protocols candidates=4 path-sensitive-lifecycles=0 access-open-lifecycles=0 unsupported-effect-lifecycles=0 unsupported-distance-releases=0 non-boundary-releases=0 evaluations={{[1-9][0-9]*}} truncated=no
+// COVERING: covering-selection status=ready error=none
+// COVERING-SAME: slot-protocol-candidates=4
+// COVERING-SAME: generated-candidates=4 generated=4
+// COVERING-SAME: mechanisms=30 selected=1
+// COVERING-SAME: providers=[mechanism[{{[0-9]+}}]=event-bundle[{{[0-9]+}}]]
+// COVERING: covering-selection-topology {{.*}}grounding-queries={{[1-9][0-9]*}} coverage-queries=0 {{.*}}final-validations=1
+// COVERING: covering-allocation mechanism[{{[0-9]+}}]=event-bundle[{{[0-9]+}}]
+// COVERING-LABEL: PTOCanonicalSyncPlan @branched_two_slot_l0_ownership
+// COVERING: covering-slot-lifecycles candidates=4 path-sensitive=4 partial-opportunities=0 truncated=no
+// COVERING: covering-slot-protocols candidates=4 path-sensitive-lifecycles=0 access-open-lifecycles=0 unsupported-effect-lifecycles=0 unsupported-distance-releases=0 non-boundary-releases=0 evaluations={{[1-9][0-9]*}} truncated=no
+// COVERING: covering-selection status=ready error=none
+// COVERING-SAME: slot-protocol-candidates=4
+// COVERING-SAME: selected=1
+// COVERING-SAME: providers=[mechanism[{{[0-9]+}}]=event-bundle[{{[0-9]+}}]]
+// COVERING: covering-allocation mechanism[{{[0-9]+}}]=event-bundle[{{[0-9]+}}]
+
+// SCARCE-LABEL: func.func @two_slot_l0_ownership
+// SCARCE: pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+// SCARCE: pto.barrier
+// SCARCE-NOT: EVENT_ID1

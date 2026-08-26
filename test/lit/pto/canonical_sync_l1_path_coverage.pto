@@ -1,0 +1,119 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=events' \
+// RUN:   | FileCheck %s --check-prefix=PLAN
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=IR
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @verified_alternating_l1_coverage(
+      %input: !pto.partition_tensor_view<128x128xf16>, %limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %addr0 = arith.constant 0 : i64
+    %addr16384 = arith.constant 16384 : i64
+    %addr32768 = arith.constant 32768 : i64
+    %a0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %a1 = pto.alloc_tile addr = %addr32768 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %left0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %left1 = pto.alloc_tile addr = %addr16384 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    pto.tload ins(%input : !pto.partition_tensor_view<128x128xf16>)
+      outs(%a0 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+    scf.for %i = %c0 to %limit step %c1 {
+      %parity = arith.remsi %i, %c2 : index
+      %is_even = arith.cmpi eq, %parity, %c0 : index
+      scf.if %is_even {
+        pto.textract ins(%a0, %c0, %c0 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left0 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        %next = arith.addi %i, %c1 : index
+        %has_next = arith.cmpi slt, %next, %limit : index
+        scf.if %has_next {
+          pto.tload ins(%input : !pto.partition_tensor_view<128x128xf16>)
+            outs(%a1 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+        }
+      } else {
+        pto.textract ins(%a1, %c0, %c0 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left1 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        %next = arith.addi %i, %c1 : index
+        %has_next = arith.cmpi slt, %next, %limit : index
+        scf.if %has_next {
+          pto.tload ins(%input : !pto.partition_tensor_view<128x128xf16>)
+            outs(%a0 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+        }
+      }
+    }
+    return
+  }
+
+  func.func @arbitrary_branch_keeps_l1_barriers(
+      %input: !pto.partition_tensor_view<128x128xf16>, %limit: index,
+      %condition: i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %addr16384 = arith.constant 16384 : i64
+    %addr32768 = arith.constant 32768 : i64
+    %a0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %a1 = pto.alloc_tile addr = %addr32768 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %left0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %left1 = pto.alloc_tile addr = %addr16384 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    pto.tload ins(%input : !pto.partition_tensor_view<128x128xf16>)
+      outs(%a0 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+    scf.for %i = %c0 to %limit step %c1 {
+      scf.if %condition {
+        pto.textract ins(%a0, %c0, %c0 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left0 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        %next = arith.addi %i, %c1 : index
+        %has_next = arith.cmpi slt, %next, %limit : index
+        scf.if %has_next {
+          pto.tload ins(%input : !pto.partition_tensor_view<128x128xf16>)
+            outs(%a1 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+        }
+      } else {
+        pto.textract ins(%a1, %c0, %c0 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+          outs(%left1 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+        %next = arith.addi %i, %c1 : index
+        %has_next = arith.cmpi slt, %next, %limit : index
+        scf.if %has_next {
+          pto.tload ins(%input : !pto.partition_tensor_view<128x128xf16>)
+            outs(%a0 : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+        }
+      }
+    }
+    return
+  }
+}
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @verified_alternating_l1_coverage
+// PLAN-SAME: barriers=1 events=2 ownership-cycles=1
+// PLAN: ownership=yes ownership-cycle=1 ownership-role=ready
+// PLAN: ownership=yes ownership-cycle=1 ownership-role=release
+// PLAN-LABEL: PTOCanonicalSyncPlan @arbitrary_branch_keeps_l1_barriers
+// PLAN-SAME: barriers=2 events=0 ownership-cycles=0
+
+// IR-LABEL: func.func @verified_alternating_l1_coverage
+// IR-NOT: pto.barrier <PIPE_MTE2>
+// IR: pto.barrier <PIPE_MTE1>
+// IR: pto.barrier <PIPE_ALL>
+// IR-LABEL: func.func @arbitrary_branch_keeps_l1_barriers
+// IR: pto.barrier <PIPE_ALL>

@@ -1,0 +1,281 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=all' \
+// RUN:   | FileCheck %s --check-prefix=PLAN
+// RUN: pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=IR
+// RUN: pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=events event-id-num-max=2' \
+// RUN:   | FileCheck %s --check-prefix=MONOTONIC
+// RUN: pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=events event-id-num-max=2 assume-distinct-gm-args-noalias=true' \
+// RUN:   | FileCheck %s --check-prefix=MODE
+// RUN: pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=covering' \
+// RUN:   | FileCheck %s --check-prefix=COVERING
+
+module {
+  func.func @recurrence_mayalias(
+      %a : !pto.partition_tensor_view<16x16xf32>,
+      %b : !pto.partition_tensor_view<16x16xf32>,
+      %out : !pto.partition_tensor_view<16x16xf32>, %n : index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %buffer = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+    %sum = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf32>
+
+    scf.for %i = %c0 to %n step %c1 {
+      %next = arith.addi %i, %c1 : index
+      %lo_index = arith.remui %i, %c2 : index
+      %hi_index = arith.remui %next, %c2 : index
+      %lo = pto.multi_tile_get %buffer[%lo_index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      pto.tload ins(%a : !pto.partition_tensor_view<16x16xf32>)
+                outs(%lo : !pto.tile_buf<vec, 16x16xf32>)
+      %hi = pto.multi_tile_get %buffer[%hi_index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      pto.tload ins(%b : !pto.partition_tensor_view<16x16xf32>)
+                outs(%hi : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tadd ins(%lo, %hi : !pto.tile_buf<vec, 16x16xf32>,
+                              !pto.tile_buf<vec, 16x16xf32>)
+               outs(%sum : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tstore ins(%sum : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%out : !pto.partition_tensor_view<16x16xf32>)
+    }
+    return
+  }
+
+  func.func @recurrence_noalias(
+      %a : !pto.partition_tensor_view<16x16xf32>,
+      %b : !pto.partition_tensor_view<16x16xf32>,
+      %out : !pto.partition_tensor_view<16x16xf32>, %n : index)
+      attributes {pto.noalias_pairs = array<i64: 0, 1, 0, 2, 1, 2>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %buffer = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+    %sum = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf32>
+
+    scf.for %i = %c0 to %n step %c1 {
+      %next = arith.addi %i, %c1 : index
+      %lo_index = arith.remui %i, %c2 : index
+      %hi_index = arith.remui %next, %c2 : index
+      %lo = pto.multi_tile_get %buffer[%lo_index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      pto.tload ins(%a : !pto.partition_tensor_view<16x16xf32>)
+                outs(%lo : !pto.tile_buf<vec, 16x16xf32>)
+      %hi = pto.multi_tile_get %buffer[%hi_index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      pto.tload ins(%b : !pto.partition_tensor_view<16x16xf32>)
+                outs(%hi : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tadd ins(%lo, %hi : !pto.tile_buf<vec, 16x16xf32>,
+                              !pto.tile_buf<vec, 16x16xf32>)
+               outs(%sum : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tstore ins(%sum : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%out : !pto.partition_tensor_view<16x16xf32>)
+    }
+    return
+  }
+
+  func.func @distance_shift_mayalias(
+      %a : !pto.partition_tensor_view<16x16xf32>,
+      %b : !pto.partition_tensor_view<16x16xf32>, %n : index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %buffer = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+
+    scf.for %i = %c0 to %n step %c1 {
+      %slot_index = arith.remui %i, %c2 : index
+      %slot = pto.multi_tile_get %buffer[%slot_index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      func.call @write_pair(%a, %slot)
+          : (!pto.partition_tensor_view<16x16xf32>,
+             !pto.tile_buf<vec, 16x16xf32>) -> ()
+      func.call @write_pair(%b, %slot)
+          : (!pto.partition_tensor_view<16x16xf32>,
+             !pto.tile_buf<vec, 16x16xf32>) -> ()
+    }
+    return
+  }
+
+  func.func @distance_shift_noalias(
+      %a : !pto.partition_tensor_view<16x16xf32>,
+      %b : !pto.partition_tensor_view<16x16xf32>, %n : index)
+      attributes {pto.noalias_pairs = array<i64: 0, 1>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %buffer = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+
+    scf.for %i = %c0 to %n step %c1 {
+      %slot_index = arith.remui %i, %c2 : index
+      %slot = pto.multi_tile_get %buffer[%slot_index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      func.call @write_pair(%a, %slot)
+          : (!pto.partition_tensor_view<16x16xf32>,
+             !pto.tile_buf<vec, 16x16xf32>) -> ()
+      func.call @write_pair(%b, %slot)
+          : (!pto.partition_tensor_view<16x16xf32>,
+             !pto.tile_buf<vec, 16x16xf32>) -> ()
+    }
+    return
+  }
+
+  func.func @distance_shift_short_mayalias(
+      %a : !pto.partition_tensor_view<16x16xf32>,
+      %b : !pto.partition_tensor_view<16x16xf32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %buffer = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+
+    scf.for %i = %c0 to %c2 step %c1 {
+      %slot_index = arith.remui %i, %c2 : index
+      %slot = pto.multi_tile_get %buffer[%slot_index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      func.call @write_pair(%a, %slot)
+          : (!pto.partition_tensor_view<16x16xf32>,
+             !pto.tile_buf<vec, 16x16xf32>) -> ()
+      func.call @write_pair(%b, %slot)
+          : (!pto.partition_tensor_view<16x16xf32>,
+             !pto.tile_buf<vec, 16x16xf32>) -> ()
+    }
+    return
+  }
+
+  func.func @distance_shift_short_noalias(
+      %a : !pto.partition_tensor_view<16x16xf32>,
+      %b : !pto.partition_tensor_view<16x16xf32>)
+      attributes {pto.noalias_pairs = array<i64: 0, 1>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %buffer = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+
+    scf.for %i = %c0 to %c2 step %c1 {
+      %slot_index = arith.remui %i, %c2 : index
+      %slot = pto.multi_tile_get %buffer[%slot_index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      func.call @write_pair(%a, %slot)
+          : (!pto.partition_tensor_view<16x16xf32>,
+             !pto.tile_buf<vec, 16x16xf32>) -> ()
+      func.call @write_pair(%b, %slot)
+          : (!pto.partition_tensor_view<16x16xf32>,
+             !pto.tile_buf<vec, 16x16xf32>) -> ()
+    }
+    return
+  }
+
+  func.func private @write_pair(
+      %gm : !pto.partition_tensor_view<16x16xf32>,
+      %slot : !pto.tile_buf<vec, 16x16xf32>)
+      attributes {pto.ptodsl.subkernel_helper = "simd",
+                  pto.tileop.effects = ["write", "write"]} {
+    return
+  }
+}
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @recurrence_mayalias
+// PLAN-SAME: dependencies=26 requirements=21 conservative-requirements=[[RMAX:26]]
+// PLAN: dependency 0 -> 0 kind=memory-waw distance=2
+// PLAN: dependency 1 -> 1 kind=memory-waw distance=2
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @recurrence_noalias
+// PLAN-SAME: dependencies=26 requirements=15 conservative-requirements=[[RMAX]]
+// PLAN: dependency 0 -> 0 kind=memory-waw distance=2
+// PLAN: dependency 1 -> 1 kind=memory-waw distance=2
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @distance_shift_mayalias
+// PLAN-SAME: dependencies=9 requirements=5 conservative-requirements=9
+// PLAN: dependency 0 -> 1 kind=memory-waw distance=1 retained=no active=yes possible=yes
+// PLAN: dependency 0 -> 1 kind=memory-waw distance=2 retained=no active=no possible=yes
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @distance_shift_noalias
+// PLAN-SAME: dependencies=9 requirements=5 conservative-requirements=9
+// PLAN: dependency 0 -> 1 kind=memory-waw distance=1 retained=no active=no possible=yes
+// PLAN: dependency 0 -> 1 kind=memory-waw distance=2 retained=no active=yes possible=yes
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @distance_shift_short_mayalias
+// PLAN-SAME: dependencies=9 requirements=5 conservative-requirements=5
+// PLAN: dependency 0 -> 1 kind=memory-waw distance=2 retained=no active=no possible=no
+// PLAN-NOT: requirement{{.*}}distance=2
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @distance_shift_short_noalias
+// PLAN-SAME: dependencies=9 requirements=3 conservative-requirements=5
+// PLAN: dependency 0 -> 1 kind=memory-waw distance=2 retained=no active=yes possible=no
+// PLAN-NOT: requirement{{.*}}distance=2
+
+// MONOTONIC-LABEL: PTOCanonicalSyncPlan @recurrence_mayalias
+// MONOTONIC-SAME: requirements=21 conservative-requirements=26
+// MONOTONIC-SAME: barriers=0 events=4 ownership-cycles=0
+// MONOTONIC: event{{.*}} PIPE_MTE3 -> PIPE_MTE2 {{.*}}recurrence=yes
+
+// MODE-LABEL: PTOCanonicalSyncPlan @recurrence_mayalias
+// MODE-SAME: gm-alias-policy=distinct-args-noalias
+// MODE-SAME: requirements=15 conservative-requirements=26
+// MODE-SAME: barriers=0 events=5 ownership-cycles=0
+// MODE: event{{.*}} PIPE_V -> PIPE_MTE2 {{.*}}recurrence=yes
+// MODE-LABEL: PTOCanonicalSyncPlan @recurrence_noalias
+// MODE-SAME: requirements=15 conservative-requirements=26
+// MODE-SAME: barriers=0 events=5 ownership-cycles=0
+// MONOTONIC-LABEL: PTOCanonicalSyncPlan @recurrence_noalias
+// MONOTONIC-SAME: requirements=15 conservative-requirements=26
+// MONOTONIC-SAME: barriers=0 events=5 ownership-cycles=0
+// MONOTONIC: event{{.*}} PIPE_V -> PIPE_MTE2 {{.*}}recurrence=yes
+
+// IR-LABEL: func.func @recurrence_mayalias
+// IR: scf.for
+// IR: pto.tload
+// IR: pto.tload
+// IR: pto.tadd
+// IR: pto.tstore
+
+// COVERING-LABEL: PTOCanonicalSyncPlan @recurrence_mayalias
+// COVERING: covering status=graph-ready scopes=3 controls=0 nodes=4
+// COVERING-SAME: fixed-edges=1 recurrence-carries=6
+// COVERING-SAME: conservative-demands=26 active-demands=21 intrinsic-demands=0
+// COVERING: covering-selection status=ready error=none
+// COVERING: covering-demand[1] 0 -> 3 kind=memory-war scope=2 distance=0 active=yes
+// COVERING: covering-demand[9] 0 -> 3 kind=memory-war scope=1 distance=1 active=yes
+// COVERING: covering-demand[22] 3 -> 0 kind=memory-raw scope=1 distance=1 active=yes
+// COVERING-LABEL: PTOCanonicalSyncPlan @recurrence_noalias
+// COVERING: covering status=graph-ready scopes=3 controls=0 nodes=4
+// COVERING-SAME: fixed-edges=1 recurrence-carries=6
+// COVERING-SAME: conservative-demands=26 active-demands=15 intrinsic-demands=0
+// COVERING: covering-selection status=ready error=none
+// COVERING: covering-demand[1] 0 -> 3 kind=memory-war scope=2 distance=0 active=no
+// COVERING: covering-demand[9] 0 -> 3 kind=memory-war scope=1 distance=1 active=no
+// COVERING: covering-demand[22] 3 -> 0 kind=memory-raw scope=1 distance=1 active=no
+
+// IR-LABEL: func.func @recurrence_noalias
+// IR: scf.for
+// IR: pto.tload
+// IR: pto.tload
+// IR: pto.tadd
+// IR: pto.tstore

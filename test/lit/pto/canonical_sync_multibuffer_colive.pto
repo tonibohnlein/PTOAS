@@ -1,0 +1,261 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=all' \
+// RUN:   | FileCheck %s --check-prefix=PLAN
+// RUN: pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=IR
+// RUN: pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=DIRECT
+// RUN: pto-test-opt %s -pto-plan-memory \
+// RUN:   '-pto-canonical-sync=event-id-num-max=1' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=SCARCE
+
+// Two slots of one allocation are live in each iteration. The vector operation
+// reads both before the next iteration overwrites them in MTE2. The preserved
+// V -> MTE2 recurrence and the existing forward events form a barrier-free
+// completion path for both slots.
+
+module {
+  func.func @colive_slots(
+      %a : !pto.partition_tensor_view<16x16xf32>,
+      %b : !pto.partition_tensor_view<16x16xf32>,
+      %out : !pto.partition_tensor_view<16x16xf32>, %n : index)
+      attributes {pto.noalias_pairs = array<i64: 0, 1, 0, 2, 1, 2>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %buffer = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+    %sum = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf32>
+
+    scf.for %i = %c0 to %n step %c1 {
+      %next = arith.addi %i, %c1 : index
+      %lo_index = arith.remui %i, %c2 : index
+      %hi_index = arith.remui %next, %c2 : index
+      %lo = pto.multi_tile_get %buffer[%lo_index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      pto.tload ins(%a : !pto.partition_tensor_view<16x16xf32>)
+                outs(%lo : !pto.tile_buf<vec, 16x16xf32>)
+      %hi = pto.multi_tile_get %buffer[%hi_index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      pto.tload ins(%b : !pto.partition_tensor_view<16x16xf32>)
+                outs(%hi : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tadd ins(%lo, %hi : !pto.tile_buf<vec, 16x16xf32>,
+                              !pto.tile_buf<vec, 16x16xf32>)
+               outs(%sum : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tstore ins(%sum : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%out : !pto.partition_tensor_view<16x16xf32>)
+    }
+    return
+  }
+
+  func.func @distance_two_short(
+      %a : !pto.partition_tensor_view<16x16xf32>,
+      %b : !pto.partition_tensor_view<16x16xf32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %buffer = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+
+    scf.for %i = %c0 to %c2 step %c1 {
+      %index = arith.remui %i, %c2 : index
+      %slot = pto.multi_tile_get %buffer[%index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      pto.tload ins(%a : !pto.partition_tensor_view<16x16xf32>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tload ins(%b : !pto.partition_tensor_view<16x16xf32>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tmuls ins(%slot, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    return
+  }
+
+  func.func @distance_two_reduced(
+      %a : !pto.partition_tensor_view<16x16xf32>,
+      %b : !pto.partition_tensor_view<16x16xf32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %buffer = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+
+    scf.for %i = %c0 to %c3 step %c1 {
+      %index = arith.remui %i, %c2 : index
+      %slot = pto.multi_tile_get %buffer[%index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      pto.tload ins(%a : !pto.partition_tensor_view<16x16xf32>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tload ins(%b : !pto.partition_tensor_view<16x16xf32>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tmuls ins(%slot, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    return
+  }
+
+  func.func @distance_two_issue_only() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %buffer = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+
+    scf.for %i = %c0 to %c3 step %c1 {
+      %index = arith.remui %i, %c2 : index
+      %slot = pto.multi_tile_get %buffer[%index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      pto.tmuls ins(%slot, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    return
+  }
+
+  func.func @distance_two_dynamic(
+      %a : !pto.partition_tensor_view<16x16xf32>, %limit : index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %buffer = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+
+    scf.for %i = %c0 to %limit step %c1 {
+      %index = arith.remui %i, %c2 : index
+      %slot = pto.multi_tile_get %buffer[%index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      pto.tload ins(%a : !pto.partition_tensor_view<16x16xf32>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tmuls ins(%slot, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    return
+  }
+
+  func.func @distance_two_conditional_path(
+      %a : !pto.partition_tensor_view<16x16xf32>,
+      %b : !pto.partition_tensor_view<16x16xf32>, %condition : i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %buffer = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+
+    scf.for %i = %c0 to %c3 step %c1 {
+      %index = arith.remui %i, %c2 : index
+      %slot = pto.multi_tile_get %buffer[%index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      scf.if %condition {
+        pto.tload ins(%a : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+      }
+      pto.tload ins(%b : !pto.partition_tensor_view<16x16xf32>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+      pto.tmuls ins(%slot, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    return
+  }
+
+  func.func @distance_two_induction_overflow() {
+    %c2 = arith.constant 2 : index
+    %lower = arith.constant 9223372036854775806 : index
+    %upper = arith.constant 9223372036854775807 : index
+    %step = arith.constant 9223372036854775807 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %buffer = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+
+    scf.for %i = %lower to %upper step %step {
+      %index = arith.remui %i, %c2 : index
+      %slot = pto.multi_tile_get %buffer[%index]
+          : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+         -> !pto.tile_buf<vec, 16x16xf32>
+      pto.tmuls ins(%slot, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                 outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    return
+  }
+}
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @colive_slots
+// PLAN: dependency 2 -> 0 kind=memory-war distance=1 retained=yes
+// PLAN: dependency 2 -> 1 kind=memory-war distance=1 retained=no
+// PLAN: event{{\[[0-9]+\]}} PIPE_V -> PIPE_MTE2 source=2 target=0 width=1
+// PLAN-SAME: recurrence=yes distance=1
+// PLAN: event{{\[[0-9]+\]}} PIPE_V -> PIPE_MTE3 source=2 target=3 width=1
+
+// IR-LABEL: func.func @colive_slots
+// IR: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// IR: scf.for
+// IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// IR: pto.tload
+// IR: pto.tload
+// IR: pto.tadd
+// IR: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// IR: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// IR: pto.tstore
+// IR-LABEL: func.func @distance_two_short
+
+// DIRECT-LABEL: func.func @colive_slots
+// DIRECT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// DIRECT: scf.for
+// DIRECT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// DIRECT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// DIRECT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// DIRECT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// DIRECT-LABEL: func.func @distance_two_short
+
+// SCARCE-LABEL: func.func @colive_slots
+// SCARCE: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// SCARCE: pto.barrier <PIPE_ALL>
+// SCARCE-NOT: EVENT_ID1
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @distance_two_short
+// PLAN: dependency 2 -> 0 kind=memory-war distance=2 retained=no
+// PLAN: dependency 2 -> 1 kind=memory-war distance=2 retained=no
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @distance_two_reduced
+// PLAN: dependency 2 -> 0 kind=memory-war distance=2 retained=yes
+// PLAN: dependency 2 -> 1 kind=memory-war distance=2 retained=no
+// PLAN: event{{\[[0-9]+\]}} PIPE_V -> PIPE_MTE2 source=2 target=0 width=2
+// PLAN-SAME: recurrence=yes distance=2
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @distance_two_issue_only
+// PLAN: dependency 0 -> 0 kind=memory-raw distance=2 retained=yes
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @distance_two_dynamic
+// PLAN: dependency 1 -> 0 kind=memory-war distance=2 retained=yes
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @distance_two_conditional_path
+// PLAN: dependency 2 -> 1 kind=memory-war distance=2 retained=yes
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @distance_two_induction_overflow
+// PLAN: dependency 0 -> 0 kind=memory-raw distance=2 retained=yes

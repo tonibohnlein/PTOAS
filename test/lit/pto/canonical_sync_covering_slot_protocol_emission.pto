@@ -1,0 +1,100 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=covering' \
+// RUN:   | FileCheck %s --check-prefix=PLAN
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=DIRECT
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @unit_slot_protocol(%source: !pto.ptr<f16, gm>, %limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c128 = arith.constant 128 : index
+    %addr0 = arith.constant 0 : i64
+    %view = pto.make_tensor_view %source, shape = [%c128, %c128],
+      strides = [%c128, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%c0, %c0],
+      sizes = [%c128, %c128] : !pto.tensor_view<?x?xf16>
+    %mat = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %left = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    scf.for %i = %c0 to %limit step %c1 {
+      pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+        outs(%mat : !pto.tile_buf<mat, 128x128xf16, slayout=row_major>)
+      pto.textract ins(%mat, %c0, %c0 :
+        !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+        outs(%left : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+    }
+    return
+  }
+
+  func.func @hierarchical_slot_protocol(
+      %destination: !pto.ptr<f32, gm>, %outerLimit: index,
+      %innerLimit: index, %condition: i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %addr0 = arith.constant 0 : i64
+    %view = pto.make_tensor_view %destination, shape = [%c128, %c256],
+      strides = [%c256, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0],
+      sizes = [%c128, %c256] : !pto.tensor_view<?x?xf32>
+    %left = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %right = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+    %acc = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>
+    scf.for %i = %c0 to %outerLimit step %c1 {
+      scf.for %k = %c0 to %innerLimit step %c1 {
+        scf.if %condition {
+          pto.tmatmul.acc ins(%acc, %left, %right :
+            !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+            !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+            !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+            outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+        } else {
+          pto.tmatmul.acc ins(%acc, %left, %right :
+            !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>,
+            !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+            !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+            outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+        }
+      }
+      pto.tstore ins(%acc : !pto.tile_buf<acc, 128x256xf32,
+                     blayout=col_major, slayout=row_major, fractal=1024>)
+        outs(%part : !pto.partition_tensor_view<128x256xf32>)
+    }
+    return
+  }
+}
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @unit_slot_protocol
+// PLAN: covering-slot-protocols candidates=1
+// PLAN: providers=[{{.*}}slot-protocol[0]{{.*}}]
+// PLAN: covering-use {{.*}}slot-protocol[0]{{.*}}width=1{{.*}}event=none
+// PLAN: covering-allocation {{.*}}slot-protocol[0]{{.*}}ids=[0]
+// PLAN-LABEL: PTOCanonicalSyncPlan @hierarchical_slot_protocol
+// PLAN: covering-slot-protocols candidates=1
+
+// DIRECT-LABEL: func.func @unit_slot_protocol
+// DIRECT: pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <[[ID:EVENT_ID[0-7]]]>]
+// DIRECT-NEXT: scf.for
+// DIRECT-NEXT: pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <[[ID]]>]
+// DIRECT: pto.textract
+// DIRECT-NEXT: pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <[[ID]]>]
+// DIRECT: pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <[[ID]]>]
+// DIRECT-LABEL: func.func @hierarchical_slot_protocol

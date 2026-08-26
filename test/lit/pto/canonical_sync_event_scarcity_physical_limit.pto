@@ -1,0 +1,77 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=events event-id-num-max=8' \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @nine_live_events(%src: !pto.partition_tensor_view<1x16xf32>) {
+    %c0 = arith.constant 0 : i64
+    %c64 = arith.constant 64 : i64
+    %c128 = arith.constant 128 : i64
+    %c192 = arith.constant 192 : i64
+    %c256 = arith.constant 256 : i64
+    %c320 = arith.constant 320 : i64
+    %c384 = arith.constant 384 : i64
+    %c448 = arith.constant 448 : i64
+    %c512 = arith.constant 512 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %t0 = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 1x16xf32>
+    %t1 = pto.alloc_tile addr = %c64 : !pto.tile_buf<vec, 1x16xf32>
+    %t2 = pto.alloc_tile addr = %c128 : !pto.tile_buf<vec, 1x16xf32>
+    %t3 = pto.alloc_tile addr = %c192 : !pto.tile_buf<vec, 1x16xf32>
+    %t4 = pto.alloc_tile addr = %c256 : !pto.tile_buf<vec, 1x16xf32>
+    %t5 = pto.alloc_tile addr = %c320 : !pto.tile_buf<vec, 1x16xf32>
+    %t6 = pto.alloc_tile addr = %c384 : !pto.tile_buf<vec, 1x16xf32>
+    %t7 = pto.alloc_tile addr = %c448 : !pto.tile_buf<vec, 1x16xf32>
+    %t8 = pto.alloc_tile addr = %c512 : !pto.tile_buf<vec, 1x16xf32>
+
+    pto.tload ins(%src : !pto.partition_tensor_view<1x16xf32>)
+      outs(%t0 : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<1x16xf32>)
+      outs(%t1 : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<1x16xf32>)
+      outs(%t2 : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<1x16xf32>)
+      outs(%t3 : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<1x16xf32>)
+      outs(%t4 : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<1x16xf32>)
+      outs(%t5 : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<1x16xf32>)
+      outs(%t6 : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<1x16xf32>)
+      outs(%t7 : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<1x16xf32>)
+      outs(%t8 : !pto.tile_buf<vec, 1x16xf32>)
+
+    pto.tmuls ins(%t0, %one : !pto.tile_buf<vec, 1x16xf32>, f32)
+      outs(%t0 : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tmuls ins(%t1, %one : !pto.tile_buf<vec, 1x16xf32>, f32)
+      outs(%t1 : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tmuls ins(%t2, %one : !pto.tile_buf<vec, 1x16xf32>, f32)
+      outs(%t2 : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tmuls ins(%t3, %one : !pto.tile_buf<vec, 1x16xf32>, f32)
+      outs(%t3 : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tmuls ins(%t4, %one : !pto.tile_buf<vec, 1x16xf32>, f32)
+      outs(%t4 : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tmuls ins(%t5, %one : !pto.tile_buf<vec, 1x16xf32>, f32)
+      outs(%t5 : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tmuls ins(%t6, %one : !pto.tile_buf<vec, 1x16xf32>, f32)
+      outs(%t6 : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tmuls ins(%t7, %one : !pto.tile_buf<vec, 1x16xf32>, f32)
+      outs(%t7 : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tmuls ins(%t8, %one : !pto.tile_buf<vec, 1x16xf32>, f32)
+      outs(%t8 : !pto.tile_buf<vec, 1x16xf32>)
+    return
+  }
+}
+
+// CHECK-LABEL: PTOCanonicalSyncPlan @nine_live_events
+// CHECK-SAME: barriers=1 events=0

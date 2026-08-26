@@ -1,0 +1,536 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=all' \
+// RUN:   | FileCheck %s --check-prefix=PLAN
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=IR
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=all assume-distinct-gm-args-noalias=true' \
+// RUN:   | FileCheck %s --check-prefix=ASSUME
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-canonical-sync=event-id-num-max=8 assume-distinct-gm-args-noalias=true' \
+// RUN:   | FileCheck %s --check-prefix=ASSUME-IR
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=dot view=plan assume-distinct-gm-args-noalias=true' \
+// RUN:   | FileCheck %s --check-prefix=ASSUME-DOT
+// RUN: ptoas %s --pto-level=level3 --pto-arch=a3 \
+// RUN:   --enable-canonical-sync \
+// RUN:   --canonical-sync-assume-distinct-gm-args-noalias -o - \
+// RUN:   | FileCheck %s --check-prefix=CLI-CPP
+// RUN: ptoas %s --pto-level=level3 --pto-arch=a3 --emit-pto-ir \
+// RUN:   --enable-canonical-sync \
+// RUN:   --canonical-sync-assume-distinct-gm-args-noalias -o - \
+// RUN:   | FileCheck %s --check-prefix=CLI-IR
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @external_may_alias(%first: !pto.ptr<f32>,
+                                %second: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1024 = arith.constant 1024 : i64
+    %first_view = pto.make_tensor_view %first,
+      shape = [%c1, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<1x16xf32>
+    %first_part = pto.partition_view %first_view,
+      offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<1x16xf32>
+     -> !pto.partition_tensor_view<1x16xf32>
+    %second_view = pto.make_tensor_view %second,
+      shape = [%c1, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<1x16xf32>
+    %second_part = pto.partition_view %second_view,
+      offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<1x16xf32>
+     -> !pto.partition_tensor_view<1x16xf32>
+    %source = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x16xf32>
+    %target = pto.alloc_tile addr = %addr1024 : !pto.tile_buf<vec, 1x16xf32>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 1x16xf32>)
+               outs(%first_part : !pto.partition_tensor_view<1x16xf32>)
+    pto.tload ins(%second_part : !pto.partition_tensor_view<1x16xf32>)
+              outs(%target : !pto.tile_buf<vec, 1x16xf32>)
+    return
+  }
+
+  func.func @external_noalias(%first: !pto.ptr<f32>,
+                              %second: !pto.ptr<f32>)
+      attributes {pto.noalias_pairs = array<i64: 0, 1>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1024 = arith.constant 1024 : i64
+    %first_view = pto.make_tensor_view %first,
+      shape = [%c1, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<1x16xf32>
+    %first_part = pto.partition_view %first_view,
+      offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<1x16xf32>
+     -> !pto.partition_tensor_view<1x16xf32>
+    %second_view = pto.make_tensor_view %second,
+      shape = [%c1, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<1x16xf32>
+    %second_part = pto.partition_view %second_view,
+      offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<1x16xf32>
+     -> !pto.partition_tensor_view<1x16xf32>
+    %source = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x16xf32>
+    %target = pto.alloc_tile addr = %addr1024 : !pto.tile_buf<vec, 1x16xf32>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 1x16xf32>)
+               outs(%first_part : !pto.partition_tensor_view<1x16xf32>)
+    pto.tload ins(%second_part : !pto.partition_tensor_view<1x16xf32>)
+              outs(%target : !pto.tile_buf<vec, 1x16xf32>)
+    return
+  }
+
+  func.func @addptr_adjacent(%base: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1024 = arith.constant 1024 : i64
+    %first_ptr = pto.addptr %base, %c0 : !pto.ptr<f32> -> !pto.ptr<f32>
+    %second_ptr = pto.addptr %base, %c16 : !pto.ptr<f32> -> !pto.ptr<f32>
+    %first_view = pto.make_tensor_view %first_ptr,
+      shape = [%c1, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<1x16xf32>
+    %first_part = pto.partition_view %first_view,
+      offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<1x16xf32>
+     -> !pto.partition_tensor_view<1x16xf32>
+    %second_view = pto.make_tensor_view %second_ptr,
+      shape = [%c1, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<1x16xf32>
+    %second_part = pto.partition_view %second_view,
+      offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<1x16xf32>
+     -> !pto.partition_tensor_view<1x16xf32>
+    %source = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x16xf32>
+    %target = pto.alloc_tile addr = %addr1024 : !pto.tile_buf<vec, 1x16xf32>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 1x16xf32>)
+               outs(%first_part : !pto.partition_tensor_view<1x16xf32>)
+    pto.tload ins(%second_part : !pto.partition_tensor_view<1x16xf32>)
+              outs(%target : !pto.tile_buf<vec, 1x16xf32>)
+    return
+  }
+
+  func.func @addptr_overlap(%base: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1024 = arith.constant 1024 : i64
+    %second_ptr = pto.addptr %base, %c8 : !pto.ptr<f32> -> !pto.ptr<f32>
+    %first_view = pto.make_tensor_view %base,
+      shape = [%c1, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<1x16xf32>
+    %first_part = pto.partition_view %first_view,
+      offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<1x16xf32>
+     -> !pto.partition_tensor_view<1x16xf32>
+    %second_view = pto.make_tensor_view %second_ptr,
+      shape = [%c1, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<1x16xf32>
+    %second_part = pto.partition_view %second_view,
+      offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<1x16xf32>
+     -> !pto.partition_tensor_view<1x16xf32>
+    %source = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x16xf32>
+    %target = pto.alloc_tile addr = %addr1024 : !pto.tile_buf<vec, 1x16xf32>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 1x16xf32>)
+               outs(%first_part : !pto.partition_tensor_view<1x16xf32>)
+    pto.tload ins(%second_part : !pto.partition_tensor_view<1x16xf32>)
+              outs(%target : !pto.tile_buf<vec, 1x16xf32>)
+    return
+  }
+
+  func.func @addptr_dynamic(%base: !pto.ptr<f32>, %offset: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1024 = arith.constant 1024 : i64
+    %second_ptr = pto.addptr %base, %offset : !pto.ptr<f32> -> !pto.ptr<f32>
+    %first_view = pto.make_tensor_view %base,
+      shape = [%c1, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<1x16xf32>
+    %first_part = pto.partition_view %first_view,
+      offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<1x16xf32>
+     -> !pto.partition_tensor_view<1x16xf32>
+    %second_view = pto.make_tensor_view %second_ptr,
+      shape = [%c1, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<1x16xf32>
+    %second_part = pto.partition_view %second_view,
+      offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<1x16xf32>
+     -> !pto.partition_tensor_view<1x16xf32>
+    %source = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x16xf32>
+    %target = pto.alloc_tile addr = %addr1024 : !pto.tile_buf<vec, 1x16xf32>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 1x16xf32>)
+               outs(%first_part : !pto.partition_tensor_view<1x16xf32>)
+    pto.tload ins(%second_part : !pto.partition_tensor_view<1x16xf32>)
+              outs(%target : !pto.tile_buf<vec, 1x16xf32>)
+    return
+  }
+
+  func.func @partition_adjacent(%base: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1024 = arith.constant 1024 : i64
+    %view = pto.make_tensor_view %base,
+      shape = [%c4, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<4x16xf32>
+    %first = pto.partition_view %view,
+      offsets = [%c0, %c0], sizes = [%c2, %c16]
+      : !pto.tensor_view<4x16xf32>
+     -> !pto.partition_tensor_view<2x16xf32>
+    %second = pto.partition_view %view,
+      offsets = [%c2, %c0], sizes = [%c2, %c16]
+      : !pto.tensor_view<4x16xf32>
+     -> !pto.partition_tensor_view<2x16xf32>
+    %source = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 2x16xf32>
+    %target = pto.alloc_tile addr = %addr1024 : !pto.tile_buf<vec, 2x16xf32>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 2x16xf32>)
+               outs(%first : !pto.partition_tensor_view<2x16xf32>)
+    pto.tload ins(%second : !pto.partition_tensor_view<2x16xf32>)
+              outs(%target : !pto.tile_buf<vec, 2x16xf32>)
+    return
+  }
+
+  func.func @partition_strided_holes(%base: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1024 = arith.constant 1024 : i64
+    %view = pto.make_tensor_view %base,
+      shape = [%c4, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<4x16xf32>
+    %first = pto.partition_view %view,
+      offsets = [%c0, %c0], sizes = [%c4, %c8]
+      : !pto.tensor_view<4x16xf32>
+     -> !pto.partition_tensor_view<4x8xf32>
+    %second = pto.partition_view %view,
+      offsets = [%c0, %c8], sizes = [%c4, %c8]
+      : !pto.tensor_view<4x16xf32>
+     -> !pto.partition_tensor_view<4x8xf32>
+    %source = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 4x8xf32>
+    %target = pto.alloc_tile addr = %addr1024 : !pto.tile_buf<vec, 4x8xf32>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 4x8xf32>)
+               outs(%first : !pto.partition_tensor_view<4x8xf32>)
+    pto.tload ins(%second : !pto.partition_tensor_view<4x8xf32>)
+              outs(%target : !pto.tile_buf<vec, 4x8xf32>)
+    return
+  }
+
+  func.func @partition_overlap(%base: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1024 = arith.constant 1024 : i64
+    %view = pto.make_tensor_view %base,
+      shape = [%c4, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<4x16xf32>
+    %first = pto.partition_view %view,
+      offsets = [%c0, %c0], sizes = [%c2, %c16]
+      : !pto.tensor_view<4x16xf32>
+     -> !pto.partition_tensor_view<2x16xf32>
+    %second = pto.partition_view %view,
+      offsets = [%c1, %c0], sizes = [%c2, %c16]
+      : !pto.tensor_view<4x16xf32>
+     -> !pto.partition_tensor_view<2x16xf32>
+    %source = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 2x16xf32>
+    %target = pto.alloc_tile addr = %addr1024 : !pto.tile_buf<vec, 2x16xf32>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 2x16xf32>)
+               outs(%first : !pto.partition_tensor_view<2x16xf32>)
+    pto.tload ins(%second : !pto.partition_tensor_view<2x16xf32>)
+              outs(%target : !pto.tile_buf<vec, 2x16xf32>)
+    return
+  }
+
+  func.func @scalar_addptr_adjacent(%base: !pto.ptr<ui32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %addr0 = arith.constant 0 : i64
+    %view = pto.make_tensor_view %base,
+      shape = [%c1, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<1x16xui32>
+    %part = pto.partition_view %view,
+      offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<1x16xui32>
+     -> !pto.partition_tensor_view<1x16xui32>
+    %source = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x16xui32>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 1x16xui32>)
+               outs(%part : !pto.partition_tensor_view<1x16xui32>)
+    %adjacent = pto.addptr %base, %c16
+      : !pto.ptr<ui32> -> !pto.ptr<ui32>
+    %value = pto.load_scalar %adjacent[%c0] : !pto.ptr<ui32> -> ui32
+    return
+  }
+
+  func.func @addptr_invalid_offsets(%base: !pto.ptr<ui32>) {
+    %cneg1 = arith.constant -1 : index
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %cmax = arith.constant 9223372036854775807 : index
+    %cwrap = arith.constant 4294967304 : i64
+    %addr0 = arith.constant 0 : i64
+    %view = pto.make_tensor_view %base,
+      shape = [%c1, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<1x16xui32>
+    %part = pto.partition_view %view,
+      offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<1x16xui32>
+     -> !pto.partition_tensor_view<1x16xui32>
+    %source = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x16xui32>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 1x16xui32>)
+               outs(%part : !pto.partition_tensor_view<1x16xui32>)
+    %negative = pto.addptr %base, %cneg1
+      : !pto.ptr<ui32> -> !pto.ptr<ui32>
+    %negative_value = pto.load_scalar %negative[%c0]
+      : !pto.ptr<ui32> -> ui32
+    %overflow = pto.addptr %base, %cmax
+      : !pto.ptr<ui32> -> !pto.ptr<ui32>
+    %overflow_value = pto.load_scalar %overflow[%c0]
+      : !pto.ptr<ui32> -> ui32
+    %wrapped_i32 = arith.trunci %cwrap : i64 to i32
+    %wrapped_index = arith.index_cast %wrapped_i32 : i32 to index
+    %wrapped = pto.addptr %base, %wrapped_index
+      : !pto.ptr<ui32> -> !pto.ptr<ui32>
+    %wrapped_value = pto.load_scalar %wrapped[%c0]
+      : !pto.ptr<ui32> -> ui32
+    return
+  }
+
+  func.func @inttoptr_roundtrip(%base: !pto.ptr<ui32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %addr0 = arith.constant 0 : i64
+    %view = pto.make_tensor_view %base,
+      shape = [%c1, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<1x16xui32>
+    %part = pto.partition_view %view,
+      offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<1x16xui32>
+     -> !pto.partition_tensor_view<1x16xui32>
+    %source = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x16xui32>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 1x16xui32>)
+               outs(%part : !pto.partition_tensor_view<1x16xui32>)
+    %address = pto.ptrtoint %base : !pto.ptr<ui32> -> i64
+    %roundtrip = pto.inttoptr %address : i64 -> !pto.ptr<ui32>
+    %value = pto.load_scalar %roundtrip[%c0] : !pto.ptr<ui32> -> ui32
+    return
+  }
+
+  func.func @inttoptr_noalias_roundtrip(%first: !pto.ptr<ui32>,
+                                        %second: !pto.ptr<ui32>)
+      attributes {pto.noalias_pairs = array<i64: 0, 1>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %addr0 = arith.constant 0 : i64
+    %view = pto.make_tensor_view %first,
+      shape = [%c1, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<1x16xui32>
+    %part = pto.partition_view %view,
+      offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<1x16xui32>
+     -> !pto.partition_tensor_view<1x16xui32>
+    %source = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x16xui32>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 1x16xui32>)
+               outs(%part : !pto.partition_tensor_view<1x16xui32>)
+    %address = pto.ptrtoint %second : !pto.ptr<ui32> -> i64
+    %roundtrip = pto.inttoptr %address : i64 -> !pto.ptr<ui32>
+    %value = pto.load_scalar %roundtrip[%c0] : !pto.ptr<ui32> -> ui32
+    return
+  }
+
+  func.func @inttoptr_distinct_roundtrip(%first: !pto.ptr<ui32>,
+                                         %second: !pto.ptr<ui32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %addr0 = arith.constant 0 : i64
+    %view = pto.make_tensor_view %first,
+      shape = [%c1, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<1x16xui32>
+    %part = pto.partition_view %view,
+      offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<1x16xui32>
+     -> !pto.partition_tensor_view<1x16xui32>
+    %source = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x16xui32>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 1x16xui32>)
+               outs(%part : !pto.partition_tensor_view<1x16xui32>)
+    %address = pto.ptrtoint %second : !pto.ptr<ui32> -> i64
+    %roundtrip = pto.inttoptr %address : i64 -> !pto.ptr<ui32>
+    %value = pto.load_scalar %roundtrip[%c0] : !pto.ptr<ui32> -> ui32
+    return
+  }
+
+  func.func @inttoptr_unknown(%base: !pto.ptr<ui32>, %address: i64) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %addr0 = arith.constant 0 : i64
+    %view = pto.make_tensor_view %base,
+      shape = [%c1, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<1x16xui32>
+    %part = pto.partition_view %view,
+      offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<1x16xui32>
+     -> !pto.partition_tensor_view<1x16xui32>
+    %source = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x16xui32>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 1x16xui32>)
+               outs(%part : !pto.partition_tensor_view<1x16xui32>)
+    %unknown = pto.inttoptr %address : i64 -> !pto.ptr<ui32>
+    %value = pto.load_scalar %unknown[%c0] : !pto.ptr<ui32> -> ui32
+    return
+  }
+}
+
+// PLAN-LABEL: PTOCanonicalSyncPlan @external_may_alias
+// PLAN-SAME: gm-alias-policy=may-alias
+// PLAN-SAME: requirements=1 conservative-requirements=1
+// PLAN-SAME: events=1
+// PLAN-LABEL: PTOCanonicalSyncPlan @external_noalias
+// PLAN-SAME: requirements=0 conservative-requirements=1
+// PLAN-SAME: events=0
+// PLAN-LABEL: PTOCanonicalSyncPlan @addptr_adjacent
+// PLAN-SAME: events=0
+// PLAN-LABEL: PTOCanonicalSyncPlan @addptr_overlap
+// PLAN-SAME: events=1
+// PLAN-LABEL: PTOCanonicalSyncPlan @addptr_dynamic
+// PLAN-SAME: events=1
+// PLAN-LABEL: PTOCanonicalSyncPlan @partition_adjacent
+// PLAN-SAME: events=0
+// PLAN-LABEL: PTOCanonicalSyncPlan @partition_strided_holes
+// PLAN-SAME: events=0
+// PLAN-LABEL: PTOCanonicalSyncPlan @partition_overlap
+// PLAN-SAME: events=1
+// PLAN-LABEL: PTOCanonicalSyncPlan @scalar_addptr_adjacent
+// PLAN-SAME: events=0
+// PLAN-LABEL: PTOCanonicalSyncPlan @addptr_invalid_offsets
+// PLAN-SAME: dependencies=3
+// PLAN-SAME: events=1
+// PLAN-LABEL: PTOCanonicalSyncPlan @inttoptr_roundtrip
+// PLAN-SAME: events=1
+// PLAN-LABEL: PTOCanonicalSyncPlan @inttoptr_noalias_roundtrip
+// PLAN-SAME: requirements=0 conservative-requirements=1
+// PLAN-SAME: events=0
+// PLAN-LABEL: PTOCanonicalSyncPlan @inttoptr_distinct_roundtrip
+// PLAN-SAME: requirements=1 conservative-requirements=1
+// PLAN-SAME: events=1
+// PLAN-LABEL: PTOCanonicalSyncPlan @inttoptr_unknown
+// PLAN-SAME: events=1
+
+// IR-LABEL: func.func @external_may_alias
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>,
+// IR-LABEL: func.func @external_noalias
+// IR-NOT: pto.set_flag
+// IR-LABEL: func.func @addptr_adjacent
+// IR-NOT: pto.set_flag
+// IR-LABEL: func.func @addptr_overlap
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>,
+// IR-LABEL: func.func @addptr_dynamic
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>,
+// IR-LABEL: func.func @partition_adjacent
+// IR-NOT: pto.set_flag
+// IR-LABEL: func.func @partition_strided_holes
+// IR-NOT: pto.set_flag
+// IR-LABEL: func.func @partition_overlap
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>,
+// IR-LABEL: func.func @scalar_addptr_adjacent
+// IR-NOT: pto.set_flag
+// IR-LABEL: func.func @addptr_invalid_offsets
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_S>,
+// IR-LABEL: func.func @inttoptr_roundtrip
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_S>,
+// IR-LABEL: func.func @inttoptr_noalias_roundtrip
+// IR-NOT: pto.set_flag
+// IR-LABEL: func.func @inttoptr_distinct_roundtrip
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_S>,
+// IR-LABEL: func.func @inttoptr_unknown
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_S>,
+
+// ASSUME-LABEL: PTOCanonicalSyncPlan @external_may_alias
+// ASSUME-SAME: gm-alias-policy=distinct-args-noalias
+// ASSUME-SAME: requirements=0 conservative-requirements=1
+// ASSUME-SAME: events=0
+// ASSUME-LABEL: PTOCanonicalSyncPlan @external_noalias
+// ASSUME-SAME: requirements=0 conservative-requirements=1
+// ASSUME-SAME: events=0
+// ASSUME-LABEL: PTOCanonicalSyncPlan @addptr_adjacent
+// ASSUME-SAME: events=0
+// ASSUME-LABEL: PTOCanonicalSyncPlan @addptr_overlap
+// ASSUME-SAME: events=1
+// ASSUME-LABEL: PTOCanonicalSyncPlan @addptr_dynamic
+// ASSUME-SAME: events=1
+// ASSUME-LABEL: PTOCanonicalSyncPlan @partition_adjacent
+// ASSUME-SAME: events=0
+// ASSUME-LABEL: PTOCanonicalSyncPlan @partition_strided_holes
+// ASSUME-SAME: events=0
+// ASSUME-LABEL: PTOCanonicalSyncPlan @partition_overlap
+// ASSUME-SAME: events=1
+// ASSUME-LABEL: PTOCanonicalSyncPlan @scalar_addptr_adjacent
+// ASSUME-SAME: events=0
+// ASSUME-LABEL: PTOCanonicalSyncPlan @addptr_invalid_offsets
+// ASSUME-SAME: events=1
+// ASSUME-LABEL: PTOCanonicalSyncPlan @inttoptr_roundtrip
+// ASSUME-SAME: events=1
+// ASSUME-LABEL: PTOCanonicalSyncPlan @inttoptr_noalias_roundtrip
+// ASSUME-SAME: events=0
+// ASSUME-LABEL: PTOCanonicalSyncPlan @inttoptr_distinct_roundtrip
+// ASSUME-SAME: requirements=0 conservative-requirements=1
+// ASSUME-SAME: events=0
+// ASSUME-LABEL: PTOCanonicalSyncPlan @inttoptr_unknown
+// ASSUME-SAME: events=1
+
+// ASSUME-IR-LABEL: func.func @external_may_alias
+// ASSUME-IR-NOT: pto.set_flag
+// ASSUME-IR-LABEL: func.func @addptr_overlap
+// ASSUME-IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>,
+// ASSUME-IR-LABEL: func.func @inttoptr_roundtrip
+// ASSUME-IR: pto.set_flag[<PIPE_MTE3>, <PIPE_S>,
+// ASSUME-IR-LABEL: func.func @inttoptr_distinct_roundtrip
+// ASSUME-IR-NOT: pto.set_flag
+// ASSUME-IR-LABEL: func.func @inttoptr_unknown
+// ASSUME-IR: pto.set_flag[<PIPE_MTE3>, <PIPE_S>,
+
+// ASSUME-DOT-LABEL: digraph "external_may_alias"
+// ASSUME-DOT: graph [label="gm-alias-policy=distinct-args-noalias"
+
+// CLI-CPP-LABEL: AICORE void external_may_alias
+// CLI-CPP: TSTORE
+// CLI-CPP-NOT: set_flag
+// CLI-CPP-NOT: wait_flag
+// CLI-CPP: TLOAD
+
+// CLI-IR-LABEL: func.func @external_may_alias
+// CLI-IR: pto.tstore
+// CLI-IR-NOT: pto.set_flag
+// CLI-IR-NOT: pto.wait_flag
+// CLI-IR: pto.tload

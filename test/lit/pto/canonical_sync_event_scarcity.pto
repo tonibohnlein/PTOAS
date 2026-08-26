@@ -1,0 +1,151 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=1' \
+// RUN:   | FileCheck %s --check-prefix=ONE
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=events event-id-num-max=1' \
+// RUN:   | FileCheck %s --check-prefix=PLAN-ONE
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=events event-id-num-max=2' \
+// RUN:   | FileCheck %s --check-prefix=PLAN-TWO
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=events event-id-num-max=1' \
+// RUN:   > %t.first
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-print-canonical-sync-plan=format=text view=events event-id-num-max=1' \
+// RUN:   > %t.second
+// RUN: diff %t.first %t.second
+// RUN: not pto-test-opt %s \
+// RUN:   '-pto-canonical-sync=event-id-num-max=0' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=ZERO
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=EIGHT
+// RUN: not pto-test-opt %s \
+// RUN:   '-pto-canonical-sync=event-id-num-max=9' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=NINE
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @two_live_events(
+      %src0: !pto.partition_tensor_view<16x128xf32>,
+      %src1: !pto.partition_tensor_view<16x128xf32>,
+      %scalar_src: !pto.ptr<f32>) {
+    %index0 = arith.constant 0 : index
+    %addr0 = arith.constant 0 : i64
+    %addr8192 = arith.constant 8192 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %tile0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tile1 = pto.alloc_tile addr = %addr8192 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tload ins(%src0 : !pto.partition_tensor_view<16x128xf32>)
+      outs(%tile0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %unused = pto.load_scalar %scalar_src[%index0] : !pto.ptr<f32> -> f32
+    pto.tload ins(%src1 : !pto.partition_tensor_view<16x128xf32>)
+      outs(%tile1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%tile0, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+      outs(%tile0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%tile1, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+      outs(%tile1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @three_live_events(
+      %src0: !pto.partition_tensor_view<16x128xf32>,
+      %src1: !pto.partition_tensor_view<16x128xf32>,
+      %src2: !pto.partition_tensor_view<16x128xf32>) {
+    %addr0 = arith.constant 0 : i64
+    %addr8192 = arith.constant 8192 : i64
+    %addr16384 = arith.constant 16384 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %tile0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tile1 = pto.alloc_tile addr = %addr8192 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tile2 = pto.alloc_tile addr = %addr16384 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tload ins(%src0 : !pto.partition_tensor_view<16x128xf32>)
+      outs(%tile0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%src1 : !pto.partition_tensor_view<16x128xf32>)
+      outs(%tile1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%src2 : !pto.partition_tensor_view<16x128xf32>)
+      outs(%tile2 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%tile0, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+      outs(%tile0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%tile1, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+      outs(%tile1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%tile2, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+      outs(%tile2 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @recurrence_protocol_pruned(
+      %src0: !pto.partition_tensor_view<16x128xf32>,
+      %src1: !pto.partition_tensor_view<16x128xf32>, %limit: index)
+      attributes {pto.noalias_pairs = array<i64: 0, 1>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %addr8192 = arith.constant 8192 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %tile0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tile1 = pto.alloc_tile addr = %addr8192 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    scf.for %i = %c0 to %limit step %c1 {
+      pto.tload ins(%src0 : !pto.partition_tensor_view<16x128xf32>)
+        outs(%tile0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tload ins(%src1 : !pto.partition_tensor_view<16x128xf32>)
+        outs(%tile1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tmuls ins(%tile1, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+        outs(%tile1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tmuls ins(%tile0, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+        outs(%tile0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    }
+    return
+  }
+}
+
+// ONE-LABEL: func.func @two_live_events
+// ONE-NOT: pto.set_flag
+// ONE: pto.barrier <PIPE_ALL> {pto.canonical_sync}
+// ONE-NOT: pto.wait_flag
+// ONE: return
+// ONE-LABEL: func.func @three_live_events
+// ONE-NOT: pto.set_flag
+// ONE: pto.barrier <PIPE_ALL> {pto.canonical_sync}
+// ONE-NOT: pto.wait_flag
+// ONE: return
+// ONE-LABEL: func.func @recurrence_protocol_pruned
+// ONE-NOT: pto.set_flag
+// ONE-COUNT-2: pto.barrier <PIPE_ALL> {pto.canonical_sync}
+// ONE-NOT: pto.wait_flag
+// ONE: return
+
+// PLAN-ONE-LABEL: PTOCanonicalSyncPlan @two_live_events
+// PLAN-ONE-SAME: barriers=1 events=0
+// PLAN-ONE-LABEL: PTOCanonicalSyncPlan @three_live_events
+// PLAN-ONE-SAME: barriers=1 events=0
+// PLAN-ONE-LABEL: PTOCanonicalSyncPlan @recurrence_protocol_pruned
+// PLAN-ONE-SAME: barriers=2 events=0
+
+// PLAN-TWO-LABEL: PTOCanonicalSyncPlan @two_live_events
+// PLAN-TWO: domain PIPE_MTE2 -> PIPE_V original-events=2 events=2 available=2 original-colors=2 colors=2 serialization-cost=0
+// PLAN-TWO-LABEL: PTOCanonicalSyncPlan @three_live_events
+// PLAN-TWO-SAME: barriers=1 events=0
+// PLAN-TWO-LABEL: PTOCanonicalSyncPlan @recurrence_protocol_pruned
+// PLAN-TWO-SAME: barriers=0 events=4
+// PLAN-TWO: domain PIPE_MTE2 -> PIPE_V original-events=2 events=2 available=2
+
+// ZERO: error: event-id-num-max must be in [1, 8]
+// EIGHT-LABEL: func.func @two_live_events
+// EIGHT: pto.set_flag
+// NINE: error: event-id-num-max must be in [1, 8]

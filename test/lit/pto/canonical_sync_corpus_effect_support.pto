@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas %S/../../samples/CommSync/tnotify_atomic_add_binding-pto-ir.pto \
+// RUN:   --pto-arch=a3 --pto-level=level2 --enable-canonical-sync -o %t.comm.cpp
+// RUN: ptoas %S/../../samples/DeepseekV4DecodeA3/kernels/aiv/combine_wait.pto \
+// RUN:   --pto-arch=a3 --pto-level=level3 --enable-canonical-sync -o %t.cmo.cpp
+// RUN: ptoas %S/../../samples/FlashAttention/flash_attention_softmax.pto \
+// RUN:   --pto-arch=a3 --pto-level=level2 --enable-canonical-sync -o %t.shape.cpp
+// RUN: ptoas %S/../../samples/TAxpy/taxpy.pto \
+// RUN:   --pto-arch=a3 --pto-level=level2 --enable-canonical-sync -o %t.scalar.cpp
+// RUN: ptoas %S/../../samples/Movfp/movfp_fixpipe_reuse_a3-pto.pto \
+// RUN:   --pto-arch=a3 --pto-level=level2 --enable-canonical-sync -o %t.quant.cpp
+// RUN: ptoas %S/../../samples/TPipe/a3_pipe_roundtrip.pto \
+// RUN:   --pto-arch=a3 --pto-level=level2 --enable-canonical-sync -o %t.tpipe.cpp
