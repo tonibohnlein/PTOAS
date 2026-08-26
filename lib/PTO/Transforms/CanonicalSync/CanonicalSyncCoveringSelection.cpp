@@ -364,6 +364,7 @@ MechanismAdapter::solve(CanonicalSyncCoveringSnapshot &snapshot) {
       for (const auto &ranked : rankedRings) {
         if (proposed.size() == kMaximumPairsPerDemand ||
             totalClaims == kMaximumRoundTripClaims) {
+          roundTripsTruncated = true;
           break;
         }
         const SupplyEntry &ring = carried->second[std::get<2>(ranked)];
@@ -381,6 +382,7 @@ MechanismAdapter::solve(CanonicalSyncCoveringSnapshot &snapshot) {
         for (SyncCoverMechanismId forwardMechanism : reversing->second) {
           if (proposed.size() == kMaximumPairsPerDemand ||
               totalClaims == kMaximumRoundTripClaims) {
+            roundTripsTruncated = true;
             break;
           }
           if (forwardMechanism == ring.mechanism) {

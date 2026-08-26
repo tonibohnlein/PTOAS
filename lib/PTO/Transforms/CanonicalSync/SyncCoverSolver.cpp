@@ -136,34 +136,35 @@ GreedyCandidate makeGreedyCandidate(
 
 bool greedyCandidateLess(const GreedyCandidate &first,
                          const GreedyCandidate &second) {
-  const auto ratioLess = [&](std::size_t firstValue,
-                             std::size_t secondValue) {
-    return static_cast<long double>(firstValue) /
-               static_cast<long double>(first.newCoverage) <
-           static_cast<long double>(secondValue) /
-               static_cast<long double>(second.newCoverage);
+  // Exact per-new-coverage ratio comparison by cross multiplication. The
+  // earlier floating-point form reused the wrong denominators when the
+  // arguments were reversed, which broke strict weak ordering exactly on
+  // ratio ties and let the anchor's column order decide instead of the
+  // added-mechanism ratio.
+  const auto ratioCompare = [&](std::size_t firstValue,
+                                std::size_t secondValue) {
+    const unsigned long long lhs =
+        static_cast<unsigned long long>(firstValue) * second.newCoverage;
+    const unsigned long long rhs =
+        static_cast<unsigned long long>(secondValue) * first.newCoverage;
+    return lhs < rhs ? -1 : (rhs < lhs ? 1 : 0);
   };
   for (std::size_t index = 0; index < first.barrierActions.size(); ++index) {
-    if (ratioLess(first.barrierActions[index],
-                  second.barrierActions[index])) {
-      return true;
+    const int barriers = ratioCompare(first.barrierActions[index],
+                                      second.barrierActions[index]);
+    if (barriers != 0) {
+      return barriers < 0;
     }
-    if (ratioLess(second.barrierActions[index],
-                  first.barrierActions[index])) {
-      return false;
-    }
-    if (ratioLess(first.eventActions[index], second.eventActions[index])) {
-      return true;
-    }
-    if (ratioLess(second.eventActions[index], first.eventActions[index])) {
-      return false;
+    const int events =
+        ratioCompare(first.eventActions[index], second.eventActions[index]);
+    if (events != 0) {
+      return events < 0;
     }
   }
-  if (ratioLess(first.addedMechanisms, second.addedMechanisms)) {
-    return true;
-  }
-  if (ratioLess(second.addedMechanisms, first.addedMechanisms)) {
-    return false;
+  const int added =
+      ratioCompare(first.addedMechanisms, second.addedMechanisms);
+  if (added != 0) {
+    return added < 0;
   }
   return first.column < second.column;
 }

@@ -559,6 +559,76 @@ bool testMissingFactoryDemand() {
   return passed;
 }
 
+bool testWeightedDrainRanking() {
+  bool passed = true;
+  const auto buildGraph = [&](SyncCoverGraph &graph, SyncCoverNodeId nodes[5]) {
+    nodes[0] = takeIndex(graph.addNode(1, 1, 0, 0), passed, "add drain n0");
+    nodes[1] = takeIndex(graph.addNode(1, 1, 0, 1), passed, "add drain n1");
+    nodes[2] = takeIndex(graph.addNode(1, 1, 0, 2), passed, "add drain n2");
+    nodes[3] = takeIndex(graph.addNode(1, 1, 0, 3), passed, "add drain n3");
+    // A second issue resource so a full drain weighs two targeted barriers.
+    nodes[4] = takeIndex(graph.addNode(2, 1, 0, 4), passed, "add drain n4");
+    // Interleaved demands share the anchor between nodes 1 and 2.
+    takeIndex(graph.addDemand(demand(nodes[0], nodes[2])), passed,
+              "add drain demand a");
+    takeIndex(graph.addDemand(demand(nodes[1], nodes[3])), passed,
+              "add drain demand b");
+  };
+  const auto addBarrier = [&](SyncCoverMechanismUniverse &universe,
+                              SyncCoverNodeId anchor, bool drainsAll,
+                              std::vector<SyncCoverEdge> supplies) {
+    SyncCoverMechanismDescriptor descriptor;
+    descriptor.kind = SyncCoverMechanismKind::Barrier;
+    SyncCoverBarrierPlacement placement{1, anchor, 0};
+    placement.drainsAllResources = drainsAll;
+    descriptor.barrier = placement;
+    descriptor.supplyEdges = std::move(supplies);
+    return takeIndex(universe.addMechanism(descriptor), passed,
+                     "add ranking barrier");
+  };
+
+  // A full drain covering both demands ties two targeted barriers on the
+  // weighted action ratio and must win on mechanism count, matching the
+  // authoritative cost order.
+  {
+    SyncCoverGraph graph;
+    SyncCoverNodeId nodes[5];
+    buildGraph(graph, nodes);
+    SyncCoverMechanismUniverse universe(graph);
+    addBarrier(universe, nodes[2], false, {supply(nodes[0], nodes[2])});
+    addBarrier(universe, nodes[2], false, {supply(nodes[1], nodes[3])});
+    const SyncCoverMechanismId drain = addBarrier(
+        universe, nodes[2], true,
+        {supply(nodes[0], nodes[2]), supply(nodes[1], nodes[3])});
+    const SyncCoverSelectionResult result =
+        solveSyncCoverSelection(universe, {0, 1});
+    passed &= check(result && result.mechanisms == std::vector{drain},
+                    "a shared drain outranks per-demand targeted barriers");
+  }
+
+  // A full drain covering one demand is strictly heavier than the targeted
+  // barrier and must lose.
+  {
+    SyncCoverGraph graph;
+    SyncCoverNodeId nodes[5];
+    buildGraph(graph, nodes);
+    SyncCoverMechanismUniverse universe(graph);
+    const SyncCoverMechanismId narrowA =
+        addBarrier(universe, nodes[2], false, {supply(nodes[0], nodes[2])});
+    const SyncCoverMechanismId narrowB =
+        addBarrier(universe, nodes[2], false, {supply(nodes[1], nodes[3])});
+    addBarrier(universe, nodes[2], true, {supply(nodes[0], nodes[2])});
+    const SyncCoverSelectionResult result =
+        solveSyncCoverSelection(universe, {0, 1});
+    passed &= check(result && result.mechanisms ==
+                                  std::vector<SyncCoverMechanismId>{narrowA,
+                                                                    narrowB},
+                    "a weighted drain never beats a same-coverage targeted "
+                    "barrier");
+  }
+  return passed;
+}
+
 } // namespace
 
 int main() {
@@ -567,6 +637,6 @@ int main() {
       testConflictsFailClosed() && testBarrierSelection() &&
       testDeclaredCoverageSelection() && testGreedyDeterminism() &&
       testRecurrenceAndInputValidation() && testManyDemandCache() &&
-      testMissingFactoryDemand();
+      testMissingFactoryDemand() && testWeightedDrainRanking();
   return passed ? 0 : 1;
 }
