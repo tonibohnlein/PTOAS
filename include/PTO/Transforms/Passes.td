@@ -56,7 +56,11 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
            "Maximum EVENT_ID slots available to canonical synchronization">,
     Option<"assumeDistinctGmArgsNoAlias",
            "assume-distinct-gm-args-noalias", "bool", "false",
-           "Treat distinct GM pointer arguments as non-aliasing">
+           "Treat distinct GM pointer arguments as non-aliasing">,
+    Option<"assumeAllGmAccessesNoAlias",
+           "assume-all-gm-accesses-noalias", "bool", "false",
+           "Treat every GM access as disjoint; the caller must guarantee this "
+           "even for accesses from the same argument and across iterations">
   ];
 
   let dependentDialects = [

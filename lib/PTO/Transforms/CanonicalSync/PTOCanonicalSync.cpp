@@ -64,6 +64,13 @@ struct PTOCanonicalSyncPass
 
   void runOnOperation() override {
     func::FuncOp function = getOperation();
+    if (assumeDistinctGmArgsNoAlias && assumeAllGmAccessesNoAlias) {
+      function.emitError(
+          "--assume-distinct-gm-args-noalias and "
+          "--assume-all-gm-accesses-noalias are mutually exclusive");
+      signalPassFailure();
+      return;
+    }
     if (shouldSkip(function)) {
       return;
     }
@@ -76,7 +83,9 @@ struct PTOCanonicalSyncPass
     pto::CanonicalSyncBuildOptions options;
     options.eventIdBudget = static_cast<unsigned>(eventIdNumMax);
     options.analysis.gmAliasPolicy =
-        assumeDistinctGmArgsNoAlias
+        assumeAllGmAccessesNoAlias
+            ? pto::CanonicalSyncGmAliasPolicy::AllAccessesNoAlias
+        : assumeDistinctGmArgsNoAlias
             ? pto::CanonicalSyncGmAliasPolicy::DistinctArgumentsNoAlias
             : pto::CanonicalSyncGmAliasPolicy::MayAlias;
     if (failed(pto::runCanonicalSync(function, options))) {

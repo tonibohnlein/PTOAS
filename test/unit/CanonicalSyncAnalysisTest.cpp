@@ -319,6 +319,23 @@ bool testGmAliasContracts() {
                   outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
         return
       }
+      func.func @recurrence(
+          %gm: !pto.partition_tensor_view<16x16xf32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %c2 = arith.constant 2 : index
+        %a0 = arith.constant 0 : i64
+        %a1 = arith.constant 1024 : i64
+        %src = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 16x16xf32>
+        %dst = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 16x16xf32>
+        scf.for %iv = %c0 to %c2 step %c1 {
+          pto.tstore ins(%src : !pto.tile_buf<vec, 16x16xf32>)
+                     outs(%gm : !pto.partition_tensor_view<16x16xf32>)
+          pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf32>)
+                    outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+        }
+        return
+      }
     }
   )mlir",
                                                              &context);
@@ -329,11 +346,67 @@ bool testGmAliasContracts() {
   distinct.gmAliasPolicy = CanonicalSyncGmAliasPolicy::DistinctArgumentsNoAlias;
   FailureOr<CanonicalSyncProgram> same = buildCanonicalSyncProgram(
       module->lookupSymbol<func::FuncOp>("same"), distinct);
+  CanonicalSyncAnalysisOptions all;
+  all.gmAliasPolicy = CanonicalSyncGmAliasPolicy::AllAccessesNoAlias;
+  FailureOr<CanonicalSyncProgram> allAccesses = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("same"), all);
+  FailureOr<CanonicalSyncProgram> recurrenceDistinct =
+      buildCanonicalSyncProgram(
+          module->lookupSymbol<func::FuncOp>("recurrence"), distinct);
+  FailureOr<CanonicalSyncProgram> recurrenceAll = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("recurrence"), all);
+  const auto hasLoopCarriedGmDemand = [](const CanonicalSyncProgram &program) {
+    const SyncCoverGraph &graph = program.getGraph();
+    return llvm::any_of(graph.getDemands(), [&](const SyncCoverDemand &demand) {
+      return demand.distance > 0 &&
+             llvm::any_of(
+                 demand.storageWitnesses,
+                 [&](SyncCoverStorageWitnessId witnessId) {
+                   const SyncCoverStorageWitness &witness =
+                       graph.getStorageWitnesses()[witnessId];
+                   const SyncCoverStorageAccess &access =
+                       graph.getStorageAccesses()[witness.sourceAccess];
+                   return program.getStorageSpaces()[access.domain] ==
+                          AddressSpace::GM;
+                 });
+    });
+  };
+  const auto hasLoopCarriedLocalDemand =
+      [](const CanonicalSyncProgram &program) {
+        const SyncCoverGraph &graph = program.getGraph();
+        return llvm::any_of(
+            graph.getDemands(), [&](const SyncCoverDemand &demand) {
+              return demand.distance > 0 &&
+                     llvm::any_of(
+                         demand.storageWitnesses,
+                         [&](SyncCoverStorageWitnessId witnessId) {
+                           const SyncCoverStorageWitness &witness =
+                               graph.getStorageWitnesses()[witnessId];
+                           const SyncCoverStorageAccess &access =
+                               graph.getStorageAccesses()[witness.sourceAccess];
+                           return program.getStorageSpaces()[access.domain] !=
+                                  AddressSpace::GM;
+                         });
+            });
+      };
   FailureOr<CanonicalSyncProgram> annotated = buildCanonicalSyncProgram(
       module->lookupSymbol<func::FuncOp>("annotated"));
   return check(succeeded(same), "build same-argument GM graph") &&
          check(!same->getGraph().getDemands().empty(),
                "preserve same-argument GM hazards") &&
+         check(succeeded(allAccesses), "build all-GM-noalias graph") &&
+         check(allAccesses->getGraph().getDemands().empty(),
+               "strong GM contract suppresses same-argument hazards") &&
+         check(succeeded(recurrenceDistinct),
+               "build distinct-argument recurrence graph") &&
+         check(hasLoopCarriedGmDemand(*recurrenceDistinct),
+               "preserve same-argument loop-carried GM hazards") &&
+         check(succeeded(recurrenceAll),
+               "build all-GM-noalias recurrence graph") &&
+         check(!hasLoopCarriedGmDemand(*recurrenceAll),
+               "strong GM contract suppresses loop-carried GM hazards") &&
+         check(hasLoopCarriedLocalDemand(*recurrenceAll),
+               "strong GM contract preserves loop-carried local hazards") &&
          check(succeeded(annotated), "build annotated GM graph") &&
          check(annotated->getGraph().getDemands().empty(),
                "honor explicit distinct-argument noalias contract");

@@ -195,6 +195,10 @@ bool ProgramBuilder::gmAccessesAreNoAlias(const ExtractedAccess &first,
   if (first.space != AddressSpace::GM || second.space != AddressSpace::GM) {
     return false;
   }
+  if (options_.gmAliasPolicy ==
+      CanonicalSyncGmAliasPolicy::AllAccessesNoAlias) {
+    return true;
+  }
   const std::optional<unsigned> firstArgument =
       getFunctionArgument(first.root, function_);
   const std::optional<unsigned> secondArgument =

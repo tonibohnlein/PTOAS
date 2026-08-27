@@ -31,6 +31,9 @@ namespace pto {
 enum class CanonicalSyncGmAliasPolicy : std::uint8_t {
   MayAlias,
   DistinctArgumentsNoAlias,
+  /// Caller-provided contract that every pair of GM accesses is disjoint,
+  /// including accesses rooted at the same argument and across iterations.
+  AllAccessesNoAlias,
 };
 
 struct CanonicalSyncAnalysisOptions {

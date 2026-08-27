@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s --check-prefix=MAY-ALIAS
+// RUN: pto-test-opt %s \
+// RUN:   '-pto-canonical-sync=event-id-num-max=8 assume-all-gm-accesses-noalias=true' \
+// RUN:   | FileCheck %s --check-prefix=ALL-NOALIAS
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
+// RUN:   --canonical-sync-assume-all-gm-accesses-noalias --emit-pto-ir %s \
+// RUN:   | FileCheck %s --check-prefix=ALL-NOALIAS
+// RUN: not pto-test-opt %s \
+// RUN:   '-pto-canonical-sync=assume-distinct-gm-args-noalias=true assume-all-gm-accesses-noalias=true' \
+// RUN:   2>&1 | FileCheck %s --check-prefix=CONFLICT
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @same_argument(
+      %gm: !pto.partition_tensor_view<16x16xf32>) {
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 1024 : i64
+    %src = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 16x16xf32>
+    %dst = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tstore ins(%src : !pto.tile_buf<vec, 16x16xf32>)
+               outs(%gm : !pto.partition_tensor_view<16x16xf32>)
+    pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf32>)
+              outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+}
+
+// MAY-ALIAS-LABEL: func.func @same_argument
+// MAY-ALIAS: pto.tstore
+// MAY-ALIAS-NEXT: pto.set_flag
+// MAY-ALIAS: pto.wait_flag
+// MAY-ALIAS-NEXT: pto.tload
+
+// ALL-NOALIAS-LABEL: func.func @same_argument
+// ALL-NOALIAS-NOT: pto.set_flag
+// ALL-NOALIAS-NOT: pto.wait_flag
+// ALL-NOALIAS: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier,
+
+// CONFLICT: error: --assume-distinct-gm-args-noalias and --assume-all-gm-accesses-noalias are mutually exclusive

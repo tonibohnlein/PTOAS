@@ -545,6 +545,14 @@ static llvm::cl::opt<bool> canonicalSyncAssumeDistinctGmArgsNoAlias(
         "synchronization"),
     llvm::cl::init(false));
 
+static llvm::cl::opt<bool> canonicalSyncAssumeAllGmAccessesNoAlias(
+    "canonical-sync-assume-all-gm-accesses-noalias",
+    llvm::cl::desc(
+        "Treat every GM access as disjoint in canonical synchronization; "
+        "the caller must guarantee this for the same argument and across "
+        "iterations"),
+    llvm::cl::init(false));
+
 static llvm::cl::opt<bool> planMemoryOrderBySize(
     "plan-memory-order-by-size",
     llvm::cl::desc("Plan larger local buffers first inside one AddressSpace "
@@ -1371,11 +1379,13 @@ struct SerialAutoSyncPass
 
   SerialAutoSyncPass(Mode mode, bool enableBufidDebug, int64_t graphEventIdMax,
                      int64_t canonicalEventIdMax = 0,
-                     bool canonicalDistinctGmArgs = false)
+                     bool canonicalDistinctGmArgs = false,
+                     bool canonicalAllGmAccesses = false)
       : mode(mode), enableBufidDebug(enableBufidDebug),
         graphEventIdMax(graphEventIdMax),
         canonicalEventIdMax(canonicalEventIdMax),
-        canonicalDistinctGmArgs(canonicalDistinctGmArgs) {}
+        canonicalDistinctGmArgs(canonicalDistinctGmArgs),
+        canonicalAllGmAccesses(canonicalAllGmAccesses) {}
 
   void runOnOperation() override {
     OpPassManager functionPM(func::FuncOp::getOperationName());
@@ -1387,6 +1397,7 @@ struct SerialAutoSyncPass
       PTOCanonicalSyncOptions options;
       options.eventIdNumMax = canonicalEventIdMax;
       options.assumeDistinctGmArgsNoAlias = canonicalDistinctGmArgs;
+      options.assumeAllGmAccessesNoAlias = canonicalAllGmAccesses;
       functionPM.addPass(pto::createPTOCanonicalSyncPass(options));
       break;
     }
@@ -1422,6 +1433,7 @@ private:
   int64_t graphEventIdMax;
   int64_t canonicalEventIdMax;
   bool canonicalDistinctGmArgs;
+  bool canonicalAllGmAccesses;
 };
 } // namespace
 
@@ -2611,7 +2623,10 @@ static bool rewriteAddPtrTraceMarkers(std::string &cpp, bool showTrace) {
     size_t replaceEnd = call->rparenPos;
     if (!showTrace) {
       size_t i = call->rparenPos + 1;
-      while (i < cpp.size() && std::isspace(static_cast<unsigned char>(cpp[i]))) {
+      while (i < cpp.size()) {
+        if (!std::isspace(static_cast<unsigned char>(cpp[i]))) {
+          break;
+        }
         ++i;
       }
       if (i < cpp.size() && cpp[i] == ';') {
@@ -2859,8 +2874,9 @@ static void emitProvenanceComments(std::string &segment) {
     }
     me += 2;
     while (me < segment.size() &&
-           (segment[me] == '\r' || segment[me] == '\n'))
+           (segment[me] == '\r' || segment[me] == '\n')) {
       ++me;
+    }
     i = me;
   }
   segment.swap(out);
@@ -2944,9 +2960,12 @@ static bool parseConstantDeclarationLine(llvm::StringRef line,
                                          ConstantDeclCandidate &candidate,
                                          std::string &valueName) {
   llvm::StringRef trimmed = line.trim();
-  if (trimmed.empty() || trimmed.starts_with("#") || trimmed.starts_with("//") ||
-      !trimmed.ends_with(";"))
+  const bool unsuitable =
+      trimmed.empty() || trimmed.starts_with("#") ||
+      trimmed.starts_with("//") || !trimmed.ends_with(";");
+  if (unsuitable) {
     return false;
+  }
 
   llvm::StringRef body = trimmed.drop_back().rtrim();
   if (body.starts_with("return") || body.starts_with("goto ") ||
@@ -2998,9 +3017,12 @@ static bool parseGeneratedValueAssignment(llvm::StringRef line,
                                           llvm::StringRef &valueName,
                                           llvm::StringRef &rhs) {
   llvm::StringRef trimmed = line.trim();
-  if (trimmed.empty() || trimmed.starts_with("#") || trimmed.starts_with("//") ||
-      !trimmed.ends_with(";"))
+  const bool unsuitable =
+      trimmed.empty() || trimmed.starts_with("#") ||
+      trimmed.starts_with("//") || !trimmed.ends_with(";");
+  if (unsuitable) {
     return false;
+  }
 
   llvm::StringRef body = trimmed.drop_back().rtrim();
   size_t eqPos = body.find('=');
@@ -3776,12 +3798,15 @@ int mlir::pto::compilePTOASModule(
     if (emitMlirIR) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::Canonical, false, 0,
-          canonicalSyncEventIdMax, canonicalSyncAssumeDistinctGmArgsNoAlias));
+          canonicalSyncEventIdMax, canonicalSyncAssumeDistinctGmArgsNoAlias,
+          canonicalSyncAssumeAllGmAccessesNoAlias));
     } else {
       PTOCanonicalSyncOptions options;
       options.eventIdNumMax = canonicalSyncEventIdMax;
       options.assumeDistinctGmArgsNoAlias =
           canonicalSyncAssumeDistinctGmArgsNoAlias;
+      options.assumeAllGmAccessesNoAlias =
+          canonicalSyncAssumeAllGmAccessesNoAlias;
       pm.addNestedPass<func::FuncOp>(pto::createPTOCanonicalSyncPass(options));
     }
   } else if (enableBufidSync) {
