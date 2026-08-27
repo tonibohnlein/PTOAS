@@ -101,14 +101,34 @@ SyncCoverEdge releaseEdge(const SyncCoverGraph &graph,
       release.targetGuard};
 }
 
+SyncCoverEdge readyEdge(const SyncCoverGraph &graph,
+                        const CanonicalSyncUnitSlotLifecycle &lifecycle) {
+  const SyncCoverDemand &ready =
+      graph.getDemands()[lifecycle.readyDemands.front()];
+  return {ready.source,     ready.target,   SyncCoverEdgeKind::CompletionSupply,
+          ready.scope,      ready.distance, ready.sourceGuard,
+          ready.targetGuard};
+}
+
+bool edgeEqual(const SyncCoverEdge &left, const SyncCoverEdge &right) {
+  return std::tie(left.source, left.target, left.kind, left.scope,
+                  left.distance, left.sourceGuard.literals,
+                  left.targetGuard.literals) ==
+         std::tie(right.source, right.target, right.kind, right.scope,
+                  right.distance, right.sourceGuard.literals,
+                  right.targetGuard.literals);
+}
+
 bool actionMatches(const CanonicalSyncAction &action,
                    CanonicalSyncActionKind kind, std::uint32_t resource,
                    SyncCoverAnchorKind anchorKind, SyncCoverNodeId node,
-                   SyncCoverScopeId scope) {
+                   SyncCoverScopeId scope, std::size_t eventUse = 0) {
   return action.kind == kind && action.resource == resource &&
          action.anchor.kind == anchorKind && action.anchor.node == node &&
-         action.anchor.scope == scope && action.eventUse == 0 &&
-         action.eventLane == 0 && action.drainedResources.empty() &&
+         action.anchor.scope == scope && action.anchor.position == 0 &&
+         action.eventUse == eventUse && action.eventLane == 0 &&
+         action.drainedResources.empty() &&
+         action.barrierKind == CanonicalSyncBarrierKind::Targeted &&
          action.guard == CanonicalSyncActionGuardKind::None &&
          !action.guardScope;
 }
@@ -395,4 +415,148 @@ bool mlir::pto::verifyCanonicalSyncUnitSlotProtocol(
              descriptor.actions[3], CanonicalSyncActionKind::EventWait,
              lifecycle.producerResource, SyncCoverAnchorKind::ScopeExit, 0,
              lifecycle.recurrenceScope);
+}
+
+std::optional<CanonicalSyncMechanismDescriptor>
+mlir::pto::makeCanonicalSyncAtomicUnitSlotProtocol(
+    const SyncCoverGraph &graph,
+    const CanonicalSyncUnitSlotLifecycle &lifecycle,
+    CanonicalSyncEventDomainId readyDomain,
+    CanonicalSyncEventDomainId releaseDomain) {
+  if (!verifyCanonicalSyncUnitSlotLifecycle(graph, lifecycle)) {
+    return std::nullopt;
+  }
+  const SyncCoverStorageAccess &producer =
+      graph.getStorageAccesses()[lifecycle.producerAccess];
+  const SyncCoverStorageAccess &consumer =
+      graph.getStorageAccesses()[lifecycle.consumerAccess];
+  CanonicalSyncMechanismDescriptor descriptor;
+  descriptor.kind = CanonicalSyncMechanismKind::Protocol;
+  descriptor.eventUses.push_back({readyDomain, 1, lifecycle.recurrenceScope});
+  descriptor.eventUses.push_back({releaseDomain, 1, lifecycle.recurrenceScope});
+  descriptor.actions.push_back(
+      {CanonicalSyncActionKind::EventSet,
+       lifecycle.producerResource,
+       {SyncCoverAnchorKind::AfterNode, producer.node, 0},
+       0,
+       0,
+       {}});
+  descriptor.actions.push_back(
+      {CanonicalSyncActionKind::EventWait,
+       lifecycle.consumerResource,
+       {SyncCoverAnchorKind::BeforeNode, consumer.node, 0},
+       0,
+       0,
+       {}});
+  descriptor.actions.push_back(
+      {CanonicalSyncActionKind::EventSet,
+       lifecycle.consumerResource,
+       {SyncCoverAnchorKind::ScopeEntry, 0, lifecycle.recurrenceScope},
+       1,
+       0,
+       {}});
+  descriptor.actions.push_back(
+      {CanonicalSyncActionKind::EventWait,
+       lifecycle.producerResource,
+       {SyncCoverAnchorKind::BeforeNode, producer.node, 0},
+       1,
+       0,
+       {}});
+  descriptor.actions.push_back(
+      {CanonicalSyncActionKind::EventSet,
+       lifecycle.consumerResource,
+       {SyncCoverAnchorKind::AfterNode, consumer.node, 0},
+       1,
+       0,
+       {}});
+  descriptor.actions.push_back(
+      {CanonicalSyncActionKind::EventWait,
+       lifecycle.producerResource,
+       {SyncCoverAnchorKind::ScopeExit, 0, lifecycle.recurrenceScope},
+       1,
+       0,
+       {}});
+  descriptor.supplies.push_back({readyEdge(graph, lifecycle), 0, std::nullopt,
+                                 0, 1,
+                                 CanonicalSyncSupplyProof::VerifiedProtocol});
+  descriptor.supplies.push_back({releaseEdge(graph, lifecycle), 1, std::nullopt,
+                                 4, 3,
+                                 CanonicalSyncSupplyProof::VerifiedProtocol});
+  return descriptor;
+}
+
+bool mlir::pto::verifyCanonicalSyncAtomicUnitSlotProtocol(
+    const SyncCoverGraph &graph,
+    const CanonicalSyncUnitSlotLifecycle &lifecycle,
+    CanonicalSyncEventDomainId readyDomain,
+    CanonicalSyncEventDomainId releaseDomain,
+    const CanonicalSyncMechanismDescriptor &descriptor) {
+  const bool validLifecycle =
+      verifyCanonicalSyncUnitSlotLifecycle(graph, lifecycle);
+  const bool validCardinality =
+      descriptor.kind == CanonicalSyncMechanismKind::Protocol &&
+      descriptor.eventUses.size() == 2 && descriptor.actions.size() == 6 &&
+      descriptor.supplies.size() == 2;
+  if (!validLifecycle || !validCardinality) {
+    return false;
+  }
+  const CanonicalSyncEventUse &readyUse = descriptor.eventUses[0];
+  const CanonicalSyncEventUse &releaseUse = descriptor.eventUses[1];
+  const SyncCoverStorageAccess &producer =
+      graph.getStorageAccesses()[lifecycle.producerAccess];
+  const SyncCoverStorageAccess &consumer =
+      graph.getStorageAccesses()[lifecycle.consumerAccess];
+  const auto readyBinding =
+      std::find_if(descriptor.supplies.begin(), descriptor.supplies.end(),
+                   [](const CanonicalSyncSupplyBinding &binding) {
+                     return binding.eventUse == 0;
+                   });
+  const auto releaseBinding =
+      std::find_if(descriptor.supplies.begin(), descriptor.supplies.end(),
+                   [](const CanonicalSyncSupplyBinding &binding) {
+                     return binding.eventUse == 1;
+                   });
+  const bool correctUses =
+      readyUse.domain == readyDomain && readyUse.width == 1 &&
+      readyUse.recurrenceScope == lifecycle.recurrenceScope &&
+      !readyUse.lifetimeScope && releaseUse.domain == releaseDomain &&
+      releaseUse.width == 1 &&
+      releaseUse.recurrenceScope == lifecycle.recurrenceScope &&
+      !releaseUse.lifetimeScope;
+  const bool correctBindings =
+      readyBinding != descriptor.supplies.end() &&
+      releaseBinding != descriptor.supplies.end() &&
+      edgeEqual(readyBinding->edge, readyEdge(graph, lifecycle)) &&
+      !readyBinding->barrierAction && readyBinding->produceAction == 0 &&
+      readyBinding->consumeAction == 1 &&
+      readyBinding->proof == CanonicalSyncSupplyProof::VerifiedProtocol &&
+      readyBinding->allowedDemands.empty() &&
+      edgeEqual(releaseBinding->edge, releaseEdge(graph, lifecycle)) &&
+      !releaseBinding->barrierAction && releaseBinding->produceAction == 4 &&
+      releaseBinding->consumeAction == 3 &&
+      releaseBinding->proof == CanonicalSyncSupplyProof::VerifiedProtocol &&
+      releaseBinding->allowedDemands.empty();
+  return correctUses && correctBindings &&
+         actionMatches(descriptor.actions[0], CanonicalSyncActionKind::EventSet,
+                       lifecycle.producerResource,
+                       SyncCoverAnchorKind::AfterNode, producer.node, 0, 0) &&
+         actionMatches(descriptor.actions[1],
+                       CanonicalSyncActionKind::EventWait,
+                       lifecycle.consumerResource,
+                       SyncCoverAnchorKind::BeforeNode, consumer.node, 0, 0) &&
+         actionMatches(descriptor.actions[2], CanonicalSyncActionKind::EventSet,
+                       lifecycle.consumerResource,
+                       SyncCoverAnchorKind::ScopeEntry, 0,
+                       lifecycle.recurrenceScope, 1) &&
+         actionMatches(descriptor.actions[3],
+                       CanonicalSyncActionKind::EventWait,
+                       lifecycle.producerResource,
+                       SyncCoverAnchorKind::BeforeNode, producer.node, 0, 1) &&
+         actionMatches(descriptor.actions[4], CanonicalSyncActionKind::EventSet,
+                       lifecycle.consumerResource,
+                       SyncCoverAnchorKind::AfterNode, consumer.node, 0, 1) &&
+         actionMatches(
+             descriptor.actions[5], CanonicalSyncActionKind::EventWait,
+             lifecycle.producerResource, SyncCoverAnchorKind::ScopeExit, 0,
+             lifecycle.recurrenceScope, 1);
 }

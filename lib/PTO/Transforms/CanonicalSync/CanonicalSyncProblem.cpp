@@ -253,14 +253,10 @@ unsigned patternPriority(CanonicalSyncPatternKind kind) {
   switch (kind) {
   case CanonicalSyncPatternKind::Singleton:
     return 0;
-  case CanonicalSyncPatternKind::OwnershipCycle:
-    return 1;
-  case CanonicalSyncPatternKind::SlotLifecycle:
-    return 2;
   case CanonicalSyncPatternKind::RoundTrip:
-    return 3;
+    return 1;
   case CanonicalSyncPatternKind::PipelineScope:
-    return 4;
+    return 2;
   }
   return std::numeric_limits<unsigned>::max();
 }
@@ -833,7 +829,7 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::internMechanismImpl(
       mechanisms_.size() >= limits_.maximumMechanisms;
   const bool patternLimitReached =
       mechanisms_.size() >= limits_.maximumPatterns ||
-      patternSpecs_.size() >= limits_.maximumPatterns - mechanisms_.size();
+      retainedPatternCount_ >= limits_.maximumPatterns - mechanisms_.size();
   if (mechanismLimitReached || patternLimitReached) {
     return {CanonicalSyncProblemError::LimitExceeded, mechanisms_.size()};
   }
@@ -860,6 +856,7 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::internMechanismImpl(
     return {CanonicalSyncProblemError::InvalidMechanism, id};
   }
   mechanismBuckets_[hash].push_back(id);
+  constructionSingletonCoverage_.push_back(std::nullopt);
   actionCount_ = nextActions;
   eventUseCount_ = nextUses;
   supplyCount_ = nextSupplies;
@@ -924,26 +921,78 @@ CanonicalSyncPatternProblem::addPattern(CanonicalSyncPatternSpec pattern) {
       }
     }
   }
-  auto existing = std::find_if(patternSpecs_.begin(), patternSpecs_.end(),
-                               [&](const auto &candidate) {
-                                 return candidate.members == pattern.members;
-                               });
+  auto existing = std::find_if(
+      patternSpecs_.begin(), patternSpecs_.end(), [&](const auto &candidate) {
+        return candidate.spec.members == pattern.members;
+      });
   if (existing != patternSpecs_.end()) {
     const bool strongerProvenance =
-        patternPriority(pattern.kind) < patternPriority(existing->kind);
+        patternPriority(pattern.kind) < patternPriority(existing->spec.kind);
     if (strongerProvenance) {
-      existing->kind = pattern.kind;
+      existing->spec.kind = pattern.kind;
     }
-    return {CanonicalSyncProblemError::None,
-            static_cast<std::size_t>(existing - patternSpecs_.begin())};
+    const std::optional<std::size_t> retained =
+        existing->extraCoverageCount == 0
+            ? std::nullopt
+            : std::optional<std::size_t>(
+                  static_cast<std::size_t>(existing - patternSpecs_.begin()));
+    return {CanonicalSyncProblemError::None, retained};
   }
-  const bool patternLimitReached =
+  const bool proposalLimitReached =
+      patternSpecs_.size() >= limits_.maximumPatternProposals;
+  if (proposalLimitReached) {
+    patternGenerationTruncated_ = true;
+    return {CanonicalSyncProblemError::None, std::nullopt};
+  }
+  if (!constructionBaselineCoverage_) {
+    const SyncCoverCoverageResult baseline =
+        computeSyncCoverCoverage(graph_, expansion_, {}, activeDemands_);
+    if (!baseline) {
+      return {CanonicalSyncProblemError::CoverageFailure, std::nullopt};
+    }
+    constructionBaselineCoverage_ =
+        projectCoverage(baseline.covered, activeDemands_);
+  }
+  SyncCoverDemandSet singletonCoverage(activeDemands_.size());
+  for (CanonicalSyncMechanismId member : pattern.members) {
+    std::optional<SyncCoverDemandSet> &cached =
+        constructionSingletonCoverage_[member];
+    if (!cached) {
+      const SyncCoverCoverageResult coverage = computeSyncCoverCoverage(
+          graph_, expansion_, getSupplies(mechanisms_, {member}),
+          activeDemands_);
+      if (!coverage) {
+        return {CanonicalSyncProblemError::CoverageFailure, std::nullopt};
+      }
+      cached = projectCoverage(coverage.covered, activeDemands_);
+      cached->subtract(*constructionBaselineCoverage_);
+    }
+    singletonCoverage.unite(*cached);
+  }
+  const SyncCoverCoverageResult coverage = computeSyncCoverCoverage(
+      graph_, expansion_, getSupplies(mechanisms_, pattern.members),
+      activeDemands_);
+  if (!coverage) {
+    return {CanonicalSyncProblemError::CoverageFailure, std::nullopt};
+  }
+  SyncCoverDemandSet jointCoverage =
+      projectCoverage(coverage.covered, activeDemands_);
+  jointCoverage.subtract(*constructionBaselineCoverage_);
+  SyncCoverDemandSet extraCoverage = jointCoverage;
+  extraCoverage.subtract(singletonCoverage);
+  const bool retainsPattern = !extraCoverage.empty();
+  const bool retainedLimitReached =
       mechanisms_.size() >= limits_.maximumPatterns ||
-      patternSpecs_.size() >= limits_.maximumPatterns - mechanisms_.size();
-  if (patternLimitReached) {
-    return {CanonicalSyncProblemError::LimitExceeded, patternSpecs_.size()};
+      retainedPatternCount_ >= limits_.maximumPatterns - mechanisms_.size();
+  if (retainsPattern && retainedLimitReached) {
+    return {CanonicalSyncProblemError::None, std::nullopt};
   }
-  patternSpecs_.push_back(std::move(pattern));
+  patternSpecs_.push_back({std::move(pattern), std::move(jointCoverage),
+                           singletonCoverage.count(), extraCoverage.count()});
+  if (!retainsPattern) {
+    return {CanonicalSyncProblemError::None, std::nullopt};
+  }
+  ++retainedPatternCount_;
   return {CanonicalSyncProblemError::None, patternSpecs_.size() - 1};
 }
 
@@ -986,47 +1035,25 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns() {
          std::move(coverage),
          0});
   }
-  for (const CanonicalSyncPatternSpec &spec : patternSpecs_) {
+  for (const PendingPattern &pending : patternSpecs_) {
+    const CanonicalSyncPatternSpec &spec = pending.spec;
+    CanonicalSyncPatternKindStatistics &statistics =
+        patternStatistics_.kinds[static_cast<std::size_t>(spec.kind)];
+    ++statistics.patterns;
+    statistics.jointCoverageIncidences += pending.coverage.count();
+    statistics.singletonCoverageIncidences += pending.singletonCoverageCount;
+    statistics.extraCoverageIncidences += pending.extraCoverageCount;
+    if (pending.extraCoverageCount == 0) {
+      continue;
+    }
+    ++statistics.patternsWithExtraCoverage;
     const CanonicalSyncResourceAllocation resources =
         allocateCanonicalSyncEvents(*this, spec.members);
     if (!resources.valid || !resources.feasible) {
       return {CanonicalSyncProblemError::InvalidPattern, patterns_.size()};
     }
-    const SyncCoverCoverageResult coverage = computeSyncCoverCoverage(
-        graph_, expansion_, getSupplies(mechanisms_, spec.members),
-        activeDemands_);
-    if (!coverage) {
-      return {CanonicalSyncProblemError::CoverageFailure, patterns_.size()};
-    }
-    SyncCoverDemandSet jointCoverage =
-        projectCoverage(coverage.covered, activeDemands_);
-    jointCoverage.subtract(baselineCoverage_);
-    SyncCoverDemandSet singletonCoverage(activeDemands_.size());
-    for (CanonicalSyncMechanismId member : spec.members) {
-      const bool validSingleton =
-          member < patterns_.size() &&
-          patterns_[member].kind == CanonicalSyncPatternKind::Singleton &&
-          patterns_[member].members.size() == 1 &&
-          patterns_[member].members.front() == member;
-      if (!validSingleton) {
-        return {CanonicalSyncProblemError::InvalidPattern, patterns_.size()};
-      }
-      singletonCoverage.unite(patterns_[member].coverage);
-    }
-    SyncCoverDemandSet extraCoverage = jointCoverage;
-    extraCoverage.subtract(singletonCoverage);
-    CanonicalSyncPatternKindStatistics &statistics =
-        patternStatistics_.kinds[static_cast<std::size_t>(spec.kind)];
-    ++statistics.patterns;
-    statistics.jointCoverageIncidences += jointCoverage.count();
-    statistics.singletonCoverageIncidences += singletonCoverage.count();
-    statistics.extraCoverageIncidences += extraCoverage.count();
-    if (!extraCoverage.empty()) {
-      ++statistics.patternsWithExtraCoverage;
-    }
     patterns_.push_back({patterns_.size(), spec.kind, spec.members,
-                         std::move(jointCoverage),
-                         extraCoverage.count()});
+                         pending.coverage, pending.extraCoverageCount});
   }
   return {};
 }

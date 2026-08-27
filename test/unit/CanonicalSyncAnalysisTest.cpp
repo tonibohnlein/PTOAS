@@ -1293,6 +1293,71 @@ bool testL0OwnershipProtocolTrustBoundary() {
     return false;
   }
 
+  const std::optional<CanonicalSyncMechanismDescriptor> expectedAtomic =
+      makeCanonicalSyncAtomicOwnershipProtocol(*program, cycle, 0, 1);
+  const std::size_t splitActionLimit = std::max(
+      protocol->ready.actions.size(), protocol->release.actions.size());
+  if (!check(expectedAtomic &&
+                 expectedAtomic->actions.size() > splitActionLimit,
+             "fixture distinguishes split and atomic action limits")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions splitLimitOptions;
+  splitLimitOptions.problemLimits.maximumActionsPerMechanism = splitActionLimit;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> splitLimitProblem =
+      buildCanonicalSyncSingletonProblem(*program, splitLimitOptions);
+  if (!check(succeeded(splitLimitProblem),
+             "retain split L0 protocols when the atomic recipe is oversized")) {
+    return false;
+  }
+  const std::uint32_t limitedCube =
+      static_cast<std::uint32_t>(PipelineType::PIPE_M);
+  const std::uint32_t limitedMte1 =
+      static_cast<std::uint32_t>(PipelineType::PIPE_MTE1);
+  std::optional<CanonicalSyncEventDomainId> limitedReadyDomain;
+  std::optional<CanonicalSyncEventDomainId> limitedReleaseDomain;
+  for (const CanonicalSyncEventDomain &domain :
+       (*splitLimitProblem)->getDomains()) {
+    if (domain.sourceResource == limitedMte1 &&
+        domain.targetResource == limitedCube) {
+      limitedReadyDomain = domain.id;
+    }
+    if (domain.sourceResource == limitedCube &&
+        domain.targetResource == limitedMte1) {
+      limitedReleaseDomain = domain.id;
+    }
+  }
+  if (!check(limitedReadyDomain && limitedReleaseDomain,
+             "find split L0 event domains")) {
+    return false;
+  }
+  const std::optional<CanonicalSyncOwnershipProtocol> expectedSplit =
+      makeCanonicalSyncOwnershipProtocol(*program, cycle, *limitedReadyDomain,
+                                         *limitedReleaseDomain);
+  const std::optional<CanonicalSyncMechanismDescriptor> limitedAtomic =
+      makeCanonicalSyncAtomicOwnershipProtocol(
+          *program, cycle, *limitedReadyDomain, *limitedReleaseDomain);
+  if (!check(expectedSplit && limitedAtomic,
+             "rebuild split L0 recipes for the admitted domains")) {
+    return false;
+  }
+  const bool hasSplitReady = llvm::any_of(
+      (*splitLimitProblem)->getMechanisms(), [&](const auto &mechanism) {
+        return sameDescriptor(mechanism.descriptor, expectedSplit->ready);
+      });
+  const bool hasSplitRelease = llvm::any_of(
+      (*splitLimitProblem)->getMechanisms(), [&](const auto &mechanism) {
+        return sameDescriptor(mechanism.descriptor, expectedSplit->release);
+      });
+  const bool hasOversizedAtomic = llvm::any_of(
+      (*splitLimitProblem)->getMechanisms(), [&](const auto &mechanism) {
+        return sameDescriptor(mechanism.descriptor, *limitedAtomic);
+      });
+  if (!check(hasSplitReady && hasSplitRelease && !hasOversizedAtomic,
+             "admit both split alternatives independently of atomic limits")) {
+    return false;
+  }
+
   std::vector<SyncCoverCompletionSupply> releaseSupplies;
   SyncCoverDemandSet qualified(program->getGraph().getDemands().size());
   for (const CanonicalSyncSupplyBinding &binding : protocol->release.supplies) {
@@ -1337,47 +1402,40 @@ bool testL0OwnershipProtocolTrustBoundary() {
   const std::uint32_t cube = static_cast<std::uint32_t>(PipelineType::PIPE_M);
   const std::uint32_t mte1 =
       static_cast<std::uint32_t>(PipelineType::PIPE_MTE1);
-  std::optional<CanonicalSyncMechanismId> releaseMechanism;
+  std::optional<CanonicalSyncMechanismId> atomicOwnership;
   for (const CanonicalSyncMechanism &mechanism : (*problem)->getMechanisms()) {
     if (mechanism.descriptor.kind != CanonicalSyncMechanismKind::Protocol ||
-        mechanism.descriptor.eventUses.size() != 1) {
+        mechanism.descriptor.eventUses.size() < 2) {
       continue;
     }
-    const CanonicalSyncEventDomain &domain =
-        (*problem)->getDomains()[mechanism.descriptor.eventUses.front().domain];
-    if (domain.sourceResource == cube && domain.targetResource == mte1) {
-      releaseMechanism = mechanism.id;
+    bool hasReady = false;
+    bool hasRelease = false;
+    for (const CanonicalSyncEventUse &use : mechanism.descriptor.eventUses) {
+      const CanonicalSyncEventDomain &domain =
+          (*problem)->getDomains()[use.domain];
+      hasReady = hasReady || (domain.sourceResource == mte1 &&
+                              domain.targetResource == cube);
+      hasRelease = hasRelease || (domain.sourceResource == cube &&
+                                  domain.targetResource == mte1);
+    }
+    if (hasReady && hasRelease) {
+      atomicOwnership = mechanism.id;
       break;
     }
   }
-  if (!check(releaseMechanism.has_value(),
-             "retain the verified ownership release mechanism")) {
+  if (!check(atomicOwnership.has_value(),
+             "retain one atomic L0 ownership mechanism")) {
     return false;
   }
-  if (!check((*problem)->getPatterns()[*releaseMechanism].coverage ==
-                 releaseCoverage.covered,
-             "ground exact release-only coverage in its singleton pattern")) {
-    return false;
-  }
-  const auto ownershipPattern = llvm::find_if(
-      (*problem)->getPatterns(), [](const CanonicalSyncPattern &pattern) {
-        return pattern.kind == CanonicalSyncPatternKind::OwnershipCycle;
-      });
-  if (!check(ownershipPattern != (*problem)->getPatterns().end() &&
-                 ownershipPattern->coverage.containsAll(qualified),
-             "ground composed ownership coverage in the named pattern")) {
+  if (!check((*problem)->getPatterns()[*atomicOwnership].coverage.containsAll(
+                 qualified),
+             "ground complete L0 ownership in one singleton pattern")) {
     return false;
   }
   const auto familyAblationKeepsMechanisms =
       [&](CanonicalSyncPatternKind disabled) {
         CanonicalSyncBuildOptions ablationOptions;
         switch (disabled) {
-        case CanonicalSyncPatternKind::OwnershipCycle:
-          ablationOptions.patterns.enableOwnershipCycle = false;
-          break;
-        case CanonicalSyncPatternKind::SlotLifecycle:
-          ablationOptions.patterns.enableSlotLifecycle = false;
-          break;
         case CanonicalSyncPatternKind::PipelineScope:
           ablationOptions.patterns.enablePipelineScope = false;
           break;
@@ -1397,22 +1455,13 @@ bool testL0OwnershipProtocolTrustBoundary() {
                              });
       };
   if (!check(familyAblationKeepsMechanisms(
-                 CanonicalSyncPatternKind::OwnershipCycle),
-             "ownership-pattern ablation keeps the mechanism catalog") ||
-      !check(familyAblationKeepsMechanisms(
-                 CanonicalSyncPatternKind::SlotLifecycle),
-             "slot-pattern ablation keeps the mechanism catalog") ||
-      !check(familyAblationKeepsMechanisms(
                  CanonicalSyncPatternKind::PipelineScope),
              "pipeline-pattern ablation keeps the mechanism catalog") ||
-      !check(familyAblationKeepsMechanisms(
-                 CanonicalSyncPatternKind::RoundTrip),
+      !check(familyAblationKeepsMechanisms(CanonicalSyncPatternKind::RoundTrip),
              "round-trip ablation keeps the mechanism catalog")) {
     return false;
   }
   CanonicalSyncBuildOptions atomicOptions;
-  atomicOptions.patterns.enableOwnershipCycle = false;
-  atomicOptions.patterns.enableSlotLifecycle = false;
   atomicOptions.patterns.enablePipelineScope = false;
   atomicOptions.patterns.enableRoundTrip = false;
   FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> atomicProblem =

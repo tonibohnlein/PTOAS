@@ -139,8 +139,6 @@ struct CanonicalSyncMechanism {
 
 enum class CanonicalSyncPatternKind : std::uint8_t {
   Singleton,
-  OwnershipCycle,
-  SlotLifecycle,
   PipelineScope,
   RoundTrip,
 };
@@ -218,6 +216,7 @@ public:
     std::size_t maximumReservedEventIds = 64;
     std::size_t maximumMechanisms = 1U << 16;
     std::size_t maximumPatterns = 1U << 16;
+    std::size_t maximumPatternProposals = 1U << 17;
     std::size_t maximumActionsPerMechanism = 1U << 12;
     std::size_t maximumDrainedResourcesPerBarrier = 64;
     std::size_t maximumEventUsesPerMechanism = 1U << 10;
@@ -280,12 +279,22 @@ public:
   const CanonicalSyncPatternStatistics &getPatternStatistics() const {
     return patternStatistics_;
   }
+  bool wasPatternGenerationTruncated() const {
+    return patternGenerationTruncated_;
+  }
   const SyncCoverDemandSet &getBaselineCoverage() const {
     return baselineCoverage_;
   }
   const Limits &getLimits() const { return limits_; }
 
 private:
+  struct PendingPattern {
+    CanonicalSyncPatternSpec spec;
+    SyncCoverDemandSet coverage;
+    std::size_t singletonCoverageCount = 0;
+    std::size_t extraCoverageCount = 0;
+  };
+
   CanonicalSyncProblemResult internMechanismImpl(
       CanonicalSyncMechanismDescriptor descriptor, bool protocolVerified,
       const std::function<bool(const CanonicalSyncMechanismDescriptor &)>
@@ -310,7 +319,11 @@ private:
   std::vector<SyncCoverDemandId> activeDemands_;
   std::vector<CanonicalSyncEventDomain> domains_;
   std::vector<CanonicalSyncMechanism> mechanisms_;
-  std::vector<CanonicalSyncPatternSpec> patternSpecs_;
+  std::vector<PendingPattern> patternSpecs_;
+  std::optional<SyncCoverDemandSet> constructionBaselineCoverage_;
+  std::vector<std::optional<SyncCoverDemandSet>> constructionSingletonCoverage_;
+  std::size_t retainedPatternCount_ = 0;
+  bool patternGenerationTruncated_ = false;
   std::vector<CanonicalSyncPattern> patterns_;
   CanonicalSyncPatternStatistics patternStatistics_;
   SyncCoverDemandSet baselineCoverage_;

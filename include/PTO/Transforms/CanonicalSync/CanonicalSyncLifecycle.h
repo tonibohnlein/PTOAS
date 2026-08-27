@@ -80,6 +80,23 @@ bool verifyCanonicalSyncUnitSlotProtocol(
     CanonicalSyncEventDomainId domain,
     const CanonicalSyncMechanismDescriptor &descriptor);
 
+/// Build one independently materializable ready/release lifecycle. Unlike the
+/// release-only protocol above, this descriptor owns both directions and does
+/// not require a multi-mechanism activation pattern.
+std::optional<CanonicalSyncMechanismDescriptor>
+makeCanonicalSyncAtomicUnitSlotProtocol(
+    const SyncCoverGraph &graph,
+    const CanonicalSyncUnitSlotLifecycle &lifecycle,
+    CanonicalSyncEventDomainId readyDomain,
+    CanonicalSyncEventDomainId releaseDomain);
+
+bool verifyCanonicalSyncAtomicUnitSlotProtocol(
+    const SyncCoverGraph &graph,
+    const CanonicalSyncUnitSlotLifecycle &lifecycle,
+    CanonicalSyncEventDomainId readyDomain,
+    CanonicalSyncEventDomainId releaseDomain,
+    const CanonicalSyncMechanismDescriptor &descriptor);
+
 } // namespace pto
 } // namespace mlir
 

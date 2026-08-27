@@ -403,7 +403,9 @@ bool testRoundTripPatternActivatesJointCoverage() {
   passed &= check(graph.addDemand(demand(baselineSource, baselineTarget)),
                   "add round baseline demand");
   passed &= check(graph.freezeStructure(), "freeze round graph");
-  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  CanonicalSyncPatternProblem::Limits limits;
+  limits.maximumPatterns = 4;
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph), limits);
   passed &=
       check(problem.addEventDomain({0, 1, 2, 8, {}}), "add carried domain");
   passed &=
@@ -424,6 +426,10 @@ bool testRoundTripPatternActivatesJointCoverage() {
                 passed, "add alternate closing mechanism");
   passed &= check(problem.addConflict(carried, blockedClosing),
                   "block first round-trip pair");
+  const CanonicalSyncProblemResult packaging = problem.addPattern(
+      {CanonicalSyncPatternKind::PipelineScope, {blockedClosing, closing}});
+  passed &= check(packaging && !packaging.index,
+                  "discard an early zero-extra pattern before capacity");
   CanonicalSyncRoundTripOptions oneEvaluation;
   oneEvaluation.maximumEvaluations = 1;
   const CanonicalSyncProblemResult capped =
@@ -528,16 +534,14 @@ bool testPackagingPatternHasNoExtraCoverage() {
                        {first, third}}),
                   "add overlapping package-only pattern");
   passed &= check(problem.freeze(), "freeze package-only problem");
-  const CanonicalSyncPattern &pattern = problem.getPatterns().back();
   const CanonicalSyncPatternKindStatistics &statistics =
       problem.getPatternStatistics().get(
           CanonicalSyncPatternKind::PipelineScope);
   passed &= check(!problem.getPatterns()[baseline].coverage.contains(3),
                   "remove fixed coverage from singleton mechanism rows");
-  passed &= check(pattern.coverage.count() == 2 &&
-                      !pattern.coverage.contains(3) &&
-                      pattern.extraCoverageCount == 0,
-                  "package coverage equals singleton union");
+  passed &=
+      check(problem.getPatterns().size() == problem.getMechanisms().size(),
+            "drop package-only patterns from the selectable catalog");
   passed &= check(statistics.patterns == 2 &&
                       statistics.jointCoverageIncidences == 4 &&
                       statistics.singletonCoverageIncidences == 4 &&
@@ -602,7 +606,13 @@ bool testUnitSlotLifecycleProtocol() {
   passed &= check(descriptor && verifyCanonicalSyncUnitSlotProtocol(
                                     graph, lifecycle, 1, *descriptor),
                   "build and independently verify unit-slot protocol");
-  if (!descriptor) {
+  const auto atomicDescriptor =
+      makeCanonicalSyncAtomicUnitSlotProtocol(graph, lifecycle, 0, 1);
+  passed &=
+      check(atomicDescriptor && verifyCanonicalSyncAtomicUnitSlotProtocol(
+                                    graph, lifecycle, 0, 1, *atomicDescriptor),
+            "build and independently verify atomic unit-slot lifecycle");
+  if (!descriptor || !atomicDescriptor) {
     return false;
   }
   CanonicalSyncMechanismDescriptor tampered = *descriptor;
@@ -610,6 +620,16 @@ bool testUnitSlotLifecycleProtocol() {
   passed &=
       check(!verifyCanonicalSyncUnitSlotProtocol(graph, lifecycle, 1, tampered),
             "reject a protocol without a scope-entry prime");
+  CanonicalSyncMechanismDescriptor wrongAtomicReady = *atomicDescriptor;
+  wrongAtomicReady.actions[0].anchor.kind = SyncCoverAnchorKind::BeforeNode;
+  passed &= check(!verifyCanonicalSyncAtomicUnitSlotProtocol(
+                      graph, lifecycle, 0, 1, wrongAtomicReady),
+                  "reject an atomic lifecycle with a wrong ready anchor");
+  CanonicalSyncMechanismDescriptor wrongAtomicRelease = *atomicDescriptor;
+  wrongAtomicRelease.supplies.back().consumeAction = 1;
+  passed &= check(!verifyCanonicalSyncAtomicUnitSlotProtocol(
+                      graph, lifecycle, 0, 1, wrongAtomicRelease),
+                  "reject an atomic lifecycle with a wrong release binding");
   CanonicalSyncUnitSlotLifecycle wrongExtent = lifecycle;
   --wrongExtent.extent.end;
   passed &= check(!verifyCanonicalSyncUnitSlotLifecycle(graph, wrongExtent),
@@ -720,6 +740,14 @@ bool testUnitSlotLifecycleProtocol() {
   const CanonicalSyncMechanismId readyMechanism =
       takeIndex(problem.internMechanism(event(0, 1, 2, producer, consumer)),
                 passed, "add lifecycle ready event");
+  const CanonicalSyncMechanismId lifecycleMechanism =
+      takeIndex(problem.internVerifiedProtocol(
+                    *atomicDescriptor,
+                    [&](const auto &candidate) {
+                      return verifyCanonicalSyncAtomicUnitSlotProtocol(
+                          graph, lifecycle, 0, 1, candidate);
+                    }),
+                passed, "add atomic lifecycle protocol");
   const CanonicalSyncMechanismId releaseMechanism =
       takeIndex(problem.internVerifiedProtocol(
                     *descriptor,
@@ -727,16 +755,25 @@ bool testUnitSlotLifecycleProtocol() {
                       return verifyCanonicalSyncUnitSlotProtocol(
                           graph, lifecycle, 1, candidate);
                     }),
-                passed, "add lifecycle release protocol");
-  passed &= check(problem.addPattern({CanonicalSyncPatternKind::SlotLifecycle,
-                                      {readyMechanism, releaseMechanism}}),
-                  "add lifecycle pattern");
+                passed, "add split lifecycle release protocol");
+  passed &= check(problem.addConflict(lifecycleMechanism, releaseMechanism),
+                  "register atomic and split lifecycle alternatives");
   passed &= check(problem.freeze(), "freeze lifecycle problem");
   const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
-  passed &= check(selection && selection.mechanisms ==
-                                   std::vector<CanonicalSyncMechanismId>{
-                                       readyMechanism, releaseMechanism},
-                  "select complete lifecycle members once");
+  const bool selectedAtomic =
+      std::binary_search(selection.mechanisms.begin(),
+                         selection.mechanisms.end(), lifecycleMechanism);
+  const bool selectedReady = std::binary_search(
+      selection.mechanisms.begin(), selection.mechanisms.end(), readyMechanism);
+  const bool selectedRelease =
+      std::binary_search(selection.mechanisms.begin(),
+                         selection.mechanisms.end(), releaseMechanism);
+  const bool completeAtomic =
+      selectedAtomic && !selectedReady && !selectedRelease;
+  const bool completeSplit =
+      !selectedAtomic && selectedReady && selectedRelease;
+  passed &= check(selection && (completeAtomic || completeSplit),
+                  "select one complete lifecycle implementation");
   passed &=
       check(static_cast<bool>(verifyCanonicalSyncSelection(problem, selection)),
             "final verification accepts lifecycle protocol");
@@ -1122,8 +1159,33 @@ bool testFailClosedConstruction() {
   passed &= check(patternLimited
                           .addPattern({CanonicalSyncPatternKind::PipelineScope,
                                        {first, second}})
-                          .error == CanonicalSyncProblemError::LimitExceeded,
-                  "optional patterns cannot exceed the aggregate limit");
+                          .error == CanonicalSyncProblemError::None,
+                  "zero-extra patterns do not consume retained capacity");
+  passed &= check(patternLimited.freeze(),
+                  "freeze a problem after dropping its optional pattern");
+  passed &= check(patternLimited.getPatterns().size() == 2,
+                  "retain only singleton patterns at the aggregate limit");
+
+  CanonicalSyncPatternProblem::Limits proposalLimits;
+  proposalLimits.maximumPatternProposals = 0;
+  CanonicalSyncPatternProblem proposalLimited(graph, allDemands(graph),
+                                              proposalLimits);
+  passed &= check(proposalLimited.addEventDomain({0, 1, 2, 8, {}}),
+                  "add proposal-limit domain");
+  const CanonicalSyncMechanismId proposalFirst =
+      takeIndex(proposalLimited.internMechanism(event(0, 1, 2, source, target)),
+                passed, "add proposal-limit event");
+  const CanonicalSyncMechanismId proposalSecond = takeIndex(
+      proposalLimited.internMechanism(barrier(2, {1, 2}, source, target)),
+      passed, "add proposal-limit barrier");
+  const CanonicalSyncProblemResult proposal = addCanonicalSyncFeasiblePattern(
+      proposalLimited, {CanonicalSyncPatternKind::PipelineScope,
+                        {proposalFirst, proposalSecond}});
+  passed &= check(proposal && !proposal.index &&
+                      proposalLimited.wasPatternGenerationTruncated(),
+                  "report bounded optional-pattern generation");
+  passed &= check(proposalLimited.freeze(),
+                  "freeze a proposal-limited fallback problem");
   return passed;
 }
 

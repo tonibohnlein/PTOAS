@@ -28,8 +28,6 @@ namespace pto {
 /// production pass keeps every family enabled; tests use these switches to
 /// distinguish atomic mechanisms from semantic composition and packaging.
 struct CanonicalSyncPatternOptions {
-  bool enableOwnershipCycle = true;
-  bool enableSlotLifecycle = true;
   bool enablePipelineScope = true;
   bool enableRoundTrip = true;
 };

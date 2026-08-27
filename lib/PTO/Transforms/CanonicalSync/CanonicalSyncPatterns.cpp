@@ -65,11 +65,7 @@ mlir::pto::addCanonicalSyncFeasiblePattern(CanonicalSyncPatternProblem &problem,
   if (!allocation.valid || !allocation.feasible) {
     return {CanonicalSyncProblemError::None, std::nullopt};
   }
-  const CanonicalSyncProblemResult added =
-      problem.addPattern(std::move(pattern));
-  return added.error == CanonicalSyncProblemError::LimitExceeded
-             ? CanonicalSyncProblemResult{}
-             : added;
+  return problem.addPattern(std::move(pattern));
 }
 
 CanonicalSyncProblemResult mlir::pto::addCanonicalSyncRoundTripPatterns(
