@@ -37,8 +37,7 @@ std::size_t takeIndex(const SyncCoverGraphResult &result, bool &passed,
 }
 
 SyncCoverDemand makeDemand(SyncCoverNodeId source, SyncCoverNodeId target,
-                           SyncCoverScopeId scope = 0,
-                           unsigned distance = 0) {
+                           SyncCoverScopeId scope = 0, unsigned distance = 0) {
   SyncCoverDemand demand;
   demand.source = source;
   demand.target = target;
@@ -81,12 +80,12 @@ bool testOneSupplyCoversSeveralDemands() {
   SyncCoverExpandedProgram expansion(graph);
   const SyncCoverCoverageResult coverage = computeSyncCoverCoverage(
       graph, expansion,
-      {{0, makeEdge(source, firstTarget,
-                    SyncCoverEdgeKind::CompletionSupply)}});
+      {{0,
+        makeEdge(source, firstTarget, SyncCoverEdgeKind::CompletionSupply)}});
   passed &= check(coverage && coverage.coversAll(),
                   "one event covers both ordered targets");
-  passed &= check(coverage.covered.count() == 2,
-                  "both demand bits are present");
+  passed &=
+      check(coverage.covered.count() == 2, "both demand bits are present");
   return passed;
 }
 
@@ -103,8 +102,8 @@ bool testTwoSuppliesCompose() {
                   "add first direct demand");
   passed &= check(graph.addDemand(makeDemand(middle, target)),
                   "add second direct demand");
-  passed &= check(graph.addDemand(makeDemand(source, target)),
-                  "add composed demand");
+  passed &=
+      check(graph.addDemand(makeDemand(source, target)), "add composed demand");
   passed &= check(graph.freezeStructure(), "freeze composed graph");
 
   SyncCoverExpandedProgram expansion(graph);
@@ -133,12 +132,12 @@ bool testIssueOrderDoesNotCreatePrefixCompletion() {
       takeIndex(graph.addNode(1, 1, 0, 1), passed, "add prefix marker");
   const SyncCoverNodeId target =
       takeIndex(graph.addNode(2, 1, 0, 2), passed, "add prefix target");
-  passed &= check(graph.addEdge(makeEdge(
-                      source, marker,
-                      SyncCoverEdgeKind::CompletionPreservingIssueOrder)),
-                  "add pre-supply issue order");
-  passed &= check(graph.addDemand(makeDemand(source, target)),
-                  "add prefix demand");
+  passed &= check(
+      graph.addEdge(makeEdge(
+          source, marker, SyncCoverEdgeKind::CompletionPreservingIssueOrder)),
+      "add pre-supply issue order");
+  passed &=
+      check(graph.addDemand(makeDemand(source, target)), "add prefix demand");
   passed &= check(graph.freezeStructure(), "freeze prefix graph");
 
   SyncCoverExpandedProgram expansion(graph);
@@ -153,9 +152,9 @@ bool testIssueOrderDoesNotCreatePrefixCompletion() {
 bool testGuardedRecurrenceAndCompactCarry() {
   bool passed = true;
   SyncCoverGraph graph;
-  const SyncCoverScopeId loop = takeIndex(
-      graph.addScope(0, true, SyncCoverTimelineInterval{0, 20}, true), passed,
-      "add recurrence loop");
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 20}, true),
+                passed, "add recurrence loop");
   const SyncCoverControlId control =
       takeIndex(graph.addControl(2, loop), passed, "add loop control");
   passed &= check(graph.setResourceRecurrenceCarryKind(
@@ -182,12 +181,16 @@ bool testGuardedRecurrenceAndCompactCarry() {
   passed &= check(expansion && statistics.arenaCount == 2 &&
                       statistics.compactCarryEdges != 0,
                   "recurrence builds one compact d+1 arena");
-  const SyncCoverCoverageResult coverage = computeSyncCoverCoverage(
-      graph, expansion,
-      {{0, makeEdge(marker, target, SyncCoverEdgeKind::CompletionSupply, loop,
-                    1)}});
-  passed &= check(coverage && coverage.coversAll(),
-                  "guarded cross-iteration supply covers recurrence");
+  const std::vector<SyncCoverCompletionSupply> supplies = {
+      {0,
+       makeEdge(marker, target, SyncCoverEdgeKind::CompletionSupply, loop, 1)}};
+  const SyncCoverCoverageResult coverage =
+      computeSyncCoverCoverage(graph, expansion, supplies);
+  const SyncCoverSingletonCoverageResult singleton =
+      computeSyncCoverSingletonCoverage(graph, expansion, 1, supplies);
+  passed &= check(coverage && coverage.coversAll() && singleton &&
+                      singleton.mechanisms[0] == coverage.covered,
+                  "guarded compact recurrence matches singleton propagation");
   return passed;
 }
 
@@ -198,35 +201,32 @@ bool testCompactCarryKindsAndResourceIsolation() {
         SyncCoverEdgeKind::NonCompletionPreservingIssueOrder}) {
     SyncCoverGraph graph;
     const SyncCoverScopeId loop = takeIndex(
-        graph.addScope(0, true, SyncCoverTimelineInterval{0, 20}, true),
-        passed, "add compact-carry loop");
+        graph.addScope(0, true, SyncCoverTimelineInterval{0, 20}, true), passed,
+        "add compact-carry loop");
     passed &= check(graph.setResourceRecurrenceCarryKind(1, carryKind),
                     "set compact-carry issue kind");
-    const SyncCoverNodeId source =
-        takeIndex(graph.addNode(2, 1, loop, 0), passed,
-                  "add compact-carry source");
-    const SyncCoverNodeId marker =
-        takeIndex(graph.addNode(1, 1, loop, 1), passed,
-                  "add compact-carry marker");
+    const SyncCoverNodeId source = takeIndex(
+        graph.addNode(2, 1, loop, 0), passed, "add compact-carry source");
+    const SyncCoverNodeId marker = takeIndex(
+        graph.addNode(1, 1, loop, 1), passed, "add compact-carry marker");
     const SyncCoverNodeId sameResourceTarget =
         takeIndex(graph.addNode(1, 1, loop, 2), passed,
                   "add same-resource recurrence target");
     const SyncCoverNodeId otherResourceTarget =
         takeIndex(graph.addNode(2, 1, loop, 3), passed,
                   "add other-resource recurrence target");
-    passed &= check(
-        graph.addDemand(makeDemand(source, sameResourceTarget, loop, 1)),
-        "add compact-carry recurrence demand");
-    passed &= check(
-        graph.addDemand(makeDemand(source, otherResourceTarget, loop, 1)),
-        "add resource-isolation recurrence demand");
+    passed &=
+        check(graph.addDemand(makeDemand(source, sameResourceTarget, loop, 1)),
+              "add compact-carry recurrence demand");
+    passed &=
+        check(graph.addDemand(makeDemand(source, otherResourceTarget, loop, 1)),
+              "add resource-isolation recurrence demand");
     passed &= check(graph.freezeStructure(), "freeze compact-carry graph");
 
     SyncCoverExpandedProgram expansion(graph);
     const SyncCoverCoverageResult coverage = computeSyncCoverCoverage(
         graph, expansion,
-        {{0, makeEdge(source, marker,
-                      SyncCoverEdgeKind::CompletionSupply)}});
+        {{0, makeEdge(source, marker, SyncCoverEdgeKind::CompletionSupply)}});
     passed &= check(coverage && coverage.covered.contains(0),
                     "established completion crosses compact carry");
     passed &= check(!coverage.covered.contains(1),
@@ -243,14 +243,12 @@ bool testOptionalIntermediateAvailability() {
         graph.addScope(0, mustExecute, SyncCoverTimelineInterval{0, 10}),
         passed, "add intermediate scope");
     const SyncCoverNodeId source =
-        takeIndex(graph.addNode(1, 1, 0, 0), passed,
-                  "add availability source");
+        takeIndex(graph.addNode(1, 1, 0, 0), passed, "add availability source");
     const SyncCoverNodeId intermediate =
         takeIndex(graph.addNode(2, 1, intermediateScope, 1), passed,
                   "add availability intermediate");
     const SyncCoverNodeId target =
-        takeIndex(graph.addNode(2, 1, 0, 2), passed,
-                  "add availability target");
+        takeIndex(graph.addNode(2, 1, 0, 2), passed, "add availability target");
     passed &= check(graph.addEdge(makeEdge(
                         intermediate, target,
                         SyncCoverEdgeKind::NonCompletionPreservingIssueOrder)),
@@ -273,18 +271,15 @@ bool testOptionalIntermediateAvailability() {
 bool testExpansionOwnershipAndMaximumHorizon() {
   bool passed = true;
   SyncCoverGraph graph;
-  const SyncCoverScopeId loop = takeIndex(
-      graph.addScope(0, true, SyncCoverTimelineInterval{0, 20}, true), passed,
-      "add maximum-horizon loop");
-  const SyncCoverNodeId source =
-      takeIndex(graph.addNode(1, 1, loop, 0), passed,
-                "add maximum-horizon source");
-  const SyncCoverNodeId firstTarget =
-      takeIndex(graph.addNode(2, 1, loop, 1), passed,
-                "add shorter-distance target");
-  const SyncCoverNodeId secondTarget =
-      takeIndex(graph.addNode(2, 1, loop, 2), passed,
-                "add maximum-distance target");
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 20}, true),
+                passed, "add maximum-horizon loop");
+  const SyncCoverNodeId source = takeIndex(graph.addNode(1, 1, loop, 0), passed,
+                                           "add maximum-horizon source");
+  const SyncCoverNodeId firstTarget = takeIndex(
+      graph.addNode(2, 1, loop, 1), passed, "add shorter-distance target");
+  const SyncCoverNodeId secondTarget = takeIndex(
+      graph.addNode(2, 1, loop, 2), passed, "add maximum-distance target");
   passed &= check(graph.addDemand(makeDemand(source, firstTarget, loop, 1)),
                   "add shorter-distance demand");
   passed &= check(graph.addDemand(makeDemand(source, secondTarget, loop, 3)),
@@ -301,17 +296,18 @@ bool testExpansionOwnershipAndMaximumHorizon() {
 
   SyncCoverGraph moved = std::move(graph);
   SyncCoverGraph unrelated;
-  passed &= check(expansion.isForGraph(moved) && !expansion.isForGraph(unrelated),
-                  "expansion identity follows graph moves only");
+  passed &=
+      check(expansion.isForGraph(moved) && !expansion.isForGraph(unrelated),
+            "expansion identity follows graph moves only");
   return passed;
 }
 
 bool testUnavailableArenaIsReported() {
   bool passed = true;
   SyncCoverGraph graph;
-  const SyncCoverScopeId loop = takeIndex(
-      graph.addScope(0, true, SyncCoverTimelineInterval{0, 20}, true), passed,
-      "add limited loop");
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 20}, true),
+                passed, "add limited loop");
   const SyncCoverNodeId source =
       takeIndex(graph.addNode(1, 1, loop, 0), passed, "add limited source");
   const SyncCoverNodeId target =
@@ -330,11 +326,10 @@ bool testUnavailableArenaIsReported() {
       graph, expansion,
       {{0, makeEdge(source, target, SyncCoverEdgeKind::CompletionSupply, loop,
                     8)}});
-  passed &= check(coverage.error ==
-                          SyncCoverCoverageError::ExpansionUnavailable &&
-                      coverage.unavailableDemands ==
-                          std::vector<SyncCoverDemandId>{0},
-                  "unavailable recurrence arena fails closed per demand");
+  passed &= check(
+      coverage.error == SyncCoverCoverageError::ExpansionUnavailable &&
+          coverage.unavailableDemands == std::vector<SyncCoverDemandId>{0},
+      "unavailable recurrence arena fails closed per demand");
   return passed;
 }
 
@@ -357,11 +352,10 @@ bool testBaseLimitFailsClosed() {
   SyncCoverExpandedProgram expansion(graph, limits);
   const SyncCoverCoverageResult coverage =
       computeSyncCoverCoverage(graph, expansion, {});
-  passed &= check(coverage.error ==
-                          SyncCoverCoverageError::ExpansionUnavailable &&
-                      coverage.unavailableDemands ==
-                          std::vector<SyncCoverDemandId>{0},
-                  "base-arena exhaustion is reported as unavailable");
+  passed &= check(
+      coverage.error == SyncCoverCoverageError::ExpansionUnavailable &&
+          coverage.unavailableDemands == std::vector<SyncCoverDemandId>{0},
+      "base-arena exhaustion is reported as unavailable");
   return passed;
 }
 

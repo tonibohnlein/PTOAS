@@ -60,6 +60,7 @@ enum class SyncCoverCoverageError : std::uint8_t {
   InvalidGraph,
   InvalidSupply,
   ExpansionUnavailable,
+  LimitExceeded,
 };
 
 struct SyncCoverCoverageResult {
@@ -76,6 +77,20 @@ struct SyncCoverCoverageResult {
   }
 };
 
+/// Exact singleton coverage for every mechanism in one batched propagation.
+/// Each entry has graph.getDemands().size() bits. This is the construction
+/// path for singleton patterns; it avoids one graph traversal per mechanism.
+struct SyncCoverSingletonCoverageResult {
+  SyncCoverCoverageError error = SyncCoverCoverageError::None;
+  SyncCoverDemandSet baseline;
+  std::vector<SyncCoverDemandSet> mechanisms;
+  std::vector<SyncCoverDemandId> unavailableDemands;
+
+  explicit operator bool() const {
+    return error == SyncCoverCoverageError::None;
+  }
+};
+
 /// Computes exact demand coverage for one mechanism set over the immutable
 /// bounded expansion. Expansion construction validates and binds the frozen
 /// graph once; this query checks that binding but does not repeat full graph
@@ -83,6 +98,21 @@ struct SyncCoverCoverageResult {
 SyncCoverCoverageResult computeSyncCoverCoverage(
     const SyncCoverGraph &graph, const SyncCoverExpandedProgram &expansion,
     const std::vector<SyncCoverCompletionSupply> &supplies);
+SyncCoverCoverageResult
+computeSyncCoverCoverage(const SyncCoverGraph &graph,
+                         const SyncCoverExpandedProgram &expansion,
+                         const std::vector<SyncCoverCompletionSupply> &supplies,
+                         const std::vector<SyncCoverDemandId> &activeDemands);
+
+SyncCoverSingletonCoverageResult computeSyncCoverSingletonCoverage(
+    const SyncCoverGraph &graph, const SyncCoverExpandedProgram &expansion,
+    std::size_t mechanismCount,
+    const std::vector<SyncCoverCompletionSupply> &supplies);
+SyncCoverSingletonCoverageResult computeSyncCoverSingletonCoverage(
+    const SyncCoverGraph &graph, const SyncCoverExpandedProgram &expansion,
+    std::size_t mechanismCount,
+    const std::vector<SyncCoverCompletionSupply> &supplies,
+    const std::vector<SyncCoverDemandId> &activeDemands);
 
 } // namespace pto
 } // namespace mlir

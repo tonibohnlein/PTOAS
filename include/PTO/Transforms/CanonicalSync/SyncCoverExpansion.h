@@ -119,6 +119,9 @@ class SyncCoverExpandedProgram {
 public:
   explicit SyncCoverExpandedProgram(const SyncCoverGraph &graph,
                                     SyncCoverExpansionLimits limits = {});
+  SyncCoverExpandedProgram(const SyncCoverGraph &graph,
+                           const std::vector<std::size_t> &activeDemands,
+                           SyncCoverExpansionLimits limits = {});
 
   explicit operator bool() const {
     return error_ == SyncCoverExpansionError::None;

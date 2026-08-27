@@ -38,6 +38,14 @@ bool checkedMultiply(std::size_t left, std::size_t right, std::size_t &result) {
   return true;
 }
 
+std::vector<std::size_t> allDemandIds(const SyncCoverGraph &graph) {
+  std::vector<std::size_t> result(graph.getDemands().size());
+  for (std::size_t demand = 0; demand < result.size(); ++demand) {
+    result[demand] = demand;
+  }
+  return result;
+}
+
 } // namespace
 
 struct SyncCoverExpandedProgram::ArenaBuildResult {
@@ -106,6 +114,11 @@ SyncCoverExpandedArena::getOutgoingEdges(std::size_t virtualNode) const {
 
 SyncCoverExpandedProgram::SyncCoverExpandedProgram(
     const SyncCoverGraph &graph, SyncCoverExpansionLimits limits)
+    : SyncCoverExpandedProgram(graph, allDemandIds(graph), limits) {}
+
+SyncCoverExpandedProgram::SyncCoverExpandedProgram(
+    const SyncCoverGraph &graph, const std::vector<std::size_t> &activeDemands,
+    SyncCoverExpansionLimits limits)
     : ownerIdentity_(graph.getIdentity()), limits_(limits) {
   const bool invalidLimits =
       limits.maximumArenaNodes == 0 || limits.maximumArenaEdges == 0 ||
@@ -114,7 +127,16 @@ SyncCoverExpandedProgram::SyncCoverExpandedProgram(
     error_ = SyncCoverExpansionError::InvalidLimits;
     return;
   }
-  const bool invalidGraph = !graph.isStructureFrozen() || !graph.validate();
+  const bool invalidDemandSet =
+      !std::is_sorted(activeDemands.begin(), activeDemands.end()) ||
+      std::adjacent_find(activeDemands.begin(), activeDemands.end()) !=
+          activeDemands.end() ||
+      std::any_of(activeDemands.begin(), activeDemands.end(),
+                  [&](std::size_t demand) {
+                    return demand >= graph.getDemands().size();
+                  });
+  const bool invalidGraph =
+      !graph.isStructureFrozen() || !graph.validate() || invalidDemandSet;
   if (invalidGraph) {
     error_ = SyncCoverExpansionError::InvalidGraph;
     return;
@@ -139,7 +161,8 @@ SyncCoverExpandedProgram::SyncCoverExpandedProgram(
   statistics_.virtualEdges = baseArena_.getEdges().size();
 
   std::map<SyncCoverScopeId, unsigned> horizons;
-  for (const SyncCoverDemand &demand : graph.getDemands()) {
+  for (std::size_t demandId : activeDemands) {
+    const SyncCoverDemand &demand = graph.getDemands()[demandId];
     if (demand.distance != 0) {
       horizons[demand.scope] =
           std::max(horizons[demand.scope], demand.distance);
@@ -350,12 +373,9 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
             copy,
             copy};
         const SyncCoverExpandedEdge fromBoundary{
-            boundary,
-            *arena.getVirtualOperation(node, copy + 1),
-            carryKind,
-            std::nullopt,
-            copy,
-            static_cast<unsigned>(copy + 1)};
+            boundary,  *arena.getVirtualOperation(node, copy + 1),
+            carryKind, std::nullopt,
+            copy,      static_cast<unsigned>(copy + 1)};
         const bool appended =
             appendEdge(intoBoundary, true) && appendEdge(fromBoundary, true);
         if (!appended) {
