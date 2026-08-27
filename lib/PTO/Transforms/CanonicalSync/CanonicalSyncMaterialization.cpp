@@ -113,12 +113,31 @@ resolvePhysicalAnchor(const CanonicalSyncProgram &program,
     if (anchor.scope >= program.getScopeBindings().size()) {
       return std::nullopt;
     }
-    Operation *owner = program.getScopeBindings()[anchor.scope].owner;
+    const CanonicalSyncScopeBinding &binding =
+        program.getScopeBindings()[anchor.scope];
+    Operation *owner = binding.owner;
     if (!owner || owner == program.getFunction().getOperation()) {
       return std::nullopt;
     }
-    return std::make_pair(owner,
-                          anchor.kind == SyncCoverAnchorKind::ScopeEntry);
+    if (isa<scf::ForOp>(owner)) {
+      return std::make_pair(owner,
+                            anchor.kind == SyncCoverAnchorKind::ScopeEntry);
+    }
+    const bool invalidRegion = !binding.region || binding.region->empty() ||
+                               !binding.region->hasOneBlock() ||
+                               binding.region->front().empty();
+    if (invalidRegion) {
+      return std::nullopt;
+    }
+    Block &block = binding.region->front();
+    Operation *position = anchor.kind == SyncCoverAnchorKind::ScopeEntry
+                              ? &block.front()
+                              : &block.back();
+    if (anchor.kind == SyncCoverAnchorKind::ScopeExit &&
+        !position->hasTrait<OpTrait::IsTerminator>()) {
+      return std::nullopt;
+    }
+    return std::make_pair(position, true);
   }
   case SyncCoverAnchorKind::TimelinePoint:
     return std::nullopt;
@@ -357,6 +376,11 @@ void emitAction(IRRewriter &rewriter, func::FuncOp function,
   case CanonicalSyncActionGuardKind::LoopNonEmpty:
     condition = rewriter.create<arith::CmpIOp>(
         location, arith::CmpIPredicate::slt, guardLoop.getLowerBound(),
+        guardLoop.getUpperBound());
+    break;
+  case CanonicalSyncActionGuardKind::LoopEmpty:
+    condition = rewriter.create<arith::CmpIOp>(
+        location, arith::CmpIPredicate::sge, guardLoop.getLowerBound(),
         guardLoop.getUpperBound());
     break;
   case CanonicalSyncActionGuardKind::NotFirstIteration:

@@ -143,6 +143,20 @@ bool verifyCanonicalSyncAtomicOwnershipProtocol(
     CanonicalSyncEventDomainId releaseDomain,
     const CanonicalSyncMechanismDescriptor &descriptor);
 
+std::optional<CanonicalSyncMechanismDescriptor>
+makeCanonicalSyncHierarchicalL1Protocol(
+    const CanonicalSyncProgram &program,
+    const CanonicalSyncOwnershipCycle &cycle, SyncCoverScopeId outerScope,
+    CanonicalSyncEventDomainId readyDomain,
+    CanonicalSyncEventDomainId releaseDomain);
+
+bool verifyCanonicalSyncHierarchicalL1Protocol(
+    const CanonicalSyncProgram &program,
+    const CanonicalSyncOwnershipCycle &cycle, SyncCoverScopeId outerScope,
+    CanonicalSyncEventDomainId readyDomain,
+    CanonicalSyncEventDomainId releaseDomain,
+    const CanonicalSyncMechanismDescriptor &descriptor);
+
 } // namespace pto
 } // namespace mlir
 

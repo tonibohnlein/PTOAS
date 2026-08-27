@@ -914,10 +914,10 @@ std::vector<CanonicalSyncOwnershipCycle> recognizeParityL1(
     });
     const bool alternating =
         (group.producers[0].size() == 1 && group.consumers[0].empty() &&
-         group.producers[1].empty() && group.consumers[1].size() == 1 &&
+         group.producers[1].empty() && !group.consumers[1].empty() &&
          executeDirectlyIn(group.consumers[1], paths[1])) ||
         (group.producers[1].size() == 1 && group.consumers[1].empty() &&
-         group.producers[0].empty() && group.consumers[0].size() == 1 &&
+         group.producers[0].empty() && !group.consumers[0].empty() &&
          executeDirectlyIn(group.consumers[0], paths[0]));
     if (stable) {
       stableGroups.push_back(&group);
@@ -946,8 +946,14 @@ std::vector<CanonicalSyncOwnershipCycle> recognizeParityL1(
     for (auto [lane, group] : llvm::enumerate(stableGroups)) {
       stable.lanes.push_back({static_cast<unsigned>(lane), {group->slot}});
       for (unsigned path = 0; path < 2; ++path) {
-        stable.paths[path].uses.push_back(makeParityUse(
-            lane, lane, group->producers[path], group->consumers[path], graph));
+        CanonicalSyncOwnershipUse use = makeParityUse(
+            lane, lane, group->producers[path], group->consumers[path], graph);
+        const bool hasMultipleConsumers = use.consumers.size() > 1;
+        if (hasMultipleConsumers) {
+          use.release = {SyncCoverAnchorKind::ScopeExit, 0,
+                         stable.paths[path].scope, 0};
+        }
+        stable.paths[path].uses.push_back(std::move(use));
       }
     }
     result.push_back(std::move(stable));
@@ -994,9 +1000,15 @@ std::vector<CanonicalSyncOwnershipCycle> recognizeParityL1(
                               loop, paths[path])) {
       return result;
     }
-    prefetch.paths[path].uses.push_back(makeParityUse(
+    CanonicalSyncOwnershipUse use = makeParityUse(
         consumerLane, producerLane, producerGroup->producers[path],
-        consumerGroup->consumers[path], graph));
+        consumerGroup->consumers[path], graph);
+    const bool hasMultipleConsumers = use.consumers.size() > 1;
+    if (hasMultipleConsumers) {
+      use.release = {SyncCoverAnchorKind::ScopeExit, 0,
+                     prefetch.paths[path].scope, 0};
+    }
+    prefetch.paths[path].uses.push_back(std::move(use));
   }
   const CanonicalSyncOwnershipUse &first = prefetch.paths.front().uses.front();
   std::vector<CanonicalSyncOwnershipSlot> managedSlots;
@@ -1290,21 +1302,55 @@ bool verifyHierarchicalUse(const CanonicalSyncProgram &program,
   llvm::transform(consumerNodes, std::back_inserter(consumerPointers),
                   [](OwnershipNode &node) { return &node; });
   Operation *consumerAnchor = getCommonTopLevel(consumerPointers);
-  if (accumulator && consumerAnchor != consumerNodes.front().operation) {
-    return false;
-  }
-  const bool ordered =
-      producerAnchor && consumerAnchor &&
-      producerAnchor->getBlock() == consumerAnchor->getBlock() &&
-      producerAnchor->isBeforeInBlock(consumerAnchor);
-  const auto producerBounds = getBoundaryAnchors(program, producerAnchor);
-  const auto consumerBounds = getBoundaryAnchors(program, consumerAnchor);
-  if (!ordered || !producerBounds || !consumerBounds ||
-      !anchorsEqual(use.writeAcquire, producerBounds->first) ||
-      !anchorsEqual(use.ready, producerBounds->second) ||
-      !anchorsEqual(use.readAcquire, consumerBounds->first) ||
-      !anchorsEqual(use.release, consumerBounds->second)) {
-    return false;
+  const bool directL1Use =
+      !accumulator && producerAnchor == producerNodes.front().operation &&
+      llvm::all_of(consumerNodes, [](const OwnershipNode &node) {
+        return node.topLevel == node.operation;
+      });
+  if (directL1Use) {
+    const auto byOrder = [&](const OwnershipNode &left,
+                             const OwnershipNode &right) {
+      return graph.getNodes()[left.id].order < graph.getNodes()[right.id].order;
+    };
+    const OwnershipNode &firstConsumer =
+        *llvm::min_element(consumerNodes, byOrder);
+    const OwnershipNode &lastConsumer =
+        *llvm::max_element(consumerNodes, byOrder);
+    const bool ordered =
+        producerAnchor->getBlock() == firstConsumer.operation->getBlock() &&
+        producerAnchor->isBeforeInBlock(firstConsumer.operation);
+    const SyncCoverAnchor expectedRelease =
+        consumerNodes.size() == 1
+            ? SyncCoverAnchor{SyncCoverAnchorKind::AfterNode, lastConsumer.id,
+                              0, 0}
+            : SyncCoverAnchor{SyncCoverAnchorKind::ScopeExit, 0, path.scope, 0};
+    if (!ordered ||
+        !anchorsEqual(use.writeAcquire, {SyncCoverAnchorKind::BeforeNode,
+                                         producerNodes.front().id, 0, 0}) ||
+        !anchorsEqual(use.ready, {SyncCoverAnchorKind::AfterNode,
+                                  producerNodes.front().id, 0, 0}) ||
+        !anchorsEqual(use.readAcquire, {SyncCoverAnchorKind::BeforeNode,
+                                        firstConsumer.id, 0, 0}) ||
+        !anchorsEqual(use.release, expectedRelease)) {
+      return false;
+    }
+  } else {
+    if (accumulator && consumerAnchor != consumerNodes.front().operation) {
+      return false;
+    }
+    const bool ordered =
+        producerAnchor && consumerAnchor &&
+        producerAnchor->getBlock() == consumerAnchor->getBlock() &&
+        producerAnchor->isBeforeInBlock(consumerAnchor);
+    const auto producerBounds = getBoundaryAnchors(program, producerAnchor);
+    const auto consumerBounds = getBoundaryAnchors(program, consumerAnchor);
+    if (!ordered || !producerBounds || !consumerBounds ||
+        !anchorsEqual(use.writeAcquire, producerBounds->first) ||
+        !anchorsEqual(use.ready, producerBounds->second) ||
+        !anchorsEqual(use.readAcquire, consumerBounds->first) ||
+        !anchorsEqual(use.release, consumerBounds->second)) {
+      return false;
+    }
   }
   if (!llvm::all_of(use.producers, [&](SyncCoverNodeId producer) {
         return represented.insert(producer).second;
@@ -1523,7 +1569,7 @@ bool verifyAlternatingCycleImpl(
     const CanonicalSyncOwnershipUse &use = path.uses.front();
     if (use.lane >= cycle.lanes.size() ||
         use.producerLane >= cycle.lanes.size() || use.producers.size() != 1 ||
-        use.consumers.size() != 1) {
+        use.consumers.empty()) {
       return false;
     }
     const SyncCoverNodeId producer = use.producers.front();
@@ -1568,10 +1614,14 @@ bool verifyAlternatingCycleImpl(
         return false;
       }
     }
+    const SyncCoverAnchor expectedRelease =
+        orderedConsumers.size() == 1
+            ? SyncCoverAnchor{SyncCoverAnchorKind::AfterNode,
+                              orderedConsumers.back(), 0, 0}
+            : SyncCoverAnchor{SyncCoverAnchorKind::ScopeExit, 0, path.scope, 0};
     if (!anchorsEqual(use.readAcquire, {SyncCoverAnchorKind::BeforeNode,
                                         orderedConsumers.front(), 0, 0}) ||
-        !anchorsEqual(use.release, {SyncCoverAnchorKind::AfterNode,
-                                    orderedConsumers.back(), 0, 0})) {
+        !anchorsEqual(use.release, expectedRelease)) {
       return false;
     }
   }
@@ -1856,7 +1906,9 @@ CanonicalSyncOwnershipResult mlir::pto::discoverCanonicalSyncOwnershipCycles(
     result.inspections += passCost;
     for (CanonicalSyncOwnershipCycle parity :
          recognizeParityL1(program, scope.id, l1Tile, *accessesByNode)) {
-      if (!verifyCycleImpl(program, parity, *accessesByNode, false)) {
+      const bool verified =
+          verifyCycleImpl(program, parity, *accessesByNode, false);
+      if (!verified) {
         continue;
       }
       if (result.cycles.size() == options.maximumCycles) {

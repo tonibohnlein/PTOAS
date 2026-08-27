@@ -907,6 +907,65 @@ bool testVerifiedProtocolTrustBoundary() {
   return passed;
 }
 
+bool testHierarchicalProtocolLifetime() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId outer =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 63}, true),
+                passed, "add hierarchical outer loop");
+  const SyncCoverScopeId inner = takeIndex(
+      graph.addScope(outer, true, SyncCoverTimelineInterval{8, 47}, true),
+      passed, "add hierarchical inner loop");
+  const SyncCoverScopeId sibling = takeIndex(
+      graph.addScope(outer, true, SyncCoverTimelineInterval{48, 55}, true),
+      passed, "add hierarchical sibling loop");
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, inner, 9, {}, {2}), passed,
+                "add hierarchical source");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(2, 1, inner, 10),
+                                           passed, "add hierarchical target");
+  passed &= check(graph.addDemand(demand(source, target, inner, 1)),
+                  "add hierarchical demand");
+  passed &= check(graph.freezeStructure(), "freeze hierarchical graph");
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 2, {}}),
+                  "add hierarchical domain");
+
+  CanonicalSyncMechanismDescriptor descriptor =
+      protocol(0, 1, 2, source, target, inner, 1, 1);
+  descriptor.eventUses[0].lifetimeScope = outer;
+  const auto verifier = [=](const CanonicalSyncMechanismDescriptor &candidate) {
+    return candidate.kind == CanonicalSyncMechanismKind::Protocol &&
+           candidate.eventUses.size() == 1 &&
+           candidate.eventUses[0].recurrenceScope == inner &&
+           candidate.eventUses[0].lifetimeScope == outer;
+  };
+  const CanonicalSyncProblemResult admitted =
+      problem.internVerifiedProtocol(descriptor, verifier);
+  passed &= check(admitted && admitted.index,
+                  "admit a verified wider hierarchical lifetime");
+  if (admitted.index) {
+    const CanonicalSyncMechanism &mechanism =
+        problem.getMechanisms()[*admitted.index];
+    passed &= check(mechanism.eventLifetimes.size() == 1 &&
+                        mechanism.eventLifetimes[0].begin == 0 &&
+                        mechanism.eventLifetimes[0].end == 63,
+                    "color the event over the complete outer loop");
+  }
+
+  CanonicalSyncMechanismDescriptor unrelated = descriptor;
+  unrelated.eventUses[0].lifetimeScope = sibling;
+  passed &= check(problem.internVerifiedProtocol(unrelated, verifier).error ==
+                      CanonicalSyncProblemError::InvalidMechanism,
+                  "reject a lifetime outside the recurrence ancestry");
+  CanonicalSyncMechanismDescriptor nonLoop = descriptor;
+  nonLoop.eventUses[0].lifetimeScope = 0;
+  passed &= check(problem.internVerifiedProtocol(nonLoop, verifier).error ==
+                      CanonicalSyncProblemError::InvalidMechanism,
+                  "reject a non-loop lifetime scope");
+  return passed;
+}
+
 bool testFailClosedConstruction() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -989,6 +1048,7 @@ int main() {
       testOptionalPipelineScarcityFallsBack() &&
       testReservationsAndFinalValidation() &&
       testAllocatorWidthsReuseAndConflicts() &&
-      testVerifiedProtocolTrustBoundary() && testFailClosedConstruction();
+      testVerifiedProtocolTrustBoundary() &&
+      testHierarchicalProtocolLifetime() && testFailClosedConstruction();
   return passed ? 0 : 1;
 }

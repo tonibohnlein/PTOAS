@@ -37,6 +37,51 @@ struct BarrierFallbackGroup {
   std::vector<SyncCoverDemandId> demands;
 };
 
+struct OwnershipMechanismRecord {
+  const CanonicalSyncOwnershipCycle *cycle = nullptr;
+  CanonicalSyncMechanismId mechanism = 0;
+};
+
+struct L0OwnershipMechanismRecord {
+  const CanonicalSyncOwnershipCycle *cycle = nullptr;
+  CanonicalSyncMechanismId mechanism = 0;
+};
+
+struct OwnershipPipelineMembers {
+  std::vector<OwnershipMechanismRecord> stableL1;
+  std::vector<OwnershipMechanismRecord> alternatingL1;
+  std::vector<L0OwnershipMechanismRecord> l0Operands;
+};
+
+std::optional<SyncCoverScopeId>
+getEnclosingLoopScope(const SyncCoverGraph &graph, SyncCoverScopeId scope) {
+  if (scope >= graph.getScopes().size()) {
+    return std::nullopt;
+  }
+  const SyncCoverScopeId parent = graph.getScopes()[scope].parent;
+  const bool parentIsLoop =
+      parent < graph.getScopes().size() && graph.getScopes()[parent].isLoop;
+  if (parentIsLoop) {
+    return parent;
+  }
+  return std::nullopt;
+}
+
+bool ownershipSlotsAreDisjoint(const CanonicalSyncOwnershipCycle &first,
+                               const CanonicalSyncOwnershipCycle &second) {
+  return llvm::none_of(first.lanes, [&](const auto &firstLane) {
+    return llvm::any_of(firstLane.slots, [&](const auto &firstSlot) {
+      return llvm::any_of(second.lanes, [&](const auto &secondLane) {
+        return llvm::any_of(secondLane.slots, [&](const auto &secondSlot) {
+          return firstSlot.domain == secondSlot.domain &&
+                 firstSlot.extent.begin < secondSlot.extent.end &&
+                 secondSlot.extent.begin < firstSlot.extent.end;
+        });
+      });
+    });
+  });
+}
+
 SyncCoverEdge getDemandEdge(const SyncCoverDemand &demand) {
   return {
       demand.source,     demand.target,   SyncCoverEdgeKind::CompletionSupply,
@@ -335,6 +380,9 @@ LogicalResult addOwnershipCycles(
     const CanonicalSyncProgram &program, CanonicalSyncPatternProblem &problem,
     const CanonicalSyncOwnershipResult &ownership,
     const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds) {
+  std::map<SyncCoverScopeId, OwnershipPipelineMembers> l1Pipelines;
+  std::map<SyncCoverScopeId, std::vector<OwnershipMechanismRecord>>
+      accumulators;
   for (const CanonicalSyncOwnershipCycle &cycle : ownership.cycles) {
     const auto readyDomain =
         domainIds.find({cycle.producerResource, cycle.consumerResource});
@@ -394,7 +442,21 @@ LogicalResult addOwnershipCycles(
       if (!mechanism || !mechanism.index) {
         return program.getFunction().emitError(
                    "cannot admit canonical sync atomic ownership protocol")
-               << " (error=" << static_cast<unsigned>(mechanism.error) << ')';
+               << " (kind=" << static_cast<unsigned>(cycle.kind)
+               << ", protocol=" << static_cast<unsigned>(cycle.protocol)
+               << ", error=" << static_cast<unsigned>(mechanism.error) << ')';
+      }
+      if (cycle.kind == CanonicalSyncOwnershipKind::L1Tile) {
+        OwnershipPipelineMembers &pipeline = l1Pipelines[cycle.recurrenceScope];
+        std::vector<OwnershipMechanismRecord> &members =
+            cycle.protocol ==
+                    CanonicalSyncOwnershipProtocolKind::AlternatingPrefetch
+                ? pipeline.alternatingL1
+                : pipeline.stableL1;
+        members.push_back({&cycle, *mechanism.index});
+      } else if (cycle.kind == CanonicalSyncOwnershipKind::L0Accumulator) {
+        accumulators[cycle.recurrenceScope].push_back(
+            {&cycle, *mechanism.index});
       }
       continue;
     }
@@ -444,6 +506,144 @@ LogicalResult addOwnershipCycles(
     if (!pattern) {
       return program.getFunction().emitError(
           "cannot add canonical sync ownership-cycle pattern");
+    }
+    std::optional<CanonicalSyncMechanismDescriptor> atomicDescriptor =
+        makeCanonicalSyncAtomicOwnershipProtocol(
+            program, cycle, readyDomain->second, releaseDomain->second);
+    if (!atomicDescriptor) {
+      return program.getFunction().emitError(
+          "cannot build canonical sync atomic L0 ownership protocol");
+    }
+    const CanonicalSyncProblemResult atomic = problem.internVerifiedProtocol(
+        std::move(*atomicDescriptor), [&](const auto &candidate) {
+          return verifyCanonicalSyncAtomicOwnershipProtocol(
+              program, cycle, readyDomain->second, releaseDomain->second,
+              candidate);
+        });
+    if (atomic.error == CanonicalSyncProblemError::LimitExceeded) {
+      continue;
+    }
+    if (!atomic || !atomic.index) {
+      return program.getFunction().emitError(
+          "cannot admit canonical sync atomic L0 ownership protocol");
+    }
+    if (problem.addConflict(*ready.index, *atomic.index).error !=
+            CanonicalSyncProblemError::None ||
+        problem.addConflict(*release.index, *atomic.index).error !=
+            CanonicalSyncProblemError::None) {
+      return program.getFunction().emitError(
+          "cannot register canonical sync L0 protocol conflicts");
+    }
+    l1Pipelines[cycle.recurrenceScope].l0Operands.push_back(
+        {&cycle, *atomic.index});
+  }
+  for (const auto &[scope, pipeline] : l1Pipelines) {
+    const std::optional<SyncCoverScopeId> outer =
+        getEnclosingLoopScope(problem.getGraph(), scope);
+    const bool hasUniquePipeline = outer && pipeline.stableL1.size() == 1 &&
+                                   pipeline.alternatingL1.size() == 1 &&
+                                   pipeline.l0Operands.size() == 1;
+    if (!hasUniquePipeline) {
+      continue;
+    }
+    const auto accumulator = accumulators.find(*outer);
+    const bool hasUniqueAccumulator =
+        accumulator != accumulators.end() && accumulator->second.size() == 1;
+    if (!hasUniqueAccumulator) {
+      continue;
+    }
+    const OwnershipMechanismRecord &stable = pipeline.stableL1.front();
+    const OwnershipMechanismRecord &alternating =
+        pipeline.alternatingL1.front();
+    const OwnershipMechanismRecord &accumulatorMember =
+        accumulator->second.front();
+    const L0OwnershipMechanismRecord &l0 = pipeline.l0Operands.front();
+    if (!stable.cycle || !alternating.cycle || !accumulatorMember.cycle ||
+        !l0.cycle ||
+        !ownershipSlotsAreDisjoint(*stable.cycle, *alternating.cycle)) {
+      continue;
+    }
+    const auto stableReady = domainIds.find(
+        {stable.cycle->producerResource, stable.cycle->consumerResource});
+    const auto stableRelease = domainIds.find(
+        {stable.cycle->consumerResource, stable.cycle->producerResource});
+    const auto alternatingReady =
+        domainIds.find({alternating.cycle->producerResource,
+                        alternating.cycle->consumerResource});
+    const auto alternatingRelease =
+        domainIds.find({alternating.cycle->consumerResource,
+                        alternating.cycle->producerResource});
+    const bool hasRequiredDomains = stableReady != domainIds.end() &&
+                                    stableRelease != domainIds.end() &&
+                                    alternatingReady != domainIds.end() &&
+                                    alternatingRelease != domainIds.end();
+    if (!hasRequiredDomains) {
+      continue;
+    }
+    std::optional<CanonicalSyncMechanismDescriptor> stableDescriptor =
+        makeCanonicalSyncHierarchicalL1Protocol(program, *stable.cycle, *outer,
+                                                stableReady->second,
+                                                stableRelease->second);
+    std::optional<CanonicalSyncMechanismDescriptor> alternatingDescriptor =
+        makeCanonicalSyncHierarchicalL1Protocol(
+            program, *alternating.cycle, *outer, alternatingReady->second,
+            alternatingRelease->second);
+    if (!stableDescriptor || !alternatingDescriptor) {
+      continue;
+    }
+    const CanonicalSyncProblemResult hierarchicalStable =
+        problem.internVerifiedProtocol(
+            std::move(*stableDescriptor), [&](const auto &candidate) {
+              return verifyCanonicalSyncHierarchicalL1Protocol(
+                  program, *stable.cycle, *outer, stableReady->second,
+                  stableRelease->second, candidate);
+            });
+    const CanonicalSyncProblemResult hierarchicalAlternating =
+        problem.internVerifiedProtocol(
+            std::move(*alternatingDescriptor), [&](const auto &candidate) {
+              return verifyCanonicalSyncHierarchicalL1Protocol(
+                  program, *alternating.cycle, *outer, alternatingReady->second,
+                  alternatingRelease->second, candidate);
+            });
+    if (hierarchicalStable && hierarchicalStable.index) {
+      const CanonicalSyncProblemResult conflict = problem.addConflict(
+          stable.mechanism, *hierarchicalStable.index);
+      if (!conflict) {
+        return program.getFunction().emitError(
+            "cannot register canonical sync stable hierarchical conflict");
+      }
+    }
+    if (hierarchicalAlternating && hierarchicalAlternating.index) {
+      const CanonicalSyncProblemResult conflict = problem.addConflict(
+          alternating.mechanism, *hierarchicalAlternating.index);
+      if (!conflict) {
+        return program.getFunction().emitError(
+            "cannot register canonical sync alternating hierarchical "
+            "conflict");
+      }
+    }
+    const bool optionalLimitReached =
+        hierarchicalStable.error == CanonicalSyncProblemError::LimitExceeded ||
+        hierarchicalAlternating.error ==
+            CanonicalSyncProblemError::LimitExceeded;
+    if (optionalLimitReached) {
+      continue;
+    }
+    if (!hierarchicalStable || !hierarchicalAlternating ||
+        !hierarchicalStable.index || !hierarchicalAlternating.index) {
+      return program.getFunction().emitError(
+                 "cannot admit canonical sync hierarchical L1 protocols")
+             << " (stable=" << static_cast<unsigned>(hierarchicalStable.error)
+             << ", alternating="
+             << static_cast<unsigned>(hierarchicalAlternating.error) << ')';
+    }
+    const CanonicalSyncProblemResult pattern = addCanonicalSyncFeasiblePattern(
+        problem, {CanonicalSyncPatternKind::PipelineScope,
+                  {*hierarchicalStable.index, *hierarchicalAlternating.index,
+                   accumulatorMember.mechanism, l0.mechanism}});
+    if (!pattern) {
+      return program.getFunction().emitError(
+          "cannot add canonical sync ownership-pipeline pattern");
     }
   }
   return success();

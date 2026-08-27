@@ -978,6 +978,121 @@ bool testPeriodicBranchEvidence() {
                "do not mis-model unsigned remainder with negative lower");
 }
 
+bool testFirstIterationRecurrenceSuppression() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @first(%limit: index,
+                       %a: !pto.tile_buf<vec, 16x16xf32>,
+                       %b: !pto.tile_buf<vec, 16x16xf32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        scf.for %i = %c0 to %limit step %c1 {
+          pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf32>)
+                   outs(%b : !pto.tile_buf<vec, 16x16xf32>)
+          %is_first = arith.cmpi eq, %i, %c0 : index
+          scf.if %is_first {
+            pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf32>)
+                     outs(%b : !pto.tile_buf<vec, 16x16xf32>)
+          }
+        }
+        return
+      }
+      func.func @near_miss(%limit: index,
+                           %a: !pto.tile_buf<vec, 16x16xf32>,
+                           %b: !pto.tile_buf<vec, 16x16xf32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        scf.for %i = %c0 to %limit step %c1 {
+          pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf32>)
+                   outs(%b : !pto.tile_buf<vec, 16x16xf32>)
+          %is_second = arith.cmpi eq, %i, %c1 : index
+          scf.if %is_second {
+            pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf32>)
+                     outs(%b : !pto.tile_buf<vec, 16x16xf32>)
+          }
+        }
+        return
+      }
+      func.func @nested(%outer_limit: index, %inner_limit: index,
+                        %a: !pto.tile_buf<vec, 16x16xf32>,
+                        %b: !pto.tile_buf<vec, 16x16xf32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        scf.for %i = %c0 to %outer_limit step %c1 {
+          pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf32>)
+                   outs(%b : !pto.tile_buf<vec, 16x16xf32>)
+          scf.for %j = %c0 to %inner_limit step %c1 {
+            %inner_first = arith.cmpi eq, %j, %c0 : index
+            scf.if %inner_first {
+              pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf32>)
+                       outs(%b : !pto.tile_buf<vec, 16x16xf32>)
+            }
+          }
+        }
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module),
+             "parse first-iteration recurrence fixture")) {
+    return false;
+  }
+  const auto build = [&](StringRef name) {
+    return buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>(name));
+  };
+  FailureOr<CanonicalSyncProgram> first = build("first");
+  FailureOr<CanonicalSyncProgram> nearMiss = build("near_miss");
+  FailureOr<CanonicalSyncProgram> nested = build("nested");
+  const bool builtPrograms =
+      check(succeeded(first) && succeeded(nearMiss) && succeeded(nested),
+            "build first-iteration recurrence graphs");
+  if (!builtPrograms) {
+    return false;
+  }
+  const auto guardedTarget = [](const CanonicalSyncProgram &program) {
+    for (auto [node, binding] : llvm::enumerate(program.getNodeBindings())) {
+      if (binding.operation &&
+          binding.operation->getParentOfType<scf::IfOp>()) {
+        return std::optional<SyncCoverNodeId>(node);
+      }
+    }
+    return std::optional<SyncCoverNodeId>{};
+  };
+  const auto recurrenceTo = [](const CanonicalSyncProgram &program,
+                               SyncCoverNodeId target,
+                               std::optional<SyncCoverScopeId> scope) {
+    return llvm::any_of(
+        program.getGraph().getDemands(), [&](const SyncCoverDemand &demand) {
+          return demand.target == target && demand.distance != 0 &&
+                 (!scope || demand.scope == *scope);
+        });
+  };
+  const std::optional<SyncCoverNodeId> firstTarget = guardedTarget(*first);
+  const std::optional<SyncCoverNodeId> nearMissTarget =
+      guardedTarget(*nearMiss);
+  const std::optional<SyncCoverNodeId> nestedTarget = guardedTarget(*nested);
+  std::optional<SyncCoverScopeId> outerScope;
+  for (const SyncCoverScope &scope : nested->getGraph().getScopes()) {
+    Operation *owner = nested->getScopeBindings()[scope.id].owner;
+    auto loop = dyn_cast_or_null<scf::ForOp>(owner);
+    if (loop && !loop->getParentOfType<scf::ForOp>()) {
+      outerScope = scope.id;
+      break;
+    }
+  }
+  return check(firstTarget && !recurrenceTo(*first, *firstTarget, std::nullopt),
+               "remove recurrence into a first-iteration-only target") &&
+         check(nearMissTarget &&
+                   recurrenceTo(*nearMiss, *nearMissTarget, std::nullopt),
+               "retain recurrence for an unrecognized loop condition") &&
+         check(nestedTarget && outerScope &&
+                   recurrenceTo(*nested, *nestedTarget, outerScope),
+               "retain enclosing-loop recurrence for an inner first iteration");
+}
+
 bool testL0OwnershipProtocolTrustBoundary() {
   MLIRContext context;
   loadDialects(context);
@@ -1153,11 +1268,19 @@ bool testL0OwnershipProtocolTrustBoundary() {
   }
   const CanonicalSyncSelection selection =
       selectCanonicalSyncPatterns(**problem);
+  const bool selectedOwnership =
+      selection &&
+      llvm::any_of(
+          selection.mechanisms, [&](CanonicalSyncMechanismId mechanism) {
+            return (*problem)->getMechanisms()[mechanism].descriptor.kind ==
+                       CanonicalSyncMechanismKind::Protocol &&
+                   (*problem)->getPatterns()[mechanism].coverage.containsAll(
+                       qualified);
+          });
   if (!check(static_cast<bool>(selection),
              "select ownership pattern problem") ||
-      !check(std::binary_search(selection.mechanisms.begin(),
-                                selection.mechanisms.end(), *releaseMechanism),
-             "select release instead of its barrier fallbacks")) {
+      !check(selectedOwnership,
+             "select verified ownership instead of barrier fallbacks")) {
     return false;
   }
 
@@ -1371,12 +1494,146 @@ bool testStableL1OwnershipProtocol() {
                "fail closed for a malformed ownership cycle");
 }
 
+bool testHierarchicalL1OwnershipProtocol() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a2a3"} {
+      func.func @hierarchical(%source0: !pto.ptr<f16, gm>,
+                              %source1: !pto.ptr<f16, gm>,
+                              %outer_limit: index, %inner_limit: index) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %c64 = arith.constant 64 : index
+        %c128 = arith.constant 128 : index
+        %addr0 = arith.constant 0 : i64
+        %addr16384 = arith.constant 16384 : i64
+        %addr32768 = arith.constant 32768 : i64
+        %view0 = pto.make_tensor_view %source0, shape = [%c128, %c128],
+          strides = [%c128, %c1] {layout = #pto.layout<nd>} :
+          !pto.tensor_view<?x?xf16>
+        %view1 = pto.make_tensor_view %source1, shape = [%c128, %c128],
+          strides = [%c128, %c1] {layout = #pto.layout<nd>} :
+          !pto.tensor_view<?x?xf16>
+        %part0 = pto.partition_view %view0, offsets = [%c0, %c0],
+          sizes = [%c128, %c128] : !pto.tensor_view<?x?xf16>
+        %part1 = pto.partition_view %view1, offsets = [%c0, %c0],
+          sizes = [%c128, %c128] : !pto.tensor_view<?x?xf16>
+        %mat0 = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+        %mat1 = pto.alloc_tile addr = %addr32768 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+        %left0 = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+        %left1 = pto.alloc_tile addr = %addr16384 :
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+        scf.for %i = %c0 to %outer_limit step %c1 {
+          scf.for %k = %c0 to %inner_limit step %c1 {
+            pto.tload ins(%part0 : !pto.partition_tensor_view<128x128xf16>)
+              outs(%mat0 : !pto.tile_buf<mat, 128x128xf16,
+                                      slayout=row_major>)
+            pto.tload ins(%part1 : !pto.partition_tensor_view<128x128xf16>)
+              outs(%mat1 : !pto.tile_buf<mat, 128x128xf16,
+                                      slayout=row_major>)
+            pto.textract ins(%mat0, %c0, %c0 :
+              !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index,
+              index) outs(%left0 : !pto.tile_buf<left, 128x64xf16,
+                                               slayout=row_major>)
+            pto.textract ins(%mat1, %c0, %c64 :
+              !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index,
+              index) outs(%left1 : !pto.tile_buf<left, 128x64xf16,
+                                               slayout=row_major>)
+          }
+        }
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module), "parse hierarchical L1 fixture")) {
+    return false;
+  }
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("hierarchical"));
+  if (!check(succeeded(program), "build hierarchical L1 graph")) {
+    return false;
+  }
+  CanonicalSyncOwnershipResult ownership =
+      discoverCanonicalSyncOwnershipCycles(*program);
+  auto cycle = llvm::find_if(ownership.cycles, [&](const auto &candidate) {
+    return candidate.kind == CanonicalSyncOwnershipKind::L1Tile &&
+           program->getGraph().getScopes()[candidate.recurrenceScope].parent !=
+               0;
+  });
+  if (!check(ownership && cycle != ownership.cycles.end(),
+             "discover nested stable L1 ownership")) {
+    return false;
+  }
+  const SyncCoverScopeId outer =
+      program->getGraph().getScopes()[cycle->recurrenceScope].parent;
+  std::optional<CanonicalSyncMechanismDescriptor> descriptor =
+      makeCanonicalSyncHierarchicalL1Protocol(*program, *cycle, outer, 0, 1);
+  const bool builtDescriptor =
+      check(descriptor.has_value(), "build hierarchical L1 protocol");
+  const bool verifiedDescriptor =
+      builtDescriptor && check(verifyCanonicalSyncHierarchicalL1Protocol(
+                                   *program, *cycle, outer, 0, 1, *descriptor),
+                               "independently verify hierarchical L1 protocol");
+  if (!verifiedDescriptor) {
+    return false;
+  }
+  const bool innerRecurrence = llvm::all_of(
+      descriptor->eventUses, [&](const CanonicalSyncEventUse &use) {
+        return use.recurrenceScope == cycle->recurrenceScope;
+      });
+  const auto outerLifetime = llvm::find_if(
+      descriptor->eventUses, [&](const CanonicalSyncEventUse &use) {
+        return use.lifetimeScope == outer;
+      });
+  const bool outerSupply = llvm::any_of(
+      descriptor->supplies, [&](const CanonicalSyncSupplyBinding &binding) {
+        return binding.edge.scope == outer && binding.edge.distance == 1;
+      });
+  CanonicalSyncMechanismDescriptor wrongLifetime = *descriptor;
+  const std::size_t lifetimeIndex =
+      static_cast<std::size_t>(outerLifetime - descriptor->eventUses.begin());
+  if (outerLifetime != descriptor->eventUses.end()) {
+    wrongLifetime.eventUses[lifetimeIndex].lifetimeScope =
+        cycle->recurrenceScope;
+  }
+  CanonicalSyncMechanismDescriptor wrongSupply = *descriptor;
+  auto outerBinding = llvm::find_if(
+      wrongSupply.supplies, [&](const CanonicalSyncSupplyBinding &binding) {
+        return binding.edge.scope == outer && binding.edge.distance == 1;
+      });
+  if (outerBinding != wrongSupply.supplies.end()) {
+    ++outerBinding->edge.distance;
+  }
+  CanonicalSyncMechanismDescriptor missingAction = *descriptor;
+  missingAction.actions.pop_back();
+  return check(innerRecurrence && outerLifetime != descriptor->eventUses.end(),
+               "hold hierarchical event IDs across the enclosing loop") &&
+         check(outerSupply, "supply an enclosing-loop ownership handoff") &&
+         check(outerLifetime != descriptor->eventUses.end() &&
+                   !verifyCanonicalSyncHierarchicalL1Protocol(
+                       *program, *cycle, outer, 0, 1, wrongLifetime),
+               "reject a narrowed hierarchical lifetime") &&
+         check(outerBinding != wrongSupply.supplies.end() &&
+                   !verifyCanonicalSyncHierarchicalL1Protocol(
+                       *program, *cycle, outer, 0, 1, wrongSupply),
+               "reject a tampered outer recurrence supply") &&
+         check(!verifyCanonicalSyncHierarchicalL1Protocol(
+                   *program, *cycle, outer, 0, 1, missingAction),
+               "reject a partial hierarchical protocol");
+}
+
 bool testAlternatingL1OwnershipProtocol() {
   MLIRContext context;
   loadDialects(context);
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
     module attributes {pto.target_arch = "a2a3"} {
-      func.func @prefetch(%source: !pto.ptr<f16, gm>, %limit: index) {
+      func.func @prefetch(%source: !pto.ptr<f16, gm>, %outer_limit: index,
+                          %limit: index) {
         %c0 = arith.constant 0 : index
         %c1 = arith.constant 1 : index
         %c2 = arith.constant 2 : index
@@ -1401,10 +1658,11 @@ bool testAlternatingL1OwnershipProtocol() {
           !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
         %left = pto.alloc_tile addr = %addr0 :
           !pto.tile_buf<left, 128x64xf16, slayout=row_major>
-        pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
-          outs(%mat0 : !pto.tile_buf<mat, 128x128xf16,
-                                  slayout=row_major>)
-        scf.for %i = %c0 to %limit step %c1 {
+        scf.for %outer = %c0 to %outer_limit step %c1 {
+          pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+            outs(%mat0 : !pto.tile_buf<mat, 128x128xf16,
+                                    slayout=row_major>)
+          scf.for %i = %c0 to %limit step %c1 {
           %phase = arith.remsi %i, %c2 : index
           %even = arith.cmpi eq, %phase, %c0 : index
           scf.if %even {
@@ -1460,6 +1718,7 @@ bool testAlternatingL1OwnershipProtocol() {
                                             slayout=row_major>)
             }
           }
+          }
         }
         return
       }
@@ -1495,6 +1754,11 @@ bool testAlternatingL1OwnershipProtocol() {
       makeCanonicalSyncOwnershipProtocol(*program, cycle, 0, 1);
   std::optional<CanonicalSyncMechanismDescriptor> atomic =
       makeCanonicalSyncAtomicOwnershipProtocol(*program, cycle, 0, 1);
+  const SyncCoverScopeId outerScope =
+      program->getGraph().getScopes()[cycle.recurrenceScope].parent;
+  std::optional<CanonicalSyncMechanismDescriptor> hierarchical =
+      makeCanonicalSyncHierarchicalL1Protocol(*program, cycle, outerScope, 0,
+                                              1);
   if (!check(verifyCanonicalSyncOwnershipCycle(*program, cycle),
              "independently verify alternating ownership") ||
       !check(protocol && verifyCanonicalSyncOwnershipProtocol(*program, cycle,
@@ -1502,7 +1766,11 @@ bool testAlternatingL1OwnershipProtocol() {
              "verify alternating ready/release lifecycle") ||
       !check(atomic && verifyCanonicalSyncAtomicOwnershipProtocol(
                            *program, cycle, 0, 1, *atomic),
-             "verify atomic alternating lifecycle")) {
+             "verify atomic alternating lifecycle") ||
+      !check(hierarchical &&
+                 verifyCanonicalSyncHierarchicalL1Protocol(
+                     *program, cycle, outerScope, 0, 1, *hierarchical),
+             "verify hierarchical alternating lifecycle")) {
     return false;
   }
   CanonicalSyncBuildOptions options;
@@ -1529,7 +1797,8 @@ bool testAlternatingL1OwnershipProtocol() {
   }
   const SyncCoverGraph &graph = program->getGraph();
   for (auto [demandId, demand] : llvm::enumerate(graph.getDemands())) {
-    if (demand.storageWitnesses.empty() ||
+    if (demand.scope != cycle.recurrenceScope ||
+        demand.storageWitnesses.empty() ||
         managedNodes.count(demand.source) == 0 ||
         managedNodes.count(demand.target) == 0) {
       continue;
@@ -1654,6 +1923,93 @@ bool testAlternatingL1OwnershipProtocol() {
   };
   const bool tokenTraces =
       llvm::all_of(std::vector<unsigned>({0, 1, 2, 3, 8}), tokenTraceBalances);
+  const auto hierarchicalTokenTraceBalances = [&](unsigned outerTrips,
+                                                  unsigned innerTrips) {
+    std::vector<int> ready(cycle.lanes.size());
+    std::vector<int> release(cycle.lanes.size(), 1);
+    for (unsigned outer = 0; outer < outerTrips; ++outer) {
+      ++ready[cycle.initialReadyLane];
+      if (--release[cycle.initialReadyLane] < 0) {
+        return false;
+      }
+      if (innerTrips == 0) {
+        if (--ready[cycle.initialReadyLane] < 0) {
+          return false;
+        }
+        ++release[cycle.initialReadyLane];
+        continue;
+      }
+      for (unsigned iteration = 0; iteration < innerTrips; ++iteration) {
+        const CanonicalSyncOwnershipUse &use =
+            cycle.paths[iteration % cycle.paths.size()].uses.front();
+        if (--ready[use.lane] < 0) {
+          return false;
+        }
+        ++release[use.lane];
+        if (iteration + 1 < innerTrips) {
+          if (--release[use.producerLane] < 0) {
+            return false;
+          }
+          ++ready[use.producerLane];
+        }
+      }
+    }
+    for (int &token : release) {
+      if (--token != 0) {
+        return false;
+      }
+    }
+    return ready == std::vector<int>({0, 0});
+  };
+  bool hierarchicalTokenTraces = true;
+  for (unsigned outerTrips : {0U, 1U, 2U}) {
+    for (unsigned innerTrips : {0U, 1U, 2U, 3U}) {
+      hierarchicalTokenTraces &=
+          hierarchicalTokenTraceBalances(outerTrips, innerTrips);
+    }
+  }
+  const std::size_t loopEmptyActions = llvm::count_if(
+      hierarchical->actions, [](const CanonicalSyncAction &action) {
+        return action.guard == CanonicalSyncActionGuardKind::LoopEmpty;
+      });
+  const bool hasNestedSummary = llvm::any_of(
+      hierarchical->supplies, [](const CanonicalSyncSupplyBinding &binding) {
+        return binding.proof ==
+               CanonicalSyncSupplyProof::VerifiedNestedRecurrenceSummary;
+      });
+  CanonicalSyncMechanismDescriptor wrongNestedSummary = *hierarchical;
+  auto nestedSummary = llvm::find_if(
+      wrongNestedSummary.supplies,
+      [](const CanonicalSyncSupplyBinding &binding) {
+        return binding.proof ==
+               CanonicalSyncSupplyProof::VerifiedNestedRecurrenceSummary;
+      });
+  if (nestedSummary != wrongNestedSummary.supplies.end()) {
+    ++nestedSummary->edge.distance;
+  }
+  const bool rejectsWrongNestedSummary =
+      hasNestedSummary &&
+      !verifyCanonicalSyncHierarchicalL1Protocol(*program, cycle, outerScope, 0,
+                                                 1, wrongNestedSummary);
+  const bool hasOwnershipClosure = llvm::any_of(
+      hierarchical->supplies, [](const CanonicalSyncSupplyBinding &binding) {
+        return binding.proof ==
+               CanonicalSyncSupplyProof::VerifiedOwnershipClosure;
+      });
+  CanonicalSyncMechanismDescriptor wrongOwnershipClosure = *hierarchical;
+  auto ownershipClosure =
+      llvm::find_if(wrongOwnershipClosure.supplies,
+                    [](const CanonicalSyncSupplyBinding &binding) {
+                      return binding.proof ==
+                             CanonicalSyncSupplyProof::VerifiedOwnershipClosure;
+                    });
+  if (ownershipClosure != wrongOwnershipClosure.supplies.end()) {
+    ++ownershipClosure->edge.distance;
+  }
+  const bool rejectsWrongOwnershipClosure =
+      hasOwnershipClosure &&
+      !verifyCanonicalSyncHierarchicalL1Protocol(*program, cycle, outerScope, 0,
+                                                 1, wrongOwnershipClosure);
   module->getOperation()->removeAttr("pto.target_arch");
   FailureOr<CanonicalSyncProgram> noPrefixProgram =
       buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>("prefetch"));
@@ -1715,11 +2071,15 @@ bool testAlternatingL1OwnershipProtocol() {
   if (succeeded(duplicateConsumerProgram)) {
     CanonicalSyncOwnershipResult duplicateConsumerCycles =
         discoverCanonicalSyncOwnershipCycles(*duplicateConsumerProgram);
-    rejectsMultipleConsumers = llvm::none_of(
+    auto duplicateAlternating = llvm::find_if(
         duplicateConsumerCycles.cycles, [](const auto &candidate) {
           return candidate.protocol ==
                  CanonicalSyncOwnershipProtocolKind::AlternatingPrefetch;
         });
+    rejectsMultipleConsumers =
+        duplicateAlternating == duplicateConsumerCycles.cycles.end() ||
+        !makeCanonicalSyncAtomicOwnershipProtocol(*duplicateConsumerProgram,
+                                                  *duplicateAlternating, 0, 1);
   }
   duplicateConsumer->erase();
 
@@ -1750,10 +2110,22 @@ bool testAlternatingL1OwnershipProtocol() {
                "reject a wrong-distance composite WAW supply") &&
          check(tokenTraces,
                "balance alternating tokens for zero and positive trips") &&
+         check(loopEmptyActions == 2,
+               "balance both hierarchical zero-trip token domains") &&
+         check(hierarchicalTokenTraces,
+               "balance hierarchical tokens across outer iterations") &&
+         check(hasNestedSummary,
+               "summarize successor-guarded ready completion") &&
+         check(rejectsWrongNestedSummary,
+               "reject a malformed nested recurrence summary") &&
+         check(rejectsWrongOwnershipClosure,
+               "reject a malformed outer ownership closure") &&
          check(noPrefixAccepted,
                "admit direct releases without scope-prefix capability") &&
          check(rejectsInterveningProducer,
                "reject an intervening producer-pipe operation") &&
+         check(succeeded(duplicateConsumerProgram),
+               "build duplicate-consumer ownership graph") &&
          check(rejectsMultipleConsumers,
                "reject multiple consumers without prefix completion") &&
          check(rejectsUnguardedContinuation,
@@ -2043,8 +2415,12 @@ int main() {
       testMmadIntrinsicRequiresExactAccumulator() &&
       testAnalysisLimitFailsClosed() && testFailClosedInputs() &&
       testRejectsAllExplicitSyncForms() && testStructuralLimitsFailClosed() &&
-      testPeriodicBranchEvidence() && testL0OwnershipProtocolTrustBoundary() &&
-      testStableL1OwnershipProtocol() && testAlternatingL1OwnershipProtocol() &&
+      testPeriodicBranchEvidence() &&
+      testFirstIterationRecurrenceSuppression() &&
+      testL0OwnershipProtocolTrustBoundary() &&
+      testStableL1OwnershipProtocol() &&
+      testHierarchicalL1OwnershipProtocol() &&
+      testAlternatingL1OwnershipProtocol() &&
       testAccumulatorOwnershipProtocol();
   return passed ? 0 : 1;
 }

@@ -393,6 +393,12 @@ bool testTimelineStorageAndFreezeContract() {
                       graph, {SyncCoverAnchorKind::ScopeExit, 0, loop}) == 20,
                   "scope exit resolves to the explicit loop boundary");
   passed &= check(resolveSyncCoverAnchor(
+                      graph, {SyncCoverAnchorKind::ScopeEntry, 0, body}) == 4,
+                  "structured scope entry resolves from its first node");
+  passed &= check(resolveSyncCoverAnchor(
+                      graph, {SyncCoverAnchorKind::ScopeExit, 0, body}) == 9,
+                  "structured scope exit resolves from its last node");
+  passed &= check(resolveSyncCoverAnchor(
                       graph,
                       {SyncCoverAnchorKind::TimelinePoint, 0, body, 10}) == 10,
                   "timeline point resolves through the nearest timeline");

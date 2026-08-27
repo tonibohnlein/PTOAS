@@ -113,8 +113,10 @@ bool descriptorEqual(const CanonicalSyncMechanismDescriptor &left,
     const CanonicalSyncEventUse &first = left.eventUses[index];
     const CanonicalSyncEventUse &second = right.eventUses[index];
     const bool different =
-        std::tie(first.domain, first.width, first.recurrenceScope) !=
-        std::tie(second.domain, second.width, second.recurrenceScope);
+        std::tie(first.domain, first.width, first.recurrenceScope,
+                 first.lifetimeScope) != std::tie(second.domain, second.width,
+                                                  second.recurrenceScope,
+                                                  second.lifetimeScope);
     if (different) {
       return false;
     }
@@ -151,6 +153,8 @@ descriptorHash(const CanonicalSyncMechanismDescriptor &descriptor) {
     hashValue(hash, use.domain);
     hashValue(hash, use.width);
     hashValue(hash, use.recurrenceScope.value_or(
+                        std::numeric_limits<std::size_t>::max()));
+    hashValue(hash, use.lifetimeScope.value_or(
                         std::numeric_limits<std::size_t>::max()));
   }
   for (const CanonicalSyncAction &action : descriptor.actions) {
@@ -305,16 +309,21 @@ validateSupplyDeclarations(const SyncCoverGraph &graph,
         binding.proof == CanonicalSyncSupplyProof::VerifiedProtocol;
     const bool composite =
         binding.proof == CanonicalSyncSupplyProof::VerifiedCompositeProtocol;
+    const bool nestedSummary =
+        binding.proof ==
+        CanonicalSyncSupplyProof::VerifiedNestedRecurrenceSummary;
+    const bool ownershipClosure =
+        binding.proof == CanonicalSyncSupplyProof::VerifiedOwnershipClosure;
     const bool validOwner =
-        protocol
-            ? (verified && binding.eventUse && !binding.barrierAction &&
-               binding.produceAction && binding.consumeAction) ||
-                  (composite && !binding.eventUse && !binding.barrierAction &&
-                   !binding.produceAction && !binding.consumeAction)
-            : direct &&
-                  (binding.eventUse.has_value() !=
-                   binding.barrierAction.has_value()) &&
-                  !binding.produceAction && !binding.consumeAction;
+        protocol ? (verified && binding.eventUse && !binding.barrierAction &&
+                    binding.produceAction && binding.consumeAction) ||
+                       ((composite || nestedSummary || ownershipClosure) &&
+                        !binding.eventUse && !binding.barrierAction &&
+                        !binding.produceAction && !binding.consumeAction)
+                 : direct &&
+                       (binding.eventUse.has_value() !=
+                        binding.barrierAction.has_value()) &&
+                       !binding.produceAction && !binding.consumeAction;
     const bool invalid = graph.canonicalizeCompletionEdge(binding.edge) !=
                              SyncCoverGraphError::None ||
                          invalidDemands ||
@@ -358,15 +367,21 @@ CanonicalSyncProblemError validateEventUseDeclarations(
                         return id < domains[use.domain].budget;
                       }))
             : 0;
+    const auto validLoopScope = [&](std::optional<SyncCoverScopeId> scope) {
+      return !scope || (*scope < graph.getScopes().size() &&
+                        graph.getScopes()[*scope].isLoop &&
+                        graph.getScopes()[*scope].timeline);
+    };
     const bool invalid =
         use.domain >= domains.size() || use.width == 0 ||
         use.width > available ||
         (descriptor.kind == CanonicalSyncMechanismKind::Event &&
          use.width != 1) ||
-        (use.recurrenceScope &&
-         (*use.recurrenceScope >= graph.getScopes().size() ||
-          !graph.getScopes()[*use.recurrenceScope].isLoop ||
-          !graph.getScopes()[*use.recurrenceScope].timeline));
+        !validLoopScope(use.recurrenceScope) ||
+        !validLoopScope(use.lifetimeScope) ||
+        (use.lifetimeScope &&
+         (!use.recurrenceScope ||
+          !graph.scopeContains(*use.lifetimeScope, *use.recurrenceScope)));
     if (invalid) {
       return CanonicalSyncProblemError::InvalidMechanism;
     }
@@ -417,8 +432,9 @@ validateActions(const SyncCoverGraph &graph,
         unguarded
             ? !action.guardScope
             : loopGuard &&
-                  ((action.guard ==
-                        CanonicalSyncActionGuardKind::LoopNonEmpty &&
+                  (((action.guard ==
+                         CanonicalSyncActionGuardKind::LoopNonEmpty ||
+                     action.guard == CanonicalSyncActionGuardKind::LoopEmpty) &&
                     scopeBoundary) ||
                    ((action.guard ==
                          CanonicalSyncActionGuardKind::NotFirstIteration ||
@@ -487,8 +503,9 @@ validateActions(const SyncCoverGraph &graph,
     CanonicalSyncEventLifetime &lifetime = state.lifetimes[*action.eventUse];
     lifetime.begin = std::min(lifetime.begin, *position);
     lifetime.end = std::max(lifetime.end, *position);
-    if (use.recurrenceScope &&
-        !graph.scopeContains(*use.recurrenceScope, *scope)) {
+    const std::optional<SyncCoverScopeId> lifetimeScope =
+        use.lifetimeScope ? use.lifetimeScope : use.recurrenceScope;
+    if (lifetimeScope && !graph.scopeContains(*lifetimeScope, *scope)) {
       return CanonicalSyncProblemError::InvalidMechanism;
     }
   }
@@ -561,8 +578,12 @@ validateSupplyBindings(const SyncCoverGraph &graph,
 
     const bool protocol =
         descriptor.kind == CanonicalSyncMechanismKind::Protocol;
-    if (protocol &&
-        binding.proof == CanonicalSyncSupplyProof::VerifiedCompositeProtocol) {
+    const bool trustedProtocolProof =
+        binding.proof == CanonicalSyncSupplyProof::VerifiedCompositeProtocol ||
+        binding.proof ==
+            CanonicalSyncSupplyProof::VerifiedNestedRecurrenceSummary ||
+        binding.proof == CanonicalSyncSupplyProof::VerifiedOwnershipClosure;
+    if (protocol && trustedProtocolProof) {
       continue;
     }
 
@@ -601,7 +622,8 @@ validateSupplyBindings(const SyncCoverGraph &graph,
           set.anchor.node != edge.source ||
           wait.anchor.kind != SyncCoverAnchorKind::BeforeNode ||
           wait.anchor.node != edge.target;
-      if (edge.distance != 0 || use.recurrenceScope || wrongAnchors ||
+      if (edge.distance != 0 || use.recurrenceScope || use.lifetimeScope ||
+          wrongAnchors ||
           !syncCoverNodeCanProduceCompletion(graph, edge.source,
                                              domain.targetResource) ||
           !syncCoverEndpointsCoExecute(graph, edge)) {
@@ -610,10 +632,20 @@ validateSupplyBindings(const SyncCoverGraph &graph,
     } else if (!use.recurrenceScope) {
       return CanonicalSyncProblemError::InvalidMechanism;
     } else if (edge.distance == 0) {
+      const SyncCoverScopeId lifetimeScope =
+          use.lifetimeScope.value_or(*use.recurrenceScope);
       const bool relatedScope =
-          graph.scopeContains(*use.recurrenceScope, edge.scope) ||
-          graph.scopeContains(edge.scope, *use.recurrenceScope);
+          graph.scopeContains(lifetimeScope, edge.scope) ||
+          graph.scopeContains(edge.scope, lifetimeScope);
       if (!relatedScope) {
+        return CanonicalSyncProblemError::InvalidMechanism;
+      }
+    } else if (use.lifetimeScope) {
+      const bool invalidLifetimeSupply =
+          edge.scope >= graph.getScopes().size() ||
+          !graph.getScopes()[edge.scope].isLoop ||
+          !graph.scopeContains(*use.lifetimeScope, edge.scope);
+      if (invalidLifetimeSupply) {
         return CanonicalSyncProblemError::InvalidMechanism;
       }
     } else if (*use.recurrenceScope != edge.scope) {
@@ -636,10 +668,13 @@ void setRecurrenceLifetimes(const SyncCoverGraph &graph,
                             const CanonicalSyncMechanismDescriptor &descriptor,
                             MechanismValidationState &state) {
   for (std::size_t use = 0; use < descriptor.eventUses.size(); ++use) {
-    if (descriptor.eventUses[use].recurrenceScope) {
+    const CanonicalSyncEventUse &eventUse = descriptor.eventUses[use];
+    const std::optional<SyncCoverScopeId> lifetimeScope =
+        eventUse.lifetimeScope ? eventUse.lifetimeScope
+                               : eventUse.recurrenceScope;
+    if (lifetimeScope) {
       const SyncCoverTimelineInterval &timeline =
-          *graph.getScopes()[*descriptor.eventUses[use].recurrenceScope]
-               .timeline;
+          *graph.getScopes()[*lifetimeScope].timeline;
       state.lifetimes[use] = {timeline.begin, timeline.end};
     }
   }

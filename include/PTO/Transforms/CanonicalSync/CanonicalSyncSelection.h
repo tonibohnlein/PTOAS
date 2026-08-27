@@ -44,6 +44,7 @@ enum class CanonicalSyncActionKind : std::uint8_t {
 enum class CanonicalSyncActionGuardKind : std::uint8_t {
   None,
   LoopNonEmpty,
+  LoopEmpty,
   NotFirstIteration,
   HasSuccessor,
 };
@@ -64,9 +65,11 @@ struct CanonicalSyncEventDomain {
 struct CanonicalSyncEventUse {
   CanonicalSyncEventDomainId domain = 0;
   std::size_t width = 1;
-  /// Positive-distance protocols conservatively own the complete recurrence
-  /// timeline in version one.
+  /// Principal recurrence scope used by ordinary event protocols.
   std::optional<SyncCoverScopeId> recurrenceScope;
+  /// Optional wider resource lifetime for a verified hierarchical protocol.
+  /// Supply edges retain their own recurrence scopes inside this loop.
+  std::optional<SyncCoverScopeId> lifetimeScope;
 };
 
 struct CanonicalSyncAction {
@@ -87,6 +90,8 @@ enum class CanonicalSyncSupplyProof : std::uint8_t {
   DirectAction,
   VerifiedProtocol,
   VerifiedCompositeProtocol,
+  VerifiedNestedRecurrenceSummary,
+  VerifiedOwnershipClosure,
 };
 
 struct CanonicalSyncSupplyBinding {

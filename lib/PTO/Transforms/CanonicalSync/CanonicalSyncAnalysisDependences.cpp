@@ -22,6 +22,43 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::canonical_sync_detail;
 
+namespace {
+
+bool executesOnlyOnFirstIteration(Operation *operation, scf::ForOp loop) {
+  for (Operation *nested = operation; nested && nested != loop.getOperation();
+       nested = nested->getParentOp()) {
+    auto conditional = dyn_cast_or_null<scf::IfOp>(nested->getParentOp());
+    if (!conditional) {
+      continue;
+    }
+    auto comparison = conditional.getCondition().getDefiningOp<arith::CmpIOp>();
+    if (!comparison) {
+      continue;
+    }
+    const bool comparesLoopStart =
+        (comparison.getLhs() == loop.getInductionVar() &&
+         comparison.getRhs() == loop.getLowerBound()) ||
+        (comparison.getRhs() == loop.getInductionVar() &&
+         comparison.getLhs() == loop.getLowerBound());
+    if (!comparesLoopStart) {
+      continue;
+    }
+    const bool thenAlternative =
+        nested->getParentRegion() == &conditional.getThenRegion();
+    const bool equality = comparison.getPredicate() == arith::CmpIPredicate::eq;
+    const bool inequality =
+        comparison.getPredicate() == arith::CmpIPredicate::ne;
+    const bool selectsFirstIteration =
+        (equality && thenAlternative) || (inequality && !thenAlternative);
+    if (selectsFirstIteration) {
+      return true;
+    }
+  }
+  return false;
+}
+
+} // namespace
+
 bool ProgramBuilder::consumePairInspection() {
   if (pairInspections_ == options_.maximumPairInspections) {
     return false;
@@ -192,6 +229,10 @@ LogicalResult ProgramBuilder::addRecurrenceDependencies() {
             maximumRecurrenceDistance(source, target);
         HazardKinds covered;
         for (unsigned distance = 1; distance <= maximumDistance; ++distance) {
+          if (executesOnlyOnFirstIteration(nodeBindings_[target].operation,
+                                           loop)) {
+            break;
+          }
           if (!consumePairInspection()) {
             return function_.emitError(
                 "canonical sync pair-inspection limit exceeded");

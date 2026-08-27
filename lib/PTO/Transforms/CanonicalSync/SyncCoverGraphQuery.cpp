@@ -339,14 +339,43 @@ mlir::pto::resolveSyncCoverAnchor(const SyncCoverGraph &graph,
   }
   case SyncCoverAnchorKind::ScopeEntry:
   case SyncCoverAnchorKind::ScopeExit: {
-    const bool invalidScope =
-        anchor.scope >= scopes.size() || !scopes[anchor.scope].timeline;
-    if (invalidScope) {
+    if (anchor.scope >= scopes.size()) {
       return std::nullopt;
     }
-    return anchor.kind == SyncCoverAnchorKind::ScopeEntry
-               ? scopes[anchor.scope].timeline->begin
-               : scopes[anchor.scope].timeline->end;
+    if (scopes[anchor.scope].timeline) {
+      return anchor.kind == SyncCoverAnchorKind::ScopeEntry
+                 ? scopes[anchor.scope].timeline->begin
+                 : scopes[anchor.scope].timeline->end;
+    }
+    const std::optional<SyncCoverScopeId> timelineScope =
+        graph.getOwningTimelineScope(anchor.scope);
+    if (!timelineScope) {
+      return std::nullopt;
+    }
+    std::optional<SyncCoverTimelinePosition> first;
+    std::optional<SyncCoverTimelinePosition> last;
+    for (const SyncCoverNode &node : nodes) {
+      if (!graph.scopeContains(anchor.scope, node.scope)) {
+        continue;
+      }
+      const std::optional<SyncCoverTimelineInterval> interval =
+          getNodeAnchorInterval(node.order);
+      if (!interval) {
+        return std::nullopt;
+      }
+      first = first ? std::min(*first, interval->begin) : interval->begin;
+      last = last ? std::max(*last, interval->end) : interval->end;
+    }
+    if (!first || !last) {
+      return std::nullopt;
+    }
+    const SyncCoverTimelineInterval &timeline =
+        *scopes[*timelineScope].timeline;
+    const SyncCoverTimelinePosition position =
+        anchor.kind == SyncCoverAnchorKind::ScopeEntry ? *first : *last;
+    return position >= timeline.begin && position <= timeline.end
+               ? std::optional<SyncCoverTimelinePosition>(position)
+               : std::nullopt;
   }
   case SyncCoverAnchorKind::TimelinePoint:
     if (anchor.scope >= scopes.size()) {
