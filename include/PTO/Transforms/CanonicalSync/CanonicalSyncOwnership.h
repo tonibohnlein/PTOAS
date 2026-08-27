@@ -26,6 +26,7 @@ namespace pto {
 
 enum class CanonicalSyncOwnershipKind : std::uint8_t {
   L0Operand,
+  L1Tile,
 };
 
 struct CanonicalSyncOwnershipSlot {
@@ -47,6 +48,9 @@ struct CanonicalSyncOwnershipUse {
   std::vector<SyncCoverNodeId> producers;
   std::vector<SyncCoverNodeId> consumers;
   SyncCoverAnchor writeAcquire;
+  SyncCoverAnchor ready;
+  SyncCoverAnchor readAcquire;
+  SyncCoverAnchor release;
 };
 
 struct CanonicalSyncOwnershipPath {
@@ -110,6 +114,20 @@ bool verifyCanonicalSyncOwnershipProtocol(
     CanonicalSyncEventDomainId readyDomain,
     CanonicalSyncEventDomainId releaseDomain,
     const CanonicalSyncOwnershipProtocol &protocol);
+
+std::optional<CanonicalSyncMechanismDescriptor>
+makeCanonicalSyncAtomicOwnershipProtocol(
+    const CanonicalSyncProgram &program,
+    const CanonicalSyncOwnershipCycle &cycle,
+    CanonicalSyncEventDomainId readyDomain,
+    CanonicalSyncEventDomainId releaseDomain);
+
+bool verifyCanonicalSyncAtomicOwnershipProtocol(
+    const CanonicalSyncProgram &program,
+    const CanonicalSyncOwnershipCycle &cycle,
+    CanonicalSyncEventDomainId readyDomain,
+    CanonicalSyncEventDomainId releaseDomain,
+    const CanonicalSyncMechanismDescriptor &descriptor);
 
 } // namespace pto
 } // namespace mlir

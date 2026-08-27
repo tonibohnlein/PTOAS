@@ -356,6 +356,34 @@ LogicalResult addOwnershipCycles(
         cycle.lanes.size() > availableEventIds(releaseResource)) {
       continue;
     }
+    if (cycle.kind == CanonicalSyncOwnershipKind::L1Tile) {
+      if (!program.getTargetCapabilities().mte1ScopeExitSetCompletesPrefix) {
+        continue;
+      }
+      std::optional<CanonicalSyncMechanismDescriptor> descriptor =
+          makeCanonicalSyncAtomicOwnershipProtocol(
+              program, cycle, readyDomain->second, releaseDomain->second);
+      if (!descriptor) {
+        return program.getFunction().emitError(
+            "cannot build canonical sync atomic L1 ownership protocol");
+      }
+      const CanonicalSyncProblemResult mechanism =
+          problem.internVerifiedProtocol(
+              std::move(*descriptor),
+              [&](const CanonicalSyncMechanismDescriptor &candidate) {
+                return verifyCanonicalSyncAtomicOwnershipProtocol(
+                    program, cycle, readyDomain->second, releaseDomain->second,
+                    candidate);
+              });
+      if (mechanism.error == CanonicalSyncProblemError::LimitExceeded) {
+        continue;
+      }
+      if (!mechanism || !mechanism.index) {
+        return program.getFunction().emitError(
+            "cannot admit canonical sync atomic L1 ownership protocol");
+      }
+      continue;
+    }
     std::optional<CanonicalSyncOwnershipProtocol> protocol =
         makeCanonicalSyncOwnershipProtocol(program, cycle, readyDomain->second,
                                            releaseDomain->second);

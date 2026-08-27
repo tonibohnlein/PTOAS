@@ -296,17 +296,26 @@ validateSupplyDeclarations(const SyncCoverGraph &graph,
                     binding.allowedDemands.end(), [&](SyncCoverDemandId id) {
                       return id >= graph.getDemands().size();
                     });
-    const bool invalid =
-        graph.canonicalizeCompletionEdge(binding.edge) !=
-            SyncCoverGraphError::None ||
-        invalidDemands || (!binding.allowedDemands.empty() && !protocol) ||
-        binding.eventUse.has_value() == binding.barrierAction.has_value() ||
-        (!protocol &&
-         (binding.produceAction || binding.consumeAction ||
-          binding.proof != CanonicalSyncSupplyProof::DirectAction)) ||
-        (protocol &&
-         (binding.proof != CanonicalSyncSupplyProof::VerifiedProtocol ||
-          !binding.produceAction || !binding.consumeAction));
+    const bool direct = binding.proof == CanonicalSyncSupplyProof::DirectAction;
+    const bool verified =
+        binding.proof == CanonicalSyncSupplyProof::VerifiedProtocol;
+    const bool composite =
+        binding.proof == CanonicalSyncSupplyProof::VerifiedCompositeProtocol;
+    const bool validOwner =
+        protocol
+            ? (verified && binding.eventUse && !binding.barrierAction &&
+               binding.produceAction && binding.consumeAction) ||
+                  (composite && !binding.eventUse && !binding.barrierAction &&
+                   !binding.produceAction && !binding.consumeAction)
+            : direct &&
+                  (binding.eventUse.has_value() !=
+                   binding.barrierAction.has_value()) &&
+                  !binding.produceAction && !binding.consumeAction;
+    const bool invalid = graph.canonicalizeCompletionEdge(binding.edge) !=
+                             SyncCoverGraphError::None ||
+                         invalidDemands ||
+                         (!binding.allowedDemands.empty() && !protocol) ||
+                         !validOwner;
     if (invalid) {
       return CanonicalSyncProblemError::InvalidMechanism;
     }
@@ -514,14 +523,19 @@ validateSupplyBindings(const SyncCoverGraph &graph,
       continue;
     }
 
+    const bool protocol =
+        descriptor.kind == CanonicalSyncMechanismKind::Protocol;
+    if (protocol &&
+        binding.proof == CanonicalSyncSupplyProof::VerifiedCompositeProtocol) {
+      continue;
+    }
+
     if (!binding.eventUse || *binding.eventUse >= descriptor.eventUses.size()) {
       return CanonicalSyncProblemError::InvalidMechanism;
     }
     ++supplyCounts[*binding.eventUse];
     const CanonicalSyncEventUse &use = descriptor.eventUses[*binding.eventUse];
     const CanonicalSyncEventDomain &domain = domains[use.domain];
-    const bool protocol =
-        descriptor.kind == CanonicalSyncMechanismKind::Protocol;
     const std::size_t produce = protocol ? *binding.produceAction
                                          : *state.setActions[*binding.eventUse];
     const std::size_t consume = protocol

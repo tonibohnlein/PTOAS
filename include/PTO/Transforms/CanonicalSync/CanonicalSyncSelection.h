@@ -77,6 +77,7 @@ struct CanonicalSyncAction {
 enum class CanonicalSyncSupplyProof : std::uint8_t {
   DirectAction,
   VerifiedProtocol,
+  VerifiedCompositeProtocol,
 };
 
 struct CanonicalSyncSupplyBinding {

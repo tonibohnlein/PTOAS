@@ -16,6 +16,7 @@
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <set>
@@ -33,6 +34,14 @@ struct OwnershipSpec {
   std::uint32_t consumerResource = 0;
   std::vector<AddressSpace> spaces;
   std::size_t requiredSpaces = 1;
+  std::size_t minimumLanes = 1;
+};
+
+struct HierarchicalOwnershipSpec {
+  CanonicalSyncOwnershipKind kind = CanonicalSyncOwnershipKind::L1Tile;
+  std::uint32_t producerResource = 0;
+  std::uint32_t consumerResource = 0;
+  AddressSpace space = AddressSpace::Zero;
   std::size_t minimumLanes = 1;
 };
 
@@ -56,6 +65,12 @@ struct PathItem {
 using SlotBundle = std::vector<CanonicalSyncOwnershipSlot>;
 using StorageAccessIndex =
     std::vector<std::vector<const SyncCoverStorageAccess *>>;
+
+struct HierarchicalSlotGroup {
+  CanonicalSyncOwnershipSlot slot;
+  std::vector<OwnershipNode *> producers;
+  std::vector<OwnershipNode *> consumers;
+};
 
 std::optional<StorageAccessIndex>
 buildStorageAccessIndex(const SyncCoverGraph &graph) {
@@ -119,6 +134,45 @@ std::optional<SyncCoverScopeId> findScope(const CanonicalSyncProgram &program,
     }
   }
   return std::nullopt;
+}
+
+Operation *getCommonTopLevel(ArrayRef<OwnershipNode *> nodes) {
+  if (nodes.empty()) {
+    return nullptr;
+  }
+  Operation *anchor = nodes.front()->topLevel;
+  return llvm::all_of(nodes,
+                      [&](const OwnershipNode *node) {
+                        return node->topLevel == anchor;
+                      })
+             ? anchor
+             : nullptr;
+}
+
+std::optional<std::pair<SyncCoverAnchor, SyncCoverAnchor>>
+getBoundaryAnchors(const CanonicalSyncProgram &program, Operation *anchor) {
+  if (!anchor) {
+    return std::nullopt;
+  }
+  for (auto [node, binding] : llvm::enumerate(program.getNodeBindings())) {
+    if (binding.operation == anchor) {
+      return std::make_pair(
+          SyncCoverAnchor{SyncCoverAnchorKind::BeforeNode, node, 0, 0},
+          SyncCoverAnchor{SyncCoverAnchorKind::AfterNode, node, 0, 0});
+    }
+  }
+  auto loop = dyn_cast<scf::ForOp>(anchor);
+  if (!loop) {
+    return std::nullopt;
+  }
+  const std::optional<SyncCoverScopeId> scope =
+      findScope(program, &loop.getRegion());
+  if (!scope) {
+    return std::nullopt;
+  }
+  return std::make_pair(
+      SyncCoverAnchor{SyncCoverAnchorKind::ScopeEntry, 0, *scope, 0},
+      SyncCoverAnchor{SyncCoverAnchorKind::ScopeExit, 0, *scope, 0});
 }
 
 bool slotsAreDisjoint(ArrayRef<CanonicalSyncOwnershipLane> lanes) {
@@ -328,6 +382,10 @@ std::optional<CanonicalSyncOwnershipPath> parseOwnershipPath(
     llvm::transform(item.consumers, std::back_inserter(use.consumers),
                     [](OwnershipNode *node) { return node->id; });
     use.writeAcquire = {SyncCoverAnchorKind::BeforeNode, producers.front()->id};
+    use.ready = {SyncCoverAnchorKind::AfterNode, producers.back()->id};
+    use.readAcquire = {SyncCoverAnchorKind::BeforeNode,
+                       item.consumers.front()->id};
+    use.release = {SyncCoverAnchorKind::AfterNode, item.consumers.back()->id};
     result.uses.push_back(std::move(use));
     producers.clear();
   }
@@ -404,6 +462,182 @@ std::optional<CanonicalSyncOwnershipCycle> recognizeL0Operand(
   return cycle;
 }
 
+std::optional<std::vector<OwnershipNode>> collectHierarchicalNodes(
+    const CanonicalSyncProgram &program, SyncCoverScopeId recurrenceScope,
+    const HierarchicalOwnershipSpec &spec,
+    ArrayRef<std::vector<const SyncCoverStorageAccess *>> accessesByNode) {
+  const SyncCoverGraph &graph = program.getGraph();
+  if (recurrenceScope >= program.getScopeBindings().size()) {
+    return std::nullopt;
+  }
+  Operation *loop = program.getScopeBindings()[recurrenceScope].owner;
+  if (!isa_and_nonnull<scf::ForOp>(loop)) {
+    return std::nullopt;
+  }
+  std::vector<OwnershipNode> result;
+  for (const SyncCoverNode &node : graph.getNodes()) {
+    if (!graph.scopeContains(recurrenceScope, node.scope)) {
+      continue;
+    }
+    std::vector<const SyncCoverStorageAccess *> accesses;
+    for (const SyncCoverStorageAccess *access : accessesByNode[node.id]) {
+      const std::optional<AddressSpace> space =
+          getAccessSpace(program, *access);
+      if (space && *space == spec.space) {
+        if (!access->exactPhysical) {
+          return std::nullopt;
+        }
+        accesses.push_back(access);
+      }
+    }
+    if (accesses.empty()) {
+      continue;
+    }
+    if (accesses.size() != 1) {
+      return std::nullopt;
+    }
+
+    OwnershipNode ownership;
+    ownership.id = node.id;
+    ownership.operation = program.getNodeBindings()[node.id].operation;
+    ownership.topLevel = getTopLevelChild(ownership.operation, loop);
+    if (!ownership.operation || !ownership.topLevel) {
+      return std::nullopt;
+    }
+    const SyncCoverStorageAccess &access = *accesses.front();
+    CanonicalSyncOwnershipSlot slot{access.domain, access.extent};
+    if (node.resource == spec.producerResource) {
+      if (access.mode != SyncCoverStorageAccessMode::Write) {
+        return std::nullopt;
+      }
+      ownership.produced.push_back(slot);
+    } else if (node.resource == spec.consumerResource) {
+      if (access.mode != SyncCoverStorageAccessMode::Read) {
+        return std::nullopt;
+      }
+      ownership.consumed.push_back(slot);
+    } else {
+      return std::nullopt;
+    }
+    result.push_back(std::move(ownership));
+  }
+  return result.empty()
+             ? std::nullopt
+             : std::optional<std::vector<OwnershipNode>>(std::move(result));
+}
+
+bool hierarchicalSlotsAreDisjoint(
+    const std::map<CanonicalSyncOwnershipSlot, HierarchicalSlotGroup> &groups) {
+  for (auto first = groups.begin(); first != groups.end(); ++first) {
+    for (auto second = std::next(first); second != groups.end(); ++second) {
+      if (first->first.domain == second->first.domain &&
+          intervalOverlaps(first->first.extent, second->first.extent)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+std::optional<CanonicalSyncOwnershipCycle> recognizeStableL1(
+    const CanonicalSyncProgram &program, SyncCoverScopeId recurrenceScope,
+    const HierarchicalOwnershipSpec &spec,
+    ArrayRef<std::vector<const SyncCoverStorageAccess *>> accessesByNode) {
+  std::optional<std::vector<OwnershipNode>> nodes =
+      collectHierarchicalNodes(program, recurrenceScope, spec, accessesByNode);
+  if (!nodes) {
+    return std::nullopt;
+  }
+  auto loop = dyn_cast_or_null<scf::ForOp>(
+      program.getScopeBindings()[recurrenceScope].owner);
+  if (!loop) {
+    return std::nullopt;
+  }
+
+  std::map<CanonicalSyncOwnershipSlot, HierarchicalSlotGroup> groups;
+  for (OwnershipNode &node : *nodes) {
+    const CanonicalSyncOwnershipSlot &slot =
+        !node.produced.empty() ? node.produced.front() : node.consumed.front();
+    HierarchicalSlotGroup &group = groups[slot];
+    group.slot = slot;
+    (!node.produced.empty() ? group.producers : group.consumers)
+        .push_back(&node);
+  }
+  if (groups.size() < spec.minimumLanes ||
+      !hierarchicalSlotsAreDisjoint(groups)) {
+    return std::nullopt;
+  }
+
+  std::vector<HierarchicalSlotGroup *> ordered;
+  ordered.reserve(groups.size());
+  for (auto &[slot, group] : groups) {
+    (void)slot;
+    const bool oneDirectProducer =
+        group.producers.size() == 1 &&
+        group.producers.front()->operation->getParentRegion() ==
+            &loop.getRegion();
+    if (!oneDirectProducer || group.consumers.empty()) {
+      return std::nullopt;
+    }
+    Operation *producerAnchor = group.producers.front()->operation;
+    Operation *consumerAnchor = getCommonTopLevel(group.consumers);
+    const bool orderedInOneBlock =
+        consumerAnchor && producerAnchor != consumerAnchor &&
+        producerAnchor->getBlock() == consumerAnchor->getBlock() &&
+        producerAnchor->isBeforeInBlock(consumerAnchor);
+    if (!orderedInOneBlock || !getBoundaryAnchors(program, producerAnchor) ||
+        !getBoundaryAnchors(program, consumerAnchor)) {
+      return std::nullopt;
+    }
+    ordered.push_back(&group);
+  }
+  llvm::stable_sort(ordered, [&](const HierarchicalSlotGroup *left,
+                                 const HierarchicalSlotGroup *right) {
+    return program.getGraph().getNodes()[left->producers.front()->id].order <
+           program.getGraph().getNodes()[right->producers.front()->id].order;
+  });
+
+  CanonicalSyncOwnershipCycle cycle;
+  cycle.kind = spec.kind;
+  cycle.recurrenceScope = recurrenceScope;
+  cycle.producerResource = spec.producerResource;
+  cycle.consumerResource = spec.consumerResource;
+  CanonicalSyncOwnershipPath path;
+  path.scope = recurrenceScope;
+  for (auto [lane, group] : llvm::enumerate(ordered)) {
+    Operation *producerAnchor = group->producers.front()->operation;
+    Operation *consumerAnchor = getCommonTopLevel(group->consumers);
+    const auto producerBounds = getBoundaryAnchors(program, producerAnchor);
+    const auto consumerBounds = getBoundaryAnchors(program, consumerAnchor);
+    if (!producerBounds || !consumerBounds) {
+      return std::nullopt;
+    }
+    CanonicalSyncOwnershipLane ownershipLane;
+    ownershipLane.id = lane;
+    ownershipLane.slots.push_back(group->slot);
+    cycle.lanes.push_back(std::move(ownershipLane));
+
+    CanonicalSyncOwnershipUse use;
+    use.lane = lane;
+    use.producerLane = lane;
+    use.producers.push_back(group->producers.front()->id);
+    llvm::sort(group->consumers,
+               [&](OwnershipNode *left, OwnershipNode *right) {
+                 return program.getGraph().getNodes()[left->id].order <
+                        program.getGraph().getNodes()[right->id].order;
+               });
+    llvm::transform(group->consumers, std::back_inserter(use.consumers),
+                    [](OwnershipNode *node) { return node->id; });
+    use.writeAcquire = producerBounds->first;
+    use.ready = producerBounds->second;
+    use.readAcquire = consumerBounds->first;
+    use.release = consumerBounds->second;
+    path.uses.push_back(std::move(use));
+  }
+  cycle.paths.push_back(std::move(path));
+  return cycle;
+}
+
 bool slotsMatch(
     const CanonicalSyncProgram &program,
     ArrayRef<std::vector<const SyncCoverStorageAccess *>> accessesByNode,
@@ -426,6 +660,29 @@ bool slotsMatch(
     const SyncCoverStorageAccessMode expectedMode =
         space == firstSpace ? firstMode : secondMode;
     if (!access->exactPhysical || access->mode != expectedMode) {
+      return false;
+    }
+    actual.push_back({access->domain, access->extent});
+  }
+  llvm::sort(actual);
+  return ArrayRef<CanonicalSyncOwnershipSlot>(actual) == expected;
+}
+
+bool slotsMatchSpace(
+    const CanonicalSyncProgram &program,
+    ArrayRef<std::vector<const SyncCoverStorageAccess *>> accessesByNode,
+    SyncCoverNodeId node, ArrayRef<CanonicalSyncOwnershipSlot> expected,
+    AddressSpace space, SyncCoverStorageAccessMode mode) {
+  std::vector<CanonicalSyncOwnershipSlot> actual;
+  if (node >= accessesByNode.size()) {
+    return false;
+  }
+  for (const SyncCoverStorageAccess *access : accessesByNode[node]) {
+    if (access->domain >= program.getStorageSpaces().size() ||
+        program.getStorageSpaces()[access->domain] != space) {
+      continue;
+    }
+    if (!access->exactPhysical || access->mode != mode) {
       return false;
     }
     actual.push_back({access->domain, access->extent});
@@ -546,11 +803,84 @@ bool pathsCoverRecurrence(const SyncCoverGraph &graph,
          *alternatives.rbegin() + 1 == control.alternatives;
 }
 
+bool anchorsEqual(const SyncCoverAnchor &left, const SyncCoverAnchor &right) {
+  return std::tie(left.kind, left.node, left.scope, left.position) ==
+         std::tie(right.kind, right.node, right.scope, right.position);
+}
+
+bool verifyHierarchicalUse(const CanonicalSyncProgram &program,
+                           const CanonicalSyncOwnershipCycle &cycle,
+                           const CanonicalSyncOwnershipPath &path,
+                           const CanonicalSyncOwnershipUse &use,
+                           std::set<SyncCoverNodeId> &represented) {
+  const SyncCoverGraph &graph = program.getGraph();
+  if (use.lane >= cycle.lanes.size() || use.producerLane != use.lane ||
+      use.producers.size() != 1 || use.consumers.empty() ||
+      path.scope != cycle.recurrenceScope ||
+      cycle.recurrenceScope >= program.getScopeBindings().size()) {
+    return false;
+  }
+  Operation *loop = program.getScopeBindings()[cycle.recurrenceScope].owner;
+  const SyncCoverNodeId producer = use.producers.front();
+  if (!loop || producer >= graph.getNodes().size() ||
+      graph.getNodes()[producer].resource != cycle.producerResource ||
+      graph.getNodes()[producer].scope != cycle.recurrenceScope) {
+    return false;
+  }
+  Operation *producerAnchor = program.getNodeBindings()[producer].operation;
+  std::vector<OwnershipNode> consumerNodes;
+  consumerNodes.reserve(use.consumers.size());
+  for (SyncCoverNodeId consumer : use.consumers) {
+    if (consumer >= graph.getNodes().size() ||
+        graph.getNodes()[consumer].resource != cycle.consumerResource ||
+        !graph.scopeContains(cycle.recurrenceScope,
+                             graph.getNodes()[consumer].scope)) {
+      return false;
+    }
+    Operation *operation = program.getNodeBindings()[consumer].operation;
+    Operation *topLevel = getTopLevelChild(operation, loop);
+    if (!operation || !topLevel) {
+      return false;
+    }
+    OwnershipNode node;
+    node.id = consumer;
+    node.operation = operation;
+    node.topLevel = topLevel;
+    consumerNodes.push_back(std::move(node));
+  }
+  std::vector<OwnershipNode *> consumerPointers;
+  llvm::transform(consumerNodes, std::back_inserter(consumerPointers),
+                  [](OwnershipNode &node) { return &node; });
+  Operation *consumerAnchor = getCommonTopLevel(consumerPointers);
+  const bool ordered =
+      producerAnchor && consumerAnchor &&
+      producerAnchor->getBlock() == consumerAnchor->getBlock() &&
+      producerAnchor->isBeforeInBlock(consumerAnchor);
+  const auto producerBounds = getBoundaryAnchors(program, producerAnchor);
+  const auto consumerBounds = getBoundaryAnchors(program, consumerAnchor);
+  if (!ordered || !producerBounds || !consumerBounds ||
+      !anchorsEqual(use.writeAcquire, producerBounds->first) ||
+      !anchorsEqual(use.ready, producerBounds->second) ||
+      !anchorsEqual(use.readAcquire, consumerBounds->first) ||
+      !anchorsEqual(use.release, consumerBounds->second)) {
+    return false;
+  }
+  if (!represented.insert(producer).second) {
+    return false;
+  }
+  return llvm::all_of(use.consumers, [&](SyncCoverNodeId consumer) {
+    return represented.insert(consumer).second;
+  });
+}
+
 bool verifyUse(const CanonicalSyncProgram &program,
                const CanonicalSyncOwnershipCycle &cycle,
                const CanonicalSyncOwnershipPath &path,
                const CanonicalSyncOwnershipUse &use,
                std::set<SyncCoverNodeId> &represented) {
+  if (cycle.kind == CanonicalSyncOwnershipKind::L1Tile) {
+    return verifyHierarchicalUse(program, cycle, path, use, represented);
+  }
   if (use.lane >= cycle.lanes.size() || use.producerLane != use.lane ||
       use.producers.empty() || use.consumers.empty()) {
     return false;
@@ -591,10 +921,34 @@ bool verifyUse(const CanonicalSyncProgram &program,
                        });
   const SyncCoverAnchor expectedAcquire{SyncCoverAnchorKind::BeforeNode,
                                         *firstProducer, 0, 0};
-  if (std::tie(use.writeAcquire.kind, use.writeAcquire.node,
-               use.writeAcquire.scope, use.writeAcquire.position) !=
-      std::tie(expectedAcquire.kind, expectedAcquire.node,
-               expectedAcquire.scope, expectedAcquire.position)) {
+  const auto lastProducer =
+      std::max_element(use.producers.begin(), use.producers.end(),
+                       [&](SyncCoverNodeId left, SyncCoverNodeId right) {
+                         return program.getGraph().getNodes()[left].order <
+                                program.getGraph().getNodes()[right].order;
+                       });
+  const auto firstConsumer =
+      std::min_element(use.consumers.begin(), use.consumers.end(),
+                       [&](SyncCoverNodeId left, SyncCoverNodeId right) {
+                         return program.getGraph().getNodes()[left].order <
+                                program.getGraph().getNodes()[right].order;
+                       });
+  const auto lastConsumer =
+      std::max_element(use.consumers.begin(), use.consumers.end(),
+                       [&](SyncCoverNodeId left, SyncCoverNodeId right) {
+                         return program.getGraph().getNodes()[left].order <
+                                program.getGraph().getNodes()[right].order;
+                       });
+  const SyncCoverAnchor expectedReady{SyncCoverAnchorKind::AfterNode,
+                                      *lastProducer, 0, 0};
+  const SyncCoverAnchor expectedReadAcquire{SyncCoverAnchorKind::BeforeNode,
+                                            *firstConsumer, 0, 0};
+  const SyncCoverAnchor expectedRelease{SyncCoverAnchorKind::AfterNode,
+                                        *lastConsumer, 0, 0};
+  if (!anchorsEqual(use.writeAcquire, expectedAcquire) ||
+      !anchorsEqual(use.ready, expectedReady) ||
+      !anchorsEqual(use.readAcquire, expectedReadAcquire) ||
+      !anchorsEqual(use.release, expectedRelease)) {
     return false;
   }
   return true;
@@ -612,7 +966,8 @@ bool verifyCycleImpl(
       cycle.recurrenceScope >= graph.getScopes().size() ||
       !graph.getScopes()[cycle.recurrenceScope].isLoop || cycle.lanes.empty() ||
       cycle.paths.empty() || !slotsAreDisjoint(cycle.lanes) ||
-      cycle.kind != CanonicalSyncOwnershipKind::L0Operand ||
+      (cycle.kind != CanonicalSyncOwnershipKind::L0Operand &&
+       cycle.kind != CanonicalSyncOwnershipKind::L1Tile) ||
       !pathsCoverRecurrence(graph, cycle.recurrenceScope, cycle.paths)) {
     return false;
   }
@@ -659,7 +1014,11 @@ bool verifyCycleImpl(
             continue;
           }
           const AddressSpace space = program.getStorageSpaces()[access->domain];
-          if (space != AddressSpace::LEFT && space != AddressSpace::RIGHT) {
+          const bool managed =
+              cycle.kind == CanonicalSyncOwnershipKind::L0Operand
+                  ? space == AddressSpace::LEFT || space == AddressSpace::RIGHT
+                  : space == AddressSpace::MAT;
+          if (!managed) {
             continue;
           }
           if (!access->exactPhysical ||
@@ -674,10 +1033,18 @@ bool verifyCycleImpl(
         return false;
       }
       for (SyncCoverNodeId consumer : use.consumers) {
-        if (!slotsMatch(program, accessesByNode, consumer,
-                        cycle.lanes[use.lane].slots, AddressSpace::LEFT,
-                        AddressSpace::RIGHT, SyncCoverStorageAccessMode::Read,
-                        SyncCoverStorageAccessMode::Read)) {
+        const bool matches =
+            cycle.kind == CanonicalSyncOwnershipKind::L0Operand
+                ? slotsMatch(program, accessesByNode, consumer,
+                             cycle.lanes[use.lane].slots, AddressSpace::LEFT,
+                             AddressSpace::RIGHT,
+                             SyncCoverStorageAccessMode::Read,
+                             SyncCoverStorageAccessMode::Read)
+                : slotsMatchSpace(program, accessesByNode, consumer,
+                                  cycle.lanes[use.lane].slots,
+                                  AddressSpace::MAT,
+                                  SyncCoverStorageAccessMode::Read);
+        if (!matches) {
           return false;
         }
       }
@@ -691,7 +1058,9 @@ bool verifyCycleImpl(
     }
     const AddressSpace space = program.getStorageSpaces()[access.domain];
     const bool managed =
-        space == AddressSpace::LEFT || space == AddressSpace::RIGHT;
+        cycle.kind == CanonicalSyncOwnershipKind::L0Operand
+            ? space == AddressSpace::LEFT || space == AddressSpace::RIGHT
+            : space == AddressSpace::MAT;
     if (managed && represented.count(access.node) == 0) {
       return false;
     }
@@ -746,6 +1115,11 @@ CanonicalSyncOwnershipResult mlir::pto::discoverCanonicalSyncOwnershipCycles(
       {AddressSpace::LEFT, AddressSpace::RIGHT},
       2,
       2};
+  const HierarchicalOwnershipSpec l1Tile{
+      CanonicalSyncOwnershipKind::L1Tile,
+      static_cast<std::uint32_t>(PipelineType::PIPE_MTE2),
+      static_cast<std::uint32_t>(PipelineType::PIPE_MTE1), AddressSpace::MAT,
+      2};
   const std::size_t passCost =
       graph.getNodes().size() + graph.getStorageAccesses().size();
   if (passCost > options.maximumInspections) {
@@ -771,15 +1145,30 @@ CanonicalSyncOwnershipResult mlir::pto::discoverCanonicalSyncOwnershipCycles(
     result.inspections += passCost;
     std::optional<CanonicalSyncOwnershipCycle> cycle =
         recognizeL0Operand(program, scope.id, l0Operand, *accessesByNode);
-    if (!cycle || !verifyCycleImpl(program, *cycle, *accessesByNode, false)) {
-      continue;
+    if (cycle && verifyCycleImpl(program, *cycle, *accessesByNode, false)) {
+      if (result.cycles.size() == options.maximumCycles) {
+        result.truncated = true;
+        return result;
+      }
+      cycle->id = result.cycles.size();
+      result.cycles.push_back(std::move(*cycle));
     }
-    if (result.cycles.size() == options.maximumCycles) {
+
+    if (result.inspections > options.maximumInspections ||
+        passCost > options.maximumInspections - result.inspections) {
       result.truncated = true;
       return result;
     }
-    cycle->id = result.cycles.size();
-    result.cycles.push_back(std::move(*cycle));
+    result.inspections += passCost;
+    cycle = recognizeStableL1(program, scope.id, l1Tile, *accessesByNode);
+    if (cycle && verifyCycleImpl(program, *cycle, *accessesByNode, false)) {
+      if (result.cycles.size() == options.maximumCycles) {
+        result.truncated = true;
+        return result;
+      }
+      cycle->id = result.cycles.size();
+      result.cycles.push_back(std::move(*cycle));
+    }
   }
   return result;
 }

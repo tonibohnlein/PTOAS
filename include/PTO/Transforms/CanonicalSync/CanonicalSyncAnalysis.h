@@ -56,6 +56,13 @@ struct CanonicalSyncScopeBinding {
 using CanonicalSyncEventReservations =
     std::map<std::pair<std::uint32_t, std::uint32_t>, std::vector<unsigned>>;
 
+struct CanonicalSyncTargetCapabilities {
+  /// A PIPE_MTE1 set issued after a structured scope certifies completion of
+  /// every earlier MTE1 operation issued by that scope. This is target
+  /// evidence, not a consequence of ordinary MTE1 issue order.
+  bool mte1ScopeExitSetCompletesPrefix = false;
+};
+
 /// One authoritative synchronization graph plus the minimal MLIR side tables
 /// needed to materialize graph anchors. The side tables contain no copied
 /// dependency, mechanism, cost, or selection state. Their raw MLIR bindings
@@ -72,11 +79,13 @@ public:
                        std::vector<CanonicalSyncNodeBinding> nodeBindings,
                        std::vector<CanonicalSyncScopeBinding> scopeBindings,
                        std::vector<AddressSpace> storageSpaces,
+                       CanonicalSyncTargetCapabilities targetCapabilities,
                        CanonicalSyncEventReservations eventReservations)
       : function_(function), graph_(std::move(graph)),
         nodeBindings_(std::move(nodeBindings)),
         scopeBindings_(std::move(scopeBindings)),
         storageSpaces_(std::move(storageSpaces)),
+        targetCapabilities_(targetCapabilities),
         eventReservations_(std::move(eventReservations)) {}
 
   SyncCoverGraph &getGraph() { return graph_; }
@@ -91,6 +100,9 @@ public:
   const std::vector<AddressSpace> &getStorageSpaces() const {
     return storageSpaces_;
   }
+  const CanonicalSyncTargetCapabilities &getTargetCapabilities() const {
+    return targetCapabilities_;
+  }
   const CanonicalSyncEventReservations &getEventReservations() const {
     return eventReservations_;
   }
@@ -101,6 +113,7 @@ private:
   std::vector<CanonicalSyncNodeBinding> nodeBindings_;
   std::vector<CanonicalSyncScopeBinding> scopeBindings_;
   std::vector<AddressSpace> storageSpaces_;
+  CanonicalSyncTargetCapabilities targetCapabilities_;
   CanonicalSyncEventReservations eventReservations_;
 };
 

@@ -1139,6 +1139,163 @@ bool testL0OwnershipProtocolTrustBoundary() {
                "reject ownership cycle with a reversed access role");
 }
 
+bool testStableL1OwnershipProtocol() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a2a3"} {
+      func.func @ownership(%source0: !pto.ptr<f16, gm>,
+                           %source1: !pto.ptr<f16, gm>, %limit: index) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %c2 = arith.constant 2 : index
+        %c64 = arith.constant 64 : index
+        %c128 = arith.constant 128 : index
+        %addr0 = arith.constant 0 : i64
+        %addr16384 = arith.constant 16384 : i64
+        %addr32768 = arith.constant 32768 : i64
+        %view0 = pto.make_tensor_view %source0, shape = [%c128, %c128],
+          strides = [%c128, %c1] {layout = #pto.layout<nd>} :
+          !pto.tensor_view<?x?xf16>
+        %view1 = pto.make_tensor_view %source1, shape = [%c128, %c128],
+          strides = [%c128, %c1] {layout = #pto.layout<nd>} :
+          !pto.tensor_view<?x?xf16>
+        %part0 = pto.partition_view %view0, offsets = [%c0, %c0],
+          sizes = [%c128, %c128] : !pto.tensor_view<?x?xf16>
+        %part1 = pto.partition_view %view1, offsets = [%c0, %c0],
+          sizes = [%c128, %c128] : !pto.tensor_view<?x?xf16>
+        %mat0 = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+        %mat1 = pto.alloc_tile addr = %addr32768 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+        %left0 = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+        %left1 = pto.alloc_tile addr = %addr16384 :
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+        scf.for %i = %c0 to %limit step %c1 {
+          pto.tload ins(%part0 : !pto.partition_tensor_view<128x128xf16>)
+            outs(%mat0 : !pto.tile_buf<mat, 128x128xf16,
+                                    slayout=row_major>)
+          pto.tload ins(%part1 : !pto.partition_tensor_view<128x128xf16>)
+            outs(%mat1 : !pto.tile_buf<mat, 128x128xf16,
+                                    slayout=row_major>)
+          scf.for %k = %c0 to %c2 step %c1 {
+            pto.textract ins(%mat0, %c0, %c0 :
+              !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index,
+              index) outs(%left0 : !pto.tile_buf<left, 128x64xf16,
+                                               slayout=row_major>)
+            pto.textract ins(%mat1, %c0, %c64 :
+              !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index,
+              index) outs(%left1 : !pto.tile_buf<left, 128x64xf16,
+                                               slayout=row_major>)
+          }
+        }
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module), "parse stable L1 fixture")) {
+    return false;
+  }
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("ownership"));
+  if (!check(succeeded(program), "build stable L1 graph")) {
+    return false;
+  }
+  CanonicalSyncOwnershipResult result =
+      discoverCanonicalSyncOwnershipCycles(*program);
+  if (!check(result && !result.truncated && result.cycles.size() == 1 &&
+                 result.cycles.front().kind ==
+                     CanonicalSyncOwnershipKind::L1Tile,
+             "discover one exact stable L1 ownership cycle")) {
+    return false;
+  }
+  const CanonicalSyncOwnershipCycle &cycle = result.cycles.front();
+  const bool boundaryAnchors = llvm::all_of(
+      cycle.paths.front().uses, [](const CanonicalSyncOwnershipUse &use) {
+        return use.producers.size() == 1 && !use.consumers.empty() &&
+               use.writeAcquire.kind == SyncCoverAnchorKind::BeforeNode &&
+               use.ready.kind == SyncCoverAnchorKind::AfterNode &&
+               use.readAcquire.kind == SyncCoverAnchorKind::ScopeEntry &&
+               use.release.kind == SyncCoverAnchorKind::ScopeExit;
+      });
+  std::optional<CanonicalSyncOwnershipProtocol> protocol =
+      makeCanonicalSyncOwnershipProtocol(*program, cycle, 0, 1);
+  std::optional<CanonicalSyncMechanismDescriptor> atomicProtocol =
+      makeCanonicalSyncAtomicOwnershipProtocol(*program, cycle, 0, 1);
+  if (!check(boundaryAnchors,
+             "anchor L1 ownership around the complete consumer loop") ||
+      !check(protocol.has_value(), "build stable L1 ownership protocol") ||
+      !check(verifyCanonicalSyncOwnershipProtocol(*program, cycle, 0, 1,
+                                                  *protocol),
+             "independently verify stable L1 ownership protocol") ||
+      !check(atomicProtocol.has_value() &&
+                 verifyCanonicalSyncAtomicOwnershipProtocol(*program, cycle, 0,
+                                                            1, *atomicProtocol),
+             "verify the indivisible stable L1 handshake")) {
+    return false;
+  }
+  SyncCoverDemandSet qualified(program->getGraph().getDemands().size());
+  for (const CanonicalSyncSupplyBinding &binding : protocol->release.supplies) {
+    for (SyncCoverDemandId demand : binding.allowedDemands) {
+      qualified.insert(demand);
+    }
+  }
+  CanonicalSyncBuildOptions options;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem =
+      buildCanonicalSyncSingletonProblem(*program, options);
+  std::optional<CanonicalSyncMechanismId> ownershipMechanism;
+  if (succeeded(problem)) {
+    for (const CanonicalSyncMechanism &mechanism :
+         (*problem)->getMechanisms()) {
+      if (mechanism.descriptor.kind == CanonicalSyncMechanismKind::Protocol &&
+          mechanism.descriptor.eventUses.size() == 2) {
+        ownershipMechanism = mechanism.id;
+        break;
+      }
+    }
+  }
+  if (!check(!qualified.empty(), "qualify exact MAT ownership demands") ||
+      !check(succeeded(problem), "build stable L1 pattern problem") ||
+      !check(ownershipMechanism.has_value() &&
+                 (*problem)
+                     ->getPatterns()[*ownershipMechanism]
+                     .coverage.containsAll(qualified),
+             "ground stable L1 ownership as one atomic mechanism")) {
+    return false;
+  }
+  module->getOperation()->setAttr("pto.target_arch",
+                                  StringAttr::get(&context, "a5"));
+  FailureOr<CanonicalSyncProgram> a5Program = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("ownership"));
+  CanonicalSyncOwnershipResult a5Cycles =
+      succeeded(a5Program) ? discoverCanonicalSyncOwnershipCycles(*a5Program)
+                           : CanonicalSyncOwnershipResult{};
+  const bool a5FailsClosed =
+      succeeded(a5Program) && a5Cycles && a5Cycles.cycles.size() == 1 &&
+      !makeCanonicalSyncAtomicOwnershipProtocol(*a5Program,
+                                                a5Cycles.cycles.front(), 0, 1);
+  if (!check(a5FailsClosed,
+             "gate scope-exit L1 release on explicit target evidence")) {
+    return false;
+  }
+  CanonicalSyncOwnershipCycle wrongAnchor = cycle;
+  wrongAnchor.paths.front().uses.front().release.kind =
+      SyncCoverAnchorKind::AfterNode;
+  CanonicalSyncMechanismDescriptor partial = *atomicProtocol;
+  partial.actions.pop_back();
+  CanonicalSyncOwnershipCycle malformed;
+  return check(!verifyCanonicalSyncOwnershipCycle(*program, wrongAnchor),
+               "reject L1 release before the complete consumer loop") &&
+         check(!verifyCanonicalSyncAtomicOwnershipProtocol(*program, cycle, 0,
+                                                           1, partial),
+               "reject a partial stable L1 handshake") &&
+         check(!verifyCanonicalSyncAtomicOwnershipProtocol(
+                   *program, malformed, 0, 1, *atomicProtocol),
+               "fail closed for a malformed ownership cycle");
+}
+
 } // namespace
 
 int main() {
@@ -1151,6 +1308,7 @@ int main() {
       testMmadIntrinsicRequiresExactAccumulator() &&
       testAnalysisLimitFailsClosed() && testFailClosedInputs() &&
       testRejectsAllExplicitSyncForms() && testStructuralLimitsFailClosed() &&
-      testPeriodicBranchEvidence() && testL0OwnershipProtocolTrustBoundary();
+      testPeriodicBranchEvidence() && testL0OwnershipProtocolTrustBoundary() &&
+      testStableL1OwnershipProtocol();
   return passed ? 0 : 1;
 }

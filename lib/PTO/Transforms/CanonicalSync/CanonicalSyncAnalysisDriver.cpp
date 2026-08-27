@@ -127,9 +127,19 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
   for (const auto &[space, domain] : storageDomains_) {
     storageSpaces[domain] = space;
   }
+  // The A3 MTE1 scope-release contract is silicon-validated. A5 remains
+  // disabled until equivalent target evidence exists.
+  ModuleOp module = function_->getParentOfType<ModuleOp>();
+  StringAttr targetArch =
+      module ? module->getAttrOfType<StringAttr>(kPTOTargetArchAttrName)
+             : StringAttr{};
+  const bool explicitA3 = targetArch && (targetArch.getValue() == "a2a3" ||
+                                         targetArch.getValue() == "a3");
+  const CanonicalSyncTargetCapabilities targetCapabilities{
+      /*mte1ScopeExitSetCompletesPrefix=*/explicitA3};
   return CanonicalSyncProgram(
       function_, std::move(graph_), std::move(nodeBindings_),
-      std::move(scopeBindings_), std::move(storageSpaces),
+      std::move(scopeBindings_), std::move(storageSpaces), targetCapabilities,
       std::move(eventReservations_));
 }
 
