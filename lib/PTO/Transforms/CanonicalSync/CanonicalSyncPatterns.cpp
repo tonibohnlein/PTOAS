@@ -35,6 +35,43 @@ bool supplyLess(const SupplyEntry &left, const SupplyEntry &right) {
 
 } // namespace
 
+CanonicalSyncProblemResult
+mlir::pto::addCanonicalSyncFeasiblePattern(CanonicalSyncPatternProblem &problem,
+                                           CanonicalSyncPatternSpec pattern) {
+  if (problem.isFrozen()) {
+    return {CanonicalSyncProblemError::Frozen, std::nullopt};
+  }
+  std::sort(pattern.members.begin(), pattern.members.end());
+  pattern.members.erase(
+      std::unique(pattern.members.begin(), pattern.members.end()),
+      pattern.members.end());
+  const bool hasCompositeMembers = pattern.members.size() >= 2;
+  if (!hasCompositeMembers) {
+    return {CanonicalSyncProblemError::InvalidPattern, std::nullopt};
+  }
+  const bool withinMemberLimit =
+      pattern.members.size() <= problem.getLimits().maximumMembersPerPattern;
+  if (!withinMemberLimit) {
+    return {CanonicalSyncProblemError::None, std::nullopt};
+  }
+  if (std::any_of(pattern.members.begin(), pattern.members.end(),
+                  [&](CanonicalSyncMechanismId member) {
+                    return member >= problem.getMechanisms().size();
+                  })) {
+    return {CanonicalSyncProblemError::InvalidPattern, std::nullopt};
+  }
+  const CanonicalSyncResourceAllocation allocation =
+      allocateCanonicalSyncEvents(problem, pattern.members);
+  if (!allocation.valid || !allocation.feasible) {
+    return {CanonicalSyncProblemError::None, std::nullopt};
+  }
+  const CanonicalSyncProblemResult added =
+      problem.addPattern(std::move(pattern));
+  return added.error == CanonicalSyncProblemError::LimitExceeded
+             ? CanonicalSyncProblemResult{}
+             : added;
+}
+
 CanonicalSyncProblemResult mlir::pto::addCanonicalSyncRoundTripPatterns(
     CanonicalSyncPatternProblem &problem,
     CanonicalSyncRoundTripOptions options) {
@@ -105,28 +142,12 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncRoundTripPatterns(
       ++evaluationCount;
       const std::vector<CanonicalSyncMechanismId> selection{members.first,
                                                             members.second};
-      const auto &conflicts = problem.getMechanisms()[members.first].conflicts;
-      if (std::binary_search(conflicts.begin(), conflicts.end(),
-                             members.second)) {
-        continue;
-      }
-      const CanonicalSyncResourceAllocation allocation =
-          allocateCanonicalSyncEvents(problem, selection);
-      if (!allocation.valid) {
-        return {CanonicalSyncProblemError::InvalidPattern, addedCount};
-      }
-      if (!allocation.feasible) {
-        continue;
-      }
-      const CanonicalSyncProblemResult added =
-          problem.addPattern({CanonicalSyncPatternKind::RoundTrip, selection});
-      if (added.error == CanonicalSyncProblemError::LimitExceeded) {
-        return {CanonicalSyncProblemError::None, addedCount};
-      }
+      const CanonicalSyncProblemResult added = addCanonicalSyncFeasiblePattern(
+          problem, {CanonicalSyncPatternKind::RoundTrip, selection});
       if (!added) {
         return {added.error, addedCount};
       }
-      ++addedCount;
+      addedCount += added.index.has_value();
     }
   }
   return {CanonicalSyncProblemError::None, addedCount};

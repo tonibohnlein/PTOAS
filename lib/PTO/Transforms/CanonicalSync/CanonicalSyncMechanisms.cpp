@@ -9,6 +9,7 @@
 // for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSync.h"
+#include "PTO/Transforms/CanonicalSync/CanonicalSyncLifecycle.h"
 
 #include "llvm/ADT/STLExtras.h"
 
@@ -27,6 +28,8 @@ namespace {
 constexpr unsigned kHardwareEventIdCount = 8;
 
 using EventDomainKey = std::pair<std::uint32_t, std::uint32_t>;
+using DemandMechanismMap =
+    std::map<SyncCoverDemandId, CanonicalSyncMechanismId>;
 
 struct BarrierFallbackGroup {
   bool broad = false;
@@ -143,6 +146,7 @@ makeBarrier(const SyncCoverGraph &graph,
 LogicalResult addEventDomains(
     const CanonicalSyncProgram &program, unsigned budget,
     CanonicalSyncPatternProblem &problem, const SyncCoverDemandSet &baseline,
+    const CanonicalSyncLifecycleResult &lifecycles,
     std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds) {
   const SyncCoverGraph &graph = program.getGraph();
   std::set<EventDomainKey> keys;
@@ -156,6 +160,14 @@ LogicalResult addEventDomains(
     }
     const EventDomainKey key{graph.getNodes()[demand.source].resource,
                              graph.getNodes()[demand.target].resource};
+    if (hasAvailableEventId(program, key, budget)) {
+      keys.insert(key);
+    }
+  }
+  for (const CanonicalSyncUnitSlotLifecycle &lifecycle :
+       lifecycles.lifecycles) {
+    const EventDomainKey key{lifecycle.consumerResource,
+                             lifecycle.producerResource};
     if (hasAvailableEventId(program, key, budget)) {
       keys.insert(key);
     }
@@ -181,7 +193,8 @@ LogicalResult addEventDomains(
 LogicalResult addDirectEvents(
     const CanonicalSyncProgram &program, CanonicalSyncPatternProblem &problem,
     const SyncCoverDemandSet &baseline,
-    const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds) {
+    const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds,
+    DemandMechanismMap &mechanismsByDemand) {
   const SyncCoverGraph &graph = program.getGraph();
   for (SyncCoverDemandId demandId = 0; demandId < graph.getDemands().size();
        ++demandId) {
@@ -205,6 +218,96 @@ LogicalResult addDirectEvents(
     if (!added) {
       return program.getFunction().emitError(
           "cannot add canonical sync direct event");
+    }
+    if (!added.index) {
+      return program.getFunction().emitError(
+          "canonical sync direct event has no mechanism identity");
+    }
+    mechanismsByDemand.emplace(demandId, *added.index);
+  }
+  return success();
+}
+
+LogicalResult addUnitSlotLifecycles(
+    const CanonicalSyncProgram &program, CanonicalSyncPatternProblem &problem,
+    const CanonicalSyncLifecycleResult &lifecycles,
+    const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds,
+    const DemandMechanismMap &mechanismsByDemand) {
+  const SyncCoverGraph &graph = program.getGraph();
+  std::map<SyncCoverScopeId, std::vector<CanonicalSyncMechanismId>>
+      pipelineMembers;
+  for (const CanonicalSyncUnitSlotLifecycle &lifecycle :
+       lifecycles.lifecycles) {
+    const EventDomainKey key{lifecycle.consumerResource,
+                             lifecycle.producerResource};
+    const auto domain = domainIds.find(key);
+    if (domain == domainIds.end()) {
+      continue;
+    }
+    std::vector<CanonicalSyncMechanismId> members;
+    bool hasEveryReady = true;
+    for (SyncCoverDemandId ready : lifecycle.readyDemands) {
+      const auto mechanism = mechanismsByDemand.find(ready);
+      if (mechanism == mechanismsByDemand.end()) {
+        hasEveryReady = false;
+        break;
+      }
+      members.push_back(mechanism->second);
+    }
+    if (!hasEveryReady) {
+      continue;
+    }
+    std::optional<CanonicalSyncMechanismDescriptor> descriptor =
+        makeCanonicalSyncUnitSlotProtocol(graph, lifecycle, domain->second);
+    if (!descriptor) {
+      return program.getFunction().emitError(
+          "cannot build canonical sync unit-slot protocol");
+    }
+    const CanonicalSyncProblemResult protocol = problem.internVerifiedProtocol(
+        std::move(*descriptor), [&](const auto &candidate) {
+          return verifyCanonicalSyncUnitSlotProtocol(graph, lifecycle,
+                                                     domain->second, candidate);
+        });
+    if (protocol.error == CanonicalSyncProblemError::LimitExceeded) {
+      return success();
+    }
+    if (!protocol || !protocol.index) {
+      return program.getFunction().emitError(
+          "cannot admit canonical sync unit-slot protocol");
+    }
+    members.push_back(*protocol.index);
+    std::sort(members.begin(), members.end());
+    members.erase(std::unique(members.begin(), members.end()), members.end());
+    const bool completeLifecycle = members.size() >= 2;
+    if (!completeLifecycle) {
+      continue;
+    }
+    const CanonicalSyncProblemResult pattern = addCanonicalSyncFeasiblePattern(
+        problem, {CanonicalSyncPatternKind::SlotLifecycle, members});
+    if (!pattern) {
+      return program.getFunction().emitError(
+          "cannot add canonical sync slot-lifecycle pattern");
+    }
+    if (!pattern.index) {
+      continue;
+    }
+    std::vector<CanonicalSyncMechanismId> &pipeline =
+        pipelineMembers[lifecycle.recurrenceScope];
+    pipeline.insert(pipeline.end(), members.begin(), members.end());
+  }
+  for (auto &[scope, members] : pipelineMembers) {
+    (void)scope;
+    std::sort(members.begin(), members.end());
+    members.erase(std::unique(members.begin(), members.end()), members.end());
+    const bool completePipeline = members.size() >= 2;
+    if (!completePipeline) {
+      continue;
+    }
+    const CanonicalSyncProblemResult pattern = addCanonicalSyncFeasiblePattern(
+        problem, {CanonicalSyncPatternKind::PipelineScope, members});
+    if (!pattern) {
+      return program.getFunction().emitError(
+          "cannot add canonical sync pipeline-scope pattern");
     }
   }
   return success();
@@ -264,12 +367,24 @@ mlir::pto::buildCanonicalSyncSingletonProblem(
         "cannot compute canonical sync fixed coverage");
     return failure();
   }
+  const CanonicalSyncLifecycleResult lifecycles =
+      discoverCanonicalSyncUnitSlotLifecycles(program.getGraph(),
+                                              problem->getDemands());
+  if (!lifecycles) {
+    program.getFunction().emitError(
+        "cannot discover canonical sync unit-slot lifecycles");
+    return failure();
+  }
   std::map<EventDomainKey, CanonicalSyncEventDomainId> domainIds;
+  DemandMechanismMap mechanismsByDemand;
   const bool failedBuild =
       failed(addBarrierFallbacks(program, *problem, baseline.covered)) ||
       failed(addEventDomains(program, options.eventIdBudget, *problem,
-                             baseline.covered, domainIds)) ||
-      failed(addDirectEvents(program, *problem, baseline.covered, domainIds));
+                             baseline.covered, lifecycles, domainIds)) ||
+      failed(addDirectEvents(program, *problem, baseline.covered, domainIds,
+                             mechanismsByDemand)) ||
+      failed(addUnitSlotLifecycles(program, *problem, lifecycles, domainIds,
+                                   mechanismsByDemand));
   if (failedBuild) {
     return failure();
   }

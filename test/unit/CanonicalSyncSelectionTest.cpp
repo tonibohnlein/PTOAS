@@ -9,6 +9,7 @@
 // for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncSelection.h"
+#include "PTO/Transforms/CanonicalSync/CanonicalSyncLifecycle.h"
 
 #include <algorithm>
 #include <iostream>
@@ -451,6 +452,202 @@ bool testRoundTripPatternActivatesJointCoverage() {
   return passed;
 }
 
+bool testUnitSlotLifecycleProtocol() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 31}, true),
+                passed, "add lifecycle loop");
+  const SyncCoverNodeId producer = takeIndex(
+      graph.addNode(1, 1, loop, 0, {}, {2}), passed, "add slot producer");
+  const SyncCoverNodeId consumer = takeIndex(
+      graph.addNode(2, 1, loop, 1, {}, {1}), passed, "add slot consumer");
+  const SyncCoverStorageDomainId storage =
+      takeIndex(graph.addStorageDomain(), passed, "add slot domain");
+  const SyncCoverStorageAccessId producerAccess =
+      takeIndex(graph.addStorageAccess(producer, storage, 0, {0, 64},
+                                       SyncCoverStorageAccessMode::Write,
+                                       std::nullopt, true),
+                passed, "add producer access");
+  const SyncCoverStorageAccessId consumerAccess =
+      takeIndex(graph.addStorageAccess(consumer, storage, 0, {0, 64},
+                                       SyncCoverStorageAccessMode::Read,
+                                       std::nullopt, true),
+                passed, "add consumer access");
+  const SyncCoverStorageWitnessId readyWitness =
+      takeIndex(graph.addStorageWitness(producerAccess, consumerAccess), passed,
+                "add ready witness");
+  const SyncCoverStorageWitnessId releaseWitness =
+      takeIndex(graph.addStorageWitness(consumerAccess, producerAccess), passed,
+                "add release witness");
+  SyncCoverDemand ready = demand(producer, consumer, loop);
+  ready.provenanceKinds = {SyncCoverDemandKind::MemoryRAW};
+  ready.storageWitnesses = {readyWitness};
+  passed &= check(graph.addDemand(ready), "add ready demand");
+  SyncCoverDemand release = demand(consumer, producer, loop, 1);
+  release.provenanceKinds = {SyncCoverDemandKind::MemoryWAR};
+  release.storageWitnesses = {releaseWitness};
+  passed &= check(graph.addDemand(release), "add release demand");
+  passed &= check(graph.freezeStructure(), "freeze lifecycle graph");
+
+  const CanonicalSyncLifecycleResult discovered =
+      discoverCanonicalSyncUnitSlotLifecycles(graph, allDemands(graph));
+  passed &= check(discovered && discovered.lifecycles.size() == 1,
+                  "discover one exact closed lifecycle");
+  const bool hasLifecycle = discovered && discovered.lifecycles.size() == 1;
+  if (!hasLifecycle) {
+    return false;
+  }
+  const CanonicalSyncUnitSlotLifecycle &lifecycle =
+      discovered.lifecycles.front();
+  passed &= check(verifyCanonicalSyncUnitSlotLifecycle(graph, lifecycle),
+                  "independently verify lifecycle evidence");
+  const auto descriptor =
+      makeCanonicalSyncUnitSlotProtocol(graph, lifecycle, 1);
+  passed &= check(descriptor && verifyCanonicalSyncUnitSlotProtocol(
+                                    graph, lifecycle, 1, *descriptor),
+                  "build and independently verify unit-slot protocol");
+  if (!descriptor) {
+    return false;
+  }
+  CanonicalSyncMechanismDescriptor tampered = *descriptor;
+  tampered.actions[0].anchor.kind = SyncCoverAnchorKind::BeforeNode;
+  passed &=
+      check(!verifyCanonicalSyncUnitSlotProtocol(graph, lifecycle, 1, tampered),
+            "reject a protocol without a scope-entry prime");
+  CanonicalSyncUnitSlotLifecycle wrongExtent = lifecycle;
+  --wrongExtent.extent.end;
+  passed &= check(!verifyCanonicalSyncUnitSlotLifecycle(graph, wrongExtent),
+                  "reject a non-exact lifecycle extent");
+  CanonicalSyncUnitSlotLifecycle wrongRole = lifecycle;
+  wrongRole.producerAccess = lifecycle.consumerAccess;
+  passed &= check(!verifyCanonicalSyncUnitSlotLifecycle(graph, wrongRole),
+                  "reject a lifecycle with the wrong access role");
+  CanonicalSyncUnitSlotLifecycle wrongDistance = lifecycle;
+  wrongDistance.releaseDemand = lifecycle.readyDemands.front();
+  passed &= check(!verifyCanonicalSyncUnitSlotLifecycle(graph, wrongDistance),
+                  "reject a non-recurrence release");
+
+  const auto rejectsUnsafeLifecycle = [&](bool exactPhysical, bool extraOverlap,
+                                          bool wrongProducerRole,
+                                          bool optionalConsumer,
+                                          unsigned distance) {
+    bool valid = true;
+    SyncCoverGraph candidate;
+    const SyncCoverScopeId candidateLoop = takeIndex(
+        candidate.addScope(0, true, SyncCoverTimelineInterval{0, 31}, true),
+        valid, "add rejected lifecycle loop");
+    SyncCoverScopeId consumerScope = candidateLoop;
+    SyncCoverGuard consumerGuard;
+    if (optionalConsumer) {
+      const SyncCoverControlId control =
+          takeIndex(candidate.addControl(2, candidateLoop), valid,
+                    "add rejected lifecycle control");
+      consumerGuard = SyncCoverGuard{{{control, 0}}};
+      consumerScope =
+          takeIndex(candidate.addScope(candidateLoop, false, std::nullopt,
+                                       false, consumerGuard),
+                    valid, "add optional lifecycle scope");
+    }
+    const SyncCoverNodeId candidateProducer =
+        takeIndex(candidate.addNode(1, 1, candidateLoop, 0, {}, {2}), valid,
+                  "add rejected producer");
+    const SyncCoverNodeId candidateConsumer =
+        takeIndex(candidate.addNode(2, 1, consumerScope, 1, consumerGuard, {1}),
+                  valid, "add rejected consumer");
+    const SyncCoverStorageDomainId candidateDomain = takeIndex(
+        candidate.addStorageDomain(), valid, "add rejected slot domain");
+    const SyncCoverStorageAccessMode producerMode =
+        wrongProducerRole ? SyncCoverStorageAccessMode::ReadWrite
+                          : SyncCoverStorageAccessMode::Write;
+    const SyncCoverStorageAccessId candidateProducerAccess =
+        takeIndex(candidate.addStorageAccess(candidateProducer, candidateDomain,
+                                             0, {0, 64}, producerMode,
+                                             std::nullopt, exactPhysical),
+                  valid, "add rejected producer access");
+    const SyncCoverStorageAccessId candidateConsumerAccess = takeIndex(
+        candidate.addStorageAccess(candidateConsumer, candidateDomain, 0,
+                                   {0, 64}, SyncCoverStorageAccessMode::Read,
+                                   std::nullopt, exactPhysical),
+        valid, "add rejected consumer access");
+    if (extraOverlap) {
+      const SyncCoverNodeId extraNode =
+          takeIndex(candidate.addNode(2, 1, candidateLoop, 2), valid,
+                    "add unrepresented lifecycle node");
+      takeIndex(candidate.addStorageAccess(
+                    extraNode, candidateDomain, 0, {0, 64},
+                    SyncCoverStorageAccessMode::Read, std::nullopt, true),
+                valid, "add unrepresented lifecycle access");
+    }
+    const SyncCoverStorageWitnessId candidateReadyWitness =
+        takeIndex(candidate.addStorageWitness(candidateProducerAccess,
+                                              candidateConsumerAccess),
+                  valid, "add rejected ready witness");
+    const SyncCoverStorageWitnessId candidateReleaseWitness =
+        takeIndex(candidate.addStorageWitness(candidateConsumerAccess,
+                                              candidateProducerAccess),
+                  valid, "add rejected release witness");
+    SyncCoverDemand candidateReady =
+        demand(candidateProducer, candidateConsumer, candidateLoop);
+    candidateReady.provenanceKinds = {SyncCoverDemandKind::MemoryRAW};
+    candidateReady.storageWitnesses = {candidateReadyWitness};
+    valid &=
+        check(candidate.addDemand(candidateReady), "add rejected ready demand");
+    SyncCoverDemand candidateRelease =
+        demand(candidateConsumer, candidateProducer, candidateLoop, distance);
+    candidateRelease.provenanceKinds = {SyncCoverDemandKind::MemoryWAR};
+    candidateRelease.storageWitnesses = {candidateReleaseWitness};
+    valid &= check(candidate.addDemand(candidateRelease),
+                   "add rejected release demand");
+    valid &=
+        check(candidate.freezeStructure(), "freeze rejected lifecycle graph");
+    const CanonicalSyncLifecycleResult rejected =
+        discoverCanonicalSyncUnitSlotLifecycles(candidate,
+                                                allDemands(candidate));
+    return valid && rejected && rejected.lifecycles.empty();
+  };
+  passed &= check(rejectsUnsafeLifecycle(false, false, false, false, 1),
+                  "reject non-exact physical storage");
+  passed &= check(rejectsUnsafeLifecycle(true, true, false, false, 1),
+                  "reject an extra overlapping access");
+  passed &= check(rejectsUnsafeLifecycle(true, false, true, false, 1),
+                  "reject an inexact producer role");
+  passed &= check(rejectsUnsafeLifecycle(true, false, false, true, 1),
+                  "reject an optional guarded endpoint");
+  passed &= check(rejectsUnsafeLifecycle(true, false, false, false, 2),
+                  "reject a non-unit recurrence distance");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                  "add lifecycle ready domain");
+  passed &= check(problem.addEventDomain({1, 2, 1, 8, {}}),
+                  "add lifecycle release domain");
+  const CanonicalSyncMechanismId readyMechanism =
+      takeIndex(problem.internMechanism(event(0, 1, 2, producer, consumer)),
+                passed, "add lifecycle ready event");
+  const CanonicalSyncMechanismId releaseMechanism =
+      takeIndex(problem.internVerifiedProtocol(
+                    *descriptor,
+                    [&](const auto &candidate) {
+                      return verifyCanonicalSyncUnitSlotProtocol(
+                          graph, lifecycle, 1, candidate);
+                    }),
+                passed, "add lifecycle release protocol");
+  passed &= check(problem.addPattern({CanonicalSyncPatternKind::SlotLifecycle,
+                                      {readyMechanism, releaseMechanism}}),
+                  "add lifecycle pattern");
+  passed &= check(problem.freeze(), "freeze lifecycle problem");
+  const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
+  passed &= check(selection && selection.mechanisms ==
+                                   std::vector<CanonicalSyncMechanismId>{
+                                       readyMechanism, releaseMechanism},
+                  "select complete lifecycle members once");
+  passed &=
+      check(static_cast<bool>(verifyCanonicalSyncSelection(problem, selection)),
+            "final verification accepts lifecycle protocol");
+  return passed;
+}
+
 bool testScarcityUsesBarrierFallback() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -490,6 +687,67 @@ bool testScarcityUsesBarrierFallback() {
                                 selection.mechanisms.end(), secondEvent) &&
                 selection.allocation.domains[0].required == 1,
             "scarce event remains unselected and allocation is exact");
+  return passed;
+}
+
+bool testOptionalPipelineScarcityFallsBack() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  std::vector<SyncCoverNodeId> sources;
+  std::vector<SyncCoverNodeId> targets;
+  for (std::size_t index = 0; index < 9; ++index) {
+    sources.push_back(takeIndex(graph.addNode(1, 1, 0, index, {}, {2}), passed,
+                                "add pipeline scarcity source"));
+  }
+  for (std::size_t index = 0; index < 9; ++index) {
+    targets.push_back(takeIndex(graph.addNode(2, 1, 0, 9 + index), passed,
+                                "add pipeline scarcity target"));
+    passed &= check(graph.addDemand(demand(sources[index], targets[index])),
+                    "add pipeline scarcity demand");
+  }
+  passed &= check(graph.freezeStructure(), "freeze pipeline scarcity graph");
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                  "add pipeline scarcity domain");
+  std::vector<CanonicalSyncMechanismId> events;
+  for (std::size_t index = 0; index < 9; ++index) {
+    events.push_back(takeIndex(
+        problem.internMechanism(event(0, 1, 2, sources[index], targets[index])),
+        passed, "add pipeline scarcity event"));
+    passed &= check(problem.internMechanism(
+                        barrier(2, {1, 2}, sources[index], targets[index])),
+                    "add pipeline scarcity fallback");
+  }
+  const CanonicalSyncProblemResult optional = addCanonicalSyncFeasiblePattern(
+      problem, {CanonicalSyncPatternKind::PipelineScope, events});
+  passed &= check(optional && !optional.index,
+                  "skip an event-infeasible optional pipeline");
+  CanonicalSyncPatternProblem::Limits memberLimits;
+  memberLimits.maximumMembersPerPattern = 8;
+  CanonicalSyncPatternProblem memberLimited(graph, allDemands(graph),
+                                            memberLimits);
+  passed &= check(memberLimited.addEventDomain({0, 1, 2, 8, {}}),
+                  "add member-limited domain");
+  std::vector<CanonicalSyncMechanismId> limitedEvents;
+  for (std::size_t index = 0; index < 9; ++index) {
+    limitedEvents.push_back(
+        takeIndex(memberLimited.internMechanism(
+                      event(0, 1, 2, sources[index], targets[index])),
+                  passed, "add member-limited event"));
+  }
+  const CanonicalSyncProblemResult memberCapped =
+      addCanonicalSyncFeasiblePattern(
+          memberLimited,
+          {CanonicalSyncPatternKind::PipelineScope, limitedEvents});
+  passed &= check(memberCapped && !memberCapped.index,
+                  "skip an oversized optional pipeline");
+  passed &= check(problem.freeze(), "freeze pipeline fallback problem");
+  const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
+  passed &= check(selection && selection.allocation.feasible,
+                  "singleton barriers keep a scarce pipeline selectable");
+  passed &=
+      check(static_cast<bool>(verifyCanonicalSyncSelection(problem, selection)),
+            "final verification accepts scarce pipeline fallback");
   return passed;
 }
 
@@ -727,7 +985,8 @@ int main() {
       testReverseDeletionPreservesBaselineCoverage() &&
       testInactiveRecurrenceDoesNotBuildAnArena() &&
       testRoundTripPatternActivatesJointCoverage() &&
-      testScarcityUsesBarrierFallback() &&
+      testUnitSlotLifecycleProtocol() && testScarcityUsesBarrierFallback() &&
+      testOptionalPipelineScarcityFallsBack() &&
       testReservationsAndFinalValidation() &&
       testAllocatorWidthsReuseAndConflicts() &&
       testVerifiedProtocolTrustBoundary() && testFailClosedConstruction();

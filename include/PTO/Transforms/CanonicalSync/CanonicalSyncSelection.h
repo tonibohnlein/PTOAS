@@ -229,6 +229,7 @@ public:
   const SyncCoverDemandSet &getBaselineCoverage() const {
     return baselineCoverage_;
   }
+  const Limits &getLimits() const { return limits_; }
 
 private:
   CanonicalSyncProblemResult internMechanismImpl(
@@ -276,6 +277,13 @@ struct CanonicalSyncRoundTripOptions {
 CanonicalSyncProblemResult
 addCanonicalSyncRoundTripPatterns(CanonicalSyncPatternProblem &problem,
                                   CanonicalSyncRoundTripOptions options = {});
+
+/// Add an optional named pattern only when its complete member set is within
+/// construction limits, conflict-free, and exactly resource-feasible. A safe
+/// skip succeeds with no index so singleton/barrier fallbacks remain usable.
+CanonicalSyncProblemResult
+addCanonicalSyncFeasiblePattern(CanonicalSyncPatternProblem &problem,
+                                CanonicalSyncPatternSpec pattern);
 
 struct CanonicalSyncEventAllocation {
   CanonicalSyncMechanismId mechanism = 0;
