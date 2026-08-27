@@ -392,8 +392,16 @@ bool testRoundTripPatternActivatesJointCoverage() {
                                           passed, "add round early");
   const SyncCoverNodeId late = takeIndex(graph.addNode(1, 1, loop, 1, {}, {2}),
                                          passed, "add round late");
+  const SyncCoverNodeId baselineSource = takeIndex(
+      graph.addNode(3, 1, 0, 2), passed, "add round baseline source");
+  const SyncCoverNodeId baselineTarget = takeIndex(
+      graph.addNode(4, 1, 0, 3), passed, "add round baseline target");
   passed &= check(graph.addDemand(demand(late, late, loop, 1)),
                   "add composed recurrence demand");
+  passed &= check(graph.addEdge(supply(baselineSource, baselineTarget)),
+                  "add round baseline edge");
+  passed &= check(graph.addDemand(demand(baselineSource, baselineTarget)),
+                  "add round baseline demand");
   passed &= check(graph.freezeStructure(), "freeze round graph");
   CanonicalSyncPatternProblem problem(graph, allDemands(graph));
   passed &=
@@ -433,8 +441,18 @@ bool testRoundTripPatternActivatesJointCoverage() {
       check(!problem.getPatterns()[carried].coverage.contains(0) &&
                 !problem.getPatterns()[blockedClosing].coverage.contains(0) &&
                 !problem.getPatterns()[closing].coverage.contains(0) &&
-                problem.getPatterns().back().coverage.contains(0),
+                problem.getPatterns().back().coverage.contains(0) &&
+                !problem.getPatterns().back().coverage.contains(1) &&
+                problem.getPatterns().back().extraCoverageCount == 1,
             "only complete round trip covers composed demand");
+  const CanonicalSyncPatternKindStatistics &statistics =
+      problem.getPatternStatistics().get(CanonicalSyncPatternKind::RoundTrip);
+  passed &= check(statistics.patterns == 1 &&
+                      statistics.jointCoverageIncidences == 1 &&
+                      statistics.singletonCoverageIncidences == 0 &&
+                      statistics.extraCoverageIncidences == 1 &&
+                      statistics.patternsWithExtraCoverage == 1,
+                  "classify round trip as genuine joint coverage");
   const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
   passed &= check(
       selection && selection.mechanisms ==
@@ -449,6 +467,83 @@ bool testRoundTripPatternActivatesJointCoverage() {
   passed &= check(selectCanonicalSyncPatterns(problem, bounded).error ==
                       CanonicalSyncSelectionError::WorkLimitExceeded,
                   "global work bound covers construction and search scans");
+  return passed;
+}
+
+bool testPackagingPatternHasNoExtraCoverage() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId firstSource = takeIndex(
+      graph.addNode(1, 1, 0, 0, {}, {2}), passed, "add package source one");
+  const SyncCoverNodeId firstTarget =
+      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add package target one");
+  const SyncCoverNodeId secondSource = takeIndex(
+      graph.addNode(1, 1, 0, 2, {}, {2}), passed, "add package source two");
+  const SyncCoverNodeId secondTarget =
+      takeIndex(graph.addNode(2, 1, 0, 3), passed, "add package target two");
+  const SyncCoverNodeId thirdSource = takeIndex(
+      graph.addNode(1, 1, 0, 4, {}, {2}), passed, "add package source three");
+  const SyncCoverNodeId thirdTarget =
+      takeIndex(graph.addNode(2, 1, 0, 5), passed, "add package target three");
+  const SyncCoverNodeId baselineSource = takeIndex(
+      graph.addNode(3, 1, 0, 6, {}, {4}), passed,
+      "add package baseline source");
+  const SyncCoverNodeId baselineTarget = takeIndex(
+      graph.addNode(4, 1, 0, 7), passed, "add package baseline target");
+  passed &= check(graph.addDemand(demand(firstSource, firstTarget)),
+                  "add package demand one");
+  passed &= check(graph.addDemand(demand(secondSource, secondTarget)),
+                  "add package demand two");
+  passed &= check(graph.addDemand(demand(thirdSource, thirdTarget)),
+                  "add package demand three");
+  passed &= check(graph.addEdge(supply(baselineSource, baselineTarget)),
+                  "add package baseline edge");
+  passed &= check(graph.addDemand(demand(baselineSource, baselineTarget)),
+                  "add package baseline demand");
+  passed &= check(graph.freezeStructure(), "freeze package graph");
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 2, {}}),
+                  "add package domain");
+  passed &= check(problem.addEventDomain({1, 3, 4, 1, {}}),
+                  "add package baseline domain");
+  const CanonicalSyncMechanismId first = takeIndex(
+      problem.internMechanism(event(0, 1, 2, firstSource, firstTarget)), passed,
+      "add package event one");
+  const CanonicalSyncMechanismId second = takeIndex(
+      problem.internMechanism(event(0, 1, 2, secondSource, secondTarget)),
+      passed, "add package event two");
+  const CanonicalSyncMechanismId third = takeIndex(
+      problem.internMechanism(event(0, 1, 2, thirdSource, thirdTarget)),
+      passed, "add package event three");
+  const CanonicalSyncMechanismId baseline = takeIndex(
+      problem.internMechanism(
+          event(1, 3, 4, baselineSource, baselineTarget)),
+      passed, "add event for fixed-covered package demand");
+  passed &= check(problem.addPattern(
+                      {CanonicalSyncPatternKind::PipelineScope,
+                       {first, second}}),
+                  "add package-only pattern");
+  passed &= check(problem.addPattern(
+                      {CanonicalSyncPatternKind::PipelineScope,
+                       {first, third}}),
+                  "add overlapping package-only pattern");
+  passed &= check(problem.freeze(), "freeze package-only problem");
+  const CanonicalSyncPattern &pattern = problem.getPatterns().back();
+  const CanonicalSyncPatternKindStatistics &statistics =
+      problem.getPatternStatistics().get(
+          CanonicalSyncPatternKind::PipelineScope);
+  passed &= check(!problem.getPatterns()[baseline].coverage.contains(3),
+                  "remove fixed coverage from singleton mechanism rows");
+  passed &= check(pattern.coverage.count() == 2 &&
+                      !pattern.coverage.contains(3) &&
+                      pattern.extraCoverageCount == 0,
+                  "package coverage equals singleton union");
+  passed &= check(statistics.patterns == 2 &&
+                      statistics.jointCoverageIncidences == 4 &&
+                      statistics.singletonCoverageIncidences == 4 &&
+                      statistics.extraCoverageIncidences == 0 &&
+                      statistics.patternsWithExtraCoverage == 0,
+                  "count overlapping package coverage as incidences");
   return passed;
 }
 
@@ -1044,6 +1139,7 @@ int main() {
       testReverseDeletionPreservesBaselineCoverage() &&
       testInactiveRecurrenceDoesNotBuildAnArena() &&
       testRoundTripPatternActivatesJointCoverage() &&
+      testPackagingPatternHasNoExtraCoverage() &&
       testUnitSlotLifecycleProtocol() && testScarcityUsesBarrierFallback() &&
       testOptionalPipelineScarcityFallsBack() &&
       testReservationsAndFinalValidation() &&

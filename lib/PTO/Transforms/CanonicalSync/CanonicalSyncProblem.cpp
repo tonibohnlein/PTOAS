@@ -965,15 +965,26 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns() {
   baselineCoverage_ =
       projectCoverage(singletonCoverage.baseline, activeDemands_);
 
+  patternStatistics_ = {};
   patterns_.clear();
   patterns_.reserve(mechanisms_.size() + patternSpecs_.size());
   for (const CanonicalSyncMechanism &mechanism : mechanisms_) {
+    SyncCoverDemandSet coverage =
+        projectCoverage(singletonCoverage.mechanisms[mechanism.id],
+                        activeDemands_);
+    coverage.subtract(baselineCoverage_);
+    CanonicalSyncPatternKindStatistics &statistics =
+        patternStatistics_.kinds[static_cast<std::size_t>(
+            CanonicalSyncPatternKind::Singleton)];
+    ++statistics.patterns;
+    statistics.jointCoverageIncidences += coverage.count();
+    statistics.singletonCoverageIncidences += coverage.count();
     patterns_.push_back(
         {patterns_.size(),
          CanonicalSyncPatternKind::Singleton,
          {mechanism.id},
-         projectCoverage(singletonCoverage.mechanisms[mechanism.id],
-                         activeDemands_)});
+         std::move(coverage),
+         0});
   }
   for (const CanonicalSyncPatternSpec &spec : patternSpecs_) {
     const CanonicalSyncResourceAllocation resources =
@@ -987,8 +998,35 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns() {
     if (!coverage) {
       return {CanonicalSyncProblemError::CoverageFailure, patterns_.size()};
     }
+    SyncCoverDemandSet jointCoverage =
+        projectCoverage(coverage.covered, activeDemands_);
+    jointCoverage.subtract(baselineCoverage_);
+    SyncCoverDemandSet singletonCoverage(activeDemands_.size());
+    for (CanonicalSyncMechanismId member : spec.members) {
+      const bool validSingleton =
+          member < patterns_.size() &&
+          patterns_[member].kind == CanonicalSyncPatternKind::Singleton &&
+          patterns_[member].members.size() == 1 &&
+          patterns_[member].members.front() == member;
+      if (!validSingleton) {
+        return {CanonicalSyncProblemError::InvalidPattern, patterns_.size()};
+      }
+      singletonCoverage.unite(patterns_[member].coverage);
+    }
+    SyncCoverDemandSet extraCoverage = jointCoverage;
+    extraCoverage.subtract(singletonCoverage);
+    CanonicalSyncPatternKindStatistics &statistics =
+        patternStatistics_.kinds[static_cast<std::size_t>(spec.kind)];
+    ++statistics.patterns;
+    statistics.jointCoverageIncidences += jointCoverage.count();
+    statistics.singletonCoverageIncidences += singletonCoverage.count();
+    statistics.extraCoverageIncidences += extraCoverage.count();
+    if (!extraCoverage.empty()) {
+      ++statistics.patternsWithExtraCoverage;
+    }
     patterns_.push_back({patterns_.size(), spec.kind, spec.members,
-                         projectCoverage(coverage.covered, activeDemands_)});
+                         std::move(jointCoverage),
+                         extraCoverage.count()});
   }
   return {};
 }

@@ -24,9 +24,20 @@
 namespace mlir {
 namespace pto {
 
+/// Internal ablation controls for the bounded named-pattern catalog. The
+/// production pass keeps every family enabled; tests use these switches to
+/// distinguish atomic mechanisms from semantic composition and packaging.
+struct CanonicalSyncPatternOptions {
+  bool enableOwnershipCycle = true;
+  bool enableSlotLifecycle = true;
+  bool enablePipelineScope = true;
+  bool enableRoundTrip = true;
+};
+
 struct CanonicalSyncBuildOptions {
   unsigned eventIdBudget = 8;
   CanonicalSyncAnalysisOptions analysis;
+  CanonicalSyncPatternOptions patterns;
   CanonicalSyncPatternProblem::Limits problemLimits;
   SyncCoverExpansionLimits expansionLimits;
   CanonicalSyncGreedyOptions selection;

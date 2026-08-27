@@ -295,7 +295,8 @@ LogicalResult addUnitSlotLifecycles(
     const CanonicalSyncProgram &program, CanonicalSyncPatternProblem &problem,
     const CanonicalSyncLifecycleResult &lifecycles,
     const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds,
-    const DemandMechanismMap &mechanismsByDemand) {
+    const DemandMechanismMap &mechanismsByDemand,
+    const CanonicalSyncPatternOptions &patternOptions) {
   const SyncCoverGraph &graph = program.getGraph();
   std::map<SyncCoverScopeId, std::vector<CanonicalSyncMechanismId>>
       pipelineMembers;
@@ -345,6 +346,9 @@ LogicalResult addUnitSlotLifecycles(
     if (!completeLifecycle) {
       continue;
     }
+    if (!patternOptions.enableSlotLifecycle) {
+      continue;
+    }
     const CanonicalSyncProblemResult pattern = addCanonicalSyncFeasiblePattern(
         problem, {CanonicalSyncPatternKind::SlotLifecycle, members});
     if (!pattern) {
@@ -357,6 +361,9 @@ LogicalResult addUnitSlotLifecycles(
     std::vector<CanonicalSyncMechanismId> &pipeline =
         pipelineMembers[lifecycle.recurrenceScope];
     pipeline.insert(pipeline.end(), members.begin(), members.end());
+  }
+  if (!patternOptions.enablePipelineScope) {
+    return success();
   }
   for (auto &[scope, members] : pipelineMembers) {
     (void)scope;
@@ -379,7 +386,8 @@ LogicalResult addUnitSlotLifecycles(
 LogicalResult addOwnershipCycles(
     const CanonicalSyncProgram &program, CanonicalSyncPatternProblem &problem,
     const CanonicalSyncOwnershipResult &ownership,
-    const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds) {
+    const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds,
+    const CanonicalSyncPatternOptions &patternOptions) {
   std::map<SyncCoverScopeId, OwnershipPipelineMembers> l1Pipelines;
   std::map<SyncCoverScopeId, std::vector<OwnershipMechanismRecord>>
       accumulators;
@@ -500,12 +508,15 @@ LogicalResult addOwnershipCycles(
              << ", release-error=" << static_cast<unsigned>(release.error)
              << ")";
     }
-    const CanonicalSyncProblemResult pattern = addCanonicalSyncFeasiblePattern(
-        problem, {CanonicalSyncPatternKind::OwnershipCycle,
-                  {*ready.index, *release.index}});
-    if (!pattern) {
-      return program.getFunction().emitError(
-          "cannot add canonical sync ownership-cycle pattern");
+    if (patternOptions.enableOwnershipCycle) {
+      const CanonicalSyncProblemResult pattern =
+          addCanonicalSyncFeasiblePattern(
+              problem, {CanonicalSyncPatternKind::OwnershipCycle,
+                        {*ready.index, *release.index}});
+      if (!pattern) {
+        return program.getFunction().emitError(
+            "cannot add canonical sync ownership-cycle pattern");
+      }
     }
     std::optional<CanonicalSyncMechanismDescriptor> atomicDescriptor =
         makeCanonicalSyncAtomicOwnershipProtocol(
@@ -637,13 +648,17 @@ LogicalResult addOwnershipCycles(
              << ", alternating="
              << static_cast<unsigned>(hierarchicalAlternating.error) << ')';
     }
-    const CanonicalSyncProblemResult pattern = addCanonicalSyncFeasiblePattern(
-        problem, {CanonicalSyncPatternKind::PipelineScope,
-                  {*hierarchicalStable.index, *hierarchicalAlternating.index,
-                   accumulatorMember.mechanism, l0.mechanism}});
-    if (!pattern) {
-      return program.getFunction().emitError(
-          "cannot add canonical sync ownership-pipeline pattern");
+    if (patternOptions.enablePipelineScope) {
+      const CanonicalSyncProblemResult pattern =
+          addCanonicalSyncFeasiblePattern(
+              problem,
+              {CanonicalSyncPatternKind::PipelineScope,
+               {*hierarchicalStable.index, *hierarchicalAlternating.index,
+                accumulatorMember.mechanism, l0.mechanism}});
+      if (!pattern) {
+        return program.getFunction().emitError(
+            "cannot add canonical sync ownership-pipeline pattern");
+      }
     }
   }
   return success();
@@ -732,18 +747,21 @@ mlir::pto::buildCanonicalSyncSingletonProblem(
                              domainIds)) ||
       failed(addDirectEvents(program, *problem, baseline.covered, domainIds,
                              mechanismsByDemand)) ||
-      failed(addOwnershipCycles(program, *problem, ownership, domainIds)) ||
+      failed(addOwnershipCycles(program, *problem, ownership, domainIds,
+                                options.patterns)) ||
       failed(addUnitSlotLifecycles(program, *problem, lifecycles, domainIds,
-                                   mechanismsByDemand));
+                                   mechanismsByDemand, options.patterns));
   if (failedBuild) {
     return failure();
   }
-  const CanonicalSyncProblemResult roundTrips =
-      addCanonicalSyncRoundTripPatterns(*problem);
-  if (!roundTrips) {
-    program.getFunction().emitError(
-        "cannot add canonical sync round-trip patterns");
-    return failure();
+  if (options.patterns.enableRoundTrip) {
+    const CanonicalSyncProblemResult roundTrips =
+        addCanonicalSyncRoundTripPatterns(*problem);
+    if (!roundTrips) {
+      program.getFunction().emitError(
+          "cannot add canonical sync round-trip patterns");
+      return failure();
+    }
   }
   const CanonicalSyncProblemResult frozen = problem->freeze();
   if (!frozen) {

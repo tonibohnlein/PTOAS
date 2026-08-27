@@ -28,6 +28,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 namespace {
 
@@ -44,6 +45,107 @@ bool check(bool condition, std::string_view message) {
 void loadDialects(MLIRContext &context) {
   context.loadDialect<PTODialect, arith::ArithDialect, func::FuncDialect,
                       scf::SCFDialect>();
+}
+
+bool sameEdge(const SyncCoverEdge &left, const SyncCoverEdge &right) {
+  return std::tie(left.source, left.target, left.kind, left.scope,
+                  left.distance, left.sourceGuard.literals,
+                  left.targetGuard.literals) ==
+         std::tie(right.source, right.target, right.kind, right.scope,
+                  right.distance, right.sourceGuard.literals,
+                  right.targetGuard.literals);
+}
+
+bool sameDescriptor(const CanonicalSyncMechanismDescriptor &left,
+                    const CanonicalSyncMechanismDescriptor &right) {
+  if (left.kind != right.kind ||
+      left.supplies.size() != right.supplies.size() ||
+      left.eventUses.size() != right.eventUses.size() ||
+      left.actions.size() != right.actions.size()) {
+    return false;
+  }
+  for (std::size_t index = 0; index < left.supplies.size(); ++index) {
+    const CanonicalSyncSupplyBinding &first = left.supplies[index];
+    const CanonicalSyncSupplyBinding &second = right.supplies[index];
+    const bool different =
+        !sameEdge(first.edge, second.edge) ||
+        std::tie(first.eventUse, first.barrierAction, first.produceAction,
+                 first.consumeAction, first.proof, first.allowedDemands) !=
+            std::tie(second.eventUse, second.barrierAction,
+                     second.produceAction, second.consumeAction, second.proof,
+                     second.allowedDemands);
+    if (different) {
+      return false;
+    }
+  }
+  for (std::size_t index = 0; index < left.eventUses.size(); ++index) {
+    const CanonicalSyncEventUse &first = left.eventUses[index];
+    const CanonicalSyncEventUse &second = right.eventUses[index];
+    if (std::tie(first.domain, first.width, first.recurrenceScope,
+                 first.lifetimeScope) !=
+        std::tie(second.domain, second.width, second.recurrenceScope,
+                 second.lifetimeScope)) {
+      return false;
+    }
+  }
+  for (std::size_t index = 0; index < left.actions.size(); ++index) {
+    const CanonicalSyncAction &first = left.actions[index];
+    const CanonicalSyncAction &second = right.actions[index];
+    if (std::tie(first.kind, first.resource, first.anchor.kind,
+                 first.anchor.node, first.anchor.scope, first.anchor.position,
+                 first.eventUse, first.eventLane, first.drainedResources,
+                 first.barrierKind, first.guard, first.guardScope) !=
+        std::tie(second.kind, second.resource, second.anchor.kind,
+                 second.anchor.node, second.anchor.scope,
+                 second.anchor.position, second.eventUse, second.eventLane,
+                 second.drainedResources, second.barrierKind, second.guard,
+                 second.guardScope)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool sameMechanismCatalog(const CanonicalSyncPatternProblem &left,
+                          const CanonicalSyncPatternProblem &right) {
+  const bool differentSizes =
+      left.getDomains().size() != right.getDomains().size() ||
+      left.getMechanisms().size() != right.getMechanisms().size();
+  if (differentSizes) {
+    return false;
+  }
+  for (std::size_t index = 0; index < left.getDomains().size(); ++index) {
+    const CanonicalSyncEventDomain &first = left.getDomains()[index];
+    const CanonicalSyncEventDomain &second = right.getDomains()[index];
+    if (std::tie(first.id, first.sourceResource, first.targetResource,
+                 first.budget, first.reservedIds) !=
+        std::tie(second.id, second.sourceResource, second.targetResource,
+                 second.budget, second.reservedIds)) {
+      return false;
+    }
+  }
+  for (std::size_t index = 0; index < left.getMechanisms().size(); ++index) {
+    const CanonicalSyncMechanism &first = left.getMechanisms()[index];
+    const CanonicalSyncMechanism &second = right.getMechanisms()[index];
+    if (first.id != second.id ||
+        !sameDescriptor(first.descriptor, second.descriptor) ||
+        first.conflicts != second.conflicts ||
+        first.cost.barrierActions != second.cost.barrierActions ||
+        first.cost.eventActions != second.cost.eventActions ||
+        first.eventLifetimes.size() != second.eventLifetimes.size()) {
+      return false;
+    }
+    for (std::size_t lifetime = 0;
+         lifetime < first.eventLifetimes.size(); ++lifetime) {
+      if (std::tie(first.eventLifetimes[lifetime].begin,
+                   first.eventLifetimes[lifetime].end) !=
+          std::tie(second.eventLifetimes[lifetime].begin,
+                   second.eventLifetimes[lifetime].end)) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 bool expectAnalysisFailure(std::string_view source, StringRef functionName,
@@ -1264,6 +1366,65 @@ bool testL0OwnershipProtocolTrustBoundary() {
   if (!check(ownershipPattern != (*problem)->getPatterns().end() &&
                  ownershipPattern->coverage.containsAll(qualified),
              "ground composed ownership coverage in the named pattern")) {
+    return false;
+  }
+  const auto familyAblationKeepsMechanisms =
+      [&](CanonicalSyncPatternKind disabled) {
+        CanonicalSyncBuildOptions ablationOptions;
+        switch (disabled) {
+        case CanonicalSyncPatternKind::OwnershipCycle:
+          ablationOptions.patterns.enableOwnershipCycle = false;
+          break;
+        case CanonicalSyncPatternKind::SlotLifecycle:
+          ablationOptions.patterns.enableSlotLifecycle = false;
+          break;
+        case CanonicalSyncPatternKind::PipelineScope:
+          ablationOptions.patterns.enablePipelineScope = false;
+          break;
+        case CanonicalSyncPatternKind::RoundTrip:
+          ablationOptions.patterns.enableRoundTrip = false;
+          break;
+        case CanonicalSyncPatternKind::Singleton:
+          return false;
+        }
+        FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> ablated =
+            buildCanonicalSyncSingletonProblem(*program, ablationOptions);
+        return succeeded(ablated) &&
+               sameMechanismCatalog(**problem, **ablated) &&
+               llvm::none_of((*ablated)->getPatterns(),
+                             [&](const CanonicalSyncPattern &pattern) {
+                               return pattern.kind == disabled;
+                             });
+      };
+  if (!check(familyAblationKeepsMechanisms(
+                 CanonicalSyncPatternKind::OwnershipCycle),
+             "ownership-pattern ablation keeps the mechanism catalog") ||
+      !check(familyAblationKeepsMechanisms(
+                 CanonicalSyncPatternKind::SlotLifecycle),
+             "slot-pattern ablation keeps the mechanism catalog") ||
+      !check(familyAblationKeepsMechanisms(
+                 CanonicalSyncPatternKind::PipelineScope),
+             "pipeline-pattern ablation keeps the mechanism catalog") ||
+      !check(familyAblationKeepsMechanisms(
+                 CanonicalSyncPatternKind::RoundTrip),
+             "round-trip ablation keeps the mechanism catalog")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions atomicOptions;
+  atomicOptions.patterns.enableOwnershipCycle = false;
+  atomicOptions.patterns.enableSlotLifecycle = false;
+  atomicOptions.patterns.enablePipelineScope = false;
+  atomicOptions.patterns.enableRoundTrip = false;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> atomicProblem =
+      buildCanonicalSyncSingletonProblem(*program, atomicOptions);
+  const bool onlySingletonPatterns =
+      succeeded(atomicProblem) &&
+      llvm::all_of((*atomicProblem)->getPatterns(),
+                   [](const CanonicalSyncPattern &pattern) {
+                     return pattern.kind == CanonicalSyncPatternKind::Singleton;
+                   });
+  if (!check(onlySingletonPatterns,
+             "disable every composite family for atomic-only analysis")) {
     return false;
   }
   const CanonicalSyncSelection selection =

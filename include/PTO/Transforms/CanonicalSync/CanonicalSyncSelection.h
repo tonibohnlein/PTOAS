@@ -15,6 +15,7 @@
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverCoverage.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -144,6 +145,9 @@ enum class CanonicalSyncPatternKind : std::uint8_t {
   RoundTrip,
 };
 
+constexpr std::size_t kCanonicalSyncPatternKindCount =
+    static_cast<std::size_t>(CanonicalSyncPatternKind::RoundTrip) + 1;
+
 struct CanonicalSyncPatternSpec {
   CanonicalSyncPatternKind kind = CanonicalSyncPatternKind::Singleton;
   std::vector<CanonicalSyncMechanismId> members;
@@ -153,7 +157,34 @@ struct CanonicalSyncPattern {
   CanonicalSyncPatternId id = 0;
   CanonicalSyncPatternKind kind = CanonicalSyncPatternKind::Singleton;
   std::vector<CanonicalSyncMechanismId> members;
+  /// Complete non-baseline semantic coverage of the member set. The
+  /// production selector continues to consume this field while pattern
+  /// families are classified.
   SyncCoverDemandSet coverage;
+  /// Number of covered demands not available from the union of the members'
+  /// singleton coverage. Zero means the pattern is greedy packaging, not a
+  /// semantic synchronization composition. Detailed extra bits are transient
+  /// during construction so diagnostics do not double pattern storage.
+  std::size_t extraCoverageCount = 0;
+};
+
+struct CanonicalSyncPatternKindStatistics {
+  std::size_t patterns = 0;
+  std::size_t jointCoverageIncidences = 0;
+  std::size_t singletonCoverageIncidences = 0;
+  std::size_t extraCoverageIncidences = 0;
+  std::size_t patternsWithExtraCoverage = 0;
+};
+
+struct CanonicalSyncPatternStatistics {
+  std::array<CanonicalSyncPatternKindStatistics,
+             kCanonicalSyncPatternKindCount>
+      kinds;
+
+  const CanonicalSyncPatternKindStatistics &
+  get(CanonicalSyncPatternKind kind) const {
+    return kinds[static_cast<std::size_t>(kind)];
+  }
 };
 
 enum class CanonicalSyncProblemError : std::uint8_t {
@@ -246,6 +277,9 @@ public:
   getMechanismPatterns() const {
     return mechanismPatterns_;
   }
+  const CanonicalSyncPatternStatistics &getPatternStatistics() const {
+    return patternStatistics_;
+  }
   const SyncCoverDemandSet &getBaselineCoverage() const {
     return baselineCoverage_;
   }
@@ -278,6 +312,7 @@ private:
   std::vector<CanonicalSyncMechanism> mechanisms_;
   std::vector<CanonicalSyncPatternSpec> patternSpecs_;
   std::vector<CanonicalSyncPattern> patterns_;
+  CanonicalSyncPatternStatistics patternStatistics_;
   SyncCoverDemandSet baselineCoverage_;
   std::vector<std::vector<CanonicalSyncPatternId>> demandPatterns_;
   std::vector<std::vector<CanonicalSyncPatternId>> mechanismPatterns_;
