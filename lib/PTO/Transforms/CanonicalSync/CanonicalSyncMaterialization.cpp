@@ -39,6 +39,7 @@ struct ConcreteAction {
   PipelineType target = PipelineType::PIPE_UNASSIGNED;
   PipelineType barrier = PipelineType::PIPE_UNASSIGNED;
   unsigned eventId = 0;
+  CanonicalSyncActionGuardKind guard = CanonicalSyncActionGuardKind::None;
   scf::ForOp guardLoop;
   bool tailFence = false;
 };
@@ -190,7 +191,7 @@ std::optional<ConcreteAction> makeConcreteAction(
   result.anchor = physicalAnchor->first;
   result.before = physicalAnchor->second ||
                   physicalAnchor->first->hasTrait<OpTrait::IsTerminator>();
-  if (action.guard == CanonicalSyncActionGuardKind::LoopNonEmpty) {
+  if (action.guard != CanonicalSyncActionGuardKind::None) {
     if (!action.guardScope ||
         *action.guardScope >= program.getScopeBindings().size()) {
       return std::nullopt;
@@ -200,8 +201,8 @@ std::optional<ConcreteAction> makeConcreteAction(
     if (!result.guardLoop) {
       return std::nullopt;
     }
-  } else if (action.guard != CanonicalSyncActionGuardKind::None ||
-             action.guardScope) {
+    result.guard = action.guard;
+  } else if (action.guardScope) {
     return std::nullopt;
   }
   if (action.kind == CanonicalSyncActionKind::Barrier) {
@@ -343,7 +344,7 @@ void emitPhysicalAction(IRRewriter &rewriter, func::FuncOp function,
 
 void emitAction(IRRewriter &rewriter, func::FuncOp function,
                 const ConcreteAction &action) {
-  if (!action.guardLoop) {
+  if (action.guard == CanonicalSyncActionGuardKind::None) {
     emitPhysicalAction(rewriter, function, action);
     return;
   }
@@ -351,9 +352,28 @@ void emitAction(IRRewriter &rewriter, func::FuncOp function,
   OpBuilder::InsertionGuard insertionGuard(rewriter);
   const Location location = action.anchor->getLoc();
   scf::ForOp guardLoop = action.guardLoop;
-  const Value condition = rewriter.create<arith::CmpIOp>(
-      location, arith::CmpIPredicate::slt, guardLoop.getLowerBound(),
-      guardLoop.getUpperBound());
+  Value condition;
+  switch (action.guard) {
+  case CanonicalSyncActionGuardKind::LoopNonEmpty:
+    condition = rewriter.create<arith::CmpIOp>(
+        location, arith::CmpIPredicate::slt, guardLoop.getLowerBound(),
+        guardLoop.getUpperBound());
+    break;
+  case CanonicalSyncActionGuardKind::NotFirstIteration:
+    condition = rewriter.create<arith::CmpIOp>(
+        location, arith::CmpIPredicate::ne, guardLoop.getInductionVar(),
+        guardLoop.getLowerBound());
+    break;
+  case CanonicalSyncActionGuardKind::HasSuccessor: {
+    const Value next = rewriter.create<arith::AddIOp>(
+        location, guardLoop.getInductionVar(), guardLoop.getStep());
+    condition = rewriter.create<arith::CmpIOp>(
+        location, arith::CmpIPredicate::slt, next, guardLoop.getUpperBound());
+    break;
+  }
+  case CanonicalSyncActionGuardKind::None:
+    return;
+  }
   scf::IfOp guard = rewriter.create<scf::IfOp>(location, TypeRange{}, condition,
                                                /*withElseRegion=*/false);
   markGenerated(guard, rewriter);

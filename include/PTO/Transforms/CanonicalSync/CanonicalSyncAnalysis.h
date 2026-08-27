@@ -61,6 +61,12 @@ struct CanonicalSyncTargetCapabilities {
   /// every earlier MTE1 operation issued by that scope. This is target
   /// evidence, not a consequence of ordinary MTE1 issue order.
   bool mte1ScopeExitSetCompletesPrefix = false;
+
+  /// An A3 PIPE_M -> PIPE_FIX event at the accumulator boundary orders the
+  /// completed accumulator result before the single FIX consumer. This is a
+  /// narrow target contract for the verified accumulator lifecycle; it does
+  /// not make PIPE_M a generic direct-completion source.
+  bool mToFixAccumulatorBoundaryCompletes = false;
 };
 
 /// One authoritative synchronization graph plus the minimal MLIR side tables

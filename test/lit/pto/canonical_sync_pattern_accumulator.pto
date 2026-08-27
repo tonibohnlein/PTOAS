@@ -1,0 +1,71 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | tee %t \
+// RUN:   | FileCheck %s --check-prefix=IR
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @accumulator(
+      %output: !pto.partition_tensor_view<128x256xf32>, %limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %addr0 = arith.constant 0 : i64
+    %left = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %right = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+    %acc = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>
+    scf.for %i = %c0 to %limit step %c1 {
+      scf.for %k = %c0 to %c2 step %c1 {
+        %first = arith.cmpi eq, %k, %c0 : index
+        scf.if %first {
+          pto.tmatmul ins(%left, %right :
+            !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+            !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+            outs(%acc : !pto.tile_buf<acc, 128x256xf32,
+                 blayout=col_major, slayout=row_major, fractal=1024>)
+        } else {
+          pto.tmatmul.acc ins(%acc, %left, %right :
+            !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                          slayout=row_major, fractal=1024>,
+            !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+            !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+            outs(%acc : !pto.tile_buf<acc, 128x256xf32,
+                 blayout=col_major, slayout=row_major, fractal=1024>)
+        }
+      }
+      pto.tstore ins(%acc : !pto.tile_buf<acc, 128x256xf32,
+                       blayout=col_major, slayout=row_major, fractal=1024>)
+        outs(%output : !pto.partition_tensor_view<128x256xf32>)
+    }
+    return
+  }
+}
+
+// IR-LABEL: func.func @accumulator
+// IR: scf.for %[[I:.*]] = %[[LOWER:.*]] to %[[UPPER:.*]] step %[[STEP:.*]] {
+// IR: %[[NOT_FIRST:.*]] = arith.cmpi ne, %[[I]], %[[LOWER]]
+// IR-NEXT: scf.if %[[NOT_FIRST]] {
+// IR-NEXT: pto.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+// IR-NEXT: } {pto.canonical_sync}
+// IR-NEXT: scf.for
+// IR: pto.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+// IR: pto.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+// IR-NEXT: pto.tstore
+// IR-NEXT: %[[NEXT:.*]] = arith.addi %[[I]], %[[STEP]]
+// IR-NEXT: %[[HAS_NEXT:.*]] = arith.cmpi slt, %[[NEXT]], %[[UPPER]]
+// IR-NEXT: scf.if %[[HAS_NEXT]] {
+// IR-NEXT: pto.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+// IR-NEXT: } {pto.canonical_sync}
+// IR: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier,

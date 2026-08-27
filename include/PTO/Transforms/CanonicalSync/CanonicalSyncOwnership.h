@@ -27,11 +27,13 @@ namespace pto {
 enum class CanonicalSyncOwnershipKind : std::uint8_t {
   L0Operand,
   L1Tile,
+  L0Accumulator,
 };
 
 enum class CanonicalSyncOwnershipProtocolKind : std::uint8_t {
   RoundTrip,
   AlternatingPrefetch,
+  BoundaryGuardedRoundTrip,
 };
 
 struct CanonicalSyncOwnershipSlot {

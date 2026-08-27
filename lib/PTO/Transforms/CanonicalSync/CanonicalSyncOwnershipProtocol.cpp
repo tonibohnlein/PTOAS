@@ -139,15 +139,15 @@ getLaneOwnershipDemands(const SyncCoverGraph &graph,
           const SyncCoverStorageAccess &target =
               graph.getStorageAccesses()[witness.targetAccess];
           const bool sourceOwnsSlot =
-              (source.mode == SyncCoverStorageAccessMode::Read &&
+              (syncCoverStorageModeReads(source.mode) &&
                std::binary_search(consumers.begin(), consumers.end(),
                                   source.node)) ||
-              (source.mode == SyncCoverStorageAccessMode::Write &&
+              (syncCoverStorageModeWrites(source.mode) &&
                std::binary_search(producers.begin(), producers.end(),
                                   source.node));
           const bool roles = source.exactPhysical && target.exactPhysical &&
                              sourceOwnsSlot &&
-                             target.mode == SyncCoverStorageAccessMode::Write &&
+                             syncCoverStorageModeWrites(target.mode) &&
                              std::binary_search(producers.begin(),
                                                 producers.end(), target.node);
           const bool managedSlot = llvm::any_of(
@@ -160,6 +160,56 @@ getLaneOwnershipDemands(const SyncCoverGraph &graph,
           return roles && managedSlot;
         });
     if (allWitnessesMatch) {
+      result.push_back(demandId);
+    }
+  }
+  return result;
+}
+
+std::vector<SyncCoverDemandId> getAccumulatorReadyDemands(
+    const SyncCoverGraph &graph, const CanonicalSyncOwnershipCycle &cycle,
+    unsigned lane, SyncCoverNodeId producer, SyncCoverNodeId consumer) {
+  std::vector<SyncCoverDemandId> result;
+  for (auto [demandId, demand] : llvm::enumerate(graph.getDemands())) {
+    const bool exactEdge =
+        demand.source == producer && demand.target == consumer;
+    const bool raw = !demand.provenanceKinds.empty() &&
+                     llvm::all_of(demand.provenanceKinds, [](auto kind) {
+                       return kind == SyncCoverDemandKind::MemoryRAW;
+                     });
+    if (!exactEdge || !raw || demand.storageWitnesses.empty()) {
+      continue;
+    }
+    const bool exactManaged = llvm::all_of(
+        demand.storageWitnesses, [&](SyncCoverStorageWitnessId witnessId) {
+          if (witnessId >= graph.getStorageWitnesses().size()) {
+            return false;
+          }
+          const SyncCoverStorageWitness &witness =
+              graph.getStorageWitnesses()[witnessId];
+          if (witness.sourceAccess >= graph.getStorageAccesses().size() ||
+              witness.targetAccess >= graph.getStorageAccesses().size()) {
+            return false;
+          }
+          const SyncCoverStorageAccess &source =
+              graph.getStorageAccesses()[witness.sourceAccess];
+          const SyncCoverStorageAccess &target =
+              graph.getStorageAccesses()[witness.targetAccess];
+          const bool roles = source.node == producer &&
+                             target.node == consumer && source.exactPhysical &&
+                             target.exactPhysical &&
+                             syncCoverStorageModeWrites(source.mode) &&
+                             target.mode == SyncCoverStorageAccessMode::Read;
+          const bool managed = llvm::any_of(
+              cycle.lanes[lane].slots,
+              [&](const CanonicalSyncOwnershipSlot &slot) {
+                return source.domain == slot.domain &&
+                       target.domain == slot.domain &&
+                       intervalContains(slot.extent, witness.overlap);
+              });
+          return roles && managed;
+        });
+    if (exactManaged) {
       result.push_back(demandId);
     }
   }
@@ -181,20 +231,22 @@ getLaneWawDemands(const SyncCoverGraph &graph,
   return result;
 }
 
-bool demandMatchesDerivedWaw(const SyncCoverGraph &graph,
-                             const CanonicalSyncOwnershipCycle &cycle,
-                             const SyncCoverDemand &demand,
-                             const SyncCoverEdge &derived) {
+bool demandMatchesDerivedWriteOwnership(
+    const SyncCoverGraph &graph, const CanonicalSyncOwnershipCycle &cycle,
+    const SyncCoverDemand &demand, const SyncCoverEdge &derived) {
   const bool sameEdge =
       demand.source == derived.source && demand.target == derived.target &&
       demand.scope == derived.scope && demand.distance == derived.distance &&
       demand.sourceGuard.literals == derived.sourceGuard.literals &&
       demand.targetGuard.literals == derived.targetGuard.literals;
-  const bool waw = !demand.provenanceKinds.empty() &&
-                   llvm::all_of(demand.provenanceKinds, [](auto kind) {
-                     return kind == SyncCoverDemandKind::MemoryWAW;
-                   });
-  if (!sameEdge || !waw || demand.storageWitnesses.empty()) {
+  const bool writeOwnership =
+      llvm::is_contained(demand.provenanceKinds,
+                         SyncCoverDemandKind::MemoryWAW) &&
+      llvm::all_of(demand.provenanceKinds, [](auto kind) {
+        return kind == SyncCoverDemandKind::MemoryWAR ||
+               kind == SyncCoverDemandKind::MemoryWAW;
+      });
+  if (!sameEdge || !writeOwnership || demand.storageWitnesses.empty()) {
     return false;
   }
   return llvm::all_of(
@@ -212,10 +264,9 @@ bool demandMatchesDerivedWaw(const SyncCoverGraph &graph,
             graph.getStorageAccesses()[witness.sourceAccess];
         const SyncCoverStorageAccess &target =
             graph.getStorageAccesses()[witness.targetAccess];
-        const bool exactWrites =
-            source.exactPhysical && target.exactPhysical &&
-            source.mode == SyncCoverStorageAccessMode::Write &&
-            target.mode == SyncCoverStorageAccessMode::Write;
+        const bool exactWrites = source.exactPhysical && target.exactPhysical &&
+                                 syncCoverStorageModeWrites(source.mode) &&
+                                 syncCoverStorageModeWrites(target.mode);
         const bool managed = llvm::any_of(
             cycle.lanes, [&](const CanonicalSyncOwnershipLane &lane) {
               return llvm::any_of(
@@ -281,7 +332,41 @@ void addAlternatingCompositeBindings(
                             release.edge.targetGuard};
       for (auto [demandId, demand] : llvm::enumerate(graph.getDemands())) {
         if (matched.count(demandId) == 0 &&
-            demandMatchesDerivedWaw(graph, cycle, demand, derived)) {
+            demandMatchesDerivedWriteOwnership(graph, cycle, demand, derived)) {
+          matched.insert(demandId);
+          addCompositeBinding(descriptor, derived,
+                              ArrayRef<SyncCoverDemandId>(&demandId, 1));
+        }
+      }
+    }
+  }
+}
+
+void addAccumulatorCompositeBindings(
+    CanonicalSyncMechanismDescriptor &descriptor, const SyncCoverGraph &graph,
+    const CanonicalSyncOwnershipCycle &cycle,
+    const CanonicalSyncOwnershipProtocol &protocol) {
+  std::set<SyncCoverDemandId> matched;
+  for (const CanonicalSyncSupplyBinding &ready : protocol.ready.supplies) {
+    for (const CanonicalSyncSupplyBinding &release :
+         protocol.release.supplies) {
+      const bool composable =
+          ready.proof == CanonicalSyncSupplyProof::VerifiedProtocol &&
+          release.proof == CanonicalSyncSupplyProof::VerifiedProtocol &&
+          ready.edge.target == release.edge.source;
+      if (!composable) {
+        continue;
+      }
+      SyncCoverEdge derived{ready.edge.source,
+                            release.edge.target,
+                            SyncCoverEdgeKind::CompletionSupply,
+                            cycle.recurrenceScope,
+                            1,
+                            ready.edge.sourceGuard,
+                            release.edge.targetGuard};
+      for (auto [demandId, demand] : llvm::enumerate(graph.getDemands())) {
+        if (matched.count(demandId) == 0 &&
+            demandMatchesDerivedWriteOwnership(graph, cycle, demand, derived)) {
           matched.insert(demandId);
           addCompositeBinding(descriptor, derived,
                               ArrayRef<SyncCoverDemandId>(&demandId, 1));
@@ -358,6 +443,77 @@ buildStableL1Ready(const SyncCoverGraph &graph,
                   .value_or(path.scope);
           addBinding(result, makeEdge(graph, producer, consumer, scope, 0), 0,
                      set, wait);
+        }
+      }
+    }
+  }
+  return result;
+}
+
+CanonicalSyncMechanismDescriptor
+buildAccumulatorReady(const SyncCoverGraph &graph,
+                      const CanonicalSyncOwnershipCycle &cycle,
+                      CanonicalSyncEventDomainId domain) {
+  CanonicalSyncMechanismDescriptor result;
+  result.kind = CanonicalSyncMechanismKind::Protocol;
+  result.eventUses.push_back(
+      {domain, cycle.lanes.size(), cycle.recurrenceScope});
+  for (const CanonicalSyncOwnershipPath &path : cycle.paths) {
+    for (const CanonicalSyncOwnershipUse &use : path.uses) {
+      const std::size_t set = result.actions.size();
+      result.actions.push_back(makeAction(CanonicalSyncActionKind::EventSet,
+                                          cycle.producerResource, use.ready, 0,
+                                          use.lane));
+      const std::size_t wait = result.actions.size();
+      result.actions.push_back(makeAction(CanonicalSyncActionKind::EventWait,
+                                          cycle.consumerResource,
+                                          use.readAcquire, 0, use.lane));
+      for (SyncCoverNodeId producer : use.producers) {
+        for (SyncCoverNodeId consumer : use.consumers) {
+          const std::vector<SyncCoverDemandId> allowed =
+              getAccumulatorReadyDemands(graph, cycle, use.lane, producer,
+                                         consumer);
+          if (!allowed.empty()) {
+            addBinding(result,
+                       makeEdge(graph, producer, consumer, path.scope, 0), 0,
+                       set, wait, allowed);
+          }
+        }
+      }
+    }
+  }
+  return result;
+}
+
+CanonicalSyncMechanismDescriptor
+buildBoundaryGuardedRelease(const SyncCoverGraph &graph,
+                            const CanonicalSyncOwnershipCycle &cycle,
+                            CanonicalSyncEventDomainId domain) {
+  CanonicalSyncMechanismDescriptor result;
+  result.kind = CanonicalSyncMechanismKind::Protocol;
+  result.eventUses.push_back(
+      {domain, cycle.lanes.size(), cycle.recurrenceScope});
+  for (const CanonicalSyncOwnershipPath &path : cycle.paths) {
+    for (const CanonicalSyncOwnershipUse &use : path.uses) {
+      const std::vector<SyncCoverDemandId> allowed =
+          getLaneOwnershipDemands(graph, cycle, use.lane);
+      const std::size_t wait = result.actions.size();
+      result.actions.push_back(
+          makeAction(CanonicalSyncActionKind::EventWait, cycle.producerResource,
+                     use.writeAcquire, 0, use.producerLane,
+                     CanonicalSyncActionGuardKind::NotFirstIteration,
+                     cycle.recurrenceScope));
+      const std::size_t set = result.actions.size();
+      result.actions.push_back(makeAction(
+          CanonicalSyncActionKind::EventSet, cycle.consumerResource,
+          use.release, 0, use.lane, CanonicalSyncActionGuardKind::HasSuccessor,
+          cycle.recurrenceScope));
+      for (SyncCoverNodeId consumer : use.consumers) {
+        for (SyncCoverNodeId producer : use.producers) {
+          addBinding(
+              result,
+              makeEdge(graph, consumer, producer, cycle.recurrenceScope, 1), 0,
+              set, wait, allowed);
         }
       }
     }
@@ -970,6 +1126,128 @@ bool verifyAlternatingReleaseDescriptor(
          bindingsEqual(descriptor.supplies, expected.supplies);
 }
 
+bool hasBoundaryGuardedCycleShape(const CanonicalSyncOwnershipCycle &cycle) {
+  if (cycle.kind != CanonicalSyncOwnershipKind::L0Accumulator ||
+      cycle.protocol !=
+          CanonicalSyncOwnershipProtocolKind::BoundaryGuardedRoundTrip ||
+      cycle.lanes.empty() || cycle.paths.size() != 1 ||
+      cycle.paths.front().scope != cycle.recurrenceScope ||
+      cycle.paths.front().uses.size() != cycle.lanes.size()) {
+    return false;
+  }
+  std::vector<bool> lanes(cycle.lanes.size(), false);
+  for (const CanonicalSyncOwnershipUse &use : cycle.paths.front().uses) {
+    if (use.lane >= lanes.size() || use.producerLane != use.lane ||
+        lanes[use.lane]) {
+      return false;
+    }
+    lanes[use.lane] = true;
+  }
+  return llvm::all_of(lanes, [](bool seen) { return seen; });
+}
+
+bool verifyAccumulatorReadyDescriptor(
+    const CanonicalSyncProgram &program,
+    const CanonicalSyncOwnershipCycle &cycle, CanonicalSyncEventDomainId domain,
+    const CanonicalSyncMechanismDescriptor &descriptor) {
+  const SyncCoverGraph &graph = program.getGraph();
+  if (!program.getTargetCapabilities().mToFixAccumulatorBoundaryCompletes ||
+      !hasBoundaryGuardedCycleShape(cycle) ||
+      !hasProtocolHeader(descriptor, domain, 1, cycle.lanes.size(),
+                         cycle.recurrenceScope)) {
+    return false;
+  }
+  std::vector<bool> claimed(descriptor.actions.size(), false);
+  CanonicalSyncMechanismDescriptor expected;
+  for (const CanonicalSyncOwnershipUse &use : cycle.paths.front().uses) {
+    if (use.consumers.size() != 1) {
+      return false;
+    }
+    const auto set =
+        claimAction(descriptor, claimed, CanonicalSyncActionKind::EventSet,
+                    cycle.producerResource, use.ready, 0, use.lane);
+    const auto wait =
+        claimAction(descriptor, claimed, CanonicalSyncActionKind::EventWait,
+                    cycle.consumerResource, use.readAcquire, 0, use.lane);
+    if (!set || !wait) {
+      return false;
+    }
+    bool supplied = false;
+    for (SyncCoverNodeId producer : use.producers) {
+      for (SyncCoverNodeId consumer : use.consumers) {
+        const std::vector<SyncCoverDemandId> allowed =
+            getAccumulatorReadyDemands(graph, cycle, use.lane, producer,
+                                       consumer);
+        if (allowed.empty()) {
+          continue;
+        }
+        SyncCoverEdge edge =
+            makeEdge(graph, producer, consumer, cycle.paths.front().scope, 0);
+        if (!isValidProtocolEdge(graph, edge)) {
+          return false;
+        }
+        addBinding(expected, std::move(edge), 0, *set, *wait, allowed);
+        supplied = true;
+      }
+    }
+    if (!supplied) {
+      return false;
+    }
+  }
+  return allActionsClaimed(claimed) &&
+         bindingsEqual(descriptor.supplies, expected.supplies);
+}
+
+bool verifyBoundaryGuardedReleaseDescriptor(
+    const SyncCoverGraph &graph, const CanonicalSyncOwnershipCycle &cycle,
+    CanonicalSyncEventDomainId domain,
+    const CanonicalSyncMechanismDescriptor &descriptor) {
+  if (!hasBoundaryGuardedCycleShape(cycle) ||
+      !hasProtocolHeader(descriptor, domain, 1, cycle.lanes.size(),
+                         cycle.recurrenceScope)) {
+    return false;
+  }
+  std::vector<bool> claimed(descriptor.actions.size(), false);
+  CanonicalSyncMechanismDescriptor expected;
+  for (const CanonicalSyncOwnershipUse &use : cycle.paths.front().uses) {
+    if (use.consumers.size() != 1) {
+      return false;
+    }
+    const std::vector<SyncCoverDemandId> allowed =
+        getLaneOwnershipDemands(graph, cycle, use.lane);
+    if (allowed.empty() ||
+        !llvm::all_of(use.consumers, [&](SyncCoverNodeId consumer) {
+          return syncCoverNodeCanProduceCompletion(graph, consumer,
+                                                   cycle.producerResource);
+        })) {
+      return false;
+    }
+    const auto wait = claimAction(
+        descriptor, claimed, CanonicalSyncActionKind::EventWait,
+        cycle.producerResource, use.writeAcquire, 0, use.producerLane,
+        CanonicalSyncActionGuardKind::NotFirstIteration, cycle.recurrenceScope);
+    const auto set = claimAction(
+        descriptor, claimed, CanonicalSyncActionKind::EventSet,
+        cycle.consumerResource, use.release, 0, use.lane,
+        CanonicalSyncActionGuardKind::HasSuccessor, cycle.recurrenceScope);
+    if (!wait || !set) {
+      return false;
+    }
+    for (SyncCoverNodeId consumer : use.consumers) {
+      for (SyncCoverNodeId producer : use.producers) {
+        SyncCoverEdge edge =
+            makeEdge(graph, consumer, producer, cycle.recurrenceScope, 1);
+        if (!isValidProtocolEdge(graph, edge)) {
+          return false;
+        }
+        addBinding(expected, std::move(edge), 0, *set, *wait, allowed);
+      }
+    }
+  }
+  return allActionsClaimed(claimed) &&
+         bindingsEqual(descriptor.supplies, expected.supplies);
+}
+
 bool verifyStableL1ReadyDescriptor(
     const SyncCoverGraph &graph, const CanonicalSyncOwnershipCycle &cycle,
     CanonicalSyncEventDomainId domain,
@@ -1480,6 +1758,12 @@ mlir::pto::makeCanonicalSyncOwnershipProtocol(
         buildAlternatingReady(program.getGraph(), cycle, readyDomain);
     result.release =
         buildAlternatingRelease(program.getGraph(), cycle, releaseDomain);
+  } else if (cycle.protocol ==
+             CanonicalSyncOwnershipProtocolKind::BoundaryGuardedRoundTrip) {
+    result.ready =
+        buildAccumulatorReady(program.getGraph(), cycle, readyDomain);
+    result.release =
+        buildBoundaryGuardedRelease(program.getGraph(), cycle, releaseDomain);
   } else if (cycle.kind == CanonicalSyncOwnershipKind::L1Tile) {
     result.ready = buildStableL1Ready(program.getGraph(), cycle, readyDomain);
     result.release =
@@ -1507,16 +1791,25 @@ bool mlir::pto::verifyCanonicalSyncOwnershipProtocol(
   }
   const bool alternating =
       cycle.protocol == CanonicalSyncOwnershipProtocolKind::AlternatingPrefetch;
+  const bool boundaryGuarded =
+      cycle.protocol ==
+      CanonicalSyncOwnershipProtocolKind::BoundaryGuardedRoundTrip;
   const bool l1 = cycle.kind == CanonicalSyncOwnershipKind::L1Tile;
   const bool ready =
-      alternating ? verifyAlternatingReadyDescriptor(
-                        program.getGraph(), cycle, readyDomain, protocol.ready)
+      boundaryGuarded ? verifyAccumulatorReadyDescriptor(
+                            program, cycle, readyDomain, protocol.ready)
+      : alternating
+          ? verifyAlternatingReadyDescriptor(program.getGraph(), cycle,
+                                             readyDomain, protocol.ready)
       : l1 ? verifyStableL1ReadyDescriptor(program.getGraph(), cycle,
                                            readyDomain, protocol.ready)
            : verifyL0ReadyDescriptor(program.getGraph(), cycle, readyDomain,
                                      protocol.ready);
   const bool release =
-      alternating
+      boundaryGuarded
+          ? verifyBoundaryGuardedReleaseDescriptor(
+                program.getGraph(), cycle, releaseDomain, protocol.release)
+      : alternating
           ? verifyAlternatingReleaseDescriptor(program.getGraph(), cycle,
                                                releaseDomain, protocol.release)
       : l1 ? verifyStableL1ReleaseDescriptor(program.getGraph(), cycle,
@@ -1544,6 +1837,10 @@ mlir::pto::makeCanonicalSyncAtomicOwnershipProtocol(
       CanonicalSyncOwnershipProtocolKind::AlternatingPrefetch) {
     addAlternatingCompositeBindings(result, program.getGraph(), cycle,
                                     *protocol);
+  } else if (cycle.protocol ==
+             CanonicalSyncOwnershipProtocolKind::BoundaryGuardedRoundTrip) {
+    addAccumulatorCompositeBindings(result, program.getGraph(), cycle,
+                                    *protocol);
   }
   return result;
 }
@@ -1560,8 +1857,12 @@ bool mlir::pto::verifyCanonicalSyncAtomicOwnershipProtocol(
   }
   CanonicalSyncMechanismDescriptor eventDescriptor = descriptor;
   std::vector<CanonicalSyncSupplyBinding> composite;
-  if (cycle.protocol ==
-      CanonicalSyncOwnershipProtocolKind::AlternatingPrefetch) {
+  const bool compositeProtocol =
+      cycle.protocol ==
+          CanonicalSyncOwnershipProtocolKind::AlternatingPrefetch ||
+      cycle.protocol ==
+          CanonicalSyncOwnershipProtocolKind::BoundaryGuardedRoundTrip;
+  if (compositeProtocol) {
     llvm::erase_if(eventDescriptor.supplies,
                    [&](const CanonicalSyncSupplyBinding &binding) {
                      if (binding.proof !=
@@ -1573,7 +1874,8 @@ bool mlir::pto::verifyCanonicalSyncAtomicOwnershipProtocol(
                    });
   }
   const std::size_t readyUses =
-      cycle.kind == CanonicalSyncOwnershipKind::L1Tile
+      cycle.kind == CanonicalSyncOwnershipKind::L1Tile ||
+              cycle.kind == CanonicalSyncOwnershipKind::L0Accumulator
           ? 1
           : cycle.paths.front().uses.front().producers.size();
   const std::optional<CanonicalSyncOwnershipProtocol> protocol =
@@ -1582,11 +1884,16 @@ bool mlir::pto::verifyCanonicalSyncAtomicOwnershipProtocol(
                        program, cycle, readyDomain, releaseDomain, *protocol)) {
     return false;
   }
-  if (cycle.protocol ==
-      CanonicalSyncOwnershipProtocolKind::AlternatingPrefetch) {
+  if (compositeProtocol) {
     CanonicalSyncMechanismDescriptor expected;
-    addAlternatingCompositeBindings(expected, program.getGraph(), cycle,
-                                    *protocol);
+    if (cycle.protocol ==
+        CanonicalSyncOwnershipProtocolKind::AlternatingPrefetch) {
+      addAlternatingCompositeBindings(expected, program.getGraph(), cycle,
+                                      *protocol);
+    } else {
+      addAccumulatorCompositeBindings(expected, program.getGraph(), cycle,
+                                      *protocol);
+    }
     if (!bindingsEqual(composite, expected.supplies)) {
       return false;
     }

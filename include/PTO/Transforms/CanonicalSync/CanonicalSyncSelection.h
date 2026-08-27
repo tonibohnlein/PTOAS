@@ -44,6 +44,8 @@ enum class CanonicalSyncActionKind : std::uint8_t {
 enum class CanonicalSyncActionGuardKind : std::uint8_t {
   None,
   LoopNonEmpty,
+  NotFirstIteration,
+  HasSuccessor,
 };
 
 enum class CanonicalSyncBarrierKind : std::uint8_t {

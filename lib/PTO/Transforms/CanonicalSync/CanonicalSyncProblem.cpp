@@ -394,17 +394,37 @@ validateActions(const SyncCoverGraph &graph,
     const std::optional<std::size_t> depth =
         getCostDepth(graph, action, *scope);
     const bool unguarded = action.guard == CanonicalSyncActionGuardKind::None;
+    const bool loopGuard = action.guardScope &&
+                           *action.guardScope < graph.getScopes().size() &&
+                           graph.getScopes()[*action.guardScope].isLoop &&
+                           action.kind != CanonicalSyncActionKind::Barrier;
+    const bool scopeBoundary =
+        action.guardScope &&
+        (action.anchor.kind == SyncCoverAnchorKind::ScopeEntry ||
+         action.anchor.kind == SyncCoverAnchorKind::ScopeExit) &&
+        action.anchor.scope == *action.guardScope;
+    const bool nodeBoundary =
+        action.guardScope &&
+        (action.anchor.kind == SyncCoverAnchorKind::BeforeNode ||
+         action.anchor.kind == SyncCoverAnchorKind::AfterNode) &&
+        graph.scopeContains(*action.guardScope, *scope);
+    const bool nestedScopeBoundary =
+        action.guardScope && *scope != *action.guardScope &&
+        (action.anchor.kind == SyncCoverAnchorKind::ScopeEntry ||
+         action.anchor.kind == SyncCoverAnchorKind::ScopeExit) &&
+        graph.scopeContains(*action.guardScope, *scope);
     const bool validGuard =
         unguarded
             ? !action.guardScope
-            : action.guard == CanonicalSyncActionGuardKind::LoopNonEmpty &&
-                  action.guardScope &&
-                  *action.guardScope < graph.getScopes().size() &&
-                  graph.getScopes()[*action.guardScope].isLoop &&
-                  action.kind != CanonicalSyncActionKind::Barrier &&
-                  (action.anchor.kind == SyncCoverAnchorKind::ScopeEntry ||
-                   action.anchor.kind == SyncCoverAnchorKind::ScopeExit) &&
-                  action.anchor.scope == *action.guardScope;
+            : loopGuard &&
+                  ((action.guard ==
+                        CanonicalSyncActionGuardKind::LoopNonEmpty &&
+                    scopeBoundary) ||
+                   ((action.guard ==
+                         CanonicalSyncActionGuardKind::NotFirstIteration ||
+                     action.guard ==
+                         CanonicalSyncActionGuardKind::HasSuccessor) &&
+                    (nodeBoundary || nestedScopeBoundary)));
     if (!depth || !validGuard) {
       return CanonicalSyncProblemError::InvalidMechanism;
     }

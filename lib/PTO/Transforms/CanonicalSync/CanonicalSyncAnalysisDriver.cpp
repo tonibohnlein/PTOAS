@@ -136,7 +136,8 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
   const bool explicitA3 = targetArch && (targetArch.getValue() == "a2a3" ||
                                          targetArch.getValue() == "a3");
   const CanonicalSyncTargetCapabilities targetCapabilities{
-      /*mte1ScopeExitSetCompletesPrefix=*/explicitA3};
+      /*mte1ScopeExitSetCompletesPrefix=*/explicitA3,
+      /*mToFixAccumulatorBoundaryCompletes=*/explicitA3};
   return CanonicalSyncProgram(
       function_, std::move(graph_), std::move(nodeBindings_),
       std::move(scopeBindings_), std::move(storageSpaces), targetCapabilities,

@@ -1687,6 +1687,277 @@ bool testAlternatingL1OwnershipProtocol() {
                "reject an unguarded continuation producer");
 }
 
+bool testAccumulatorOwnershipProtocol() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a2a3"} {
+      func.func @accumulator(
+          %output: !pto.partition_tensor_view<128x256xf32>, %limit: index) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %c2 = arith.constant 2 : index
+        %addr0 = arith.constant 0 : i64
+        %left = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+        %right = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+        %acc = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                        slayout=row_major, fractal=1024>
+        scf.for %i = %c0 to %limit step %c1 {
+          scf.for %k = %c0 to %c2 step %c1 {
+            %first = arith.cmpi eq, %k, %c0 : index
+            scf.if %first {
+              pto.tmatmul ins(%left, %right :
+                !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+                !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+                outs(%acc : !pto.tile_buf<acc, 128x256xf32,
+                     blayout=col_major, slayout=row_major, fractal=1024>)
+            } else {
+              pto.tmatmul.acc ins(%acc, %left, %right :
+                !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                              slayout=row_major, fractal=1024>,
+                !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+                !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+                outs(%acc : !pto.tile_buf<acc, 128x256xf32,
+                     blayout=col_major, slayout=row_major, fractal=1024>)
+            }
+          }
+          pto.tstore ins(%acc : !pto.tile_buf<acc, 128x256xf32,
+                           blayout=col_major, slayout=row_major, fractal=1024>)
+            outs(%output : !pto.partition_tensor_view<128x256xf32>)
+        }
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module), "parse accumulator fixture")) {
+    return false;
+  }
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("accumulator"));
+  if (!check(succeeded(program), "build accumulator graph")) {
+    return false;
+  }
+  CanonicalSyncOwnershipResult result =
+      discoverCanonicalSyncOwnershipCycles(*program);
+  auto found = llvm::find_if(result.cycles, [](const auto &cycle) {
+    return cycle.kind == CanonicalSyncOwnershipKind::L0Accumulator;
+  });
+  if (!check(result && !result.truncated && found != result.cycles.end(),
+             "discover accumulator ownership")) {
+    return false;
+  }
+  const CanonicalSyncOwnershipCycle &cycle = *found;
+  const bool shape =
+      cycle.protocol ==
+          CanonicalSyncOwnershipProtocolKind::BoundaryGuardedRoundTrip &&
+      cycle.lanes.size() == 1 && cycle.paths.size() == 1 &&
+      cycle.paths.front().uses.size() == 1 &&
+      cycle.paths.front().uses.front().producers.size() == 2;
+  std::optional<CanonicalSyncMechanismDescriptor> atomic =
+      makeCanonicalSyncAtomicOwnershipProtocol(*program, cycle, 0, 1);
+  if (!check(shape, "recognize the nested MMAD accumulator boundary") ||
+      !check(verifyCanonicalSyncOwnershipCycle(*program, cycle),
+             "independently verify accumulator ownership") ||
+      !check(atomic && verifyCanonicalSyncAtomicOwnershipProtocol(
+                           *program, cycle, 0, 1, *atomic),
+             "verify the atomic accumulator lifecycle")) {
+    return false;
+  }
+
+  const std::size_t notFirst =
+      llvm::count_if(atomic->actions, [](const CanonicalSyncAction &action) {
+        return action.guard == CanonicalSyncActionGuardKind::NotFirstIteration;
+      });
+  const std::size_t hasSuccessor =
+      llvm::count_if(atomic->actions, [](const CanonicalSyncAction &action) {
+        return action.guard == CanonicalSyncActionGuardKind::HasSuccessor;
+      });
+  CanonicalSyncMechanismDescriptor missingGuard = *atomic;
+  auto guarded = llvm::find_if(
+      missingGuard.actions, [](const CanonicalSyncAction &action) {
+        return action.guard == CanonicalSyncActionGuardKind::NotFirstIteration;
+      });
+  guarded->guard = CanonicalSyncActionGuardKind::None;
+  guarded->guardScope.reset();
+  CanonicalSyncMechanismDescriptor wrongComposite = *atomic;
+  auto composite = llvm::find_if(
+      wrongComposite.supplies, [](const CanonicalSyncSupplyBinding &binding) {
+        return binding.proof ==
+               CanonicalSyncSupplyProof::VerifiedCompositeProtocol;
+      });
+  const bool hasComposite = composite != wrongComposite.supplies.end();
+  if (hasComposite) {
+    composite->edge.distance = 0;
+  }
+  CanonicalSyncOwnershipCycle multipleConsumers = cycle;
+  multipleConsumers.paths.front().uses.front().consumers.push_back(
+      multipleConsumers.paths.front().uses.front().consumers.front());
+
+  CanonicalSyncBuildOptions options;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem =
+      buildCanonicalSyncSingletonProblem(*program, options);
+  std::optional<CanonicalSyncMechanismId> accumulatorMechanism;
+  if (succeeded(problem)) {
+    for (const CanonicalSyncMechanism &mechanism :
+         (*problem)->getMechanisms()) {
+      const bool boundaryGuarded = llvm::any_of(
+          mechanism.descriptor.actions, [](const CanonicalSyncAction &action) {
+            return action.guard ==
+                   CanonicalSyncActionGuardKind::NotFirstIteration;
+          });
+      if (mechanism.descriptor.kind == CanonicalSyncMechanismKind::Protocol &&
+          boundaryGuarded) {
+        accumulatorMechanism = mechanism.id;
+        break;
+      }
+    }
+  }
+  CanonicalSyncSelection selection;
+  if (succeeded(problem)) {
+    selection = selectCanonicalSyncPatterns(**problem);
+  }
+  bool coversManagedAccumulatorDemands = false;
+  if (succeeded(problem) && accumulatorMechanism &&
+      *accumulatorMechanism < (*problem)->getPatterns().size()) {
+    const CanonicalSyncPattern &singleton =
+        (*problem)->getPatterns()[*accumulatorMechanism];
+    const CanonicalSyncOwnershipUse &use = cycle.paths.front().uses.front();
+    bool sawReady = false;
+    bool sawRelease = false;
+    bool sawRecurrence = false;
+    coversManagedAccumulatorDemands = llvm::all_of(
+        llvm::enumerate(program->getGraph().getDemands()), [&](auto entry) {
+          const SyncCoverDemand &demand = entry.value();
+          const bool ready = demand.distance == 0 &&
+                             llvm::is_contained(use.producers, demand.source) &&
+                             llvm::is_contained(use.consumers, demand.target);
+          const bool release =
+              demand.scope == cycle.recurrenceScope && demand.distance == 1 &&
+              llvm::is_contained(use.consumers, demand.source) &&
+              llvm::is_contained(use.producers, demand.target);
+          const bool recurrence =
+              demand.scope == cycle.recurrenceScope && demand.distance == 1 &&
+              llvm::is_contained(use.producers, demand.source) &&
+              llvm::is_contained(use.producers, demand.target);
+          if ((!ready && !release && !recurrence) ||
+              demand.storageWitnesses.empty()) {
+            return true;
+          }
+          const bool exactAccumulator = llvm::all_of(
+              demand.storageWitnesses,
+              [&](SyncCoverStorageWitnessId witnessId) {
+                const SyncCoverStorageWitness &witness =
+                    program->getGraph().getStorageWitnesses()[witnessId];
+                const SyncCoverStorageAccess &source =
+                    program->getGraph()
+                        .getStorageAccesses()[witness.sourceAccess];
+                const SyncCoverStorageAccess &target =
+                    program->getGraph()
+                        .getStorageAccesses()[witness.targetAccess];
+                return llvm::any_of(
+                    cycle.lanes.front().slots,
+                    [&](const CanonicalSyncOwnershipSlot &slot) {
+                      return source.domain == slot.domain &&
+                             target.domain == slot.domain &&
+                             slot.extent.begin <= witness.overlap.begin &&
+                             witness.overlap.end <= slot.extent.end;
+                    });
+              });
+          if (!exactAccumulator) {
+            return true;
+          }
+          sawReady = sawReady || ready;
+          sawRelease = sawRelease || release;
+          sawRecurrence = sawRecurrence || recurrence;
+          auto position = llvm::find((*problem)->getDemands(), entry.index());
+          return position != (*problem)->getDemands().end() &&
+                 ((*problem)->getBaselineCoverage().contains(
+                      position - (*problem)->getDemands().begin()) ||
+                  singleton.coverage.contains(
+                      position - (*problem)->getDemands().begin()));
+        });
+    coversManagedAccumulatorDemands = coversManagedAccumulatorDemands &&
+                                      sawReady && sawRelease && sawRecurrence;
+  }
+  (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "a5"));
+  FailureOr<CanonicalSyncProgram> unsupportedProgram =
+      buildCanonicalSyncProgram(
+          module->lookupSymbol<func::FuncOp>("accumulator"));
+  bool rejectsUnsupportedTarget = false;
+  bool unsupportedTargetFallsBack = false;
+  if (succeeded(unsupportedProgram)) {
+    CanonicalSyncOwnershipResult unsupportedCycles =
+        discoverCanonicalSyncOwnershipCycles(*unsupportedProgram);
+    auto unsupportedAccumulator =
+        llvm::find_if(unsupportedCycles.cycles, [](const auto &candidate) {
+          return candidate.kind == CanonicalSyncOwnershipKind::L0Accumulator;
+        });
+    if (unsupportedAccumulator != unsupportedCycles.cycles.end()) {
+      std::optional<CanonicalSyncMechanismDescriptor> unsupportedAtomic =
+          makeCanonicalSyncAtomicOwnershipProtocol(
+              *unsupportedProgram, *unsupportedAccumulator, 0, 1);
+      rejectsUnsupportedTarget = !unsupportedAtomic;
+    }
+    FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> unsupportedProblem =
+        buildCanonicalSyncSingletonProblem(*unsupportedProgram, options);
+    unsupportedTargetFallsBack =
+        succeeded(unsupportedProblem) &&
+        llvm::none_of(
+            (*unsupportedProblem)->getMechanisms(),
+            [](const CanonicalSyncMechanism &mechanism) {
+              return llvm::any_of(
+                  mechanism.descriptor.actions,
+                  [](const CanonicalSyncAction &action) {
+                    return action.guard ==
+                           CanonicalSyncActionGuardKind::NotFirstIteration;
+                  });
+            });
+  }
+  const auto tokenTraceBalances = [](unsigned trips) {
+    int token = 0;
+    for (unsigned iteration = 0; iteration < trips; ++iteration) {
+      if (iteration != 0 && --token != 0) {
+        return false;
+      }
+      if (iteration + 1 < trips) {
+        ++token;
+      }
+    }
+    return token == 0;
+  };
+  return check(notFirst == 1 && hasSuccessor == 1,
+               "guard the accumulator release boundaries") &&
+         check(hasComposite,
+               "derive exact accumulator WAW coverage from both legs") &&
+         check(!verifyCanonicalSyncAtomicOwnershipProtocol(*program, cycle, 0,
+                                                           1, missingGuard),
+               "reject an unguarded accumulator acquire") &&
+         check(!verifyCanonicalSyncAtomicOwnershipProtocol(*program, cycle, 0,
+                                                           1, wrongComposite),
+               "reject a wrong accumulator composite supply") &&
+         check(!verifyCanonicalSyncOwnershipCycle(*program, multipleConsumers),
+               "reject multiple accumulator consumers") &&
+         check(tokenTraceBalances(0) && tokenTraceBalances(1) &&
+                   tokenTraceBalances(2) && tokenTraceBalances(3) &&
+                   tokenTraceBalances(8),
+               "balance accumulator release tokens") &&
+         check(succeeded(problem) && accumulatorMechanism.has_value(),
+               "admit the accumulator ownership mechanism") &&
+         check(selection && llvm::is_contained(selection.mechanisms,
+                                               *accumulatorMechanism),
+               "select the accumulator ownership mechanism") &&
+         check(coversManagedAccumulatorDemands,
+               "cover every managed accumulator lifecycle demand") &&
+         check(rejectsUnsupportedTarget,
+               "reject accumulator completion without target evidence") &&
+         check(unsupportedTargetFallsBack,
+               "fall back safely without accumulator target evidence");
+}
+
 } // namespace
 
 int main() {
@@ -1700,6 +1971,7 @@ int main() {
       testAnalysisLimitFailsClosed() && testFailClosedInputs() &&
       testRejectsAllExplicitSyncForms() && testStructuralLimitsFailClosed() &&
       testPeriodicBranchEvidence() && testL0OwnershipProtocolTrustBoundary() &&
-      testStableL1OwnershipProtocol() && testAlternatingL1OwnershipProtocol();
+      testStableL1OwnershipProtocol() && testAlternatingL1OwnershipProtocol() &&
+      testAccumulatorOwnershipProtocol();
   return passed ? 0 : 1;
 }

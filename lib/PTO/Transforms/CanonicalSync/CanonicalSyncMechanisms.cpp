@@ -350,13 +350,19 @@ LogicalResult addOwnershipCycles(
     const std::size_t producerCount =
         cycle.paths.front().uses.front().producers.size();
     const std::size_t readyIds = availableEventIds(readyResource);
-    const bool readyOverflow = cycle.lanes.size() != 0 &&
-                               producerCount > readyIds / cycle.lanes.size();
+    const bool readyOverflow =
+        cycle.kind == CanonicalSyncOwnershipKind::L0Operand &&
+        cycle.lanes.size() != 0 &&
+        producerCount > readyIds / cycle.lanes.size();
     if (readyOverflow || cycle.lanes.size() > readyIds ||
         cycle.lanes.size() > availableEventIds(releaseResource)) {
       continue;
     }
-    if (cycle.kind == CanonicalSyncOwnershipKind::L1Tile) {
+    if (cycle.kind != CanonicalSyncOwnershipKind::L0Operand) {
+      if (cycle.kind == CanonicalSyncOwnershipKind::L0Accumulator &&
+          !program.getTargetCapabilities().mToFixAccumulatorBoundaryCompletes) {
+        continue;
+      }
       const bool needsScopePrefix =
           llvm::any_of(cycle.paths, [](const auto &path) {
             return llvm::any_of(path.uses, [](const auto &use) {
@@ -372,7 +378,7 @@ LogicalResult addOwnershipCycles(
               program, cycle, readyDomain->second, releaseDomain->second);
       if (!descriptor) {
         return program.getFunction().emitError(
-            "cannot build canonical sync atomic L1 ownership protocol");
+            "cannot build canonical sync atomic ownership protocol");
       }
       const CanonicalSyncProblemResult mechanism =
           problem.internVerifiedProtocol(
@@ -387,7 +393,8 @@ LogicalResult addOwnershipCycles(
       }
       if (!mechanism || !mechanism.index) {
         return program.getFunction().emitError(
-            "cannot admit canonical sync atomic L1 ownership protocol");
+                   "cannot admit canonical sync atomic ownership protocol")
+               << " (error=" << static_cast<unsigned>(mechanism.error) << ')';
       }
       continue;
     }
