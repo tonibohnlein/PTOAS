@@ -264,6 +264,19 @@ private:
       mechanismBuckets_;
 };
 
+struct CanonicalSyncRoundTripOptions {
+  /// Optimization cap only. Singleton fallbacks remain available when the cap
+  /// is reached.
+  std::size_t maximumPatterns = 512;
+  std::size_t maximumEvaluations = 2048;
+};
+
+/// Add only the canonical recurrence composition: one positive-distance
+/// supply and one distance-zero supply with exactly reversed endpoints.
+CanonicalSyncProblemResult
+addCanonicalSyncRoundTripPatterns(CanonicalSyncPatternProblem &problem,
+                                  CanonicalSyncRoundTripOptions options = {});
+
 struct CanonicalSyncEventAllocation {
   CanonicalSyncMechanismId mechanism = 0;
   std::size_t eventUse = 0;

@@ -384,53 +384,60 @@ bool testInactiveRecurrenceDoesNotBuildAnArena() {
 bool testRoundTripPatternActivatesJointCoverage() {
   bool passed = true;
   SyncCoverGraph graph;
-  const SyncCoverNodeId source =
-      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}), passed, "add round source");
-  const SyncCoverNodeId middle =
-      takeIndex(graph.addNode(2, 1, 0, 1, {}, {1}), passed, "add round middle");
-  const SyncCoverNodeId target =
-      takeIndex(graph.addNode(1, 1, 0, 2), passed, "add round target");
-  passed &=
-      check(graph.addDemand(demand(source, middle)), "add forward demand");
-  passed &= check(graph.addDemand(demand(middle, target)), "add return demand");
-  passed &=
-      check(graph.addDemand(demand(source, target)), "add composed demand");
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 31}, true),
+                passed, "add round loop");
+  const SyncCoverNodeId early = takeIndex(graph.addNode(2, 1, loop, 0, {}, {1}),
+                                          passed, "add round early");
+  const SyncCoverNodeId late = takeIndex(graph.addNode(1, 1, loop, 1, {}, {2}),
+                                         passed, "add round late");
+  passed &= check(graph.addDemand(demand(late, late, loop, 1)),
+                  "add composed recurrence demand");
   passed &= check(graph.freezeStructure(), "freeze round graph");
-  const SyncCoverExpandedProgram expansion(graph);
-  const std::vector<SyncCoverCompletionSupply> chainedSupplies = {
-      {0, supply(source, middle)}, {0, supply(middle, target)}};
-  const SyncCoverSingletonCoverageResult chained =
-      computeSyncCoverSingletonCoverage(graph, expansion, 1, chainedSupplies);
-  const SyncCoverCoverageResult chainedIndependent =
-      computeSyncCoverCoverage(graph, expansion, chainedSupplies);
-  passed &=
-      check(chained && chainedIndependent &&
-                chained.mechanisms[0] == chainedIndependent.covered &&
-                chained.mechanisms[0].contains(2),
-            "batched singleton propagates multiple edges of one mechanism");
   CanonicalSyncPatternProblem problem(graph, allDemands(graph));
   passed &=
-      check(problem.addEventDomain({0, 1, 2, 8, {}}), "add forward domain");
+      check(problem.addEventDomain({0, 1, 2, 8, {}}), "add carried domain");
   passed &=
-      check(problem.addEventDomain({1, 2, 1, 8, {}}), "add return domain");
-  const CanonicalSyncMechanismId forward =
-      takeIndex(problem.internMechanism(event(0, 1, 2, source, middle)), passed,
-                "add forward mechanism");
-  const CanonicalSyncMechanismId backward =
-      takeIndex(problem.internMechanism(event(1, 2, 1, middle, target)), passed,
-                "add return mechanism");
-  passed &= check(problem.addPattern({CanonicalSyncPatternKind::RoundTrip,
-                                      {forward, backward}}),
-                  "add round-trip pattern");
+      check(problem.addEventDomain({1, 2, 1, 8, {}}), "add closing domain");
+  const auto verifier = [](const CanonicalSyncMechanismDescriptor &) {
+    return true;
+  };
+  const CanonicalSyncMechanismId carried =
+      takeIndex(problem.internVerifiedProtocol(
+                    protocol(0, 1, 2, late, early, loop, 1, 1), verifier),
+                passed, "add carried mechanism");
+  const CanonicalSyncMechanismId blockedClosing =
+      takeIndex(problem.internMechanism(event(1, 2, 1, early, late)), passed,
+                "add blocked closing mechanism");
+  const CanonicalSyncMechanismId closing =
+      takeIndex(problem.internVerifiedProtocol(
+                    protocol(1, 2, 1, early, late, loop, 1), verifier),
+                passed, "add alternate closing mechanism");
+  passed &= check(problem.addConflict(carried, blockedClosing),
+                  "block first round-trip pair");
+  CanonicalSyncRoundTripOptions oneEvaluation;
+  oneEvaluation.maximumEvaluations = 1;
+  const CanonicalSyncProblemResult capped =
+      addCanonicalSyncRoundTripPatterns(problem, oneEvaluation);
+  passed &= check(capped && capped.index == 0,
+                  "infeasible pair consumes the evaluation cap");
+  CanonicalSyncRoundTripOptions twoEvaluations;
+  twoEvaluations.maximumEvaluations = 2;
+  const CanonicalSyncProblemResult generated =
+      addCanonicalSyncRoundTripPatterns(problem, twoEvaluations);
+  passed &= check(generated && generated.index == 1,
+                  "generate one bounded round-trip pattern");
   passed &= check(problem.freeze(), "freeze round-trip problem");
-  passed &= check(!problem.getPatterns()[forward].coverage.contains(2) &&
-                      !problem.getPatterns()[backward].coverage.contains(2) &&
-                      problem.getPatterns().back().coverage.contains(2),
-                  "only complete round trip covers composed demand");
+  passed &=
+      check(!problem.getPatterns()[carried].coverage.contains(0) &&
+                !problem.getPatterns()[blockedClosing].coverage.contains(0) &&
+                !problem.getPatterns()[closing].coverage.contains(0) &&
+                problem.getPatterns().back().coverage.contains(0),
+            "only complete round trip covers composed demand");
   const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
   passed &= check(
       selection && selection.mechanisms ==
-                       std::vector<CanonicalSyncMechanismId>{forward, backward},
+                       std::vector<CanonicalSyncMechanismId>{carried, closing},
       "shared round-trip members are selected once");
   const CanonicalSyncVerifiedPlan verified =
       verifyCanonicalSyncSelection(problem, selection);

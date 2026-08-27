@@ -273,6 +273,13 @@ mlir::pto::buildCanonicalSyncSingletonProblem(
   if (failedBuild) {
     return failure();
   }
+  const CanonicalSyncProblemResult roundTrips =
+      addCanonicalSyncRoundTripPatterns(*problem);
+  if (!roundTrips) {
+    program.getFunction().emitError(
+        "cannot add canonical sync round-trip patterns");
+    return failure();
+  }
   const CanonicalSyncProblemResult frozen = problem->freeze();
   if (!frozen) {
     program.getFunction().emitError()

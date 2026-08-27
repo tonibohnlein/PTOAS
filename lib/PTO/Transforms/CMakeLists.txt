@@ -22,6 +22,7 @@ if(TARGET vfsim::ir_planner)
 endif()
 
 add_library(PTOSyncCoverCore OBJECT
+  CanonicalSync/CanonicalSyncPatterns.cpp
   CanonicalSync/CanonicalSyncProblem.cpp
   CanonicalSync/CanonicalSyncResources.cpp
   CanonicalSync/CanonicalSyncSolver.cpp
