@@ -384,12 +384,16 @@ struct PTORemoveIdentityTMovPass
     });
 
     if (!memInfoCandidates.empty()) {
-      MemoryDependentAnalyzer memAnalyzer;
       SyncIRs syncIR;
       Buffer2MemInfoMap buffer2MemInfoMap;
-      PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, func,
-                                 SyncAnalysisMode::NORMALSYNC);
-      translator.Build();
+      OperationMemInfoStorage operationMemInfos;
+      PTOIRTranslator translator(syncIR, buffer2MemInfoMap, operationMemInfos,
+                                 func);
+      if (failed(translator.Build())) {
+        func.emitError("failed to extract synchronization memory effects");
+        signalPassFailure();
+        return;
+      }
 
       for (TMovOp op : memInfoCandidates) {
         if (isIdentityTMovByMemInfo(op, buffer2MemInfoMap)) {

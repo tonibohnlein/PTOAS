@@ -1,22 +1,29 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- SlotAffineAnalysis.cpp ----------------------------------*- C++ -*-===//
 
 #include "PTO/Transforms/SlotAffineAnalysis.h"
 
-#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/Support/CodeConstants.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/Operation.h"
+#include "llvm/Support/MathExtras.h"
+
+#include <algorithm>
+#include <limits>
+#include <tuple>
 
 using namespace mlir;
 
@@ -58,9 +65,10 @@ constexpr int kMaxAddSubPeelCount = 4;
 // when the input is a pure constant -- then the canonical form is just
 // `innerOffset mod N` with `innerSym == nullptr`.
 struct SlotForm {
-  Value innerSym;        // null = constant-only form
+  Value innerSym; // null = constant-only form
   int64_t innerOffset{0};
   uint32_t N{0};
+  bool normalizedModuloN{false};
 };
 
 static bool tryGetConstantInt(Value v, int64_t &out) {
@@ -68,7 +76,11 @@ static bool tryGetConstantInt(Value v, int64_t &out) {
   if (!matchPattern(v, m_Constant(&attr))) {
     return false;
   }
-  out = attr.getValue().getSExtValue();
+  const APInt &value = attr.getValue();
+  if (!value.isSignedIntN(64)) {
+    return false;
+  }
+  out = value.getSExtValue();
   return true;
 }
 
@@ -95,14 +107,24 @@ static bool peelAddSubConst(Value v, Value &remaining, int64_t &offset) {
 
   int64_t c;
   if (tryGetConstantInt(rhs, c)) {
+    int64_t updatedOffset;
+    const bool overflow = isSub ? llvm::SubOverflow(offset, c, updatedOffset)
+                                : llvm::AddOverflow(offset, c, updatedOffset);
+    if (overflow) {
+      return false;
+    }
     remaining = lhs;
-    offset += isSub ? -c : c;
+    offset = updatedOffset;
     return true;
   }
   if (!isSub && tryGetConstantInt(lhs, c)) {
     // commutativity only for add
+    int64_t updatedOffset;
+    if (llvm::AddOverflow(offset, c, updatedOffset)) {
+      return false;
+    }
     remaining = rhs;
-    offset += c;
+    offset = updatedOffset;
     return true;
   }
   return false;
@@ -126,10 +148,14 @@ static bool extractSlotForm(Value slot, uint32_t expectN, SlotForm &out) {
   // Case 1: `arith.remui inner, %const_N`.
   if (auto remOp = dyn_cast_if_present<arith::RemUIOp>(def)) {
     int64_t n;
-    if (!tryGetConstantInt(remOp.getRhs(), n) || n <= 0) {
+    const bool invalidModulus =
+        !tryGetConstantInt(remOp.getRhs(), n) || n <= 0 ||
+        static_cast<uint64_t>(n) > std::numeric_limits<uint32_t>::max();
+    if (invalidModulus) {
       return false;
     }
     out.N = static_cast<uint32_t>(n);
+    out.normalizedModuloN = true;
     Value inner = remOp.getLhs();
     int64_t offset = 0;
     // Peel at most one add/sub of a constant.
@@ -144,8 +170,12 @@ static bool extractSlotForm(Value slot, uint32_t expectN, SlotForm &out) {
     }
     int64_t cst;
     if (tryGetConstantInt(rem, cst)) {
+      int64_t combinedOffset;
+      if (llvm::AddOverflow(cst, offset, combinedOffset)) {
+        return false;
+      }
       out.innerSym = Value();
-      out.innerOffset = cst + offset;
+      out.innerOffset = combinedOffset;
     } else {
       out.innerSym = rem;
       out.innerOffset = offset;
@@ -158,6 +188,7 @@ static bool extractSlotForm(Value slot, uint32_t expectN, SlotForm &out) {
   if (tryGetConstantInt(slot, cst)) {
     out.innerSym = Value();
     out.innerOffset = cst;
+    out.normalizedModuloN = true;
     return true;
   }
 
@@ -179,13 +210,15 @@ static int64_t pyMod(int64_t a, int64_t n) {
 
 } // namespace
 
-SlotRelation compareSlotSSA(Value a, Value b, uint32_t N) {
+static SlotRelation compareSlotForms(Value a, Value b, uint32_t N,
+                                     Value shiftedSymbol,
+                                     int64_t rhsSymbolOffset) {
   if (!a || !b || N == 0) {
     return SlotRelation::kUnknown;
   }
 
   // Shortcut: same SSA value -> always equal regardless of N.
-  if (a == b) {
+  if (a == b && rhsSymbolOffset == 0) {
     return SlotRelation::kEqual;
   }
 
@@ -226,8 +259,96 @@ SlotRelation compareSlotSSA(Value a, Value b, uint32_t N) {
     return SlotRelation::kUnknown;
   }
 
-  int64_t diff = pyMod(fa.innerOffset - fb.innerOffset, N);
+  if (rhsSymbolOffset != 0) {
+    const bool invalidShift = !shiftedSymbol || !fa.normalizedModuloN ||
+                              !fb.normalizedModuloN ||
+                              fa.innerSym != shiftedSymbol;
+    if (invalidShift) {
+      return SlotRelation::kUnknown;
+    }
+  }
+
+  const int64_t lhsOffset = pyMod(fa.innerOffset, N);
+  const int64_t rhsOffset = pyMod(fb.innerOffset, N);
+  const int64_t shiftedOffset = pyMod(rhsSymbolOffset, N);
+  int64_t diff = pyMod(lhsOffset - rhsOffset, N);
+  diff = pyMod(diff - shiftedOffset, N);
   return diff == 0 ? SlotRelation::kEqual : SlotRelation::kDisjoint;
+}
+
+SlotRelation compareSlotSSA(Value a, Value b, uint32_t N) {
+  return compareSlotForms(a, b, N, Value(), 0);
+}
+
+SlotRelation compareSlotSSAWithOffset(Value a, Value b, uint32_t N,
+                                      Value shiftedSymbol,
+                                      int64_t rhsSymbolOffset) {
+  if (rhsSymbolOffset == 0) {
+    return compareSlotSSA(a, b, N);
+  }
+  if (!shiftedSymbol) {
+    return SlotRelation::kUnknown;
+  }
+  return compareSlotForms(a, b, N, shiftedSymbol, rhsSymbolOffset);
+}
+
+std::optional<llvm::SmallVector<SlotOrdinalPair, 4>>
+enumerateSlotSSAOrdinalPairs(Value a, Value b, uint32_t N,
+                             Value shiftedSymbol,
+                             int64_t rhsSymbolOffset) {
+  constexpr uint32_t kMaximumEnumeratedSlotCount = 4096;
+  if (!a || !b || N == 0 || N > kMaximumEnumeratedSlotCount) {
+    return std::nullopt;
+  }
+  SlotForm first;
+  SlotForm second;
+  const bool invalidForm =
+      !extractSlotForm(a, N, first) || !extractSlotForm(b, N, second) ||
+      first.N != N || second.N != N || !first.normalizedModuloN ||
+      !second.normalizedModuloN;
+  if (invalidForm) {
+    return std::nullopt;
+  }
+  const bool firstSymbolic = static_cast<bool>(first.innerSym);
+  const bool secondSymbolic = static_cast<bool>(second.innerSym);
+  if (firstSymbolic && secondSymbolic &&
+      first.innerSym != second.innerSym) {
+    return std::nullopt;
+  }
+  if (rhsSymbolOffset != 0) {
+    const bool incompatibleShift =
+        (firstSymbolic || secondSymbolic) &&
+        (!shiftedSymbol ||
+         (firstSymbolic && first.innerSym != shiftedSymbol) ||
+         (secondSymbolic && second.innerSym != shiftedSymbol));
+    if (incompatibleShift) {
+      return std::nullopt;
+    }
+  }
+
+  const uint32_t residues = firstSymbolic || secondSymbolic ? N : 1;
+  llvm::SmallVector<SlotOrdinalPair, 4> pairs;
+  pairs.reserve(residues);
+  const int64_t firstOffset = pyMod(first.innerOffset, N);
+  const int64_t secondOffset = pyMod(second.innerOffset, N);
+  const int64_t shiftedOffset =
+      secondSymbolic ? pyMod(rhsSymbolOffset, N) : 0;
+  for (uint32_t residue = 0; residue < residues; ++residue) {
+    const int64_t firstBase = firstSymbolic ? residue : 0;
+    const int64_t secondBase = secondSymbolic ? residue : 0;
+    const int64_t firstOrdinal = pyMod(firstBase + firstOffset, N);
+    const int64_t secondOrdinal =
+        pyMod(secondBase + secondOffset + shiftedOffset, N);
+    pairs.push_back({static_cast<uint32_t>(firstOrdinal),
+                     static_cast<uint32_t>(secondOrdinal)});
+  }
+  std::sort(pairs.begin(), pairs.end(), [](const SlotOrdinalPair &lhs,
+                                           const SlotOrdinalPair &rhs) {
+    return std::tie(lhs.first, lhs.second) <
+           std::tie(rhs.first, rhs.second);
+  });
+  pairs.erase(std::unique(pairs.begin(), pairs.end()), pairs.end());
+  return pairs;
 }
 
 } // namespace pto

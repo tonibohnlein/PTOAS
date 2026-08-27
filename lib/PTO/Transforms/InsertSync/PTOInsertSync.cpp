@@ -94,10 +94,16 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     SyncIRs syncIR;
     SyncOperations syncOpsStorage;
     Buffer2MemInfoMap buffer2MemInfoMap;
+    OperationMemInfoStorage operationMemInfos;
 
     // 1. Translator: 构建 SyncIR
-    PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, func, SyncAnalysisMode::NORMALSYNC);
-    translator.Build();
+    PTOIRTranslator translator(syncIR, buffer2MemInfoMap, operationMemInfos,
+                               func);
+    if (failed(translator.Build())) {
+      func.emitError("failed to extract synchronization memory effects");
+      signalPassFailure();
+      return;
+    }
 
     // 如果 IR 太简单，直接跳过
     if (syncIR.size() <= 1) {

@@ -16,34 +16,37 @@
  
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
-#include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/Support/LogicalResult.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <memory>
+#include <vector>
  
 namespace mlir {
 namespace pto {
+
+struct PTOIRTranslatorOptions {
+  bool preciseGmRanges = false;
+  bool includeExtendedEffects = false;
+  bool failOnUnmodeledEffects = false;
+};
  
 class PTOIRTranslator {
 public:
-  PTOIRTranslator(SyncIRs &syncIR,
-                  MemoryDependentAnalyzer &memDepAnalyzer,
-                  Buffer2MemInfoMap &buffer2MemInfoMap,
-                  func::FuncOp func,
-                  SyncAnalysisMode syncAnalysisMode)
-    : func_(func), 
-      index(0),
-      syncIR_(syncIR), 
-      buffer2MemInfoMap_(buffer2MemInfoMap),
-      memAnalyzer_(memDepAnalyzer),
-      mode_(syncAnalysisMode) {
-    (void)memAnalyzer_;
-    (void)mode_;
-  };
+  PTOIRTranslator(SyncIRs &syncIR, Buffer2MemInfoMap &buffer2MemInfoMap,
+                  OperationMemInfoStorage &operationMemInfos,
+                  func::FuncOp func, PTOIRTranslatorOptions options = {})
+      : func_(func), index(0), syncIR_(syncIR),
+        buffer2MemInfoMap_(buffer2MemInfoMap),
+        operationMemInfos_(operationMemInfos), options_(options) {}
  
-  // 核心入口：执行 IR 分析和转换
-  void Build();
+  // Core entry point. Output memory pointers remain valid while both supplied
+  // owning stores remain alive; consumers must copy normalized records before
+  // releasing those stores.
+  LogicalResult Build();
  
   // 获取生成的 SyncIR (指令序列)
   SyncIRs &getSyncIR() { return syncIR_; }
@@ -61,11 +64,13 @@ private:
   // 核心数据结构 (定义在 SyncCommon.h 中)
   SyncIRs &syncIR_;
   Buffer2MemInfoMap &buffer2MemInfoMap_;
-  MemoryDependentAnalyzer &memAnalyzer_;
-  SyncAnalysisMode mode_;
+  OperationMemInfoStorage &operationMemInfos_;
+  PTOIRTranslatorOptions options_;
+  bool usePreciseGmRanges_ = false;
+  bool failed_ = false;
  
   // --- 递归遍历逻辑 ---
-  void RecursionIR(Region *region);
+  LogicalResult RecursionIR(Region *region);
  
   // --- 内存/Alias 分析 ---
   void UpdateKernelArgMemInfo();
@@ -77,6 +82,9 @@ private:
   // 处理 View/Alias (MakeTensorView, Subview, Mov)
   void UpdateAliasBufferInfo(Value result, Value source);
   void UpdateConservativeAliasBufferInfo(Value result, Value source);
+  void UpdateAddPtrAliasBufferInfo(pto::AddPtrOp op);
+  void UpdateMakeTensorViewAliasBufferInfo(pto::MakeTensorViewOp op);
+  void UpdatePartitionViewAliasBufferInfo(pto::PartitionViewOp op);
   void UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op);
   LogicalResult UpdateIntToPtrOpMemInfo(pto::IntToPtrOp op);
   void UpdateMultiTileGetAliasBufferInfo(pto::MultiTileGetOp op);
@@ -90,13 +98,15 @@ private:
   void UpdateYieldOpInfo(scf::YieldOp yieldOp);
 
   // --- 核心：处理计算/搬运指令 (生成 Compound 节点) ---
-  void UpdatePTOOpInfo(Operation *op);
-  void UpdatePTOOpInfoWithPipeline(Operation *op, PipelineType pipe,
-                                   bool skipIfNoMemInfo = false);
+  LogicalResult UpdatePTOOpInfo(Operation *op);
+  LogicalResult UpdatePTOOpInfoWithPipeline(Operation *op, PipelineType pipe,
+                                            bool skipIfNoMemInfo = false);
+  void UpdateScalarAccessInfo(Value pointer, Value offset,
+                              SmallVector<const BaseMemInfo *> &accesses);
   void UpdateMacroOpInfo(Operation *op);
   void MakeMacroCompound(Operation *op, PipelineType pipe, ValueRange defValues,
                          ValueRange useValues, int macroPhaseId);
-  void UpdateHelperCallInfo(func::CallOp callOp);
+  LogicalResult UpdateHelperCallInfo(func::CallOp callOp);
 
   // --- 辅助函数 ---
 
