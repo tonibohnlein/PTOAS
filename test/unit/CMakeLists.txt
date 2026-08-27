@@ -26,3 +26,25 @@ target_link_libraries(pto-ir-translator-unit-test PRIVATE
 )
 add_test(NAME pto_ir_translator_unit COMMAND pto-ir-translator-unit-test)
 set_tests_properties(pto_ir_translator_unit PROPERTIES LABELS "PTO;unit")
+
+add_executable(pto-sync-cover-graph-unit-test
+  SyncCoverGraphTest.cpp
+)
+target_link_libraries(pto-sync-cover-graph-unit-test PRIVATE
+  PTOSyncCoverCore
+)
+add_test(NAME pto_sync_cover_graph_unit
+  COMMAND pto-sync-cover-graph-unit-test
+)
+set_tests_properties(pto_sync_cover_graph_unit PROPERTIES LABELS "PTO;unit")
+
+add_executable(pto-sync-cover-coverage-unit-test
+  SyncCoverCoverageTest.cpp
+)
+target_link_libraries(pto-sync-cover-coverage-unit-test PRIVATE
+  PTOSyncCoverCore
+)
+add_test(NAME pto_sync_cover_coverage_unit
+  COMMAND pto-sync-cover-coverage-unit-test
+)
+set_tests_properties(pto_sync_cover_coverage_unit PROPERTIES LABELS "PTO;unit")
