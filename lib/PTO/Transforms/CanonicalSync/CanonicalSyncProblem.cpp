@@ -88,11 +88,12 @@ bool actionEqual(const CanonicalSyncAction &left,
                  const CanonicalSyncAction &right) {
   return std::tie(left.kind, left.resource, left.anchor.kind, left.anchor.node,
                   left.anchor.scope, left.anchor.position, left.eventUse,
-                  left.eventLane, left.drainedResources, left.barrierKind) ==
+                  left.eventLane, left.drainedResources, left.barrierKind,
+                  left.guard, left.guardScope) ==
          std::tie(right.kind, right.resource, right.anchor.kind,
                   right.anchor.node, right.anchor.scope, right.anchor.position,
                   right.eventUse, right.eventLane, right.drainedResources,
-                  right.barrierKind);
+                  right.barrierKind, right.guard, right.guardScope);
 }
 
 bool descriptorEqual(const CanonicalSyncMechanismDescriptor &left,
@@ -166,6 +167,9 @@ descriptorHash(const CanonicalSyncMechanismDescriptor &descriptor) {
       hashValue(hash, resource);
     }
     hashValue(hash, static_cast<std::uint8_t>(action.barrierKind));
+    hashValue(hash, static_cast<std::uint8_t>(action.guard));
+    hashValue(hash, action.guardScope.value_or(
+                        std::numeric_limits<std::size_t>::max()));
   }
   return hash;
 }
@@ -389,7 +393,19 @@ validateActions(const SyncCoverGraph &graph,
     }
     const std::optional<std::size_t> depth =
         getCostDepth(graph, action, *scope);
-    if (!depth) {
+    const bool unguarded = action.guard == CanonicalSyncActionGuardKind::None;
+    const bool validGuard =
+        unguarded
+            ? !action.guardScope
+            : action.guard == CanonicalSyncActionGuardKind::LoopNonEmpty &&
+                  action.guardScope &&
+                  *action.guardScope < graph.getScopes().size() &&
+                  graph.getScopes()[*action.guardScope].isLoop &&
+                  action.kind != CanonicalSyncActionKind::Barrier &&
+                  (action.anchor.kind == SyncCoverAnchorKind::ScopeEntry ||
+                   action.anchor.kind == SyncCoverAnchorKind::ScopeExit) &&
+                  action.anchor.scope == *action.guardScope;
+    if (!depth || !validGuard) {
       return CanonicalSyncProblemError::InvalidMechanism;
     }
     state.cost.barrierActions.resize(
@@ -571,10 +587,16 @@ validateSupplyBindings(const SyncCoverGraph &graph,
           !syncCoverEndpointsCoExecute(graph, edge)) {
         return CanonicalSyncProblemError::InvalidMechanism;
       }
-    } else if (!use.recurrenceScope ||
-               (edge.distance == 0
-                    ? !graph.scopeContains(*use.recurrenceScope, edge.scope)
-                    : *use.recurrenceScope != edge.scope)) {
+    } else if (!use.recurrenceScope) {
+      return CanonicalSyncProblemError::InvalidMechanism;
+    } else if (edge.distance == 0) {
+      const bool relatedScope =
+          graph.scopeContains(*use.recurrenceScope, edge.scope) ||
+          graph.scopeContains(edge.scope, *use.recurrenceScope);
+      if (!relatedScope) {
+        return CanonicalSyncProblemError::InvalidMechanism;
+      }
+    } else if (*use.recurrenceScope != edge.scope) {
       return CanonicalSyncProblemError::InvalidMechanism;
     }
   }

@@ -41,6 +41,11 @@ enum class CanonicalSyncActionKind : std::uint8_t {
   Barrier,
 };
 
+enum class CanonicalSyncActionGuardKind : std::uint8_t {
+  None,
+  LoopNonEmpty,
+};
+
 enum class CanonicalSyncBarrierKind : std::uint8_t {
   Targeted,
   All,
@@ -72,6 +77,8 @@ struct CanonicalSyncAction {
   /// the single authoritative barrier cost weight.
   std::vector<std::uint32_t> drainedResources;
   CanonicalSyncBarrierKind barrierKind = CanonicalSyncBarrierKind::Targeted;
+  CanonicalSyncActionGuardKind guard = CanonicalSyncActionGuardKind::None;
+  std::optional<SyncCoverScopeId> guardScope;
 };
 
 enum class CanonicalSyncSupplyProof : std::uint8_t {

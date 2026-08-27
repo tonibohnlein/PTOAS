@@ -11,11 +11,14 @@
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncOwnership.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Matchers.h"
 
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
+#include <array>
 #include <iterator>
 #include <map>
 #include <optional>
@@ -72,6 +75,12 @@ struct HierarchicalSlotGroup {
   std::vector<OwnershipNode *> consumers;
 };
 
+struct ParitySlotGroup {
+  CanonicalSyncOwnershipSlot slot;
+  std::array<std::vector<OwnershipNode *>, 2> producers;
+  std::array<std::vector<OwnershipNode *>, 2> consumers;
+};
+
 std::optional<StorageAccessIndex>
 buildStorageAccessIndex(const SyncCoverGraph &graph) {
   StorageAccessIndex result(graph.getNodes().size());
@@ -108,6 +117,41 @@ Operation *getTopLevelChild(Operation *operation, Operation *loop) {
     child = child->getParentOp();
   }
   return child;
+}
+
+Operation *getTopLevelInBlock(Operation *operation, Block *block) {
+  Operation *topLevel = operation;
+  while (topLevel && topLevel->getBlock() != block) {
+    topLevel = topLevel->getParentOp();
+  }
+  return topLevel;
+}
+
+bool isBeforeLoop(Operation *operation, scf::ForOp loop) {
+  Operation *topLevel = getTopLevelInBlock(operation, loop->getBlock());
+  return topLevel && topLevel != loop && topLevel->isBeforeInBlock(loop);
+}
+
+bool hasInterveningResourceNode(const CanonicalSyncProgram &program,
+                                SyncCoverNodeId source, scf::ForOp loop,
+                                std::uint32_t resource) {
+  Operation *sourceOperation = program.getNodeBindings()[source].operation;
+  if (!sourceOperation || !isBeforeLoop(sourceOperation, loop)) {
+    return true;
+  }
+  for (const SyncCoverNode &node : program.getGraph().getNodes()) {
+    if (node.id == source || node.resource != resource) {
+      continue;
+    }
+    Operation *operation = program.getNodeBindings()[node.id].operation;
+    Operation *topLevel = getTopLevelInBlock(operation, loop->getBlock());
+    if (topLevel && topLevel != loop &&
+        sourceOperation->isBeforeInBlock(topLevel) &&
+        topLevel->isBeforeInBlock(loop)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 Region *getPathRegion(Operation *operation, Operation *branch) {
@@ -638,6 +682,333 @@ std::optional<CanonicalSyncOwnershipCycle> recognizeStableL1(
   return cycle;
 }
 
+bool paritySlotsAreDisjoint(
+    const std::map<CanonicalSyncOwnershipSlot, ParitySlotGroup> &groups) {
+  for (auto first = groups.begin(); first != groups.end(); ++first) {
+    for (auto second = std::next(first); second != groups.end(); ++second) {
+      if (first->first.domain == second->first.domain &&
+          intervalOverlaps(first->first.extent, second->first.extent)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool matchNonNegativeConstant(Value value, std::uint64_t expected) {
+  APInt constant;
+  return matchPattern(value, m_ConstantInt(&constant)) &&
+         constant.isNonNegative() && constant.getZExtValue() == expected;
+}
+
+bool matchAlternatingParityBranch(scf::ForOp loop, scf::IfOp branch) {
+  if (!branch || branch.getElseRegion().empty() ||
+      !matchNonNegativeConstant(loop.getLowerBound(), 0) ||
+      !matchNonNegativeConstant(loop.getStep(), 1)) {
+    return false;
+  }
+  auto compare = branch.getCondition().getDefiningOp<arith::CmpIOp>();
+  if (!compare || compare.getPredicate() != arith::CmpIPredicate::eq) {
+    return false;
+  }
+  Value remainderValue = compare.getLhs();
+  Value zeroValue = compare.getRhs();
+  if (!matchNonNegativeConstant(zeroValue, 0)) {
+    remainderValue = compare.getRhs();
+    zeroValue = compare.getLhs();
+  }
+  auto remainder = remainderValue.getDefiningOp<arith::RemSIOp>();
+  return matchNonNegativeConstant(zeroValue, 0) && remainder &&
+         remainder.getLhs() == loop.getInductionVar() &&
+         matchNonNegativeConstant(remainder.getRhs(), 2);
+}
+
+bool matchNextIteration(Value value, scf::ForOp loop) {
+  auto add = value.getDefiningOp<arith::AddIOp>();
+  return add && ((add.getLhs() == loop.getInductionVar() &&
+                  matchNonNegativeConstant(add.getRhs(), 1)) ||
+                 (add.getRhs() == loop.getInductionVar() &&
+                  matchNonNegativeConstant(add.getLhs(), 1)));
+}
+
+bool hasContinuationGuard(Operation *operation, scf::ForOp loop, Region *path) {
+  auto guard = dyn_cast_or_null<scf::IfOp>(operation->getParentOp());
+  const bool direct = guard && path && guard->getParentRegion() == path &&
+                      operation->getParentRegion() == &guard.getThenRegion() &&
+                      guard.getElseRegion().empty();
+  if (!direct) {
+    return false;
+  }
+  auto compare = guard.getCondition().getDefiningOp<arith::CmpIOp>();
+  return compare && compare.getPredicate() == arith::CmpIPredicate::slt &&
+         compare.getRhs() == loop.getUpperBound() &&
+         matchNextIteration(compare.getLhs(), loop);
+}
+
+bool executeDirectlyIn(ArrayRef<OwnershipNode *> nodes, Region *region) {
+  return llvm::all_of(nodes, [&](const OwnershipNode *node) {
+    return node->operation->getParentRegion() == region;
+  });
+}
+
+OwnershipNode *firstByOrder(ArrayRef<OwnershipNode *> nodes,
+                            const SyncCoverGraph &graph) {
+  return *llvm::min_element(nodes, [&](const OwnershipNode *left,
+                                       const OwnershipNode *right) {
+    return graph.getNodes()[left->id].order < graph.getNodes()[right->id].order;
+  });
+}
+
+OwnershipNode *lastByOrder(ArrayRef<OwnershipNode *> nodes,
+                           const SyncCoverGraph &graph) {
+  return *llvm::max_element(nodes, [&](const OwnershipNode *left,
+                                       const OwnershipNode *right) {
+    return graph.getNodes()[left->id].order < graph.getNodes()[right->id].order;
+  });
+}
+
+CanonicalSyncOwnershipUse makeParityUse(unsigned lane, unsigned producerLane,
+                                        ArrayRef<OwnershipNode *> producers,
+                                        ArrayRef<OwnershipNode *> consumers,
+                                        const SyncCoverGraph &graph) {
+  CanonicalSyncOwnershipUse use;
+  use.lane = lane;
+  use.producerLane = producerLane;
+  llvm::transform(producers, std::back_inserter(use.producers),
+                  [](const OwnershipNode *node) { return node->id; });
+  llvm::transform(consumers, std::back_inserter(use.consumers),
+                  [](const OwnershipNode *node) { return node->id; });
+  OwnershipNode *firstProducer = firstByOrder(producers, graph);
+  OwnershipNode *lastProducer = lastByOrder(producers, graph);
+  OwnershipNode *firstConsumer = firstByOrder(consumers, graph);
+  OwnershipNode *lastConsumer = lastByOrder(consumers, graph);
+  use.writeAcquire = {SyncCoverAnchorKind::BeforeNode, firstProducer->id};
+  use.ready = {SyncCoverAnchorKind::AfterNode, lastProducer->id};
+  use.readAcquire = {SyncCoverAnchorKind::BeforeNode, firstConsumer->id};
+  use.release = {SyncCoverAnchorKind::AfterNode, lastConsumer->id};
+  return use;
+}
+
+std::optional<SyncCoverNodeId> findInitialProducer(
+    const CanonicalSyncProgram &program, scf::ForOp loop,
+    const CanonicalSyncOwnershipSlot &slot,
+    ArrayRef<CanonicalSyncOwnershipSlot> managedSlots,
+    ArrayRef<std::vector<const SyncCoverStorageAccess *>> accessesByNode) {
+  std::optional<SyncCoverNodeId> result;
+  for (const SyncCoverNode &node : program.getGraph().getNodes()) {
+    Operation *operation = program.getNodeBindings()[node.id].operation;
+    Operation *topLevel = getTopLevelInBlock(operation, loop->getBlock());
+    if (!topLevel || topLevel == loop || !topLevel->isBeforeInBlock(loop)) {
+      continue;
+    }
+    bool touchesManaged = false;
+    bool initialWrite = false;
+    bool conflictingAccess = false;
+    for (const SyncCoverStorageAccess *access : accessesByNode[node.id]) {
+      if (access->domain >= program.getStorageSpaces().size() ||
+          program.getStorageSpaces()[access->domain] != AddressSpace::MAT) {
+        continue;
+      }
+      if (!access->exactPhysical) {
+        return std::nullopt;
+      }
+      const CanonicalSyncOwnershipSlot candidate{access->domain,
+                                                 access->extent};
+      const bool overlapsManaged = llvm::any_of(
+          managedSlots, [&](const CanonicalSyncOwnershipSlot &managed) {
+            return candidate.domain == managed.domain &&
+                   intervalOverlaps(candidate.extent, managed.extent);
+          });
+      if (!overlapsManaged) {
+        continue;
+      }
+      touchesManaged = true;
+      const bool valid = operation == topLevel &&
+                         node.resource == static_cast<std::uint32_t>(
+                                              PipelineType::PIPE_MTE2) &&
+                         access->mode == SyncCoverStorageAccessMode::Write &&
+                         candidate == slot;
+      conflictingAccess |= initialWrite || !valid;
+      initialWrite |= valid;
+    }
+    if (!touchesManaged) {
+      continue;
+    }
+    if (!initialWrite || conflictingAccess || result) {
+      return std::nullopt;
+    }
+    result = node.id;
+  }
+  return result;
+}
+
+std::vector<CanonicalSyncOwnershipCycle> recognizeParityL1(
+    const CanonicalSyncProgram &program, SyncCoverScopeId recurrenceScope,
+    const HierarchicalOwnershipSpec &spec,
+    ArrayRef<std::vector<const SyncCoverStorageAccess *>> accessesByNode) {
+  std::vector<CanonicalSyncOwnershipCycle> result;
+  std::optional<std::vector<OwnershipNode>> nodes =
+      collectHierarchicalNodes(program, recurrenceScope, spec, accessesByNode);
+  auto loop = dyn_cast_or_null<scf::ForOp>(
+      program.getScopeBindings()[recurrenceScope].owner);
+  if (!nodes || !loop) {
+    return result;
+  }
+  Operation *commonChild = nodes->front().topLevel;
+  const bool oneChild = llvm::all_of(*nodes, [&](const OwnershipNode &node) {
+    return node.topLevel == commonChild;
+  });
+  scf::IfOp branch =
+      oneChild ? dyn_cast_or_null<scf::IfOp>(commonChild) : scf::IfOp{};
+  if (!matchAlternatingParityBranch(loop, branch)) {
+    return result;
+  }
+  Region *paths[] = {&branch.getThenRegion(), &branch.getElseRegion()};
+  std::map<CanonicalSyncOwnershipSlot, ParitySlotGroup> groups;
+  for (OwnershipNode &node : *nodes) {
+    node.path = getPathRegion(node.operation, branch);
+    const unsigned pathIndex = node.path == paths[0]   ? 0
+                               : node.path == paths[1] ? 1
+                                                       : 2;
+    if (pathIndex == 2) {
+      return {};
+    }
+    const CanonicalSyncOwnershipSlot &slot =
+        !node.produced.empty() ? node.produced.front() : node.consumed.front();
+    ParitySlotGroup &group = groups[slot];
+    group.slot = slot;
+    (!node.produced.empty() ? group.producers[pathIndex]
+                            : group.consumers[pathIndex])
+        .push_back(&node);
+  }
+  if (!paritySlotsAreDisjoint(groups)) {
+    return {};
+  }
+
+  std::vector<ParitySlotGroup *> stableGroups;
+  std::vector<ParitySlotGroup *> alternatingGroups;
+  const SyncCoverGraph &graph = program.getGraph();
+  for (auto &[slot, group] : groups) {
+    (void)slot;
+    const bool stable = llvm::all_of(llvm::seq<unsigned>(0, 2), [&](unsigned
+                                                                        path) {
+      return group.producers[path].size() == 1 &&
+             !group.consumers[path].empty() &&
+             executeDirectlyIn(group.producers[path], paths[path]) &&
+             executeDirectlyIn(group.consumers[path], paths[path]) &&
+             graph.getNodes()[group.producers[path].front()->id].order <
+                 graph
+                     .getNodes()[firstByOrder(group.consumers[path], graph)->id]
+                     .order;
+    });
+    const bool alternating =
+        (group.producers[0].size() == 1 && group.consumers[0].empty() &&
+         group.producers[1].empty() && group.consumers[1].size() == 1 &&
+         executeDirectlyIn(group.consumers[1], paths[1])) ||
+        (group.producers[1].size() == 1 && group.consumers[1].empty() &&
+         group.producers[0].empty() && group.consumers[0].size() == 1 &&
+         executeDirectlyIn(group.consumers[0], paths[0]));
+    if (stable) {
+      stableGroups.push_back(&group);
+    } else if (alternating) {
+      alternatingGroups.push_back(&group);
+    } else {
+      return {};
+    }
+  }
+
+  if (stableGroups.size() >= spec.minimumLanes) {
+    CanonicalSyncOwnershipCycle stable;
+    stable.kind = CanonicalSyncOwnershipKind::L1Tile;
+    stable.recurrenceScope = recurrenceScope;
+    stable.producerResource = spec.producerResource;
+    stable.consumerResource = spec.consumerResource;
+    stable.paths.resize(2);
+    for (unsigned path = 0; path < 2; ++path) {
+      const std::optional<SyncCoverScopeId> scope =
+          findScope(program, paths[path]);
+      if (!scope) {
+        return {};
+      }
+      stable.paths[path].scope = *scope;
+    }
+    for (auto [lane, group] : llvm::enumerate(stableGroups)) {
+      stable.lanes.push_back({static_cast<unsigned>(lane), {group->slot}});
+      for (unsigned path = 0; path < 2; ++path) {
+        stable.paths[path].uses.push_back(makeParityUse(
+            lane, lane, group->producers[path], group->consumers[path], graph));
+      }
+    }
+    result.push_back(std::move(stable));
+  }
+
+  if (alternatingGroups.size() != 2) {
+    return result;
+  }
+  CanonicalSyncOwnershipCycle prefetch;
+  prefetch.kind = CanonicalSyncOwnershipKind::L1Tile;
+  prefetch.protocol = CanonicalSyncOwnershipProtocolKind::AlternatingPrefetch;
+  prefetch.recurrenceScope = recurrenceScope;
+  prefetch.producerResource = spec.producerResource;
+  prefetch.consumerResource = spec.consumerResource;
+  prefetch.paths.resize(2);
+  for (unsigned path = 0; path < 2; ++path) {
+    const std::optional<SyncCoverScopeId> scope =
+        findScope(program, paths[path]);
+    if (!scope) {
+      return result;
+    }
+    prefetch.paths[path].scope = *scope;
+  }
+  for (auto [lane, group] : llvm::enumerate(alternatingGroups)) {
+    prefetch.lanes.push_back({static_cast<unsigned>(lane), {group->slot}});
+  }
+  for (unsigned path = 0; path < 2; ++path) {
+    ParitySlotGroup *consumerGroup = nullptr;
+    ParitySlotGroup *producerGroup = nullptr;
+    unsigned consumerLane = 0;
+    unsigned producerLane = 0;
+    for (auto [lane, group] : llvm::enumerate(alternatingGroups)) {
+      if (!group->consumers[path].empty()) {
+        consumerGroup = group;
+        consumerLane = lane;
+      }
+      if (!group->producers[path].empty()) {
+        producerGroup = group;
+        producerLane = lane;
+      }
+    }
+    if (!consumerGroup || !producerGroup || consumerLane == producerLane ||
+        !hasContinuationGuard(producerGroup->producers[path].front()->operation,
+                              loop, paths[path])) {
+      return result;
+    }
+    prefetch.paths[path].uses.push_back(makeParityUse(
+        consumerLane, producerLane, producerGroup->producers[path],
+        consumerGroup->consumers[path], graph));
+  }
+  const CanonicalSyncOwnershipUse &first = prefetch.paths.front().uses.front();
+  std::vector<CanonicalSyncOwnershipSlot> managedSlots;
+  for (const CanonicalSyncOwnershipLane &lane : prefetch.lanes) {
+    managedSlots.insert(managedSlots.end(), lane.slots.begin(),
+                        lane.slots.end());
+  }
+  const std::optional<SyncCoverNodeId> initial = findInitialProducer(
+      program, loop, prefetch.lanes[first.lane].slots.front(), managedSlots,
+      accessesByNode);
+  if (!initial || hasInterveningResourceNode(program, *initial, loop,
+                                             prefetch.producerResource)) {
+    return result;
+  }
+  prefetch.initialProducers.push_back(*initial);
+  prefetch.initialWriteAcquire = {SyncCoverAnchorKind::BeforeNode, *initial};
+  prefetch.initialReady = {SyncCoverAnchorKind::ScopeEntry, 0, recurrenceScope};
+  prefetch.initialReadyLane = first.lane;
+  prefetch.initiallyFreeLanes.push_back(first.producerLane);
+  result.push_back(std::move(prefetch));
+  return result;
+}
+
 bool slotsMatch(
     const CanonicalSyncProgram &program,
     ArrayRef<std::vector<const SyncCoverStorageAccess *>> accessesByNode,
@@ -808,6 +1179,16 @@ bool anchorsEqual(const SyncCoverAnchor &left, const SyncCoverAnchor &right) {
          std::tie(right.kind, right.node, right.scope, right.position);
 }
 
+bool accessOverlapsCycle(const CanonicalSyncOwnershipCycle &cycle,
+                         const SyncCoverStorageAccess &access) {
+  return llvm::any_of(cycle.lanes, [&](const auto &lane) {
+    return llvm::any_of(lane.slots, [&](const auto &slot) {
+      return access.domain == slot.domain &&
+             intervalOverlaps(access.extent, slot.extent);
+    });
+  });
+}
+
 bool verifyHierarchicalUse(const CanonicalSyncProgram &program,
                            const CanonicalSyncOwnershipCycle &cycle,
                            const CanonicalSyncOwnershipPath &path,
@@ -816,29 +1197,33 @@ bool verifyHierarchicalUse(const CanonicalSyncProgram &program,
   const SyncCoverGraph &graph = program.getGraph();
   if (use.lane >= cycle.lanes.size() || use.producerLane != use.lane ||
       use.producers.size() != 1 || use.consumers.empty() ||
-      path.scope != cycle.recurrenceScope ||
+      !graph.scopeContains(cycle.recurrenceScope, path.scope) ||
       cycle.recurrenceScope >= program.getScopeBindings().size()) {
     return false;
   }
   Operation *loop = program.getScopeBindings()[cycle.recurrenceScope].owner;
+  Region *pathRegion = program.getScopeBindings()[path.scope].region;
   const SyncCoverNodeId producer = use.producers.front();
-  if (!loop || producer >= graph.getNodes().size() ||
+  if (!loop || !pathRegion || producer >= graph.getNodes().size() ||
       graph.getNodes()[producer].resource != cycle.producerResource ||
-      graph.getNodes()[producer].scope != cycle.recurrenceScope) {
+      graph.getNodes()[producer].scope != path.scope) {
     return false;
   }
-  Operation *producerAnchor = program.getNodeBindings()[producer].operation;
+  Operation *producerOperation = program.getNodeBindings()[producer].operation;
+  Operation *producerAnchor = getPathAnchor(producerOperation, pathRegion);
+  if (producerAnchor != producerOperation) {
+    return false;
+  }
   std::vector<OwnershipNode> consumerNodes;
   consumerNodes.reserve(use.consumers.size());
   for (SyncCoverNodeId consumer : use.consumers) {
     if (consumer >= graph.getNodes().size() ||
         graph.getNodes()[consumer].resource != cycle.consumerResource ||
-        !graph.scopeContains(cycle.recurrenceScope,
-                             graph.getNodes()[consumer].scope)) {
+        !graph.scopeContains(path.scope, graph.getNodes()[consumer].scope)) {
       return false;
     }
     Operation *operation = program.getNodeBindings()[consumer].operation;
-    Operation *topLevel = getTopLevelChild(operation, loop);
+    Operation *topLevel = getPathAnchor(operation, pathRegion);
     if (!operation || !topLevel) {
       return false;
     }
@@ -954,18 +1339,218 @@ bool verifyUse(const CanonicalSyncProgram &program,
   return true;
 }
 
+bool verifyAlternatingCycleImpl(
+    const CanonicalSyncProgram &program,
+    const CanonicalSyncOwnershipCycle &cycle,
+    ArrayRef<std::vector<const SyncCoverStorageAccess *>> accessesByNode,
+    bool validateGraph) {
+  const SyncCoverGraph &graph = program.getGraph();
+  const bool basicShape =
+      graph.isStructureFrozen() &&
+      (!validateGraph || static_cast<bool>(graph.validate())) &&
+      cycle.kind == CanonicalSyncOwnershipKind::L1Tile &&
+      cycle.protocol ==
+          CanonicalSyncOwnershipProtocolKind::AlternatingPrefetch &&
+      cycle.recurrenceScope < graph.getScopes().size() &&
+      graph.getScopes()[cycle.recurrenceScope].isLoop &&
+      cycle.lanes.size() == 2 && cycle.paths.size() == 2 &&
+      cycle.initialProducers.size() == 1 &&
+      cycle.initiallyFreeLanes.size() == 1 && slotsAreDisjoint(cycle.lanes) &&
+      cycle.initialReadyLane < cycle.lanes.size() &&
+      cycle.initiallyFreeLanes.front() < cycle.lanes.size() &&
+      accessesByNode.size() == graph.getNodes().size() &&
+      program.getNodeBindings().size() == graph.getNodes().size() &&
+      program.getScopeBindings().size() == graph.getScopes().size() &&
+      pathsCoverRecurrence(graph, cycle.recurrenceScope, cycle.paths) &&
+      cycle.paths[0].uses.size() == 1 && cycle.paths[1].uses.size() == 1;
+  if (!basicShape) {
+    return false;
+  }
+  for (auto [laneIndex, lane] : llvm::enumerate(cycle.lanes)) {
+    if (lane.id != laneIndex || lane.slots.size() != 1) {
+      return false;
+    }
+  }
+  auto loop = dyn_cast_or_null<scf::ForOp>(
+      program.getScopeBindings()[cycle.recurrenceScope].owner);
+  Region *firstRegion = program.getScopeBindings()[cycle.paths[0].scope].region;
+  Region *secondRegion =
+      program.getScopeBindings()[cycle.paths[1].scope].region;
+  auto branch = firstRegion
+                    ? dyn_cast_or_null<scf::IfOp>(firstRegion->getParentOp())
+                    : scf::IfOp{};
+  if (!loop || !branch || branch->getParentOp() != loop.getOperation() ||
+      firstRegion != &branch.getThenRegion() ||
+      secondRegion != &branch.getElseRegion() ||
+      !matchAlternatingParityBranch(loop, branch)) {
+    return false;
+  }
+  const SyncCoverGuard &recurrenceGuard =
+      graph.getScopes()[cycle.recurrenceScope].guard;
+  std::optional<SyncCoverControlId> pathControl;
+  for (const CanonicalSyncOwnershipPath &path : cycle.paths) {
+    const SyncCoverGuard &pathGuard = graph.getScopes()[path.scope].guard;
+    std::vector<SyncCoverGuardLiteral> residual;
+    std::set_difference(pathGuard.literals.begin(), pathGuard.literals.end(),
+                        recurrenceGuard.literals.begin(),
+                        recurrenceGuard.literals.end(),
+                        std::back_inserter(residual));
+    if (residual.size() != 1 ||
+        (pathControl && *pathControl != residual.front().control)) {
+      return false;
+    }
+    pathControl = residual.front().control;
+  }
+  const SyncCoverControl *periodicControl =
+      pathControl && *pathControl < graph.getControls().size()
+          ? &graph.getControls()[*pathControl]
+          : nullptr;
+  const bool validPhase =
+      periodicControl && periodicControl->scope == cycle.recurrenceScope &&
+      periodicControl->alternatives == 2 && periodicControl->phaseRelation &&
+      periodicControl->phaseRelation->loopScope == cycle.recurrenceScope &&
+      periodicControl->phaseRelation->initialPhase == 0 &&
+      periodicControl->phaseRelation->nextPhase ==
+          std::vector<std::size_t>({1, 0}) &&
+      periodicControl->phaseRelation->activeAlternative ==
+          std::vector<unsigned>({0, 1});
+  if (!validPhase) {
+    return false;
+  }
+
+  const CanonicalSyncOwnershipUse &first = cycle.paths[0].uses.front();
+  const CanonicalSyncOwnershipUse &second = cycle.paths[1].uses.front();
+  const bool transitions =
+      first.lane == cycle.initialReadyLane &&
+      first.producerLane == cycle.initiallyFreeLanes.front() &&
+      first.lane != first.producerLane && second.lane == first.producerLane &&
+      second.producerLane == first.lane;
+  if (!transitions ||
+      !anchorsEqual(cycle.initialReady, {SyncCoverAnchorKind::ScopeEntry, 0,
+                                         cycle.recurrenceScope, 0})) {
+    return false;
+  }
+
+  std::set<SyncCoverNodeId> represented;
+  const SyncCoverNodeId initial = cycle.initialProducers.front();
+  Operation *initialOperation =
+      initial < program.getNodeBindings().size()
+          ? program.getNodeBindings()[initial].operation
+          : nullptr;
+  Operation *initialTopLevel = initialOperation;
+  while (initialTopLevel && initialTopLevel->getBlock() != loop->getBlock()) {
+    initialTopLevel = initialTopLevel->getParentOp();
+  }
+  const bool validInitial =
+      initial < graph.getNodes().size() && initialOperation &&
+      initialTopLevel == initialOperation && initialTopLevel != loop &&
+      initialTopLevel->isBeforeInBlock(loop) &&
+      graph.getNodes()[initial].resource == cycle.producerResource &&
+      !hasInterveningResourceNode(program, initial, loop,
+                                  cycle.producerResource) &&
+      slotsMatchSpace(program, accessesByNode, initial,
+                      cycle.lanes[cycle.initialReadyLane].slots,
+                      AddressSpace::MAT, SyncCoverStorageAccessMode::Write) &&
+      anchorsEqual(cycle.initialWriteAcquire,
+                   {SyncCoverAnchorKind::BeforeNode, initial, 0, 0});
+  if (!validInitial || !represented.insert(initial).second) {
+    return false;
+  }
+
+  for (const CanonicalSyncOwnershipPath &path : cycle.paths) {
+    if (path.uses.size() != 1) {
+      return false;
+    }
+    const CanonicalSyncOwnershipUse &use = path.uses.front();
+    if (use.lane >= cycle.lanes.size() ||
+        use.producerLane >= cycle.lanes.size() || use.producers.size() != 1 ||
+        use.consumers.size() != 1) {
+      return false;
+    }
+    const SyncCoverNodeId producer = use.producers.front();
+    Operation *producerOperation =
+        producer < program.getNodeBindings().size()
+            ? program.getNodeBindings()[producer].operation
+            : nullptr;
+    Region *pathRegion = program.getScopeBindings()[path.scope].region;
+    const bool validProducer =
+        producer < graph.getNodes().size() && producerOperation &&
+        graph.getNodes()[producer].resource == cycle.producerResource &&
+        graph.scopeContains(path.scope, graph.getNodes()[producer].scope) &&
+        hasContinuationGuard(producerOperation, loop, pathRegion) &&
+        slotsMatchSpace(program, accessesByNode, producer,
+                        cycle.lanes[use.producerLane].slots, AddressSpace::MAT,
+                        SyncCoverStorageAccessMode::Write) &&
+        anchorsEqual(use.writeAcquire,
+                     {SyncCoverAnchorKind::BeforeNode, producer, 0, 0}) &&
+        anchorsEqual(use.ready,
+                     {SyncCoverAnchorKind::AfterNode, producer, 0, 0});
+    if (!validProducer || !represented.insert(producer).second) {
+      return false;
+    }
+    std::vector<SyncCoverNodeId> orderedConsumers = use.consumers;
+    llvm::sort(
+        orderedConsumers, [&](SyncCoverNodeId left, SyncCoverNodeId right) {
+          return graph.getNodes()[left].order < graph.getNodes()[right].order;
+        });
+    for (SyncCoverNodeId consumer : orderedConsumers) {
+      Operation *consumerOperation =
+          consumer < program.getNodeBindings().size()
+              ? program.getNodeBindings()[consumer].operation
+              : nullptr;
+      const bool validConsumer =
+          consumer < graph.getNodes().size() && consumerOperation &&
+          consumerOperation->getParentRegion() == pathRegion &&
+          graph.getNodes()[consumer].resource == cycle.consumerResource &&
+          slotsMatchSpace(program, accessesByNode, consumer,
+                          cycle.lanes[use.lane].slots, AddressSpace::MAT,
+                          SyncCoverStorageAccessMode::Read);
+      if (!validConsumer || !represented.insert(consumer).second) {
+        return false;
+      }
+    }
+    if (!anchorsEqual(use.readAcquire, {SyncCoverAnchorKind::BeforeNode,
+                                        orderedConsumers.front(), 0, 0}) ||
+        !anchorsEqual(use.release, {SyncCoverAnchorKind::AfterNode,
+                                    orderedConsumers.back(), 0, 0})) {
+      return false;
+    }
+  }
+
+  for (const SyncCoverStorageAccess &access : graph.getStorageAccesses()) {
+    Operation *operation = program.getNodeBindings()[access.node].operation;
+    const bool inCycle =
+        graph.scopeContains(cycle.recurrenceScope,
+                            graph.getNodes()[access.node].scope) ||
+        isBeforeLoop(operation, loop);
+    if (inCycle && access.domain < program.getStorageSpaces().size() &&
+        program.getStorageSpaces()[access.domain] == AddressSpace::MAT &&
+        accessOverlapsCycle(cycle, access) &&
+        represented.count(access.node) == 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool verifyCycleImpl(
     const CanonicalSyncProgram &program,
     const CanonicalSyncOwnershipCycle &cycle,
     ArrayRef<std::vector<const SyncCoverStorageAccess *>> accessesByNode,
     bool validateGraph) {
   const SyncCoverGraph &graph = program.getGraph();
+  if (cycle.protocol ==
+      CanonicalSyncOwnershipProtocolKind::AlternatingPrefetch) {
+    return verifyAlternatingCycleImpl(program, cycle, accessesByNode,
+                                      validateGraph);
+  }
   if (!graph.isStructureFrozen() ||
       (validateGraph && !static_cast<bool>(graph.validate())) ||
       accessesByNode.size() != graph.getNodes().size() ||
       cycle.recurrenceScope >= graph.getScopes().size() ||
       !graph.getScopes()[cycle.recurrenceScope].isLoop || cycle.lanes.empty() ||
       cycle.paths.empty() || !slotsAreDisjoint(cycle.lanes) ||
+      cycle.protocol != CanonicalSyncOwnershipProtocolKind::RoundTrip ||
       (cycle.kind != CanonicalSyncOwnershipKind::L0Operand &&
        cycle.kind != CanonicalSyncOwnershipKind::L1Tile) ||
       !pathsCoverRecurrence(graph, cycle.recurrenceScope, cycle.paths)) {
@@ -1061,7 +1646,8 @@ bool verifyCycleImpl(
         cycle.kind == CanonicalSyncOwnershipKind::L0Operand
             ? space == AddressSpace::LEFT || space == AddressSpace::RIGHT
             : space == AddressSpace::MAT;
-    if (managed && represented.count(access.node) == 0) {
+    if (managed && accessOverlapsCycle(cycle, access) &&
+        represented.count(access.node) == 0) {
       return false;
     }
   }
@@ -1168,6 +1754,25 @@ CanonicalSyncOwnershipResult mlir::pto::discoverCanonicalSyncOwnershipCycles(
       }
       cycle->id = result.cycles.size();
       result.cycles.push_back(std::move(*cycle));
+    }
+
+    if (result.inspections > options.maximumInspections ||
+        passCost > options.maximumInspections - result.inspections) {
+      result.truncated = true;
+      return result;
+    }
+    result.inspections += passCost;
+    for (CanonicalSyncOwnershipCycle parity :
+         recognizeParityL1(program, scope.id, l1Tile, *accessesByNode)) {
+      if (!verifyCycleImpl(program, parity, *accessesByNode, false)) {
+        continue;
+      }
+      if (result.cycles.size() == options.maximumCycles) {
+        result.truncated = true;
+        return result;
+      }
+      parity.id = result.cycles.size();
+      result.cycles.push_back(std::move(parity));
     }
   }
   return result;

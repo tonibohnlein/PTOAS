@@ -357,7 +357,14 @@ LogicalResult addOwnershipCycles(
       continue;
     }
     if (cycle.kind == CanonicalSyncOwnershipKind::L1Tile) {
-      if (!program.getTargetCapabilities().mte1ScopeExitSetCompletesPrefix) {
+      const bool needsScopePrefix =
+          llvm::any_of(cycle.paths, [](const auto &path) {
+            return llvm::any_of(path.uses, [](const auto &use) {
+              return use.release.kind == SyncCoverAnchorKind::ScopeExit;
+            });
+          });
+      if (needsScopePrefix &&
+          !program.getTargetCapabilities().mte1ScopeExitSetCompletesPrefix) {
         continue;
       }
       std::optional<CanonicalSyncMechanismDescriptor> descriptor =

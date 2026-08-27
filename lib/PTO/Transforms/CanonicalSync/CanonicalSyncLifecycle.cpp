@@ -108,7 +108,9 @@ bool actionMatches(const CanonicalSyncAction &action,
   return action.kind == kind && action.resource == resource &&
          action.anchor.kind == anchorKind && action.anchor.node == node &&
          action.anchor.scope == scope && action.eventUse == 0 &&
-         action.eventLane == 0 && action.drainedResources.empty();
+         action.eventLane == 0 && action.drainedResources.empty() &&
+         action.guard == CanonicalSyncActionGuardKind::None &&
+         !action.guardScope;
 }
 
 } // namespace

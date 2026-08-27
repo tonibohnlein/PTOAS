@@ -29,6 +29,11 @@ enum class CanonicalSyncOwnershipKind : std::uint8_t {
   L1Tile,
 };
 
+enum class CanonicalSyncOwnershipProtocolKind : std::uint8_t {
+  RoundTrip,
+  AlternatingPrefetch,
+};
+
 struct CanonicalSyncOwnershipSlot {
   SyncCoverStorageDomainId domain = 0;
   SyncCoverStorageInterval extent;
@@ -61,11 +66,18 @@ struct CanonicalSyncOwnershipPath {
 struct CanonicalSyncOwnershipCycle {
   std::size_t id = 0;
   CanonicalSyncOwnershipKind kind = CanonicalSyncOwnershipKind::L0Operand;
+  CanonicalSyncOwnershipProtocolKind protocol =
+      CanonicalSyncOwnershipProtocolKind::RoundTrip;
   SyncCoverScopeId recurrenceScope = 0;
   std::uint32_t producerResource = 0;
   std::uint32_t consumerResource = 0;
   std::vector<CanonicalSyncOwnershipLane> lanes;
   std::vector<CanonicalSyncOwnershipPath> paths;
+  std::vector<SyncCoverNodeId> initialProducers;
+  SyncCoverAnchor initialWriteAcquire;
+  SyncCoverAnchor initialReady;
+  unsigned initialReadyLane = 0;
+  std::vector<unsigned> initiallyFreeLanes;
 };
 
 enum class CanonicalSyncOwnershipError : std::uint8_t {

@@ -13,6 +13,8 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/PatternMatch.h"
 
 #include <algorithm>
@@ -37,6 +39,7 @@ struct ConcreteAction {
   PipelineType target = PipelineType::PIPE_UNASSIGNED;
   PipelineType barrier = PipelineType::PIPE_UNASSIGNED;
   unsigned eventId = 0;
+  scf::ForOp guardLoop;
   bool tailFence = false;
 };
 
@@ -187,6 +190,20 @@ std::optional<ConcreteAction> makeConcreteAction(
   result.anchor = physicalAnchor->first;
   result.before = physicalAnchor->second ||
                   physicalAnchor->first->hasTrait<OpTrait::IsTerminator>();
+  if (action.guard == CanonicalSyncActionGuardKind::LoopNonEmpty) {
+    if (!action.guardScope ||
+        *action.guardScope >= program.getScopeBindings().size()) {
+      return std::nullopt;
+    }
+    result.guardLoop = dyn_cast_or_null<scf::ForOp>(
+        program.getScopeBindings()[*action.guardScope].owner);
+    if (!result.guardLoop) {
+      return std::nullopt;
+    }
+  } else if (action.guard != CanonicalSyncActionGuardKind::None ||
+             action.guardScope) {
+    return std::nullopt;
+  }
   if (action.kind == CanonicalSyncActionKind::Barrier) {
     const std::optional<PipelineType> pipe =
         resolveBarrierPipe(action, allResources);
@@ -291,8 +308,8 @@ void markGenerated(Operation *operation, Builder &builder) {
   operation->setAttr("pto.canonical_sync", builder.getUnitAttr());
 }
 
-void emitAction(IRRewriter &rewriter, func::FuncOp function,
-                const ConcreteAction &action) {
+void emitPhysicalAction(IRRewriter &rewriter, func::FuncOp function,
+                        const ConcreteAction &action) {
   if (action.kind == CanonicalSyncActionKind::Barrier) {
     Operation *created =
         rewriter
@@ -322,6 +339,26 @@ void emitAction(IRRewriter &rewriter, func::FuncOp function,
                                                      source, target, event)
                                  .getOperation();
   markGenerated(created, rewriter);
+}
+
+void emitAction(IRRewriter &rewriter, func::FuncOp function,
+                const ConcreteAction &action) {
+  if (!action.guardLoop) {
+    emitPhysicalAction(rewriter, function, action);
+    return;
+  }
+
+  OpBuilder::InsertionGuard insertionGuard(rewriter);
+  const Location location = action.anchor->getLoc();
+  scf::ForOp guardLoop = action.guardLoop;
+  const Value condition = rewriter.create<arith::CmpIOp>(
+      location, arith::CmpIPredicate::slt, guardLoop.getLowerBound(),
+      guardLoop.getUpperBound());
+  scf::IfOp guard = rewriter.create<scf::IfOp>(location, TypeRange{}, condition,
+                                               /*withElseRegion=*/false);
+  markGenerated(guard, rewriter);
+  rewriter.setInsertionPointToStart(&guard.getThenRegion().front());
+  emitPhysicalAction(rewriter, function, action);
 }
 
 } // namespace

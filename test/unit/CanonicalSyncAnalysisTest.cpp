@@ -24,6 +24,8 @@
 
 #include <algorithm>
 #include <iostream>
+#include <iterator>
+#include <set>
 #include <string>
 #include <string_view>
 
@@ -1296,6 +1298,395 @@ bool testStableL1OwnershipProtocol() {
                "fail closed for a malformed ownership cycle");
 }
 
+bool testAlternatingL1OwnershipProtocol() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a2a3"} {
+      func.func @prefetch(%source: !pto.ptr<f16, gm>, %limit: index) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %c2 = arith.constant 2 : index
+        %c64 = arith.constant 64 : index
+        %c128 = arith.constant 128 : index
+        %addr0 = arith.constant 0 : i64
+        %addr32768 = arith.constant 32768 : i64
+        %addr65536 = arith.constant 65536 : i64
+        %addr98304 = arith.constant 98304 : i64
+        %view = pto.make_tensor_view %source, shape = [%c128, %c128],
+          strides = [%c128, %c1] {layout = #pto.layout<nd>} :
+          !pto.tensor_view<?x?xf16>
+        %part = pto.partition_view %view, offsets = [%c0, %c0],
+          sizes = [%c128, %c128] : !pto.tensor_view<?x?xf16>
+        %mat0 = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+        %mat1 = pto.alloc_tile addr = %addr32768 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+        %stable0 = pto.alloc_tile addr = %addr65536 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+        %stable1 = pto.alloc_tile addr = %addr98304 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+        %left = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+        pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+          outs(%mat0 : !pto.tile_buf<mat, 128x128xf16,
+                                  slayout=row_major>)
+        scf.for %i = %c0 to %limit step %c1 {
+          %phase = arith.remsi %i, %c2 : index
+          %even = arith.cmpi eq, %phase, %c0 : index
+          scf.if %even {
+            pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+              outs(%stable0 : !pto.tile_buf<mat, 128x128xf16,
+                                               slayout=row_major>)
+            pto.textract ins(%stable0, %c0, %c0 :
+              !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index,
+              index) outs(%left : !pto.tile_buf<left, 128x64xf16,
+                                             slayout=row_major>)
+            pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+              outs(%stable1 : !pto.tile_buf<mat, 128x128xf16,
+                                               slayout=row_major>)
+            pto.textract ins(%stable1, %c0, %c64 :
+              !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index,
+              index) outs(%left : !pto.tile_buf<left, 128x64xf16,
+                                             slayout=row_major>)
+            pto.textract ins(%mat0, %c0, %c0 :
+              !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index,
+              index) outs(%left : !pto.tile_buf<left, 128x64xf16,
+                                             slayout=row_major>)
+            %next = arith.addi %i, %c1 : index
+            %has_next = arith.cmpi slt, %next, %limit : index
+            scf.if %has_next {
+              pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+                outs(%mat1 : !pto.tile_buf<mat, 128x128xf16,
+                                            slayout=row_major>)
+            }
+          } else {
+            pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+              outs(%stable0 : !pto.tile_buf<mat, 128x128xf16,
+                                               slayout=row_major>)
+            pto.textract ins(%stable0, %c0, %c0 :
+              !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index,
+              index) outs(%left : !pto.tile_buf<left, 128x64xf16,
+                                             slayout=row_major>)
+            pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+              outs(%stable1 : !pto.tile_buf<mat, 128x128xf16,
+                                               slayout=row_major>)
+            pto.textract ins(%stable1, %c0, %c64 :
+              !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index,
+              index) outs(%left : !pto.tile_buf<left, 128x64xf16,
+                                             slayout=row_major>)
+            pto.textract ins(%mat1, %c0, %c64 :
+              !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index,
+              index) outs(%left : !pto.tile_buf<left, 128x64xf16,
+                                             slayout=row_major>)
+            %next = arith.addi %i, %c1 : index
+            %has_next = arith.cmpi slt, %next, %limit : index
+            scf.if %has_next {
+              pto.tload ins(%part : !pto.partition_tensor_view<128x128xf16>)
+                outs(%mat0 : !pto.tile_buf<mat, 128x128xf16,
+                                            slayout=row_major>)
+            }
+          }
+        }
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module), "parse alternating L1 fixture")) {
+    return false;
+  }
+  FailureOr<CanonicalSyncProgram> program =
+      buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>("prefetch"));
+  if (!check(succeeded(program), "build alternating L1 graph")) {
+    return false;
+  }
+  CanonicalSyncOwnershipResult result =
+      discoverCanonicalSyncOwnershipCycles(*program);
+  auto alternating = llvm::find_if(result.cycles, [](const auto &cycle) {
+    return cycle.protocol ==
+           CanonicalSyncOwnershipProtocolKind::AlternatingPrefetch;
+  });
+  const std::size_t stableCycles =
+      llvm::count_if(result.cycles, [](const auto &cycle) {
+        return cycle.kind == CanonicalSyncOwnershipKind::L1Tile &&
+               cycle.protocol == CanonicalSyncOwnershipProtocolKind::RoundTrip;
+      });
+  if (!check(result && !result.truncated && stableCycles == 1 &&
+                 alternating != result.cycles.end(),
+             "discover alternating-prefetch ownership")) {
+    return false;
+  }
+  const CanonicalSyncOwnershipCycle &cycle = *alternating;
+  std::optional<CanonicalSyncOwnershipProtocol> protocol =
+      makeCanonicalSyncOwnershipProtocol(*program, cycle, 0, 1);
+  std::optional<CanonicalSyncMechanismDescriptor> atomic =
+      makeCanonicalSyncAtomicOwnershipProtocol(*program, cycle, 0, 1);
+  if (!check(verifyCanonicalSyncOwnershipCycle(*program, cycle),
+             "independently verify alternating ownership") ||
+      !check(protocol && verifyCanonicalSyncOwnershipProtocol(*program, cycle,
+                                                              0, 1, *protocol),
+             "verify alternating ready/release lifecycle") ||
+      !check(atomic && verifyCanonicalSyncAtomicOwnershipProtocol(
+                           *program, cycle, 0, 1, *atomic),
+             "verify atomic alternating lifecycle")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions options;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem =
+      buildCanonicalSyncSingletonProblem(*program, options);
+  std::optional<CanonicalSyncMechanismId> alternatingMechanism;
+  if (succeeded(problem)) {
+    for (const CanonicalSyncMechanism &mechanism :
+         (*problem)->getMechanisms()) {
+      if (mechanism.descriptor.kind == CanonicalSyncMechanismKind::Protocol &&
+          mechanism.descriptor.actions.size() == atomic->actions.size()) {
+        alternatingMechanism = mechanism.id;
+      }
+    }
+  }
+  SyncCoverDemandSet managedDemands(program->getGraph().getDemands().size());
+  std::set<SyncCoverNodeId> managedNodes(cycle.initialProducers.begin(),
+                                         cycle.initialProducers.end());
+  for (const CanonicalSyncOwnershipPath &path : cycle.paths) {
+    for (const CanonicalSyncOwnershipUse &use : path.uses) {
+      managedNodes.insert(use.producers.begin(), use.producers.end());
+      managedNodes.insert(use.consumers.begin(), use.consumers.end());
+    }
+  }
+  const SyncCoverGraph &graph = program->getGraph();
+  for (auto [demandId, demand] : llvm::enumerate(graph.getDemands())) {
+    if (demand.storageWitnesses.empty() ||
+        managedNodes.count(demand.source) == 0 ||
+        managedNodes.count(demand.target) == 0) {
+      continue;
+    }
+    const bool exactManaged = llvm::all_of(
+        demand.storageWitnesses, [&](SyncCoverStorageWitnessId witnessId) {
+          if (witnessId >= graph.getStorageWitnesses().size()) {
+            return false;
+          }
+          const SyncCoverStorageWitness &witness =
+              graph.getStorageWitnesses()[witnessId];
+          if (witness.sourceAccess >= graph.getStorageAccesses().size() ||
+              witness.targetAccess >= graph.getStorageAccesses().size()) {
+            return false;
+          }
+          const SyncCoverStorageAccess &source =
+              graph.getStorageAccesses()[witness.sourceAccess];
+          const SyncCoverStorageAccess &target =
+              graph.getStorageAccesses()[witness.targetAccess];
+          return source.exactPhysical && target.exactPhysical &&
+                 llvm::any_of(
+                     cycle.lanes, [&](const CanonicalSyncOwnershipLane &lane) {
+                       return llvm::any_of(
+                           lane.slots,
+                           [&](const CanonicalSyncOwnershipSlot &slot) {
+                             return source.domain == slot.domain &&
+                                    target.domain == slot.domain &&
+                                    slot.extent.begin <=
+                                        witness.overlap.begin &&
+                                    witness.overlap.end <= slot.extent.end;
+                           });
+                     });
+        });
+    if (exactManaged) {
+      managedDemands.insert(demandId);
+    }
+  }
+  const CanonicalSyncPattern *alternatingPattern =
+      alternatingMechanism && succeeded(problem)
+          ? &(*problem)->getPatterns()[*alternatingMechanism]
+          : nullptr;
+  CanonicalSyncSelection selection;
+  if (succeeded(problem)) {
+    selection = selectCanonicalSyncPatterns(**problem);
+  }
+  if (!check(succeeded(problem), "build alternating pattern problem") ||
+      !check(alternatingMechanism.has_value(),
+             "admit alternating ownership mechanism") ||
+      !check(!managedDemands.empty() && alternatingPattern &&
+                 alternatingPattern->coverage.containsAll(managedDemands),
+             "cover every exact managed MAT demand with the lifecycle") ||
+      !check(selection && llvm::is_contained(selection.mechanisms,
+                                             *alternatingMechanism),
+             "select alternating ownership mechanism")) {
+    return false;
+  }
+  const std::size_t guarded =
+      llvm::count_if(atomic->actions, [](const CanonicalSyncAction &action) {
+        return action.guard == CanonicalSyncActionGuardKind::LoopNonEmpty;
+      });
+  CanonicalSyncMechanismDescriptor missingGuard = *atomic;
+  auto guardedAction = llvm::find_if(
+      missingGuard.actions, [](const CanonicalSyncAction &action) {
+        return action.guard == CanonicalSyncActionGuardKind::LoopNonEmpty;
+      });
+  guardedAction->guard = CanonicalSyncActionGuardKind::None;
+  guardedAction->guardScope.reset();
+  CanonicalSyncOwnershipCycle wrongTransition = cycle;
+  wrongTransition.paths[1].uses.front().producerLane =
+      wrongTransition.paths[1].uses.front().lane;
+  CanonicalSyncOwnershipCycle wrongInitial = cycle;
+  wrongInitial.initialReadyLane = wrongInitial.initiallyFreeLanes.front();
+  CanonicalSyncMechanismDescriptor wrongComposite = *atomic;
+  auto composite = llvm::find_if(
+      wrongComposite.supplies, [](const CanonicalSyncSupplyBinding &binding) {
+        return binding.proof ==
+               CanonicalSyncSupplyProof::VerifiedCompositeProtocol;
+      });
+  const bool hasComposite = composite != wrongComposite.supplies.end();
+  if (hasComposite) {
+    ++composite->edge.distance;
+  }
+  const bool rejectsMissingGuard = !verifyCanonicalSyncAtomicOwnershipProtocol(
+      *program, cycle, 0, 1, missingGuard);
+  const bool rejectsWrongTransition =
+      !verifyCanonicalSyncOwnershipCycle(*program, wrongTransition);
+  const bool rejectsWrongInitial =
+      !verifyCanonicalSyncOwnershipCycle(*program, wrongInitial);
+  const bool rejectsWrongComposite =
+      hasComposite && !verifyCanonicalSyncAtomicOwnershipProtocol(
+                          *program, cycle, 0, 1, wrongComposite);
+
+  const auto tokenTraceBalances = [&](unsigned trips) {
+    std::vector<int> ready(cycle.lanes.size());
+    std::vector<int> release(cycle.lanes.size());
+    if (trips == 0) {
+      return ready == std::vector<int>({0, 0}) &&
+             release == std::vector<int>({0, 0});
+    }
+    ++ready[cycle.initialReadyLane];
+    ++release[cycle.initiallyFreeLanes.front()];
+    for (unsigned iteration = 0; iteration < trips; ++iteration) {
+      const CanonicalSyncOwnershipUse &use =
+          cycle.paths[iteration % cycle.paths.size()].uses.front();
+      if (--ready[use.lane] < 0) {
+        return false;
+      }
+      ++release[use.lane];
+      if (iteration + 1 < trips) {
+        if (--release[use.producerLane] < 0) {
+          return false;
+        }
+        ++ready[use.producerLane];
+      }
+    }
+    for (int &token : release) {
+      if (--token != 0) {
+        return false;
+      }
+    }
+    return ready == std::vector<int>({0, 0});
+  };
+  const bool tokenTraces =
+      llvm::all_of(std::vector<unsigned>({0, 1, 2, 3, 8}), tokenTraceBalances);
+  module->getOperation()->removeAttr("pto.target_arch");
+  FailureOr<CanonicalSyncProgram> noPrefixProgram =
+      buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>("prefetch"));
+  CanonicalSyncOwnershipResult noPrefixCycles =
+      succeeded(noPrefixProgram)
+          ? discoverCanonicalSyncOwnershipCycles(*noPrefixProgram)
+          : CanonicalSyncOwnershipResult{};
+  auto noPrefixAlternating =
+      llvm::find_if(noPrefixCycles.cycles, [](const auto &candidate) {
+        return candidate.protocol ==
+               CanonicalSyncOwnershipProtocolKind::AlternatingPrefetch;
+      });
+  const bool noPrefixAccepted =
+      succeeded(noPrefixProgram) && noPrefixCycles &&
+      !noPrefixProgram->getTargetCapabilities()
+           .mte1ScopeExitSetCompletesPrefix &&
+      noPrefixAlternating != noPrefixCycles.cycles.end() &&
+      makeCanonicalSyncAtomicOwnershipProtocol(*noPrefixProgram,
+                                               *noPrefixAlternating, 0, 1)
+          .has_value();
+
+  auto stable = llvm::find_if(result.cycles, [](const auto &candidate) {
+    return candidate.kind == CanonicalSyncOwnershipKind::L1Tile &&
+           candidate.protocol == CanonicalSyncOwnershipProtocolKind::RoundTrip;
+  });
+  Operation *intervening =
+      stable != result.cycles.end()
+          ? program->getNodeBindings()[stable->paths[0].uses[0].producers[0]]
+                .operation->clone()
+          : nullptr;
+  auto loop = dyn_cast_or_null<scf::ForOp>(
+      program->getScopeBindings()[cycle.recurrenceScope].owner);
+  bool rejectsInterveningProducer = false;
+  if (intervening && loop) {
+    loop->getBlock()->getOperations().insert(loop->getIterator(), intervening);
+    FailureOr<CanonicalSyncProgram> interveningProgram =
+        buildCanonicalSyncProgram(
+            module->lookupSymbol<func::FuncOp>("prefetch"));
+    if (succeeded(interveningProgram)) {
+      CanonicalSyncOwnershipResult interveningCycles =
+          discoverCanonicalSyncOwnershipCycles(*interveningProgram);
+      rejectsInterveningProducer =
+          llvm::none_of(interveningCycles.cycles, [](const auto &candidate) {
+            return candidate.protocol ==
+                   CanonicalSyncOwnershipProtocolKind::AlternatingPrefetch;
+          });
+    }
+    intervening->erase();
+  }
+
+  Operation *consumer =
+      program->getNodeBindings()[cycle.paths[0].uses[0].consumers[0]].operation;
+  Operation *duplicateConsumer = consumer->clone();
+  consumer->getBlock()->getOperations().insert(
+      std::next(consumer->getIterator()), duplicateConsumer);
+  FailureOr<CanonicalSyncProgram> duplicateConsumerProgram =
+      buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>("prefetch"));
+  bool rejectsMultipleConsumers = false;
+  if (succeeded(duplicateConsumerProgram)) {
+    CanonicalSyncOwnershipResult duplicateConsumerCycles =
+        discoverCanonicalSyncOwnershipCycles(*duplicateConsumerProgram);
+    rejectsMultipleConsumers = llvm::none_of(
+        duplicateConsumerCycles.cycles, [](const auto &candidate) {
+          return candidate.protocol ==
+                 CanonicalSyncOwnershipProtocolKind::AlternatingPrefetch;
+        });
+  }
+  duplicateConsumer->erase();
+
+  Operation *continuationProducer =
+      program->getNodeBindings()[cycle.paths[0].uses[0].producers[0]].operation;
+  Operation *continuationGuard = continuationProducer->getParentOp();
+  continuationProducer->moveBefore(continuationGuard);
+  FailureOr<CanonicalSyncProgram> unguardedProgram =
+      buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>("prefetch"));
+  bool rejectsUnguardedContinuation = false;
+  if (succeeded(unguardedProgram)) {
+    CanonicalSyncOwnershipResult unguardedCycles =
+        discoverCanonicalSyncOwnershipCycles(*unguardedProgram);
+    rejectsUnguardedContinuation =
+        llvm::none_of(unguardedCycles.cycles, [](const auto &candidate) {
+          return candidate.protocol ==
+                 CanonicalSyncOwnershipProtocolKind::AlternatingPrefetch;
+        });
+  }
+
+  return check(guarded == 4,
+               "guard every zero-trip-sensitive prime and drain") &&
+         check(rejectsMissingGuard, "reject an unguarded alternating prime") &&
+         check(rejectsWrongTransition,
+               "reject a non-alternating lane transition") &&
+         check(rejectsWrongInitial, "reject a mismatched initial owner") &&
+         check(rejectsWrongComposite,
+               "reject a wrong-distance composite WAW supply") &&
+         check(tokenTraces,
+               "balance alternating tokens for zero and positive trips") &&
+         check(noPrefixAccepted,
+               "admit direct releases without scope-prefix capability") &&
+         check(rejectsInterveningProducer,
+               "reject an intervening producer-pipe operation") &&
+         check(rejectsMultipleConsumers,
+               "reject multiple consumers without prefix completion") &&
+         check(rejectsUnguardedContinuation,
+               "reject an unguarded continuation producer");
+}
+
 } // namespace
 
 int main() {
@@ -1309,6 +1700,6 @@ int main() {
       testAnalysisLimitFailsClosed() && testFailClosedInputs() &&
       testRejectsAllExplicitSyncForms() && testStructuralLimitsFailClosed() &&
       testPeriodicBranchEvidence() && testL0OwnershipProtocolTrustBoundary() &&
-      testStableL1OwnershipProtocol();
+      testStableL1OwnershipProtocol() && testAlternatingL1OwnershipProtocol();
   return passed ? 0 : 1;
 }
