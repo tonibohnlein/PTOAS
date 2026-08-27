@@ -108,6 +108,18 @@ resolvePhysicalAnchor(const CanonicalSyncProgram &program,
     return std::make_pair(operation,
                           anchor.kind == SyncCoverAnchorKind::BeforeNode);
   }
+  case SyncCoverAnchorKind::ControlEntry:
+  case SyncCoverAnchorKind::ControlExit: {
+    if (anchor.node >= program.getControlBindings().size()) {
+      return std::nullopt;
+    }
+    Operation *owner = program.getControlBindings()[anchor.node].owner;
+    if (!owner || !isa<scf::IfOp>(owner)) {
+      return std::nullopt;
+    }
+    return std::make_pair(owner,
+                          anchor.kind == SyncCoverAnchorKind::ControlEntry);
+  }
   case SyncCoverAnchorKind::ScopeEntry:
   case SyncCoverAnchorKind::ScopeExit: {
     if (anchor.scope >= program.getScopeBindings().size()) {

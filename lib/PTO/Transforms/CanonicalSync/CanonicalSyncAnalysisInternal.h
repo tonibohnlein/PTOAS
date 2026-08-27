@@ -142,6 +142,7 @@ private:
   std::vector<CompoundInstanceElement *> compounds_;
   std::vector<CanonicalSyncNodeBinding> nodeBindings_;
   std::vector<CanonicalSyncScopeBinding> scopeBindings_;
+  std::vector<CanonicalSyncControlBinding> controlBindings_;
   llvm::DenseMap<Region *, RegionContext> contexts_;
   llvm::DenseMap<Operation *, SmallVector<SyncCoverNodeId, 2>> operationNodes_;
   std::vector<std::pair<Operation *, SyncCoverScopeId>> loopScopes_;

@@ -97,6 +97,7 @@ LogicalResult ProgramBuilder::addRegion(Region &region,
         return conditional.emitError(
             "cannot construct canonical sync branch control");
       }
+      controlBindings_.push_back({conditional.getOperation()});
       if (failed(addPeriodicControlEvidence(conditional, *control.index,
                                             context.scope))) {
         return failure();

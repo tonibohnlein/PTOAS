@@ -127,8 +127,9 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
   for (const auto &[space, domain] : storageDomains_) {
     storageSpaces[domain] = space;
   }
-  // The A3 MTE1 scope-release contract is silicon-validated. A5 remains
-  // disabled until equivalent target evidence exists.
+  // These narrow A3 completion contracts are silicon-validated by the
+  // ownership-pipelined GEMM. A5 remains disabled until equivalent target
+  // evidence exists.
   ModuleOp module = function_->getParentOfType<ModuleOp>();
   StringAttr targetArch =
       module ? module->getAttrOfType<StringAttr>(kPTOTargetArchAttrName)
@@ -136,11 +137,14 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
   const bool explicitA3 = targetArch && (targetArch.getValue() == "a2a3" ||
                                          targetArch.getValue() == "a3");
   const CanonicalSyncTargetCapabilities targetCapabilities{
+      /*mte1L0ReadySetCompletesPrefix=*/explicitA3,
+      /*mL0AlternativeJoinSetCompletes=*/explicitA3,
       /*mte1ScopeExitSetCompletesPrefix=*/explicitA3,
       /*mToFixAccumulatorBoundaryCompletes=*/explicitA3};
   return CanonicalSyncProgram(
       function_, std::move(graph_), std::move(nodeBindings_),
-      std::move(scopeBindings_), std::move(storageSpaces), targetCapabilities,
+      std::move(scopeBindings_), std::move(controlBindings_),
+      std::move(storageSpaces), targetCapabilities,
       std::move(eventReservations_));
 }
 

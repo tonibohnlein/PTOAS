@@ -11,23 +11,21 @@
 // RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
 // RUN:   | tee %t.events \
 // RUN:   | FileCheck %s --check-prefix=EVENTS
-// RUN: grep 'pto.set_flag' %t.events | count 8
-// RUN: grep 'pto.wait_flag' %t.events | count 8
+// RUN: grep 'pto.set_flag' %t.events | count 6
+// RUN: grep 'pto.wait_flag' %t.events | count 6
 // RUN: not grep 'pto.barrier <PIPE_ALL> {pto.canonical_sync}' %t.events
 // RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=2' \
 // RUN:   | tee %t.budget2 \
-// RUN:   | FileCheck %s --check-prefix=PARTIAL
-// RUN: grep 'pto.set_flag' %t.budget2 | count 4
-// RUN: grep 'pto.wait_flag' %t.budget2 | count 4
-// RUN: grep 'pto.barrier <PIPE_ALL> {pto.canonical_sync}' %t.budget2 \
-// RUN:   | count 4
+// RUN:   | FileCheck %s --check-prefix=EVENTS
+// RUN: grep 'pto.set_flag' %t.budget2 | count 6
+// RUN: grep 'pto.wait_flag' %t.budget2 | count 6
+// RUN: not grep 'pto.barrier <PIPE_ALL> {pto.canonical_sync}' %t.budget2
 // RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=3' \
 // RUN:   | tee %t.budget3 \
-// RUN:   | FileCheck %s --check-prefix=PARTIAL
-// RUN: grep 'pto.set_flag' %t.budget3 | count 4
-// RUN: grep 'pto.wait_flag' %t.budget3 | count 4
-// RUN: grep 'pto.barrier <PIPE_ALL> {pto.canonical_sync}' %t.budget3 \
-// RUN:   | count 4
+// RUN:   | FileCheck %s --check-prefix=EVENTS
+// RUN: grep 'pto.set_flag' %t.budget3 | count 6
+// RUN: grep 'pto.wait_flag' %t.budget3 | count 6
+// RUN: not grep 'pto.barrier <PIPE_ALL> {pto.canonical_sync}' %t.budget3
 // RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=1' \
 // RUN:   | FileCheck %s --check-prefix=SCARCE
 
@@ -63,13 +61,22 @@ module attributes {pto.target_arch = "a2a3"} {
       pto.textract ins(%right_source, %c0, %c0 :
         !pto.tile_buf<mat, 128x256xf16, slayout=col_major>, index, index)
         outs(%right0 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
-      pto.tmatmul.acc ins(%acc, %left0, %right0 :
-        !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
-                      slayout=row_major, fractal=1024>,
-        !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
-        !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
-        outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
-                                  slayout=row_major, fractal=1024>)
+      %first = arith.cmpi eq, %i, %c0 : index
+      scf.if %first {
+        pto.tmatmul ins(%left0, %right0 :
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          outs(%acc : !pto.tile_buf<acc, 128x256xf32,
+            blayout=col_major, slayout=row_major, fractal=1024>)
+      } else {
+        pto.tmatmul.acc ins(%acc, %left0, %right0 :
+          !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                        slayout=row_major, fractal=1024>,
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          outs(%acc : !pto.tile_buf<acc, 128x256xf32,
+            blayout=col_major, slayout=row_major, fractal=1024>)
+      }
       pto.textract ins(%left_source, %c0, %c64 :
         !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
         outs(%left1 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
@@ -94,29 +101,26 @@ module attributes {pto.target_arch = "a2a3"} {
 // EVENTS: scf.for
 // EVENTS: pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
 // EVENTS: pto.textract
-// EVENTS-NEXT: pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
 // EVENTS: pto.textract
-// EVENTS-NEXT: pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID2>]
+// EVENTS-NEXT: pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+// EVENTS: arith.cmpi
 // EVENTS-NEXT: pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
-// EVENTS-NEXT: pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID2>]
+// EVENTS-NEXT: scf.if
+// EVENTS-NEXT: pto.tmatmul
+// EVENTS: } else {
 // EVENTS-NEXT: pto.tmatmul.acc
+// EVENTS-NEXT: }
 // EVENTS-NEXT: pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
 // EVENTS: pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
-// EVENTS: pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
-// EVENTS: pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID3>]
-// EVENTS: pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
-// EVENTS-NEXT: pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID3>]
+// EVENTS: pto.textract
+// EVENTS: pto.textract
+// EVENTS-NEXT: pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
+// EVENTS-NEXT: pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
 // EVENTS-NEXT: pto.tmatmul.acc
 // EVENTS-NEXT: pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
 // EVENTS: pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
 // EVENTS-NEXT: pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
 // EVENTS-NEXT: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier,
-
-// PARTIAL-LABEL: func.func @two_slot_l0_ownership
-// PARTIAL-NOT: pto.set_flag[<PIPE_M>, <PIPE_MTE1>
-// PARTIAL: pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
-// PARTIAL: pto.barrier <PIPE_ALL> {pto.canonical_sync}
-// PARTIAL: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier,
 
 // SCARCE-LABEL: func.func @two_slot_l0_ownership
 // SCARCE-NOT: pto.set_flag

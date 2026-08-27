@@ -46,6 +46,11 @@ struct SyncCoverTimelineInterval {
 enum class SyncCoverAnchorKind : std::uint8_t {
   BeforeNode,
   AfterNode,
+  /// Immediately before one structured control selects an alternative, or
+  /// after all alternatives rejoin. The anchor's node field stores the
+  /// SyncCoverControlId and scope stores the control's owning scope.
+  ControlEntry,
+  ControlExit,
   ScopeEntry,
   ScopeExit,
   TimelinePoint,

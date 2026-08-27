@@ -1292,6 +1292,13 @@ bool testL0OwnershipProtocolTrustBoundary() {
              "independently verify L0 ownership protocol")) {
     return false;
   }
+  if (!check(
+          program->getTargetCapabilities().mte1L0ReadySetCompletesPrefix &&
+              program->getTargetCapabilities().mL0AlternativeJoinSetCompletes &&
+              protocol->ready.eventUses.size() == 1,
+          "use target-qualified L0 ready prefix and alternative join")) {
+    return false;
+  }
 
   const std::optional<CanonicalSyncMechanismDescriptor> expectedAtomic =
       makeCanonicalSyncAtomicOwnershipProtocol(*program, cycle, 0, 1);
@@ -1478,15 +1485,32 @@ bool testL0OwnershipProtocolTrustBoundary() {
   }
   const CanonicalSyncSelection selection =
       selectCanonicalSyncPatterns(**problem);
+  bool selectedReadyProtocol = false;
+  bool selectedReleaseProtocol = false;
+  bool selectedBarrier = false;
+  if (selection) {
+    for (CanonicalSyncMechanismId mechanism : selection.mechanisms) {
+      const CanonicalSyncMechanismDescriptor &descriptor =
+          (*problem)->getMechanisms()[mechanism].descriptor;
+      selectedBarrier = selectedBarrier ||
+                        descriptor.kind == CanonicalSyncMechanismKind::Barrier;
+      if (descriptor.kind != CanonicalSyncMechanismKind::Protocol) {
+        continue;
+      }
+      for (const CanonicalSyncEventUse &use : descriptor.eventUses) {
+        const CanonicalSyncEventDomain &domain =
+            (*problem)->getDomains()[use.domain];
+        selectedReadyProtocol =
+            selectedReadyProtocol ||
+            (domain.sourceResource == mte1 && domain.targetResource == cube);
+        selectedReleaseProtocol =
+            selectedReleaseProtocol ||
+            (domain.sourceResource == cube && domain.targetResource == mte1);
+      }
+    }
+  }
   const bool selectedOwnership =
-      selection &&
-      llvm::any_of(
-          selection.mechanisms, [&](CanonicalSyncMechanismId mechanism) {
-            return (*problem)->getMechanisms()[mechanism].descriptor.kind ==
-                       CanonicalSyncMechanismKind::Protocol &&
-                   (*problem)->getPatterns()[mechanism].coverage.containsAll(
-                       qualified);
-          });
+      selectedReadyProtocol && selectedReleaseProtocol && !selectedBarrier;
   if (!check(static_cast<bool>(selection),
              "select ownership pattern problem") ||
       !check(selectedOwnership,
@@ -1529,6 +1553,39 @@ bool testL0OwnershipProtocolTrustBoundary() {
   CanonicalSyncOwnershipCycle wrongRole = cycle;
   wrongRole.paths.front().uses.front().producers.front() =
       wrongRole.paths.front().uses.front().consumers.front();
+  CanonicalSyncOwnershipProtocol wrongPrefixAnchor = *protocol;
+  wrongPrefixAnchor.ready.actions.front().anchor.node =
+      cycle.paths.front().uses.front().producers.front();
+  module->getOperation()->removeAttr("pto.target_arch");
+  FailureOr<CanonicalSyncProgram> conservativeProgram =
+      buildCanonicalSyncProgram(
+          module->lookupSymbol<func::FuncOp>("ownership"));
+  CanonicalSyncOwnershipResult conservativeCycles =
+      succeeded(conservativeProgram)
+          ? discoverCanonicalSyncOwnershipCycles(*conservativeProgram)
+          : CanonicalSyncOwnershipResult{};
+  const std::optional<CanonicalSyncOwnershipProtocol> conservativeProtocol =
+      conservativeCycles.cycles.size() == 1
+          ? makeCanonicalSyncOwnershipProtocol(
+                *conservativeProgram, conservativeCycles.cycles.front(), 0, 1)
+          : std::nullopt;
+  const bool conservativeReady = succeeded(conservativeProgram) &&
+                                 conservativeCycles &&
+                                 !conservativeProgram->getTargetCapabilities()
+                                      .mte1L0ReadySetCompletesPrefix &&
+                                 !conservativeProgram->getTargetCapabilities()
+                                      .mL0AlternativeJoinSetCompletes &&
+                                 conservativeProtocol &&
+                                 conservativeProtocol->ready.eventUses.size() ==
+                                     conservativeCycles.cycles.front()
+                                         .paths.front()
+                                         .uses.front()
+                                         .producers.size();
+  const bool rejectsPrefixWithoutEvidence =
+      conservativeReady &&
+      !verifyCanonicalSyncOwnershipProtocol(*conservativeProgram,
+                                            conservativeCycles.cycles.front(),
+                                            0, 1, *protocol);
   return check(!verifyCanonicalSyncOwnershipProtocol(*program, cycle, 0, 1,
                                                      missingAction),
                "reject ownership protocol with a missing action") &&
@@ -1544,7 +1601,14 @@ bool testL0OwnershipProtocolTrustBoundary() {
          check(!verifyCanonicalSyncOwnershipCycle(*program, wrongProducerLane),
                "reject ownership cycle with a mismatched producer lane") &&
          check(!verifyCanonicalSyncOwnershipCycle(*program, wrongRole),
-               "reject ownership cycle with a reversed access role");
+               "reject ownership cycle with a reversed access role") &&
+         check(!verifyCanonicalSyncOwnershipProtocol(*program, cycle, 0, 1,
+                                                     wrongPrefixAnchor),
+               "reject a prefix-ready protocol with an early set") &&
+         check(conservativeReady,
+               "retain per-producer L0 readiness without target evidence") &&
+         check(rejectsPrefixWithoutEvidence,
+               "reject prefix-ready coverage without target evidence");
 }
 
 bool testStableL1OwnershipProtocol() {

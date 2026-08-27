@@ -337,6 +337,45 @@ mlir::pto::resolveSyncCoverAnchor(const SyncCoverGraph &graph,
     }
     return position;
   }
+  case SyncCoverAnchorKind::ControlEntry:
+  case SyncCoverAnchorKind::ControlExit: {
+    if (anchor.node >= graph.getControls().size()) {
+      return std::nullopt;
+    }
+    const SyncCoverControl &control = graph.getControls()[anchor.node];
+    if (anchor.scope != control.scope) {
+      return std::nullopt;
+    }
+    std::optional<SyncCoverTimelinePosition> entry;
+    std::optional<SyncCoverTimelinePosition> exit;
+    std::vector<bool> alternatives(control.alternatives, false);
+    for (const SyncCoverNode &node : nodes) {
+      const auto literal =
+          std::find_if(node.guard.literals.begin(), node.guard.literals.end(),
+                       [&](const SyncCoverGuardLiteral &candidate) {
+                         return candidate.control == control.id;
+                       });
+      const bool invalidLiteral = literal == node.guard.literals.end() ||
+                                  literal->alternative >= alternatives.size();
+      if (invalidLiteral) {
+        continue;
+      }
+      const std::optional<SyncCoverTimelineInterval> interval =
+          getNodeAnchorInterval(node.order);
+      if (!interval) {
+        return std::nullopt;
+      }
+      alternatives[literal->alternative] = true;
+      entry = entry ? std::min(*entry, interval->begin) : interval->begin;
+      exit = exit ? std::max(*exit, interval->end) : interval->end;
+    }
+    const bool complete =
+        std::all_of(alternatives.begin(), alternatives.end(),
+                    [](bool represented) { return represented; });
+    return complete ? (anchor.kind == SyncCoverAnchorKind::ControlEntry ? entry
+                                                                        : exit)
+                    : std::nullopt;
+  }
   case SyncCoverAnchorKind::ScopeEntry:
   case SyncCoverAnchorKind::ScopeExit: {
     if (anchor.scope >= scopes.size()) {

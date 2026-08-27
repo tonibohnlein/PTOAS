@@ -56,10 +56,26 @@ struct CanonicalSyncScopeBinding {
   Region *region = nullptr;
 };
 
+struct CanonicalSyncControlBinding {
+  Operation *owner = nullptr;
+};
+
 using CanonicalSyncEventReservations =
     std::map<std::pair<std::uint32_t, std::uint32_t>, std::vector<unsigned>>;
 
 struct CanonicalSyncTargetCapabilities {
+  /// An A3 PIPE_MTE1 set issued after the final producer of an exact L0
+  /// ownership use certifies completion of every earlier MTE1 producer in
+  /// that use. The verified recipe may therefore use one ready event lane
+  /// instead of one lane per producer.
+  bool mte1L0ReadySetCompletesPrefix = false;
+
+  /// An A3 PIPE_M set at an exhaustive branch join releases the exact L0
+  /// operand slots consumed by whichever branch alternative executed. This
+  /// is a narrow ownership-lifecycle contract, not generic PIPE_M completion
+  /// ordering.
+  bool mL0AlternativeJoinSetCompletes = false;
+
   /// A PIPE_MTE1 set issued after a structured scope certifies completion of
   /// every earlier MTE1 operation issued by that scope. This is target
   /// evidence, not a consequence of ordinary MTE1 issue order.
@@ -87,12 +103,14 @@ public:
   CanonicalSyncProgram(func::FuncOp function, SyncCoverGraph graph,
                        std::vector<CanonicalSyncNodeBinding> nodeBindings,
                        std::vector<CanonicalSyncScopeBinding> scopeBindings,
+                       std::vector<CanonicalSyncControlBinding> controlBindings,
                        std::vector<AddressSpace> storageSpaces,
                        CanonicalSyncTargetCapabilities targetCapabilities,
                        CanonicalSyncEventReservations eventReservations)
       : function_(function), graph_(std::move(graph)),
         nodeBindings_(std::move(nodeBindings)),
         scopeBindings_(std::move(scopeBindings)),
+        controlBindings_(std::move(controlBindings)),
         storageSpaces_(std::move(storageSpaces)),
         targetCapabilities_(targetCapabilities),
         eventReservations_(std::move(eventReservations)) {}
@@ -105,6 +123,9 @@ public:
   }
   const std::vector<CanonicalSyncScopeBinding> &getScopeBindings() const {
     return scopeBindings_;
+  }
+  const std::vector<CanonicalSyncControlBinding> &getControlBindings() const {
+    return controlBindings_;
   }
   const std::vector<AddressSpace> &getStorageSpaces() const {
     return storageSpaces_;
@@ -121,6 +142,7 @@ private:
   SyncCoverGraph graph_;
   std::vector<CanonicalSyncNodeBinding> nodeBindings_;
   std::vector<CanonicalSyncScopeBinding> scopeBindings_;
+  std::vector<CanonicalSyncControlBinding> controlBindings_;
   std::vector<AddressSpace> storageSpaces_;
   CanonicalSyncTargetCapabilities targetCapabilities_;
   CanonicalSyncEventReservations eventReservations_;

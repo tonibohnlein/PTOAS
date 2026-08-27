@@ -722,6 +722,38 @@ bool testCompletionDominanceContract() {
   return passed && check(graph.validate(), "validate completion dominance");
 }
 
+bool testControlBoundaryAnchors() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverControlId control =
+      takeIndex(graph.addControl(2), passed, "add branch control");
+  const SyncCoverScopeId thenScope =
+      takeIndex(graph.addScope(0, true, std::nullopt, false, {{{control, 0}}}),
+                passed, "add then scope");
+  const SyncCoverScopeId elseScope =
+      takeIndex(graph.addScope(0, true, std::nullopt, false, {{{control, 1}}}),
+                passed, "add else scope");
+  takeIndex(graph.addNode(1, 1, thenScope, 0, {{{control, 0}}}), passed,
+            "add then node");
+  takeIndex(graph.addNode(1, 1, elseScope, 1, {{{control, 1}}}), passed,
+            "add else node");
+  const SyncCoverAnchor entry{SyncCoverAnchorKind::ControlEntry, control, 0, 0};
+  const SyncCoverAnchor join{SyncCoverAnchorKind::ControlExit, control, 0, 0};
+  const std::optional<SyncCoverTimelinePosition> entryPosition =
+      resolveSyncCoverAnchor(graph, entry);
+  const std::optional<SyncCoverTimelinePosition> exitPosition =
+      resolveSyncCoverAnchor(graph, join);
+  passed &= check(entryPosition && *entryPosition == 0,
+                  "place control entry before every alternative");
+  passed &= check(exitPosition && *exitPosition == 3,
+                  "place control exit after every alternative");
+  SyncCoverAnchor wrongScope = join;
+  wrongScope.scope = thenScope;
+  passed &= check(!resolveSyncCoverAnchor(graph, wrongScope),
+                  "reject a control exit in the wrong owning scope");
+  return passed && check(graph.validate(), "validate control-exit graph");
+}
+
 } // namespace
 
 int main() {
@@ -738,5 +770,6 @@ int main() {
   passed &= testTimelineBoundariesAndOverflow();
   passed &= testPeriodicControlEvidence();
   passed &= testCompletionDominanceContract();
+  passed &= testControlBoundaryAnchors();
   return passed ? 0 : 1;
 }

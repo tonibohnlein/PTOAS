@@ -19,8 +19,10 @@
 // RUN:   '-pto-canonical-sync=event-id-num-max=8 assume-all-gm-accesses-noalias=true' \
 // RUN:   | tee %t \
 // RUN:   | FileCheck %s --check-prefix=IR
-// RUN: grep 'pto.set_flag' %t | count 72
-// RUN: grep 'pto.wait_flag' %t | count 74
+// The generated plan executes 53 pairs for non-empty K, matching the manual
+// pipeline. One guarded pair preserves the zero-trip ownership protocol.
+// RUN: grep 'pto.set_flag' %t | count 54
+// RUN: grep 'pto.wait_flag' %t | count 54
 // RUN: grep 'pto.barrier' %t | count 1
 // RUN: not grep -E 'EVENT_ID([89]|[1-9][0-9]+)' %t
 

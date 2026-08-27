@@ -187,6 +187,16 @@ getActionScope(const SyncCoverGraph &graph, const CanonicalSyncAction &action) {
       return graph.getNodes()[action.anchor.node].scope;
     }
     return std::nullopt;
+  case SyncCoverAnchorKind::ControlEntry:
+  case SyncCoverAnchorKind::ControlExit: {
+    const bool validControl =
+        action.anchor.node < graph.getControls().size() &&
+        action.anchor.scope == graph.getControls()[action.anchor.node].scope;
+    if (validControl) {
+      return action.anchor.scope;
+    }
+    return std::nullopt;
+  }
   case SyncCoverAnchorKind::ScopeEntry:
   case SyncCoverAnchorKind::ScopeExit:
   case SyncCoverAnchorKind::TimelinePoint:

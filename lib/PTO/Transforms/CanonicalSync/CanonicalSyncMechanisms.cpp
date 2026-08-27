@@ -398,9 +398,12 @@ LogicalResult addOwnershipCycles(
     const std::size_t producerCount =
         cycle.paths.front().uses.front().producers.size();
     const std::size_t readyIds = availableEventIds(readyResource);
+    const bool hasPrefixReady =
+        cycle.kind == CanonicalSyncOwnershipKind::L0Operand &&
+        program.getTargetCapabilities().mte1L0ReadySetCompletesPrefix;
     const bool readyOverflow =
         cycle.kind == CanonicalSyncOwnershipKind::L0Operand &&
-        cycle.lanes.size() != 0 &&
+        !hasPrefixReady && cycle.lanes.size() != 0 &&
         producerCount > readyIds / cycle.lanes.size();
     if (readyOverflow || cycle.lanes.size() > readyIds ||
         cycle.lanes.size() > availableEventIds(releaseResource)) {
@@ -495,6 +498,17 @@ LogicalResult addOwnershipCycles(
     if (invalidReady || invalidRelease) {
       return program.getFunction().emitError(
           "cannot admit canonical sync split L0 ownership protocol");
+    }
+    const bool completeSplit = ready && ready.index && release && release.index;
+    if (completeSplit && patternOptions.enableRoundTrip) {
+      const CanonicalSyncProblemResult splitRoundTrip =
+          addCanonicalSyncFeasiblePattern(problem,
+                                          {CanonicalSyncPatternKind::RoundTrip,
+                                           {*ready.index, *release.index}});
+      if (!splitRoundTrip) {
+        return program.getFunction().emitError(
+            "cannot add canonical sync split L0 round-trip pattern");
+      }
     }
     std::optional<CanonicalSyncMechanismDescriptor> atomicDescriptor =
         makeCanonicalSyncAtomicOwnershipProtocol(

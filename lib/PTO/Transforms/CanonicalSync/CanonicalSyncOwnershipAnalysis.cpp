@@ -181,6 +181,16 @@ std::optional<SyncCoverScopeId> findScope(const CanonicalSyncProgram &program,
   return std::nullopt;
 }
 
+std::optional<SyncCoverControlId>
+findControl(const CanonicalSyncProgram &program, Operation *owner) {
+  for (auto [index, binding] : llvm::enumerate(program.getControlBindings())) {
+    if (binding.owner == owner) {
+      return index;
+    }
+  }
+  return std::nullopt;
+}
+
 Operation *getCommonTopLevel(ArrayRef<OwnershipNode *> nodes) {
   if (nodes.empty()) {
     return nullptr;
@@ -428,9 +438,22 @@ std::optional<CanonicalSyncOwnershipPath> parseOwnershipPath(
                     [](OwnershipNode *node) { return node->id; });
     use.writeAcquire = {SyncCoverAnchorKind::BeforeNode, producers.front()->id};
     use.ready = {SyncCoverAnchorKind::AfterNode, producers.back()->id};
-    use.readAcquire = {SyncCoverAnchorKind::BeforeNode,
-                       item.consumers.front()->id};
-    use.release = {SyncCoverAnchorKind::AfterNode, item.consumers.back()->id};
+    const bool hasSingleConsumer = item.consumers.size() == 1;
+    if (hasSingleConsumer) {
+      use.readAcquire = {SyncCoverAnchorKind::BeforeNode,
+                         item.consumers.front()->id};
+      use.release = {SyncCoverAnchorKind::AfterNode, item.consumers.back()->id};
+    } else {
+      const std::optional<SyncCoverControlId> control =
+          findControl(program, item.consumerAnchor);
+      if (!control ||
+          program.getGraph().getControls()[*control].scope != *pathScope) {
+        return std::nullopt;
+      }
+      use.readAcquire = {SyncCoverAnchorKind::ControlEntry, *control,
+                         *pathScope, 0};
+      use.release = {SyncCoverAnchorKind::ControlExit, *control, *pathScope, 0};
+    }
     result.uses.push_back(std::move(use));
     producers.clear();
   }
@@ -1433,11 +1456,39 @@ bool verifyUse(const CanonicalSyncProgram &program,
                                       *lastProducer, 0, 0};
   const SyncCoverAnchor expectedReadAcquire{SyncCoverAnchorKind::BeforeNode,
                                             *firstConsumer, 0, 0};
-  const SyncCoverAnchor expectedRelease{SyncCoverAnchorKind::AfterNode,
-                                        *lastConsumer, 0, 0};
+  SyncCoverAnchor expectedRelease{SyncCoverAnchorKind::AfterNode, *lastConsumer,
+                                  0, 0};
+  const bool hasAlternativeConsumers = use.consumers.size() > 1;
+  if (hasAlternativeConsumers) {
+    Operation *commonControl = nullptr;
+    for (SyncCoverNodeId consumer : use.consumers) {
+      Operation *operation = program.getNodeBindings()[consumer].operation;
+      Operation *topLevel = getPathAnchor(
+          operation, program.getScopeBindings()[path.scope].region);
+      const bool invalidControl = !isa_and_nonnull<scf::IfOp>(topLevel) ||
+                                  (commonControl && commonControl != topLevel);
+      if (invalidControl) {
+        return false;
+      }
+      commonControl = topLevel;
+    }
+    const std::optional<SyncCoverControlId> control =
+        findControl(program, commonControl);
+    if (!control ||
+        program.getGraph().getControls()[*control].scope != path.scope) {
+      return false;
+    }
+    expectedRelease = {SyncCoverAnchorKind::ControlExit, *control, path.scope,
+                       0};
+    if (!anchorsEqual(use.readAcquire, {SyncCoverAnchorKind::ControlEntry,
+                                        *control, path.scope, 0})) {
+      return false;
+    }
+  }
   if (!anchorsEqual(use.writeAcquire, expectedAcquire) ||
       !anchorsEqual(use.ready, expectedReady) ||
-      !anchorsEqual(use.readAcquire, expectedReadAcquire) ||
+      (!hasAlternativeConsumers &&
+       !anchorsEqual(use.readAcquire, expectedReadAcquire)) ||
       !anchorsEqual(use.release, expectedRelease)) {
     return false;
   }
