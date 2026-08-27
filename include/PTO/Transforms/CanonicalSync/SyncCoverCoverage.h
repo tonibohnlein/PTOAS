@@ -53,6 +53,7 @@ private:
 struct SyncCoverCompletionSupply {
   SyncCoverMechanismId mechanism = 0;
   SyncCoverEdge edge;
+  std::vector<SyncCoverDemandId> allowedDemands;
 };
 
 enum class SyncCoverCoverageError : std::uint8_t {

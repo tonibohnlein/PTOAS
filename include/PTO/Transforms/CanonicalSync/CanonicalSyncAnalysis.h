@@ -15,6 +15,7 @@
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverGraph.h"
 
+#include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Support/LogicalResult.h"
 
@@ -70,10 +71,12 @@ public:
   CanonicalSyncProgram(func::FuncOp function, SyncCoverGraph graph,
                        std::vector<CanonicalSyncNodeBinding> nodeBindings,
                        std::vector<CanonicalSyncScopeBinding> scopeBindings,
+                       std::vector<AddressSpace> storageSpaces,
                        CanonicalSyncEventReservations eventReservations)
       : function_(function), graph_(std::move(graph)),
         nodeBindings_(std::move(nodeBindings)),
         scopeBindings_(std::move(scopeBindings)),
+        storageSpaces_(std::move(storageSpaces)),
         eventReservations_(std::move(eventReservations)) {}
 
   SyncCoverGraph &getGraph() { return graph_; }
@@ -85,6 +88,9 @@ public:
   const std::vector<CanonicalSyncScopeBinding> &getScopeBindings() const {
     return scopeBindings_;
   }
+  const std::vector<AddressSpace> &getStorageSpaces() const {
+    return storageSpaces_;
+  }
   const CanonicalSyncEventReservations &getEventReservations() const {
     return eventReservations_;
   }
@@ -94,6 +100,7 @@ private:
   SyncCoverGraph graph_;
   std::vector<CanonicalSyncNodeBinding> nodeBindings_;
   std::vector<CanonicalSyncScopeBinding> scopeBindings_;
+  std::vector<AddressSpace> storageSpaces_;
   CanonicalSyncEventReservations eventReservations_;
 };
 

@@ -8,8 +8,9 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-#include "PTO/Transforms/CanonicalSync/CanonicalSyncAnalysis.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/CanonicalSync/CanonicalSync.h"
+#include "PTO/Transforms/CanonicalSync/CanonicalSyncOwnership.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -21,6 +22,7 @@
 
 #include "llvm/ADT/STLExtras.h"
 
+#include <algorithm>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -901,6 +903,242 @@ bool testPeriodicBranchEvidence() {
                "do not mis-model unsigned remainder with negative lower");
 }
 
+bool testL0OwnershipProtocolTrustBoundary() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a2a3"} {
+      func.func @ownership(%limit: index) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %c64 = arith.constant 64 : index
+        %addr0 = arith.constant 0 : i64
+        %addr16384 = arith.constant 16384 : i64
+        %addr32768 = arith.constant 32768 : i64
+        %leftSource = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+        %rightSource = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<mat, 128x256xf16, slayout=col_major>
+        %left0 = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+        %left1 = pto.alloc_tile addr = %addr16384 :
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+        %right0 = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+        %right1 = pto.alloc_tile addr = %addr32768 :
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+        %acc = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                       slayout=row_major, fractal=1024>
+        scf.for %i = %c0 to %limit step %c1 {
+          pto.textract ins(%leftSource, %c0, %c0 :
+            !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+            outs(%left0 :
+              !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+          pto.textract ins(%rightSource, %c0, %c0 :
+            !pto.tile_buf<mat, 128x256xf16, slayout=col_major>, index, index)
+            outs(%right0 :
+              !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          pto.tmatmul.acc ins(%acc, %left0, %right0 :
+            !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                          slayout=row_major, fractal=1024>,
+            !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+            !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+            outs(%acc : !pto.tile_buf<acc, 128x256xf32,
+              blayout=col_major, slayout=row_major, fractal=1024>)
+          pto.textract ins(%leftSource, %c0, %c64 :
+            !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+            outs(%left1 :
+              !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+          pto.textract ins(%rightSource, %c64, %c0 :
+            !pto.tile_buf<mat, 128x256xf16, slayout=col_major>, index, index)
+            outs(%right1 :
+              !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          pto.tmatmul.acc ins(%acc, %left1, %right1 :
+            !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                          slayout=row_major, fractal=1024>,
+            !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+            !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+            outs(%acc : !pto.tile_buf<acc, 128x256xf32,
+              blayout=col_major, slayout=row_major, fractal=1024>)
+        }
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module), "parse L0 ownership fixture")) {
+    return false;
+  }
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("ownership"));
+  if (!check(succeeded(program), "build L0 ownership graph")) {
+    return false;
+  }
+  CanonicalSyncOwnershipResult result =
+      discoverCanonicalSyncOwnershipCycles(*program);
+  if (!check(!result.truncated &&
+                 result.error == CanonicalSyncOwnershipError::None &&
+                 result.cycles.size() == 1,
+             "discover one bounded L0 ownership cycle")) {
+    return false;
+  }
+  const CanonicalSyncOwnershipCycle &cycle = result.cycles.front();
+  CanonicalSyncOwnershipOptions truncatedOptions;
+  truncatedOptions.maximumInspections = 0;
+  const CanonicalSyncOwnershipResult truncated =
+      discoverCanonicalSyncOwnershipCycles(*program, truncatedOptions);
+  std::optional<CanonicalSyncOwnershipProtocol> protocol =
+      makeCanonicalSyncOwnershipProtocol(*program, cycle, 0, 1);
+  if (!check(truncated && truncated.truncated && truncated.cycles.empty(),
+             "bound ownership discovery without partial protocols") ||
+      !check(verifyCanonicalSyncOwnershipCycle(*program, cycle),
+             "independently verify L0 ownership cycle") ||
+      !check(protocol.has_value(), "build L0 ownership protocol") ||
+      !check(verifyCanonicalSyncOwnershipProtocol(*program, cycle, 0, 1,
+                                                  *protocol),
+             "independently verify L0 ownership protocol")) {
+    return false;
+  }
+
+  std::vector<SyncCoverCompletionSupply> releaseSupplies;
+  SyncCoverDemandSet qualified(program->getGraph().getDemands().size());
+  for (const CanonicalSyncSupplyBinding &binding : protocol->release.supplies) {
+    releaseSupplies.push_back({0, binding.edge, binding.allowedDemands});
+    for (SyncCoverDemandId demand : binding.allowedDemands) {
+      qualified.insert(demand);
+    }
+  }
+  SyncCoverExpandedProgram expansion(program->getGraph());
+  const SyncCoverCoverageResult releaseCoverage =
+      computeSyncCoverCoverage(program->getGraph(), expansion, releaseSupplies);
+  const SyncCoverSingletonCoverageResult singletonRelease =
+      computeSyncCoverSingletonCoverage(program->getGraph(), expansion, 1,
+                                        releaseSupplies);
+  std::vector<SyncCoverCompletionSupply> ownershipSupplies = releaseSupplies;
+  for (SyncCoverCompletionSupply &supply : ownershipSupplies) {
+    supply.mechanism = 1;
+  }
+  for (const CanonicalSyncSupplyBinding &binding : protocol->ready.supplies) {
+    ownershipSupplies.push_back({0, binding.edge, binding.allowedDemands});
+  }
+  const SyncCoverCoverageResult ownershipCoverage = computeSyncCoverCoverage(
+      program->getGraph(), expansion, ownershipSupplies);
+  if (!check(releaseCoverage && !qualified.empty(),
+             "compute qualified release coverage") ||
+      !check(singletonRelease &&
+                 singletonRelease.mechanisms.front() == releaseCoverage.covered,
+             "batched singleton coverage preserves demand qualifications") ||
+      !check(qualified.containsAll(releaseCoverage.covered),
+             "release covers only its exact storage demands") ||
+      !check(ownershipCoverage &&
+                 ownershipCoverage.covered.containsAll(qualified),
+             "ready and release compose over every exact ownership demand")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions buildOptions;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem =
+      buildCanonicalSyncSingletonProblem(*program, buildOptions);
+  if (!check(succeeded(problem), "build ownership pattern problem")) {
+    return false;
+  }
+  const std::uint32_t cube = static_cast<std::uint32_t>(PipelineType::PIPE_M);
+  const std::uint32_t mte1 =
+      static_cast<std::uint32_t>(PipelineType::PIPE_MTE1);
+  std::optional<CanonicalSyncMechanismId> releaseMechanism;
+  for (const CanonicalSyncMechanism &mechanism : (*problem)->getMechanisms()) {
+    if (mechanism.descriptor.kind != CanonicalSyncMechanismKind::Protocol ||
+        mechanism.descriptor.eventUses.size() != 1) {
+      continue;
+    }
+    const CanonicalSyncEventDomain &domain =
+        (*problem)->getDomains()[mechanism.descriptor.eventUses.front().domain];
+    if (domain.sourceResource == cube && domain.targetResource == mte1) {
+      releaseMechanism = mechanism.id;
+      break;
+    }
+  }
+  if (!check(releaseMechanism.has_value(),
+             "retain the verified ownership release mechanism")) {
+    return false;
+  }
+  if (!check((*problem)->getPatterns()[*releaseMechanism].coverage ==
+                 releaseCoverage.covered,
+             "ground exact release-only coverage in its singleton pattern")) {
+    return false;
+  }
+  const auto ownershipPattern = llvm::find_if(
+      (*problem)->getPatterns(), [](const CanonicalSyncPattern &pattern) {
+        return pattern.kind == CanonicalSyncPatternKind::OwnershipCycle;
+      });
+  if (!check(ownershipPattern != (*problem)->getPatterns().end() &&
+                 ownershipPattern->coverage.containsAll(qualified),
+             "ground composed ownership coverage in the named pattern")) {
+    return false;
+  }
+  const CanonicalSyncSelection selection =
+      selectCanonicalSyncPatterns(**problem);
+  if (!check(static_cast<bool>(selection),
+             "select ownership pattern problem") ||
+      !check(std::binary_search(selection.mechanisms.begin(),
+                                selection.mechanisms.end(), *releaseMechanism),
+             "select release instead of its barrier fallbacks")) {
+    return false;
+  }
+
+  CanonicalSyncOwnershipProtocol missingAction = *protocol;
+  missingAction.ready.actions.pop_back();
+  CanonicalSyncOwnershipProtocol missingBinding = *protocol;
+  missingBinding.release.supplies.pop_back();
+  CanonicalSyncOwnershipProtocol wrongLane = *protocol;
+  wrongLane.ready.actions.front().eventLane = cycle.lanes.size();
+  CanonicalSyncOwnershipProtocol wrongQualifiedDemand = *protocol;
+  if (!check(!wrongQualifiedDemand.release.supplies.empty() &&
+                 !wrongQualifiedDemand.release.supplies.front()
+                      .allowedDemands.empty(),
+             "release protocol carries exact demand qualifications")) {
+    return false;
+  }
+  const std::vector<SyncCoverDemandId> &allowed =
+      wrongQualifiedDemand.release.supplies.front().allowedDemands;
+  std::optional<SyncCoverDemandId> unrelated;
+  for (SyncCoverDemandId demand = 0;
+       demand < program->getGraph().getDemands().size(); ++demand) {
+    if (!std::binary_search(allowed.begin(), allowed.end(), demand)) {
+      unrelated = demand;
+      break;
+    }
+  }
+  if (!check(unrelated.has_value(),
+             "fixture contains an unrelated completion demand")) {
+    return false;
+  }
+  wrongQualifiedDemand.release.supplies.front().allowedDemands = {*unrelated};
+  CanonicalSyncOwnershipCycle wrongProducerLane = cycle;
+  wrongProducerLane.paths.front().uses.front().producerLane =
+      (wrongProducerLane.paths.front().uses.front().lane + 1) %
+      wrongProducerLane.lanes.size();
+  CanonicalSyncOwnershipCycle wrongRole = cycle;
+  wrongRole.paths.front().uses.front().producers.front() =
+      wrongRole.paths.front().uses.front().consumers.front();
+  return check(!verifyCanonicalSyncOwnershipProtocol(*program, cycle, 0, 1,
+                                                     missingAction),
+               "reject ownership protocol with a missing action") &&
+         check(!verifyCanonicalSyncOwnershipProtocol(*program, cycle, 0, 1,
+                                                     missingBinding),
+               "reject ownership protocol with a missing binding") &&
+         check(!verifyCanonicalSyncOwnershipProtocol(*program, cycle, 0, 1,
+                                                     wrongLane),
+               "reject ownership protocol with a wrong event lane") &&
+         check(!verifyCanonicalSyncOwnershipProtocol(*program, cycle, 0, 1,
+                                                     wrongQualifiedDemand),
+               "reject ownership release qualified for an unrelated demand") &&
+         check(!verifyCanonicalSyncOwnershipCycle(*program, wrongProducerLane),
+               "reject ownership cycle with a mismatched producer lane") &&
+         check(!verifyCanonicalSyncOwnershipCycle(*program, wrongRole),
+               "reject ownership cycle with a reversed access role");
+}
+
 } // namespace
 
 int main() {
@@ -913,6 +1151,6 @@ int main() {
       testMmadIntrinsicRequiresExactAccumulator() &&
       testAnalysisLimitFailsClosed() && testFailClosedInputs() &&
       testRejectsAllExplicitSyncForms() && testStructuralLimitsFailClosed() &&
-      testPeriodicBranchEvidence();
+      testPeriodicBranchEvidence() && testL0OwnershipProtocolTrustBoundary();
   return passed ? 0 : 1;
 }

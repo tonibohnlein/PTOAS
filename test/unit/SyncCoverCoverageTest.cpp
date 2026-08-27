@@ -123,6 +123,42 @@ bool testTwoSuppliesCompose() {
   return passed;
 }
 
+bool testDemandQualifiedSupplyDoesNotEscape() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add qualified source");
+  const SyncCoverNodeId firstTarget = takeIndex(
+      graph.addNode(2, 1, 0, 1), passed, "add qualified first target");
+  const SyncCoverNodeId secondTarget = takeIndex(
+      graph.addNode(2, 1, 0, 2), passed, "add qualified second target");
+  passed &= check(graph.addEdge(makeEdge(
+                      firstTarget, secondTarget,
+                      SyncCoverEdgeKind::NonCompletionPreservingIssueOrder)),
+                  "add qualified target issue order");
+  passed &= check(graph.addDemand(makeDemand(source, firstTarget)),
+                  "add qualified demand");
+  passed &= check(graph.addDemand(makeDemand(source, secondTarget)),
+                  "add unrelated demand");
+  passed &= check(graph.freezeStructure(), "freeze qualified-supply graph");
+
+  SyncCoverExpandedProgram expansion(graph);
+  const SyncCoverEdge edge =
+      makeEdge(source, firstTarget, SyncCoverEdgeKind::CompletionSupply);
+  const SyncCoverCoverageResult restricted =
+      computeSyncCoverCoverage(graph, expansion, {{0, edge, {0}}});
+  passed &= check(restricted && restricted.covered.contains(0),
+                  "qualified supply covers its attested demand");
+  passed &= check(!restricted.covered.contains(1),
+                  "qualified supply cannot escape to another demand");
+
+  const SyncCoverCoverageResult unrestricted =
+      computeSyncCoverCoverage(graph, expansion, {{0, edge}});
+  passed &= check(unrestricted && unrestricted.coversAll(),
+                  "ordinary completion supply remains reusable");
+  return passed;
+}
+
 bool testIssueOrderDoesNotCreatePrefixCompletion() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -384,6 +420,7 @@ int main() {
   bool passed = true;
   passed &= testOneSupplyCoversSeveralDemands();
   passed &= testTwoSuppliesCompose();
+  passed &= testDemandQualifiedSupplyDoesNotEscape();
   passed &= testIssueOrderDoesNotCreatePrefixCompletion();
   passed &= testGuardedRecurrenceAndCompactCarry();
   passed &= testCompactCarryKindsAndResourceIsolation();

@@ -86,6 +86,10 @@ struct CanonicalSyncSupplyBinding {
   std::optional<std::size_t> produceAction;
   std::optional<std::size_t> consumeAction;
   CanonicalSyncSupplyProof proof = CanonicalSyncSupplyProof::DirectAction;
+  /// Empty means this completion consequence is generally applicable. A
+  /// verified ownership release names only the exact storage demands for
+  /// which issue, rather than full operation completion, is sufficient.
+  std::vector<SyncCoverDemandId> allowedDemands;
 };
 
 /// One atomic synchronization unit. This descriptor is also its emission
@@ -119,6 +123,7 @@ struct CanonicalSyncMechanism {
 
 enum class CanonicalSyncPatternKind : std::uint8_t {
   Singleton,
+  OwnershipCycle,
   SlotLifecycle,
   PipelineScope,
   RoundTrip,

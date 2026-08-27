@@ -69,19 +69,19 @@ bool bindingLess(const CanonicalSyncSupplyBinding &left,
   if (edgeLess(right.edge, left.edge)) {
     return false;
   }
-  return std::tie(left.eventUse, left.barrierAction, left.produceAction,
-                  left.consumeAction, left.proof) <
-         std::tie(right.eventUse, right.barrierAction, right.produceAction,
-                  right.consumeAction, right.proof);
+  return std::tie(left.allowedDemands, left.eventUse, left.barrierAction,
+                  left.produceAction, left.consumeAction, left.proof) <
+         std::tie(right.allowedDemands, right.eventUse, right.barrierAction,
+                  right.produceAction, right.consumeAction, right.proof);
 }
 
 bool bindingEqual(const CanonicalSyncSupplyBinding &left,
                   const CanonicalSyncSupplyBinding &right) {
   return edgeEqual(left.edge, right.edge) &&
-         std::tie(left.eventUse, left.barrierAction, left.produceAction,
-                  left.consumeAction, left.proof) ==
-             std::tie(right.eventUse, right.barrierAction, right.produceAction,
-                      right.consumeAction, right.proof);
+         std::tie(left.allowedDemands, left.eventUse, left.barrierAction,
+                  left.produceAction, left.consumeAction, left.proof) ==
+             std::tie(right.allowedDemands, right.eventUse, right.barrierAction,
+                      right.produceAction, right.consumeAction, right.proof);
 }
 
 bool actionEqual(const CanonicalSyncAction &left,
@@ -132,6 +132,10 @@ descriptorHash(const CanonicalSyncMechanismDescriptor &descriptor) {
   hashValue(hash, static_cast<std::uint8_t>(descriptor.kind));
   for (const CanonicalSyncSupplyBinding &binding : descriptor.supplies) {
     hashEdge(hash, binding.edge);
+    for (SyncCoverDemandId demand : binding.allowedDemands) {
+      hashValue(hash, demand);
+    }
+    hashValue(hash, std::numeric_limits<std::size_t>::max());
     hashValue(hash, binding.eventUse.value_or(
                         std::numeric_limits<std::size_t>::max()));
     hashValue(hash, binding.barrierAction.value_or(
@@ -241,12 +245,14 @@ unsigned patternPriority(CanonicalSyncPatternKind kind) {
   switch (kind) {
   case CanonicalSyncPatternKind::Singleton:
     return 0;
-  case CanonicalSyncPatternKind::SlotLifecycle:
+  case CanonicalSyncPatternKind::OwnershipCycle:
     return 1;
-  case CanonicalSyncPatternKind::RoundTrip:
+  case CanonicalSyncPatternKind::SlotLifecycle:
     return 2;
-  case CanonicalSyncPatternKind::PipelineScope:
+  case CanonicalSyncPatternKind::RoundTrip:
     return 3;
+  case CanonicalSyncPatternKind::PipelineScope:
+    return 4;
   }
   return std::numeric_limits<unsigned>::max();
 }
@@ -258,7 +264,7 @@ getSupplies(const std::vector<CanonicalSyncMechanism> &mechanisms,
   for (CanonicalSyncMechanismId member : members) {
     for (const CanonicalSyncSupplyBinding &binding :
          mechanisms[member].descriptor.supplies) {
-      result.push_back({member, binding.edge});
+      result.push_back({member, binding.edge, binding.allowedDemands});
     }
   }
   return result;
@@ -280,9 +286,20 @@ validateSupplyDeclarations(const SyncCoverGraph &graph,
                            CanonicalSyncMechanismDescriptor &descriptor) {
   const bool protocol = descriptor.kind == CanonicalSyncMechanismKind::Protocol;
   for (CanonicalSyncSupplyBinding &binding : descriptor.supplies) {
+    const bool invalidDemands =
+        !std::is_sorted(binding.allowedDemands.begin(),
+                        binding.allowedDemands.end()) ||
+        std::adjacent_find(binding.allowedDemands.begin(),
+                           binding.allowedDemands.end()) !=
+            binding.allowedDemands.end() ||
+        std::any_of(binding.allowedDemands.begin(),
+                    binding.allowedDemands.end(), [&](SyncCoverDemandId id) {
+                      return id >= graph.getDemands().size();
+                    });
     const bool invalid =
         graph.canonicalizeCompletionEdge(binding.edge) !=
             SyncCoverGraphError::None ||
+        invalidDemands || (!binding.allowedDemands.empty() && !protocol) ||
         binding.eventUse.has_value() == binding.barrierAction.has_value() ||
         (!protocol &&
          (binding.produceAction || binding.consumeAction ||
@@ -844,7 +861,8 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns() {
   for (const CanonicalSyncMechanism &mechanism : mechanisms_) {
     for (const CanonicalSyncSupplyBinding &binding :
          mechanism.descriptor.supplies) {
-      allSupplies.push_back({mechanism.id, binding.edge});
+      allSupplies.push_back(
+          {mechanism.id, binding.edge, binding.allowedDemands});
     }
   }
   const SyncCoverSingletonCoverageResult singletonCoverage =

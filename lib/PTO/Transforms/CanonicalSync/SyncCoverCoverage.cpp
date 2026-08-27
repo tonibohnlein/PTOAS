@@ -167,6 +167,7 @@ void visitSupplyOutgoing(const SupplyIndex &index, SyncCoverNodeId source,
 }
 
 bool coversDemand(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
+                  SyncCoverDemandId demandId,
                   const SyncCoverExpandedArena &arena,
                   const SupplyIndex &supplyIndex,
                   const std::vector<SyncCoverCompletionSupply> &supplies,
@@ -225,7 +226,14 @@ bool coversDemand(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
     }
     visitSupplyOutgoing(
         supplyIndex, *sourceOperation, [&](const IndexedSupply &indexed) {
-          const SyncCoverEdge &supply = supplies[indexed.supply].edge;
+          const SyncCoverCompletionSupply &description =
+              supplies[indexed.supply];
+          if (!description.allowedDemands.empty() &&
+              !std::binary_search(description.allowedDemands.begin(),
+                                  description.allowedDemands.end(), demandId)) {
+            return;
+          }
+          const SyncCoverEdge &supply = description.edge;
           const bool distanceOutOfRange =
               supply.distance > arena.getHorizon() - *sourceCopy;
           if (distanceOutOfRange) {
@@ -280,7 +288,9 @@ bool canonicalizeSupplies(const SyncCoverGraph &graph,
                           std::vector<SyncCoverCompletionSupply> &supplies,
                           std::size_t mechanismCount) {
   for (SyncCoverCompletionSupply &supply : supplies) {
-    if (supply.mechanism >= mechanismCount ||
+    const bool invalidDemandFilter =
+        !demandIdsValid(graph, supply.allowedDemands);
+    if (supply.mechanism >= mechanismCount || invalidDemandFilter ||
         graph.canonicalizeCompletionEdge(supply.edge) !=
             SyncCoverGraphError::None) {
       return false;
@@ -293,11 +303,11 @@ bool canonicalizeSupplies(const SyncCoverGraph &graph,
         return std::tie(left.mechanism, left.edge.source, left.edge.target,
                         left.edge.scope, left.edge.distance,
                         left.edge.sourceGuard.literals,
-                        left.edge.targetGuard.literals) <
+                        left.edge.targetGuard.literals, left.allowedDemands) <
                std::tie(right.mechanism, right.edge.source, right.edge.target,
                         right.edge.scope, right.edge.distance,
                         right.edge.sourceGuard.literals,
-                        right.edge.targetGuard.literals);
+                        right.edge.targetGuard.literals, right.allowedDemands);
       });
   return true;
 }
@@ -423,8 +433,8 @@ struct SingletonSeedCollection {
 
 SingletonSeedCollection collectSingletonSeeds(
     const SyncCoverGraph &graph, const SyncCoverDemand &demand,
-    const DemandContext &context, const SyncCoverExpandedArena &arena,
-    const SupplyIndex &supplyIndex,
+    SyncCoverDemandId demandId, const DemandContext &context,
+    const SyncCoverExpandedArena &arena, const SupplyIndex &supplyIndex,
     const std::vector<SyncCoverCompletionSupply> &supplies) {
   SingletonSeedCollection result;
   const std::optional<std::size_t> source =
@@ -476,9 +486,16 @@ SingletonSeedCollection collectSingletonSeeds(
     }
     visitSupplyOutgoing(
         supplyIndex, *operation, [&](const IndexedSupply &indexed) {
+          const SyncCoverCompletionSupply &description =
+              supplies[indexed.supply];
+          if (!description.allowedDemands.empty() &&
+              !std::binary_search(description.allowedDemands.begin(),
+                                  description.allowedDemands.end(), demandId)) {
+            return;
+          }
           std::size_t target = 0;
-          if (supplyIsActive(graph, demand, context, arena,
-                             supplies[indexed.supply].edge, *copy, target)) {
+          if (supplyIsActive(graph, demand, context, arena, description.edge,
+                             *copy, target)) {
             result.seeds.push_back({indexed.mechanism, target});
           }
         });
@@ -615,7 +632,7 @@ SyncCoverCoverageResult mlir::pto::computeSyncCoverCoverage(
     auto [workspace, inserted] =
         workspaces.try_emplace(arena, arena->getVirtualNodeCount());
     (void)inserted;
-    if (coversDemand(graph, demand, *arena, supplyIndex, supplies,
+    if (coversDemand(graph, demand, demandId, *arena, supplyIndex, supplies,
                      workspace->second)) {
       result.covered.insert(demandId);
     }
@@ -695,7 +712,7 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
     }
 
     const SingletonSeedCollection seedCollection = collectSingletonSeeds(
-        graph, demand, context, *arena, supplyIndex, supplies);
+        graph, demand, demandId, context, *arena, supplyIndex, supplies);
     if (seedCollection.baselineCovers) {
       result.baseline.insert(demandId);
     }
@@ -756,6 +773,14 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
       }
       visitSupplyOutgoing(
           supplyIndex, *operation, [&](const IndexedSupply &indexed) {
+            const SyncCoverCompletionSupply &description =
+                supplies[indexed.supply];
+            if (!description.allowedDemands.empty() &&
+                !std::binary_search(description.allowedDemands.begin(),
+                                    description.allowedDemands.end(),
+                                    demandId)) {
+              return;
+            }
             const auto mechanism = std::lower_bound(
                 candidates.begin(), candidates.end(), indexed.mechanism);
             const bool absent = mechanism == candidates.end() ||
@@ -769,8 +794,8 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
               return;
             }
             std::size_t target = 0;
-            if (supplyIsActive(graph, demand, context, *arena,
-                               supplies[indexed.supply].edge, *copy, target)) {
+            if (supplyIsActive(graph, demand, context, *arena, description.edge,
+                               *copy, target)) {
               workspace.add(target, local);
             }
           });

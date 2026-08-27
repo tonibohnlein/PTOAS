@@ -430,7 +430,7 @@ selectedSupplies(const CanonicalSyncPatternProblem &problem,
   for (CanonicalSyncMechanismId mechanism : selected) {
     for (const CanonicalSyncSupplyBinding &binding :
          problem.getMechanisms()[mechanism].descriptor.supplies) {
-      result.push_back({mechanism, binding.edge});
+      result.push_back({mechanism, binding.edge, binding.allowedDemands});
     }
   }
   return result;

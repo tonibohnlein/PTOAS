@@ -10,6 +10,7 @@
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSync.h"
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncLifecycle.h"
+#include "PTO/Transforms/CanonicalSync/CanonicalSyncOwnership.h"
 
 #include "llvm/ADT/STLExtras.h"
 
@@ -76,6 +77,13 @@ bool hasAvailableEventId(const CanonicalSyncProgram &program,
       std::count_if(reserved.begin(), reserved.end(),
                     [&](unsigned eventId) { return eventId < budget; }));
   return unavailable < budget;
+}
+
+std::size_t availableEventIds(const CanonicalSyncEventDomain &domain) {
+  const std::size_t reserved = static_cast<std::size_t>(
+      std::count_if(domain.reservedIds.begin(), domain.reservedIds.end(),
+                    [&](unsigned eventId) { return eventId < domain.budget; }));
+  return domain.budget - std::min<std::size_t>(domain.budget, reserved);
 }
 
 bool canUseDirectEvent(const SyncCoverGraph &graph,
@@ -147,6 +155,7 @@ LogicalResult addEventDomains(
     const CanonicalSyncProgram &program, unsigned budget,
     CanonicalSyncPatternProblem &problem, const SyncCoverDemandSet &baseline,
     const CanonicalSyncLifecycleResult &lifecycles,
+    const CanonicalSyncOwnershipResult &ownership,
     std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds) {
   const SyncCoverGraph &graph = program.getGraph();
   std::set<EventDomainKey> keys;
@@ -170,6 +179,15 @@ LogicalResult addEventDomains(
                              lifecycle.producerResource};
     if (hasAvailableEventId(program, key, budget)) {
       keys.insert(key);
+    }
+  }
+  for (const CanonicalSyncOwnershipCycle &cycle : ownership.cycles) {
+    for (const EventDomainKey &key :
+         {EventDomainKey{cycle.producerResource, cycle.consumerResource},
+          EventDomainKey{cycle.consumerResource, cycle.producerResource}}) {
+      if (hasAvailableEventId(program, key, budget)) {
+        keys.insert(key);
+      }
     }
   }
   for (const EventDomainKey &key : keys) {
@@ -313,6 +331,82 @@ LogicalResult addUnitSlotLifecycles(
   return success();
 }
 
+LogicalResult addOwnershipCycles(
+    const CanonicalSyncProgram &program, CanonicalSyncPatternProblem &problem,
+    const CanonicalSyncOwnershipResult &ownership,
+    const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds) {
+  for (const CanonicalSyncOwnershipCycle &cycle : ownership.cycles) {
+    const auto readyDomain =
+        domainIds.find({cycle.producerResource, cycle.consumerResource});
+    const auto releaseDomain =
+        domainIds.find({cycle.consumerResource, cycle.producerResource});
+    if (readyDomain == domainIds.end() || releaseDomain == domainIds.end()) {
+      continue;
+    }
+    const CanonicalSyncEventDomain &readyResource =
+        problem.getDomains()[readyDomain->second];
+    const CanonicalSyncEventDomain &releaseResource =
+        problem.getDomains()[releaseDomain->second];
+    const std::size_t producerCount =
+        cycle.paths.front().uses.front().producers.size();
+    const std::size_t readyIds = availableEventIds(readyResource);
+    const bool readyOverflow = cycle.lanes.size() != 0 &&
+                               producerCount > readyIds / cycle.lanes.size();
+    if (readyOverflow || cycle.lanes.size() > readyIds ||
+        cycle.lanes.size() > availableEventIds(releaseResource)) {
+      continue;
+    }
+    std::optional<CanonicalSyncOwnershipProtocol> protocol =
+        makeCanonicalSyncOwnershipProtocol(program, cycle, readyDomain->second,
+                                           releaseDomain->second);
+    if (!protocol || !verifyCanonicalSyncOwnershipProtocol(
+                         program, cycle, readyDomain->second,
+                         releaseDomain->second, *protocol)) {
+      return program.getFunction().emitError(
+          "cannot build canonical sync ownership protocol");
+    }
+    const CanonicalSyncOwnershipProtocol reference = *protocol;
+    const CanonicalSyncProblemResult ready = problem.internVerifiedProtocol(
+        std::move(protocol->ready),
+        [&](const CanonicalSyncMechanismDescriptor &candidate) {
+          CanonicalSyncOwnershipProtocol checked = reference;
+          checked.ready = candidate;
+          return verifyCanonicalSyncOwnershipProtocol(
+              program, cycle, readyDomain->second, releaseDomain->second,
+              checked);
+        });
+    const CanonicalSyncProblemResult release = problem.internVerifiedProtocol(
+        std::move(protocol->release),
+        [&](const CanonicalSyncMechanismDescriptor &candidate) {
+          CanonicalSyncOwnershipProtocol checked = reference;
+          checked.release = candidate;
+          return verifyCanonicalSyncOwnershipProtocol(
+              program, cycle, readyDomain->second, releaseDomain->second,
+              checked);
+        });
+    if (ready.error == CanonicalSyncProblemError::LimitExceeded ||
+        release.error == CanonicalSyncProblemError::LimitExceeded) {
+      continue;
+    }
+    if (!ready || !release || !ready.index || !release.index) {
+      return program.getFunction().emitError(
+                 "cannot admit canonical sync ownership protocol")
+             << " (kind=" << static_cast<unsigned>(cycle.kind)
+             << ", ready-error=" << static_cast<unsigned>(ready.error)
+             << ", release-error=" << static_cast<unsigned>(release.error)
+             << ")";
+    }
+    const CanonicalSyncProblemResult pattern = addCanonicalSyncFeasiblePattern(
+        problem, {CanonicalSyncPatternKind::OwnershipCycle,
+                  {*ready.index, *release.index}});
+    if (!pattern) {
+      return program.getFunction().emitError(
+          "cannot add canonical sync ownership-cycle pattern");
+    }
+  }
+  return success();
+}
+
 LogicalResult addBarrierFallbacks(const CanonicalSyncProgram &program,
                                   CanonicalSyncPatternProblem &problem,
                                   const SyncCoverDemandSet &baseline) {
@@ -375,14 +469,28 @@ mlir::pto::buildCanonicalSyncSingletonProblem(
         "cannot discover canonical sync unit-slot lifecycles");
     return failure();
   }
+  const CanonicalSyncOwnershipResult ownership =
+      discoverCanonicalSyncOwnershipCycles(program);
+  if (!ownership) {
+    program.getFunction().emitError(
+        "cannot discover canonical sync ownership cycles");
+    return failure();
+  }
+  if (ownership.truncated) {
+    program.getFunction().emitRemark(
+        "canonical sync ownership discovery reached its bounded analysis "
+        "limit; conservative event and barrier fallbacks remain available");
+  }
   std::map<EventDomainKey, CanonicalSyncEventDomainId> domainIds;
   DemandMechanismMap mechanismsByDemand;
   const bool failedBuild =
       failed(addBarrierFallbacks(program, *problem, baseline.covered)) ||
       failed(addEventDomains(program, options.eventIdBudget, *problem,
-                             baseline.covered, lifecycles, domainIds)) ||
+                             baseline.covered, lifecycles, ownership,
+                             domainIds)) ||
       failed(addDirectEvents(program, *problem, baseline.covered, domainIds,
                              mechanismsByDemand)) ||
+      failed(addOwnershipCycles(program, *problem, ownership, domainIds)) ||
       failed(addUnitSlotLifecycles(program, *problem, lifecycles, domainIds,
                                    mechanismsByDemand));
   if (failedBuild) {

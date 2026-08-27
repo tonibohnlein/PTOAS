@@ -1,0 +1,103 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @nested_consumer_falls_back(%limit: index, %condition: i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %addr0 = arith.constant 0 : i64
+    %addr16384 = arith.constant 16384 : i64
+    %addr32768 = arith.constant 32768 : i64
+    %left_source = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x128xf16, slayout=row_major>
+    %right_source = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<mat, 128x256xf16, slayout=col_major>
+    %left0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %left1 = pto.alloc_tile addr = %addr16384 :
+      !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+    %right0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+    %right1 = pto.alloc_tile addr = %addr32768 :
+      !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+    %acc = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>
+
+    scf.for %i = %c0 to %limit step %c1 {
+      pto.textract ins(%left_source, %c0, %c0 :
+        !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+        outs(%left0 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+      pto.textract ins(%right_source, %c0, %c0 :
+        !pto.tile_buf<mat, 128x256xf16, slayout=col_major>, index, index)
+        outs(%right0 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+      scf.if %condition {
+        scf.for %j = %c0 to %limit step %c1 {
+          pto.tmatmul.acc ins(%acc, %left0, %right0 :
+            !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                          slayout=row_major, fractal=1024>,
+            !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+            !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+            outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                                      slayout=row_major, fractal=1024>)
+        }
+      } else {
+        scf.for %j = %c0 to %limit step %c1 {
+          pto.tmatmul.acc ins(%acc, %left0, %right0 :
+            !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                          slayout=row_major, fractal=1024>,
+            !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+            !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+            outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                                      slayout=row_major, fractal=1024>)
+        }
+      }
+      pto.textract ins(%left_source, %c0, %c64 :
+        !pto.tile_buf<mat, 128x128xf16, slayout=row_major>, index, index)
+        outs(%left1 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+      pto.textract ins(%right_source, %c64, %c0 :
+        !pto.tile_buf<mat, 128x256xf16, slayout=col_major>, index, index)
+        outs(%right1 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+      scf.if %condition {
+        scf.for %j = %c0 to %limit step %c1 {
+          pto.tmatmul.acc ins(%acc, %left1, %right1 :
+            !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                          slayout=row_major, fractal=1024>,
+            !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+            !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+            outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                                      slayout=row_major, fractal=1024>)
+        }
+      } else {
+        scf.for %j = %c0 to %limit step %c1 {
+          pto.tmatmul.acc ins(%acc, %left1, %right1 :
+            !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                          slayout=row_major, fractal=1024>,
+            !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+            !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+            outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                                      slayout=row_major, fractal=1024>)
+        }
+      }
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @nested_consumer_falls_back
+// CHECK-NOT: pto.set_flag[<PIPE_M>, <PIPE_MTE1>
+// CHECK: scf.for
+// CHECK: pto.barrier <PIPE_ALL> {pto.canonical_sync}
+// CHECK: scf.if
+// CHECK: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier,

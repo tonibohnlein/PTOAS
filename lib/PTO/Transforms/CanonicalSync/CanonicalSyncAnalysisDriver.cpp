@@ -122,9 +122,15 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
     function_.emitError("cannot freeze canonical sync graph");
     return failure();
   }
+  std::vector<AddressSpace> storageSpaces(graph_.getStorageDomains().size(),
+                                          AddressSpace::Zero);
+  for (const auto &[space, domain] : storageDomains_) {
+    storageSpaces[domain] = space;
+  }
   return CanonicalSyncProgram(
       function_, std::move(graph_), std::move(nodeBindings_),
-      std::move(scopeBindings_), std::move(eventReservations_));
+      std::move(scopeBindings_), std::move(storageSpaces),
+      std::move(eventReservations_));
 }
 
 LogicalResult ProgramBuilder::validateInput() {
