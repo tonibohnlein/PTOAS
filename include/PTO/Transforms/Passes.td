@@ -41,6 +41,32 @@ def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
   ];
 }
 
+def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
+  let summary = "Insert synchronization from a canonical completion graph";
+  let description = [{
+    Builds completion obligations over structured PTO control flow, selects a
+    bounded catalog of atomic synchronization recipes, verifies the complete
+    selected plan independently, and only then materializes synchronization.
+  }];
+
+  let constructor = "mlir::pto::createPTOCanonicalSyncPass()";
+
+  let options = [
+    Option<"eventIdNumMax", "event-id-num-max", "int64_t", "8",
+           "Maximum EVENT_ID slots available to canonical synchronization">,
+    Option<"assumeDistinctGmArgsNoAlias",
+           "assume-distinct-gm-args-noalias", "bool", "false",
+           "Treat distinct GM pointer arguments as non-aliasing">
+  ];
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::memref::MemRefDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::scf::SCFDialect"
+  ];
+}
+
 def PTOInjectBarrierAllSync : Pass<"pto-inject-barrier-all-sync", "func::FuncOp"> {
   let summary = "Conservatively insert PIPE_ALL barriers for PTO dialect";
   let description = [{

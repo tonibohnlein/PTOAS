@@ -88,10 +88,11 @@ bool actionEqual(const CanonicalSyncAction &left,
                  const CanonicalSyncAction &right) {
   return std::tie(left.kind, left.resource, left.anchor.kind, left.anchor.node,
                   left.anchor.scope, left.anchor.position, left.eventUse,
-                  left.eventLane, left.drainedResources) ==
+                  left.eventLane, left.drainedResources, left.barrierKind) ==
          std::tie(right.kind, right.resource, right.anchor.kind,
                   right.anchor.node, right.anchor.scope, right.anchor.position,
-                  right.eventUse, right.eventLane, right.drainedResources);
+                  right.eventUse, right.eventLane, right.drainedResources,
+                  right.barrierKind);
 }
 
 bool descriptorEqual(const CanonicalSyncMechanismDescriptor &left,
@@ -160,6 +161,7 @@ descriptorHash(const CanonicalSyncMechanismDescriptor &descriptor) {
     for (std::uint32_t resource : action.drainedResources) {
       hashValue(hash, resource);
     }
+    hashValue(hash, static_cast<std::uint8_t>(action.barrierKind));
   }
   return hash;
 }
@@ -221,6 +223,17 @@ projectCoverage(const SyncCoverDemandSet &all,
       result.insert(local);
     }
   }
+  return result;
+}
+
+std::vector<std::uint32_t> getIssueResources(const SyncCoverGraph &graph) {
+  std::vector<std::uint32_t> result;
+  result.reserve(graph.getNodes().size());
+  for (const SyncCoverNode &node : graph.getNodes()) {
+    result.push_back(node.resource);
+  }
+  std::sort(result.begin(), result.end());
+  result.erase(std::unique(result.begin(), result.end()), result.end());
   return result;
 }
 
@@ -337,6 +350,7 @@ CanonicalSyncProblemError
 validateActions(const SyncCoverGraph &graph,
                 const std::vector<CanonicalSyncEventDomain> &domains,
                 const CanonicalSyncPatternProblem::Limits &limits,
+                const std::vector<std::uint32_t> &issueResources,
                 CanonicalSyncMechanismDescriptor &descriptor,
                 MechanismValidationState &state) {
   for (std::size_t index = 0; index < descriptor.actions.size(); ++index) {
@@ -362,10 +376,18 @@ validateActions(const SyncCoverGraph &graph,
       action.drainedResources.erase(std::unique(action.drainedResources.begin(),
                                                 action.drainedResources.end()),
                                     action.drainedResources.end());
+      const bool targeted =
+          action.barrierKind == CanonicalSyncBarrierKind::Targeted;
+      const bool all = action.barrierKind == CanonicalSyncBarrierKind::All;
+      const bool validDrain =
+          targeted ? action.drainedResources.size() == 1 &&
+                         action.drainedResources.front() == action.resource
+                   : all && action.drainedResources == issueResources;
       const bool invalid = action.eventUse || action.eventLane != 0 ||
                            action.drainedResources.empty() ||
                            action.drainedResources.size() >
                                limits.maximumDrainedResourcesPerBarrier ||
+                           !validDrain ||
                            !checkedIncrement(state.cost.barrierActions[*depth],
                                              action.drainedResources.size());
       if (invalid) {
@@ -374,9 +396,10 @@ validateActions(const SyncCoverGraph &graph,
       continue;
     }
 
-    const bool invalidUse = !action.eventUse ||
-                            *action.eventUse >= descriptor.eventUses.size() ||
-                            !action.drainedResources.empty();
+    const bool invalidUse =
+        !action.eventUse || *action.eventUse >= descriptor.eventUses.size() ||
+        !action.drainedResources.empty() ||
+        action.barrierKind != CanonicalSyncBarrierKind::Targeted;
     if (invalidUse) {
       return CanonicalSyncProblemError::InvalidMechanism;
     }
@@ -559,7 +582,8 @@ CanonicalSyncPatternProblem::CanonicalSyncPatternProblem(
     const SyncCoverGraph &graph, std::vector<SyncCoverDemandId> activeDemands,
     Limits limits, SyncCoverExpansionLimits expansionLimits)
     : graph_(graph), expansion_(graph, activeDemands, expansionLimits),
-      limits_(limits), activeDemands_(std::move(activeDemands)) {
+      limits_(limits), issueResources_(getIssueResources(graph)),
+      activeDemands_(std::move(activeDemands)) {
   const bool normalized =
       std::is_sorted(activeDemands_.begin(), activeDemands_.end()) &&
       std::adjacent_find(activeDemands_.begin(), activeDemands_.end()) ==
@@ -639,7 +663,8 @@ CanonicalSyncPatternProblem::validateAndCostMechanism(
     return {validation, std::nullopt};
   }
 
-  validation = validateActions(graph_, domains_, limits_, descriptor, state);
+  validation = validateActions(graph_, domains_, limits_, issueResources_,
+                               descriptor, state);
   if (validation != CanonicalSyncProblemError::None) {
     return {validation, std::nullopt};
   }

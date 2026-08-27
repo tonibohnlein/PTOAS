@@ -41,6 +41,11 @@ enum class CanonicalSyncActionKind : std::uint8_t {
   Barrier,
 };
 
+enum class CanonicalSyncBarrierKind : std::uint8_t {
+  Targeted,
+  All,
+};
+
 struct CanonicalSyncEventDomain {
   CanonicalSyncEventDomainId id = 0;
   std::uint32_t sourceResource = 0;
@@ -66,6 +71,7 @@ struct CanonicalSyncAction {
   /// Nonempty only for barriers. This is both the physical drain contract and
   /// the single authoritative barrier cost weight.
   std::vector<std::uint32_t> drainedResources;
+  CanonicalSyncBarrierKind barrierKind = CanonicalSyncBarrierKind::Targeted;
 };
 
 enum class CanonicalSyncSupplyProof : std::uint8_t {
@@ -239,6 +245,7 @@ private:
   const SyncCoverGraph &graph_;
   SyncCoverExpandedProgram expansion_;
   Limits limits_;
+  std::vector<std::uint32_t> issueResources_;
   bool graphValid_ = false;
   bool frozen_ = false;
   std::size_t incidenceCount_ = 0;

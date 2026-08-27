@@ -97,6 +97,7 @@ using namespace pto;
 namespace {
 
 constexpr unsigned kSeenCalleeInlineCapacity = 8;
+constexpr int kDefaultCanonicalSyncEventIdMax = 8;
 constexpr int kDefaultGraphSyncSolverEventIdMax = 8;
 constexpr unsigned kStringRefInlineCapacity = 4;
 constexpr unsigned kEmptyExpressionInlineCapacity = 8;
@@ -521,9 +522,28 @@ static llvm::cl::opt<VPTOSchedulerCLIMode> vptoSchedulerMode(
         clEnumValN(VPTOSchedulerCLIMode::On, "on", "Run scheduler in on mode")),
     llvm::cl::init(VPTOSchedulerCLIMode::Off));
 
-static llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
-                                            llvm::cl::desc("Enable automatic synchronization insertion pass"),
-                                            llvm::cl::init(false));
+static llvm::cl::opt<bool> enableInsertSync(
+    "enable-insert-sync",
+    llvm::cl::desc("Enable automatic synchronization insertion pass"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<bool> enableCanonicalSync(
+    "enable-canonical-sync",
+    llvm::cl::desc("Enable canonical completion-graph synchronization"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<int> canonicalSyncEventIdMax(
+    "canonical-sync-event-id-max",
+    llvm::cl::desc(
+        "Maximum EVENT_ID slots for canonical synchronization (default 8)"),
+    llvm::cl::init(kDefaultCanonicalSyncEventIdMax));
+
+static llvm::cl::opt<bool> canonicalSyncAssumeDistinctGmArgsNoAlias(
+    "canonical-sync-assume-distinct-gm-args-noalias",
+    llvm::cl::desc(
+        "Treat distinct GM pointer arguments as non-aliasing in canonical "
+        "synchronization"),
+    llvm::cl::init(false));
 
 static llvm::cl::opt<bool> planMemoryOrderBySize(
     "plan-memory-order-by-size",
@@ -1347,12 +1367,15 @@ struct SerialAutoSyncPass
     : public PassWrapper<SerialAutoSyncPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SerialAutoSyncPass)
 
-  enum class Mode { InsertSync, Bufid, BarrierAll, GraphSolver };
+  enum class Mode { InsertSync, Canonical, Bufid, BarrierAll, GraphSolver };
 
-  SerialAutoSyncPass(Mode mode, bool enableBufidDebug,
-                     int64_t graphEventIdMax)
+  SerialAutoSyncPass(Mode mode, bool enableBufidDebug, int64_t graphEventIdMax,
+                     int64_t canonicalEventIdMax = 0,
+                     bool canonicalDistinctGmArgs = false)
       : mode(mode), enableBufidDebug(enableBufidDebug),
-        graphEventIdMax(graphEventIdMax) {}
+        graphEventIdMax(graphEventIdMax),
+        canonicalEventIdMax(canonicalEventIdMax),
+        canonicalDistinctGmArgs(canonicalDistinctGmArgs) {}
 
   void runOnOperation() override {
     OpPassManager functionPM(func::FuncOp::getOperationName());
@@ -1360,6 +1383,13 @@ struct SerialAutoSyncPass
     case Mode::InsertSync:
       functionPM.addPass(pto::createPTOInsertSyncPass());
       break;
+    case Mode::Canonical: {
+      PTOCanonicalSyncOptions options;
+      options.eventIdNumMax = canonicalEventIdMax;
+      options.assumeDistinctGmArgsNoAlias = canonicalDistinctGmArgs;
+      functionPM.addPass(pto::createPTOCanonicalSyncPass(options));
+      break;
+    }
     case Mode::Bufid: {
       PTOBufidSyncOptions options;
       options.enableBufidSyncDebug = enableBufidDebug;
@@ -1390,6 +1420,8 @@ private:
   Mode mode;
   bool enableBufidDebug;
   int64_t graphEventIdMax;
+  int64_t canonicalEventIdMax;
+  bool canonicalDistinctGmArgs;
 };
 } // namespace
 
@@ -3514,10 +3546,12 @@ int mlir::pto::compilePTOASModule(
   }
 
   int enabledAutoSyncModes =
-      (enableInsertSync ? 1 : 0) + (enableBufidSync ? 1 : 0) +
-      (enableInjectBarrierAllSync ? 1 : 0) + (enableGraphSyncSolver ? 1 : 0);
+      (enableInsertSync ? 1 : 0) + (enableCanonicalSync ? 1 : 0) +
+      (enableBufidSync ? 1 : 0) + (enableInjectBarrierAllSync ? 1 : 0) +
+      (enableGraphSyncSolver ? 1 : 0);
   if (enabledAutoSyncModes > 1) {
-    llvm::errs() << "Error: --enable-insert-sync, --enable-bufid_sync, "
+    llvm::errs() << "Error: --enable-insert-sync, --enable-canonical-sync, "
+                    "--enable-bufid_sync, "
                     "--enable-inject-barrier-all-sync, and "
                     "--enable-graph-sync-solver are mutually exclusive.\n";
     return 1;
@@ -3525,6 +3559,11 @@ int mlir::pto::compilePTOASModule(
   if (hasTAssign && enableInjectBarrierAllSync) {
     llvm::errs() << "Error: pto.tassign requires "
                     "--enable-inject-barrier-all-sync to be disabled.\n";
+    return 1;
+  }
+  if (hasTAssign && enableCanonicalSync) {
+    llvm::errs() << "Error: pto.tassign requires --enable-canonical-sync to "
+                    "be disabled.\n";
     return 1;
   }
   if (hasTAssign && enableGraphSyncSolver) {
@@ -3727,13 +3766,25 @@ int mlir::pto::compilePTOASModule(
   // and event-id analysis.
   // solvers, while BufidSync is A5-only get_buf/rls_buf synchronization.
   if (enableInsertSync) {
-    if (emitMlirIR)
+    if (emitMlirIR) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::InsertSync, false, 0));
-    else
+    } else {
       pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass());
-  }
-  else if (enableBufidSync) {
+    }
+  } else if (enableCanonicalSync) {
+    if (emitMlirIR) {
+      pm.addPass(std::make_unique<SerialAutoSyncPass>(
+          SerialAutoSyncPass::Mode::Canonical, false, 0,
+          canonicalSyncEventIdMax, canonicalSyncAssumeDistinctGmArgsNoAlias));
+    } else {
+      PTOCanonicalSyncOptions options;
+      options.eventIdNumMax = canonicalSyncEventIdMax;
+      options.assumeDistinctGmArgsNoAlias =
+          canonicalSyncAssumeDistinctGmArgsNoAlias;
+      pm.addNestedPass<func::FuncOp>(pto::createPTOCanonicalSyncPass(options));
+    }
+  } else if (enableBufidSync) {
     if (emitMlirIR) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::Bufid, enableBufidSyncDebug, 0));

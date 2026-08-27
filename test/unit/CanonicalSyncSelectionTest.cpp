@@ -126,17 +126,14 @@ protocol(CanonicalSyncEventDomainId domain, std::uint32_t sourceResource,
 }
 
 CanonicalSyncMechanismDescriptor barrier(std::uint32_t actionResource,
-                                         std::uint32_t drainedResource,
+                                         std::vector<std::uint32_t> resources,
                                          SyncCoverNodeId source,
                                          SyncCoverNodeId target) {
   CanonicalSyncMechanismDescriptor result;
   result.kind = CanonicalSyncMechanismKind::Barrier;
-  result.actions.push_back({CanonicalSyncActionKind::Barrier,
-                            actionResource,
-                            before(target),
-                            std::nullopt,
-                            0,
-                            {drainedResource}});
+  result.actions.push_back(
+      {CanonicalSyncActionKind::Barrier, actionResource, before(target),
+       std::nullopt, 0, std::move(resources), CanonicalSyncBarrierKind::All});
   result.supplies.push_back({supply(source, target), std::nullopt, 0,
                              std::nullopt, std::nullopt,
                              CanonicalSyncSupplyProof::DirectAction});
@@ -327,9 +324,9 @@ bool testReverseDeletionPreservesBaselineCoverage() {
   const CanonicalSyncMechanismId eventId =
       takeIndex(problem.internMechanism(event(0, 1, 2, source, second)), passed,
                 "add mixed event");
-  const CanonicalSyncMechanismId barrierId =
-      takeIndex(problem.internMechanism(barrier(2, 1, source, first)), passed,
-                "add mixed barrier");
+  const CanonicalSyncMechanismId barrierId = takeIndex(
+      problem.internMechanism(barrier(2, {1, 2, 3, 4}, source, first)), passed,
+      "add mixed barrier");
   passed &= check(problem.freeze(), "freeze mixed problem");
   const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
   passed &= check(selection && selection.statistics.deletionEvaluations != 0 &&
@@ -473,7 +470,7 @@ bool testScarcityUsesBarrierFallback() {
       problem.internMechanism(event(0, 1, 2, secondSource, secondTarget)),
       passed, "add second scarce event");
   const CanonicalSyncMechanismId fallback = takeIndex(
-      problem.internMechanism(barrier(2, 1, secondSource, secondTarget)),
+      problem.internMechanism(barrier(2, {1, 2}, secondSource, secondTarget)),
       passed, "add scarcity barrier");
   passed &= check(problem.freeze(), "freeze scarcity problem");
   const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
@@ -665,10 +662,10 @@ bool testFailClosedConstruction() {
   passed &= check(problem.internMechanism(protocol).error ==
                       CanonicalSyncProblemError::UnverifiedProtocol,
                   "protocol cannot bypass its verifier");
-  passed &=
-      check(problem.internMechanism(barrier(99, 1, source, target)).error ==
-                CanonicalSyncProblemError::InvalidMechanism,
-            "barrier action must execute on the target resource");
+  passed &= check(
+      problem.internMechanism(barrier(99, {1, 2}, source, target)).error ==
+          CanonicalSyncProblemError::InvalidMechanism,
+      "barrier action must execute on the target resource");
   CanonicalSyncMechanismDescriptor wideEvent = event(0, 1, 2, source, target);
   wideEvent.eventUses[0].width = 2;
   passed &= check(problem.internMechanism(wideEvent).error ==
@@ -685,14 +682,14 @@ bool testFailClosedConstruction() {
       check(limited.addEventDomain({0, 1, 2, 8, {}}), "add incidence domain");
   passed &= check(limited.internMechanism(event(0, 1, 2, source, target)),
                   "add incidence event");
-  passed &= check(limited.internMechanism(barrier(2, 1, source, target)),
+  passed &= check(limited.internMechanism(barrier(2, {1, 2}, source, target)),
                   "add incidence barrier");
   passed &=
       check(limited.freeze().error == CanonicalSyncProblemError::LimitExceeded,
             "incidence limit fails during construction");
 
   CanonicalSyncPatternProblem::Limits patternLimits;
-  patternLimits.maximumPatterns = 3;
+  patternLimits.maximumPatterns = 2;
   CanonicalSyncPatternProblem patternLimited(graph, allDemands(graph),
                                              patternLimits);
   passed &= check(patternLimited.addEventDomain({0, 1, 2, 8, {}}),
@@ -700,18 +697,14 @@ bool testFailClosedConstruction() {
   const CanonicalSyncMechanismId first =
       takeIndex(patternLimited.internMechanism(event(0, 1, 2, source, target)),
                 passed, "add pattern-limit event");
-  const CanonicalSyncMechanismId second =
-      takeIndex(patternLimited.internMechanism(barrier(2, 1, source, target)),
-                passed, "add pattern-limit barrier");
-  passed &=
-      check(patternLimited.addPattern(
-                {CanonicalSyncPatternKind::PipelineScope, {first, second}}),
-            "add optional pattern at limit");
-  CanonicalSyncMechanismDescriptor broad = barrier(2, 1, source, target);
-  broad.actions[0].drainedResources.push_back(3);
-  passed &= check(patternLimited.internMechanism(broad).error ==
-                      CanonicalSyncProblemError::LimitExceeded,
-                  "later mechanisms cannot exceed the aggregate pattern limit");
+  const CanonicalSyncMechanismId second = takeIndex(
+      patternLimited.internMechanism(barrier(2, {1, 2}, source, target)),
+      passed, "add pattern-limit barrier");
+  passed &= check(patternLimited
+                          .addPattern({CanonicalSyncPatternKind::PipelineScope,
+                                       {first, second}})
+                          .error == CanonicalSyncProblemError::LimitExceeded,
+                  "optional patterns cannot exceed the aggregate limit");
   return passed;
 }
 
