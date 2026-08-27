@@ -27,6 +27,28 @@ target_link_libraries(pto-ir-translator-unit-test PRIVATE
 add_test(NAME pto_ir_translator_unit COMMAND pto-ir-translator-unit-test)
 set_tests_properties(pto_ir_translator_unit PROPERTIES LABELS "PTO;unit")
 
+add_executable(pto-canonical-sync-analysis-unit-test
+  CanonicalSyncAnalysisTest.cpp
+)
+target_include_directories(pto-canonical-sync-analysis-unit-test PRIVATE
+  "${PROJECT_SOURCE_DIR}/include"
+)
+target_link_libraries(pto-canonical-sync-analysis-unit-test PRIVATE
+  MLIRArithDialect
+  MLIRFuncDialect
+  MLIRIR
+  MLIRParser
+  MLIRSCFDialect
+  PTOIR
+  PTOTransforms
+  LLVMSupport
+)
+add_test(NAME pto_canonical_sync_analysis_unit
+  COMMAND pto-canonical-sync-analysis-unit-test
+)
+set_tests_properties(pto_canonical_sync_analysis_unit
+  PROPERTIES LABELS "PTO;unit")
+
 add_executable(pto-sync-cover-graph-unit-test
   SyncCoverGraphTest.cpp
 )
