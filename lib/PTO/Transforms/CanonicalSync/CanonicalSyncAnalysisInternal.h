@@ -97,6 +97,7 @@ private:
   LogicalResult addConservativeAccess(ExtractedAccess &access,
                                       SyncCoverStorageDomainId domain,
                                       SyncCoverStorageAccessFamilyId family);
+  LogicalResult buildStorageConflictIndex();
   bool gmAccessesAreNoAlias(const ExtractedAccess &first,
                             const ExtractedAccess &second) const;
   FailureOr<std::vector<std::pair<unsigned, unsigned>>>
@@ -152,6 +153,7 @@ private:
   llvm::DenseMap<Operation *, SmallVector<SyncCoverNodeId, 16>> loopNodes_;
   std::vector<ExtractedAccess> extractedAccesses_;
   std::vector<std::vector<std::size_t>> nodeAccessIndices_;
+  std::vector<std::vector<SyncCoverNodeId>> storageConflictPeers_;
   std::map<AddressSpace, SyncCoverStorageDomainId> storageDomains_;
   llvm::DenseMap<Value, SyncCoverStorageAccessFamilyId> storageFamilies_;
   SyncCoverStorageAccessFamilyId nextStorageFamily_ = 1;

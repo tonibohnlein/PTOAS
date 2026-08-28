@@ -116,8 +116,8 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
   const bool failedStage =
       failed(validateInput()) || failed(extract()) || failed(buildScopes()) ||
       failed(buildNodesAndStorage()) || failed(validateControlDataflow()) ||
-      failed(addFixedIssueOrder()) || failed(addForwardDependencies()) ||
-      failed(addRecurrenceDependencies());
+      failed(addFixedIssueOrder()) || failed(buildStorageConflictIndex()) ||
+      failed(addForwardDependencies()) || failed(addRecurrenceDependencies());
   if (failedStage) {
     return failure();
   }

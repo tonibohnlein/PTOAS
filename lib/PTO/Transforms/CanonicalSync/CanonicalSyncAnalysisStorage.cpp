@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <tuple>
 #include <utility>
 
 using namespace mlir;
@@ -187,6 +188,104 @@ ProgramBuilder::addConservativeAccess(ExtractedAccess &access,
         "cannot construct conservative canonical sync storage access");
   }
   access.graphAccesses = {*added.index};
+  return success();
+}
+
+LogicalResult ProgramBuilder::buildStorageConflictIndex() {
+  const auto &graphAccesses = graph_.getStorageAccesses();
+  const std::size_t missing = std::numeric_limits<std::size_t>::max();
+  std::vector<std::size_t> extractedByGraphAccess(graphAccesses.size(),
+                                                  missing);
+  for (std::size_t extracted = 0; extracted < extractedAccesses_.size();
+       ++extracted) {
+    for (SyncCoverStorageAccessId access :
+         extractedAccesses_[extracted].graphAccesses) {
+      const bool invalid = access >= extractedByGraphAccess.size() ||
+                           extractedByGraphAccess[access] != missing;
+      if (invalid) {
+        return function_.emitError(
+            "canonical sync storage index has invalid access ownership");
+      }
+      extractedByGraphAccess[access] = extracted;
+    }
+  }
+  if (llvm::is_contained(extractedByGraphAccess, missing)) {
+    return function_.emitError(
+        "canonical sync storage index lost access ownership");
+  }
+
+  std::vector<std::vector<SyncCoverStorageAccessId>> accessesByDomain(
+      graph_.getStorageDomains().size());
+  for (const SyncCoverStorageAccess &access : graphAccesses) {
+    if (access.domain >= accessesByDomain.size()) {
+      return function_.emitError(
+          "canonical sync storage index has invalid domain ownership");
+    }
+    accessesByDomain[access.domain].push_back(access.id);
+  }
+
+  std::vector<std::pair<SyncCoverNodeId, SyncCoverNodeId>> nodePairs;
+  for (std::vector<SyncCoverStorageAccessId> &domainAccesses :
+       accessesByDomain) {
+    llvm::sort(domainAccesses, [&](SyncCoverStorageAccessId first,
+                                   SyncCoverStorageAccessId second) {
+      const SyncCoverStorageAccess &firstAccess = graphAccesses[first];
+      const SyncCoverStorageAccess &secondAccess = graphAccesses[second];
+      return std::tie(firstAccess.extent.begin, firstAccess.extent.end,
+                      firstAccess.id) < std::tie(secondAccess.extent.begin,
+                                                 secondAccess.extent.end,
+                                                 secondAccess.id);
+    });
+    std::vector<SyncCoverStorageAccessId> active;
+    for (SyncCoverStorageAccessId currentId : domainAccesses) {
+      const SyncCoverStorageAccess &current = graphAccesses[currentId];
+      active.erase(
+          std::remove_if(active.begin(), active.end(),
+                         [&](SyncCoverStorageAccessId candidate) {
+                           return graphAccesses[candidate].extent.end <=
+                                  current.extent.begin;
+                         }),
+          active.end());
+      if (syncCoverStorageModeWrites(current.mode)) {
+        nodePairs.emplace_back(current.node, current.node);
+      }
+      for (SyncCoverStorageAccessId previousId : active) {
+        const SyncCoverStorageAccess &previous = graphAccesses[previousId];
+        const bool cannotHazard = !syncCoverStorageModeWrites(previous.mode) &&
+                                  !syncCoverStorageModeWrites(current.mode);
+        if (cannotHazard) {
+          continue;
+        }
+        const ExtractedAccess &previousExtracted =
+            extractedAccesses_[extractedByGraphAccess[previousId]];
+        const ExtractedAccess &currentExtracted =
+            extractedAccesses_[extractedByGraphAccess[currentId]];
+        if (gmAccessesAreNoAlias(previousExtracted, currentExtracted)) {
+          continue;
+        }
+        if (!consumePairInspection()) {
+          return function_.emitError(
+              "canonical sync pair-inspection limit exceeded");
+        }
+        nodePairs.push_back(std::minmax(previous.node, current.node));
+      }
+      active.push_back(currentId);
+    }
+  }
+
+  llvm::sort(nodePairs);
+  nodePairs.erase(std::unique(nodePairs.begin(), nodePairs.end()),
+                  nodePairs.end());
+  storageConflictPeers_.assign(nodeBindings_.size(), {});
+  for (const auto &[first, second] : nodePairs) {
+    storageConflictPeers_[first].push_back(second);
+    if (first != second) {
+      storageConflictPeers_[second].push_back(first);
+    }
+  }
+  for (std::vector<SyncCoverNodeId> &peers : storageConflictPeers_) {
+    llvm::sort(peers);
+  }
   return success();
 }
 

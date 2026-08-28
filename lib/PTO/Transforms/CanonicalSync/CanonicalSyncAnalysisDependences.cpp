@@ -188,11 +188,9 @@ LogicalResult ProgramBuilder::addForwardDependencies() {
   }
 
   for (SyncCoverNodeId source = 0; source < nodeBindings_.size(); ++source) {
-    for (SyncCoverNodeId target = source + 1; target < nodeBindings_.size();
-         ++target) {
-      if (!consumePairInspection()) {
-        return function_.emitError(
-            "canonical sync pair-inspection limit exceeded");
+    for (SyncCoverNodeId target : storageConflictPeers_[source]) {
+      if (target <= source) {
+        continue;
       }
       const bool unavailable =
           nodeBindings_[source].operation == nodeBindings_[target].operation ||
@@ -221,9 +219,13 @@ LogicalResult ProgramBuilder::addRecurrenceDependencies() {
     if (indexed == loopNodes_.end()) {
       continue;
     }
-    const ArrayRef<SyncCoverNodeId> loopNodes = indexed->second;
+    SmallVector<SyncCoverNodeId, 16> loopNodes = indexed->second;
+    llvm::sort(loopNodes);
     for (SyncCoverNodeId source : loopNodes) {
-      for (SyncCoverNodeId target : loopNodes) {
+      for (SyncCoverNodeId target : storageConflictPeers_[source]) {
+        if (!std::binary_search(loopNodes.begin(), loopNodes.end(), target)) {
+          continue;
+        }
         if (isDemandImplicitlyComplete(source, target)) {
           continue;
         }
