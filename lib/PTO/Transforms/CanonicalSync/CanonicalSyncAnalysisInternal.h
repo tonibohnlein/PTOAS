@@ -63,6 +63,20 @@ struct HazardKinds {
 
 using IssueFrontier = std::map<std::uint32_t, std::vector<SyncCoverNodeId>>;
 
+struct FixedBarrierBoundary {
+  Operation *operation = nullptr;
+  SyncCoverGuard guard;
+  std::vector<SyncCoverNodeId> sources;
+  std::set<std::uint32_t> remainingTargetResources;
+};
+
+struct IssueOrderState {
+  IssueFrontier frontier;
+  IssueFrontier issued;
+  std::vector<FixedBarrierBoundary> fixedBarriers;
+};
+
+bool isCanonicalSyncOwned(Operation *operation);
 bool isTransparentRegionOperation(Operation *operation);
 bool isCompletionOrdered(std::uint32_t resource, Operation *operation);
 bool canSignalDirectCompletion(std::uint32_t resource);
@@ -108,8 +122,11 @@ private:
 
   bool consumePairInspection();
   LogicalResult addFixedIssueOrder();
-  LogicalResult addRegionIssueOrder(Region &region, IssueFrontier &frontier);
-  LogicalResult addIssueNode(SyncCoverNodeId target, IssueFrontier &frontier);
+  LogicalResult addRegionIssueOrder(Region &region, IssueOrderState &state);
+  LogicalResult addIssueNode(SyncCoverNodeId target, IssueOrderState &state);
+  LogicalResult addFixedBarrier(BarrierOp barrier, IssueOrderState &state);
+  static void mergeIssueStates(IssueOrderState &target,
+                               const IssueOrderState &source);
   static void mergeFrontiers(IssueFrontier &target,
                              const IssueFrontier &source);
   LogicalResult addForwardDependencies();

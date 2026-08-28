@@ -60,6 +60,9 @@ LogicalResult ProgramBuilder::addRegion(Region &region,
   }
   contexts_[&region] = context;
   for (Operation &operation : region.front()) {
+    if (isCanonicalSyncOwned(&operation)) {
+      continue;
+    }
     if (auto loop = dyn_cast<scf::ForOp>(operation)) {
       const bool scopeLimitReached =
           graph_.getScopes().size() >= options_.maximumScopes;
@@ -244,6 +247,9 @@ LogicalResult ProgramBuilder::validateControlDataflow() {
   };
 
   WalkResult walk = function_.walk([&](Operation *operation) {
+    if (isCanonicalSyncOwned(operation)) {
+      return WalkResult::skip();
+    }
     if (auto conditional = dyn_cast<scf::IfOp>(operation)) {
       if (failed(rejectScheduledControlValue(
               operation, conditional.getCondition(), "scf.if condition"))) {

@@ -629,12 +629,60 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
   }
   std::size_t dynamicSets = 0;
   std::size_t dynamicWaits = 0;
+  std::size_t generatedHelpers = 0;
+  bool unownedDynamicSync = false;
   module->walk([&](Operation *operation) {
     dynamicSets += operation->getName().getStringRef() == "pto.set_flag_dyn";
     dynamicWaits += operation->getName().getStringRef() == "pto.wait_flag_dyn";
+    const bool generated = operation->hasAttr("pto.canonical_sync");
+    const bool dynamic = isa<SetFlagDynOp, WaitFlagDynOp>(operation);
+    unownedDynamicSync = unownedDynamicSync || (dynamic && !generated);
+    generatedHelpers +=
+        generated && operation->getDialect() ==
+                         context.getLoadedDialect<arith::ArithDialect>();
   });
-  return check(dynamicSets == 1 && dynamicWaits == 1,
-               "emit one modulo-selected body set and wait");
+  if (!check(dynamicSets == 1 && dynamicWaits == 1 && !unownedDynamicSync,
+             "emit one owned modulo-selected body set and wait") ||
+      !check(generatedHelpers != 0,
+             "mark dynamic-lane and guard helpers as pass-owned")) {
+    return false;
+  }
+
+  func::FuncOp function = module->lookupSymbol<func::FuncOp>("reuse");
+  const std::string materialized = printOperation(function);
+  CanonicalSyncBuildOptions analysisOnlyOptions = options;
+  analysisOnlyOptions.analysisOnly = true;
+  if (!check(succeeded(runCanonicalSync(function, analysisOnlyOptions)),
+             "reanalyze pass-owned synchronization without mutation") ||
+      !check(printOperation(function) == materialized,
+             "preserve pass-owned IR in analysis-only mode")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions invalidOptions = options;
+  invalidOptions.analysis.maximumNodes = 0;
+  {
+    ScopedDiagnosticHandler handler(&context,
+                                    [](Diagnostic &) { return success(); });
+    if (!check(failed(runCanonicalSync(function, invalidOptions)),
+               "fail a rerun before replacement materialization")) {
+      return false;
+    }
+  }
+  const bool retainedAfterFailure =
+      check(printOperation(function) == materialized,
+            "retain the previous plan after a failed rerun");
+  const bool replacementSucceeded =
+      check(succeeded(runCanonicalSync(function, options)),
+            "replace pass-owned synchronization on rerun");
+  const bool replacementIsIdempotent =
+      check(printOperation(function) == materialized,
+            "make pass-owned replacement idempotent");
+  if (!retainedAfterFailure || !replacementSucceeded ||
+      !replacementIsIdempotent) {
+    return false;
+  }
+  return true;
 }
 
 bool testDistanceTwoCrossRootSlotRecurrence() {
@@ -980,6 +1028,128 @@ bool testRejectsOwnedSyncAndAcceptsFixedFence() {
          expectAnalysisFailure(source, "set_intra", diagnostic) &&
          expectAnalysisFailure(source, "wait_intra", diagnostic) &&
          expectAnalysisSuccess(source, "fence");
+}
+
+bool testFixedBarriersSupplyCompletionAndRemainUnowned() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a5"} {
+      func.func @fixed(
+          %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>) {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.barrier <PIPE_MTE2>
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
+      func.func @fixed_branch(
+          %condition: i1,
+          %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>) {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        scf.if %condition {
+          pto.barrier <PIPE_MTE2>
+          pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                    outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        }
+        return
+      }
+      func.func @fixed_all(
+          %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>,
+          %out: !pto.tile_buf<vec, 16x16xf32>) {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.barrier <PIPE_ALL>
+        pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%out : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module), "parse fixed-barrier fixtures")) {
+    return false;
+  }
+
+  const auto checkFunction = [&](StringRef name,
+                                 bool expectGuardedSupply) -> bool {
+    func::FuncOp function = module->lookupSymbol<func::FuncOp>(name);
+    FailureOr<CanonicalSyncProgram> program =
+        buildCanonicalSyncProgram(function);
+    if (!check(succeeded(program), "build fixed-barrier completion graph")) {
+      return false;
+    }
+    const SyncCoverGraph &graph = program->getGraph();
+    const bool hasFixedSupply =
+        llvm::any_of(graph.getEdges(), [&](const SyncCoverEdge &edge) {
+          return edge.kind == SyncCoverEdgeKind::CompletionSupply &&
+                 (!expectGuardedSupply || !edge.sourceGuard.literals.empty() ||
+                  !edge.targetGuard.literals.empty());
+        });
+    CanonicalSyncBuildOptions options;
+    CanonicalSyncProblemBuildResult precise =
+        buildCanonicalSyncPreciseProblem(*program, options);
+    const bool baselineComplete =
+        precise && precise.problem->getBaselineCoverage().count() ==
+                       graph.getDemands().size();
+    const bool credited =
+        check(!graph.getDemands().empty() && hasFixedSupply,
+              "credit an unowned barrier as fixed completion supply");
+    const bool covered =
+        check(baselineComplete,
+              "cover fixed-barrier hazards without a candidate mechanism");
+    const bool materialized =
+        check(succeeded(runCanonicalSync(function, options)),
+              "materialize around a fixed user barrier");
+    if (!credited || !covered || !materialized) {
+      return false;
+    }
+
+    std::size_t userBarriers = 0;
+    std::size_t generatedNonTailSync = 0;
+    function.walk([&](Operation *operation) {
+      const bool generated = operation->hasAttr("pto.canonical_sync");
+      if (isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp>(operation)) {
+        generatedNonTailSync += generated;
+      }
+      if (auto barrier = dyn_cast<BarrierOp>(operation)) {
+        if (!generated) {
+          ++userBarriers;
+        } else if (!barrier->hasAttr("pto.auto_sync_tail_barrier")) {
+          ++generatedNonTailSync;
+        }
+      }
+    });
+    return check(userBarriers == 1,
+                 "preserve the unowned fixed barrier exactly once") &&
+           check(generatedNonTailSync == 0,
+                 "avoid redundant synchronization around fixed supply");
+  };
+
+  return checkFunction("fixed", false) && checkFunction("fixed_branch", true) &&
+         checkFunction("fixed_all", false);
+}
+
+bool testRejectsFixedBarrierInsideLoop() {
+  constexpr std::string_view source = R"mlir(
+    module attributes {pto.target_arch = "a5"} {
+      func.func @loop_barrier(%limit: index) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        scf.for %i = %c0 to %limit step %c1 {
+          pto.barrier <PIPE_MTE2>
+        }
+        return
+      }
+    }
+  )mlir";
+  return expectAnalysisFailure(source, "loop_barrier",
+                               "fixed pipe barriers inside loops");
 }
 
 bool testStructuralLimitsFailClosed() {
@@ -1861,7 +2031,9 @@ int main() {
       testAnalysisLimitFailsClosed() && testFailClosedInputs() &&
       testAcceptsDeclaredStorageProvenanceRoots() &&
       testRejectsOwnedSyncAndAcceptsFixedFence() &&
-      testStructuralLimitsFailClosed() && testPeriodicBranchEvidence() &&
+      testFixedBarriersSupplyCompletionAndRemainUnowned() &&
+      testRejectsFixedBarrierInsideLoop() && testStructuralLimitsFailClosed() &&
+      testPeriodicBranchEvidence() &&
       testFirstIterationRecurrenceSuppression() &&
       testGenericRecurrenceWithoutOwnershipDiscovery() &&
       testUncoverablePreciseCatalogUsesBackstop() &&

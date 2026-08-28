@@ -12,6 +12,8 @@
 
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
+
 #include "llvm/ADT/StringSwitch.h"
 
 #include <algorithm>
@@ -24,17 +26,18 @@ using namespace mlir::pto::canonical_sync_detail;
 namespace {
 
 bool isManualSync(Operation *operation) {
-  // Reject only operations that consume the intra-core event resources this
-  // pass owns. Whole-core syncall and fence-barrier-all operations are fixed
-  // input constraints and do not participate in canonical cover selection.
+  // Reject operations that consume the intra-core event resources this pass
+  // owns. Pipe barriers are modeled as fixed completion supply. Whole-core
+  // syncall and fence-barrier-all remain preserved fixed constraints but are
+  // not yet credited as cover supply.
   const StringRef name = operation->getName().getStringRef();
   return llvm::StringSwitch<bool>(name)
       .Cases(RecordEventOp::getOperationName(), WaitEventOp::getOperationName(),
              BarrierSyncOp::getOperationName(), true)
       .Cases(SetFlagOp::getOperationName(), WaitFlagOp::getOperationName(),
              SetFlagDynOp::getOperationName(), true)
-      .Cases(WaitFlagDynOp::getOperationName(), BarrierOp::getOperationName(),
-             TSyncOp::getOperationName(), true)
+      .Cases(WaitFlagDynOp::getOperationName(), TSyncOp::getOperationName(),
+             true)
       .Cases(GetBufOp::getOperationName(), GetBufDynOp::getOperationName(),
              RlsBufOp::getOperationName(), true)
       .Cases(RlsBufDynOp::getOperationName(),
@@ -50,6 +53,53 @@ bool isManualSync(Operation *operation) {
              SetIntraBlockOp::getOperationName(), true)
       .Case(WaitIntraBlockOp::getOperationName(), true)
       .Default(false);
+}
+
+bool isSupportedOwnedOperation(Operation *operation) {
+  const StringRef name = operation->getName().getStringRef();
+  return llvm::StringSwitch<bool>(name)
+      .Cases(BarrierOp::getOperationName(), SetFlagOp::getOperationName(),
+             WaitFlagOp::getOperationName(), true)
+      .Cases(SetFlagDynOp::getOperationName(),
+             WaitFlagDynOp::getOperationName(), scf::IfOp::getOperationName(),
+             true)
+      .Cases(arith::AddIOp::getOperationName(),
+             arith::SubIOp::getOperationName(),
+             arith::DivUIOp::getOperationName(), true)
+      .Cases(arith::RemUIOp::getOperationName(),
+             arith::CmpIOp::getOperationName(),
+             arith::SelectOp::getOperationName(), true)
+      .Case(arith::ConstantOp::getOperationName(), true)
+      .Default(false);
+}
+
+LogicalResult validateOwnedOperationTree(Operation *root) {
+  WalkResult walk = root->walk([&](Operation *operation) {
+    const bool generatedTerminator =
+        operation != root && isa<scf::YieldOp>(operation) &&
+        isCanonicalSyncOwned(operation->getParentOp());
+    if (generatedTerminator) {
+      return WalkResult::advance();
+    }
+    const bool invalidMarker = !isCanonicalSyncOwned(operation) ||
+                               !isSupportedOwnedOperation(operation);
+    if (invalidMarker) {
+      operation->emitError(
+          "canonical sync found malformed pass-owned synchronization IR");
+      return WalkResult::interrupt();
+    }
+    for (Value result : operation->getResults()) {
+      for (Operation *user : result.getUsers()) {
+        if (!isCanonicalSyncOwned(user)) {
+          user->emitError("canonical sync pass-owned helper escapes into "
+                          "user IR");
+          return WalkResult::interrupt();
+        }
+      }
+    }
+    return WalkResult::advance();
+  });
+  return failure(walk.wasInterrupted());
 }
 
 bool isGmArgumentType(Type type) {
@@ -71,6 +121,12 @@ bool isGmArgumentType(Type type) {
 }
 
 } // namespace
+
+bool mlir::pto::canonical_sync_detail::isCanonicalSyncOwned(
+    Operation *operation) {
+  return operation &&
+         isa_and_nonnull<UnitAttr>(operation->getAttr("pto.canonical_sync"));
+}
 
 bool mlir::pto::canonical_sync_detail::isTransparentRegionOperation(
     Operation *operation) {
@@ -193,10 +249,25 @@ LogicalResult ProgramBuilder::validateInput() {
   }
 
   WalkResult walk = function_.walk([&](Operation *operation) {
+    const bool hasOwnershipMarker = operation->hasAttr("pto.canonical_sync");
+    if (hasOwnershipMarker) {
+      if (failed(validateOwnedOperationTree(operation))) {
+        return WalkResult::interrupt();
+      }
+      return WalkResult::skip();
+    }
     if (isManualSync(operation)) {
       operation->emitError(
           "canonical sync does not accept pre-existing pipe synchronization");
       return WalkResult::interrupt();
+    }
+    if (auto barrier = dyn_cast<BarrierOp>(operation)) {
+      const bool insideLoop = barrier->getParentOfType<scf::ForOp>() != nullptr;
+      if (insideLoop) {
+        barrier.emitError("canonical sync does not yet support fixed pipe "
+                          "barriers inside loops");
+        return WalkResult::interrupt();
+      }
     }
     if (auto conditional = dyn_cast<scf::IfOp>(operation)) {
       const bool hasResults = conditional.getNumResults() != 0;
@@ -253,6 +324,12 @@ LogicalResult ProgramBuilder::extract() {
   for (const std::unique_ptr<InstanceElement> &element : syncIR_) {
     auto *compound = dyn_cast<CompoundInstanceElement>(element.get());
     if (!compound || !compound->elementOp) {
+      continue;
+    }
+    const bool fixedOrOwnedSync =
+        isCanonicalSyncOwned(compound->elementOp) ||
+        isa<BarrierOp, FenceBarrierAllOp, SyncAllOp>(compound->elementOp);
+    if (fixedOrOwnedSync) {
       continue;
     }
     compounds_.push_back(compound);

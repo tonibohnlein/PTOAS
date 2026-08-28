@@ -17,6 +17,8 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/PatternMatch.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 #include <algorithm>
 #include <limits>
 #include <map>
@@ -360,6 +362,29 @@ void markGenerated(Operation *operation, Builder &builder) {
   operation->setAttr("pto.canonical_sync", builder.getUnitAttr());
 }
 
+bool isGenerated(Operation *operation) {
+  return operation &&
+         isa_and_nonnull<UnitAttr>(operation->getAttr("pto.canonical_sync"));
+}
+
+SmallVector<Operation *> collectGeneratedRoots(func::FuncOp function) {
+  SmallVector<Operation *> roots;
+  function.walk([&](Operation *operation) {
+    if (!isGenerated(operation)) {
+      return;
+    }
+    bool ownedAncestor = false;
+    for (Operation *parent = operation->getParentOp(); parent != nullptr;
+         parent = parent->getParentOp()) {
+      ownedAncestor = ownedAncestor || isGenerated(parent);
+    }
+    if (!ownedAncestor) {
+      roots.push_back(operation);
+    }
+  });
+  return roots;
+}
+
 void emitPhysicalAction(IRRewriter &rewriter, func::FuncOp function,
                         const ConcreteAction &action) {
   if (action.kind == CanonicalSyncActionKind::Barrier) {
@@ -385,22 +410,31 @@ void emitPhysicalAction(IRRewriter &rewriter, func::FuncOp function,
     scf::ForOp loop = action.eventLaneLoop;
     Value offset = rewriter.create<arith::SubIOp>(
         location, loop.getInductionVar(), loop.getLowerBound());
+    markGenerated(offset.getDefiningOp(), rewriter);
     Value ordinal =
         rewriter.create<arith::DivUIOp>(location, offset, loop.getStep());
+    markGenerated(ordinal.getDefiningOp(), rewriter);
     Value width = rewriter.create<arith::ConstantIndexOp>(
         location, action.eventIds.size());
+    markGenerated(width.getDefiningOp(), rewriter);
     Value lane = rewriter.create<arith::RemUIOp>(location, ordinal, width);
+    markGenerated(lane.getDefiningOp(), rewriter);
     Value selected = rewriter.create<arith::ConstantIndexOp>(
         location, action.eventIds.front());
+    markGenerated(selected.getDefiningOp(), rewriter);
     for (std::size_t index = 1; index < action.eventIds.size(); ++index) {
       Value candidate =
           rewriter.create<arith::ConstantIndexOp>(location, index);
+      markGenerated(candidate.getDefiningOp(), rewriter);
       Value matches = rewriter.create<arith::CmpIOp>(
           location, arith::CmpIPredicate::eq, lane, candidate);
+      markGenerated(matches.getDefiningOp(), rewriter);
       Value event = rewriter.create<arith::ConstantIndexOp>(
           location, action.eventIds[index]);
+      markGenerated(event.getDefiningOp(), rewriter);
       selected =
           rewriter.create<arith::SelectOp>(location, matches, event, selected);
+      markGenerated(selected.getDefiningOp(), rewriter);
     }
     Operation *created =
         action.kind == CanonicalSyncActionKind::EventSet
@@ -454,6 +488,7 @@ void emitAction(IRRewriter &rewriter, func::FuncOp function,
   case CanonicalSyncActionGuardKind::HasSuccessor: {
     const Value next = rewriter.create<arith::AddIOp>(
         location, guardLoop.getInductionVar(), guardLoop.getStep());
+    markGenerated(next.getDefiningOp(), rewriter);
     condition = rewriter.create<arith::CmpIOp>(
         location, arith::CmpIPredicate::slt, next, guardLoop.getUpperBound());
     break;
@@ -461,6 +496,7 @@ void emitAction(IRRewriter &rewriter, func::FuncOp function,
   case CanonicalSyncActionGuardKind::None:
     return;
   }
+  markGenerated(condition.getDefiningOp(), rewriter);
   scf::IfOp guard = rewriter.create<scf::IfOp>(location, TypeRange{}, condition,
                                                /*withElseRegion=*/false);
   markGenerated(guard, rewriter);
@@ -882,6 +918,11 @@ LogicalResult mlir::pto::materializeCanonicalSyncPlan(
         "canonical sync plan has an invalid physical recipe");
   }
   IRRewriter rewriter(program.getFunction().getContext());
+  SmallVector<Operation *> generatedRoots =
+      collectGeneratedRoots(program.getFunction());
+  for (Operation *operation : llvm::reverse(generatedRoots)) {
+    rewriter.eraseOp(operation);
+  }
   for (const ActionGroup &group : *groups) {
     if (group.before) {
       rewriter.setInsertionPoint(group.anchor);

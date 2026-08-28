@@ -68,38 +68,47 @@ bool ProgramBuilder::consumePairInspection() {
 }
 
 LogicalResult ProgramBuilder::addFixedIssueOrder() {
-  IssueFrontier frontier;
-  return addRegionIssueOrder(function_.getBody(), frontier);
+  IssueOrderState state;
+  return addRegionIssueOrder(function_.getBody(), state);
 }
 
 LogicalResult ProgramBuilder::addRegionIssueOrder(Region &region,
-                                                  IssueFrontier &frontier) {
+                                                  IssueOrderState &state) {
   if (region.empty()) {
     return success();
   }
   for (Operation &operation : region.front()) {
+    if (isCanonicalSyncOwned(&operation)) {
+      continue;
+    }
     if (auto loop = dyn_cast<scf::ForOp>(operation)) {
-      IssueFrontier body = frontier;
+      IssueOrderState body = state;
       if (failed(addRegionIssueOrder(loop.getRegion(), body))) {
         return failure();
       }
-      mergeFrontiers(frontier, body);
+      mergeIssueStates(state, body);
       continue;
     }
     if (auto conditional = dyn_cast<scf::IfOp>(operation)) {
-      IssueFrontier alternatives;
+      IssueOrderState alternatives;
       for (Region &alternative : conditional->getRegions()) {
-        IssueFrontier branch = frontier;
+        IssueOrderState branch = state;
         if (failed(addRegionIssueOrder(alternative, branch))) {
           return failure();
         }
-        mergeFrontiers(alternatives, branch);
+        mergeIssueStates(alternatives, branch);
       }
-      frontier = std::move(alternatives);
+      state = std::move(alternatives);
       continue;
     }
     if (isTransparentRegionOperation(&operation)) {
-      if (failed(addRegionIssueOrder(operation.getRegion(0), frontier))) {
+      if (failed(addRegionIssueOrder(operation.getRegion(0), state))) {
+        return failure();
+      }
+      continue;
+    }
+    if (auto barrier = dyn_cast<BarrierOp>(operation)) {
+      if (failed(addFixedBarrier(barrier, state))) {
         return failure();
       }
       continue;
@@ -109,7 +118,7 @@ LogicalResult ProgramBuilder::addRegionIssueOrder(Region &region,
       continue;
     }
     for (SyncCoverNodeId node : scheduled->second) {
-      if (failed(addIssueNode(node, frontier))) {
+      if (failed(addIssueNode(node, state))) {
         return failure();
       }
     }
@@ -118,9 +127,57 @@ LogicalResult ProgramBuilder::addRegionIssueOrder(Region &region,
 }
 
 LogicalResult ProgramBuilder::addIssueNode(SyncCoverNodeId target,
-                                           IssueFrontier &frontier) {
+                                           IssueOrderState &state) {
   const SyncCoverNode &targetNode = graph_.getNodes()[target];
-  std::vector<SyncCoverNodeId> &predecessors = frontier[targetNode.resource];
+  for (FixedBarrierBoundary &boundary : state.fixedBarriers) {
+    auto remaining =
+        boundary.remainingTargetResources.find(targetNode.resource);
+    if (remaining == boundary.remainingTargetResources.end()) {
+      continue;
+    }
+    for (SyncCoverNodeId source : boundary.sources) {
+      if (!consumePairInspection()) {
+        return function_.emitError(
+            "canonical sync pair-inspection limit exceeded");
+      }
+      const SyncCoverNode &sourceNode = graph_.getNodes()[source];
+      const bool incompatible =
+          sourceNode.order >= targetNode.order ||
+          !syncCoverGuardsCompatible(sourceNode.guard, boundary.guard) ||
+          !syncCoverGuardsCompatible(targetNode.guard, boundary.guard);
+      if (incompatible) {
+        continue;
+      }
+      const std::optional<SyncCoverScopeId> scope =
+          graph_.getLowestCommonScope(sourceNode.scope, targetNode.scope);
+      if (!scope) {
+        return function_.emitError("canonical sync fixed-barrier scope failed");
+      }
+      SyncCoverEdge edge;
+      edge.source = source;
+      edge.target = target;
+      edge.scope = *scope;
+      edge.kind = SyncCoverEdgeKind::CompletionSupply;
+      edge.sourceGuard = boundary.guard;
+      edge.targetGuard = boundary.guard;
+      const SyncCoverGraphResult added = graph_.addEdge(std::move(edge));
+      const bool duplicate = added.error == SyncCoverGraphError::DuplicateEdge;
+      if (!added && !duplicate) {
+        return function_.emitError(
+            "cannot construct canonical sync fixed-barrier supply");
+      }
+    }
+    boundary.remainingTargetResources.erase(remaining);
+  }
+  state.fixedBarriers.erase(
+      std::remove_if(state.fixedBarriers.begin(), state.fixedBarriers.end(),
+                     [](const FixedBarrierBoundary &boundary) {
+                       return boundary.remainingTargetResources.empty();
+                     }),
+      state.fixedBarriers.end());
+
+  std::vector<SyncCoverNodeId> &predecessors =
+      state.frontier[targetNode.resource];
   for (SyncCoverNodeId source : predecessors) {
     if (!consumePairInspection()) {
       return function_.emitError(
@@ -149,7 +206,107 @@ LogicalResult ProgramBuilder::addIssueNode(SyncCoverNodeId target,
     }
   }
   predecessors = {target};
+  state.issued[targetNode.resource].push_back(target);
   return success();
+}
+
+LogicalResult ProgramBuilder::addFixedBarrier(BarrierOp barrier,
+                                              IssueOrderState &state) {
+  auto context = contexts_.find(barrier->getParentRegion());
+  if (context == contexts_.end()) {
+    return barrier.emitError(
+        "canonical sync lost fixed-barrier region context");
+  }
+  FixedBarrierBoundary boundary;
+  boundary.operation = barrier.getOperation();
+  boundary.guard = context->second.guard;
+  const std::uint32_t resource =
+      static_cast<std::uint32_t>(barrier.getPipe().getPipe());
+  bool inspectionLimitExceeded = false;
+  const auto captureSource = [&](SyncCoverNodeId source) {
+    if (!consumePairInspection()) {
+      inspectionLimitExceeded = true;
+      return;
+    }
+    const bool compatible = syncCoverGuardsCompatible(
+        graph_.getNodes()[source].guard, boundary.guard);
+    if (compatible) {
+      boundary.sources.push_back(source);
+    }
+  };
+  if (resource == static_cast<std::uint32_t>(PipelineType::PIPE_ALL)) {
+    for (const auto &[sourceResource, sources] : state.issued) {
+      (void)sourceResource;
+      for (SyncCoverNodeId source : sources) {
+        captureSource(source);
+        if (inspectionLimitExceeded) {
+          break;
+        }
+      }
+      if (inspectionLimitExceeded) {
+        break;
+      }
+    }
+    for (const SyncCoverNode &node : graph_.getNodes()) {
+      if (inspectionLimitExceeded) {
+        break;
+      }
+      if (!consumePairInspection()) {
+        inspectionLimitExceeded = true;
+        break;
+      }
+      boundary.remainingTargetResources.insert(node.resource);
+    }
+  } else {
+    const auto sources = state.issued.find(resource);
+    if (sources != state.issued.end()) {
+      for (SyncCoverNodeId source : sources->second) {
+        captureSource(source);
+        if (inspectionLimitExceeded) {
+          break;
+        }
+      }
+    }
+    boundary.remainingTargetResources.insert(resource);
+  }
+  if (inspectionLimitExceeded) {
+    return function_.emitError("canonical sync pair-inspection limit exceeded");
+  }
+  llvm::sort(boundary.sources);
+  boundary.sources.erase(
+      std::unique(boundary.sources.begin(), boundary.sources.end()),
+      boundary.sources.end());
+  const bool effectiveBoundary =
+      !boundary.sources.empty() && !boundary.remainingTargetResources.empty();
+  if (effectiveBoundary) {
+    state.fixedBarriers.push_back(std::move(boundary));
+  }
+  return success();
+}
+
+void ProgramBuilder::mergeIssueStates(IssueOrderState &target,
+                                      const IssueOrderState &source) {
+  mergeFrontiers(target.frontier, source.frontier);
+  mergeFrontiers(target.issued, source.issued);
+  for (const FixedBarrierBoundary &incoming : source.fixedBarriers) {
+    auto existing = llvm::find_if(
+        target.fixedBarriers, [&](const FixedBarrierBoundary &candidate) {
+          return candidate.operation == incoming.operation;
+        });
+    if (existing == target.fixedBarriers.end()) {
+      target.fixedBarriers.push_back(incoming);
+      continue;
+    }
+    existing->sources.insert(existing->sources.end(), incoming.sources.begin(),
+                             incoming.sources.end());
+    llvm::sort(existing->sources);
+    existing->sources.erase(
+        std::unique(existing->sources.begin(), existing->sources.end()),
+        existing->sources.end());
+    existing->remainingTargetResources.insert(
+        incoming.remainingTargetResources.begin(),
+        incoming.remainingTargetResources.end());
+  }
 }
 
 void ProgramBuilder::mergeFrontiers(IssueFrontier &target,
