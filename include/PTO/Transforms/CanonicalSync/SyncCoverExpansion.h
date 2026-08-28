@@ -55,6 +55,38 @@ struct SyncCoverExpandedEdge {
   unsigned targetCopy = 0;
 };
 
+enum class SyncCoverLoopBoundaryKind : std::uint8_t {
+  Entry,
+  Exit,
+};
+
+struct SyncCoverLoopPeriodicSummary {
+  SyncCoverControlId control = 0;
+  std::size_t initialPhase = 0;
+  std::vector<std::size_t> nextPhase;
+  std::vector<unsigned> activeAlternative;
+};
+
+/// One bottom-up semantic summary of a loop-local DAG. Resources include
+/// nested summaries so a parent can route completion through child exits.
+struct SyncCoverLoopSummary {
+  SyncCoverScopeId scope = 0;
+  std::optional<SyncCoverScopeId> parentLoop;
+  SyncCoverAnchor entry;
+  SyncCoverAnchor exit;
+  bool zeroTripPossible = true;
+  std::vector<SyncCoverScopeId> childLoops;
+  std::vector<std::uint32_t> resources;
+  std::vector<std::uint32_t> carryResources;
+  std::vector<SyncCoverLoopPeriodicSummary> periodicControls;
+};
+
+struct SyncCoverProjectedCompletion {
+  std::size_t target = 0;
+  unsigned targetCopy = 0;
+  std::optional<SyncCoverScopeId> exportedLoop;
+};
+
 class SyncCoverExpandedEdgeRange {
 public:
   using const_iterator = std::vector<SyncCoverExpandedEdge>::const_iterator;
@@ -92,6 +124,10 @@ public:
   std::optional<SyncCoverNodeId>
   getOperationForVirtualNode(std::size_t virtualNode) const;
   std::optional<unsigned> getCopyForVirtualNode(std::size_t virtualNode) const;
+  std::optional<std::size_t> getLoopBoundary(SyncCoverScopeId scope,
+                                             std::uint32_t resource,
+                                             SyncCoverLoopBoundaryKind kind,
+                                             unsigned copy) const;
   SyncCoverExpandedEdgeRange getOutgoingEdges(std::size_t virtualNode) const;
 
 private:
@@ -100,8 +136,10 @@ private:
   SyncCoverScopeId scope_ = 0;
   unsigned horizon_ = 0;
   std::size_t operationVirtualNodeCount_ = 0;
+  std::size_t loopSummaryVirtualNodeCount_ = 0;
   std::size_t virtualNodeCount_ = 0;
   std::vector<SyncCoverNodeId> operationNodes_;
+  std::vector<std::pair<SyncCoverScopeId, std::uint32_t>> loopSummaryResources_;
   std::vector<std::uint32_t> carryResources_;
   std::vector<SyncCoverExpandedEdge> edges_;
   std::vector<std::size_t> outgoingOffsets_;
@@ -113,6 +151,8 @@ struct SyncCoverExpansionStatistics {
   std::size_t virtualNodes = 0;
   std::size_t virtualEdges = 0;
   std::size_t compactCarryEdges = 0;
+  std::size_t loopSummaryNodes = 0;
+  std::size_t zeroTripEdges = 0;
 };
 
 class SyncCoverExpandedProgram {
@@ -135,6 +175,15 @@ public:
   const SyncCoverExpandedArena *
   getRecurrenceArena(SyncCoverScopeId scope) const;
   const SyncCoverExpandedArena *getArena(const SyncCoverDemand &demand) const;
+  const std::vector<SyncCoverLoopSummary> &getLoopSummaries() const {
+    return loopSummaries_;
+  }
+  const SyncCoverLoopSummary *getLoopSummary(SyncCoverScopeId scope) const;
+  std::optional<SyncCoverProjectedCompletion>
+  projectCompletion(const SyncCoverGraph &graph,
+                    const SyncCoverExpandedArena &arena,
+                    const SyncCoverEdge &edge, unsigned sourceCopy,
+                    bool exportsCompletionAtScopeExit) const;
   std::optional<SyncCoverArenaUnavailableReason>
   getUnavailableReason(SyncCoverScopeId scope) const;
   SyncCoverExpansionStatistics getStatistics() const { return statistics_; }
@@ -156,6 +205,9 @@ private:
   std::map<SyncCoverScopeId, SyncCoverExpandedArena> recurrenceArenas_;
   std::map<SyncCoverScopeId, SyncCoverArenaUnavailableReason>
       unavailableArenas_;
+  std::vector<SyncCoverLoopSummary> loopSummaries_;
+  std::map<SyncCoverScopeId, std::size_t> loopSummaryIndices_;
+  std::vector<SyncCoverScopeId> summarizedLoops_;
   SyncCoverExpansionStatistics statistics_;
 };
 

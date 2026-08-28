@@ -73,6 +73,14 @@ Distance-zero demands use one immutable base arena. A loop with maximum active
 distance `d` uses `d + 1` virtual iterations. Nested loops retain separate
 recurrence arenas rather than forming a Cartesian product.
 
+Loop-local DAGs are summarized bottom-up with resource-specific entry and exit
+nodes, an explicit zero-trip transfer, recurrence-carry resources, and copied
+periodic-control phase relations. Issue edges that cross a summarized child are
+routed through those boundaries. A verified recurrence protocol exports
+completion only to its scope-exit summary after its drain; parent coverage can
+then consume that fact without treating an earlier child-body wait as if it
+occurred after the loop.
+
 ## 3. Restricted mechanism catalog
 
 A mechanism is the smallest selectable and materializable unit. Version one

@@ -54,6 +54,9 @@ struct SyncCoverCompletionSupply {
   SyncCoverMechanismId mechanism = 0;
   SyncCoverEdge edge;
   std::vector<SyncCoverDemandId> allowedDemands;
+  /// A verified recurrence protocol with a balanced scope-exit drain exports
+  /// completion to the enclosing arena through its loop summary.
+  bool exportsCompletionAtScopeExit = false;
 };
 
 enum class SyncCoverCoverageError : std::uint8_t {

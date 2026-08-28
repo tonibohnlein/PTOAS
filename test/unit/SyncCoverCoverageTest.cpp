@@ -304,6 +304,145 @@ bool testOptionalIntermediateAvailability() {
   return passed;
 }
 
+bool testNestedLoopSummaryMatchesExplicitUnrolling() {
+  bool passed = true;
+  SyncCoverGraph nested;
+  const SyncCoverScopeId outer = takeIndex(
+      nested.addScope(0, true, SyncCoverTimelineInterval{0, 40}, true), passed,
+      "add summarized outer loop");
+  const SyncCoverScopeId inner = takeIndex(
+      nested.addScope(outer, false, SyncCoverTimelineInterval{4, 24}, true),
+      passed, "add summarized inner loop");
+  const SyncCoverControlId control = takeIndex(
+      nested.addControl(2, inner), passed, "add summarized periodic control");
+  SyncCoverControlPhaseRelation relation;
+  relation.loopScope = inner;
+  relation.initialPhase = 0;
+  relation.nextPhase = {1, 0};
+  relation.activeAlternative = {0, 1};
+  passed &= check(nested.setControlPhaseRelation(control, relation),
+                  "add summarized periodic phase relation");
+  passed &= check(nested.setResourceRecurrenceCarryKind(
+                      2, SyncCoverEdgeKind::CompletionPreservingIssueOrder),
+                  "add summarized outer carry");
+  const SyncCoverNodeId innerWait = takeIndex(
+      nested.addNode(2, 1, inner, 2), passed, "add summarized inner wait");
+  const SyncCoverNodeId innerSet = takeIndex(
+      nested.addNode(1, 1, inner, 3), passed, "add summarized inner set");
+  const SyncCoverNodeId outerTarget = takeIndex(
+      nested.addNode(2, 1, outer, 4), passed, "add summarized outer target");
+  passed &=
+      check(nested.addEdge(makeEdge(
+                innerWait, outerTarget,
+                SyncCoverEdgeKind::CompletionPreservingIssueOrder, outer)),
+            "route summarized exit to outer target");
+  passed &= check(nested.addDemand(makeDemand(innerSet, outerTarget, outer, 0)),
+                  "add summarized parent demand");
+  passed &= check(nested.addDemand(makeDemand(innerSet, outerTarget, outer, 1)),
+                  "add summarized outer recurrence demand");
+  passed &= check(nested.addDemand(makeDemand(innerSet, innerWait, inner, 1)),
+                  "add summarized inner recurrence contract");
+  passed &= check(nested.freezeStructure(), "freeze summarized nested graph");
+
+  const SyncCoverExpandedProgram nestedExpansion(nested);
+  const SyncCoverLoopSummary *summary = nestedExpansion.getLoopSummary(inner);
+  const SyncCoverExpandedArena *outerArena =
+      nestedExpansion.getRecurrenceArena(outer);
+  const bool summaryContract =
+      summary && summary->parentLoop == outer && summary->zeroTripPossible &&
+      summary->entry.kind == SyncCoverAnchorKind::ScopeEntry &&
+      summary->entry.position == 4 &&
+      summary->exit.kind == SyncCoverAnchorKind::ScopeExit &&
+      summary->exit.position == 24 &&
+      summary->resources == std::vector<std::uint32_t>({1, 2}) &&
+      summary->carryResources == std::vector<std::uint32_t>({2}) &&
+      summary->periodicControls.size() == 1 &&
+      summary->periodicControls[0].control == control &&
+      summary->periodicControls[0].initialPhase == 0 &&
+      summary->periodicControls[0].nextPhase ==
+          std::vector<std::size_t>({1, 0}) &&
+      summary->periodicControls[0].activeAlternative ==
+          std::vector<unsigned>({0, 1});
+  passed &= check(nestedExpansion && summaryContract,
+                  "build bottom-up loop summary contract");
+  passed &= check(outerArena &&
+                      outerArena->getLoopBoundary(
+                          inner, 2, SyncCoverLoopBoundaryKind::Entry, 0) &&
+                      outerArena->getLoopBoundary(
+                          inner, 2, SyncCoverLoopBoundaryKind::Exit, 0),
+                  "materialize inner entry and exit in the parent arena");
+  const SyncCoverExpansionStatistics statistics =
+      nestedExpansion.getStatistics();
+  passed &=
+      check(statistics.loopSummaryNodes != 0 && statistics.zeroTripEdges != 0,
+            "materialize explicit zero-trip summary transfers");
+
+  const SyncCoverCompletionSupply nestedProtocol{
+      0,
+      makeEdge(innerSet, innerWait, SyncCoverEdgeKind::CompletionSupply, inner,
+               1),
+      {},
+      true};
+  const SyncCoverCoverageResult nestedCoverage = computeSyncCoverCoverage(
+      nested, nestedExpansion, {nestedProtocol}, {0, 1});
+  SyncCoverCompletionSupply equivalentProtocol = nestedProtocol;
+  equivalentProtocol.mechanism = 1;
+  const std::vector<SyncCoverCompletionSupply> nestedProtocols = {
+      nestedProtocol, equivalentProtocol};
+  const SyncCoverSingletonCoverageResult nestedSingleton =
+      computeSyncCoverSingletonCoverage(nested, nestedExpansion, 2,
+                                        nestedProtocols, {0, 1});
+  const SyncCoverPairCoverageResult nestedPair = computeSyncCoverPairCoverage(
+      nested, nestedExpansion, 2, nestedProtocols, {{0, 1}}, {0, 1});
+
+  SyncCoverGraph unrolled;
+  const SyncCoverScopeId unrolledOuter = takeIndex(
+      unrolled.addScope(0, true, SyncCoverTimelineInterval{0, 40}, true),
+      passed, "add unrolled outer loop");
+  passed &= check(unrolled.setResourceRecurrenceCarryKind(
+                      2, SyncCoverEdgeKind::CompletionPreservingIssueOrder),
+                  "add unrolled outer carry");
+  const SyncCoverNodeId unrolledSet =
+      takeIndex(unrolled.addNode(1, 1, unrolledOuter, 1), passed,
+                "add explicitly unrolled inner set");
+  const SyncCoverNodeId unrolledDrain =
+      takeIndex(unrolled.addNode(2, 1, unrolledOuter, 2), passed,
+                "add explicitly unrolled scope-exit drain");
+  const SyncCoverNodeId unrolledTarget =
+      takeIndex(unrolled.addNode(2, 1, unrolledOuter, 3), passed,
+                "add explicitly unrolled outer target");
+  passed &= check(
+      unrolled.addEdge(makeEdge(
+          unrolledDrain, unrolledTarget,
+          SyncCoverEdgeKind::CompletionPreservingIssueOrder, unrolledOuter)),
+      "route unrolled drain to outer target");
+  passed &= check(unrolled.addDemand(
+                      makeDemand(unrolledSet, unrolledTarget, unrolledOuter)),
+                  "add unrolled parent demand");
+  passed &= check(unrolled.addDemand(makeDemand(unrolledSet, unrolledTarget,
+                                                unrolledOuter, 1)),
+                  "add unrolled outer recurrence demand");
+  passed &=
+      check(unrolled.freezeStructure(), "freeze explicitly unrolled graph");
+  const SyncCoverExpandedProgram unrolledExpansion(unrolled);
+  const SyncCoverCompletionSupply unrolledDrainSupply{
+      0,
+      makeEdge(unrolledSet, unrolledDrain, SyncCoverEdgeKind::CompletionSupply,
+               unrolledOuter),
+      {}};
+  const SyncCoverCoverageResult unrolledCoverage = computeSyncCoverCoverage(
+      unrolled, unrolledExpansion, {unrolledDrainSupply}, {0, 1});
+  passed &= check(nestedCoverage && unrolledCoverage &&
+                      nestedCoverage.covered.count() == 2 &&
+                      unrolledCoverage.covered.count() == 2,
+                  "nested summaries match explicit one-iteration unrolling");
+  passed &= check(nestedSingleton && nestedPair &&
+                      nestedSingleton.mechanisms[0].count() == 2 &&
+                      nestedPair.pairs[0].count() == 2,
+                  "all prepared coverage engines consume loop summaries");
+  return passed;
+}
+
 bool testExpansionOwnershipAndMaximumHorizon() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -425,6 +564,7 @@ int main() {
   passed &= testGuardedRecurrenceAndCompactCarry();
   passed &= testCompactCarryKindsAndResourceIsolation();
   passed &= testOptionalIntermediateAvailability();
+  passed &= testNestedLoopSummaryMatchesExplicitUnrolling();
   passed &= testExpansionOwnershipAndMaximumHorizon();
   passed &= testUnavailableArenaIsReported();
   passed &= testBaseLimitFailsClosed();

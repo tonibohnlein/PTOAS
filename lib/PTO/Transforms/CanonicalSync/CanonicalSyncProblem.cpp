@@ -284,7 +284,9 @@ getSupplies(const std::vector<CanonicalSyncMechanism> &mechanisms,
   for (CanonicalSyncMechanismId member : members) {
     for (const CanonicalSyncSupplyBinding &binding :
          mechanisms[member].descriptor.supplies) {
-      result.push_back({member, binding.edge, binding.allowedDemands});
+      result.push_back(
+          {member, binding.edge, binding.allowedDemands,
+           binding.proof == CanonicalSyncSupplyProof::VerifiedProtocol});
     }
   }
   return result;
@@ -1122,7 +1124,8 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns() {
     for (const CanonicalSyncSupplyBinding &binding :
          mechanism.descriptor.supplies) {
       allSupplies.push_back(
-          {mechanism.id, binding.edge, binding.allowedDemands});
+          {mechanism.id, binding.edge, binding.allowedDemands,
+           binding.proof == CanonicalSyncSupplyProof::VerifiedProtocol});
     }
   }
   const SyncCoverSingletonCoverageResult singletonCoverage =
