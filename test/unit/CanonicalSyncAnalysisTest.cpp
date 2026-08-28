@@ -1423,14 +1423,14 @@ bool testFixedBarrierInspectionBoundsAndPersistentControlState() {
   }
   func::FuncOp fixed = module->lookupSymbol<func::FuncOp>("fixed_limit");
   CanonicalSyncBuildOptions exactOptions;
-  exactOptions.analysis.maximumPairInspections = 22;
+  exactOptions.analysis.maximumPairInspections = 24;
   if (!check(succeeded(runCanonicalSync(fixed, exactOptions)),
              "complete fixed-barrier analysis at its exact work bound")) {
     return false;
   }
   const std::string materialized = printOperation(fixed);
   CanonicalSyncBuildOptions belowOptions = exactOptions;
-  belowOptions.analysis.maximumPairInspections = 21;
+  belowOptions.analysis.maximumPairInspections = 23;
   bool failedBelow = false;
   {
     ScopedDiagnosticHandler handler(&context,
@@ -1485,10 +1485,127 @@ bool testFixedBarrierInspectionBoundsAndPersistentControlState() {
                                     [](Diagnostic &) { return success(); });
     below = buildCanonicalSyncProgram(deep, deepBelow);
   }
-  return check(succeeded(exact),
-               "bound deep no-barrier state independently of control depth") &&
-         check(failed(below),
-               "account every persistent no-barrier issue-state update");
+  if (!check(succeeded(exact),
+             "bound deep no-barrier state independently of control depth") ||
+      !check(failed(below),
+             "account every persistent no-barrier issue-state update")) {
+    return false;
+  }
+
+  constexpr std::size_t shallowGuardDepth = 1;
+  constexpr std::size_t deepGuardDepth = 32;
+  constexpr std::size_t barrierCount = 16;
+  const auto makeGuardedBarrierFixture = [](StringRef name,
+                                            std::size_t guardDepth) {
+    std::string result = R"mlir(
+      module attributes {pto.target_arch = "a5"} {
+        func.func @)mlir";
+    result += name.str();
+    result += R"mlir((
+            %condition: i1,
+            %first: !pto.partition_tensor_view<16x16xf32>,
+            %second: !pto.partition_tensor_view<16x16xf32>,
+            %first_slot: !pto.tile_buf<vec, 16x16xf32>,
+            %second_slot: !pto.tile_buf<vec, 16x16xf32>) {
+)mlir";
+    for (std::size_t depth = 0; depth < guardDepth; ++depth) {
+      result += "          scf.if %condition {\n";
+    }
+    result += R"mlir(
+            pto.tload ins(%first : !pto.partition_tensor_view<16x16xf32>)
+                      outs(%first_slot : !pto.tile_buf<vec, 16x16xf32>)
+)mlir";
+    for (std::size_t barrier = 0; barrier < barrierCount; ++barrier) {
+      result += "            pto.barrier <PIPE_MTE2>\n";
+    }
+    result += R"mlir(
+            pto.tload ins(%second : !pto.partition_tensor_view<16x16xf32>)
+                      outs(%second_slot : !pto.tile_buf<vec, 16x16xf32>)
+)mlir";
+    for (std::size_t depth = 0; depth < guardDepth; ++depth) {
+      result += "          }\n";
+    }
+    result += R"mlir(
+          return
+        }
+      }
+)mlir";
+    return result;
+  };
+  OwningOpRef<ModuleOp> guardedModule = parseSourceString<ModuleOp>(
+      makeGuardedBarrierFixture("guarded_shallow", shallowGuardDepth),
+      &context);
+  OwningOpRef<ModuleOp> deeplyGuardedModule = parseSourceString<ModuleOp>(
+      makeGuardedBarrierFixture("guarded_deep", deepGuardDepth), &context);
+  const bool parsedGuardedModules = static_cast<bool>(guardedModule) &&
+                                    static_cast<bool>(deeplyGuardedModule);
+  if (!check(parsedGuardedModules,
+             "parse guarded fixed-barrier accounting fixtures")) {
+    return false;
+  }
+  const auto minimumAcceptedBound = [&](func::FuncOp function) {
+    std::size_t lower = 1;
+    std::size_t upper = 1U << 18;
+    {
+      CanonicalSyncAnalysisOptions options;
+      options.maximumPairInspections = upper;
+      if (failed(buildCanonicalSyncProgram(function, options))) {
+        return std::size_t{0};
+      }
+    }
+    while (lower < upper) {
+      const std::size_t middle = lower + (upper - lower) / 2;
+      CanonicalSyncAnalysisOptions options;
+      options.maximumPairInspections = middle;
+      FailureOr<CanonicalSyncProgram> trial = failure();
+      {
+        ScopedDiagnosticHandler handler(&context,
+                                        [](Diagnostic &) { return success(); });
+        trial = buildCanonicalSyncProgram(function, options);
+      }
+      if (succeeded(trial)) {
+        upper = middle;
+      } else {
+        lower = middle + 1;
+      }
+    }
+    return lower;
+  };
+  func::FuncOp shallow =
+      guardedModule->lookupSymbol<func::FuncOp>("guarded_shallow");
+  func::FuncOp deeplyGuarded =
+      deeplyGuardedModule->lookupSymbol<func::FuncOp>("guarded_deep");
+  const std::size_t shallowMinimum = minimumAcceptedBound(shallow);
+  const std::size_t deepMinimum = minimumAcceptedBound(deeplyGuarded);
+  if (!check(shallowMinimum != 0 && deepMinimum != 0,
+             "find guarded fixed-barrier accounting bounds")) {
+    return false;
+  }
+  const std::size_t chargedGuardMetadata =
+      3 * barrierCount * (deepGuardDepth - shallowGuardDepth);
+  const bool guardMetadataCharged =
+      deepMinimum >= shallowMinimum &&
+      deepMinimum - shallowMinimum >= chargedGuardMetadata;
+  CanonicalSyncAnalysisOptions deepGuardExact;
+  deepGuardExact.maximumPairInspections = deepMinimum;
+  CanonicalSyncAnalysisOptions deepGuardBelow = deepGuardExact;
+  --deepGuardBelow.maximumPairInspections;
+  FailureOr<CanonicalSyncProgram> deepGuardExactResult =
+      buildCanonicalSyncProgram(deeplyGuarded, deepGuardExact);
+  FailureOr<CanonicalSyncProgram> deepGuardBelowResult = failure();
+  {
+    ScopedDiagnosticHandler handler(&context,
+                                    [](Diagnostic &) { return success(); });
+    deepGuardBelowResult =
+        buildCanonicalSyncProgram(deeplyGuarded, deepGuardBelow);
+  }
+  return check(
+             guardMetadataCharged,
+             "charge shared guard metadata before retaining and copying it") &&
+         check(succeeded(deepGuardExactResult),
+               "accept deeply guarded barriers at the exact work bound") &&
+         check(failed(deepGuardBelowResult),
+               "reject deeply guarded barriers one unit below the bound");
 }
 
 bool testStructuralLimitsFailClosed() {

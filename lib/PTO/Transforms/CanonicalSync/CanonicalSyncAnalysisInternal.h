@@ -79,9 +79,9 @@ struct IssueHistoryNode {
 
 struct FixedBarrierBoundary {
   Operation *operation = nullptr;
-  SyncCoverGuard guard;
+  std::shared_ptr<const SyncCoverGuard> guard;
   std::shared_ptr<const std::vector<SyncCoverNodeId>> sources;
-  std::set<std::uint32_t> remainingTargetResources;
+  std::shared_ptr<const std::set<std::uint32_t>> remainingTargetResources;
 };
 
 struct IssueOrderState {
