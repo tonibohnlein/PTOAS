@@ -1,17 +1,19 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- PTORemoveIdentityTMov.cpp -----------------------------------------===//
 //===----------------------------------------------------------------------===//
 
-#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
@@ -285,9 +287,9 @@ static bool hasUseAfterOp(Value value, Operation *currentOp) {
   return false;
 }
 
-static bool hasLaterUseOfSameAddressRange(
-    TMovOp op, const BaseMemInfo *dstInfo,
-    const Buffer2MemInfoMap &buffer2MemInfoMap) {
+static bool
+hasLaterUseOfSameAddressRange(TMovOp op, const BaseMemInfo *dstInfo,
+                              const Buffer2MemInfoMap &buffer2MemInfoMap) {
   for (const auto &entry : buffer2MemInfoMap) {
     // Later reads of the source itself do not make this no-op TMOV a bridge.
     if (entry.first == op.getSrc()) {
@@ -331,7 +333,9 @@ static bool hasLowPrecisionElement(Value value) {
 }
 
 static bool touchesLowPrecisionElement(TMovOp op) {
-  if (hasLowPrecisionElement(op.getSrc()) || hasLowPrecisionElement(op.getDst())) {
+  const bool lowPrecisionSource = hasLowPrecisionElement(op.getSrc());
+  const bool lowPrecisionDestination = hasLowPrecisionElement(op.getDst());
+  if (lowPrecisionSource || lowPrecisionDestination) {
     return true;
   }
   return llvm::any_of(op->getResults(), [](OpResult result) {
@@ -349,7 +353,9 @@ static bool
 isIdentityTMovByMemInfo(TMovOp op, const Buffer2MemInfoMap &buffer2MemInfoMap) {
   Value src = op.getSrc();
   Value dst = op.getDst();
-  if (!isStaticallyAddressableValue(src) || !isStaticallyAddressableValue(dst)) {
+  const bool staticSource = isStaticallyAddressableValue(src);
+  const bool staticDestination = isStaticallyAddressableValue(dst);
+  if (!staticSource || !staticDestination) {
     return false;
   }
 
@@ -384,12 +390,16 @@ struct PTORemoveIdentityTMovPass
     });
 
     if (!memInfoCandidates.empty()) {
-      MemoryDependentAnalyzer memAnalyzer;
       SyncIRs syncIR;
       Buffer2MemInfoMap buffer2MemInfoMap;
-      PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, func,
-                                 SyncAnalysisMode::NORMALSYNC);
-      translator.Build();
+      OperationMemInfoStorage operationMemInfos;
+      PTOIRTranslator translator(syncIR, buffer2MemInfoMap, operationMemInfos,
+                                 func);
+      if (failed(translator.Build())) {
+        func.emitError("failed to extract synchronization memory effects");
+        signalPassFailure();
+        return;
+      }
 
       for (TMovOp op : memInfoCandidates) {
         if (isIdentityTMovByMemInfo(op, buffer2MemInfoMap)) {

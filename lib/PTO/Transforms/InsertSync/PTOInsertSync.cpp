@@ -1,26 +1,28 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- PTOInsertSync.cpp - PTO Insert Synchronization for PTO Pipeline ----===//
 //===----------------------------------------------------------------------===//
-#include "PTO/Transforms/Passes.h"
 #include "PTO/IR/PTO.h"
-#include "PTO/Transforms/InsertSync/SyncCommon.h"
-#include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
-#include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/InsertSyncAnalysis.h"
 #include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
+#include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/MoveSyncState.h"
+#include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/RemoveRedundantSync.h"
-#include "PTO/Transforms/InsertSync/SyncEventIdAllocation.h"
 #include "PTO/Transforms/InsertSync/SyncCodegen.h"
-#include "mlir/IR/ImplicitLocOpBuilder.h"
+#include "PTO/Transforms/InsertSync/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/SyncEventIdAllocation.h"
+#include "PTO/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h" // [FIX] 确保 FuncOp 定义可见
+#include "mlir/IR/ImplicitLocOpBuilder.h"
 
 // [CRITICAL FIX] 必须在包含 .inc 之前设置好命名空间环境
 // 将 Passes.h.inc 生成的声明包裹在 namespace mlir 中
@@ -29,11 +31,11 @@
 
 namespace mlir {
 namespace pto {
-  // [FIX] 给 mlir::func 起别名为 func，这样 .inc 文件里的 func::FuncOp 就能找到了
-  namespace func = ::mlir::func;
+// [FIX] 给 mlir::func 起别名为 func，这样 .inc 文件里的 func::FuncOp 就能找到了
+namespace func = ::mlir::func;
 
-  #define GEN_PASS_DEF_PTOINSERTSYNC
-  #include "PTO/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_PTOINSERTSYNC
+#include "PTO/Transforms/Passes.h.inc"
 } // namespace pto
 } // namespace mlir
 
@@ -59,7 +61,8 @@ static bool hasGatherScatterLikeOps(func::FuncOp func) {
   return found;
 }
 
-struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSyncPass> {
+struct PTOInsertSyncPass
+    : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSyncPass> {
   void runOnOperation() override {
     func::FuncOp func = getOperation();
     // Backend-partitioned PTODSL containers carry private func declarations
@@ -94,10 +97,16 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     SyncIRs syncIR;
     SyncOperations syncOpsStorage;
     Buffer2MemInfoMap buffer2MemInfoMap;
+    OperationMemInfoStorage operationMemInfos;
 
     // 1. Translator: 构建 SyncIR
-    PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, func, SyncAnalysisMode::NORMALSYNC);
-    translator.Build();
+    PTOIRTranslator translator(syncIR, buffer2MemInfoMap, operationMemInfos,
+                               func);
+    if (failed(translator.Build())) {
+      func.emitError("failed to extract synchronization memory effects");
+      signalPassFailure();
+      return;
+    }
 
     // 如果 IR 太简单，直接跳过
     if (syncIR.size() <= 1) {
