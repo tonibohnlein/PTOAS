@@ -20,6 +20,7 @@
 #include "mlir/Parser/Parser.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <iostream>
@@ -39,6 +40,13 @@ bool check(bool condition, std::string_view message) {
     std::cerr << "CanonicalSyncAnalysisTest failure: " << message << '\n';
   }
   return condition;
+}
+
+std::string printOperation(Operation *operation) {
+  std::string text;
+  llvm::raw_string_ostream stream(text);
+  operation->print(stream);
+  return text;
 }
 
 bool matchesDenseDistanceZeroStorageHazards(const SyncCoverGraph &graph) {
@@ -1336,6 +1344,71 @@ bool testGenericRecurrenceWithoutOwnershipDiscovery() {
                "emit direct ready plus prime-body-drain recurrence actions");
 }
 
+bool testUncoverablePreciseCatalogUsesBackstop() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @uncoverable_guarded_endpoint(
+          %input: !pto.partition_tensor_view<16x16xf32>, %condition: i1) {
+        %addr0 = arith.constant 0 : i64
+        %one = arith.constant 1.000000e+00 : f32
+        %shared = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<vec, 16x16xf32>
+        pto.tload ins(%input : !pto.partition_tensor_view<16x16xf32>)
+          outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+        scf.if %condition {
+          pto.tmuls ins(%shared, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+            outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+        }
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module), "parse uncoverable guarded kernel")) {
+    return false;
+  }
+  func::FuncOp function =
+      module->lookupSymbol<func::FuncOp>("uncoverable_guarded_endpoint");
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(function);
+  if (!check(succeeded(program), "build uncoverable guarded program")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions options;
+  CanonicalSyncProblemBuildResult precise =
+      buildCanonicalSyncPreciseProblem(*program, options);
+  const bool preciselyUncoverable =
+      !precise && precise.problem &&
+      precise.status.error == CanonicalSyncProblemError::UncoverableDemand;
+  if (!check(preciselyUncoverable,
+             "identify the guarded cross-pipe demand as uncoverable")) {
+    return false;
+  }
+  CanonicalSyncComparisonReport report;
+  options.reportCallback = [&](const CanonicalSyncComparisonReport &actual) {
+    report = actual;
+    return success();
+  };
+  if (!check(succeeded(runCanonicalSync(function, options)),
+             "materialize the backstop for an uncoverable precise catalog")) {
+    return false;
+  }
+  std::size_t generatedPipeAllBackstops = 0;
+  function.walk([&](BarrierOp barrier) {
+    generatedPipeAllBackstops +=
+        barrier->hasAttr("pto.canonical_sync") &&
+        !barrier->hasAttr("pto.auto_sync_tail_barrier") &&
+        barrier.getPipe().getPipe() == PIPE::PIPE_ALL;
+  });
+  return check(generatedPipeAllBackstops == 1,
+               "emit one localized PIPE_ALL for the uncovered demand") &&
+         check(report.strategies.size() == 1 &&
+                   report.strategies.front().verified &&
+                   report.strategies.front().usedLocalizedPipeAll,
+               "report the verified uncoverable-demand backstop");
+}
+
 bool testConflictCoreRepairAvoidsPipeAll() {
   MLIRContext context;
   loadDialects(context);
@@ -1370,6 +1443,7 @@ bool testConflictCoreRepairAvoidsPipeAll() {
     return false;
   }
   OwningOpRef<Operation *> forcedFallbackClone(module->clone());
+  OwningOpRef<Operation *> analysisOnlyClone(module->clone());
   func::FuncOp function =
       module->lookupSymbol<func::FuncOp>("scarcity_frontier");
   FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(function);
@@ -1532,6 +1606,17 @@ bool testConflictCoreRepairAvoidsPipeAll() {
              "report the bounded, freshly verified production repair")) {
     return false;
   }
+  std::size_t generatedTargetedBarriers = 0;
+  function.walk([&](BarrierOp barrier) {
+    const bool generated = barrier->hasAttr("pto.canonical_sync");
+    const bool tail = barrier->hasAttr("pto.auto_sync_tail_barrier");
+    generatedTargetedBarriers +=
+        generated && !tail && barrier.getPipe().getPipe() != PIPE::PIPE_ALL;
+  });
+  if (!check(generatedTargetedBarriers == 1,
+             "materialize the verified repair rather than PIPE_ALL")) {
+    return false;
+  }
 
   ModuleOp forcedFallbackModule = cast<ModuleOp>(*forcedFallbackClone);
   func::FuncOp forcedFallback =
@@ -1539,19 +1624,62 @@ bool testConflictCoreRepairAvoidsPipeAll() {
   CanonicalSyncBuildOptions forcedOptions;
   forcedOptions.eventIdBudget = 1;
   forcedOptions.maximumRepairTrials = 0;
+  forcedOptions.maximumBackstopDeletionTrials = 0;
   CanonicalSyncComparisonReport forcedReport;
   forcedOptions.reportCallback =
       [&](const CanonicalSyncComparisonReport &report) {
         forcedReport = report;
         return success();
       };
-  return check(succeeded(runCanonicalSync(forcedFallback, forcedOptions)),
-               "fall back when the aggregate repair-trial budget is zero") &&
-         check(forcedReport.strategies.size() == 1 &&
-                   forcedReport.strategies.front().usedLocalizedPipeAll &&
-                   forcedReport.strategies.front().repairBudgetExhausted &&
-                   forcedReport.strategies.front().repairTrials == 0,
-               "report deterministic aggregate repair-budget exhaustion");
+  if (!check(succeeded(runCanonicalSync(forcedFallback, forcedOptions)),
+             "fall back when the aggregate repair-trial budget is zero") ||
+      !check(forcedReport.strategies.size() == 1 &&
+                 forcedReport.strategies.front().usedLocalizedPipeAll &&
+                 forcedReport.strategies.front().repairBudgetExhausted &&
+                 forcedReport.strategies.front().repairTrials == 0 &&
+                 forcedReport.strategies.front().backstopDeletionTruncated &&
+                 forcedReport.strategies.front().backstopDeletionTrials == 0,
+             "report bounded repair and backstop-deletion exhaustion")) {
+    return false;
+  }
+  std::size_t generatedPipeAllBackstops = 0;
+  forcedFallback.walk([&](BarrierOp barrier) {
+    generatedPipeAllBackstops +=
+        barrier->hasAttr("pto.canonical_sync") &&
+        !barrier->hasAttr("pto.auto_sync_tail_barrier") &&
+        barrier.getPipe().getPipe() == PIPE::PIPE_ALL;
+  });
+  if (!check(generatedPipeAllBackstops == 2,
+             "retain the verified full backstop when cleanup is bounded")) {
+    return false;
+  }
+
+  ModuleOp analysisOnlyModule = cast<ModuleOp>(*analysisOnlyClone);
+  func::FuncOp analysisOnly =
+      analysisOnlyModule.lookupSymbol<func::FuncOp>("scarcity_frontier");
+  CanonicalSyncBuildOptions analysisOptions = forcedOptions;
+  analysisOptions.analysisOnly = true;
+  CanonicalSyncComparisonReport analysisReport;
+  analysisOptions.reportCallback =
+      [&](const CanonicalSyncComparisonReport &report) {
+        analysisReport = report;
+        return success();
+      };
+  const std::string irBefore = printOperation(analysisOnly);
+  if (!check(succeeded(runCanonicalSync(analysisOnly, analysisOptions)),
+             "analyze complete strategy feasibility without mutation")) {
+    return false;
+  }
+  const std::string irAfter = printOperation(analysisOnly);
+  return check(irBefore == irAfter,
+               "leave IR unchanged in analysis-only mode") &&
+         check(analysisReport.strategies.size() == 3 &&
+                   llvm::all_of(analysisReport.strategies,
+                                [](const CanonicalSyncStrategyReport &report) {
+                                  return report.verified &&
+                                         report.usedLocalizedPipeAll;
+                                }),
+               "report the complete backstop path for every compared strategy");
 }
 
 } // namespace
@@ -1570,6 +1698,7 @@ int main() {
       testStructuralLimitsFailClosed() && testPeriodicBranchEvidence() &&
       testFirstIterationRecurrenceSuppression() &&
       testGenericRecurrenceWithoutOwnershipDiscovery() &&
+      testUncoverablePreciseCatalogUsesBackstop() &&
       testConflictCoreRepairAvoidsPipeAll();
   return passed ? 0 : 1;
 }

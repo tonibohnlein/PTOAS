@@ -528,9 +528,12 @@ struct SelectionOutcome {
   bool fatalConstructionError = false;
   bool repairFrontierTruncated = false;
   bool repairBudgetExhausted = false;
+  bool backstopDeletionTruncated = false;
   std::size_t repairRounds = 0;
   std::size_t repairTrials = 0;
   std::size_t repairWorkUnits = 0;
+  std::size_t backstopDeletionTrials = 0;
+  std::size_t backstopDeletionWorkUnits = 0;
 
   const CanonicalSyncPatternProblem &getProblem() const {
     return ownedProblem ? *ownedProblem : *selectedProblem;
@@ -695,9 +698,12 @@ buildStrategyReport(CanonicalSyncSelectionStrategy strategy,
   report.usedLocalizedPipeAll = usedLocalizedPipeAll;
   report.repairFrontierTruncated = outcome.repairFrontierTruncated;
   report.repairBudgetExhausted = outcome.repairBudgetExhausted;
+  report.backstopDeletionTruncated = outcome.backstopDeletionTruncated;
   report.repairRounds = outcome.repairRounds;
   report.repairTrials = outcome.repairTrials;
   report.repairWorkUnits = outcome.repairWorkUnits;
+  report.backstopDeletionTrials = outcome.backstopDeletionTrials;
+  report.backstopDeletionWorkUnits = outcome.backstopDeletionWorkUnits;
   report.cost = outcome.selection.cost;
   report.search = outcome.selection.statistics;
   report.allocation = outcome.selection.allocation;
@@ -741,7 +747,40 @@ buildComparisonHeader(const CanonicalSyncPatternProblem &problem) {
 struct PipeAllFallbackOutcome {
   std::unique_ptr<CanonicalSyncPatternProblem> problem;
   CanonicalSyncVerifiedPlan plan;
+  bool deletionTruncated = false;
+  std::size_t deletionTrials = 0;
+  std::size_t deletionWorkUnits = 0;
 };
+
+std::size_t saturatedAddSize(std::size_t first, std::size_t second) {
+  return second > std::numeric_limits<std::size_t>::max() - first
+             ? std::numeric_limits<std::size_t>::max()
+             : first + second;
+}
+
+std::size_t saturatedMultiplySize(std::size_t first, std::size_t second) {
+  return first != 0 && second > std::numeric_limits<std::size_t>::max() / first
+             ? std::numeric_limits<std::size_t>::max()
+             : first * second;
+}
+
+std::size_t
+estimateFinalVerificationWork(const CanonicalSyncPatternProblem &problem,
+                              ArrayRef<CanonicalSyncMechanismId> mechanisms) {
+  const SyncCoverExpansionStatistics expansion =
+      problem.getExpansion().getStatistics();
+  std::size_t structure =
+      saturatedAddSize(expansion.virtualNodes, expansion.virtualEdges);
+  structure = saturatedAddSize(structure, problem.getDemands().size());
+  structure = saturatedAddSize(structure, problem.getPatterns().size());
+  std::size_t supplies = 1;
+  for (CanonicalSyncMechanismId mechanism : mechanisms) {
+    supplies = saturatedAddSize(
+        supplies,
+        problem.getMechanisms()[mechanism].descriptor.supplies.size());
+  }
+  return saturatedMultiplySize(structure, supplies);
+}
 
 std::optional<PipeAllFallbackOutcome>
 buildLocalizedPipeAllFallback(const CanonicalSyncProgram &program,
@@ -767,6 +806,9 @@ buildLocalizedPipeAllFallback(const CanonicalSyncProgram &program,
   }
   const std::vector<CanonicalSyncMechanismId> deletionOrder =
       selection.mechanisms;
+  std::size_t deletionTrials = 0;
+  std::size_t deletionWorkUnits = 0;
+  bool deletionTruncated = false;
   for (auto position = deletionOrder.rbegin(); position != deletionOrder.rend();
        ++position) {
     CanonicalSyncSelection trial = selection;
@@ -778,6 +820,19 @@ buildLocalizedPipeAllFallback(const CanonicalSyncProgram &program,
       continue;
     }
     trial.mechanisms.erase(found);
+    const std::size_t work =
+        estimateFinalVerificationWork(problem, trial.mechanisms);
+    const bool trialLimitReached =
+        deletionTrials == options.maximumBackstopDeletionTrials;
+    const bool workLimitExceeded =
+        work > options.maximumBackstopDeletionWorkUnits ||
+        deletionWorkUnits > options.maximumBackstopDeletionWorkUnits - work;
+    if (trialLimitReached || workLimitExceeded) {
+      deletionTruncated = true;
+      break;
+    }
+    ++deletionTrials;
+    deletionWorkUnits += work;
     trial.allocation = allocateCanonicalSyncEvents(problem, trial.mechanisms);
     const CanonicalSyncVerifiedPlan verified =
         verifyCanonicalSyncSelection(problem, trial);
@@ -786,7 +841,31 @@ buildLocalizedPipeAllFallback(const CanonicalSyncProgram &program,
       plan = verified;
     }
   }
-  return PipeAllFallbackOutcome{std::move(built.problem), std::move(plan)};
+  return PipeAllFallbackOutcome{std::move(built.problem), std::move(plan),
+                                deletionTruncated, deletionTrials,
+                                deletionWorkUnits};
+}
+
+SelectionOutcome takeFallbackSelection(PipeAllFallbackOutcome fallback,
+                                       const SelectionOutcome &failed) {
+  SelectionOutcome outcome;
+  outcome.ownedProblem = std::move(fallback.problem);
+  outcome.selectedProblem = outcome.ownedProblem.get();
+  outcome.feasible = true;
+  outcome.verifiedPlan = fallback.plan;
+  outcome.repairFrontierTruncated = failed.repairFrontierTruncated;
+  outcome.repairBudgetExhausted = failed.repairBudgetExhausted;
+  outcome.repairRounds = failed.repairRounds;
+  outcome.repairTrials = failed.repairTrials;
+  outcome.repairWorkUnits = failed.repairWorkUnits;
+  outcome.selection.mechanisms = fallback.plan.mechanisms;
+  outcome.selection.allocation = fallback.plan.allocation;
+  outcome.selection.cost = computeCanonicalSyncStructuralCost(
+      outcome.getProblem(), outcome.selection.mechanisms);
+  outcome.backstopDeletionTruncated = fallback.deletionTruncated;
+  outcome.backstopDeletionTrials = fallback.deletionTrials;
+  outcome.backstopDeletionWorkUnits = fallback.deletionWorkUnits;
+  return outcome;
 }
 
 } // namespace
@@ -858,14 +937,26 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
       if (outcome.fatalConstructionError) {
         return failure();
       }
+      bool usedLocalizedPipeAll = false;
+      if (!outcome.feasible) {
+        std::optional<PipeAllFallbackOutcome> fallback =
+            buildLocalizedPipeAllFallback(*program, trialOptions);
+        if (!fallback) {
+          function.emitError("canonical sync comparison could not construct "
+                             "its localized PIPE_ALL backstop");
+          return failure();
+        }
+        outcome = takeFallbackSelection(std::move(*fallback), outcome);
+        usedLocalizedPipeAll = true;
+      }
       bool verified = false;
       if (outcome.feasible) {
         verified = outcome.verifiedPlan.has_value() ||
                    static_cast<bool>(verifyCanonicalSyncSelection(
                        outcome.getProblem(), outcome.selection));
       }
-      report.strategies.push_back(
-          buildStrategyReport(strategy, outcome, verified));
+      report.strategies.push_back(buildStrategyReport(
+          strategy, outcome, verified, usedLocalizedPipeAll));
     }
     if (options.reportCallback && failed(options.reportCallback(report))) {
       return failure();
@@ -916,19 +1007,8 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
   function.emitRemark(
       "canonical sync used localized PIPE_ALL target barriers after bounded "
       "event repair was exhausted");
-  SelectionOutcome fallbackOutcome;
-  fallbackOutcome.ownedProblem = std::move(fallback->problem);
-  fallbackOutcome.selectedProblem = fallbackOutcome.ownedProblem.get();
-  fallbackOutcome.feasible = true;
-  fallbackOutcome.repairFrontierTruncated = selection.repairFrontierTruncated;
-  fallbackOutcome.repairBudgetExhausted = selection.repairBudgetExhausted;
-  fallbackOutcome.repairRounds = selection.repairRounds;
-  fallbackOutcome.repairTrials = selection.repairTrials;
-  fallbackOutcome.repairWorkUnits = selection.repairWorkUnits;
-  fallbackOutcome.selection.mechanisms = fallback->plan.mechanisms;
-  fallbackOutcome.selection.allocation = fallback->plan.allocation;
-  fallbackOutcome.selection.cost = computeCanonicalSyncStructuralCost(
-      fallbackOutcome.getProblem(), fallbackOutcome.selection.mechanisms);
+  SelectionOutcome fallbackOutcome =
+      takeFallbackSelection(std::move(*fallback), selection);
   if (!options.compareSelectionStrategies) {
     report.strategies.push_back(buildStrategyReport(
         options.selection.strategy, fallbackOutcome, true, true));
@@ -937,5 +1017,5 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
     }
   }
   return materializeCanonicalSyncPlan(*program, fallbackOutcome.getProblem(),
-                                      fallback->plan);
+                                      *fallbackOutcome.verifiedPlan);
 }
