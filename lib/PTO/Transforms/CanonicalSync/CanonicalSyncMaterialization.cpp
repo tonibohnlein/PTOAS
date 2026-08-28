@@ -521,15 +521,75 @@ firstConflictCore(const CanonicalSyncSelection &selection) {
 
 struct SelectionOutcome {
   CanonicalSyncSelection selection;
+  std::optional<CanonicalSyncVerifiedPlan> verifiedPlan;
   std::unique_ptr<CanonicalSyncPatternProblem> ownedProblem;
   const CanonicalSyncPatternProblem *selectedProblem = nullptr;
   bool feasible = false;
+  bool fatalConstructionError = false;
+  bool repairFrontierTruncated = false;
+  bool repairBudgetExhausted = false;
   std::size_t repairRounds = 0;
+  std::size_t repairTrials = 0;
+  std::size_t repairWorkUnits = 0;
 
   const CanonicalSyncPatternProblem &getProblem() const {
     return ownedProblem ? *ownedProblem : *selectedProblem;
   }
 };
+
+class RepairBudget {
+public:
+  RepairBudget(std::size_t maximumTrials, std::size_t maximumWorkUnits)
+      : maximumTrials_(maximumTrials), maximumWorkUnits_(maximumWorkUnits) {}
+
+  std::optional<CanonicalSyncSelection>
+  run(const CanonicalSyncPatternProblem &problem,
+      CanonicalSyncGreedyOptions options) {
+    const std::size_t remainingWork = maximumWorkUnits_ - workUnits_;
+    if (trials_ == maximumTrials_ || remainingWork == 0) {
+      exhausted_ = true;
+      return std::nullopt;
+    }
+    options.maximumWorkUnits =
+        std::min(options.maximumWorkUnits, remainingWork);
+    ++trials_;
+    CanonicalSyncSelection selection =
+        selectCanonicalSyncPatterns(problem, std::move(options));
+    workUnits_ += std::min(selection.statistics.workUnits, remainingWork);
+    return selection;
+  }
+
+  bool exhausted() const { return exhausted_; }
+  std::size_t trials() const { return trials_; }
+  std::size_t workUnits() const { return workUnits_; }
+
+private:
+  std::size_t maximumTrials_ = 0;
+  std::size_t maximumWorkUnits_ = 0;
+  std::size_t trials_ = 0;
+  std::size_t workUnits_ = 0;
+  bool exhausted_ = false;
+};
+
+struct VerifiedRepairCandidate {
+  CanonicalSyncSelection selection;
+  CanonicalSyncVerifiedPlan plan;
+};
+
+void considerVerifiedRepair(const CanonicalSyncPatternProblem &problem,
+                            const CanonicalSyncSelection &selection,
+                            std::optional<VerifiedRepairCandidate> &best) {
+  if (!selection) {
+    return;
+  }
+  CanonicalSyncVerifiedPlan plan =
+      verifyCanonicalSyncSelection(problem, selection);
+  if (!plan ||
+      (best && !structuralCostLess(selection.cost, best->selection.cost))) {
+    return;
+  }
+  best = VerifiedRepairCandidate{selection, std::move(plan)};
+}
 
 SelectionOutcome
 selectWithBoundedRepair(const CanonicalSyncProgram &program,
@@ -555,68 +615,71 @@ selectWithBoundedRepair(const CanonicalSyncProgram &program,
       buildCanonicalSyncRepairProblem(program, problem, options, initialCore);
   if (!repair) {
     outcome.selection = std::move(selection);
+    outcome.fatalConstructionError = true;
     return outcome;
   }
   outcome.ownedProblem = std::move(repair.problem);
   outcome.selectedProblem = outcome.ownedProblem.get();
-  selection = selectCanonicalSyncPatterns(*outcome.ownedProblem, current);
+  outcome.repairFrontierTruncated =
+      outcome.ownedProblem->getPatternStatistics().repairFrontierTruncated;
+  RepairBudget budget(options.maximumRepairTrials,
+                      options.maximumRepairWorkUnits);
+  std::optional<CanonicalSyncSelection> currentSelection =
+      budget.run(*outcome.ownedProblem, current);
+  std::vector<CanonicalSyncMechanismId> core = initialCore;
 
   for (std::size_t round = 1; round <= options.maximumRepairRounds; ++round) {
-    if (selection) {
-      outcome.selection = std::move(selection);
-      outcome.feasible = true;
-      outcome.repairRounds = round;
-      return outcome;
-    }
-    const bool canRepair =
-        selection.error == CanonicalSyncSelectionError::ResourceInfeasible ||
-        selection.error == CanonicalSyncSelectionError::NoCoveringPattern;
-    if (!canRepair) {
-      outcome.selection = std::move(selection);
-      outcome.repairRounds = round;
-      return outcome;
-    }
-
-    std::optional<CanonicalSyncSelection> bestFeasible;
+    outcome.repairRounds = round;
+    std::optional<VerifiedRepairCandidate> bestVerified;
     std::optional<CanonicalSyncSelection> bestPressureTrial;
     CanonicalSyncGreedyOptions bestPressureOptions;
-    const std::vector<CanonicalSyncMechanismId> core =
-        firstConflictCore(selection);
+    if (currentSelection) {
+      considerVerifiedRepair(*outcome.ownedProblem, *currentSelection,
+                             bestVerified);
+      if (currentSelection->error ==
+          CanonicalSyncSelectionError::ResourceInfeasible) {
+        bestPressureTrial = *currentSelection;
+        bestPressureOptions = current;
+      }
+    }
     for (CanonicalSyncMechanismId mechanism : core) {
       CanonicalSyncGreedyOptions trialOptions = current;
       trialOptions.forbiddenMechanisms.push_back(mechanism);
-      CanonicalSyncSelection trial =
-          selectCanonicalSyncPatterns(*outcome.ownedProblem, trialOptions);
-      if (trial && (!bestFeasible ||
-                    structuralCostLess(trial.cost, bestFeasible->cost))) {
-        bestFeasible = trial;
-      } else if (trial.error ==
-                     CanonicalSyncSelectionError::ResourceInfeasible &&
-                 (!bestPressureTrial ||
-                  resourceOverflow(trial) <
-                      resourceOverflow(*bestPressureTrial))) {
-        bestPressureTrial = trial;
+      std::optional<CanonicalSyncSelection> trial =
+          budget.run(*outcome.ownedProblem, trialOptions);
+      if (!trial) {
+        break;
+      }
+      considerVerifiedRepair(*outcome.ownedProblem, *trial, bestVerified);
+      if (trial->error == CanonicalSyncSelectionError::ResourceInfeasible &&
+          (!bestPressureTrial ||
+           resourceOverflow(*trial) < resourceOverflow(*bestPressureTrial))) {
+        bestPressureTrial = *trial;
         bestPressureOptions = std::move(trialOptions);
       }
     }
-    if (bestFeasible) {
-      outcome.selection = std::move(*bestFeasible);
+    if (bestVerified) {
+      outcome.selection = std::move(bestVerified->selection);
+      outcome.verifiedPlan = std::move(bestVerified->plan);
       outcome.feasible = true;
       outcome.repairRounds = round;
-      return outcome;
+      break;
     }
-    if (bestPressureTrial) {
-      selection = std::move(*bestPressureTrial);
-      current = std::move(bestPressureOptions);
-      continue;
+    const bool cannotContinue = budget.exhausted() || !bestPressureTrial;
+    if (cannotContinue) {
+      break;
     }
-    outcome.selection = std::move(selection);
-    outcome.repairRounds = round;
-    return outcome;
+    currentSelection = std::move(bestPressureTrial);
+    current = std::move(bestPressureOptions);
+    core = firstConflictCore(*currentSelection);
   }
-  outcome.feasible = static_cast<bool>(selection);
-  outcome.selection = std::move(selection);
-  outcome.repairRounds = options.maximumRepairRounds;
+  if (!outcome.feasible) {
+    outcome.selection =
+        currentSelection ? std::move(*currentSelection) : std::move(selection);
+  }
+  outcome.repairBudgetExhausted = budget.exhausted();
+  outcome.repairTrials = budget.trials();
+  outcome.repairWorkUnits = budget.workUnits();
   return outcome;
 }
 
@@ -630,7 +693,11 @@ buildStrategyReport(CanonicalSyncSelectionStrategy strategy,
   report.error = outcome.selection.error;
   report.verified = verified;
   report.usedLocalizedPipeAll = usedLocalizedPipeAll;
+  report.repairFrontierTruncated = outcome.repairFrontierTruncated;
+  report.repairBudgetExhausted = outcome.repairBudgetExhausted;
   report.repairRounds = outcome.repairRounds;
+  report.repairTrials = outcome.repairTrials;
+  report.repairWorkUnits = outcome.repairWorkUnits;
   report.cost = outcome.selection.cost;
   report.search = outcome.selection.statistics;
   report.allocation = outcome.selection.allocation;
@@ -788,10 +855,14 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
         outcome.selection.error =
             CanonicalSyncSelectionError::NoCoveringPattern;
       }
+      if (outcome.fatalConstructionError) {
+        return failure();
+      }
       bool verified = false;
       if (outcome.feasible) {
-        verified = static_cast<bool>(verifyCanonicalSyncSelection(
-            outcome.getProblem(), outcome.selection));
+        verified = outcome.verifiedPlan.has_value() ||
+                   static_cast<bool>(verifyCanonicalSyncSelection(
+                       outcome.getProblem(), outcome.selection));
       }
       report.strategies.push_back(
           buildStrategyReport(strategy, outcome, verified));
@@ -811,9 +882,15 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
     selection.selectedProblem = precise.problem.get();
     selection.selection.error = CanonicalSyncSelectionError::NoCoveringPattern;
   }
+  if (selection.fatalConstructionError) {
+    return failure();
+  }
   if (selection.feasible) {
-    const CanonicalSyncVerifiedPlan plan = verifyCanonicalSyncSelection(
-        selection.getProblem(), selection.selection);
+    const CanonicalSyncVerifiedPlan plan =
+        selection.verifiedPlan
+            ? *selection.verifiedPlan
+            : verifyCanonicalSyncSelection(selection.getProblem(),
+                                           selection.selection);
     if (!plan) {
       function.emitError() << "canonical sync finalization failed, error="
                            << static_cast<unsigned>(plan.error);
@@ -843,7 +920,11 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
   fallbackOutcome.ownedProblem = std::move(fallback->problem);
   fallbackOutcome.selectedProblem = fallbackOutcome.ownedProblem.get();
   fallbackOutcome.feasible = true;
+  fallbackOutcome.repairFrontierTruncated = selection.repairFrontierTruncated;
+  fallbackOutcome.repairBudgetExhausted = selection.repairBudgetExhausted;
   fallbackOutcome.repairRounds = selection.repairRounds;
+  fallbackOutcome.repairTrials = selection.repairTrials;
+  fallbackOutcome.repairWorkUnits = selection.repairWorkUnits;
   fallbackOutcome.selection.mechanisms = fallback->plan.mechanisms;
   fallbackOutcome.selection.allocation = fallback->plan.allocation;
   fallbackOutcome.selection.cost = computeCanonicalSyncStructuralCost(

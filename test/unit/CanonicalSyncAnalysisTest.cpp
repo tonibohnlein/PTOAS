@@ -1369,6 +1369,7 @@ bool testConflictCoreRepairAvoidsPipeAll() {
   if (!check(static_cast<bool>(module), "parse scarcity-frontier kernel")) {
     return false;
   }
+  OwningOpRef<Operation *> forcedFallbackClone(module->clone());
   func::FuncOp function =
       module->lookupSymbol<func::FuncOp>("scarcity_frontier");
   FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(function);
@@ -1491,19 +1492,66 @@ bool testConflictCoreRepairAvoidsPipeAll() {
                                              CanonicalSyncBarrierKind::All;
                                 });
                    });
-  return check(repair.problem->getMechanisms().size() ==
-                   (*problem)->getMechanisms().size() + 2,
-               "keep repair candidates out of the precise catalog") &&
-         check(fallbackOnlyContainsPipeAll,
-               "keep PIPE_ALL in a barrier-only fallback problem") &&
-         check(selection && frontierMembers == 1 && !usesPipeAll,
-               "select one targeted barrier plus one frontier event") &&
-         check(selection.allocation.domains.size() == 1 &&
-                   selection.allocation.domains.front().required == 1,
-               "frontier fits the one-ID budget") &&
-         check(static_cast<bool>(
-                   verifyCanonicalSyncSelection(*repair.problem, selection)),
-               "finalize conflict-core repair from certified coverage");
+  const bool catalogChecks =
+      check(repair.problem->getMechanisms().size() ==
+                (*problem)->getMechanisms().size() + 2,
+            "keep repair candidates out of the precise catalog") &&
+      check(fallbackOnlyContainsPipeAll,
+            "keep PIPE_ALL in a barrier-only fallback problem") &&
+      check(selection && frontierMembers == 1 && !usesPipeAll,
+            "select one targeted barrier plus one frontier event") &&
+      check(selection.allocation.domains.size() == 1 &&
+                selection.allocation.domains.front().required == 1,
+            "frontier fits the one-ID budget") &&
+      check(static_cast<bool>(
+                verifyCanonicalSyncSelection(*repair.problem, selection)),
+            "finalize conflict-core repair from certified coverage");
+  if (!catalogChecks) {
+    return false;
+  }
+
+  CanonicalSyncComparisonReport repairReport;
+  options.reportCallback = [&](const CanonicalSyncComparisonReport &report) {
+    repairReport = report;
+    return success();
+  };
+  if (!check(succeeded(runCanonicalSync(function, options)),
+             "run conflict-core repair through production orchestration")) {
+    return false;
+  }
+  const bool repairReported =
+      repairReport.strategies.size() == 1 &&
+      repairReport.strategies.front().verified &&
+      !repairReport.strategies.front().usedLocalizedPipeAll &&
+      repairReport.strategies.front().repairRounds == 1 &&
+      repairReport.strategies.front().repairTrials == 3 &&
+      repairReport.strategies.front().repairWorkUnits != 0 &&
+      repairReport.strategies.front().selectedEvents == 1 &&
+      repairReport.strategies.front().selectedTargetedBarriers == 1;
+  if (!check(repairReported,
+             "report the bounded, freshly verified production repair")) {
+    return false;
+  }
+
+  ModuleOp forcedFallbackModule = cast<ModuleOp>(*forcedFallbackClone);
+  func::FuncOp forcedFallback =
+      forcedFallbackModule.lookupSymbol<func::FuncOp>("scarcity_frontier");
+  CanonicalSyncBuildOptions forcedOptions;
+  forcedOptions.eventIdBudget = 1;
+  forcedOptions.maximumRepairTrials = 0;
+  CanonicalSyncComparisonReport forcedReport;
+  forcedOptions.reportCallback =
+      [&](const CanonicalSyncComparisonReport &report) {
+        forcedReport = report;
+        return success();
+      };
+  return check(succeeded(runCanonicalSync(forcedFallback, forcedOptions)),
+               "fall back when the aggregate repair-trial budget is zero") &&
+         check(forcedReport.strategies.size() == 1 &&
+                   forcedReport.strategies.front().usedLocalizedPipeAll &&
+                   forcedReport.strategies.front().repairBudgetExhausted &&
+                   forcedReport.strategies.front().repairTrials == 0,
+               "report deterministic aggregate repair-budget exhaustion");
 }
 
 } // namespace

@@ -42,7 +42,14 @@ struct CanonicalSyncStrategyReport {
   CanonicalSyncSelectionError error = CanonicalSyncSelectionError::None;
   bool verified = false;
   bool usedLocalizedPipeAll = false;
+  bool repairFrontierTruncated = false;
+  bool repairBudgetExhausted = false;
+  bool backstopDeletionTruncated = false;
   std::size_t repairRounds = 0;
+  std::size_t repairTrials = 0;
+  std::size_t repairWorkUnits = 0;
+  std::size_t backstopDeletionTrials = 0;
+  std::size_t backstopDeletionWorkUnits = 0;
   std::size_t selectedEvents = 0;
   std::size_t selectedTargetedBarriers = 0;
   std::size_t selectedPipeAllBarriers = 0;
@@ -69,6 +76,10 @@ struct CanonicalSyncBuildOptions {
   SyncCoverExpansionLimits expansionLimits;
   CanonicalSyncGreedyOptions selection;
   std::size_t maximumRepairRounds = 8;
+  std::size_t maximumRepairTrials = 256;
+  std::size_t maximumRepairWorkUnits = 1U << 28;
+  std::size_t maximumBackstopDeletionTrials = 4096;
+  std::size_t maximumBackstopDeletionWorkUnits = 1U << 27;
   bool analysisOnly = false;
   bool compareSelectionStrategies = false;
   std::function<LogicalResult(const CanonicalSyncComparisonReport &)>
