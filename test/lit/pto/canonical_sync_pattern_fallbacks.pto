@@ -1,0 +1,129 @@
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a3"} {
+  // CHECK-LABEL: func.func @same_pipe_fallback
+  // CHECK: pto.tmatmul
+  // CHECK-NEXT: pto.barrier <PIPE_M>
+  // CHECK-NEXT: pto.tmatmul
+  func.func @same_pipe_fallback() {
+    %addr0 = arith.constant 0 : i64
+    %left = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>
+    %right = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>
+    %acc = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>
+
+    pto.tmatmul ins(%left, %right :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>,
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>)
+      outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                   slayout=row_major, fractal=1024>)
+    pto.tmatmul ins(%left, %right :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>,
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>)
+      outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                   slayout=row_major, fractal=1024>)
+    return
+  }
+
+  // CHECK-LABEL: func.func @cross_pipe_fallback
+  // CHECK: pto.tmatmul
+  // CHECK-NEXT: pto.barrier <PIPE_ALL>
+  // CHECK-NEXT: pto.tstore
+  func.func @cross_pipe_fallback(
+      %output: !pto.partition_tensor_view<32x32xf32>) {
+    %addr0 = arith.constant 0 : i64
+    %left = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>
+    %right = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>
+    %acc = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>
+
+    pto.tmatmul ins(%left, %right :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>,
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>)
+      outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                   slayout=row_major, fractal=1024>)
+    pto.tstore ins(%acc :
+      !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>)
+      outs(%output : !pto.partition_tensor_view<32x32xf32>)
+    return
+  }
+
+  // CHECK-LABEL: func.func @recurrence_fallback
+  // CHECK: scf.for
+  // CHECK-NEXT: pto.barrier <PIPE_M>
+  // CHECK-NEXT: pto.tmatmul
+  func.func @recurrence_fallback(%limit: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %left = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<left, 32x32xf16, slayout=row_major>
+    %right = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<right, 32x32xf16, slayout=col_major>
+    %acc = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                    slayout=row_major, fractal=1024>
+
+    scf.for %iteration = %c0 to %limit step %c1 {
+      pto.tmatmul ins(%left, %right :
+        !pto.tile_buf<left, 32x32xf16, slayout=row_major>,
+        !pto.tile_buf<right, 32x32xf16, slayout=col_major>)
+        outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                     slayout=row_major, fractal=1024>)
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @guarded_endpoint_fallback
+  // CHECK: pto.tload
+  // CHECK: scf.if
+  // CHECK-NEXT: pto.barrier <PIPE_ALL>
+  // CHECK-NEXT: pto.tmuls
+  func.func @guarded_endpoint_fallback(
+      %input: !pto.partition_tensor_view<16x16xf32>, %condition: i1) {
+    %addr0 = arith.constant 0 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %shared = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf32>)
+      outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    scf.if %condition {
+      pto.tmuls ins(%shared, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+        outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    }
+    return
+  }
+
+  // A same target with cross-pipe RAW/WAR and same-pipe reuse must not upgrade
+  // the whole group to PIPE_ALL. Precise events establish the ownership cycle.
+  // CHECK-LABEL: func.func @mixed_pipe_target_fallback
+  // CHECK: pto.tload
+  // CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>
+  // CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>
+  // CHECK-NEXT: pto.tmuls
+  // CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>
+  // CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>
+  // CHECK-NEXT: pto.tload
+  func.func @mixed_pipe_target_fallback(
+      %input: !pto.partition_tensor_view<16x16xf32>) {
+    %addr0 = arith.constant 0 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %shared = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf32>)
+      outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tmuls ins(%shared, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+      outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf32>)
+      outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+}

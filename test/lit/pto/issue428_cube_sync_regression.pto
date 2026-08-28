@@ -1,3 +1,13 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
 // RUN: ptoas --pto-arch=a3 --enable-insert-sync %s | FileCheck %s
 //
 // Issue #428 regression guard:
@@ -6,101 +16,102 @@
 //
 // CHECK-LABEL: tri_inv_block2x2_fp16(
 // CHECK: for (int64_t [[LOOP0:[_A-Za-z][_A-Za-z0-9]*]] =
-// CHECK: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID2);
+// CHECK: wait_flag(PIPE_M, PIPE_MTE1, [[L0_M_MTE1:EVENT_ID[0-7]]]);
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_MTE1, PIPE_M, EVENT_ID2);
-// CHECK: wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID2);
-// CHECK: wait_flag(PIPE_FIX, PIPE_M, EVENT_ID2);
+// CHECK: set_flag(PIPE_MTE1, PIPE_M, [[L0_MTE1_M:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_MTE1, PIPE_M, [[L0_MTE1_M]]);
+// CHECK: wait_flag(PIPE_FIX, PIPE_M, [[L0_FIX_M:EVENT_ID[0-7]]]);
 // CHECK: TMATMUL({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID3);
-// CHECK: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID3);
+// CHECK: set_flag(PIPE_M, PIPE_MTE1, [[L0_M_MTE1_NEXT:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_M, PIPE_MTE1, [[L0_M_MTE1_NEXT]]);
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_MTE1, PIPE_M, EVENT_ID3);
-// CHECK: wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID3);
+// CHECK: set_flag(PIPE_MTE1, PIPE_M, [[L0_MTE1_M_NEXT:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_MTE1, PIPE_M, [[L0_MTE1_M_NEXT]]);
 // CHECK: TMATMUL_ACC({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID4);
-// CHECK: set_flag(PIPE_M, PIPE_FIX, EVENT_ID2);
-// CHECK: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID2);
-// CHECK: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID4);
+// CHECK: set_flag(PIPE_M, PIPE_MTE1, [[L0_M_MTE1_LAST:EVENT_ID[0-7]]]);
+// CHECK: set_flag(PIPE_M, PIPE_FIX, [[L0_M_FIX:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_M, PIPE_FIX, [[L0_M_FIX]]);
+// CHECK: wait_flag(PIPE_M, PIPE_MTE1, [[L0_M_MTE1_LAST]]);
 // CHECK: if ((int64_t) {{.*}} [[LOOP0]]{{.*}}) {
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_FIX, PIPE_M, EVENT_ID3);
+// CHECK: set_flag(PIPE_FIX, PIPE_M, [[L0_FIX_M_NEXT:EVENT_ID[0-7]]]);
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_MTE1, PIPE_M, EVENT_ID4);
-// CHECK: wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID4);
-// CHECK: wait_flag(PIPE_FIX, PIPE_M, EVENT_ID3);
+// CHECK: set_flag(PIPE_MTE1, PIPE_M, [[L0_MTE1_M_LAST:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_MTE1, PIPE_M, [[L0_MTE1_M_LAST]]);
+// CHECK: wait_flag(PIPE_FIX, PIPE_M, [[L0_FIX_M_NEXT]]);
 // CHECK: TMATMUL({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_M, PIPE_FIX, EVENT_ID3);
-// CHECK: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID3);
+// CHECK: set_flag(PIPE_M, PIPE_FIX, [[L0_M_FIX_NEXT:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_M, PIPE_FIX, [[L0_M_FIX_NEXT]]);
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID2);
-// CHECK: set_flag(PIPE_FIX, PIPE_M, EVENT_ID2);
+// CHECK: set_flag(PIPE_M, PIPE_MTE1, [[L0_M_MTE1]]);
+// CHECK: set_flag(PIPE_FIX, PIPE_M, [[L0_FIX_M]]);
 // CHECK: }
 // CHECK: for (int64_t [[LOOP1:[_A-Za-z][_A-Za-z0-9]*]] =
-// CHECK: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID7);
+// CHECK: wait_flag(PIPE_M, PIPE_MTE1, [[L1_M_MTE1:EVENT_ID[0-7]]]);
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_MTE1, PIPE_M, EVENT_ID6);
-// CHECK: wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID6);
-// CHECK: wait_flag(PIPE_FIX, PIPE_M, EVENT_ID6);
+// CHECK: set_flag(PIPE_MTE1, PIPE_M, [[L1_MTE1_M:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_MTE1, PIPE_M, [[L1_MTE1_M]]);
+// CHECK: wait_flag(PIPE_FIX, PIPE_M, [[L1_FIX_M:EVENT_ID[0-7]]]);
 // CHECK: TMATMUL({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
-// CHECK: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
+// CHECK: set_flag(PIPE_M, PIPE_MTE1, [[L1_M_MTE1_NEXT:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_M, PIPE_MTE1, [[L1_M_MTE1_NEXT]]);
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_MTE1, PIPE_M, EVENT_ID7);
-// CHECK: wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID7);
+// CHECK: set_flag(PIPE_MTE1, PIPE_M, [[L1_MTE1_M_NEXT:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_MTE1, PIPE_M, [[L1_MTE1_M_NEXT]]);
 // CHECK: TMATMUL_ACC({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
-// CHECK: set_flag(PIPE_M, PIPE_FIX, EVENT_ID6);
-// CHECK: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID6);
-// CHECK: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID0);
+// CHECK: set_flag(PIPE_M, PIPE_MTE1, [[L1_M_MTE1_LAST:EVENT_ID[0-7]]]);
+// CHECK: set_flag(PIPE_M, PIPE_FIX, [[L1_M_FIX:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_M, PIPE_FIX, [[L1_M_FIX]]);
+// CHECK: wait_flag(PIPE_M, PIPE_MTE1, [[L1_M_MTE1_LAST]]);
 // CHECK: if ((int64_t) {{.*}} [[LOOP1]]{{.*}}) {
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_FIX, PIPE_M, EVENT_ID7);
+// CHECK: set_flag(PIPE_FIX, PIPE_M, [[L1_FIX_M_NEXT:EVENT_ID[0-7]]]);
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
-// CHECK: wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
-// CHECK: wait_flag(PIPE_FIX, PIPE_M, EVENT_ID7);
+// CHECK: set_flag(PIPE_MTE1, PIPE_M, [[L1_MTE1_M_LAST:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_MTE1, PIPE_M, [[L1_MTE1_M_LAST]]);
+// CHECK: wait_flag(PIPE_FIX, PIPE_M, [[L1_FIX_M_NEXT]]);
 // CHECK: TMATMUL({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_M, PIPE_FIX, EVENT_ID7);
-// CHECK: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID7);
+// CHECK: set_flag(PIPE_M, PIPE_FIX, [[L1_M_FIX_NEXT:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_M, PIPE_FIX, [[L1_M_FIX_NEXT]]);
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID7);
-// CHECK: set_flag(PIPE_FIX, PIPE_M, EVENT_ID6);
+// CHECK: set_flag(PIPE_M, PIPE_MTE1, [[L1_M_MTE1]]);
+// CHECK: set_flag(PIPE_FIX, PIPE_M, [[L1_FIX_M]]);
 // CHECK: }
-// CHECK: set_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
-// CHECK: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
+// CHECK: set_flag(PIPE_M, PIPE_FIX, [[TAIL_M_FIX:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_M, PIPE_FIX, [[TAIL_M_FIX]]);
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
+// CHECK: set_flag(PIPE_FIX, PIPE_MTE1, [[TAIL_FIX_MTE1:EVENT_ID[0-7]]]);
 // CHECK: TSTORE({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_FIX, PIPE_M, EVENT_ID0);
+// CHECK: set_flag(PIPE_FIX, PIPE_M, [[TAIL_FIX_M:EVENT_ID[0-7]]]);
 // CHECK: TLOAD({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID3);
-// CHECK: wait_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID0);
+// CHECK: set_flag(PIPE_MTE2, PIPE_MTE1, [[TAIL_MTE2_MTE1:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_FIX, PIPE_MTE1, [[TAIL_FIX_MTE1]]);
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: wait_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID3);
+// CHECK: wait_flag(PIPE_MTE2, PIPE_MTE1, [[TAIL_MTE2_MTE1]]);
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
-// CHECK: wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
-// CHECK: wait_flag(PIPE_FIX, PIPE_M, EVENT_ID0);
+// CHECK: set_flag(PIPE_MTE1, PIPE_M, [[TAIL_MTE1_M:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_MTE1, PIPE_M, [[TAIL_MTE1_M]]);
+// CHECK: wait_flag(PIPE_FIX, PIPE_M, [[TAIL_FIX_M]]);
 // CHECK: TMATMUL({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
-// CHECK: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
+// CHECK: set_flag(PIPE_M, PIPE_FIX, [[TAIL_M_FIX_NEXT:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_M, PIPE_FIX, [[TAIL_M_FIX_NEXT]]);
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID1);
-// CHECK: wait_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID1);
+// CHECK: set_flag(PIPE_FIX, PIPE_MTE1, [[TAIL_FIX_MTE1_NEXT:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_FIX, PIPE_MTE1, [[TAIL_FIX_MTE1_NEXT]]);
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
 // CHECK: TMOV({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
-// CHECK: wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
+// CHECK: set_flag(PIPE_MTE1, PIPE_M, [[TAIL_MTE1_M_NEXT:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_MTE1, PIPE_M, [[TAIL_MTE1_M_NEXT]]);
 // CHECK: TMATMUL({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: set_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
-// CHECK: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
+// CHECK: set_flag(PIPE_M, PIPE_FIX, [[TAIL_M_FIX_LAST:EVENT_ID[0-7]]]);
+// CHECK: wait_flag(PIPE_M, PIPE_FIX, [[TAIL_M_FIX_LAST]]);
 // CHECK: TSTORE({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
-// CHECK: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID2);
-// CHECK: wait_flag(PIPE_FIX, PIPE_M, EVENT_ID2);
-// CHECK: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID7);
-// CHECK: wait_flag(PIPE_FIX, PIPE_M, EVENT_ID6);
+// CHECK: wait_flag(PIPE_M, PIPE_MTE1, [[L0_M_MTE1]]);
+// CHECK: wait_flag(PIPE_FIX, PIPE_M, [[L0_FIX_M]]);
+// CHECK: wait_flag(PIPE_M, PIPE_MTE1, [[L1_M_MTE1]]);
+// CHECK: wait_flag(PIPE_FIX, PIPE_M, [[L1_FIX_M]]);
 // CHECK: ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
 
 module {

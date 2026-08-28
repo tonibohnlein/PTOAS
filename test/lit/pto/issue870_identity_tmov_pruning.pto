@@ -86,6 +86,29 @@ module attributes {pto.target_arch = "a2a3", pto.kernel_kind = #pto.kernel_kind<
     return
   }
 
+  func.func @identity_tmov_trunc_wraps_to_zero() {
+    %c0_i64 = arith.constant 0 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %wrapped_i8 = arith.trunci %c256_i64 : i64 to i8
+    %wrapped_i64 = arith.extui %wrapped_i8 : i8 to i64
+    %src = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 1x16xf32>
+    %dst = pto.alloc_tile addr = %wrapped_i64 : !pto.tile_buf<vec, 1x16xf32>
+    pto.tmov ins(%src : !pto.tile_buf<vec, 1x16xf32>)
+      outs(%dst : !pto.tile_buf<vec, 1x16xf32>)
+    return
+  }
+
+  func.func @non_identity_tmov_zero_extends_negative_byte() {
+    %negative_i8 = arith.constant -32 : i8
+    %unsigned_i64 = arith.extui %negative_i8 : i8 to i64
+    %c0_i64 = arith.constant 0 : i64
+    %src = pto.alloc_tile addr = %unsigned_i64 : !pto.tile_buf<vec, 1x16xf32>
+    %dst = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 1x16xf32>
+    pto.tmov ins(%src : !pto.tile_buf<vec, 1x16xf32>)
+      outs(%dst : !pto.tile_buf<vec, 1x16xf32>)
+    return
+  }
+
   func.func @non_identity_tmov_dynamic_addr(%addr0: i64, %addr1: i64) {
     %src = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x16xf32>
     %dst = pto.alloc_tile addr = %addr1 : !pto.tile_buf<vec, 1x16xf32>
@@ -115,6 +138,14 @@ module attributes {pto.target_arch = "a2a3", pto.kernel_kind = #pto.kernel_kind<
 // CPP: TMOV(
 
 // CPP-LABEL: AICORE void non_identity_tmov_trunc_then_extsi_addr
+// CPP: TMOV(
+
+// CPP-LABEL: AICORE void identity_tmov_trunc_wraps_to_zero
+// CPP-NOT: pipe_barrier(PIPE_V)
+// CPP-NOT: TMOV(
+// CPP: return;
+
+// CPP-LABEL: AICORE void non_identity_tmov_zero_extends_negative_byte
 // CPP: TMOV(
 
 // CPP-LABEL: AICORE void non_identity_tmov_dynamic_addr
