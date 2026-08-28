@@ -1033,6 +1033,88 @@ bool testInvalidSupplyFailsClosed() {
   return passed;
 }
 
+bool testBoundedCoverageMetersWholeQuery() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  SyncCoverGuard guard;
+  constexpr std::size_t guardCount = 12;
+  for (std::size_t index = 0; index < guardCount; ++index) {
+    const SyncCoverControlId control = takeIndex(
+        graph.addControl(2), passed, "add bounded-query guard control");
+    guard.literals.push_back({control, 0});
+  }
+
+  SyncCoverScopeId outer = 0;
+  SyncCoverScopeId deepest = 0;
+  constexpr std::size_t loopDepth = 8;
+  for (std::size_t depth = 0; depth < loopDepth; ++depth) {
+    deepest = takeIndex(graph.addScope(deepest, true,
+                                       SyncCoverTimelineInterval{0, 200}, true,
+                                       guard),
+                        passed, "add bounded-query nested loop");
+    if (depth == 0) {
+      outer = deepest;
+    }
+  }
+
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, deepest, 1, guard), passed,
+                "add bounded-query source");
+  constexpr std::size_t targetCount = 16;
+  std::vector<SyncCoverNodeId> targets;
+  std::vector<SyncCoverDemandId> activeDemands;
+  std::vector<SyncCoverCompletionSupply> supplies;
+  targets.reserve(targetCount);
+  activeDemands.reserve(targetCount);
+  for (std::size_t index = 0; index < targetCount; ++index) {
+    const SyncCoverNodeId target =
+        takeIndex(graph.addNode(2, 1, deepest, index + 2, guard), passed,
+                  "add bounded-query target");
+    targets.push_back(target);
+    passed &= check(graph.addDemand(makeDemand(source, target, outer)),
+                    "add bounded-query demand");
+    activeDemands.push_back(index);
+  }
+  for (std::size_t index = 0; index < targetCount; ++index) {
+    supplies.push_back({index,
+                        makeEdge(source, targets[index],
+                                 SyncCoverEdgeKind::CompletionSupply, outer),
+                        activeDemands});
+  }
+  passed &= check(graph.freezeStructure(), "freeze bounded-query graph");
+  const SyncCoverExpandedProgram expansion(graph);
+
+  SyncCoverCoverageWorkBudget referenceBudget;
+  const SyncCoverCoverageResult reference = computeSyncCoverCoverage(
+      graph, expansion, supplies, activeDemands, &referenceBudget);
+  passed &= check(reference && reference.coversAll() &&
+                      referenceBudget.workUnits != 0,
+                  "measure complete adversarial coverage work");
+
+  SyncCoverCoverageWorkBudget exactBudget(referenceBudget.workUnits);
+  const SyncCoverCoverageResult exact = computeSyncCoverCoverage(
+      graph, expansion, supplies, activeDemands, &exactBudget);
+  passed &= check(exact && exact.coversAll() && !exactBudget.exhausted &&
+                      exactBudget.workUnits == referenceBudget.workUnits,
+                  "accept adversarial coverage at its exact work bound");
+
+  SyncCoverCoverageWorkBudget belowBudget(referenceBudget.workUnits - 1);
+  const SyncCoverCoverageResult below = computeSyncCoverCoverage(
+      graph, expansion, supplies, activeDemands, &belowBudget);
+  passed &= check(below.error == SyncCoverCoverageError::WorkLimitExceeded &&
+                      belowBudget.exhausted &&
+                      belowBudget.workUnits == belowBudget.maximumWorkUnits,
+                  "stop before exceeding the adversarial coverage work bound");
+
+  SyncCoverCoverageWorkBudget tinyBudget(4);
+  const SyncCoverCoverageResult tiny = computeSyncCoverCoverage(
+      graph, expansion, supplies, activeDemands, &tinyBudget);
+  passed &= check(tiny.error == SyncCoverCoverageError::WorkLimitExceeded &&
+                      tinyBudget.exhausted && tinyBudget.workUnits <= 4,
+                  "reject large metadata before a tiny budget is exceeded");
+  return passed;
+}
+
 } // namespace
 
 int main() {
@@ -1057,5 +1139,6 @@ int main() {
   passed &= testBaseLimitFailsClosed();
   passed &= testHierarchicalMetadataHonorsBaseNodeLimit();
   passed &= testInvalidSupplyFailsClosed();
+  passed &= testBoundedCoverageMetersWholeQuery();
   return passed ? 0 : 1;
 }

@@ -1450,6 +1450,7 @@ bool testConflictCoreRepairAvoidsPipeAll() {
   OwningOpRef<Operation *> cleanupReferenceClone(module->clone());
   OwningOpRef<Operation *> cleanupExactClone(module->clone());
   OwningOpRef<Operation *> cleanupBelowClone(module->clone());
+  OwningOpRef<Operation *> cleanupRetainedClone(module->clone());
   func::FuncOp function =
       module->lookupSymbol<func::FuncOp>("scarcity_frontier");
   FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(function);
@@ -1766,6 +1767,20 @@ bool testConflictCoreRepairAvoidsPipeAll() {
               cleanupBelowReport.strategies.front().backstopDeletionWorkUnits ==
                   cleanupBelowOptions.maximumBackstopDeletionWorkUnits,
           "reject the first cleanup trial beyond the work bound")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions cleanupRetainedOptions = cleanupReferenceOptions;
+  cleanupRetainedOptions.maximumBackstopDeletionTrials =
+      cleanupReference.backstopDeletionTrials - 1;
+  CanonicalSyncComparisonReport cleanupRetainedReport;
+  if (!check(succeeded(runCloneWithReport(cleanupRetainedClone,
+                                          cleanupRetainedOptions,
+                                          cleanupRetainedReport)),
+             "materialize the last plan verified before cleanup exhaustion") ||
+      !check(printOperation(cast<ModuleOp>(*cleanupBelowClone)) ==
+                 printOperation(cast<ModuleOp>(*cleanupRetainedClone)),
+             "retain exactly the last verified backstop plan")) {
     return false;
   }
 

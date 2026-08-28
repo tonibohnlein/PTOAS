@@ -769,21 +769,51 @@ buildLocalizedPipeAllFallback(const CanonicalSyncProgram &program,
       selection.mechanisms.push_back(mechanism.id);
     }
   }
-  selection.allocation =
-      allocateCanonicalSyncEvents(problem, selection.mechanisms);
   CanonicalSyncVerifiedPlan plan =
       verifyCanonicalSyncSelection(problem, selection);
   if (!plan) {
     return std::nullopt;
   }
-  const std::vector<CanonicalSyncMechanismId> deletionOrder =
-      selection.mechanisms;
+  SyncCoverCoverageWorkBudget cleanupBudget(
+      options.maximumBackstopDeletionWorkUnits);
+  std::vector<CanonicalSyncMechanismId> deletionOrder;
   std::size_t deletionTrials = 0;
-  std::size_t deletionWorkUnits = 0;
   bool deletionTruncated = false;
+  if (!selection.mechanisms.empty()) {
+    const bool trialLimitReached = options.maximumBackstopDeletionTrials == 0;
+    const bool setupWorkUnavailable =
+        !trialLimitReached &&
+        !cleanupBudget.consume(selection.mechanisms.size());
+    if (trialLimitReached || setupWorkUnavailable) {
+      deletionTruncated = true;
+    } else {
+      deletionOrder = selection.mechanisms;
+    }
+  }
   for (auto position = deletionOrder.rbegin(); position != deletionOrder.rend();
        ++position) {
+    const bool trialLimitReached =
+        deletionTrials == options.maximumBackstopDeletionTrials;
+    const bool workLimitReached =
+        cleanupBudget.exhausted ||
+        cleanupBudget.workUnits == cleanupBudget.maximumWorkUnits;
+    if (trialLimitReached || workLimitReached) {
+      deletionTruncated = true;
+      break;
+    }
+    ++deletionTrials;
+    const bool trialSetupUnavailable = !cleanupBudget.consume(
+        selection.mechanisms.empty() ? 1 : selection.mechanisms.size());
+    if (trialSetupUnavailable) {
+      deletionTruncated = true;
+      break;
+    }
     CanonicalSyncSelection trial = selection;
+    if (!cleanupBudget.consume(
+            trial.mechanisms.empty() ? 1 : trial.mechanisms.size())) {
+      deletionTruncated = true;
+      break;
+    }
     const auto found = std::lower_bound(trial.mechanisms.begin(),
                                         trial.mechanisms.end(), *position);
     const bool mechanismMissing =
@@ -791,23 +821,16 @@ buildLocalizedPipeAllFallback(const CanonicalSyncProgram &program,
     if (mechanismMissing) {
       continue;
     }
-    trial.mechanisms.erase(found);
-    const bool trialLimitReached =
-        deletionTrials == options.maximumBackstopDeletionTrials;
-    const bool workLimitReached =
-        deletionWorkUnits == options.maximumBackstopDeletionWorkUnits;
-    if (trialLimitReached || workLimitReached) {
+    const bool eraseWorkUnavailable =
+        !cleanupBudget.consume(trial.mechanisms.size());
+    if (eraseWorkUnavailable) {
       deletionTruncated = true;
       break;
     }
-    ++deletionTrials;
-    trial.allocation = allocateCanonicalSyncEvents(problem, trial.mechanisms);
-    SyncCoverCoverageWorkBudget workBudget(
-        options.maximumBackstopDeletionWorkUnits - deletionWorkUnits);
+    trial.mechanisms.erase(found);
     const CanonicalSyncVerifiedPlan verified =
-        verifyCanonicalSyncSelection(problem, trial, &workBudget);
-    deletionWorkUnits += workBudget.workUnits;
-    if (workBudget.exhausted) {
+        verifyCanonicalSyncSelection(problem, trial, &cleanupBudget);
+    if (cleanupBudget.exhausted) {
       deletionTruncated = true;
       break;
     }
@@ -818,7 +841,7 @@ buildLocalizedPipeAllFallback(const CanonicalSyncProgram &program,
   }
   return PipeAllFallbackOutcome{std::move(built.problem), std::move(plan),
                                 deletionTruncated, deletionTrials,
-                                deletionWorkUnits};
+                                cleanupBudget.workUnits};
 }
 
 SelectionOutcome takeFallbackSelection(PipeAllFallbackOutcome fallback,

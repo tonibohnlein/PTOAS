@@ -455,7 +455,8 @@ struct CanonicalSyncResourceAllocation {
 
 CanonicalSyncResourceAllocation allocateCanonicalSyncEvents(
     const CanonicalSyncPatternProblem &problem,
-    const std::vector<CanonicalSyncMechanismId> &selected);
+    const std::vector<CanonicalSyncMechanismId> &selected,
+    SyncCoverCoverageWorkBudget *workBudget = nullptr);
 
 struct CanonicalSyncGreedyStatistics {
   std::size_t patternEvaluations = 0;

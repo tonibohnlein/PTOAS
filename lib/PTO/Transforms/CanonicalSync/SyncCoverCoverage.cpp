@@ -27,6 +27,40 @@ namespace {
 
 constexpr std::size_t kBitsPerWord = 64;
 
+bool consumeProduct(SyncCoverCoverageWorkBudget *budget, std::size_t left,
+                    std::size_t right) {
+  if (!budget || left == 0 || right == 0) {
+    return true;
+  }
+  const bool productOverflows =
+      right > std::numeric_limits<std::size_t>::max() / left;
+  if (productOverflows) {
+    budget->exhausted = true;
+    return false;
+  }
+  return budget->consume(left * right);
+}
+
+bool checkedSum(std::size_t first, std::size_t second, std::size_t &result) {
+  const bool sumOverflows =
+      second > std::numeric_limits<std::size_t>::max() - first;
+  if (sumOverflows) {
+    return false;
+  }
+  result = first + second;
+  return true;
+}
+
+bool checkedSum(std::size_t first, std::size_t second, std::size_t third,
+                std::size_t &result) {
+  return checkedSum(first, second, result) && checkedSum(result, third, result);
+}
+
+bool consumeVectorCopy(SyncCoverCoverageWorkBudget *budget,
+                       std::size_t elements) {
+  return consumeWork(budget, elements == 0 ? 1 : elements);
+}
+
 template <typename T, typename Compare>
 bool meteredStableSort(std::vector<T> &values, Compare compare,
                        SyncCoverCoverageWorkBudget *budget) {
@@ -41,7 +75,11 @@ bool meteredStableSort(std::vector<T> &values, Compare compare,
       if (!budget->consume()) {
         return false;
       }
-      if (!compare(value, values[position - 1])) {
+      const bool precedes = compare(value, values[position - 1]);
+      if (budget->exhausted) {
+        return false;
+      }
+      if (!precedes) {
         break;
       }
       values[position] = std::move(values[position - 1]);
@@ -50,6 +88,70 @@ bool meteredStableSort(std::vector<T> &values, Compare compare,
     values[position] = std::move(value);
   }
   return true;
+}
+
+bool chargeProjection(const SyncCoverGraph &graph,
+                      const SyncCoverExpandedArena &arena,
+                      bool completionProjection,
+                      SyncCoverCoverageWorkBudget *budget) {
+  if (!budget) {
+    return true;
+  }
+  const std::size_t scopeWalks = completionProjection ? 4 : 2;
+  const std::size_t lookupScans = completionProjection ? 3 : 1;
+  return consumeProduct(budget, graph.getScopes().size(), scopeWalks) &&
+         consumeProduct(budget, arena.getVirtualNodeCount(), lookupScans);
+}
+
+bool chargeSupplyCopy(const std::vector<SyncCoverCompletionSupply> &supplies,
+                      SyncCoverCoverageWorkBudget *budget) {
+  for (const SyncCoverCompletionSupply &supply : supplies) {
+    const bool supplyUnavailable =
+        !consumeWork(budget) ||
+        !consumeVectorCopy(budget, supply.edge.sourceGuard.literals.size()) ||
+        !consumeVectorCopy(budget, supply.edge.targetGuard.literals.size()) ||
+        !consumeVectorCopy(budget, supply.allowedDemands.size());
+    if (supplyUnavailable) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool chargeCompletionCanonicalization(const SyncCoverGraph &graph,
+                                      const SyncCoverCompletionSupply &supply,
+                                      SyncCoverCoverageWorkBudget *budget) {
+  if (!budget) {
+    return true;
+  }
+  const SyncCoverEdge &edge = supply.edge;
+  const bool invalidEndpoint = edge.source >= graph.getNodes().size() ||
+                               edge.target >= graph.getNodes().size();
+  if (invalidEndpoint) {
+    return consumeWork(budget);
+  }
+  std::size_t sourceLiterals = 0;
+  std::size_t targetLiterals = 0;
+  const std::size_t scopes = graph.getScopes().size();
+  std::size_t totalLiterals = 0;
+  std::size_t scopeCharge = 0;
+  if (!checkedSum(edge.sourceGuard.literals.size(),
+                  graph.getNodes()[edge.source].guard.literals.size(),
+                  sourceLiterals) ||
+      !checkedSum(edge.targetGuard.literals.size(),
+                  graph.getNodes()[edge.target].guard.literals.size(),
+                  targetLiterals) ||
+      !checkedSum(sourceLiterals, targetLiterals, totalLiterals) ||
+      !checkedSum(scopes, 3, scopeCharge)) {
+    budget->exhausted = true;
+    return false;
+  }
+  // Reserve the complete variable work performed by endpoint-guard insertion,
+  // sorting/deduplication, validation scope walks, and endpoint compatibility.
+  return consumeProduct(budget, sourceLiterals, sourceLiterals) &&
+         consumeProduct(budget, targetLiterals, targetLiterals) &&
+         consumeProduct(budget, totalLiterals, scopeCharge) &&
+         consumeProduct(budget, scopes, 3);
 }
 
 struct IndexedSupply {
@@ -161,7 +263,9 @@ buildSupplyIndex(const SyncCoverGraph &graph,
   for (std::size_t supplyId = 0; supplyId < supplies.size(); ++supplyId) {
     const SyncCoverCompletionSupply &supply = supplies[supplyId];
     for (unsigned copy = 0; copy <= arena.getHorizon(); ++copy) {
-      if (!consumeWork(budget)) {
+      const bool projectionWorkUnavailable =
+          !consumeWork(budget) || !chargeProjection(graph, arena, true, budget);
+      if (projectionWorkUnavailable) {
         return result;
       }
       const std::optional<SyncCoverProjectedCompletion> projected =
@@ -184,6 +288,12 @@ buildSupplyIndex(const SyncCoverGraph &graph,
       },
       budget);
   if (!sorted) {
+    return result;
+  }
+  const bool offsetsUnavailable =
+      arena.getVirtualNodeCount() == std::numeric_limits<std::size_t>::max() ||
+      !consumeWork(budget, arena.getVirtualNodeCount() + 1);
+  if (offsetsUnavailable) {
     return result;
   }
   result.outgoingOffsets.assign(arena.getVirtualNodeCount() + 1, 0);
@@ -229,6 +339,12 @@ bool coversDemand(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
                   SyncCoverCoverageWorkBudget *budget = nullptr) {
   const DemandContext context = makeDemandContext(graph, demand, budget);
   if (budget && budget->exhausted) {
+    return false;
+  }
+  const bool projectionWorkUnavailable =
+      !chargeProjection(graph, arena, false, budget) ||
+      !chargeProjection(graph, arena, false, budget);
+  if (projectionWorkUnavailable) {
     return false;
   }
   const std::optional<std::size_t> source =
@@ -352,6 +468,12 @@ std::vector<SyncCoverDemandId>
 hierarchicalDemandOrder(const SyncCoverGraph &graph,
                         const std::vector<SyncCoverDemandId> &demands,
                         SyncCoverCoverageWorkBudget *budget = nullptr) {
+  const bool workspaceUnavailable =
+      !consumeVectorCopy(budget, graph.getScopes().size()) ||
+      !consumeVectorCopy(budget, demands.size());
+  if (workspaceUnavailable) {
+    return {};
+  }
   std::vector<std::size_t> depths(graph.getScopes().size(), 0);
   for (SyncCoverScopeId scope = 1; scope < graph.getScopes().size(); ++scope) {
     SyncCoverScopeId current = scope;
@@ -401,7 +523,10 @@ bool canonicalizeSupplies(const SyncCoverGraph &graph,
   for (SyncCoverCompletionSupply &supply : supplies) {
     const bool invalidDemandFilter =
         !demandIdsValid(graph, supply.allowedDemands, budget);
-    if (!consumeWork(budget)) {
+    const bool canonicalizationWorkUnavailable =
+        !consumeWork(budget) ||
+        !chargeCompletionCanonicalization(graph, supply, budget);
+    if (canonicalizationWorkUnavailable) {
       return false;
     }
     const SyncCoverGraphError edgeError =
@@ -417,8 +542,29 @@ bool canonicalizeSupplies(const SyncCoverGraph &graph,
   }
   return meteredStableSort(
       supplies,
-      [](const SyncCoverCompletionSupply &left,
-         const SyncCoverCompletionSupply &right) {
+      [&](const SyncCoverCompletionSupply &left,
+          const SyncCoverCompletionSupply &right) {
+        std::size_t leftMetadata = 0;
+        std::size_t rightMetadata = 0;
+        const bool validSizes =
+            checkedSum(left.edge.sourceGuard.literals.size(),
+                       left.edge.targetGuard.literals.size(),
+                       left.allowedDemands.size(), leftMetadata) &&
+            checkedSum(right.edge.sourceGuard.literals.size(),
+                       right.edge.targetGuard.literals.size(),
+                       right.allowedDemands.size(), rightMetadata);
+        if (!validSizes) {
+          if (budget) {
+            budget->exhausted = true;
+          }
+          return false;
+        }
+        const bool comparisonWorkUnavailable =
+            !consumeWork(budget, leftMetadata) ||
+            !consumeWork(budget, rightMetadata);
+        if (comparisonWorkUnavailable) {
+          return false;
+        }
         return std::tie(left.mechanism, left.edge.source, left.edge.target,
                         left.edge.scope, left.edge.distance,
                         left.edge.sourceGuard.literals,
@@ -766,6 +912,13 @@ SyncCoverCoverageResult mlir::pto::computeSyncCoverCoverage(
     const std::vector<SyncCoverDemandId> &activeDemands,
     SyncCoverCoverageWorkBudget *workBudget) {
   SyncCoverCoverageResult result;
+  const std::size_t demandWords =
+      graph.getDemands().size() / kBitsPerWord +
+      (graph.getDemands().size() % kBitsPerWord != 0 ? 1 : 0);
+  if (!consumeVectorCopy(workBudget, demandWords)) {
+    result.error = SyncCoverCoverageError::WorkLimitExceeded;
+    return result;
+  }
   result.covered = SyncCoverDemandSet(graph.getDemands().size());
   const bool invalidInputs = !coverageInputsValid(graph, expansion) ||
                              !demandIdsValid(graph, activeDemands, workBudget);
@@ -788,7 +941,15 @@ SyncCoverCoverageResult mlir::pto::computeSyncCoverCoverage(
     return result;
   }
 
+  if (!chargeSupplyCopy(inputSupplies, workBudget)) {
+    result.error = SyncCoverCoverageError::WorkLimitExceeded;
+    return result;
+  }
   std::vector<SyncCoverCompletionSupply> supplies = inputSupplies;
+  if (!consumeVectorCopy(workBudget, supplies.size())) {
+    result.error = SyncCoverCoverageError::WorkLimitExceeded;
+    return result;
+  }
   const std::size_t mechanismCount =
       supplies.empty() ? 0
                        : std::max_element(
@@ -824,6 +985,21 @@ SyncCoverCoverageResult mlir::pto::computeSyncCoverCoverage(
     if (!arena) {
       result.unavailableDemands.push_back(demandId);
       continue;
+    }
+    const bool arenaLookupWorkUnavailable =
+        !consumeWork(workBudget, workspaces.size() + 1) ||
+        !consumeWork(workBudget, supplyIndices.size() + 1);
+    if (arenaLookupWorkUnavailable) {
+      result.error = SyncCoverCoverageError::WorkLimitExceeded;
+      return result;
+    }
+    auto existingWorkspace = workspaces.find(arena);
+    const bool workspaceUnavailable =
+        existingWorkspace == workspaces.end() &&
+        !consumeProduct(workBudget, arena->getVirtualNodeCount(), 4);
+    if (workspaceUnavailable) {
+      result.error = SyncCoverCoverageError::WorkLimitExceeded;
+      return result;
     }
     auto [workspace, inserted] =
         workspaces.try_emplace(arena, arena->getVirtualNodeCount());

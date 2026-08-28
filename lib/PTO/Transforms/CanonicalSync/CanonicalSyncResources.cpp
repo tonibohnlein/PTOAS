@@ -42,54 +42,137 @@ struct PressureEvent {
   std::size_t interval = 0;
 };
 
-bool normalizedSelection(
-    const CanonicalSyncPatternProblem &problem,
-    const std::vector<CanonicalSyncMechanismId> &selected) {
-  return std::is_sorted(selected.begin(), selected.end()) &&
-         std::adjacent_find(selected.begin(), selected.end()) ==
-             selected.end() &&
-         std::all_of(selected.begin(), selected.end(), [&](auto mechanism) {
-           return mechanism < problem.getMechanisms().size();
-         });
+bool consumeWork(SyncCoverCoverageWorkBudget *budget, std::size_t amount = 1) {
+  return !budget || budget->consume(amount);
 }
 
-bool conflictFree(const CanonicalSyncPatternProblem &problem,
-                  const std::vector<CanonicalSyncMechanismId> &selected) {
-  for (CanonicalSyncMechanismId mechanism : selected) {
-    const auto &conflicts = problem.getMechanisms()[mechanism].conflicts;
-    const bool hasConflict =
-        std::any_of(conflicts.begin(), conflicts.end(), [&](auto conflict) {
-          return std::binary_search(selected.begin(), selected.end(), conflict);
-        });
-    if (hasConflict) {
+template <typename T, typename Compare>
+bool meteredStableSort(std::vector<T> &values, Compare compare,
+                       SyncCoverCoverageWorkBudget *budget) {
+  if (!budget) {
+    std::stable_sort(values.begin(), values.end(), compare);
+    return true;
+  }
+  for (std::size_t index = 1; index < values.size(); ++index) {
+    T value = std::move(values[index]);
+    std::size_t position = index;
+    while (position != 0) {
+      if (!consumeWork(budget)) {
+        return false;
+      }
+      if (!compare(value, values[position - 1])) {
+        break;
+      }
+      values[position] = std::move(values[position - 1]);
+      --position;
+    }
+    values[position] = std::move(value);
+  }
+  return true;
+}
+
+template <typename T>
+bool meteredBinarySearch(const std::vector<T> &values, const T &value,
+                         SyncCoverCoverageWorkBudget *budget) {
+  std::size_t first = 0;
+  std::size_t last = values.size();
+  while (first < last) {
+    if (!consumeWork(budget)) {
+      return false;
+    }
+    const std::size_t middle = first + (last - first) / 2;
+    if (values[middle] < value) {
+      first = middle + 1;
+    } else {
+      last = middle;
+    }
+  }
+  return first != values.size() && values[first] == value;
+}
+
+bool normalizedSelection(const CanonicalSyncPatternProblem &problem,
+                         const std::vector<CanonicalSyncMechanismId> &selected,
+                         SyncCoverCoverageWorkBudget *budget) {
+  for (std::size_t index = 0; index < selected.size(); ++index) {
+    if (!consumeWork(budget)) {
+      return false;
+    }
+    const bool invalid = selected[index] >= problem.getMechanisms().size() ||
+                         (index != 0 && selected[index - 1] >= selected[index]);
+    if (invalid) {
       return false;
     }
   }
   return true;
 }
 
-std::size_t availableIds(const CanonicalSyncEventDomain &domain) {
-  return domain.budget -
-         static_cast<std::size_t>(
-             std::count_if(domain.reservedIds.begin(), domain.reservedIds.end(),
-                           [&](unsigned id) { return id < domain.budget; }));
+bool conflictFree(const CanonicalSyncPatternProblem &problem,
+                  const std::vector<CanonicalSyncMechanismId> &selected,
+                  SyncCoverCoverageWorkBudget *budget) {
+  for (CanonicalSyncMechanismId mechanism : selected) {
+    const auto &conflicts = problem.getMechanisms()[mechanism].conflicts;
+    for (CanonicalSyncMechanismId conflict : conflicts) {
+      if (!consumeWork(budget)) {
+        return false;
+      }
+      if (meteredBinarySearch(selected, conflict, budget)) {
+        return false;
+      }
+      if (budget && budget->exhausted) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+std::optional<std::size_t> availableIds(const CanonicalSyncEventDomain &domain,
+                                        SyncCoverCoverageWorkBudget *budget) {
+  std::size_t reserved = 0;
+  for (unsigned id : domain.reservedIds) {
+    if (!consumeWork(budget)) {
+      return std::nullopt;
+    }
+    reserved += id < domain.budget;
+  }
+  return domain.budget - reserved;
 }
 
 bool measureDomainPressure(
     const std::vector<IntervalUse> &intervals, std::size_t &required,
     std::optional<SyncCoverTimelinePosition> &maximumPoint,
-    std::vector<CanonicalSyncMechanismId> &liveMechanisms) {
+    std::vector<CanonicalSyncMechanismId> &liveMechanisms,
+    SyncCoverCoverageWorkBudget *budget) {
   std::vector<PressureEvent> events;
-  events.reserve(intervals.size() * 2);
+  const bool eventCountOverflows =
+      intervals.size() > std::numeric_limits<std::size_t>::max() / 2;
+  if (eventCountOverflows) {
+    if (budget) {
+      budget->exhausted = true;
+    }
+    return false;
+  }
+  const std::size_t eventCount = intervals.size() * 2;
+  if (!consumeWork(budget, eventCount == 0 ? 1 : eventCount)) {
+    return false;
+  }
+  events.reserve(eventCount);
   for (std::size_t interval = 0; interval < intervals.size(); ++interval) {
+    if (!consumeWork(budget, 2)) {
+      return false;
+    }
     events.push_back({intervals[interval].lifetime.begin, true, interval});
     events.push_back({intervals[interval].lifetime.end, false, interval});
   }
-  std::stable_sort(
-      events.begin(), events.end(), [](const auto &first, const auto &second) {
-        return std::tie(first.position, first.begins, first.interval) <
-               std::tie(second.position, second.begins, second.interval);
-      });
+  if (!meteredStableSort(
+          events,
+          [](const auto &first, const auto &second) {
+            return std::tie(first.position, first.begins, first.interval) <
+                   std::tie(second.position, second.begins, second.interval);
+          },
+          budget)) {
+    return false;
+  }
 
   std::set<std::size_t> active;
   std::size_t activeWidth = 0;
@@ -97,6 +180,9 @@ bool measureDomainPressure(
     const SyncCoverTimelinePosition position = events[event].position;
     std::size_t next = event;
     while (next < events.size()) {
+      if (!consumeWork(budget)) {
+        return false;
+      }
       if (events[next].position != position) {
         break;
       }
@@ -108,6 +194,11 @@ bool measureDomainPressure(
           return false;
         }
         activeWidth += width;
+        const bool activeInsertWorkUnavailable =
+            !consumeWork(budget, active.size() + 1);
+        if (activeInsertWorkUnavailable) {
+          return false;
+        }
         active.insert(events[next].interval);
       }
       ++next;
@@ -117,15 +208,29 @@ bool measureDomainPressure(
       maximumPoint = position;
       liveMechanisms.clear();
       for (std::size_t interval : active) {
+        if (!consumeWork(budget)) {
+          return false;
+        }
         liveMechanisms.push_back(intervals[interval].mechanism);
       }
-      std::sort(liveMechanisms.begin(), liveMechanisms.end());
+      if (!meteredStableSort(liveMechanisms, std::less<>(), budget)) {
+        return false;
+      }
+      if (!consumeWork(budget,
+                       liveMechanisms.empty() ? 1 : liveMechanisms.size())) {
+        return false;
+      }
       liveMechanisms.erase(
           std::unique(liveMechanisms.begin(), liveMechanisms.end()),
           liveMechanisms.end());
     }
     for (std::size_t current = event; current < next; ++current) {
       if (!events[current].begins) {
+        const bool activeEraseWorkUnavailable =
+            !consumeWork(budget, active.size() + 1);
+        if (activeEraseWorkUnavailable) {
+          return false;
+        }
         const std::size_t interval = events[current].interval;
         activeWidth -= intervals[interval].width;
         active.erase(interval);
@@ -138,23 +243,41 @@ bool measureDomainPressure(
 
 std::optional<std::vector<CanonicalSyncEventAllocation>>
 allocateDomain(const CanonicalSyncEventDomain &domain,
-               std::vector<IntervalUse> intervals) {
-  std::stable_sort(intervals.begin(), intervals.end(),
-                   [](const IntervalUse &first, const IntervalUse &second) {
-                     return std::tie(first.lifetime.begin, first.lifetime.end,
-                                     first.mechanism, first.eventUse) <
-                            std::tie(second.lifetime.begin, second.lifetime.end,
-                                     second.mechanism, second.eventUse);
-                   });
+               const std::vector<IntervalUse> &inputIntervals,
+               SyncCoverCoverageWorkBudget *budget) {
+  if (!consumeWork(budget,
+                   inputIntervals.empty() ? 1 : inputIntervals.size())) {
+    return std::nullopt;
+  }
+  std::vector<IntervalUse> intervals = inputIntervals;
+  if (!meteredStableSort(
+          intervals,
+          [](const IntervalUse &first, const IntervalUse &second) {
+            return std::tie(first.lifetime.begin, first.lifetime.end,
+                            first.mechanism, first.eventUse) <
+                   std::tie(second.lifetime.begin, second.lifetime.end,
+                            second.mechanism, second.eventUse);
+          },
+          budget)) {
+    return std::nullopt;
+  }
   std::priority_queue<ActiveUse, std::vector<ActiveUse>,
                       std::greater<ActiveUse>>
       active;
   std::set<unsigned> reusable;
   unsigned nextFresh = 0;
+  const bool allocationWorkspaceUnavailable =
+      !consumeWork(budget, intervals.empty() ? 1 : intervals.size());
+  if (allocationWorkspaceUnavailable) {
+    return std::nullopt;
+  }
   std::vector<CanonicalSyncEventAllocation> allocations(intervals.size());
 
   for (std::size_t interval = 0; interval < intervals.size(); ++interval) {
     while (!active.empty()) {
+      if (!consumeWork(budget, active.size())) {
+        return std::nullopt;
+      }
       const bool hasExpired =
           active.top().end < intervals[interval].lifetime.begin;
       if (!hasExpired) {
@@ -162,12 +285,23 @@ allocateDomain(const CanonicalSyncEventDomain &domain,
       }
       const std::size_t expiredInterval = active.top().interval;
       active.pop();
-      reusable.insert(allocations[expiredInterval].ids.begin(),
-                      allocations[expiredInterval].ids.end());
+      for (unsigned id : allocations[expiredInterval].ids) {
+        const bool reusableInsertWorkUnavailable =
+            !consumeWork(budget, reusable.size() + 1);
+        if (reusableInsertWorkUnavailable) {
+          return std::nullopt;
+        }
+        reusable.insert(id);
+      }
     }
     allocations[interval].mechanism = intervals[interval].mechanism;
     allocations[interval].eventUse = intervals[interval].eventUse;
     for (std::size_t lane = 0; lane < intervals[interval].width; ++lane) {
+      const bool laneWorkUnavailable =
+          !consumeWork(budget, reusable.size() + 1);
+      if (laneWorkUnavailable) {
+        return std::nullopt;
+      }
       if (!reusable.empty()) {
         const auto id = reusable.begin();
         allocations[interval].ids.push_back(*id);
@@ -175,22 +309,33 @@ allocateDomain(const CanonicalSyncEventDomain &domain,
         continue;
       }
       while (nextFresh < domain.budget &&
-             std::binary_search(domain.reservedIds.begin(),
-                                domain.reservedIds.end(), nextFresh)) {
+             meteredBinarySearch(domain.reservedIds, nextFresh, budget)) {
         ++nextFresh;
+      }
+      if (budget && budget->exhausted) {
+        return std::nullopt;
       }
       if (nextFresh >= domain.budget) {
         return std::nullopt;
       }
       allocations[interval].ids.push_back(nextFresh++);
     }
+    const bool activePushWorkUnavailable =
+        !consumeWork(budget, active.size() + 1);
+    if (activePushWorkUnavailable) {
+      return std::nullopt;
+    }
     active.push({intervals[interval].lifetime.end, interval});
   }
-  std::sort(allocations.begin(), allocations.end(),
-            [](const auto &first, const auto &second) {
-              return std::tie(first.mechanism, first.eventUse) <
-                     std::tie(second.mechanism, second.eventUse);
-            });
+  if (!meteredStableSort(
+          allocations,
+          [](const auto &first, const auto &second) {
+            return std::tie(first.mechanism, first.eventUse) <
+                   std::tie(second.mechanism, second.eventUse);
+          },
+          budget)) {
+    return std::nullopt;
+  }
   return allocations;
 }
 
@@ -198,15 +343,23 @@ allocateDomain(const CanonicalSyncEventDomain &domain,
 
 CanonicalSyncResourceAllocation mlir::pto::allocateCanonicalSyncEvents(
     const CanonicalSyncPatternProblem &problem,
-    const std::vector<CanonicalSyncMechanismId> &selected) {
+    const std::vector<CanonicalSyncMechanismId> &selected,
+    SyncCoverCoverageWorkBudget *workBudget) {
   CanonicalSyncResourceAllocation result;
-  const bool invalidSelection = !normalizedSelection(problem, selected) ||
-                                !conflictFree(problem, selected);
+  const bool invalidSelection =
+      !normalizedSelection(problem, selected, workBudget) ||
+      !conflictFree(problem, selected, workBudget);
   if (invalidSelection) {
     return result;
   }
   result.valid = true;
   result.feasible = true;
+  const bool domainWorkspaceUnavailable = !consumeWork(
+      workBudget,
+      problem.getDomains().empty() ? 1 : problem.getDomains().size());
+  if (domainWorkspaceUnavailable) {
+    return result;
+  }
   std::vector<std::vector<IntervalUse>> intervals(problem.getDomains().size());
   for (CanonicalSyncMechanismId mechanismId : selected) {
     const CanonicalSyncMechanism &mechanism =
@@ -215,6 +368,9 @@ CanonicalSyncResourceAllocation mlir::pto::allocateCanonicalSyncEvents(
          ++use) {
       const CanonicalSyncEventUse &eventUse =
           mechanism.descriptor.eventUses[use];
+      if (!consumeWork(workBudget)) {
+        return result;
+      }
       const bool invalidUse = eventUse.domain >= intervals.size() ||
                               use >= mechanism.eventLifetimes.size();
       if (invalidUse) {
@@ -237,22 +393,31 @@ CanonicalSyncResourceAllocation mlir::pto::allocateCanonicalSyncEvents(
   for (const CanonicalSyncEventDomain &domain : problem.getDomains()) {
     CanonicalSyncDomainAllocation allocation;
     allocation.domain = domain.id;
-    allocation.available = availableIds(domain);
+    const std::optional<std::size_t> available =
+        availableIds(domain, workBudget);
+    if (!available) {
+      return result;
+    }
+    allocation.available = *available;
     const bool pressureValid = measureDomainPressure(
         intervals[domain.id], allocation.required,
-        allocation.maximumPressurePoint, allocation.liveMechanisms);
+        allocation.maximumPressurePoint, allocation.liveMechanisms, workBudget);
     if (!pressureValid) {
       result.valid = false;
       result.feasible = false;
       return result;
     }
     const bool feasible = allocation.required <= allocation.available;
-    const auto assigned =
-        feasible ? allocateDomain(domain, intervals[domain.id]) : std::nullopt;
+    auto assigned =
+        feasible ? allocateDomain(domain, intervals[domain.id], workBudget)
+                 : std::nullopt;
     if (!assigned) {
       result.feasible = false;
     } else {
-      allocation.uses = *assigned;
+      allocation.uses = std::move(*assigned);
+    }
+    if (!consumeWork(workBudget)) {
+      return result;
     }
     result.domains.push_back(std::move(allocation));
   }
