@@ -42,6 +42,13 @@ namespace pto {
 
 inline constexpr size_t kMaxMultiBufferCount = 16;
 
+/// Return whether an operation introduces a storage handle rather than an
+/// asynchronously produced SSA value. Synchronization provenance treats these
+/// operations as explicit roots.
+inline bool isSyncStorageProvenanceRoot(Operation *op) {
+  return isa<AllocTileOp, AllocMultiTileOp, DeclareTileOp, DeclareGlobalOp>(op);
+}
+
 enum class SyncAnalysisMode {
   NORMALSYNC, // 核内同步 (Intra-Core): 解决流水线冒险
   BLOCKSYNC   // 核间同步 (Inter-Core): 解决 CV 分离后的通讯

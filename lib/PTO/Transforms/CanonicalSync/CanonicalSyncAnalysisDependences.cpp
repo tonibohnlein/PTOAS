@@ -285,10 +285,10 @@ LogicalResult ProgramBuilder::collectScheduledProducers(
     producers.insert(completion->second);
     return success();
   }
-  // Allocation handles name storage; they do not represent asynchronously
-  // produced data. Treat these operations as explicit provenance roots even
+  // Storage handles do not represent asynchronously produced data. Treat
+  // allocation and declaration operations as explicit provenance roots even
   // though their memory-effect interfaces are not side-effect-free.
-  if (isa<pto::AllocTileOp, pto::AllocMultiTileOp>(definition)) {
+  if (isSyncStorageProvenanceRoot(definition)) {
     return success();
   }
   const bool unsupportedDefinition =

@@ -41,7 +41,6 @@ bool check(bool condition, std::string_view message) {
 }
 
 void loadDialects(MLIRContext &context) {
-  context.allowUnregisteredDialects();
   context.loadDialect<PTODialect, arith::ArithDialect, func::FuncDialect,
                       scf::SCFDialect>();
 }
@@ -836,11 +835,13 @@ bool testFailClosedInputs() {
   )mlir";
   constexpr std::string_view hiddenScheduledProducer = R"mlir(
     module attributes {pto.target_arch = "a3"} {
+      func.func private @provenance_barrier(i1) -> i1
+          attributes {pto.tileop.helper, pto.tileop.kind = "vector"}
       func.func @hidden_producer(%condition_ptr: !pto.ptr<i1>) {
         %zero = arith.constant 0 : index
         %loaded = pto.load_scalar %condition_ptr[%zero] :
           !pto.ptr<i1> -> i1
-        %condition = "test.provenance_barrier"(%loaded) : (i1) -> i1
+        %condition = func.call @provenance_barrier(%loaded) : (i1) -> i1
         scf.if %condition {
         }
         return
@@ -860,6 +861,38 @@ bool testFailClosedInputs() {
                                "asynchronous scf.if condition") &&
          expectAnalysisFailure(hiddenScheduledProducer, "hidden_producer",
                                "cannot trace SSA provenance");
+}
+
+bool testAcceptsDeclaredStorageProvenanceRoots() {
+  constexpr std::string_view declaredTile = R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @declared_tile(
+          %src: !pto.partition_tensor_view<16x16xf32>) {
+        %dst = pto.declare_tile -> !pto.tile_buf<vec, 16x16xf32>
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
+    }
+  )mlir";
+  constexpr std::string_view declaredGlobal = R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @declared_global(%dst: !pto.tile_buf<vec, 16x16xf32>) {
+        %src = pto.declare_global -> !pto.tensor_view<16x16xf32>
+        %zero = arith.constant 0 : index
+        %size = arith.constant 16 : index
+        %part = pto.partition_view %src,
+          offsets = [%zero, %zero], sizes = [%size, %size]
+          : !pto.tensor_view<16x16xf32>
+            -> !pto.partition_tensor_view<16x16xf32>
+        pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
+    }
+  )mlir";
+  return expectAnalysisSuccess(declaredTile, "declared_tile") &&
+         expectAnalysisSuccess(declaredGlobal, "declared_global");
 }
 
 bool testRejectsOwnedSyncAndAcceptsFixedFence() {
@@ -1351,6 +1384,7 @@ int main() {
       testDistanceTwoCrossRootSlotRecurrence() &&
       testMmadIntrinsicRequiresExactAccumulator() &&
       testAnalysisLimitFailsClosed() && testFailClosedInputs() &&
+      testAcceptsDeclaredStorageProvenanceRoots() &&
       testRejectsOwnedSyncAndAcceptsFixedFence() &&
       testStructuralLimitsFailClosed() && testPeriodicBranchEvidence() &&
       testFirstIterationRecurrenceSuppression() &&
