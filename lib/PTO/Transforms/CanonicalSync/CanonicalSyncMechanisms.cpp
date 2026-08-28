@@ -242,6 +242,7 @@ makeRecurrenceEvent(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
   binding.produceAction = produceAction;
   binding.consumeAction = consumeAction;
   binding.proof = CanonicalSyncSupplyProof::VerifiedProtocol;
+  binding.completionExport = CanonicalSyncSupplyExport::ScopeExitAfterDrain;
   descriptor.supplies.push_back(std::move(binding));
   return descriptor;
 }
@@ -289,6 +290,7 @@ bool verifyRecurrenceEvent(const SyncCoverGraph &graph,
            binding.eventUse == 0 && !binding.barrierAction &&
            !binding.produceAction && !binding.consumeAction &&
            binding.proof == CanonicalSyncSupplyProof::DirectAction &&
+           binding.completionExport == CanonicalSyncSupplyExport::LocalTarget &&
            actionMatches(descriptor.actions[0],
                          CanonicalSyncActionKind::EventSet, source.resource,
                          SyncCoverAnchorKind::AfterNode, source.id, 0, 0,
@@ -312,7 +314,9 @@ bool verifyRecurrenceEvent(const SyncCoverGraph &graph,
       binding.edge.distance == demand.distance && binding.eventUse == 0 &&
       !binding.barrierAction && binding.produceAction == produceAction &&
       binding.consumeAction == consumeAction &&
-      binding.proof == CanonicalSyncSupplyProof::VerifiedProtocol;
+      binding.proof == CanonicalSyncSupplyProof::VerifiedProtocol &&
+      binding.completionExport ==
+          CanonicalSyncSupplyExport::ScopeExitAfterDrain;
   if (!correctUse || !correctSupply ||
       descriptor.actions.size() != width * 2 + 2) {
     return false;

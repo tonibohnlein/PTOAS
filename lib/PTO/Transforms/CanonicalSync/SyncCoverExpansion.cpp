@@ -46,6 +46,49 @@ std::vector<std::size_t> allDemandIds(const SyncCoverGraph &graph) {
   return result;
 }
 
+SyncCoverScopeId getArenaScopeForScope(const SyncCoverGraph &graph,
+                                       SyncCoverScopeId scope) {
+  return graph.getNearestEnclosingLoop(scope, true).value_or(0);
+}
+
+std::optional<SyncCoverScopeId>
+getImmediateChildLoop(const SyncCoverGraph &graph, SyncCoverScopeId arenaScope,
+                      SyncCoverScopeId nodeScope) {
+  if (arenaScope != 0 && !graph.scopeContains(arenaScope, nodeScope)) {
+    return std::nullopt;
+  }
+  std::optional<SyncCoverScopeId> current =
+      graph.getNearestEnclosingLoop(nodeScope, true);
+  if (!current || *current == arenaScope) {
+    return std::nullopt;
+  }
+  while (current) {
+    const std::optional<SyncCoverScopeId> parent =
+        graph.getNearestEnclosingLoop(graph.getScopes()[*current].parent, true);
+    const bool isImmediateChild =
+        (arenaScope == 0 && !parent) || (parent && *parent == arenaScope);
+    if (isImmediateChild) {
+      return current;
+    }
+    current = parent;
+  }
+  return std::nullopt;
+}
+
+std::vector<std::size_t>
+getReachablePhases(const SyncCoverControlPhaseRelation &relation) {
+  std::vector<std::size_t> result;
+  std::vector<bool> visited(relation.nextPhase.size(), false);
+  std::size_t phase = relation.initialPhase;
+  while (!visited[phase]) {
+    visited[phase] = true;
+    result.push_back(phase);
+    phase = relation.nextPhase[phase];
+  }
+  std::sort(result.begin(), result.end());
+  return result;
+}
+
 } // namespace
 
 struct SyncCoverExpandedProgram::ArenaBuildResult {
@@ -176,17 +219,18 @@ SyncCoverExpandedProgram::SyncCoverExpandedProgram(
     return;
   }
 
+  arenaScopeByScope_.resize(graph.getScopes().size());
+  for (const SyncCoverScope &scope : graph.getScopes()) {
+    arenaScopeByScope_[scope.id] = getArenaScopeForScope(graph, scope.id);
+  }
   std::map<SyncCoverScopeId, unsigned> horizons;
   for (std::size_t demandId : activeDemands) {
     const SyncCoverDemand &demand = graph.getDemands()[demandId];
-    if (demand.distance != 0) {
-      horizons[demand.scope] =
-          std::max(horizons[demand.scope], demand.distance);
+    const SyncCoverScopeId arenaScope =
+        demand.distance == 0 ? arenaScopeByScope_[demand.scope] : demand.scope;
+    if (arenaScope != 0) {
+      horizons[arenaScope] = std::max(horizons[arenaScope], demand.distance);
     }
-  }
-  for (const auto &[scope, horizon] : horizons) {
-    (void)horizon;
-    summarizedLoops_.push_back(scope);
   }
 
   std::vector<std::pair<std::size_t, SyncCoverScopeId>> loopOrder;
@@ -232,7 +276,8 @@ SyncCoverExpandedProgram::SyncCoverExpandedProgram(
     loopSummaries_[summary->second].periodicControls.push_back(
         {control.id, control.phaseRelation->initialPhase,
          control.phaseRelation->nextPhase,
-         control.phaseRelation->activeAlternative});
+         control.phaseRelation->activeAlternative,
+         getReachablePhases(*control.phaseRelation)});
   }
   for (const SyncCoverNode &node : graph.getNodes()) {
     const std::optional<SyncCoverScopeId> loop =
@@ -270,6 +315,10 @@ SyncCoverExpandedProgram::SyncCoverExpandedProgram(
     normalize(summary.childLoops);
     normalize(summary.resources);
     normalize(summary.carryResources);
+    for (std::uint32_t resource : summary.resources) {
+      summary.completionTransfers.push_back(
+          {resource, true, summary.zeroTripPossible});
+    }
     std::sort(summary.periodicControls.begin(), summary.periodicControls.end(),
               [](const auto &left, const auto &right) {
                 return left.control < right.control;
@@ -342,10 +391,12 @@ SyncCoverExpandedProgram::getArena(const SyncCoverDemand &demand) const {
   if (!*this) {
     return nullptr;
   }
-  if (demand.distance == 0) {
+  const SyncCoverScopeId arenaScope =
+      demand.distance == 0 ? arenaScopeByScope_[demand.scope] : demand.scope;
+  if (arenaScope == 0) {
     return &baseArena_;
   }
-  const SyncCoverExpandedArena *arena = getRecurrenceArena(demand.scope);
+  const SyncCoverExpandedArena *arena = getRecurrenceArena(arenaScope);
   return arena && demand.distance <= arena->getHorizon() ? arena : nullptr;
 }
 
@@ -355,6 +406,31 @@ SyncCoverExpandedProgram::getLoopSummary(SyncCoverScopeId scope) const {
   return summary == loopSummaryIndices_.end()
              ? nullptr
              : &loopSummaries_[summary->second];
+}
+
+std::optional<std::size_t> SyncCoverExpandedProgram::projectEndpoint(
+    const SyncCoverGraph &graph, const SyncCoverExpandedArena &arena,
+    SyncCoverNodeId node, SyncCoverEndpointRole role, unsigned copy) const {
+  const bool invalidEndpoint = !isForGraph(graph) ||
+                               node >= graph.getNodes().size() ||
+                               copy > arena.getHorizon();
+  if (invalidEndpoint) {
+    return std::nullopt;
+  }
+  if (const std::optional<std::size_t> local =
+          arena.getVirtualOperation(node, copy)) {
+    return local;
+  }
+  const SyncCoverNode &operation = graph.getNodes()[node];
+  const std::optional<SyncCoverScopeId> child =
+      getImmediateChildLoop(graph, arena.getScope(), operation.scope);
+  if (!child) {
+    return std::nullopt;
+  }
+  const SyncCoverLoopBoundaryKind boundary =
+      role == SyncCoverEndpointRole::Source ? SyncCoverLoopBoundaryKind::Exit
+                                            : SyncCoverLoopBoundaryKind::Entry;
+  return arena.getLoopBoundary(*child, operation.resource, boundary, copy);
 }
 
 std::optional<SyncCoverProjectedCompletion>
@@ -373,11 +449,22 @@ SyncCoverExpandedProgram::projectCompletion(
       return std::nullopt;
     }
     const unsigned targetCopy = sourceCopy + edge.distance;
+    const std::optional<SyncCoverScopeId> sourceChild = getImmediateChildLoop(
+        graph, arena.getScope(), graph.getNodes()[edge.source].scope);
+    const std::optional<SyncCoverScopeId> targetChild = getImmediateChildLoop(
+        graph, arena.getScope(), graph.getNodes()[edge.target].scope);
+    const SyncCoverEndpointRole targetRole =
+        edge.distance == 0 && sourceChild && sourceChild == targetChild
+            ? SyncCoverEndpointRole::Source
+            : SyncCoverEndpointRole::Target;
+    const std::optional<std::size_t> source = projectEndpoint(
+        graph, arena, edge.source, SyncCoverEndpointRole::Source, sourceCopy);
     const std::optional<std::size_t> target =
-        arena.getVirtualOperation(edge.target, targetCopy);
-    return target ? std::optional<SyncCoverProjectedCompletion>(
-                        {{*target, targetCopy, std::nullopt}})
-                  : std::nullopt;
+        projectEndpoint(graph, arena, edge.target, targetRole, targetCopy);
+    return source && target
+               ? std::optional<SyncCoverProjectedCompletion>(
+                     {{*source, *target, sourceCopy, targetCopy, std::nullopt}})
+               : std::nullopt;
   }
 
   const bool invalidExport =
@@ -391,12 +478,16 @@ SyncCoverExpandedProgram::projectCompletion(
   if (invalidExport) {
     return std::nullopt;
   }
-  const std::uint32_t targetResource = graph.getNodes()[edge.target].resource;
-  const std::optional<std::size_t> target = arena.getLoopBoundary(
-      edge.scope, targetResource, SyncCoverLoopBoundaryKind::Exit, sourceCopy);
-  return target ? std::optional<SyncCoverProjectedCompletion>(
-                      {{*target, sourceCopy, edge.scope}})
-                : std::nullopt;
+  const std::optional<std::size_t> source = projectEndpoint(
+      graph, arena, edge.source, SyncCoverEndpointRole::Source, sourceCopy);
+  const std::optional<std::size_t> target = projectEndpoint(
+      graph, arena, edge.target, SyncCoverEndpointRole::Source, sourceCopy);
+  const std::optional<SyncCoverScopeId> exportedLoop = getImmediateChildLoop(
+      graph, arena.getScope(), graph.getNodes()[edge.target].scope);
+  return source && target && exportedLoop
+             ? std::optional<SyncCoverProjectedCompletion>(
+                   {{*source, *target, sourceCopy, sourceCopy, *exportedLoop}})
+             : std::nullopt;
 }
 
 std::optional<SyncCoverArenaUnavailableReason>
@@ -417,7 +508,8 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
   arena.scope_ = scope;
   arena.horizon_ = horizon;
   for (const SyncCoverNode &node : graph.getNodes()) {
-    if (scope == 0 || graph.scopeContains(scope, node.scope)) {
+    const SyncCoverScopeId owner = getArenaScopeForScope(graph, node.scope);
+    if (owner == scope) {
       const bool nodeBudgetExhausted =
           arena.operationNodes_.size() >= maximumNodes;
       if (nodeBudgetExhausted) {
@@ -428,15 +520,16 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
     }
   }
 
-  for (SyncCoverScopeId loop : summarizedLoops_) {
-    const bool nested =
-        loop != scope && (scope == 0 || graph.scopeContains(scope, loop));
-    const SyncCoverLoopSummary *summary = getLoopSummary(loop);
-    if (!nested || !summary) {
+  for (const SyncCoverLoopSummary &summary : loopSummaries_) {
+    const bool immediateChild =
+        scope == 0 ? !summary.parentLoop
+                   : summary.parentLoop && *summary.parentLoop == scope;
+    if (!immediateChild) {
       continue;
     }
-    for (std::uint32_t resource : summary->resources) {
-      arena.loopSummaryResources_.push_back({loop, resource});
+    for (const SyncCoverLoopCompletionTransfer &transfer :
+         summary.completionTransfers) {
+      arena.loopSummaryResources_.push_back({summary.scope, transfer.resource});
     }
   }
   std::sort(arena.loopSummaryResources_.begin(),
@@ -459,6 +552,18 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
       (void)nodes;
       arena.carryResources_.push_back(resource);
     }
+    for (const auto &[loop, resource] : arena.loopSummaryResources_) {
+      (void)loop;
+      const bool hasCarry =
+          graph.getResourceRecurrenceCarryKinds().count(resource) != 0;
+      if (hasCarry) {
+        arena.carryResources_.push_back(resource);
+      }
+    }
+    std::sort(arena.carryResources_.begin(), arena.carryResources_.end());
+    arena.carryResources_.erase(
+        std::unique(arena.carryResources_.begin(), arena.carryResources_.end()),
+        arena.carryResources_.end());
   }
 
   std::size_t copyCount = 0;
@@ -500,7 +605,7 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
 
   for (const auto &[loop, resource] : arena.loopSummaryResources_) {
     const SyncCoverLoopSummary *summary = getLoopSummary(loop);
-    if (!summary || !summary->zeroTripPossible) {
+    if (!summary) {
       continue;
     }
     for (unsigned copy = 0; copy <= horizon; ++copy) {
@@ -513,7 +618,7 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
           appendEdge({*entry, *exit,
                       SyncCoverEdgeKind::CompletionPreservingIssueOrder,
                       std::nullopt, copy, copy},
-                     false, true);
+                     false, summary->zeroTripPossible);
       if (!appended) {
         result.unavailable = edgeReason;
         return result;
@@ -521,35 +626,16 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
     }
   }
 
-  const auto nestedLoopChain = [&](SyncCoverScopeId nodeScope,
-                                   std::uint32_t resource, unsigned copy,
-                                   SyncCoverLoopBoundaryKind kind) {
-    std::vector<std::size_t> result;
-    std::optional<SyncCoverScopeId> loop =
-        graph.getNearestEnclosingLoop(nodeScope, true);
-    while (loop && *loop != scope) {
-      if (const std::optional<std::size_t> boundary =
-              arena.getLoopBoundary(*loop, resource, kind, copy)) {
-        result.push_back(*boundary);
-      }
-      loop =
-          graph.getNearestEnclosingLoop(graph.getScopes()[*loop].parent, true);
-    }
-    return result;
-  };
-  const auto boundaryLoop = [&](std::size_t boundary) {
-    const std::size_t offset =
-        (boundary - arena.operationVirtualNodeCount_) % summaryNodesPerCopy;
-    return arena.loopSummaryResources_[offset / 2].first;
-  };
-
   for (std::size_t edgeId = 0; edgeId < graph.getEdges().size(); ++edgeId) {
     const SyncCoverEdge &edge = graph.getEdges()[edgeId];
-    const std::optional<std::size_t> localSource =
-        arena.getVirtualOperation(edge.source, 0);
-    const std::optional<std::size_t> localTarget =
-        arena.getVirtualOperation(edge.target, 0);
-    if (!localSource || !localTarget || edge.distance > horizon ||
+    const std::optional<SyncCoverScopeId> sourceChild = getImmediateChildLoop(
+        graph, scope, graph.getNodes()[edge.source].scope);
+    const std::optional<SyncCoverScopeId> targetChild = getImmediateChildLoop(
+        graph, scope, graph.getNodes()[edge.target].scope);
+    const bool delegatedToChild =
+        edge.distance == 0 && sourceChild && sourceChild == targetChild &&
+        edge.kind != SyncCoverEdgeKind::CompletionSupply;
+    if (delegatedToChild || edge.distance > horizon ||
         (edge.distance != 0 && edge.scope != scope)) {
       continue;
     }
@@ -558,54 +644,24 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
          ++sourceCopy) {
       const unsigned sourceCopyValue = static_cast<unsigned>(sourceCopy);
       const unsigned targetCopy = sourceCopyValue + edge.distance;
-      const std::size_t source =
-          *arena.getVirtualOperation(edge.source, sourceCopyValue);
-      const std::size_t target =
-          *arena.getVirtualOperation(edge.target, targetCopy);
-      std::vector<std::size_t> route;
-      const SyncCoverNode &sourceNode = graph.getNodes()[edge.source];
-      const SyncCoverNode &targetNode = graph.getNodes()[edge.target];
-      const bool routeThroughSummaries =
-          edge.distance == 0 &&
-          edge.kind != SyncCoverEdgeKind::CompletionSupply &&
-          sourceNode.resource == targetNode.resource;
-      if (routeThroughSummaries) {
-        std::vector<std::size_t> sourceLoops =
-            nestedLoopChain(sourceNode.scope, sourceNode.resource,
-                            sourceCopyValue, SyncCoverLoopBoundaryKind::Exit);
-        std::vector<std::size_t> targetLoops =
-            nestedLoopChain(targetNode.scope, targetNode.resource, targetCopy,
-                            SyncCoverLoopBoundaryKind::Entry);
-        std::size_t sourceCommon = sourceLoops.size();
-        std::size_t targetCommon = targetLoops.size();
-        while (sourceCommon != 0 && targetCommon != 0) {
-          const bool differentLoop =
-              boundaryLoop(sourceLoops[sourceCommon - 1]) !=
-              boundaryLoop(targetLoops[targetCommon - 1]);
-          if (differentLoop) {
-            break;
-          }
-          --sourceCommon;
-          --targetCommon;
-        }
-        route.insert(route.end(), sourceLoops.begin(),
-                     sourceLoops.begin() +
-                         static_cast<std::ptrdiff_t>(sourceCommon));
-        for (std::size_t index = targetCommon; index != 0; --index) {
-          route.push_back(targetLoops[index - 1]);
-        }
+      const std::optional<std::size_t> source =
+          projectEndpoint(graph, arena, edge.source,
+                          SyncCoverEndpointRole::Source, sourceCopyValue);
+      const SyncCoverEndpointRole targetRole =
+          edge.distance == 0 && sourceChild && sourceChild == targetChild
+              ? SyncCoverEndpointRole::Source
+              : SyncCoverEndpointRole::Target;
+      const std::optional<std::size_t> target =
+          projectEndpoint(graph, arena, edge.target, targetRole, targetCopy);
+      if (!source || !target) {
+        continue;
       }
-      route.push_back(target);
-      std::size_t previous = source;
-      for (std::size_t next : route) {
-        const bool appended = appendEdge(
-            {previous, next, edge.kind, edgeId, sourceCopyValue, targetCopy},
-            false, false);
-        if (!appended) {
-          result.unavailable = edgeReason;
-          return result;
-        }
-        previous = next;
+      const bool appended = appendEdge(
+          {*source, *target, edge.kind, edgeId, sourceCopyValue, targetCopy},
+          false, false);
+      if (!appended) {
+        result.unavailable = edgeReason;
+        return result;
       }
     }
   }
@@ -621,23 +677,26 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
           arena.loopSummaryVirtualNodeCount_ +
           static_cast<std::size_t>(copy) * arena.carryResources_.size() +
           resourceIndex;
-      for (SyncCoverNodeId node : carryNodes.at(resource)) {
-        const SyncCoverExpandedEdge intoBoundary{
-            *arena.getVirtualOperation(node, copy),
-            boundary,
-            carryKind,
-            std::nullopt,
-            copy,
-            copy};
-        const SyncCoverExpandedEdge fromBoundary{
-            boundary,  *arena.getVirtualOperation(node, copy + 1),
-            carryKind, std::nullopt,
-            copy,      static_cast<unsigned>(copy + 1)};
-        const bool appended = appendEdge(intoBoundary, true, false) &&
-                              appendEdge(fromBoundary, true, false);
-        if (!appended) {
-          result.unavailable = edgeReason;
-          return result;
+      const auto localCarryNodes = carryNodes.find(resource);
+      if (localCarryNodes != carryNodes.end()) {
+        for (SyncCoverNodeId node : localCarryNodes->second) {
+          const SyncCoverExpandedEdge intoBoundary{
+              *arena.getVirtualOperation(node, copy),
+              boundary,
+              carryKind,
+              std::nullopt,
+              copy,
+              copy};
+          const SyncCoverExpandedEdge fromBoundary{
+              boundary,  *arena.getVirtualOperation(node, copy + 1),
+              carryKind, std::nullopt,
+              copy,      static_cast<unsigned>(copy + 1)};
+          const bool appended = appendEdge(intoBoundary, true, false) &&
+                                appendEdge(fromBoundary, true, false);
+          if (!appended) {
+            result.unavailable = edgeReason;
+            return result;
+          }
         }
       }
       for (const auto &[loop, summaryResource] : arena.loopSummaryResources_) {

@@ -621,9 +621,9 @@ CanonicalSyncVerifiedPlan mlir::pto::verifyCanonicalSyncSelection(
   for (CanonicalSyncMechanismId mechanism : result.mechanisms) {
     for (const CanonicalSyncSupplyBinding &binding :
          problem.getMechanisms()[mechanism].descriptor.supplies) {
-      supplies.push_back(
-          {mechanism, binding.edge, binding.allowedDemands,
-           binding.proof == CanonicalSyncSupplyProof::VerifiedProtocol});
+      supplies.push_back({mechanism, binding.edge, binding.allowedDemands,
+                          binding.completionExport ==
+                              CanonicalSyncSupplyExport::ScopeExitAfterDrain});
     }
   }
   const SyncCoverCoverageResult coverage =

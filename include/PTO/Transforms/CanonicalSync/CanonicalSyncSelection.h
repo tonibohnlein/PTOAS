@@ -115,6 +115,11 @@ enum class CanonicalSyncSupplyProof : std::uint8_t {
   VerifiedProtocol,
 };
 
+enum class CanonicalSyncSupplyExport : std::uint8_t {
+  LocalTarget,
+  ScopeExitAfterDrain,
+};
+
 struct CanonicalSyncSupplyBinding {
   SyncCoverEdge edge;
   std::optional<std::size_t> eventUse;
@@ -122,6 +127,11 @@ struct CanonicalSyncSupplyBinding {
   std::optional<std::size_t> produceAction;
   std::optional<std::size_t> consumeAction;
   CanonicalSyncSupplyProof proof = CanonicalSyncSupplyProof::DirectAction;
+  /// Scope-exit export is a separate certificate from protocol admission. It
+  /// is accepted only when common validation proves balanced priming, body
+  /// lane use, and one scope-exit drain for every recurrence lane.
+  CanonicalSyncSupplyExport completionExport =
+      CanonicalSyncSupplyExport::LocalTarget;
   /// Empty means this completion consequence is generally applicable. A
   /// verified ownership release names only the exact storage demands for
   /// which issue, rather than full operation completion, is sufficient.

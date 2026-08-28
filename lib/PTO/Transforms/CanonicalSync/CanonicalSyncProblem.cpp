@@ -70,18 +70,22 @@ bool bindingLess(const CanonicalSyncSupplyBinding &left,
     return false;
   }
   return std::tie(left.allowedDemands, left.eventUse, left.barrierAction,
-                  left.produceAction, left.consumeAction, left.proof) <
+                  left.produceAction, left.consumeAction, left.proof,
+                  left.completionExport) <
          std::tie(right.allowedDemands, right.eventUse, right.barrierAction,
-                  right.produceAction, right.consumeAction, right.proof);
+                  right.produceAction, right.consumeAction, right.proof,
+                  right.completionExport);
 }
 
 bool bindingEqual(const CanonicalSyncSupplyBinding &left,
                   const CanonicalSyncSupplyBinding &right) {
   return edgeEqual(left.edge, right.edge) &&
          std::tie(left.allowedDemands, left.eventUse, left.barrierAction,
-                  left.produceAction, left.consumeAction, left.proof) ==
+                  left.produceAction, left.consumeAction, left.proof,
+                  left.completionExport) ==
              std::tie(right.allowedDemands, right.eventUse, right.barrierAction,
-                      right.produceAction, right.consumeAction, right.proof);
+                      right.produceAction, right.consumeAction, right.proof,
+                      right.completionExport);
 }
 
 bool actionEqual(const CanonicalSyncAction &left,
@@ -151,6 +155,7 @@ descriptorHash(const CanonicalSyncMechanismDescriptor &descriptor) {
     hashValue(hash, binding.consumeAction.value_or(
                         std::numeric_limits<std::size_t>::max()));
     hashValue(hash, static_cast<std::uint8_t>(binding.proof));
+    hashValue(hash, static_cast<std::uint8_t>(binding.completionExport));
   }
   for (const CanonicalSyncEventUse &use : descriptor.eventUses) {
     hashValue(hash, use.domain);
@@ -284,9 +289,9 @@ getSupplies(const std::vector<CanonicalSyncMechanism> &mechanisms,
   for (CanonicalSyncMechanismId member : members) {
     for (const CanonicalSyncSupplyBinding &binding :
          mechanisms[member].descriptor.supplies) {
-      result.push_back(
-          {member, binding.edge, binding.allowedDemands,
-           binding.proof == CanonicalSyncSupplyProof::VerifiedProtocol});
+      result.push_back({member, binding.edge, binding.allowedDemands,
+                        binding.completionExport ==
+                            CanonicalSyncSupplyExport::ScopeExitAfterDrain});
     }
   }
   return result;
@@ -565,6 +570,106 @@ validateMechanismShape(const CanonicalSyncMechanismDescriptor &descriptor,
                  : CanonicalSyncProblemError::None;
 }
 
+bool hasValidatedScopeExitExport(
+    const SyncCoverGraph &graph,
+    const CanonicalSyncMechanismDescriptor &descriptor,
+    const CanonicalSyncSupplyBinding &binding,
+    const CanonicalSyncEventUse &use) {
+  if (binding.completionExport !=
+      CanonicalSyncSupplyExport::ScopeExitAfterDrain) {
+    return true;
+  }
+  const SyncCoverEdge &edge = binding.edge;
+  const bool invalidContract =
+      descriptor.kind != CanonicalSyncMechanismKind::Protocol ||
+      binding.proof != CanonicalSyncSupplyProof::VerifiedProtocol ||
+      edge.distance == 0 || edge.scope >= graph.getScopes().size() ||
+      !graph.getScopes()[edge.scope].isLoop || !binding.eventUse ||
+      !binding.produceAction || !binding.consumeAction ||
+      use.width != edge.distance || use.recurrenceScope != edge.scope ||
+      use.lifetimeScope || !edge.sourceGuard.literals.empty() ||
+      !edge.targetGuard.literals.empty();
+  if (invalidContract) {
+    return false;
+  }
+
+  const std::uint32_t sourceResource = graph.getNodes()[edge.source].resource;
+  const std::uint32_t targetResource = graph.getNodes()[edge.target].resource;
+  const CanonicalSyncEventLaneKind bodyLaneKind =
+      edge.distance > 1 ? CanonicalSyncEventLaneKind::LoopIterationModulo
+                        : CanonicalSyncEventLaneKind::Static;
+  const std::optional<SyncCoverScopeId> bodyLaneScope =
+      edge.distance > 1 ? std::optional<SyncCoverScopeId>(edge.scope)
+                        : std::nullopt;
+  const auto actionMatches =
+      [&](const CanonicalSyncAction &action, CanonicalSyncActionKind kind,
+          std::uint32_t resource, SyncCoverAnchorKind anchorKind,
+          SyncCoverNodeId node, std::size_t lane,
+          CanonicalSyncEventLaneKind laneKind,
+          std::optional<SyncCoverScopeId> laneScope) {
+        return action.kind == kind && action.resource == resource &&
+               action.anchor.kind == anchorKind && action.anchor.node == node &&
+               action.anchor.scope ==
+                   (anchorKind == SyncCoverAnchorKind::ScopeEntry ||
+                            anchorKind == SyncCoverAnchorKind::ScopeExit
+                        ? edge.scope
+                        : 0) &&
+               action.eventUse == binding.eventUse &&
+               action.eventLane == lane && action.eventLaneKind == laneKind &&
+               action.eventLaneScope == laneScope &&
+               action.guard == CanonicalSyncActionGuardKind::None &&
+               !action.guardScope && action.drainedResources.empty();
+      };
+  const bool invalidBodyActions =
+      *binding.produceAction >= descriptor.actions.size() ||
+      *binding.consumeAction >= descriptor.actions.size() ||
+      !actionMatches(descriptor.actions[*binding.produceAction],
+                     CanonicalSyncActionKind::EventSet, sourceResource,
+                     SyncCoverAnchorKind::AfterNode, edge.source, 0,
+                     bodyLaneKind, bodyLaneScope) ||
+      !actionMatches(descriptor.actions[*binding.consumeAction],
+                     CanonicalSyncActionKind::EventWait, targetResource,
+                     SyncCoverAnchorKind::BeforeNode, edge.target, 0,
+                     bodyLaneKind, bodyLaneScope);
+  if (invalidBodyActions) {
+    return false;
+  }
+
+  std::vector<bool> primed(edge.distance, false);
+  std::vector<bool> drained(edge.distance, false);
+  std::size_t setCount = 0;
+  std::size_t waitCount = 0;
+  for (const CanonicalSyncAction &action : descriptor.actions) {
+    if (action.eventUse != binding.eventUse) {
+      continue;
+    }
+    setCount += action.kind == CanonicalSyncActionKind::EventSet ? 1 : 0;
+    waitCount += action.kind == CanonicalSyncActionKind::EventWait ? 1 : 0;
+    for (std::size_t lane = 0; lane < edge.distance; ++lane) {
+      if (actionMatches(action, CanonicalSyncActionKind::EventSet,
+                        sourceResource, SyncCoverAnchorKind::ScopeEntry, 0,
+                        lane, CanonicalSyncEventLaneKind::Static,
+                        std::nullopt)) {
+        if (primed[lane]) {
+          return false;
+        }
+        primed[lane] = true;
+      }
+      if (actionMatches(action, CanonicalSyncActionKind::EventWait,
+                        targetResource, SyncCoverAnchorKind::ScopeExit, 0, lane,
+                        CanonicalSyncEventLaneKind::Static, std::nullopt)) {
+        if (drained[lane]) {
+          return false;
+        }
+        drained[lane] = true;
+      }
+    }
+  }
+  return setCount == edge.distance + 1 && waitCount == edge.distance + 1 &&
+         std::find(primed.begin(), primed.end(), false) == primed.end() &&
+         std::find(drained.begin(), drained.end(), false) == drained.end();
+}
+
 CanonicalSyncProblemError
 validateSupplyBindings(const SyncCoverGraph &graph,
                        const std::vector<CanonicalSyncEventDomain> &domains,
@@ -629,6 +734,9 @@ validateSupplyBindings(const SyncCoverGraph &graph,
         domain.sourceResource != graph.getNodes()[edge.source].resource ||
         domain.targetResource != graph.getNodes()[edge.target].resource;
     if (wrongActions || wrongResources) {
+      return CanonicalSyncProblemError::InvalidMechanism;
+    }
+    if (!hasValidatedScopeExitExport(graph, descriptor, binding, use)) {
       return CanonicalSyncProblemError::InvalidMechanism;
     }
     if (!protocol) {
@@ -1125,7 +1233,8 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns() {
          mechanism.descriptor.supplies) {
       allSupplies.push_back(
           {mechanism.id, binding.edge, binding.allowedDemands,
-           binding.proof == CanonicalSyncSupplyProof::VerifiedProtocol});
+           binding.completionExport ==
+               CanonicalSyncSupplyExport::ScopeExitAfterDrain});
     }
   }
   const SyncCoverSingletonCoverageResult singletonCoverage =

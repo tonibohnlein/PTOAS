@@ -60,11 +60,27 @@ enum class SyncCoverLoopBoundaryKind : std::uint8_t {
   Exit,
 };
 
+enum class SyncCoverEndpointRole : std::uint8_t {
+  Source,
+  Target,
+};
+
 struct SyncCoverLoopPeriodicSummary {
   SyncCoverControlId control = 0;
   std::size_t initialPhase = 0;
   std::vector<std::size_t> nextPhase;
   std::vector<unsigned> activeAlternative;
+  std::vector<std::size_t> reachablePhases;
+};
+
+/// A phase-independent completion transfer exposed by a child loop. The
+/// transfer preserves an established completion fact from child entry to
+/// child exit on one issue resource. A zero-trip path is recorded separately
+/// for diagnostics, but both paths have the same completion consequence.
+struct SyncCoverLoopCompletionTransfer {
+  std::uint32_t resource = 0;
+  bool hasNonZeroPath = true;
+  bool hasZeroTripPath = true;
 };
 
 /// One bottom-up semantic summary of a loop-local DAG. Resources include
@@ -79,10 +95,13 @@ struct SyncCoverLoopSummary {
   std::vector<std::uint32_t> resources;
   std::vector<std::uint32_t> carryResources;
   std::vector<SyncCoverLoopPeriodicSummary> periodicControls;
+  std::vector<SyncCoverLoopCompletionTransfer> completionTransfers;
 };
 
 struct SyncCoverProjectedCompletion {
+  std::size_t source = 0;
   std::size_t target = 0;
+  unsigned sourceCopy = 0;
   unsigned targetCopy = 0;
   std::optional<SyncCoverScopeId> exportedLoop;
 };
@@ -104,10 +123,12 @@ private:
   const_iterator end_;
 };
 
-/// One immutable expansion is built for the distance-zero graph and one for
-/// each recurrence loop at that loop's maximum demanded distance. Compact
-/// per-resource boundary nodes encode cross-iteration issue order in O(N)
-/// edges per copy instead of an O(N^2) all-pairs carry relation.
+/// One immutable root arena and one local arena for each active loop scope are
+/// built. An arena contains only locally owned operation nodes plus the
+/// transfer interfaces of its immediate child loops. Recurrence arenas use
+/// the scope's maximum demanded distance. Compact per-resource boundary nodes
+/// encode cross-iteration issue order in O(N) edges per copy instead of an
+/// O(N^2) all-pairs carry relation.
 class SyncCoverExpandedArena {
 public:
   SyncCoverScopeId getScope() const { return scope_; }
@@ -179,6 +200,10 @@ public:
     return loopSummaries_;
   }
   const SyncCoverLoopSummary *getLoopSummary(SyncCoverScopeId scope) const;
+  std::optional<std::size_t>
+  projectEndpoint(const SyncCoverGraph &graph,
+                  const SyncCoverExpandedArena &arena, SyncCoverNodeId node,
+                  SyncCoverEndpointRole role, unsigned copy) const;
   std::optional<SyncCoverProjectedCompletion>
   projectCompletion(const SyncCoverGraph &graph,
                     const SyncCoverExpandedArena &arena,
@@ -207,7 +232,7 @@ private:
       unavailableArenas_;
   std::vector<SyncCoverLoopSummary> loopSummaries_;
   std::map<SyncCoverScopeId, std::size_t> loopSummaryIndices_;
-  std::vector<SyncCoverScopeId> summarizedLoops_;
+  std::vector<SyncCoverScopeId> arenaScopeByScope_;
   SyncCoverExpansionStatistics statistics_;
 };
 

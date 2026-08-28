@@ -33,8 +33,10 @@ constexpr std::size_t kMaximumPairWorkspaceWords = 1U << 24;
 constexpr std::size_t kMaximumPairResultWords = 1U << 24;
 
 struct IndexedSupply {
-  SyncCoverNodeId source = 0;
-  SyncCoverNodeId target = 0;
+  std::size_t source = 0;
+  std::size_t target = 0;
+  unsigned sourceCopy = 0;
+  unsigned targetCopy = 0;
   SyncCoverMechanismId mechanism = 0;
   std::size_t supply = 0;
 };
@@ -129,22 +131,31 @@ std::optional<std::size_t> transition(SyncCoverEdgeKind kind,
 
 SupplyIndex
 buildSupplyIndex(const SyncCoverGraph &graph,
+                 const SyncCoverExpandedProgram &expansion,
+                 const SyncCoverExpandedArena &arena,
                  const std::vector<SyncCoverCompletionSupply> &supplies) {
   SupplyIndex result;
-  result.edges.reserve(supplies.size());
   for (std::size_t supplyId = 0; supplyId < supplies.size(); ++supplyId) {
     const SyncCoverCompletionSupply &supply = supplies[supplyId];
-    result.edges.push_back(
-        {supply.edge.source, supply.edge.target, supply.mechanism, supplyId});
+    for (unsigned copy = 0; copy <= arena.getHorizon(); ++copy) {
+      const std::optional<SyncCoverProjectedCompletion> projected =
+          expansion.projectCompletion(graph, arena, supply.edge, copy,
+                                      supply.exportsCompletionAtScopeExit);
+      if (projected) {
+        result.edges.push_back({projected->source, projected->target,
+                                projected->sourceCopy, projected->targetCopy,
+                                supply.mechanism, supplyId});
+      }
+    }
   }
   std::sort(result.edges.begin(), result.edges.end(),
             [](const IndexedSupply &left, const IndexedSupply &right) {
-              return std::tie(left.source, left.target, left.mechanism,
-                              left.supply) <
-                     std::tie(right.source, right.target, right.mechanism,
-                              right.supply);
+              return std::tie(left.source, left.target, left.sourceCopy,
+                              left.targetCopy, left.mechanism, left.supply) <
+                     std::tie(right.source, right.target, right.sourceCopy,
+                              right.targetCopy, right.mechanism, right.supply);
             });
-  result.outgoingOffsets.assign(graph.getNodes().size() + 1, 0);
+  result.outgoingOffsets.assign(arena.getVirtualNodeCount() + 1, 0);
   for (const IndexedSupply &edge : result.edges) {
     ++result.outgoingOffsets[edge.source + 1];
   }
@@ -155,7 +166,7 @@ buildSupplyIndex(const SyncCoverGraph &graph,
 }
 
 template <typename Visitor>
-void visitSupplyOutgoing(const SupplyIndex &index, SyncCoverNodeId source,
+void visitSupplyOutgoing(const SupplyIndex &index, std::size_t source,
                          Visitor &&visitor) {
   const bool invalidNode = index.outgoingOffsets.empty() ||
                            source >= index.outgoingOffsets.size() - 1;
@@ -176,10 +187,11 @@ bool coversDemand(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
                   const std::vector<SyncCoverCompletionSupply> &supplies,
                   CoverageWorkspace &workspace) {
   const DemandContext context = makeDemandContext(graph, demand);
-  const std::optional<std::size_t> source =
-      arena.getVirtualOperation(demand.source, 0);
+  const std::optional<std::size_t> source = expansion.projectEndpoint(
+      graph, arena, demand.source, SyncCoverEndpointRole::Source, 0);
   const std::optional<std::size_t> target =
-      arena.getVirtualOperation(demand.target, demand.distance);
+      expansion.projectEndpoint(graph, arena, demand.target,
+                                SyncCoverEndpointRole::Target, demand.distance);
   const bool invalidDemand =
       !context.valid || !source || !target ||
       arena.getVirtualNodeCount() > std::numeric_limits<std::size_t>::max() / 2;
@@ -220,15 +232,8 @@ bool coversDemand(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
       }
     }
 
-    const std::optional<SyncCoverNodeId> sourceOperation =
-        arena.getOperationForVirtualNode(virtualNode);
-    const std::optional<unsigned> sourceCopy =
-        arena.getCopyForVirtualNode(virtualNode);
-    if (!sourceOperation || !sourceCopy) {
-      continue;
-    }
     visitSupplyOutgoing(
-        supplyIndex, *sourceOperation, [&](const IndexedSupply &indexed) {
+        supplyIndex, virtualNode, [&](const IndexedSupply &indexed) {
           const SyncCoverCompletionSupply &description =
               supplies[indexed.supply];
           const bool restricted = !description.allowedDemands.empty();
@@ -239,24 +244,20 @@ bool coversDemand(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
             return;
           }
           const SyncCoverEdge &supply = description.edge;
-          const std::optional<SyncCoverProjectedCompletion> projected =
-              expansion.projectCompletion(
-                  graph, arena, supply, *sourceCopy,
-                  description.exportsCompletionAtScopeExit);
           const bool active =
-              projected && projected->targetCopy <= demand.distance &&
+              indexed.targetCopy <= demand.distance &&
               nodeInstanceAvailable(graph, demand, supply.source,
-                                    *sourceCopy) &&
+                                    indexed.sourceCopy) &&
               nodeInstanceAvailable(graph, demand, supply.target,
-                                    projected->targetCopy) &&
+                                    indexed.targetCopy) &&
               workspace.isNodeActive(graph, demand, context, arena,
                                      virtualNode) &&
               workspace.isNodeActive(graph, demand, context, arena,
-                                     projected->target) &&
-              edgeGuardsActive(graph, demand, context, supply, *sourceCopy,
-                               projected->targetCopy);
+                                     indexed.target) &&
+              edgeGuardsActive(graph, demand, context, supply,
+                               indexed.sourceCopy, indexed.targetCopy);
           if (active) {
-            enqueue(getStateIndex(projected->target, true));
+            enqueue(getStateIndex(indexed.target, true));
           }
         });
   }
@@ -319,9 +320,7 @@ bool canonicalizeSupplies(const SyncCoverGraph &graph,
     const bool invalidExport =
         supply.exportsCompletionAtScopeExit &&
         (edgeError != SyncCoverGraphError::None || supply.edge.distance == 0 ||
-         !graph.getScopes()[supply.edge.scope].isLoop ||
-         !supply.edge.sourceGuard.literals.empty() ||
-         !supply.edge.targetGuard.literals.empty());
+         !graph.getScopes()[supply.edge.scope].isLoop);
     if (supply.mechanism >= mechanismCount || invalidDemandFilter ||
         edgeError != SyncCoverGraphError::None || invalidExport) {
       return false;
@@ -482,27 +481,21 @@ private:
   std::deque<std::size_t> ready_;
 };
 
-bool supplyIsActive(const SyncCoverGraph &graph,
-                    const SyncCoverExpandedProgram &expansion,
-                    const SyncCoverDemand &demand, const DemandContext &context,
-                    const SyncCoverExpandedArena &arena,
+bool supplyIsActive(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
+                    const DemandContext &context,
                     const SyncCoverCompletionSupply &description,
-                    unsigned sourceCopy, std::size_t &targetNode) {
+                    const IndexedSupply &indexed, std::size_t &targetNode) {
   const SyncCoverEdge &supply = description.edge;
-  const std::optional<SyncCoverProjectedCompletion> projected =
-      expansion.projectCompletion(graph, arena, supply, sourceCopy,
-                                  description.exportsCompletionAtScopeExit);
   const bool active =
-      projected && projected->targetCopy <= demand.distance &&
-      nodeInstanceAvailable(graph, demand, supply.source, sourceCopy) &&
-      nodeInstanceAvailable(graph, demand, supply.target,
-                            projected->targetCopy) &&
-      edgeGuardsActive(graph, demand, context, supply, sourceCopy,
-                       projected->targetCopy);
+      indexed.targetCopy <= demand.distance &&
+      nodeInstanceAvailable(graph, demand, supply.source, indexed.sourceCopy) &&
+      nodeInstanceAvailable(graph, demand, supply.target, indexed.targetCopy) &&
+      edgeGuardsActive(graph, demand, context, supply, indexed.sourceCopy,
+                       indexed.targetCopy);
   if (!active) {
     return false;
   }
-  targetNode = projected->target;
+  targetNode = indexed.target;
   return true;
 }
 
@@ -536,8 +529,8 @@ SingletonSeedCollection collectSingletonSeeds(
     const SyncCoverExpandedArena &arena, const SupplyIndex &supplyIndex,
     const std::vector<SyncCoverCompletionSupply> &supplies) {
   SingletonSeedCollection result;
-  const std::optional<std::size_t> source =
-      arena.getVirtualOperation(demand.source, 0);
+  const std::optional<std::size_t> source = expansion.projectEndpoint(
+      graph, arena, demand.source, SyncCoverEndpointRole::Source, 0);
   const bool invalidSource =
       !source ||
       arena.getVirtualNodeCount() > std::numeric_limits<std::size_t>::max() / 2;
@@ -576,15 +569,8 @@ SingletonSeedCollection collectSingletonSeeds(
       }
     }
 
-    const std::optional<SyncCoverNodeId> operation =
-        arena.getOperationForVirtualNode(virtualNode);
-    const std::optional<unsigned> copy =
-        arena.getCopyForVirtualNode(virtualNode);
-    if (!operation || !copy) {
-      continue;
-    }
     visitSupplyOutgoing(
-        supplyIndex, *operation, [&](const IndexedSupply &indexed) {
+        supplyIndex, virtualNode, [&](const IndexedSupply &indexed) {
           const SyncCoverCompletionSupply &description =
               supplies[indexed.supply];
           const bool restricted = !description.allowedDemands.empty();
@@ -595,14 +581,15 @@ SingletonSeedCollection collectSingletonSeeds(
             return;
           }
           std::size_t target = 0;
-          if (supplyIsActive(graph, expansion, demand, context, arena,
-                             description, *copy, target)) {
+          if (supplyIsActive(graph, demand, context, description, indexed,
+                             target)) {
             result.seeds.push_back({indexed.mechanism, target});
           }
         });
   }
   const std::optional<std::size_t> goal =
-      arena.getVirtualOperation(demand.target, demand.distance);
+      expansion.projectEndpoint(graph, arena, demand.target,
+                                SyncCoverEndpointRole::Target, demand.distance);
   result.baselineCovers = goal && seen[getStateIndex(*goal, true)] != 0;
   std::sort(result.seeds.begin(), result.seeds.end(),
             [](const SingletonSeed &left, const SingletonSeed &right) {
@@ -721,8 +708,8 @@ SyncCoverCoverageResult mlir::pto::computeSyncCoverCoverage(
     return result;
   }
 
-  const SupplyIndex supplyIndex = buildSupplyIndex(graph, supplies);
   std::map<const SyncCoverExpandedArena *, CoverageWorkspace> workspaces;
+  std::map<const SyncCoverExpandedArena *, SupplyIndex> supplyIndices;
   for (SyncCoverDemandId demandId :
        hierarchicalDemandOrder(graph, activeDemands)) {
     const SyncCoverDemand &demand = graph.getDemands()[demandId];
@@ -734,8 +721,13 @@ SyncCoverCoverageResult mlir::pto::computeSyncCoverCoverage(
     auto [workspace, inserted] =
         workspaces.try_emplace(arena, arena->getVirtualNodeCount());
     (void)inserted;
-    if (coversDemand(graph, demand, demandId, expansion, *arena, supplyIndex,
-                     supplies, workspace->second)) {
+    auto [supplyIndex, indexInserted] = supplyIndices.try_emplace(arena);
+    if (indexInserted) {
+      supplyIndex->second =
+          buildSupplyIndex(graph, expansion, *arena, supplies);
+    }
+    if (coversDemand(graph, demand, demandId, expansion, *arena,
+                     supplyIndex->second, supplies, workspace->second)) {
       result.covered.insert(demandId);
     }
   }
@@ -794,7 +786,7 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
     result.error = SyncCoverCoverageError::InvalidSupply;
     return result;
   }
-  const SupplyIndex supplyIndex = buildSupplyIndex(graph, supplies);
+  std::map<const SyncCoverExpandedArena *, SupplyIndex> supplyIndices;
 
   for (SyncCoverDemandId demandId :
        hierarchicalDemandOrder(graph, activeDemands)) {
@@ -805,18 +797,24 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
       continue;
     }
     const DemandContext context = makeDemandContext(graph, demand);
-    const std::optional<std::size_t> source =
-        arena->getVirtualOperation(demand.source, 0);
-    const std::optional<std::size_t> goal =
-        arena->getVirtualOperation(demand.target, demand.distance);
+    const std::optional<std::size_t> source = expansion.projectEndpoint(
+        graph, *arena, demand.source, SyncCoverEndpointRole::Source, 0);
+    const std::optional<std::size_t> goal = expansion.projectEndpoint(
+        graph, *arena, demand.target, SyncCoverEndpointRole::Target,
+        demand.distance);
     if (!context.valid || !source || !goal) {
       result.error = SyncCoverCoverageError::InvalidGraph;
       return result;
     }
 
+    auto [supplyIndex, inserted] = supplyIndices.try_emplace(arena);
+    if (inserted) {
+      supplyIndex->second =
+          buildSupplyIndex(graph, expansion, *arena, supplies);
+    }
     const SingletonSeedCollection seedCollection =
         collectSingletonSeeds(graph, demand, demandId, context, expansion,
-                              *arena, supplyIndex, supplies);
+                              *arena, supplyIndex->second, supplies);
     if (seedCollection.baselineCovers) {
       result.baseline.insert(demandId);
     }
@@ -869,14 +867,8 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
         }
       }
 
-      const std::optional<SyncCoverNodeId> operation =
-          arena->getOperationForVirtualNode(*node);
-      const std::optional<unsigned> copy = arena->getCopyForVirtualNode(*node);
-      if (!operation || !copy) {
-        continue;
-      }
       visitSupplyOutgoing(
-          supplyIndex, *operation, [&](const IndexedSupply &indexed) {
+          supplyIndex->second, *node, [&](const IndexedSupply &indexed) {
             const SyncCoverCompletionSupply &description =
                 supplies[indexed.supply];
             const bool restricted = !description.allowedDemands.empty();
@@ -899,8 +891,8 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
               return;
             }
             std::size_t target = 0;
-            if (supplyIsActive(graph, expansion, demand, context, *arena,
-                               description, *copy, target)) {
+            if (supplyIsActive(graph, demand, context, description, indexed,
+                               target)) {
               workspace.add(target, local);
             }
           });
@@ -961,7 +953,7 @@ SyncCoverPairCoverageResult mlir::pto::computeSyncCoverPairCoverage(
     result.error = SyncCoverCoverageError::InvalidSupply;
     return result;
   }
-  const SupplyIndex supplyIndex = buildSupplyIndex(graph, supplies);
+  std::map<const SyncCoverExpandedArena *, SupplyIndex> supplyIndices;
   std::vector<std::vector<std::size_t>> pairsByMechanism(mechanismCount);
   for (std::size_t pair = 0; pair < pairs.size(); ++pair) {
     pairsByMechanism[pairs[pair].first].push_back(pair);
@@ -979,15 +971,21 @@ SyncCoverPairCoverageResult mlir::pto::computeSyncCoverPairCoverage(
       continue;
     }
     const DemandContext context = makeDemandContext(graph, demand);
-    const std::optional<std::size_t> goal =
-        arena->getVirtualOperation(demand.target, demand.distance);
+    const std::optional<std::size_t> goal = expansion.projectEndpoint(
+        graph, *arena, demand.target, SyncCoverEndpointRole::Target,
+        demand.distance);
     if (!context.valid || !goal) {
       result.error = SyncCoverCoverageError::InvalidGraph;
       return result;
     }
+    auto [supplyIndex, inserted] = supplyIndices.try_emplace(arena);
+    if (inserted) {
+      supplyIndex->second =
+          buildSupplyIndex(graph, expansion, *arena, supplies);
+    }
     const SingletonSeedCollection seeds =
         collectSingletonSeeds(graph, demand, demandId, context, expansion,
-                              *arena, supplyIndex, supplies);
+                              *arena, supplyIndex->second, supplies);
     if (seeds.baselineCovers) {
       continue;
     }
@@ -1043,14 +1041,8 @@ SyncCoverPairCoverageResult mlir::pto::computeSyncCoverPairCoverage(
         }
       }
 
-      const std::optional<SyncCoverNodeId> operation =
-          arena->getOperationForVirtualNode(*node);
-      const std::optional<unsigned> copy = arena->getCopyForVirtualNode(*node);
-      if (!operation || !copy) {
-        continue;
-      }
       visitSupplyOutgoing(
-          supplyIndex, *operation, [&](const IndexedSupply &indexed) {
+          supplyIndex->second, *node, [&](const IndexedSupply &indexed) {
             const SyncCoverCompletionSupply &description =
                 supplies[indexed.supply];
             const bool constrained = !description.allowedDemands.empty();
@@ -1062,8 +1054,8 @@ SyncCoverPairCoverageResult mlir::pto::computeSyncCoverPairCoverage(
               return;
             }
             std::size_t target = 0;
-            if (!supplyIsActive(graph, expansion, demand, context, *arena,
-                                description, *copy, target)) {
+            if (!supplyIsActive(graph, demand, context, description, indexed,
+                                target)) {
               return;
             }
             for (std::size_t pair : pairsByMechanism[indexed.mechanism]) {

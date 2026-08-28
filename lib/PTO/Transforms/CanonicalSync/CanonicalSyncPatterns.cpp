@@ -148,9 +148,9 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
   for (const CanonicalSyncMechanism &mechanism : problem.getMechanisms()) {
     for (const CanonicalSyncSupplyBinding &binding :
          mechanism.descriptor.supplies) {
-      supplies.push_back(
-          {mechanism.id, binding.edge, binding.allowedDemands,
-           binding.proof == CanonicalSyncSupplyProof::VerifiedProtocol});
+      supplies.push_back({mechanism.id, binding.edge, binding.allowedDemands,
+                          binding.completionExport ==
+                              CanonicalSyncSupplyExport::ScopeExitAfterDrain});
     }
   }
   const SyncCoverSingletonCoverageResult singleton =

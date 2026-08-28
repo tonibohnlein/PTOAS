@@ -995,6 +995,15 @@ bool testVerifiedProtocolTrustBoundary() {
       protocol(0, 1, 2, source, target, loop, 1, 1), verifier);
   passed &= check(admitted, "verified recurrence protocol is admitted");
 
+  CanonicalSyncMechanismDescriptor undrainedExport =
+      protocol(0, 1, 2, source, target, loop, 1, 1);
+  undrainedExport.supplies[0].completionExport =
+      CanonicalSyncSupplyExport::ScopeExitAfterDrain;
+  passed &=
+      check(problem.internVerifiedProtocol(undrainedExport, verifier).error ==
+                CanonicalSyncProblemError::InvalidMechanism,
+            "undrained verified protocol cannot certify scope exit");
+
   CanonicalSyncMechanismDescriptor rejected =
       protocol(0, 1, 2, source, target, loop, 1, 1);
   rejected.supplies[0].edge.distance = 0;
