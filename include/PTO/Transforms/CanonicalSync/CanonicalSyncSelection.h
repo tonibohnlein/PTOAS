@@ -528,9 +528,10 @@ struct CanonicalSyncVerifiedPlan {
   }
 };
 
-CanonicalSyncVerifiedPlan
-verifyCanonicalSyncSelection(const CanonicalSyncPatternProblem &problem,
-                             const CanonicalSyncSelection &selection);
+CanonicalSyncVerifiedPlan verifyCanonicalSyncSelection(
+    const CanonicalSyncPatternProblem &problem,
+    const CanonicalSyncSelection &selection,
+    SyncCoverCoverageWorkBudget *coverageWork = nullptr);
 
 } // namespace pto
 } // namespace mlir

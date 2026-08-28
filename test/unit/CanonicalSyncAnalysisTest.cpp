@@ -1761,10 +1761,10 @@ bool testConflictCoreRepairAvoidsPipeAll() {
              "retain a verified backstop below the cleanup work bound") ||
       !check(
           cleanupBelowReport.strategies.front().backstopDeletionTruncated &&
-              cleanupBelowReport.strategies.front().backstopDeletionTrials <
+              cleanupBelowReport.strategies.front().backstopDeletionTrials ==
                   cleanupReference.backstopDeletionTrials &&
-              cleanupBelowReport.strategies.front().backstopDeletionWorkUnits <
-                  cleanupReference.backstopDeletionWorkUnits,
+              cleanupBelowReport.strategies.front().backstopDeletionWorkUnits ==
+                  cleanupBelowOptions.maximumBackstopDeletionWorkUnits,
           "reject the first cleanup trial beyond the work bound")) {
     return false;
   }

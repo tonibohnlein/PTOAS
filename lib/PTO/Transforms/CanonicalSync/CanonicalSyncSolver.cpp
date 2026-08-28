@@ -571,7 +571,8 @@ CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
 
 CanonicalSyncVerifiedPlan mlir::pto::verifyCanonicalSyncSelection(
     const CanonicalSyncPatternProblem &problem,
-    const CanonicalSyncSelection &selection) {
+    const CanonicalSyncSelection &selection,
+    SyncCoverCoverageWorkBudget *coverageWork) {
   CanonicalSyncVerifiedPlan result;
   const bool invalid =
       !problem.isFrozen() ||
@@ -608,9 +609,11 @@ CanonicalSyncVerifiedPlan mlir::pto::verifyCanonicalSyncSelection(
   }
   const SyncCoverCoverageResult coverage =
       computeSyncCoverCoverage(problem.getGraph(), problem.getExpansion(),
-                               supplies, problem.getDemands());
+                               supplies, problem.getDemands(), coverageWork);
   if (!coverage) {
-    result.error = CanonicalSyncSelectionError::FinalValidationFailed;
+    result.error = coverage.error == SyncCoverCoverageError::WorkLimitExceeded
+                       ? CanonicalSyncSelectionError::WorkLimitExceeded
+                       : CanonicalSyncSelectionError::FinalValidationFailed;
     return result;
   }
   for (std::size_t demand = 0; demand < problem.getDemands().size(); ++demand) {

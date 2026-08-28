@@ -754,49 +754,6 @@ struct PipeAllFallbackOutcome {
   std::size_t deletionWorkUnits = 0;
 };
 
-std::size_t saturatedAddSize(std::size_t first, std::size_t second) {
-  return second > std::numeric_limits<std::size_t>::max() - first
-             ? std::numeric_limits<std::size_t>::max()
-             : first + second;
-}
-
-std::size_t saturatedMultiplySize(std::size_t first, std::size_t second) {
-  return first != 0 && second > std::numeric_limits<std::size_t>::max() / first
-             ? std::numeric_limits<std::size_t>::max()
-             : first * second;
-}
-
-std::size_t
-estimateFinalVerificationWork(const CanonicalSyncPatternProblem &problem,
-                              ArrayRef<CanonicalSyncMechanismId> mechanisms) {
-  const SyncCoverGraph &graph = problem.getGraph();
-  const SyncCoverExpansionStatistics expansion =
-      problem.getExpansion().getStatistics();
-  // Final verification has at most three independently growing dimensions:
-  // demands, expanded graph states/edges, and projected supplies (one per
-  // arena copy). Supply-index sorting is also bounded by the product of those
-  // dimensions. A scaled cube of their aggregate therefore conservatively
-  // dominates every traversal and indexing loop without allocating a
-  // workspace merely to meter an optional cleanup trial.
-  std::size_t basis = 1;
-  basis = saturatedAddSize(basis, graph.getNodes().size());
-  basis = saturatedAddSize(basis, graph.getEdges().size());
-  basis = saturatedAddSize(basis, graph.getScopes().size());
-  basis = saturatedAddSize(basis, graph.getControls().size());
-  basis = saturatedAddSize(basis, problem.getDemands().size());
-  basis = saturatedAddSize(basis, expansion.virtualNodes);
-  basis = saturatedAddSize(basis, expansion.virtualEdges);
-  basis = saturatedAddSize(basis, problem.getPatterns().size());
-  basis = saturatedAddSize(basis, problem.getMechanisms().size());
-  for (CanonicalSyncMechanismId mechanism : mechanisms) {
-    basis = saturatedAddSize(
-        basis, problem.getMechanisms()[mechanism].descriptor.supplies.size());
-  }
-  const std::size_t square = saturatedMultiplySize(basis, basis);
-  const std::size_t cube = saturatedMultiplySize(square, basis);
-  return saturatedMultiplySize(cube, 16);
-}
-
 std::optional<PipeAllFallbackOutcome>
 buildLocalizedPipeAllFallback(const CanonicalSyncProgram &program,
                               const CanonicalSyncBuildOptions &options) {
@@ -835,22 +792,25 @@ buildLocalizedPipeAllFallback(const CanonicalSyncProgram &program,
       continue;
     }
     trial.mechanisms.erase(found);
-    const std::size_t work =
-        estimateFinalVerificationWork(problem, trial.mechanisms);
     const bool trialLimitReached =
         deletionTrials == options.maximumBackstopDeletionTrials;
-    const bool workLimitExceeded =
-        work > options.maximumBackstopDeletionWorkUnits ||
-        deletionWorkUnits > options.maximumBackstopDeletionWorkUnits - work;
-    if (trialLimitReached || workLimitExceeded) {
+    const bool workLimitReached =
+        deletionWorkUnits == options.maximumBackstopDeletionWorkUnits;
+    if (trialLimitReached || workLimitReached) {
       deletionTruncated = true;
       break;
     }
     ++deletionTrials;
-    deletionWorkUnits += work;
     trial.allocation = allocateCanonicalSyncEvents(problem, trial.mechanisms);
+    SyncCoverCoverageWorkBudget workBudget(
+        options.maximumBackstopDeletionWorkUnits - deletionWorkUnits);
     const CanonicalSyncVerifiedPlan verified =
-        verifyCanonicalSyncSelection(problem, trial);
+        verifyCanonicalSyncSelection(problem, trial, &workBudget);
+    deletionWorkUnits += workBudget.workUnits;
+    if (workBudget.exhausted) {
+      deletionTruncated = true;
+      break;
+    }
     if (verified) {
       selection = std::move(trial);
       plan = verified;

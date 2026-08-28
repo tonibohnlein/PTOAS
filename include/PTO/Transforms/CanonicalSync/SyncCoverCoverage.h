@@ -17,6 +17,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace mlir {
@@ -33,6 +34,29 @@ struct SyncCoverCoverageLimits {
   std::size_t maximumResultWords = 1U << 22;
   std::size_t maximumResultRows = 1U << 16;
   std::size_t maximumMechanismRows = 1U << 16;
+};
+
+/// Shared counter for one optional exact-coverage query. Queries without a
+/// budget pass null and retain their existing behavior. A bounded query stops
+/// before executing work that would exceed the limit.
+struct SyncCoverCoverageWorkBudget {
+  explicit SyncCoverCoverageWorkBudget(
+      std::size_t maximum = std::numeric_limits<std::size_t>::max())
+      : maximumWorkUnits(maximum) {}
+
+  bool consume(std::size_t amount = 1) {
+    if (exhausted || workUnits > maximumWorkUnits ||
+        amount > maximumWorkUnits - workUnits) {
+      exhausted = true;
+      return false;
+    }
+    workUnits += amount;
+    return true;
+  }
+
+  std::size_t maximumWorkUnits = std::numeric_limits<std::size_t>::max();
+  std::size_t workUnits = 0;
+  bool exhausted = false;
 };
 
 class SyncCoverDemandSet {
@@ -75,6 +99,7 @@ enum class SyncCoverCoverageError : std::uint8_t {
   InvalidSupply,
   ExpansionUnavailable,
   LimitExceeded,
+  WorkLimitExceeded,
 };
 
 struct SyncCoverCoverageResult {
@@ -134,7 +159,8 @@ SyncCoverCoverageResult
 computeSyncCoverCoverage(const SyncCoverGraph &graph,
                          const SyncCoverExpandedProgram &expansion,
                          const std::vector<SyncCoverCompletionSupply> &supplies,
-                         const std::vector<SyncCoverDemandId> &activeDemands);
+                         const std::vector<SyncCoverDemandId> &activeDemands,
+                         SyncCoverCoverageWorkBudget *workBudget = nullptr);
 
 SyncCoverSingletonCoverageResult computeSyncCoverSingletonCoverage(
     const SyncCoverGraph &graph, const SyncCoverExpandedProgram &expansion,
