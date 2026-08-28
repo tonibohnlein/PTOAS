@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <limits>
 #include <map>
+#include <set>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -29,46 +30,6 @@ bool isDirectPairMember(const CanonicalSyncMechanism &mechanism) {
                      mechanism.descriptor.supplies.end(), [](const auto &item) {
                        return item.allowedDemands.empty();
                      });
-}
-
-bool suppliesMayCompose(const SyncCoverGraph &graph,
-                        const CanonicalSyncSupplyBinding &first,
-                        const CanonicalSyncSupplyBinding &second) {
-  const SyncCoverEdge &firstEdge = first.edge;
-  const SyncCoverEdge &secondEdge = second.edge;
-  const std::size_t nodeCount = graph.getNodes().size();
-  const bool invalidEndpoint =
-      firstEdge.source >= nodeCount || firstEdge.target >= nodeCount ||
-      secondEdge.source >= nodeCount || secondEdge.target >= nodeCount;
-  if (invalidEndpoint) {
-    return false;
-  }
-  const SyncCoverNode &firstSource = graph.getNodes()[firstEdge.source];
-  const SyncCoverNode &firstTarget = graph.getNodes()[firstEdge.target];
-  const SyncCoverNode &secondSource = graph.getNodes()[secondEdge.source];
-  const SyncCoverNode &secondTarget = graph.getNodes()[secondEdge.target];
-  const bool forwardChain =
-      firstTarget.resource == secondSource.resource &&
-      syncCoverGuardsCompatible(firstEdge.targetGuard, secondEdge.sourceGuard);
-  const bool reverseChain =
-      secondTarget.resource == firstSource.resource &&
-      syncCoverGuardsCompatible(secondEdge.targetGuard, firstEdge.sourceGuard);
-  return forwardChain || reverseChain;
-}
-
-bool mechanismsMayCompose(const SyncCoverGraph &graph,
-                          const CanonicalSyncMechanism &first,
-                          const CanonicalSyncMechanism &second) {
-  return std::any_of(
-      first.descriptor.supplies.begin(), first.descriptor.supplies.end(),
-      [&](const CanonicalSyncSupplyBinding &firstSupply) {
-        return std::any_of(second.descriptor.supplies.begin(),
-                           second.descriptor.supplies.end(),
-                           [&](const CanonicalSyncSupplyBinding &secondSupply) {
-                             return suppliesMayCompose(graph, firstSupply,
-                                                       secondSupply);
-                           });
-      });
 }
 
 std::optional<SyncCoverScopeId>
@@ -89,6 +50,79 @@ getMechanismOwner(const SyncCoverGraph &graph,
   return owner;
 }
 
+struct ConnectorEndpoint {
+  CanonicalSyncMechanismId mechanism = 0;
+  SyncCoverGuard guard;
+};
+
+using ConnectorOwnerIndex =
+    std::map<SyncCoverScopeId, std::vector<ConnectorEndpoint>>;
+using ConnectorResourceIndex = std::map<std::uint32_t, ConnectorOwnerIndex>;
+
+struct MechanismPairLess {
+  bool operator()(const SyncCoverMechanismPair &first,
+                  const SyncCoverMechanismPair &second) const {
+    return std::tie(first.first, first.second) <
+           std::tie(second.first, second.second);
+  }
+};
+
+struct OwnedPairProposals {
+  std::set<SyncCoverMechanismPair, MechanismPairLess> pairs;
+  std::size_t proposalCount = 0;
+  bool truncated = false;
+};
+
+void indexMechanismConnectors(const SyncCoverGraph &graph,
+                              const CanonicalSyncMechanism &mechanism,
+                              SyncCoverScopeId owner,
+                              ConnectorResourceIndex &sources,
+                              ConnectorResourceIndex &targets) {
+  for (const CanonicalSyncSupplyBinding &binding :
+       mechanism.descriptor.supplies) {
+    const SyncCoverEdge &edge = binding.edge;
+    const bool invalidEndpoint = edge.source >= graph.getNodes().size() ||
+                                 edge.target >= graph.getNodes().size();
+    if (invalidEndpoint) {
+      continue;
+    }
+    const SyncCoverNode &source = graph.getNodes()[edge.source];
+    const SyncCoverNode &target = graph.getNodes()[edge.target];
+    sources[source.resource][owner].push_back({mechanism.id, edge.sourceGuard});
+    targets[target.resource][owner].push_back({mechanism.id, edge.targetGuard});
+  }
+}
+
+void addConnectorGroup(const std::vector<ConnectorEndpoint> &targets,
+                       const std::vector<ConnectorEndpoint> &sources,
+                       std::size_t maximumProposals,
+                       OwnedPairProposals &proposals) {
+  if (proposals.truncated) {
+    return;
+  }
+  for (const ConnectorEndpoint &target : targets) {
+    for (const ConnectorEndpoint &source : sources) {
+      if (target.mechanism == source.mechanism ||
+          !syncCoverGuardsCompatible(target.guard, source.guard)) {
+        continue;
+      }
+      const auto members = std::minmax(target.mechanism, source.mechanism);
+      const bool inserted =
+          proposals.pairs.insert({members.first, members.second}).second;
+      if (!inserted) {
+        continue;
+      }
+      proposals.proposalCount = proposals.pairs.size();
+      const bool capacityExceeded = proposals.pairs.size() > maximumProposals;
+      if (capacityExceeded) {
+        proposals.pairs.clear();
+        proposals.truncated = true;
+        return;
+      }
+    }
+  }
+}
+
 } // namespace
 
 CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
@@ -98,67 +132,63 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
     return {CanonicalSyncProblemError::Frozen, std::nullopt};
   }
   const SyncCoverGraph &graph = problem.getGraph();
-  std::vector<CanonicalSyncMechanismId> eligible;
+  ConnectorResourceIndex sources;
+  ConnectorResourceIndex targets;
   for (const CanonicalSyncMechanism &mechanism : problem.getMechanisms()) {
-    if (isDirectPairMember(mechanism)) {
-      eligible.push_back(mechanism.id);
+    if (!isDirectPairMember(mechanism)) {
+      continue;
+    }
+    const std::optional<SyncCoverScopeId> owner =
+        getMechanismOwner(graph, mechanism);
+    if (owner) {
+      indexMechanismConnectors(graph, mechanism, *owner, sources, targets);
     }
   }
+  std::map<SyncCoverScopeId, OwnedPairProposals> indexedProposals;
+  for (const auto &[resource, targetOwners] : targets) {
+    const auto sourcePosition = sources.find(resource);
+    if (sourcePosition == sources.end()) {
+      continue;
+    }
+    for (const auto &[targetOwner, targetEndpoints] : targetOwners) {
+      for (const auto &[sourceOwner, sourceEndpoints] :
+           sourcePosition->second) {
+        const std::optional<SyncCoverScopeId> pairOwner =
+            graph.getLowestCommonScope(targetOwner, sourceOwner);
+        if (!pairOwner) {
+          continue;
+        }
+        OwnedPairProposals &proposals = indexedProposals[*pairOwner];
+        if (proposals.truncated) {
+          continue;
+        }
+        addConnectorGroup(targetEndpoints, sourceEndpoints,
+                          options.maximumEvaluationsPerScope, proposals);
+        if (proposals.truncated) {
+          problem.markPatternGenerationTruncated();
+        }
+      }
+    }
+  }
+
   std::map<SyncCoverScopeId, std::vector<SyncCoverMechanismPair>> byOwner;
-  for (std::size_t first = 0; first < eligible.size(); ++first) {
-    for (std::size_t second = first + 1; second < eligible.size(); ++second) {
-      const CanonicalSyncMechanism &firstMechanism =
-          problem.getMechanisms()[eligible[first]];
-      const CanonicalSyncMechanism &secondMechanism =
-          problem.getMechanisms()[eligible[second]];
-      if (!mechanismsMayCompose(graph, firstMechanism, secondMechanism)) {
-        continue;
-      }
-      const std::optional<SyncCoverScopeId> firstOwner =
-          getMechanismOwner(graph, firstMechanism);
-      const std::optional<SyncCoverScopeId> secondOwner =
-          getMechanismOwner(graph, secondMechanism);
-      const std::optional<SyncCoverScopeId> pairOwner =
-          firstOwner && secondOwner
-              ? graph.getLowestCommonScope(*firstOwner, *secondOwner)
-              : std::nullopt;
-      if (!pairOwner) {
-        continue;
-      }
-      const auto members = std::minmax(eligible[first], eligible[second]);
-      byOwner[*pairOwner].push_back({members.first, members.second});
-    }
-  }
   std::size_t proposalCount = 0;
-  for (auto &[owner, owned] : byOwner) {
-    (void)owner;
-    std::sort(owned.begin(), owned.end(),
-              [](const auto &first, const auto &second) {
-                return std::tie(first.first, first.second) <
-                       std::tie(second.first, second.second);
-              });
-    owned.erase(std::unique(owned.begin(), owned.end(),
-                            [](const auto &first, const auto &second) {
-                              return first.first == second.first &&
-                                     first.second == second.second;
-                            }),
-                owned.end());
+  for (auto &[owner, proposals] : indexedProposals) {
     const bool proposalCountOverflows =
-        owned.size() > std::numeric_limits<std::size_t>::max() - proposalCount;
+        proposals.proposalCount >
+        std::numeric_limits<std::size_t>::max() - proposalCount;
     if (proposalCountOverflows) {
       problem.markPatternGenerationTruncated();
       proposalCount = std::numeric_limits<std::size_t>::max();
     } else {
-      proposalCount += owned.size();
+      proposalCount += proposals.proposalCount;
     }
-    const bool evaluationLimitExceeded =
-        owned.size() > options.maximumEvaluationsPerScope;
-    if (evaluationLimitExceeded) {
-      if (!owned.empty()) {
-        problem.markPatternGenerationTruncated();
-      }
-      owned.clear();
+    if (proposals.truncated) {
+      byOwner.try_emplace(owner);
+      continue;
     }
+    byOwner.emplace(owner, std::vector<SyncCoverMechanismPair>(
+                               proposals.pairs.begin(), proposals.pairs.end()));
   }
 
   std::vector<SyncCoverCompletionSupply> supplies;
