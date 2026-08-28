@@ -52,7 +52,7 @@ getMechanismOwner(const SyncCoverGraph &graph,
 
 struct ConnectorEndpoint {
   CanonicalSyncMechanismId mechanism = 0;
-  SyncCoverGuard guard;
+  const SyncCoverGuard *guard = nullptr;
 };
 
 using ConnectorOwnerIndex =
@@ -73,11 +73,10 @@ struct OwnedPairProposals {
   bool truncated = false;
 };
 
-void indexMechanismConnectors(const SyncCoverGraph &graph,
-                              const CanonicalSyncMechanism &mechanism,
-                              SyncCoverScopeId owner,
-                              ConnectorResourceIndex &sources,
-                              ConnectorResourceIndex &targets) {
+bool indexMechanismConnectors(
+    const SyncCoverGraph &graph, const CanonicalSyncMechanism &mechanism,
+    SyncCoverScopeId owner, std::size_t maximumEntries, std::size_t &entryCount,
+    ConnectorResourceIndex &sources, ConnectorResourceIndex &targets) {
   for (const CanonicalSyncSupplyBinding &binding :
        mechanism.descriptor.supplies) {
     const SyncCoverEdge &edge = binding.edge;
@@ -86,24 +85,70 @@ void indexMechanismConnectors(const SyncCoverGraph &graph,
     if (invalidEndpoint) {
       continue;
     }
+    const bool entryLimitExceeded =
+        entryCount > maximumEntries || maximumEntries - entryCount < 2;
+    if (entryLimitExceeded) {
+      return false;
+    }
     const SyncCoverNode &source = graph.getNodes()[edge.source];
     const SyncCoverNode &target = graph.getNodes()[edge.target];
-    sources[source.resource][owner].push_back({mechanism.id, edge.sourceGuard});
-    targets[target.resource][owner].push_back({mechanism.id, edge.targetGuard});
+    sources[source.resource][owner].push_back(
+        {mechanism.id, &edge.sourceGuard});
+    targets[target.resource][owner].push_back(
+        {mechanism.id, &edge.targetGuard});
+    entryCount += 2;
+  }
+  return true;
+}
+
+bool endpointLess(const ConnectorEndpoint &first,
+                  const ConnectorEndpoint &second) {
+  return std::tie(first.mechanism, first.guard->literals) <
+         std::tie(second.mechanism, second.guard->literals);
+}
+
+bool endpointEqual(const ConnectorEndpoint &first,
+                   const ConnectorEndpoint &second) {
+  return first.mechanism == second.mechanism &&
+         first.guard->literals == second.guard->literals;
+}
+
+void canonicalizeConnectorIndex(ConnectorResourceIndex &index) {
+  for (auto &[resource, owners] : index) {
+    (void)resource;
+    for (auto &[owner, endpoints] : owners) {
+      (void)owner;
+      std::sort(endpoints.begin(), endpoints.end(), endpointLess);
+      endpoints.erase(
+          std::unique(endpoints.begin(), endpoints.end(), endpointEqual),
+          endpoints.end());
+    }
   }
 }
 
-void addConnectorGroup(const std::vector<ConnectorEndpoint> &targets,
+bool consumeConnectorInspection(std::size_t maximum, std::size_t &inspections) {
+  if (inspections == maximum) {
+    return false;
+  }
+  ++inspections;
+  return true;
+}
+
+bool addConnectorGroup(const std::vector<ConnectorEndpoint> &targets,
                        const std::vector<ConnectorEndpoint> &sources,
                        std::size_t maximumProposals,
+                       std::size_t maximumInspections, std::size_t &inspections,
                        OwnedPairProposals &proposals) {
   if (proposals.truncated) {
-    return;
+    return true;
   }
   for (const ConnectorEndpoint &target : targets) {
     for (const ConnectorEndpoint &source : sources) {
+      if (!consumeConnectorInspection(maximumInspections, inspections)) {
+        return false;
+      }
       if (target.mechanism == source.mechanism ||
-          !syncCoverGuardsCompatible(target.guard, source.guard)) {
+          !syncCoverGuardsCompatible(*target.guard, *source.guard)) {
         continue;
       }
       const auto members = std::minmax(target.mechanism, source.mechanism);
@@ -117,10 +162,11 @@ void addConnectorGroup(const std::vector<ConnectorEndpoint> &targets,
       if (capacityExceeded) {
         proposals.pairs.clear();
         proposals.truncated = true;
-        return;
+        return true;
       }
     }
   }
+  return true;
 }
 
 } // namespace
@@ -134,17 +180,28 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
   const SyncCoverGraph &graph = problem.getGraph();
   ConnectorResourceIndex sources;
   ConnectorResourceIndex targets;
+  std::size_t connectorIndexEntries = 0;
   for (const CanonicalSyncMechanism &mechanism : problem.getMechanisms()) {
     if (!isDirectPairMember(mechanism)) {
       continue;
     }
     const std::optional<SyncCoverScopeId> owner =
         getMechanismOwner(graph, mechanism);
-    if (owner) {
-      indexMechanismConnectors(graph, mechanism, *owner, sources, targets);
+    const bool indexed = !owner || indexMechanismConnectors(
+                                       graph, mechanism, *owner,
+                                       options.maximumConnectorIndexEntries,
+                                       connectorIndexEntries, sources, targets);
+    if (!indexed) {
+      problem.markPatternGenerationTruncated();
+      problem.recordDirectPairGeneration(0, 0, 0);
+      return {CanonicalSyncProblemError::None, 0};
     }
   }
+  canonicalizeConnectorIndex(sources);
+  canonicalizeConnectorIndex(targets);
   std::map<SyncCoverScopeId, OwnedPairProposals> indexedProposals;
+  std::size_t connectorInspections = 0;
+  bool connectorLimitExceeded = false;
   for (const auto &[resource, targetOwners] : targets) {
     const auto sourcePosition = sources.find(resource);
     if (sourcePosition == sources.end()) {
@@ -153,6 +210,11 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
     for (const auto &[targetOwner, targetEndpoints] : targetOwners) {
       for (const auto &[sourceOwner, sourceEndpoints] :
            sourcePosition->second) {
+        if (!consumeConnectorInspection(options.maximumConnectorInspections,
+                                        connectorInspections)) {
+          connectorLimitExceeded = true;
+          break;
+        }
         const std::optional<SyncCoverScopeId> pairOwner =
             graph.getLowestCommonScope(targetOwner, sourceOwner);
         if (!pairOwner) {
@@ -162,13 +224,31 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
         if (proposals.truncated) {
           continue;
         }
-        addConnectorGroup(targetEndpoints, sourceEndpoints,
-                          options.maximumEvaluationsPerScope, proposals);
+        const bool inspected =
+            addConnectorGroup(targetEndpoints, sourceEndpoints,
+                              options.maximumEvaluationsPerScope,
+                              options.maximumConnectorInspections,
+                              connectorInspections, proposals);
+        if (!inspected) {
+          connectorLimitExceeded = true;
+          break;
+        }
         if (proposals.truncated) {
           problem.markPatternGenerationTruncated();
         }
       }
+      if (connectorLimitExceeded) {
+        break;
+      }
     }
+    if (connectorLimitExceeded) {
+      break;
+    }
+  }
+  if (connectorLimitExceeded) {
+    problem.markPatternGenerationTruncated();
+    problem.recordDirectPairGeneration(0, 0, connectorInspections);
+    return {CanonicalSyncProblemError::None, 0};
   }
 
   std::map<SyncCoverScopeId, std::vector<SyncCoverMechanismPair>> byOwner;
@@ -247,7 +327,8 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
       addedCount += *added.index;
     }
   }
-  problem.recordDirectPairGeneration(proposalCount, evaluationCount);
+  problem.recordDirectPairGeneration(proposalCount, evaluationCount,
+                                     connectorInspections);
   return {CanonicalSyncProblemError::None, addedCount};
 }
 

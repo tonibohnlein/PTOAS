@@ -471,6 +471,82 @@ bool testDirectPairDiscoversJointCoverage() {
   return passed;
 }
 
+bool testConnectorIndexCanonicalizesDuplicateSupplies() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  CanonicalSyncMechanismDescriptor first;
+  CanonicalSyncMechanismDescriptor second;
+  SyncCoverNodeId demandedSource = 0;
+  SyncCoverNodeId demandedTarget = 0;
+  constexpr std::size_t packageWidth = 16;
+  for (std::size_t index = 0; index < packageWidth; ++index) {
+    const SyncCoverNodeId source =
+        takeIndex(graph.addNode(1, 1, 0, index * 3, {}, {2}), passed,
+                  "add duplicate-connector source");
+    const SyncCoverNodeId middle =
+        takeIndex(graph.addNode(2, 1, 0, index * 3 + 1, {}, {3}), passed,
+                  "add duplicate-connector middle");
+    const SyncCoverNodeId target =
+        takeIndex(graph.addNode(3, 1, 0, index * 3 + 2), passed,
+                  "add duplicate-connector target");
+    if (index == 0) {
+      demandedSource = source;
+      demandedTarget = target;
+    }
+    const auto appendEvent =
+        [&](CanonicalSyncMechanismDescriptor &descriptor,
+            CanonicalSyncEventDomainId domain, SyncCoverNodeId producer,
+            SyncCoverNodeId consumer, std::uint32_t producerResource,
+            std::uint32_t consumerResource) {
+          const std::size_t use = descriptor.eventUses.size();
+          descriptor.eventUses.push_back({domain, 1, std::nullopt});
+          descriptor.actions.push_back({CanonicalSyncActionKind::EventSet,
+                                        producerResource,
+                                        after(producer),
+                                        use,
+                                        0,
+                                        {}});
+          descriptor.actions.push_back({CanonicalSyncActionKind::EventWait,
+                                        consumerResource,
+                                        before(consumer),
+                                        use,
+                                        0,
+                                        {}});
+          CanonicalSyncSupplyBinding binding;
+          binding.edge = supply(producer, consumer);
+          binding.eventUse = use;
+          descriptor.supplies.push_back(std::move(binding));
+        };
+    appendEvent(first, 0, source, middle, 1, 2);
+    appendEvent(second, 1, middle, target, 2, 3);
+  }
+  passed &= check(graph.addDemand(demand(demandedSource, demandedTarget)),
+                  "add duplicate-connector demand");
+  passed &= check(graph.freezeStructure(), "freeze duplicate-connector graph");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                  "add duplicate-connector first domain");
+  passed &= check(problem.addEventDomain({1, 2, 3, 8, {}}),
+                  "add duplicate-connector second domain");
+  passed &= check(problem.internMechanism(std::move(first)),
+                  "add duplicate first connector");
+  passed &= check(problem.internMechanism(std::move(second)),
+                  "add duplicate second connector");
+
+  CanonicalSyncDirectPairOptions options;
+  options.maximumConnectorInspections = 2;
+  const CanonicalSyncProblemResult generated =
+      addCanonicalSyncDirectPairPatterns(problem, options);
+  passed &= check(
+      generated && generated.index == 1 &&
+          !problem.wasPatternGenerationTruncated() &&
+          problem.getPatternStatistics().directPairConnectorInspections == 2,
+      "join canonical connector keys within the exact work bound");
+  passed &= check(problem.freeze(), "freeze duplicate-connector problem");
+  return passed;
+}
+
 bool testPairPreparationLimitKeepsSingletonCorrectness() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -519,6 +595,35 @@ bool testPairPreparationLimitKeepsSingletonCorrectness() {
       check(selection && selection.mechanisms ==
                              std::vector<CanonicalSyncMechanismId>{direct},
             "retain singleton correctness after optional pair truncation");
+
+  CanonicalSyncPatternProblem connectorLimited(graph, allDemands(graph));
+  passed &= check(connectorLimited.addEventDomain({0, 1, 3, 8, {}}),
+                  "add connector-limit direct domain");
+  passed &= check(connectorLimited.addEventDomain({1, 1, 2, 8, {}}),
+                  "add connector-limit first domain");
+  passed &= check(connectorLimited.addEventDomain({2, 2, 3, 8, {}}),
+                  "add connector-limit second domain");
+  passed &=
+      check(connectorLimited.internMechanism(event(0, 1, 3, source, target)),
+            "add connector-limit covering singleton");
+  passed &=
+      check(connectorLimited.internMechanism(event(1, 1, 2, source, middle)),
+            "add connector-limit first pair member");
+  passed &=
+      check(connectorLimited.internMechanism(event(2, 2, 3, middle, target)),
+            "add connector-limit second pair member");
+  CanonicalSyncDirectPairOptions connectorOptions;
+  connectorOptions.maximumConnectorInspections = 1;
+  const CanonicalSyncProblemResult connectorGeneration =
+      addCanonicalSyncDirectPairPatterns(connectorLimited, connectorOptions);
+  passed &=
+      check(connectorGeneration && connectorGeneration.index == 0 &&
+                connectorLimited.wasPatternGenerationTruncated() &&
+                connectorLimited.getPatternStatistics()
+                        .directPairConnectorInspections == 1,
+            "truncate connector discovery at its explicit inspection bound");
+  passed &= check(connectorLimited.freeze(),
+                  "freeze singleton-valid connector-limited problem");
   return passed;
 }
 
@@ -1624,6 +1729,7 @@ int main() {
       testReverseDeletionPreservesBaselineCoverage() &&
       testInactiveRecurrenceDoesNotBuildAnArena() &&
       testDirectPairDiscoversJointCoverage() &&
+      testConnectorIndexCanonicalizesDuplicateSupplies() &&
       testPairPreparationLimitKeepsSingletonCorrectness() &&
       testPairOwnerUsesEverySupplyScope() &&
       testOwnerPairBatchesTruncateAtomicallyAndContinue() &&

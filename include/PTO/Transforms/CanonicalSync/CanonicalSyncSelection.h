@@ -210,6 +210,7 @@ struct CanonicalSyncPatternStatistics {
       kinds;
   std::size_t directPairProposals = 0;
   std::size_t directPairEvaluations = 0;
+  std::size_t directPairConnectorInspections = 0;
 
   const CanonicalSyncPatternKindStatistics &
   get(CanonicalSyncPatternKind kind) const {
@@ -325,9 +326,11 @@ public:
   }
   void markPatternGenerationTruncated() { patternGenerationTruncated_ = true; }
   void recordDirectPairGeneration(std::size_t proposals,
-                                  std::size_t evaluations) {
+                                  std::size_t evaluations,
+                                  std::size_t connectorInspections) {
     patternStatistics_.directPairProposals = proposals;
     patternStatistics_.directPairEvaluations = evaluations;
+    patternStatistics_.directPairConnectorInspections = connectorInspections;
   }
   const SyncCoverDemandSet &getBaselineCoverage() const {
     return baselineCoverage_;
@@ -392,6 +395,10 @@ struct CanonicalSyncDirectPairOptions {
   /// Proposals are owned by the LCA of their mechanism scopes. An oversized
   /// scope is skipped as a whole so truncation never depends on ID order.
   std::size_t maximumEvaluationsPerScope = 1U << 12;
+  /// Total source/target endpoint entries retained by the connector index.
+  std::size_t maximumConnectorIndexEntries = 1U << 20;
+  /// Global deterministic bound on owner-group and endpoint comparisons.
+  std::size_t maximumConnectorInspections = 1U << 20;
   /// Pair preparation is optional. A scope whose exact pair matrices exceed
   /// these limits is skipped without weakening singleton correctness.
   SyncCoverCoverageLimits pairCoverageLimits;

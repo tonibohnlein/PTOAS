@@ -1347,9 +1347,13 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns(
       patternStatistics_.directPairProposals;
   const std::size_t directPairEvaluations =
       patternStatistics_.directPairEvaluations;
+  const std::size_t directPairConnectorInspections =
+      patternStatistics_.directPairConnectorInspections;
   patternStatistics = {};
   patternStatistics.directPairProposals = directPairProposals;
   patternStatistics.directPairEvaluations = directPairEvaluations;
+  patternStatistics.directPairConnectorInspections =
+      directPairConnectorInspections;
   patterns.clear();
   patterns.reserve(mechanisms_.size() + patternSpecs_.size());
   for (const CanonicalSyncMechanism &mechanism : mechanisms_) {
