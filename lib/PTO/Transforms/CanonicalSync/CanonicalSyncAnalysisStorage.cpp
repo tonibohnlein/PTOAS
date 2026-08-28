@@ -16,6 +16,8 @@
 
 #include <algorithm>
 #include <limits>
+#include <queue>
+#include <set>
 #include <tuple>
 #include <utility>
 
@@ -58,6 +60,31 @@ std::optional<unsigned> getFunctionArgument(Value value,
     return std::nullopt;
   }
   return argument.getArgNumber();
+}
+
+struct ActiveStorageAccess {
+  std::uint64_t end = 0;
+  SyncCoverStorageAccessId access = 0;
+
+  bool operator>(const ActiveStorageAccess &other) const {
+    return std::tie(end, access) > std::tie(other.end, other.access);
+  }
+};
+
+using ActiveStorageHeap =
+    std::priority_queue<ActiveStorageAccess, std::vector<ActiveStorageAccess>,
+                        std::greater<ActiveStorageAccess>>;
+
+void expireStorageAccesses(std::uint64_t begin, ActiveStorageHeap &expiry,
+                           std::set<SyncCoverStorageAccessId> &active) {
+  while (!expiry.empty()) {
+    const bool expired = expiry.top().end <= begin;
+    if (!expired) {
+      break;
+    }
+    active.erase(expiry.top().access);
+    expiry.pop();
+  }
 }
 
 } // namespace
@@ -224,7 +251,34 @@ LogicalResult ProgramBuilder::buildStorageConflictIndex() {
     accessesByDomain[access.domain].push_back(access.id);
   }
 
-  std::vector<std::pair<SyncCoverNodeId, SyncCoverNodeId>> nodePairs;
+  std::vector<bool> nodeIsInLoop(nodeBindings_.size(), false);
+  for (const auto &[loop, nodes] : loopNodes_) {
+    (void)loop;
+    for (SyncCoverNodeId node : nodes) {
+      nodeIsInLoop[node] = true;
+    }
+  }
+  std::set<std::pair<SyncCoverNodeId, SyncCoverNodeId>> nodePairs;
+  const auto retainNodePair = [&](SyncCoverNodeId first,
+                                  SyncCoverNodeId second) -> LogicalResult {
+    const std::pair<SyncCoverNodeId, SyncCoverNodeId> pair =
+        std::minmax(first, second);
+    if (pair.first == pair.second && !nodeIsInLoop[pair.first]) {
+      return success();
+    }
+    const bool retained = nodePairs.find(pair) != nodePairs.end();
+    if (retained) {
+      return success();
+    }
+    const bool edgeLimitReached =
+        nodePairs.size() == options_.maximumStorageConflictEdges;
+    if (edgeLimitReached) {
+      return function_.emitError(
+          "canonical sync storage-conflict edge limit exceeded");
+    }
+    nodePairs.insert(pair);
+    return success();
+  };
   for (std::vector<SyncCoverStorageAccessId> &domainAccesses :
        accessesByDomain) {
     llvm::sort(domainAccesses, [&](SyncCoverStorageAccessId first,
@@ -236,46 +290,60 @@ LogicalResult ProgramBuilder::buildStorageConflictIndex() {
                                                  secondAccess.extent.end,
                                                  secondAccess.id);
     });
-    std::vector<SyncCoverStorageAccessId> active;
+    ActiveStorageHeap writerExpiry;
+    ActiveStorageHeap readerExpiry;
+    std::set<SyncCoverStorageAccessId> activeWriters;
+    std::set<SyncCoverStorageAccessId> activeReaders;
     for (SyncCoverStorageAccessId currentId : domainAccesses) {
       const SyncCoverStorageAccess &current = graphAccesses[currentId];
-      active.erase(
-          std::remove_if(active.begin(), active.end(),
-                         [&](SyncCoverStorageAccessId candidate) {
-                           return graphAccesses[candidate].extent.end <=
-                                  current.extent.begin;
-                         }),
-          active.end());
-      if (syncCoverStorageModeWrites(current.mode)) {
-        nodePairs.emplace_back(current.node, current.node);
+      expireStorageAccesses(current.extent.begin, writerExpiry, activeWriters);
+      expireStorageAccesses(current.extent.begin, readerExpiry, activeReaders);
+      const bool currentWrites = syncCoverStorageModeWrites(current.mode);
+      const bool currentReads = syncCoverStorageModeReads(current.mode);
+      const auto joinActive = [&](const auto &active) -> LogicalResult {
+        for (SyncCoverStorageAccessId previousId : active) {
+          if (!consumePairInspection()) {
+            return function_.emitError(
+                "canonical sync pair-inspection limit exceeded");
+          }
+          const ExtractedAccess &previousExtracted =
+              extractedAccesses_[extractedByGraphAccess[previousId]];
+          const ExtractedAccess &currentExtracted =
+              extractedAccesses_[extractedByGraphAccess[currentId]];
+          if (gmAccessesAreNoAlias(previousExtracted, currentExtracted)) {
+            continue;
+          }
+          if (failed(retainNodePair(graphAccesses[previousId].node,
+                                    current.node))) {
+            return failure();
+          }
+        }
+        return success();
+      };
+      const bool failedJoin =
+          (currentWrites && (failed(joinActive(activeReaders)) ||
+                             failed(joinActive(activeWriters)))) ||
+          (!currentWrites && currentReads && failed(joinActive(activeWriters)));
+      if (failedJoin) {
+        return failure();
       }
-      for (SyncCoverStorageAccessId previousId : active) {
-        const SyncCoverStorageAccess &previous = graphAccesses[previousId];
-        const bool cannotHazard = !syncCoverStorageModeWrites(previous.mode) &&
-                                  !syncCoverStorageModeWrites(current.mode);
-        if (cannotHazard) {
-          continue;
-        }
-        const ExtractedAccess &previousExtracted =
-            extractedAccesses_[extractedByGraphAccess[previousId]];
-        const ExtractedAccess &currentExtracted =
-            extractedAccesses_[extractedByGraphAccess[currentId]];
-        if (gmAccessesAreNoAlias(previousExtracted, currentExtracted)) {
-          continue;
-        }
-        if (!consumePairInspection()) {
-          return function_.emitError(
-              "canonical sync pair-inspection limit exceeded");
-        }
-        nodePairs.push_back(std::minmax(previous.node, current.node));
+      const ExtractedAccess &currentExtracted =
+          extractedAccesses_[extractedByGraphAccess[currentId]];
+      if (currentWrites && nodeIsInLoop[current.node] &&
+          !gmAccessesAreNoAlias(currentExtracted, currentExtracted) &&
+          failed(retainNodePair(current.node, current.node))) {
+        return failure();
       }
-      active.push_back(currentId);
+      if (currentWrites) {
+        activeWriters.insert(currentId);
+        writerExpiry.push({current.extent.end, currentId});
+      } else if (currentReads) {
+        activeReaders.insert(currentId);
+        readerExpiry.push({current.extent.end, currentId});
+      }
     }
   }
 
-  llvm::sort(nodePairs);
-  nodePairs.erase(std::unique(nodePairs.begin(), nodePairs.end()),
-                  nodePairs.end());
   storageConflictPeers_.assign(nodeBindings_.size(), {});
   for (const auto &[first, second] : nodePairs) {
     storageConflictPeers_[first].push_back(second);

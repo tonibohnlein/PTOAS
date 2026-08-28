@@ -27,6 +27,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 namespace {
 
@@ -38,6 +39,51 @@ bool check(bool condition, std::string_view message) {
     std::cerr << "CanonicalSyncAnalysisTest failure: " << message << '\n';
   }
   return condition;
+}
+
+bool matchesDenseDistanceZeroStorageHazards(const SyncCoverGraph &graph) {
+  using HazardKey =
+      std::tuple<SyncCoverNodeId, SyncCoverNodeId, SyncCoverDemandKind>;
+  std::set<HazardKey> expected;
+  for (const SyncCoverStorageAccess &first : graph.getStorageAccesses()) {
+    for (const SyncCoverStorageAccess &second : graph.getStorageAccesses()) {
+      if (first.node >= second.node || first.domain != second.domain ||
+          first.extent.begin >= second.extent.end ||
+          second.extent.begin >= first.extent.end) {
+        continue;
+      }
+      const bool raw = syncCoverStorageModeWrites(first.mode) &&
+                       syncCoverStorageModeReads(second.mode);
+      if (raw) {
+        expected.emplace(first.node, second.node,
+                         SyncCoverDemandKind::MemoryRAW);
+      }
+      const bool war = syncCoverStorageModeReads(first.mode) &&
+                       syncCoverStorageModeWrites(second.mode);
+      if (war) {
+        expected.emplace(first.node, second.node,
+                         SyncCoverDemandKind::MemoryWAR);
+      }
+      const bool waw = syncCoverStorageModeWrites(first.mode) &&
+                       syncCoverStorageModeWrites(second.mode);
+      if (waw) {
+        expected.emplace(first.node, second.node,
+                         SyncCoverDemandKind::MemoryWAW);
+      }
+    }
+  }
+  std::set<HazardKey> actual;
+  for (const SyncCoverDemand &demand : graph.getDemands()) {
+    if (demand.distance != 0) {
+      continue;
+    }
+    for (SyncCoverDemandKind kind : demand.provenanceKinds) {
+      if (kind != SyncCoverDemandKind::SSA) {
+        actual.emplace(demand.source, demand.target, kind);
+      }
+    }
+  }
+  return actual == expected;
 }
 
 void loadDialects(MLIRContext &context) {
@@ -142,6 +188,8 @@ bool testBuildsOneFrozenGraph() {
                "retain explicit MTE completion capability") &&
          check(graph.getDemands().size() == 1,
                "construct local RAW completion demand") &&
+         check(matchesDenseDistanceZeroStorageHazards(graph),
+               "match dense distance-zero storage hazard enumeration") &&
          check(llvm::is_contained(graph.getDemands().front().provenanceKinds,
                                   SyncCoverDemandKind::MemoryRAW),
                "retain RAW memory provenance") &&
@@ -947,11 +995,16 @@ bool testStructuralLimitsFailClosed() {
   nodeLimit.maximumNodes = 1;
   CanonicalSyncAnalysisOptions storageLimit;
   storageLimit.maximumStorageAccesses = 1;
+  CanonicalSyncAnalysisOptions conflictLimit;
+  conflictLimit.maximumStorageConflictEdges = 0;
   const bool basicLimits =
       expectAnalysisFailure(basic, "bounded", "node limit exceeded",
                             nodeLimit) &&
       expectAnalysisFailure(basic, "bounded", "storage-access limit exceeded",
-                            storageLimit);
+                            storageLimit) &&
+      expectAnalysisFailure(basic, "bounded",
+                            "storage-conflict edge limit exceeded",
+                            conflictLimit);
   if (!basicLimits) {
     return false;
   }
