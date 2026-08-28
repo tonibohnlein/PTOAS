@@ -129,7 +129,17 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
         {"error", static_cast<std::int64_t>(strategy.error)},
         {"verified", strategy.verified},
         {"used_localized_pipe_all", strategy.usedLocalizedPipeAll},
+        {"repair_frontier_truncated", strategy.repairFrontierTruncated},
+        {"repair_budget_exhausted", strategy.repairBudgetExhausted},
+        {"backstop_deletion_truncated", strategy.backstopDeletionTruncated},
         {"repair_rounds", static_cast<std::int64_t>(strategy.repairRounds)},
+        {"repair_trials", static_cast<std::int64_t>(strategy.repairTrials)},
+        {"repair_work_units",
+         static_cast<std::int64_t>(strategy.repairWorkUnits)},
+        {"backstop_deletion_trials",
+         static_cast<std::int64_t>(strategy.backstopDeletionTrials)},
+        {"backstop_deletion_work_units",
+         static_cast<std::int64_t>(strategy.backstopDeletionWorkUnits)},
         {"selected_events", static_cast<std::int64_t>(strategy.selectedEvents)},
         {"selected_targeted_barriers",
          static_cast<std::int64_t>(strategy.selectedTargetedBarriers)},
@@ -183,6 +193,14 @@ LogicalResult emitReport(func::FuncOp function, StringRef path,
         << ", targeted-barriers=" << strategy.selectedTargetedBarriers
         << ", pipe-all-barriers=" << strategy.selectedPipeAllBarriers
         << ", repairs=" << strategy.repairRounds
+        << ", repair-trials=" << strategy.repairTrials
+        << ", repair-work=" << strategy.repairWorkUnits
+        << ", repair-frontier-truncated=" << strategy.repairFrontierTruncated
+        << ", repair-budget-exhausted=" << strategy.repairBudgetExhausted
+        << ", backstop-deletion-trials=" << strategy.backstopDeletionTrials
+        << ", backstop-deletion-work=" << strategy.backstopDeletionWorkUnits
+        << ", backstop-deletion-truncated="
+        << strategy.backstopDeletionTruncated
         << ", serialization=" << strategy.cost.serializationBreadth
         << ", lifetime=" << strategy.cost.eventLifetimeArea
         << ", maximum-event-overlap=" << maximumOverlap;

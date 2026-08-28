@@ -611,6 +611,12 @@ struct RepairFrontierBuildResult {
   std::size_t proposals = 0;
 };
 
+struct RepairFrontierMetadata {
+  std::size_t inspections = 0;
+  std::size_t proposals = 0;
+  bool truncated = false;
+};
+
 RepairFrontierBuildResult
 addRepairFrontierPatterns(const CanonicalSyncProgram &program,
                           CanonicalSyncPatternProblem &problem,
@@ -717,6 +723,16 @@ addRepairFrontierPatterns(const CanonicalSyncProgram &program,
         problem.internMechanism(makeRepairBarrier(graph, proposal.barrier));
     const CanonicalSyncProblemResult event = problem.internMechanism(
         makeRepairEvent(graph, proposal.event, proposal.domain));
+    const bool barrierSemanticFailure =
+        !barrier && barrier.error != CanonicalSyncProblemError::LimitExceeded;
+    const bool eventSemanticFailure =
+        !event && event.error != CanonicalSyncProblemError::LimitExceeded;
+    if (barrierSemanticFailure || eventSemanticFailure) {
+      result.status = RepairFrontierBuildStatus::Failed;
+      program.getFunction().emitError(
+          "cannot add canonical sync repair-frontier mechanisms");
+      return result;
+    }
     const bool limitExceeded =
         barrier.error == CanonicalSyncProblemError::LimitExceeded ||
         event.error == CanonicalSyncProblemError::LimitExceeded;
@@ -768,7 +784,8 @@ CanonicalSyncProblemBuildResult buildCandidateCatalog(
     const CanonicalSyncProgram &program,
     const CanonicalSyncBuildOptions &options, CandidateCatalogKind kind,
     ArrayRef<CanonicalSyncMechanismId> conflictCore = {},
-    const CanonicalSyncPatternProblem *preciseProblem = nullptr) {
+    const CanonicalSyncPatternProblem *preciseProblem = nullptr,
+    std::optional<RepairFrontierMetadata> repairMetadata = std::nullopt) {
   if (options.eventIdBudget == 0 ||
       options.eventIdBudget > kHardwareEventIdCount) {
     program.getFunction().emitError(
@@ -822,16 +839,16 @@ CanonicalSyncProblemBuildResult buildCandidateCatalog(
                 {CanonicalSyncProblemError::InvalidMechanism, std::nullopt}};
       }
       if (repair.status == RepairFrontierBuildStatus::Truncated) {
-        CanonicalSyncProblemBuildResult precise = buildCandidateCatalog(
-            program, options, CandidateCatalogKind::Precise);
-        if (precise.problem) {
-          precise.problem->recordRepairFrontierGeneration(
-              repair.inspections, repair.proposals, true);
-        }
-        return precise;
+        return buildCandidateCatalog(
+            program, options, CandidateCatalogKind::Precise, {}, nullptr,
+            RepairFrontierMetadata{repair.inspections, repair.proposals, true});
       }
-      problem->recordRepairFrontierGeneration(repair.inspections,
-                                              repair.proposals, false);
+      const CanonicalSyncProblemResult recorded =
+          problem->recordRepairFrontierGeneration(repair.inspections,
+                                                  repair.proposals, false);
+      if (!recorded) {
+        return {nullptr, recorded};
+      }
     }
   }
   if (failedBuild) {
@@ -842,6 +859,15 @@ CanonicalSyncProblemBuildResult buildCandidateCatalog(
     program.getFunction().emitRemark(
         "canonical sync pattern generation reached its bounded proposal "
         "limit; singleton candidates remain available");
+  }
+  if (repairMetadata) {
+    const CanonicalSyncProblemResult recorded =
+        problem->recordRepairFrontierGeneration(repairMetadata->inspections,
+                                                repairMetadata->proposals,
+                                                repairMetadata->truncated);
+    if (!recorded) {
+      return {nullptr, recorded};
+    }
   }
   const CanonicalSyncProblemResult frozen = problem->freeze();
   return {std::move(problem), frozen};

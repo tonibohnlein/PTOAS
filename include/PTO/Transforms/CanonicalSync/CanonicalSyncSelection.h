@@ -319,19 +319,34 @@ public:
   bool wasPatternGenerationTruncated() const {
     return patternGenerationTruncated_;
   }
-  void markPatternGenerationTruncated() { patternGenerationTruncated_ = true; }
-  void recordDirectPairGeneration(std::size_t proposals,
-                                  std::size_t evaluations,
-                                  std::size_t connectorInspections) {
+  CanonicalSyncProblemResult markPatternGenerationTruncated() {
+    if (frozen_) {
+      return {CanonicalSyncProblemError::Frozen, std::nullopt};
+    }
+    patternGenerationTruncated_ = true;
+    return {};
+  }
+  CanonicalSyncProblemResult
+  recordDirectPairGeneration(std::size_t proposals, std::size_t evaluations,
+                             std::size_t connectorInspections) {
+    if (frozen_) {
+      return {CanonicalSyncProblemError::Frozen, std::nullopt};
+    }
     patternStatistics_.directPairProposals = proposals;
     patternStatistics_.directPairEvaluations = evaluations;
     patternStatistics_.directPairConnectorInspections = connectorInspections;
+    return {};
   }
-  void recordRepairFrontierGeneration(std::size_t inspections,
-                                      std::size_t proposals, bool truncated) {
+  CanonicalSyncProblemResult
+  recordRepairFrontierGeneration(std::size_t inspections, std::size_t proposals,
+                                 bool truncated) {
+    if (frozen_) {
+      return {CanonicalSyncProblemError::Frozen, std::nullopt};
+    }
     patternStatistics_.repairFrontierInspections = inspections;
     patternStatistics_.repairFrontierProposals = proposals;
     patternStatistics_.repairFrontierTruncated = truncated;
+    return {};
   }
   bool hasSameCandidatePrefix(const CanonicalSyncPatternProblem &other) const;
   const SyncCoverDemandSet &getBaselineCoverage() const {

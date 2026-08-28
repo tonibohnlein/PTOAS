@@ -1444,6 +1444,12 @@ bool testConflictCoreRepairAvoidsPipeAll() {
   }
   OwningOpRef<Operation *> forcedFallbackClone(module->clone());
   OwningOpRef<Operation *> analysisOnlyClone(module->clone());
+  OwningOpRef<Operation *> exactRepairClone(module->clone());
+  OwningOpRef<Operation *> belowTrialRepairClone(module->clone());
+  OwningOpRef<Operation *> belowWorkRepairClone(module->clone());
+  OwningOpRef<Operation *> cleanupReferenceClone(module->clone());
+  OwningOpRef<Operation *> cleanupExactClone(module->clone());
+  OwningOpRef<Operation *> cleanupBelowClone(module->clone());
   func::FuncOp function =
       module->lookupSymbol<func::FuncOp>("scarcity_frontier");
   FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(function);
@@ -1517,6 +1523,32 @@ bool testConflictCoreRepairAvoidsPipeAll() {
           "truncate the optional repair batch before its first inspection")) {
     return false;
   }
+  const CanonicalSyncProblemResult frozenMetadataWrite =
+      truncatedRepair.problem->recordRepairFrontierGeneration(9, 9, false);
+  if (!check(frozenMetadataWrite.error == CanonicalSyncProblemError::Frozen &&
+                 truncatedRepair.problem->getPatternStatistics()
+                     .repairFrontierTruncated,
+             "keep repair metadata immutable after problem freeze")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions proposalTruncatedOptions = options;
+  proposalTruncatedOptions.patterns.maximumRepairFrontierProposals = 0;
+  CanonicalSyncProblemBuildResult proposalTruncatedRepair =
+      buildCanonicalSyncRepairProblem(*program, **problem,
+                                      proposalTruncatedOptions, conflictCore);
+  if (!check(static_cast<bool>(proposalTruncatedRepair),
+             "retain the precise catalog at the proposal bound")) {
+    return false;
+  }
+  const CanonicalSyncPatternStatistics &proposalTruncatedStatistics =
+      proposalTruncatedRepair.problem->getPatternStatistics();
+  if (!check(proposalTruncatedStatistics.repairFrontierTruncated &&
+                 proposalTruncatedStatistics.repairFrontierInspections == 1 &&
+                 proposalTruncatedStatistics.repairFrontierProposals == 0,
+             "reject the first proposal beyond a zero proposal budget")) {
+    return false;
+  }
+  options.patterns.maximumRepairFrontierProposals = 1;
   CanonicalSyncProblemBuildResult repair = buildCanonicalSyncRepairProblem(
       *program, **problem, options, conflictCore);
   if (!check(static_cast<bool>(repair),
@@ -1615,6 +1647,125 @@ bool testConflictCoreRepairAvoidsPipeAll() {
   });
   if (!check(generatedTargetedBarriers == 1,
              "materialize the verified repair rather than PIPE_ALL")) {
+    return false;
+  }
+
+  const CanonicalSyncStrategyReport &referenceRepair =
+      repairReport.strategies.front();
+  const auto runCloneWithReport =
+      [&](OwningOpRef<Operation *> &clone, CanonicalSyncBuildOptions runOptions,
+          CanonicalSyncComparisonReport &runReport) {
+        ModuleOp cloneModule = cast<ModuleOp>(*clone);
+        func::FuncOp cloneFunction =
+            cloneModule.lookupSymbol<func::FuncOp>("scarcity_frontier");
+        runOptions.reportCallback =
+            [&](const CanonicalSyncComparisonReport &actual) {
+              runReport = actual;
+              return success();
+            };
+        return runCanonicalSync(cloneFunction, runOptions);
+      };
+
+  CanonicalSyncBuildOptions exactRepairOptions = options;
+  exactRepairOptions.maximumRepairTrials = referenceRepair.repairTrials;
+  exactRepairOptions.maximumRepairWorkUnits = referenceRepair.repairWorkUnits;
+  CanonicalSyncComparisonReport exactRepairReport;
+  if (!check(succeeded(runCloneWithReport(exactRepairClone, exactRepairOptions,
+                                          exactRepairReport)),
+             "accept aggregate repair work at the exact bound")) {
+    return false;
+  }
+  const CanonicalSyncStrategyReport &exactRepair =
+      exactRepairReport.strategies.front();
+  if (!check(!exactRepair.repairBudgetExhausted &&
+                 !exactRepair.usedLocalizedPipeAll &&
+                 exactRepair.repairTrials == referenceRepair.repairTrials &&
+                 exactRepair.repairWorkUnits == referenceRepair.repairWorkUnits,
+             "complete all repair trials at their exact aggregate limits")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions belowTrialOptions = exactRepairOptions;
+  belowTrialOptions.maximumRepairTrials = referenceRepair.repairTrials - 1;
+  CanonicalSyncComparisonReport belowTrialReport;
+  if (!check(succeeded(runCloneWithReport(belowTrialRepairClone,
+                                          belowTrialOptions, belowTrialReport)),
+             "stop repair at one trial below the exact bound") ||
+      !check(belowTrialReport.strategies.front().repairBudgetExhausted &&
+                 belowTrialReport.strategies.front().repairTrials ==
+                     belowTrialOptions.maximumRepairTrials,
+             "report the first repair trial rejected by the aggregate bound")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions belowWorkOptions = exactRepairOptions;
+  belowWorkOptions.maximumRepairWorkUnits = referenceRepair.repairWorkUnits - 1;
+  CanonicalSyncComparisonReport belowWorkReport;
+  if (!check(succeeded(runCloneWithReport(belowWorkRepairClone,
+                                          belowWorkOptions, belowWorkReport)),
+             "stop repair at one work unit below the exact bound") ||
+      !check(belowWorkReport.strategies.front().repairBudgetExhausted &&
+                 belowWorkReport.strategies.front().repairWorkUnits <
+                     referenceRepair.repairWorkUnits,
+             "report aggregate repair work exhaustion exactly")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions cleanupReferenceOptions;
+  cleanupReferenceOptions.eventIdBudget = 1;
+  cleanupReferenceOptions.maximumRepairTrials = 0;
+  CanonicalSyncComparisonReport cleanupReferenceReport;
+  if (!check(succeeded(runCloneWithReport(cleanupReferenceClone,
+                                          cleanupReferenceOptions,
+                                          cleanupReferenceReport)),
+             "measure the bounded backstop cleanup reference")) {
+    return false;
+  }
+  const CanonicalSyncStrategyReport &cleanupReference =
+      cleanupReferenceReport.strategies.front();
+  if (!check(!cleanupReference.backstopDeletionTruncated &&
+                 cleanupReference.backstopDeletionTrials != 0 &&
+                 cleanupReference.backstopDeletionWorkUnits != 0,
+             "complete the reference backstop cleanup")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions cleanupExactOptions = cleanupReferenceOptions;
+  cleanupExactOptions.maximumBackstopDeletionTrials =
+      cleanupReference.backstopDeletionTrials;
+  cleanupExactOptions.maximumBackstopDeletionWorkUnits =
+      cleanupReference.backstopDeletionWorkUnits;
+  CanonicalSyncComparisonReport cleanupExactReport;
+  if (!check(succeeded(runCloneWithReport(
+                 cleanupExactClone, cleanupExactOptions, cleanupExactReport)),
+             "accept backstop cleanup at the exact work bound")) {
+    return false;
+  }
+  const CanonicalSyncStrategyReport &cleanupExact =
+      cleanupExactReport.strategies.front();
+  if (!check(!cleanupExact.backstopDeletionTruncated &&
+                 cleanupExact.backstopDeletionTrials ==
+                     cleanupReference.backstopDeletionTrials &&
+                 cleanupExact.backstopDeletionWorkUnits ==
+                     cleanupReference.backstopDeletionWorkUnits,
+             "complete backstop cleanup at exact trial and work limits")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions cleanupBelowOptions = cleanupExactOptions;
+  cleanupBelowOptions.maximumBackstopDeletionWorkUnits =
+      cleanupReference.backstopDeletionWorkUnits - 1;
+  CanonicalSyncComparisonReport cleanupBelowReport;
+  if (!check(succeeded(runCloneWithReport(
+                 cleanupBelowClone, cleanupBelowOptions, cleanupBelowReport)),
+             "retain a verified backstop below the cleanup work bound") ||
+      !check(
+          cleanupBelowReport.strategies.front().backstopDeletionTruncated &&
+              cleanupBelowReport.strategies.front().backstopDeletionTrials <
+                  cleanupReference.backstopDeletionTrials &&
+              cleanupBelowReport.strategies.front().backstopDeletionWorkUnits <
+                  cleanupReference.backstopDeletionWorkUnits,
+          "reject the first cleanup trial beyond the work bound")) {
     return false;
   }
 

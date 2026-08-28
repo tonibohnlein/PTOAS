@@ -26,8 +26,22 @@
 // SUMMARY-DAG: canonical sync strategy=fixed-cover
 // SUMMARY-DAG: canonical sync strategy=action-aware-singleton
 // SUMMARY-DAG: canonical sync strategy=pair-lookahead
+// SUMMARY-DAG: repair-trials=
+// SUMMARY-DAG: repair-work=
+// SUMMARY-DAG: repair-frontier-truncated=
+// SUMMARY-DAG: repair-budget-exhausted=
+// SUMMARY-DAG: backstop-deletion-trials=
+// SUMMARY-DAG: backstop-deletion-work=
+// SUMMARY-DAG: backstop-deletion-truncated=
 // REPORT: "demands":
 // REPORT: "direct_pair_evaluations":
+// REPORT: "backstop_deletion_trials":
+// REPORT: "backstop_deletion_truncated":
+// REPORT: "backstop_deletion_work_units":
+// REPORT: "repair_budget_exhausted":
+// REPORT: "repair_frontier_truncated":
+// REPORT: "repair_trials":
+// REPORT: "repair_work_units":
 // REPORT: "strategy": "fixed-cover"
 // REPORT: "strategy": "action-aware-singleton"
 // REPORT: "strategy": "pair-lookahead"

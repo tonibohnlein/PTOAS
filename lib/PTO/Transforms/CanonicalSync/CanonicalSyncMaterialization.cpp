@@ -559,6 +559,8 @@ public:
     CanonicalSyncSelection selection =
         selectCanonicalSyncPatterns(problem, std::move(options));
     workUnits_ += std::min(selection.statistics.workUnits, remainingWork);
+    exhausted_ |=
+        selection.error == CanonicalSyncSelectionError::WorkLimitExceeded;
     return selection;
   }
 
@@ -767,19 +769,32 @@ std::size_t saturatedMultiplySize(std::size_t first, std::size_t second) {
 std::size_t
 estimateFinalVerificationWork(const CanonicalSyncPatternProblem &problem,
                               ArrayRef<CanonicalSyncMechanismId> mechanisms) {
+  const SyncCoverGraph &graph = problem.getGraph();
   const SyncCoverExpansionStatistics expansion =
       problem.getExpansion().getStatistics();
-  std::size_t structure =
-      saturatedAddSize(expansion.virtualNodes, expansion.virtualEdges);
-  structure = saturatedAddSize(structure, problem.getDemands().size());
-  structure = saturatedAddSize(structure, problem.getPatterns().size());
-  std::size_t supplies = 1;
+  // Final verification has at most three independently growing dimensions:
+  // demands, expanded graph states/edges, and projected supplies (one per
+  // arena copy). Supply-index sorting is also bounded by the product of those
+  // dimensions. A scaled cube of their aggregate therefore conservatively
+  // dominates every traversal and indexing loop without allocating a
+  // workspace merely to meter an optional cleanup trial.
+  std::size_t basis = 1;
+  basis = saturatedAddSize(basis, graph.getNodes().size());
+  basis = saturatedAddSize(basis, graph.getEdges().size());
+  basis = saturatedAddSize(basis, graph.getScopes().size());
+  basis = saturatedAddSize(basis, graph.getControls().size());
+  basis = saturatedAddSize(basis, problem.getDemands().size());
+  basis = saturatedAddSize(basis, expansion.virtualNodes);
+  basis = saturatedAddSize(basis, expansion.virtualEdges);
+  basis = saturatedAddSize(basis, problem.getPatterns().size());
+  basis = saturatedAddSize(basis, problem.getMechanisms().size());
   for (CanonicalSyncMechanismId mechanism : mechanisms) {
-    supplies = saturatedAddSize(
-        supplies,
-        problem.getMechanisms()[mechanism].descriptor.supplies.size());
+    basis = saturatedAddSize(
+        basis, problem.getMechanisms()[mechanism].descriptor.supplies.size());
   }
-  return saturatedMultiplySize(structure, supplies);
+  const std::size_t square = saturatedMultiplySize(basis, basis);
+  const std::size_t cube = saturatedMultiplySize(square, basis);
+  return saturatedMultiplySize(cube, 16);
 }
 
 std::optional<PipeAllFallbackOutcome>
