@@ -839,6 +839,48 @@ bool testBaseLimitFailsClosed() {
   return passed;
 }
 
+bool testHierarchicalPortsHonorBaseNodeLimit() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  SyncCoverScopeId deepest = 0;
+  constexpr unsigned nestingDepth = 32;
+  for (unsigned depth = 0; depth < nestingDepth; ++depth) {
+    deepest = takeIndex(
+        graph.addScope(deepest, true, SyncCoverTimelineInterval{0, 64}, true),
+        passed, "add deeply nested loop");
+  }
+
+  std::vector<SyncCoverNodeId> ports;
+  for (unsigned order = 0; order < 4; ++order) {
+    ports.push_back(takeIndex(graph.addNode(1, 1, deepest, order), passed,
+                              "add deeply nested endpoint"));
+  }
+  passed &= check(graph.addDemand(makeDemand(ports[0], ports[1], deepest)),
+                  "add first deeply nested demand");
+  passed &= check(graph.addDemand(makeDemand(ports[2], ports[3], deepest)),
+                  "add second deeply nested demand");
+  passed &= check(graph.freezeStructure(), "freeze deeply nested graph");
+
+  SyncCoverExpansionLimits limits;
+  limits.maximumArenaNodes = 3;
+  limits.maximumArenaEdges = 32;
+  limits.maximumTotalNodes = 3;
+  limits.maximumTotalEdges = 32;
+  const SyncCoverExpandedProgram first(graph, limits);
+  const SyncCoverExpandedProgram second(graph, limits);
+  std::size_t storedPorts = 0;
+  for (const SyncCoverLoopSummary &summary : first.getLoopSummaries()) {
+    storedPorts += summary.completionPorts.size();
+  }
+  passed &= check(storedPorts == ports.size(),
+                  "store each hierarchical port in only its owning summary");
+  passed &= check(
+      first.getError() == SyncCoverExpansionError::BaseLimitExceeded &&
+          second.getError() == first.getError(),
+      "deep hierarchical ports fail deterministically at the base node limit");
+  return passed;
+}
+
 bool testInvalidSupplyFailsClosed() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -877,6 +919,7 @@ int main() {
   passed &= testExpansionOwnershipAndMaximumHorizon();
   passed &= testUnavailableArenaIsReported();
   passed &= testBaseLimitFailsClosed();
+  passed &= testHierarchicalPortsHonorBaseNodeLimit();
   passed &= testInvalidSupplyFailsClosed();
   return passed ? 0 : 1;
 }

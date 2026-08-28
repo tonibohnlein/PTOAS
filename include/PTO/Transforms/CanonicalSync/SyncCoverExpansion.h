@@ -91,9 +91,9 @@ struct SyncCoverLoopSummary {
   std::vector<std::uint32_t> carryResources;
   std::vector<SyncCoverLoopPeriodicSummary> periodicControls;
   std::vector<SyncCoverLoopCompletionTransfer> completionTransfers;
-  /// Original operation identities exposed to the parent. Transfers between
-  /// ports are copied only from certified graph edges or selected supplies;
-  /// same-resource operations are never conflated.
+  /// Locally owned operation identities that may be exposed through an
+  /// ancestor interface. Descendant ports remain hierarchical references and
+  /// are expanded only while charging an arena's node budget.
   std::vector<SyncCoverNodeId> completionPorts;
 };
 
