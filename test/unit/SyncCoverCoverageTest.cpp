@@ -643,6 +643,77 @@ bool testChildLocalPairExportsThroughPorts() {
   return passed;
 }
 
+bool testChildFixedPathClosureMatchesExplicitBody() {
+  bool passed = true;
+  const auto build = [&](bool summarized) {
+    SyncCoverGraph graph;
+    const SyncCoverScopeId outer = takeIndex(
+        graph.addScope(0, true, SyncCoverTimelineInterval{0, 50}, true), passed,
+        "add fixed-path outer loop");
+    SyncCoverScopeId child = outer;
+    if (summarized) {
+      child = takeIndex(
+          graph.addScope(outer, true, SyncCoverTimelineInterval{2, 20}, true),
+          passed, "add fixed-path summarized loop");
+    }
+    const SyncCoverNodeId source = takeIndex(graph.addNode(0, 1, outer, 0),
+                                             passed, "add fixed-path source");
+    const SyncCoverNodeId first = takeIndex(
+        graph.addNode(1, 1, child, 2), passed, "add fixed-path first port");
+    const SyncCoverNodeId bridge = takeIndex(graph.addNode(1, 1, child, 4),
+                                             passed, "add fixed-path bridge");
+    const SyncCoverNodeId last =
+        takeIndex(graph.addNode(1, 1, child, 6, {}, {2}), passed,
+                  "add fixed-path last port");
+    const SyncCoverNodeId target = takeIndex(graph.addNode(2, 1, outer, 12),
+                                             passed, "add fixed-path target");
+    passed &= check(
+        graph.addEdge(makeEdge(
+            first, bridge, SyncCoverEdgeKind::CompletionPreservingIssueOrder)),
+        "enter unexposed fixed-path bridge");
+    passed &= check(
+        graph.addEdge(makeEdge(
+            bridge, last, SyncCoverEdgeKind::CompletionPreservingIssueOrder)),
+        "exit unexposed fixed-path bridge");
+    passed &= check(graph.addDemand(makeDemand(source, target, outer)),
+                    "add fixed-path parent demand");
+    passed &= check(graph.addDemand(makeDemand(source, first, outer)),
+                    "expose fixed-path entry port");
+    passed &= check(graph.freezeStructure(), "freeze fixed-path graph");
+
+    const SyncCoverExpandedProgram expansion(graph);
+    if (summarized) {
+      const SyncCoverExpandedArena *arena = expansion.getRecurrenceArena(outer);
+      passed &= check(arena && arena->getLoopPort(child, bridge, 0),
+                      "retain the internal node needed by a fixed path");
+    }
+    const std::vector<SyncCoverCompletionSupply> supplies = {
+        {0,
+         makeEdge(source, first, SyncCoverEdgeKind::CompletionSupply, outer)},
+        {1,
+         makeEdge(last, target, SyncCoverEdgeKind::CompletionSupply, outer)}};
+    const std::vector<SyncCoverDemandId> active{0};
+    return CoverageSnapshot{
+        computeSyncCoverCoverage(graph, expansion, supplies, active),
+        computeSyncCoverSingletonCoverage(graph, expansion, 2, supplies,
+                                          active),
+        computeSyncCoverPairCoverage(graph, expansion, 2, supplies, {{0, 1}},
+                                     active)};
+  };
+
+  const CoverageSnapshot summarized = build(true);
+  const CoverageSnapshot unrolled = build(false);
+  passed &= check(snapshotsMatch(summarized, unrolled),
+                  "fixed-path summary matches explicit child body");
+  passed &= check(summarized.full && summarized.full.covered.contains(0) &&
+                      summarized.singleton &&
+                      summarized.singleton.mechanisms[0].empty() &&
+                      summarized.singleton.mechanisms[1].empty() &&
+                      summarized.pair && summarized.pair.pairs[0].contains(0),
+                  "two supplies compose through an internal fixed-path node");
+  return passed;
+}
+
 bool testNestedExportCrossesInactiveMiddleSummary() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -914,6 +985,7 @@ int main() {
   passed &= testLoopSummaryMatchesExplicitUnrollings();
   passed &= testChildPortsPreserveEndpointIdentity();
   passed &= testChildLocalPairExportsThroughPorts();
+  passed &= testChildFixedPathClosureMatchesExplicitBody();
   passed &= testNestedExportCrossesInactiveMiddleSummary();
   passed &= testGuardedProtocolRemainsLocal();
   passed &= testExpansionOwnershipAndMaximumHorizon();

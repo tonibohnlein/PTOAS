@@ -79,15 +79,16 @@ periodic-control phase relations. Each arena contains its locally owned
 operations and only the transfer interfaces of its immediate children; child
 bodies are not copied into parent arenas. The interface retains a distinct port
 for each externally relevant child operation, so early and late operations on
-one resource cannot alias. Each summary owns only its local ports; parent arenas
-resolve descendant ports through hierarchical child references and charge them
-against the arena node budget before materialization. Fixed and selected
-completion supplies use those identity-preserving ports, while only certified
-issue-order edges connect ports to resource entry/exit boundaries. A recurrence
-protocol exports completion only when common validation certifies balanced
-priming, body lanes, and one scope-exit drain per lane. Guarded protocols remain
-valid locally but do not export until phase-qualified export semantics are
-supported.
+one resource cannot alias. Port discovery closes over internal operations on
+fixed paths between exposed endpoints, preserving each path's node availability
+and guards. Each summary owns only its local ports; parent arenas resolve
+descendant ports through hierarchical child references and charge them against
+the arena node budget before materialization. Fixed and selected completion
+supplies use those identity-preserving ports, while only certified issue-order
+edges connect ports to resource entry/exit boundaries. A recurrence protocol
+exports completion only when common validation certifies balanced priming, body
+lanes, and one scope-exit drain per lane. Guarded protocols remain valid locally
+but do not export until phase-qualified export semantics are supported.
 
 ## 3. Restricted mechanism catalog
 

@@ -354,6 +354,49 @@ SyncCoverExpandedProgram::SyncCoverExpandedProgram(
       exposedPorts[edge.target] = true;
     }
   }
+  std::vector<std::vector<SyncCoverNodeId>> fixedSuccessors(
+      graph.getNodes().size());
+  std::vector<std::vector<SyncCoverNodeId>> fixedPredecessors(
+      graph.getNodes().size());
+  for (const SyncCoverEdge &edge : graph.getEdges()) {
+    const SyncCoverScopeId sourceOwner =
+        getArenaScopeForScope(graph, graph.getNodes()[edge.source].scope);
+    const SyncCoverScopeId targetOwner =
+        getArenaScopeForScope(graph, graph.getNodes()[edge.target].scope);
+    const bool isLocalFixedEdge =
+        edge.kind != SyncCoverEdgeKind::CompletionSupply &&
+        edge.distance == 0 && sourceOwner != 0 && sourceOwner == targetOwner;
+    if (!isLocalFixedEdge) {
+      continue;
+    }
+    fixedSuccessors[edge.source].push_back(edge.target);
+    fixedPredecessors[edge.target].push_back(edge.source);
+  }
+  const auto getReachable = [&](const auto &adjacency) {
+    std::vector<bool> reachable = exposedPorts;
+    std::vector<SyncCoverNodeId> worklist;
+    for (const SyncCoverNode &node : graph.getNodes()) {
+      if (reachable[node.id]) {
+        worklist.push_back(node.id);
+      }
+    }
+    while (!worklist.empty()) {
+      const SyncCoverNodeId node = worklist.back();
+      worklist.pop_back();
+      for (SyncCoverNodeId adjacent : adjacency[node]) {
+        if (!reachable[adjacent]) {
+          reachable[adjacent] = true;
+          worklist.push_back(adjacent);
+        }
+      }
+    }
+    return reachable;
+  };
+  const std::vector<bool> reachableFromPort = getReachable(fixedSuccessors);
+  const std::vector<bool> canReachPort = getReachable(fixedPredecessors);
+  for (const SyncCoverNode &node : graph.getNodes()) {
+    exposedPorts[node.id] = reachableFromPort[node.id] && canReachPort[node.id];
+  }
   for (const SyncCoverNode &node : graph.getNodes()) {
     if (!exposedPorts[node.id]) {
       continue;
