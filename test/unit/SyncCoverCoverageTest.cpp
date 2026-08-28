@@ -1036,29 +1036,34 @@ bool testInvalidSupplyFailsClosed() {
 bool testBoundedCoverageMetersWholeQuery() {
   bool passed = true;
   SyncCoverGraph graph;
-  SyncCoverGuard guard;
-  constexpr std::size_t guardCount = 12;
+  SyncCoverGuard targetGuard;
+  SyncCoverGuard sourceGuard;
+  constexpr std::size_t guardCount = 8;
   for (std::size_t index = 0; index < guardCount; ++index) {
     const SyncCoverControlId control = takeIndex(
         graph.addControl(2), passed, "add bounded-query guard control");
-    guard.literals.push_back({control, 0});
+    targetGuard.literals.push_back({control, 0});
+  }
+  for (std::size_t index = 0; index < guardCount; ++index) {
+    const SyncCoverControlId control = takeIndex(
+        graph.addControl(2), passed, "add bounded-query guard control");
+    sourceGuard.literals.push_back({control, 0});
   }
 
   SyncCoverScopeId outer = 0;
   SyncCoverScopeId deepest = 0;
   constexpr std::size_t loopDepth = 8;
   for (std::size_t depth = 0; depth < loopDepth; ++depth) {
-    deepest = takeIndex(graph.addScope(deepest, true,
-                                       SyncCoverTimelineInterval{0, 200}, true,
-                                       guard),
-                        passed, "add bounded-query nested loop");
+    deepest = takeIndex(
+        graph.addScope(deepest, true, SyncCoverTimelineInterval{0, 200}, true),
+        passed, "add bounded-query nested loop");
     if (depth == 0) {
       outer = deepest;
     }
   }
 
   const SyncCoverNodeId source =
-      takeIndex(graph.addNode(1, 1, deepest, 1, guard), passed,
+      takeIndex(graph.addNode(1, 1, deepest, 1, sourceGuard), passed,
                 "add bounded-query source");
   constexpr std::size_t targetCount = 16;
   std::vector<SyncCoverNodeId> targets;
@@ -1068,7 +1073,7 @@ bool testBoundedCoverageMetersWholeQuery() {
   activeDemands.reserve(targetCount);
   for (std::size_t index = 0; index < targetCount; ++index) {
     const SyncCoverNodeId target =
-        takeIndex(graph.addNode(2, 1, deepest, index + 2, guard), passed,
+        takeIndex(graph.addNode(2, 1, deepest, index + 2, targetGuard), passed,
                   "add bounded-query target");
     targets.push_back(target);
     passed &= check(graph.addDemand(makeDemand(source, target, outer)),
@@ -1087,9 +1092,17 @@ bool testBoundedCoverageMetersWholeQuery() {
   SyncCoverCoverageWorkBudget referenceBudget;
   const SyncCoverCoverageResult reference = computeSyncCoverCoverage(
       graph, expansion, supplies, activeDemands, &referenceBudget);
+  const SyncCoverExpandedArena *arena =
+      expansion.getArena(graph.getDemands().front());
+  const std::size_t scopes = graph.getScopes().size();
+  const std::size_t projectionReservation =
+      arena ? 6 * scopes * scopes + 4 * arena->getVirtualNodeCount() : 0;
+  const std::size_t contextShiftWork =
+      sourceGuard.literals.size() * targetGuard.literals.size() * targetCount;
   passed &= check(reference && reference.coversAll() &&
-                      referenceBudget.workUnits != 0,
-                  "measure complete adversarial coverage work");
+                      referenceBudget.workUnits >=
+                          projectionReservation + contextShiftWork,
+                  "meter projection ancestry and middle context insertion");
 
   SyncCoverCoverageWorkBudget exactBudget(referenceBudget.workUnits);
   const SyncCoverCoverageResult exact = computeSyncCoverCoverage(
@@ -1112,6 +1125,60 @@ bool testBoundedCoverageMetersWholeQuery() {
   passed &= check(tiny.error == SyncCoverCoverageError::WorkLimitExceeded &&
                       tinyBudget.exhausted && tinyBudget.workUnits <= 4,
                   "reject large metadata before a tiny budget is exceeded");
+  return passed;
+}
+
+bool testDeepProjectionReservationFailsEarly() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  SyncCoverScopeId outer = 0;
+  SyncCoverScopeId deepest = 0;
+  constexpr std::size_t loopDepth = 32;
+  for (std::size_t depth = 0; depth < loopDepth; ++depth) {
+    deepest = takeIndex(
+        graph.addScope(deepest, true, SyncCoverTimelineInterval{0, 20}, true),
+        passed, "add isolated projection loop");
+    if (depth == 0) {
+      outer = deepest;
+    }
+  }
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, deepest, 1), passed,
+                "add isolated projection source");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(2, 1, deepest, 2), passed,
+                "add isolated projection target");
+  passed &= check(graph.addDemand(makeDemand(source, target, outer)),
+                  "add isolated projection demand");
+  passed &= check(graph.freezeStructure(), "freeze isolated projection graph");
+  const SyncCoverExpandedProgram expansion(graph);
+  const SyncCoverExpandedArena *arena =
+      expansion.getArena(graph.getDemands().front());
+  if (!check(arena != nullptr, "build isolated projection arena")) {
+    return false;
+  }
+  const std::vector<SyncCoverCompletionSupply> supplies = {
+      {0,
+       makeEdge(source, target, SyncCoverEdgeKind::CompletionSupply, outer)}};
+  const std::vector<SyncCoverDemandId> active{0};
+  const std::size_t scopes = graph.getScopes().size();
+  const std::size_t completionReservation =
+      6 * scopes * scopes + 4 * arena->getVirtualNodeCount();
+
+  SyncCoverCoverageWorkBudget referenceBudget;
+  const SyncCoverCoverageResult reference = computeSyncCoverCoverage(
+      graph, expansion, supplies, active, &referenceBudget);
+  passed &= check(reference && reference.coversAll() &&
+                      referenceBudget.workUnits >= completionReservation,
+                  "reserve the analytic deep-projection work bound");
+
+  SyncCoverCoverageWorkBudget insufficient(completionReservation - 1);
+  const SyncCoverCoverageResult limited = computeSyncCoverCoverage(
+      graph, expansion, supplies, active, &insufficient);
+  passed &= check(limited.error == SyncCoverCoverageError::WorkLimitExceeded &&
+                      insufficient.exhausted &&
+                      insufficient.workUnits <= insufficient.maximumWorkUnits,
+                  "stop before an underfunded deep projection");
   return passed;
 }
 
@@ -1140,5 +1207,6 @@ int main() {
   passed &= testHierarchicalMetadataHonorsBaseNodeLimit();
   passed &= testInvalidSupplyFailsClosed();
   passed &= testBoundedCoverageMetersWholeQuery();
+  passed &= testDeepProjectionReservationFailsEarly();
   return passed ? 0 : 1;
 }

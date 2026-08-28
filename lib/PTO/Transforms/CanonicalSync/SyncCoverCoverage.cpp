@@ -97,10 +97,19 @@ bool chargeProjection(const SyncCoverGraph &graph,
   if (!budget) {
     return true;
   }
-  const std::size_t scopeWalks = completionProjection ? 4 : 2;
-  const std::size_t lookupScans = completionProjection ? 3 : 1;
-  return consumeProduct(budget, graph.getScopes().size(), scopeWalks) &&
-         consumeProduct(budget, arena.getVirtualNodeCount(), lookupScans);
+  // An immediate-child lookup may repeatedly search enclosing loops. Charging
+  // one complete scope walk for every possible enclosing scope dominates that
+  // nested ancestry search. Endpoint projection reserves two such searches;
+  // completion projection reserves two endpoints plus its export checks.
+  const std::size_t hierarchyFactors = completionProjection ? 6 : 2;
+  const std::size_t lookupScans = completionProjection ? 4 : 2;
+  for (std::size_t factor = 0; factor < hierarchyFactors; ++factor) {
+    if (!consumeProduct(budget, graph.getScopes().size(),
+                        graph.getScopes().size())) {
+      return false;
+    }
+  }
+  return consumeProduct(budget, arena.getVirtualNodeCount(), lookupScans);
 }
 
 bool chargeSupplyCopy(const std::vector<SyncCoverCompletionSupply> &supplies,

@@ -134,6 +134,15 @@ inline bool appendGuard(const SyncCoverGraph &graph,
       }
       continue;
     }
+    const std::size_t shifted =
+        static_cast<std::size_t>(context.end() - position);
+    const bool reallocates = context.size() == context.capacity();
+    const bool insertionWorkUnavailable =
+        !consumeWork(budget, shifted) ||
+        (reallocates && !consumeWork(budget, context.size() + 1));
+    if (insertionWorkUnavailable) {
+      return false;
+    }
     context.insert(position, item);
   }
   return true;
