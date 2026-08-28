@@ -46,8 +46,28 @@ Unsupported region control flow, incomplete effects, ambiguous physical storage,
 and unbalanced recurrence recipes fail closed before the IR is changed.
 
 Operations that consume the intra-core event resources owned by CanonicalSync
-are rejected as input. Whole-core synchronization and memory-fence operations
-are fixed input constraints and are not treated as CanonicalSync output.
+are rejected as user input. Targeted and `PIPE_ALL` `pto.barrier` operations
+outside loops are accepted, preserved, and modeled as fixed completion supply.
+A targeted barrier drains earlier work on its named pipeline; `PIPE_ALL` drains
+earlier work on every pipeline. Barriers inside `scf.for` are rejected until a
+balanced recurrence contract is available. Whole-core synchronization and
+memory-fence operations remain preserved fixed constraints, but are not yet
+credited as coverage supply.
+
+CanonicalSync marks every synchronization operation, guard, and dynamic event
+lane helper that it creates with the unit attribute `pto.canonical_sync`. This
+attribute is an internal ownership boundary, not a user extension point. An
+owned tree may contain only the generated synchronization, `scf.if`, and
+arithmetic helper allowlist; all nested generated operations must be marked,
+apart from the implicit `scf.yield`, and owned results may not escape to user
+IR. A malformed or non-unit marker fails closed.
+
+On a rerun, valid owned IR is ignored during analysis. CanonicalSync first
+analyzes and freshly verifies a complete replacement plan, stages every
+physical action, and only then erases old owned roots in reverse use order and
+emits the replacement. Analysis-only mode never erases owned IR. Any analysis,
+selection, verification, or staging failure preserves both fixed user barriers
+and the previous generated plan byte-for-byte.
 
 ## 2. Completion graph
 

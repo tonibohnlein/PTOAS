@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <utility>
@@ -63,17 +64,30 @@ struct HazardKinds {
 
 using IssueFrontier = std::map<std::uint32_t, std::vector<SyncCoverNodeId>>;
 
+struct IssueHistoryNode;
+using IssueHistory = std::shared_ptr<const IssueHistoryNode>;
+using IssueHistoryHeads = std::map<std::uint32_t, IssueHistory>;
+
+/// Persistent issue history. Ordinary nodes prepend one record and control
+/// joins add one shared union record, so copying path state never copies a
+/// cumulative node vector.
+struct IssueHistoryNode {
+  std::optional<SyncCoverNodeId> issued;
+  IssueHistory first;
+  IssueHistory second;
+};
+
 struct FixedBarrierBoundary {
   Operation *operation = nullptr;
   SyncCoverGuard guard;
-  std::vector<SyncCoverNodeId> sources;
+  std::shared_ptr<const std::vector<SyncCoverNodeId>> sources;
   std::set<std::uint32_t> remainingTargetResources;
 };
 
 struct IssueOrderState {
-  IssueFrontier frontier;
-  IssueFrontier issued;
-  std::vector<FixedBarrierBoundary> fixedBarriers;
+  std::shared_ptr<const IssueFrontier> frontier;
+  std::shared_ptr<const IssueHistoryHeads> issued;
+  std::shared_ptr<const std::vector<FixedBarrierBoundary>> fixedBarriers;
 };
 
 bool isCanonicalSyncOwned(Operation *operation);
@@ -120,15 +134,17 @@ private:
   std::optional<std::int64_t> getIterationOffset(Operation *loop,
                                                  unsigned distance) const;
 
-  bool consumePairInspection();
+  bool consumePairInspections(std::size_t amount = 1);
+  bool consumePairInspection() { return consumePairInspections(); }
   LogicalResult addFixedIssueOrder();
   LogicalResult addRegionIssueOrder(Region &region, IssueOrderState &state);
   LogicalResult addIssueNode(SyncCoverNodeId target, IssueOrderState &state);
   LogicalResult addFixedBarrier(BarrierOp barrier, IssueOrderState &state);
-  static void mergeIssueStates(IssueOrderState &target,
-                               const IssueOrderState &source);
-  static void mergeFrontiers(IssueFrontier &target,
-                             const IssueFrontier &source);
+  LogicalResult mergeIssueStates(IssueOrderState &target,
+                                 const IssueOrderState &source);
+  LogicalResult collectIssuedSources(const IssueHistory &history,
+                                     const SyncCoverGuard &barrierGuard,
+                                     std::vector<SyncCoverNodeId> &sources);
   LogicalResult addForwardDependencies();
   LogicalResult addRecurrenceDependencies();
   bool isDemandImplicitlyComplete(SyncCoverNodeId source,

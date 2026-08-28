@@ -1030,6 +1030,112 @@ bool testRejectsOwnedSyncAndAcceptsFixedFence() {
          expectAnalysisSuccess(source, "fence");
 }
 
+bool testRejectsMalformedOwnedSynchronization() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a5"} {
+      func.func @wrong_type() {
+        %zero = arith.constant 0 : index
+        return
+      }
+      func.func @unsupported() {
+        %zero = arith.constant 0 : index
+        %one = arith.constant 1 : index
+        %product = arith.muli %zero, %one : index
+        return
+      }
+      func.func @partial_tree(%condition: i1) {
+        scf.if %condition {
+          %zero = arith.constant 0 : index
+        }
+        return
+      }
+      func.func @escaping_helper() {
+        %zero = arith.constant 0 : index
+        %sum = arith.addi %zero, %zero : index
+        return
+      }
+      func.func @preserve_previous(
+          %input: !pto.partition_tensor_view<16x16xf32>,
+          %output: !pto.partition_tensor_view<16x16xf32>) {
+        %addr = arith.constant 0 : i64
+        %tile = pto.alloc_tile addr = %addr : !pto.tile_buf<vec, 16x16xf32>
+        pto.tload ins(%input : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf32>)
+                   outs(%output : !pto.partition_tensor_view<16x16xf32>)
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module),
+             "parse malformed pass-ownership fixtures")) {
+    return false;
+  }
+
+  Builder builder(&context);
+  func::FuncOp wrongType = module->lookupSymbol<func::FuncOp>("wrong_type");
+  arith::ConstantOp wrongMarker =
+      *wrongType.getBody().front().getOps<arith::ConstantOp>().begin();
+  wrongMarker->setAttr("pto.canonical_sync", builder.getStringAttr("invalid"));
+  func::FuncOp unsupported = module->lookupSymbol<func::FuncOp>("unsupported");
+  arith::MulIOp unsupportedOwned =
+      *unsupported.getBody().front().getOps<arith::MulIOp>().begin();
+  unsupportedOwned->setAttr("pto.canonical_sync", builder.getUnitAttr());
+  func::FuncOp partial = module->lookupSymbol<func::FuncOp>("partial_tree");
+  scf::IfOp partialOwned =
+      *partial.getBody().front().getOps<scf::IfOp>().begin();
+  partialOwned->setAttr("pto.canonical_sync", builder.getUnitAttr());
+  func::FuncOp escaping = module->lookupSymbol<func::FuncOp>("escaping_helper");
+  arith::ConstantOp escapingOwned =
+      *escaping.getBody().front().getOps<arith::ConstantOp>().begin();
+  escapingOwned->setAttr("pto.canonical_sync", builder.getUnitAttr());
+
+  const auto expectMalformed = [&](func::FuncOp function,
+                                   StringRef expected) -> bool {
+    bool sawExpected = false;
+    ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
+      sawExpected |= diagnostic.str().find(expected.str()) != std::string::npos;
+      return success();
+    });
+    FailureOr<CanonicalSyncProgram> program =
+        buildCanonicalSyncProgram(function);
+    return check(failed(program), "reject malformed pass-owned IR") &&
+           check(sawExpected, "diagnose malformed pass-owned IR");
+  };
+  const bool malformedRejected =
+      expectMalformed(wrongType, "malformed pass-owned") &&
+      expectMalformed(unsupported, "malformed pass-owned") &&
+      expectMalformed(partial, "malformed pass-owned") &&
+      expectMalformed(escaping, "pass-owned helper escapes");
+  if (!malformedRejected) {
+    return false;
+  }
+
+  func::FuncOp preserve =
+      module->lookupSymbol<func::FuncOp>("preserve_previous");
+  CanonicalSyncBuildOptions options;
+  if (!check(succeeded(runCanonicalSync(preserve, options)),
+             "materialize a plan before malformed-rerun rejection")) {
+    return false;
+  }
+  TLoadOp malformedOwned =
+      *preserve.getBody().front().getOps<TLoadOp>().begin();
+  malformedOwned->setAttr("pto.canonical_sync", builder.getUnitAttr());
+  const std::string beforeFailure = printOperation(preserve);
+  bool failedRerun = false;
+  {
+    ScopedDiagnosticHandler handler(&context,
+                                    [](Diagnostic &) { return success(); });
+    failedRerun = failed(runCanonicalSync(preserve, options));
+  }
+  return check(failedRerun, "reject a malformed pass-owned rerun") &&
+         check(printOperation(preserve) == beforeFailure,
+               "preserve the previous plan after malformed ownership");
+}
+
 bool testFixedBarriersSupplyCompletionAndRemainUnowned() {
   MLIRContext context;
   loadDialects(context);
@@ -1058,6 +1164,51 @@ bool testFixedBarriersSupplyCompletionAndRemainUnowned() {
         }
         return
       }
+      func.func @fixed_one_path(
+          %condition: i1,
+          %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>) {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        scf.if %condition {
+          pto.barrier <PIPE_MTE2>
+        }
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
+      func.func @fixed_before_branch(
+          %condition: i1,
+          %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>) {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.barrier <PIPE_MTE2>
+        scf.if %condition {
+          pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                    outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        } else {
+          pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                    outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        }
+        return
+      }
+      func.func @fixed_after_join(
+          %condition: i1,
+          %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>) {
+        scf.if %condition {
+          pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                    outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        } else {
+          pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                    outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        }
+        pto.barrier <PIPE_MTE2>
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
       func.func @fixed_all(
           %src: !pto.partition_tensor_view<16x16xf32>,
           %slot: !pto.tile_buf<vec, 16x16xf32>,
@@ -1069,6 +1220,27 @@ bool testFixedBarriersSupplyCompletionAndRemainUnowned() {
                  outs(%out : !pto.tile_buf<vec, 16x16xf32>)
         return
       }
+      func.func @fixed_all_multi(
+          %src: !pto.partition_tensor_view<16x16xf32>,
+          %dst: !pto.partition_tensor_view<16x16xf32>)
+          attributes {pto.noalias_pairs = array<i64: 0, 1>} {
+        %first_addr = arith.constant 0 : i64
+        %second_addr = arith.constant 4096 : i64
+        %slot = pto.alloc_tile addr = %first_addr :
+          !pto.tile_buf<vec, 16x16xf32>
+        %out = pto.alloc_tile addr = %second_addr :
+          !pto.tile_buf<vec, 16x16xf32>
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tstore ins(%out : !pto.tile_buf<vec, 16x16xf32>)
+                   outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+        pto.barrier <PIPE_ALL>
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tstore ins(%out : !pto.tile_buf<vec, 16x16xf32>)
+                   outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+        return
+      }
     }
   )mlir",
                                                              &context);
@@ -1076,8 +1248,8 @@ bool testFixedBarriersSupplyCompletionAndRemainUnowned() {
     return false;
   }
 
-  const auto checkFunction = [&](StringRef name,
-                                 bool expectGuardedSupply) -> bool {
+  const auto checkFunction = [&](StringRef name, bool expectGuardedSupply,
+                                 bool expectMultipleResources = false) -> bool {
     func::FuncOp function = module->lookupSymbol<func::FuncOp>(name);
     FailureOr<CanonicalSyncProgram> program =
         buildCanonicalSyncProgram(function);
@@ -1091,6 +1263,30 @@ bool testFixedBarriersSupplyCompletionAndRemainUnowned() {
                  (!expectGuardedSupply || !edge.sourceGuard.literals.empty() ||
                   !edge.targetGuard.literals.empty());
         });
+    const bool exactTargetedEndpoint =
+        name != "fixed" ||
+        llvm::any_of(graph.getEdges(), [&](const SyncCoverEdge &edge) {
+          return edge.kind == SyncCoverEdgeKind::CompletionSupply &&
+                 edge.source == 0 && edge.target == 1 &&
+                 graph.getNodes()[edge.source].resource ==
+                     static_cast<std::uint32_t>(PipelineType::PIPE_MTE2) &&
+                 graph.getNodes()[edge.target].resource ==
+                     static_cast<std::uint32_t>(PipelineType::PIPE_MTE2) &&
+                 edge.sourceGuard.literals.empty() &&
+                 edge.targetGuard.literals.empty();
+        });
+    std::set<std::uint32_t> fixedSourceResources;
+    std::set<std::uint32_t> fixedTargetResources;
+    for (const SyncCoverEdge &edge : graph.getEdges()) {
+      if (edge.kind != SyncCoverEdgeKind::CompletionSupply) {
+        continue;
+      }
+      fixedSourceResources.insert(graph.getNodes()[edge.source].resource);
+      fixedTargetResources.insert(graph.getNodes()[edge.target].resource);
+    }
+    const bool expectedResources =
+        !expectMultipleResources ||
+        (fixedSourceResources.size() >= 2 && fixedTargetResources.size() >= 2);
     CanonicalSyncBuildOptions options;
     CanonicalSyncProblemBuildResult precise =
         buildCanonicalSyncPreciseProblem(*program, options);
@@ -1098,11 +1294,13 @@ bool testFixedBarriersSupplyCompletionAndRemainUnowned() {
         precise && precise.problem->getBaselineCoverage().count() ==
                        graph.getDemands().size();
     const bool credited =
-        check(!graph.getDemands().empty() && hasFixedSupply,
+        check(!graph.getDemands().empty() && hasFixedSupply &&
+                  exactTargetedEndpoint && expectedResources,
               "credit an unowned barrier as fixed completion supply");
     const bool covered =
         check(baselineComplete,
-              "cover fixed-barrier hazards without a candidate mechanism");
+              "cover fixed-barrier hazards without a candidate mechanism: " +
+                  name.str());
     const bool materialized =
         check(succeeded(runCanonicalSync(function, options)),
               "materialize around a fixed user barrier");
@@ -1131,8 +1329,55 @@ bool testFixedBarriersSupplyCompletionAndRemainUnowned() {
                  "avoid redundant synchronization around fixed supply");
   };
 
-  return checkFunction("fixed", false) && checkFunction("fixed_branch", true) &&
-         checkFunction("fixed_all", false);
+  const bool fixedCasesCovered = checkFunction("fixed", false) &&
+                                 checkFunction("fixed_branch", true) &&
+                                 checkFunction("fixed_before_branch", true) &&
+                                 checkFunction("fixed_after_join", true) &&
+                                 checkFunction("fixed_all", false) &&
+                                 checkFunction("fixed_all_multi", false, true);
+  if (!fixedCasesCovered) {
+    return false;
+  }
+
+  func::FuncOp onePath = module->lookupSymbol<func::FuncOp>("fixed_one_path");
+  FailureOr<CanonicalSyncProgram> onePathProgram =
+      buildCanonicalSyncProgram(onePath);
+  if (!check(succeeded(onePathProgram),
+             "build one-path fixed-barrier completion graph")) {
+    return false;
+  }
+  const SyncCoverGraph &onePathGraph = onePathProgram->getGraph();
+  const bool hasGuardedFixedSupply =
+      llvm::any_of(onePathGraph.getEdges(), [](const SyncCoverEdge &edge) {
+        return edge.kind == SyncCoverEdgeKind::CompletionSupply &&
+               (!edge.sourceGuard.literals.empty() ||
+                !edge.targetGuard.literals.empty());
+      });
+  CanonicalSyncBuildOptions onePathOptions;
+  CanonicalSyncProblemBuildResult onePathPrecise =
+      buildCanonicalSyncPreciseProblem(*onePathProgram, onePathOptions);
+  const bool missingPathRemainsUncovered =
+      onePathPrecise && onePathPrecise.problem->getBaselineCoverage().count() <
+                            onePathGraph.getDemands().size();
+  if (!check(hasGuardedFixedSupply && missingPathRemainsUncovered,
+             "keep a one-branch barrier from covering the missing path") ||
+      !check(succeeded(runCanonicalSync(onePath, onePathOptions)),
+             "synchronize the path not covered by a conditional barrier")) {
+    return false;
+  }
+  std::size_t generatedNonTailSync = 0;
+  onePath.walk([&](Operation *operation) {
+    const bool generated = operation->hasAttr("pto.canonical_sync");
+    generatedNonTailSync +=
+        generated &&
+        isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp>(operation);
+    if (auto barrier = dyn_cast<BarrierOp>(operation)) {
+      generatedNonTailSync +=
+          generated && !barrier->hasAttr("pto.auto_sync_tail_barrier");
+    }
+  });
+  return check(generatedNonTailSync != 0,
+               "materialize synchronization for the missing branch path");
 }
 
 bool testRejectsFixedBarrierInsideLoop() {
@@ -1150,6 +1395,100 @@ bool testRejectsFixedBarrierInsideLoop() {
   )mlir";
   return expectAnalysisFailure(source, "loop_barrier",
                                "fixed pipe barriers inside loops");
+}
+
+bool testFixedBarrierInspectionBoundsAndPersistentControlState() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a5"} {
+      func.func @fixed_limit(
+          %first: !pto.partition_tensor_view<16x16xf32>,
+          %second: !pto.partition_tensor_view<16x16xf32>,
+          %first_slot: !pto.tile_buf<vec, 16x16xf32>,
+          %second_slot: !pto.tile_buf<vec, 16x16xf32>) {
+        pto.tload ins(%first : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%first_slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.barrier <PIPE_MTE2>
+        pto.tload ins(%second : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%second_slot : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module),
+             "parse fixed-barrier inspection-bound fixture")) {
+    return false;
+  }
+  func::FuncOp fixed = module->lookupSymbol<func::FuncOp>("fixed_limit");
+  CanonicalSyncBuildOptions exactOptions;
+  exactOptions.analysis.maximumPairInspections = 22;
+  if (!check(succeeded(runCanonicalSync(fixed, exactOptions)),
+             "complete fixed-barrier analysis at its exact work bound")) {
+    return false;
+  }
+  const std::string materialized = printOperation(fixed);
+  CanonicalSyncBuildOptions belowOptions = exactOptions;
+  belowOptions.analysis.maximumPairInspections = 21;
+  bool failedBelow = false;
+  {
+    ScopedDiagnosticHandler handler(&context,
+                                    [](Diagnostic &) { return success(); });
+    failedBelow = failed(runCanonicalSync(fixed, belowOptions));
+  }
+  if (!check(failedBelow,
+             "reject fixed-barrier analysis one work unit below its bound") ||
+      !check(printOperation(fixed) == materialized,
+             "retain generated IR after fixed-barrier bound exhaustion")) {
+    return false;
+  }
+
+  constexpr std::size_t prefixNodes = 64;
+  constexpr std::size_t controlDepth = 128;
+  std::string deepSource = R"mlir(
+    module attributes {pto.target_arch = "a5"} {
+      func.func @deep(%condition: i1, %source: !pto.ptr<i32>) {
+        %zero = arith.constant 0 : index
+  )mlir";
+  for (std::size_t index = 0; index < prefixNodes; ++index) {
+    deepSource += "        %value" + std::to_string(index) +
+                  " = pto.load_scalar %source[%zero] : !pto.ptr<i32> -> i32\n";
+  }
+  for (std::size_t depth = 0; depth < controlDepth; ++depth) {
+    deepSource += "        scf.if %condition {\n";
+  }
+  for (std::size_t depth = 0; depth < controlDepth; ++depth) {
+    deepSource += "        }\n";
+  }
+  deepSource += R"mlir(
+        return
+      }
+    }
+  )mlir";
+  OwningOpRef<ModuleOp> deepModule =
+      parseSourceString<ModuleOp>(deepSource, &context);
+  if (!check(static_cast<bool>(deepModule),
+             "parse deep persistent-issue-state fixture")) {
+    return false;
+  }
+  func::FuncOp deep = deepModule->lookupSymbol<func::FuncOp>("deep");
+  CanonicalSyncAnalysisOptions deepExact;
+  deepExact.maximumPairInspections = 7 * prefixNodes - 4;
+  FailureOr<CanonicalSyncProgram> exact =
+      buildCanonicalSyncProgram(deep, deepExact);
+  CanonicalSyncAnalysisOptions deepBelow = deepExact;
+  --deepBelow.maximumPairInspections;
+  FailureOr<CanonicalSyncProgram> below = failure();
+  {
+    ScopedDiagnosticHandler handler(&context,
+                                    [](Diagnostic &) { return success(); });
+    below = buildCanonicalSyncProgram(deep, deepBelow);
+  }
+  return check(succeeded(exact),
+               "bound deep no-barrier state independently of control depth") &&
+         check(failed(below),
+               "account every persistent no-barrier issue-state update");
 }
 
 bool testStructuralLimitsFailClosed() {
@@ -2031,9 +2370,11 @@ int main() {
       testAnalysisLimitFailsClosed() && testFailClosedInputs() &&
       testAcceptsDeclaredStorageProvenanceRoots() &&
       testRejectsOwnedSyncAndAcceptsFixedFence() &&
+      testRejectsMalformedOwnedSynchronization() &&
       testFixedBarriersSupplyCompletionAndRemainUnowned() &&
-      testRejectsFixedBarrierInsideLoop() && testStructuralLimitsFailClosed() &&
-      testPeriodicBranchEvidence() &&
+      testRejectsFixedBarrierInsideLoop() &&
+      testFixedBarrierInspectionBoundsAndPersistentControlState() &&
+      testStructuralLimitsFailClosed() && testPeriodicBranchEvidence() &&
       testFirstIterationRecurrenceSuppression() &&
       testGenericRecurrenceWithoutOwnershipDiscovery() &&
       testUncoverablePreciseCatalogUsesBackstop() &&
