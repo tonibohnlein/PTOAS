@@ -27,11 +27,11 @@ namespace mlir {
 namespace pto {
 
 /// Internal ablation controls for the restricted direct-mechanism catalog.
-/// Scarcity frontiers are grounded only for bounded repair and are excluded
-/// from ordinary precise selection.
+/// Repair frontiers are grounded only from a live allocation conflict core in
+/// a separately owned repair problem.
 struct CanonicalSyncPatternOptions {
   bool enableDirectPairs = true;
-  bool enableScarcityFrontiers = true;
+  bool enableConflictCoreRepair = true;
 };
 
 struct CanonicalSyncStrategyReport {
@@ -72,6 +72,31 @@ struct CanonicalSyncBuildOptions {
   std::function<LogicalResult(const CanonicalSyncComparisonReport &)>
       reportCallback;
 };
+
+/// Result of building one immutable candidate catalog. An uncoverable precise
+/// catalog is a normal signal to construct the localized PIPE_ALL backstop,
+/// not an analysis failure.
+struct CanonicalSyncProblemBuildResult {
+  std::unique_ptr<CanonicalSyncPatternProblem> problem;
+  CanonicalSyncProblemResult status;
+
+  explicit operator bool() const {
+    return problem != nullptr && static_cast<bool>(status);
+  }
+};
+
+CanonicalSyncProblemBuildResult
+buildCanonicalSyncPreciseProblem(const CanonicalSyncProgram &program,
+                                 const CanonicalSyncBuildOptions &options);
+
+CanonicalSyncProblemBuildResult buildCanonicalSyncRepairProblem(
+    const CanonicalSyncProgram &program,
+    const CanonicalSyncBuildOptions &options,
+    const std::vector<CanonicalSyncMechanismId> &conflictCore);
+
+CanonicalSyncProblemBuildResult
+buildCanonicalSyncPipeAllProblem(const CanonicalSyncProgram &program,
+                                 const CanonicalSyncBuildOptions &options);
 
 /// Build and freeze the singleton candidate problem. The returned problem
 /// retains a non-owning reference to program and must not outlive or move it.

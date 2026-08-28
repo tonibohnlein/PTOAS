@@ -177,21 +177,6 @@ std::optional<std::size_t> countNewCoverage(const SyncCoverDemandSet &covered,
   return result;
 }
 
-CanonicalSyncSelectionTier
-mechanismTier(const CanonicalSyncMechanism &mechanism) {
-  return mechanism.descriptor.selectionTier;
-}
-
-CanonicalSyncSelectionTier
-patternTier(const CanonicalSyncPatternProblem &problem,
-            const CanonicalSyncPattern &pattern) {
-  CanonicalSyncSelectionTier result = CanonicalSyncSelectionTier::Precise;
-  for (CanonicalSyncMechanismId member : pattern.members) {
-    result = std::max(result, mechanismTier(problem.getMechanisms()[member]));
-  }
-  return result;
-}
-
 std::uint64_t
 mechanismSerializationBreadth(const CanonicalSyncPatternProblem &problem,
                               CanonicalSyncMechanismId mechanismId) {
@@ -379,11 +364,9 @@ bool buildFixedCandidates(const CanonicalSyncPatternProblem &problem,
                           CanonicalSyncGreedyStatistics &statistics,
                           std::vector<GreedyCandidate> &candidates) {
   for (const CanonicalSyncPattern &pattern : problem.getPatterns()) {
-    const bool tierUnavailable =
-        patternTier(problem, pattern) > options.maximumTier;
     const bool forbidden =
         containsForbidden(pattern.members, options.forbiddenMechanisms);
-    if (tierUnavailable || forbidden) {
+    if (forbidden) {
       continue;
     }
     std::vector<CanonicalSyncMechanismId> additions =
@@ -435,13 +418,12 @@ bool buildActionAwareCandidates(
     CanonicalSyncGreedyStatistics &statistics,
     std::vector<GreedyCandidate> &candidates) {
   for (const CanonicalSyncMechanism &mechanism : problem.getMechanisms()) {
-    const bool tierUnavailable = mechanismTier(mechanism) > options.maximumTier;
     const bool alreadySelected =
         std::binary_search(selected.begin(), selected.end(), mechanism.id);
     const bool forbidden =
         std::binary_search(options.forbiddenMechanisms.begin(),
                            options.forbiddenMechanisms.end(), mechanism.id);
-    if (tierUnavailable || alreadySelected || forbidden) {
+    if (alreadySelected || forbidden) {
       continue;
     }
     if (!buildActionAwareCandidate(problem, selected, covered, {mechanism.id},
@@ -455,11 +437,9 @@ bool buildActionAwareCandidates(
   }
   for (const CanonicalSyncPattern &pattern : problem.getPatterns()) {
     const bool isPair = pattern.members.size() == 2;
-    const bool tierUnavailable =
-        patternTier(problem, pattern) > options.maximumTier;
     const bool forbidden =
         containsForbidden(pattern.members, options.forbiddenMechanisms);
-    if (!isPair || tierUnavailable || forbidden) {
+    if (!isPair || forbidden) {
       continue;
     }
     std::vector<CanonicalSyncMechanismId> additions =

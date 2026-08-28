@@ -142,7 +142,6 @@ CanonicalSyncMechanismDescriptor barrier(std::uint32_t actionResource,
                                          SyncCoverNodeId target) {
   CanonicalSyncMechanismDescriptor result;
   result.kind = CanonicalSyncMechanismKind::Barrier;
-  result.selectionTier = CanonicalSyncSelectionTier::PipeAllRescue;
   result.actions.push_back(
       {CanonicalSyncActionKind::Barrier, actionResource, before(target),
        std::nullopt, 0, std::move(resources), CanonicalSyncBarrierKind::All});
@@ -360,10 +359,7 @@ bool testReverseDeletionPreservesBaselineCoverage() {
       problem.internMechanism(barrier(2, {1, 2, 3, 4, 5}, source, first)),
       passed, "add mixed barrier");
   passed &= check(problem.freeze(), "freeze mixed problem");
-  CanonicalSyncGreedyOptions options;
-  options.maximumTier = CanonicalSyncSelectionTier::PipeAllRescue;
-  const CanonicalSyncSelection selection =
-      selectCanonicalSyncPatterns(problem, options);
+  const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
   passed &= check(selection && selection.statistics.deletionEvaluations != 0 &&
                       selection.mechanisms ==
                           std::vector<CanonicalSyncMechanismId>{barrierId} &&
@@ -1068,7 +1064,7 @@ bool testDirectPairComposesAcrossRecurrenceArena() {
                          "select recurrence pair members globally");
 }
 
-bool testPipeAllRequiresRescueTier() {
+bool testPipeAllFallbackProblem() {
   bool passed = true;
   SyncCoverGraph graph;
   const SyncCoverNodeId source =
@@ -1083,19 +1079,11 @@ bool testPipeAllRequiresRescueTier() {
                 passed, "add PIPE_ALL rescue");
   passed &= check(problem.freeze(), "freeze rescue problem");
 
-  CanonicalSyncGreedyOptions precise;
-  precise.maximumTier = CanonicalSyncSelectionTier::Precise;
-  passed &= check(selectCanonicalSyncPatterns(problem, precise).error ==
-                      CanonicalSyncSelectionError::NoCoveringPattern,
-                  "exclude PIPE_ALL from precise selection");
-  CanonicalSyncGreedyOptions enabled;
-  enabled.maximumTier = CanonicalSyncSelectionTier::PipeAllRescue;
-  const CanonicalSyncSelection selection =
-      selectCanonicalSyncPatterns(problem, enabled);
+  const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
   passed &=
       check(selection && selection.mechanisms ==
                              std::vector<CanonicalSyncMechanismId>{rescue},
-            "admit PIPE_ALL only in the rescue tier");
+            "select PIPE_ALL from a fallback-only problem");
   return passed;
 }
 
@@ -1147,18 +1135,16 @@ bool testPackagingPatternHasNoExtraCoverage() {
   const CanonicalSyncMechanismId baseline = takeIndex(
       problem.internMechanism(event(1, 3, 4, baselineSource, baselineTarget)),
       passed, "add event for fixed-covered package demand");
-  passed &=
-      check(problem.addPattern(
-                {CanonicalSyncPatternKind::ScarcityFrontier, {first, second}}),
-            "add package-only pattern");
-  passed &=
-      check(problem.addPattern(
-                {CanonicalSyncPatternKind::ScarcityFrontier, {first, third}}),
-            "add overlapping package-only pattern");
+  passed &= check(problem.addPattern({CanonicalSyncPatternKind::RepairFrontier,
+                                      {first, second}}),
+                  "add package-only pattern");
+  passed &= check(problem.addPattern({CanonicalSyncPatternKind::RepairFrontier,
+                                      {first, third}}),
+                  "add overlapping package-only pattern");
   passed &= check(problem.freeze(), "freeze package-only problem");
   const CanonicalSyncPatternKindStatistics &statistics =
       problem.getPatternStatistics().get(
-          CanonicalSyncPatternKind::ScarcityFrontier);
+          CanonicalSyncPatternKind::RepairFrontier);
   passed &= check(!problem.getPatterns()[baseline].coverage.contains(3),
                   "remove fixed coverage from singleton mechanism rows");
   passed &=
@@ -1173,7 +1159,7 @@ bool testPackagingPatternHasNoExtraCoverage() {
   return passed;
 }
 
-bool testScarcityUsesBarrierFallback() {
+bool testSeparateFallbackRepairsEventPressure() {
   bool passed = true;
   SyncCoverGraph graph;
   const SyncCoverNodeId firstSource = takeIndex(
@@ -1198,10 +1184,7 @@ bool testScarcityUsesBarrierFallback() {
   const CanonicalSyncMechanismId secondEvent = takeIndex(
       problem.internMechanism(event(0, 1, 2, secondSource, secondTarget)),
       passed, "add second scarce event");
-  const CanonicalSyncMechanismId fallback = takeIndex(
-      problem.internMechanism(barrier(2, {1, 2}, secondSource, secondTarget)),
-      passed, "add scarcity barrier");
-  passed &= check(problem.freeze(), "freeze scarcity problem");
+  passed &= check(problem.freeze(), "freeze precise scarcity problem");
   const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
   passed &= check(
       selection.error == CanonicalSyncSelectionError::ResourceInfeasible &&
@@ -1212,10 +1195,25 @@ bool testScarcityUsesBarrierFallback() {
           selection.allocation.domains[0].liveMechanisms ==
               std::vector<CanonicalSyncMechanismId>{firstEvent, secondEvent},
       "normal cover reports its exact post-selection event-pressure core");
-  CanonicalSyncGreedyOptions fallbackOptions;
-  fallbackOptions.maximumTier = CanonicalSyncSelectionTier::PipeAllRescue;
+
+  CanonicalSyncPatternProblem fallbackProblem(graph, allDemands(graph));
+  passed &= check(fallbackProblem.addEventDomain({0, 1, 2, 1, {}}),
+                  "add fallback scarcity domain");
+  const CanonicalSyncMechanismId fallbackFirstEvent = takeIndex(
+      fallbackProblem.internMechanism(event(0, 1, 2, firstSource, firstTarget)),
+      passed, "add first fallback event");
+  passed &= check(fallbackFirstEvent == firstEvent,
+                  "preserve precise mechanism IDs in the fallback problem");
+  passed &= check(fallbackProblem.internMechanism(
+                      event(0, 1, 2, secondSource, secondTarget)),
+                  "add second fallback event");
+  const CanonicalSyncMechanismId fallback =
+      takeIndex(fallbackProblem.internMechanism(
+                    barrier(2, {1, 2}, secondSource, secondTarget)),
+                passed, "add scarcity fallback barrier");
+  passed &= check(fallbackProblem.freeze(), "freeze scarcity fallback problem");
   const CanonicalSyncSelection repaired =
-      selectCanonicalSyncPatterns(problem, fallbackOptions);
+      selectCanonicalSyncPatterns(fallbackProblem);
   passed &= check(repaired && repaired.mechanisms ==
                                   std::vector<CanonicalSyncMechanismId>{
                                       firstEvent, fallback},
@@ -1223,7 +1221,7 @@ bool testScarcityUsesBarrierFallback() {
   return passed;
 }
 
-bool testOptionalPipelineScarcityFallsBack() {
+bool testOptionalPipelineFallback() {
   bool passed = true;
   SyncCoverGraph graph;
   std::vector<SyncCoverNodeId> sources;
@@ -1247,12 +1245,9 @@ bool testOptionalPipelineScarcityFallsBack() {
     events.push_back(takeIndex(
         problem.internMechanism(event(0, 1, 2, sources[index], targets[index])),
         passed, "add pipeline scarcity event"));
-    passed &= check(problem.internMechanism(
-                        barrier(2, {1, 2}, sources[index], targets[index])),
-                    "add pipeline scarcity fallback");
   }
   const CanonicalSyncProblemResult optional = addCanonicalSyncFeasiblePattern(
-      problem, {CanonicalSyncPatternKind::ScarcityFrontier, events});
+      problem, {CanonicalSyncPatternKind::RepairFrontier, events});
   passed &= check(optional && !optional.index,
                   "drop a coverage-free optional pipeline independently of "
                   "event coloring");
@@ -1272,25 +1267,36 @@ bool testOptionalPipelineScarcityFallsBack() {
   const CanonicalSyncProblemResult memberCapped =
       addCanonicalSyncFeasiblePattern(
           memberLimited,
-          {CanonicalSyncPatternKind::ScarcityFrontier, limitedEvents});
+          {CanonicalSyncPatternKind::RepairFrontier, limitedEvents});
   passed &= check(memberCapped && !memberCapped.index,
                   "skip an oversized optional pipeline");
-  passed &= check(problem.freeze(), "freeze pipeline fallback problem");
+  passed &= check(problem.freeze(), "freeze precise pipeline problem");
   const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
   passed &= check(selection.error ==
                           CanonicalSyncSelectionError::ResourceInfeasible &&
                       selection.allocation.domains[0].required == 9 &&
                       selection.allocation.domains[0].available == 8,
                   "post-cover allocation diagnoses the oversized event family");
-  CanonicalSyncGreedyOptions enabled;
-  enabled.maximumTier = CanonicalSyncSelectionTier::PipeAllRescue;
+
+  CanonicalSyncPatternProblem fallbackProblem(graph, allDemands(graph));
+  passed &= check(fallbackProblem.addEventDomain({0, 1, 2, 8, {}}),
+                  "add pipeline fallback domain");
+  for (std::size_t index = 0; index < 9; ++index) {
+    passed &= check(fallbackProblem.internMechanism(
+                        event(0, 1, 2, sources[index], targets[index])),
+                    "add pipeline fallback event");
+    passed &= check(fallbackProblem.internMechanism(
+                        barrier(2, {1, 2}, sources[index], targets[index])),
+                    "add pipeline scarcity fallback");
+  }
+  passed &= check(fallbackProblem.freeze(), "freeze pipeline fallback problem");
   const CanonicalSyncSelection repaired =
-      selectCanonicalSyncPatterns(problem, enabled);
+      selectCanonicalSyncPatterns(fallbackProblem);
   passed &= check(repaired && repaired.allocation.feasible,
                   "fallback-enabled re-cover is event feasible");
-  passed &=
-      check(static_cast<bool>(verifyCanonicalSyncSelection(problem, repaired)),
-            "fresh finalization accepts the repaired scarce pipeline");
+  passed &= check(static_cast<bool>(
+                      verifyCanonicalSyncSelection(fallbackProblem, repaired)),
+                  "fresh finalization accepts the repaired scarce pipeline");
   return passed;
 }
 
@@ -1683,12 +1689,11 @@ bool testFailClosedConstruction() {
   const CanonicalSyncMechanismId second = takeIndex(
       patternLimited.internMechanism(barrier(2, {1, 2}, source, target)),
       passed, "add pattern-limit barrier");
-  passed &=
-      check(patternLimited
-                    .addPattern({CanonicalSyncPatternKind::ScarcityFrontier,
-                                 {first, second}})
-                    .error == CanonicalSyncProblemError::None,
-            "zero-extra patterns do not consume retained capacity");
+  passed &= check(patternLimited
+                          .addPattern({CanonicalSyncPatternKind::RepairFrontier,
+                                       {first, second}})
+                          .error == CanonicalSyncProblemError::None,
+                  "zero-extra patterns do not consume retained capacity");
   passed &= check(patternLimited.freeze(),
                   "freeze a problem after dropping its optional pattern");
   passed &= check(patternLimited.getPatterns().size() == 2,
@@ -1707,7 +1712,7 @@ bool testFailClosedConstruction() {
       proposalLimited.internMechanism(barrier(2, {1, 2}, source, target)),
       passed, "add proposal-limit barrier");
   const CanonicalSyncProblemResult proposal = addCanonicalSyncFeasiblePattern(
-      proposalLimited, {CanonicalSyncPatternKind::ScarcityFrontier,
+      proposalLimited, {CanonicalSyncPatternKind::RepairFrontier,
                         {proposalFirst, proposalSecond}});
   passed &= check(proposal && !proposal.index &&
                       proposalLimited.wasPatternGenerationTruncated(),
@@ -1737,11 +1742,10 @@ int main() {
       testSiblingAndBarrierPairsComposeAtTheirLca() &&
       testNestedPairExtendsToParentDemand() &&
       testDirectPairComposesAcrossRecurrenceArena() &&
-      testPipeAllRequiresRescueTier() &&
+      testPipeAllFallbackProblem() &&
       testPackagingPatternHasNoExtraCoverage() &&
-      testScarcityUsesBarrierFallback() &&
-      testOptionalPipelineScarcityFallsBack() &&
-      testReservationsAndFinalValidation() &&
+      testSeparateFallbackRepairsEventPressure() &&
+      testOptionalPipelineFallback() && testReservationsAndFinalValidation() &&
       testAllocatorWidthsReuseAndConflicts() &&
       testVerifiedProtocolTrustBoundary() &&
       testHierarchicalProtocolLifetime() &&

@@ -23,9 +23,7 @@ using namespace mlir::pto;
 namespace {
 
 bool isDirectPairMember(const CanonicalSyncMechanism &mechanism) {
-  return mechanism.descriptor.selectionTier ==
-             CanonicalSyncSelectionTier::Precise &&
-         !mechanism.descriptor.supplies.empty() &&
+  return !mechanism.descriptor.supplies.empty() &&
          std::all_of(mechanism.descriptor.supplies.begin(),
                      mechanism.descriptor.supplies.end(), [](const auto &item) {
                        return item.allowedDemands.empty();

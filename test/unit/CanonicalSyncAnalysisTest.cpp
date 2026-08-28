@@ -604,10 +604,8 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
              "generate a two-lane generic recurrence ring")) {
     return false;
   }
-  CanonicalSyncGreedyOptions precise;
-  precise.maximumTier = CanonicalSyncSelectionTier::Precise;
   const CanonicalSyncSelection selection =
-      selectCanonicalSyncPatterns(**problem, precise);
+      selectCanonicalSyncPatterns(**problem);
   const bool selectedRing =
       selection && llvm::any_of(selection.mechanisms, [&](auto mechanism) {
         return isDistanceTwoRing((*problem)->getMechanisms()[mechanism]);
@@ -1302,8 +1300,6 @@ bool testGenericRecurrenceWithoutOwnershipDiscovery() {
   }
   const auto isGenericRecurrence = [](const CanonicalSyncMechanism &mechanism) {
     return mechanism.descriptor.kind == CanonicalSyncMechanismKind::Protocol &&
-           mechanism.descriptor.selectionTier ==
-               CanonicalSyncSelectionTier::Precise &&
            mechanism.descriptor.eventUses.size() == 1 &&
            llvm::any_of(mechanism.descriptor.supplies,
                         [](const CanonicalSyncSupplyBinding &supply) {
@@ -1314,10 +1310,8 @@ bool testGenericRecurrenceWithoutOwnershipDiscovery() {
              "generate a generic prime-body-drain recurrence event")) {
     return false;
   }
-  CanonicalSyncGreedyOptions selectionOptions;
-  selectionOptions.maximumTier = CanonicalSyncSelectionTier::Precise;
   const CanonicalSyncSelection selection =
-      selectCanonicalSyncPatterns(**problem, selectionOptions);
+      selectCanonicalSyncPatterns(**problem);
   const bool selectedGeneric =
       selection && llvm::any_of(selection.mechanisms, [&](auto mechanism) {
         return isGenericRecurrence((*problem)->getMechanisms()[mechanism]);
@@ -1342,7 +1336,7 @@ bool testGenericRecurrenceWithoutOwnershipDiscovery() {
                "emit direct ready plus prime-body-drain recurrence actions");
 }
 
-bool testScarcityFrontierAvoidsPipeAll() {
+bool testConflictCoreRepairAvoidsPipeAll() {
   MLIRContext context;
   loadDialects(context);
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
@@ -1389,41 +1383,77 @@ bool testScarcityFrontierAvoidsPipeAll() {
     return false;
   }
 
-  CanonicalSyncGreedyOptions precise;
-  precise.maximumTier = CanonicalSyncSelectionTier::Precise;
-  if (!check(selectCanonicalSyncPatterns(**problem, precise).error ==
-                 CanonicalSyncSelectionError::ResourceInfeasible,
+  const CanonicalSyncSelection precise = selectCanonicalSyncPatterns(**problem);
+  if (!check(precise.error == CanonicalSyncSelectionError::ResourceInfeasible,
              "one event ID rejects the overlapping precise plan")) {
     return false;
   }
-  CanonicalSyncGreedyOptions scarcity;
-  scarcity.maximumTier = CanonicalSyncSelectionTier::ScarcityFrontier;
+  const std::vector<CanonicalSyncMechanismId> &conflictCore =
+      precise.allocation.domains.front().liveMechanisms;
+  CanonicalSyncProblemBuildResult partialRepair =
+      buildCanonicalSyncRepairProblem(*program, options,
+                                      {conflictCore.front()});
+  const bool partialRepairStayedPrecise =
+      partialRepair && partialRepair.problem->getMechanisms().size() ==
+                           (*problem)->getMechanisms().size();
+  if (!check(partialRepairStayedPrecise,
+             "do not generate frontiers from events outside the live core")) {
+    return false;
+  }
+  CanonicalSyncProblemBuildResult repair =
+      buildCanonicalSyncRepairProblem(*program, options, conflictCore);
+  if (!check(static_cast<bool>(repair),
+             "build repair candidates from the live conflict core")) {
+    return false;
+  }
   const CanonicalSyncSelection selection =
-      selectCanonicalSyncPatterns(**problem, scarcity);
-  const std::size_t frontierMembers = static_cast<std::size_t>(
-      std::count_if(selection.mechanisms.begin(), selection.mechanisms.end(),
-                    [&](CanonicalSyncMechanismId mechanism) {
-                      return (*problem)
-                                 ->getMechanisms()[mechanism]
-                                 .descriptor.selectionTier ==
-                             CanonicalSyncSelectionTier::ScarcityFrontier;
-                    }));
-  const bool usesPipeAll =
-      std::any_of(selection.mechanisms.begin(), selection.mechanisms.end(),
-                  [&](CanonicalSyncMechanismId mechanism) {
-                    return (*problem)
-                               ->getMechanisms()[mechanism]
-                               .descriptor.selectionTier ==
-                           CanonicalSyncSelectionTier::PipeAllRescue;
-                  });
-  return check(selection && frontierMembers == 2 && !usesPipeAll,
+      selectCanonicalSyncPatterns(*repair.problem);
+  const std::size_t frontierMembers = static_cast<std::size_t>(std::count_if(
+      selection.mechanisms.begin(), selection.mechanisms.end(),
+      [&](CanonicalSyncMechanismId mechanism) {
+        return repair.problem->getMechanisms()[mechanism].descriptor.kind ==
+               CanonicalSyncMechanismKind::Barrier;
+      }));
+  const bool usesPipeAll = std::any_of(
+      selection.mechanisms.begin(), selection.mechanisms.end(),
+      [&](CanonicalSyncMechanismId mechanism) {
+        return llvm::any_of(
+            repair.problem->getMechanisms()[mechanism].descriptor.actions,
+            [](const CanonicalSyncAction &action) {
+              return action.kind == CanonicalSyncActionKind::Barrier &&
+                     action.barrierKind == CanonicalSyncBarrierKind::All;
+            });
+      });
+  CanonicalSyncProblemBuildResult fallback =
+      buildCanonicalSyncPipeAllProblem(*program, options);
+  const bool fallbackOnlyContainsPipeAll =
+      fallback &&
+      llvm::all_of(fallback.problem->getMechanisms(),
+                   [](const CanonicalSyncMechanism &mechanism) {
+                     return mechanism.descriptor.kind ==
+                                CanonicalSyncMechanismKind::Barrier &&
+                            llvm::all_of(
+                                mechanism.descriptor.actions,
+                                [](const CanonicalSyncAction &action) {
+                                  return action.kind ==
+                                             CanonicalSyncActionKind::Barrier &&
+                                         action.barrierKind ==
+                                             CanonicalSyncBarrierKind::All;
+                                });
+                   });
+  return check(repair.problem->getMechanisms().size() ==
+                   (*problem)->getMechanisms().size() + 2,
+               "keep repair candidates out of the precise catalog") &&
+         check(fallbackOnlyContainsPipeAll,
+               "keep PIPE_ALL in a barrier-only fallback problem") &&
+         check(selection && frontierMembers == 1 && !usesPipeAll,
                "select one targeted barrier plus one frontier event") &&
          check(selection.allocation.domains.size() == 1 &&
                    selection.allocation.domains.front().required == 1,
                "frontier fits the one-ID budget") &&
          check(static_cast<bool>(
-                   verifyCanonicalSyncSelection(**problem, selection)),
-               "finalize scarcity frontier from certified coverage");
+                   verifyCanonicalSyncSelection(*repair.problem, selection)),
+               "finalize conflict-core repair from certified coverage");
 }
 
 } // namespace
@@ -1442,6 +1472,6 @@ int main() {
       testStructuralLimitsFailClosed() && testPeriodicBranchEvidence() &&
       testFirstIterationRecurrenceSuppression() &&
       testGenericRecurrenceWithoutOwnershipDiscovery() &&
-      testScarcityFrontierAvoidsPipeAll();
+      testConflictCoreRepairAvoidsPipeAll();
   return passed ? 0 : 1;
 }

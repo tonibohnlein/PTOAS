@@ -521,26 +521,60 @@ firstConflictCore(const CanonicalSyncSelection &selection) {
 
 struct SelectionOutcome {
   CanonicalSyncSelection selection;
+  std::unique_ptr<CanonicalSyncPatternProblem> ownedProblem;
+  const CanonicalSyncPatternProblem *selectedProblem = nullptr;
   bool feasible = false;
   std::size_t repairRounds = 0;
+
+  const CanonicalSyncPatternProblem &getProblem() const {
+    return ownedProblem ? *ownedProblem : *selectedProblem;
+  }
 };
 
 SelectionOutcome
-selectWithBoundedRepair(const CanonicalSyncPatternProblem &problem,
+selectWithBoundedRepair(const CanonicalSyncProgram &program,
+                        const CanonicalSyncPatternProblem &problem,
                         const CanonicalSyncBuildOptions &options) {
   CanonicalSyncGreedyOptions current = options.selection;
-  current.maximumTier = CanonicalSyncSelectionTier::Precise;
   CanonicalSyncSelection selection =
       selectCanonicalSyncPatterns(problem, current);
-  for (std::size_t round = 0; round < options.maximumRepairRounds; ++round) {
+  SelectionOutcome outcome;
+  outcome.selectedProblem = &problem;
+  if (selection ||
+      selection.error != CanonicalSyncSelectionError::ResourceInfeasible ||
+      !options.patterns.enableConflictCoreRepair ||
+      options.maximumRepairRounds == 0) {
+    outcome.feasible = static_cast<bool>(selection);
+    outcome.selection = std::move(selection);
+    return outcome;
+  }
+
+  const std::vector<CanonicalSyncMechanismId> initialCore =
+      firstConflictCore(selection);
+  CanonicalSyncProblemBuildResult repair =
+      buildCanonicalSyncRepairProblem(program, options, initialCore);
+  if (!repair) {
+    outcome.selection = std::move(selection);
+    return outcome;
+  }
+  outcome.ownedProblem = std::move(repair.problem);
+  outcome.selectedProblem = outcome.ownedProblem.get();
+  selection = selectCanonicalSyncPatterns(*outcome.ownedProblem, current);
+
+  for (std::size_t round = 1; round <= options.maximumRepairRounds; ++round) {
     if (selection) {
-      return {std::move(selection), true, round};
+      outcome.selection = std::move(selection);
+      outcome.feasible = true;
+      outcome.repairRounds = round;
+      return outcome;
     }
     const bool canRepair =
         selection.error == CanonicalSyncSelectionError::ResourceInfeasible ||
         selection.error == CanonicalSyncSelectionError::NoCoveringPattern;
     if (!canRepair) {
-      return {std::move(selection), false, round};
+      outcome.selection = std::move(selection);
+      outcome.repairRounds = round;
+      return outcome;
     }
 
     std::optional<CanonicalSyncSelection> bestFeasible;
@@ -552,7 +586,7 @@ selectWithBoundedRepair(const CanonicalSyncPatternProblem &problem,
       CanonicalSyncGreedyOptions trialOptions = current;
       trialOptions.forbiddenMechanisms.push_back(mechanism);
       CanonicalSyncSelection trial =
-          selectCanonicalSyncPatterns(problem, trialOptions);
+          selectCanonicalSyncPatterns(*outcome.ownedProblem, trialOptions);
       if (trial && (!bestFeasible ||
                     structuralCostLess(trial.cost, bestFeasible->cost))) {
         bestFeasible = trial;
@@ -566,29 +600,31 @@ selectWithBoundedRepair(const CanonicalSyncPatternProblem &problem,
       }
     }
     if (bestFeasible) {
-      return {std::move(*bestFeasible), true, round + 1};
+      outcome.selection = std::move(*bestFeasible);
+      outcome.feasible = true;
+      outcome.repairRounds = round;
+      return outcome;
     }
     if (bestPressureTrial) {
       selection = std::move(*bestPressureTrial);
       current = std::move(bestPressureOptions);
       continue;
     }
-    if (current.maximumTier == CanonicalSyncSelectionTier::Precise) {
-      current.maximumTier = CanonicalSyncSelectionTier::ScarcityFrontier;
-      selection = selectCanonicalSyncPatterns(problem, current);
-      continue;
-    }
-    return {std::move(selection), false, round + 1};
+    outcome.selection = std::move(selection);
+    outcome.repairRounds = round;
+    return outcome;
   }
-  const bool feasible = static_cast<bool>(selection);
-  return {std::move(selection), feasible, options.maximumRepairRounds};
+  outcome.feasible = static_cast<bool>(selection);
+  outcome.selection = std::move(selection);
+  outcome.repairRounds = options.maximumRepairRounds;
+  return outcome;
 }
 
 CanonicalSyncStrategyReport
-buildStrategyReport(const CanonicalSyncPatternProblem &problem,
-                    CanonicalSyncSelectionStrategy strategy,
+buildStrategyReport(CanonicalSyncSelectionStrategy strategy,
                     const SelectionOutcome &outcome, bool verified,
                     bool usedLocalizedPipeAll = false) {
+  const CanonicalSyncPatternProblem &problem = outcome.getProblem();
   CanonicalSyncStrategyReport report;
   report.strategy = strategy;
   report.error = outcome.selection.error;
@@ -624,12 +660,7 @@ CanonicalSyncComparisonReport
 buildComparisonHeader(const CanonicalSyncPatternProblem &problem) {
   CanonicalSyncComparisonReport report;
   report.demands = problem.getDemands().size();
-  report.directMechanisms = static_cast<std::size_t>(std::count_if(
-      problem.getMechanisms().begin(), problem.getMechanisms().end(),
-      [](const CanonicalSyncMechanism &mechanism) {
-        return mechanism.descriptor.selectionTier ==
-               CanonicalSyncSelectionTier::Precise;
-      }));
+  report.directMechanisms = problem.getMechanisms().size();
   const CanonicalSyncPatternStatistics &statistics =
       problem.getPatternStatistics();
   report.directPairProposals = statistics.directPairProposals;
@@ -640,8 +671,20 @@ buildComparisonHeader(const CanonicalSyncPatternProblem &problem) {
   return report;
 }
 
-std::optional<CanonicalSyncVerifiedPlan>
-buildLocalizedPipeAllFallback(const CanonicalSyncPatternProblem &problem) {
+struct PipeAllFallbackOutcome {
+  std::unique_ptr<CanonicalSyncPatternProblem> problem;
+  CanonicalSyncVerifiedPlan plan;
+};
+
+std::optional<PipeAllFallbackOutcome>
+buildLocalizedPipeAllFallback(const CanonicalSyncProgram &program,
+                              const CanonicalSyncBuildOptions &options) {
+  CanonicalSyncProblemBuildResult built =
+      buildCanonicalSyncPipeAllProblem(program, options);
+  if (!built) {
+    return std::nullopt;
+  }
+  CanonicalSyncPatternProblem &problem = *built.problem;
   CanonicalSyncSelection selection;
   for (const CanonicalSyncMechanism &mechanism : problem.getMechanisms()) {
     if (mechanism.descriptor.kind == CanonicalSyncMechanismKind::Barrier) {
@@ -676,7 +719,7 @@ buildLocalizedPipeAllFallback(const CanonicalSyncPatternProblem &problem) {
       plan = verified;
     }
   }
-  return plan;
+  return PipeAllFallbackOutcome{std::move(built.problem), std::move(plan)};
 }
 
 } // namespace
@@ -716,12 +759,19 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
   if (failed(program)) {
     return failure();
   }
-  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem =
-      buildCanonicalSyncSingletonProblem(*program, options);
-  if (failed(problem)) {
+  CanonicalSyncProblemBuildResult precise =
+      buildCanonicalSyncPreciseProblem(*program, options);
+  const bool preciseUncoverable =
+      !precise &&
+      precise.status.error == CanonicalSyncProblemError::UncoverableDemand;
+  if (!precise && !preciseUncoverable) {
+    function.emitError() << "cannot build canonical sync precise problem, "
+                            "error="
+                         << static_cast<unsigned>(precise.status.error);
     return failure();
   }
-  CanonicalSyncComparisonReport report = buildComparisonHeader(**problem);
+  CanonicalSyncComparisonReport report =
+      buildComparisonHeader(*precise.problem);
   if (options.analysisOnly || options.compareSelectionStrategies) {
     for (CanonicalSyncSelectionStrategy strategy :
          {CanonicalSyncSelectionStrategy::FixedCover,
@@ -729,15 +779,22 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
           CanonicalSyncSelectionStrategy::PairLookahead}) {
       CanonicalSyncBuildOptions trialOptions = options;
       trialOptions.selection.strategy = strategy;
-      const SelectionOutcome outcome =
-          selectWithBoundedRepair(**problem, trialOptions);
+      SelectionOutcome outcome;
+      if (precise) {
+        outcome =
+            selectWithBoundedRepair(*program, *precise.problem, trialOptions);
+      } else {
+        outcome.selectedProblem = precise.problem.get();
+        outcome.selection.error =
+            CanonicalSyncSelectionError::NoCoveringPattern;
+      }
       bool verified = false;
       if (outcome.feasible) {
-        verified = static_cast<bool>(
-            verifyCanonicalSyncSelection(**problem, outcome.selection));
+        verified = static_cast<bool>(verifyCanonicalSyncSelection(
+            outcome.getProblem(), outcome.selection));
       }
       report.strategies.push_back(
-          buildStrategyReport(**problem, strategy, outcome, verified));
+          buildStrategyReport(strategy, outcome, verified));
     }
     if (options.reportCallback && failed(options.reportCallback(report))) {
       return failure();
@@ -747,28 +804,33 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
     }
   }
 
-  const SelectionOutcome selection =
-      selectWithBoundedRepair(**problem, options);
+  SelectionOutcome selection;
+  if (precise) {
+    selection = selectWithBoundedRepair(*program, *precise.problem, options);
+  } else {
+    selection.selectedProblem = precise.problem.get();
+    selection.selection.error = CanonicalSyncSelectionError::NoCoveringPattern;
+  }
   if (selection.feasible) {
-    const CanonicalSyncVerifiedPlan plan =
-        verifyCanonicalSyncSelection(**problem, selection.selection);
+    const CanonicalSyncVerifiedPlan plan = verifyCanonicalSyncSelection(
+        selection.getProblem(), selection.selection);
     if (!plan) {
       function.emitError() << "canonical sync finalization failed, error="
                            << static_cast<unsigned>(plan.error);
       return failure();
     }
     if (!options.compareSelectionStrategies) {
-      report.strategies.push_back(buildStrategyReport(
-          **problem, options.selection.strategy, selection, true));
+      report.strategies.push_back(
+          buildStrategyReport(options.selection.strategy, selection, true));
       if (options.reportCallback && failed(options.reportCallback(report))) {
         return failure();
       }
     }
-    return materializeCanonicalSyncPlan(*program, **problem, plan);
+    return materializeCanonicalSyncPlan(*program, selection.getProblem(), plan);
   }
 
-  const std::optional<CanonicalSyncVerifiedPlan> fallback =
-      buildLocalizedPipeAllFallback(**problem);
+  std::optional<PipeAllFallbackOutcome> fallback =
+      buildLocalizedPipeAllFallback(*program, options);
   if (!fallback) {
     function.emitError(
         "canonical sync could not construct its localized PIPE_ALL backstop");
@@ -778,18 +840,21 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
       "canonical sync used localized PIPE_ALL target barriers after bounded "
       "event repair was exhausted");
   SelectionOutcome fallbackOutcome;
+  fallbackOutcome.ownedProblem = std::move(fallback->problem);
+  fallbackOutcome.selectedProblem = fallbackOutcome.ownedProblem.get();
   fallbackOutcome.feasible = true;
   fallbackOutcome.repairRounds = selection.repairRounds;
-  fallbackOutcome.selection.mechanisms = fallback->mechanisms;
-  fallbackOutcome.selection.allocation = fallback->allocation;
+  fallbackOutcome.selection.mechanisms = fallback->plan.mechanisms;
+  fallbackOutcome.selection.allocation = fallback->plan.allocation;
   fallbackOutcome.selection.cost = computeCanonicalSyncStructuralCost(
-      **problem, fallbackOutcome.selection.mechanisms);
+      fallbackOutcome.getProblem(), fallbackOutcome.selection.mechanisms);
   if (!options.compareSelectionStrategies) {
     report.strategies.push_back(buildStrategyReport(
-        **problem, options.selection.strategy, fallbackOutcome, true, true));
+        options.selection.strategy, fallbackOutcome, true, true));
     if (options.reportCallback && failed(options.reportCallback(report))) {
       return failure();
     }
   }
-  return materializeCanonicalSyncPlan(*program, **problem, *fallback);
+  return materializeCanonicalSyncPlan(*program, fallbackOutcome.getProblem(),
+                                      fallback->plan);
 }

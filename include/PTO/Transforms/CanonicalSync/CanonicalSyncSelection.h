@@ -43,12 +43,6 @@ enum class CanonicalSyncMechanismKind : std::uint8_t {
   Protocol,
 };
 
-enum class CanonicalSyncSelectionTier : std::uint8_t {
-  Precise,
-  ScarcityFrontier,
-  PipeAllRescue,
-};
-
 enum class CanonicalSyncActionKind : std::uint8_t {
   EventSet,
   EventWait,
@@ -143,8 +137,6 @@ struct CanonicalSyncSupplyBinding {
 /// after selection.
 struct CanonicalSyncMechanismDescriptor {
   CanonicalSyncMechanismKind kind = CanonicalSyncMechanismKind::Event;
-  CanonicalSyncSelectionTier selectionTier =
-      CanonicalSyncSelectionTier::Precise;
   std::vector<CanonicalSyncSupplyBinding> supplies;
   std::vector<CanonicalSyncEventUse> eventUses;
   std::vector<CanonicalSyncAction> actions;
@@ -172,11 +164,11 @@ struct CanonicalSyncMechanism {
 enum class CanonicalSyncPatternKind : std::uint8_t {
   Singleton,
   DirectPair,
-  ScarcityFrontier,
+  RepairFrontier,
 };
 
 constexpr std::size_t kCanonicalSyncPatternKindCount =
-    static_cast<std::size_t>(CanonicalSyncPatternKind::ScarcityFrontier) + 1;
+    static_cast<std::size_t>(CanonicalSyncPatternKind::RepairFrontier) + 1;
 
 struct CanonicalSyncPatternSpec {
   CanonicalSyncPatternKind kind = CanonicalSyncPatternKind::Singleton;
@@ -470,7 +462,6 @@ struct CanonicalSyncGreedyOptions {
   std::size_t maximumWorkUnits = 1U << 27;
   CanonicalSyncSelectionStrategy strategy =
       CanonicalSyncSelectionStrategy::PairLookahead;
-  CanonicalSyncSelectionTier maximumTier = CanonicalSyncSelectionTier::Precise;
   /// Mechanisms disabled by one bounded resource-repair trial.
   std::vector<CanonicalSyncMechanismId> forbiddenMechanisms;
 };

@@ -13,6 +13,7 @@
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
+#include <iterator>
 #include <map>
 #include <numeric>
 #include <set>
@@ -256,7 +257,6 @@ bool verifyRecurrenceEvent(const SyncCoverGraph &graph,
       !canUseRecurrenceEvent(graph, demand) ||
       descriptor.kind != (releaseStyle ? CanonicalSyncMechanismKind::Protocol
                                        : CanonicalSyncMechanismKind::Event) ||
-      descriptor.selectionTier != CanonicalSyncSelectionTier::Precise ||
       descriptor.eventUses.size() != 1 || descriptor.supplies.size() != 1;
   if (invalid) {
     return false;
@@ -356,8 +356,6 @@ makeBarrier(const SyncCoverGraph &graph,
   const SyncCoverNode &target = graph.getNodes()[first.target];
   CanonicalSyncMechanismDescriptor descriptor;
   descriptor.kind = CanonicalSyncMechanismKind::Barrier;
-  descriptor.selectionTier = broad ? CanonicalSyncSelectionTier::PipeAllRescue
-                                   : CanonicalSyncSelectionTier::Precise;
   descriptor.actions.push_back(
       {CanonicalSyncActionKind::Barrier,
        target.resource,
@@ -476,13 +474,12 @@ LogicalResult addDirectEvents(
   return success();
 }
 
-LogicalResult addBarrierFallbacks(const CanonicalSyncProgram &program,
+LogicalResult addTargetedBarriers(const CanonicalSyncProgram &program,
                                   CanonicalSyncPatternProblem &problem,
                                   const SyncCoverDemandSet &baseline) {
   const SyncCoverGraph &graph = program.getGraph();
   const std::vector<std::uint32_t> allResources = getIssueResources(graph);
   std::map<SyncCoverNodeId, BarrierFallbackGroup> targetedGroups;
-  std::map<SyncCoverNodeId, BarrierFallbackGroup> rescueGroups;
   for (SyncCoverDemandId demandId = 0; demandId < graph.getDemands().size();
        ++demandId) {
     const SyncCoverDemand &demand = graph.getDemands()[demandId];
@@ -491,10 +488,9 @@ LogicalResult addBarrierFallbacks(const CanonicalSyncProgram &program,
     }
     const SyncCoverNode &source = graph.getNodes()[demand.source];
     const SyncCoverNode &target = graph.getNodes()[demand.target];
-    BarrierFallbackGroup &group = source.resource == target.resource
-                                      ? targetedGroups[target.id]
-                                      : rescueGroups[target.id];
-    group.demands.push_back(demandId);
+    if (source.resource == target.resource) {
+      targetedGroups[target.id].demands.push_back(demandId);
+    }
   }
   const auto addGroups = [&](const auto &groups, bool broad) -> LogicalResult {
     for (const auto &[target, group] : groups) {
@@ -509,20 +505,41 @@ LogicalResult addBarrierFallbacks(const CanonicalSyncProgram &program,
     }
     return success();
   };
-  const bool failedGroups = failed(addGroups(targetedGroups, false)) ||
-                            failed(addGroups(rescueGroups, true));
-  if (failedGroups) {
+  if (failed(addGroups(targetedGroups, false))) {
     return program.getFunction().emitError(
-        "cannot add canonical sync barrier fallback");
+        "cannot add canonical sync targeted barrier");
   }
   return success();
 }
 
-CanonicalSyncMechanismDescriptor
-makeScarcityBarrier(const SyncCoverGraph &graph, const SyncCoverEdge &edge) {
+LogicalResult addPipeAllBackstop(const CanonicalSyncProgram &program,
+                                 CanonicalSyncPatternProblem &problem,
+                                 const SyncCoverDemandSet &baseline) {
+  const SyncCoverGraph &graph = program.getGraph();
+  const std::vector<std::uint32_t> allResources = getIssueResources(graph);
+  std::map<SyncCoverNodeId, BarrierFallbackGroup> groups;
+  for (SyncCoverDemandId demandId = 0; demandId < graph.getDemands().size();
+       ++demandId) {
+    if (!baseline.contains(demandId)) {
+      const SyncCoverDemand &demand = graph.getDemands()[demandId];
+      groups[demand.target].demands.push_back(demandId);
+    }
+  }
+  for (const auto &[target, group] : groups) {
+    (void)target;
+    if (!problem.internMechanism(
+            makeBarrier(graph, allResources, group.demands, true))) {
+      return program.getFunction().emitError(
+          "cannot add canonical sync localized PIPE_ALL backstop");
+    }
+  }
+  return success();
+}
+
+CanonicalSyncMechanismDescriptor makeRepairBarrier(const SyncCoverGraph &graph,
+                                                   const SyncCoverEdge &edge) {
   CanonicalSyncMechanismDescriptor descriptor;
   descriptor.kind = CanonicalSyncMechanismKind::Barrier;
-  descriptor.selectionTier = CanonicalSyncSelectionTier::ScarcityFrontier;
   const SyncCoverNode &target = graph.getNodes()[edge.target];
   descriptor.actions.push_back(
       {CanonicalSyncActionKind::Barrier,
@@ -540,13 +557,12 @@ makeScarcityBarrier(const SyncCoverGraph &graph, const SyncCoverEdge &edge) {
 }
 
 CanonicalSyncMechanismDescriptor
-makeScarcityEvent(const SyncCoverGraph &graph, const SyncCoverEdge &edge,
-                  CanonicalSyncEventDomainId domain) {
+makeRepairEvent(const SyncCoverGraph &graph, const SyncCoverEdge &edge,
+                CanonicalSyncEventDomainId domain) {
   const SyncCoverNode &source = graph.getNodes()[edge.source];
   const SyncCoverNode &target = graph.getNodes()[edge.target];
   CanonicalSyncMechanismDescriptor descriptor;
   descriptor.kind = CanonicalSyncMechanismKind::Event;
-  descriptor.selectionTier = CanonicalSyncSelectionTier::ScarcityFrontier;
   descriptor.eventUses.push_back({domain, 1, std::nullopt});
   descriptor.actions.push_back(
       {CanonicalSyncActionKind::EventSet,
@@ -569,42 +585,53 @@ makeScarcityEvent(const SyncCoverGraph &graph, const SyncCoverEdge &edge,
   return descriptor;
 }
 
-struct ScarcityFrontierProposal {
+struct RepairFrontierProposal {
   SyncCoverEdge barrier;
   SyncCoverEdge event;
   CanonicalSyncEventDomainId domain = 0;
 };
 
-bool frontierProposalLess(const ScarcityFrontierProposal &left,
-                          const ScarcityFrontierProposal &right) {
+bool frontierProposalLess(const RepairFrontierProposal &left,
+                          const RepairFrontierProposal &right) {
   return std::tie(left.domain, left.barrier.source, left.barrier.target,
                   left.event.source, left.event.target) <
          std::tie(right.domain, right.barrier.source, right.barrier.target,
                   right.event.source, right.event.target);
 }
 
-bool frontierProposalEqual(const ScarcityFrontierProposal &left,
-                           const ScarcityFrontierProposal &right) {
+bool frontierProposalEqual(const RepairFrontierProposal &left,
+                           const RepairFrontierProposal &right) {
   return !frontierProposalLess(left, right) &&
          !frontierProposalLess(right, left);
 }
 
 LogicalResult
-addScarcityFrontierPatterns(const CanonicalSyncProgram &program,
-                            CanonicalSyncPatternProblem &problem,
-                            ArrayRef<DirectEventRecord> directEvents) {
+addRepairFrontierPatterns(const CanonicalSyncProgram &program,
+                          CanonicalSyncPatternProblem &problem,
+                          ArrayRef<DirectEventRecord> directEvents,
+                          ArrayRef<CanonicalSyncMechanismId> conflictCore) {
   constexpr std::size_t kMaximumFrontierProposals = 4096;
   const SyncCoverGraph &graph = program.getGraph();
-  std::vector<ScarcityFrontierProposal> proposals;
-  for (std::size_t first = 0; first < directEvents.size(); ++first) {
+  std::vector<CanonicalSyncMechanismId> sortedCore(conflictCore.begin(),
+                                                   conflictCore.end());
+  llvm::sort(sortedCore);
+  sortedCore.erase(std::unique(sortedCore.begin(), sortedCore.end()),
+                   sortedCore.end());
+  std::vector<DirectEventRecord> liveEvents;
+  llvm::copy_if(directEvents, std::back_inserter(liveEvents),
+                [&](const DirectEventRecord &event) {
+                  return std::binary_search(sortedCore.begin(),
+                                            sortedCore.end(), event.mechanism);
+                });
+  std::vector<RepairFrontierProposal> proposals;
+  for (std::size_t first = 0; first < liveEvents.size(); ++first) {
     const SyncCoverDemand &firstDemand =
-        graph.getDemands()[directEvents[first].demand];
-    for (std::size_t second = first + 1; second < directEvents.size();
-         ++second) {
+        graph.getDemands()[liveEvents[first].demand];
+    for (std::size_t second = first + 1; second < liveEvents.size(); ++second) {
       const SyncCoverDemand &secondDemand =
-          graph.getDemands()[directEvents[second].demand];
+          graph.getDemands()[liveEvents[second].demand];
       const bool compatible =
-          directEvents[first].domain == directEvents[second].domain &&
+          liveEvents[first].domain == liveEvents[second].domain &&
           firstDemand.scope == secondDemand.scope &&
           firstDemand.sourceGuard.literals.empty() &&
           firstDemand.targetGuard.literals.empty() &&
@@ -650,7 +677,7 @@ addScarcityFrontierPatterns(const CanonicalSyncProgram &program,
       if (invalidFrontier) {
         continue;
       }
-      proposals.push_back({barrier, event, directEvents[first].domain});
+      proposals.push_back({barrier, event, liveEvents[first].domain});
     }
   }
   llvm::sort(proposals, frontierProposalLess);
@@ -663,21 +690,21 @@ addScarcityFrontierPatterns(const CanonicalSyncProgram &program,
     problem.markPatternGenerationTruncated();
     return success();
   }
-  for (const ScarcityFrontierProposal &proposal : proposals) {
+  for (const RepairFrontierProposal &proposal : proposals) {
     const CanonicalSyncProblemResult barrier =
-        problem.internMechanism(makeScarcityBarrier(graph, proposal.barrier));
+        problem.internMechanism(makeRepairBarrier(graph, proposal.barrier));
     const CanonicalSyncProblemResult event = problem.internMechanism(
-        makeScarcityEvent(graph, proposal.event, proposal.domain));
+        makeRepairEvent(graph, proposal.event, proposal.domain));
     if (!barrier || !event || !barrier.index || !event.index) {
       return program.getFunction().emitError(
-          "cannot add canonical sync scarcity-frontier mechanisms");
+          "cannot add canonical sync repair-frontier mechanisms");
     }
     const CanonicalSyncProblemResult pattern = addCanonicalSyncFeasiblePattern(
-        problem, {CanonicalSyncPatternKind::ScarcityFrontier,
+        problem, {CanonicalSyncPatternKind::RepairFrontier,
                   {*barrier.index, *event.index}});
     if (!pattern) {
       return program.getFunction().emitError(
-          "cannot add canonical sync scarcity-frontier pattern");
+          "cannot add canonical sync repair-frontier pattern");
     }
   }
   return success();
@@ -694,17 +721,22 @@ LogicalResult addDirectPairPatterns(const CanonicalSyncProgram &program,
   return success();
 }
 
-} // namespace
+enum class CandidateCatalogKind : std::uint8_t {
+  Precise,
+  ConflictCoreRepair,
+  LocalizedPipeAll,
+};
 
-FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>>
-mlir::pto::buildCanonicalSyncSingletonProblem(
-    const CanonicalSyncProgram &program,
-    const CanonicalSyncBuildOptions &options) {
+CanonicalSyncProblemBuildResult
+buildCandidateCatalog(const CanonicalSyncProgram &program,
+                      const CanonicalSyncBuildOptions &options,
+                      CandidateCatalogKind kind,
+                      ArrayRef<CanonicalSyncMechanismId> conflictCore = {}) {
   if (options.eventIdBudget == 0 ||
       options.eventIdBudget > kHardwareEventIdCount) {
     program.getFunction().emitError(
         "canonical sync event-id budget must be in [1, 8]");
-    return failure();
+    return {nullptr, {CanonicalSyncProblemError::InvalidDomain, std::nullopt}};
   }
   auto problem = std::make_unique<CanonicalSyncPatternProblem>(
       program.getGraph(), getActiveDemands(program.getGraph()),
@@ -714,34 +746,76 @@ mlir::pto::buildCanonicalSyncSingletonProblem(
   if (!baseline) {
     program.getFunction().emitError(
         "cannot compute canonical sync fixed coverage");
-    return failure();
+    return {nullptr,
+            {CanonicalSyncProblemError::CoverageFailure, std::nullopt}};
   }
-  std::map<EventDomainKey, CanonicalSyncEventDomainId> domainIds;
-  std::vector<DirectEventRecord> directEvents;
-  const bool failedBuild =
-      failed(addBarrierFallbacks(program, *problem, baseline.covered)) ||
-      failed(addEventDomains(program, options.eventIdBudget, *problem,
-                             baseline.covered, domainIds)) ||
-      failed(addDirectEvents(program, *problem, baseline.covered, domainIds,
-                             directEvents)) ||
-      (options.patterns.enableDirectPairs &&
-       failed(addDirectPairPatterns(program, *problem))) ||
-      (options.patterns.enableScarcityFrontiers &&
-       failed(addScarcityFrontierPatterns(program, *problem, directEvents)));
+
+  bool failedBuild = false;
+  if (kind == CandidateCatalogKind::LocalizedPipeAll) {
+    failedBuild =
+        failed(addPipeAllBackstop(program, *problem, baseline.covered));
+  } else {
+    std::map<EventDomainKey, CanonicalSyncEventDomainId> domainIds;
+    std::vector<DirectEventRecord> directEvents;
+    failedBuild =
+        failed(addTargetedBarriers(program, *problem, baseline.covered)) ||
+        failed(addEventDomains(program, options.eventIdBudget, *problem,
+                               baseline.covered, domainIds)) ||
+        failed(addDirectEvents(program, *problem, baseline.covered, domainIds,
+                               directEvents)) ||
+        (options.patterns.enableDirectPairs &&
+         failed(addDirectPairPatterns(program, *problem))) ||
+        (kind == CandidateCatalogKind::ConflictCoreRepair &&
+         failed(addRepairFrontierPatterns(program, *problem, directEvents,
+                                          conflictCore)));
+  }
   if (failedBuild) {
-    return failure();
+    return {nullptr,
+            {CanonicalSyncProblemError::InvalidMechanism, std::nullopt}};
   }
   if (problem->wasPatternGenerationTruncated()) {
     program.getFunction().emitRemark(
         "canonical sync pattern generation reached its bounded proposal "
-        "limit; singleton and barrier fallbacks remain available");
+        "limit; singleton candidates remain available");
   }
   const CanonicalSyncProblemResult frozen = problem->freeze();
-  if (!frozen) {
+  return {std::move(problem), frozen};
+}
+
+} // namespace
+
+CanonicalSyncProblemBuildResult mlir::pto::buildCanonicalSyncPreciseProblem(
+    const CanonicalSyncProgram &program,
+    const CanonicalSyncBuildOptions &options) {
+  return buildCandidateCatalog(program, options, CandidateCatalogKind::Precise);
+}
+
+CanonicalSyncProblemBuildResult mlir::pto::buildCanonicalSyncRepairProblem(
+    const CanonicalSyncProgram &program,
+    const CanonicalSyncBuildOptions &options,
+    const std::vector<CanonicalSyncMechanismId> &conflictCore) {
+  return buildCandidateCatalog(
+      program, options, CandidateCatalogKind::ConflictCoreRepair, conflictCore);
+}
+
+CanonicalSyncProblemBuildResult mlir::pto::buildCanonicalSyncPipeAllProblem(
+    const CanonicalSyncProgram &program,
+    const CanonicalSyncBuildOptions &options) {
+  return buildCandidateCatalog(program, options,
+                               CandidateCatalogKind::LocalizedPipeAll);
+}
+
+FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>>
+mlir::pto::buildCanonicalSyncSingletonProblem(
+    const CanonicalSyncProgram &program,
+    const CanonicalSyncBuildOptions &options) {
+  CanonicalSyncProblemBuildResult built =
+      buildCanonicalSyncPreciseProblem(program, options);
+  if (!built) {
     program.getFunction().emitError()
-        << "cannot freeze canonical sync singleton problem, error="
-        << static_cast<unsigned>(frozen.error);
+        << "cannot freeze canonical sync precise problem, error="
+        << static_cast<unsigned>(built.status.error);
     return failure();
   }
-  return problem;
+  return std::move(built.problem);
 }

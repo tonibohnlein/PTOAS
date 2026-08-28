@@ -109,9 +109,12 @@ modulo lane selection, and exit draining.
 Ownership/slot-lifecycle protocols, pipeline aggregates, named round trips,
 merged-prefix events, and arbitrary protocol paths are not part of the catalog.
 
-The ordinary cover sees only precise direct mechanisms. Repair frontiers and
-localized `PIPE_ALL` mechanisms are present in separately ranked fallback
-tiers and cannot win normal cover selection.
+The ordinary frozen problem contains only precise mechanisms. Allocation
+failure reports a live conflict core; only then does the pass rebuild the same
+precise prefix and append repair-frontier proposals derived from direct events
+in that core. A localized `PIPE_ALL` backstop is built as a third, barrier-only
+problem. Repair and backstop mechanisms therefore cannot enter ordinary cover
+selection through a cost or eligibility tier.
 
 A fixed architecture-required return drain is outside the covering problem. It
 has no demand coverage and cannot make the optimization instance trivial.
@@ -206,16 +209,17 @@ On failure, the allocator reports:
 - the maximum-pressure timeline point;
 - the selected mechanisms live at that point.
 
-Bounded repair first forbids one conflict-core mechanism at a time and reruns
-the same global selector. If those alternatives remain infeasible, the
-targeted-barrier event-frontier tier becomes eligible. The default repair bound
-is eight rounds.
+Bounded repair constructs a separate problem from the first live allocation
+conflict core. It retains stable IDs for the precise mechanisms and adds only
+the targeted-barrier/event frontiers induced by direct events in that core.
+The selector then forbids one live-core mechanism at a time within that repair
+problem. The default repair bound is eight rounds.
 
-If repair is exhausted, CanonicalSync makes one last attempt using localized
-target barriers, including `PIPE_ALL` only at affected targets. This backstop is
-reported explicitly and is never an ordinary weighted-cover candidate. If even
-that plan cannot be freshly verified, the pass fails and leaves the IR
-unchanged.
+If repair is exhausted, CanonicalSync builds a separate barrier-only problem
+with one `PIPE_ALL` mechanism per affected target. It verifies the full set,
+reverse-deletes redundant target barriers, and reports the surviving backstop
+explicitly. If even that plan cannot be freshly verified, the pass fails and
+leaves the IR unchanged.
 
 ## 7. Independent final verification
 

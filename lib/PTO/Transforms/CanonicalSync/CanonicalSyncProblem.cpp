@@ -105,7 +105,7 @@ bool actionEqual(const CanonicalSyncAction &left,
 
 bool descriptorEqual(const CanonicalSyncMechanismDescriptor &left,
                      const CanonicalSyncMechanismDescriptor &right) {
-  if (left.kind != right.kind || left.selectionTier != right.selectionTier ||
+  if (left.kind != right.kind ||
       left.supplies.size() != right.supplies.size() ||
       left.eventUses.size() != right.eventUses.size() ||
       left.actions.size() != right.actions.size()) {
@@ -140,7 +140,6 @@ std::uint64_t
 descriptorHash(const CanonicalSyncMechanismDescriptor &descriptor) {
   std::uint64_t hash = kHashOffset;
   hashValue(hash, static_cast<std::uint8_t>(descriptor.kind));
-  hashValue(hash, static_cast<std::uint8_t>(descriptor.selectionTier));
   for (const CanonicalSyncSupplyBinding &binding : descriptor.supplies) {
     hashEdge(hash, binding.edge);
     for (SyncCoverDemandId demand : binding.allowedDemands) {
@@ -296,7 +295,7 @@ unsigned patternPriority(CanonicalSyncPatternKind kind) {
     return 0;
   case CanonicalSyncPatternKind::DirectPair:
     return 1;
-  case CanonicalSyncPatternKind::ScarcityFrontier:
+  case CanonicalSyncPatternKind::RepairFrontier:
     return 2;
   }
   return std::numeric_limits<unsigned>::max();
@@ -891,16 +890,7 @@ CanonicalSyncPatternProblem::validateAndCostMechanism(
   }
   const bool emptyMechanism =
       descriptor.supplies.empty() || descriptor.actions.empty();
-  const bool hasPipeAll =
-      std::any_of(descriptor.actions.begin(), descriptor.actions.end(),
-                  [](const CanonicalSyncAction &action) {
-                    return action.kind == CanonicalSyncActionKind::Barrier &&
-                           action.barrierKind == CanonicalSyncBarrierKind::All;
-                  });
-  const bool invalidTier =
-      hasPipeAll !=
-      (descriptor.selectionTier == CanonicalSyncSelectionTier::PipeAllRescue);
-  if (emptyMechanism || invalidTier) {
+  if (emptyMechanism) {
     return {CanonicalSyncProblemError::InvalidMechanism, std::nullopt};
   }
   const bool mechanismLimitExceeded =
