@@ -233,7 +233,9 @@ LogicalResult ProgramBuilder::validateControlDataflow() {
                                          StringRef role) -> LogicalResult {
     llvm::SetVector<SyncCoverNodeId> producers;
     llvm::DenseSet<Value> visited;
-    collectScheduledProducers(value, producers, visited);
+    if (failed(collectScheduledProducers(value, producers, visited))) {
+      return failure();
+    }
     if (producers.empty()) {
       return success();
     }

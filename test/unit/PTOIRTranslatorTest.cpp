@@ -10,6 +10,7 @@
 
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PTO/Transforms/SlotAffineAnalysis.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -249,6 +250,38 @@ bool testStrictRecognizedExtendedEffectSucceeds() {
                "modeled extended effect produces one synchronization node");
 }
 
+bool testMacroResultCompletionContract() {
+  MLIRContext context;
+  context.loadDialect<arith::ArithDialect>();
+  const Location location = UnknownLoc::get(&context);
+  OpBuilder builder(&context);
+  auto module = ModuleOp::create(location);
+  builder.setInsertionPointToStart(module.getBody());
+  arith::ConstantIntOp operation =
+      builder.create<arith::ConstantIntOp>(location, 0, 32);
+
+  SyncMacroModel valid;
+  valid.phases.push_back({0, PipelineType::PIPE_S, {}, {}, {0}});
+  const bool validContract =
+      succeeded(verifySyncMacroModel(operation, valid)) &&
+      getSyncMacroResultCompletionPhase(valid, 0) == 0;
+
+  SyncMacroModel missing;
+  missing.phases.push_back({0, PipelineType::PIPE_S, {}, {}, {}});
+  bool diagnosedMissing = false;
+  ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
+    diagnosedMissing |= diagnostic.str().find("one synchronization completion "
+                                              "phase for every SSA result") !=
+                        std::string::npos;
+    return success();
+  });
+  return check(validContract,
+               "accept explicit macro result completion phase") &&
+         check(failed(verifySyncMacroModel(operation, missing)),
+               "reject a macro result without a completion phase") &&
+         check(diagnosedMissing, "diagnose missing macro result completion");
+}
+
 } // namespace
 
 int main() {
@@ -257,6 +290,7 @@ int main() {
                       testStrictMultiTileHelperRequiresEffects() &&
                       testShiftedSlotComparisonFailsClosed() &&
                       testStrictMalformedHelperEffectsFailClosed() &&
-                      testStrictRecognizedExtendedEffectSucceeds();
+                      testStrictRecognizedExtendedEffectSucceeds() &&
+                      testMacroResultCompletionContract();
   return passed ? 0 : 1;
 }

@@ -32,6 +32,8 @@
 namespace mlir {
 namespace pto {
 
+struct SyncMacroModel;
+
 struct PTOIRTranslatorOptions {
   bool preciseGmRanges = false;
   bool includeExtendedEffects = false;
@@ -107,7 +109,7 @@ private:
                                             bool skipIfNoMemInfo = false);
   void UpdateScalarAccessInfo(Value pointer, Value offset,
                               SmallVector<const BaseMemInfo *> &accesses);
-  void UpdateMacroOpInfo(Operation *op);
+  LogicalResult UpdateMacroOpInfo(Operation *op, const SyncMacroModel &model);
   void MakeMacroCompound(Operation *op, PipelineType pipe, ValueRange defValues,
                          ValueRange useValues, int macroPhaseId);
   LogicalResult UpdateHelperCallInfo(func::CallOp callOp);

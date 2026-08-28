@@ -10,6 +10,8 @@
 
 #include "CanonicalSyncAnalysisInternal.h"
 
+#include "PTO/Transforms/InsertSync/SyncMacroModel.h"
+
 #include "llvm/ADT/StringSwitch.h"
 
 #include <algorithm>
@@ -321,11 +323,57 @@ LogicalResult ProgramBuilder::buildNodesAndStorage() {
       return failure();
     }
   }
+  if (failed(indexSsaCompletionNodes())) {
+    return failure();
+  }
   indexNodesByLoop();
   if (failed(refineLoopTimelines())) {
     return failure();
   }
   collectHiddenEventReservations();
+  return success();
+}
+
+LogicalResult ProgramBuilder::indexSsaCompletionNodes() {
+  for (const auto &[operation, nodes] : operationNodes_) {
+    const bool hasNoResults = operation->getNumResults() == 0;
+    if (hasNoResults) {
+      continue;
+    }
+    const bool ordinary =
+        nodes.size() == 1 && nodeBindings_[nodes.front()].macroPhase < 0;
+    if (ordinary) {
+      for (Value result : operation->getResults()) {
+        ssaCompletionNodes_[result] = nodes.front();
+      }
+      continue;
+    }
+
+    const std::optional<SyncMacroModel> model = getSyncMacroModel(operation);
+    if (!model) {
+      return operation->emitError(
+          "cannot determine synchronization completion phases for SSA results");
+    }
+    if (failed(verifySyncMacroModel(operation, *model))) {
+      return failure();
+    }
+    for (OpResult result : operation->getResults()) {
+      const std::optional<unsigned> phase =
+          getSyncMacroResultCompletionPhase(*model, result.getResultNumber());
+      if (!phase) {
+        return operation->emitError(
+            "cannot bind an SSA result to its synchronization macro phase");
+      }
+      const auto node = llvm::find_if(nodes, [&](SyncCoverNodeId candidate) {
+        return nodeBindings_[candidate].macroPhase == static_cast<int>(*phase);
+      });
+      if (node == nodes.end()) {
+        return operation->emitError(
+            "cannot bind an SSA result to its synchronization macro phase");
+      }
+      ssaCompletionNodes_[result] = *node;
+    }
+  }
   return success();
 }
 

@@ -87,6 +87,7 @@ private:
   LogicalResult buildNodesAndStorage();
   LogicalResult validateControlDataflow();
   LogicalResult refineLoopTimelines();
+  LogicalResult indexSsaCompletionNodes();
   void collectHiddenEventReservations();
   void indexNodesByLoop();
 
@@ -114,9 +115,10 @@ private:
   LogicalResult addRecurrenceDependencies();
   bool isDemandImplicitlyComplete(SyncCoverNodeId source,
                                   SyncCoverNodeId target);
-  void collectScheduledProducers(Value value,
-                                 llvm::SetVector<SyncCoverNodeId> &producers,
-                                 llvm::DenseSet<Value> &visited) const;
+  LogicalResult
+  collectScheduledProducers(Value value,
+                            llvm::SetVector<SyncCoverNodeId> &producers,
+                            llvm::DenseSet<Value> &visited) const;
   bool hasIntrinsicMmadAccumulatorOrdering(
       SyncCoverNodeId source, SyncCoverNodeId target,
       const SyncCoverStorageAccess &sourceAccess,
@@ -145,6 +147,7 @@ private:
   std::vector<CanonicalSyncControlBinding> controlBindings_;
   llvm::DenseMap<Region *, RegionContext> contexts_;
   llvm::DenseMap<Operation *, SmallVector<SyncCoverNodeId, 2>> operationNodes_;
+  llvm::DenseMap<Value, SyncCoverNodeId> ssaCompletionNodes_;
   std::vector<std::pair<Operation *, SyncCoverScopeId>> loopScopes_;
   llvm::DenseMap<Operation *, SmallVector<SyncCoverNodeId, 16>> loopNodes_;
   std::vector<ExtractedAccess> extractedAccesses_;

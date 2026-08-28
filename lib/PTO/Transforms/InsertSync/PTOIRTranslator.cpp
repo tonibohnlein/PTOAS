@@ -651,8 +651,10 @@ LogicalResult PTOIRTranslator::RecursionIR(Region *region) {
       return failed_ ? WalkResult::interrupt() : WalkResult::skip();
     } else if (auto yieldOp = dyn_cast<scf::YieldOp>(op)) {
       UpdateYieldOpInfo(yieldOp);
-    } else if (getSyncMacroModel(op)) {
-      UpdateMacroOpInfo(op);
+    } else if (auto model = getSyncMacroModel(op)) {
+      if (failed(UpdateMacroOpInfo(op, *model))) {
+        return WalkResult::interrupt();
+      }
     } else if (auto callOp = dyn_cast<func::CallOp>(op)) {
       if (failed(UpdateHelperCallInfo(callOp))) {
         return WalkResult::interrupt();
@@ -1061,15 +1063,16 @@ void PTOIRTranslator::MakeMacroCompound(Operation *op, PipelineType pipe,
   index++;
 }
 
-void PTOIRTranslator::UpdateMacroOpInfo(Operation *op) {
-  auto model = getSyncMacroModel(op);
-  if (!model) {
-    return;
+LogicalResult PTOIRTranslator::UpdateMacroOpInfo(Operation *op,
+                                                 const SyncMacroModel &model) {
+  if (failed(verifySyncMacroModel(op, model))) {
+    return failure();
   }
-  for (const auto &phase : model->phases) {
+  for (const SyncMacroPhase &phase : model.phases) {
     MakeMacroCompound(op, phase.pipe, ValueRange(phase.defValues),
                       ValueRange(phase.useValues), phase.phaseId);
   }
+  return success();
 }
 
 LogicalResult PTOIRTranslator::UpdateHelperCallInfo(func::CallOp callOp) {

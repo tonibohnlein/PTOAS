@@ -23,6 +23,14 @@ protocols, or use a broad barrier as an ordinary cover candidate.
 
 ## 1. Input contract
 
+Every ordinary operation result completes at its single scheduled graph node.
+A multi-phase synchronization macro must instead name exactly one authoritative
+completion phase for every SSA result. Missing, duplicate, or invalid mappings
+fail before graph construction, and SSA provenance never crosses an unscheduled
+effectful or region operation without an explicit rule. Tile allocation results
+are explicit provenance roots because they name storage rather than completed
+asynchronous data.
+
 CanonicalSync runs after scheduling and memory planning. Local allocations must
 therefore have concrete physical addresses. The pass analyzes:
 

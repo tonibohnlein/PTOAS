@@ -41,6 +41,7 @@ bool check(bool condition, std::string_view message) {
 }
 
 void loadDialects(MLIRContext &context) {
+  context.allowUnregisteredDialects();
   context.loadDialect<PTODialect, arith::ArithDialect, func::FuncDialect,
                       scf::SCFDialect>();
 }
@@ -833,6 +834,19 @@ bool testFailClosedInputs() {
       }
     }
   )mlir";
+  constexpr std::string_view hiddenScheduledProducer = R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @hidden_producer(%condition_ptr: !pto.ptr<i1>) {
+        %zero = arith.constant 0 : index
+        %loaded = pto.load_scalar %condition_ptr[%zero] :
+          !pto.ptr<i1> -> i1
+        %condition = "test.provenance_barrier"(%loaded) : (i1) -> i1
+        scf.if %condition {
+        }
+        return
+      }
+    }
+  )mlir";
 
   return expectAnalysisFailure(malformedNoAlias, "bad_noalias",
                                "even dense i64 array") &&
@@ -843,7 +857,9 @@ bool testFailClosedInputs() {
                                "result-carrying scf.if") &&
          expectAnalysisFailure(iterArgs, "iter_args", "scf.for iter_args") &&
          expectAnalysisFailure(asynchronousControl, "async_control",
-                               "asynchronous scf.if condition");
+                               "asynchronous scf.if condition") &&
+         expectAnalysisFailure(hiddenScheduledProducer, "hidden_producer",
+                               "cannot trace SSA provenance");
 }
 
 bool testRejectsOwnedSyncAndAcceptsFixedFence() {

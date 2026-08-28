@@ -11,6 +11,8 @@
 #include "PTO/IR/PTO.h"
 #include "mlir/IR/Matchers.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 using namespace mlir;
 using namespace mlir::pto;
 
@@ -29,10 +31,12 @@ SmallVector<unsigned> getSequentialEventIds(unsigned count) {
 
 void addPhase(SyncMacroModel &model, PipelineType pipe, ValueRange defValues,
               ValueRange useValues) {
-  model.phases.push_back(SyncMacroPhase{
-      static_cast<unsigned>(model.phases.size()), pipe,
-      SmallVector<Value>(defValues.begin(), defValues.end()),
-      SmallVector<Value>(useValues.begin(), useValues.end())});
+  model.phases.push_back(
+      SyncMacroPhase{static_cast<unsigned>(model.phases.size()),
+                     pipe,
+                     SmallVector<Value>(defValues.begin(), defValues.end()),
+                     SmallVector<Value>(useValues.begin(), useValues.end()),
+                     {}});
 }
 
 void addHiddenEvent(SyncMacroModel &model, PipelineType srcPipe,
@@ -405,6 +409,53 @@ std::optional<SyncMacroModel> getMGatherSyncMacroModel(pto::MGatherOp op) {
 }
 
 } // namespace
+
+LogicalResult mlir::pto::verifySyncMacroModel(Operation *op,
+                                              const SyncMacroModel &model) {
+  if (!op) {
+    return failure();
+  }
+  if (model.phases.empty()) {
+    return op->emitError("requires at least one synchronization macro phase");
+  }
+  SmallVector<bool> seenPhases(model.phases.size(), false);
+  SmallVector<bool> seenResults(op->getNumResults(), false);
+  for (const SyncMacroPhase &phase : model.phases) {
+    const bool invalidPhase = phase.phaseId >= model.phases.size() ||
+                              seenPhases[phase.phaseId] ||
+                              phase.pipe == PipelineType::PIPE_UNASSIGNED;
+    if (invalidPhase) {
+      return op->emitError(
+          "has an invalid or duplicate synchronization macro phase");
+    }
+    seenPhases[phase.phaseId] = true;
+    for (unsigned result : phase.completedResults) {
+      const bool invalidResult =
+          result >= op->getNumResults() || seenResults[result];
+      if (invalidResult) {
+        return op->emitError(
+            "has an invalid or duplicate macro result completion phase");
+      }
+      seenResults[result] = true;
+    }
+  }
+  if (llvm::any_of(seenResults, [](bool seen) { return !seen; })) {
+    return op->emitError(
+        "requires one synchronization completion phase for every SSA result");
+  }
+  return success();
+}
+
+std::optional<unsigned>
+mlir::pto::getSyncMacroResultCompletionPhase(const SyncMacroModel &model,
+                                             unsigned resultNumber) {
+  for (const SyncMacroPhase &phase : model.phases) {
+    if (llvm::is_contained(phase.completedResults, resultNumber)) {
+      return phase.phaseId;
+    }
+  }
+  return std::nullopt;
+}
 
 std::optional<SyncMacroModel> mlir::pto::getSyncMacroModel(Operation *op) {
   if (auto model = getP2PCommSyncMacroModel(op)) {

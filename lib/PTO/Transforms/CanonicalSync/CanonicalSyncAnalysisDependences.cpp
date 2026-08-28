@@ -167,7 +167,9 @@ LogicalResult ProgramBuilder::addForwardDependencies() {
     for (Value operand : nodeBindings_[target].operation->getOperands()) {
       llvm::SetVector<SyncCoverNodeId> producers;
       llvm::DenseSet<Value> visited;
-      collectScheduledProducers(operand, producers, visited);
+      if (failed(collectScheduledProducers(operand, producers, visited))) {
+        return failure();
+      }
       for (SyncCoverNodeId source : producers) {
         const bool unavailable =
             source >= target ||
@@ -263,29 +265,45 @@ bool ProgramBuilder::isDemandImplicitlyComplete(SyncCoverNodeId source,
          isCompletionOrdered(sourceNode.resource, function_.getOperation());
 }
 
-void ProgramBuilder::collectScheduledProducers(
+LogicalResult ProgramBuilder::collectScheduledProducers(
     Value value, llvm::SetVector<SyncCoverNodeId> &producers,
     llvm::DenseSet<Value> &visited) const {
   if (!value || !visited.insert(value).second) {
-    return;
+    return success();
   }
   Operation *definition = value.getDefiningOp();
   if (!definition) {
-    return;
+    return success();
   }
   auto scheduled = operationNodes_.find(definition);
   if (scheduled != operationNodes_.end()) {
-    producers.insert(scheduled->second.back());
-    return;
+    const auto completion = ssaCompletionNodes_.find(value);
+    if (completion == ssaCompletionNodes_.end()) {
+      return definition->emitError(
+          "canonical sync has no completion phase for this SSA result");
+    }
+    producers.insert(completion->second);
+    return success();
+  }
+  // Allocation handles name storage; they do not represent asynchronously
+  // produced data. Treat these operations as explicit provenance roots even
+  // though their memory-effect interfaces are not side-effect-free.
+  if (isa<pto::AllocTileOp, pto::AllocMultiTileOp>(definition)) {
+    return success();
   }
   const bool unsupportedDefinition =
       !isMemoryEffectFree(definition) || definition->getNumRegions() != 0;
   if (unsupportedDefinition) {
-    return;
+    return definition->emitError(
+        "canonical sync cannot trace SSA provenance through this unscheduled "
+        "effectful or region operation");
   }
   for (Value operand : definition->getOperands()) {
-    collectScheduledProducers(operand, producers, visited);
+    if (failed(collectScheduledProducers(operand, producers, visited))) {
+      return failure();
+    }
   }
+  return success();
 }
 
 bool ProgramBuilder::hasIntrinsicMmadAccumulatorOrdering(

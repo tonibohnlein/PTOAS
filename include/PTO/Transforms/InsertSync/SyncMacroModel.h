@@ -12,6 +12,7 @@
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/SmallVector.h"
 #include <optional>
 
@@ -23,6 +24,9 @@ struct SyncMacroPhase {
   PipelineType pipe{PipelineType::PIPE_UNASSIGNED};
   SmallVector<Value> defValues;
   SmallVector<Value> useValues;
+  /// Operation result numbers whose SSA values become complete in this phase.
+  /// Every result of a multi-phase macro must be named by exactly one phase.
+  SmallVector<unsigned> completedResults;
 };
 
 struct SyncMacroHiddenEvent {
@@ -39,6 +43,15 @@ struct SyncMacroModel {
 };
 
 std::optional<SyncMacroModel> getSyncMacroModel(Operation *op);
+
+/// Verify that phase identifiers are unique and every operation result has one
+/// authoritative completion phase. Diagnostics are emitted on `op`.
+LogicalResult verifySyncMacroModel(Operation *op, const SyncMacroModel &model);
+
+/// Return the authoritative completion phase for a verified macro result.
+std::optional<unsigned>
+getSyncMacroResultCompletionPhase(const SyncMacroModel &model,
+                                  unsigned resultNumber);
 
 } // namespace pto
 } // namespace mlir
