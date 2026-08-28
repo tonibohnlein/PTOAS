@@ -203,17 +203,20 @@ buildSupplyIndex(const SyncCoverGraph &graph,
 }
 
 template <typename Visitor>
-void visitSupplyOutgoing(const SupplyIndex &index, std::size_t source,
+bool visitSupplyOutgoing(const SupplyIndex &index, std::size_t source,
                          Visitor &&visitor) {
   const bool invalidNode = index.outgoingOffsets.empty() ||
                            source >= index.outgoingOffsets.size() - 1;
   if (invalidNode) {
-    return;
+    return true;
   }
   for (std::size_t edge = index.outgoingOffsets[source];
        edge < index.outgoingOffsets[source + 1]; ++edge) {
-    visitor(index.edges[edge]);
+    if (!visitor(index.edges[edge])) {
+      return false;
+    }
   }
+  return true;
 }
 
 bool coversDemand(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
@@ -281,10 +284,10 @@ bool coversDemand(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
       }
     }
 
-    visitSupplyOutgoing(
-        supplyIndex, virtualNode, [&](const IndexedSupply &indexed) {
+    const bool suppliesVisited = visitSupplyOutgoing(
+        supplyIndex, virtualNode, [&](const IndexedSupply &indexed) -> bool {
           if (!consumeWork(budget)) {
-            return;
+            return false;
           }
           const SyncCoverCompletionSupply &description =
               supplies[indexed.supply];
@@ -292,7 +295,7 @@ bool coversDemand(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
           bool demandAllowed = false;
           for (SyncCoverDemandId allowed : description.allowedDemands) {
             if (!consumeWork(budget)) {
-              return;
+              return false;
             }
             if (allowed == demandId) {
               demandAllowed = true;
@@ -303,7 +306,7 @@ bool coversDemand(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
             }
           }
           if (restricted && !demandAllowed) {
-            return;
+            return true;
           }
           const SyncCoverEdge &supply = description.edge;
           const bool active =
@@ -321,7 +324,11 @@ bool coversDemand(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
           if (active) {
             enqueue(getStateIndex(indexed.target, true));
           }
+          return !budget || !budget->exhausted;
         });
+    if (!suppliesVisited) {
+      return false;
+    }
   }
   return (!budget || !budget->exhausted) && workspace.wasSeen(goal);
 }
@@ -652,7 +659,7 @@ SingletonSeedCollection collectSingletonSeeds(
     }
 
     visitSupplyOutgoing(
-        supplyIndex, virtualNode, [&](const IndexedSupply &indexed) {
+        supplyIndex, virtualNode, [&](const IndexedSupply &indexed) -> bool {
           const SyncCoverCompletionSupply &description =
               supplies[indexed.supply];
           const bool restricted = !description.allowedDemands.empty();
@@ -660,13 +667,14 @@ SingletonSeedCollection collectSingletonSeeds(
               std::binary_search(description.allowedDemands.begin(),
                                  description.allowedDemands.end(), demandId);
           if (restricted && !demandAllowed) {
-            return;
+            return true;
           }
           std::size_t target = 0;
           if (supplyIsActive(graph, demand, context, description, indexed,
                              target)) {
             result.seeds.push_back({indexed.mechanism, target});
           }
+          return true;
         });
   }
   const std::optional<std::size_t> goal =
@@ -978,7 +986,8 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
       }
 
       visitSupplyOutgoing(
-          supplyIndex->second, *node, [&](const IndexedSupply &indexed) {
+          supplyIndex->second, *node,
+          [&](const IndexedSupply &indexed) -> bool {
             const SyncCoverCompletionSupply &description =
                 supplies[indexed.supply];
             const bool restricted = !description.allowedDemands.empty();
@@ -986,25 +995,26 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
                 std::binary_search(description.allowedDemands.begin(),
                                    description.allowedDemands.end(), demandId);
             if (restricted && !demandAllowed) {
-              return;
+              return true;
             }
             const auto mechanism = std::lower_bound(
                 candidates.begin(), candidates.end(), indexed.mechanism);
             const bool absent = mechanism == candidates.end() ||
                                 *mechanism != indexed.mechanism;
             if (absent) {
-              return;
+              return true;
             }
             const std::size_t local =
                 static_cast<std::size_t>(mechanism - candidates.begin());
             if (!workspace.contains(*node, local)) {
-              return;
+              return true;
             }
             std::size_t target = 0;
             if (supplyIsActive(graph, demand, context, description, indexed,
                                target)) {
               workspace.add(target, local);
             }
+            return true;
           });
     }
 
@@ -1159,7 +1169,8 @@ SyncCoverPairCoverageResult mlir::pto::computeSyncCoverPairCoverage(
       }
 
       visitSupplyOutgoing(
-          supplyIndex->second, *node, [&](const IndexedSupply &indexed) {
+          supplyIndex->second, *node,
+          [&](const IndexedSupply &indexed) -> bool {
             const SyncCoverCompletionSupply &description =
                 supplies[indexed.supply];
             const bool constrained = !description.allowedDemands.empty();
@@ -1168,12 +1179,12 @@ SyncCoverPairCoverageResult mlir::pto::computeSyncCoverPairCoverage(
                 std::binary_search(description.allowedDemands.begin(),
                                    description.allowedDemands.end(), demandId);
             if (!demandAllowed) {
-              return;
+              return true;
             }
             std::size_t target = 0;
             if (!supplyIsActive(graph, demand, context, description, indexed,
                                 target)) {
-              return;
+              return true;
             }
             for (std::size_t pair : pairsByMechanism[indexed.mechanism]) {
               const std::size_t local = globalToLocal[pair];
@@ -1181,6 +1192,7 @@ SyncCoverPairCoverageResult mlir::pto::computeSyncCoverPairCoverage(
                 workspace.add(target, local);
               }
             }
+            return true;
           });
     }
 
