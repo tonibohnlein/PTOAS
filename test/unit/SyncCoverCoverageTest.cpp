@@ -497,6 +497,152 @@ bool testLoopSummaryMatchesExplicitUnrollings() {
   return passed;
 }
 
+bool testChildPortsPreserveEndpointIdentity() {
+  bool passed = true;
+  const auto build = [&](bool summarized) {
+    SyncCoverGraph graph;
+    const SyncCoverScopeId outer = takeIndex(
+        graph.addScope(0, true, SyncCoverTimelineInterval{0, 50}, true), passed,
+        "add endpoint-order outer loop");
+    SyncCoverScopeId child = outer;
+    if (summarized) {
+      child = takeIndex(
+          graph.addScope(outer, true, SyncCoverTimelineInterval{2, 16}, true),
+          passed, "add endpoint-order child loop");
+    }
+    const SyncCoverNodeId source = takeIndex(
+        graph.addNode(0, 1, outer, 0), passed, "add endpoint-order source");
+    const SyncCoverNodeId earlySource = takeIndex(
+        graph.addNode(1, 1, child, 2), passed, "add early child source");
+    const SyncCoverNodeId lateSource = takeIndex(
+        graph.addNode(1, 1, child, 3), passed, "add late child source");
+    const SyncCoverNodeId earlyTarget = takeIndex(
+        graph.addNode(2, 1, child, 4), passed, "add early child target");
+    const SyncCoverNodeId lateTarget = takeIndex(
+        graph.addNode(2, 1, child, 6), passed, "add late child target");
+    const SyncCoverNodeId outerTarget =
+        takeIndex(graph.addNode(2, 1, outer, 10), passed,
+                  "add endpoint-order outer target");
+    passed &= check(
+        graph.addEdge(makeEdge(source, lateTarget,
+                               SyncCoverEdgeKind::CompletionSupply, outer)),
+        "add fixed late-target completion");
+    passed &= check(
+        graph.addEdge(makeEdge(earlySource, earlyTarget,
+                               SyncCoverEdgeKind::CompletionSupply, child)),
+        "add fixed early-source completion");
+    passed &= check(graph.addEdge(makeEdge(
+                        earlyTarget, outerTarget,
+                        SyncCoverEdgeKind::CompletionPreservingIssueOrder)),
+                    "route early child target outward");
+    passed &= check(graph.addDemand(makeDemand(source, earlyTarget, outer)),
+                    "add earlier-target parent demand");
+    passed &= check(graph.addDemand(makeDemand(lateSource, outerTarget, outer)),
+                    "add later-source parent demand");
+    passed &= check(graph.addDemand(makeDemand(source, lateTarget, outer)),
+                    "expose late target port");
+    passed &=
+        check(graph.addDemand(makeDemand(earlySource, earlyTarget, child)),
+              "expose early source port");
+    passed &= check(graph.freezeStructure(), "freeze endpoint-order graph");
+
+    const SyncCoverExpandedProgram expansion(graph);
+    if (summarized) {
+      const SyncCoverExpandedArena *arena = expansion.getRecurrenceArena(outer);
+      const std::optional<std::size_t> earlySourcePort =
+          arena ? arena->getLoopPort(child, earlySource, 0) : std::nullopt;
+      const std::optional<std::size_t> lateSourcePort =
+          arena ? arena->getLoopPort(child, lateSource, 0) : std::nullopt;
+      const std::optional<std::size_t> earlyTargetPort =
+          arena ? arena->getLoopPort(child, earlyTarget, 0) : std::nullopt;
+      const std::optional<std::size_t> lateTargetPort =
+          arena ? arena->getLoopPort(child, lateTarget, 0) : std::nullopt;
+      passed &=
+          check(earlySourcePort && lateSourcePort && earlyTargetPort &&
+                    lateTargetPort && *earlySourcePort != *lateSourcePort &&
+                    *earlyTargetPort != *lateTargetPort,
+                "preserve ordered same-resource endpoint ports");
+    }
+    const std::vector<SyncCoverCompletionSupply> supplies = {
+        {0, makeEdge(source, lateTarget, SyncCoverEdgeKind::CompletionSupply,
+                     outer)},
+        {1, makeEdge(earlySource, earlyTarget,
+                     SyncCoverEdgeKind::CompletionSupply, child)}};
+    const std::vector<SyncCoverDemandId> active{0, 1};
+    return CoverageSnapshot{
+        computeSyncCoverCoverage(graph, expansion, supplies, active),
+        computeSyncCoverSingletonCoverage(graph, expansion, 2, supplies,
+                                          active),
+        computeSyncCoverPairCoverage(graph, expansion, 2, supplies, {{0, 1}},
+                                     active)};
+  };
+
+  const CoverageSnapshot summarized = build(true);
+  const CoverageSnapshot unrolled = build(false);
+  passed &= check(snapshotsMatch(summarized, unrolled),
+                  "endpoint-sensitive summary matches explicit child body");
+  passed &=
+      check(summarized.full && summarized.full.covered.empty() &&
+                summarized.singleton && summarized.singleton.baseline.empty() &&
+                summarized.singleton.mechanisms[0].empty() &&
+                summarized.singleton.mechanisms[1].empty() && summarized.pair &&
+                summarized.pair.pairs[0].empty(),
+            "late waits and early sets cannot cover reversed endpoints");
+  return passed;
+}
+
+bool testChildLocalPairExportsThroughPorts() {
+  bool passed = true;
+  const auto build = [&](bool summarized) {
+    SyncCoverGraph graph;
+    const SyncCoverScopeId outer = takeIndex(
+        graph.addScope(0, true, SyncCoverTimelineInterval{0, 40}, true), passed,
+        "add child-pair outer loop");
+    SyncCoverScopeId child = outer;
+    if (summarized) {
+      child = takeIndex(
+          graph.addScope(outer, true, SyncCoverTimelineInterval{2, 20}, true),
+          passed, "add child-pair summarized loop");
+    }
+    const SyncCoverNodeId source =
+        takeIndex(graph.addNode(1, 1, child, 2, {}, {2}), passed,
+                  "add child-pair source");
+    const SyncCoverNodeId middle =
+        takeIndex(graph.addNode(2, 1, child, 4, {}, {3}), passed,
+                  "add child-pair middle");
+    const SyncCoverNodeId childTarget = takeIndex(
+        graph.addNode(3, 1, child, 6), passed, "add child-pair target");
+    const SyncCoverNodeId outerTarget = takeIndex(
+        graph.addNode(3, 1, outer, 12), passed, "add child-pair outer target");
+    passed &= check(graph.addEdge(makeEdge(
+                        childTarget, outerTarget,
+                        SyncCoverEdgeKind::CompletionPreservingIssueOrder)),
+                    "export child-pair completion");
+    passed &= check(graph.addDemand(makeDemand(source, outerTarget, outer)),
+                    "add child-pair parent demand");
+    passed &= check(graph.addDemand(makeDemand(source, middle, child)),
+                    "add child-pair first local demand");
+    passed &= check(graph.addDemand(makeDemand(middle, childTarget, child)),
+                    "add child-pair second local demand");
+    passed &= check(graph.freezeStructure(), "freeze child-pair graph");
+    const SyncCoverExpandedProgram expansion(graph);
+    return getTwoLegCoverage(graph, expansion, source, middle, childTarget,
+                             child);
+  };
+
+  const CoverageSnapshot summarized = build(true);
+  const CoverageSnapshot unrolled = build(false);
+  passed &= check(snapshotsMatch(summarized, unrolled),
+                  "child-local pair summary matches explicit body");
+  passed &= check(summarized.full && summarized.full.covered.contains(0) &&
+                      summarized.singleton &&
+                      !summarized.singleton.mechanisms[0].contains(0) &&
+                      !summarized.singleton.mechanisms[1].contains(0) &&
+                      summarized.pair && summarized.pair.pairs[0].contains(0),
+                  "child-local pair completion exports through exact ports");
+  return passed;
+}
+
 bool testNestedExportCrossesInactiveMiddleSummary() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -724,6 +870,8 @@ int main() {
   passed &= testCompactCarryKindsAndResourceIsolation();
   passed &= testOptionalIntermediateAvailability();
   passed &= testLoopSummaryMatchesExplicitUnrollings();
+  passed &= testChildPortsPreserveEndpointIdentity();
+  passed &= testChildLocalPairExportsThroughPorts();
   passed &= testNestedExportCrossesInactiveMiddleSummary();
   passed &= testGuardedProtocolRemainsLocal();
   passed &= testExpansionOwnershipAndMaximumHorizon();

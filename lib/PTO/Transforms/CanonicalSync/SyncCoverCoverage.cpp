@@ -187,11 +187,10 @@ bool coversDemand(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
                   const std::vector<SyncCoverCompletionSupply> &supplies,
                   CoverageWorkspace &workspace) {
   const DemandContext context = makeDemandContext(graph, demand);
-  const std::optional<std::size_t> source = expansion.projectEndpoint(
-      graph, arena, demand.source, SyncCoverEndpointRole::Source, 0);
+  const std::optional<std::size_t> source =
+      expansion.projectEndpoint(graph, arena, demand.source, 0);
   const std::optional<std::size_t> target =
-      expansion.projectEndpoint(graph, arena, demand.target,
-                                SyncCoverEndpointRole::Target, demand.distance);
+      expansion.projectEndpoint(graph, arena, demand.target, demand.distance);
   const bool invalidDemand =
       !context.valid || !source || !target ||
       arena.getVirtualNodeCount() > std::numeric_limits<std::size_t>::max() / 2;
@@ -529,8 +528,8 @@ SingletonSeedCollection collectSingletonSeeds(
     const SyncCoverExpandedArena &arena, const SupplyIndex &supplyIndex,
     const std::vector<SyncCoverCompletionSupply> &supplies) {
   SingletonSeedCollection result;
-  const std::optional<std::size_t> source = expansion.projectEndpoint(
-      graph, arena, demand.source, SyncCoverEndpointRole::Source, 0);
+  const std::optional<std::size_t> source =
+      expansion.projectEndpoint(graph, arena, demand.source, 0);
   const bool invalidSource =
       !source ||
       arena.getVirtualNodeCount() > std::numeric_limits<std::size_t>::max() / 2;
@@ -588,8 +587,7 @@ SingletonSeedCollection collectSingletonSeeds(
         });
   }
   const std::optional<std::size_t> goal =
-      expansion.projectEndpoint(graph, arena, demand.target,
-                                SyncCoverEndpointRole::Target, demand.distance);
+      expansion.projectEndpoint(graph, arena, demand.target, demand.distance);
   result.baselineCovers = goal && seen[getStateIndex(*goal, true)] != 0;
   std::sort(result.seeds.begin(), result.seeds.end(),
             [](const SingletonSeed &left, const SingletonSeed &right) {
@@ -797,11 +795,10 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
       continue;
     }
     const DemandContext context = makeDemandContext(graph, demand);
-    const std::optional<std::size_t> source = expansion.projectEndpoint(
-        graph, *arena, demand.source, SyncCoverEndpointRole::Source, 0);
+    const std::optional<std::size_t> source =
+        expansion.projectEndpoint(graph, *arena, demand.source, 0);
     const std::optional<std::size_t> goal = expansion.projectEndpoint(
-        graph, *arena, demand.target, SyncCoverEndpointRole::Target,
-        demand.distance);
+        graph, *arena, demand.target, demand.distance);
     if (!context.valid || !source || !goal) {
       result.error = SyncCoverCoverageError::InvalidGraph;
       return result;
@@ -972,8 +969,7 @@ SyncCoverPairCoverageResult mlir::pto::computeSyncCoverPairCoverage(
     }
     const DemandContext context = makeDemandContext(graph, demand);
     const std::optional<std::size_t> goal = expansion.projectEndpoint(
-        graph, *arena, demand.target, SyncCoverEndpointRole::Target,
-        demand.distance);
+        graph, *arena, demand.target, demand.distance);
     if (!context.valid || !goal) {
       result.error = SyncCoverCoverageError::InvalidGraph;
       return result;

@@ -77,13 +77,14 @@ Loop-local DAGs are summarized bottom-up with resource-specific entry and exit
 nodes, an explicit zero-trip transfer, recurrence-carry resources, and copied
 periodic-control phase relations. Each arena contains its locally owned
 operations and only the transfer interfaces of its immediate children; child
-bodies are not copied into parent arenas. Fixed and selected completion
-supplies within a child are projected onto that interface, so a parent consumes
-the child's completion transfer rather than traversing its body. A recurrence
-protocol exports completion only when common validation certifies balanced
-priming, body lanes, and one scope-exit drain per lane. Guarded protocols remain
-valid locally but do not export until phase-qualified export semantics are
-supported.
+bodies are not copied into parent arenas. The interface retains a distinct port
+for each externally relevant child operation, so early and late operations on
+one resource cannot alias. Fixed and selected completion supplies use those
+identity-preserving ports, while only certified issue-order edges connect
+ports to resource entry/exit boundaries. A recurrence protocol exports
+completion only when common validation certifies balanced priming, body lanes,
+and one scope-exit drain per lane. Guarded protocols remain valid locally but
+do not export until phase-qualified export semantics are supported.
 
 ## 3. Restricted mechanism catalog
 

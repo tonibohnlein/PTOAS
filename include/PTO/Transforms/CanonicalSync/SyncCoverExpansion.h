@@ -60,11 +60,6 @@ enum class SyncCoverLoopBoundaryKind : std::uint8_t {
   Exit,
 };
 
-enum class SyncCoverEndpointRole : std::uint8_t {
-  Source,
-  Target,
-};
-
 struct SyncCoverLoopPeriodicSummary {
   SyncCoverControlId control = 0;
   std::size_t initialPhase = 0;
@@ -96,6 +91,10 @@ struct SyncCoverLoopSummary {
   std::vector<std::uint32_t> carryResources;
   std::vector<SyncCoverLoopPeriodicSummary> periodicControls;
   std::vector<SyncCoverLoopCompletionTransfer> completionTransfers;
+  /// Original operation identities exposed to the parent. Transfers between
+  /// ports are copied only from certified graph edges or selected supplies;
+  /// same-resource operations are never conflated.
+  std::vector<SyncCoverNodeId> completionPorts;
 };
 
 struct SyncCoverProjectedCompletion {
@@ -149,6 +148,9 @@ public:
                                              std::uint32_t resource,
                                              SyncCoverLoopBoundaryKind kind,
                                              unsigned copy) const;
+  std::optional<std::size_t> getLoopPort(SyncCoverScopeId scope,
+                                         SyncCoverNodeId node,
+                                         unsigned copy) const;
   SyncCoverExpandedEdgeRange getOutgoingEdges(std::size_t virtualNode) const;
 
 private:
@@ -158,9 +160,11 @@ private:
   unsigned horizon_ = 0;
   std::size_t operationVirtualNodeCount_ = 0;
   std::size_t loopSummaryVirtualNodeCount_ = 0;
+  std::size_t loopPortVirtualNodeCount_ = 0;
   std::size_t virtualNodeCount_ = 0;
   std::vector<SyncCoverNodeId> operationNodes_;
   std::vector<std::pair<SyncCoverScopeId, std::uint32_t>> loopSummaryResources_;
+  std::vector<std::pair<SyncCoverScopeId, SyncCoverNodeId>> loopSummaryPorts_;
   std::vector<std::uint32_t> carryResources_;
   std::vector<SyncCoverExpandedEdge> edges_;
   std::vector<std::size_t> outgoingOffsets_;
@@ -203,7 +207,7 @@ public:
   std::optional<std::size_t>
   projectEndpoint(const SyncCoverGraph &graph,
                   const SyncCoverExpandedArena &arena, SyncCoverNodeId node,
-                  SyncCoverEndpointRole role, unsigned copy) const;
+                  unsigned copy) const;
   std::optional<SyncCoverProjectedCompletion>
   projectCompletion(const SyncCoverGraph &graph,
                     const SyncCoverExpandedArena &arena,

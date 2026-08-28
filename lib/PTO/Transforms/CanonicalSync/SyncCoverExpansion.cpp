@@ -119,10 +119,18 @@ SyncCoverExpandedArena::getVirtualOperation(SyncCoverNodeId node,
 std::optional<SyncCoverNodeId>
 SyncCoverExpandedArena::getOperationForVirtualNode(
     std::size_t virtualNode) const {
-  if (virtualNode >= operationVirtualNodeCount_ || operationNodes_.empty()) {
+  if (virtualNode < operationVirtualNodeCount_ && !operationNodes_.empty()) {
+    return operationNodes_[virtualNode % operationNodes_.size()];
+  }
+  const std::size_t portBegin =
+      operationVirtualNodeCount_ + loopSummaryVirtualNodeCount_;
+  const std::size_t portEnd = portBegin + loopPortVirtualNodeCount_;
+  if (virtualNode < portBegin || virtualNode >= portEnd ||
+      loopSummaryPorts_.empty()) {
     return std::nullopt;
   }
-  return operationNodes_[virtualNode % operationNodes_.size()];
+  const std::size_t offset = virtualNode - portBegin;
+  return loopSummaryPorts_[offset % loopSummaryPorts_.size()].second;
 }
 
 std::optional<unsigned>
@@ -146,10 +154,18 @@ SyncCoverExpandedArena::getCopyForVirtualNode(std::size_t virtualNode) const {
     return static_cast<unsigned>((virtualNode - operationVirtualNodeCount_) /
                                  nodesPerCopy);
   }
+  const std::size_t portEnd = summaryEnd + loopPortVirtualNodeCount_;
+  if (virtualNode < portEnd) {
+    if (loopSummaryPorts_.empty()) {
+      return std::nullopt;
+    }
+    return static_cast<unsigned>((virtualNode - summaryEnd) /
+                                 loopSummaryPorts_.size());
+  }
   if (carryResources_.empty()) {
     return std::nullopt;
   }
-  return static_cast<unsigned>((virtualNode - summaryEnd) /
+  return static_cast<unsigned>((virtualNode - portEnd) /
                                carryResources_.size());
 }
 
@@ -173,6 +189,25 @@ std::optional<std::size_t> SyncCoverExpandedArena::getLoopBoundary(
   const std::size_t boundary = kind == SyncCoverLoopBoundaryKind::Entry ? 0 : 1;
   return operationVirtualNodeCount_ +
          static_cast<std::size_t>(copy) * nodesPerCopy + pair * 2 + boundary;
+}
+
+std::optional<std::size_t>
+SyncCoverExpandedArena::getLoopPort(SyncCoverScopeId scope,
+                                    SyncCoverNodeId node, unsigned copy) const {
+  if (copy > horizon_) {
+    return std::nullopt;
+  }
+  const std::pair<SyncCoverScopeId, SyncCoverNodeId> key{scope, node};
+  const auto position =
+      std::lower_bound(loopSummaryPorts_.begin(), loopSummaryPorts_.end(), key);
+  const bool missing = position == loopSummaryPorts_.end() || *position != key;
+  if (missing) {
+    return std::nullopt;
+  }
+  const std::size_t local =
+      static_cast<std::size_t>(position - loopSummaryPorts_.begin());
+  return operationVirtualNodeCount_ + loopSummaryVirtualNodeCount_ +
+         static_cast<std::size_t>(copy) * loopSummaryPorts_.size() + local;
 }
 
 SyncCoverExpandedEdgeRange
@@ -294,6 +329,42 @@ SyncCoverExpandedProgram::SyncCoverExpandedProgram(
       summary.carryResources.push_back(node.resource);
     }
   }
+  std::vector<bool> exposedPorts(graph.getNodes().size(), false);
+  for (const SyncCoverDemand &demand : graph.getDemands()) {
+    exposedPorts[demand.source] = true;
+    exposedPorts[demand.target] = true;
+  }
+  for (const SyncCoverNode &node : graph.getNodes()) {
+    if (!node.completionTargets.empty()) {
+      exposedPorts[node.id] = true;
+    }
+    for (SyncCoverNodeId source : node.completionDominatedSources) {
+      exposedPorts[node.id] = true;
+      exposedPorts[source] = true;
+    }
+  }
+  for (const SyncCoverEdge &edge : graph.getEdges()) {
+    const SyncCoverScopeId sourceOwner =
+        getArenaScopeForScope(graph, graph.getNodes()[edge.source].scope);
+    const SyncCoverScopeId targetOwner =
+        getArenaScopeForScope(graph, graph.getNodes()[edge.target].scope);
+    const bool crossesLoop = sourceOwner != targetOwner;
+    if (crossesLoop || edge.kind == SyncCoverEdgeKind::CompletionSupply) {
+      exposedPorts[edge.source] = true;
+      exposedPorts[edge.target] = true;
+    }
+  }
+  for (const SyncCoverNode &node : graph.getNodes()) {
+    if (!exposedPorts[node.id]) {
+      continue;
+    }
+    const std::optional<SyncCoverScopeId> loop =
+        graph.getNearestEnclosingLoop(node.scope, true);
+    if (loop) {
+      loopSummaries_[loopSummaryIndices_.at(*loop)].completionPorts.push_back(
+          node.id);
+    }
+  }
   for (SyncCoverLoopSummary &summary : loopSummaries_) {
     if (!summary.parentLoop) {
       continue;
@@ -306,6 +377,9 @@ SyncCoverExpandedProgram::SyncCoverExpandedProgram(
     parent.carryResources.insert(parent.carryResources.end(),
                                  summary.carryResources.begin(),
                                  summary.carryResources.end());
+    parent.completionPorts.insert(parent.completionPorts.end(),
+                                  summary.completionPorts.begin(),
+                                  summary.completionPorts.end());
   }
   for (SyncCoverLoopSummary &summary : loopSummaries_) {
     auto normalize = [](auto &values) {
@@ -315,6 +389,7 @@ SyncCoverExpandedProgram::SyncCoverExpandedProgram(
     normalize(summary.childLoops);
     normalize(summary.resources);
     normalize(summary.carryResources);
+    normalize(summary.completionPorts);
     for (std::uint32_t resource : summary.resources) {
       summary.completionTransfers.push_back(
           {resource, true, summary.zeroTripPossible});
@@ -410,7 +485,7 @@ SyncCoverExpandedProgram::getLoopSummary(SyncCoverScopeId scope) const {
 
 std::optional<std::size_t> SyncCoverExpandedProgram::projectEndpoint(
     const SyncCoverGraph &graph, const SyncCoverExpandedArena &arena,
-    SyncCoverNodeId node, SyncCoverEndpointRole role, unsigned copy) const {
+    SyncCoverNodeId node, unsigned copy) const {
   const bool invalidEndpoint = !isForGraph(graph) ||
                                node >= graph.getNodes().size() ||
                                copy > arena.getHorizon();
@@ -421,16 +496,12 @@ std::optional<std::size_t> SyncCoverExpandedProgram::projectEndpoint(
           arena.getVirtualOperation(node, copy)) {
     return local;
   }
-  const SyncCoverNode &operation = graph.getNodes()[node];
-  const std::optional<SyncCoverScopeId> child =
-      getImmediateChildLoop(graph, arena.getScope(), operation.scope);
+  const std::optional<SyncCoverScopeId> child = getImmediateChildLoop(
+      graph, arena.getScope(), graph.getNodes()[node].scope);
   if (!child) {
     return std::nullopt;
   }
-  const SyncCoverLoopBoundaryKind boundary =
-      role == SyncCoverEndpointRole::Source ? SyncCoverLoopBoundaryKind::Exit
-                                            : SyncCoverLoopBoundaryKind::Entry;
-  return arena.getLoopBoundary(*child, operation.resource, boundary, copy);
+  return arena.getLoopPort(*child, node, copy);
 }
 
 std::optional<SyncCoverProjectedCompletion>
@@ -449,18 +520,10 @@ SyncCoverExpandedProgram::projectCompletion(
       return std::nullopt;
     }
     const unsigned targetCopy = sourceCopy + edge.distance;
-    const std::optional<SyncCoverScopeId> sourceChild = getImmediateChildLoop(
-        graph, arena.getScope(), graph.getNodes()[edge.source].scope);
-    const std::optional<SyncCoverScopeId> targetChild = getImmediateChildLoop(
-        graph, arena.getScope(), graph.getNodes()[edge.target].scope);
-    const SyncCoverEndpointRole targetRole =
-        edge.distance == 0 && sourceChild && sourceChild == targetChild
-            ? SyncCoverEndpointRole::Source
-            : SyncCoverEndpointRole::Target;
-    const std::optional<std::size_t> source = projectEndpoint(
-        graph, arena, edge.source, SyncCoverEndpointRole::Source, sourceCopy);
+    const std::optional<std::size_t> source =
+        projectEndpoint(graph, arena, edge.source, sourceCopy);
     const std::optional<std::size_t> target =
-        projectEndpoint(graph, arena, edge.target, targetRole, targetCopy);
+        projectEndpoint(graph, arena, edge.target, targetCopy);
     return source && target
                ? std::optional<SyncCoverProjectedCompletion>(
                      {{*source, *target, sourceCopy, targetCopy, std::nullopt}})
@@ -478,12 +541,16 @@ SyncCoverExpandedProgram::projectCompletion(
   if (invalidExport) {
     return std::nullopt;
   }
-  const std::optional<std::size_t> source = projectEndpoint(
-      graph, arena, edge.source, SyncCoverEndpointRole::Source, sourceCopy);
-  const std::optional<std::size_t> target = projectEndpoint(
-      graph, arena, edge.target, SyncCoverEndpointRole::Source, sourceCopy);
+  const std::optional<std::size_t> source =
+      projectEndpoint(graph, arena, edge.source, sourceCopy);
   const std::optional<SyncCoverScopeId> exportedLoop = getImmediateChildLoop(
       graph, arena.getScope(), graph.getNodes()[edge.target].scope);
+  const std::uint32_t targetResource = graph.getNodes()[edge.target].resource;
+  const std::optional<std::size_t> target =
+      exportedLoop
+          ? arena.getLoopBoundary(*exportedLoop, targetResource,
+                                  SyncCoverLoopBoundaryKind::Exit, sourceCopy)
+          : std::nullopt;
   return source && target && exportedLoop
              ? std::optional<SyncCoverProjectedCompletion>(
                    {{*source, *target, sourceCopy, sourceCopy, *exportedLoop}})
@@ -531,6 +598,9 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
          summary.completionTransfers) {
       arena.loopSummaryResources_.push_back({summary.scope, transfer.resource});
     }
+    for (SyncCoverNodeId port : summary.completionPorts) {
+      arena.loopSummaryPorts_.push_back({summary.scope, port});
+    }
   }
   std::sort(arena.loopSummaryResources_.begin(),
             arena.loopSummaryResources_.end());
@@ -538,6 +608,10 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
       std::unique(arena.loopSummaryResources_.begin(),
                   arena.loopSummaryResources_.end()),
       arena.loopSummaryResources_.end());
+  std::sort(arena.loopSummaryPorts_.begin(), arena.loopSummaryPorts_.end());
+  arena.loopSummaryPorts_.erase(std::unique(arena.loopSummaryPorts_.begin(),
+                                            arena.loopSummaryPorts_.end()),
+                                arena.loopSummaryPorts_.end());
 
   std::map<std::uint32_t, std::vector<SyncCoverNodeId>> carryNodes;
   if (horizon != 0) {
@@ -577,10 +651,14 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
                        summaryNodesPerCopy) ||
       !checkedMultiply(summaryNodesPerCopy, copyCount,
                        arena.loopSummaryVirtualNodeCount_) ||
+      !checkedMultiply(arena.loopSummaryPorts_.size(), copyCount,
+                       arena.loopPortVirtualNodeCount_) ||
       !checkedMultiply(arena.carryResources_.size(), horizon,
                        carryBoundaryCount) ||
       !checkedAdd(arena.operationVirtualNodeCount_,
                   arena.loopSummaryVirtualNodeCount_,
+                  arena.virtualNodeCount_) ||
+      !checkedAdd(arena.virtualNodeCount_, arena.loopPortVirtualNodeCount_,
                   arena.virtualNodeCount_) ||
       !checkedAdd(arena.virtualNodeCount_, carryBoundaryCount,
                   arena.virtualNodeCount_) ||
@@ -589,7 +667,8 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
     result.unavailable = nodeReason;
     return result;
   }
-  result.loopSummaryNodes = arena.loopSummaryVirtualNodeCount_;
+  result.loopSummaryNodes =
+      arena.loopSummaryVirtualNodeCount_ + arena.loopPortVirtualNodeCount_;
 
   auto appendEdge = [&](SyncCoverExpandedEdge edge, bool compactCarry,
                         bool zeroTrip) {
@@ -628,14 +707,7 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
 
   for (std::size_t edgeId = 0; edgeId < graph.getEdges().size(); ++edgeId) {
     const SyncCoverEdge &edge = graph.getEdges()[edgeId];
-    const std::optional<SyncCoverScopeId> sourceChild = getImmediateChildLoop(
-        graph, scope, graph.getNodes()[edge.source].scope);
-    const std::optional<SyncCoverScopeId> targetChild = getImmediateChildLoop(
-        graph, scope, graph.getNodes()[edge.target].scope);
-    const bool delegatedToChild =
-        edge.distance == 0 && sourceChild && sourceChild == targetChild &&
-        edge.kind != SyncCoverEdgeKind::CompletionSupply;
-    if (delegatedToChild || edge.distance > horizon ||
+    if (edge.distance > horizon ||
         (edge.distance != 0 && edge.scope != scope)) {
       continue;
     }
@@ -645,23 +717,52 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
       const unsigned sourceCopyValue = static_cast<unsigned>(sourceCopy);
       const unsigned targetCopy = sourceCopyValue + edge.distance;
       const std::optional<std::size_t> source =
-          projectEndpoint(graph, arena, edge.source,
-                          SyncCoverEndpointRole::Source, sourceCopyValue);
-      const SyncCoverEndpointRole targetRole =
-          edge.distance == 0 && sourceChild && sourceChild == targetChild
-              ? SyncCoverEndpointRole::Source
-              : SyncCoverEndpointRole::Target;
+          projectEndpoint(graph, arena, edge.source, sourceCopyValue);
       const std::optional<std::size_t> target =
-          projectEndpoint(graph, arena, edge.target, targetRole, targetCopy);
+          projectEndpoint(graph, arena, edge.target, targetCopy);
       if (!source || !target) {
         continue;
       }
-      const bool appended = appendEdge(
-          {*source, *target, edge.kind, edgeId, sourceCopyValue, targetCopy},
-          false, false);
-      if (!appended) {
-        result.unavailable = edgeReason;
-        return result;
+      const std::optional<SyncCoverScopeId> sourceChild = getImmediateChildLoop(
+          graph, scope, graph.getNodes()[edge.source].scope);
+      const std::optional<SyncCoverScopeId> targetChild = getImmediateChildLoop(
+          graph, scope, graph.getNodes()[edge.target].scope);
+      const bool crossesSummary =
+          edge.kind != SyncCoverEdgeKind::CompletionSupply &&
+          graph.getNodes()[edge.source].resource ==
+              graph.getNodes()[edge.target].resource &&
+          (edge.distance != 0 || sourceChild != targetChild);
+      std::vector<std::size_t> route;
+      if (crossesSummary && sourceChild) {
+        const std::optional<std::size_t> exit = arena.getLoopBoundary(
+            *sourceChild, graph.getNodes()[edge.source].resource,
+            SyncCoverLoopBoundaryKind::Exit, sourceCopyValue);
+        if (exit) {
+          route.push_back(*exit);
+        }
+      }
+      if (crossesSummary && targetChild) {
+        const std::optional<std::size_t> entry = arena.getLoopBoundary(
+            *targetChild, graph.getNodes()[edge.target].resource,
+            SyncCoverLoopBoundaryKind::Entry, targetCopy);
+        if (entry) {
+          route.push_back(*entry);
+        }
+      }
+      route.push_back(*target);
+      std::size_t previous = *source;
+      for (std::size_t next : route) {
+        if (previous == next) {
+          continue;
+        }
+        const bool appended = appendEdge(
+            {previous, next, edge.kind, edgeId, sourceCopyValue, targetCopy},
+            false, false);
+        if (!appended) {
+          result.unavailable = edgeReason;
+          return result;
+        }
+        previous = next;
       }
     }
   }
@@ -674,7 +775,7 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
     for (unsigned copy = 0; copy < horizon; ++copy) {
       const std::size_t boundary =
           arena.operationVirtualNodeCount_ +
-          arena.loopSummaryVirtualNodeCount_ +
+          arena.loopSummaryVirtualNodeCount_ + arena.loopPortVirtualNodeCount_ +
           static_cast<std::size_t>(copy) * arena.carryResources_.size() +
           resourceIndex;
       const auto localCarryNodes = carryNodes.find(resource);
@@ -697,6 +798,27 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
             result.unavailable = edgeReason;
             return result;
           }
+        }
+      }
+      for (const auto &[loop, port] : arena.loopSummaryPorts_) {
+        if (graph.getNodes()[port].resource != resource) {
+          continue;
+        }
+        const std::optional<std::size_t> current =
+            arena.getLoopPort(loop, port, copy);
+        const std::optional<std::size_t> next =
+            arena.getLoopPort(loop, port, copy + 1);
+        const bool appended =
+            current && next &&
+            appendEdge(
+                {*current, boundary, carryKind, std::nullopt, copy, copy}, true,
+                false) &&
+            appendEdge({boundary, *next, carryKind, std::nullopt, copy,
+                        static_cast<unsigned>(copy + 1)},
+                       true, false);
+        if (!appended) {
+          result.unavailable = edgeReason;
+          return result;
         }
       }
       for (const auto &[loop, summaryResource] : arena.loopSummaryResources_) {
