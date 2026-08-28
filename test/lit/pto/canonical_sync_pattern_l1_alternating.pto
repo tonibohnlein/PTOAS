@@ -12,7 +12,8 @@
 // RUN:   | tee %t \
 // RUN:   | FileCheck %s --check-prefix=IR
 // RUN: not grep 'EVENT_ID8' %t
-// RUN: grep 'pto.barrier <PIPE_ALL> {pto.canonical_sync}' %t | count 2
+// RUN: not grep 'pto.barrier <PIPE_ALL> {pto.canonical_sync}' %t
+// RUN: grep 'pto.barrier <PIPE_MTE1> {pto.canonical_sync}' %t | count 2
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @alternating_l1(%source: !pto.ptr<f16, gm>, %limit: index) {

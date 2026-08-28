@@ -92,6 +92,24 @@ struct SyncCoverSingletonCoverageResult {
   }
 };
 
+struct SyncCoverMechanismPair {
+  SyncCoverMechanismId first = 0;
+  SyncCoverMechanismId second = 0;
+};
+
+/// Exact joint coverage for a bounded set of two-mechanism proposals. All
+/// proposals are propagated together in each demand's owning expansion arena,
+/// so pair construction does not perform one graph traversal per proposal.
+struct SyncCoverPairCoverageResult {
+  SyncCoverCoverageError error = SyncCoverCoverageError::None;
+  std::vector<SyncCoverDemandSet> pairs;
+  std::vector<SyncCoverDemandId> unavailableDemands;
+
+  explicit operator bool() const {
+    return error == SyncCoverCoverageError::None;
+  }
+};
+
 /// Computes exact demand coverage for one mechanism set over the immutable
 /// bounded expansion. Expansion construction validates and binds the frozen
 /// graph once; this query checks that binding but does not repeat full graph
@@ -113,6 +131,13 @@ SyncCoverSingletonCoverageResult computeSyncCoverSingletonCoverage(
     const SyncCoverGraph &graph, const SyncCoverExpandedProgram &expansion,
     std::size_t mechanismCount,
     const std::vector<SyncCoverCompletionSupply> &supplies,
+    const std::vector<SyncCoverDemandId> &activeDemands);
+
+SyncCoverPairCoverageResult computeSyncCoverPairCoverage(
+    const SyncCoverGraph &graph, const SyncCoverExpandedProgram &expansion,
+    std::size_t mechanismCount,
+    const std::vector<SyncCoverCompletionSupply> &supplies,
+    const std::vector<SyncCoverMechanismPair> &pairs,
     const std::vector<SyncCoverDemandId> &activeDemands);
 
 } // namespace pto

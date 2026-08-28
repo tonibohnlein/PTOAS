@@ -29,6 +29,28 @@ namespace {
 
 constexpr std::int64_t kHardwareEventIdCount = 8;
 
+bool configurePatternMode(StringRef mode,
+                          pto::CanonicalSyncPatternOptions &options) {
+  if (mode == "direct") {
+    options.enablePipelineScope = false;
+    options.enableRoundTrip = false;
+    options.enableDirectPairs = false;
+    options.enableSpecializedOwnership = false;
+    return true;
+  }
+  if (mode == "direct-pair") {
+    options.enablePipelineScope = false;
+    options.enableRoundTrip = true;
+    options.enableDirectPairs = true;
+    options.enableSpecializedOwnership = false;
+    return true;
+  }
+  if (mode == "direct-pair-ownership") {
+    return true;
+  }
+  return false;
+}
+
 bool isKernelDispatchWrapper(func::FuncOp function) {
   const bool isEntry = function->hasAttr("pto.entry");
   const bool hasSingleBlock = function.getBody().hasOneBlock();
@@ -82,6 +104,12 @@ struct PTOCanonicalSyncPass
     }
     pto::CanonicalSyncBuildOptions options;
     options.eventIdBudget = static_cast<unsigned>(eventIdNumMax);
+    if (!configurePatternMode(patternMode, options.patterns)) {
+      function.emitError() << "pattern-mode must be direct, direct-pair, or "
+                              "direct-pair-ownership";
+      signalPassFailure();
+      return;
+    }
     options.analysis.gmAliasPolicy =
         assumeAllGmAccessesNoAlias
             ? pto::CanonicalSyncGmAliasPolicy::AllAccessesNoAlias

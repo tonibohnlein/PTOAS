@@ -30,6 +30,9 @@ namespace pto {
 struct CanonicalSyncPatternOptions {
   bool enablePipelineScope = true;
   bool enableRoundTrip = true;
+  bool enableDirectPairs = true;
+  bool enableScarcityFrontiers = true;
+  bool enableSpecializedOwnership = true;
 };
 
 struct CanonicalSyncBuildOptions {

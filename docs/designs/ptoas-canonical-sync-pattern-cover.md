@@ -20,10 +20,14 @@ completion edges. A demand states that a source operation must complete before a
 target operation may issue. Demands include SSA dependencies and physical-memory
 RAW, WAR, and WAW hazards.
 
-Loops remain structured. A distance-`d` recurrence is checked over `d + 1`
-virtual iterations, which is sufficient to represent the finite periodic
-dependence without unrolling a runtime trip count. Mutually exclusive control
-paths and loop-local guards remain explicit in the graph.
+The graph owns an explicit scope tree. A zero-distance demand belongs to the
+lowest scope containing both endpoints, while a recurrence belongs to its loop.
+Loops remain structured: a distance-`d` recurrence is checked in that loop's
+`d + 1`-copy arena, which is sufficient to represent the finite periodic
+dependence without unrolling a runtime trip count. Descendant operations remain
+visible in an enclosing arena, while nested recurrences retain their own arena;
+the implementation does not form a Cartesian product of nested trip counts.
+Mutually exclusive control paths and loop-local guards remain explicit.
 
 Issue order is not automatically completion order. The graph distinguishes:
 
@@ -41,7 +45,9 @@ only when the target capability records suitable evidence.
 A mechanism is an independently selectable and materializable unit:
 
 - one complete event handshake;
-- one barrier;
+- one targeted same-pipe barrier;
+- one generic loop-carried event channel with its lane-indexed prime, body, and
+  drain;
 - one verified ownership or slot-lifecycle protocol.
 
 Each mechanism owns its completion edges, physical actions, resource lifetimes,
@@ -62,16 +68,38 @@ member set is then present.
 
 The production catalog is deliberately finite:
 
-- singleton events and barriers;
+- singleton events and targeted barriers;
+- direct pairs whose exact joint coverage is larger than the union of their
+  singleton coverage;
+- generic recurrence events for every distance that fits the event-ID budget;
 - recurrence round trips;
 - verified ownership protocols;
 - verified slot-lifecycle protocols;
-- bounded pipeline-scope aggregates.
+- bounded pipeline-scope aggregates;
+- targeted-barrier event frontiers used only under event-ID scarcity;
+- localized `PIPE_ALL` rescue mechanisms.
+
+Candidate construction is bottom-up over the scope tree, but selection is not.
+An inner mechanism remains selectable globally and its coverage is evaluated
+against every active demand, including demands owned by an ancestor scope. All
+singleton mechanisms are propagated together for each demand. Likewise, every
+bounded two-mechanism proposal is propagated together in the demand's owning
+base or recurrence arena. This extends inner coverage outward without one graph
+walk per mechanism or pair.
 
 CanonicalSync does not enumerate arbitrary mechanism subsets, run pricing, or
-maintain a second exact solver. Every supported demand retains a safe singleton
-event or barrier fallback, so a missing optimization pattern affects plan quality
-rather than correctness.
+maintain a second exact solver. Direct-pair proposals are restricted to related
+scope ancestries and bounded before exact joint coverage is computed. If that
+bound is exceeded, the whole optional pair family is skipped rather than taking
+an order-dependent prefix. Every supported demand retains a safe precise event,
+targeted barrier, or final rescue, so a missing optimization pattern affects
+plan quality rather than correctness.
+
+For a release-style distance-`d` recurrence, one verified mechanism owns `d`
+physical IDs, one scope-entry prime and scope-exit drain per lane, and body
+set/wait actions selecting `iterationOrdinal % d`. A forward-ordered recurrence
+uses the stronger legal same-iteration event when available. Guarded recurrence
+channels remain fail-closed until a complete path-balanced recipe is available.
 
 ## 3. Selection And Event IDs
 
@@ -80,6 +108,21 @@ best exact, integer-computed marginal cost density. The marginal cost contains
 only newly introduced mechanisms, while the gain includes every pattern
 activated by the resulting selected set. A reverse-deletion pass then removes
 mechanisms whose removal preserves claimed coverage and resource feasibility.
+
+Selection runs in three ordered tiers. Precise events, recurrence channels,
+verified protocols, and targeted same-pipe barriers are considered first. A
+targeted barrier is a precise local completion mechanism, not a broad rescue.
+If ordinary greedy selection reaches an event-ID dead end, the same precise
+catalog is retried with exact interval pressure and event-lifetime span as
+deterministic tie breakers. Only then are targeted-barrier event frontiers
+enabled. `PIPE_ALL` is enabled only in the final retry and is
+reported with a diagnostic. Once a retry enables a fallback family, every
+enabled candidate other than `PIPE_ALL` competes by the same marginal-density
+objective. This lets a frontier avoid a greedy event-ID dead end rather than
+arriving only after the scarce ID was already consumed. In the final retry,
+`PIPE_ALL` ranks after every precise or scarcity candidate and is considered
+only when those candidates cannot advance the anchored demand under the current
+resource assignment.
 
 No semantic graph traversal occurs during greedy selection. Selection reads the
 precomputed pattern coverage and resource intervals.
@@ -90,10 +133,11 @@ width, and the hardware budget. A candidate that cannot be colored is not a
 feasible selection. The final assignment is recomputed authoritatively after
 selection.
 
-The structural objective is loop-aware. Barriers are ranked before event actions
-at each loop depth because a body barrier drains a pipe and can serialize more
-work than a targeted event handshake. Broad `PIPE_ALL` barriers are weighted by
-the resources they drain.
+The structural objective is loop-aware and calibration-free. A targeted
+same-pipe barrier is counted as one precise synchronization action, while an
+event handshake contributes its set and wait actions. Actions in deeper loops
+are compared first using exact integer ratios. Broad `PIPE_ALL` barriers are
+both isolated in the rescue tier and weighted by the resources they drain.
 
 ## 4. Finalization And Materialization
 
@@ -156,7 +200,8 @@ is a target-semantics distinction, not a solver or pattern-generation failure.
 ## 7. Future Extensions
 
 The graph and mechanism model intentionally leave room for evidence-gated merged
-events, improved event-scarcity substitutions, and richer target capabilities.
+events, more selective pair discovery, guard-complete recurrence channels, and
+richer target capabilities.
 Longer term, the same completion requirements and structural cost model can
 participate in memory-placement and out-of-order scheduling optimization. Those
 extensions may change addresses or issue order and then rebuild the bounded

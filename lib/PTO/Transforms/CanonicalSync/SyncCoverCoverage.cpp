@@ -29,6 +29,8 @@ constexpr std::size_t kBitsPerWord = 64;
 constexpr std::size_t kMaximumSingletonWorkspaceWords = 1U << 24;
 constexpr std::size_t kMaximumSingletonResultWords = 1U << 24;
 constexpr std::size_t kMaximumSingletonRows = 1U << 20;
+constexpr std::size_t kMaximumPairWorkspaceWords = 1U << 24;
+constexpr std::size_t kMaximumPairResultWords = 1U << 24;
 
 struct IndexedSupply {
   SyncCoverNodeId source = 0;
@@ -275,6 +277,27 @@ std::vector<SyncCoverDemandId> allDemandIds(const SyncCoverGraph &graph) {
   return result;
 }
 
+std::vector<SyncCoverDemandId>
+hierarchicalDemandOrder(const SyncCoverGraph &graph,
+                        const std::vector<SyncCoverDemandId> &demands) {
+  std::vector<std::size_t> depths(graph.getScopes().size(), 0);
+  for (SyncCoverScopeId scope = 1; scope < graph.getScopes().size(); ++scope) {
+    SyncCoverScopeId current = scope;
+    while (current != 0) {
+      ++depths[scope];
+      current = graph.getScopes()[current].parent;
+    }
+  }
+  std::vector<SyncCoverDemandId> result = demands;
+  std::stable_sort(result.begin(), result.end(), [&](auto first, auto second) {
+    const SyncCoverScopeId firstScope = graph.getDemands()[first].scope;
+    const SyncCoverScopeId secondScope = graph.getDemands()[second].scope;
+    return std::make_pair(depths[firstScope], first) >
+           std::make_pair(depths[secondScope], second);
+  });
+  return result;
+}
+
 bool demandIdsValid(const SyncCoverGraph &graph,
                     const std::vector<SyncCoverDemandId> &demands) {
   return std::is_sorted(demands.begin(), demands.end()) &&
@@ -366,6 +389,74 @@ public:
     return reachable_.data() + node * wordsPerNode_;
   }
   std::size_t wordCount() const { return wordsPerNode_; }
+
+private:
+  void enqueue(std::size_t node) {
+    if (queued_[node] == 0) {
+      queued_[node] = 1;
+      ready_.push_back(node);
+    }
+  }
+
+  std::size_t wordsPerNode_ = 0;
+  std::vector<std::uint64_t> reachable_;
+  std::vector<std::uint8_t> queued_;
+  std::deque<std::size_t> ready_;
+};
+
+class PairWorkspace {
+public:
+  PairWorkspace(std::size_t virtualNodes, std::size_t pairs)
+      : wordsPerNode_(pairs / kBitsPerWord +
+                      (pairs % kBitsPerWord != 0 ? 1 : 0)),
+        reachable_(virtualNodes * wordsPerNode_, 0), queued_(virtualNodes, 0) {}
+
+  bool add(std::size_t node, std::size_t pair) {
+    const std::size_t word = pair / kBitsPerWord;
+    const std::uint64_t bit = std::uint64_t{1} << (pair % kBitsPerWord);
+    std::uint64_t &value = reachable_[node * wordsPerNode_ + word];
+    const bool alreadyReachable = (value & bit) != 0;
+    if (alreadyReachable) {
+      return false;
+    }
+    value |= bit;
+    enqueue(node);
+    return true;
+  }
+
+  bool contains(std::size_t node, std::size_t pair) const {
+    const std::size_t word = pair / kBitsPerWord;
+    const std::uint64_t bit = std::uint64_t{1} << (pair % kBitsPerWord);
+    return (reachable_[node * wordsPerNode_ + word] & bit) != 0;
+  }
+
+  void unite(std::size_t source, std::size_t target) {
+    bool changed = false;
+    for (std::size_t word = 0; word < wordsPerNode_; ++word) {
+      std::uint64_t &targetWord = reachable_[target * wordsPerNode_ + word];
+      const std::uint64_t combined =
+          targetWord | reachable_[source * wordsPerNode_ + word];
+      changed |= combined != targetWord;
+      targetWord = combined;
+    }
+    if (changed) {
+      enqueue(target);
+    }
+  }
+
+  std::optional<std::size_t> pop() {
+    if (ready_.empty()) {
+      return std::nullopt;
+    }
+    const std::size_t node = ready_.front();
+    ready_.pop_front();
+    queued_[node] = 0;
+    return node;
+  }
+
+  const std::uint64_t *words(std::size_t node) const {
+    return reachable_.data() + node * wordsPerNode_;
+  }
 
 private:
   void enqueue(std::size_t node) {
@@ -622,7 +713,8 @@ SyncCoverCoverageResult mlir::pto::computeSyncCoverCoverage(
 
   const SupplyIndex supplyIndex = buildSupplyIndex(graph, supplies);
   std::map<const SyncCoverExpandedArena *, CoverageWorkspace> workspaces;
-  for (SyncCoverDemandId demandId : activeDemands) {
+  for (SyncCoverDemandId demandId :
+       hierarchicalDemandOrder(graph, activeDemands)) {
     const SyncCoverDemand &demand = graph.getDemands()[demandId];
     const SyncCoverExpandedArena *arena = expansion.getArena(demand);
     if (!arena) {
@@ -694,7 +786,8 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
   }
   const SupplyIndex supplyIndex = buildSupplyIndex(graph, supplies);
 
-  for (SyncCoverDemandId demandId : activeDemands) {
+  for (SyncCoverDemandId demandId :
+       hierarchicalDemandOrder(graph, activeDemands)) {
     const SyncCoverDemand &demand = graph.getDemands()[demandId];
     const SyncCoverExpandedArena *arena = expansion.getArena(demand);
     if (!arena) {
@@ -807,6 +900,175 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
            (std::uint64_t{1} << (local % kBitsPerWord))) != 0) {
         result.mechanisms[candidates[local]].insert(demandId);
       }
+    }
+  }
+  if (!result.unavailableDemands.empty()) {
+    result.error = SyncCoverCoverageError::ExpansionUnavailable;
+  }
+  return result;
+}
+
+SyncCoverPairCoverageResult mlir::pto::computeSyncCoverPairCoverage(
+    const SyncCoverGraph &graph, const SyncCoverExpandedProgram &expansion,
+    std::size_t mechanismCount,
+    const std::vector<SyncCoverCompletionSupply> &inputSupplies,
+    const std::vector<SyncCoverMechanismPair> &pairs,
+    const std::vector<SyncCoverDemandId> &activeDemands) {
+  SyncCoverPairCoverageResult result;
+  const bool invalidInputs =
+      !coverageInputsValid(graph, expansion) ||
+      !demandIdsValid(graph, activeDemands) ||
+      std::any_of(pairs.begin(), pairs.end(), [&](const auto &pair) {
+        return pair.first >= pair.second || pair.second >= mechanismCount;
+      });
+  if (invalidInputs) {
+    result.error = SyncCoverCoverageError::InvalidGraph;
+    return result;
+  }
+  const std::size_t demandWords =
+      graph.getDemands().size() / kBitsPerWord +
+      (graph.getDemands().size() % kBitsPerWord != 0 ? 1 : 0);
+  const bool resultLimitExceeded =
+      demandWords != 0 && pairs.size() > kMaximumPairResultWords / demandWords;
+  if (resultLimitExceeded) {
+    result.error = SyncCoverCoverageError::LimitExceeded;
+    return result;
+  }
+  result.pairs.assign(pairs.size(),
+                      SyncCoverDemandSet(graph.getDemands().size()));
+  const bool baseExpansionUnavailable =
+      expansion.getError() == SyncCoverExpansionError::BaseLimitExceeded;
+  if (baseExpansionUnavailable) {
+    result.error = SyncCoverCoverageError::ExpansionUnavailable;
+    result.unavailableDemands = activeDemands;
+    return result;
+  }
+
+  std::vector<SyncCoverCompletionSupply> supplies = inputSupplies;
+  if (!canonicalizeSupplies(graph, supplies, mechanismCount)) {
+    result.error = SyncCoverCoverageError::InvalidSupply;
+    return result;
+  }
+  const SupplyIndex supplyIndex = buildSupplyIndex(graph, supplies);
+  std::vector<std::vector<std::size_t>> pairsByMechanism(mechanismCount);
+  for (std::size_t pair = 0; pair < pairs.size(); ++pair) {
+    pairsByMechanism[pairs[pair].first].push_back(pair);
+    pairsByMechanism[pairs[pair].second].push_back(pair);
+  }
+
+  constexpr std::size_t kAbsent = std::numeric_limits<std::size_t>::max();
+  std::vector<std::size_t> globalToLocal(pairs.size(), kAbsent);
+  for (SyncCoverDemandId demandId :
+       hierarchicalDemandOrder(graph, activeDemands)) {
+    const SyncCoverDemand &demand = graph.getDemands()[demandId];
+    const SyncCoverExpandedArena *arena = expansion.getArena(demand);
+    if (!arena) {
+      result.unavailableDemands.push_back(demandId);
+      continue;
+    }
+    const DemandContext context = makeDemandContext(graph, demand);
+    const std::optional<std::size_t> goal =
+        arena->getVirtualOperation(demand.target, demand.distance);
+    if (!context.valid || !goal) {
+      result.error = SyncCoverCoverageError::InvalidGraph;
+      return result;
+    }
+    const SingletonSeedCollection seeds = collectSingletonSeeds(
+        graph, demand, demandId, context, *arena, supplyIndex, supplies);
+    if (seeds.baselineCovers) {
+      continue;
+    }
+
+    std::vector<std::size_t> candidates;
+    for (const SingletonSeed &seed : seeds.seeds) {
+      const auto &memberPairs = pairsByMechanism[seed.mechanism];
+      candidates.insert(candidates.end(), memberPairs.begin(),
+                        memberPairs.end());
+    }
+    std::sort(candidates.begin(), candidates.end());
+    candidates.erase(std::unique(candidates.begin(), candidates.end()),
+                     candidates.end());
+    if (candidates.empty()) {
+      continue;
+    }
+    const std::size_t wordsPerNode =
+        candidates.size() / kBitsPerWord +
+        (candidates.size() % kBitsPerWord != 0 ? 1 : 0);
+    if (wordsPerNode > kMaximumPairWorkspaceWords ||
+        arena->getVirtualNodeCount() >
+            kMaximumPairWorkspaceWords / wordsPerNode) {
+      result.unavailableDemands.push_back(demandId);
+      continue;
+    }
+    for (std::size_t local = 0; local < candidates.size(); ++local) {
+      globalToLocal[candidates[local]] = local;
+    }
+
+    PairWorkspace workspace(arena->getVirtualNodeCount(), candidates.size());
+    for (const SingletonSeed &seed : seeds.seeds) {
+      for (std::size_t pair : pairsByMechanism[seed.mechanism]) {
+        const std::size_t local = globalToLocal[pair];
+        if (local != kAbsent) {
+          workspace.add(seed.target, local);
+        }
+      }
+    }
+    while (const std::optional<std::size_t> node = workspace.pop()) {
+      for (const SyncCoverExpandedEdge &edge : arena->getOutgoingEdges(*node)) {
+        const bool active =
+            edge.targetCopy <= demand.distance &&
+            virtualNodeAvailable(graph, demand, context, *arena, edge.source,
+                                 edge.sourceCopy) &&
+            virtualNodeAvailable(graph, demand, context, *arena, edge.target,
+                                 edge.targetCopy) &&
+            (!edge.graphEdge ||
+             edgeGuardsActive(graph, demand, context,
+                              graph.getEdges()[*edge.graphEdge],
+                              edge.sourceCopy, edge.targetCopy));
+        if (active) {
+          workspace.unite(*node, edge.target);
+        }
+      }
+
+      const std::optional<SyncCoverNodeId> operation =
+          arena->getOperationForVirtualNode(*node);
+      const std::optional<unsigned> copy = arena->getCopyForVirtualNode(*node);
+      if (!operation || !copy) {
+        continue;
+      }
+      visitSupplyOutgoing(
+          supplyIndex, *operation, [&](const IndexedSupply &indexed) {
+            const SyncCoverCompletionSupply &description =
+                supplies[indexed.supply];
+            const bool constrained = !description.allowedDemands.empty();
+            const bool demandAllowed =
+                !constrained ||
+                std::binary_search(description.allowedDemands.begin(),
+                                   description.allowedDemands.end(), demandId);
+            if (!demandAllowed) {
+              return;
+            }
+            std::size_t target = 0;
+            if (!supplyIsActive(graph, demand, context, *arena,
+                                description.edge, *copy, target)) {
+              return;
+            }
+            for (std::size_t pair : pairsByMechanism[indexed.mechanism]) {
+              const std::size_t local = globalToLocal[pair];
+              if (local != kAbsent && workspace.contains(*node, local)) {
+                workspace.add(target, local);
+              }
+            }
+          });
+    }
+
+    const std::uint64_t *goalWords = workspace.words(*goal);
+    for (std::size_t local = 0; local < candidates.size(); ++local) {
+      if ((goalWords[local / kBitsPerWord] &
+           (std::uint64_t{1} << (local % kBitsPerWord))) != 0) {
+        result.pairs[candidates[local]].insert(demandId);
+      }
+      globalToLocal[candidates[local]] = kAbsent;
     }
   }
   if (!result.unavailableDemands.empty()) {

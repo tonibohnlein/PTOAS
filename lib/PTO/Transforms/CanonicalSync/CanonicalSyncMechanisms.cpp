@@ -31,8 +31,13 @@ constexpr unsigned kHardwareEventIdCount = 8;
 using EventDomainKey = std::pair<std::uint32_t, std::uint32_t>;
 
 struct BarrierFallbackGroup {
-  bool broad = false;
   std::vector<SyncCoverDemandId> demands;
+};
+
+struct DirectEventRecord {
+  SyncCoverDemandId demand = 0;
+  CanonicalSyncMechanismId mechanism = 0;
+  CanonicalSyncEventDomainId domain = 0;
 };
 
 struct OwnershipMechanismRecord {
@@ -129,14 +134,45 @@ std::size_t availableEventIds(const CanonicalSyncEventDomain &domain) {
   return domain.budget - std::min<std::size_t>(domain.budget, reserved);
 }
 
-bool canUseDirectEvent(const SyncCoverGraph &graph,
-                       const SyncCoverDemand &demand) {
+bool canUseDistanceZeroEvent(const SyncCoverGraph &graph,
+                             const SyncCoverDemand &demand) {
   const SyncCoverNode &source = graph.getNodes()[demand.source];
   const SyncCoverNode &target = graph.getNodes()[demand.target];
   const SyncCoverEdge edge = getDemandEdge(demand);
   return demand.distance == 0 && source.resource != target.resource &&
          syncCoverNodeCanProduceCompletion(graph, source.id, target.resource) &&
          syncCoverEndpointsCoExecute(graph, edge);
+}
+
+bool canUseRecurrenceEvent(const SyncCoverGraph &graph,
+                           const SyncCoverDemand &demand) {
+  const bool invalid = demand.distance == 0 ||
+                       demand.scope >= graph.getScopes().size() ||
+                       !graph.getScopes()[demand.scope].isLoop ||
+                       !graph.getScopes()[demand.scope].timeline ||
+                       !demand.sourceGuard.literals.empty() ||
+                       !demand.targetGuard.literals.empty();
+  if (invalid) {
+    return false;
+  }
+  const SyncCoverNode &source = graph.getNodes()[demand.source];
+  const SyncCoverNode &target = graph.getNodes()[demand.target];
+  return source.resource != target.resource &&
+         graph.scopeMustExecuteWithin(demand.scope, source.scope) &&
+         graph.scopeMustExecuteWithin(demand.scope, target.scope) &&
+         syncCoverNodeCanProduceCompletion(graph, source.id, target.resource);
+}
+
+bool isReleaseStyleRecurrence(const SyncCoverGraph &graph,
+                              const SyncCoverDemand &demand) {
+  return graph.getNodes()[demand.target].order <
+         graph.getNodes()[demand.source].order;
+}
+
+bool canUsePreciseEvent(const SyncCoverGraph &graph,
+                        const SyncCoverDemand &demand) {
+  return canUseDistanceZeroEvent(graph, demand) ||
+         canUseRecurrenceEvent(graph, demand);
 }
 
 CanonicalSyncMechanismDescriptor
@@ -169,6 +205,193 @@ makeDirectEvent(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
 }
 
 CanonicalSyncMechanismDescriptor
+makeRecurrenceEvent(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
+                    CanonicalSyncEventDomainId domain) {
+  const SyncCoverNode &source = graph.getNodes()[demand.source];
+  const SyncCoverNode &target = graph.getNodes()[demand.target];
+  if (!isReleaseStyleRecurrence(graph, demand)) {
+    CanonicalSyncMechanismDescriptor descriptor;
+    descriptor.kind = CanonicalSyncMechanismKind::Event;
+    descriptor.eventUses.push_back({domain, 1, std::nullopt});
+    descriptor.actions.push_back(
+        {CanonicalSyncActionKind::EventSet,
+         source.resource,
+         {SyncCoverAnchorKind::AfterNode, source.id, 0, 0},
+         0,
+         0,
+         {}});
+    descriptor.actions.push_back(
+        {CanonicalSyncActionKind::EventWait,
+         target.resource,
+         {SyncCoverAnchorKind::BeforeNode, target.id, 0, 0},
+         0,
+         0,
+         {}});
+    SyncCoverEdge edge = getDemandEdge(demand);
+    edge.distance = 0;
+    edge.scope = *graph.getLowestCommonScope(source.scope, target.scope);
+    CanonicalSyncSupplyBinding binding;
+    binding.edge = std::move(edge);
+    binding.eventUse = 0;
+    descriptor.supplies.push_back(std::move(binding));
+    return descriptor;
+  }
+
+  const std::size_t width = demand.distance;
+  CanonicalSyncMechanismDescriptor descriptor;
+  descriptor.kind = CanonicalSyncMechanismKind::Protocol;
+  descriptor.eventUses.push_back({domain, width, demand.scope});
+  for (std::size_t lane = 0; lane < width; ++lane) {
+    descriptor.actions.push_back(
+        {CanonicalSyncActionKind::EventSet,
+         source.resource,
+         {SyncCoverAnchorKind::ScopeEntry, 0, demand.scope},
+         0,
+         lane,
+         {}});
+  }
+  const std::size_t consumeAction = descriptor.actions.size();
+  CanonicalSyncAction bodyWait{CanonicalSyncActionKind::EventWait,
+                               target.resource,
+                               {SyncCoverAnchorKind::BeforeNode, target.id, 0},
+                               0,
+                               0,
+                               {}};
+  if (width > 1) {
+    bodyWait.eventLaneKind = CanonicalSyncEventLaneKind::LoopIterationModulo;
+    bodyWait.eventLaneScope = demand.scope;
+  }
+  descriptor.actions.push_back(std::move(bodyWait));
+  const std::size_t produceAction = descriptor.actions.size();
+  CanonicalSyncAction bodySet{CanonicalSyncActionKind::EventSet,
+                              source.resource,
+                              {SyncCoverAnchorKind::AfterNode, source.id, 0},
+                              0,
+                              0,
+                              {}};
+  if (width > 1) {
+    bodySet.eventLaneKind = CanonicalSyncEventLaneKind::LoopIterationModulo;
+    bodySet.eventLaneScope = demand.scope;
+  }
+  descriptor.actions.push_back(std::move(bodySet));
+  for (std::size_t lane = 0; lane < width; ++lane) {
+    descriptor.actions.push_back(
+        {CanonicalSyncActionKind::EventWait,
+         target.resource,
+         {SyncCoverAnchorKind::ScopeExit, 0, demand.scope},
+         0,
+         lane,
+         {}});
+  }
+  CanonicalSyncSupplyBinding binding;
+  binding.edge = getDemandEdge(demand);
+  binding.eventUse = 0;
+  binding.produceAction = produceAction;
+  binding.consumeAction = consumeAction;
+  binding.proof = CanonicalSyncSupplyProof::VerifiedProtocol;
+  descriptor.supplies.push_back(std::move(binding));
+  return descriptor;
+}
+
+bool verifyRecurrenceEvent(const SyncCoverGraph &graph,
+                           const SyncCoverDemand &demand,
+                           CanonicalSyncEventDomainId domain,
+                           const CanonicalSyncMechanismDescriptor &descriptor) {
+  const bool releaseStyle = isReleaseStyleRecurrence(graph, demand);
+  const bool invalid =
+      !canUseRecurrenceEvent(graph, demand) ||
+      descriptor.kind != (releaseStyle ? CanonicalSyncMechanismKind::Protocol
+                                       : CanonicalSyncMechanismKind::Event) ||
+      descriptor.selectionTier != CanonicalSyncSelectionTier::Precise ||
+      descriptor.eventUses.size() != 1 || descriptor.supplies.size() != 1;
+  if (invalid) {
+    return false;
+  }
+  const SyncCoverNode &source = graph.getNodes()[demand.source];
+  const SyncCoverNode &target = graph.getNodes()[demand.target];
+  const CanonicalSyncEventUse &use = descriptor.eventUses.front();
+  const CanonicalSyncSupplyBinding &binding = descriptor.supplies.front();
+  const auto actionMatches =
+      [](const CanonicalSyncAction &action, CanonicalSyncActionKind kind,
+         std::uint32_t resource, SyncCoverAnchorKind anchorKind,
+         SyncCoverNodeId node, SyncCoverScopeId scope, std::size_t lane,
+         CanonicalSyncEventLaneKind laneKind,
+         std::optional<SyncCoverScopeId> laneScope) {
+        return action.kind == kind && action.resource == resource &&
+               action.anchor.kind == anchorKind && action.anchor.node == node &&
+               action.anchor.scope == scope && action.eventUse == 0 &&
+               action.eventLane == lane && action.drainedResources.empty() &&
+               action.guard == CanonicalSyncActionGuardKind::None &&
+               !action.guardScope && action.eventLaneKind == laneKind &&
+               action.eventLaneScope == laneScope;
+      };
+  if (!releaseStyle) {
+    const std::optional<SyncCoverScopeId> common =
+        graph.getLowestCommonScope(source.scope, target.scope);
+    return common && descriptor.actions.size() == 2 && use.domain == domain &&
+           use.width == 1 && !use.recurrenceScope && !use.lifetimeScope &&
+           binding.edge.source == demand.source &&
+           binding.edge.target == demand.target &&
+           binding.edge.scope == *common && binding.edge.distance == 0 &&
+           binding.eventUse == 0 && !binding.barrierAction &&
+           !binding.produceAction && !binding.consumeAction &&
+           binding.proof == CanonicalSyncSupplyProof::DirectAction &&
+           actionMatches(descriptor.actions[0],
+                         CanonicalSyncActionKind::EventSet, source.resource,
+                         SyncCoverAnchorKind::AfterNode, source.id, 0, 0,
+                         CanonicalSyncEventLaneKind::Static, std::nullopt) &&
+           actionMatches(descriptor.actions[1],
+                         CanonicalSyncActionKind::EventWait, target.resource,
+                         SyncCoverAnchorKind::BeforeNode, target.id, 0, 0,
+                         CanonicalSyncEventLaneKind::Static, std::nullopt);
+  }
+
+  const std::size_t width = demand.distance;
+  const std::size_t consumeAction = width;
+  const std::size_t produceAction = width + 1;
+  const bool correctUse = use.domain == domain && use.width == width &&
+                          use.recurrenceScope == demand.scope &&
+                          !use.lifetimeScope;
+  const bool correctSupply =
+      binding.edge.source == demand.source &&
+      binding.edge.target == demand.target &&
+      binding.edge.scope == demand.scope &&
+      binding.edge.distance == demand.distance && binding.eventUse == 0 &&
+      !binding.barrierAction && binding.produceAction == produceAction &&
+      binding.consumeAction == consumeAction &&
+      binding.proof == CanonicalSyncSupplyProof::VerifiedProtocol;
+  if (!correctUse || !correctSupply ||
+      descriptor.actions.size() != width * 2 + 2) {
+    return false;
+  }
+  for (std::size_t lane = 0; lane < width; ++lane) {
+    if (!actionMatches(descriptor.actions[lane],
+                       CanonicalSyncActionKind::EventSet, source.resource,
+                       SyncCoverAnchorKind::ScopeEntry, 0, demand.scope, lane,
+                       CanonicalSyncEventLaneKind::Static, std::nullopt) ||
+        !actionMatches(descriptor.actions[width + 2 + lane],
+                       CanonicalSyncActionKind::EventWait, target.resource,
+                       SyncCoverAnchorKind::ScopeExit, 0, demand.scope, lane,
+                       CanonicalSyncEventLaneKind::Static, std::nullopt)) {
+      return false;
+    }
+  }
+  const CanonicalSyncEventLaneKind bodyLaneKind =
+      width > 1 ? CanonicalSyncEventLaneKind::LoopIterationModulo
+                : CanonicalSyncEventLaneKind::Static;
+  const std::optional<SyncCoverScopeId> bodyLaneScope =
+      width > 1 ? std::optional<SyncCoverScopeId>(demand.scope) : std::nullopt;
+  return actionMatches(descriptor.actions[consumeAction],
+                       CanonicalSyncActionKind::EventWait, target.resource,
+                       SyncCoverAnchorKind::BeforeNode, target.id, 0, 0,
+                       bodyLaneKind, bodyLaneScope) &&
+         actionMatches(descriptor.actions[produceAction],
+                       CanonicalSyncActionKind::EventSet, source.resource,
+                       SyncCoverAnchorKind::AfterNode, source.id, 0, 0,
+                       bodyLaneKind, bodyLaneScope);
+}
+
+CanonicalSyncMechanismDescriptor
 makeBarrier(const SyncCoverGraph &graph,
             const std::vector<std::uint32_t> &allResources,
             ArrayRef<SyncCoverDemandId> demands, bool broad) {
@@ -176,6 +399,8 @@ makeBarrier(const SyncCoverGraph &graph,
   const SyncCoverNode &target = graph.getNodes()[first.target];
   CanonicalSyncMechanismDescriptor descriptor;
   descriptor.kind = CanonicalSyncMechanismKind::Barrier;
+  descriptor.selectionTier = broad ? CanonicalSyncSelectionTier::PipeAllRescue
+                                   : CanonicalSyncSelectionTier::Precise;
   descriptor.actions.push_back(
       {CanonicalSyncActionKind::Barrier,
        target.resource,
@@ -206,7 +431,7 @@ LogicalResult addEventDomains(
        ++demandId) {
     const SyncCoverDemand &demand = graph.getDemands()[demandId];
     const bool needsMechanism = !baseline.contains(demandId);
-    const bool supportsDirectEvent = canUseDirectEvent(graph, demand);
+    const bool supportsDirectEvent = canUsePreciseEvent(graph, demand);
     if (!needsMechanism || !supportsDirectEvent) {
       continue;
     }
@@ -258,13 +483,14 @@ LogicalResult addEventDomains(
 LogicalResult addDirectEvents(
     const CanonicalSyncProgram &program, CanonicalSyncPatternProblem &problem,
     const SyncCoverDemandSet &baseline,
-    const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds) {
+    const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds,
+    std::vector<DirectEventRecord> &directEvents) {
   const SyncCoverGraph &graph = program.getGraph();
   for (SyncCoverDemandId demandId = 0; demandId < graph.getDemands().size();
        ++demandId) {
     const SyncCoverDemand &demand = graph.getDemands()[demandId];
     const bool needsMechanism = !baseline.contains(demandId);
-    const bool supportsDirectEvent = canUseDirectEvent(graph, demand);
+    const bool supportsDirectEvent = canUsePreciseEvent(graph, demand);
     if (!needsMechanism || !supportsDirectEvent) {
       continue;
     }
@@ -274,14 +500,43 @@ LogicalResult addDirectEvents(
     if (domain == domainIds.end()) {
       continue;
     }
-    const CanonicalSyncProblemResult added =
-        problem.internMechanism(makeDirectEvent(graph, demand, domain->second));
+    CanonicalSyncProblemResult added;
+    if (demand.distance == 0) {
+      added = problem.internMechanism(
+          makeDirectEvent(graph, demand, domain->second));
+    } else {
+      const CanonicalSyncEventDomain &eventDomain =
+          problem.getDomains()[domain->second];
+      const bool releaseStyle = isReleaseStyleRecurrence(graph, demand);
+      if (releaseStyle && demand.distance > availableEventIds(eventDomain)) {
+        continue;
+      }
+      CanonicalSyncMechanismDescriptor descriptor =
+          makeRecurrenceEvent(graph, demand, domain->second);
+      if (descriptor.kind == CanonicalSyncMechanismKind::Protocol) {
+        added = problem.internVerifiedProtocol(
+            std::move(descriptor),
+            [&](const CanonicalSyncMechanismDescriptor &actual) {
+              return verifyRecurrenceEvent(graph, demand, domain->second,
+                                           actual);
+            });
+      } else if (verifyRecurrenceEvent(graph, demand, domain->second,
+                                       descriptor)) {
+        added = problem.internMechanism(std::move(descriptor));
+      } else {
+        return program.getFunction().emitError(
+            "cannot verify canonical sync forward recurrence event");
+      }
+    }
     if (added.error == CanonicalSyncProblemError::LimitExceeded) {
       return success();
     }
-    if (!added) {
+    if (!added || !added.index) {
       return program.getFunction().emitError(
           "cannot add canonical sync direct event");
+    }
+    if (demand.distance == 0) {
+      directEvents.push_back({demandId, *added.index, domain->second});
     }
   }
   return success();
@@ -614,8 +869,8 @@ LogicalResult addOwnershipCycles(
                   alternatingRelease->second, candidate);
             });
     if (hierarchicalStable && hierarchicalStable.index) {
-      const CanonicalSyncProblemResult conflict = problem.addConflict(
-          stable.mechanism, *hierarchicalStable.index);
+      const CanonicalSyncProblemResult conflict =
+          problem.addConflict(stable.mechanism, *hierarchicalStable.index);
       if (!conflict) {
         return program.getFunction().emitError(
             "cannot register canonical sync stable hierarchical conflict");
@@ -666,7 +921,8 @@ LogicalResult addBarrierFallbacks(const CanonicalSyncProgram &program,
                                   const SyncCoverDemandSet &baseline) {
   const SyncCoverGraph &graph = program.getGraph();
   const std::vector<std::uint32_t> allResources = getIssueResources(graph);
-  std::map<SyncCoverNodeId, BarrierFallbackGroup> groups;
+  std::map<SyncCoverNodeId, BarrierFallbackGroup> targetedGroups;
+  std::map<SyncCoverNodeId, BarrierFallbackGroup> rescueGroups;
   for (SyncCoverDemandId demandId = 0; demandId < graph.getDemands().size();
        ++demandId) {
     const SyncCoverDemand &demand = graph.getDemands()[demandId];
@@ -675,20 +931,205 @@ LogicalResult addBarrierFallbacks(const CanonicalSyncProgram &program,
     }
     const SyncCoverNode &source = graph.getNodes()[demand.source];
     const SyncCoverNode &target = graph.getNodes()[demand.target];
-    BarrierFallbackGroup &group = groups[target.id];
-    group.broad = group.broad || source.resource != target.resource;
+    BarrierFallbackGroup &group = source.resource == target.resource
+                                      ? targetedGroups[target.id]
+                                      : rescueGroups[target.id];
     group.demands.push_back(demandId);
   }
-  for (const auto &[target, group] : groups) {
-    (void)target;
-    const bool hasDemands = !group.demands.empty();
-    const bool added =
-        hasDemands && problem.internMechanism(makeBarrier(
-                          graph, allResources, group.demands, group.broad));
-    if (!added) {
-      return program.getFunction().emitError(
-          "cannot add canonical sync barrier fallback");
+  const auto addGroups = [&](const auto &groups, bool broad) -> LogicalResult {
+    for (const auto &[target, group] : groups) {
+      (void)target;
+      const bool hasDemands = !group.demands.empty();
+      const bool added =
+          hasDemands && problem.internMechanism(makeBarrier(
+                            graph, allResources, group.demands, broad));
+      if (!added) {
+        return failure();
+      }
     }
+    return success();
+  };
+  const bool failedGroups = failed(addGroups(targetedGroups, false)) ||
+                            failed(addGroups(rescueGroups, true));
+  if (failedGroups) {
+    return program.getFunction().emitError(
+        "cannot add canonical sync barrier fallback");
+  }
+  return success();
+}
+
+CanonicalSyncMechanismDescriptor
+makeScarcityBarrier(const SyncCoverGraph &graph, const SyncCoverEdge &edge) {
+  CanonicalSyncMechanismDescriptor descriptor;
+  descriptor.kind = CanonicalSyncMechanismKind::Barrier;
+  descriptor.selectionTier = CanonicalSyncSelectionTier::ScarcityFrontier;
+  const SyncCoverNode &target = graph.getNodes()[edge.target];
+  descriptor.actions.push_back(
+      {CanonicalSyncActionKind::Barrier,
+       target.resource,
+       {SyncCoverAnchorKind::BeforeNode, target.id, 0, 0},
+       std::nullopt,
+       0,
+       {target.resource},
+       CanonicalSyncBarrierKind::Targeted});
+  CanonicalSyncSupplyBinding supply;
+  supply.edge = edge;
+  supply.barrierAction = 0;
+  descriptor.supplies.push_back(std::move(supply));
+  return descriptor;
+}
+
+CanonicalSyncMechanismDescriptor
+makeScarcityEvent(const SyncCoverGraph &graph, const SyncCoverEdge &edge,
+                  CanonicalSyncEventDomainId domain) {
+  const SyncCoverNode &source = graph.getNodes()[edge.source];
+  const SyncCoverNode &target = graph.getNodes()[edge.target];
+  CanonicalSyncMechanismDescriptor descriptor;
+  descriptor.kind = CanonicalSyncMechanismKind::Event;
+  descriptor.selectionTier = CanonicalSyncSelectionTier::ScarcityFrontier;
+  descriptor.eventUses.push_back({domain, 1, std::nullopt});
+  descriptor.actions.push_back(
+      {CanonicalSyncActionKind::EventSet,
+       source.resource,
+       {SyncCoverAnchorKind::AfterNode, source.id, 0, 0},
+       0,
+       0,
+       {}});
+  descriptor.actions.push_back(
+      {CanonicalSyncActionKind::EventWait,
+       target.resource,
+       {SyncCoverAnchorKind::BeforeNode, target.id, 0, 0},
+       0,
+       0,
+       {}});
+  CanonicalSyncSupplyBinding supply;
+  supply.edge = edge;
+  supply.eventUse = 0;
+  descriptor.supplies.push_back(std::move(supply));
+  return descriptor;
+}
+
+struct ScarcityFrontierProposal {
+  SyncCoverEdge barrier;
+  SyncCoverEdge event;
+  CanonicalSyncEventDomainId domain = 0;
+};
+
+bool frontierProposalLess(const ScarcityFrontierProposal &left,
+                          const ScarcityFrontierProposal &right) {
+  return std::tie(left.domain, left.barrier.source, left.barrier.target,
+                  left.event.source, left.event.target) <
+         std::tie(right.domain, right.barrier.source, right.barrier.target,
+                  right.event.source, right.event.target);
+}
+
+bool frontierProposalEqual(const ScarcityFrontierProposal &left,
+                           const ScarcityFrontierProposal &right) {
+  return !frontierProposalLess(left, right) &&
+         !frontierProposalLess(right, left);
+}
+
+LogicalResult
+addScarcityFrontierPatterns(const CanonicalSyncProgram &program,
+                            CanonicalSyncPatternProblem &problem,
+                            ArrayRef<DirectEventRecord> directEvents) {
+  constexpr std::size_t kMaximumFrontierProposals = 4096;
+  const SyncCoverGraph &graph = program.getGraph();
+  std::vector<ScarcityFrontierProposal> proposals;
+  for (std::size_t first = 0; first < directEvents.size(); ++first) {
+    const SyncCoverDemand &firstDemand =
+        graph.getDemands()[directEvents[first].demand];
+    for (std::size_t second = first + 1; second < directEvents.size();
+         ++second) {
+      const SyncCoverDemand &secondDemand =
+          graph.getDemands()[directEvents[second].demand];
+      const bool compatible =
+          directEvents[first].domain == directEvents[second].domain &&
+          firstDemand.scope == secondDemand.scope &&
+          firstDemand.sourceGuard.literals.empty() &&
+          firstDemand.targetGuard.literals.empty() &&
+          secondDemand.sourceGuard.literals.empty() &&
+          secondDemand.targetGuard.literals.empty();
+      if (!compatible) {
+        continue;
+      }
+      const SyncCoverNode &firstSource = graph.getNodes()[firstDemand.source];
+      const SyncCoverNode &secondSource = graph.getNodes()[secondDemand.source];
+      const SyncCoverNode &firstTarget = graph.getNodes()[firstDemand.target];
+      const SyncCoverNode &secondTarget = graph.getNodes()[secondDemand.target];
+      const SyncCoverNode &earlySource =
+          firstSource.order < secondSource.order ? firstSource : secondSource;
+      const SyncCoverNode &lateSource =
+          firstSource.order < secondSource.order ? secondSource : firstSource;
+      const SyncCoverNode &earlyTarget =
+          firstTarget.order < secondTarget.order ? firstTarget : secondTarget;
+      const bool distinctSources = earlySource.id != lateSource.id;
+      const bool forwardFrontier = lateSource.order < earlyTarget.order;
+      if (!distinctSources || !forwardFrontier) {
+        continue;
+      }
+      SyncCoverEdge barrier{earlySource.id,
+                            lateSource.id,
+                            SyncCoverEdgeKind::CompletionSupply,
+                            firstDemand.scope,
+                            0,
+                            {},
+                            {}};
+      SyncCoverEdge event{lateSource.id,
+                          earlyTarget.id,
+                          SyncCoverEdgeKind::CompletionSupply,
+                          firstDemand.scope,
+                          0,
+                          {},
+                          {}};
+      const bool invalidFrontier =
+          !syncCoverEndpointsCoExecute(graph, barrier) ||
+          !syncCoverEndpointsCoExecute(graph, event) ||
+          !syncCoverNodeCanProduceCompletion(graph, lateSource.id,
+                                             earlyTarget.resource);
+      if (invalidFrontier) {
+        continue;
+      }
+      proposals.push_back({barrier, event, directEvents[first].domain});
+    }
+  }
+  llvm::sort(proposals, frontierProposalLess);
+  proposals.erase(
+      std::unique(proposals.begin(), proposals.end(), frontierProposalEqual),
+      proposals.end());
+  const bool proposalLimitExceeded =
+      proposals.size() > kMaximumFrontierProposals;
+  if (proposalLimitExceeded) {
+    problem.markPatternGenerationTruncated();
+    return success();
+  }
+  for (const ScarcityFrontierProposal &proposal : proposals) {
+    const CanonicalSyncProblemResult barrier =
+        problem.internMechanism(makeScarcityBarrier(graph, proposal.barrier));
+    const CanonicalSyncProblemResult event = problem.internMechanism(
+        makeScarcityEvent(graph, proposal.event, proposal.domain));
+    if (!barrier || !event || !barrier.index || !event.index) {
+      return program.getFunction().emitError(
+          "cannot add canonical sync scarcity-frontier mechanisms");
+    }
+    const CanonicalSyncProblemResult pattern = addCanonicalSyncFeasiblePattern(
+        problem, {CanonicalSyncPatternKind::ScarcityFrontier,
+                  {*barrier.index, *event.index}});
+    if (!pattern) {
+      return program.getFunction().emitError(
+          "cannot add canonical sync scarcity-frontier pattern");
+    }
+  }
+  return success();
+}
+
+LogicalResult addDirectPairPatterns(const CanonicalSyncProgram &program,
+                                    CanonicalSyncPatternProblem &problem) {
+  const CanonicalSyncProblemResult pairs =
+      addCanonicalSyncDirectPairPatterns(problem);
+  if (!pairs) {
+    return program.getFunction().emitError(
+        "cannot add canonical sync direct-pair patterns");
   }
   return success();
 }
@@ -715,16 +1156,20 @@ mlir::pto::buildCanonicalSyncSingletonProblem(
         "cannot compute canonical sync fixed coverage");
     return failure();
   }
-  const CanonicalSyncLifecycleResult lifecycles =
-      discoverCanonicalSyncUnitSlotLifecycles(program.getGraph(),
-                                              problem->getDemands());
+  CanonicalSyncLifecycleResult lifecycles;
+  if (options.patterns.enableSpecializedOwnership) {
+    lifecycles = discoverCanonicalSyncUnitSlotLifecycles(program.getGraph(),
+                                                         problem->getDemands());
+  }
   if (!lifecycles) {
     program.getFunction().emitError(
         "cannot discover canonical sync unit-slot lifecycles");
     return failure();
   }
-  const CanonicalSyncOwnershipResult ownership =
-      discoverCanonicalSyncOwnershipCycles(program);
+  CanonicalSyncOwnershipResult ownership;
+  if (options.patterns.enableSpecializedOwnership) {
+    ownership = discoverCanonicalSyncOwnershipCycles(program);
+  }
   if (!ownership) {
     program.getFunction().emitError(
         "cannot discover canonical sync ownership cycles");
@@ -736,16 +1181,24 @@ mlir::pto::buildCanonicalSyncSingletonProblem(
         "limit; conservative event and barrier fallbacks remain available");
   }
   std::map<EventDomainKey, CanonicalSyncEventDomainId> domainIds;
+  std::vector<DirectEventRecord> directEvents;
   const bool failedBuild =
       failed(addBarrierFallbacks(program, *problem, baseline.covered)) ||
       failed(addEventDomains(program, options.eventIdBudget, *problem,
                              baseline.covered, lifecycles, ownership,
                              domainIds)) ||
-      failed(addDirectEvents(program, *problem, baseline.covered, domainIds)) ||
-      failed(addOwnershipCycles(program, *problem, ownership, domainIds,
-                                options.patterns)) ||
-      failed(addUnitSlotLifecycles(program, *problem, lifecycles, domainIds,
-                                   options.patterns));
+      failed(addDirectEvents(program, *problem, baseline.covered, domainIds,
+                             directEvents)) ||
+      (options.patterns.enableDirectPairs &&
+       failed(addDirectPairPatterns(program, *problem))) ||
+      (options.patterns.enableScarcityFrontiers &&
+       failed(addScarcityFrontierPatterns(program, *problem, directEvents))) ||
+      (options.patterns.enableSpecializedOwnership &&
+       failed(addOwnershipCycles(program, *problem, ownership, domainIds,
+                                 options.patterns))) ||
+      (options.patterns.enableSpecializedOwnership &&
+       failed(addUnitSlotLifecycles(program, *problem, lifecycles, domainIds,
+                                    options.patterns)));
   if (failedBuild) {
     return failure();
   }

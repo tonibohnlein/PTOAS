@@ -39,6 +39,8 @@ struct ConcreteAction {
   PipelineType target = PipelineType::PIPE_UNASSIGNED;
   PipelineType barrier = PipelineType::PIPE_UNASSIGNED;
   unsigned eventId = 0;
+  std::vector<unsigned> eventIds;
+  scf::ForOp eventLaneLoop;
   CanonicalSyncActionGuardKind guard = CanonicalSyncActionGuardKind::None;
   scf::ForOp guardLoop;
   bool tailFence = false;
@@ -262,7 +264,24 @@ std::optional<ConcreteAction> makeConcreteAction(
   const CanonicalSyncEventDomain &domain = problem.getDomains()[use.domain];
   result.source = static_cast<PipelineType>(domain.sourceResource);
   result.target = static_cast<PipelineType>(domain.targetResource);
-  result.eventId = allocation->second[action.eventLane];
+  if (action.eventLaneKind == CanonicalSyncEventLaneKind::LoopIterationModulo) {
+    if (!action.eventLaneScope ||
+        *action.eventLaneScope >= program.getScopeBindings().size() ||
+        allocation->second.size() != use.width) {
+      return std::nullopt;
+    }
+    result.eventLaneLoop = dyn_cast_or_null<scf::ForOp>(
+        program.getScopeBindings()[*action.eventLaneScope].owner);
+    if (!result.eventLaneLoop) {
+      return std::nullopt;
+    }
+    result.eventIds = allocation->second;
+  } else {
+    if (action.eventLaneScope) {
+      return std::nullopt;
+    }
+    result.eventId = allocation->second[action.eventLane];
+  }
   return isPhysicalEventPipe(result.source) &&
                  isPhysicalEventPipe(result.target)
              ? std::optional<ConcreteAction>(result)
@@ -360,6 +379,37 @@ void emitPhysicalAction(IRRewriter &rewriter, func::FuncOp function,
   }
   const PipeAttr source = getPipeAttr(rewriter, action.source);
   const PipeAttr target = getPipeAttr(rewriter, action.target);
+  if (action.eventLaneLoop) {
+    const Location location = action.anchor->getLoc();
+    scf::ForOp loop = action.eventLaneLoop;
+    Value offset = rewriter.create<arith::SubIOp>(
+        location, loop.getInductionVar(), loop.getLowerBound());
+    Value ordinal =
+        rewriter.create<arith::DivUIOp>(location, offset, loop.getStep());
+    Value width = rewriter.create<arith::ConstantIndexOp>(
+        location, action.eventIds.size());
+    Value lane = rewriter.create<arith::RemUIOp>(location, ordinal, width);
+    Value selected = rewriter.create<arith::ConstantIndexOp>(
+        location, action.eventIds.front());
+    for (std::size_t index = 1; index < action.eventIds.size(); ++index) {
+      Value candidate =
+          rewriter.create<arith::ConstantIndexOp>(location, index);
+      Value matches = rewriter.create<arith::CmpIOp>(
+          location, arith::CmpIPredicate::eq, lane, candidate);
+      Value event = rewriter.create<arith::ConstantIndexOp>(
+          location, action.eventIds[index]);
+      selected =
+          rewriter.create<arith::SelectOp>(location, matches, event, selected);
+    }
+    Operation *created =
+        action.kind == CanonicalSyncActionKind::EventSet
+            ? rewriter.create<SetFlagDynOp>(location, source, target, selected)
+                  .getOperation()
+            : rewriter.create<WaitFlagDynOp>(location, source, target, selected)
+                  .getOperation();
+    markGenerated(created, rewriter);
+    return;
+  }
   const EventAttr event = getEventAttr(rewriter, action.eventId);
   Operation *created = action.kind == CanonicalSyncActionKind::EventSet
                            ? rewriter
@@ -459,12 +509,53 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
   if (failed(problem)) {
     return failure();
   }
-  const CanonicalSyncSelection selection =
-      selectCanonicalSyncPatterns(**problem, options.selection);
+  const auto canRetry = [](CanonicalSyncSelectionError error) {
+    return error == CanonicalSyncSelectionError::NoCoveringPattern ||
+           error == CanonicalSyncSelectionError::ResourceInfeasible;
+  };
+  CanonicalSyncGreedyOptions selectionOptions = options.selection;
+  selectionOptions.maximumTier = CanonicalSyncSelectionTier::Precise;
+  CanonicalSyncSelection selection =
+      selectCanonicalSyncPatterns(**problem, selectionOptions);
+  const bool retryPreciseForPressure =
+      !selection &&
+      selection.error == CanonicalSyncSelectionError::ResourceInfeasible;
+  if (retryPreciseForPressure) {
+    selectionOptions.preferEventHeadroom = true;
+    selection = selectCanonicalSyncPatterns(**problem, selectionOptions);
+  }
+  const bool retryScarcity = !selection && canRetry(selection.error) &&
+                             options.selection.maximumTier >=
+                                 CanonicalSyncSelectionTier::ScarcityFrontier;
+  if (retryScarcity) {
+    selectionOptions.maximumTier = CanonicalSyncSelectionTier::ScarcityFrontier;
+    selectionOptions.preferEventHeadroom = true;
+    selection = selectCanonicalSyncPatterns(**problem, selectionOptions);
+  }
+  const bool retryPipeAll = !selection && canRetry(selection.error) &&
+                            options.selection.maximumTier >=
+                                CanonicalSyncSelectionTier::PipeAllRescue;
+  if (retryPipeAll) {
+    selectionOptions.maximumTier = CanonicalSyncSelectionTier::PipeAllRescue;
+    selection = selectCanonicalSyncPatterns(**problem, selectionOptions);
+  }
   if (!selection) {
     function.emitError() << "canonical sync selection failed, error="
                          << static_cast<unsigned>(selection.error);
     return failure();
+  }
+  const bool usedPipeAllRescue =
+      std::any_of(selection.mechanisms.begin(), selection.mechanisms.end(),
+                  [&](CanonicalSyncMechanismId mechanism) {
+                    return (**problem)
+                               .getMechanisms()[mechanism]
+                               .descriptor.selectionTier ==
+                           CanonicalSyncSelectionTier::PipeAllRescue;
+                  });
+  if (usedPipeAllRescue) {
+    function.emitRemark(
+        "canonical sync used a localized PIPE_ALL rescue after precise and "
+        "scarcity-frontier selection failed");
   }
   const CanonicalSyncVerifiedPlan plan =
       verifyCanonicalSyncSelection(**problem, selection);

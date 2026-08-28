@@ -1,5 +1,16 @@
 // RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
 // RUN:   --emit-pto-ir %s | FileCheck %s
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-pattern-mode=direct --emit-pto-ir %s \
+// RUN:   | FileCheck %s
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-pattern-mode=direct-pair --emit-pto-ir %s \
+// RUN:   | FileCheck %s
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-pattern-mode=invalid --emit-pto-ir %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=INVALID
+
+// INVALID: pattern-mode must be direct, direct-pair, or direct-pair-ownership
 
 module {
   // CHECK-LABEL: func.func @empty_kernel

@@ -132,6 +132,7 @@ CanonicalSyncMechanismDescriptor barrier(std::uint32_t actionResource,
                                          SyncCoverNodeId target) {
   CanonicalSyncMechanismDescriptor result;
   result.kind = CanonicalSyncMechanismKind::Barrier;
+  result.selectionTier = CanonicalSyncSelectionTier::PipeAllRescue;
   result.actions.push_back(
       {CanonicalSyncActionKind::Barrier, actionResource, before(target),
        std::nullopt, 0, std::move(resources), CanonicalSyncBarrierKind::All});
@@ -392,10 +393,10 @@ bool testRoundTripPatternActivatesJointCoverage() {
                                           passed, "add round early");
   const SyncCoverNodeId late = takeIndex(graph.addNode(1, 1, loop, 1, {}, {2}),
                                          passed, "add round late");
-  const SyncCoverNodeId baselineSource = takeIndex(
-      graph.addNode(3, 1, 0, 2), passed, "add round baseline source");
-  const SyncCoverNodeId baselineTarget = takeIndex(
-      graph.addNode(4, 1, 0, 3), passed, "add round baseline target");
+  const SyncCoverNodeId baselineSource =
+      takeIndex(graph.addNode(3, 1, 0, 2), passed, "add round baseline source");
+  const SyncCoverNodeId baselineTarget =
+      takeIndex(graph.addNode(4, 1, 0, 3), passed, "add round baseline target");
   passed &= check(graph.addDemand(demand(late, late, loop, 1)),
                   "add composed recurrence demand");
   passed &= check(graph.addEdge(supply(baselineSource, baselineTarget)),
@@ -476,6 +477,181 @@ bool testRoundTripPatternActivatesJointCoverage() {
   return passed;
 }
 
+bool testDirectPairDiscoversJointCoverage() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}), passed, "add pair source");
+  const SyncCoverNodeId middle =
+      takeIndex(graph.addNode(2, 1, 0, 1, {}, {3}), passed, "add pair middle");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(3, 1, 0, 2), passed, "add pair target");
+  passed &= check(graph.addDemand(demand(source, target)),
+                  "add pair-composed demand");
+  passed &= check(graph.freezeStructure(), "freeze direct-pair graph");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &=
+      check(problem.addEventDomain({0, 1, 2, 8, {}}), "add first pair domain");
+  passed &=
+      check(problem.addEventDomain({1, 2, 3, 8, {}}), "add second pair domain");
+  const CanonicalSyncMechanismId first =
+      takeIndex(problem.internMechanism(event(0, 1, 2, source, middle)), passed,
+                "add first pair event");
+  const CanonicalSyncMechanismId second =
+      takeIndex(problem.internMechanism(event(1, 2, 3, middle, target)), passed,
+                "add second pair event");
+  const CanonicalSyncProblemResult generated =
+      addCanonicalSyncDirectPairPatterns(problem);
+  passed &= check(generated && generated.index == 1,
+                  "retain one direct pair with extra coverage");
+  passed &= check(problem.freeze(), "freeze direct-pair problem");
+  passed &= check(!problem.getPatterns()[first].coverage.contains(0) &&
+                      !problem.getPatterns()[second].coverage.contains(0) &&
+                      problem.getPatterns().back().kind ==
+                          CanonicalSyncPatternKind::DirectPair &&
+                      problem.getPatterns().back().coverage.contains(0) &&
+                      problem.getPatterns().back().extraCoverageCount == 1,
+                  "store only the pair's exact extra coverage");
+  const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
+  passed &= check(selection &&
+                      selection.mechanisms ==
+                          std::vector<CanonicalSyncMechanismId>{first, second},
+                  "select both shared pair members exactly once");
+  return passed;
+}
+
+bool testNestedPairExtendsToParentDemand() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId inner =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 15}, true),
+                passed, "add nested pair scope");
+  const SyncCoverNodeId source = takeIndex(
+      graph.addNode(1, 1, inner, 0, {}, {2}), passed, "add nested pair source");
+  const SyncCoverNodeId middle = takeIndex(
+      graph.addNode(2, 1, inner, 1, {}, {3}), passed, "add nested pair middle");
+  const SyncCoverNodeId innerTarget = takeIndex(
+      graph.addNode(3, 1, inner, 2), passed, "add nested pair inner target");
+  const SyncCoverNodeId outerTarget = takeIndex(
+      graph.addNode(3, 1, 0, 3), passed, "add nested pair outer target");
+  passed &= check(
+      graph.addEdge({innerTarget, outerTarget,
+                     SyncCoverEdgeKind::CompletionPreservingIssueOrder, 0}),
+      "add nested-to-parent completion path");
+  passed &= check(graph.addDemand(demand(source, outerTarget)),
+                  "add parent-level pair demand");
+  passed &= check(graph.freezeStructure(), "freeze nested pair graph");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                  "add nested first domain");
+  passed &= check(problem.addEventDomain({1, 2, 3, 8, {}}),
+                  "add nested second domain");
+  const CanonicalSyncMechanismId first =
+      takeIndex(problem.internMechanism(event(0, 1, 2, source, middle)), passed,
+                "add nested first event");
+  const CanonicalSyncMechanismId second =
+      takeIndex(problem.internMechanism(event(1, 2, 3, middle, innerTarget)),
+                passed, "add nested second event");
+  const CanonicalSyncProblemResult generated =
+      addCanonicalSyncDirectPairPatterns(problem);
+  passed &= check(generated && generated.index == 1,
+                  "extend one inner pair onto a parent demand");
+  passed &= check(problem.freeze(), "freeze nested pair problem");
+  const CanonicalSyncPattern &pair = problem.getPatterns().back();
+  passed &= check(pair.kind == CanonicalSyncPatternKind::DirectPair &&
+                      pair.coverage.contains(0) && pair.extraCoverageCount == 1,
+                  "retain exact parent-level extra coverage");
+  const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
+  return passed && check(selection && selection.mechanisms ==
+                                          std::vector<CanonicalSyncMechanismId>{
+                                              first, second},
+                         "select the nested pair globally");
+}
+
+bool testDirectPairComposesAcrossRecurrenceArena() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 15}, true),
+                passed, "add recurrence-pair loop");
+  const SyncCoverNodeId producer =
+      takeIndex(graph.addNode(1, 1, loop, 0, {}, {2}), passed,
+                "add recurrence-pair producer");
+  const SyncCoverNodeId consumer =
+      takeIndex(graph.addNode(2, 1, loop, 1, {}, {1}), passed,
+                "add recurrence-pair consumer");
+  passed &= check(graph.addDemand(demand(producer, producer, loop, 1)),
+                  "add recurrence-pair reuse demand");
+  passed &= check(graph.freezeStructure(), "freeze recurrence-pair graph");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                  "add recurrence-pair forward domain");
+  passed &= check(problem.addEventDomain({1, 2, 1, 8, {}}),
+                  "add recurrence-pair carried domain");
+  const CanonicalSyncMechanismId forward =
+      takeIndex(problem.internMechanism(event(0, 1, 2, producer, consumer)),
+                passed, "add recurrence-pair forward event");
+  CanonicalSyncMechanismDescriptor carriedDescriptor =
+      protocol(1, 2, 1, consumer, producer, loop, 1, 1);
+  const CanonicalSyncMechanismId carried = takeIndex(
+      problem.internVerifiedProtocol(
+          carriedDescriptor,
+          [&](const CanonicalSyncMechanismDescriptor &candidate) {
+            return candidate.kind == CanonicalSyncMechanismKind::Protocol &&
+                   candidate.supplies.size() == 1 &&
+                   candidate.supplies.front().edge.distance == 1;
+          }),
+      passed, "add recurrence-pair carried event");
+  const CanonicalSyncProblemResult generated =
+      addCanonicalSyncDirectPairPatterns(problem);
+  passed &= check(generated && generated.index == 1,
+                  "retain recurrence-arena pair synergy");
+  passed &= check(problem.freeze(), "freeze recurrence-pair problem");
+  const CanonicalSyncPattern &pair = problem.getPatterns().back();
+  passed &= check(pair.kind == CanonicalSyncPatternKind::DirectPair &&
+                      pair.coverage.contains(0) && pair.extraCoverageCount == 1,
+                  "derive reuse coverage from ready and carried events");
+  const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
+  return passed && check(selection && selection.mechanisms ==
+                                          std::vector<CanonicalSyncMechanismId>{
+                                              forward, carried},
+                         "select recurrence pair members globally");
+}
+
+bool testPipeAllRequiresRescueTier() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add rescue source");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add rescue target");
+  passed &= check(graph.addDemand(demand(source, target)), "add rescue demand");
+  passed &= check(graph.freezeStructure(), "freeze rescue graph");
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  const CanonicalSyncMechanismId rescue =
+      takeIndex(problem.internMechanism(barrier(2, {1, 2}, source, target)),
+                passed, "add PIPE_ALL rescue");
+  passed &= check(problem.freeze(), "freeze rescue problem");
+
+  CanonicalSyncGreedyOptions precise;
+  precise.maximumTier = CanonicalSyncSelectionTier::Precise;
+  passed &= check(selectCanonicalSyncPatterns(problem, precise).error ==
+                      CanonicalSyncSelectionError::NoCoveringPattern,
+                  "exclude PIPE_ALL from precise selection");
+  CanonicalSyncGreedyOptions enabled;
+  enabled.maximumTier = CanonicalSyncSelectionTier::PipeAllRescue;
+  const CanonicalSyncSelection selection =
+      selectCanonicalSyncPatterns(problem, enabled);
+  passed &=
+      check(selection && selection.mechanisms ==
+                             std::vector<CanonicalSyncMechanismId>{rescue},
+            "admit PIPE_ALL only in the rescue tier");
+  return passed;
+}
+
 bool testPackagingPatternHasNoExtraCoverage() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -491,9 +667,9 @@ bool testPackagingPatternHasNoExtraCoverage() {
       graph.addNode(1, 1, 0, 4, {}, {2}), passed, "add package source three");
   const SyncCoverNodeId thirdTarget =
       takeIndex(graph.addNode(2, 1, 0, 5), passed, "add package target three");
-  const SyncCoverNodeId baselineSource = takeIndex(
-      graph.addNode(3, 1, 0, 6, {}, {4}), passed,
-      "add package baseline source");
+  const SyncCoverNodeId baselineSource =
+      takeIndex(graph.addNode(3, 1, 0, 6, {}, {4}), passed,
+                "add package baseline source");
   const SyncCoverNodeId baselineTarget = takeIndex(
       graph.addNode(4, 1, 0, 7), passed, "add package baseline target");
   passed &= check(graph.addDemand(demand(firstSource, firstTarget)),
@@ -508,8 +684,8 @@ bool testPackagingPatternHasNoExtraCoverage() {
                   "add package baseline demand");
   passed &= check(graph.freezeStructure(), "freeze package graph");
   CanonicalSyncPatternProblem problem(graph, allDemands(graph));
-  passed &= check(problem.addEventDomain({0, 1, 2, 2, {}}),
-                  "add package domain");
+  passed &=
+      check(problem.addEventDomain({0, 1, 2, 2, {}}), "add package domain");
   passed &= check(problem.addEventDomain({1, 3, 4, 1, {}}),
                   "add package baseline domain");
   const CanonicalSyncMechanismId first = takeIndex(
@@ -519,19 +695,16 @@ bool testPackagingPatternHasNoExtraCoverage() {
       problem.internMechanism(event(0, 1, 2, secondSource, secondTarget)),
       passed, "add package event two");
   const CanonicalSyncMechanismId third = takeIndex(
-      problem.internMechanism(event(0, 1, 2, thirdSource, thirdTarget)),
-      passed, "add package event three");
+      problem.internMechanism(event(0, 1, 2, thirdSource, thirdTarget)), passed,
+      "add package event three");
   const CanonicalSyncMechanismId baseline = takeIndex(
-      problem.internMechanism(
-          event(1, 3, 4, baselineSource, baselineTarget)),
+      problem.internMechanism(event(1, 3, 4, baselineSource, baselineTarget)),
       passed, "add event for fixed-covered package demand");
-  passed &= check(problem.addPattern(
-                      {CanonicalSyncPatternKind::PipelineScope,
-                       {first, second}}),
+  passed &= check(problem.addPattern({CanonicalSyncPatternKind::PipelineScope,
+                                      {first, second}}),
                   "add package-only pattern");
-  passed &= check(problem.addPattern(
-                      {CanonicalSyncPatternKind::PipelineScope,
-                       {first, third}}),
+  passed &= check(problem.addPattern({CanonicalSyncPatternKind::PipelineScope,
+                                      {first, third}}),
                   "add overlapping package-only pattern");
   passed &= check(problem.freeze(), "freeze package-only problem");
   const CanonicalSyncPatternKindStatistics &statistics =
@@ -1215,6 +1388,10 @@ int main() {
       testReverseDeletionPreservesBaselineCoverage() &&
       testInactiveRecurrenceDoesNotBuildAnArena() &&
       testRoundTripPatternActivatesJointCoverage() &&
+      testDirectPairDiscoversJointCoverage() &&
+      testNestedPairExtendsToParentDemand() &&
+      testDirectPairComposesAcrossRecurrenceArena() &&
+      testPipeAllRequiresRescueTier() &&
       testPackagingPatternHasNoExtraCoverage() &&
       testUnitSlotLifecycleProtocol() && testScarcityUsesBarrierFallback() &&
       testOptionalPipelineScarcityFallsBack() &&

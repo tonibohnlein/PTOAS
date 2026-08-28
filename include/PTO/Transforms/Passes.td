@@ -45,8 +45,8 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
   let summary = "Insert synchronization from a canonical completion graph";
   let description = [{
     Builds completion obligations over structured PTO control flow, selects a
-    bounded catalog of atomic synchronization recipes, verifies the complete
-    selected plan independently, and only then materializes synchronization.
+    bounded catalog of atomic synchronization recipes, checks the selected
+    plan against certified coverage, and only then materializes synchronization.
   }];
 
   let constructor = "mlir::pto::createPTOCanonicalSyncPass()";
@@ -60,7 +60,11 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
     Option<"assumeAllGmAccessesNoAlias",
            "assume-all-gm-accesses-noalias", "bool", "false",
            "Treat every GM access as disjoint; the caller must guarantee this "
-           "even for accesses from the same argument and across iterations">
+           "even for accesses from the same argument and across iterations">,
+    Option<"patternMode", "pattern-mode", "std::string",
+           "\"direct-pair-ownership\"",
+           "Candidate ablation: direct, direct-pair, or "
+           "direct-pair-ownership">
   ];
 
   let dependentDialects = [

@@ -102,12 +102,15 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 
-  // One target has a same-pipe WAW and a cross-pipe WAW. Its mandatory
-  // fallback is one PIPE_ALL barrier, never separate targeted and broad drains.
+  // A same target with cross-pipe RAW/WAR and same-pipe reuse must not upgrade
+  // the whole group to PIPE_ALL. Precise events establish the ownership cycle.
   // CHECK-LABEL: func.func @mixed_pipe_target_fallback
   // CHECK: pto.tload
-  // CHECK: pto.tmuls
-  // CHECK-NEXT: pto.barrier <PIPE_ALL>
+  // CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>
+  // CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>
+  // CHECK-NEXT: pto.tmuls
+  // CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>
+  // CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>
   // CHECK-NEXT: pto.tload
   func.func @mixed_pipe_target_fallback(
       %input: !pto.partition_tensor_view<16x16xf32>) {

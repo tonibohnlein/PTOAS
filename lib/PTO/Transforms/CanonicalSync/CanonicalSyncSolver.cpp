@@ -21,8 +21,7 @@ using namespace mlir::pto;
 namespace {
 
 struct StructuralCost {
-  std::vector<std::uint64_t> barriers;
-  std::vector<std::uint64_t> events;
+  std::vector<std::uint64_t> actions;
   std::size_t mechanisms = 0;
   std::vector<CanonicalSyncMechanismId> signature;
 };
@@ -232,15 +231,15 @@ getCost(const CanonicalSyncPatternProblem &problem,
     if (!workAvailable) {
       return std::nullopt;
     }
-    result.barriers.resize(
-        std::max(result.barriers.size(), cost.barrierActions.size()), 0);
-    result.events.resize(
-        std::max(result.events.size(), cost.eventActions.size()), 0);
+    result.actions.resize(
+        std::max({result.actions.size(), cost.barrierActions.size(),
+                  cost.eventActions.size()}),
+        0);
     for (std::size_t depth = 0; depth < cost.barrierActions.size(); ++depth) {
-      result.barriers[depth] += cost.barrierActions[depth];
+      result.actions[depth] += cost.barrierActions[depth];
     }
     for (std::size_t depth = 0; depth < cost.eventActions.size(); ++depth) {
-      result.events[depth] += cost.eventActions[depth];
+      result.actions[depth] += cost.eventActions[depth];
     }
   }
   return result;
@@ -254,15 +253,11 @@ std::uint64_t profileValue(const std::vector<std::uint64_t> &profile,
 bool structuralCostLess(const StructuralCost &first,
                         const StructuralCost &second) {
   const std::size_t depthCount =
-      std::max({first.barriers.size(), first.events.size(),
-                second.barriers.size(), second.events.size()});
+      std::max(first.actions.size(), second.actions.size());
   for (std::size_t reverse = depthCount; reverse > 0; --reverse) {
     const std::size_t depth = reverse - 1;
-    const auto firstDepth = std::make_pair(profileValue(first.barriers, depth),
-                                           profileValue(first.events, depth));
-    const auto secondDepth =
-        std::make_pair(profileValue(second.barriers, depth),
-                       profileValue(second.events, depth));
+    const std::uint64_t firstDepth = profileValue(first.actions, depth);
+    const std::uint64_t secondDepth = profileValue(second.actions, depth);
     if (firstDepth != secondDepth) {
       return firstDepth < secondDepth;
     }
@@ -273,21 +268,34 @@ bool structuralCostLess(const StructuralCost &first,
 
 struct GreedyCandidate {
   CanonicalSyncPatternId pattern = 0;
+  CanonicalSyncSelectionTier tier = CanonicalSyncSelectionTier::Precise;
   std::vector<CanonicalSyncMechanismId> additions;
   SyncCoverDemandSet coverage;
-  std::vector<std::uint64_t> barriers;
-  std::vector<std::uint64_t> events;
+  std::vector<std::uint64_t> actions;
   std::size_t gain = 0;
+  std::size_t pressureNumerator = 0;
+  std::size_t pressureDenominator = 1;
+  std::uint64_t eventLifetimeSpan = 0;
 };
+
+CanonicalSyncSelectionTier
+getPatternTier(const CanonicalSyncPatternProblem &problem,
+               const CanonicalSyncPattern &pattern) {
+  CanonicalSyncSelectionTier tier = CanonicalSyncSelectionTier::Precise;
+  for (CanonicalSyncMechanismId mechanism : pattern.members) {
+    tier = std::max(
+        tier, problem.getMechanisms()[mechanism].descriptor.selectionTier);
+  }
+  return tier;
+}
 
 std::optional<std::size_t>
 getCandidateSortWork(const std::vector<GreedyCandidate> &candidates) {
   const std::size_t factor = logarithmicFactor(candidates.size());
   std::size_t work = 0;
   for (const GreedyCandidate &candidate : candidates) {
-    std::size_t profile = candidate.barriers.size();
-    const bool profileValid =
-        addWork(candidate.events.size(), profile) && addWork(1, profile);
+    std::size_t profile = candidate.actions.size();
+    const bool profileValid = addWork(2, profile);
     if (!profileValid) {
       return std::nullopt;
     }
@@ -320,23 +328,45 @@ int compareRatio(std::uint64_t first, std::size_t firstGain,
   return 0;
 }
 
-bool greedyLess(const GreedyCandidate &first, const GreedyCandidate &second) {
+bool pressureLess(const GreedyCandidate &first, const GreedyCandidate &second) {
+  const unsigned __int128 left =
+      static_cast<unsigned __int128>(first.pressureNumerator) *
+      second.pressureDenominator;
+  const unsigned __int128 right =
+      static_cast<unsigned __int128>(second.pressureNumerator) *
+      first.pressureDenominator;
+  return left < right;
+}
+
+bool greedyLess(const GreedyCandidate &first, const GreedyCandidate &second,
+                bool preferEventHeadroom) {
+  const bool firstPipeAll =
+      first.tier == CanonicalSyncSelectionTier::PipeAllRescue;
+  const bool secondPipeAll =
+      second.tier == CanonicalSyncSelectionTier::PipeAllRescue;
+  if (firstPipeAll != secondPipeAll) {
+    return !firstPipeAll;
+  }
+  if (preferEventHeadroom) {
+    if (pressureLess(first, second)) {
+      return true;
+    }
+    if (pressureLess(second, first)) {
+      return false;
+    }
+    if (first.eventLifetimeSpan != second.eventLifetimeSpan) {
+      return first.eventLifetimeSpan < second.eventLifetimeSpan;
+    }
+  }
   const std::size_t depths =
-      std::max({first.barriers.size(), first.events.size(),
-                second.barriers.size(), second.events.size()});
+      std::max(first.actions.size(), second.actions.size());
   for (std::size_t reverse = depths; reverse > 0; --reverse) {
     const std::size_t depth = reverse - 1;
-    const int barriers =
-        compareRatio(profileValue(first.barriers, depth), first.gain,
-                     profileValue(second.barriers, depth), second.gain);
-    if (barriers != 0) {
-      return barriers < 0;
-    }
-    const int events =
-        compareRatio(profileValue(first.events, depth), first.gain,
-                     profileValue(second.events, depth), second.gain);
-    if (events != 0) {
-      return events < 0;
+    const int actions =
+        compareRatio(profileValue(first.actions, depth), first.gain,
+                     profileValue(second.actions, depth), second.gain);
+    if (actions != 0) {
+      return actions < 0;
     }
   }
   const int mechanisms = compareRatio(first.additions.size(), first.gain,
@@ -344,19 +374,37 @@ bool greedyLess(const GreedyCandidate &first, const GreedyCandidate &second) {
   return mechanisms != 0 ? mechanisms < 0 : first.pattern < second.pattern;
 }
 
+void setCandidatePressure(const CanonicalSyncResourceAllocation &allocation,
+                          GreedyCandidate &candidate) {
+  for (const CanonicalSyncDomainAllocation &domain : allocation.domains) {
+    if (domain.available == 0) {
+      continue;
+    }
+    const unsigned __int128 current =
+        static_cast<unsigned __int128>(candidate.pressureNumerator) *
+        domain.available;
+    const unsigned __int128 proposed =
+        static_cast<unsigned __int128>(domain.required) *
+        candidate.pressureDenominator;
+    if (proposed > current) {
+      candidate.pressureNumerator = domain.required;
+      candidate.pressureDenominator = domain.available;
+    }
+  }
+}
+
 std::optional<GreedyCandidate>
 makeCandidate(const CanonicalSyncPatternProblem &problem,
               const SyncCoverDemandSet &covered,
-              const SyncCoverDemandSet &eventCoverable,
               CanonicalSyncPatternId patternId,
               std::vector<CanonicalSyncMechanismId> additions,
               SyncCoverDemandSet successorCoverage, std::size_t maximumWork,
               std::size_t &work) {
   GreedyCandidate result;
   result.pattern = patternId;
+  result.tier = getPatternTier(problem, problem.getPatterns()[patternId]);
   result.additions = std::move(additions);
   result.coverage = std::move(successorCoverage);
-  bool addsBarrier = false;
   for (CanonicalSyncMechanismId mechanism : result.additions) {
     const CanonicalSyncMechanism &item = problem.getMechanisms()[mechanism];
     std::size_t profileWork = item.cost.barrierActions.size();
@@ -366,60 +414,35 @@ makeCandidate(const CanonicalSyncPatternProblem &problem,
     if (!workAvailable) {
       return std::nullopt;
     }
-    addsBarrier |= item.descriptor.kind == CanonicalSyncMechanismKind::Barrier;
-    result.barriers.resize(
-        std::max(result.barriers.size(), item.cost.barrierActions.size()), 0);
-    result.events.resize(
-        std::max(result.events.size(), item.cost.eventActions.size()), 0);
+    result.actions.resize(
+        std::max({result.actions.size(), item.cost.barrierActions.size(),
+                  item.cost.eventActions.size()}),
+        0);
     for (std::size_t depth = 0; depth < item.cost.barrierActions.size();
          ++depth) {
-      result.barriers[depth] += item.cost.barrierActions[depth];
+      result.actions[depth] += item.cost.barrierActions[depth];
     }
     for (std::size_t depth = 0; depth < item.cost.eventActions.size();
          ++depth) {
-      result.events[depth] += item.cost.eventActions[depth];
+      result.actions[depth] += item.cost.eventActions[depth];
     }
-  }
-  if (addsBarrier) {
-    SyncCoverDemandSet forced = result.coverage;
-    forced.subtract(eventCoverable);
-    const std::optional<std::size_t> gain =
-        countNewCoverage(covered, forced, maximumWork, work);
-    if (!gain) {
-      return std::nullopt;
-    }
-    result.gain = std::max<std::size_t>(*gain, 1);
-  } else {
-    const std::optional<std::size_t> gain =
-        countNewCoverage(covered, result.coverage, maximumWork, work);
-    if (!gain) {
-      return std::nullopt;
-    }
-    result.gain = *gain;
-  }
-  return result;
-}
-
-std::optional<SyncCoverDemandSet>
-getEventCoverable(const CanonicalSyncPatternProblem &problem,
-                  std::size_t maximumWork, std::size_t &work) {
-  SyncCoverDemandSet result(problem.getDemands().size());
-  for (const CanonicalSyncPattern &pattern : problem.getPatterns()) {
-    if (!consumeWork(1 + pattern.members.size(), maximumWork, work)) {
-      return std::nullopt;
-    }
-    const bool barrierFree = std::none_of(
-        pattern.members.begin(), pattern.members.end(), [&](auto mechanism) {
-          return problem.getMechanisms()[mechanism].descriptor.kind ==
-                 CanonicalSyncMechanismKind::Barrier;
-        });
-    if (barrierFree) {
-      if (!consumeWork(pattern.coverage.getWords().size(), maximumWork, work)) {
-        return std::nullopt;
+    for (const CanonicalSyncEventLifetime &lifetime : item.eventLifetimes) {
+      const std::uint64_t span = lifetime.end - lifetime.begin;
+      const std::uint64_t remainingSpan =
+          std::numeric_limits<std::uint64_t>::max() - result.eventLifetimeSpan;
+      if (span > remainingSpan) {
+        result.eventLifetimeSpan = std::numeric_limits<std::uint64_t>::max();
+      } else {
+        result.eventLifetimeSpan += span;
       }
-      result.unite(pattern.coverage);
     }
   }
+  const std::optional<std::size_t> gain =
+      countNewCoverage(covered, result.coverage, maximumWork, work);
+  if (!gain) {
+    return std::nullopt;
+  }
+  result.gain = *gain;
   return result;
 }
 
@@ -437,12 +460,6 @@ CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
     return result;
   }
 
-  const std::optional<SyncCoverDemandSet> eventCoverable = getEventCoverable(
-      problem, options.maximumWorkUnits, result.statistics.workUnits);
-  if (!eventCoverable) {
-    result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
-    return result;
-  }
   std::vector<CanonicalSyncMechanismId> selected;
   std::vector<CanonicalSyncMechanismId> selectionOrder;
   while (true) {
@@ -477,6 +494,11 @@ CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
          problem.getDemandPatterns()[*anchor]) {
       const CanonicalSyncPattern &patternDetails =
           problem.getPatterns()[pattern];
+      const bool tierDisabled =
+          getPatternTier(problem, patternDetails) > options.maximumTier;
+      if (tierDisabled) {
+        continue;
+      }
       std::size_t memberWork = selected.size();
       const bool workAvailable =
           addWork(patternDetails.members.size(), memberWork) &&
@@ -497,14 +519,34 @@ CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
         result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
         return result;
       }
-      std::optional<GreedyCandidate> candidate = makeCandidate(
-          problem, result.covered, *eventCoverable, pattern, additions,
-          *coverage, options.maximumWorkUnits, result.statistics.workUnits);
+      std::optional<GreedyCandidate> candidate =
+          makeCandidate(problem, result.covered, pattern, additions, *coverage,
+                        options.maximumWorkUnits, result.statistics.workUnits);
       if (!candidate) {
         result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
         return result;
       }
       if (candidate->gain != 0) {
+        if (options.preferEventHeadroom) {
+          const std::vector<CanonicalSyncMechanismId> successor =
+              addMembers(selected, candidate->additions);
+          const std::optional<std::size_t> allocationWork =
+              getAllocationWork(problem, successor);
+          const bool pressureWorkAvailable =
+              allocationWork &&
+              consumeWork(*allocationWork, options.maximumWorkUnits,
+                          result.statistics.workUnits);
+          if (!pressureWorkAvailable) {
+            result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+            return result;
+          }
+          const CanonicalSyncResourceAllocation allocation =
+              allocateCanonicalSyncEvents(problem, successor);
+          if (!allocation.valid || !allocation.feasible) {
+            continue;
+          }
+          setCandidatePressure(allocation, *candidate);
+        }
         candidates.push_back(std::move(*candidate));
       }
     }
@@ -515,7 +557,11 @@ CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
       result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
       return result;
     }
-    std::stable_sort(candidates.begin(), candidates.end(), greedyLess);
+    std::stable_sort(candidates.begin(), candidates.end(),
+                     [&](const auto &first, const auto &second) {
+                       return greedyLess(first, second,
+                                         options.preferEventHeadroom);
+                     });
 
     bool advanced = false;
     for (GreedyCandidate &candidate : candidates) {

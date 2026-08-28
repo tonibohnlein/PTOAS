@@ -36,6 +36,12 @@ enum class CanonicalSyncMechanismKind : std::uint8_t {
   Protocol,
 };
 
+enum class CanonicalSyncSelectionTier : std::uint8_t {
+  Precise,
+  ScarcityFrontier,
+  PipeAllRescue,
+};
+
 enum class CanonicalSyncActionKind : std::uint8_t {
   EventSet,
   EventWait,
@@ -48,6 +54,14 @@ enum class CanonicalSyncActionGuardKind : std::uint8_t {
   LoopEmpty,
   NotFirstIteration,
   HasSuccessor,
+};
+
+enum class CanonicalSyncEventLaneKind : std::uint8_t {
+  Static,
+  /// Select eventIds[iterationOrdinal % width] in the named loop. This keeps
+  /// one recurrence channel materializable without expanding one body action
+  /// per static lane.
+  LoopIterationModulo,
 };
 
 enum class CanonicalSyncBarrierKind : std::uint8_t {
@@ -85,6 +99,8 @@ struct CanonicalSyncAction {
   CanonicalSyncBarrierKind barrierKind = CanonicalSyncBarrierKind::Targeted;
   CanonicalSyncActionGuardKind guard = CanonicalSyncActionGuardKind::None;
   std::optional<SyncCoverScopeId> guardScope;
+  CanonicalSyncEventLaneKind eventLaneKind = CanonicalSyncEventLaneKind::Static;
+  std::optional<SyncCoverScopeId> eventLaneScope;
 };
 
 enum class CanonicalSyncSupplyProof : std::uint8_t {
@@ -113,6 +129,8 @@ struct CanonicalSyncSupplyBinding {
 /// after selection.
 struct CanonicalSyncMechanismDescriptor {
   CanonicalSyncMechanismKind kind = CanonicalSyncMechanismKind::Event;
+  CanonicalSyncSelectionTier selectionTier =
+      CanonicalSyncSelectionTier::Precise;
   std::vector<CanonicalSyncSupplyBinding> supplies;
   std::vector<CanonicalSyncEventUse> eventUses;
   std::vector<CanonicalSyncAction> actions;
@@ -139,12 +157,14 @@ struct CanonicalSyncMechanism {
 
 enum class CanonicalSyncPatternKind : std::uint8_t {
   Singleton,
-  PipelineScope,
+  DirectPair,
   RoundTrip,
+  ScarcityFrontier,
+  PipelineScope,
 };
 
 constexpr std::size_t kCanonicalSyncPatternKindCount =
-    static_cast<std::size_t>(CanonicalSyncPatternKind::RoundTrip) + 1;
+    static_cast<std::size_t>(CanonicalSyncPatternKind::PipelineScope) + 1;
 
 struct CanonicalSyncPatternSpec {
   CanonicalSyncPatternKind kind = CanonicalSyncPatternKind::Singleton;
@@ -155,9 +175,8 @@ struct CanonicalSyncPattern {
   CanonicalSyncPatternId id = 0;
   CanonicalSyncPatternKind kind = CanonicalSyncPatternKind::Singleton;
   std::vector<CanonicalSyncMechanismId> members;
-  /// Complete non-baseline semantic coverage of the member set. The
-  /// production selector continues to consume this field while pattern
-  /// families are classified.
+  /// Singleton patterns store their complete non-baseline coverage. Composite
+  /// patterns store only coverage unavailable from their member singletons.
   SyncCoverDemandSet coverage;
   /// Number of covered demands not available from the union of the members'
   /// singleton coverage. Zero means the pattern is greedy packaging, not a
@@ -175,8 +194,7 @@ struct CanonicalSyncPatternKindStatistics {
 };
 
 struct CanonicalSyncPatternStatistics {
-  std::array<CanonicalSyncPatternKindStatistics,
-             kCanonicalSyncPatternKindCount>
+  std::array<CanonicalSyncPatternKindStatistics, kCanonicalSyncPatternKindCount>
       kinds;
 
   const CanonicalSyncPatternKindStatistics &
@@ -251,6 +269,13 @@ public:
   CanonicalSyncProblemResult addConflict(CanonicalSyncMechanismId first,
                                          CanonicalSyncMechanismId second);
   CanonicalSyncProblemResult addPattern(CanonicalSyncPatternSpec pattern);
+  /// Add a pattern whose exact joint and singleton-union coverage were
+  /// computed by the shared batched coverage engine. Inputs use graph-global
+  /// demand IDs and are projected onto the active problem rows here.
+  CanonicalSyncProblemResult
+  addPattern(CanonicalSyncPatternSpec pattern,
+             const SyncCoverDemandSet &jointCoverage,
+             const SyncCoverDemandSet &singletonCoverage);
   CanonicalSyncProblemResult freeze();
 
   bool isFrozen() const { return frozen_; }
@@ -282,6 +307,7 @@ public:
   bool wasPatternGenerationTruncated() const {
     return patternGenerationTruncated_;
   }
+  void markPatternGenerationTruncated() { patternGenerationTruncated_ = true; }
   const SyncCoverDemandSet &getBaselineCoverage() const {
     return baselineCoverage_;
   }
@@ -291,6 +317,7 @@ private:
   struct PendingPattern {
     CanonicalSyncPatternSpec spec;
     SyncCoverDemandSet coverage;
+    std::size_t jointCoverageCount = 0;
     std::size_t singletonCoverageCount = 0;
     std::size_t extraCoverageCount = 0;
   };
@@ -339,6 +366,16 @@ struct CanonicalSyncRoundTripOptions {
   std::size_t maximumPatterns = 512;
   std::size_t maximumEvaluations = 2048;
 };
+
+struct CanonicalSyncDirectPairOptions {
+  /// Count the complete eligible set before evaluation. Oversized sets are
+  /// skipped rather than truncated in mechanism-ID order.
+  std::size_t maximumEvaluations = 1U << 14;
+};
+
+CanonicalSyncProblemResult
+addCanonicalSyncDirectPairPatterns(CanonicalSyncPatternProblem &problem,
+                                   CanonicalSyncDirectPairOptions options = {});
 
 /// Add only the canonical recurrence composition: one positive-distance
 /// supply and one distance-zero supply with exactly reversed endpoints.
@@ -395,6 +432,12 @@ enum class CanonicalSyncSelectionError : std::uint8_t {
 
 struct CanonicalSyncGreedyOptions {
   std::size_t maximumWorkUnits = 1U << 27;
+  CanonicalSyncSelectionTier maximumTier =
+      CanonicalSyncSelectionTier::PipeAllRescue;
+  /// Deterministic retry policy: rank lower exact interval pressure before
+  /// structural density. This is used only after the ordinary precise greedy
+  /// reaches an event-ID dead end.
+  bool preferEventHeadroom = false;
 };
 
 struct CanonicalSyncSelection {

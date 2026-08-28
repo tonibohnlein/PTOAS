@@ -82,9 +82,9 @@ bool sameDescriptor(const CanonicalSyncMechanismDescriptor &left,
     const CanonicalSyncEventUse &first = left.eventUses[index];
     const CanonicalSyncEventUse &second = right.eventUses[index];
     if (std::tie(first.domain, first.width, first.recurrenceScope,
-                 first.lifetimeScope) !=
-        std::tie(second.domain, second.width, second.recurrenceScope,
-                 second.lifetimeScope)) {
+                 first.lifetimeScope) != std::tie(second.domain, second.width,
+                                                  second.recurrenceScope,
+                                                  second.lifetimeScope)) {
       return false;
     }
   }
@@ -94,12 +94,14 @@ bool sameDescriptor(const CanonicalSyncMechanismDescriptor &left,
     if (std::tie(first.kind, first.resource, first.anchor.kind,
                  first.anchor.node, first.anchor.scope, first.anchor.position,
                  first.eventUse, first.eventLane, first.drainedResources,
-                 first.barrierKind, first.guard, first.guardScope) !=
+                 first.barrierKind, first.guard, first.guardScope,
+                 first.eventLaneKind, first.eventLaneScope) !=
         std::tie(second.kind, second.resource, second.anchor.kind,
                  second.anchor.node, second.anchor.scope,
                  second.anchor.position, second.eventUse, second.eventLane,
                  second.drainedResources, second.barrierKind, second.guard,
-                 second.guardScope)) {
+                 second.guardScope, second.eventLaneKind,
+                 second.eventLaneScope)) {
       return false;
     }
   }
@@ -135,8 +137,8 @@ bool sameMechanismCatalog(const CanonicalSyncPatternProblem &left,
         first.eventLifetimes.size() != second.eventLifetimes.size()) {
       return false;
     }
-    for (std::size_t lifetime = 0;
-         lifetime < first.eventLifetimes.size(); ++lifetime) {
+    for (std::size_t lifetime = 0; lifetime < first.eventLifetimes.size();
+         ++lifetime) {
       if (std::tie(first.eventLifetimes[lifetime].begin,
                    first.eventLifetimes[lifetime].end) !=
           std::tie(second.eventLifetimes[lifetime].begin,
@@ -605,19 +607,68 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
                llvm::is_contained(demand.provenanceKinds,
                                   SyncCoverDemandKind::MemoryWAR);
       });
-  return check(graph.getScopes().size() == 2,
-               "construct explicit loop scope") &&
-         check(graph.getScopes()[1].isLoop, "mark recurrence scope as loop") &&
-         check(recurrence != graph.getDemands().end(),
-               "recover distance-two slot reuse") &&
-         check(recurrence->scope == 1,
-               "attach recurrence to the loop timeline") &&
-         check(llvm::any_of(graph.getStorageAccesses(),
-                            [](const SyncCoverStorageAccess &access) {
-                              return access.exactPhysical &&
-                                     access.addressOrdinal.has_value();
-                            }),
-               "retain exact physical slot ordinals");
+  const bool graphChecks =
+      check(graph.getScopes().size() == 2, "construct explicit loop scope") &&
+      check(graph.getScopes()[1].isLoop, "mark recurrence scope as loop") &&
+      check(recurrence != graph.getDemands().end(),
+            "recover distance-two slot reuse") &&
+      check(recurrence->scope == 1, "attach recurrence to the loop timeline") &&
+      check(llvm::any_of(graph.getStorageAccesses(),
+                         [](const SyncCoverStorageAccess &access) {
+                           return access.exactPhysical &&
+                                  access.addressOrdinal.has_value();
+                         }),
+            "retain exact physical slot ordinals");
+  if (!graphChecks) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions options;
+  options.patterns.enableSpecializedOwnership = false;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem =
+      buildCanonicalSyncSingletonProblem(*program, options);
+  if (!check(succeeded(problem),
+             "build distance-two generic recurrence problem")) {
+    return false;
+  }
+  const auto isDistanceTwoRing = [](const CanonicalSyncMechanism &mechanism) {
+    return mechanism.descriptor.kind == CanonicalSyncMechanismKind::Protocol &&
+           mechanism.descriptor.eventUses.size() == 1 &&
+           mechanism.descriptor.eventUses.front().width == 2 &&
+           llvm::any_of(mechanism.descriptor.supplies,
+                        [](const CanonicalSyncSupplyBinding &binding) {
+                          return binding.edge.distance == 2;
+                        });
+  };
+  if (!check(llvm::any_of((*problem)->getMechanisms(), isDistanceTwoRing),
+             "generate a two-lane generic recurrence ring")) {
+    return false;
+  }
+  CanonicalSyncGreedyOptions precise;
+  precise.maximumTier = CanonicalSyncSelectionTier::Precise;
+  const CanonicalSyncSelection selection =
+      selectCanonicalSyncPatterns(**problem, precise);
+  const bool selectedRing =
+      selection && llvm::any_of(selection.mechanisms, [&](auto mechanism) {
+        return isDistanceTwoRing((*problem)->getMechanisms()[mechanism]);
+      });
+  const bool ringSelected =
+      check(selectedRing, "select the distance-two recurrence ring");
+  const bool ringMaterialized =
+      check(succeeded(runCanonicalSync(
+                module->lookupSymbol<func::FuncOp>("reuse"), options)),
+            "materialize the distance-two recurrence ring");
+  if (!ringSelected || !ringMaterialized) {
+    return false;
+  }
+  std::size_t dynamicSets = 0;
+  std::size_t dynamicWaits = 0;
+  module->walk([&](Operation *operation) {
+    dynamicSets += operation->getName().getStringRef() == "pto.set_flag_dyn";
+    dynamicWaits += operation->getName().getStringRef() == "pto.wait_flag_dyn";
+  });
+  return check(dynamicSets == 1 && dynamicWaits == 1,
+               "emit one modulo-selected body set and wait");
 }
 
 bool testDistanceTwoCrossRootSlotRecurrence() {
@@ -1195,6 +1246,175 @@ bool testFirstIterationRecurrenceSuppression() {
                "retain enclosing-loop recurrence for an inner first iteration");
 }
 
+bool testGenericRecurrenceWithoutOwnershipDiscovery() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @generic_recurrence(
+          %input: !pto.partition_tensor_view<16x16xf32>, %limit: index) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %addr0 = arith.constant 0 : i64
+        %one = arith.constant 1.000000e+00 : f32
+        %shared = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<vec, 16x16xf32>
+        scf.for %i = %c0 to %limit step %c1 {
+          pto.tload ins(%input : !pto.partition_tensor_view<16x16xf32>)
+            outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+          pto.tmuls ins(%shared, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+            outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+        }
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module),
+             "parse generic recurrence ownership ablation")) {
+    return false;
+  }
+  func::FuncOp function =
+      module->lookupSymbol<func::FuncOp>("generic_recurrence");
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(function);
+  if (!check(succeeded(program), "build generic recurrence program")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions options;
+  options.patterns.enableSpecializedOwnership = false;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem =
+      buildCanonicalSyncSingletonProblem(*program, options);
+  if (!check(succeeded(problem),
+             "build generic recurrence problem without ownership")) {
+    return false;
+  }
+  const auto isGenericRecurrence = [](const CanonicalSyncMechanism &mechanism) {
+    return mechanism.descriptor.kind == CanonicalSyncMechanismKind::Protocol &&
+           mechanism.descriptor.selectionTier ==
+               CanonicalSyncSelectionTier::Precise &&
+           mechanism.descriptor.eventUses.size() == 1 &&
+           llvm::any_of(mechanism.descriptor.supplies,
+                        [](const CanonicalSyncSupplyBinding &supply) {
+                          return supply.edge.distance == 1;
+                        });
+  };
+  if (!check(llvm::any_of((*problem)->getMechanisms(), isGenericRecurrence),
+             "generate a generic prime-body-drain recurrence event")) {
+    return false;
+  }
+  CanonicalSyncGreedyOptions selectionOptions;
+  selectionOptions.maximumTier = CanonicalSyncSelectionTier::Precise;
+  const CanonicalSyncSelection selection =
+      selectCanonicalSyncPatterns(**problem, selectionOptions);
+  const bool selectedGeneric =
+      selection && llvm::any_of(selection.mechanisms, [&](auto mechanism) {
+        return isGenericRecurrence((*problem)->getMechanisms()[mechanism]);
+      });
+  const CanonicalSyncVerifiedPlan verified =
+      verifyCanonicalSyncSelection(**problem, selection);
+  if (!check(selectedGeneric,
+             "select the generic recurrence event without PIPE_ALL") ||
+      !check(static_cast<bool>(verified),
+             "finalize generic recurrence from certified coverage") ||
+      !check(succeeded(runCanonicalSync(function, options)),
+             "materialize generic recurrence without ownership")) {
+    return false;
+  }
+  std::size_t setCount = 0;
+  std::size_t waitCount = 0;
+  function.walk([&](Operation *operation) {
+    setCount += operation->getName().getStringRef() == "pto.set_flag";
+    waitCount += operation->getName().getStringRef() == "pto.wait_flag";
+  });
+  return check(setCount == 3 && waitCount == 3,
+               "emit direct ready plus prime-body-drain recurrence actions");
+}
+
+bool testScarcityFrontierAvoidsPipeAll() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @scarcity_frontier(
+          %first: !pto.partition_tensor_view<16x16xf32>,
+          %second: !pto.partition_tensor_view<16x16xf32>) {
+        %addr0 = arith.constant 0 : i64
+        %addr1024 = arith.constant 1024 : i64
+        %one = arith.constant 1.000000e+00 : f32
+        %firstTile = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<vec, 16x16xf32>
+        %secondTile = pto.alloc_tile addr = %addr1024 :
+          !pto.tile_buf<vec, 16x16xf32>
+        pto.tload ins(%first : !pto.partition_tensor_view<16x16xf32>)
+          outs(%firstTile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%second : !pto.partition_tensor_view<16x16xf32>)
+          outs(%secondTile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%firstTile, %one :
+          !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%firstTile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%secondTile, %one :
+          !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%secondTile : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module), "parse scarcity-frontier kernel")) {
+    return false;
+  }
+  func::FuncOp function =
+      module->lookupSymbol<func::FuncOp>("scarcity_frontier");
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(function);
+  if (!check(succeeded(program), "build scarcity-frontier program")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions options;
+  options.eventIdBudget = 1;
+  options.patterns.enableSpecializedOwnership = false;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem =
+      buildCanonicalSyncSingletonProblem(*program, options);
+  if (!check(succeeded(problem), "build scarcity-frontier problem")) {
+    return false;
+  }
+
+  CanonicalSyncGreedyOptions precise;
+  precise.maximumTier = CanonicalSyncSelectionTier::Precise;
+  if (!check(selectCanonicalSyncPatterns(**problem, precise).error ==
+                 CanonicalSyncSelectionError::ResourceInfeasible,
+             "one event ID rejects the overlapping precise plan")) {
+    return false;
+  }
+  CanonicalSyncGreedyOptions scarcity;
+  scarcity.maximumTier = CanonicalSyncSelectionTier::ScarcityFrontier;
+  const CanonicalSyncSelection selection =
+      selectCanonicalSyncPatterns(**problem, scarcity);
+  const std::size_t frontierMembers = static_cast<std::size_t>(
+      std::count_if(selection.mechanisms.begin(), selection.mechanisms.end(),
+                    [&](CanonicalSyncMechanismId mechanism) {
+                      return (*problem)
+                                 ->getMechanisms()[mechanism]
+                                 .descriptor.selectionTier ==
+                             CanonicalSyncSelectionTier::ScarcityFrontier;
+                    }));
+  const bool usesPipeAll =
+      std::any_of(selection.mechanisms.begin(), selection.mechanisms.end(),
+                  [&](CanonicalSyncMechanismId mechanism) {
+                    return (*problem)
+                               ->getMechanisms()[mechanism]
+                               .descriptor.selectionTier ==
+                           CanonicalSyncSelectionTier::PipeAllRescue;
+                  });
+  return check(selection && frontierMembers == 2 && !usesPipeAll,
+               "select one targeted barrier plus one frontier event") &&
+         check(selection.allocation.domains.size() == 1 &&
+                   selection.allocation.domains.front().required == 1,
+               "frontier fits the one-ID budget") &&
+         check(static_cast<bool>(
+                   verifyCanonicalSyncSelection(**problem, selection)),
+               "finalize scarcity frontier from certified coverage");
+}
+
 bool testL0OwnershipProtocolTrustBoundary() {
   MLIRContext context;
   loadDialects(context);
@@ -1449,6 +1669,12 @@ bool testL0OwnershipProtocolTrustBoundary() {
         case CanonicalSyncPatternKind::RoundTrip:
           ablationOptions.patterns.enableRoundTrip = false;
           break;
+        case CanonicalSyncPatternKind::DirectPair:
+          ablationOptions.patterns.enableDirectPairs = false;
+          break;
+        case CanonicalSyncPatternKind::ScarcityFrontier:
+          ablationOptions.patterns.enableScarcityFrontiers = false;
+          break;
         case CanonicalSyncPatternKind::Singleton:
           return false;
         }
@@ -1471,6 +1697,8 @@ bool testL0OwnershipProtocolTrustBoundary() {
   CanonicalSyncBuildOptions atomicOptions;
   atomicOptions.patterns.enablePipelineScope = false;
   atomicOptions.patterns.enableRoundTrip = false;
+  atomicOptions.patterns.enableDirectPairs = false;
+  atomicOptions.patterns.enableScarcityFrontiers = false;
   FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> atomicProblem =
       buildCanonicalSyncSingletonProblem(*program, atomicOptions);
   const bool onlySingletonPatterns =
@@ -2691,6 +2919,8 @@ int main() {
       testRejectsAllExplicitSyncForms() && testStructuralLimitsFailClosed() &&
       testPeriodicBranchEvidence() &&
       testFirstIterationRecurrenceSuppression() &&
+      testGenericRecurrenceWithoutOwnershipDiscovery() &&
+      testScarcityFrontierAvoidsPipeAll() &&
       testL0OwnershipProtocolTrustBoundary() &&
       testStableL1OwnershipProtocol() &&
       testHierarchicalL1OwnershipProtocol() &&
