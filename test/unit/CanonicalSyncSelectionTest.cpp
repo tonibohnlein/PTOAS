@@ -460,6 +460,57 @@ bool testDirectPairDiscoversJointCoverage() {
   return passed;
 }
 
+bool testPairPreparationLimitKeepsSingletonCorrectness() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2, 3}), passed,
+                "add optional-pair source");
+  const SyncCoverNodeId middle = takeIndex(graph.addNode(2, 1, 0, 1, {}, {3}),
+                                           passed, "add optional-pair middle");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(3, 1, 0, 2), passed, "add optional-pair target");
+  passed &= check(graph.addDemand(demand(source, target)),
+                  "add optional-pair demand");
+  passed &= check(graph.freezeStructure(), "freeze optional-pair graph");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 3, 8, {}}),
+                  "add direct singleton domain");
+  passed &= check(problem.addEventDomain({1, 1, 2, 8, {}}),
+                  "add optional-pair first domain");
+  passed &= check(problem.addEventDomain({2, 2, 3, 8, {}}),
+                  "add optional-pair second domain");
+  const CanonicalSyncMechanismId direct =
+      takeIndex(problem.internMechanism(event(0, 1, 3, source, target)), passed,
+                "add covering direct singleton");
+  passed &= check(problem.internMechanism(event(1, 1, 2, source, middle)),
+                  "add optional-pair first member");
+  passed &= check(problem.internMechanism(event(2, 2, 3, middle, target)),
+                  "add optional-pair second member");
+
+  CanonicalSyncDirectPairOptions options;
+  options.pairCoverageLimits.maximumWorkspaceWords = 0;
+  const CanonicalSyncProblemResult generated =
+      addCanonicalSyncDirectPairPatterns(problem, options);
+  passed &= check(generated && generated.index == 0 &&
+                      problem.wasPatternGenerationTruncated() &&
+                      problem.getPatternStatistics().directPairProposals == 1 &&
+                      problem.getPatternStatistics().directPairEvaluations == 0,
+                  "truncate an optional pair scope at its workspace bound");
+  passed &= check(problem.freeze(),
+                  "freeze singleton-valid problem after pair truncation");
+  passed &= check(problem.getPatternStatistics().directPairProposals == 1 &&
+                      problem.getPatternStatistics().directPairEvaluations == 0,
+                  "preserve pair truncation statistics through freeze");
+  const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
+  passed &=
+      check(selection && selection.mechanisms ==
+                             std::vector<CanonicalSyncMechanismId>{direct},
+            "retain singleton correctness after optional pair truncation");
+  return passed;
+}
+
 bool testSiblingAndBarrierPairsComposeAtTheirLca() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -1201,6 +1252,7 @@ int main() {
       testReverseDeletionPreservesBaselineCoverage() &&
       testInactiveRecurrenceDoesNotBuildAnArena() &&
       testDirectPairDiscoversJointCoverage() &&
+      testPairPreparationLimitKeepsSingletonCorrectness() &&
       testSiblingAndBarrierPairsComposeAtTheirLca() &&
       testNestedPairExtendsToParentDemand() &&
       testDirectPairComposesAcrossRecurrenceArena() &&

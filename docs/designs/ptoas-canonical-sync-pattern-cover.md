@@ -140,7 +140,15 @@ chain before exact propagation.
 
 The exact-evaluation bound is applied per owner scope. If one scope exceeds the
 bound, optional pairs for that scope are skipped as a group; singleton direct
-mechanisms remain available.
+mechanisms remain available. Exact pair coverage is likewise prepared one owner
+scope at a time. If that scope exceeds a pair result or workspace bound, its
+whole pair batch is discarded and preparation continues with the next scope.
+
+Dense coverage matrices use a default limit of `2^22` 64-bit words each. Pair
+preparation therefore retains at most one singleton result, one current-scope
+pair result, and one pair workspace at once: a 96 MiB aggregate dense-matrix
+ceiling. Row metadata has a separate `2^16` bound, including for zero-demand
+graphs.
 
 ## 5. Selection strategies
 

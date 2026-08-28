@@ -1246,7 +1246,13 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns() {
   baselineCoverage_ =
       projectCoverage(singletonCoverage.baseline, activeDemands_);
 
+  const std::size_t directPairProposals =
+      patternStatistics_.directPairProposals;
+  const std::size_t directPairEvaluations =
+      patternStatistics_.directPairEvaluations;
   patternStatistics_ = {};
+  patternStatistics_.directPairProposals = directPairProposals;
+  patternStatistics_.directPairEvaluations = directPairEvaluations;
   patterns_.clear();
   patterns_.reserve(mechanisms_.size() + patternSpecs_.size());
   for (const CanonicalSyncMechanism &mechanism : mechanisms_) {

@@ -383,6 +383,9 @@ struct CanonicalSyncDirectPairOptions {
   /// Proposals are owned by the LCA of their mechanism scopes. An oversized
   /// scope is skipped as a whole so truncation never depends on ID order.
   std::size_t maximumEvaluationsPerScope = 1U << 12;
+  /// Pair preparation is optional. A scope whose exact pair matrices exceed
+  /// these limits is skipped without weakening singleton correctness.
+  SyncCoverCoverageLimits pairCoverageLimits;
 };
 
 CanonicalSyncProblemResult

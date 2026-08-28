@@ -884,6 +884,33 @@ bool testUnavailableArenaIsReported() {
   return passed;
 }
 
+bool testPairWorkspaceLimitReturnsNoPartialCoverage() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add pair-limit source");
+  const SyncCoverNodeId middle =
+      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add pair-limit middle");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(3, 1, 0, 2), passed, "add pair-limit target");
+  passed &= check(graph.addDemand(makeDemand(source, target)),
+                  "add pair-limit demand");
+  passed &= check(graph.freezeStructure(), "freeze pair-limit graph");
+
+  const SyncCoverExpandedProgram expansion(graph);
+  const std::vector<SyncCoverCompletionSupply> supplies = {
+      {0, makeEdge(source, middle, SyncCoverEdgeKind::CompletionSupply)},
+      {1, makeEdge(middle, target, SyncCoverEdgeKind::CompletionSupply)}};
+  SyncCoverCoverageLimits limits;
+  limits.maximumWorkspaceWords = 0;
+  const SyncCoverPairCoverageResult result = computeSyncCoverPairCoverage(
+      graph, expansion, 2, supplies, {{0, 1}}, {0}, limits);
+  passed &= check(result.error == SyncCoverCoverageError::LimitExceeded &&
+                      result.pairs.empty() && result.unavailableDemands.empty(),
+                  "pair workspace exhaustion discards the entire batch");
+  return passed;
+}
+
 bool testBaseLimitFailsClosed() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -1004,6 +1031,7 @@ int main() {
   passed &= testGuardedProtocolRemainsLocal();
   passed &= testExpansionOwnershipAndMaximumHorizon();
   passed &= testUnavailableArenaIsReported();
+  passed &= testPairWorkspaceLimitReturnsNoPartialCoverage();
   passed &= testBaseLimitFailsClosed();
   passed &= testHierarchicalMetadataHonorsBaseNodeLimit();
   passed &= testInvalidSupplyFailsClosed();

@@ -87,7 +87,6 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
     }
   }
   std::map<SyncCoverScopeId, std::vector<SyncCoverMechanismPair>> byOwner;
-  std::vector<SyncCoverMechanismPair> proposals;
   for (std::size_t first = 0; first < eligible.size(); ++first) {
     for (std::size_t second = first + 1; second < eligible.size(); ++second) {
       const CanonicalSyncMechanism &firstMechanism =
@@ -113,6 +112,17 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
   std::size_t proposalCount = 0;
   for (auto &[owner, owned] : byOwner) {
     (void)owner;
+    std::sort(owned.begin(), owned.end(),
+              [](const auto &first, const auto &second) {
+                return std::tie(first.first, first.second) <
+                       std::tie(second.first, second.second);
+              });
+    owned.erase(std::unique(owned.begin(), owned.end(),
+                            [](const auto &first, const auto &second) {
+                              return first.first == second.first &&
+                                     first.second == second.second;
+                            }),
+                owned.end());
     const bool proposalCountOverflows =
         owned.size() > std::numeric_limits<std::size_t>::max() - proposalCount;
     if (proposalCountOverflows) {
@@ -127,22 +137,9 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
       if (!owned.empty()) {
         problem.markPatternGenerationTruncated();
       }
-      continue;
+      owned.clear();
     }
-    proposals.insert(proposals.end(), owned.begin(), owned.end());
   }
-  std::sort(proposals.begin(), proposals.end(),
-            [](const auto &first, const auto &second) {
-              return std::tie(first.first, first.second) <
-                     std::tie(second.first, second.second);
-            });
-  proposals.erase(std::unique(proposals.begin(), proposals.end(),
-                              [](const auto &first, const auto &second) {
-                                return first.first == second.first &&
-                                       first.second == second.second;
-                              }),
-                  proposals.end());
-  problem.recordDirectPairGeneration(proposalCount, proposals.size());
 
   std::vector<SyncCoverCompletionSupply> supplies;
   for (const CanonicalSyncMechanism &mechanism : problem.getMechanisms()) {
@@ -157,28 +154,51 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
       computeSyncCoverSingletonCoverage(graph, problem.getExpansion(),
                                         problem.getMechanisms().size(),
                                         supplies, problem.getDemands());
-  const SyncCoverPairCoverageResult joint = computeSyncCoverPairCoverage(
-      graph, problem.getExpansion(), problem.getMechanisms().size(), supplies,
-      proposals, problem.getDemands());
-  if (!singleton || !joint) {
+  if (!singleton) {
     return {CanonicalSyncProblemError::CoverageFailure, std::nullopt};
   }
 
   std::size_t addedCount = 0;
-  for (std::size_t proposal = 0; proposal < proposals.size(); ++proposal) {
-    const SyncCoverMechanismPair &members = proposals[proposal];
-    const std::vector<CanonicalSyncMechanismId> selection{members.first,
-                                                          members.second};
-    SyncCoverDemandSet singletonUnion = singleton.mechanisms[members.first];
-    singletonUnion.unite(singleton.mechanisms[members.second]);
-    const CanonicalSyncProblemResult added =
-        problem.addPattern({CanonicalSyncPatternKind::DirectPair, selection},
-                           joint.pairs[proposal], singletonUnion);
-    if (!added) {
-      return {added.error, addedCount};
+  std::size_t evaluationCount = 0;
+  for (const auto &[owner, owned] : byOwner) {
+    (void)owner;
+    if (owned.empty()) {
+      continue;
     }
-    addedCount += added.index.has_value();
+    const SyncCoverPairCoverageResult joint = computeSyncCoverPairCoverage(
+        graph, problem.getExpansion(), problem.getMechanisms().size(), supplies,
+        owned, problem.getDemands(), options.pairCoverageLimits);
+    if (joint.error == SyncCoverCoverageError::LimitExceeded) {
+      problem.markPatternGenerationTruncated();
+      continue;
+    }
+    if (!joint) {
+      return {CanonicalSyncProblemError::CoverageFailure, std::nullopt};
+    }
+    const bool evaluationCountOverflows =
+        owned.size() >
+        std::numeric_limits<std::size_t>::max() - evaluationCount;
+    if (evaluationCountOverflows) {
+      evaluationCount = std::numeric_limits<std::size_t>::max();
+    } else {
+      evaluationCount += owned.size();
+    }
+    for (std::size_t proposal = 0; proposal < owned.size(); ++proposal) {
+      const SyncCoverMechanismPair &members = owned[proposal];
+      const std::vector<CanonicalSyncMechanismId> selection{members.first,
+                                                            members.second};
+      SyncCoverDemandSet singletonUnion = singleton.mechanisms[members.first];
+      singletonUnion.unite(singleton.mechanisms[members.second]);
+      const CanonicalSyncProblemResult added =
+          problem.addPattern({CanonicalSyncPatternKind::DirectPair, selection},
+                             joint.pairs[proposal], singletonUnion);
+      if (!added) {
+        return {added.error, addedCount};
+      }
+      addedCount += added.index.has_value();
+    }
   }
+  problem.recordDirectPairGeneration(proposalCount, evaluationCount);
   return {CanonicalSyncProblemError::None, addedCount};
 }
 

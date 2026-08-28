@@ -25,6 +25,15 @@ namespace pto {
 using SyncCoverDemandId = std::size_t;
 using SyncCoverMechanismId = std::size_t;
 
+/// Bounds the dense bit matrices used by one coverage query. The defaults cap
+/// each result or workspace matrix at 32 MiB and keep row-vector metadata
+/// bounded independently, including for a graph with no demand bits.
+struct SyncCoverCoverageLimits {
+  std::size_t maximumWorkspaceWords = 1U << 22;
+  std::size_t maximumResultWords = 1U << 22;
+  std::size_t maximumResultRows = 1U << 16;
+};
+
 class SyncCoverDemandSet {
 public:
   explicit SyncCoverDemandSet(std::size_t size = 0);
@@ -129,19 +138,22 @@ computeSyncCoverCoverage(const SyncCoverGraph &graph,
 SyncCoverSingletonCoverageResult computeSyncCoverSingletonCoverage(
     const SyncCoverGraph &graph, const SyncCoverExpandedProgram &expansion,
     std::size_t mechanismCount,
-    const std::vector<SyncCoverCompletionSupply> &supplies);
+    const std::vector<SyncCoverCompletionSupply> &supplies,
+    SyncCoverCoverageLimits limits = {});
 SyncCoverSingletonCoverageResult computeSyncCoverSingletonCoverage(
     const SyncCoverGraph &graph, const SyncCoverExpandedProgram &expansion,
     std::size_t mechanismCount,
     const std::vector<SyncCoverCompletionSupply> &supplies,
-    const std::vector<SyncCoverDemandId> &activeDemands);
+    const std::vector<SyncCoverDemandId> &activeDemands,
+    SyncCoverCoverageLimits limits = {});
 
 SyncCoverPairCoverageResult computeSyncCoverPairCoverage(
     const SyncCoverGraph &graph, const SyncCoverExpandedProgram &expansion,
     std::size_t mechanismCount,
     const std::vector<SyncCoverCompletionSupply> &supplies,
     const std::vector<SyncCoverMechanismPair> &pairs,
-    const std::vector<SyncCoverDemandId> &activeDemands);
+    const std::vector<SyncCoverDemandId> &activeDemands,
+    SyncCoverCoverageLimits limits = {});
 
 } // namespace pto
 } // namespace mlir
