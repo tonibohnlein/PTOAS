@@ -415,11 +415,6 @@ SyncCoverExpandedProgram::SyncCoverExpandedProgram(
     SyncCoverLoopSummary &parent =
         loopSummaries_[loopSummaryIndices_.at(*summary.parentLoop)];
     parent.childLoops.push_back(summary.scope);
-    parent.resources.insert(parent.resources.end(), summary.resources.begin(),
-                            summary.resources.end());
-    parent.carryResources.insert(parent.carryResources.end(),
-                                 summary.carryResources.begin(),
-                                 summary.carryResources.end());
   }
   for (SyncCoverLoopSummary &summary : loopSummaries_) {
     auto normalize = [](auto &values) {
@@ -634,10 +629,20 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
     if (!immediateChild) {
       continue;
     }
-    for (const SyncCoverLoopCompletionTransfer &transfer :
-         summary.completionTransfers) {
-      arena.loopSummaryResources_.push_back({summary.scope, transfer.resource});
-    }
+    const auto interfaceFits = [&](std::size_t additionalResources,
+                                   std::size_t additionalPorts) {
+      std::size_t resourceCount = 0;
+      std::size_t boundaryNodes = 0;
+      std::size_t interfaceNodes = 0;
+      return checkedAdd(arena.loopSummaryResources_.size(), additionalResources,
+                        resourceCount) &&
+             checkedMultiply(resourceCount, 2, boundaryNodes) &&
+             checkedAdd(boundaryNodes, arena.loopSummaryPorts_.size(),
+                        interfaceNodes) &&
+             checkedAdd(interfaceNodes, additionalPorts, interfaceNodes) &&
+             arena.operationNodes_.size() <= maximumNodes &&
+             interfaceNodes <= maximumNodes - arena.operationNodes_.size();
+    };
     std::vector<SyncCoverScopeId> descendants{summary.scope};
     while (!descendants.empty()) {
       const SyncCoverScopeId descendant = descendants.back();
@@ -648,12 +653,23 @@ SyncCoverExpandedProgram::ArenaBuildResult SyncCoverExpandedProgram::buildArena(
         result.unavailable = nodeReason;
         return result;
       }
+      for (const SyncCoverLoopCompletionTransfer &transfer :
+           descendantSummary->completionTransfers) {
+        const auto resource = std::make_pair(summary.scope, transfer.resource);
+        const bool alreadyPresent =
+            std::find(arena.loopSummaryResources_.begin(),
+                      arena.loopSummaryResources_.end(),
+                      resource) != arena.loopSummaryResources_.end();
+        if (!alreadyPresent) {
+          if (!interfaceFits(1, 0)) {
+            result.unavailable = nodeReason;
+            return result;
+          }
+          arena.loopSummaryResources_.push_back(resource);
+        }
+      }
       for (SyncCoverNodeId port : descendantSummary->completionPorts) {
-        const bool portBudgetExhausted =
-            arena.operationNodes_.size() >= maximumNodes ||
-            arena.loopSummaryPorts_.size() >=
-                maximumNodes - arena.operationNodes_.size();
-        if (portBudgetExhausted) {
+        if (!interfaceFits(0, 1)) {
           result.unavailable = nodeReason;
           return result;
         }

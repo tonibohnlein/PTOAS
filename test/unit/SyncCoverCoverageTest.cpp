@@ -910,26 +910,31 @@ bool testBaseLimitFailsClosed() {
   return passed;
 }
 
-bool testHierarchicalPortsHonorBaseNodeLimit() {
+bool testHierarchicalMetadataHonorsBaseNodeLimit() {
   bool passed = true;
   SyncCoverGraph graph;
+  passed &= check(graph.setResourceRecurrenceCarryKind(
+                      1, SyncCoverEdgeKind::CompletionPreservingIssueOrder),
+                  "set deeply nested carry resource");
   SyncCoverScopeId deepest = 0;
   constexpr unsigned nestingDepth = 32;
   for (unsigned depth = 0; depth < nestingDepth; ++depth) {
     deepest = takeIndex(
-        graph.addScope(deepest, true, SyncCoverTimelineInterval{0, 64}, true),
+        graph.addScope(deepest, true, SyncCoverTimelineInterval{0, 256}, true),
         passed, "add deeply nested loop");
   }
 
   std::vector<SyncCoverNodeId> ports;
-  for (unsigned order = 0; order < 4; ++order) {
+  constexpr unsigned endpointCount = 64;
+  for (unsigned order = 0; order < endpointCount; ++order) {
     ports.push_back(takeIndex(graph.addNode(1, 1, deepest, order), passed,
                               "add deeply nested endpoint"));
   }
-  passed &= check(graph.addDemand(makeDemand(ports[0], ports[1], deepest)),
-                  "add first deeply nested demand");
-  passed &= check(graph.addDemand(makeDemand(ports[2], ports[3], deepest)),
-                  "add second deeply nested demand");
+  for (unsigned endpoint = 0; endpoint < endpointCount; endpoint += 2) {
+    passed &= check(graph.addDemand(makeDemand(ports[endpoint],
+                                               ports[endpoint + 1], deepest)),
+                    "add deeply nested demand");
+  }
   passed &= check(graph.freezeStructure(), "freeze deeply nested graph");
 
   SyncCoverExpansionLimits limits;
@@ -940,11 +945,20 @@ bool testHierarchicalPortsHonorBaseNodeLimit() {
   const SyncCoverExpandedProgram first(graph, limits);
   const SyncCoverExpandedProgram second(graph, limits);
   std::size_t storedPorts = 0;
+  std::size_t storedResources = 0;
+  std::size_t storedCarryResources = 0;
+  std::size_t storedTransfers = 0;
   for (const SyncCoverLoopSummary &summary : first.getLoopSummaries()) {
     storedPorts += summary.completionPorts.size();
+    storedResources += summary.resources.size();
+    storedCarryResources += summary.carryResources.size();
+    storedTransfers += summary.completionTransfers.size();
   }
   passed &= check(storedPorts == ports.size(),
                   "store each hierarchical port in only its owning summary");
+  passed &= check(storedResources == 1 && storedCarryResources == 1 &&
+                      storedTransfers == 1,
+                  "store same-resource metadata only in its owning summary");
   passed &= check(
       first.getError() == SyncCoverExpansionError::BaseLimitExceeded &&
           second.getError() == first.getError(),
@@ -991,7 +1005,7 @@ int main() {
   passed &= testExpansionOwnershipAndMaximumHorizon();
   passed &= testUnavailableArenaIsReported();
   passed &= testBaseLimitFailsClosed();
-  passed &= testHierarchicalPortsHonorBaseNodeLimit();
+  passed &= testHierarchicalMetadataHonorsBaseNodeLimit();
   passed &= testInvalidSupplyFailsClosed();
   return passed ? 0 : 1;
 }

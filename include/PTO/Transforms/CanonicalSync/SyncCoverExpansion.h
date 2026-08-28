@@ -78,8 +78,9 @@ struct SyncCoverLoopCompletionTransfer {
   bool hasZeroTripPath = true;
 };
 
-/// One bottom-up semantic summary of a loop-local DAG. Resources include
-/// nested summaries so a parent can route completion through child exits.
+/// One bottom-up semantic summary of a loop-local DAG. Resource and operation
+/// metadata is locally owned; parent arenas resolve descendants through their
+/// immediate-child interface while enforcing expansion budgets.
 struct SyncCoverLoopSummary {
   SyncCoverScopeId scope = 0;
   std::optional<SyncCoverScopeId> parentLoop;
