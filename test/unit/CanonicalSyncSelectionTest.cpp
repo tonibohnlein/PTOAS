@@ -467,7 +467,7 @@ bool testRoundTripPatternActivatesJointCoverage() {
   const CanonicalSyncVerifiedPlan verified =
       verifyCanonicalSyncSelection(problem, selection);
   passed &= check(static_cast<bool>(verified),
-                  "fresh final coverage accepts round trip");
+                  "frozen pattern coverage accepts round trip");
   CanonicalSyncGreedyOptions bounded;
   bounded.maximumWorkUnits = 1;
   passed &= check(selectCanonicalSyncPatterns(problem, bounded).error ==
@@ -776,7 +776,7 @@ bool testUnitSlotLifecycleProtocol() {
                   "select one complete lifecycle implementation");
   passed &=
       check(static_cast<bool>(verifyCanonicalSyncSelection(problem, selection)),
-            "final verification accepts lifecycle protocol");
+            "finalization accepts lifecycle protocol");
   return passed;
 }
 
@@ -879,21 +879,27 @@ bool testOptionalPipelineScarcityFallsBack() {
                   "singleton barriers keep a scarce pipeline selectable");
   passed &=
       check(static_cast<bool>(verifyCanonicalSyncSelection(problem, selection)),
-            "final verification accepts scarce pipeline fallback");
+            "finalization accepts scarce pipeline fallback");
   return passed;
 }
 
 bool testReservationsAndFinalValidation() {
   bool passed = true;
   SyncCoverGraph graph;
-  const SyncCoverNodeId source = takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}),
+  const SyncCoverNodeId inactiveSource = takeIndex(
+      graph.addNode(3, 1, 0, 0), passed, "add inactive reserve source");
+  const SyncCoverNodeId inactiveTarget = takeIndex(
+      graph.addNode(4, 1, 0, 1), passed, "add inactive reserve target");
+  const SyncCoverNodeId source = takeIndex(graph.addNode(1, 1, 0, 2, {}, {2}),
                                            passed, "add reserve source");
   const SyncCoverNodeId target =
-      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add reserve target");
+      takeIndex(graph.addNode(2, 1, 0, 3), passed, "add reserve target");
+  passed &= check(graph.addDemand(demand(inactiveSource, inactiveTarget)),
+                  "add inactive reserve demand");
   passed &=
       check(graph.addDemand(demand(source, target)), "add reserve demand");
   passed &= check(graph.freezeStructure(), "freeze reserve graph");
-  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  CanonicalSyncPatternProblem problem(graph, {1});
   passed &= check(problem.addEventDomain({0, 1, 2, 4, {0, 2, 9}}),
                   "add reserved domain");
   const CanonicalSyncMechanismId mechanism =
@@ -911,6 +917,14 @@ bool testReservationsAndFinalValidation() {
                       verified.allocation.domains[0].uses[0].ids ==
                           std::vector<unsigned>{1},
                   "allocation skips in-range reservations only");
+  CanonicalSyncSelection incomplete = selection;
+  incomplete.mechanisms.clear();
+  const CanonicalSyncVerifiedPlan rejected =
+      verifyCanonicalSyncSelection(problem, incomplete);
+  passed &= check(
+      rejected.error == CanonicalSyncSelectionError::FinalValidationFailed &&
+          rejected.firstUncoveredDemand == 1,
+      "finalization rejects missing selected IDs with graph demand");
   return passed;
 }
 

@@ -423,19 +423,6 @@ getEventCoverable(const CanonicalSyncPatternProblem &problem,
   return result;
 }
 
-std::vector<SyncCoverCompletionSupply>
-selectedSupplies(const CanonicalSyncPatternProblem &problem,
-                 const std::vector<CanonicalSyncMechanismId> &selected) {
-  std::vector<SyncCoverCompletionSupply> result;
-  for (CanonicalSyncMechanismId mechanism : selected) {
-    for (const CanonicalSyncSupplyBinding &binding :
-         problem.getMechanisms()[mechanism].descriptor.supplies) {
-      result.push_back({mechanism, binding.edge, binding.allowedDemands});
-    }
-  }
-  return result;
-}
-
 } // namespace
 
 CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
@@ -664,17 +651,18 @@ CanonicalSyncVerifiedPlan mlir::pto::verifyCanonicalSyncSelection(
     result.error = CanonicalSyncSelectionError::ResourceInfeasible;
     return result;
   }
-  const SyncCoverCoverageResult coverage = computeSyncCoverCoverage(
-      problem.getGraph(), problem.getExpansion(),
-      selectedSupplies(problem, result.mechanisms), problem.getDemands());
+  std::size_t coverageWork = 0;
+  const std::optional<SyncCoverDemandSet> coverage =
+      coveredBy(problem, result.mechanisms,
+                std::numeric_limits<std::size_t>::max(), coverageWork);
   if (!coverage) {
     result.error = CanonicalSyncSelectionError::FinalValidationFailed;
     return result;
   }
-  for (SyncCoverDemandId demand : problem.getDemands()) {
-    if (!coverage.covered.contains(demand)) {
+  for (std::size_t demand = 0; demand < problem.getDemands().size(); ++demand) {
+    if (!coverage->contains(demand)) {
       result.error = CanonicalSyncSelectionError::FinalValidationFailed;
-      result.firstUncoveredDemand = demand;
+      result.firstUncoveredDemand = problem.getDemands()[demand];
       return result;
     }
   }

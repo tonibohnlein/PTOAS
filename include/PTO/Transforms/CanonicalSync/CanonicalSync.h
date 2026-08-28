@@ -54,8 +54,8 @@ materializeCanonicalSyncPlan(const CanonicalSyncProgram &program,
                              const CanonicalSyncPatternProblem &problem,
                              const CanonicalSyncVerifiedPlan &plan);
 
-/// Run analysis, bounded-pattern selection, independent final verification,
-/// and materialization while all referenced graph storage remains alive.
+/// Run analysis, bounded-pattern selection, bitset-based finalization, and
+/// materialization while all referenced graph storage remains alive.
 LogicalResult runCanonicalSync(func::FuncOp function,
                                const CanonicalSyncBuildOptions &options = {});
 

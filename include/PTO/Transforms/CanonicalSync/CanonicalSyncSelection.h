@@ -413,9 +413,10 @@ CanonicalSyncSelection
 selectCanonicalSyncPatterns(const CanonicalSyncPatternProblem &problem,
                             CanonicalSyncGreedyOptions options = {});
 
-/// The only result future materialization may consume. Pattern bitsets are not
-/// part of this trust boundary: finalization recomputes semantic coverage and
-/// exact event allocation from the selected atomic mechanisms.
+/// The only result future materialization may consume. Finalization recomputes
+/// coverage from the frozen pattern table and exact event allocation from the
+/// selected atomic mechanisms; it does not trust the solver's mutable coverage
+/// state.
 struct CanonicalSyncVerifiedPlan {
   CanonicalSyncSelectionError error = CanonicalSyncSelectionError::None;
   std::vector<CanonicalSyncMechanismId> mechanisms;

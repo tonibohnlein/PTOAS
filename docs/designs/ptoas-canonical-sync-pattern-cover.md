@@ -7,9 +7,11 @@ separate concerns:
 1. analysis constructs sound completion requirements;
 2. selection chooses synchronization mechanisms with exact event-ID
    feasibility;
-3. an independent final check proves the selected plan before materialization.
+3. finalization validates the selected plan before materialization.
 
-Selection is an optimization. The final check is the correctness boundary.
+Pattern coverage is certified while the immutable problem is built. Selection
+uses only those certified bitsets, and finalization checks the selected IDs
+against the frozen pattern table before emission.
 
 ## 1. Completion Requirements
 
@@ -93,12 +95,14 @@ at each loop depth because a body barrier drains a pipe and can serialize more
 work than a targeted event handshake. Broad `PIPE_ALL` barriers are weighted by
 the resources they drain.
 
-## 4. Verification And Materialization
+## 4. Finalization And Materialization
 
-After selection, CanonicalSync performs one fresh whole-plan coverage check over
-all active demands. It also rechecks resource feasibility, the event-ID
-assignment, mechanism conflicts, and the availability of every materialization
-recipe. Failure aborts the pass without partially modifying the IR.
+After selection, CanonicalSync recomputes active coverage from the selected
+mechanism IDs and the frozen, certified pattern bitsets. It also rechecks
+resource feasibility, the event-ID assignment, mechanism conflicts, and the
+availability of every materialization recipe. No semantic graph traversal is
+repeated after selection. Failure aborts the pass without partially modifying
+the IR.
 
 Materialization then emits each selected mechanism exactly once using its stored
 recipe and assigned IDs. Protocol actions remain atomic: failure cannot leave a
@@ -156,4 +160,5 @@ events, improved event-scarcity substitutions, and richer target capabilities.
 Longer term, the same completion requirements and structural cost model can
 participate in memory-placement and out-of-order scheduling optimization. Those
 extensions may change addresses or issue order and then rebuild the bounded
-pattern problem; they do not require weakening the final coverage verifier.
+pattern problem; they do not require weakening construction-time coverage
+certification.

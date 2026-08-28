@@ -469,7 +469,7 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
   const CanonicalSyncVerifiedPlan plan =
       verifyCanonicalSyncSelection(**problem, selection);
   if (!plan) {
-    function.emitError() << "canonical sync final verification failed, error="
+    function.emitError() << "canonical sync finalization failed, error="
                          << static_cast<unsigned>(plan.error);
     return failure();
   }
