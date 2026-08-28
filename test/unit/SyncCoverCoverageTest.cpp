@@ -911,6 +911,27 @@ bool testPairWorkspaceLimitReturnsNoPartialCoverage() {
   return passed;
 }
 
+bool testPairMechanismRowsAreBoundedWithoutDemands() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  passed &= check(graph.freezeStructure(), "freeze zero-demand pair graph");
+  const SyncCoverExpandedProgram expansion(graph);
+  SyncCoverCoverageLimits limits;
+  limits.maximumResultRows = 0;
+  limits.maximumResultWords = 0;
+  limits.maximumMechanismRows = 0;
+  const SyncCoverPairCoverageResult rejected =
+      computeSyncCoverPairCoverage(graph, expansion, 1, {}, {}, {}, limits);
+  const SyncCoverPairCoverageResult empty =
+      computeSyncCoverPairCoverage(graph, expansion, 0, {}, {}, {}, limits);
+  passed &= check(rejected.error == SyncCoverCoverageError::LimitExceeded &&
+                      rejected.pairs.empty(),
+                  "bound pair mechanism rows before zero-demand allocation");
+  passed &= check(empty && empty.pairs.empty(),
+                  "accept an actually empty zero-row pair query");
+  return passed;
+}
+
 bool testBaseLimitFailsClosed() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -1032,6 +1053,7 @@ int main() {
   passed &= testExpansionOwnershipAndMaximumHorizon();
   passed &= testUnavailableArenaIsReported();
   passed &= testPairWorkspaceLimitReturnsNoPartialCoverage();
+  passed &= testPairMechanismRowsAreBoundedWithoutDemands();
   passed &= testBaseLimitFailsClosed();
   passed &= testHierarchicalMetadataHonorsBaseNodeLimit();
   passed &= testInvalidSupplyFailsClosed();

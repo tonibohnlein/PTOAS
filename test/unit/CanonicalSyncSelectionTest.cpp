@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <iterator>
 #include <numeric>
 #include <string_view>
 #include <utility>
@@ -92,6 +93,16 @@ CanonicalSyncMechanismDescriptor event(CanonicalSyncEventDomainId domain,
   result.supplies.push_back({supply(source, target), 0, std::nullopt,
                              std::nullopt, std::nullopt,
                              CanonicalSyncSupplyProof::DirectAction});
+  return result;
+}
+
+CanonicalSyncMechanismDescriptor
+eventInScope(CanonicalSyncEventDomainId domain, std::uint32_t sourceResource,
+             std::uint32_t targetResource, SyncCoverNodeId source,
+             SyncCoverNodeId target, SyncCoverScopeId scope) {
+  CanonicalSyncMechanismDescriptor result =
+      event(domain, sourceResource, targetResource, source, target);
+  result.supplies.front().edge.scope = scope;
   return result;
 }
 
@@ -508,6 +519,274 @@ bool testPairPreparationLimitKeepsSingletonCorrectness() {
       check(selection && selection.mechanisms ==
                              std::vector<CanonicalSyncMechanismId>{direct},
             "retain singleton correctness after optional pair truncation");
+  return passed;
+}
+
+bool testPairOwnerUsesEverySupplyScope() {
+  bool passed = true;
+  const auto run = [&](bool leftNodesFirst) {
+    SyncCoverGraph graph;
+    const SyncCoverScopeId left = takeIndex(
+        graph.addScope(0, true, SyncCoverTimelineInterval{0, 100}, true),
+        passed, "add multi-supply left loop");
+    const SyncCoverScopeId right = takeIndex(
+        graph.addScope(0, true, SyncCoverTimelineInterval{0, 100}, true),
+        passed, "add multi-supply right loop");
+    SyncCoverNodeId leftSource = 0;
+    SyncCoverNodeId leftMiddle = 0;
+    SyncCoverNodeId leftTarget = 0;
+    SyncCoverNodeId rightSource = 0;
+    SyncCoverNodeId rightTarget = 0;
+    unsigned order = 0;
+    const auto addLeft = [&]() {
+      leftSource = takeIndex(graph.addNode(1, 1, left, order++, {}, {2}),
+                             passed, "add multi-supply left source");
+      leftMiddle = takeIndex(graph.addNode(2, 1, left, order++, {}, {3}),
+                             passed, "add multi-supply left middle");
+      leftTarget = takeIndex(graph.addNode(3, 1, left, order++), passed,
+                             "add multi-supply left target");
+    };
+    const auto addRight = [&]() {
+      rightSource = takeIndex(graph.addNode(7, 1, right, order++, {}, {8}),
+                              passed, "add multi-supply right source");
+      rightTarget = takeIndex(graph.addNode(8, 1, right, order++), passed,
+                              "add multi-supply right target");
+    };
+    if (leftNodesFirst) {
+      addLeft();
+      addRight();
+    } else {
+      addRight();
+      addLeft();
+    }
+    const SyncCoverNodeId rootSource =
+        takeIndex(graph.addNode(4, 1, 0, order++, {}, {5}), passed,
+                  "add multi-supply root source");
+    const SyncCoverNodeId rootMiddle =
+        takeIndex(graph.addNode(5, 1, 0, order++, {}, {6}), passed,
+                  "add multi-supply root middle");
+    const SyncCoverNodeId rootTarget =
+        takeIndex(graph.addNode(6, 1, 0, order++), passed,
+                  "add multi-supply root target");
+    passed &= check(graph.freezeStructure(), "freeze multi-supply graph");
+
+    CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+    passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                    "add multi-supply left domain");
+    passed &= check(problem.addEventDomain({1, 7, 8, 8, {}}),
+                    "add multi-supply right domain");
+    passed &= check(problem.addEventDomain({2, 2, 3, 8, {}}),
+                    "add multi-supply connector domain");
+    passed &= check(problem.addEventDomain({3, 4, 5, 8, {}}),
+                    "add first root connector domain");
+    passed &= check(problem.addEventDomain({4, 5, 6, 8, {}}),
+                    "add second root connector domain");
+    CanonicalSyncMechanismDescriptor multi =
+        protocol(0, 1, 2, leftSource, leftMiddle, left, 1);
+    CanonicalSyncMechanismDescriptor rightProtocol =
+        protocol(1, 7, 8, rightSource, rightTarget, right, 1);
+    rightProtocol.actions[0].eventUse = 1;
+    rightProtocol.actions[1].eventUse = 1;
+    rightProtocol.supplies.front().eventUse = 1;
+    rightProtocol.supplies.front().produceAction = 2;
+    rightProtocol.supplies.front().consumeAction = 3;
+    multi.eventUses.push_back(std::move(rightProtocol.eventUses.front()));
+    multi.actions.insert(multi.actions.end(),
+                         std::make_move_iterator(rightProtocol.actions.begin()),
+                         std::make_move_iterator(rightProtocol.actions.end()));
+    multi.supplies.push_back(std::move(rightProtocol.supplies.front()));
+    passed &= check(
+        problem.internVerifiedProtocol(std::move(multi),
+                                       [](const auto &candidate) {
+                                         return candidate.supplies.size() == 2;
+                                       }),
+        "add multi-supply mechanism");
+    passed &= check(problem.internMechanism(
+                        eventInScope(2, 2, 3, leftMiddle, leftTarget, left)),
+                    "add multi-supply connector");
+    passed &=
+        check(problem.internMechanism(event(3, 4, 5, rootSource, rootMiddle)),
+              "add root connector first member");
+    passed &=
+        check(problem.internMechanism(event(4, 5, 6, rootMiddle, rootTarget)),
+              "add root connector second member");
+    CanonicalSyncDirectPairOptions options;
+    options.maximumEvaluationsPerScope = 1;
+    const CanonicalSyncProblemResult generated =
+        addCanonicalSyncDirectPairPatterns(problem, options);
+    const CanonicalSyncPatternStatistics &statistics =
+        problem.getPatternStatistics();
+    passed &= check(generated && generated.index == 0 &&
+                        problem.wasPatternGenerationTruncated() &&
+                        statistics.directPairProposals == 2 &&
+                        statistics.directPairEvaluations == 0,
+                    "own a multi-supply pair at the LCA of every supply");
+  };
+  run(true);
+  run(false);
+  return passed;
+}
+
+bool testOwnerPairBatchesTruncateAtomicallyAndContinue() {
+  bool passed = true;
+  const auto run = [&](bool coverageRowLimit) {
+    SyncCoverGraph graph;
+    const SyncCoverScopeId child =
+        takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{12, 30}),
+                  passed, "add atomic-pair child scope");
+    unsigned order = 0;
+    const auto addNode =
+        [&](std::uint32_t resource, SyncCoverScopeId scope,
+            std::string_view message,
+            std::vector<std::uint32_t> completionTargets = {}) {
+          return takeIndex(graph.addNode(resource, 1, scope, order++, {},
+                                         std::move(completionTargets)),
+                           passed, message);
+        };
+    const SyncCoverNodeId firstSource =
+        addNode(1, 0, "add first root-chain source", {2});
+    const SyncCoverNodeId firstMiddle =
+        addNode(2, 0, "add first root-chain middle", {3});
+    const SyncCoverNodeId firstTarget =
+        addNode(3, 0, "add first root-chain target");
+    const SyncCoverNodeId secondSource =
+        addNode(4, 0, "add second root-chain source", {5});
+    const SyncCoverNodeId secondMiddle =
+        addNode(5, 0, "add second root-chain middle", {6});
+    const SyncCoverNodeId secondTarget =
+        addNode(6, 0, "add second root-chain target");
+    const SyncCoverNodeId childSource =
+        addNode(7, child, "add child-chain source", {8});
+    const SyncCoverNodeId childMiddle =
+        addNode(8, child, "add child-chain middle", {9});
+    const SyncCoverNodeId childTarget =
+        addNode(9, child, "add child-chain target");
+    passed &= check(graph.freezeStructure(), "freeze atomic-pair graph");
+
+    CanonicalSyncPatternProblem::Limits problemLimits;
+    if (!coverageRowLimit) {
+      problemLimits.maximumPatternProposals = 1;
+    }
+    CanonicalSyncPatternProblem problem(graph, allDemands(graph),
+                                        problemLimits);
+    for (const CanonicalSyncEventDomain &domain :
+         std::vector<CanonicalSyncEventDomain>{{0, 1, 2, 8, {}},
+                                               {1, 2, 3, 8, {}},
+                                               {2, 4, 5, 8, {}},
+                                               {3, 5, 6, 8, {}},
+                                               {4, 7, 8, 8, {}},
+                                               {5, 8, 9, 8, {}}}) {
+      passed &=
+          check(problem.addEventDomain(domain), "add atomic-pair event domain");
+    }
+    passed &=
+        check(problem.internMechanism(event(0, 1, 2, firstSource, firstMiddle)),
+              "add first root-chain member");
+    passed &=
+        check(problem.internMechanism(event(1, 2, 3, firstMiddle, firstTarget)),
+              "add first root-chain connector");
+    passed &= check(
+        problem.internMechanism(event(2, 4, 5, secondSource, secondMiddle)),
+        "add second root-chain member");
+    passed &= check(
+        problem.internMechanism(event(3, 5, 6, secondMiddle, secondTarget)),
+        "add second root-chain connector");
+    passed &= check(problem.internMechanism(
+                        eventInScope(4, 7, 8, childSource, childMiddle, child)),
+                    "add child-chain member");
+    passed &= check(problem.internMechanism(
+                        eventInScope(5, 8, 9, childMiddle, childTarget, child)),
+                    "add child-chain connector");
+    CanonicalSyncDirectPairOptions options;
+    if (coverageRowLimit) {
+      options.pairCoverageLimits.maximumResultRows = 1;
+    }
+    const CanonicalSyncProblemResult generated =
+        addCanonicalSyncDirectPairPatterns(problem, options);
+    const std::size_t expectedEvaluations = coverageRowLimit ? 1 : 3;
+    passed &=
+        check(generated && generated.index == 0 &&
+                  problem.wasPatternGenerationTruncated() &&
+                  problem.getPatternStatistics().directPairProposals == 3 &&
+                  problem.getPatternStatistics().directPairEvaluations ==
+                      expectedEvaluations,
+              "truncate one owner batch and evaluate the later scope");
+    passed &=
+        check(problem.freeze(), "freeze after atomic owner-pair truncation");
+    passed &= check(problem.getPatternStatistics()
+                            .get(CanonicalSyncPatternKind::DirectPair)
+                            .patterns == 1,
+                    "commit no partial rows from the oversized owner batch");
+  };
+  run(true);
+  run(false);
+  return passed;
+}
+
+bool testOwnerPairCoverageWordLimitIsAtomic() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source = takeIndex(
+      graph.addNode(1, 1, 0, 0, {}, {2, 3}), passed, "add word-limit source");
+  const SyncCoverNodeId middle = takeIndex(graph.addNode(2, 1, 0, 1, {}, {3}),
+                                           passed, "add word-limit middle");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(3, 1, 0, 2), passed, "add word-limit target");
+  const SyncCoverNodeId otherSource = takeIndex(
+      graph.addNode(4, 1, 0, 3, {}, {5}), passed, "add zero-extra source");
+  const SyncCoverNodeId otherMiddle = takeIndex(
+      graph.addNode(5, 1, 0, 4, {}, {6}), passed, "add zero-extra middle");
+  const SyncCoverNodeId otherTarget =
+      takeIndex(graph.addNode(6, 1, 0, 5), passed, "add zero-extra target");
+  passed &=
+      check(graph.addDemand(demand(source, target)), "add word-limit demand");
+  passed &= check(graph.freezeStructure(), "freeze word-limit graph");
+
+  CanonicalSyncPatternProblem::Limits limits;
+  limits.maximumCoverageWords = 0;
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph), limits);
+  passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                  "add word-limit first domain");
+  passed &= check(problem.addEventDomain({1, 2, 3, 8, {}}),
+                  "add word-limit second domain");
+  passed &= check(problem.addEventDomain({2, 1, 3, 8, {}}),
+                  "add word-limit direct domain");
+  passed &= check(problem.addEventDomain({3, 4, 5, 8, {}}),
+                  "add zero-extra first domain");
+  passed &= check(problem.addEventDomain({4, 5, 6, 8, {}}),
+                  "add zero-extra second domain");
+  passed &= check(problem.internMechanism(event(0, 1, 2, source, middle)),
+                  "add word-limit first pair member");
+  passed &= check(problem.internMechanism(event(1, 2, 3, middle, target)),
+                  "add word-limit second pair member");
+  passed &=
+      check(problem.internMechanism(event(3, 4, 5, otherSource, otherMiddle)),
+            "add zero-extra first pair member");
+  passed &=
+      check(problem.internMechanism(event(4, 5, 6, otherMiddle, otherTarget)),
+            "add zero-extra second pair member");
+  passed &= check(problem.internMechanism(event(2, 1, 3, source, target)),
+                  "add word-limit covering singleton");
+
+  SyncCoverDemandSet retainedJoint(1);
+  retainedJoint.insert(0);
+  SyncCoverDemandSet emptyJoint(1);
+  const std::vector<SyncCoverDemandSet> singletonRows(
+      problem.getMechanisms().size(), SyncCoverDemandSet(1));
+  const CanonicalSyncProblemResult rejected =
+      problem.addDirectPairBatch({{0, 1}}, {retainedJoint}, singletonRows);
+  const CanonicalSyncProblemResult continued =
+      problem.addDirectPairBatch({{2, 3}}, {emptyJoint}, singletonRows);
+  passed &=
+      check(rejected && rejected.index == 0 && continued &&
+                continued.index == 0 && problem.wasPatternGenerationTruncated(),
+            "discard a whole retained row at the coverage-word bound");
+  passed &=
+      check(problem.freeze(), "freeze after coverage-word batch truncation");
+  passed &= check(problem.getPatternStatistics()
+                          .get(CanonicalSyncPatternKind::DirectPair)
+                          .patterns == 1,
+                  "continue with a later zero-extra owner batch");
   return passed;
 }
 
@@ -1253,6 +1532,9 @@ int main() {
       testInactiveRecurrenceDoesNotBuildAnArena() &&
       testDirectPairDiscoversJointCoverage() &&
       testPairPreparationLimitKeepsSingletonCorrectness() &&
+      testPairOwnerUsesEverySupplyScope() &&
+      testOwnerPairBatchesTruncateAtomicallyAndContinue() &&
+      testOwnerPairCoverageWordLimitIsAtomic() &&
       testSiblingAndBarrierPairsComposeAtTheirLca() &&
       testNestedPairExtendsToParentDemand() &&
       testDirectPairComposesAcrossRecurrenceArena() &&

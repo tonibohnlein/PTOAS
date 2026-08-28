@@ -71,6 +71,24 @@ bool mechanismsMayCompose(const SyncCoverGraph &graph,
       });
 }
 
+std::optional<SyncCoverScopeId>
+getMechanismOwner(const SyncCoverGraph &graph,
+                  const CanonicalSyncMechanism &mechanism) {
+  std::optional<SyncCoverScopeId> owner;
+  for (const CanonicalSyncSupplyBinding &binding :
+       mechanism.descriptor.supplies) {
+    if (!owner) {
+      owner = binding.edge.scope;
+      continue;
+    }
+    owner = graph.getLowestCommonScope(*owner, binding.edge.scope);
+    if (!owner) {
+      return std::nullopt;
+    }
+  }
+  return owner;
+}
+
 } // namespace
 
 CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
@@ -96,17 +114,19 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
       if (!mechanismsMayCompose(graph, firstMechanism, secondMechanism)) {
         continue;
       }
-      const SyncCoverScopeId firstScope =
-          firstMechanism.descriptor.supplies.front().edge.scope;
-      const SyncCoverScopeId secondScope =
-          secondMechanism.descriptor.supplies.front().edge.scope;
-      const std::optional<SyncCoverScopeId> owner =
-          graph.getLowestCommonScope(firstScope, secondScope);
-      if (!owner) {
+      const std::optional<SyncCoverScopeId> firstOwner =
+          getMechanismOwner(graph, firstMechanism);
+      const std::optional<SyncCoverScopeId> secondOwner =
+          getMechanismOwner(graph, secondMechanism);
+      const std::optional<SyncCoverScopeId> pairOwner =
+          firstOwner && secondOwner
+              ? graph.getLowestCommonScope(*firstOwner, *secondOwner)
+              : std::nullopt;
+      if (!pairOwner) {
         continue;
       }
       const auto members = std::minmax(eligible[first], eligible[second]);
-      byOwner[*owner].push_back({members.first, members.second});
+      byOwner[*pairOwner].push_back({members.first, members.second});
     }
   }
   std::size_t proposalCount = 0;
@@ -183,19 +203,18 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
     } else {
       evaluationCount += owned.size();
     }
-    for (std::size_t proposal = 0; proposal < owned.size(); ++proposal) {
-      const SyncCoverMechanismPair &members = owned[proposal];
-      const std::vector<CanonicalSyncMechanismId> selection{members.first,
-                                                            members.second};
-      SyncCoverDemandSet singletonUnion = singleton.mechanisms[members.first];
-      singletonUnion.unite(singleton.mechanisms[members.second]);
-      const CanonicalSyncProblemResult added =
-          problem.addPattern({CanonicalSyncPatternKind::DirectPair, selection},
-                             joint.pairs[proposal], singletonUnion);
-      if (!added) {
-        return {added.error, addedCount};
+    const CanonicalSyncProblemResult added =
+        problem.addDirectPairBatch(owned, joint.pairs, singleton.mechanisms);
+    if (!added) {
+      return {added.error, addedCount};
+    }
+    if (added.index) {
+      const bool addedCountOverflows =
+          *added.index > std::numeric_limits<std::size_t>::max() - addedCount;
+      if (addedCountOverflows) {
+        return {CanonicalSyncProblemError::ArithmeticOverflow, addedCount};
       }
-      addedCount += added.index.has_value();
+      addedCount += *added.index;
     }
   }
   problem.recordDirectPairGeneration(proposalCount, evaluationCount);

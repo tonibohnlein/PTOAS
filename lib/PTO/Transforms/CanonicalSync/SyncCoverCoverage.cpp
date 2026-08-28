@@ -925,6 +925,10 @@ SyncCoverPairCoverageResult mlir::pto::computeSyncCoverPairCoverage(
     result.error = SyncCoverCoverageError::InvalidGraph;
     return result;
   }
+  if (mechanismCount > limits.maximumMechanismRows) {
+    result.error = SyncCoverCoverageError::LimitExceeded;
+    return result;
+  }
   const std::size_t demandWords =
       graph.getDemands().size() / kBitsPerWord +
       (graph.getDemands().size() % kBitsPerWord != 0 ? 1 : 0);

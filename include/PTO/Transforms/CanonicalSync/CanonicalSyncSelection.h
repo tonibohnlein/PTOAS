@@ -258,6 +258,8 @@ public:
     std::size_t maximumTotalSupplies = 1U << 20;
     std::size_t maximumMembersPerPattern = 64;
     std::size_t maximumIncidences = 1U << 22;
+    /// Aggregate dense coverage words retained by optional patterns.
+    std::size_t maximumCoverageWords = 1U << 22;
   };
 
   CanonicalSyncPatternProblem(const SyncCoverGraph &graph,
@@ -283,13 +285,13 @@ public:
   CanonicalSyncProblemResult addConflict(CanonicalSyncMechanismId first,
                                          CanonicalSyncMechanismId second);
   CanonicalSyncProblemResult addPattern(CanonicalSyncPatternSpec pattern);
-  /// Add a pattern whose exact joint and singleton-union coverage were
-  /// computed by the shared batched coverage engine. Inputs use graph-global
-  /// demand IDs and are projected onto the active problem rows here.
-  CanonicalSyncProblemResult
-  addPattern(CanonicalSyncPatternSpec pattern,
-             const SyncCoverDemandSet &jointCoverage,
-             const SyncCoverDemandSet &singletonCoverage);
+  /// Classify and atomically commit one owner scope's exact direct-pair rows.
+  /// Joint and singleton rows use graph-global demand IDs. The result index is
+  /// the number of retained extra-coverage patterns committed by the batch.
+  CanonicalSyncProblemResult addDirectPairBatch(
+      const std::vector<SyncCoverMechanismPair> &pairs,
+      const std::vector<SyncCoverDemandSet> &jointCoverage,
+      const std::vector<SyncCoverDemandSet> &singletonMechanismCoverage);
   CanonicalSyncProblemResult freeze();
 
   bool isFrozen() const { return frozen_; }
@@ -335,7 +337,9 @@ public:
 private:
   struct PendingPattern {
     CanonicalSyncPatternSpec spec;
-    SyncCoverDemandSet coverage;
+    /// Sparse active-demand IDs. Dense rows are materialized only during
+    /// freeze, under coverageWordCount_'s aggregate reservation.
+    std::vector<SyncCoverDemandId> coverage;
     std::size_t jointCoverageCount = 0;
     std::size_t singletonCoverageCount = 0;
     std::size_t extraCoverageCount = 0;
@@ -369,6 +373,8 @@ private:
   std::optional<SyncCoverDemandSet> constructionBaselineCoverage_;
   std::vector<std::optional<SyncCoverDemandSet>> constructionSingletonCoverage_;
   std::size_t retainedPatternCount_ = 0;
+  std::size_t coverageWordCount_ = 0;
+  std::size_t pendingCoverageIncidenceCount_ = 0;
   bool patternGenerationTruncated_ = false;
   std::vector<CanonicalSyncPattern> patterns_;
   CanonicalSyncPatternStatistics patternStatistics_;

@@ -147,8 +147,13 @@ whole pair batch is discarded and preparation continues with the next scope.
 Dense coverage matrices use a default limit of `2^22` 64-bit words each. Pair
 preparation therefore retains at most one singleton result, one current-scope
 pair result, and one pair workspace at once: a 96 MiB aggregate dense-matrix
-ceiling. Row metadata has a separate `2^16` bound, including for zero-demand
-graphs.
+ceiling. Coverage-query result rows and mechanism-index rows have separate
+`2^16` bounds, including for zero-demand graphs. Retained optional coverage has
+its own aggregate `2^22`-word reservation and is stored as bounded sparse demand
+IDs until freeze; zero-extra rows retain statistics but allocate no coverage
+bitset. Freeze materializes each reserved row once, so pending and frozen dense
+copies never coexist. Owner batches are capacity-checked transactionally and
+are either committed in full or skipped before sparse storage is allocated.
 
 ## 5. Selection strategies
 
