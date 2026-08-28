@@ -1377,6 +1377,7 @@ bool testConflictCoreRepairAvoidsPipeAll() {
   }
   CanonicalSyncBuildOptions options;
   options.eventIdBudget = 1;
+  options.patterns.maximumRepairFrontierInspections = 1;
   FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem =
       buildCanonicalSyncSingletonProblem(*program, options);
   if (!check(succeeded(problem), "build scarcity-frontier problem")) {
@@ -1391,7 +1392,7 @@ bool testConflictCoreRepairAvoidsPipeAll() {
   const std::vector<CanonicalSyncMechanismId> &conflictCore =
       precise.allocation.domains.front().liveMechanisms;
   CanonicalSyncProblemBuildResult partialRepair =
-      buildCanonicalSyncRepairProblem(*program, options,
+      buildCanonicalSyncRepairProblem(*program, **problem, options,
                                       {conflictCore.front()});
   const bool partialRepairStayedPrecise =
       partialRepair && partialRepair.problem->getMechanisms().size() ==
@@ -1400,10 +1401,59 @@ bool testConflictCoreRepairAvoidsPipeAll() {
              "do not generate frontiers from events outside the live core")) {
     return false;
   }
-  CanonicalSyncProblemBuildResult repair =
-      buildCanonicalSyncRepairProblem(*program, options, conflictCore);
+  CanonicalSyncBuildOptions staleOptions = options;
+  staleOptions.eventIdBudget = 2;
+  bool sawStaleCoreDiagnostic = false;
+  CanonicalSyncProblemBuildResult staleRepair;
+  {
+    ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
+      sawStaleCoreDiagnostic |=
+          diagnostic.str().find("does not match the precise catalog") !=
+          std::string::npos;
+      return success();
+    });
+    staleRepair = buildCanonicalSyncRepairProblem(*program, **problem,
+                                                  staleOptions, conflictCore);
+  }
+  if (!check(
+          !staleRepair &&
+              staleRepair.status.error ==
+                  CanonicalSyncProblemError::InvalidPattern &&
+              sawStaleCoreDiagnostic,
+          "reject a conflict core against a differently configured prefix")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions truncatedOptions = options;
+  truncatedOptions.patterns.maximumRepairFrontierInspections = 0;
+  CanonicalSyncProblemBuildResult truncatedRepair =
+      buildCanonicalSyncRepairProblem(*program, **problem, truncatedOptions,
+                                      conflictCore);
+  if (!check(static_cast<bool>(truncatedRepair),
+             "retain the precise catalog when repair generation truncates")) {
+    return false;
+  }
+  const CanonicalSyncPatternStatistics &truncatedStatistics =
+      truncatedRepair.problem->getPatternStatistics();
+  if (!check(
+          truncatedRepair.problem->hasSameCandidatePrefix(**problem) &&
+              truncatedStatistics.repairFrontierTruncated &&
+              truncatedStatistics.repairFrontierInspections == 0 &&
+              truncatedStatistics.repairFrontierProposals == 0,
+          "truncate the optional repair batch before its first inspection")) {
+    return false;
+  }
+  CanonicalSyncProblemBuildResult repair = buildCanonicalSyncRepairProblem(
+      *program, **problem, options, conflictCore);
   if (!check(static_cast<bool>(repair),
              "build repair candidates from the live conflict core")) {
+    return false;
+  }
+  const CanonicalSyncPatternStatistics &repairStatistics =
+      repair.problem->getPatternStatistics();
+  if (!check(!repairStatistics.repairFrontierTruncated &&
+                 repairStatistics.repairFrontierInspections == 1 &&
+                 repairStatistics.repairFrontierProposals == 1,
+             "admit the exact-bound repair proposal deterministically")) {
     return false;
   }
   const CanonicalSyncSelection selection =

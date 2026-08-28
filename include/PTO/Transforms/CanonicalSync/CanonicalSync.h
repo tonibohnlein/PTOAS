@@ -32,6 +32,8 @@ namespace pto {
 struct CanonicalSyncPatternOptions {
   bool enableDirectPairs = true;
   bool enableConflictCoreRepair = true;
+  std::size_t maximumRepairFrontierInspections = 1U << 16;
+  std::size_t maximumRepairFrontierProposals = 4096;
 };
 
 struct CanonicalSyncStrategyReport {
@@ -91,6 +93,7 @@ buildCanonicalSyncPreciseProblem(const CanonicalSyncProgram &program,
 
 CanonicalSyncProblemBuildResult buildCanonicalSyncRepairProblem(
     const CanonicalSyncProgram &program,
+    const CanonicalSyncPatternProblem &preciseProblem,
     const CanonicalSyncBuildOptions &options,
     const std::vector<CanonicalSyncMechanismId> &conflictCore);
 

@@ -599,19 +599,26 @@ bool frontierProposalLess(const RepairFrontierProposal &left,
                   right.event.source, right.event.target);
 }
 
-bool frontierProposalEqual(const RepairFrontierProposal &left,
-                           const RepairFrontierProposal &right) {
-  return !frontierProposalLess(left, right) &&
-         !frontierProposalLess(right, left);
-}
+enum class RepairFrontierBuildStatus : std::uint8_t {
+  Complete,
+  Truncated,
+  Failed,
+};
 
-LogicalResult
+struct RepairFrontierBuildResult {
+  RepairFrontierBuildStatus status = RepairFrontierBuildStatus::Complete;
+  std::size_t inspections = 0;
+  std::size_t proposals = 0;
+};
+
+RepairFrontierBuildResult
 addRepairFrontierPatterns(const CanonicalSyncProgram &program,
                           CanonicalSyncPatternProblem &problem,
                           ArrayRef<DirectEventRecord> directEvents,
-                          ArrayRef<CanonicalSyncMechanismId> conflictCore) {
-  constexpr std::size_t kMaximumFrontierProposals = 4096;
+                          ArrayRef<CanonicalSyncMechanismId> conflictCore,
+                          const CanonicalSyncPatternOptions &options) {
   const SyncCoverGraph &graph = program.getGraph();
+  RepairFrontierBuildResult result;
   std::vector<CanonicalSyncMechanismId> sortedCore(conflictCore.begin(),
                                                    conflictCore.end());
   llvm::sort(sortedCore);
@@ -623,11 +630,21 @@ addRepairFrontierPatterns(const CanonicalSyncProgram &program,
                   return std::binary_search(sortedCore.begin(),
                                             sortedCore.end(), event.mechanism);
                 });
-  std::vector<RepairFrontierProposal> proposals;
+  const auto less = [](const RepairFrontierProposal &left,
+                       const RepairFrontierProposal &right) {
+    return frontierProposalLess(left, right);
+  };
+  std::set<RepairFrontierProposal, decltype(less)> proposals(less);
   for (std::size_t first = 0; first < liveEvents.size(); ++first) {
     const SyncCoverDemand &firstDemand =
         graph.getDemands()[liveEvents[first].demand];
     for (std::size_t second = first + 1; second < liveEvents.size(); ++second) {
+      if (result.inspections == options.maximumRepairFrontierInspections) {
+        result.status = RepairFrontierBuildStatus::Truncated;
+        result.proposals = proposals.size();
+        return result;
+      }
+      ++result.inspections;
       const SyncCoverDemand &secondDemand =
           graph.getDemands()[liveEvents[second].demand];
       const bool compatible =
@@ -677,37 +694,57 @@ addRepairFrontierPatterns(const CanonicalSyncProgram &program,
       if (invalidFrontier) {
         continue;
       }
-      proposals.push_back({barrier, event, liveEvents[first].domain});
+      RepairFrontierProposal proposal{barrier, event, liveEvents[first].domain};
+      const auto insertion = proposals.lower_bound(proposal);
+      const bool duplicate =
+          insertion != proposals.end() && !less(proposal, *insertion);
+      if (duplicate) {
+        continue;
+      }
+      const bool proposalLimitReached =
+          proposals.size() == options.maximumRepairFrontierProposals;
+      if (proposalLimitReached) {
+        result.status = RepairFrontierBuildStatus::Truncated;
+        result.proposals = proposals.size();
+        return result;
+      }
+      proposals.emplace_hint(insertion, std::move(proposal));
     }
   }
-  llvm::sort(proposals, frontierProposalLess);
-  proposals.erase(
-      std::unique(proposals.begin(), proposals.end(), frontierProposalEqual),
-      proposals.end());
-  const bool proposalLimitExceeded =
-      proposals.size() > kMaximumFrontierProposals;
-  if (proposalLimitExceeded) {
-    problem.markPatternGenerationTruncated();
-    return success();
-  }
+  result.proposals = proposals.size();
   for (const RepairFrontierProposal &proposal : proposals) {
     const CanonicalSyncProblemResult barrier =
         problem.internMechanism(makeRepairBarrier(graph, proposal.barrier));
     const CanonicalSyncProblemResult event = problem.internMechanism(
         makeRepairEvent(graph, proposal.event, proposal.domain));
+    const bool limitExceeded =
+        barrier.error == CanonicalSyncProblemError::LimitExceeded ||
+        event.error == CanonicalSyncProblemError::LimitExceeded;
+    if (limitExceeded) {
+      result.status = RepairFrontierBuildStatus::Truncated;
+      return result;
+    }
     if (!barrier || !event || !barrier.index || !event.index) {
-      return program.getFunction().emitError(
+      result.status = RepairFrontierBuildStatus::Failed;
+      program.getFunction().emitError(
           "cannot add canonical sync repair-frontier mechanisms");
+      return result;
     }
     const CanonicalSyncProblemResult pattern = addCanonicalSyncFeasiblePattern(
         problem, {CanonicalSyncPatternKind::RepairFrontier,
                   {*barrier.index, *event.index}});
+    if (pattern.error == CanonicalSyncProblemError::LimitExceeded) {
+      result.status = RepairFrontierBuildStatus::Truncated;
+      return result;
+    }
     if (!pattern) {
-      return program.getFunction().emitError(
+      result.status = RepairFrontierBuildStatus::Failed;
+      program.getFunction().emitError(
           "cannot add canonical sync repair-frontier pattern");
+      return result;
     }
   }
-  return success();
+  return result;
 }
 
 LogicalResult addDirectPairPatterns(const CanonicalSyncProgram &program,
@@ -727,11 +764,11 @@ enum class CandidateCatalogKind : std::uint8_t {
   LocalizedPipeAll,
 };
 
-CanonicalSyncProblemBuildResult
-buildCandidateCatalog(const CanonicalSyncProgram &program,
-                      const CanonicalSyncBuildOptions &options,
-                      CandidateCatalogKind kind,
-                      ArrayRef<CanonicalSyncMechanismId> conflictCore = {}) {
+CanonicalSyncProblemBuildResult buildCandidateCatalog(
+    const CanonicalSyncProgram &program,
+    const CanonicalSyncBuildOptions &options, CandidateCatalogKind kind,
+    ArrayRef<CanonicalSyncMechanismId> conflictCore = {},
+    const CanonicalSyncPatternProblem *preciseProblem = nullptr) {
   if (options.eventIdBudget == 0 ||
       options.eventIdBudget > kHardwareEventIdCount) {
     program.getFunction().emitError(
@@ -764,10 +801,38 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
         failed(addDirectEvents(program, *problem, baseline.covered, domainIds,
                                directEvents)) ||
         (options.patterns.enableDirectPairs &&
-         failed(addDirectPairPatterns(program, *problem))) ||
-        (kind == CandidateCatalogKind::ConflictCoreRepair &&
-         failed(addRepairFrontierPatterns(program, *problem, directEvents,
-                                          conflictCore)));
+         failed(addDirectPairPatterns(program, *problem)));
+    if (!failedBuild && kind == CandidateCatalogKind::ConflictCoreRepair) {
+      const bool invalidOwner =
+          !preciseProblem || !preciseProblem->isFrozen() ||
+          !problem->hasSameCandidatePrefix(*preciseProblem) ||
+          llvm::any_of(conflictCore, [&](CanonicalSyncMechanismId mechanism) {
+            return mechanism >= problem->getMechanisms().size();
+          });
+      if (invalidOwner) {
+        program.getFunction().emitError(
+            "canonical sync repair core does not match the precise catalog");
+        return {nullptr,
+                {CanonicalSyncProblemError::InvalidPattern, std::nullopt}};
+      }
+      const RepairFrontierBuildResult repair = addRepairFrontierPatterns(
+          program, *problem, directEvents, conflictCore, options.patterns);
+      if (repair.status == RepairFrontierBuildStatus::Failed) {
+        return {nullptr,
+                {CanonicalSyncProblemError::InvalidMechanism, std::nullopt}};
+      }
+      if (repair.status == RepairFrontierBuildStatus::Truncated) {
+        CanonicalSyncProblemBuildResult precise = buildCandidateCatalog(
+            program, options, CandidateCatalogKind::Precise);
+        if (precise.problem) {
+          precise.problem->recordRepairFrontierGeneration(
+              repair.inspections, repair.proposals, true);
+        }
+        return precise;
+      }
+      problem->recordRepairFrontierGeneration(repair.inspections,
+                                              repair.proposals, false);
+    }
   }
   if (failedBuild) {
     return {nullptr,
@@ -792,10 +857,12 @@ CanonicalSyncProblemBuildResult mlir::pto::buildCanonicalSyncPreciseProblem(
 
 CanonicalSyncProblemBuildResult mlir::pto::buildCanonicalSyncRepairProblem(
     const CanonicalSyncProgram &program,
+    const CanonicalSyncPatternProblem &preciseProblem,
     const CanonicalSyncBuildOptions &options,
     const std::vector<CanonicalSyncMechanismId> &conflictCore) {
-  return buildCandidateCatalog(
-      program, options, CandidateCatalogKind::ConflictCoreRepair, conflictCore);
+  return buildCandidateCatalog(program, options,
+                               CandidateCatalogKind::ConflictCoreRepair,
+                               conflictCore, &preciseProblem);
 }
 
 CanonicalSyncProblemBuildResult mlir::pto::buildCanonicalSyncPipeAllProblem(

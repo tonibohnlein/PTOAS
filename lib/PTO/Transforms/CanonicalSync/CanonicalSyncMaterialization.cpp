@@ -552,7 +552,7 @@ selectWithBoundedRepair(const CanonicalSyncProgram &program,
   const std::vector<CanonicalSyncMechanismId> initialCore =
       firstConflictCore(selection);
   CanonicalSyncProblemBuildResult repair =
-      buildCanonicalSyncRepairProblem(program, options, initialCore);
+      buildCanonicalSyncRepairProblem(program, problem, options, initialCore);
   if (!repair) {
     outcome.selection = std::move(selection);
     return outcome;

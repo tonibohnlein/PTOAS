@@ -203,6 +203,9 @@ struct CanonicalSyncPatternStatistics {
   std::size_t directPairProposals = 0;
   std::size_t directPairEvaluations = 0;
   std::size_t directPairConnectorInspections = 0;
+  std::size_t repairFrontierInspections = 0;
+  std::size_t repairFrontierProposals = 0;
+  bool repairFrontierTruncated = false;
 
   const CanonicalSyncPatternKindStatistics &
   get(CanonicalSyncPatternKind kind) const {
@@ -324,6 +327,13 @@ public:
     patternStatistics_.directPairEvaluations = evaluations;
     patternStatistics_.directPairConnectorInspections = connectorInspections;
   }
+  void recordRepairFrontierGeneration(std::size_t inspections,
+                                      std::size_t proposals, bool truncated) {
+    patternStatistics_.repairFrontierInspections = inspections;
+    patternStatistics_.repairFrontierProposals = proposals;
+    patternStatistics_.repairFrontierTruncated = truncated;
+  }
+  bool hasSameCandidatePrefix(const CanonicalSyncPatternProblem &other) const;
   const SyncCoverDemandSet &getBaselineCoverage() const {
     return baselineCoverage_;
   }

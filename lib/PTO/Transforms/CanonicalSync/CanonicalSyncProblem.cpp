@@ -876,6 +876,34 @@ CanonicalSyncPatternProblem::addEventDomain(CanonicalSyncEventDomain domain) {
   return {CanonicalSyncProblemError::None, domains_.size() - 1};
 }
 
+bool CanonicalSyncPatternProblem::hasSameCandidatePrefix(
+    const CanonicalSyncPatternProblem &other) const {
+  const bool differentShape = &graph_ != &other.graph_ ||
+                              domains_.size() != other.domains_.size() ||
+                              mechanisms_.size() != other.mechanisms_.size();
+  if (differentShape) {
+    return false;
+  }
+  for (std::size_t index = 0; index < domains_.size(); ++index) {
+    const CanonicalSyncEventDomain &left = domains_[index];
+    const CanonicalSyncEventDomain &right = other.domains_[index];
+    if (std::tie(left.id, left.sourceResource, left.targetResource, left.budget,
+                 left.reservedIds) !=
+        std::tie(right.id, right.sourceResource, right.targetResource,
+                 right.budget, right.reservedIds)) {
+      return false;
+    }
+  }
+  for (std::size_t index = 0; index < mechanisms_.size(); ++index) {
+    if (!descriptorEqual(mechanisms_[index].descriptor,
+                         other.mechanisms_[index].descriptor) ||
+        mechanisms_[index].conflicts != other.mechanisms_[index].conflicts) {
+      return false;
+    }
+  }
+  return true;
+}
+
 CanonicalSyncProblemResult
 CanonicalSyncPatternProblem::validateAndCostMechanism(
     CanonicalSyncMechanismDescriptor &descriptor,
@@ -1339,11 +1367,20 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns(
       patternStatistics_.directPairEvaluations;
   const std::size_t directPairConnectorInspections =
       patternStatistics_.directPairConnectorInspections;
+  const std::size_t repairFrontierInspections =
+      patternStatistics_.repairFrontierInspections;
+  const std::size_t repairFrontierProposals =
+      patternStatistics_.repairFrontierProposals;
+  const bool repairFrontierTruncated =
+      patternStatistics_.repairFrontierTruncated;
   patternStatistics = {};
   patternStatistics.directPairProposals = directPairProposals;
   patternStatistics.directPairEvaluations = directPairEvaluations;
   patternStatistics.directPairConnectorInspections =
       directPairConnectorInspections;
+  patternStatistics.repairFrontierInspections = repairFrontierInspections;
+  patternStatistics.repairFrontierProposals = repairFrontierProposals;
+  patternStatistics.repairFrontierTruncated = repairFrontierTruncated;
   patterns.clear();
   patterns.reserve(mechanisms_.size() + patternSpecs_.size());
   for (const CanonicalSyncMechanism &mechanism : mechanisms_) {
