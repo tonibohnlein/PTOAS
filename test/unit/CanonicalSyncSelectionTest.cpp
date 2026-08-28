@@ -1427,6 +1427,99 @@ bool testHierarchicalProtocolLifetime() {
   return passed;
 }
 
+bool testFreezeRetryCommitsFreshDerivedState() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId firstSource = takeIndex(
+      graph.addNode(1, 1, 0, 0, {}, {2}), passed, "add retry first source");
+  const SyncCoverNodeId firstTarget =
+      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add retry first target");
+  const SyncCoverNodeId secondSource = takeIndex(
+      graph.addNode(3, 1, 0, 2, {}, {4}), passed, "add retry second source");
+  const SyncCoverNodeId secondTarget =
+      takeIndex(graph.addNode(4, 1, 0, 3), passed, "add retry second target");
+  passed &= check(graph.addDemand(demand(firstSource, firstTarget)),
+                  "add retry first demand");
+  passed &= check(graph.addDemand(demand(secondSource, secondTarget)),
+                  "add retry second demand");
+  passed &= check(graph.freezeStructure(), "freeze retry graph");
+
+  CanonicalSyncPatternProblem::Limits limits;
+  limits.maximumIncidences = 2;
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph), limits);
+  passed &=
+      check(problem.addEventDomain({0, 1, 2, 8, {}}), "add retry first domain");
+  passed &= check(problem.addEventDomain({1, 3, 4, 8, {}}),
+                  "add retry second domain");
+  passed &=
+      check(problem.internMechanism(event(0, 1, 2, firstSource, firstTarget)),
+            "add retry first mechanism");
+  passed &= check(problem.freeze().error ==
+                      CanonicalSyncProblemError::UncoverableDemand,
+                  "first freeze reports the uncovered demand");
+  passed &= check(!problem.isFrozen(), "failed freeze remains mutable");
+  passed &=
+      check(problem.internMechanism(event(1, 3, 4, secondSource, secondTarget)),
+            "add retry covering mechanism");
+  passed &=
+      check(problem.freeze(), "retry freeze at the exact incidence limit");
+  passed &= check(problem.getDemandPatterns().size() == 2 &&
+                      problem.getDemandPatterns()[0].size() == 1 &&
+                      problem.getDemandPatterns()[1].size() == 1,
+                  "retry commits only freshly prepared incidences");
+  return passed;
+}
+
+bool testOptionalPairReservesSingletonIncidences() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2, 3}), passed,
+                "add incidence-reservation source");
+  const SyncCoverNodeId middle =
+      takeIndex(graph.addNode(2, 1, 0, 1, {}, {3}), passed,
+                "add incidence-reservation middle");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(3, 1, 0, 2), passed,
+                                           "add incidence-reservation target");
+  passed &= check(graph.addDemand(demand(source, target)),
+                  "add incidence-reservation demand");
+  passed &=
+      check(graph.freezeStructure(), "freeze incidence-reservation graph");
+
+  CanonicalSyncPatternProblem::Limits limits;
+  limits.maximumIncidences = 1;
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph), limits);
+  passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                  "add incidence-reservation first domain");
+  passed &= check(problem.addEventDomain({1, 2, 3, 8, {}}),
+                  "add incidence-reservation second domain");
+  passed &= check(problem.addEventDomain({2, 1, 3, 8, {}}),
+                  "add incidence-reservation direct domain");
+  passed &= check(problem.internMechanism(event(0, 1, 2, source, middle)),
+                  "add incidence-reservation first pair member");
+  passed &= check(problem.internMechanism(event(1, 2, 3, middle, target)),
+                  "add incidence-reservation second pair member");
+  passed &= check(problem.internMechanism(event(2, 1, 3, source, target)),
+                  "add incidence-reservation covering singleton");
+
+  SyncCoverDemandSet jointCoverage(1);
+  jointCoverage.insert(0);
+  std::vector<SyncCoverDemandSet> singletonCoverage(
+      problem.getMechanisms().size(), SyncCoverDemandSet(1));
+  singletonCoverage[2].insert(0);
+  const CanonicalSyncProblemResult generated =
+      problem.addDirectPairBatch({{0, 1}}, {jointCoverage}, singletonCoverage);
+  passed &= check(generated && generated.index == 0 &&
+                      problem.wasPatternGenerationTruncated(),
+                  "truncate the optional pair after reserving singleton rows");
+  passed &= check(problem.freeze(),
+                  "singleton-valid problem freezes at its incidence limit");
+  passed &= check(problem.getDemandPatterns().size() == 1 &&
+                      problem.getDemandPatterns()[0].size() == 1,
+                  "optional pair does not consume singleton incidence supply");
+  return passed;
+}
+
 bool testFailClosedConstruction() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -1545,6 +1638,9 @@ int main() {
       testReservationsAndFinalValidation() &&
       testAllocatorWidthsReuseAndConflicts() &&
       testVerifiedProtocolTrustBoundary() &&
-      testHierarchicalProtocolLifetime() && testFailClosedConstruction();
+      testHierarchicalProtocolLifetime() &&
+      testFreezeRetryCommitsFreshDerivedState() &&
+      testOptionalPairReservesSingletonIncidences() &&
+      testFailClosedConstruction();
   return passed ? 0 : 1;
 }

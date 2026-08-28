@@ -354,7 +354,10 @@ private:
                            std::vector<CanonicalSyncEventLifetime> &lifetimes,
                            CanonicalSyncMechanismCost &cost,
                            bool protocolVerified) const;
-  CanonicalSyncProblemResult buildPatterns();
+  CanonicalSyncProblemResult
+  buildPatterns(std::vector<CanonicalSyncPattern> &patterns,
+                CanonicalSyncPatternStatistics &statistics,
+                SyncCoverDemandSet &baselineCoverage) const;
 
   const SyncCoverGraph &graph_;
   SyncCoverExpandedProgram expansion_;
