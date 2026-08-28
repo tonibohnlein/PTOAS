@@ -21,6 +21,25 @@ if(TARGET vfsim::ir_planner)
     $<BUILD_INTERFACE:vfsim::ir_planner>)
 endif()
 
+add_library(PTOSyncCoverCore OBJECT
+  CanonicalSync/CanonicalSyncPatterns.cpp
+  CanonicalSync/CanonicalSyncProblem.cpp
+  CanonicalSync/CanonicalSyncResources.cpp
+  CanonicalSync/CanonicalSyncSolver.cpp
+  CanonicalSync/SyncCoverCoverage.cpp
+  CanonicalSync/SyncCoverExpansion.cpp
+  CanonicalSync/SyncCoverGraph.cpp
+  CanonicalSync/SyncCoverGraphQuery.cpp
+  CanonicalSync/SyncCoverGraphStorage.cpp
+  CanonicalSync/SyncCoverGraphValidation.cpp
+)
+target_include_directories(PTOSyncCoverCore PUBLIC
+  "${PROJECT_SOURCE_DIR}/include"
+)
+set_target_properties(PTOSyncCoverCore PROPERTIES
+  POSITION_INDEPENDENT_CODE ON
+)
+
 add_mlir_dialect_library(PTOTransforms
   ENABLE_AGGREGATION
 
@@ -96,6 +115,13 @@ add_mlir_dialect_library(PTOTransforms
   PTOOutlineSIMTSections.cpp
   PTOInferVPTOVecScope.cpp
 
+  CanonicalSync/CanonicalSyncAnalysisControl.cpp
+  CanonicalSync/CanonicalSyncAnalysisDependences.cpp
+  CanonicalSync/CanonicalSyncAnalysisDriver.cpp
+  CanonicalSync/CanonicalSyncAnalysisStorage.cpp
+  CanonicalSync/CanonicalSyncMaterialization.cpp
+  CanonicalSync/CanonicalSyncMechanisms.cpp
+  CanonicalSync/PTOCanonicalSync.cpp
   InsertSync/PTOInsertSync.cpp
   PTOInjectBarrierAllSync.cpp
   InsertSync/InsertSyncDebug.cpp
@@ -200,6 +226,14 @@ add_mlir_dialect_library(PTOTransforms
   PRIVATE
   ${_ptoas_transforms_private_link_libs}
 )
+
+target_sources(PTOTransforms PRIVATE
+  $<TARGET_OBJECTS:PTOSyncCoverCore>
+)
+set_property(TARGET PTOTransforms APPEND PROPERTY MLIR_AGGREGATE_OBJECTS
+  $<TARGET_OBJECTS:PTOSyncCoverCore>
+)
+add_dependencies(PTOTransforms PTOSyncCoverCore)
 
 install(TARGETS PTOTransforms
   EXPORT PTOASTargets      # 将此 Target 加入导出集

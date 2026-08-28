@@ -41,6 +41,49 @@ def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
   ];
 }
 
+def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
+  let summary = "Insert synchronization from a canonical completion graph";
+  let description = [{
+    Builds completion obligations over structured PTO control flow, selects a
+    bounded catalog of atomic synchronization recipes, checks the selected
+    plan against certified coverage, and only then materializes synchronization.
+  }];
+
+  let constructor = "mlir::pto::createPTOCanonicalSyncPass()";
+
+  let options = [
+    Option<"eventIdNumMax", "event-id-num-max", "int64_t", "8",
+           "Maximum EVENT_ID slots available to canonical synchronization">,
+    Option<"assumeDistinctGmArgsNoAlias",
+           "assume-distinct-gm-args-noalias", "bool", "false",
+           "Treat distinct GM pointer arguments as non-aliasing">,
+    Option<"assumeAllGmAccessesNoAlias",
+           "assume-all-gm-accesses-noalias", "bool", "false",
+           "Treat every GM access as disjoint; the caller must guarantee this "
+           "even for accesses from the same argument and across iterations">,
+    Option<"patternMode", "pattern-mode", "std::string",
+           "\"direct-pair\"",
+           "Candidate ablation: direct or direct-pair">,
+    Option<"selectionStrategy", "selection-strategy", "std::string",
+           "\"pair-lookahead\"",
+           "Selection policy: fixed-cover, action-aware-singleton, or "
+           "pair-lookahead">,
+    Option<"maximumRepairRounds", "maximum-repair-rounds", "int64_t", "8",
+           "Maximum bounded event-pressure repair rounds">,
+    Option<"analysisOnly", "analysis-only", "bool", "false",
+           "Compare all selection strategies without modifying IR">,
+    Option<"comparisonReport", "comparison-report", "std::string", "\"\"",
+           "Optional JSON path for canonical synchronization statistics">
+  ];
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::memref::MemRefDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::scf::SCFDialect"
+  ];
+}
+
 def PTOInjectBarrierAllSync : Pass<"pto-inject-barrier-all-sync", "func::FuncOp"> {
   let summary = "Conservatively insert PIPE_ALL barriers for PTO dialect";
   let description = [{

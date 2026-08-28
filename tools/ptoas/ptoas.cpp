@@ -1,87 +1,88 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "ptoas.h"
 #include "PTO/IR/PTO.h"
-#include "PTO/IR/VMIUtils.h"
 #include "PTO/IR/PTOMultiBuffer.h"
-#include "PTO/Transforms/VPTOLLVMEmitter.h"
-#include "PTO/Transforms/Passes.h"
+#include "PTO/IR/VMIUtils.h"
 #include "PTO/Transforms/BufferizableOpInterfaceImpl.h"
-#include "VPTOHostStubEmission.h"
 #include "PTO/Transforms/CppPostprocess.h"
+#include "PTO/Transforms/Passes.h"
+#include "PTO/Transforms/VPTOLLVMEmitter.h"
+#include "VPTOHostStubEmission.h"
 #include "mlir/AsmParser/AsmParserState.h"
-#include "mlir/IR/MLIRContext.h"
-#include "mlir/IR/Diagnostics.h"
-#include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/Verifier.h"
 #include "mlir/Conversion/Passes.h"
-#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
-#include "mlir/Dialect/Arith/Transforms/Passes.h"
-#include "mlir/Dialect/Func/Transforms/Passes.h"
-#include "mlir/Dialect/Math/Transforms/Passes.h"
-#include "mlir/Dialect/MemRef/Transforms/Passes.h"
-#include "mlir/Dialect/SCF/Transforms/Passes.h"
-#include "mlir/Dialect/Tensor/Transforms/Passes.h"
-#include "mlir/Parser/Parser.h"
-#include "mlir/Pass/PassManager.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/Math/IR/Math.h"
-#include "mlir/Dialect/Utils/StaticValueUtils.h"
-#include <cctype>
-#include <cstdlib>
-#include <cstring>
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/MemRef/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
-#include "mlir/Target/Cpp/CppEmitter.h"
-#include "mlir/Transforms/Passes.h"
-#include "llvm/Support/SourceMgr.h"
-#include "llvm/Support/ToolOutputFile.h"
-#include "llvm/Support/FileSystem.h" // [Fix] Required for OF_None
-#include "llvm/Support/Path.h"
-#include "ptobc/ptobc_decode.h"
+#include "mlir/Dialect/Arith/Transforms/Passes.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/Dialect/EmitC/Transforms/Transforms.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Func/Transforms/Passes.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Math/Transforms/Passes.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/MemRef/Transforms/Passes.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/SCF/Transforms/Passes.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
+#include "mlir/Dialect/Tensor/Transforms/Passes.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectInterface.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Verifier.h"
+#include "mlir/Parser/Parser.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Target/Cpp/CppEmitter.h"
 #include "mlir/Transforms/InliningUtils.h"
-#include "llvm/Support/CommandLine.h"
-#include "llvm/Support/Regex.h"
-#include "llvm/Support/raw_ostream.h"
+#include "mlir/Transforms/Passes.h"
+#include "ptobc/ptobc_decode.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
-#include "llvm/ADT/StringMap.h"
-#include "llvm/ADT/SmallString.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/FileSystem.h" // [Fix] Required for OF_None
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/Regex.h"
+#include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/ToolOutputFile.h"
+#include "llvm/Support/raw_ostream.h"
 #include <algorithm>
+#include <cctype>
+#include <chrono>
+#include <csignal>
+#include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
-#include <thread>
-#include <chrono>
-#include <unistd.h>
-#include <csignal>
 #include <sys/types.h>
+#include <thread>
+#include <unistd.h>
 
 extern "C" {
 extern char **environ;
@@ -97,6 +98,7 @@ using namespace pto;
 namespace {
 
 constexpr unsigned kSeenCalleeInlineCapacity = 8;
+constexpr int kDefaultCanonicalSyncEventIdMax = 8;
 constexpr int kDefaultGraphSyncSolverEventIdMax = 8;
 constexpr unsigned kStringRefInlineCapacity = 4;
 constexpr unsigned kEmptyExpressionInlineCapacity = 8;
@@ -122,13 +124,11 @@ struct PTOASFuncInlinerInterface final : public DialectInlinerInterface {
     return !call->hasAttr("no_inline") && !callable->hasAttr("no_inline");
   }
 
-  bool isLegalToInline(Operation *, Region *, bool,
-                       IRMapping &) const final {
+  bool isLegalToInline(Operation *, Region *, bool, IRMapping &) const final {
     return true;
   }
 
-  bool isLegalToInline(Region *, Region *, bool,
-                       IRMapping &) const final {
+  bool isLegalToInline(Region *, Region *, bool, IRMapping &) const final {
     return true;
   }
 
@@ -137,8 +137,7 @@ struct PTOASFuncInlinerInterface final : public DialectInlinerInterface {
     if (!returnOp)
       return;
     OpBuilder builder(op);
-    builder.create<cf::BranchOp>(op->getLoc(), newDest,
-                                 returnOp.getOperands());
+    builder.create<cf::BranchOp>(op->getLoc(), newDest, returnOp.getOperands());
     op->erase();
   }
 
@@ -161,8 +160,7 @@ static void registerPTOASFuncInlinerExtension(DialectRegistry &registry) {
 /// standard Func dialect attribute understood by MLIR's public inliner
 /// extension and by later LLVM lowering.
 struct ApplySIMTEntryNoInlinePass final
-    : public PassWrapper<ApplySIMTEntryNoInlinePass,
-                         OperationPass<ModuleOp>> {
+    : public PassWrapper<ApplySIMTEntryNoInlinePass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ApplySIMTEntryNoInlinePass)
 
   void runOnOperation() final {
@@ -204,7 +202,8 @@ struct FormEmitCExpressionsCompatPass final
       if (apply && apply.getApplicableOperator() == "&")
         continue;
 
-      for (OpOperand &operand : llvm::make_early_inc_range(op.getOpOperands())) {
+      for (OpOperand &operand :
+           llvm::make_early_inc_range(op.getOpOperands())) {
         auto producer = operand.get().getDefiningOp<emitc::ExpressionOp>();
         if (!producer || !producer.getResult().hasOneUse() ||
             producer.hasSideEffects())
@@ -372,9 +371,10 @@ void mlir::pto::loadPTOASDialects(MLIRContext &context) {
   context.getOrLoadDialect<mlir::LLVM::LLVMDialect>();
 }
 
-static LogicalResult applyConfiguredPassManagerCLOptions(
-    PassManager &pm, llvm::StringRef pipelineName,
-    llvm::raw_ostream &diagOS = llvm::errs()) {
+static LogicalResult
+applyConfiguredPassManagerCLOptions(PassManager &pm,
+                                    llvm::StringRef pipelineName,
+                                    llvm::raw_ostream &diagOS = llvm::errs()) {
   if (succeeded(mlir::applyPassManagerCLOptions(pm))) {
     return success();
   }
@@ -457,8 +457,8 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
   }
 
   if (sortedDefinitions.size() != definitions.size()) {
-    return module.emitError()
-           << "cyclic function call graph is not supported for EmitC C++ emission";
+    return module.emitError() << "cyclic function call graph is not supported "
+                                 "for EmitC C++ emission";
   }
 
   if (declarations.empty() && definitions.size() <= 1) {
@@ -497,8 +497,7 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
     }
     if (anchor) {
       func->moveBefore(anchor);
-    }
-    else {
+    } else {
       func->moveBefore(&body, body.end());
     }
   }
@@ -512,8 +511,7 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
 enum class VPTOSchedulerCLIMode { Off, Analyze, On };
 
 static llvm::cl::opt<VPTOSchedulerCLIMode> vptoSchedulerMode(
-    "vpto-scheduler",
-    llvm::cl::desc("VPTO scheduler mode"),
+    "vpto-scheduler", llvm::cl::desc("VPTO scheduler mode"),
     llvm::cl::values(
         clEnumValN(VPTOSchedulerCLIMode::Off, "off", "Disable scheduling"),
         clEnumValN(VPTOSchedulerCLIMode::Analyze, "analyze",
@@ -521,9 +519,65 @@ static llvm::cl::opt<VPTOSchedulerCLIMode> vptoSchedulerMode(
         clEnumValN(VPTOSchedulerCLIMode::On, "on", "Run scheduler in on mode")),
     llvm::cl::init(VPTOSchedulerCLIMode::Off));
 
-static llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
-                                            llvm::cl::desc("Enable automatic synchronization insertion pass"),
-                                            llvm::cl::init(false));
+static llvm::cl::opt<bool> enableInsertSync(
+    "enable-insert-sync",
+    llvm::cl::desc("Enable automatic synchronization insertion pass"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<bool> enableCanonicalSync(
+    "enable-canonical-sync",
+    llvm::cl::desc("Enable canonical completion-graph synchronization"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<int> canonicalSyncEventIdMax(
+    "canonical-sync-event-id-max",
+    llvm::cl::desc(
+        "Maximum EVENT_ID slots for canonical synchronization (default 8)"),
+    llvm::cl::init(kDefaultCanonicalSyncEventIdMax));
+
+static llvm::cl::opt<bool> canonicalSyncAssumeDistinctGmArgsNoAlias(
+    "canonical-sync-assume-distinct-gm-args-noalias",
+    llvm::cl::desc(
+        "Treat distinct GM pointer arguments as non-aliasing in canonical "
+        "synchronization"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<bool> canonicalSyncAssumeAllGmAccessesNoAlias(
+    "canonical-sync-assume-all-gm-accesses-noalias",
+    llvm::cl::desc(
+        "Treat every GM access as disjoint in canonical synchronization; "
+        "the caller must guarantee this for the same argument and across "
+        "iterations"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<std::string> canonicalSyncPatternMode(
+    "canonical-sync-pattern-mode",
+    llvm::cl::desc("Canonical synchronization candidate ablation: direct or "
+                   "direct-pair"),
+    llvm::cl::init("direct-pair"));
+
+static llvm::cl::opt<std::string> canonicalSyncSelectionStrategy(
+    "canonical-sync-selection-strategy",
+    llvm::cl::desc("Canonical synchronization selection policy: fixed-cover, "
+                   "action-aware-singleton, or pair-lookahead"),
+    llvm::cl::init("pair-lookahead"));
+
+static llvm::cl::opt<int> canonicalSyncMaximumRepairRounds(
+    "canonical-sync-maximum-repair-rounds",
+    llvm::cl::desc("Maximum canonical synchronization event-pressure repair "
+                   "rounds"),
+    llvm::cl::init(8));
+
+static llvm::cl::opt<bool> canonicalSyncAnalysisOnly(
+    "canonical-sync-analysis-only",
+    llvm::cl::desc("Compare canonical synchronization selection strategies "
+                   "without modifying IR"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<std::string> canonicalSyncComparisonReport(
+    "canonical-sync-comparison-report",
+    llvm::cl::desc("Write canonical synchronization comparison JSON"),
+    llvm::cl::init(""));
 
 static llvm::cl::opt<bool> planMemoryOrderBySize(
     "plan-memory-order-by-size",
@@ -599,10 +653,11 @@ static llvm::cl::opt<bool> enableUnrollAfterLoopFusion(
 
 static llvm::cl::opt<bool> enableShapeInference(
     "enable-shape-inference",
-    llvm::cl::desc("Enable shape inference (ShapeConstraintSolver) for A5 tile "
-                  "fusion. On by default: uses the ShapeConstraintSolver for "
-                  "iteration-domain inference; pass --enable-shape-inference=false "
-                  "to fall back to static/direct-bound inference."),
+    llvm::cl::desc(
+        "Enable shape inference (ShapeConstraintSolver) for A5 tile "
+        "fusion. On by default: uses the ShapeConstraintSolver for "
+        "iteration-domain inference; pass --enable-shape-inference=false "
+        "to fall back to static/direct-bound inference."),
     llvm::cl::init(true));
 
 static llvm::cl::opt<bool> enableVfSimCostmodelOptimization(
@@ -637,52 +692,52 @@ static llvm::cl::opt<bool> emitAddPtrTrace(
     llvm::cl::init(false));
 
 llvm::cl::opt<bool> mlir::pto::emitMlirIR(
-    "emit-pto-ir",
-    llvm::cl::desc("Emit PTO IR after lowering instead of C++"),
+    "emit-pto-ir", llvm::cl::desc("Emit PTO IR after lowering instead of C++"),
     llvm::cl::init(false));
 
 llvm::cl::opt<std::string> mlir::pto::ptoTargetArch(
     "pto-arch",
-    llvm::cl::desc("Target Ascend architecture for codegen: a2, a3, or a5 (default: a3)"),
-    llvm::cl::value_desc("a2|a3|a5"),
-    llvm::cl::init("a3"));
+    llvm::cl::desc(
+        "Target Ascend architecture for codegen: a2, a3, or a5 (default: a3)"),
+    llvm::cl::value_desc("a2|a3|a5"), llvm::cl::init("a3"));
 
-static llvm::cl::opt<std::string> ptoBuildLevel(
-    "pto-level",
-    llvm::cl::desc("Build level for pass pipeline: level1, level2, or level3 (default: level2)"),
-    llvm::cl::value_desc("level1|level2|level3"),
-    llvm::cl::init("level2"));
+static llvm::cl::opt<std::string>
+    ptoBuildLevel("pto-level",
+                  llvm::cl::desc("Build level for pass pipeline: level1, "
+                                 "level2, or level3 (default: level2)"),
+                  llvm::cl::value_desc("level1|level2|level3"),
+                  llvm::cl::init("level2"));
 
 llvm::cl::opt<std::string> mlir::pto::ptoBackend(
     "pto-backend",
     llvm::cl::desc("Final PTOAS backend: emitc or vpto (default: emitc)"),
     llvm::cl::value_desc("emitc|vpto"), llvm::cl::init("emitc"));
 
-llvm::cl::opt<bool> mlir::pto::emitVPTO(
-    "emit-vpto",
-    llvm::cl::desc("Write final post-pass VPTO IR to -o"),
-    llvm::cl::init(false));
+llvm::cl::opt<bool>
+    mlir::pto::emitVPTO("emit-vpto",
+                        llvm::cl::desc("Write final post-pass VPTO IR to -o"),
+                        llvm::cl::init(false));
 
 llvm::cl::opt<bool> mlir::pto::emitVPTOLLVMDialect(
-    "emit-vpto-llvm-ir",
-    llvm::cl::desc("Write translated VPTO LLVM IR to -o"),
+    "emit-vpto-llvm-ir", llvm::cl::desc("Write translated VPTO LLVM IR to -o"),
     llvm::cl::init(false));
 
-static llvm::cl::opt<bool> vptoPrintIR(
-    "vpto-print-ir",
-    llvm::cl::desc("Print post-pass VPTO backend IR to stderr"),
-    llvm::cl::init(false));
+static llvm::cl::opt<bool>
+    vptoPrintIR("vpto-print-ir",
+                llvm::cl::desc("Print post-pass VPTO backend IR to stderr"),
+                llvm::cl::init(false));
 
 static llvm::cl::opt<std::string> vptoLoweringStrategy(
     "vpto-lowering-strategy",
-    llvm::cl::desc("VPTO vector lowering strategy: post-update or no-post-update"),
+    llvm::cl::desc(
+        "VPTO vector lowering strategy: post-update or no-post-update"),
     llvm::cl::value_desc("post-update|no-post-update"),
     llvm::cl::init("post-update"));
 
-static llvm::cl::opt<bool> dumpVPTOIR(
-    "dump-vpto-ir",
-    llvm::cl::desc("Print post-pass VPTO backend IR to stderr"),
-    llvm::cl::init(false));
+static llvm::cl::opt<bool>
+    dumpVPTOIR("dump-vpto-ir",
+               llvm::cl::desc("Print post-pass VPTO backend IR to stderr"),
+               llvm::cl::init(false));
 
 llvm::cl::opt<bool> mlir::pto::ptoPrintSeamIR(
     "pto-print-seam-ir",
@@ -692,17 +747,18 @@ llvm::cl::opt<bool> mlir::pto::ptoPrintSeamIR(
 llvm::cl::opt<std::string> mlir::pto::ptoSeamIRFile(
     "pto-seam-ir-file",
     llvm::cl::desc("Write shared pre-backend seam IR to a file"),
-    llvm::cl::value_desc("path"),
-    llvm::cl::init(""));
+    llvm::cl::value_desc("path"), llvm::cl::init(""));
 
 llvm::cl::opt<std::string> mlir::pto::cannOutputVersion(
     "cann-output-version",
-    llvm::cl::desc("Override the CANN version used for lowering and public ABI output selection; examples: 9.0.0, 9.0.0-beta.1"),
+    llvm::cl::desc("Override the CANN version used for lowering and public ABI "
+                   "output selection; examples: 9.0.0, 9.0.0-beta.1"),
     llvm::cl::value_desc("version"), llvm::cl::init(""));
 
 llvm::cl::opt<mlir::pto::VFSIMTSizeFixMode> mlir::pto::vptoFixVFSIMTSize(
     "vpto-fix-vfsimt-size",
-    llvm::cl::desc("Validate or repair VF_SIMT code sizes in VPTO vector objects"),
+    llvm::cl::desc(
+        "Validate or repair VF_SIMT code sizes in VPTO vector objects"),
     llvm::cl::value_desc("auto|off|verify"),
     llvm::cl::values(
         clEnumValN(mlir::pto::VFSIMTSizeFixMode::Auto, "auto",
@@ -719,9 +775,7 @@ enum class PTOBuildLevel {
   Level3,
 };
 
-static PTOBuildLevel defaultBuildLevel() {
-  return PTOBuildLevel::Level2;
-}
+static PTOBuildLevel defaultBuildLevel() { return PTOBuildLevel::Level2; }
 
 static bool parseBuildLevel(llvm::StringRef levelStr, PTOBuildLevel &out) {
   std::string s = levelStr.str();
@@ -792,8 +846,8 @@ static LogicalResult validateReserveBufferBase(pto::ReserveBufferOp op,
   if (base > spec.capacityBytes || size > spec.capacityBytes - base) {
     return op.emitError("reserved range exceeds ")
            << stringifyEnum(op.getLocation().getAddressSpace())
-           << " capacity: base " << base << " + size " << size
-           << " > " << spec.capacityBytes << " bytes";
+           << " capacity: base " << base << " + size " << size << " > "
+           << spec.capacityBytes << " bytes";
   }
 
   return success();
@@ -843,7 +897,8 @@ static constexpr llvm::StringLiteral kAutoSyncTailPolicyBarrierAll =
 static constexpr llvm::StringLiteral kAutoSyncTailPolicyMte3ToSEvent0 =
     "setwait_mte3_to_s_event0";
 
-static bool parseAutoSyncTailHint(llvm::StringRef hintStr, std::string &normalized) {
+static bool parseAutoSyncTailHint(llvm::StringRef hintStr,
+                                  std::string &normalized) {
   std::string s = hintStr.str();
   for (char &c : s) {
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -853,8 +908,7 @@ static bool parseAutoSyncTailHint(llvm::StringRef hintStr, std::string &normaliz
     return true;
   }
   if (s == "mte3-to-s-event0" || s == "mte3_to_s_event0" ||
-      s == "setwait-mte3-to-s-event0" ||
-      s == "setwait_mte3_to_s_event0") {
+      s == "setwait-mte3-to-s-event0" || s == "setwait_mte3_to_s_event0") {
     normalized = kAutoSyncTailPolicyMte3ToSEvent0.str();
     return true;
   }
@@ -929,7 +983,8 @@ static bool isCppIdentifierChar(char c) {
   return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
 }
 
-static std::optional<std::string> getTextualNameFromSMRange(llvm::SMRange range) {
+static std::optional<std::string>
+getTextualNameFromSMRange(llvm::SMRange range) {
   if (!range.Start.isValid() || !range.End.isValid()) {
     return std::nullopt;
   }
@@ -993,8 +1048,7 @@ static std::string sanitizeCppIdentifier(llvm::StringRef name) {
   for (char c : name) {
     if (isCppIdentifierChar(c)) {
       sanitized.push_back(c);
-    }
-    else {
+    } else {
       appendUnderscore();
     }
   }
@@ -1134,11 +1188,10 @@ static SmallVector<std::string, 4> getRawResultProvenance(Operation *op) {
   if (hints.empty()) {
     return hints;
   }
-  hints.erase(std::remove_if(hints.begin(), hints.end(),
-                              [](const std::string &name) {
-                                return name.empty();
-                              }),
-              hints.end());
+  hints.erase(
+      std::remove_if(hints.begin(), hints.end(),
+                     [](const std::string &name) { return name.empty(); }),
+      hints.end());
   if (hints.empty()) {
     return hints;
   }
@@ -1157,15 +1210,15 @@ static SmallVector<std::string, 4> getRawResultProvenance(Operation *op) {
 static SmallVector<std::string, 4> getRawLocationProvenance(Location loc) {
   SmallVector<std::string, 4> hints;
   appendRawLocationProvenance(loc, hints);
-  hints.erase(std::remove_if(hints.begin(), hints.end(),
-                             [](const std::string &hint) {
-                               return hint.empty();
-                             }),
-              hints.end());
+  hints.erase(
+      std::remove_if(hints.begin(), hints.end(),
+                     [](const std::string &hint) { return hint.empty(); }),
+      hints.end());
   return hints;
 }
 
-static Location getIndexedRawProvenanceLoc(Location fallbackLoc, unsigned index) {
+static Location getIndexedRawProvenanceLoc(Location fallbackLoc,
+                                           unsigned index) {
   SmallVector<std::string, 4> hints = getRawLocationProvenance(fallbackLoc);
   if (index >= hints.size()) {
     return fallbackLoc;
@@ -1190,15 +1243,17 @@ static Location attachLocationNameHints(Location baseLoc,
   if (attrs.size() == 1) {
     return NameLoc::get(cast<StringAttr>(attrs.front()), baseLoc);
   }
-  return FusedLoc::get(ArrayRef<Location>{baseLoc}, ArrayAttr::get(context, attrs),
-                       context);
+  return FusedLoc::get(ArrayRef<Location>{baseLoc},
+                       ArrayAttr::get(context, attrs), context);
 }
 
-static void applyValueNameHints(Value value, llvm::ArrayRef<std::string> hints) {
+static void applyValueNameHints(Value value,
+                                llvm::ArrayRef<std::string> hints) {
   if (!value || hints.empty() || hasLocationNameHints(value.getLoc())) {
     return;
   }
-  value.setLoc(attachLocationNameHints(value.getLoc(), hints, value.getContext()));
+  value.setLoc(
+      attachLocationNameHints(value.getLoc(), hints, value.getContext()));
 }
 
 static void applyOperationResultNameHints(Operation *op,
@@ -1216,7 +1271,8 @@ static void applyOperationResultNameHints(Operation *op,
     return;
   }
 
-  op->setLoc(attachLocationNameHints(op->getLoc(), limitedHints, op->getContext()));
+  op->setLoc(
+      attachLocationNameHints(op->getLoc(), limitedHints, op->getContext()));
 }
 
 static void splitDerivedSingleResultProvenanceLocsInRegion(Region &region);
@@ -1307,8 +1363,8 @@ static void narrowUnusedMultiResultProvenanceLocs(Operation *root) {
       return;
     }
 
-    op->setLoc(attachLocationNameHints(op->getLoc(), liveHints,
-                                       op->getContext()));
+    op->setLoc(
+        attachLocationNameHints(op->getLoc(), liveHints, op->getContext()));
   });
 }
 
@@ -1330,7 +1386,8 @@ static std::unique_ptr<Pass> createNarrowUnusedMultiResultProvenancePass() {
 }
 
 namespace {
-static SmallVector<func::FuncOp> collectSharedPipelineFunctions(ModuleOp module) {
+static SmallVector<func::FuncOp>
+collectSharedPipelineFunctions(ModuleOp module) {
   SmallVector<func::FuncOp> functions;
   // Object compilation promotes backend children to top-level compile units.
   // Preserve recursive traversal only for user-visible IR modes, which retain
@@ -1347,12 +1404,27 @@ struct SerialAutoSyncPass
     : public PassWrapper<SerialAutoSyncPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SerialAutoSyncPass)
 
-  enum class Mode { InsertSync, Bufid, BarrierAll, GraphSolver };
+  enum class Mode { InsertSync, Canonical, Bufid, BarrierAll, GraphSolver };
 
-  SerialAutoSyncPass(Mode mode, bool enableBufidDebug,
-                     int64_t graphEventIdMax)
+  SerialAutoSyncPass(Mode mode, bool enableBufidDebug, int64_t graphEventIdMax,
+                     int64_t canonicalEventIdMax = 0,
+                     bool canonicalDistinctGmArgs = false,
+                     bool canonicalAllGmAccesses = false,
+                     std::string canonicalPatternMode = "direct-pair",
+                     std::string canonicalSelectionStrategy = "pair-lookahead",
+                     int64_t canonicalMaximumRepairRounds = 8,
+                     bool canonicalAnalysisOnly = false,
+                     std::string canonicalComparisonReport = "")
       : mode(mode), enableBufidDebug(enableBufidDebug),
-        graphEventIdMax(graphEventIdMax) {}
+        graphEventIdMax(graphEventIdMax),
+        canonicalEventIdMax(canonicalEventIdMax),
+        canonicalDistinctGmArgs(canonicalDistinctGmArgs),
+        canonicalAllGmAccesses(canonicalAllGmAccesses),
+        canonicalPatternMode(std::move(canonicalPatternMode)),
+        canonicalSelectionStrategy(std::move(canonicalSelectionStrategy)),
+        canonicalMaximumRepairRounds(canonicalMaximumRepairRounds),
+        canonicalAnalysisOnly(canonicalAnalysisOnly),
+        canonicalComparisonReport(std::move(canonicalComparisonReport)) {}
 
   void runOnOperation() override {
     OpPassManager functionPM(func::FuncOp::getOperationName());
@@ -1360,6 +1432,19 @@ struct SerialAutoSyncPass
     case Mode::InsertSync:
       functionPM.addPass(pto::createPTOInsertSyncPass());
       break;
+    case Mode::Canonical: {
+      PTOCanonicalSyncOptions options;
+      options.eventIdNumMax = canonicalEventIdMax;
+      options.assumeDistinctGmArgsNoAlias = canonicalDistinctGmArgs;
+      options.assumeAllGmAccessesNoAlias = canonicalAllGmAccesses;
+      options.patternMode = canonicalPatternMode;
+      options.selectionStrategy = canonicalSelectionStrategy;
+      options.maximumRepairRounds = canonicalMaximumRepairRounds;
+      options.analysisOnly = canonicalAnalysisOnly;
+      options.comparisonReport = canonicalComparisonReport;
+      functionPM.addPass(pto::createPTOCanonicalSyncPass(options));
+      break;
+    }
     case Mode::Bufid: {
       PTOBufidSyncOptions options;
       options.enableBufidSyncDebug = enableBufidDebug;
@@ -1377,8 +1462,7 @@ struct SerialAutoSyncPass
     }
     }
 
-    for (func::FuncOp funcOp :
-         collectSharedPipelineFunctions(getOperation())) {
+    for (func::FuncOp funcOp : collectSharedPipelineFunctions(getOperation())) {
       if (failed(runPipeline(functionPM, funcOp))) {
         signalPassFailure();
         return;
@@ -1390,6 +1474,14 @@ private:
   Mode mode;
   bool enableBufidDebug;
   int64_t graphEventIdMax;
+  int64_t canonicalEventIdMax;
+  bool canonicalDistinctGmArgs;
+  bool canonicalAllGmAccesses;
+  std::string canonicalPatternMode;
+  std::string canonicalSelectionStrategy;
+  int64_t canonicalMaximumRepairRounds;
+  bool canonicalAnalysisOnly;
+  std::string canonicalComparisonReport;
 };
 } // namespace
 
@@ -1397,8 +1489,7 @@ namespace {
 struct SerialFrontendPipeLoweringPass
     : public PassWrapper<SerialFrontendPipeLoweringPass,
                          OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
-      SerialFrontendPipeLoweringPass)
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SerialFrontendPipeLoweringPass)
 
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<func::FuncDialect, pto::PTODialect>();
@@ -1414,8 +1505,7 @@ struct SerialFrontendPipeLoweringPass
     // adaptor allows one function to be verified while another function is
     // still mutating its pipe ops. Keep these two small passes serial so every
     // verifier observes either the complete frontend or complete lowered form.
-    for (func::FuncOp funcOp :
-         collectSharedPipelineFunctions(getOperation())) {
+    for (func::FuncOp funcOp : collectSharedPipelineFunctions(getOperation())) {
       if (failed(runPipeline(functionPM, funcOp))) {
         signalPassFailure();
         return;
@@ -1429,8 +1519,9 @@ static std::unique_ptr<Pass> createSerialFrontendPipeLoweringPass() {
   return std::make_unique<SerialFrontendPipeLoweringPass>();
 }
 
-static void collectNonEntryBlocksInSourceOrder(
-    Operation *op, SmallVectorImpl<Block *> &blocks) {
+static void
+collectNonEntryBlocksInSourceOrder(Operation *op,
+                                   SmallVectorImpl<Block *> &blocks) {
   for (Region &region : op->getRegions()) {
     bool isEntryBlock = true;
     for (Block &block : region) {
@@ -1445,13 +1536,14 @@ static void collectNonEntryBlocksInSourceOrder(
   }
 }
 
-void mlir::pto::applyTextualNameHintsToModule(ModuleOp module,
-                                              const AsmParserState &parserState) {
+void mlir::pto::applyTextualNameHintsToModule(
+    ModuleOp module, const AsmParserState &parserState) {
   if (!module) {
     return;
   }
 
-  for (const AsmParserState::BlockDefinition &blockDef : parserState.getBlockDefs()) {
+  for (const AsmParserState::BlockDefinition &blockDef :
+       parserState.getBlockDefs()) {
     if (!blockDef.block) {
       continue;
     }
@@ -1468,7 +1560,8 @@ void mlir::pto::applyTextualNameHintsToModule(ModuleOp module,
     }
   }
 
-  for (const AsmParserState::OperationDefinition &opDef : parserState.getOpDefs()) {
+  for (const AsmParserState::OperationDefinition &opDef :
+       parserState.getOpDefs()) {
     if (!opDef.op || opDef.op->getNumResults() == 0) {
       continue;
     }
@@ -1488,7 +1581,8 @@ void mlir::pto::applyTextualNameHintsToModule(ModuleOp module,
   }
 }
 
-static FunctionBlockArgHintMap collectFunctionBlockArgNameHints(ModuleOp module) {
+static FunctionBlockArgHintMap
+collectFunctionBlockArgNameHints(ModuleOp module) {
   FunctionBlockArgHintMap hintsByFunction;
   for (func::FuncOp func : module.getOps<func::FuncOp>()) {
     SmallVector<Block *, 8> nonEntryBlocks;
@@ -1550,7 +1644,8 @@ static void applyFunctionBlockArgNameHintsToEmitC(
     for (auto [blockIndex, block] : llvm::enumerate(nonEntryBlocks)) {
       const auto &argHints = it->second[blockIndex];
       for (auto [argIndex, arg] : llvm::enumerate(block->getArguments()))
-        applyValueNameHints(arg, llvm::ArrayRef<std::string>{argHints[argIndex]});
+        applyValueNameHints(arg,
+                            llvm::ArrayRef<std::string>{argHints[argIndex]});
     }
   }
 }
@@ -1646,7 +1741,8 @@ static void annotateEmitCProvenanceHints(ModuleOp module) {
     }
 
     if (auto expr = dyn_cast<emitc::ExpressionOp>(op)) {
-      SmallVector<std::string, 8> provenance = collectExpressionProvenance(expr);
+      SmallVector<std::string, 8> provenance =
+          collectExpressionProvenance(expr);
       if (provenance.empty()) {
         return WalkResult::skip();
       }
@@ -1678,10 +1774,9 @@ static void annotateEmitCProvenanceHints(ModuleOp module) {
     // point 1: locatability without strict number alignment).
     if (!marker.names.empty()) {
       builder.setInsertionPoint(marker.op);
-      builder.create<emitc::VerbatimOp>(
-          marker.op->getLoc(),
-          builder.getStringAttr(
-              buildHintMarker("PTOAS_PROVENANCE", marker.names)));
+      builder.create<emitc::VerbatimOp>(marker.op->getLoc(),
+                                        builder.getStringAttr(buildHintMarker(
+                                            "PTOAS_PROVENANCE", marker.names)));
     }
   }
 }
@@ -1818,7 +1913,8 @@ static bool rewriteMarkerCallToMember(std::string &cpp, llvm::StringRef marker,
                                       llvm::StringRef memberName,
                                       unsigned expectedNumArgs) {
   return rewriteMarkerCalls(
-      cpp, marker, [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
+      cpp, marker,
+      [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
         if (call.args.size() != expectedNumArgs) {
           return std::nullopt;
         }
@@ -1841,15 +1937,15 @@ static bool rewriteMarkerCallToMember(std::string &cpp, llvm::StringRef marker,
       });
 }
 
-static void rewriteMarkerCallsToMembers(
-    std::string &cpp, llvm::ArrayRef<MarkerRewriteSpec> rewrites) {
+static void
+rewriteMarkerCallsToMembers(std::string &cpp,
+                            llvm::ArrayRef<MarkerRewriteSpec> rewrites) {
   bool changed = true;
   while (changed) {
     changed = false;
     for (const MarkerRewriteSpec &rewrite : rewrites) {
-      changed |= rewriteMarkerCallToMember(cpp, rewrite.marker,
-                                           rewrite.memberName,
-                                           rewrite.expectedNumArgs);
+      changed |= rewriteMarkerCallToMember(
+          cpp, rewrite.marker, rewrite.memberName, rewrite.expectedNumArgs);
     }
   }
 }
@@ -1858,7 +1954,8 @@ static bool rewriteMarkerCallToField(std::string &cpp, llvm::StringRef marker,
                                      llvm::StringRef fieldName,
                                      size_t expectedNumArgs) {
   return rewriteMarkerCalls(
-      cpp, marker, [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
+      cpp, marker,
+      [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
         if (call.args.size() != expectedNumArgs) {
           return std::nullopt;
         }
@@ -1892,8 +1989,8 @@ static void rewriteAsyncEventMarkers(std::string &cpp) {
       {"PTOAS__ASYNC_EVENT_TEST", "Test", 2},
   };
   rewriteMarkerCallsToMembers(cpp, kAsyncEventMarkerRewrites);
-  (void)rewriteMarkerCallToField(cpp, "PTOAS__PREFETCH_CTX_SESSION",
-                                 "session", 1);
+  (void)rewriteMarkerCallToField(cpp, "PTOAS__PREFETCH_CTX_SESSION", "session",
+                                 1);
 }
 
 // --------------------------------------------------------------------------
@@ -2129,7 +2226,8 @@ static void normalizeEmitCIntegerAttrsForCppEmission(Operation *rootOp) {
   });
 }
 
-static Attribute getDefaultEmitCVariableInitAttr(OpBuilder &builder, Type type) {
+static Attribute getDefaultEmitCVariableInitAttr(OpBuilder &builder,
+                                                 Type type) {
   if (auto intTy = dyn_cast<IntegerType>(type)) {
     if (intTy.getWidth() == 0) {
       return emitc::OpaqueAttr::get(builder.getContext(), "0");
@@ -2148,9 +2246,7 @@ static Attribute getDefaultEmitCVariableInitAttr(OpBuilder &builder, Type type) 
   return Attribute{};
 }
 
-static Type getEmitCVariableStorageType(Type valueType) {
-  return valueType;
-}
+static Type getEmitCVariableStorageType(Type valueType) { return valueType; }
 
 // FormExpressions may inline conditions into emitc.expression, but the C++
 // emitter prints cf.br/cf.cond_br operands by variable name rather than by
@@ -2180,22 +2276,25 @@ static void materializeControlFlowOperands(Operation *rootOp) {
         continue;
       }
 
-      Value tmp = builder
-                      .create<emitc::VariableOp>(
-                          op->getLoc(), getEmitCVariableStorageType(value.getType()),
-                          initAttr)
-                      .getResult();
+      Value tmp =
+          builder
+              .create<emitc::VariableOp>(
+                  op->getLoc(), getEmitCVariableStorageType(value.getType()),
+                  initAttr)
+              .getResult();
       builder.create<emitc::AssignOp>(op->getLoc(), tmp, value);
       operand.set(tmp);
     }
   }
 }
 
-static bool rewriteMarkerCallToSubscript(std::string &cpp, llvm::StringRef marker,
+static bool rewriteMarkerCallToSubscript(std::string &cpp,
+                                         llvm::StringRef marker,
                                          unsigned expectedNumArgs,
                                          bool isStore) {
   return rewriteMarkerCalls(
-      cpp, marker, [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
+      cpp, marker,
+      [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
         if (call.args.size() != expectedNumArgs) {
           return std::nullopt;
         }
@@ -2223,8 +2322,8 @@ static void rewriteGlobalTensorMetadataMarkers(std::string &cpp) {
         [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
           if (call.args.size() != 2)
             return std::nullopt;
-          return ("(" + call.args[0] + ")." + method +
-                  "(static_cast<int>(" + call.args[1] + "))")
+          return ("(" + call.args[0] + ")." + method + "(static_cast<int>(" +
+                  call.args[1] + "))")
               .str();
         });
   };
@@ -2238,9 +2337,8 @@ static void rewriteMarkerCallsToSubscripts(
   while (changed) {
     changed = false;
     for (const MarkerSubscriptRewriteSpec &rewrite : rewrites) {
-      changed |= rewriteMarkerCallToSubscript(cpp, rewrite.marker,
-                                              rewrite.expectedNumArgs,
-                                              rewrite.isStore);
+      changed |= rewriteMarkerCallToSubscript(
+          cpp, rewrite.marker, rewrite.expectedNumArgs, rewrite.isStore);
     }
   }
 }
@@ -2291,8 +2389,7 @@ static void appendScalarGMFlush(std::string &out, llvm::StringRef indent) {
 }
 
 static bool stripScalarGMFlushMarkersFromLine(std::string &line) {
-  static constexpr llvm::StringLiteral kMarker =
-      "PTOAS__SCALAR_GM_STORE_FLUSH";
+  static constexpr llvm::StringLiteral kMarker = "PTOAS__SCALAR_GM_STORE_FLUSH";
 
   bool changed = false;
   size_t searchPos = 0;
@@ -2329,8 +2426,9 @@ static bool stripScalarGMFlushMarkersFromLine(std::string &line) {
   return changed;
 }
 
-static bool previousSignificantLineIsTailFlushPoint(
-    llvm::ArrayRef<std::string> lines, size_t index) {
+static bool
+previousSignificantLineIsTailFlushPoint(llvm::ArrayRef<std::string> lines,
+                                        size_t index) {
   for (size_t i = index; i > 0; --i) {
     llvm::StringRef prev = llvm::StringRef(lines[i - 1]).trim();
     if (prev.empty()) {
@@ -2342,15 +2440,15 @@ static bool previousSignificantLineIsTailFlushPoint(
   return false;
 }
 
-static bool previousSignificantLineIsExitOrTailFlushPoint(
-    llvm::ArrayRef<std::string> lines, size_t index) {
+static bool
+previousSignificantLineIsExitOrTailFlushPoint(llvm::ArrayRef<std::string> lines,
+                                              size_t index) {
   for (size_t i = index; i > 0; --i) {
     llvm::StringRef prev = llvm::StringRef(lines[i - 1]).trim();
     if (prev.empty()) {
       continue;
     }
-    return prev.starts_with("return") ||
-           prev.starts_with("#endif // __DAV_") ||
+    return prev.starts_with("return") || prev.starts_with("#endif // __DAV_") ||
            prev.starts_with("ptoas_auto_sync_tail(");
   }
   return false;
@@ -2438,7 +2536,7 @@ static void rewriteScalarGMStoreFlushMarkers(std::string &cpp) {
 
   auto flushFunction = [&](bool hasTrailingNewline) {
     out.append(rewriteScalarGMStoreFlushMarkersInFunction(functionLines,
-                                                         hasTrailingNewline));
+                                                          hasTrailingNewline));
     functionLines.clear();
     inFunction = false;
     sawFunctionBrace = false;
@@ -2579,7 +2677,10 @@ static bool rewriteAddPtrTraceMarkers(std::string &cpp, bool showTrace) {
     size_t replaceEnd = call->rparenPos;
     if (!showTrace) {
       size_t i = call->rparenPos + 1;
-      while (i < cpp.size() && std::isspace(static_cast<unsigned char>(cpp[i]))) {
+      while (i < cpp.size()) {
+        if (!std::isspace(static_cast<unsigned char>(cpp[i]))) {
+          break;
+        }
         ++i;
       }
       if (i < cpp.size() && cpp[i] == ';') {
@@ -2827,8 +2928,9 @@ static void emitProvenanceComments(std::string &segment) {
     }
     me += 2;
     while (me < segment.size() &&
-           (segment[me] == '\r' || segment[me] == '\n'))
+           (segment[me] == '\r' || segment[me] == '\n')) {
       ++me;
+    }
     i = me;
   }
   segment.swap(out);
@@ -2886,8 +2988,7 @@ static bool isLiteralInitializer(llvm::StringRef rhs) {
       R"(^[+-]?(([0-9]+\.[0-9]*|\.[0-9]+|[0-9]+)([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+)[fF]?$)");
   static const llvm::Regex kHexFloatLiteral(
       R"(^[+-]?0[xX]([0-9A-Fa-f]+\.[0-9A-Fa-f]*|[0-9A-Fa-f]+|\.[0-9A-Fa-f]+)[pP][+-]?[0-9]+[fF]?$)");
-  static const llvm::Regex kSpecialFloatLiteral(
-      R"(^[+-]?(nan|inf)[fF]?$)");
+  static const llvm::Regex kSpecialFloatLiteral(R"(^[+-]?(nan|inf)[fF]?$)");
 
   return kIntLiteral.match(rhs) || kFloatLiteral.match(rhs) ||
          kHexFloatLiteral.match(rhs) || kSpecialFloatLiteral.match(rhs);
@@ -2912,9 +3013,11 @@ static bool parseConstantDeclarationLine(llvm::StringRef line,
                                          ConstantDeclCandidate &candidate,
                                          std::string &valueName) {
   llvm::StringRef trimmed = line.trim();
-  if (trimmed.empty() || trimmed.starts_with("#") || trimmed.starts_with("//") ||
-      !trimmed.ends_with(";"))
+  const bool unsuitable = trimmed.empty() || trimmed.starts_with("#") ||
+                          trimmed.starts_with("//") || !trimmed.ends_with(";");
+  if (unsuitable) {
     return false;
+  }
 
   llvm::StringRef body = trimmed.drop_back().rtrim();
   if (body.starts_with("return") || body.starts_with("goto ") ||
@@ -2966,9 +3069,11 @@ static bool parseGeneratedValueAssignment(llvm::StringRef line,
                                           llvm::StringRef &valueName,
                                           llvm::StringRef &rhs) {
   llvm::StringRef trimmed = line.trim();
-  if (trimmed.empty() || trimmed.starts_with("#") || trimmed.starts_with("//") ||
-      !trimmed.ends_with(";"))
+  const bool unsuitable = trimmed.empty() || trimmed.starts_with("#") ||
+                          trimmed.starts_with("//") || !trimmed.ends_with(";");
+  if (unsuitable) {
     return false;
+  }
 
   llvm::StringRef body = trimmed.drop_back().rtrim();
   size_t eqPos = body.find('=');
@@ -3083,7 +3188,9 @@ static void rewriteScalarConstantDecls(std::string &cpp) {
 }
 
 static bool shouldDeclareVariablesAtTop(ModuleOp module) {
-  auto hasMultiBlockFunc = [](auto func) { return func.getBlocks().size() > 1; };
+  auto hasMultiBlockFunc = [](auto func) {
+    return func.getBlocks().size() > 1;
+  };
   return llvm::any_of(module.getOps<func::FuncOp>(), hasMultiBlockFunc) ||
          llvm::any_of(module.getOps<emitc::FuncOp>(), hasMultiBlockFunc);
 }
@@ -3100,8 +3207,7 @@ static void prepareVPTOForEmission(PassManager &pm) {
   // backend checks catch any illegal barrier that still leaks through.
   kernelModulePM.addNestedPass<func::FuncOp>(
       pto::createLoweringSyncToPipePass());
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createPTOUnrollLoopsPass());
+  kernelModulePM.addNestedPass<func::FuncOp>(pto::createPTOUnrollLoopsPass());
   kernelModulePM.addPass(createSCCPPass());
   kernelModulePM.addPass(createCanonicalizerPass());
   kernelModulePM.addPass(createCSEPass());
@@ -3115,8 +3221,7 @@ static void prepareVPTOForEmission(PassManager &pm) {
   kernelModulePM.addPass(pto::createVPTOOptimizeVcvtPass());
   kernelModulePM.addPass(pto::createVPTOMaskSimplifyPass());
   kernelModulePM.addPass(createReconcileUnrealizedCastsPass());
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      createVPTOExpandWrapperOpsPass());
+  kernelModulePM.addNestedPass<func::FuncOp>(createVPTOExpandWrapperOpsPass());
   kernelModulePM.addNestedPass<func::FuncOp>(
       pto::createPTOInferVPTOVecScopePass());
   if (enableSoftPostUpdate) {
@@ -3124,8 +3229,7 @@ static void prepareVPTOForEmission(PassManager &pm) {
   }
   // Hoist loop-invariant guarded address chains out of scf.if regions before
   // the generic LICM (which only inspects top-level loop-body operations).
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createVPTOGuardedLICMPass());
+  kernelModulePM.addNestedPass<func::FuncOp>(pto::createVPTOGuardedLICMPass());
   kernelModulePM.addPass(createLoopInvariantCodeMotionPass());
   kernelModulePM.addNestedPass<func::FuncOp>(
       pto::createPTONarrowVPTOLoopCountersPass());
@@ -3144,9 +3248,8 @@ static void prepareVPTOForEmission(PassManager &pm) {
   kernelModulePM.addPass(createCSEPass());
   if (vptoSchedulerMode != VPTOSchedulerCLIMode::Off) {
     pto::VPTOSchedulerOptions schedulerOptions;
-    schedulerOptions.mode = vptoSchedulerMode == VPTOSchedulerCLIMode::Analyze
-                                ? "analyze"
-                                : "on";
+    schedulerOptions.mode =
+        vptoSchedulerMode == VPTOSchedulerCLIMode::Analyze ? "analyze" : "on";
     kernelModulePM.addPass(pto::createVPTOSchedulerPass(schedulerOptions));
   }
   kernelModulePM.addPass(pto::createPTOValidateVPTOEmissionIRPass());
@@ -3238,9 +3341,8 @@ static int emitVPTOBackendResult(ModuleOp module, PTOASCompileResult &result,
 
   if (emitVPTOLLVMDialect) {
     result.kind = PTOASCompileResultKind::Text;
-    pto::VPTOEmissionOptions options =
-        buildVPTOEmissionOptions(
-            cannVersion, resolveEffectiveTargetArch(module, ptoTargetArch));
+    pto::VPTOEmissionOptions options = buildVPTOEmissionOptions(
+        cannVersion, resolveEffectiveTargetArch(module, ptoTargetArch));
     if (failed(pto::lowerVPTOModuleToLLVMIRText(
             module, options, result.textOutput, llvm::errs()))) {
       llvm::errs() << "Error: Failed to lower VPTO to LLVM IR.\n";
@@ -3249,9 +3351,8 @@ static int emitVPTOBackendResult(ModuleOp module, PTOASCompileResult &result,
     return 0;
   }
 
-  pto::VPTOEmissionOptions options =
-      buildVPTOEmissionOptions(
-          cannVersion, resolveEffectiveTargetArch(module, ptoTargetArch));
+  pto::VPTOEmissionOptions options = buildVPTOEmissionOptions(
+      cannVersion, resolveEffectiveTargetArch(module, ptoTargetArch));
   std::string stubSource;
   if (emitHostStub) {
     if (failed(pto::emitVPTOHostStubSource(module, stubSource, llvm::errs()))) {
@@ -3260,11 +3361,9 @@ static int emitVPTOBackendResult(ModuleOp module, PTOASCompileResult &result,
     }
   }
 
-  if (failed(
-          pto::lowerVPTOModuleToLLVMModules(module, options,
-                                            result.vptoCubeModule,
-                                            result.vptoVectorModule,
-                                            llvm::errs()))) {
+  if (failed(pto::lowerVPTOModuleToLLVMModules(
+          module, options, result.vptoCubeModule, result.vptoVectorModule,
+          llvm::errs()))) {
     llvm::errs() << "Error: Failed to lower VPTO to LLVM modules.\n";
     return 1;
   }
@@ -3358,10 +3457,11 @@ static LogicalResult validateSCFForConstantSteps(ModuleOp module) {
   return result.wasInterrupted() ? failure() : success();
 }
 
-int mlir::pto::compilePTOASModule(
-    OwningOpRef<ModuleOp> &module, PTOASContext &context,
-    PTOBackend effectiveBackend, PTOASCompileResult &result,
-    bool emitVPTOHostStub) {
+int mlir::pto::compilePTOASModule(OwningOpRef<ModuleOp> &module,
+                                  PTOASContext &context,
+                                  PTOBackend effectiveBackend,
+                                  PTOASCompileResult &result,
+                                  bool emitVPTOHostStub) {
   result.reset();
   if (failed(validateSCFForConstantSteps(*module))) {
     return 1;
@@ -3407,8 +3507,8 @@ int mlir::pto::compilePTOASModule(
     return 1;
   }
 
-  module->getOperation()->setAttr("pto.target_arch",
-                                  mlir::StringAttr::get(module->getContext(), arch));
+  module->getOperation()->setAttr(
+      "pto.target_arch", mlir::StringAttr::get(module->getContext(), arch));
 
   if (failed(mlir::verify(module.get()))) {
     llvm::errs() << "Error: input module verification failed.\n";
@@ -3444,9 +3544,8 @@ int mlir::pto::compilePTOASModule(
                     "--enable-vfsim-costmodel-optimization.\n";
   }
 
-  const bool enableA5FusionPath =
-      opFusionEnabled && arch == "a5" &&
-      effectiveLevel != PTOBuildLevel::Level1;
+  const bool enableA5FusionPath = opFusionEnabled && arch == "a5" &&
+                                  effectiveLevel != PTOBuildLevel::Level1;
   const bool enableA5EmitCFusionPath =
       enableA5FusionPath && effectiveBackend == PTOBackend::EmitC;
   const bool enableA5VPTOFusionPath =
@@ -3514,17 +3613,36 @@ int mlir::pto::compilePTOASModule(
   }
 
   int enabledAutoSyncModes =
-      (enableInsertSync ? 1 : 0) + (enableBufidSync ? 1 : 0) +
-      (enableInjectBarrierAllSync ? 1 : 0) + (enableGraphSyncSolver ? 1 : 0);
+      (enableInsertSync ? 1 : 0) + (enableCanonicalSync ? 1 : 0) +
+      (enableBufidSync ? 1 : 0) + (enableInjectBarrierAllSync ? 1 : 0) +
+      (enableGraphSyncSolver ? 1 : 0);
   if (enabledAutoSyncModes > 1) {
-    llvm::errs() << "Error: --enable-insert-sync, --enable-bufid_sync, "
+    llvm::errs() << "Error: --enable-insert-sync, --enable-canonical-sync, "
+                    "--enable-bufid_sync, "
                     "--enable-inject-barrier-all-sync, and "
                     "--enable-graph-sync-solver are mutually exclusive.\n";
+    return 1;
+  }
+  const bool hasCanonicalAnalysisOption =
+      canonicalSyncAnalysisOnly || !canonicalSyncComparisonReport.empty();
+  if (hasCanonicalAnalysisOption && !enableCanonicalSync) {
+    llvm::errs() << "Error: canonical synchronization analysis/report options "
+                    "require --enable-canonical-sync.\n";
+    return 1;
+  }
+  if (canonicalSyncAnalysisOnly && !emitMlirIR) {
+    llvm::errs() << "Error: --canonical-sync-analysis-only requires "
+                    "--emit-pto-ir to prevent unsynchronized code emission.\n";
     return 1;
   }
   if (hasTAssign && enableInjectBarrierAllSync) {
     llvm::errs() << "Error: pto.tassign requires "
                     "--enable-inject-barrier-all-sync to be disabled.\n";
+    return 1;
+  }
+  if (hasTAssign && enableCanonicalSync) {
+    llvm::errs() << "Error: pto.tassign requires --enable-canonical-sync to "
+                    "be disabled.\n";
     return 1;
   }
   if (hasTAssign && enableGraphSyncSolver) {
@@ -3576,8 +3694,8 @@ int mlir::pto::compilePTOASModule(
     bool hasAddr = false;
     module->walk([&](pto::AllocTileOp op) {
       if (op.getAddr()) {
-        op.emitError(
-            "unexpected 'addr' operand: only supported when --pto-level=level3");
+        op.emitError("unexpected 'addr' operand: only supported when "
+                     "--pto-level=level3");
         hasAddr = true;
       }
     });
@@ -3602,10 +3720,10 @@ int mlir::pto::compilePTOASModule(
     preBackendPM.enableVerifier();
     preBackendPM.addPass(pto::createPTOMaterializeTileOpSectionsPass());
     preBackendPM.addPass(pto::createPTONormalizeUncoveredTileSectionsPass());
-    preBackendPM.addPass(
-        pto::createPTOValidatePhysicalSectionBoundariesPass());
+    preBackendPM.addPass(pto::createPTOValidatePhysicalSectionBoundariesPass());
     if (failed(preBackendPM.run(module.get()))) {
-      llvm::errs() << "Error: failed to normalize uncovered PTO tile sections.\n";
+      llvm::errs()
+          << "Error: failed to normalize uncovered PTO tile sections.\n";
       return 1;
     }
   }
@@ -3642,7 +3760,7 @@ int mlir::pto::compilePTOASModule(
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCanonicalizeIRPass());
   }
   pm.addPass(createSerialFrontendPipeLoweringPass());
-  //pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVerifyTFreePass());
+  // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVerifyTFreePass());
   pm.addPass(pto::createPTOInferValidatePipeInitPass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
   if (!disableInferLayout) {
@@ -3690,9 +3808,8 @@ int mlir::pto::compilePTOASModule(
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOFusionRegionGenPass());
   }
 
-  pm.addNestedPass<mlir::func::FuncOp>(
-      pto::createPTOMaterializeImplicitTmpPass(
-          effectiveLevel == PTOBuildLevel::Level3));
+  pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOMaterializeImplicitTmpPass(
+      effectiveLevel == PTOBuildLevel::Level3));
   pm.addNestedPass<mlir::func::FuncOp>(
       pto::createPTORematerializeFixpipeVectorQuantPass());
 
@@ -3727,13 +3844,35 @@ int mlir::pto::compilePTOASModule(
   // and event-id analysis.
   // solvers, while BufidSync is A5-only get_buf/rls_buf synchronization.
   if (enableInsertSync) {
-    if (emitMlirIR)
+    if (emitMlirIR) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::InsertSync, false, 0));
-    else
+    } else {
       pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass());
-  }
-  else if (enableBufidSync) {
+    }
+  } else if (enableCanonicalSync) {
+    if (emitMlirIR) {
+      pm.addPass(std::make_unique<SerialAutoSyncPass>(
+          SerialAutoSyncPass::Mode::Canonical, false, 0,
+          canonicalSyncEventIdMax, canonicalSyncAssumeDistinctGmArgsNoAlias,
+          canonicalSyncAssumeAllGmAccessesNoAlias, canonicalSyncPatternMode,
+          canonicalSyncSelectionStrategy, canonicalSyncMaximumRepairRounds,
+          canonicalSyncAnalysisOnly, canonicalSyncComparisonReport));
+    } else {
+      PTOCanonicalSyncOptions options;
+      options.eventIdNumMax = canonicalSyncEventIdMax;
+      options.assumeDistinctGmArgsNoAlias =
+          canonicalSyncAssumeDistinctGmArgsNoAlias;
+      options.assumeAllGmAccessesNoAlias =
+          canonicalSyncAssumeAllGmAccessesNoAlias;
+      options.patternMode = canonicalSyncPatternMode;
+      options.selectionStrategy = canonicalSyncSelectionStrategy;
+      options.maximumRepairRounds = canonicalSyncMaximumRepairRounds;
+      options.analysisOnly = canonicalSyncAnalysisOnly;
+      options.comparisonReport = canonicalSyncComparisonReport;
+      pm.addNestedPass<func::FuncOp>(pto::createPTOCanonicalSyncPass(options));
+    }
+  } else if (enableBufidSync) {
     if (emitMlirIR) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::Bufid, enableBufidSyncDebug, 0));
@@ -3747,8 +3886,7 @@ int mlir::pto::compilePTOASModule(
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::BarrierAll, false, 0));
     else
-      pm.addNestedPass<func::FuncOp>(
-          pto::createPTOInjectBarrierAllSyncPass());
+      pm.addNestedPass<func::FuncOp>(pto::createPTOInjectBarrierAllSyncPass());
   } else if (enableGraphSyncSolver) {
     if (emitMlirIR) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
@@ -3770,8 +3908,7 @@ int mlir::pto::compilePTOASModule(
   }
 
   module->getOperation()->setAttr(
-      "pto.target_arch",
-      mlir::StringAttr::get(module->getContext(), arch));
+      "pto.target_arch", mlir::StringAttr::get(module->getContext(), arch));
 
   if (emitMlirIR) {
     if (failed(pm.run(*module))) {
@@ -3845,8 +3982,8 @@ int mlir::pto::compilePTOASModule(
   }
   emitcPM.addPass(std::make_unique<FormEmitCExpressionsCompatPass>());
   emitcPM.addPass(mlir::createCSEPass());
-  if (failed(applyConfiguredPassManagerCLOptions(
-          emitcPM, "EmitC backend pipeline")))
+  if (failed(applyConfiguredPassManagerCLOptions(emitcPM,
+                                                 "EmitC backend pipeline")))
     return 1;
 
   if (failed(emitcPM.run(*module))) {
@@ -3860,7 +3997,8 @@ int mlir::pto::compilePTOASModule(
   materializeControlFlowOperands(module.get());
   normalizeEmitCIntegerAttrsForCppEmission(module.get());
   if (failed(reorderEmitCFunctions(module.get()))) {
-    llvm::errs() << "Error: Failed to order emitted functions for C++ emission.\n";
+    llvm::errs()
+        << "Error: Failed to order emitted functions for C++ emission.\n";
     return 1;
   }
   annotateEmitCProvenanceHints(*module);
@@ -3872,8 +4010,9 @@ int mlir::pto::compilePTOASModule(
   // multiple blocks, requiring variables to be declared at the top for valid
   // C++ emission.
   bool declareVariablesAtTop = shouldDeclareVariablesAtTop(*module);
-  if (failed(emitc::translateToCpp(*module, cppOS,
-                                  /*declareVariablesAtTop=*/declareVariablesAtTop))) {
+  if (failed(emitc::translateToCpp(
+          *module, cppOS,
+          /*declareVariablesAtTop=*/declareVariablesAtTop))) {
     llvm::errs() << "Error: Failed to emit C++.\n";
     return 1;
   }

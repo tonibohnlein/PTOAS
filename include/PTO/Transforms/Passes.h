@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- Passes.h - Pass Entrypoints ------------------------------*- C++ -*-===//
 //===----------------------------------------------------------------------===//
@@ -17,16 +19,16 @@
 #define MLIR_DIALECT_PTO_TRANSFORMS_PASSES_H
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTODialect.h"
+#include "PTO/Transforms/TileLibService.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringRef.h"
-#include "mlir/Pass/Pass.h"
-#include "PTO/IR/PTODialect.h"
-#include "PTO/Transforms/TileLibService.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
 
 namespace mlir {
 namespace pto {
@@ -49,6 +51,8 @@ std::unique_ptr<Pass> createPTOVerifyTFreePass();
 
 // Creates a pass for ...
 std::unique_ptr<Pass> createPTOInsertSyncPass();
+std::unique_ptr<Pass>
+createPTOCanonicalSyncPass(const PTOCanonicalSyncOptions &options = {});
 std::unique_ptr<Pass> createPTOInjectBarrierAllSyncPass();
 std::unique_ptr<Pass>
 createPTOBufidSyncPass(const PTOBufidSyncOptions &options = {});
@@ -60,7 +64,6 @@ createPTOGraphSyncSolverPass(const PTOGraphSyncSolverOptions &options = {});
 std::unique_ptr<Pass> createEmitPTOManualPass();
 // Explicitly select target arch for codegen.
 std::unique_ptr<Pass> createEmitPTOManualPass(PTOArch arch);
-
 
 /// Create a pass to convert ops from other dialects to PTO Ops.
 std::unique_ptr<Pass> createConvertToPTOOpPass();
@@ -85,8 +88,7 @@ std::unique_ptr<Pass> createPTORemoveIdentityTMovPass();
 std::unique_ptr<Pass> createPreFusionAnalysisPass();
 std::unique_ptr<Pass> createPrintPreFusionAnalysisPass();
 std::unique_ptr<Pass> createFusionPlanPass();
-std::unique_ptr<Pass>
-createFusionPlanPass(const FusionPlanOptions &options);
+std::unique_ptr<Pass> createFusionPlanPass(const FusionPlanOptions &options);
 std::unique_ptr<Pass> createOpSchedulingPass();
 std::unique_ptr<Pass> createPTOMarkLastUsePass();
 std::unique_ptr<Pass> createPTOFusionRegionGenPass();
@@ -107,8 +109,8 @@ std::unique_ptr<Pass> createVPTOSoftPostUpdatePass();
 std::unique_ptr<Pass> createVPTOGuardedLICMPass();
 std::unique_ptr<Pass> createPTOPrintAddressAnalysisPass();
 std::unique_ptr<Pass> createPTOVPTOPtrBoundaryPass();
-std::unique_ptr<Pass>
-createPTOLowLevelLoopFusionPass(const PTOLowLevelLoopFusionOptions &options = {});
+std::unique_ptr<Pass> createPTOLowLevelLoopFusionPass(
+    const PTOLowLevelLoopFusionOptions &options = {});
 std::unique_ptr<Pass> createPTOFusionPredicateElisionPass();
 std::unique_ptr<Pass> createPTOFusionLoadStoreElisionPass();
 std::unique_ptr<Pass> createPTOVexpdifFusionPass();
@@ -127,8 +129,9 @@ LogicalResult validateVPTOEmissionIR(ModuleOp module,
                                      llvm::raw_ostream *diagOS = nullptr);
 std::unique_ptr<Pass> createPTOValidateVPTOIRPass();
 std::unique_ptr<Pass> createPTOValidateVPTOEmissionIRPass();
-LogicalResult validateVMIProducerBoundaryIR(ModuleOp module,
-                                            llvm::raw_ostream *diagOS = nullptr);
+LogicalResult
+validateVMIProducerBoundaryIR(ModuleOp module,
+                              llvm::raw_ostream *diagOS = nullptr);
 LogicalResult validateVMILayoutAssignedIR(ModuleOp module,
                                           llvm::raw_ostream *diagOS = nullptr,
                                           bool verifyHelperSupport = true);
@@ -167,6 +170,5 @@ std::unique_ptr<Pass> createPTOInlineBackendHelpersPass(
 
 } // namespace pto
 } // namespace mlir
-
 
 #endif // MLIR_DIALECT_PTO_TRANSFORMS_PASSES_H
