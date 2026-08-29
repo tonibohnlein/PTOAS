@@ -537,9 +537,16 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
       byOwner.try_emplace(owner);
       continue;
     }
-    byOwner.emplace(
-        owner, std::vector<SyncCoverMechanismPair>(proposals.pairs.begin(),
-                                                   proposals.pairs.end()));
+    std::vector<SyncCoverMechanismPair> conflictFree;
+    conflictFree.reserve(proposals.pairs.size());
+    for (const SyncCoverMechanismPair &pair : proposals.pairs) {
+      const auto &conflicts = problem.getMechanisms()[pair.first].conflicts;
+      if (!std::binary_search(conflicts.begin(), conflicts.end(),
+                              pair.second)) {
+        conflictFree.push_back(pair);
+      }
+    }
+    byOwner.emplace(owner, std::move(conflictFree));
   }
 
   std::vector<SyncCoverCompletionSupply> supplies;

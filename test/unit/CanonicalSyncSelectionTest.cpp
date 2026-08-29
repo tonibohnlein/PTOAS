@@ -581,6 +581,47 @@ bool testDirectPairDiscoversJointCoverage() {
   return passed;
 }
 
+bool testDirectPairSkipsConflictingMechanisms() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2, 3}), passed,
+                "add conflicting-pair source");
+  const SyncCoverNodeId middle =
+      takeIndex(graph.addNode(2, 1, 0, 1, {}, {3}), passed,
+                "add conflicting-pair middle");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(3, 1, 0, 2), passed,
+                                           "add conflicting-pair target");
+  passed &= check(graph.addDemand(demand(source, target)),
+                  "add conflicting-pair demand");
+  passed &= check(graph.freezeStructure(), "freeze conflicting-pair graph");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                  "add conflicting-pair first domain");
+  passed &= check(problem.addEventDomain({1, 2, 3, 8, {}}),
+                  "add conflicting-pair second domain");
+  passed &= check(problem.addEventDomain({2, 1, 3, 8, {}}),
+                  "add conflicting-pair covering domain");
+  const CanonicalSyncMechanismId first =
+      takeIndex(problem.internMechanism(event(0, 1, 2, source, middle)), passed,
+                "add conflicting-pair first event");
+  const CanonicalSyncMechanismId second =
+      takeIndex(problem.internMechanism(event(1, 2, 3, middle, target)), passed,
+                "add conflicting-pair second event");
+  passed &= check(problem.internMechanism(event(2, 1, 3, source, target)),
+                  "add conflicting-pair covering event");
+  passed &=
+      check(problem.addConflict(first, second), "record direct-pair conflict");
+  const CanonicalSyncProblemResult generated =
+      addCanonicalSyncDirectPairPatterns(problem);
+  passed &= check(generated && generated.index == 0,
+                  "skip a conflicting direct-pair proposal");
+  return passed &&
+         check(problem.freeze(),
+               "conflicting optional pair does not invalidate the problem");
+}
+
 bool testDirectPairTraversesFixedCompletionSupply() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -2606,6 +2647,7 @@ int main() {
       testReverseDeletionPreservesBaselineCoverage() &&
       testInactiveRecurrenceDoesNotBuildAnArena() &&
       testDirectPairDiscoversJointCoverage() &&
+      testDirectPairSkipsConflictingMechanisms() &&
       testDirectPairTraversesFixedCompletionSupply() &&
       testDirectPairIndexesUnrestrictedBindingOfMixedMechanism() &&
       testConnectorIndexRetainsDistinctEndpointNodes() &&
