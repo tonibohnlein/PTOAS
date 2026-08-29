@@ -966,18 +966,16 @@ bool testPairOwnerExact4096Boundary() {
   bool passed = true;
   const auto run = [&](std::size_t pairCount, bool expectTruncated) {
     SyncCoverGraph graph;
-    const SyncCoverNodeId source =
-        takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}), passed,
-                  "add 4096-boundary source");
+    const SyncCoverNodeId source = takeIndex(
+        graph.addNode(1, 1, 0, 0, {}, {2}), passed, "add 4096-boundary source");
     const SyncCoverNodeId middle =
         takeIndex(graph.addNode(2, 1, 0, 1, {}, {3}), passed,
                   "add 4096-boundary connector");
     std::vector<SyncCoverNodeId> targets;
     targets.reserve(pairCount);
     for (std::size_t index = 0; index < pairCount; ++index) {
-      targets.push_back(takeIndex(
-          graph.addNode(3, 1, 0, index + 2), passed,
-          "add 4096-boundary target"));
+      targets.push_back(takeIndex(graph.addNode(3, 1, 0, index + 2), passed,
+                                  "add 4096-boundary target"));
     }
     passed &= check(graph.freezeStructure(), "freeze 4096-boundary graph");
     CanonicalSyncPatternProblem problem(graph, allDemands(graph));
@@ -988,9 +986,8 @@ bool testPairOwnerExact4096Boundary() {
     passed &= check(problem.internMechanism(event(0, 1, 2, source, middle)),
                     "add 4096-boundary first member");
     for (SyncCoverNodeId target : targets) {
-      passed &= check(
-          problem.internMechanism(event(1, 2, 3, middle, target)),
-          "add 4096-boundary successor");
+      passed &= check(problem.internMechanism(event(1, 2, 3, middle, target)),
+                      "add 4096-boundary successor");
     }
     CanonicalSyncDirectPairOptions options;
     options.maximumEvaluationsPerScope = 4096;
@@ -1004,9 +1001,8 @@ bool testPairOwnerExact4096Boundary() {
             statistics.directPairProposals == pairCount &&
             statistics.directPairEvaluations ==
                 (expectTruncated ? 0 : pairCount),
-        expectTruncated
-            ? "skip an owner atomically at proposal 4097"
-            : "evaluate the complete owner batch at proposal 4096");
+        expectTruncated ? "skip an owner atomically at proposal 4097"
+                        : "evaluate the complete owner batch at proposal 4096");
   };
   run(4096, false);
   run(4097, true);
@@ -1378,12 +1374,12 @@ bool testStructuralCostSeparatesBarrierAndEventActions() {
 
   const CanonicalSyncStructuralCost cost =
       computeCanonicalSyncStructuralCost(problem, {barrierId, eventId});
-  const std::uint64_t barriers = std::accumulate(
-      cost.barrierActionProfile.begin(), cost.barrierActionProfile.end(),
-      std::uint64_t{0});
-  const std::uint64_t events = std::accumulate(
-      cost.eventActionProfile.begin(), cost.eventActionProfile.end(),
-      std::uint64_t{0});
+  const std::uint64_t barriers =
+      std::accumulate(cost.barrierActionProfile.begin(),
+                      cost.barrierActionProfile.end(), std::uint64_t{0});
+  const std::uint64_t events =
+      std::accumulate(cost.eventActionProfile.begin(),
+                      cost.eventActionProfile.end(), std::uint64_t{0});
   const std::uint64_t actions = std::accumulate(
       cost.actionProfile.begin(), cost.actionProfile.end(), std::uint64_t{0});
   return passed && check(barriers == 1 && events == 2 && actions == 3,
@@ -2614,8 +2610,7 @@ int main() {
       testDirectPairIndexesUnrestrictedBindingOfMixedMechanism() &&
       testConnectorIndexRetainsDistinctEndpointNodes() &&
       testPairPreparationLimitKeepsSingletonCorrectness() &&
-      testPairOwnerUsesEverySupplyScope() &&
-      testPairOwnerExact4096Boundary() &&
+      testPairOwnerUsesEverySupplyScope() && testPairOwnerExact4096Boundary() &&
       testOwnerPairBatchesTruncateAtomicallyAndContinue() &&
       testOwnerPairCoverageWordLimitIsAtomic() &&
       testSiblingAndBarrierPairsComposeAtTheirLca() &&
