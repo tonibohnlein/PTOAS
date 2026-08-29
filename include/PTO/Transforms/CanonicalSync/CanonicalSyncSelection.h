@@ -275,6 +275,9 @@ struct CanonicalSyncPatternStatistics {
   std::size_t loopBoundaryProtocolCandidates = 0;
   std::size_t loopBoundaryProtocolIncidences = 0;
   bool loopBoundaryProtocolGenerationTruncated = false;
+  std::size_t slotLifecycleInspections = 0;
+  std::size_t slotLifecycleCandidates = 0;
+  bool slotLifecycleGenerationTruncated = false;
 
   const CanonicalSyncPatternKindStatistics &
   get(CanonicalSyncPatternKind kind) const {
@@ -483,6 +486,17 @@ public:
     patternStatistics_.loopBoundaryProtocolCandidates += candidates;
     patternStatistics_.loopBoundaryProtocolIncidences += incidences;
     patternStatistics_.loopBoundaryProtocolGenerationTruncated |= truncated;
+    return {};
+  }
+  CanonicalSyncProblemResult
+  recordSlotLifecycleGeneration(std::size_t inspections, std::size_t candidates,
+                                bool truncated) {
+    if (frozen_) {
+      return {CanonicalSyncProblemError::Frozen, std::nullopt};
+    }
+    patternStatistics_.slotLifecycleInspections = inspections;
+    patternStatistics_.slotLifecycleCandidates = candidates;
+    patternStatistics_.slotLifecycleGenerationTruncated = truncated;
     return {};
   }
   bool hasSameCandidatePrefix(const CanonicalSyncPatternProblem &other) const;

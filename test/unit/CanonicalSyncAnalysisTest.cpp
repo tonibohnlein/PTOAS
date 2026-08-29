@@ -563,6 +563,98 @@ bool testStructuredIssueFrontier() {
                "encode only structured immediate issue frontiers");
 }
 
+bool testExactUnitSlotLifecycleBundle() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @unit_lifecycle(
+          %src: !pto.partition_tensor_view<16x16xf32>, %limit: index) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %shared_addr = arith.constant 0 : i64
+        %output_addr = arith.constant 4096 : i64
+        %shared = pto.alloc_tile addr = %shared_addr :
+          !pto.tile_buf<vec, 16x16xf32>
+        %output = pto.alloc_tile addr = %output_addr :
+          !pto.tile_buf<vec, 16x16xf32>
+        scf.for %i = %c0 to %limit step %c1 {
+          pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+            outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+          pto.tabs ins(%shared : !pto.tile_buf<vec, 16x16xf32>)
+            outs(%output : !pto.tile_buf<vec, 16x16xf32>)
+        }
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module),
+             "parse exact unit slot-lifecycle fixture")) {
+    return false;
+  }
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("unit_lifecycle"));
+  if (!check(succeeded(program), "build exact unit slot lifecycle")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions options;
+  options.enableDemandBasisReduction = false;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem =
+      buildCanonicalSyncSingletonProblem(*program, options);
+  if (!check(succeeded(problem), "build exact unit lifecycle catalog")) {
+    return false;
+  }
+  const auto isUnitLifecycle = [](const CanonicalSyncMechanism &mechanism) {
+    const bool hasReady = llvm::any_of(
+        mechanism.descriptor.supplies,
+        [](const CanonicalSyncSupplyBinding &binding) {
+          return binding.edge.distance == 0 &&
+                 binding.proof == CanonicalSyncSupplyProof::VerifiedProtocol;
+        });
+    const bool hasRelease = llvm::any_of(
+        mechanism.descriptor.supplies,
+        [](const CanonicalSyncSupplyBinding &binding) {
+          return binding.edge.distance == 1 &&
+                 binding.proof == CanonicalSyncSupplyProof::VerifiedProtocol;
+        });
+    return mechanism.descriptor.kind == CanonicalSyncMechanismKind::Protocol &&
+           mechanism.descriptor.eventUses.size() == 2 && hasReady &&
+           hasRelease &&
+           llvm::none_of(mechanism.descriptor.actions,
+                         [](const CanonicalSyncAction &action) {
+                           return action.kind ==
+                                  CanonicalSyncActionKind::Barrier;
+                         });
+  };
+  const CanonicalSyncPatternStatistics &statistics =
+      (*problem)->getPatternStatistics();
+  if (!check(statistics.slotLifecycleInspections != 0 &&
+                 statistics.slotLifecycleCandidates == 1 &&
+                 !statistics.slotLifecycleGenerationTruncated &&
+                 llvm::count_if((*problem)->getMechanisms(), isUnitLifecycle) ==
+                     1,
+             "admit one verified barrier-free unit lifecycle")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions bounded = options;
+  bounded.patterns.maximumSlotLifecycleCandidates = 0;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> truncated =
+      buildCanonicalSyncSingletonProblem(*program, bounded);
+  return check(succeeded(truncated),
+               "retain singleton correctness when lifecycle generation is "
+               "bounded") &&
+         check(
+             (*truncated)
+                     ->getPatternStatistics()
+                     .slotLifecycleGenerationTruncated &&
+                 (*truncated)->getPatternStatistics().slotLifecycleCandidates ==
+                     0 &&
+                 llvm::none_of((*truncated)->getMechanisms(), isUnitLifecycle),
+             "truncate the optional unit lifecycle atomically");
+}
+
 bool testDistanceTwoPhysicalSlotRecurrence() {
   MLIRContext context;
   loadDialects(context);
@@ -4092,6 +4184,7 @@ int main() {
       testBuildsOneFrozenGraph() && testMacroBindingsAndHiddenReservations() &&
       testEmptyNestedLoopTimelineIsClamped() && testGmAliasPolicies() &&
       testGmAliasContracts() && testStructuredIssueFrontier() &&
+      testExactUnitSlotLifecycleBundle() &&
       testDistanceTwoPhysicalSlotRecurrence() &&
       testA5MatrixLoopBoundaryProtocol() &&
       testDistanceTwoCrossRootSlotRecurrence() &&

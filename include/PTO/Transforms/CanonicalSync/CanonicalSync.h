@@ -46,6 +46,8 @@ struct CanonicalSyncPatternOptions {
   std::size_t maximumLoopBoundaryProtocolInspections = 1U << 20;
   std::size_t maximumLoopBoundaryProtocolCandidates = 1U << 14;
   std::size_t maximumLoopBoundaryProtocolIncidences = 1U << 20;
+  std::size_t maximumSlotLifecycleInspections = 1U << 20;
+  std::size_t maximumSlotLifecycleCandidates = 1U << 12;
 };
 
 struct CanonicalSyncStrategyReport {
@@ -134,6 +136,9 @@ struct CanonicalSyncComparisonReport {
   std::size_t loopBoundaryProtocolCandidates = 0;
   std::size_t loopBoundaryProtocolIncidences = 0;
   bool loopBoundaryProtocolGenerationTruncated = false;
+  std::size_t slotLifecycleInspections = 0;
+  std::size_t slotLifecycleCandidates = 0;
+  bool slotLifecycleGenerationTruncated = false;
   std::uint64_t preparationNanoseconds = 0;
   std::vector<CanonicalSyncStrategyReport> strategies;
 };

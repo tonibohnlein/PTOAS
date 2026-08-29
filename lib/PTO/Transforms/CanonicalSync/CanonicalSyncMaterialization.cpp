@@ -1280,6 +1280,10 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
       statistics.loopBoundaryProtocolIncidences;
   report.loopBoundaryProtocolGenerationTruncated =
       statistics.loopBoundaryProtocolGenerationTruncated;
+  report.slotLifecycleInspections = statistics.slotLifecycleInspections;
+  report.slotLifecycleCandidates = statistics.slotLifecycleCandidates;
+  report.slotLifecycleGenerationTruncated =
+      statistics.slotLifecycleGenerationTruncated;
   report.preparationNanoseconds = preparationNanoseconds;
   return report;
 }

@@ -44,6 +44,15 @@ struct DirectEventRecord {
   CanonicalSyncEventDomainId domain = 0;
 };
 
+/// Exact per-demand event/protocol records retained for physical-slot
+/// lifecycle discovery. Unlike DirectEventRecord, recurrence protocols belong
+/// here and must not enter allocation-frontier repair generation.
+struct ExactEventRecord {
+  SyncCoverDemandId demand = 0;
+  CanonicalSyncMechanismId mechanism = 0;
+  CanonicalSyncEventDomainId domain = 0;
+};
+
 SyncCoverEdge getDemandEdge(const SyncCoverDemand &demand) {
   return {
       demand.source,     demand.target,   SyncCoverEdgeKind::CompletionSupply,
@@ -1944,7 +1953,8 @@ LogicalResult addExactEvents(
     const CanonicalSyncProgram &program, CanonicalSyncPatternProblem &problem,
     const SyncCoverDemandSet &baseline,
     const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds,
-    std::vector<DirectEventRecord> &directEvents) {
+    std::vector<DirectEventRecord> &directEvents,
+    std::vector<ExactEventRecord> &exactEvents) {
   const SyncCoverGraph &graph = program.getGraph();
   for (SyncCoverDemandId demandId : problem.getDemands()) {
     const SyncCoverDemand &demand = graph.getDemands()[demandId];
@@ -1968,6 +1978,7 @@ LogicalResult addExactEvents(
         return program.getFunction().emitError(
             "cannot add canonical sync precise event");
       }
+      exactEvents.push_back({demandId, *added.index, domain->second});
       if (directEvent) {
         directEvents.push_back({demandId, *added.index, domain->second});
       }
@@ -2002,6 +2013,402 @@ LogicalResult addExactEvents(
         return failure();
       }
     }
+  }
+  return success();
+}
+
+bool sameMechanismAction(const CanonicalSyncAction &left,
+                         const CanonicalSyncAction &right) {
+  return left.kind == right.kind && left.resource == right.resource &&
+         left.anchor.kind == right.anchor.kind &&
+         left.anchor.node == right.anchor.node &&
+         left.anchor.scope == right.anchor.scope &&
+         left.anchor.position == right.anchor.position &&
+         left.eventUse == right.eventUse && left.eventLane == right.eventLane &&
+         left.drainedResources == right.drainedResources &&
+         left.barrierKind == right.barrierKind && left.guard == right.guard &&
+         left.guardScope == right.guardScope &&
+         left.eventLaneKind == right.eventLaneKind &&
+         left.eventLaneScope == right.eventLaneScope;
+}
+
+bool sameMechanismSupply(const CanonicalSyncSupplyBinding &left,
+                         const CanonicalSyncSupplyBinding &right) {
+  const SyncCoverEdge &leftEdge = left.edge;
+  const SyncCoverEdge &rightEdge = right.edge;
+  return leftEdge.source == rightEdge.source &&
+         leftEdge.target == rightEdge.target &&
+         leftEdge.kind == rightEdge.kind && leftEdge.scope == rightEdge.scope &&
+         leftEdge.distance == rightEdge.distance &&
+         leftEdge.sourceGuard.literals == rightEdge.sourceGuard.literals &&
+         leftEdge.targetGuard.literals == rightEdge.targetGuard.literals &&
+         left.eventUse == right.eventUse &&
+         left.barrierAction == right.barrierAction &&
+         left.produceAction == right.produceAction &&
+         left.consumeAction == right.consumeAction &&
+         left.proof == right.proof &&
+         left.completionExport == right.completionExport &&
+         left.allowedDemands == right.allowedDemands &&
+         left.attestedDemand == right.attestedDemand &&
+         left.applicability == right.applicability;
+}
+
+bool sameMechanismDescriptor(const CanonicalSyncMechanismDescriptor &left,
+                             const CanonicalSyncMechanismDescriptor &right) {
+  const bool sameUses =
+      left.eventUses.size() == right.eventUses.size() &&
+      std::equal(left.eventUses.begin(), left.eventUses.end(),
+                 right.eventUses.begin(),
+                 [](const CanonicalSyncEventUse &first,
+                    const CanonicalSyncEventUse &second) {
+                   return first.domain == second.domain &&
+                          first.width == second.width &&
+                          first.recurrenceScope == second.recurrenceScope &&
+                          first.lifetimeScope == second.lifetimeScope;
+                 });
+  return left.kind == right.kind && sameUses &&
+         left.actions.size() == right.actions.size() &&
+         left.supplies.size() == right.supplies.size() &&
+         std::equal(left.actions.begin(), left.actions.end(),
+                    right.actions.begin(), sameMechanismAction) &&
+         std::equal(left.supplies.begin(), left.supplies.end(),
+                    right.supplies.begin(), sameMechanismSupply);
+}
+
+void appendMechanismDescriptor(CanonicalSyncMechanismDescriptor &destination,
+                               const CanonicalSyncMechanismDescriptor &part) {
+  const std::size_t eventUseOffset = destination.eventUses.size();
+  const std::size_t actionOffset = destination.actions.size();
+  destination.eventUses.insert(destination.eventUses.end(),
+                               part.eventUses.begin(), part.eventUses.end());
+  for (CanonicalSyncAction action : part.actions) {
+    if (action.eventUse) {
+      *action.eventUse += eventUseOffset;
+    }
+    destination.actions.push_back(std::move(action));
+  }
+  for (CanonicalSyncSupplyBinding binding : part.supplies) {
+    const std::optional<std::size_t> partEventUse = binding.eventUse;
+    if (binding.eventUse) {
+      *binding.eventUse += eventUseOffset;
+    }
+    if (binding.barrierAction) {
+      *binding.barrierAction += actionOffset;
+    }
+    if (binding.produceAction) {
+      *binding.produceAction += actionOffset;
+    }
+    if (binding.consumeAction) {
+      *binding.consumeAction += actionOffset;
+    }
+    if (destination.kind == CanonicalSyncMechanismKind::Protocol &&
+        part.kind != CanonicalSyncMechanismKind::Protocol && partEventUse) {
+      for (std::size_t index = 0; index < part.actions.size(); ++index) {
+        const CanonicalSyncAction &action = part.actions[index];
+        if (action.eventUse != partEventUse) {
+          continue;
+        }
+        if (action.kind == CanonicalSyncActionKind::EventSet) {
+          binding.produceAction = actionOffset + index;
+        } else if (action.kind == CanonicalSyncActionKind::EventWait) {
+          binding.consumeAction = actionOffset + index;
+        }
+      }
+      binding.proof = CanonicalSyncSupplyProof::VerifiedProtocol;
+    }
+    destination.supplies.push_back(std::move(binding));
+  }
+}
+
+CanonicalSyncMechanismDescriptor
+makeExactSlotLifecycleBundle(const CanonicalSyncMechanismDescriptor &ready,
+                             const CanonicalSyncMechanismDescriptor &release) {
+  CanonicalSyncMechanismDescriptor descriptor;
+  descriptor.kind = CanonicalSyncMechanismKind::Protocol;
+  appendMechanismDescriptor(descriptor, ready);
+  appendMechanismDescriptor(descriptor, release);
+  return descriptor;
+}
+
+bool intervalsOverlap(SyncCoverStorageInterval first,
+                      SyncCoverStorageInterval second) {
+  return first.begin < second.end && second.begin < first.end;
+}
+
+bool isExactUnitSlotLifecycle(const SyncCoverGraph &graph,
+                              SyncCoverDemandId readyId,
+                              SyncCoverStorageWitnessId readyWitnessId,
+                              SyncCoverDemandId releaseId,
+                              SyncCoverStorageWitnessId releaseWitnessId) {
+  if (readyId >= graph.getDemands().size() ||
+      releaseId >= graph.getDemands().size() ||
+      readyWitnessId >= graph.getStorageWitnesses().size() ||
+      releaseWitnessId >= graph.getStorageWitnesses().size()) {
+    return false;
+  }
+  const SyncCoverDemand &ready = graph.getDemands()[readyId];
+  const SyncCoverDemand &release = graph.getDemands()[releaseId];
+  const bool demandShape = ready.distance == 0 && release.distance == 1 &&
+                           release.scope < graph.getScopes().size() &&
+                           graph.getScopes()[release.scope].isLoop &&
+                           graph.getScopes()[release.scope].timeline &&
+                           llvm::is_contained(ready.provenanceKinds,
+                                              SyncCoverDemandKind::MemoryRAW) &&
+                           llvm::is_contained(release.provenanceKinds,
+                                              SyncCoverDemandKind::MemoryWAR) &&
+                           ready.source == release.target &&
+                           ready.target == release.source &&
+                           ready.sourceGuard.literals.empty() &&
+                           ready.targetGuard.literals.empty() &&
+                           release.sourceGuard.literals.empty() &&
+                           release.targetGuard.literals.empty();
+  if (!demandShape) {
+    return false;
+  }
+  const SyncCoverStorageWitness &readyWitness =
+      graph.getStorageWitnesses()[readyWitnessId];
+  const SyncCoverStorageWitness &releaseWitness =
+      graph.getStorageWitnesses()[releaseWitnessId];
+  const auto &accesses = graph.getStorageAccesses();
+  const SyncCoverStorageAccess &producer = accesses[readyWitness.sourceAccess];
+  const SyncCoverStorageAccess &consumer = accesses[readyWitness.targetAccess];
+  const bool reversedAccesses =
+      readyWitness.sourceAccess == releaseWitness.targetAccess &&
+      readyWitness.targetAccess == releaseWitness.sourceAccess;
+  const bool exactSlot =
+      reversedAccesses && producer.exactPhysical && consumer.exactPhysical &&
+      producer.domain == consumer.domain &&
+      producer.extent.begin == consumer.extent.begin &&
+      producer.extent.end == consumer.extent.end &&
+      readyWitness.overlap.begin == producer.extent.begin &&
+      readyWitness.overlap.end == producer.extent.end &&
+      releaseWitness.overlap.begin == producer.extent.begin &&
+      releaseWitness.overlap.end == producer.extent.end &&
+      producer.mode == SyncCoverStorageAccessMode::Write &&
+      consumer.mode == SyncCoverStorageAccessMode::Read;
+  if (!exactSlot) {
+    return false;
+  }
+  const SyncCoverNode &producerNode = graph.getNodes()[producer.node];
+  const SyncCoverNode &consumerNode = graph.getNodes()[consumer.node];
+  const bool nodeShape =
+      producer.node == ready.source && consumer.node == ready.target &&
+      producerNode.resource != consumerNode.resource &&
+      producerNode.order < consumerNode.order &&
+      producerNode.guard.literals.empty() &&
+      consumerNode.guard.literals.empty() &&
+      graph.scopeMustExecuteWithin(release.scope, producerNode.scope) &&
+      graph.scopeMustExecuteWithin(release.scope, consumerNode.scope) &&
+      syncCoverNodeCanProduceCompletion(graph, producerNode.id,
+                                        consumerNode.resource) &&
+      syncCoverNodeCanProduceCompletion(graph, consumerNode.id,
+                                        producerNode.resource);
+  if (!nodeShape) {
+    return false;
+  }
+  for (const SyncCoverStorageAccess &access : accesses) {
+    if (access.domain != producer.domain ||
+        !intervalsOverlap(access.extent, producer.extent)) {
+      continue;
+    }
+    if (access.id != producer.id && access.id != consumer.id) {
+      return false;
+    }
+  }
+  return true;
+}
+
+LogicalResult
+addExactSlotLifecycleBundles(const CanonicalSyncProgram &program,
+                             CanonicalSyncPatternProblem &problem,
+                             ArrayRef<ExactEventRecord> exactEvents,
+                             const CanonicalSyncPatternOptions &options) {
+  const SyncCoverGraph &graph = program.getGraph();
+  using LifecycleKey = std::tuple<SyncCoverStorageDomainId, std::uint64_t,
+                                  std::uint64_t, std::uint32_t, std::uint32_t>;
+  struct Opportunity {
+    ExactEventRecord event;
+    SyncCoverStorageWitnessId witness = 0;
+  };
+  std::map<LifecycleKey, std::vector<Opportunity>> readyBySlot;
+  std::size_t inspections = 0;
+  std::size_t candidates = 0;
+  bool truncated = false;
+  const auto consumeInspection = [&](std::size_t amount = 1) {
+    if (inspections > options.maximumSlotLifecycleInspections ||
+        amount > options.maximumSlotLifecycleInspections - inspections) {
+      truncated = true;
+      return false;
+    }
+    inspections += amount;
+    return true;
+  };
+  for (const ExactEventRecord &event : exactEvents) {
+    if (!consumeInspection()) {
+      break;
+    }
+    const SyncCoverDemand &demand = graph.getDemands()[event.demand];
+    if (demand.distance != 0 ||
+        !llvm::is_contained(demand.provenanceKinds,
+                            SyncCoverDemandKind::MemoryRAW)) {
+      continue;
+    }
+    for (SyncCoverStorageWitnessId witnessId : demand.storageWitnesses) {
+      if (!consumeInspection()) {
+        break;
+      }
+      const SyncCoverStorageWitness &witness =
+          graph.getStorageWitnesses()[witnessId];
+      const SyncCoverStorageAccess &source =
+          graph.getStorageAccesses()[witness.sourceAccess];
+      const SyncCoverStorageAccess &target =
+          graph.getStorageAccesses()[witness.targetAccess];
+      const bool wholeExactSlot =
+          source.exactPhysical && target.exactPhysical &&
+          source.mode == SyncCoverStorageAccessMode::Write &&
+          target.mode == SyncCoverStorageAccessMode::Read &&
+          source.domain == target.domain &&
+          source.extent.begin == target.extent.begin &&
+          source.extent.end == target.extent.end &&
+          witness.overlap.begin == source.extent.begin &&
+          witness.overlap.end == source.extent.end;
+      if (!wholeExactSlot) {
+        continue;
+      }
+      const SyncCoverNode &sourceNode = graph.getNodes()[demand.source];
+      const SyncCoverNode &targetNode = graph.getNodes()[demand.target];
+      readyBySlot[{source.domain, source.extent.begin, source.extent.end,
+                   sourceNode.resource, targetNode.resource}]
+          .push_back({event, witnessId});
+    }
+    if (truncated) {
+      break;
+    }
+  }
+
+  std::set<std::pair<CanonicalSyncMechanismId, CanonicalSyncMechanismId>>
+      admittedPairs;
+  std::map<CanonicalSyncMechanismId, std::vector<CanonicalSyncMechanismId>>
+      bundlesByComponent;
+  for (const ExactEventRecord &releaseEvent : exactEvents) {
+    if (truncated || !consumeInspection()) {
+      break;
+    }
+    const SyncCoverDemand &release = graph.getDemands()[releaseEvent.demand];
+    if (release.distance != 1 ||
+        !llvm::is_contained(release.provenanceKinds,
+                            SyncCoverDemandKind::MemoryWAR)) {
+      continue;
+    }
+    for (SyncCoverStorageWitnessId releaseWitnessId :
+         release.storageWitnesses) {
+      if (!consumeInspection()) {
+        break;
+      }
+      const SyncCoverStorageWitness &releaseWitness =
+          graph.getStorageWitnesses()[releaseWitnessId];
+      const SyncCoverStorageAccess &producer =
+          graph.getStorageAccesses()[releaseWitness.targetAccess];
+      const SyncCoverNode &consumerNode = graph.getNodes()[release.source];
+      const SyncCoverNode &producerNode = graph.getNodes()[release.target];
+      const LifecycleKey key{producer.domain, producer.extent.begin,
+                             producer.extent.end, producerNode.resource,
+                             consumerNode.resource};
+      const auto ready = readyBySlot.find(key);
+      if (ready == readyBySlot.end()) {
+        continue;
+      }
+      for (const Opportunity &readyOpportunity : ready->second) {
+        if (!consumeInspection()) {
+          break;
+        }
+        const std::pair<CanonicalSyncMechanismId, CanonicalSyncMechanismId>
+            pair = std::minmax(readyOpportunity.event.mechanism,
+                               releaseEvent.mechanism);
+        if (pair.first == pair.second || admittedPairs.count(pair) != 0) {
+          continue;
+        }
+        const std::size_t accessCount = graph.getStorageAccesses().size();
+        const bool accessWorkOverflows =
+            accessCount > std::numeric_limits<std::size_t>::max() / 2;
+        if (accessWorkOverflows || !consumeInspection(accessCount * 2)) {
+          break;
+        }
+        if (!isExactUnitSlotLifecycle(graph, readyOpportunity.event.demand,
+                                      readyOpportunity.witness,
+                                      releaseEvent.demand, releaseWitnessId)) {
+          continue;
+        }
+        if (candidates >= options.maximumSlotLifecycleCandidates) {
+          truncated = true;
+          break;
+        }
+        const CanonicalSyncMechanismDescriptor &readyDescriptor =
+            problem.getMechanisms()[readyOpportunity.event.mechanism]
+                .descriptor;
+        const CanonicalSyncMechanismDescriptor &releaseDescriptor =
+            problem.getMechanisms()[releaseEvent.mechanism].descriptor;
+        const bool exactComponents =
+            sameMechanismDescriptor(
+                readyDescriptor,
+                makeDirectEvent(
+                    graph, graph.getDemands()[readyOpportunity.event.demand],
+                    readyOpportunity.event.domain)) &&
+            verifyRecurrenceEvent(graph,
+                                  graph.getDemands()[releaseEvent.demand],
+                                  releaseEvent.domain, releaseDescriptor);
+        if (!exactComponents) {
+          continue;
+        }
+        CanonicalSyncMechanismDescriptor descriptor =
+            makeExactSlotLifecycleBundle(readyDescriptor, releaseDescriptor);
+        const CanonicalSyncMechanismDescriptor expected = descriptor;
+        const CanonicalSyncProblemResult added = problem.internVerifiedProtocol(
+            std::move(descriptor),
+            [&](const CanonicalSyncMechanismDescriptor &actual) {
+              return isExactUnitSlotLifecycle(
+                         graph, readyOpportunity.event.demand,
+                         readyOpportunity.witness, releaseEvent.demand,
+                         releaseWitnessId) &&
+                     sameMechanismDescriptor(actual, expected);
+            });
+        if (added.error == CanonicalSyncProblemError::LimitExceeded) {
+          truncated = true;
+          break;
+        }
+        if (!added || !added.index) {
+          return program.getFunction().emitError(
+                     "cannot add verified exact-slot lifecycle bundle, error=")
+                 << static_cast<unsigned>(added.error);
+        }
+        const CanonicalSyncMechanismId bundle = *added.index;
+        for (CanonicalSyncMechanismId component :
+             {readyOpportunity.event.mechanism, releaseEvent.mechanism}) {
+          if (bundle != component && !problem.addConflict(bundle, component)) {
+            return program.getFunction().emitError(
+                "cannot record exact-slot lifecycle component conflict");
+          }
+          for (CanonicalSyncMechanismId prior : bundlesByComponent[component]) {
+            if (prior != bundle && !problem.addConflict(bundle, prior)) {
+              return program.getFunction().emitError(
+                  "cannot record overlapping exact-slot lifecycle conflict");
+            }
+          }
+          bundlesByComponent[component].push_back(bundle);
+        }
+        admittedPairs.insert(pair);
+        ++candidates;
+      }
+      if (truncated) {
+        break;
+      }
+    }
+  }
+  const CanonicalSyncProblemResult recorded =
+      problem.recordSlotLifecycleGeneration(inspections, candidates, truncated);
+  if (!recorded) {
+    return program.getFunction().emitError(
+        "cannot record exact-slot lifecycle generation");
   }
   return success();
 }
@@ -3050,6 +3457,7 @@ CanonicalSyncProblemBuildResult buildCandidateCatalog(
   } else {
     std::map<EventDomainKey, CanonicalSyncEventDomainId> domainIds;
     std::vector<DirectEventRecord> directEvents;
+    std::vector<ExactEventRecord> exactEvents;
     std::vector<SyncCoverDemandId> sameResourceObligations;
     std::vector<SyncCoverDemandId> uncoveredBasisDemands;
     for (SyncCoverDemandId demandId : problem->getDemands()) {
@@ -3077,7 +3485,9 @@ CanonicalSyncProblemBuildResult buildCandidateCatalog(
         failed(addEventDomains(program, options.eventIdBudget, *problem,
                                baseline.covered, domainIds)) ||
         failed(addExactEvents(program, *problem, baseline.covered, domainIds,
-                              directEvents)) ||
+                              directEvents, exactEvents)) ||
+        failed(addExactSlotLifecycleBundles(program, *problem, exactEvents,
+                                            options.patterns)) ||
         failed(addCompletionFrontierEvents(program, *problem, baseline.covered,
                                            domainIds, directEvents)) ||
         failed(addTargetCompletionCertificateEvents(

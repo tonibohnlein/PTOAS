@@ -1398,7 +1398,16 @@ validateSupplyBindings(const SyncCoverGraph &graph,
         return CanonicalSyncProblemError::InvalidMechanism;
       }
     } else if (!use.recurrenceScope) {
-      return CanonicalSyncProblemError::InvalidMechanism;
+      const bool localVerifiedAction =
+          edge.distance == 0 &&
+          set.anchor.kind == SyncCoverAnchorKind::AfterNode &&
+          set.anchor.node == edge.source &&
+          wait.anchor.kind == SyncCoverAnchorKind::BeforeNode &&
+          wait.anchor.node == edge.target &&
+          syncCoverEndpointsCoExecute(graph, edge);
+      if (!localVerifiedAction) {
+        return CanonicalSyncProblemError::InvalidMechanism;
+      }
     } else if (edge.distance == 0) {
       const SyncCoverScopeId lifetimeScope =
           use.lifetimeScope.value_or(*use.recurrenceScope);
@@ -2121,6 +2130,12 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns(
       patternStatistics_.loopBoundaryProtocolIncidences;
   const bool loopBoundaryProtocolGenerationTruncated =
       patternStatistics_.loopBoundaryProtocolGenerationTruncated;
+  const std::size_t slotLifecycleInspections =
+      patternStatistics_.slotLifecycleInspections;
+  const std::size_t slotLifecycleCandidates =
+      patternStatistics_.slotLifecycleCandidates;
+  const bool slotLifecycleGenerationTruncated =
+      patternStatistics_.slotLifecycleGenerationTruncated;
   patternStatistics = {};
   patternStatistics.directPairProposals = directPairProposals;
   patternStatistics.directPairEvaluations = directPairEvaluations;
@@ -2146,6 +2161,10 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns(
       loopBoundaryProtocolIncidences;
   patternStatistics.loopBoundaryProtocolGenerationTruncated =
       loopBoundaryProtocolGenerationTruncated;
+  patternStatistics.slotLifecycleInspections = slotLifecycleInspections;
+  patternStatistics.slotLifecycleCandidates = slotLifecycleCandidates;
+  patternStatistics.slotLifecycleGenerationTruncated =
+      slotLifecycleGenerationTruncated;
   patterns.clear();
   patterns.reserve(mechanisms_.size() + patternSpecs_.size());
   for (const CanonicalSyncMechanism &mechanism : mechanisms_) {

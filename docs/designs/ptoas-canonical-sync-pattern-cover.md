@@ -217,8 +217,19 @@ completes the whole admitted producer prefix before the value is exported to
 the next virtual copy. Target capability data, rather than a pipeline-name
 allowlist, determines which source pipes admit the protocol.
 
-Ownership/slot-lifecycle protocols, pipeline aggregates, named round trips,
-merged-prefix events, and arbitrary protocol paths are not part of the catalog.
+The hybrid catalog also admits a deliberately narrow exact-slot lifecycle
+bundle. It recognizes an unguarded, distance-one round trip where one exact
+physical access is the producer write, one is the consumer read, the
+distance-zero RAW and loop-carried WAR witnesses reverse those same access
+IDs, and no third access overlaps the slot. The already verified ready event
+and release recurrence protocol are merged into one atomic, independently
+verified mechanism. The bundle conflicts with both components and with another
+bundle sharing either component, so materialization cannot duplicate a
+physical recipe. Discovery is bounded and truncating.
+
+Broader ownership protocols, path-sensitive or multi-access slot lifecycles,
+pipeline aggregates, merged-prefix events, and arbitrary protocol paths are
+not yet part of the catalog.
 
 The ordinary frozen problem contains only precise mechanisms. Allocation
 failure reports a live conflict core; only then does the pass rebuild the same

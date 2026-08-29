@@ -281,6 +281,12 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
        jsonInteger(report.loopBoundaryProtocolIncidences)},
       {"loop_boundary_protocol_generation_truncated",
        report.loopBoundaryProtocolGenerationTruncated},
+      {"slot_lifecycle_inspections",
+       jsonInteger(report.slotLifecycleInspections)},
+      {"slot_lifecycle_candidates",
+       jsonInteger(report.slotLifecycleCandidates)},
+      {"slot_lifecycle_generation_truncated",
+       report.slotLifecycleGenerationTruncated},
       {"preparation_time_ns", jsonInteger(report.preparationNanoseconds)},
       {"strategies", std::move(strategies)}};
 }
