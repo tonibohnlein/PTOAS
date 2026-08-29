@@ -22,12 +22,13 @@ using namespace mlir::pto;
 
 namespace {
 
+bool isPairCapableBinding(const CanonicalSyncSupplyBinding &binding) {
+  return binding.allowedDemands.empty();
+}
+
 bool isDirectPairMember(const CanonicalSyncMechanism &mechanism) {
-  return !mechanism.descriptor.supplies.empty() &&
-         std::all_of(mechanism.descriptor.supplies.begin(),
-                     mechanism.descriptor.supplies.end(), [](const auto &item) {
-                       return item.allowedDemands.empty();
-                     });
+  return std::any_of(mechanism.descriptor.supplies.begin(),
+                     mechanism.descriptor.supplies.end(), isPairCapableBinding);
 }
 
 std::optional<SyncCoverScopeId>
@@ -36,6 +37,9 @@ getMechanismOwner(const SyncCoverGraph &graph,
   std::optional<SyncCoverScopeId> owner;
   for (const CanonicalSyncSupplyBinding &binding :
        mechanism.descriptor.supplies) {
+    if (!isPairCapableBinding(binding)) {
+      continue;
+    }
     if (!owner) {
       owner = binding.edge.scope;
       continue;
@@ -50,12 +54,26 @@ getMechanismOwner(const SyncCoverGraph &graph,
 
 struct ConnectorEndpoint {
   CanonicalSyncMechanismId mechanism = 0;
+  SyncCoverNodeId node = 0;
+  SyncCoverNodeId outerNode = 0;
+  std::size_t distance = 0;
+  std::uint32_t outerResource = 0;
+  CanonicalSyncMechanismKind kind = CanonicalSyncMechanismKind::Event;
+  CanonicalSyncSupplyProof proof = CanonicalSyncSupplyProof::DirectAction;
   const SyncCoverGuard *guard = nullptr;
 };
 
 using ConnectorOwnerIndex =
     std::map<SyncCoverScopeId, std::vector<ConnectorEndpoint>>;
-using ConnectorResourceIndex = std::map<std::uint32_t, ConnectorOwnerIndex>;
+using ConnectorNodeIndex = std::map<SyncCoverNodeId, ConnectorOwnerIndex>;
+using FixedConnectorState = std::size_t;
+
+struct FixedConnectorAutomaton {
+  std::size_t nodes = 0;
+  std::vector<std::vector<FixedConnectorState>> successors;
+};
+using PlausibleDemandEndpoint =
+    std::tuple<SyncCoverNodeId, SyncCoverNodeId, std::size_t>;
 
 struct MechanismPairLess {
   bool operator()(const SyncCoverMechanismPair &first,
@@ -74,9 +92,12 @@ struct OwnedPairProposals {
 bool indexMechanismConnectors(
     const SyncCoverGraph &graph, const CanonicalSyncMechanism &mechanism,
     SyncCoverScopeId owner, std::size_t maximumEntries, std::size_t &entryCount,
-    ConnectorResourceIndex &sources, ConnectorResourceIndex &targets) {
+    ConnectorNodeIndex &sources, ConnectorNodeIndex &targets) {
   for (const CanonicalSyncSupplyBinding &binding :
        mechanism.descriptor.supplies) {
+    if (!isPairCapableBinding(binding)) {
+      continue;
+    }
     const SyncCoverEdge &edge = binding.edge;
     const bool invalidEndpoint = edge.source >= graph.getNodes().size() ||
                                  edge.target >= graph.getNodes().size();
@@ -88,12 +109,14 @@ bool indexMechanismConnectors(
     if (entryLimitExceeded) {
       return false;
     }
-    const SyncCoverNode &source = graph.getNodes()[edge.source];
-    const SyncCoverNode &target = graph.getNodes()[edge.target];
-    sources[source.resource][owner].push_back(
-        {mechanism.id, &edge.sourceGuard});
-    targets[target.resource][owner].push_back(
-        {mechanism.id, &edge.targetGuard});
+    sources[edge.source][owner].push_back(
+        {mechanism.id, edge.source, edge.target, edge.distance,
+         graph.getNodes()[edge.target].resource, mechanism.descriptor.kind,
+         binding.proof, &edge.sourceGuard});
+    targets[edge.target][owner].push_back(
+        {mechanism.id, edge.target, edge.source, edge.distance,
+         graph.getNodes()[edge.source].resource, mechanism.descriptor.kind,
+         binding.proof, &edge.targetGuard});
     entryCount += 2;
   }
   return true;
@@ -101,19 +124,27 @@ bool indexMechanismConnectors(
 
 bool endpointLess(const ConnectorEndpoint &first,
                   const ConnectorEndpoint &second) {
-  return std::tie(first.mechanism, first.guard->literals) <
-         std::tie(second.mechanism, second.guard->literals);
+  return std::tie(first.mechanism, first.node, first.outerNode, first.distance,
+                  first.outerResource, first.kind, first.proof,
+                  first.guard->literals) <
+         std::tie(second.mechanism, second.node, second.outerNode,
+                  second.distance, second.outerResource, second.kind,
+                  second.proof, second.guard->literals);
 }
 
 bool endpointEqual(const ConnectorEndpoint &first,
                    const ConnectorEndpoint &second) {
-  return first.mechanism == second.mechanism &&
+  return first.mechanism == second.mechanism && first.node == second.node &&
+         first.outerNode == second.outerNode &&
+         first.distance == second.distance &&
+         first.outerResource == second.outerResource &&
+         first.kind == second.kind && first.proof == second.proof &&
          first.guard->literals == second.guard->literals;
 }
 
-void canonicalizeConnectorIndex(ConnectorResourceIndex &index) {
-  for (auto &[resource, owners] : index) {
-    (void)resource;
+void canonicalizeConnectorIndex(ConnectorNodeIndex &index) {
+  for (auto &[node, owners] : index) {
+    (void)node;
     for (auto &[owner, endpoints] : owners) {
       (void)owner;
       std::sort(endpoints.begin(), endpoints.end(), endpointLess);
@@ -132,11 +163,204 @@ bool consumeConnectorInspection(std::size_t maximum, std::size_t &inspections) {
   return true;
 }
 
-bool addConnectorGroup(const std::vector<ConnectorEndpoint> &targets,
-                       const std::vector<ConnectorEndpoint> &sources,
-                       std::size_t maximumProposals,
-                       std::size_t maximumInspections, std::size_t &inspections,
-                       OwnedPairProposals &proposals) {
+FixedConnectorState fixedConnectorState(SyncCoverNodeId node, bool completed) {
+  return static_cast<std::size_t>(node) * 2 + (completed ? 1 : 0);
+}
+
+SyncCoverNodeId fixedConnectorNode(FixedConnectorState state) {
+  return static_cast<SyncCoverNodeId>(state / 2);
+}
+
+bool fixedConnectorCompleted(FixedConnectorState state) {
+  return state % 2 != 0;
+}
+
+FixedConnectorAutomaton
+buildFixedConnectorAutomaton(const SyncCoverGraph &graph) {
+  FixedConnectorAutomaton result;
+  result.nodes = graph.getNodes().size();
+  if (result.nodes > std::numeric_limits<std::size_t>::max() / 2) {
+    return result;
+  }
+  result.successors.resize(result.nodes * 2);
+  const auto addTransition = [&](SyncCoverNodeId source, bool sourceCompleted,
+                                 SyncCoverNodeId target, bool targetCompleted) {
+    result.successors[fixedConnectorState(source, sourceCompleted)].push_back(
+        fixedConnectorState(target, targetCompleted));
+  };
+  for (const SyncCoverEdge &edge : graph.getEdges()) {
+    if (edge.distance != 0 || edge.source >= result.nodes ||
+        edge.target >= result.nodes) {
+      continue;
+    }
+    switch (edge.kind) {
+    case SyncCoverEdgeKind::CertifiedCompletionFrontier:
+      addTransition(edge.source, false, edge.target, false);
+      addTransition(edge.source, true, edge.target, true);
+      break;
+    case SyncCoverEdgeKind::CompletionPreservingIssueOrder:
+    case SyncCoverEdgeKind::NonCompletionPreservingIssueOrder:
+      addTransition(edge.source, true, edge.target, true);
+      break;
+    case SyncCoverEdgeKind::CompletionSupply:
+      addTransition(edge.source, false, edge.target, true);
+      addTransition(edge.source, true, edge.target, true);
+      break;
+    }
+  }
+  for (std::vector<FixedConnectorState> &successors : result.successors) {
+    std::sort(successors.begin(), successors.end());
+    successors.erase(std::unique(successors.begin(), successors.end()),
+                     successors.end());
+  }
+  return result;
+}
+
+bool findFixedConnectorStates(const FixedConnectorAutomaton &automaton,
+                              SyncCoverNodeId start, bool startsCompleted,
+                              std::size_t maximumInspections,
+                              std::size_t &inspections,
+                              std::vector<FixedConnectorState> &reachable) {
+  reachable.clear();
+  if (start >= automaton.nodes) {
+    return true;
+  }
+  std::vector<std::uint8_t> visited(automaton.successors.size(), 0);
+  std::vector<FixedConnectorState> ready{
+      fixedConnectorState(start, startsCompleted)};
+  while (!ready.empty()) {
+    const FixedConnectorState current = ready.back();
+    ready.pop_back();
+    if (visited[current] != 0) {
+      continue;
+    }
+    visited[current] = 1;
+    reachable.push_back(current);
+    for (FixedConnectorState successor : automaton.successors[current]) {
+      if (!consumeConnectorInspection(maximumInspections, inspections)) {
+        return false;
+      }
+      if (visited[successor] == 0) {
+        ready.push_back(successor);
+      }
+    }
+  }
+  std::sort(reachable.begin(), reachable.end());
+  return true;
+}
+
+FixedConnectorAutomaton
+reverseFixedConnectorAutomaton(const FixedConnectorAutomaton &automaton) {
+  FixedConnectorAutomaton result;
+  result.nodes = automaton.nodes;
+  result.successors.resize(automaton.successors.size());
+  for (FixedConnectorState source = 0; source < automaton.successors.size();
+       ++source) {
+    for (FixedConnectorState target : automaton.successors[source]) {
+      result.successors[target].push_back(source);
+    }
+  }
+  for (std::vector<FixedConnectorState> &predecessors : result.successors) {
+    std::sort(predecessors.begin(), predecessors.end());
+    predecessors.erase(std::unique(predecessors.begin(), predecessors.end()),
+                       predecessors.end());
+  }
+  return result;
+}
+
+bool buildPlausibleDemandEndpoints(
+    const FixedConnectorAutomaton &automaton, const ConnectorNodeIndex &sources,
+    const ConnectorNodeIndex &targets,
+    const std::set<PlausibleDemandEndpoint> &activeDemands,
+    std::size_t maximumInspections, std::size_t &inspections,
+    std::set<PlausibleDemandEndpoint> &plausible) {
+  if (activeDemands.empty()) {
+    return true;
+  }
+  std::set<SyncCoverNodeId> outerSources;
+  std::set<SyncCoverNodeId> outerTargets;
+  for (const auto &[node, owners] : targets) {
+    (void)node;
+    for (const auto &[owner, endpoints] : owners) {
+      (void)owner;
+      for (const ConnectorEndpoint &endpoint : endpoints) {
+        outerSources.insert(endpoint.outerNode);
+      }
+    }
+  }
+  for (const auto &[node, owners] : sources) {
+    (void)node;
+    for (const auto &[owner, endpoints] : owners) {
+      (void)owner;
+      for (const ConnectorEndpoint &endpoint : endpoints) {
+        outerTargets.insert(endpoint.outerNode);
+      }
+    }
+  }
+  const FixedConnectorAutomaton reverse =
+      reverseFixedConnectorAutomaton(automaton);
+  std::map<SyncCoverNodeId, std::vector<SyncCoverNodeId>> forwardCache;
+  std::map<SyncCoverNodeId, std::vector<SyncCoverNodeId>> backwardCache;
+  std::vector<FixedConnectorState> reachable;
+  for (const auto &[source, target, distance] : activeDemands) {
+    auto forward = forwardCache.find(source);
+    if (forward == forwardCache.end()) {
+      if (!findFixedConnectorStates(automaton, source, false,
+                                    maximumInspections, inspections,
+                                    reachable)) {
+        return false;
+      }
+      std::vector<SyncCoverNodeId> filtered;
+      for (FixedConnectorState state : reachable) {
+        const SyncCoverNodeId node = fixedConnectorNode(state);
+        if (outerSources.find(node) != outerSources.end()) {
+          filtered.push_back(node);
+        }
+      }
+      std::sort(filtered.begin(), filtered.end());
+      filtered.erase(std::unique(filtered.begin(), filtered.end()),
+                     filtered.end());
+      forward = forwardCache.emplace(source, std::move(filtered)).first;
+    }
+    auto backward = backwardCache.find(target);
+    if (backward == backwardCache.end()) {
+      if (!findFixedConnectorStates(reverse, target, true, maximumInspections,
+                                    inspections, reachable)) {
+        return false;
+      }
+      std::vector<SyncCoverNodeId> filtered;
+      for (FixedConnectorState state : reachable) {
+        const SyncCoverNodeId node = fixedConnectorNode(state);
+        if (fixedConnectorCompleted(state) &&
+            outerTargets.find(node) != outerTargets.end()) {
+          filtered.push_back(node);
+        }
+      }
+      std::sort(filtered.begin(), filtered.end());
+      filtered.erase(std::unique(filtered.begin(), filtered.end()),
+                     filtered.end());
+      backward = backwardCache.emplace(target, std::move(filtered)).first;
+    }
+    for (SyncCoverNodeId outerSource : forward->second) {
+      for (SyncCoverNodeId outerTarget : backward->second) {
+        if (!consumeConnectorInspection(maximumInspections, inspections)) {
+          return false;
+        }
+        plausible.insert({outerSource, outerTarget, distance});
+      }
+    }
+  }
+  return true;
+}
+
+bool addConnectorGroup(
+    const std::vector<ConnectorEndpoint> &targets,
+    const std::vector<ConnectorEndpoint> &sources,
+    const std::set<std::pair<std::uint32_t, std::uint32_t>>
+        &activeDemandResourcePairs,
+    const std::set<PlausibleDemandEndpoint> &activeDemandEndpoints,
+    std::size_t maximumProposals, std::size_t maximumInspections,
+    std::size_t &inspections, OwnedPairProposals &proposals) {
   if (proposals.truncated) {
     return true;
   }
@@ -145,22 +369,39 @@ bool addConnectorGroup(const std::vector<ConnectorEndpoint> &targets,
       if (!consumeConnectorInspection(maximumInspections, inspections)) {
         return false;
       }
-      if (target.mechanism == source.mechanism ||
+      const bool plausibleResourceChain =
+          activeDemandResourcePairs.empty() ||
+          activeDemandResourcePairs.find(
+              {target.outerResource, source.outerResource}) !=
+              activeDemandResourcePairs.end();
+      const bool distanceOverflows =
+          target.distance >
+          std::numeric_limits<std::size_t>::max() - source.distance;
+      const std::size_t combinedDistance =
+          distanceOverflows ? 0 : target.distance + source.distance;
+      const bool plausibleEndpoints =
+          activeDemandEndpoints.empty() ||
+          (!distanceOverflows &&
+           activeDemandEndpoints.find(
+               {target.outerNode, source.outerNode, combinedDistance}) !=
+               activeDemandEndpoints.end());
+      if (!plausibleResourceChain || !plausibleEndpoints ||
+          target.mechanism == source.mechanism ||
           !syncCoverGuardsCompatible(*target.guard, *source.guard)) {
         continue;
       }
       const auto members = std::minmax(target.mechanism, source.mechanism);
-      const bool inserted =
-          proposals.pairs.insert({members.first, members.second}).second;
-      if (!inserted) {
-        continue;
-      }
-      proposals.proposalCount = proposals.pairs.size();
-      const bool capacityExceeded = proposals.pairs.size() > maximumProposals;
-      if (capacityExceeded) {
+      const SyncCoverMechanismPair pair{members.first, members.second};
+      proposals.pairs.insert(pair);
+      if (proposals.pairs.size() > maximumProposals) {
+        proposals.proposalCount =
+            maximumProposals == std::numeric_limits<std::size_t>::max()
+                ? maximumProposals
+                : maximumProposals + 1;
         proposals.pairs.clear();
         proposals.truncated = true;
-        return true;
+      } else {
+        proposals.proposalCount = proposals.pairs.size();
       }
     }
   }
@@ -176,8 +417,20 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
     return {CanonicalSyncProblemError::Frozen, std::nullopt};
   }
   const SyncCoverGraph &graph = problem.getGraph();
-  ConnectorResourceIndex sources;
-  ConnectorResourceIndex targets;
+  std::set<std::pair<std::uint32_t, std::uint32_t>> activeDemandResourcePairs;
+  std::set<PlausibleDemandEndpoint> activeDemandRows;
+  for (SyncCoverDemandId demandId : problem.getDemands()) {
+    if (demandId >= graph.getDemands().size()) {
+      return {CanonicalSyncProblemError::InvalidGraph, std::nullopt};
+    }
+    const SyncCoverDemand &demand = graph.getDemands()[demandId];
+    activeDemandResourcePairs.insert(
+        {graph.getNodes()[demand.source].resource,
+         graph.getNodes()[demand.target].resource});
+    activeDemandRows.insert({demand.source, demand.target, demand.distance});
+  }
+  ConnectorNodeIndex sources;
+  ConnectorNodeIndex targets;
   std::size_t connectorIndexEntries = 0;
   for (const CanonicalSyncMechanism &mechanism : problem.getMechanisms()) {
     if (!isDirectPairMember(mechanism)) {
@@ -197,50 +450,68 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
   }
   canonicalizeConnectorIndex(sources);
   canonicalizeConnectorIndex(targets);
+  const FixedConnectorAutomaton fixedConnectors =
+      buildFixedConnectorAutomaton(graph);
   std::map<SyncCoverScopeId, OwnedPairProposals> indexedProposals;
   std::size_t connectorInspections = 0;
+  std::set<PlausibleDemandEndpoint> activeDemandEndpoints;
+  if (!buildPlausibleDemandEndpoints(
+          fixedConnectors, sources, targets, activeDemandRows,
+          options.maximumConnectorInspections, connectorInspections,
+          activeDemandEndpoints)) {
+    problem.markPatternGenerationTruncated();
+    problem.recordDirectPairGeneration(0, 0, connectorInspections);
+    return {CanonicalSyncProblemError::None, 0};
+  }
   bool connectorLimitExceeded = false;
-  for (const auto &[resource, targetOwners] : targets) {
-    const auto sourcePosition = sources.find(resource);
-    if (sourcePosition == sources.end()) {
-      continue;
+  std::vector<FixedConnectorState> reachable;
+  for (const auto &[targetNode, targetOwners] : targets) {
+    if (!findFixedConnectorStates(fixedConnectors, targetNode, true,
+                                  options.maximumConnectorInspections,
+                                  connectorInspections, reachable)) {
+      connectorLimitExceeded = true;
+      break;
     }
-    for (const auto &[targetOwner, targetEndpoints] : targetOwners) {
-      for (const auto &[sourceOwner, sourceEndpoints] :
-           sourcePosition->second) {
-        if (!consumeConnectorInspection(options.maximumConnectorInspections,
-                                        connectorInspections)) {
-          connectorLimitExceeded = true;
+    for (FixedConnectorState state : reachable) {
+      if (!fixedConnectorCompleted(state)) {
+        continue;
+      }
+      const SyncCoverNodeId sourceNode = fixedConnectorNode(state);
+      const auto sourcePosition = sources.find(sourceNode);
+      if (sourcePosition == sources.end()) {
+        continue;
+      }
+      for (const auto &[targetOwner, targetEndpoints] : targetOwners) {
+        for (const auto &[sourceOwner, sourceEndpoints] :
+             sourcePosition->second) {
+          if (!consumeConnectorInspection(options.maximumConnectorInspections,
+                                          connectorInspections)) {
+            connectorLimitExceeded = true;
+            break;
+          }
+          const std::optional<SyncCoverScopeId> pairOwner =
+              graph.getLowestCommonScope(targetOwner, sourceOwner);
+          if (!pairOwner) {
+            continue;
+          }
+          OwnedPairProposals &proposals = indexedProposals[*pairOwner];
+          const bool inspected = addConnectorGroup(
+              targetEndpoints, sourceEndpoints, activeDemandResourcePairs,
+              activeDemandEndpoints, options.maximumEvaluationsPerScope,
+              options.maximumConnectorInspections, connectorInspections,
+              proposals);
+          if (!inspected) {
+            connectorLimitExceeded = true;
+            break;
+          }
+        }
+        if (connectorLimitExceeded) {
           break;
-        }
-        const std::optional<SyncCoverScopeId> pairOwner =
-            graph.getLowestCommonScope(targetOwner, sourceOwner);
-        if (!pairOwner) {
-          continue;
-        }
-        OwnedPairProposals &proposals = indexedProposals[*pairOwner];
-        if (proposals.truncated) {
-          continue;
-        }
-        const bool inspected =
-            addConnectorGroup(targetEndpoints, sourceEndpoints,
-                              options.maximumEvaluationsPerScope,
-                              options.maximumConnectorInspections,
-                              connectorInspections, proposals);
-        if (!inspected) {
-          connectorLimitExceeded = true;
-          break;
-        }
-        if (proposals.truncated) {
-          problem.markPatternGenerationTruncated();
         }
       }
       if (connectorLimitExceeded) {
         break;
       }
-    }
-    if (connectorLimitExceeded) {
-      break;
     }
   }
   if (connectorLimitExceeded) {
@@ -262,11 +533,13 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
       proposalCount += proposals.proposalCount;
     }
     if (proposals.truncated) {
+      problem.markPatternGenerationTruncated();
       byOwner.try_emplace(owner);
       continue;
     }
-    byOwner.emplace(owner, std::vector<SyncCoverMechanismPair>(
-                               proposals.pairs.begin(), proposals.pairs.end()));
+    byOwner.emplace(
+        owner, std::vector<SyncCoverMechanismPair>(proposals.pairs.begin(),
+                                                   proposals.pairs.end()));
   }
 
   std::vector<SyncCoverCompletionSupply> supplies;
@@ -275,7 +548,8 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
          mechanism.descriptor.supplies) {
       supplies.push_back({mechanism.id, binding.edge, binding.allowedDemands,
                           binding.completionExport ==
-                              CanonicalSyncSupplyExport::ScopeExitAfterDrain});
+                              CanonicalSyncSupplyExport::ScopeExitAfterDrain,
+                          binding.applicability});
     }
   }
   const SyncCoverSingletonCoverageResult singleton =

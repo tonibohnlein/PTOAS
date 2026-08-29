@@ -106,6 +106,57 @@ struct CanonicalSyncAction {
 
 enum class CanonicalSyncSupplyProof : std::uint8_t {
   DirectAction,
+  /// A direct set/wait whose producer is a certified later completion
+  /// frontier. The graph's typed frontier edges, rather than a merged supply
+  /// declaration, account for completion of earlier source nodes.
+  CompletionFrontierAction,
+  /// A direct event whose completion semantics are authorized by one
+  /// immutable target/storage lifecycle certificate in SyncCoverGraph.  The
+  /// binding remains restricted to its exact attested demand.
+  TargetCompletionCertificateAction,
+  /// A balanced, source-controlled event fence. The set is issued on the
+  /// source pipe immediately after the complete physical source operation;
+  /// the matching wait is issued on the target pipe at the same dynamic
+  /// source occurrence. Target-pipe issue order carries that completed wait
+  /// to later target occurrences without requiring source/target coexecution.
+  /// Positive-distance bindings remain restricted to their attested demand.
+  SourceLocalCompletionAction,
+  /// A width-one, locally rearmed set/wait pair issued at one target anchor.
+  /// Every bound demand is independently certified in its d+1 arena and is
+  /// restricted through allowedDemands. Multiple bindings are action
+  /// deduplication only when their complete physical recipes are identical.
+  TargetLocalFenceAction,
+  /// A targeted source-pipe drain issued immediately before the physical
+  /// target. The ISA guarantees that every previously issued operation on
+  /// that source pipe completes before the subsequent target begins. Each
+  /// binding remains independently attested and distance-qualified.
+  TargetLocalPipeDrainAction,
+  /// A targeted source-pipe drain before one physical target. The immutable
+  /// certificate names resource-matching, guard-compatible source-prefix
+  /// nodes issued before that cut. Each edge is owned by the source/target LCA.
+  /// Its supplies are distance-zero-only and may therefore persist through
+  /// later fixed issue order without leaking into recurrence.
+  DominatingTargetedDrainCut,
+  /// A source-pipe drain at the beginning of every non-first loop iteration.
+  /// Each positive-distance supply is separately attested and restricted to
+  /// its original demand; the shared action only certifies that the complete
+  /// prior-iteration source prefix has finished before the current body.
+  LoopCarryPipeDrain,
+  /// A named-pipe drain after the complete physical source operation. Every
+  /// binding is exact-demand attested; sharing is physical-action
+  /// deduplication across later targets, never unrestricted prefix export.
+  SourceLocalPipeDrainAction,
+  /// A named-pipe drain after a later same-scope, same-guard cut. The immutable
+  /// issued-prefix certificate proves that earlier source operations on the
+  /// named pipe have issued before the cut; every supplied demand remains
+  /// independently attested and distance-qualified.
+  SourcePrefixPipeDrainAction,
+  /// One lifecycle-complete recurrence channel shared by exact demands with
+  /// the same loop, distance, and directed pipe domain. Entry priming and
+  /// scope-exit draining balance the channel. A targeted source-prefix drain
+  /// followed by the body set at LoopBodyExit completes every admitted source
+  /// before the next-copy wait at LoopBodyEntry.
+  LoopBoundarySourcePrefixProtocol,
   VerifiedProtocol,
 };
 
@@ -130,6 +181,11 @@ struct CanonicalSyncSupplyBinding {
   /// verified ownership release names only the exact storage demands for
   /// which issue, rather than full operation completion, is sufficient.
   std::vector<SyncCoverDemandId> allowedDemands;
+  /// Original row whose exact dynamic recipe was checked. This is validation
+  /// provenance and does not itself restrict graph propagation.
+  std::optional<SyncCoverDemandId> attestedDemand;
+  SyncCoverSupplyApplicability applicability =
+      SyncCoverSupplyApplicability::AllDemands;
 };
 
 /// One atomic synchronization unit. This descriptor is also its emission
@@ -151,6 +207,7 @@ struct CanonicalSyncMechanismCost {
   /// Natural loop depth: index zero is one-shot function scope.
   std::vector<std::uint64_t> barrierActions;
   std::vector<std::uint64_t> eventActions;
+  std::uint64_t serializationBreadth = 0;
 };
 
 struct CanonicalSyncMechanism {
@@ -206,6 +263,18 @@ struct CanonicalSyncPatternStatistics {
   std::size_t repairFrontierInspections = 0;
   std::size_t repairFrontierProposals = 0;
   bool repairFrontierTruncated = false;
+  std::size_t sourcePrefixInspections = 0;
+  std::size_t sourcePrefixCandidates = 0;
+  std::size_t sourcePrefixIncidences = 0;
+  bool sourcePrefixGenerationTruncated = false;
+  std::size_t loopCarryInspections = 0;
+  std::size_t loopCarryCandidates = 0;
+  std::size_t loopCarryIncidences = 0;
+  bool loopCarryGenerationTruncated = false;
+  std::size_t loopBoundaryProtocolInspections = 0;
+  std::size_t loopBoundaryProtocolCandidates = 0;
+  std::size_t loopBoundaryProtocolIncidences = 0;
+  bool loopBoundaryProtocolGenerationTruncated = false;
 
   const CanonicalSyncPatternKindStatistics &
   get(CanonicalSyncPatternKind kind) const {
@@ -264,6 +333,12 @@ public:
                               std::vector<SyncCoverDemandId> activeDemands,
                               Limits limits,
                               SyncCoverExpansionLimits expansionLimits = {});
+  CanonicalSyncPatternProblem(const SyncCoverGraph &graph,
+                              std::vector<SyncCoverDemandId> obligationDemands,
+                              std::vector<SyncCoverDemandId> selectionDemands,
+                              Limits limits,
+                              SyncCoverExpansionLimits expansionLimits = {},
+                              bool basisReductionTruncated = false);
   CanonicalSyncPatternProblem(const CanonicalSyncPatternProblem &) = delete;
   CanonicalSyncPatternProblem(CanonicalSyncPatternProblem &&) = default;
   CanonicalSyncPatternProblem &
@@ -296,6 +371,10 @@ public:
   const std::vector<SyncCoverDemandId> &getDemands() const {
     return activeDemands_;
   }
+  const std::vector<SyncCoverDemandId> &getObligationDemands() const {
+    return obligationDemands_;
+  }
+  bool wasBasisReductionTruncated() const { return basisReductionTruncated_; }
   const std::vector<CanonicalSyncEventDomain> &getDomains() const {
     return domains_;
   }
@@ -348,7 +427,76 @@ public:
     patternStatistics_.repairFrontierTruncated = truncated;
     return {};
   }
+  CanonicalSyncProblemResult
+  recordSourcePrefixGeneration(std::size_t inspections, std::size_t candidates,
+                               std::size_t incidences, bool truncated) {
+    if (frozen_) {
+      return {CanonicalSyncProblemError::Frozen, std::nullopt};
+    }
+    const bool overflow =
+        inspections > std::numeric_limits<std::size_t>::max() -
+                          patternStatistics_.sourcePrefixInspections ||
+        candidates > std::numeric_limits<std::size_t>::max() -
+                         patternStatistics_.sourcePrefixCandidates ||
+        incidences > std::numeric_limits<std::size_t>::max() -
+                         patternStatistics_.sourcePrefixIncidences;
+    if (overflow) {
+      return {CanonicalSyncProblemError::ArithmeticOverflow, std::nullopt};
+    }
+    patternStatistics_.sourcePrefixInspections += inspections;
+    patternStatistics_.sourcePrefixCandidates += candidates;
+    patternStatistics_.sourcePrefixIncidences += incidences;
+    patternStatistics_.sourcePrefixGenerationTruncated |= truncated;
+    return {};
+  }
+  CanonicalSyncProblemResult recordLoopCarryGeneration(std::size_t inspections,
+                                                       std::size_t candidates,
+                                                       std::size_t incidences,
+                                                       bool truncated) {
+    if (frozen_) {
+      return {CanonicalSyncProblemError::Frozen, std::nullopt};
+    }
+    patternStatistics_.loopCarryInspections = inspections;
+    patternStatistics_.loopCarryCandidates = candidates;
+    patternStatistics_.loopCarryIncidences = incidences;
+    patternStatistics_.loopCarryGenerationTruncated = truncated;
+    return {};
+  }
+  CanonicalSyncProblemResult
+  recordLoopBoundaryProtocolGeneration(std::size_t inspections,
+                                       std::size_t candidates,
+                                       std::size_t incidences, bool truncated) {
+    if (frozen_) {
+      return {CanonicalSyncProblemError::Frozen, std::nullopt};
+    }
+    const bool overflow =
+        inspections > std::numeric_limits<std::size_t>::max() -
+                          patternStatistics_.loopBoundaryProtocolInspections ||
+        candidates > std::numeric_limits<std::size_t>::max() -
+                         patternStatistics_.loopBoundaryProtocolCandidates ||
+        incidences > std::numeric_limits<std::size_t>::max() -
+                         patternStatistics_.loopBoundaryProtocolIncidences;
+    if (overflow) {
+      return {CanonicalSyncProblemError::ArithmeticOverflow, std::nullopt};
+    }
+    patternStatistics_.loopBoundaryProtocolInspections += inspections;
+    patternStatistics_.loopBoundaryProtocolCandidates += candidates;
+    patternStatistics_.loopBoundaryProtocolIncidences += incidences;
+    patternStatistics_.loopBoundaryProtocolGenerationTruncated |= truncated;
+    return {};
+  }
   bool hasSameCandidatePrefix(const CanonicalSyncPatternProblem &other) const;
+  /// Revalidate one immutable mechanism and its derived lifetime/cost data.
+  /// Protocols rerun the common balanced-action and supply-export contract.
+  CanonicalSyncProblemResult
+  verifyMechanism(CanonicalSyncMechanismId mechanism,
+                  SyncCoverCoverageWorkBudget *workBudget = nullptr) const;
+  std::uint64_t getMechanismSignature(CanonicalSyncMechanismId mechanism) const;
+  /// Preview the union of baseline, singleton, and retained optional-pattern
+  /// coverage without freezing the catalog. Used to ground completeness
+  /// mechanisms only for rows absent from the exact catalog.
+  CanonicalSyncProblemResult
+  previewCoveredDemands(SyncCoverDemandSet &covered) const;
   const SyncCoverDemandSet &getBaselineCoverage() const {
     return baselineCoverage_;
   }
@@ -369,11 +517,11 @@ private:
       CanonicalSyncMechanismDescriptor descriptor, bool protocolVerified,
       const std::function<bool(const CanonicalSyncMechanismDescriptor &)>
           &verifier = {});
-  CanonicalSyncProblemResult
-  validateAndCostMechanism(CanonicalSyncMechanismDescriptor &descriptor,
-                           std::vector<CanonicalSyncEventLifetime> &lifetimes,
-                           CanonicalSyncMechanismCost &cost,
-                           bool protocolVerified) const;
+  CanonicalSyncProblemResult validateAndCostMechanism(
+      CanonicalSyncMechanismDescriptor &descriptor,
+      std::vector<CanonicalSyncEventLifetime> &lifetimes,
+      CanonicalSyncMechanismCost &cost, bool protocolVerified,
+      SyncCoverCoverageWorkBudget *workBudget = nullptr) const;
   CanonicalSyncProblemResult
   buildPatterns(std::vector<CanonicalSyncPattern> &patterns,
                 CanonicalSyncPatternStatistics &statistics,
@@ -389,7 +537,9 @@ private:
   std::size_t actionCount_ = 0;
   std::size_t eventUseCount_ = 0;
   std::size_t supplyCount_ = 0;
+  std::vector<SyncCoverDemandId> obligationDemands_;
   std::vector<SyncCoverDemandId> activeDemands_;
+  bool basisReductionTruncated_ = false;
   std::vector<CanonicalSyncEventDomain> domains_;
   std::vector<CanonicalSyncMechanism> mechanisms_;
   std::vector<PendingPattern> patternSpecs_;
@@ -410,12 +560,12 @@ private:
 
 struct CanonicalSyncDirectPairOptions {
   /// Proposals are owned by the LCA of their mechanism scopes. An oversized
-  /// scope is skipped as a whole so truncation never depends on ID order.
+  /// owner batch is skipped atomically; no batch is cut by mechanism ID order.
   std::size_t maximumEvaluationsPerScope = 1U << 12;
   /// Total source/target endpoint entries retained by the connector index.
   std::size_t maximumConnectorIndexEntries = 1U << 20;
   /// Global deterministic bound on owner-group and endpoint comparisons.
-  std::size_t maximumConnectorInspections = 1U << 20;
+  std::size_t maximumConnectorInspections = 1U << 24;
   /// Pair preparation is optional. A scope whose exact pair matrices exceed
   /// these limits is skipped without weakening singleton correctness.
   SyncCoverCoverageLimits pairCoverageLimits;
@@ -479,6 +629,7 @@ enum class CanonicalSyncSelectionError : std::uint8_t {
   None,
   InvalidProblem,
   NoCoveringPattern,
+  InvalidAllocation,
   ResourceInfeasible,
   WorkLimitExceeded,
   FinalValidationFailed,

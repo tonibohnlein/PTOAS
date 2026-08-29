@@ -35,11 +35,13 @@ std::size_t takeIndex(const SyncCoverGraphResult &result, bool &passed,
   return result.index.value_or(0);
 }
 
-SyncCoverEdge makeEdge(SyncCoverNodeId source, SyncCoverNodeId target) {
+SyncCoverEdge
+makeEdge(SyncCoverNodeId source, SyncCoverNodeId target,
+         SyncCoverEdgeKind kind = SyncCoverEdgeKind::CompletionSupply) {
   SyncCoverEdge edge;
   edge.source = source;
   edge.target = target;
-  edge.kind = SyncCoverEdgeKind::CompletionSupply;
+  edge.kind = kind;
   return edge;
 }
 
@@ -375,7 +377,8 @@ bool testTimelineStorageAndFreezeContract() {
       mergedRawResult && rawResult &&
           mergedRawResult.index == rawResult.index &&
           graph.getDemands()[*rawResult.index].storageWitnesses ==
-              std::vector<SyncCoverStorageWitnessId>{witness, secondWitness},
+              std::vector<SyncCoverStorageWitnessId>{witness, secondWitness} &&
+          graph.getDemands()[*rawResult.index].originalDemandCount == 2,
       "canonical demand merges witnesses across insertions");
 
   passed &= check(resolveSyncCoverAnchor(
@@ -484,7 +487,8 @@ bool testCanonicalRowsAndInvalidKinds() {
       graph.addDemand(makeDemand(source, target));
   passed &= check(firstDemand && duplicateDemand &&
                       duplicateDemand.index == firstDemand.index &&
-                      graph.getDemands().size() == 1,
+                      graph.getDemands().size() == 1 &&
+                      graph.getDemands()[0].originalDemandCount == 2,
                   "duplicate demands share one canonical row");
 
   SyncCoverEdge invalidEdge = makeEdge(source, target);
@@ -497,6 +501,11 @@ bool testCanonicalRowsAndInvalidKinds() {
   passed &= check(graph.addDemand(invalidDemand).error ==
                       SyncCoverGraphError::InvalidDemandKind,
                   "invalid demand enum fails closed");
+  invalidDemand = makeDemand(source, target);
+  invalidDemand.originalDemandCount = 0;
+  passed &= check(graph.addDemand(invalidDemand).error ==
+                      SyncCoverGraphError::InvalidDemandKind,
+                  "empty original-demand provenance fails closed");
   return passed;
 }
 
@@ -693,13 +702,24 @@ bool testCompletionDominanceContract() {
   bool passed = true;
   SyncCoverGraph graph;
   const SyncCoverNodeId first =
-      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add first completion node");
-  const SyncCoverNodeId second = takeIndex(graph.addNode(1, 1, 0, 1), passed,
-                                           "add second completion node");
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {}, std::nullopt, true), passed,
+                "add first completion node");
+  const SyncCoverNodeId second =
+      takeIndex(graph.addNode(1, 1, 0, 1, {}, {}, std::nullopt, true), passed,
+                "add second completion node");
   const SyncCoverNodeId third =
-      takeIndex(graph.addNode(1, 1, 0, 2), passed, "add third completion node");
+      takeIndex(graph.addNode(1, 1, 0, 2, {}, {}, std::nullopt, true), passed,
+                "add third completion node");
   const SyncCoverNodeId other =
       takeIndex(graph.addNode(2, 1, 0, 3), passed, "add other-resource node");
+  passed &=
+      check(graph.addEdge(makeEdge(
+                first, second, SyncCoverEdgeKind::CertifiedCompletionFrontier)),
+            "add first certified completion edge");
+  passed &=
+      check(graph.addEdge(makeEdge(
+                second, third, SyncCoverEdgeKind::CertifiedCompletionFrontier)),
+            "add second certified completion edge");
   passed &= check(graph.addCompletionDominance(first, second),
                   "record direct completion dominance");
   passed &= check(graph.addCompletionDominance(second, third),
@@ -750,6 +770,215 @@ bool testControlBoundaryAnchors() {
   return passed && check(graph.validate(), "validate control-exit graph");
 }
 
+bool testPhysicalMacroEntryAndExitAnchors() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId entry =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add physical macro entry");
+  const SyncCoverNodeId exit =
+      takeIndex(graph.addNode(2, 1, 0, 1, {}, {}, entry), passed,
+                "add physical macro exit");
+  const SyncCoverNodeId following =
+      takeIndex(graph.addNode(3, 1, 0, 2), passed, "add following operation");
+  passed &= check(graph.setPhysicalExit(entry, exit),
+                  "set physical macro entry exit");
+  passed &=
+      check(graph.setPhysicalExit(exit, exit), "set physical macro exit exit");
+  passed &= check(graph.freezeStructure(), "freeze physical macro graph");
+
+  const auto beforeEntry = resolveSyncCoverAnchor(
+      graph, {SyncCoverAnchorKind::BeforeNode, exit, 0, 0});
+  const auto afterExit = resolveSyncCoverAnchor(
+      graph, {SyncCoverAnchorKind::AfterNode, entry, 0, 0});
+  const auto beforeFollowing = resolveSyncCoverAnchor(
+      graph, {SyncCoverAnchorKind::BeforeNode, following, 0, 0});
+  passed &= check(beforeEntry && *beforeEntry == 0,
+                  "before any macro phase resolves to physical entry");
+  passed &= check(afterExit && *afterExit == 3,
+                  "after any macro phase resolves to physical exit");
+  passed &= check(beforeFollowing && *afterExit < *beforeFollowing,
+                  "physical exit remains before the following operation");
+  return passed;
+}
+
+bool testBlockingBarrierPrefixAndLoopBodyAnchor() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverControlId control =
+      takeIndex(graph.addControl(2), passed, "add prefix branch control");
+  const SyncCoverScopeId loop = takeIndex(
+      graph.addScope(0, true, SyncCoverTimelineInterval{0, 20}, true), passed,
+      "add prefix loop scope");
+  const SyncCoverScopeId thenScope = takeIndex(
+      graph.addScope(loop, true, std::nullopt, false, {{{control, 0}}}), passed,
+      "add prefix then scope");
+  const SyncCoverScopeId elseScope = takeIndex(
+      graph.addScope(loop, true, std::nullopt, false, {{{control, 1}}}), passed,
+      "add prefix else scope");
+  const SyncCoverNodeId first =
+      takeIndex(graph.addNode(1, 1, thenScope, 0, {{{control, 0}}}), passed,
+                "add first prefix source");
+  const SyncCoverNodeId second =
+      takeIndex(graph.addNode(1, 1, thenScope, 1, {{{control, 0}}}), passed,
+                "add second prefix source");
+  const SyncCoverNodeId sibling =
+      takeIndex(graph.addNode(1, 1, elseScope, 2, {{{control, 1}}}), passed,
+                "add incompatible prefix source");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(2, 1, thenScope, 3, {{{control, 0}}}), passed,
+                "add prefix target");
+  const SyncCoverNodeId later =
+      takeIndex(graph.addNode(1, 1, thenScope, 4, {{{control, 0}}}), passed,
+                "add later prefix source");
+  passed &= check(graph.setBlockingTargetedBarrierResources({1}),
+                  "enable blocking targeted barrier resource");
+  passed &= check(graph.setBlockingTargetedBarrierPrefix(
+                      1, target, {second, first, first}),
+                  "record a sorted and deduplicated issued prefix");
+  const auto prefix =
+      graph.getBlockingTargetedBarrierPrefixes().find({1, target});
+  passed &= check(prefix != graph.getBlockingTargetedBarrierPrefixes().end() &&
+                      prefix->second ==
+                          std::vector<SyncCoverNodeId>{first, second},
+                  "retain exactly the earlier compatible prefix");
+  passed &= check(graph.setBlockingTargetedBarrierPrefix(1, later, {later})
+                          .error == SyncCoverGraphError::InvalidOrder,
+                  "reject a source issued at the cut") &&
+            check(graph.setBlockingTargetedBarrierPrefix(1, later, {sibling})
+                          .error == SyncCoverGraphError::InvalidOrder,
+                  "reject an incompatible sibling-branch source");
+  const auto loopBody = resolveSyncCoverAnchor(
+      graph, {SyncCoverAnchorKind::LoopBodyEntry, 0, loop, 0});
+  const auto loopBodyExit = resolveSyncCoverAnchor(
+      graph, {SyncCoverAnchorKind::LoopBodyExit, 0, loop, 0});
+  passed &= check(loopBody && *loopBody == 0,
+                  "resolve loop body entry on the loop timeline") &&
+            check(loopBodyExit && *loopBodyExit == 20,
+                  "resolve loop body exit on the loop timeline");
+  passed &= check(graph.freezeStructure(), "freeze prefix graph") &&
+            check(graph.validate(), "validate immutable prefix certificate");
+  passed &= check(graph.setBlockingTargetedBarrierPrefix(1, later, {})
+                          .error == SyncCoverGraphError::StructureFrozen,
+                  "reject prefix mutation after graph freeze");
+  return passed;
+}
+
+bool testTargetCompletionCertificatesAreExactAndImmutable() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const std::uint32_t mte1 = 3;
+  const std::uint32_t matrix = 2;
+  const std::uint32_t fix = 10;
+  passed &= check(
+      graph.setTargetCompletionResources({mte1, matrix, fix}),
+      "configure opaque target completion resources");
+  const SyncCoverNodeId first =
+      takeIndex(graph.addNode(mte1, 1, 0, 0), passed,
+                "add first certified producer");
+  const SyncCoverNodeId second =
+      takeIndex(graph.addNode(mte1, 1, 0, 1), passed,
+                "add final certified producer");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(matrix, 1, 0, 2), passed,
+                "add certified physical target");
+  const SyncCoverStorageDomainId left =
+      takeIndex(graph.addStorageDomain(SyncCoverStorageDomainRole::L0Left),
+                passed,
+                "add certified exact storage domain");
+  const SyncCoverStorageDomainId other = takeIndex(
+      graph.addStorageDomain(SyncCoverStorageDomainRole::Other), passed,
+      "add wrong certificate storage domain");
+  const SyncCoverStorageAccessId firstWrite = takeIndex(
+      graph.addStorageAccess(first, left, 1, {0, 64},
+                             SyncCoverStorageAccessMode::Write, std::nullopt,
+                             true),
+      passed, "add first exact producer access");
+  const SyncCoverStorageAccessId secondWrite = takeIndex(
+      graph.addStorageAccess(second, left, 2, {64, 128},
+                             SyncCoverStorageAccessMode::Write, std::nullopt,
+                             true),
+      passed, "add second exact producer access");
+  const SyncCoverStorageAccessId firstRead = takeIndex(
+      graph.addStorageAccess(target, left, 1, {0, 64},
+                             SyncCoverStorageAccessMode::Read, std::nullopt,
+                             true),
+      passed, "add first exact target access");
+  const SyncCoverStorageAccessId secondRead = takeIndex(
+      graph.addStorageAccess(target, left, 2, {64, 128},
+                             SyncCoverStorageAccessMode::Read, std::nullopt,
+                             true),
+      passed, "add second exact target access");
+  const SyncCoverStorageWitnessId firstWitness = takeIndex(
+      graph.addStorageWitness(firstWrite, firstRead), passed,
+      "add first exact RAW witness");
+  const SyncCoverStorageWitnessId secondWitness = takeIndex(
+      graph.addStorageWitness(secondWrite, secondRead), passed,
+      "add second exact RAW witness");
+  SyncCoverDemand firstDemand = makeDemand(first, target);
+  firstDemand.provenanceKinds = {SyncCoverDemandKind::MemoryRAW};
+  firstDemand.storageWitnesses = {firstWitness};
+  const SyncCoverDemandId firstDemandId = takeIndex(
+      graph.addDemand(std::move(firstDemand)), passed,
+      "add first certified demand");
+  SyncCoverDemand secondDemand = makeDemand(second, target);
+  secondDemand.provenanceKinds = {SyncCoverDemandKind::MemoryRAW};
+  secondDemand.storageWitnesses = {secondWitness};
+  const SyncCoverDemandId secondDemandId = takeIndex(
+      graph.addDemand(std::move(secondDemand)), passed,
+      "add second certified demand");
+  passed &= check(graph.addTargetCompletionCertificate(
+                      SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix,
+                      second, target, mte1, matrix, {left},
+                      {firstDemandId, secondDemandId}),
+                  "register exact target completion certificate");
+  passed &= check(graph.hasTargetCompletionCertificate(
+                      SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix,
+                      second, target, mte1, matrix, firstDemandId) &&
+                      graph.hasTargetCompletionCertificate(
+                          SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix,
+                          second, target, mte1, matrix, secondDemandId),
+                  "query only explicitly certified demands");
+  const std::size_t certificateCount =
+      graph.getTargetCompletionCertificates().size();
+  passed &= check(graph.addTargetCompletionCertificate(
+                      SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix,
+                      first, target, mte1, matrix, {left}, {secondDemandId})
+                          .error == SyncCoverGraphError::
+                                        InvalidTargetCompletionCertificate &&
+                      graph.getTargetCompletionCertificates().size() ==
+                          certificateCount,
+                  "reject a cut before its attested producer atomically");
+  passed &= check(
+      graph.addTargetCompletionCertificate(
+               SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix, second,
+               target, matrix, matrix, {left}, {firstDemandId})
+              .error ==
+          SyncCoverGraphError::InvalidTargetCompletionCertificate,
+      "reject a target certificate with the wrong source pipe");
+  passed &= check(
+      graph.addTargetCompletionCertificate(
+               SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix, second,
+               target, mte1, matrix, {other}, {firstDemandId})
+              .error ==
+          SyncCoverGraphError::InvalidTargetCompletionCertificate,
+      "reject a target certificate with the wrong storage role");
+  passed &= check(
+      graph.addTargetCompletionCertificate(
+               SyncCoverTargetCompletionKind::MToFixAccumulatorBoundary,
+               second, target, mte1, matrix, {left}, {firstDemandId})
+              .error ==
+          SyncCoverGraphError::InvalidTargetCompletionCertificate,
+      "reject resources and storage belonging to another certificate kind");
+  passed &= check(graph.freezeStructure(), "freeze certified target graph") &&
+            check(graph.validate(), "validate certified target graph");
+  passed &= check(graph.addTargetCompletionCertificate(
+                      SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix,
+                      second, target, mte1, matrix, {left}, {firstDemandId})
+                          .error == SyncCoverGraphError::StructureFrozen,
+                  "reject target certificate mutation after freeze");
+  return passed;
+}
+
 } // namespace
 
 int main() {
@@ -767,5 +996,8 @@ int main() {
   passed &= testPeriodicControlEvidence();
   passed &= testCompletionDominanceContract();
   passed &= testControlBoundaryAnchors();
+  passed &= testPhysicalMacroEntryAndExitAnchors();
+  passed &= testBlockingBarrierPrefixAndLoopBodyAnchor();
+  passed &= testTargetCompletionCertificatesAreExactAndImmutable();
   return passed ? 0 : 1;
 }

@@ -48,11 +48,13 @@ and unbalanced recurrence recipes fail closed before the IR is changed.
 Operations that consume the intra-core event resources owned by CanonicalSync
 are rejected as user input. Targeted and `PIPE_ALL` `pto.barrier` operations
 outside loops are accepted, preserved, and modeled as fixed completion supply.
-A targeted barrier drains earlier work on its named pipeline; `PIPE_ALL` drains
-earlier work on every pipeline. Barriers inside `scf.for` are rejected until a
-balanced recurrence contract is available. Whole-core synchronization and
-memory-fence operations remain preserved fixed constraints, but are not yet
-credited as coverage supply.
+On an architecture that advertises the blocking targeted-barrier contract, a
+targeted barrier drains earlier work on its named pipeline before the first
+subsequent operation on every resource; `PIPE_ALL` drains earlier work on every
+pipeline. Unsupported targeted pipes retain only same-resource completion.
+Barriers inside `scf.for` are rejected until a balanced recurrence contract is
+available. Whole-core synchronization and memory-fence operations remain
+preserved fixed constraints, but are not yet credited as coverage supply.
 
 CanonicalSync marks every synchronization operation, guard, and dynamic event
 lane helper that it creates with the unit attribute `pto.canonical_sync`. This
@@ -119,12 +121,101 @@ contains only:
 - a direct cross-pipeline event handshake;
 - a targeted same-pipeline barrier;
 - a lifecycle-complete generic recurrence event channel;
-- a targeted-barrier plus event frontier reserved for event-pressure repair;
+- a target-local set/wait on completion-ordered resources;
+- a source-local balanced event immediately after one complete producer,
+  preceded by an exact targeted source drain when that producer cannot signal
+  completion directly;
+- source-local and source-prefix pipe drains for same-resource rows only;
+- a loop-carry source-pipe drain at the beginning of each non-first iteration;
+- a loop-boundary recurrence channel whose source-prefix completion is
+  established by one target-supported targeted barrier at the loop-body exit;
+- cross-resource source/target drains and targeted-barrier plus event frontiers
+  reserved for conflict-core event-pressure repair;
 - a localized target `PIPE_ALL` barrier reserved for the last backstop.
 
 A set and its matching wait are one mechanism and can never be selected
 separately. A recurrence channel owns its entry priming, loop body actions,
 modulo lane selection, and exit draining.
+
+The source-local mechanism is the fail-closed normal completeness column. A
+directly signalling producer emits a balanced set/wait at its complete physical
+exit. A non-signalling producer first emits a blocking targeted barrier for its
+own pipe at that exit, then the balanced set/wait. The normal catalog never
+uses a drain alone to satisfy a cross-resource row. Each binding retains the
+exact demand that admitted the physical recipe. A distance-zero binding may
+propagate to other distance-zero rows only; it is never carried into a
+positive-distance recurrence arena. A positive-distance binding is restricted
+to its attested demand. Bindings of both distance classes may share one
+mechanism only when their complete physical action list is identical; their
+per-binding applicability remains independent. This is deduplication of an
+exact hardware action, not a merged-prefix event.
+
+A target-local set/wait is available only when the source has an explicit
+completion-ordered prefix contract. Drain-only cross-resource alternatives are
+constructed only for the live allocation conflict core during bounded repair;
+they never compete in normal selection.
+
+A blocking target-local barrier may additionally expose a distance-zero-only
+dominating-cut certificate. Analysis snapshots the structured issued history
+immediately before the target's physical macro anchor. The certificate contains
+only earlier, resource-matching, guard-compatible source nodes. Completion from
+the barrier may propagate through later fixed issue order, but it cannot enter a
+positive-distance arena. These certificate supplies are intentionally
+unattested because they describe a validated physical prefix rather than a
+single admitting hazard; graph freeze validation and fresh mechanism validation
+recheck the complete prefix.
+
+`SourceLocalPipeDrain` places one targeted barrier immediately after a source
+macro. On architectures that guarantee a blocking targeted barrier for that
+source pipe, the physical macro exit is known complete before subsequent work
+begins on any resource. One action can therefore satisfy all compatible
+downstream targets of that producer. Distance-zero bindings use the exact
+after-source completion edge and remain distance-zero-only; positive-distance
+bindings retain their exact demand attestation and recurrence arena.
+
+`SourcePrefixPipeDrain` shares one physical drain across several earlier
+producers without inventing an event prefix. Analysis groups source and cut
+nodes by the immutable tuple `(scope, normalized guard, resource)` and uses the
+frozen issued-prefix certificate at the cut. The barrier is anchored after the
+cut's physical macro exit. Every supplied source must be the cut itself or a
+member of that exact certificate, and fresh validation rechecks the scope,
+guard, source pipe, physical ordering, and distance qualifier. Construction is
+bounded separately by inspected incidences, admitted mechanisms, and retained
+demand incidences. Reaching any bound truncates this optional family
+deterministically; it never removes the source-local, target-local, event, or
+same-pipeline singleton fallbacks, and a candidate is committed all-or-none.
+
+`LoopCarryPipeDrain` is a separate exact recurrence mechanism. It emits one
+targeted source-pipe barrier at the loop-body entry, guarded by
+`NotFirstIteration`. Every positive-distance supply retains
+`attestedDemand=d` and `allowedDemands={d}`. A distance greater than one is
+valid because completion established at the first intervening iteration entry
+persists. The mechanism shares one physical drain across rows in the same
+recurrence scope and source pipe, including exact rows whose target is on a
+different pipe. The blocking source-pipe barrier completes that prior-copy
+prefix before any current-copy target can issue. It neither removes storage
+obligations nor acts as an unrestricted pair connector. This loop-entry carry
+cut is the narrow recurrence exception to the rule that ordinary
+cross-resource drains are generated only from an allocation conflict core.
+The required exact singleton and source-local completion catalog is completed
+before this optional consolidation is considered. Loop-carry preparation has
+independent inspection, complete-candidate, and retained-incidence bounds;
+oversized groups and aggregate problem-limit exhaustion truncate the family
+without rejecting the singleton-valid problem. Each `(loop, source pipe)`
+group is committed all-or-none.
+
+`LoopBoundarySourcePrefixProtocol` is a narrow lifecycle-complete recurrence
+channel for source pipes with a target-supported blocking barrier. It is
+admitted only for positive-distance, cross-resource rows in one loop, and only
+when at least two exact rows share the same loop, distance, source pipe, and
+target pipe. It owns `d` scope-entry primes, one modulo-lane wait at
+`LoopBodyEntry`, a targeted source-pipe barrier followed by the matching
+modulo-lane set at `LoopBodyExit`, and `d` scope-exit drains. Every binding
+remains restricted to its attested demand. The `LoopBodyExit` anchor resolves
+immediately before the structured loop-body terminator, so the barrier
+completes the whole admitted producer prefix before the value is exported to
+the next virtual copy. Target capability data, rather than a pipeline-name
+allowlist, determines which source pipes admit the protocol.
 
 Ownership/slot-lifecycle protocols, pipeline aggregates, named round trips,
 merged-prefix events, and arbitrary protocol paths are not part of the catalog.
@@ -142,7 +233,19 @@ has no demand coverage and cannot make the optimization instance trivial.
 ## 4. Singleton and pair coverage
 
 For every precise mechanism `m`, the graph oracle computes exact singleton
-coverage `C(m)` over all active demand rows.
+coverage `C(m)` over the selection basis. The complete obligation universe is
+kept separately and is never reduced or discarded. Catalog construction uses
+the complete obligations, while greedy selection and reverse deletion use only
+the basis. Fresh verification always recomputes coverage over the complete
+obligation universe.
+
+The optional basis reduction applies only to unguarded distance-zero memory
+obligations in one scope and one resource. Within each eligible group it removes
+an edge only when a path through other obligations already implies it. SSA,
+guarded, cross-resource, and positive-distance obligations always remain in the
+basis. Edge, reachability-word, and accounted-work bounds are checked before a
+group is transformed; a group that does not fit is retained unchanged. Reports
+distinguish complete rows, basis rows, reduced rows, and truncation.
 
 For two plausible mechanisms `m1` and `m2`, the oracle computes exact joint
 coverage. The pair is retained only if it adds coverage that neither singleton
@@ -164,8 +267,9 @@ chain before exact propagation.
 The exact-evaluation bound is applied per owner scope. If one scope exceeds the
 bound, optional pairs for that scope are skipped as a group; singleton direct
 mechanisms remain available. Exact pair coverage is likewise prepared one owner
-scope at a time. If that scope exceeds a pair result or workspace bound, its
-whole pair batch is discarded and preparation continues with the next scope.
+scope at a time. If a scope exceeds its proposal, pair-result, or workspace
+bound, its whole batch is discarded and preparation continues with the next
+scope. A batch is never truncated by mechanism ID order.
 
 Dense coverage matrices use a default limit of `2^22` 64-bit words each. Pair
 preparation therefore retains at most one singleton result, one current-scope
@@ -243,14 +347,18 @@ leaves the IR unchanged.
 
 ## 7. Independent final verification
 
-The final verifier does not trust the mutable greedy coverage state. It rebuilds
-the completion-supply list from only the selected mechanisms and reruns the
-semantic coverage oracle over every active demand.
+The final verifier does not trust construction-time mechanism admission, a
+repair trial's cached plan, or the mutable greedy coverage state. Under a
+separate work bound it revalidates each immutable action/supply recipe and its
+derived lifetime and cost data, rejects selected conflict pairs, recomputes
+event allocation, rebuilds the completion-supply list, and reruns the semantic
+coverage oracle over the complete obligation universe.
 
-It also recomputes event allocation and validates mechanism conflicts, guarded
-and recurrence actions, physical anchors, lanes, and reserved IDs. Only then are
-all actions staged and emitted. No failure can leave a partial set/wait
-protocol in the function.
+Physical verification then resolves every anchor, guard loop, event lane,
+allocated ID, and barrier resource before any rewrite. This staging step also
+runs in analysis-only mode, so a comparison cannot report a semantically valid
+but physically unmaterializable plan. A failed verification leaves both user IR
+and a previous pass-owned plan unchanged.
 
 ## 8. CLI
 
@@ -266,7 +374,29 @@ Relevant driver options are:
 --canonical-sync-event-id-max=8
 --canonical-sync-pattern-mode=direct|direct-pair
 --canonical-sync-selection-strategy=fixed-cover|action-aware-singleton|pair-lookahead
+--canonical-sync-maximum-pair-evaluations-per-scope=4096
+--canonical-sync-maximum-selection-work-units=134217728
 --canonical-sync-maximum-repair-rounds=8
+--canonical-sync-maximum-repair-trials=256
+--canonical-sync-maximum-repair-work-units=268435456
+--canonical-sync-maximum-repair-frontier-inspections=65536
+--canonical-sync-maximum-repair-frontier-proposals=4096
+--canonical-sync-maximum-backstop-deletion-trials=4096
+--canonical-sync-maximum-backstop-deletion-work-units=134217728
+--canonical-sync-maximum-verification-work-units=134217728
+--canonical-sync-enable-demand-basis-reduction
+--canonical-sync-maximum-demand-basis-group-edges=262144
+--canonical-sync-maximum-demand-basis-reachability-words=1048576
+--canonical-sync-maximum-demand-basis-reduction-work=16777216
+--canonical-sync-maximum-source-prefix-inspections=1048576
+--canonical-sync-maximum-source-prefix-candidates=16384
+--canonical-sync-maximum-source-prefix-incidences=1048576
+--canonical-sync-maximum-loop-carry-inspections=1048576
+--canonical-sync-maximum-loop-carry-candidates=16384
+--canonical-sync-maximum-loop-carry-incidences=1048576
+--canonical-sync-maximum-loop-boundary-protocol-inspections=1048576
+--canonical-sync-maximum-loop-boundary-protocol-candidates=16384
+--canonical-sync-maximum-loop-boundary-protocol-incidences=1048576
 --canonical-sync-assume-distinct-gm-args-noalias
 --canonical-sync-assume-all-gm-accesses-noalias
 ```
@@ -281,15 +411,26 @@ synchronization:
 
 ```text
 --enable-canonical-sync
---canonical-sync-analysis-only
---canonical-sync-comparison-report=report.json
+--analyze-canonical-sync-strategies
+--canonical-sync-report=report.json
 --emit-pto-ir
 ```
 
 Analysis-only mode requires textual IR emission so it cannot accidentally
 produce executable output without synchronization.
 
-The human summary and JSON report contain demand/key counts, direct mechanisms,
-pair proposals and evaluations, retained synergistic pairs, selected event and
-barrier counts, all structural cost components, maximum domain pressure, repair
-rounds, assigned physical IDs, work limits, and localized `PIPE_ALL` use.
+`--canonical-sync-analysis-only` and
+`--canonical-sync-comparison-report` remain accepted compatibility spellings.
+
+The JSON root carries schema `ptoas.canonical_sync.v1` and the function name.
+It reports graph nodes and edges, original demand provenance and unique coverage
+rows, complete obligation and selection-basis sizes, reduced-row and truncation
+status, preparation time, direct mechanisms, bounded source-prefix construction,
+pair proposals/evaluations, and retained synergistic pairs. Each strategy
+reports selection/cleanup work, selected events and barriers (including each
+targeted-barrier recipe separately), predicted synchronization instructions,
+all structural cost components, event-domain pressure and live mechanisms,
+assigned physical IDs, bounded repair/backstop status,
+selection/repair/verification times, fresh-verification work and result,
+localized `PIPE_ALL` use, and a deterministic signature over the selected
+immutable recipes and allocation.

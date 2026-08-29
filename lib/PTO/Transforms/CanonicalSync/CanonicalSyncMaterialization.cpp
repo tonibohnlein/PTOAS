@@ -20,6 +20,9 @@
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <optional>
@@ -31,6 +34,21 @@ using namespace mlir;
 using namespace mlir::pto;
 
 namespace {
+
+using SteadyClock = std::chrono::steady_clock;
+
+std::uint64_t elapsedNanoseconds(SteadyClock::time_point begin) {
+  const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                           SteadyClock::now() - begin)
+                           .count();
+  return elapsed > 0 ? static_cast<std::uint64_t>(elapsed) : 0;
+}
+
+void addNanoseconds(std::uint64_t &total, std::uint64_t amount) {
+  total = amount > std::numeric_limits<std::uint64_t>::max() - total
+              ? std::numeric_limits<std::uint64_t>::max()
+              : total + amount;
+}
 
 using AllocationKey = std::pair<CanonicalSyncMechanismId, std::size_t>;
 
@@ -97,6 +115,15 @@ std::vector<std::uint32_t> getIssueResources(const SyncCoverGraph &graph) {
   return resources;
 }
 
+Operation *getFirstUnownedOperation(Block &block) {
+  for (Operation &operation : block) {
+    if (!isa_and_nonnull<UnitAttr>(operation.getAttr("pto.canonical_sync"))) {
+      return &operation;
+    }
+  }
+  return nullptr;
+}
+
 std::optional<std::pair<Operation *, bool>>
 resolvePhysicalAnchor(const CanonicalSyncProgram &program,
                       const SyncCoverAnchor &anchor) {
@@ -148,10 +175,31 @@ resolvePhysicalAnchor(const CanonicalSyncProgram &program,
     }
     Block &block = binding.region->front();
     Operation *position = anchor.kind == SyncCoverAnchorKind::ScopeEntry
-                              ? &block.front()
+                              ? getFirstUnownedOperation(block)
                               : &block.back();
+    if (!position) {
+      return std::nullopt;
+    }
     if (anchor.kind == SyncCoverAnchorKind::ScopeExit &&
         !position->hasTrait<OpTrait::IsTerminator>()) {
+      return std::nullopt;
+    }
+    return std::make_pair(position, true);
+  }
+  case SyncCoverAnchorKind::LoopBodyEntry:
+  case SyncCoverAnchorKind::LoopBodyExit: {
+    if (anchor.scope >= program.getScopeBindings().size()) {
+      return std::nullopt;
+    }
+    Operation *owner = program.getScopeBindings()[anchor.scope].owner;
+    auto loop = dyn_cast_or_null<scf::ForOp>(owner);
+    if (!loop || loop.getBody()->empty()) {
+      return std::nullopt;
+    }
+    Operation *position = anchor.kind == SyncCoverAnchorKind::LoopBodyEntry
+                              ? getFirstUnownedOperation(*loop.getBody())
+                              : loop.getBody()->getTerminator();
+    if (!position) {
       return std::nullopt;
     }
     return std::make_pair(position, true);
@@ -555,13 +603,33 @@ firstConflictCore(const CanonicalSyncSelection &selection) {
   return {};
 }
 
+std::vector<CanonicalSyncMechanismId>
+allConflictCore(const CanonicalSyncSelection &selection) {
+  std::vector<CanonicalSyncMechanismId> result;
+  for (const CanonicalSyncDomainAllocation &domain :
+       selection.allocation.domains) {
+    if (domain.required > domain.available) {
+      result.insert(result.end(), domain.liveMechanisms.begin(),
+                    domain.liveMechanisms.end());
+    }
+  }
+  llvm::sort(result);
+  result.erase(std::unique(result.begin(), result.end()), result.end());
+  return result;
+}
+
 struct SelectionOutcome {
   CanonicalSyncSelection selection;
+  CanonicalSyncSelectionError preciseError = CanonicalSyncSelectionError::None;
+  CanonicalSyncGreedyStatistics preciseSearch;
+  CanonicalSyncResourceAllocation preciseAllocation;
   std::optional<CanonicalSyncVerifiedPlan> verifiedPlan;
   std::unique_ptr<CanonicalSyncPatternProblem> ownedProblem;
   const CanonicalSyncPatternProblem *selectedProblem = nullptr;
   bool feasible = false;
   bool fatalConstructionError = false;
+  bool repairAttempted = false;
+  bool repairSearchExhausted = false;
   bool repairFrontierTruncated = false;
   bool repairBudgetExhausted = false;
   bool backstopDeletionTruncated = false;
@@ -570,6 +638,8 @@ struct SelectionOutcome {
   std::size_t repairWorkUnits = 0;
   std::size_t backstopDeletionTrials = 0;
   std::size_t backstopDeletionWorkUnits = 0;
+  std::uint64_t selectionNanoseconds = 0;
+  std::uint64_t repairNanoseconds = 0;
 
   const CanonicalSyncPatternProblem &getProblem() const {
     return ownedProblem ? *ownedProblem : *selectedProblem;
@@ -617,6 +687,14 @@ struct VerifiedRepairCandidate {
   CanonicalSyncVerifiedPlan plan;
 };
 
+bool consumesEvent(const CanonicalSyncPatternProblem &problem,
+                   CanonicalSyncMechanismId mechanism) {
+  if (mechanism >= problem.getMechanisms().size()) {
+    return false;
+  }
+  return !problem.getMechanisms()[mechanism].descriptor.eventUses.empty();
+}
+
 void considerVerifiedRepair(const CanonicalSyncPatternProblem &problem,
                             const CanonicalSyncSelection &selection,
                             std::optional<VerifiedRepairCandidate> &best) {
@@ -637,10 +715,15 @@ selectWithBoundedRepair(const CanonicalSyncProgram &program,
                         const CanonicalSyncPatternProblem &problem,
                         const CanonicalSyncBuildOptions &options) {
   CanonicalSyncGreedyOptions current = options.selection;
+  const SteadyClock::time_point selectionStart = SteadyClock::now();
   CanonicalSyncSelection selection =
       selectCanonicalSyncPatterns(problem, current);
   SelectionOutcome outcome;
+  outcome.selectionNanoseconds = elapsedNanoseconds(selectionStart);
   outcome.selectedProblem = &problem;
+  outcome.preciseError = selection.error;
+  outcome.preciseSearch = selection.statistics;
+  outcome.preciseAllocation = selection.allocation;
   if (selection ||
       selection.error != CanonicalSyncSelectionError::ResourceInfeasible ||
       !options.patterns.enableConflictCoreRepair ||
@@ -650,54 +733,178 @@ selectWithBoundedRepair(const CanonicalSyncProgram &program,
     return outcome;
   }
 
+  const SteadyClock::time_point repairStart = SteadyClock::now();
   const std::vector<CanonicalSyncMechanismId> initialCore =
-      firstConflictCore(selection);
-  CanonicalSyncProblemBuildResult repair =
-      buildCanonicalSyncRepairProblem(program, problem, options, initialCore);
+      allConflictCore(selection);
+  if (initialCore.empty()) {
+    outcome.selection = std::move(selection);
+    outcome.fatalConstructionError = true;
+    outcome.repairNanoseconds = elapsedNanoseconds(repairStart);
+    program.getFunction().emitError(
+        "canonical sync allocation pressure has no valid conflict core");
+    return outcome;
+  }
+  CanonicalSyncProblemBuildResult repair = buildCanonicalSyncRepairProblem(
+      program, problem, options, initialCore, selection.mechanisms);
   if (!repair) {
     outcome.selection = std::move(selection);
     outcome.fatalConstructionError = true;
+    outcome.repairNanoseconds = elapsedNanoseconds(repairStart);
     return outcome;
   }
   outcome.ownedProblem = std::move(repair.problem);
   outcome.selectedProblem = outcome.ownedProblem.get();
+  outcome.repairAttempted = true;
   outcome.repairFrontierTruncated =
       outcome.ownedProblem->getPatternStatistics().repairFrontierTruncated;
+  const auto repairMechanismsByOwner =
+      std::move(repair.repairMechanismsByOwner);
+  const std::vector<CanonicalSyncMechanismId> collectiveRepairMechanisms =
+      std::move(repair.collectiveRepairMechanisms);
+  std::vector<CanonicalSyncMechanismId> allRepairMechanisms =
+      collectiveRepairMechanisms;
+  for (const auto &[owner, mechanisms] : repairMechanismsByOwner) {
+    (void)owner;
+    allRepairMechanisms.insert(allRepairMechanisms.end(), mechanisms.begin(),
+                               mechanisms.end());
+  }
+  llvm::sort(allRepairMechanisms);
+  allRepairMechanisms.erase(
+      std::unique(allRepairMechanisms.begin(), allRepairMechanisms.end()),
+      allRepairMechanisms.end());
+  const auto constrainRepairCatalog =
+      [&](CanonicalSyncGreedyOptions &trialOptions,
+          ArrayRef<CanonicalSyncMechanismId> owners, bool collective) {
+        std::vector<CanonicalSyncMechanismId> allowed;
+        for (CanonicalSyncMechanismId owner : owners) {
+          const auto position = repairMechanismsByOwner.find(owner);
+          if (position != repairMechanismsByOwner.end()) {
+            allowed.insert(allowed.end(), position->second.begin(),
+                           position->second.end());
+          }
+        }
+        if (collective) {
+          allowed.insert(allowed.end(), collectiveRepairMechanisms.begin(),
+                         collectiveRepairMechanisms.end());
+        }
+        llvm::sort(allowed);
+        allowed.erase(std::unique(allowed.begin(), allowed.end()),
+                      allowed.end());
+        trialOptions.forbiddenMechanisms.erase(
+            std::remove_if(trialOptions.forbiddenMechanisms.begin(),
+                           trialOptions.forbiddenMechanisms.end(),
+                           [&](CanonicalSyncMechanismId mechanism) {
+                             return std::binary_search(
+                                 allRepairMechanisms.begin(),
+                                 allRepairMechanisms.end(), mechanism);
+                           }),
+            trialOptions.forbiddenMechanisms.end());
+        for (CanonicalSyncMechanismId mechanism : allRepairMechanisms) {
+          if (!std::binary_search(allowed.begin(), allowed.end(), mechanism)) {
+            trialOptions.forbiddenMechanisms.push_back(mechanism);
+          }
+        }
+      };
   RepairBudget budget(options.maximumRepairTrials,
                       options.maximumRepairWorkUnits);
-  std::optional<CanonicalSyncSelection> currentSelection =
-      budget.run(*outcome.ownedProblem, current);
+  // The repair catalog is never an unrestricted replacement catalog. Preserve
+  // the precise pressure result and expose its extra mechanisms only in a
+  // trial that forbids at least one live conflicting event.
+  CanonicalSyncSelection lastPressure = selection;
   std::vector<CanonicalSyncMechanismId> core = initialCore;
+  std::vector<CanonicalSyncMechanismId> forbiddenRepairOwners;
 
   for (std::size_t round = 1; round <= options.maximumRepairRounds; ++round) {
     outcome.repairRounds = round;
     std::optional<VerifiedRepairCandidate> bestVerified;
     std::optional<CanonicalSyncSelection> bestPressureTrial;
     CanonicalSyncGreedyOptions bestPressureOptions;
-    if (currentSelection) {
-      considerVerifiedRepair(*outcome.ownedProblem, *currentSelection,
-                             bestVerified);
-      if (currentSelection->error ==
-          CanonicalSyncSelectionError::ResourceInfeasible) {
-        bestPressureTrial = *currentSelection;
-        bestPressureOptions = current;
-      }
-    }
-    for (CanonicalSyncMechanismId mechanism : core) {
+    std::vector<CanonicalSyncMechanismId> bestPressureOwners;
+    std::vector<CanonicalSyncMechanismId> replaceableCore;
+    llvm::copy_if(core, std::back_inserter(replaceableCore),
+                  [&](CanonicalSyncMechanismId mechanism) {
+                    return consumesEvent(*outcome.ownedProblem, mechanism);
+                  });
+    // Try owners with a certified repair alternative first. Stable ordering
+    // within each class keeps the search deterministic while avoiding work on
+    // exclusions that can only reshuffle the same over-pressured event plan.
+    llvm::stable_sort(replaceableCore, [&](CanonicalSyncMechanismId first,
+                                           CanonicalSyncMechanismId second) {
+      const bool firstHasRepair =
+          repairMechanismsByOwner.find(first) != repairMechanismsByOwner.end();
+      const bool secondHasRepair =
+          repairMechanismsByOwner.find(second) != repairMechanismsByOwner.end();
+      return firstHasRepair > secondHasRepair;
+    });
+    const auto considerTrial =
+        [&](CanonicalSyncGreedyOptions trialOptions,
+            ArrayRef<CanonicalSyncMechanismId> trialOwners) {
+          std::optional<CanonicalSyncSelection> trial =
+              budget.run(*outcome.ownedProblem, trialOptions);
+          if (!trial) {
+            return;
+          }
+          considerVerifiedRepair(*outcome.ownedProblem, *trial, bestVerified);
+          const bool improvesPressure =
+              trial->error == CanonicalSyncSelectionError::ResourceInfeasible &&
+              resourceOverflow(*trial) < resourceOverflow(lastPressure) &&
+              (!bestPressureTrial ||
+               resourceOverflow(*trial) < resourceOverflow(*bestPressureTrial));
+          if (improvesPressure) {
+            bestPressureTrial = *trial;
+            bestPressureOptions = std::move(trialOptions);
+            bestPressureOwners.assign(trialOwners.begin(), trialOwners.end());
+          }
+        };
+    // Required search: forbid one live conflicting event at a time from the
+    // current pressure baseline.
+    for (CanonicalSyncMechanismId mechanism : replaceableCore) {
       CanonicalSyncGreedyOptions trialOptions = current;
       trialOptions.forbiddenMechanisms.push_back(mechanism);
-      std::optional<CanonicalSyncSelection> trial =
-          budget.run(*outcome.ownedProblem, trialOptions);
-      if (!trial) {
+      std::vector<CanonicalSyncMechanismId> trialOwners = forbiddenRepairOwners;
+      trialOwners.push_back(mechanism);
+      llvm::sort(trialOwners);
+      trialOwners.erase(std::unique(trialOwners.begin(), trialOwners.end()),
+                        trialOwners.end());
+      constrainRepairCatalog(trialOptions, trialOwners, false);
+      llvm::sort(trialOptions.forbiddenMechanisms);
+      trialOptions.forbiddenMechanisms.erase(
+          std::unique(trialOptions.forbiddenMechanisms.begin(),
+                      trialOptions.forbiddenMechanisms.end()),
+          trialOptions.forbiddenMechanisms.end());
+      considerTrial(std::move(trialOptions), trialOwners);
+      // A strictly smaller pressure diagnosis is the next repair baseline,
+      // not another candidate to compare exhaustively in this round. Advance
+      // immediately so a bounded budget can perform several local removals.
+      if (bestPressureTrial || budget.exhausted()) {
         break;
       }
-      considerVerifiedRepair(*outcome.ownedProblem, *trial, bestVerified);
-      if (trial->error == CanonicalSyncSelectionError::ResourceInfeasible &&
-          (!bestPressureTrial ||
-           resourceOverflow(*trial) < resourceOverflow(*bestPressureTrial))) {
-        bestPressureTrial = *trial;
-        bestPressureOptions = std::move(trialOptions);
-      }
+    }
+    // Optional acceleration: try replacing the entire live core, but never
+    // allow an uncoverable/work-limited collective trial to replace the last
+    // valid resource-pressure diagnosis.
+    if (!budget.exhausted() &&
+        (!bestPressureTrial || round == options.maximumRepairRounds) &&
+        !replaceableCore.empty()) {
+      CanonicalSyncGreedyOptions collectiveOptions = current;
+      std::vector<CanonicalSyncMechanismId> collectiveOwners =
+          forbiddenRepairOwners;
+      collectiveOwners.insert(collectiveOwners.end(), replaceableCore.begin(),
+                              replaceableCore.end());
+      llvm::sort(collectiveOwners);
+      collectiveOwners.erase(
+          std::unique(collectiveOwners.begin(), collectiveOwners.end()),
+          collectiveOwners.end());
+      collectiveOptions.forbiddenMechanisms.insert(
+          collectiveOptions.forbiddenMechanisms.end(), replaceableCore.begin(),
+          replaceableCore.end());
+      constrainRepairCatalog(collectiveOptions, collectiveOwners, true);
+      llvm::sort(collectiveOptions.forbiddenMechanisms);
+      collectiveOptions.forbiddenMechanisms.erase(
+          std::unique(collectiveOptions.forbiddenMechanisms.begin(),
+                      collectiveOptions.forbiddenMechanisms.end()),
+          collectiveOptions.forbiddenMechanisms.end());
+      considerTrial(std::move(collectiveOptions), collectiveOwners);
     }
     if (bestVerified) {
       outcome.selection = std::move(bestVerified->selection);
@@ -710,29 +917,175 @@ selectWithBoundedRepair(const CanonicalSyncProgram &program,
     if (cannotContinue) {
       break;
     }
-    currentSelection = std::move(bestPressureTrial);
+    lastPressure = *bestPressureTrial;
     current = std::move(bestPressureOptions);
-    core = firstConflictCore(*currentSelection);
+    forbiddenRepairOwners = std::move(bestPressureOwners);
+    core = allConflictCore(lastPressure);
   }
   if (!outcome.feasible) {
-    outcome.selection =
-        currentSelection ? std::move(*currentSelection) : std::move(selection);
+    outcome.selection = std::move(lastPressure);
   }
   outcome.repairBudgetExhausted = budget.exhausted();
+  outcome.repairSearchExhausted = !outcome.feasible;
   outcome.repairTrials = budget.trials();
   outcome.repairWorkUnits = budget.workUnits();
+  outcome.repairNanoseconds = elapsedNanoseconds(repairStart);
   return outcome;
+}
+
+bool canUseLocalizedPipeAllBackstop(const SelectionOutcome &outcome) {
+  return !outcome.feasible && !outcome.fatalConstructionError &&
+         outcome.selection.error ==
+             CanonicalSyncSelectionError::ResourceInfeasible &&
+         outcome.selection.allocation.valid &&
+         !outcome.selection.allocation.feasible &&
+         !firstConflictCore(outcome.selection).empty() &&
+         outcome.repairAttempted && outcome.repairSearchExhausted;
+}
+
+std::size_t
+countPredictedSyncInstructions(const CanonicalSyncProgram &program,
+                               const CanonicalSyncPatternProblem &problem,
+                               const CanonicalSyncVerifiedPlan &plan) {
+  std::size_t result = 0;
+  for (CanonicalSyncMechanismId mechanism : plan.mechanisms) {
+    const std::size_t actions =
+        problem.getMechanisms()[mechanism].descriptor.actions.size();
+    const bool actionCountOverflows =
+        actions > std::numeric_limits<std::size_t>::max() - result;
+    if (actionCountOverflows) {
+      return std::numeric_limits<std::size_t>::max();
+    }
+    result += actions;
+  }
+  program.getFunction().walk([&](func::ReturnOp) {
+    if (result != std::numeric_limits<std::size_t>::max()) {
+      ++result;
+    }
+  });
+  return result;
+}
+
+void hashPlanValue(std::uint64_t &hash, std::uint64_t value) {
+  constexpr std::uint64_t hashPrime = 1099511628211ULL;
+  for (unsigned byte = 0; byte < sizeof(value); ++byte) {
+    hash ^= (value >> (byte * 8)) & 0xffU;
+    hash *= hashPrime;
+  }
+}
+
+std::uint64_t computePlanSignature(const CanonicalSyncPatternProblem &problem,
+                                   const CanonicalSyncVerifiedPlan &plan) {
+  std::uint64_t hash = 1469598103934665603ULL;
+  hashPlanValue(hash, plan.mechanisms.size());
+  for (CanonicalSyncMechanismId mechanism : plan.mechanisms) {
+    hashPlanValue(hash, mechanism);
+    hashPlanValue(hash, problem.getMechanismSignature(mechanism));
+  }
+  hashPlanValue(hash, plan.allocation.domains.size());
+  for (const CanonicalSyncDomainAllocation &domain : plan.allocation.domains) {
+    hashPlanValue(hash, domain.domain);
+    hashPlanValue(hash, domain.required);
+    hashPlanValue(hash, domain.available);
+    hashPlanValue(hash, domain.maximumPressurePoint.value_or(
+                            std::numeric_limits<std::size_t>::max()));
+    for (CanonicalSyncMechanismId mechanism : domain.liveMechanisms) {
+      hashPlanValue(hash, mechanism);
+    }
+    for (const CanonicalSyncEventAllocation &use : domain.uses) {
+      hashPlanValue(hash, use.mechanism);
+      hashPlanValue(hash, use.eventUse);
+      for (unsigned id : use.ids) {
+        hashPlanValue(hash, id);
+      }
+    }
+  }
+  return hash;
+}
+
+bool consumeStagingVerificationWork(const CanonicalSyncProgram &program,
+                                    const CanonicalSyncPatternProblem &problem,
+                                    const CanonicalSyncVerifiedPlan &plan,
+                                    SyncCoverCoverageWorkBudget &work) {
+  const bool setupWorkUnavailable =
+      !work.consume(plan.mechanisms.size()) ||
+      !work.consume(plan.allocation.domains.size());
+  if (setupWorkUnavailable) {
+    return false;
+  }
+  for (CanonicalSyncMechanismId mechanism : plan.mechanisms) {
+    const CanonicalSyncMechanismDescriptor &descriptor =
+        problem.getMechanisms()[mechanism].descriptor;
+    const bool descriptorWorkUnavailable =
+        !work.consume(descriptor.supplies.size()) ||
+        !work.consume(descriptor.actions.size()) ||
+        !work.consume(descriptor.eventUses.size());
+    if (descriptorWorkUnavailable) {
+      return false;
+    }
+  }
+  for (const CanonicalSyncDomainAllocation &domain : plan.allocation.domains) {
+    const bool domainWorkUnavailable =
+        !work.consume(domain.liveMechanisms.size()) ||
+        !work.consume(domain.uses.size());
+    if (domainWorkUnavailable) {
+      return false;
+    }
+    for (const CanonicalSyncEventAllocation &use : domain.uses) {
+      if (!work.consume(use.ids.size())) {
+        return false;
+      }
+    }
+  }
+  std::size_t returns = 0;
+  program.getFunction().walk([&](func::ReturnOp) {
+    if (returns != std::numeric_limits<std::size_t>::max()) {
+      ++returns;
+    }
+  });
+  return work.consume(returns);
+}
+
+struct FreshVerificationResult {
+  CanonicalSyncVerifiedPlan plan;
+  std::size_t workUnits = 0;
+  std::uint64_t nanoseconds = 0;
+};
+
+FreshVerificationResult
+freshlyVerifySelection(const CanonicalSyncProgram &program,
+                       const CanonicalSyncPatternProblem &problem,
+                       const CanonicalSyncSelection &selection,
+                       std::size_t maximumWorkUnits) {
+  const SteadyClock::time_point verificationStart = SteadyClock::now();
+  SyncCoverCoverageWorkBudget work(maximumWorkUnits);
+  FreshVerificationResult result;
+  result.plan = verifyCanonicalSyncSelection(problem, selection, &work);
+  if (result.plan &&
+      (!consumeStagingVerificationWork(program, problem, result.plan, work) ||
+       !stageActions(program, problem, result.plan))) {
+    result.plan.error =
+        work.exhausted ? CanonicalSyncSelectionError::WorkLimitExceeded
+                       : CanonicalSyncSelectionError::FinalValidationFailed;
+  }
+  result.workUnits = work.workUnits;
+  result.nanoseconds = elapsedNanoseconds(verificationStart);
+  return result;
 }
 
 CanonicalSyncStrategyReport
 buildStrategyReport(CanonicalSyncSelectionStrategy strategy,
-                    const SelectionOutcome &outcome, bool verified,
+                    const CanonicalSyncProgram &program,
+                    const SelectionOutcome &outcome,
+                    const FreshVerificationResult &verification,
                     bool usedLocalizedPipeAll = false) {
   const CanonicalSyncPatternProblem &problem = outcome.getProblem();
   CanonicalSyncStrategyReport report;
   report.strategy = strategy;
   report.error = outcome.selection.error;
-  report.verified = verified;
+  report.preciseError = outcome.preciseError;
+  report.verificationError = verification.plan.error;
+  report.verified = static_cast<bool>(verification.plan);
   report.usedLocalizedPipeAll = usedLocalizedPipeAll;
   report.repairFrontierTruncated = outcome.repairFrontierTruncated;
   report.repairBudgetExhausted = outcome.repairBudgetExhausted;
@@ -742,12 +1095,83 @@ buildStrategyReport(CanonicalSyncSelectionStrategy strategy,
   report.repairWorkUnits = outcome.repairWorkUnits;
   report.backstopDeletionTrials = outcome.backstopDeletionTrials;
   report.backstopDeletionWorkUnits = outcome.backstopDeletionWorkUnits;
+  report.selectionNanoseconds = outcome.selectionNanoseconds;
+  report.repairNanoseconds = outcome.repairNanoseconds;
+  report.verificationNanoseconds = verification.nanoseconds;
+  report.verificationWorkUnits = verification.workUnits;
   report.cost = outcome.selection.cost;
   report.search = outcome.selection.statistics;
-  report.allocation = outcome.selection.allocation;
+  report.allocation = verification.plan ? verification.plan.allocation
+                                        : outcome.selection.allocation;
+  report.preciseSearch = outcome.preciseSearch;
+  report.preciseAllocation = outcome.preciseAllocation;
   for (CanonicalSyncMechanismId mechanismId : outcome.selection.mechanisms) {
     const CanonicalSyncMechanismDescriptor &descriptor =
         problem.getMechanisms()[mechanismId].descriptor;
+    const bool hasRecurrenceSupply =
+        llvm::any_of(descriptor.supplies, [](const auto &binding) {
+          return binding.edge.distance != 0;
+        });
+    const bool hasZeroDistanceSupply =
+        llvm::any_of(descriptor.supplies, [](const auto &binding) {
+          return binding.edge.distance == 0;
+        });
+    const bool isTargetLocalPipeDrain =
+        llvm::any_of(descriptor.supplies, [](const auto &binding) {
+          return binding.proof ==
+                     CanonicalSyncSupplyProof::TargetLocalPipeDrainAction ||
+                 binding.proof ==
+                     CanonicalSyncSupplyProof::DominatingTargetedDrainCut;
+        });
+    const bool isLoopCarryPipeDrain =
+        llvm::any_of(descriptor.supplies, [](const auto &binding) {
+          return binding.proof == CanonicalSyncSupplyProof::LoopCarryPipeDrain;
+        });
+    const bool isSourceLocalPipeDrain =
+        llvm::any_of(descriptor.supplies, [](const auto &binding) {
+          return binding.proof ==
+                 CanonicalSyncSupplyProof::SourceLocalPipeDrainAction;
+        });
+    const bool isSourcePrefixPipeDrain =
+        llvm::any_of(descriptor.supplies, [](const auto &binding) {
+          return binding.proof ==
+                 CanonicalSyncSupplyProof::SourcePrefixPipeDrainAction;
+        });
+    for (const CanonicalSyncAction &action : descriptor.actions) {
+      if (action.kind == CanonicalSyncActionKind::EventSet) {
+        ++report.emittedEventSets;
+      } else if (action.kind == CanonicalSyncActionKind::EventWait) {
+        ++report.emittedEventWaits;
+      } else if (action.barrierKind == CanonicalSyncBarrierKind::All) {
+        ++report.emittedPipeAllBarriers;
+      } else {
+        ++report.emittedTargetedBarriers;
+        if (hasRecurrenceSupply) {
+          ++report.emittedRecurrenceTargetedBarriers;
+        } else {
+          ++report.emittedZeroDistanceTargetedBarriers;
+        }
+        if (hasZeroDistanceSupply && hasRecurrenceSupply) {
+          ++report.emittedMixedDistanceTargetedBarriers;
+        } else if (hasRecurrenceSupply) {
+          ++report.emittedRecurrenceOnlyTargetedBarriers;
+        } else {
+          ++report.emittedZeroOnlyTargetedBarriers;
+        }
+        if (isTargetLocalPipeDrain) {
+          ++report.emittedTargetLocalPipeDrainBarriers;
+        }
+        if (isLoopCarryPipeDrain) {
+          ++report.emittedLoopCarryPipeDrainBarriers;
+        }
+        if (isSourceLocalPipeDrain) {
+          ++report.emittedSourceLocalPipeDrainBarriers;
+        }
+        if (isSourcePrefixPipeDrain) {
+          ++report.emittedSourcePrefixPipeDrainBarriers;
+        }
+      }
+    }
     if (descriptor.kind != CanonicalSyncMechanismKind::Barrier) {
       ++report.selectedEvents;
       continue;
@@ -764,13 +1188,73 @@ buildStrategyReport(CanonicalSyncSelectionStrategy strategy,
       ++report.selectedTargetedBarriers;
     }
   }
+  if (verification.plan) {
+    report.predictedSyncInstructions =
+        countPredictedSyncInstructions(program, problem, verification.plan);
+    report.planSignature = computePlanSignature(problem, verification.plan);
+  }
   return report;
 }
 
 CanonicalSyncComparisonReport
-buildComparisonHeader(const CanonicalSyncPatternProblem &problem) {
+buildComparisonHeader(const CanonicalSyncProgram &program,
+                      const CanonicalSyncPatternProblem &problem,
+                      CanonicalSyncGmAliasPolicy gmAliasPolicy,
+                      std::uint64_t preparationNanoseconds) {
   CanonicalSyncComparisonReport report;
-  report.demands = problem.getDemands().size();
+  report.function = program.getFunction().getSymName().str();
+  report.gmAliasPolicy = gmAliasPolicy;
+  report.graphNodes = program.getGraph().getNodes().size();
+  report.graphEdges = program.getGraph().getEdges().size();
+  report.certifiedCompletionFrontiers = static_cast<std::size_t>(std::count_if(
+      program.getGraph().getEdges().begin(),
+      program.getGraph().getEdges().end(), [](const SyncCoverEdge &edge) {
+        return edge.kind == SyncCoverEdgeKind::CertifiedCompletionFrontier;
+      }));
+  report.uniqueDemandRows = problem.getObligationDemands().size();
+  report.selectionBasisRows = problem.getDemands().size();
+  report.basisReducedRows = report.uniqueDemandRows - report.selectionBasisRows;
+  report.basisReductionTruncated = problem.wasBasisReductionTruncated();
+  for (SyncCoverDemandId demandId : problem.getObligationDemands()) {
+    const SyncCoverDemand &demand = program.getGraph().getDemands()[demandId];
+    if (demand.distance == 0) {
+      ++report.zeroDistanceDemandRows;
+    } else {
+      ++report.recurrenceDemandRows;
+      report.maximumRecurrenceDistance =
+          std::max(report.maximumRecurrenceDistance, demand.distance);
+    }
+    if (program.getGraph().getNodes()[demand.source].resource ==
+        program.getGraph().getNodes()[demand.target].resource) {
+      ++report.sameResourceDemandRows;
+    } else {
+      ++report.crossResourceDemandRows;
+    }
+    for (SyncCoverDemandKind kind : demand.provenanceKinds) {
+      switch (kind) {
+      case SyncCoverDemandKind::SSA:
+        ++report.ssaDemandRows;
+        break;
+      case SyncCoverDemandKind::MemoryRAW:
+        ++report.rawDemandRows;
+        break;
+      case SyncCoverDemandKind::MemoryWAR:
+        ++report.warDemandRows;
+        break;
+      case SyncCoverDemandKind::MemoryWAW:
+        ++report.wawDemandRows;
+        break;
+      }
+    }
+    const bool provenanceCountOverflows =
+        demand.originalDemandCount >
+        std::numeric_limits<std::size_t>::max() - report.demands;
+    if (provenanceCountOverflows) {
+      report.demands = std::numeric_limits<std::size_t>::max();
+      break;
+    }
+    report.demands += demand.originalDemandCount;
+  }
   report.directMechanisms = problem.getMechanisms().size();
   const CanonicalSyncPatternStatistics &statistics =
       problem.getPatternStatistics();
@@ -779,6 +1263,24 @@ buildComparisonHeader(const CanonicalSyncPatternProblem &problem) {
   report.synergisticPairs =
       statistics.get(CanonicalSyncPatternKind::DirectPair).patterns;
   report.pairGenerationTruncated = problem.wasPatternGenerationTruncated();
+  report.sourcePrefixInspections = statistics.sourcePrefixInspections;
+  report.sourcePrefixCandidates = statistics.sourcePrefixCandidates;
+  report.sourcePrefixIncidences = statistics.sourcePrefixIncidences;
+  report.sourcePrefixGenerationTruncated =
+      statistics.sourcePrefixGenerationTruncated;
+  report.loopCarryInspections = statistics.loopCarryInspections;
+  report.loopCarryCandidates = statistics.loopCarryCandidates;
+  report.loopCarryIncidences = statistics.loopCarryIncidences;
+  report.loopCarryGenerationTruncated = statistics.loopCarryGenerationTruncated;
+  report.loopBoundaryProtocolInspections =
+      statistics.loopBoundaryProtocolInspections;
+  report.loopBoundaryProtocolCandidates =
+      statistics.loopBoundaryProtocolCandidates;
+  report.loopBoundaryProtocolIncidences =
+      statistics.loopBoundaryProtocolIncidences;
+  report.loopBoundaryProtocolGenerationTruncated =
+      statistics.loopBoundaryProtocolGenerationTruncated;
+  report.preparationNanoseconds = preparationNanoseconds;
   return report;
 }
 
@@ -886,7 +1388,12 @@ SelectionOutcome takeFallbackSelection(PipeAllFallbackOutcome fallback,
   outcome.ownedProblem = std::move(fallback.problem);
   outcome.selectedProblem = outcome.ownedProblem.get();
   outcome.feasible = true;
+  outcome.preciseError = failed.selection.error;
+  outcome.preciseSearch = failed.selection.statistics;
+  outcome.preciseAllocation = failed.selection.allocation;
   outcome.verifiedPlan = fallback.plan;
+  outcome.repairAttempted = failed.repairAttempted;
+  outcome.repairSearchExhausted = failed.repairSearchExhausted;
   outcome.repairFrontierTruncated = failed.repairFrontierTruncated;
   outcome.repairBudgetExhausted = failed.repairBudgetExhausted;
   outcome.repairRounds = failed.repairRounds;
@@ -899,6 +1406,8 @@ SelectionOutcome takeFallbackSelection(PipeAllFallbackOutcome fallback,
   outcome.backstopDeletionTruncated = fallback.deletionTruncated;
   outcome.backstopDeletionTrials = fallback.deletionTrials;
   outcome.backstopDeletionWorkUnits = fallback.deletionWorkUnits;
+  outcome.selectionNanoseconds = failed.selectionNanoseconds;
+  outcome.repairNanoseconds = failed.repairNanoseconds;
   return outcome;
 }
 
@@ -939,6 +1448,7 @@ LogicalResult mlir::pto::materializeCanonicalSyncPlan(
 LogicalResult
 mlir::pto::runCanonicalSync(func::FuncOp function,
                             const CanonicalSyncBuildOptions &options) {
+  const SteadyClock::time_point preparationStart = SteadyClock::now();
   FailureOr<CanonicalSyncProgram> program =
       buildCanonicalSyncProgram(function, options.analysis);
   if (failed(program)) {
@@ -946,17 +1456,39 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
   }
   CanonicalSyncProblemBuildResult precise =
       buildCanonicalSyncPreciseProblem(*program, options);
-  const bool preciseUncoverable =
-      !precise &&
-      precise.status.error == CanonicalSyncProblemError::UncoverableDemand;
-  if (!precise && !preciseUncoverable) {
-    function.emitError() << "cannot build canonical sync precise problem, "
-                            "error="
-                         << static_cast<unsigned>(precise.status.error);
+  if (!precise) {
+    InFlightDiagnostic diagnostic =
+        function.emitError() << "cannot build canonical sync precise "
+                                "problem, error="
+                             << static_cast<unsigned>(precise.status.error);
+    if (precise.problem && precise.status.index &&
+        *precise.status.index < precise.problem->getDemands().size()) {
+      const SyncCoverDemandId demandId =
+          precise.problem->getDemands()[*precise.status.index];
+      const SyncCoverDemand &demand =
+          program->getGraph().getDemands()[demandId];
+      const SyncCoverNode &source =
+          program->getGraph().getNodes()[demand.source];
+      const SyncCoverNode &target =
+          program->getGraph().getNodes()[demand.target];
+      const bool sameOperation =
+          demand.source < program->getNodeBindings().size() &&
+          demand.target < program->getNodeBindings().size() &&
+          program->getNodeBindings()[demand.source].operation ==
+              program->getNodeBindings()[demand.target].operation;
+      diagnostic << ", first_uncovered_row=" << *precise.status.index
+                 << ", source_node=" << demand.source
+                 << ", target_node=" << demand.target
+                 << ", source_resource=" << source.resource
+                 << ", target_resource=" << target.resource
+                 << ", distance=" << demand.distance
+                 << ", same_macro_operation=" << sameOperation;
+    }
     return failure();
   }
-  CanonicalSyncComparisonReport report =
-      buildComparisonHeader(*precise.problem);
+  CanonicalSyncComparisonReport report = buildComparisonHeader(
+      *program, *precise.problem, options.analysis.gmAliasPolicy,
+      elapsedNanoseconds(preparationStart));
   if (options.analysisOnly || options.compareSelectionStrategies) {
     for (CanonicalSyncSelectionStrategy strategy :
          {CanonicalSyncSelectionStrategy::FixedCover,
@@ -964,20 +1496,14 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
           CanonicalSyncSelectionStrategy::PairLookahead}) {
       CanonicalSyncBuildOptions trialOptions = options;
       trialOptions.selection.strategy = strategy;
-      SelectionOutcome outcome;
-      if (precise) {
-        outcome =
-            selectWithBoundedRepair(*program, *precise.problem, trialOptions);
-      } else {
-        outcome.selectedProblem = precise.problem.get();
-        outcome.selection.error =
-            CanonicalSyncSelectionError::NoCoveringPattern;
-      }
+      SelectionOutcome outcome =
+          selectWithBoundedRepair(*program, *precise.problem, trialOptions);
       if (outcome.fatalConstructionError) {
         return failure();
       }
       bool usedLocalizedPipeAll = false;
-      if (!outcome.feasible) {
+      if (canUseLocalizedPipeAllBackstop(outcome)) {
+        const SteadyClock::time_point fallbackStart = SteadyClock::now();
         std::optional<PipeAllFallbackOutcome> fallback =
             buildLocalizedPipeAllFallback(*program, trialOptions);
         if (!fallback) {
@@ -986,16 +1512,18 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
           return failure();
         }
         outcome = takeFallbackSelection(std::move(*fallback), outcome);
+        addNanoseconds(outcome.repairNanoseconds,
+                       elapsedNanoseconds(fallbackStart));
         usedLocalizedPipeAll = true;
       }
-      bool verified = false;
+      FreshVerificationResult verification;
       if (outcome.feasible) {
-        verified = outcome.verifiedPlan.has_value() ||
-                   static_cast<bool>(verifyCanonicalSyncSelection(
-                       outcome.getProblem(), outcome.selection));
+        verification = freshlyVerifySelection(
+            *program, outcome.getProblem(), outcome.selection,
+            trialOptions.maximumVerificationWorkUnits);
       }
       report.strategies.push_back(buildStrategyReport(
-          strategy, outcome, verified, usedLocalizedPipeAll));
+          strategy, *program, outcome, verification, usedLocalizedPipeAll));
     }
     if (options.reportCallback && failed(options.reportCallback(report))) {
       return failure();
@@ -1005,37 +1533,82 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
     }
   }
 
-  SelectionOutcome selection;
-  if (precise) {
-    selection = selectWithBoundedRepair(*program, *precise.problem, options);
-  } else {
-    selection.selectedProblem = precise.problem.get();
-    selection.selection.error = CanonicalSyncSelectionError::NoCoveringPattern;
-  }
+  SelectionOutcome selection =
+      selectWithBoundedRepair(*program, *precise.problem, options);
   if (selection.fatalConstructionError) {
     return failure();
   }
+  CanonicalSyncProblemBuildResult fullBasis;
   if (selection.feasible) {
-    const CanonicalSyncVerifiedPlan plan =
-        selection.verifiedPlan
-            ? *selection.verifiedPlan
-            : verifyCanonicalSyncSelection(selection.getProblem(),
-                                           selection.selection);
-    if (!plan) {
+    FreshVerificationResult verification = freshlyVerifySelection(
+        *program, selection.getProblem(), selection.selection,
+        options.maximumVerificationWorkUnits);
+    const bool reducedBasis =
+        selection.getProblem().getDemands().size() !=
+        selection.getProblem().getObligationDemands().size();
+    if (!verification.plan && reducedBasis) {
+      CanonicalSyncBuildOptions fullOptions = options;
+      fullOptions.enableDemandBasisReduction = false;
+      fullBasis = buildCanonicalSyncPreciseProblem(*program, fullOptions);
+      if (!fullBasis) {
+        function.emitError(
+            "canonical sync could not rebuild its full demand basis");
+        return failure();
+      }
+      selection =
+          selectWithBoundedRepair(*program, *fullBasis.problem, fullOptions);
+      if (selection.fatalConstructionError || !selection.feasible) {
+        function.emitError(
+            "canonical sync full-basis retry failed before materialization");
+        return failure();
+      }
+      verification = freshlyVerifySelection(
+          *program, selection.getProblem(), selection.selection,
+          fullOptions.maximumVerificationWorkUnits);
+      report = buildComparisonHeader(*program, selection.getProblem(),
+                                     options.analysis.gmAliasPolicy,
+                                     elapsedNanoseconds(preparationStart));
+    }
+    if (!verification.plan) {
       function.emitError() << "canonical sync finalization failed, error="
-                           << static_cast<unsigned>(plan.error);
+                           << static_cast<unsigned>(verification.plan.error);
       return failure();
     }
     if (!options.compareSelectionStrategies) {
-      report.strategies.push_back(
-          buildStrategyReport(options.selection.strategy, selection, true));
+      report.strategies.push_back(buildStrategyReport(
+          options.selection.strategy, *program, selection, verification));
       if (options.reportCallback && failed(options.reportCallback(report))) {
         return failure();
       }
     }
-    return materializeCanonicalSyncPlan(*program, selection.getProblem(), plan);
+    return materializeCanonicalSyncPlan(*program, selection.getProblem(),
+                                        verification.plan);
   }
 
+  if (!canUseLocalizedPipeAllBackstop(selection)) {
+    function.emitError()
+        << "canonical sync precise planning failed closed, error="
+        << static_cast<unsigned>(selection.selection.error);
+    return failure();
+  }
+
+  for (const CanonicalSyncDomainAllocation &domain :
+       selection.selection.allocation.domains) {
+    if (domain.required <= domain.available) {
+      continue;
+    }
+    const CanonicalSyncEventDomain &eventDomain =
+        selection.getProblem().getDomains()[domain.domain];
+    function.emitRemark() << "canonical sync event pressure: source_resource="
+                          << eventDomain.sourceResource
+                          << ", target_resource=" << eventDomain.targetResource
+                          << ", required=" << domain.required
+                          << ", available=" << domain.available
+                          << ", live_mechanisms="
+                          << domain.liveMechanisms.size();
+  }
+
+  const SteadyClock::time_point fallbackStart = SteadyClock::now();
   std::optional<PipeAllFallbackOutcome> fallback =
       buildLocalizedPipeAllFallback(*program, options);
   if (!fallback) {
@@ -1048,13 +1621,25 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
       "event repair was exhausted");
   SelectionOutcome fallbackOutcome =
       takeFallbackSelection(std::move(*fallback), selection);
+  addNanoseconds(fallbackOutcome.repairNanoseconds,
+                 elapsedNanoseconds(fallbackStart));
+  FreshVerificationResult verification = freshlyVerifySelection(
+      *program, fallbackOutcome.getProblem(), fallbackOutcome.selection,
+      options.maximumVerificationWorkUnits);
+  if (!verification.plan) {
+    function.emitError() << "canonical sync backstop finalization failed, "
+                            "error="
+                         << static_cast<unsigned>(verification.plan.error);
+    return failure();
+  }
   if (!options.compareSelectionStrategies) {
-    report.strategies.push_back(buildStrategyReport(
-        options.selection.strategy, fallbackOutcome, true, true));
+    report.strategies.push_back(buildStrategyReport(options.selection.strategy,
+                                                    *program, fallbackOutcome,
+                                                    verification, true));
     if (options.reportCallback && failed(options.reportCallback(report))) {
       return failure();
     }
   }
   return materializeCanonicalSyncPlan(*program, fallbackOutcome.getProblem(),
-                                      *fallbackOutcome.verifiedPlan);
+                                      verification.plan);
 }

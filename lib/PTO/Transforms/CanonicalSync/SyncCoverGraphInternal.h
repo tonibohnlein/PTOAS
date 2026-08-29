@@ -22,6 +22,7 @@ namespace sync_cover_detail {
 
 inline bool isValidEdgeKind(SyncCoverEdgeKind kind) {
   switch (kind) {
+  case SyncCoverEdgeKind::CertifiedCompletionFrontier:
   case SyncCoverEdgeKind::CompletionPreservingIssueOrder:
   case SyncCoverEdgeKind::NonCompletionPreservingIssueOrder:
   case SyncCoverEdgeKind::CompletionSupply:
@@ -57,8 +58,10 @@ inline unsigned edgeStrength(SyncCoverEdgeKind kind) {
     return 0;
   case SyncCoverEdgeKind::CompletionPreservingIssueOrder:
     return 1;
-  case SyncCoverEdgeKind::CompletionSupply:
+  case SyncCoverEdgeKind::CertifiedCompletionFrontier:
     return 2;
+  case SyncCoverEdgeKind::CompletionSupply:
+    return 3;
   }
   return 0;
 }

@@ -27,12 +27,13 @@ bool mlir::pto::syncCoverStorageModeWrites(SyncCoverStorageAccessMode mode) {
          mode == SyncCoverStorageAccessMode::ReadWrite;
 }
 
-SyncCoverGraphResult SyncCoverGraph::addStorageDomain() {
+SyncCoverGraphResult
+SyncCoverGraph::addStorageDomain(SyncCoverStorageDomainRole role) {
   if (!canMutateStructure()) {
     return {SyncCoverGraphError::StructureFrozen, storageDomains_.size()};
   }
   const SyncCoverStorageDomainId id = storageDomains_.size();
-  storageDomains_.push_back({id});
+  storageDomains_.push_back({id, role});
   return {SyncCoverGraphError::None, id};
 }
 
@@ -105,4 +106,52 @@ SyncCoverGraph::addStorageWitness(SyncCoverStorageAccessId sourceAccess,
   storageWitnesses_.push_back({id, sourceAccess, targetAccess, overlap});
   storageWitnessIds_.emplace(key, id);
   return {SyncCoverGraphError::None, id};
+}
+
+SyncCoverGraphResult SyncCoverGraph::addTargetCompletionCertificate(
+    SyncCoverTargetCompletionKind kind, SyncCoverNodeId completionNode,
+    SyncCoverNodeId target, std::uint32_t sourceResource,
+    std::uint32_t targetResource,
+    std::vector<SyncCoverStorageDomainId> storageDomains,
+    std::vector<SyncCoverDemandId> demands) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen,
+            targetCompletionCertificates_.size()};
+  }
+  std::sort(storageDomains.begin(), storageDomains.end());
+  storageDomains.erase(
+      std::unique(storageDomains.begin(), storageDomains.end()),
+      storageDomains.end());
+  std::sort(demands.begin(), demands.end());
+  demands.erase(std::unique(demands.begin(), demands.end()), demands.end());
+  const SyncCoverTargetCompletionCertificateId id =
+      targetCompletionCertificates_.size();
+  targetCompletionCertificates_.push_back(
+      {id, kind, completionNode, target, sourceResource, targetResource,
+       std::move(storageDomains), std::move(demands)});
+  const SyncCoverGraphResult validated =
+      validateTargetCompletionCertificates();
+  if (!validated) {
+    targetCompletionCertificates_.pop_back();
+    return {validated.error, id};
+  }
+  return {SyncCoverGraphError::None, id};
+}
+
+bool SyncCoverGraph::hasTargetCompletionCertificate(
+    SyncCoverTargetCompletionKind kind, SyncCoverNodeId completionNode,
+    SyncCoverNodeId target, std::uint32_t sourceResource,
+    std::uint32_t targetResource, SyncCoverDemandId demand) const {
+  return std::any_of(
+      targetCompletionCertificates_.begin(),
+      targetCompletionCertificates_.end(),
+      [&](const SyncCoverTargetCompletionCertificate &certificate) {
+        return certificate.kind == kind &&
+               certificate.completionNode == completionNode &&
+               certificate.target == target &&
+               certificate.sourceResource == sourceResource &&
+               certificate.targetResource == targetResource &&
+               std::binary_search(certificate.demands.begin(),
+                                  certificate.demands.end(), demand);
+      });
 }

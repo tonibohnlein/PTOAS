@@ -14,6 +14,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
@@ -21,7 +22,11 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <iterator>
+#include <limits>
+#include <string>
 #include <system_error>
+#include <utility>
 
 namespace mlir {
 namespace pto {
@@ -37,6 +42,16 @@ using namespace mlir;
 namespace {
 
 constexpr std::int64_t kHardwareEventIdCount = 8;
+
+std::int64_t jsonInteger(std::uint64_t value) {
+  constexpr std::uint64_t maximum =
+      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+  return static_cast<std::int64_t>(std::min(value, maximum));
+}
+
+std::string jsonSignature(std::uint64_t value) {
+  return "0x" + llvm::utohexstr(value, /*LowerCase=*/true);
+}
 
 bool configurePatternMode(StringRef mode,
                           pto::CanonicalSyncPatternOptions &options) {
@@ -84,9 +99,21 @@ StringRef strategyName(pto::CanonicalSyncSelectionStrategy strategy) {
 llvm::json::Array jsonUnsignedValues(ArrayRef<std::uint64_t> values) {
   llvm::json::Array result;
   for (std::uint64_t value : values) {
-    result.push_back(static_cast<std::int64_t>(value));
+    result.push_back(jsonInteger(value));
   }
   return result;
+}
+
+StringRef gmAliasPolicyName(pto::CanonicalSyncGmAliasPolicy policy) {
+  switch (policy) {
+  case pto::CanonicalSyncGmAliasPolicy::MayAlias:
+    return "may-alias";
+  case pto::CanonicalSyncGmAliasPolicy::DistinctArgumentsNoAlias:
+    return "distinct-arguments-noalias";
+  case pto::CanonicalSyncGmAliasPolicy::AllAccessesNoAlias:
+    return "all-accesses-noalias";
+  }
+  return "unknown";
 }
 
 llvm::json::Object
@@ -94,24 +121,28 @@ jsonAllocation(const pto::CanonicalSyncResourceAllocation &allocation) {
   llvm::json::Array domains;
   for (const pto::CanonicalSyncDomainAllocation &domain : allocation.domains) {
     llvm::json::Array uses;
+    llvm::json::Array liveMechanisms;
+    for (pto::CanonicalSyncMechanismId mechanism : domain.liveMechanisms) {
+      liveMechanisms.push_back(jsonInteger(mechanism));
+    }
     for (const pto::CanonicalSyncEventAllocation &use : domain.uses) {
       llvm::json::Array ids;
       for (unsigned id : use.ids) {
         ids.push_back(static_cast<std::int64_t>(id));
       }
-      uses.push_back(llvm::json::Object{
-          {"mechanism", static_cast<std::int64_t>(use.mechanism)},
-          {"event_use", static_cast<std::int64_t>(use.eventUse)},
-          {"ids", std::move(ids)}});
+      uses.push_back(
+          llvm::json::Object{{"mechanism", jsonInteger(use.mechanism)},
+                             {"event_use", jsonInteger(use.eventUse)},
+                             {"ids", std::move(ids)}});
     }
-    llvm::json::Object item{
-        {"domain", static_cast<std::int64_t>(domain.domain)},
-        {"required", static_cast<std::int64_t>(domain.required)},
-        {"available", static_cast<std::int64_t>(domain.available)},
-        {"uses", std::move(uses)}};
+    llvm::json::Object item{{"domain", jsonInteger(domain.domain)},
+                            {"required", jsonInteger(domain.required)},
+                            {"available", jsonInteger(domain.available)},
+                            {"live_mechanisms", std::move(liveMechanisms)},
+                            {"uses", std::move(uses)}};
     if (domain.maximumPressurePoint) {
       item["maximum_pressure_point"] =
-          static_cast<std::int64_t>(*domain.maximumPressurePoint);
+          jsonInteger(*domain.maximumPressurePoint);
     }
     domains.push_back(std::move(item));
   }
@@ -126,54 +157,140 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
   for (const pto::CanonicalSyncStrategyReport &strategy : report.strategies) {
     strategies.push_back(llvm::json::Object{
         {"strategy", strategyName(strategy.strategy)},
-        {"error", static_cast<std::int64_t>(strategy.error)},
+        {"error", jsonInteger(static_cast<std::uint8_t>(strategy.error))},
+        {"verification_error",
+         jsonInteger(static_cast<std::uint8_t>(strategy.verificationError))},
+        {"precise_error",
+         jsonInteger(static_cast<std::uint8_t>(strategy.preciseError))},
         {"verified", strategy.verified},
         {"used_localized_pipe_all", strategy.usedLocalizedPipeAll},
         {"repair_frontier_truncated", strategy.repairFrontierTruncated},
         {"repair_budget_exhausted", strategy.repairBudgetExhausted},
         {"backstop_deletion_truncated", strategy.backstopDeletionTruncated},
-        {"repair_rounds", static_cast<std::int64_t>(strategy.repairRounds)},
-        {"repair_trials", static_cast<std::int64_t>(strategy.repairTrials)},
-        {"repair_work_units",
-         static_cast<std::int64_t>(strategy.repairWorkUnits)},
+        {"repair_rounds", jsonInteger(strategy.repairRounds)},
+        {"repair_trials", jsonInteger(strategy.repairTrials)},
+        {"repair_work_units", jsonInteger(strategy.repairWorkUnits)},
         {"backstop_deletion_trials",
-         static_cast<std::int64_t>(strategy.backstopDeletionTrials)},
+         jsonInteger(strategy.backstopDeletionTrials)},
         {"backstop_deletion_work_units",
-         static_cast<std::int64_t>(strategy.backstopDeletionWorkUnits)},
-        {"selected_events", static_cast<std::int64_t>(strategy.selectedEvents)},
+         jsonInteger(strategy.backstopDeletionWorkUnits)},
+        {"selected_events", jsonInteger(strategy.selectedEvents)},
         {"selected_targeted_barriers",
-         static_cast<std::int64_t>(strategy.selectedTargetedBarriers)},
+         jsonInteger(strategy.selectedTargetedBarriers)},
         {"selected_pipe_all_barriers",
-         static_cast<std::int64_t>(strategy.selectedPipeAllBarriers)},
+         jsonInteger(strategy.selectedPipeAllBarriers)},
+        {"emitted_event_sets", jsonInteger(strategy.emittedEventSets)},
+        {"emitted_event_waits", jsonInteger(strategy.emittedEventWaits)},
+        {"emitted_targeted_barriers",
+         jsonInteger(strategy.emittedTargetedBarriers)},
+        {"emitted_zero_distance_targeted_barriers",
+         jsonInteger(strategy.emittedZeroDistanceTargetedBarriers)},
+        {"emitted_recurrence_targeted_barriers",
+         jsonInteger(strategy.emittedRecurrenceTargetedBarriers)},
+        {"emitted_zero_only_targeted_barriers",
+         jsonInteger(strategy.emittedZeroOnlyTargetedBarriers)},
+        {"emitted_recurrence_only_targeted_barriers",
+         jsonInteger(strategy.emittedRecurrenceOnlyTargetedBarriers)},
+        {"emitted_mixed_distance_targeted_barriers",
+         jsonInteger(strategy.emittedMixedDistanceTargetedBarriers)},
+        {"emitted_target_local_pipe_drain_barriers",
+         jsonInteger(strategy.emittedTargetLocalPipeDrainBarriers)},
+        {"emitted_loop_carry_pipe_drain_barriers",
+         jsonInteger(strategy.emittedLoopCarryPipeDrainBarriers)},
+        {"emitted_source_local_pipe_drain_barriers",
+         jsonInteger(strategy.emittedSourceLocalPipeDrainBarriers)},
+        {"emitted_source_prefix_pipe_drain_barriers",
+         jsonInteger(strategy.emittedSourcePrefixPipeDrainBarriers)},
+        {"emitted_pipe_all_barriers",
+         jsonInteger(strategy.emittedPipeAllBarriers)},
+        {"predicted_sync_instructions",
+         jsonInteger(strategy.predictedSyncInstructions)},
         {"action_profile", jsonUnsignedValues(strategy.cost.actionProfile)},
         {"serialization_breadth",
-         static_cast<std::int64_t>(strategy.cost.serializationBreadth)},
-        {"event_lifetime_area",
-         static_cast<std::int64_t>(strategy.cost.eventLifetimeArea)},
-        {"mechanisms", static_cast<std::int64_t>(strategy.cost.mechanismCount)},
+         jsonInteger(strategy.cost.serializationBreadth)},
+        {"event_lifetime_area", jsonInteger(strategy.cost.eventLifetimeArea)},
+        {"mechanisms", jsonInteger(strategy.cost.mechanismCount)},
         {"pattern_evaluations",
-         static_cast<std::int64_t>(strategy.search.patternEvaluations)},
+         jsonInteger(strategy.search.patternEvaluations)},
         {"deletion_evaluations",
-         static_cast<std::int64_t>(strategy.search.deletionEvaluations)},
-        {"work_units", static_cast<std::int64_t>(strategy.search.workUnits)},
-        {"event_allocation", jsonAllocation(strategy.allocation)}});
+         jsonInteger(strategy.search.deletionEvaluations)},
+        {"work_units", jsonInteger(strategy.search.workUnits)},
+        {"verification_work_units",
+         jsonInteger(strategy.verificationWorkUnits)},
+        {"selection_time_ns", jsonInteger(strategy.selectionNanoseconds)},
+        {"repair_time_ns", jsonInteger(strategy.repairNanoseconds)},
+        {"verification_time_ns", jsonInteger(strategy.verificationNanoseconds)},
+        {"plan_signature", jsonSignature(strategy.planSignature)},
+        {"event_allocation", jsonAllocation(strategy.allocation)},
+        {"precise_pattern_evaluations",
+         jsonInteger(strategy.preciseSearch.patternEvaluations)},
+        {"precise_deletion_evaluations",
+         jsonInteger(strategy.preciseSearch.deletionEvaluations)},
+        {"precise_work_units", jsonInteger(strategy.preciseSearch.workUnits)},
+        {"precise_event_allocation",
+         jsonAllocation(strategy.preciseAllocation)}});
   }
   return llvm::json::Object{
-      {"demands", static_cast<std::int64_t>(report.demands)},
-      {"unique_demand_keys", static_cast<std::int64_t>(report.demands)},
-      {"direct_mechanisms", static_cast<std::int64_t>(report.directMechanisms)},
-      {"direct_pair_proposals",
-       static_cast<std::int64_t>(report.directPairProposals)},
-      {"direct_pair_evaluations",
-       static_cast<std::int64_t>(report.directPairEvaluations)},
-      {"synergistic_pairs", static_cast<std::int64_t>(report.synergisticPairs)},
+      {"schema", "ptoas.canonical_sync.v1"},
+      {"function", report.function},
+      {"gm_alias_policy", gmAliasPolicyName(report.gmAliasPolicy)},
+      {"graph_nodes", jsonInteger(report.graphNodes)},
+      {"graph_edges", jsonInteger(report.graphEdges)},
+      {"certified_completion_frontiers",
+       jsonInteger(report.certifiedCompletionFrontiers)},
+      {"demands", jsonInteger(report.demands)},
+      {"unique_demand_keys", jsonInteger(report.uniqueDemandRows)},
+      {"selection_basis_rows", jsonInteger(report.selectionBasisRows)},
+      {"basis_reduced_rows", jsonInteger(report.basisReducedRows)},
+      {"basis_reduction_truncated", report.basisReductionTruncated},
+      {"zero_distance_demand_keys", jsonInteger(report.zeroDistanceDemandRows)},
+      {"recurrence_demand_keys", jsonInteger(report.recurrenceDemandRows)},
+      {"same_resource_demand_keys", jsonInteger(report.sameResourceDemandRows)},
+      {"cross_resource_demand_keys",
+       jsonInteger(report.crossResourceDemandRows)},
+      {"ssa_demand_keys", jsonInteger(report.ssaDemandRows)},
+      {"raw_demand_keys", jsonInteger(report.rawDemandRows)},
+      {"war_demand_keys", jsonInteger(report.warDemandRows)},
+      {"waw_demand_keys", jsonInteger(report.wawDemandRows)},
+      {"maximum_recurrence_distance",
+       jsonInteger(report.maximumRecurrenceDistance)},
+      {"direct_mechanisms", jsonInteger(report.directMechanisms)},
+      {"direct_pair_proposals", jsonInteger(report.directPairProposals)},
+      {"direct_pair_evaluations", jsonInteger(report.directPairEvaluations)},
+      {"synergistic_pairs", jsonInteger(report.synergisticPairs)},
       {"pair_generation_truncated", report.pairGenerationTruncated},
+      {"source_prefix_inspections",
+       jsonInteger(report.sourcePrefixInspections)},
+      {"source_prefix_candidates", jsonInteger(report.sourcePrefixCandidates)},
+      {"source_prefix_incidences", jsonInteger(report.sourcePrefixIncidences)},
+      {"source_prefix_generation_truncated",
+       report.sourcePrefixGenerationTruncated},
+      {"loop_carry_inspections", jsonInteger(report.loopCarryInspections)},
+      {"loop_carry_candidates", jsonInteger(report.loopCarryCandidates)},
+      {"loop_carry_incidences", jsonInteger(report.loopCarryIncidences)},
+      {"loop_carry_generation_truncated", report.loopCarryGenerationTruncated},
+      {"loop_boundary_protocol_inspections",
+       jsonInteger(report.loopBoundaryProtocolInspections)},
+      {"loop_boundary_protocol_candidates",
+       jsonInteger(report.loopBoundaryProtocolCandidates)},
+      {"loop_boundary_protocol_incidences",
+       jsonInteger(report.loopBoundaryProtocolIncidences)},
+      {"loop_boundary_protocol_generation_truncated",
+       report.loopBoundaryProtocolGenerationTruncated},
+      {"preparation_time_ns", jsonInteger(report.preparationNanoseconds)},
       {"strategies", std::move(strategies)}};
 }
 
 LogicalResult emitReport(func::FuncOp function, StringRef path,
                          const pto::CanonicalSyncComparisonReport &report) {
   function.emitRemark() << "canonical sync: demands=" << report.demands
+                        << ", unique-demand-rows=" << report.uniqueDemandRows
+                        << ", recurrence-demand-rows="
+                        << report.recurrenceDemandRows
+                        << ", same-resource-demand-rows="
+                        << report.sameResourceDemandRows
+                        << ", graph-nodes=" << report.graphNodes
+                        << ", graph-edges=" << report.graphEdges
                         << ", direct-mechanisms=" << report.directMechanisms
                         << ", pair-proposals=" << report.directPairProposals
                         << ", pair-evaluations=" << report.directPairEvaluations
@@ -201,6 +318,9 @@ LogicalResult emitReport(func::FuncOp function, StringRef path,
         << ", backstop-deletion-work=" << strategy.backstopDeletionWorkUnits
         << ", backstop-deletion-truncated="
         << strategy.backstopDeletionTruncated
+        << ", verification-work=" << strategy.verificationWorkUnits
+        << ", predicted-sync-instructions="
+        << strategy.predictedSyncInstructions
         << ", serialization=" << strategy.cost.serializationBreadth
         << ", lifetime=" << strategy.cost.eventLifetimeArea
         << ", maximum-event-overlap=" << maximumOverlap;
@@ -269,8 +389,44 @@ struct PTOCanonicalSyncPass
       signalPassFailure();
       return;
     }
-    if (maximumRepairRounds <= 0) {
-      function.emitError("maximum-repair-rounds must be positive");
+    const auto validBound = [](std::int64_t value) {
+      return value > 0 && static_cast<std::uint64_t>(value) <=
+                              std::numeric_limits<std::size_t>::max();
+    };
+    const std::pair<std::int64_t, StringRef> bounds[] = {
+        {maximumPairEvaluationsPerScope, "maximum-pair-evaluations-per-scope"},
+        {maximumSelectionWorkUnits, "maximum-selection-work-units"},
+        {maximumRepairRounds, "maximum-repair-rounds"},
+        {maximumRepairTrials, "maximum-repair-trials"},
+        {maximumRepairWorkUnits, "maximum-repair-work-units"},
+        {maximumRepairFrontierInspections,
+         "maximum-repair-frontier-inspections"},
+        {maximumRepairFrontierProposals, "maximum-repair-frontier-proposals"},
+        {maximumBackstopDeletionTrials, "maximum-backstop-deletion-trials"},
+        {maximumBackstopDeletionWorkUnits,
+         "maximum-backstop-deletion-work-units"},
+        {maximumVerificationWorkUnits, "maximum-verification-work-units"},
+        {maximumDemandBasisGroupEdges, "maximum-demand-basis-group-edges"},
+        {maximumDemandBasisReachabilityWords,
+         "maximum-demand-basis-reachability-words"},
+        {maximumDemandBasisReductionWork,
+         "maximum-demand-basis-reduction-work"},
+        {maximumSourcePrefixInspections, "maximum-source-prefix-inspections"},
+        {maximumSourcePrefixCandidates, "maximum-source-prefix-candidates"},
+        {maximumSourcePrefixIncidences, "maximum-source-prefix-incidences"},
+        {maximumLoopCarryInspections, "maximum-loop-carry-inspections"},
+        {maximumLoopCarryCandidates, "maximum-loop-carry-candidates"},
+        {maximumLoopCarryIncidences, "maximum-loop-carry-incidences"},
+        {maximumLoopBoundaryProtocolInspections,
+         "maximum-loop-boundary-protocol-inspections"},
+        {maximumLoopBoundaryProtocolCandidates,
+         "maximum-loop-boundary-protocol-candidates"},
+        {maximumLoopBoundaryProtocolIncidences,
+         "maximum-loop-boundary-protocol-incidences"}};
+    const auto invalidBound = llvm::find_if(
+        bounds, [&](const auto &bound) { return !validBound(bound.first); });
+    if (invalidBound != std::end(bounds)) {
+      function.emitError() << invalidBound->second << " must be positive";
       signalPassFailure();
       return;
     }
@@ -287,7 +443,49 @@ struct PTOCanonicalSyncPass
       signalPassFailure();
       return;
     }
+    options.directPairs.maximumEvaluationsPerScope =
+        static_cast<std::size_t>(maximumPairEvaluationsPerScope);
+    options.selection.maximumWorkUnits =
+        static_cast<std::size_t>(maximumSelectionWorkUnits);
     options.maximumRepairRounds = static_cast<std::size_t>(maximumRepairRounds);
+    options.maximumRepairTrials = static_cast<std::size_t>(maximumRepairTrials);
+    options.maximumRepairWorkUnits =
+        static_cast<std::size_t>(maximumRepairWorkUnits);
+    options.patterns.maximumRepairFrontierInspections =
+        static_cast<std::size_t>(maximumRepairFrontierInspections);
+    options.patterns.maximumRepairFrontierProposals =
+        static_cast<std::size_t>(maximumRepairFrontierProposals);
+    options.maximumBackstopDeletionTrials =
+        static_cast<std::size_t>(maximumBackstopDeletionTrials);
+    options.maximumBackstopDeletionWorkUnits =
+        static_cast<std::size_t>(maximumBackstopDeletionWorkUnits);
+    options.maximumVerificationWorkUnits =
+        static_cast<std::size_t>(maximumVerificationWorkUnits);
+    options.enableDemandBasisReduction = enableDemandBasisReduction;
+    options.maximumDemandBasisGroupEdges =
+        static_cast<std::size_t>(maximumDemandBasisGroupEdges);
+    options.maximumDemandBasisReachabilityWords =
+        static_cast<std::size_t>(maximumDemandBasisReachabilityWords);
+    options.maximumDemandBasisReductionWork =
+        static_cast<std::size_t>(maximumDemandBasisReductionWork);
+    options.patterns.maximumSourcePrefixInspections =
+        static_cast<std::size_t>(maximumSourcePrefixInspections);
+    options.patterns.maximumSourcePrefixCandidates =
+        static_cast<std::size_t>(maximumSourcePrefixCandidates);
+    options.patterns.maximumSourcePrefixIncidences =
+        static_cast<std::size_t>(maximumSourcePrefixIncidences);
+    options.patterns.maximumLoopCarryInspections =
+        static_cast<std::size_t>(maximumLoopCarryInspections);
+    options.patterns.maximumLoopCarryCandidates =
+        static_cast<std::size_t>(maximumLoopCarryCandidates);
+    options.patterns.maximumLoopCarryIncidences =
+        static_cast<std::size_t>(maximumLoopCarryIncidences);
+    options.patterns.maximumLoopBoundaryProtocolInspections =
+        static_cast<std::size_t>(maximumLoopBoundaryProtocolInspections);
+    options.patterns.maximumLoopBoundaryProtocolCandidates =
+        static_cast<std::size_t>(maximumLoopBoundaryProtocolCandidates);
+    options.patterns.maximumLoopBoundaryProtocolIncidences =
+        static_cast<std::size_t>(maximumLoopBoundaryProtocolIncidences);
     options.analysisOnly = analysisOnly;
     options.compareSelectionStrategies = analysisOnly;
     options.reportCallback =

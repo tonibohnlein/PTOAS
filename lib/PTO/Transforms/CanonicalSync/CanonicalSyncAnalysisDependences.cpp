@@ -75,6 +75,221 @@ LogicalResult ProgramBuilder::addFixedIssueOrder() {
   return addRegionIssueOrder(function_.getBody(), state);
 }
 
+LogicalResult ProgramBuilder::addCertifiedCompletionFrontiers() {
+  const SyncCoverGraph &graph = graph_;
+  const std::vector<SyncCoverEdge> fixedEdges = graph.getEdges();
+  for (const SyncCoverEdge &edge : fixedEdges) {
+    const bool fixedIssue =
+        edge.distance == 0 &&
+        (edge.kind == SyncCoverEdgeKind::CompletionPreservingIssueOrder ||
+         edge.kind == SyncCoverEdgeKind::NonCompletionPreservingIssueOrder);
+    if (!fixedIssue) {
+      continue;
+    }
+    const SyncCoverNode &edgeSource = graph.getNodes()[edge.source];
+    const SyncCoverNode &edgeTarget = graph.getNodes()[edge.target];
+    const bool certifiedContract = canSignalPrefixCompletion(
+        edgeSource.resource, function_.getOperation());
+    const bool sameControlChain =
+        edgeSource.scope == edgeTarget.scope &&
+        edgeSource.guard.literals == edgeTarget.guard.literals;
+    if (!certifiedContract || !sameControlChain ||
+        edgeSource.physicalAnchor == edgeTarget.physicalAnchor) {
+      continue;
+    }
+
+    const SyncCoverNodeId source = edge.source;
+    const SyncCoverNodeId target = edge.target;
+    const SyncCoverNode &sourceNode = graph.getNodes()[source];
+    const SyncCoverNode &targetNode = graph.getNodes()[target];
+    if (source == target || sourceNode.order >= targetNode.order ||
+        sourceNode.scope != targetNode.scope ||
+        sourceNode.guard.literals != targetNode.guard.literals) {
+      continue;
+    }
+    SyncCoverEdge frontier;
+    frontier.source = source;
+    frontier.target = target;
+    frontier.kind = SyncCoverEdgeKind::CertifiedCompletionFrontier;
+    frontier.scope = sourceNode.scope;
+    frontier.sourceGuard = sourceNode.guard;
+    frontier.targetGuard = targetNode.guard;
+    const SyncCoverGraphResult added = graph_.addEdge(std::move(frontier));
+    if (!added) {
+      return function_.emitError(
+          "cannot construct canonical sync certified completion frontier");
+    }
+    if (!added.index || graph_.getEdges()[*added.index].kind !=
+                            SyncCoverEdgeKind::CertifiedCompletionFrontier) {
+      continue;
+    }
+    if (!graph_.addCompletionDominance(source, target)) {
+      return function_.emitError(
+          "cannot register canonical sync completion dominance");
+    }
+  }
+  return success();
+}
+
+LogicalResult ProgramBuilder::addTargetCompletionCertificates(
+    const CanonicalSyncTargetCapabilities &capabilities) {
+  if (!capabilities.mte1L0ReadySetCompletesPrefix &&
+      !capabilities.mToFixAccumulatorBoundaryCompletes) {
+    return success();
+  }
+  const auto domainFor = [&](AddressSpace space)
+      -> std::optional<SyncCoverStorageDomainId> {
+    const auto domain = storageDomains_.find(space);
+    return domain == storageDomains_.end()
+               ? std::nullopt
+               : std::optional<SyncCoverStorageDomainId>(domain->second);
+  };
+  const std::optional<SyncCoverStorageDomainId> left =
+      domainFor(AddressSpace::LEFT);
+  const std::optional<SyncCoverStorageDomainId> right =
+      domainFor(AddressSpace::RIGHT);
+  const std::optional<SyncCoverStorageDomainId> accumulator =
+      domainFor(AddressSpace::ACC);
+  const SyncCoverGraph &graph = graph_;
+  const auto exactRawDomain =
+      [&](const SyncCoverDemand &demand,
+          ArrayRef<SyncCoverStorageDomainId> admittedDomains)
+      -> std::optional<SyncCoverStorageDomainId> {
+    if (demand.distance != 0 ||
+        !llvm::is_contained(demand.provenanceKinds,
+                            SyncCoverDemandKind::MemoryRAW)) {
+      return std::nullopt;
+    }
+    for (SyncCoverStorageWitnessId witnessId : demand.storageWitnesses) {
+      if (witnessId >= graph.getStorageWitnesses().size()) {
+        continue;
+      }
+      const SyncCoverStorageWitness &witness =
+          graph.getStorageWitnesses()[witnessId];
+      const SyncCoverStorageAccess &source =
+          graph.getStorageAccesses()[witness.sourceAccess];
+      const SyncCoverStorageAccess &target =
+          graph.getStorageAccesses()[witness.targetAccess];
+      if (source.node == demand.source && target.node == demand.target &&
+          source.domain == target.domain && source.exactPhysical &&
+          target.exactPhysical && syncCoverStorageModeWrites(source.mode) &&
+          syncCoverStorageModeReads(target.mode) &&
+          llvm::is_contained(admittedDomains, source.domain)) {
+        return source.domain;
+      }
+    }
+    return std::nullopt;
+  };
+
+  using CertifiedDemand =
+      std::pair<SyncCoverDemandId, SyncCoverStorageDomainId>;
+  std::map<SyncCoverNodeId, std::vector<CertifiedDemand>> mte1Uses;
+  std::map<std::pair<SyncCoverNodeId, SyncCoverNodeId>,
+           std::vector<CertifiedDemand>>
+      accumulatorUses;
+  std::vector<SyncCoverStorageDomainId> l0Domains;
+  if (left) {
+    l0Domains.push_back(*left);
+  }
+  if (right) {
+    l0Domains.push_back(*right);
+  }
+  const std::vector<SyncCoverStorageDomainId> accumulatorDomains =
+      accumulator ? std::vector<SyncCoverStorageDomainId>{*accumulator}
+                  : std::vector<SyncCoverStorageDomainId>{};
+  for (SyncCoverDemandId demandId = 0; demandId < graph.getDemands().size();
+       ++demandId) {
+    const SyncCoverDemand &demand = graph.getDemands()[demandId];
+    const SyncCoverNode &source = graph.getNodes()[demand.source];
+    const SyncCoverNode &target = graph.getNodes()[demand.target];
+    const SyncCoverNode &physicalSource =
+        graph.getNodes()[source.physicalExit];
+    const SyncCoverNode &physicalTarget =
+        graph.getNodes()[target.physicalAnchor];
+    const bool oneControlChain =
+        source.scope == target.scope && source.scope == physicalSource.scope &&
+        source.scope == physicalTarget.scope &&
+        source.guard.literals == target.guard.literals &&
+        source.guard.literals == physicalSource.guard.literals &&
+        source.guard.literals == physicalTarget.guard.literals &&
+        physicalSource.order < physicalTarget.order;
+    if (!oneControlChain) {
+      continue;
+    }
+    if (capabilities.mte1L0ReadySetCompletesPrefix && !l0Domains.empty() &&
+        source.resource ==
+            static_cast<std::uint32_t>(PipelineType::PIPE_MTE1) &&
+        target.resource == static_cast<std::uint32_t>(PipelineType::PIPE_M)) {
+      if (const auto domain = exactRawDomain(demand, l0Domains)) {
+        mte1Uses[target.physicalAnchor].push_back({demandId, *domain});
+      }
+    }
+    if (capabilities.mToFixAccumulatorBoundaryCompletes && accumulator &&
+        source.resource == static_cast<std::uint32_t>(PipelineType::PIPE_M) &&
+        target.resource ==
+            static_cast<std::uint32_t>(PipelineType::PIPE_FIX)) {
+      if (const auto domain = exactRawDomain(demand, accumulatorDomains)) {
+        accumulatorUses[{source.physicalExit, target.physicalAnchor}]
+            .push_back({demandId, *domain});
+      }
+    }
+  }
+
+  for (const auto &[target, certifiedDemands] : mte1Uses) {
+    // A singleton already has the ordinary exact MTE1 event.  The target
+    // contract matters only when one final ready set replaces multiple source
+    // events belonging to the same exact L0 consumer lifecycle.
+    if (certifiedDemands.size() < 2) {
+      continue;
+    }
+    SyncCoverNodeId completionNode = 0;
+    std::vector<SyncCoverDemandId> demands;
+    std::vector<SyncCoverStorageDomainId> domains;
+    for (const auto &[demandId, domain] : certifiedDemands) {
+      const SyncCoverNodeId physicalExit =
+          graph.getNodes()[graph.getDemands()[demandId].source].physicalExit;
+      if (demands.empty() || graph.getNodes()[completionNode].order <
+                                 graph.getNodes()[physicalExit].order) {
+        completionNode = physicalExit;
+      }
+      demands.push_back(demandId);
+      domains.push_back(domain);
+    }
+    const SyncCoverGraphResult added = graph_.addTargetCompletionCertificate(
+        SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix, completionNode,
+        target, static_cast<std::uint32_t>(PipelineType::PIPE_MTE1),
+        static_cast<std::uint32_t>(PipelineType::PIPE_M), std::move(domains),
+        std::move(demands));
+    if (!added) {
+      return function_.emitError(
+                 "cannot register canonical sync A3 MTE1 L0-ready "
+                 "certificate, graph_error=")
+             << static_cast<unsigned>(added.error);
+    }
+  }
+  for (const auto &[anchors, certifiedDemands] : accumulatorUses) {
+    std::vector<SyncCoverDemandId> demands;
+    std::vector<SyncCoverStorageDomainId> domains;
+    for (const auto &[demandId, domain] : certifiedDemands) {
+      demands.push_back(demandId);
+      domains.push_back(domain);
+    }
+    const SyncCoverGraphResult added = graph_.addTargetCompletionCertificate(
+        SyncCoverTargetCompletionKind::MToFixAccumulatorBoundary,
+        anchors.first, anchors.second,
+        static_cast<std::uint32_t>(PipelineType::PIPE_M),
+        static_cast<std::uint32_t>(PipelineType::PIPE_FIX), std::move(domains),
+        std::move(demands));
+    if (!added) {
+      return function_.emitError(
+                 "cannot register canonical sync A3 M-to-FIX certificate, "
+                 "graph_error=")
+             << static_cast<unsigned>(added.error);
+    }
+  }
+  return success();
+}
+
 LogicalResult ProgramBuilder::addRegionIssueOrder(Region &region,
                                                   IssueOrderState &state) {
   if (region.empty()) {
@@ -136,6 +351,9 @@ LogicalResult ProgramBuilder::addRegionIssueOrder(Region &region,
 LogicalResult ProgramBuilder::addIssueNode(SyncCoverNodeId target,
                                            IssueOrderState &state) {
   const SyncCoverNode &targetNode = graph_.getNodes()[target];
+  if (failed(recordBlockingBarrierPrefixes(target, state))) {
+    return failure();
+  }
   if (state.fixedBarriers && !state.fixedBarriers->empty()) {
     bool changesBoundary = false;
     for (const FixedBarrierBoundary &boundary : *state.fixedBarriers) {
@@ -307,6 +525,41 @@ LogicalResult ProgramBuilder::addIssueNode(SyncCoverNodeId target,
   return success();
 }
 
+LogicalResult ProgramBuilder::recordBlockingBarrierPrefixes(
+    SyncCoverNodeId target, IssueOrderState &state) {
+  const SyncCoverNode &targetNode = graph_.getNodes()[target];
+  const SyncCoverNodeId physicalTarget = targetNode.physicalAnchor;
+  static const IssueHistoryHeads emptyIssued;
+  const IssueHistoryHeads &issued = state.issued ? *state.issued : emptyIssued;
+  for (const auto &[resource, carryKind] :
+       graph_.getResourceRecurrenceCarryKinds()) {
+    (void)carryKind;
+    if (!graph_.supportsBlockingTargetedBarrier(resource)) {
+      continue;
+    }
+    const auto key = std::make_pair(resource, physicalTarget);
+    if (graph_.getBlockingTargetedBarrierPrefixes().find(key) !=
+        graph_.getBlockingTargetedBarrierPrefixes().end()) {
+      continue;
+    }
+    std::vector<SyncCoverNodeId> sources;
+    const auto history = issued.find(resource);
+    if (history != issued.end() &&
+        failed(collectIssuedSources(history->second, targetNode.guard,
+                                    sources))) {
+      return failure();
+    }
+    const SyncCoverGraphResult recorded =
+        graph_.setBlockingTargetedBarrierPrefix(resource, physicalTarget,
+                                                std::move(sources));
+    if (!recorded) {
+      return function_.emitError(
+          "cannot record canonical sync blocking-barrier prefix");
+    }
+  }
+  return success();
+}
+
 LogicalResult
 ProgramBuilder::collectIssuedSources(const IssueHistory &history,
                                      const SyncCoverGuard &barrierGuard,
@@ -358,19 +611,14 @@ LogicalResult ProgramBuilder::addFixedBarrier(BarrierOp barrier,
   std::set<std::uint32_t> remainingTargetResources;
   static const IssueHistoryHeads emptyIssued;
   const IssueHistoryHeads &issued = state.issued ? *state.issued : emptyIssued;
-  if (resource == static_cast<std::uint32_t>(PipelineType::PIPE_ALL)) {
+  const bool allPipe =
+      resource == static_cast<std::uint32_t>(PipelineType::PIPE_ALL);
+  if (allPipe) {
     for (const auto &[sourceResource, history] : issued) {
       (void)sourceResource;
       if (failed(collectIssuedSources(history, barrierGuard, sources))) {
         return failure();
       }
-    }
-    for (const SyncCoverNode &node : graph_.getNodes()) {
-      if (!consumePairInspection()) {
-        return function_.emitError(
-            "canonical sync pair-inspection limit exceeded");
-      }
-      remainingTargetResources.insert(node.resource);
     }
   } else {
     const auto history = issued.find(resource);
@@ -380,6 +628,18 @@ LogicalResult ProgramBuilder::addFixedBarrier(BarrierOp barrier,
         return failure();
       }
     }
+  }
+  const bool blocksSubsequentResources =
+      allPipe || graph_.supportsBlockingTargetedBarrier(resource);
+  if (blocksSubsequentResources) {
+    for (const SyncCoverNode &node : graph_.getNodes()) {
+      if (!consumePairInspection()) {
+        return function_.emitError(
+            "canonical sync pair-inspection limit exceeded");
+      }
+      remainingTargetResources.insert(node.resource);
+    }
+  } else {
     remainingTargetResources.insert(resource);
   }
   llvm::sort(sources);

@@ -160,6 +160,39 @@ bool testDemandQualifiedSupplyDoesNotEscape() {
   return passed;
 }
 
+bool testDistanceZeroSupplyDoesNotCoverRecurrence() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 20}, true),
+                passed, "add distance-qualified loop");
+  passed &= check(graph.setResourceRecurrenceCarryKind(
+                      2, SyncCoverEdgeKind::CompletionPreservingIssueOrder),
+                  "set distance-qualified target carry");
+  const SyncCoverNodeId source = takeIndex(graph.addNode(1, 1, loop, 0), passed,
+                                           "add distance-qualified source");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(2, 1, loop, 1), passed,
+                                           "add distance-qualified target");
+  passed &= check(graph.addDemand(makeDemand(source, target, loop, 0)),
+                  "add distance-zero demand");
+  passed &= check(graph.addDemand(makeDemand(source, target, loop, 1)),
+                  "add recurrence demand");
+  passed &= check(graph.freezeStructure(), "freeze distance-qualified graph");
+
+  SyncCoverExpandedProgram expansion(graph);
+  const SyncCoverEdge edge =
+      makeEdge(source, target, SyncCoverEdgeKind::CompletionSupply, loop);
+  const SyncCoverCompletionSupply distanceZeroOnly{
+      0, edge, {}, false, SyncCoverSupplyApplicability::DistanceZeroOnly};
+  const SyncCoverCoverageResult qualified =
+      computeSyncCoverCoverage(graph, expansion, {distanceZeroOnly});
+  passed &= check(qualified && qualified.covered.contains(0),
+                  "distance-zero supply covers a distance-zero row");
+  passed &= check(!qualified.covered.contains(1),
+                  "distance-zero supply cannot cross a recurrence carry");
+  return passed;
+}
+
 bool testIssueOrderDoesNotCreatePrefixCompletion() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -183,6 +216,36 @@ bool testIssueOrderDoesNotCreatePrefixCompletion() {
       {{0, makeEdge(marker, target, SyncCoverEdgeKind::CompletionSupply)}});
   passed &= check(coverage && !coverage.coversAll(),
                   "later set does not complete an earlier source");
+  return passed;
+}
+
+bool testCertifiedFrontierCreatesPrefixCompletion() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {}, std::nullopt, true), passed,
+                "add certified prefix source");
+  const SyncCoverNodeId frontier =
+      takeIndex(graph.addNode(1, 1, 0, 1, {}, {}, std::nullopt, true), passed,
+                "add certified prefix frontier");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(2, 1, 0, 2), passed,
+                                           "add certified prefix target");
+  passed &= check(
+      graph.addEdge(makeEdge(source, frontier,
+                             SyncCoverEdgeKind::CertifiedCompletionFrontier)),
+      "add certified prefix edge");
+  passed &= check(graph.addCompletionDominance(source, frontier),
+                  "register certified prefix dominance");
+  passed &= check(graph.addDemand(makeDemand(source, target)),
+                  "add certified prefix demand");
+  passed &= check(graph.freezeStructure(), "freeze certified prefix graph");
+
+  SyncCoverExpandedProgram expansion(graph);
+  const SyncCoverCoverageResult coverage = computeSyncCoverCoverage(
+      graph, expansion,
+      {{0, makeEdge(frontier, target, SyncCoverEdgeKind::CompletionSupply)}});
+  passed &= check(coverage && coverage.coversAll(),
+                  "later certified set completes the earlier source");
   return passed;
 }
 
@@ -1189,7 +1252,9 @@ int main() {
   passed &= testOneSupplyCoversSeveralDemands();
   passed &= testTwoSuppliesCompose();
   passed &= testDemandQualifiedSupplyDoesNotEscape();
+  passed &= testDistanceZeroSupplyDoesNotCoverRecurrence();
   passed &= testIssueOrderDoesNotCreatePrefixCompletion();
+  passed &= testCertifiedFrontierCreatesPrefixCompletion();
   passed &= testGuardedRecurrenceAndCompactCarry();
   passed &= testCompactCarryKindsAndResourceIsolation();
   passed &= testOptionalIntermediateAvailability();

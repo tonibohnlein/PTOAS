@@ -74,6 +74,7 @@
 #include <cctype>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -562,11 +563,149 @@ static llvm::cl::opt<std::string> canonicalSyncSelectionStrategy(
                    "action-aware-singleton, or pair-lookahead"),
     llvm::cl::init("pair-lookahead"));
 
-static llvm::cl::opt<int> canonicalSyncMaximumRepairRounds(
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumPairEvaluationsPerScope(
+    "canonical-sync-maximum-pair-evaluations-per-scope",
+    llvm::cl::desc("Maximum canonical synchronization direct-pair evaluations "
+                   "per owner scope"),
+    llvm::cl::init(4096));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumSelectionWorkUnits(
+    "canonical-sync-maximum-selection-work-units",
+    llvm::cl::desc(
+        "Maximum accounted operations in canonical synchronization selection"),
+    llvm::cl::init(1U << 27));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumRepairRounds(
     "canonical-sync-maximum-repair-rounds",
     llvm::cl::desc("Maximum canonical synchronization event-pressure repair "
                    "rounds"),
     llvm::cl::init(8));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumRepairTrials(
+    "canonical-sync-maximum-repair-trials",
+    llvm::cl::desc("Maximum canonical synchronization event-pressure repair "
+                   "trials"),
+    llvm::cl::init(256));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumRepairWorkUnits(
+    "canonical-sync-maximum-repair-work-units",
+    llvm::cl::desc("Maximum accounted operations across canonical "
+                   "synchronization repair trials"),
+    llvm::cl::init(1U << 28));
+
+static llvm::cl::opt<std::int64_t>
+    canonicalSyncMaximumRepairFrontierInspections(
+        "canonical-sync-maximum-repair-frontier-inspections",
+        llvm::cl::desc("Maximum canonical synchronization conflict-core "
+                       "frontier inspections"),
+        llvm::cl::init(1U << 16));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumRepairFrontierProposals(
+    "canonical-sync-maximum-repair-frontier-proposals",
+    llvm::cl::desc("Maximum canonical synchronization conflict-core "
+                   "frontier proposals"),
+    llvm::cl::init(4096));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumBackstopDeletionTrials(
+    "canonical-sync-maximum-backstop-deletion-trials",
+    llvm::cl::desc("Maximum canonical synchronization localized PIPE_ALL "
+                   "deletion trials"),
+    llvm::cl::init(4096));
+
+static llvm::cl::opt<std::int64_t>
+    canonicalSyncMaximumBackstopDeletionWorkUnits(
+        "canonical-sync-maximum-backstop-deletion-work-units",
+        llvm::cl::desc("Maximum accounted operations in canonical "
+                       "synchronization PIPE_ALL cleanup"),
+        llvm::cl::init(1U << 27));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumVerificationWorkUnits(
+    "canonical-sync-maximum-verification-work-units",
+    llvm::cl::desc("Maximum accounted operations in canonical synchronization "
+                   "fresh verification"),
+    llvm::cl::init(1U << 27));
+
+static llvm::cl::opt<bool> canonicalSyncEnableDemandBasisReduction(
+    "canonical-sync-enable-demand-basis-reduction",
+    llvm::cl::desc("Reduce eligible distance-zero memory obligations before "
+                   "canonical synchronization selection"),
+    llvm::cl::init(true));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumDemandBasisGroupEdges(
+    "canonical-sync-maximum-demand-basis-group-edges",
+    llvm::cl::desc("Maximum obligations reduced in one canonical "
+                   "synchronization scope/resource group"),
+    llvm::cl::init(1U << 18));
+
+static llvm::cl::opt<std::int64_t>
+    canonicalSyncMaximumDemandBasisReachabilityWords(
+        "canonical-sync-maximum-demand-basis-reachability-words",
+        llvm::cl::desc("Maximum reachability words allocated across canonical "
+                       "synchronization demand-basis groups"),
+        llvm::cl::init(1U << 20));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumDemandBasisReductionWork(
+    "canonical-sync-maximum-demand-basis-reduction-work",
+    llvm::cl::desc("Maximum accounted canonical synchronization "
+                   "demand-basis reduction work"),
+    llvm::cl::init(1U << 24));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumSourcePrefixInspections(
+    "canonical-sync-maximum-source-prefix-inspections",
+    llvm::cl::desc("Maximum canonical synchronization source-prefix "
+                   "preparation inspections"),
+    llvm::cl::init(1U << 20));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumSourcePrefixCandidates(
+    "canonical-sync-maximum-source-prefix-candidates",
+    llvm::cl::desc("Maximum canonical synchronization source-prefix "
+                   "mechanisms prepared"),
+    llvm::cl::init(1U << 14));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumSourcePrefixIncidences(
+    "canonical-sync-maximum-source-prefix-incidences",
+    llvm::cl::desc("Maximum demand incidences retained by canonical "
+                   "synchronization source-prefix mechanisms"),
+    llvm::cl::init(1U << 20));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumLoopCarryInspections(
+    "canonical-sync-maximum-loop-carry-inspections",
+    llvm::cl::desc("Maximum canonical synchronization loop-carry demand "
+                   "inspections"),
+    llvm::cl::init(1U << 20));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumLoopCarryCandidates(
+    "canonical-sync-maximum-loop-carry-candidates",
+    llvm::cl::desc("Maximum complete canonical synchronization loop-carry "
+                   "mechanisms prepared"),
+    llvm::cl::init(1U << 14));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumLoopCarryIncidences(
+    "canonical-sync-maximum-loop-carry-incidences",
+    llvm::cl::desc("Maximum demand incidences retained by canonical "
+                   "synchronization loop-carry mechanisms"),
+    llvm::cl::init(1U << 20));
+
+static llvm::cl::opt<std::int64_t>
+    canonicalSyncMaximumLoopBoundaryProtocolInspections(
+        "canonical-sync-maximum-loop-boundary-protocol-inspections",
+        llvm::cl::desc("Maximum canonical synchronization loop-boundary "
+                       "protocol inspections"),
+        llvm::cl::init(1U << 20));
+
+static llvm::cl::opt<std::int64_t>
+    canonicalSyncMaximumLoopBoundaryProtocolCandidates(
+        "canonical-sync-maximum-loop-boundary-protocol-candidates",
+        llvm::cl::desc("Maximum canonical synchronization loop-boundary "
+                       "protocol mechanisms prepared"),
+        llvm::cl::init(1U << 14));
+
+static llvm::cl::opt<std::int64_t>
+    canonicalSyncMaximumLoopBoundaryProtocolIncidences(
+        "canonical-sync-maximum-loop-boundary-protocol-incidences",
+        llvm::cl::desc("Maximum demand incidences retained by canonical "
+                       "synchronization loop-boundary protocols"),
+        llvm::cl::init(1U << 20));
 
 static llvm::cl::opt<bool> canonicalSyncAnalysisOnly(
     "canonical-sync-analysis-only",
@@ -574,9 +713,20 @@ static llvm::cl::opt<bool> canonicalSyncAnalysisOnly(
                    "without modifying IR"),
     llvm::cl::init(false));
 
+static llvm::cl::opt<bool> analyzeCanonicalSyncStrategies(
+    "analyze-canonical-sync-strategies",
+    llvm::cl::desc("Terminally compare and freshly verify all canonical "
+                   "synchronization strategies without modifying IR"),
+    llvm::cl::init(false));
+
 static llvm::cl::opt<std::string> canonicalSyncComparisonReport(
     "canonical-sync-comparison-report",
     llvm::cl::desc("Write canonical synchronization comparison JSON"),
+    llvm::cl::init(""));
+
+static llvm::cl::opt<std::string> canonicalSyncReport(
+    "canonical-sync-report",
+    llvm::cl::desc("Write ptoas.canonical_sync.v1 strategy JSON"),
     llvm::cl::init(""));
 
 static llvm::cl::opt<bool> planMemoryOrderBySize(
@@ -1407,24 +1557,10 @@ struct SerialAutoSyncPass
   enum class Mode { InsertSync, Canonical, Bufid, BarrierAll, GraphSolver };
 
   SerialAutoSyncPass(Mode mode, bool enableBufidDebug, int64_t graphEventIdMax,
-                     int64_t canonicalEventIdMax = 0,
-                     bool canonicalDistinctGmArgs = false,
-                     bool canonicalAllGmAccesses = false,
-                     std::string canonicalPatternMode = "direct-pair",
-                     std::string canonicalSelectionStrategy = "pair-lookahead",
-                     int64_t canonicalMaximumRepairRounds = 8,
-                     bool canonicalAnalysisOnly = false,
-                     std::string canonicalComparisonReport = "")
+                     PTOCanonicalSyncOptions canonicalOptions = {})
       : mode(mode), enableBufidDebug(enableBufidDebug),
         graphEventIdMax(graphEventIdMax),
-        canonicalEventIdMax(canonicalEventIdMax),
-        canonicalDistinctGmArgs(canonicalDistinctGmArgs),
-        canonicalAllGmAccesses(canonicalAllGmAccesses),
-        canonicalPatternMode(std::move(canonicalPatternMode)),
-        canonicalSelectionStrategy(std::move(canonicalSelectionStrategy)),
-        canonicalMaximumRepairRounds(canonicalMaximumRepairRounds),
-        canonicalAnalysisOnly(canonicalAnalysisOnly),
-        canonicalComparisonReport(std::move(canonicalComparisonReport)) {}
+        canonicalOptions(std::move(canonicalOptions)) {}
 
   void runOnOperation() override {
     OpPassManager functionPM(func::FuncOp::getOperationName());
@@ -1433,16 +1569,7 @@ struct SerialAutoSyncPass
       functionPM.addPass(pto::createPTOInsertSyncPass());
       break;
     case Mode::Canonical: {
-      PTOCanonicalSyncOptions options;
-      options.eventIdNumMax = canonicalEventIdMax;
-      options.assumeDistinctGmArgsNoAlias = canonicalDistinctGmArgs;
-      options.assumeAllGmAccessesNoAlias = canonicalAllGmAccesses;
-      options.patternMode = canonicalPatternMode;
-      options.selectionStrategy = canonicalSelectionStrategy;
-      options.maximumRepairRounds = canonicalMaximumRepairRounds;
-      options.analysisOnly = canonicalAnalysisOnly;
-      options.comparisonReport = canonicalComparisonReport;
-      functionPM.addPass(pto::createPTOCanonicalSyncPass(options));
+      functionPM.addPass(pto::createPTOCanonicalSyncPass(canonicalOptions));
       break;
     }
     case Mode::Bufid: {
@@ -1474,14 +1601,7 @@ private:
   Mode mode;
   bool enableBufidDebug;
   int64_t graphEventIdMax;
-  int64_t canonicalEventIdMax;
-  bool canonicalDistinctGmArgs;
-  bool canonicalAllGmAccesses;
-  std::string canonicalPatternMode;
-  std::string canonicalSelectionStrategy;
-  int64_t canonicalMaximumRepairRounds;
-  bool canonicalAnalysisOnly;
-  std::string canonicalComparisonReport;
+  PTOCanonicalSyncOptions canonicalOptions;
 };
 } // namespace
 
@@ -3623,16 +3743,29 @@ int mlir::pto::compilePTOASModule(OwningOpRef<ModuleOp> &module,
                     "--enable-graph-sync-solver are mutually exclusive.\n";
     return 1;
   }
+  const bool canonicalAnalysisRequested =
+      canonicalSyncAnalysisOnly || analyzeCanonicalSyncStrategies;
+  const bool conflictingCanonicalReports =
+      !canonicalSyncComparisonReport.empty() && !canonicalSyncReport.empty() &&
+      canonicalSyncComparisonReport != canonicalSyncReport;
+  if (conflictingCanonicalReports) {
+    llvm::errs() << "Error: --canonical-sync-report and "
+                    "--canonical-sync-comparison-report must name the same "
+                    "path when both are provided.\n";
+    return 1;
+  }
   const bool hasCanonicalAnalysisOption =
-      canonicalSyncAnalysisOnly || !canonicalSyncComparisonReport.empty();
+      canonicalAnalysisRequested || !canonicalSyncComparisonReport.empty() ||
+      !canonicalSyncReport.empty();
   if (hasCanonicalAnalysisOption && !enableCanonicalSync) {
     llvm::errs() << "Error: canonical synchronization analysis/report options "
                     "require --enable-canonical-sync.\n";
     return 1;
   }
-  if (canonicalSyncAnalysisOnly && !emitMlirIR) {
-    llvm::errs() << "Error: --canonical-sync-analysis-only requires "
-                    "--emit-pto-ir to prevent unsynchronized code emission.\n";
+  if (canonicalAnalysisRequested && !emitMlirIR) {
+    llvm::errs() << "Error: canonical synchronization strategy analysis "
+                    "requires --emit-pto-ir to prevent unsynchronized code "
+                    "emission.\n";
     return 1;
   }
   if (hasTAssign && enableInjectBarrierAllSync) {
@@ -3851,25 +3984,65 @@ int mlir::pto::compilePTOASModule(OwningOpRef<ModuleOp> &module,
       pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass());
     }
   } else if (enableCanonicalSync) {
+    PTOCanonicalSyncOptions options;
+    options.eventIdNumMax = canonicalSyncEventIdMax;
+    options.assumeDistinctGmArgsNoAlias =
+        canonicalSyncAssumeDistinctGmArgsNoAlias;
+    options.assumeAllGmAccessesNoAlias =
+        canonicalSyncAssumeAllGmAccessesNoAlias;
+    options.patternMode = canonicalSyncPatternMode;
+    options.selectionStrategy = canonicalSyncSelectionStrategy;
+    options.maximumPairEvaluationsPerScope =
+        canonicalSyncMaximumPairEvaluationsPerScope;
+    options.maximumSelectionWorkUnits = canonicalSyncMaximumSelectionWorkUnits;
+    options.maximumRepairRounds = canonicalSyncMaximumRepairRounds;
+    options.maximumRepairTrials = canonicalSyncMaximumRepairTrials;
+    options.maximumRepairWorkUnits = canonicalSyncMaximumRepairWorkUnits;
+    options.maximumRepairFrontierInspections =
+        canonicalSyncMaximumRepairFrontierInspections;
+    options.maximumRepairFrontierProposals =
+        canonicalSyncMaximumRepairFrontierProposals;
+    options.maximumBackstopDeletionTrials =
+        canonicalSyncMaximumBackstopDeletionTrials;
+    options.maximumBackstopDeletionWorkUnits =
+        canonicalSyncMaximumBackstopDeletionWorkUnits;
+    options.maximumVerificationWorkUnits =
+        canonicalSyncMaximumVerificationWorkUnits;
+    options.enableDemandBasisReduction =
+        canonicalSyncEnableDemandBasisReduction;
+    options.maximumDemandBasisGroupEdges =
+        canonicalSyncMaximumDemandBasisGroupEdges;
+    options.maximumDemandBasisReachabilityWords =
+        canonicalSyncMaximumDemandBasisReachabilityWords;
+    options.maximumDemandBasisReductionWork =
+        canonicalSyncMaximumDemandBasisReductionWork;
+    options.maximumSourcePrefixInspections =
+        canonicalSyncMaximumSourcePrefixInspections;
+    options.maximumSourcePrefixCandidates =
+        canonicalSyncMaximumSourcePrefixCandidates;
+    options.maximumSourcePrefixIncidences =
+        canonicalSyncMaximumSourcePrefixIncidences;
+    options.maximumLoopCarryInspections =
+        canonicalSyncMaximumLoopCarryInspections;
+    options.maximumLoopCarryCandidates =
+        canonicalSyncMaximumLoopCarryCandidates;
+    options.maximumLoopCarryIncidences =
+        canonicalSyncMaximumLoopCarryIncidences;
+    options.maximumLoopBoundaryProtocolInspections =
+        canonicalSyncMaximumLoopBoundaryProtocolInspections;
+    options.maximumLoopBoundaryProtocolCandidates =
+        canonicalSyncMaximumLoopBoundaryProtocolCandidates;
+    options.maximumLoopBoundaryProtocolIncidences =
+        canonicalSyncMaximumLoopBoundaryProtocolIncidences;
+    options.analysisOnly =
+        canonicalSyncAnalysisOnly || analyzeCanonicalSyncStrategies;
+    options.comparisonReport = canonicalSyncReport.empty()
+                                   ? canonicalSyncComparisonReport
+                                   : canonicalSyncReport;
     if (emitMlirIR) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
-          SerialAutoSyncPass::Mode::Canonical, false, 0,
-          canonicalSyncEventIdMax, canonicalSyncAssumeDistinctGmArgsNoAlias,
-          canonicalSyncAssumeAllGmAccessesNoAlias, canonicalSyncPatternMode,
-          canonicalSyncSelectionStrategy, canonicalSyncMaximumRepairRounds,
-          canonicalSyncAnalysisOnly, canonicalSyncComparisonReport));
+          SerialAutoSyncPass::Mode::Canonical, false, 0, options));
     } else {
-      PTOCanonicalSyncOptions options;
-      options.eventIdNumMax = canonicalSyncEventIdMax;
-      options.assumeDistinctGmArgsNoAlias =
-          canonicalSyncAssumeDistinctGmArgsNoAlias;
-      options.assumeAllGmAccessesNoAlias =
-          canonicalSyncAssumeAllGmAccessesNoAlias;
-      options.patternMode = canonicalSyncPatternMode;
-      options.selectionStrategy = canonicalSyncSelectionStrategy;
-      options.maximumRepairRounds = canonicalSyncMaximumRepairRounds;
-      options.analysisOnly = canonicalSyncAnalysisOnly;
-      options.comparisonReport = canonicalSyncComparisonReport;
       pm.addNestedPass<func::FuncOp>(pto::createPTOCanonicalSyncPass(options));
     }
   } else if (enableBufidSync) {

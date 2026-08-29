@@ -52,6 +52,7 @@ struct ExtractedAccess {
   std::uint64_t size = 0;
   bool knownPhysical = false;
   bool unknownRange = false;
+  std::optional<std::uint64_t> rootRelativeOffset;
   SyncCoverStorageAccessMode mode = SyncCoverStorageAccessMode::Read;
   std::vector<SyncCoverStorageAccessId> graphAccesses;
 };
@@ -94,6 +95,7 @@ bool isCanonicalSyncOwned(Operation *operation);
 bool isTransparentRegionOperation(Operation *operation);
 bool isCompletionOrdered(std::uint32_t resource, Operation *operation);
 bool canSignalDirectCompletion(std::uint32_t resource);
+bool canSignalPrefixCompletion(std::uint32_t resource, Operation *operation);
 
 class ProgramBuilder {
 public:
@@ -137,7 +139,10 @@ private:
   bool consumePairInspections(std::size_t amount = 1);
   bool consumePairInspection() { return consumePairInspections(); }
   LogicalResult addFixedIssueOrder();
+  LogicalResult addCertifiedCompletionFrontiers();
   LogicalResult addRegionIssueOrder(Region &region, IssueOrderState &state);
+  LogicalResult recordBlockingBarrierPrefixes(SyncCoverNodeId target,
+                                              IssueOrderState &state);
   LogicalResult addIssueNode(SyncCoverNodeId target, IssueOrderState &state);
   LogicalResult addFixedBarrier(BarrierOp barrier, IssueOrderState &state);
   LogicalResult mergeIssueStates(IssueOrderState &target,
@@ -147,6 +152,8 @@ private:
                                      std::vector<SyncCoverNodeId> &sources);
   LogicalResult addForwardDependencies();
   LogicalResult addRecurrenceDependencies();
+  LogicalResult addTargetCompletionCertificates(
+      const CanonicalSyncTargetCapabilities &capabilities);
   bool isDemandImplicitlyComplete(SyncCoverNodeId source,
                                   SyncCoverNodeId target);
   LogicalResult

@@ -9,8 +9,9 @@
 // for the full text of the License.
 
 // RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
-// RUN:   --canonical-sync-analysis-only \
-// RUN:   --canonical-sync-comparison-report=%t.json --emit-pto-ir %s \
+// RUN:   --analyze-canonical-sync-strategies \
+// RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
+// RUN:   --canonical-sync-report=%t.json --emit-pto-ir %s \
 // RUN:   > %t.mlir
 // RUN: pto-test-opt %s \
 // RUN:   '-pto-canonical-sync=analysis-only event-id-num-max=8' \
@@ -21,6 +22,36 @@
 // RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
 // RUN:   --canonical-sync-selection-strategy=invalid --emit-pto-ir %s \
 // RUN:   2>&1 | FileCheck %s --check-prefix=INVALID
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-verification-work-units=0 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-BOUND
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-demand-basis-group-edges=0 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-BASIS-EDGE
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-demand-basis-reachability-words=0 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-BASIS-WORD
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-demand-basis-reduction-work=0 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-BASIS-WORK
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-source-prefix-inspections=0 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-PREFIX-INSPECT
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-source-prefix-candidates=0 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-PREFIX-CANDIDATE
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-source-prefix-incidences=0 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-PREFIX-INCIDENCE
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-loop-carry-inspections=0 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-CARRY-INSPECT
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-loop-carry-candidates=0 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-CARRY-CANDIDATE
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-loop-carry-incidences=0 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-CARRY-INCIDENCE
 
 // SUMMARY: canonical sync: demands=
 // SUMMARY-DAG: canonical sync strategy=fixed-cover
@@ -33,19 +64,55 @@
 // SUMMARY-DAG: backstop-deletion-trials=
 // SUMMARY-DAG: backstop-deletion-work=
 // SUMMARY-DAG: backstop-deletion-truncated=
-// REPORT: "demands":
-// REPORT: "direct_pair_evaluations":
-// REPORT: "backstop_deletion_trials":
-// REPORT: "backstop_deletion_truncated":
-// REPORT: "backstop_deletion_work_units":
-// REPORT: "repair_budget_exhausted":
-// REPORT: "repair_frontier_truncated":
-// REPORT: "repair_trials":
-// REPORT: "repair_work_units":
-// REPORT: "strategy": "fixed-cover"
-// REPORT: "strategy": "action-aware-singleton"
-// REPORT: "strategy": "pair-lookahead"
+// REPORT-DAG: "schema": "ptoas.canonical_sync.v1"
+// REPORT-DAG: "function": "comparison"
+// REPORT-DAG: "gm_alias_policy": "distinct-arguments-noalias"
+// REPORT-DAG: "graph_nodes":
+// REPORT-DAG: "graph_edges":
+// REPORT-DAG: "demands":
+// REPORT-DAG: "unique_demand_keys":
+// REPORT-DAG: "selection_basis_rows":
+// REPORT-DAG: "basis_reduced_rows":
+// REPORT-DAG: "basis_reduction_truncated":
+// REPORT-DAG: "direct_pair_evaluations":
+// REPORT-DAG: "source_prefix_inspections":
+// REPORT-DAG: "source_prefix_candidates":
+// REPORT-DAG: "source_prefix_incidences":
+// REPORT-DAG: "source_prefix_generation_truncated":
+// REPORT-DAG: "loop_carry_inspections":
+// REPORT-DAG: "loop_carry_candidates":
+// REPORT-DAG: "loop_carry_incidences":
+// REPORT-DAG: "loop_carry_generation_truncated":
+// REPORT-DAG: "backstop_deletion_trials":
+// REPORT-DAG: "backstop_deletion_truncated":
+// REPORT-DAG: "backstop_deletion_work_units":
+// REPORT-DAG: "repair_budget_exhausted":
+// REPORT-DAG: "repair_frontier_truncated":
+// REPORT-DAG: "repair_trials":
+// REPORT-DAG: "repair_work_units":
+// REPORT-DAG: "verification_work_units":
+// REPORT-DAG: "emitted_source_prefix_pipe_drain_barriers":
+// REPORT-DAG: "predicted_sync_instructions":
+// REPORT-DAG: "plan_signature": "0x
+// REPORT-DAG: "selection_time_ns":
+// REPORT-DAG: "repair_time_ns":
+// REPORT-DAG: "verification_time_ns":
+// REPORT-DAG: "preparation_time_ns":
+// REPORT-DAG: "live_mechanisms":
+// REPORT-DAG: "strategy": "fixed-cover"
+// REPORT-DAG: "strategy": "action-aware-singleton"
+// REPORT-DAG: "strategy": "pair-lookahead"
 // INVALID: selection-strategy must be fixed-cover, action-aware-singleton, or pair-lookahead
+// INVALID-BOUND: maximum-verification-work-units must be positive
+// INVALID-BASIS-EDGE: maximum-demand-basis-group-edges must be positive
+// INVALID-BASIS-WORD: maximum-demand-basis-reachability-words must be positive
+// INVALID-BASIS-WORK: maximum-demand-basis-reduction-work must be positive
+// INVALID-PREFIX-INSPECT: maximum-source-prefix-inspections must be positive
+// INVALID-PREFIX-CANDIDATE: maximum-source-prefix-candidates must be positive
+// INVALID-PREFIX-INCIDENCE: maximum-source-prefix-incidences must be positive
+// INVALID-CARRY-INSPECT: maximum-loop-carry-inspections must be positive
+// INVALID-CARRY-CANDIDATE: maximum-loop-carry-candidates must be positive
+// INVALID-CARRY-INCIDENCE: maximum-loop-carry-incidences must be positive
 
 module {
   // UNCHANGED-LABEL: func.func @comparison

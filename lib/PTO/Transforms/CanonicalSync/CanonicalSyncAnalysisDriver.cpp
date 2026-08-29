@@ -164,16 +164,73 @@ bool mlir::pto::canonical_sync_detail::canSignalDirectCompletion(
   return false;
 }
 
+bool mlir::pto::canonical_sync_detail::canSignalPrefixCompletion(
+    std::uint32_t resource, Operation *operation) {
+  // A later set may represent an earlier issued prefix only on resources with
+  // an explicit in-order completion contract. Other physical resources may
+  // still signal the completion of the immediately preceding operation.
+  return isCompletionOrdered(resource, operation);
+}
+
 ProgramBuilder::ProgramBuilder(func::FuncOp function,
                                const CanonicalSyncAnalysisOptions &options)
     : function_(function), options_(options) {}
 
 FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
+  ModuleOp module = function_->getParentOfType<ModuleOp>();
+  StringAttr targetArch =
+      module ? module->getAttrOfType<StringAttr>(kPTOTargetArchAttrName)
+             : StringAttr{};
+  const bool explicitA3 = targetArch && (targetArch.getValue() == "a2a3" ||
+                                         targetArch.getValue() == "a3");
+  const bool explicitA5 = targetArch && targetArch.getValue() == "a5";
+  std::vector<std::uint32_t> blockingBarrierResources;
+  if (explicitA3 || explicitA5) {
+    blockingBarrierResources = {
+        static_cast<std::uint32_t>(PipelineType::PIPE_M),
+        static_cast<std::uint32_t>(PipelineType::PIPE_MTE1),
+        static_cast<std::uint32_t>(PipelineType::PIPE_MTE2),
+        static_cast<std::uint32_t>(PipelineType::PIPE_MTE3),
+        static_cast<std::uint32_t>(PipelineType::PIPE_FIX)};
+    if (!explicitA5) {
+      blockingBarrierResources.push_back(
+          static_cast<std::uint32_t>(PipelineType::PIPE_V));
+    }
+  }
+  // These narrow A3 completion contracts are silicon-validated by the
+  // ownership-pipelined GEMM. A5 remains disabled until equivalent target
+  // evidence exists.
+  const CanonicalSyncTargetCapabilities targetCapabilities{
+      /*mte1L0ReadySetCompletesPrefix=*/explicitA3,
+      /*mL0AlternativeJoinSetCompletes=*/explicitA3,
+      /*mte1ScopeExitSetCompletesPrefix=*/explicitA3,
+      /*mToFixAccumulatorBoundaryCompletes=*/explicitA3};
+  const bool failedBarrierConfiguration =
+      !graph_.setBlockingTargetedBarrierResources(
+          std::move(blockingBarrierResources));
+  const bool failedTargetCompletionConfiguration =
+      !graph_.setTargetCompletionResources(
+          {static_cast<std::uint32_t>(PipelineType::PIPE_MTE1),
+           static_cast<std::uint32_t>(PipelineType::PIPE_M),
+           static_cast<std::uint32_t>(PipelineType::PIPE_FIX)});
   const bool failedStage =
-      failed(validateInput()) || failed(extract()) || failed(buildScopes()) ||
+      failedBarrierConfiguration || failedTargetCompletionConfiguration ||
+      failed(validateInput()) ||
+      failed(extract()) || failed(buildScopes()) ||
       failed(buildNodesAndStorage()) || failed(validateControlDataflow()) ||
-      failed(addFixedIssueOrder()) || failed(buildStorageConflictIndex()) ||
-      failed(addForwardDependencies()) || failed(addRecurrenceDependencies());
+      failed(addFixedIssueOrder()) ||
+      failed(addCertifiedCompletionFrontiers()) ||
+      failed(buildStorageConflictIndex()) || failed(addForwardDependencies()) ||
+      failed(addRecurrenceDependencies()) ||
+      failed(addTargetCompletionCertificates(targetCapabilities));
+  if (failedBarrierConfiguration) {
+    function_.emitError(
+        "cannot configure canonical sync blocking-barrier resources");
+  }
+  if (failedTargetCompletionConfiguration) {
+    function_.emitError(
+        "cannot configure canonical sync target completion resources");
+  }
   if (failedStage) {
     return failure();
   }
@@ -186,20 +243,6 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
   for (const auto &[space, domain] : storageDomains_) {
     storageSpaces[domain] = space;
   }
-  // These narrow A3 completion contracts are silicon-validated by the
-  // ownership-pipelined GEMM. A5 remains disabled until equivalent target
-  // evidence exists.
-  ModuleOp module = function_->getParentOfType<ModuleOp>();
-  StringAttr targetArch =
-      module ? module->getAttrOfType<StringAttr>(kPTOTargetArchAttrName)
-             : StringAttr{};
-  const bool explicitA3 = targetArch && (targetArch.getValue() == "a2a3" ||
-                                         targetArch.getValue() == "a3");
-  const CanonicalSyncTargetCapabilities targetCapabilities{
-      /*mte1L0ReadySetCompletesPrefix=*/explicitA3,
-      /*mL0AlternativeJoinSetCompletes=*/explicitA3,
-      /*mte1ScopeExitSetCompletesPrefix=*/explicitA3,
-      /*mToFixAccumulatorBoundaryCompletes=*/explicitA3};
   return CanonicalSyncProgram(
       function_, std::move(graph_), std::move(nodeBindings_),
       std::move(scopeBindings_), std::move(controlBindings_),
@@ -367,6 +410,7 @@ LogicalResult ProgramBuilder::buildNodesAndStorage() {
     }
   }
 
+  std::map<Operation *, SyncCoverNodeId> physicalAnchors;
   for (std::size_t order = 0; order < compounds_.size(); ++order) {
     CompoundInstanceElement *compound = compounds_[order];
     auto context = contexts_.find(compound->elementOp->getParentRegion());
@@ -377,20 +421,26 @@ LogicalResult ProgramBuilder::buildNodesAndStorage() {
     const std::uint32_t resource =
         static_cast<std::uint32_t>(compound->kPipeValue);
     std::vector<std::uint32_t> completionTargets;
-    if (canSignalDirectCompletion(resource)) {
-      for (std::uint32_t candidate : resources) {
-        if (candidate != resource) {
-          completionTargets.push_back(candidate);
-        }
+    for (std::uint32_t candidate : resources) {
+      if (candidate != resource &&
+          canSignalDirectCompletion(resource)) {
+        completionTargets.push_back(candidate);
       }
     }
-    const SyncCoverGraphResult node =
-        graph_.addNode(resource, 1, context->second.scope, order,
-                       context->second.guard, std::move(completionTargets));
+    const auto physicalAnchor = physicalAnchors.find(compound->elementOp);
+    const std::optional<SyncCoverNodeId> representative =
+        physicalAnchor == physicalAnchors.end()
+            ? std::nullopt
+            : std::optional<SyncCoverNodeId>(physicalAnchor->second);
+    const SyncCoverGraphResult node = graph_.addNode(
+        resource, 1, context->second.scope, order, context->second.guard,
+        std::move(completionTargets), representative,
+        canSignalPrefixCompletion(resource, function_.getOperation()));
     if (!node) {
       return compound->elementOp->emitError(
           "cannot construct canonical sync operation node");
     }
+    physicalAnchors.try_emplace(compound->elementOp, *node.index);
     nodeBindings_.push_back({compound->elementOp, compound->macroOpInstanceId});
     operationNodes_[compound->elementOp].push_back(*node.index);
     nodeAccessIndices_.emplace_back();
@@ -398,6 +448,18 @@ LogicalResult ProgramBuilder::buildNodesAndStorage() {
     appendAccesses(*node.index, compound->defVec, true);
     if (failed(materializeNodeAccesses(*node.index))) {
       return failure();
+    }
+  }
+  for (const auto &[operation, nodes] : operationNodes_) {
+    (void)operation;
+    if (nodes.empty()) {
+      continue;
+    }
+    for (SyncCoverNodeId node : nodes) {
+      if (!graph_.setPhysicalExit(node, nodes.back())) {
+        return function_.emitError(
+            "cannot register canonical sync physical operation exit");
+      }
     }
   }
   if (failed(indexSsaCompletionNodes())) {

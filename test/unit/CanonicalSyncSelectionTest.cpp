@@ -107,6 +107,44 @@ eventInScope(CanonicalSyncEventDomainId domain, std::uint32_t sourceResource,
 }
 
 CanonicalSyncMechanismDescriptor
+mixedTargetLocalEvent(CanonicalSyncEventDomainId domain,
+                      std::uint32_t sourceResource,
+                      std::uint32_t targetResource, SyncCoverNodeId source,
+                      SyncCoverNodeId target, SyncCoverScopeId loop,
+                      SyncCoverDemandId distanceZeroDemand,
+                      SyncCoverDemandId positiveDistanceDemand) {
+  CanonicalSyncMechanismDescriptor result;
+  result.eventUses.push_back({domain, 1, std::nullopt});
+  result.actions.push_back({CanonicalSyncActionKind::EventSet,
+                            sourceResource,
+                            before(target),
+                            0,
+                            0,
+                            {}});
+  result.actions.push_back({CanonicalSyncActionKind::EventWait,
+                            targetResource,
+                            before(target),
+                            0,
+                            0,
+                            {}});
+  CanonicalSyncSupplyBinding distanceZero;
+  distanceZero.edge = supply(source, target, loop);
+  distanceZero.eventUse = 0;
+  distanceZero.proof = CanonicalSyncSupplyProof::TargetLocalFenceAction;
+  distanceZero.attestedDemand = distanceZeroDemand;
+  distanceZero.applicability = SyncCoverSupplyApplicability::DistanceZeroOnly;
+  result.supplies.push_back(std::move(distanceZero));
+  CanonicalSyncSupplyBinding positiveDistance;
+  positiveDistance.edge = supply(source, target, loop, 1);
+  positiveDistance.eventUse = 0;
+  positiveDistance.proof = CanonicalSyncSupplyProof::TargetLocalFenceAction;
+  positiveDistance.allowedDemands = {positiveDistanceDemand};
+  positiveDistance.attestedDemand = positiveDistanceDemand;
+  result.supplies.push_back(std::move(positiveDistance));
+  return result;
+}
+
+CanonicalSyncMechanismDescriptor
 protocol(CanonicalSyncEventDomainId domain, std::uint32_t sourceResource,
          std::uint32_t targetResource, SyncCoverNodeId source,
          SyncCoverNodeId target, SyncCoverScopeId loop, std::size_t width,
@@ -167,6 +205,82 @@ CanonicalSyncMechanismDescriptor targetedBarrier(std::uint32_t resource,
   result.supplies.push_back({supply(source, target, scope), std::nullopt, 0,
                              std::nullopt, std::nullopt,
                              CanonicalSyncSupplyProof::DirectAction});
+  return result;
+}
+
+CanonicalSyncMechanismDescriptor sourceLocalBarrier(
+    std::uint32_t resource, SyncCoverNodeId source,
+    const std::vector<std::pair<SyncCoverNodeId, SyncCoverDemandId>> &targets) {
+  CanonicalSyncMechanismDescriptor result;
+  result.kind = CanonicalSyncMechanismKind::Barrier;
+  result.actions.push_back({CanonicalSyncActionKind::Barrier,
+                            resource,
+                            after(source),
+                            std::nullopt,
+                            0,
+                            {resource},
+                            CanonicalSyncBarrierKind::Targeted});
+  for (const auto &[target, demandId] : targets) {
+    CanonicalSyncSupplyBinding binding;
+    binding.edge = supply(source, target);
+    binding.barrierAction = 0;
+    binding.proof = CanonicalSyncSupplyProof::SourceLocalPipeDrainAction;
+    binding.attestedDemand = demandId;
+    binding.applicability = SyncCoverSupplyApplicability::DistanceZeroOnly;
+    result.supplies.push_back(std::move(binding));
+  }
+  return result;
+}
+
+CanonicalSyncMechanismDescriptor
+targetLocalPipeDrain(std::uint32_t sourceResource, SyncCoverNodeId source,
+                     SyncCoverNodeId target, SyncCoverDemandId demandId) {
+  CanonicalSyncMechanismDescriptor result;
+  result.kind = CanonicalSyncMechanismKind::Barrier;
+  result.actions.push_back({CanonicalSyncActionKind::Barrier,
+                            sourceResource,
+                            before(target),
+                            std::nullopt,
+                            0,
+                            {sourceResource},
+                            CanonicalSyncBarrierKind::Targeted});
+  CanonicalSyncSupplyBinding binding;
+  binding.edge = supply(source, target);
+  binding.barrierAction = 0;
+  binding.proof = CanonicalSyncSupplyProof::TargetLocalPipeDrainAction;
+  binding.attestedDemand = demandId;
+  binding.applicability = SyncCoverSupplyApplicability::DistanceZeroOnly;
+  result.supplies.push_back(std::move(binding));
+  return result;
+}
+
+CanonicalSyncMechanismDescriptor sourcePrefixPipeDrain(
+    const SyncCoverGraph &graph, std::uint32_t resource, SyncCoverNodeId cut,
+    const std::vector<std::pair<SyncCoverNodeId, SyncCoverDemandId>> &targets) {
+  CanonicalSyncMechanismDescriptor result;
+  result.kind = CanonicalSyncMechanismKind::Barrier;
+  result.actions.push_back({CanonicalSyncActionKind::Barrier,
+                            resource,
+                            after(cut),
+                            std::nullopt,
+                            0,
+                            {resource},
+                            CanonicalSyncBarrierKind::Targeted});
+  for (const auto &[target, demandId] : targets) {
+    const SyncCoverDemand &demandDescription = graph.getDemands()[demandId];
+    CanonicalSyncSupplyBinding binding;
+    binding.edge = supply(demandDescription.source, target,
+                          demandDescription.scope, demandDescription.distance);
+    binding.barrierAction = 0;
+    binding.proof = CanonicalSyncSupplyProof::SourcePrefixPipeDrainAction;
+    binding.attestedDemand = demandId;
+    if (binding.edge.distance == 0) {
+      binding.applicability = SyncCoverSupplyApplicability::DistanceZeroOnly;
+    } else {
+      binding.allowedDemands = {demandId};
+    }
+    result.supplies.push_back(std::move(binding));
+  }
   return result;
 }
 
@@ -467,7 +581,124 @@ bool testDirectPairDiscoversJointCoverage() {
   return passed;
 }
 
-bool testConnectorIndexCanonicalizesDuplicateSupplies() {
+bool testDirectPairTraversesFixedCompletionSupply() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}), passed,
+                "add fixed-connector pair source");
+  const SyncCoverNodeId firstMiddle =
+      takeIndex(graph.addNode(2, 1, 0, 1, {}, {3}), passed,
+                "add fixed-connector first middle");
+  const SyncCoverNodeId secondMiddle =
+      takeIndex(graph.addNode(3, 1, 0, 2, {}, {4}), passed,
+                "add fixed-connector second middle");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(4, 1, 0, 3), passed,
+                                           "add fixed-connector pair target");
+  passed &= check(graph.addEdge(supply(firstMiddle, secondMiddle)),
+                  "add fixed completion connector") &&
+            check(graph.addDemand(demand(source, target)),
+                  "add fixed-connector pair demand") &&
+            check(graph.freezeStructure(), "freeze fixed-connector pair graph");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                  "add fixed-connector first domain") &&
+            check(problem.addEventDomain({1, 3, 4, 8, {}}),
+                  "add fixed-connector second domain");
+  const CanonicalSyncMechanismId first =
+      takeIndex(problem.internMechanism(event(0, 1, 2, source, firstMiddle)),
+                passed, "add fixed-connector first member");
+  const CanonicalSyncMechanismId second =
+      takeIndex(problem.internMechanism(event(1, 3, 4, secondMiddle, target)),
+                passed, "add fixed-connector second member");
+  const CanonicalSyncProblemResult generated =
+      addCanonicalSyncDirectPairPatterns(problem);
+  passed &= check(generated && generated.index == 1,
+                  "retain pair joined by fixed completion supply") &&
+            check(problem.freeze(), "freeze fixed-connector pair problem");
+  if (!passed) {
+    return false;
+  }
+  const CanonicalSyncPattern &pair = problem.getPatterns().back();
+  return check(!problem.getPatterns()[first].coverage.contains(0) &&
+                   !problem.getPatterns()[second].coverage.contains(0) &&
+                   pair.kind == CanonicalSyncPatternKind::DirectPair &&
+                   pair.members ==
+                       std::vector<CanonicalSyncMechanismId>{first, second} &&
+                   pair.coverage.contains(0) && pair.extraCoverageCount == 1,
+               "fixed completion supply contributes only to the joint cover");
+}
+
+bool testDirectPairIndexesUnrestrictedBindingOfMixedMechanism() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 15}, true),
+                passed, "add mixed-binding loop");
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, loop, 0, {}, {2}), passed,
+                "add mixed-binding source");
+  const SyncCoverNodeId middle =
+      takeIndex(graph.addNode(2, 1, loop, 1, {}, {3}, std::nullopt, true),
+                passed, "add mixed-binding middle");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(3, 1, loop, 2), passed,
+                                           "add mixed-binding target");
+  passed &= check(graph.addDemand(demand(source, target, loop)),
+                  "add mixed-binding pair demand");
+  const SyncCoverDemandId distanceZeroDemand = graph.getDemands().size();
+  passed &= check(graph.addDemand(demand(middle, target, loop)),
+                  "add mixed-binding distance-zero attestation");
+  const SyncCoverDemandId positiveDistanceDemand = graph.getDemands().size();
+  passed &= check(graph.addDemand(demand(middle, target, loop, 1)),
+                  "add mixed-binding positive-distance attestation");
+  const SyncCoverDemandId unrelatedPositiveDemand = graph.getDemands().size();
+  passed &= check(graph.addDemand(demand(middle, target, loop, 2)),
+                  "add mixed-binding unrelated positive-distance row");
+  passed &= check(graph.freezeStructure(), "freeze mixed-binding graph");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                  "add mixed-binding first domain");
+  passed &= check(problem.addEventDomain({1, 2, 3, 8, {}}),
+                  "add mixed-binding second domain");
+  const CanonicalSyncMechanismId first = takeIndex(
+      problem.internMechanism(eventInScope(0, 1, 2, source, middle, loop)),
+      passed, "add mixed-binding first event");
+  const CanonicalSyncMechanismId second =
+      takeIndex(problem.internMechanism(mixedTargetLocalEvent(
+                    1, 2, 3, middle, target, loop, distanceZeroDemand,
+                    positiveDistanceDemand)),
+                passed, "add mixed target-local event");
+  CanonicalSyncDirectPairOptions options;
+  options.maximumConnectorIndexEntries = 4;
+  const CanonicalSyncProblemResult generated =
+      addCanonicalSyncDirectPairPatterns(problem, options);
+  passed &= check(generated && generated.index == 1 &&
+                      !problem.wasPatternGenerationTruncated(),
+                  "index only the unrestricted binding of a mixed mechanism");
+  CanonicalSyncMechanismDescriptor unrelatedCover =
+      mixedTargetLocalEvent(1, 2, 3, middle, target, loop, distanceZeroDemand,
+                            unrelatedPositiveDemand);
+  unrelatedCover.supplies.erase(unrelatedCover.supplies.begin());
+  unrelatedCover.supplies.front().edge.distance = 2;
+  passed &= check(problem.internMechanism(std::move(unrelatedCover)),
+                  "cover the unrelated recurrence row independently");
+  if (!check(problem.freeze(), "freeze mixed-binding problem")) {
+    return false;
+  }
+  const CanonicalSyncPattern &pair = problem.getPatterns().back();
+  return passed &&
+         check(pair.kind == CanonicalSyncPatternKind::DirectPair &&
+                   pair.members ==
+                       std::vector<CanonicalSyncMechanismId>{first, second} &&
+                   pair.coverage.contains(0) &&
+                   !pair.coverage.contains(unrelatedPositiveDemand),
+               "retain pair coverage from a mixed mechanism's unrestricted "
+               "binding without leaking it into recurrence rows");
+}
+
+bool testConnectorIndexRetainsDistinctEndpointNodes() {
   bool passed = true;
   SyncCoverGraph graph;
   CanonicalSyncMechanismDescriptor first;
@@ -531,14 +762,16 @@ bool testConnectorIndexCanonicalizesDuplicateSupplies() {
                   "add duplicate second connector");
 
   CanonicalSyncDirectPairOptions options;
-  options.maximumConnectorInspections = 2;
+  options.maximumConnectorInspections = packageWidth * 2 + 1;
   const CanonicalSyncProblemResult generated =
       addCanonicalSyncDirectPairPatterns(problem, options);
   passed &= check(
       generated && generated.index == 1 &&
           !problem.wasPatternGenerationTruncated() &&
-          problem.getPatternStatistics().directPairConnectorInspections == 2,
-      "join canonical connector keys within the exact work bound");
+          problem.getPatternStatistics().directPairConnectorInspections ==
+              packageWidth * 2 + 1,
+      "join only structurally connected endpoint nodes within the exact work "
+      "bound");
   passed &= check(problem.freeze(), "freeze duplicate-connector problem");
   return passed;
 }
@@ -721,10 +954,62 @@ bool testPairOwnerUsesEverySupplyScope() {
                         problem.wasPatternGenerationTruncated() &&
                         statistics.directPairProposals == 2 &&
                         statistics.directPairEvaluations == 0,
-                    "own a multi-supply pair at the LCA of every supply");
+                    "own every pair at the supply LCA and atomically skip an "
+                    "oversized owner batch");
   };
   run(true);
   run(false);
+  return passed;
+}
+
+bool testPairOwnerExact4096Boundary() {
+  bool passed = true;
+  const auto run = [&](std::size_t pairCount, bool expectTruncated) {
+    SyncCoverGraph graph;
+    const SyncCoverNodeId source =
+        takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}), passed,
+                  "add 4096-boundary source");
+    const SyncCoverNodeId middle =
+        takeIndex(graph.addNode(2, 1, 0, 1, {}, {3}), passed,
+                  "add 4096-boundary connector");
+    std::vector<SyncCoverNodeId> targets;
+    targets.reserve(pairCount);
+    for (std::size_t index = 0; index < pairCount; ++index) {
+      targets.push_back(takeIndex(
+          graph.addNode(3, 1, 0, index + 2), passed,
+          "add 4096-boundary target"));
+    }
+    passed &= check(graph.freezeStructure(), "freeze 4096-boundary graph");
+    CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+    passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                    "add 4096-boundary first domain");
+    passed &= check(problem.addEventDomain({1, 2, 3, 8, {}}),
+                    "add 4096-boundary second domain");
+    passed &= check(problem.internMechanism(event(0, 1, 2, source, middle)),
+                    "add 4096-boundary first member");
+    for (SyncCoverNodeId target : targets) {
+      passed &= check(
+          problem.internMechanism(event(1, 2, 3, middle, target)),
+          "add 4096-boundary successor");
+    }
+    CanonicalSyncDirectPairOptions options;
+    options.maximumEvaluationsPerScope = 4096;
+    const CanonicalSyncProblemResult generated =
+        addCanonicalSyncDirectPairPatterns(problem, options);
+    const CanonicalSyncPatternStatistics &statistics =
+        problem.getPatternStatistics();
+    passed &= check(
+        generated && generated.index == 0 &&
+            problem.wasPatternGenerationTruncated() == expectTruncated &&
+            statistics.directPairProposals == pairCount &&
+            statistics.directPairEvaluations ==
+                (expectTruncated ? 0 : pairCount),
+        expectTruncated
+            ? "skip an owner atomically at proposal 4097"
+            : "evaluate the complete owner batch at proposal 4096");
+  };
+  run(4096, false);
+  run(4097, true);
   return passed;
 }
 
@@ -1334,6 +1619,37 @@ bool testReservationsAndFinalValidation() {
                       verified.allocation.domains[0].uses[0].ids ==
                           std::vector<unsigned>{1},
                   "allocation skips in-range reservations only");
+  passed &= check(problem.verifyMechanism(mechanism),
+                  "freshly revalidate immutable mechanism data");
+  passed &= check(problem.getMechanismSignature(mechanism) != 0 &&
+                      problem.getMechanismSignature(mechanism) ==
+                          problem.getMechanismSignature(mechanism),
+                  "derive a stable immutable mechanism signature");
+  std::size_t lowerVerificationBound = 1;
+  std::size_t upperVerificationBound = 1U << 20;
+  while (lowerVerificationBound < upperVerificationBound) {
+    const std::size_t middle =
+        lowerVerificationBound +
+        (upperVerificationBound - lowerVerificationBound) / 2;
+    SyncCoverCoverageWorkBudget work(middle);
+    if (verifyCanonicalSyncSelection(problem, selection, &work)) {
+      upperVerificationBound = middle;
+    } else {
+      lowerVerificationBound = middle + 1;
+    }
+  }
+  SyncCoverCoverageWorkBudget exactWork(lowerVerificationBound);
+  const CanonicalSyncVerifiedPlan exact =
+      verifyCanonicalSyncSelection(problem, selection, &exactWork);
+  SyncCoverCoverageWorkBudget belowWork(lowerVerificationBound - 1);
+  const CanonicalSyncVerifiedPlan below =
+      verifyCanonicalSyncSelection(problem, selection, &belowWork);
+  passed &= check(exact && exactWork.workUnits == lowerVerificationBound,
+                  "accept fresh verification at its exact work bound");
+  passed &=
+      check(below.error == CanonicalSyncSelectionError::WorkLimitExceeded &&
+                belowWork.exhausted,
+            "reject fresh verification one unit below its exact work bound");
   CanonicalSyncSelection incomplete = selection;
   incomplete.mechanisms.clear();
   const CanonicalSyncVerifiedPlan rejected =
@@ -1722,6 +2038,525 @@ bool testFailClosedConstruction() {
   return passed;
 }
 
+bool testSelectionBasisRetainsFullObligationVerification() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId first =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add basis first node");
+  const SyncCoverNodeId middle =
+      takeIndex(graph.addNode(1, 1, 0, 1), passed, "add basis middle node");
+  const SyncCoverNodeId last =
+      takeIndex(graph.addNode(1, 1, 0, 2), passed, "add basis last node");
+  SyncCoverEdge firstIssue = supply(first, middle);
+  firstIssue.kind = SyncCoverEdgeKind::NonCompletionPreservingIssueOrder;
+  SyncCoverEdge secondIssue = supply(middle, last);
+  secondIssue.kind = SyncCoverEdgeKind::NonCompletionPreservingIssueOrder;
+  passed &=
+      check(graph.addEdge(firstIssue), "add first basis issue edge") &&
+      check(graph.addEdge(secondIssue), "add second basis issue edge") &&
+      check(graph.addDemand(demand(first, middle)), "add first basis demand") &&
+      check(graph.addDemand(demand(middle, last)), "add second basis demand") &&
+      check(graph.addDemand(demand(first, last)),
+            "add redundant full-universe demand") &&
+      check(graph.setBlockingTargetedBarrierResources({1}),
+            "enable basis targeted barriers") &&
+      check(graph.freezeStructure(), "freeze basis graph");
+  if (!passed) {
+    return false;
+  }
+
+  const std::vector<SyncCoverDemandId> obligations{0, 1, 2};
+  CanonicalSyncPatternProblem reduced(graph, obligations,
+                                      std::vector<SyncCoverDemandId>{0, 1},
+                                      CanonicalSyncPatternProblem::Limits{});
+  passed &= check(reduced.getObligationDemands() == obligations,
+                  "retain the complete obligation universe") &&
+            check(reduced.getDemands() == std::vector<SyncCoverDemandId>{0, 1},
+                  "retain the smaller immutable selection basis") &&
+            check(reduced.internMechanism(targetedBarrier(1, first, middle)),
+                  "add first basis barrier") &&
+            check(reduced.internMechanism(targetedBarrier(1, middle, last)),
+                  "add second basis barrier") &&
+            check(reduced.freeze(), "freeze reduced-basis problem");
+  const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(reduced);
+  const CanonicalSyncVerifiedPlan verified =
+      verifyCanonicalSyncSelection(reduced, selection);
+  passed &= check(selection && verified,
+                  "verify all three obligations from two basis rows");
+
+  CanonicalSyncPatternProblem differentBasis(
+      graph, obligations, obligations, CanonicalSyncPatternProblem::Limits{});
+  passed &=
+      check(differentBasis.internMechanism(targetedBarrier(1, first, middle)),
+            "add first different-basis barrier") &&
+      check(differentBasis.internMechanism(targetedBarrier(1, middle, last)),
+            "add second different-basis barrier") &&
+      check(!reduced.hasSameCandidatePrefix(differentBasis),
+            "reject an otherwise-identical different demand basis");
+
+  CanonicalSyncPatternProblem invalid(graph, obligations,
+                                      std::vector<SyncCoverDemandId>{0},
+                                      CanonicalSyncPatternProblem::Limits{});
+  passed &= check(invalid.internMechanism(targetedBarrier(1, first, middle)),
+                  "add incomplete-basis barrier") &&
+            check(invalid.freeze(), "freeze incomplete selection basis");
+  const CanonicalSyncSelection incomplete =
+      selectCanonicalSyncPatterns(invalid);
+  const CanonicalSyncVerifiedPlan rejected =
+      verifyCanonicalSyncSelection(invalid, incomplete);
+  return passed &&
+         check(incomplete && !rejected && rejected.firstUncoveredDemand,
+               "reject a greedy-complete basis that misses an obligation");
+}
+
+bool testRecurrenceBasisLemmasPreserveExactDistance() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 31}, true),
+                passed, "add recurrence-basis loop");
+  const SyncCoverNodeId first =
+      takeIndex(graph.addNode(1, 1, loop, 0, {}, {2}), passed,
+                "add recurrence-basis first node");
+  const SyncCoverNodeId middle =
+      takeIndex(graph.addNode(2, 1, loop, 1, {}, {3}), passed,
+                "add recurrence-basis middle node");
+  const SyncCoverNodeId last = takeIndex(graph.addNode(3, 1, loop, 2), passed,
+                                         "add recurrence-basis last node");
+  passed &= check(graph.addDemand(demand(first, middle, loop, 1)),
+                  "add first distance-one basis lemma") &&
+            check(graph.addDemand(demand(middle, last, loop, 1)),
+                  "add second distance-one basis lemma") &&
+            check(graph.addDemand(demand(first, last, loop, 2)),
+                  "add implied distance-two obligation") &&
+            check(graph.addDemand(demand(first, last, loop, 1)),
+                  "add non-implied distance-one obligation") &&
+            check(graph.freezeStructure(), "freeze recurrence-basis graph");
+  if (!passed) {
+    return false;
+  }
+  const auto admitDistanceOne = [](const auto &descriptor) {
+    return descriptor.supplies.size() == 1 &&
+           descriptor.supplies.front().edge.distance == 1;
+  };
+  const auto addBasisProtocols = [&](CanonicalSyncPatternProblem &problem) {
+    bool added = true;
+    added &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                   "add first recurrence-basis domain");
+    added &= check(problem.addEventDomain({1, 2, 3, 8, {}}),
+                   "add second recurrence-basis domain");
+    added &= check(
+        problem.internVerifiedProtocol(
+            protocol(0, 1, 2, first, middle, loop, 1, 1), admitDistanceOne),
+        "add first recurrence-basis protocol");
+    added &= check(
+        problem.internVerifiedProtocol(
+            protocol(1, 2, 3, middle, last, loop, 1, 1), admitDistanceOne),
+        "add second recurrence-basis protocol");
+    return added;
+  };
+
+  const std::vector<SyncCoverDemandId> exactObligations{0, 1, 2};
+  const std::vector<SyncCoverDemandId> basis{0, 1};
+  CanonicalSyncPatternProblem exact(graph, exactObligations, basis,
+                                    CanonicalSyncPatternProblem::Limits{});
+  passed &= addBasisProtocols(exact) &&
+            check(exact.freeze(), "freeze exact recurrence-basis problem");
+  const CanonicalSyncSelection exactSelection =
+      selectCanonicalSyncPatterns(exact);
+  passed &= check(exactSelection &&
+                      verifyCanonicalSyncSelection(exact, exactSelection),
+                  "prove d2 from two proved d1 recurrence lemmas");
+
+  const std::vector<SyncCoverDemandId> wrongDistanceObligations{0, 1, 2, 3};
+  CanonicalSyncPatternProblem wrongDistance(
+      graph, wrongDistanceObligations, basis,
+      CanonicalSyncPatternProblem::Limits{});
+  passed &= addBasisProtocols(wrongDistance) &&
+            check(wrongDistance.freeze(),
+                  "freeze wrong-distance recurrence-basis problem");
+  const CanonicalSyncSelection wrongSelection =
+      selectCanonicalSyncPatterns(wrongDistance);
+  const CanonicalSyncVerifiedPlan rejected =
+      verifyCanonicalSyncSelection(wrongDistance, wrongSelection);
+  return passed &&
+         check(wrongSelection && !rejected &&
+                   rejected.firstUncoveredDemand ==
+                       std::optional<SyncCoverDemandId>(3),
+               "do not use d1 plus d1 to prove a distance-one obligation");
+}
+
+bool testSourceLocalBarrierCoversFanout() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 2, 0, 0), passed, "add source-local source");
+  std::vector<SyncCoverNodeId> targets;
+  std::vector<std::pair<SyncCoverNodeId, SyncCoverDemandId>> bindings;
+  for (std::size_t index = 0; index < 4; ++index) {
+    const std::uint32_t targetResource = index % 2 == 0 ? 2 : 3;
+    const SyncCoverNodeId target =
+        takeIndex(graph.addNode(targetResource, 1, 0, index + 1), passed,
+                  "add source-local fanout target");
+    const SyncCoverDemandId demandId =
+        takeIndex(graph.addDemand(demand(source, target)), passed,
+                  "add source-local fanout demand");
+    targets.push_back(target);
+    bindings.push_back({target, demandId});
+  }
+  passed &= check(graph.setBlockingTargetedBarrierResources({1}),
+                  "enable source-local pipe drain") &&
+            check(graph.freezeStructure(), "freeze source-local graph");
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  for (std::size_t index = 0; index < targets.size(); ++index) {
+    passed &= check(problem.internMechanism(
+                        targetLocalPipeDrain(1, source, targets[index], index)),
+                    "add target-local fanout alternative");
+  }
+  const CanonicalSyncMechanismId sourceLocal = takeIndex(
+      problem.internMechanism(sourceLocalBarrier(1, source, bindings)), passed,
+      "add one source-local fanout barrier");
+  passed &= check(problem.freeze(), "freeze source-local fanout problem");
+  const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
+  return passed &&
+         check(selection &&
+                   selection.mechanisms ==
+                       std::vector<CanonicalSyncMechanismId>{sourceLocal},
+               "select one source-local barrier over four target barriers") &&
+         check(verifyCanonicalSyncSelection(problem, selection),
+               "freshly verify every source-local fanout row");
+}
+
+bool testSourceLocalBarrierReconcilesReducedBasis() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId first =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add reduced source");
+  const SyncCoverNodeId middle =
+      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add reduced middle");
+  const SyncCoverNodeId last =
+      takeIndex(graph.addNode(2, 1, 0, 2), passed, "add reduced last");
+  passed &=
+      check(graph.addDemand(demand(first, middle)),
+            "add reduced source demand") &&
+      check(graph.addDemand(demand(middle, last)), "add reduced tail demand") &&
+      check(graph.addDemand(demand(first, last)),
+            "add reduced transitive obligation") &&
+      check(graph.setBlockingTargetedBarrierResources({1, 2}),
+            "enable reduced source drain") &&
+      check(graph.freezeStructure(), "freeze reduced source graph");
+  if (!passed) {
+    return false;
+  }
+  const std::vector<SyncCoverDemandId> obligations{0, 1, 2};
+  CanonicalSyncPatternProblem problem(graph, obligations,
+                                      std::vector<SyncCoverDemandId>{0, 1},
+                                      CanonicalSyncPatternProblem::Limits{});
+  const CanonicalSyncMechanismId sourceLocal =
+      takeIndex(problem.internMechanism(
+                    sourceLocalBarrier(1, first, {{middle, 0}, {last, 2}})),
+                passed, "add reduced-basis source drain");
+  const CanonicalSyncMechanismId tail =
+      takeIndex(problem.internMechanism(targetedBarrier(2, middle, last)),
+                passed, "add reduced-basis tail barrier");
+  passed &= check(problem.freeze(), "freeze reduced source problem");
+  const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
+  const CanonicalSyncVerifiedPlan verified =
+      verifyCanonicalSyncSelection(problem, selection);
+  return passed &&
+         check(selection &&
+                   selection.mechanisms ==
+                       std::vector<CanonicalSyncMechanismId>{sourceLocal, tail},
+               "select the source drain on the reduced universe") &&
+         check(verified,
+               "freshly verify the omitted transitive source obligation");
+}
+
+bool testSourceLocalBarrierRejectsUnsupportedAndSameMacro() {
+  bool passed = true;
+  SyncCoverGraph unsupported;
+  const SyncCoverNodeId unsupportedSource = takeIndex(
+      unsupported.addNode(1, 1, 0, 0), passed, "add unsupported source");
+  const SyncCoverNodeId unsupportedTarget = takeIndex(
+      unsupported.addNode(2, 1, 0, 1), passed, "add unsupported target");
+  passed &=
+      check(unsupported.addDemand(demand(unsupportedSource, unsupportedTarget)),
+            "add unsupported demand") &&
+      check(unsupported.setBlockingTargetedBarrierResources({2}),
+            "exclude unsupported source pipe") &&
+      check(unsupported.freezeStructure(), "freeze unsupported source graph");
+  CanonicalSyncPatternProblem unsupportedProblem(unsupported,
+                                                 allDemands(unsupported));
+  passed &= check(unsupportedProblem
+                          .internMechanism(sourceLocalBarrier(
+                              1, unsupportedSource, {{unsupportedTarget, 0}}))
+                          .error == CanonicalSyncProblemError::InvalidMechanism,
+                  "reject a source drain without the blocking capability");
+
+  SyncCoverGraph macro;
+  const SyncCoverNodeId entry =
+      takeIndex(macro.addNode(1, 1, 0, 0), passed, "add macro entry");
+  const SyncCoverNodeId phase = takeIndex(
+      macro.addNode(2, 1, 0, 1, {}, {}, entry), passed, "add macro phase");
+  passed &=
+      check(macro.setPhysicalExit(entry, phase), "set macro entry exit") &&
+      check(macro.setPhysicalExit(phase, phase), "set macro phase exit") &&
+      check(macro.addDemand(demand(entry, phase)), "add same-macro demand") &&
+      check(macro.setBlockingTargetedBarrierResources({1}),
+            "enable macro source pipe") &&
+      check(macro.freezeStructure(), "freeze same-macro graph");
+  CanonicalSyncPatternProblem macroProblem(macro, allDemands(macro));
+  return passed &&
+         check(macroProblem
+                       .internMechanism(
+                           sourceLocalBarrier(1, entry, {{phase, 0}}))
+                       .error == CanonicalSyncProblemError::InvalidMechanism,
+               "reject a source barrier placed after its same macro target");
+}
+
+bool testSourcePrefixBarrierConsolidatesIssuedSources() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  std::vector<SyncCoverNodeId> sources;
+  for (std::size_t index = 0; index < 4; ++index) {
+    sources.push_back(
+        takeIndex(graph.addNode(1, 1, 0, index), passed, "add prefix source"));
+  }
+  std::vector<std::pair<SyncCoverNodeId, SyncCoverDemandId>> bindings;
+  for (std::size_t index = 0; index < sources.size(); ++index) {
+    const SyncCoverNodeId target =
+        takeIndex(graph.addNode(2, 1, 0, sources.size() + index), passed,
+                  "add prefix target");
+    const SyncCoverDemandId demandId =
+        takeIndex(graph.addDemand(demand(sources[index], target)), passed,
+                  "add prefix demand");
+    bindings.push_back({target, demandId});
+  }
+  passed &= check(graph.setBlockingTargetedBarrierResources({1}),
+                  "enable prefix source drain") &&
+            check(graph.setBlockingTargetedBarrierPrefix(
+                      1, sources.back(), {sources[0], sources[1], sources[2]}),
+                  "certify the issued source prefix") &&
+            check(graph.freezeStructure(), "freeze source-prefix graph");
+  if (!passed) {
+    return false;
+  }
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  for (const auto &[target, demandId] : bindings) {
+    const SyncCoverNodeId source = graph.getDemands()[demandId].source;
+    passed &= check(problem.internMechanism(
+                        sourceLocalBarrier(1, source, {{target, demandId}})),
+                    "add source-local prefix alternative");
+  }
+  const CanonicalSyncMechanismId prefix =
+      takeIndex(problem.internMechanism(
+                    sourcePrefixPipeDrain(graph, 1, sources.back(), bindings)),
+                passed, "add one source-prefix barrier");
+  passed &= check(problem.freeze(), "freeze source-prefix problem");
+  const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
+  return passed &&
+         check(selection && selection.mechanisms ==
+                                std::vector<CanonicalSyncMechanismId>{prefix},
+               "select one prefix drain over four source drains") &&
+         check(verifyCanonicalSyncSelection(problem, selection),
+               "freshly verify every issued-prefix obligation");
+}
+
+bool testSourcePrefixFinalVerificationWorkIsBounded() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  std::vector<std::uint32_t> resources;
+  std::vector<SyncCoverNodeId> sources;
+  std::vector<SyncCoverNodeId> cuts;
+  std::vector<std::vector<std::pair<SyncCoverNodeId, SyncCoverDemandId>>>
+      bindings;
+  passed &= check(graph.setBlockingTargetedBarrierResources({1, 2, 3}),
+                  "enable bounded-verification source pipes");
+  for (std::uint32_t resource = 1; resource <= 3; ++resource) {
+    const SyncCoverNodeId source =
+        takeIndex(graph.addNode(resource, 1, 0, (resource - 1) * 2), passed,
+                  "add bounded-verification prefix source");
+    const SyncCoverNodeId cut =
+        takeIndex(graph.addNode(resource, 1, 0, (resource - 1) * 2 + 1), passed,
+                  "add bounded-verification prefix cut");
+    passed &=
+        check(graph.setBlockingTargetedBarrierPrefix(resource, cut, {source}),
+              "certify bounded-verification issued prefix");
+    resources.push_back(resource);
+    sources.push_back(source);
+    cuts.push_back(cut);
+  }
+  for (std::size_t index = 0; index < resources.size(); ++index) {
+    const SyncCoverNodeId target = takeIndex(
+        graph.addNode(resources[index] + 10, 1, 0, 10 + resources[index]),
+        passed, "add bounded-verification prefix target");
+    const SyncCoverDemandId sourceDemand =
+        takeIndex(graph.addDemand(demand(sources[index], target)), passed,
+                  "add bounded-verification prefix demand");
+    const SyncCoverDemandId cutDemand =
+        takeIndex(graph.addDemand(demand(cuts[index], target)), passed,
+                  "add bounded-verification cut demand");
+    bindings.push_back({{target, sourceDemand}, {target, cutDemand}});
+  }
+  passed &= check(graph.freezeStructure(),
+                  "freeze bounded-verification source-prefix graph");
+  if (!passed) {
+    return false;
+  }
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  for (std::size_t index = 0; index < resources.size(); ++index) {
+    passed &= check(problem.internMechanism(sourcePrefixPipeDrain(
+                        graph, resources[index], cuts[index], bindings[index])),
+                    "add bounded-verification source-prefix drain");
+  }
+  passed &= check(problem.freeze(),
+                  "freeze bounded-verification source-prefix problem");
+  const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
+  SyncCoverCoverageWorkBudget referenceWork(1U << 20);
+  const CanonicalSyncVerifiedPlan reference =
+      verifyCanonicalSyncSelection(problem, selection, &referenceWork);
+  if (!check(reference && selection.mechanisms.size() == resources.size(),
+             "select and verify several source-prefix drains")) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget exactWork(referenceWork.workUnits);
+  const CanonicalSyncVerifiedPlan exact =
+      verifyCanonicalSyncSelection(problem, selection, &exactWork);
+  SyncCoverCoverageWorkBudget belowWork(referenceWork.workUnits - 1);
+  const CanonicalSyncVerifiedPlan below =
+      verifyCanonicalSyncSelection(problem, selection, &belowWork);
+  return check(exact && exactWork.workUnits == referenceWork.workUnits,
+               "accept source-prefix verification at its exact work bound") &&
+         check(below.error == CanonicalSyncSelectionError::WorkLimitExceeded &&
+                   belowWork.exhausted,
+               "reject source-prefix verification one unit below its bound");
+}
+
+bool testSourcePrefixBarrierRejectsInvalidCertificates() {
+  bool passed = true;
+  SyncCoverGraph missing;
+  const SyncCoverNodeId missingSource = takeIndex(
+      missing.addNode(1, 1, 0, 0), passed, "add missing-prefix source");
+  const SyncCoverNodeId certifiedSource = takeIndex(
+      missing.addNode(1, 1, 0, 1), passed, "add certified prefix source");
+  const SyncCoverNodeId missingCut =
+      takeIndex(missing.addNode(1, 1, 0, 2), passed, "add missing-prefix cut");
+  const SyncCoverNodeId missingTarget = takeIndex(
+      missing.addNode(2, 1, 0, 3), passed, "add missing-prefix target");
+  passed &= check(missing.addDemand(demand(missingSource, missingTarget)),
+                  "add missing-prefix demand") &&
+            check(missing.setBlockingTargetedBarrierResources({1}),
+                  "enable missing-prefix source pipe") &&
+            check(missing.setBlockingTargetedBarrierPrefix(1, missingCut,
+                                                           {certifiedSource}),
+                  "certify a prefix that omits the demanded source") &&
+            check(missing.freezeStructure(), "freeze missing-prefix graph");
+  CanonicalSyncPatternProblem missingProblem(missing, allDemands(missing));
+  passed &=
+      check(missingProblem
+                    .internMechanism(sourcePrefixPipeDrain(
+                        missing, 1, missingCut, {{missingTarget, 0}}))
+                    .error == CanonicalSyncProblemError::InvalidMechanism,
+            "reject a source-prefix drain whose certificate omits the source");
+
+  SyncCoverGraph scoped;
+  const SyncCoverScopeId child =
+      takeIndex(scoped.addScope(0, true, SyncCoverTimelineInterval{2, 3}),
+                passed, "add source-prefix child scope");
+  const SyncCoverNodeId scopedSource =
+      takeIndex(scoped.addNode(1, 1, 0, 0), passed, "add outer prefix source");
+  const SyncCoverNodeId scopedCut =
+      takeIndex(scoped.addNode(1, 1, child, 1), passed, "add child prefix cut");
+  const SyncCoverNodeId scopedTarget =
+      takeIndex(scoped.addNode(2, 1, 0, 2), passed, "add outer prefix target");
+  passed &= check(scoped.addDemand(demand(scopedSource, scopedTarget)),
+                  "add cross-scope prefix demand") &&
+            check(scoped.setBlockingTargetedBarrierResources({1}),
+                  "enable scoped source pipe") &&
+            check(scoped.setBlockingTargetedBarrierPrefix(1, scopedCut,
+                                                          {scopedSource}),
+                  "certify compatible cross-scope issued history") &&
+            check(scoped.freezeStructure(), "freeze scoped prefix graph");
+  CanonicalSyncPatternProblem scopedProblem(scoped, allDemands(scoped));
+  passed &= check(scopedProblem
+                          .internMechanism(sourcePrefixPipeDrain(
+                              scoped, 1, scopedCut, {{scopedTarget, 0}}))
+                          .error == CanonicalSyncProblemError::InvalidMechanism,
+                  "reject a source-prefix drain across distinct action scopes");
+
+  SyncCoverGraph unsupported;
+  const SyncCoverNodeId unsupportedSource = takeIndex(
+      unsupported.addNode(1, 1, 0, 0), passed, "add unsupported prefix source");
+  const SyncCoverNodeId unsupportedTarget = takeIndex(
+      unsupported.addNode(2, 1, 0, 1), passed, "add unsupported prefix target");
+  passed &=
+      check(unsupported.addDemand(demand(unsupportedSource, unsupportedTarget)),
+            "add unsupported prefix demand") &&
+      check(unsupported.setBlockingTargetedBarrierResources({2}),
+            "exclude unsupported prefix source pipe") &&
+      check(unsupported.freezeStructure(), "freeze unsupported prefix graph");
+  CanonicalSyncPatternProblem unsupportedProblem(unsupported,
+                                                 allDemands(unsupported));
+  return passed &&
+         check(unsupportedProblem
+                       .internMechanism(sourcePrefixPipeDrain(
+                           unsupported, 1, unsupportedSource,
+                           {{unsupportedTarget, 0}}))
+                       .error == CanonicalSyncProblemError::InvalidMechanism,
+               "reject a source-prefix drain without blocking capability");
+}
+
+bool testSourcePrefixBarrierKeepsDistanceQualifiers() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 15}, true),
+                passed, "add mixed-distance prefix loop");
+  const SyncCoverNodeId source = takeIndex(graph.addNode(1, 1, loop, 1), passed,
+                                           "add mixed-distance source");
+  const SyncCoverNodeId cut =
+      takeIndex(graph.addNode(1, 1, loop, 2, {}, {2}), passed,
+                "add mixed-distance completion-capable cut");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(2, 1, loop, 3), passed,
+                                           "add mixed-distance target");
+  const SyncCoverDemandId sameIteration =
+      takeIndex(graph.addDemand(demand(source, target, loop, 0)), passed,
+                "add distance-zero prefix demand");
+  const SyncCoverDemandId nextIteration =
+      takeIndex(graph.addDemand(demand(source, target, loop, 1)), passed,
+                "add distance-one prefix demand");
+  passed &=
+      check(graph.setBlockingTargetedBarrierResources({1}),
+            "enable mixed-distance source pipe") &&
+      check(graph.setBlockingTargetedBarrierPrefix(1, cut, {source}),
+            "certify mixed-distance issued prefix") &&
+      check(graph.freezeStructure(), "freeze mixed-distance prefix graph");
+  if (!passed) {
+    return false;
+  }
+  CanonicalSyncPatternProblem sameOnly(graph, allDemands(graph));
+  passed &= check(sameOnly.internMechanism(sourcePrefixPipeDrain(
+                      graph, 1, cut, {{target, sameIteration}})),
+                  "admit the distance-zero source-prefix qualifier");
+  CanonicalSyncPatternProblem nextOnly(graph, allDemands(graph));
+  passed &= check(nextOnly.internMechanism(sourcePrefixPipeDrain(
+                      graph, 1, cut, {{target, nextIteration}})),
+                  "admit the distance-one source-prefix qualifier");
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  const CanonicalSyncMechanismId prefix = takeIndex(
+      problem.internMechanism(sourcePrefixPipeDrain(
+          graph, 1, cut, {{target, sameIteration}, {target, nextIteration}})),
+      passed, "add mixed-distance source-prefix barrier");
+  passed &= check(problem.freeze(), "freeze mixed-distance prefix problem");
+  const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
+  return passed &&
+         check(selection && selection.mechanisms ==
+                                std::vector<CanonicalSyncMechanismId>{prefix},
+               "select one action with independent distance qualifiers") &&
+         check(verifyCanonicalSyncSelection(problem, selection),
+               "freshly verify both source-prefix distance classes");
+}
+
 } // namespace
 
 int main() {
@@ -1734,9 +2569,12 @@ int main() {
       testReverseDeletionPreservesBaselineCoverage() &&
       testInactiveRecurrenceDoesNotBuildAnArena() &&
       testDirectPairDiscoversJointCoverage() &&
-      testConnectorIndexCanonicalizesDuplicateSupplies() &&
+      testDirectPairTraversesFixedCompletionSupply() &&
+      testDirectPairIndexesUnrestrictedBindingOfMixedMechanism() &&
+      testConnectorIndexRetainsDistinctEndpointNodes() &&
       testPairPreparationLimitKeepsSingletonCorrectness() &&
       testPairOwnerUsesEverySupplyScope() &&
+      testPairOwnerExact4096Boundary() &&
       testOwnerPairBatchesTruncateAtomicallyAndContinue() &&
       testOwnerPairCoverageWordLimitIsAtomic() &&
       testSiblingAndBarrierPairsComposeAtTheirLca() &&
@@ -1751,6 +2589,15 @@ int main() {
       testHierarchicalProtocolLifetime() &&
       testFreezeRetryCommitsFreshDerivedState() &&
       testOptionalPairReservesSingletonIncidences() &&
+      testSelectionBasisRetainsFullObligationVerification() &&
+      testRecurrenceBasisLemmasPreserveExactDistance() &&
+      testSourceLocalBarrierCoversFanout() &&
+      testSourceLocalBarrierReconcilesReducedBasis() &&
+      testSourceLocalBarrierRejectsUnsupportedAndSameMacro() &&
+      testSourcePrefixBarrierConsolidatesIssuedSources() &&
+      testSourcePrefixFinalVerificationWorkIsBounded() &&
+      testSourcePrefixBarrierRejectsInvalidCertificates() &&
+      testSourcePrefixBarrierKeepsDistanceQualifiers() &&
       testFailClosedConstruction();
   return passed ? 0 : 1;
 }

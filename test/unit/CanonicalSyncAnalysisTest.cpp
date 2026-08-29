@@ -378,6 +378,32 @@ bool testGmAliasContracts() {
                   outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
         return
       }
+      func.func @disjoint_slices(%gm: !pto.ptr<f32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %c16 = arith.constant 16 : index
+        %c32 = arith.constant 32 : index
+        %a0 = arith.constant 0 : i64
+        %a1 = arith.constant 1024 : i64
+        %view = pto.make_tensor_view %gm,
+          shape = [%c32, %c16], strides = [%c16, %c1]
+          : !pto.tensor_view<?x?xf32>
+        %first = pto.partition_view %view,
+          offsets = [%c0, %c0], sizes = [%c16, %c16]
+          : !pto.tensor_view<?x?xf32>
+            -> !pto.partition_tensor_view<16x16xf32>
+        %second = pto.partition_view %view,
+          offsets = [%c16, %c0], sizes = [%c16, %c16]
+          : !pto.tensor_view<?x?xf32>
+            -> !pto.partition_tensor_view<16x16xf32>
+        %src = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 16x16xf32>
+        %dst = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 16x16xf32>
+        pto.tstore ins(%src : !pto.tile_buf<vec, 16x16xf32>)
+                   outs(%first : !pto.partition_tensor_view<16x16xf32>)
+        pto.tload ins(%second : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
       func.func @annotated(
           %first: !pto.partition_tensor_view<16x16xf32>,
           %second: !pto.partition_tensor_view<16x16xf32>)
@@ -423,6 +449,8 @@ bool testGmAliasContracts() {
   all.gmAliasPolicy = CanonicalSyncGmAliasPolicy::AllAccessesNoAlias;
   FailureOr<CanonicalSyncProgram> allAccesses = buildCanonicalSyncProgram(
       module->lookupSymbol<func::FuncOp>("same"), all);
+  FailureOr<CanonicalSyncProgram> disjointSlices = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("disjoint_slices"));
   FailureOr<CanonicalSyncProgram> recurrenceDistinct =
       buildCanonicalSyncProgram(
           module->lookupSymbol<func::FuncOp>("recurrence"), distinct);
@@ -470,6 +498,9 @@ bool testGmAliasContracts() {
          check(succeeded(allAccesses), "build all-GM-noalias graph") &&
          check(allAccesses->getGraph().getDemands().empty(),
                "strong GM contract suppresses same-argument hazards") &&
+         check(succeeded(disjointSlices), "build disjoint GM slices graph") &&
+         check(disjointSlices->getGraph().getDemands().empty(),
+               "preserve disjoint root-relative GM slice ranges") &&
          check(succeeded(recurrenceDistinct),
                "build distinct-argument recurrence graph") &&
          check(hasLoopCarriedGmDemand(*recurrenceDistinct),
@@ -555,6 +586,8 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
                     outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
           pto.tmuls ins(%slot, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
                     outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+          pto.tadds ins(%slot, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+                    outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
         }
         return
       }
@@ -593,6 +626,9 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
   }
 
   CanonicalSyncBuildOptions options;
+  // Inspect every distance-two recipe independently of optional selection-
+  // basis reduction.
+  options.enableDemandBasisReduction = false;
   FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem =
       buildCanonicalSyncSingletonProblem(*program, options);
   if (!check(succeeded(problem),
@@ -612,43 +648,508 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
              "generate a two-lane generic recurrence ring")) {
     return false;
   }
+  const auto isDistanceTwoLoopBoundaryPrefix =
+      [](const CanonicalSyncMechanism &mechanism) {
+        return mechanism.descriptor.kind ==
+                   CanonicalSyncMechanismKind::Protocol &&
+               mechanism.descriptor.eventUses.size() == 1 &&
+               mechanism.descriptor.eventUses.front().width == 2 &&
+               llvm::any_of(
+                   mechanism.descriptor.actions,
+                   [](const CanonicalSyncAction &action) {
+                     return action.kind == CanonicalSyncActionKind::Barrier &&
+                            action.anchor.kind ==
+                                SyncCoverAnchorKind::LoopBodyExit &&
+                            action.resource == static_cast<std::uint32_t>(
+                                                   PipelineType::PIPE_V);
+                   }) &&
+               llvm::all_of(mechanism.descriptor.supplies,
+                            [](const CanonicalSyncSupplyBinding &binding) {
+                              return binding.edge.distance == 2 &&
+                                     binding.proof ==
+                                         CanonicalSyncSupplyProof::
+                                             LoopBoundarySourcePrefixProtocol &&
+                                     binding.attestedDemand &&
+                                     binding.allowedDemands ==
+                                         std::vector<SyncCoverDemandId>{
+                                             *binding.attestedDemand};
+                            });
+      };
+  const auto loopBoundaryProtocol = llvm::find_if(
+      (*problem)->getMechanisms(), isDistanceTwoLoopBoundaryPrefix);
+  if (!check(loopBoundaryProtocol != (*problem)->getMechanisms().end(),
+             "generate a balanced two-lane A3 V loop-boundary prefix "
+             "protocol")) {
+    return false;
+  }
+  const CanonicalSyncPatternStatistics &protocolStatistics =
+      (*problem)->getPatternStatistics();
+  if (!check(protocolStatistics.loopBoundaryProtocolInspections ==
+                     (*problem)->getObligationDemands().size() &&
+                 protocolStatistics.loopBoundaryProtocolCandidates != 0 &&
+                 protocolStatistics.loopBoundaryProtocolIncidences >= 2 &&
+                 !protocolStatistics.loopBoundaryProtocolGenerationTruncated,
+             "report complete loop-boundary protocol preparation")) {
+    return false;
+  }
+  using LoopBoundaryGroup =
+      std::tuple<SyncCoverScopeId, unsigned, std::uint32_t, std::uint32_t>;
+  const auto collectLoopBoundaryGroups =
+      [&](const CanonicalSyncPatternProblem &candidateProblem) {
+        std::set<LoopBoundaryGroup> groups;
+        std::size_t incidenceCount = 0;
+        for (const CanonicalSyncMechanism &mechanism :
+             candidateProblem.getMechanisms()) {
+          if (mechanism.descriptor.kind !=
+                  CanonicalSyncMechanismKind::Protocol ||
+              mechanism.descriptor.supplies.empty() ||
+              !llvm::all_of(mechanism.descriptor.supplies,
+                            [](const CanonicalSyncSupplyBinding &binding) {
+                              return binding.proof ==
+                                     CanonicalSyncSupplyProof::
+                                         LoopBoundarySourcePrefixProtocol;
+                            })) {
+            continue;
+          }
+          const CanonicalSyncSupplyBinding &binding =
+              mechanism.descriptor.supplies.front();
+          groups.insert({binding.edge.scope, binding.edge.distance,
+                         graph.getNodes()[binding.edge.source].resource,
+                         graph.getNodes()[binding.edge.target].resource});
+          incidenceCount += mechanism.descriptor.supplies.size();
+        }
+        return std::make_pair(std::move(groups), incidenceCount);
+      };
+  const auto fullProtocolGroups = collectLoopBoundaryGroups(**problem);
+  if (!check(fullProtocolGroups.first.size() ==
+                     protocolStatistics.loopBoundaryProtocolCandidates &&
+                 fullProtocolGroups.second ==
+                     protocolStatistics.loopBoundaryProtocolIncidences,
+             "count every loop-boundary descriptor and exact incidence")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions oneLessCandidate = options;
+  oneLessCandidate.patterns.maximumLoopBoundaryProtocolCandidates =
+      protocolStatistics.loopBoundaryProtocolCandidates - 1;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> oneLessProblem =
+      buildCanonicalSyncSingletonProblem(*program, oneLessCandidate);
+  std::set<LoopBoundaryGroup> omittedGroups;
+  if (succeeded(oneLessProblem)) {
+    const auto oneLessGroups = collectLoopBoundaryGroups(**oneLessProblem);
+    std::set_difference(fullProtocolGroups.first.begin(),
+                        fullProtocolGroups.first.end(),
+                        oneLessGroups.first.begin(), oneLessGroups.first.end(),
+                        std::inserter(omittedGroups, omittedGroups.end()));
+  }
+  if (!check(succeeded(oneLessProblem) &&
+                 (*oneLessProblem)
+                     ->getPatternStatistics()
+                     .loopBoundaryProtocolGenerationTruncated &&
+                 (*oneLessProblem)
+                         ->getPatternStatistics()
+                         .loopBoundaryProtocolCandidates ==
+                     protocolStatistics.loopBoundaryProtocolCandidates - 1 &&
+                 omittedGroups.size() == 1,
+             "deterministically omit exactly one complete group at the "
+             "one-less candidate bound")) {
+    return false;
+  }
+  const auto boundedProtocolBuild =
+      [&](std::size_t inspections, std::size_t candidates,
+          std::size_t incidences, bool requireDistanceTwoProtocolAbsent,
+          std::optional<std::size_t> maximumActions = std::nullopt) {
+        CanonicalSyncBuildOptions bounded = options;
+        bounded.patterns.maximumLoopBoundaryProtocolInspections = inspections;
+        bounded.patterns.maximumLoopBoundaryProtocolCandidates = candidates;
+        bounded.patterns.maximumLoopBoundaryProtocolIncidences = incidences;
+        if (maximumActions) {
+          bounded.problemLimits.maximumActionsPerMechanism = *maximumActions;
+        }
+        FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> built =
+            buildCanonicalSyncSingletonProblem(*program, bounded);
+        if (failed(built)) {
+          return false;
+        }
+        const CanonicalSyncPatternStatistics &statistics =
+            (*built)->getPatternStatistics();
+        return statistics.loopBoundaryProtocolGenerationTruncated &&
+               statistics.loopBoundaryProtocolInspections <= inspections &&
+               statistics.loopBoundaryProtocolCandidates <= candidates &&
+               statistics.loopBoundaryProtocolIncidences <= incidences &&
+               (!requireDistanceTwoProtocolAbsent ||
+                !llvm::any_of((*built)->getMechanisms(),
+                              isDistanceTwoLoopBoundaryPrefix));
+      };
+  if (!check(boundedProtocolBuild(
+                 protocolStatistics.loopBoundaryProtocolInspections - 1,
+                 protocolStatistics.loopBoundaryProtocolCandidates,
+                 protocolStatistics.loopBoundaryProtocolIncidences, true),
+             "truncate the optional protocol family at its inspection bound") ||
+      !check(boundedProtocolBuild(
+                 protocolStatistics.loopBoundaryProtocolInspections,
+                 protocolStatistics.loopBoundaryProtocolCandidates - 1,
+                 protocolStatistics.loopBoundaryProtocolIncidences, false),
+             "truncate the optional protocol family at its candidate bound") ||
+      !check(boundedProtocolBuild(
+                 protocolStatistics.loopBoundaryProtocolInspections,
+                 protocolStatistics.loopBoundaryProtocolCandidates,
+                 protocolStatistics.loopBoundaryProtocolIncidences - 1, false),
+             "truncate the optional protocol family at its incidence bound") ||
+      !check(boundedProtocolBuild(
+                 protocolStatistics.loopBoundaryProtocolInspections,
+                 protocolStatistics.loopBoundaryProtocolCandidates,
+                 protocolStatistics.loopBoundaryProtocolIncidences, true, 6),
+             "skip a distance-two protocol that exceeds its action bound")) {
+    return false;
+  }
+  (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "a5"));
+  FailureOr<CanonicalSyncProgram> a5Program =
+      buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>("reuse"));
+  if (!check(succeeded(a5Program),
+             "build the distance-two recurrence graph for A5")) {
+    return false;
+  }
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> a5Problem =
+      buildCanonicalSyncSingletonProblem(*a5Program, options);
+  const bool a5HasLoopBoundaryPrefix =
+      succeeded(a5Problem) && llvm::any_of((*a5Problem)->getMechanisms(),
+                                           isDistanceTwoLoopBoundaryPrefix);
+  if (!check(succeeded(a5Problem),
+             "build the distance-two recurrence catalog for A5") ||
+      !check(!a5HasLoopBoundaryPrefix,
+             "do not infer the targeted-V loop-boundary protocol on A5")) {
+    return false;
+  }
+  (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "a3"));
+  const auto isDistanceTwoExactDrain = [](const auto &mechanism) {
+    return mechanism.descriptor.kind == CanonicalSyncMechanismKind::Barrier &&
+           llvm::any_of(
+               mechanism.descriptor.supplies,
+               [](const CanonicalSyncSupplyBinding &binding) {
+                 return binding.edge.distance == 2 &&
+                        (binding.proof == CanonicalSyncSupplyProof::
+                                              TargetLocalPipeDrainAction ||
+                         binding.proof == CanonicalSyncSupplyProof::
+                                              SourceLocalPipeDrainAction ||
+                         binding.proof ==
+                             CanonicalSyncSupplyProof::LoopCarryPipeDrain);
+               });
+  };
+  const auto isDistanceTwoCrossResourceLoopCarry = [&](const auto &mechanism) {
+    return mechanism.descriptor.kind == CanonicalSyncMechanismKind::Barrier &&
+           mechanism.descriptor.actions.size() == 1 &&
+           llvm::any_of(
+               mechanism.descriptor.supplies,
+               [&](const CanonicalSyncSupplyBinding &binding) {
+                 return binding.edge.distance == 2 &&
+                        binding.proof ==
+                            CanonicalSyncSupplyProof::LoopCarryPipeDrain &&
+                        graph.getNodes()[binding.edge.source].resource !=
+                            graph.getNodes()[binding.edge.target].resource;
+               });
+  };
+  if (!check(llvm::any_of((*problem)->getMechanisms(), isDistanceTwoExactDrain),
+             "generate an exact distance-two target drain") ||
+      !check(llvm::any_of((*problem)->getMechanisms(),
+                          isDistanceTwoCrossResourceLoopCarry),
+             "generate an exact cross-resource distance-two loop-carry "
+             "drain")) {
+    return false;
+  }
+  const auto crossResourceLoopCarry = llvm::find_if(
+      (*problem)->getMechanisms(), isDistanceTwoCrossResourceLoopCarry);
+  std::vector<SyncCoverDemandId> loopCarryDemands;
+  for (const CanonicalSyncSupplyBinding &binding :
+       crossResourceLoopCarry->descriptor.supplies) {
+    if (binding.attestedDemand) {
+      loopCarryDemands.push_back(*binding.attestedDemand);
+    }
+  }
+  llvm::sort(loopCarryDemands);
+  loopCarryDemands.erase(
+      std::unique(loopCarryDemands.begin(), loopCarryDemands.end()),
+      loopCarryDemands.end());
+  CanonicalSyncPatternProblem isolatedLoopCarry(graph, loopCarryDemands);
+  const bool isolatedLoopCarryBuilt =
+      !loopCarryDemands.empty() &&
+      isolatedLoopCarry.internMechanism(crossResourceLoopCarry->descriptor) &&
+      isolatedLoopCarry.freeze();
+  CanonicalSyncSelection loopCarrySelection;
+  CanonicalSyncVerifiedPlan verifiedLoopCarry;
+  if (isolatedLoopCarryBuilt) {
+    loopCarrySelection = selectCanonicalSyncPatterns(isolatedLoopCarry);
+    verifiedLoopCarry =
+        verifyCanonicalSyncSelection(isolatedLoopCarry, loopCarrySelection);
+  }
+  if (!check(isolatedLoopCarryBuilt && loopCarrySelection &&
+                 loopCarrySelection.mechanisms ==
+                     std::vector<CanonicalSyncMechanismId>{0} &&
+                 verifiedLoopCarry,
+             "select and freshly verify only the cross-resource "
+             "distance-two loop-carry drain")) {
+    return false;
+  }
+  const auto rejectsLoopCarry = [&](CanonicalSyncMechanismDescriptor value) {
+    CanonicalSyncPatternProblem tampered(graph, loopCarryDemands);
+    return !tampered.internMechanism(std::move(value));
+  };
+  CanonicalSyncMechanismDescriptor wrongLoopCarryPipe =
+      crossResourceLoopCarry->descriptor;
+  wrongLoopCarryPipe.actions.front().resource =
+      static_cast<std::uint32_t>(PipelineType::PIPE_MTE1);
+  wrongLoopCarryPipe.actions.front().drainedResources = {
+      static_cast<std::uint32_t>(PipelineType::PIPE_MTE1)};
+  CanonicalSyncMechanismDescriptor wrongLoopCarryScope =
+      crossResourceLoopCarry->descriptor;
+  wrongLoopCarryScope.actions.front().anchor.scope = 0;
+  wrongLoopCarryScope.actions.front().guardScope = 0;
+  CanonicalSyncMechanismDescriptor wrongLoopCarryGuard =
+      crossResourceLoopCarry->descriptor;
+  wrongLoopCarryGuard.actions.front().guard =
+      CanonicalSyncActionGuardKind::None;
+  wrongLoopCarryGuard.actions.front().guardScope.reset();
+  CanonicalSyncMechanismDescriptor unverifiedLoopCarry =
+      crossResourceLoopCarry->descriptor;
+  unverifiedLoopCarry.supplies.front().attestedDemand.reset();
+  if (!check(rejectsLoopCarry(std::move(wrongLoopCarryPipe)),
+             "reject a loop-carry drain for the wrong source pipe") ||
+      !check(rejectsLoopCarry(std::move(wrongLoopCarryScope)),
+             "reject a loop-carry drain at the wrong loop scope") ||
+      !check(rejectsLoopCarry(std::move(wrongLoopCarryGuard)),
+             "reject an unguarded loop-carry drain") ||
+      !check(rejectsLoopCarry(std::move(unverifiedLoopCarry)),
+             "reject a loop-carry drain without exact attestation")) {
+    return false;
+  }
+  if (!check(succeeded(materializeCanonicalSyncPlan(*program, isolatedLoopCarry,
+                                                    verifiedLoopCarry)),
+             "materialize only the cross-resource distance-two loop-carry "
+             "drain")) {
+    return false;
+  }
+  std::size_t loopCarryBarriers = 0;
+  std::size_t loopCarryEvents = 0;
+  bool exactNotFirstIterationGuard = false;
+  module->walk([&](Operation *operation) {
+    const bool generated = operation->hasAttr("pto.canonical_sync");
+    loopCarryEvents +=
+        generated &&
+        isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp>(operation);
+    auto barrier = dyn_cast<BarrierOp>(operation);
+    if (!generated || !barrier ||
+        barrier->hasAttr("pto.auto_sync_tail_barrier")) {
+      return;
+    }
+    ++loopCarryBarriers;
+    auto guard = barrier->getParentOfType<scf::IfOp>();
+    auto loop = barrier->getParentOfType<scf::ForOp>();
+    auto comparison =
+        guard ? guard.getCondition().getDefiningOp<arith::CmpIOp>() : nullptr;
+    exactNotFirstIterationGuard =
+        exactNotFirstIterationGuard ||
+        (loop && comparison &&
+         comparison.getPredicate() == arith::CmpIPredicate::ne &&
+         comparison.getLhs() == loop.getInductionVar() &&
+         comparison.getRhs() == loop.getLowerBound());
+  });
+  if (!check(loopCarryBarriers == 1 && loopCarryEvents == 0 &&
+                 exactNotFirstIterationGuard,
+             "emit one targeted barrier that is inactive for zero/one-trip "
+             "carry and active on every later iteration")) {
+    return false;
+  }
+  std::vector<SyncCoverDemandId> protocolDemands;
+  for (const CanonicalSyncSupplyBinding &binding :
+       loopBoundaryProtocol->descriptor.supplies) {
+    if (binding.attestedDemand) {
+      protocolDemands.push_back(*binding.attestedDemand);
+    }
+  }
+  llvm::sort(protocolDemands);
+  protocolDemands.erase(
+      std::unique(protocolDemands.begin(), protocolDemands.end()),
+      protocolDemands.end());
+  CanonicalSyncPatternProblem isolatedProtocolProblem(graph, protocolDemands);
+  bool isolatedProblemBuilt = !protocolDemands.empty();
+  for (const CanonicalSyncEventDomain &domain : (*problem)->getDomains()) {
+    isolatedProblemBuilt =
+        isolatedProblemBuilt && isolatedProtocolProblem.addEventDomain(domain);
+  }
+  const CanonicalSyncProblemResult isolatedProtocol =
+      isolatedProtocolProblem.internVerifiedProtocol(
+          loopBoundaryProtocol->descriptor,
+          [&](const CanonicalSyncMechanismDescriptor &descriptor) {
+            CanonicalSyncMechanism mechanism;
+            mechanism.descriptor = descriptor;
+            return isDistanceTwoLoopBoundaryPrefix(mechanism);
+          });
+  isolatedProblemBuilt = isolatedProblemBuilt && isolatedProtocol &&
+                         isolatedProtocolProblem.freeze();
+  if (!check(isolatedProblemBuilt,
+             "freeze the isolated distance-two loop-boundary cover")) {
+    return false;
+  }
   const CanonicalSyncSelection selection =
-      selectCanonicalSyncPatterns(**problem);
-  const bool selectedRing =
-      selection && llvm::any_of(selection.mechanisms, [&](auto mechanism) {
-        return isDistanceTwoRing((*problem)->getMechanisms()[mechanism]);
+      selectCanonicalSyncPatterns(isolatedProtocolProblem);
+  const CanonicalSyncVerifiedPlan verified =
+      verifyCanonicalSyncSelection(isolatedProtocolProblem, selection);
+  const bool selectedLoopBoundaryProtocol =
+      selection &&
+      selection.mechanisms == std::vector<CanonicalSyncMechanismId>{0};
+  const bool recurrenceSelected =
+      check(selectedLoopBoundaryProtocol && verified,
+            "select and freshly verify only the distance-two loop-boundary "
+            "recurrence protocol");
+  const bool recurrenceMaterialized =
+      check(verified && succeeded(materializeCanonicalSyncPlan(
+                            *program, isolatedProtocolProblem, verified)),
+            "materialize the selected distance-two loop-boundary protocol");
+  if (!recurrenceSelected || !recurrenceMaterialized) {
+    return false;
+  }
+  const auto rejectsProtocol =
+      [&](CanonicalSyncMechanismDescriptor descriptor) {
+        CanonicalSyncPatternProblem tampered(graph, protocolDemands);
+        bool domainsAdded = true;
+        for (const CanonicalSyncEventDomain &domain :
+             (*problem)->getDomains()) {
+          domainsAdded = domainsAdded && tampered.addEventDomain(domain);
+        }
+        const CanonicalSyncProblemResult added =
+            tampered.internVerifiedProtocol(
+                std::move(descriptor),
+                [](const CanonicalSyncMechanismDescriptor &) { return true; });
+        return domainsAdded && !added;
+      };
+  CanonicalSyncMechanismDescriptor wrongWidth =
+      loopBoundaryProtocol->descriptor;
+  wrongWidth.eventUses.front().width = 1;
+  CanonicalSyncMechanismDescriptor missingBarrier =
+      loopBoundaryProtocol->descriptor;
+  const auto barrierPosition = llvm::find_if(
+      missingBarrier.actions, [](const CanonicalSyncAction &action) {
+        return action.kind == CanonicalSyncActionKind::Barrier;
       });
-  const bool ringSelected =
-      check(selectedRing, "select the distance-two recurrence ring");
-  const bool ringMaterialized =
-      check(succeeded(runCanonicalSync(
-                module->lookupSymbol<func::FuncOp>("reuse"), options)),
-            "materialize the distance-two recurrence ring");
-  if (!ringSelected || !ringMaterialized) {
+  missingBarrier.actions.erase(barrierPosition);
+  CanonicalSyncMechanismDescriptor wrongResource =
+      loopBoundaryProtocol->descriptor;
+  CanonicalSyncAction &wrongBarrier = *llvm::find_if(
+      wrongResource.actions, [](const CanonicalSyncAction &action) {
+        return action.kind == CanonicalSyncActionKind::Barrier;
+      });
+  wrongBarrier.resource = static_cast<std::uint32_t>(PipelineType::PIPE_MTE1);
+  wrongBarrier.drainedResources = {wrongBarrier.resource};
+  CanonicalSyncMechanismDescriptor unrestricted =
+      loopBoundaryProtocol->descriptor;
+  unrestricted.supplies.front().allowedDemands.clear();
+  CanonicalSyncMechanismDescriptor wrongScope =
+      loopBoundaryProtocol->descriptor;
+  wrongScope.eventUses.front().recurrenceScope = 0;
+  CanonicalSyncMechanismDescriptor wrongLane = loopBoundaryProtocol->descriptor;
+  CanonicalSyncAction &bodyWait =
+      *llvm::find_if(wrongLane.actions, [](const CanonicalSyncAction &action) {
+        return action.kind == CanonicalSyncActionKind::EventWait &&
+               action.anchor.kind == SyncCoverAnchorKind::LoopBodyEntry;
+      });
+  bodyWait.eventLaneKind = CanonicalSyncEventLaneKind::Static;
+  bodyWait.eventLaneScope.reset();
+  if (!check(rejectsProtocol(std::move(wrongWidth)),
+             "reject a loop-boundary protocol with the wrong width") ||
+      !check(rejectsProtocol(std::move(missingBarrier)),
+             "reject a loop-boundary protocol without its V barrier") ||
+      !check(rejectsProtocol(std::move(wrongResource)),
+             "reject a loop-boundary protocol with the wrong resource") ||
+      !check(rejectsProtocol(std::move(unrestricted)),
+             "reject an unrestricted loop-boundary protocol binding") ||
+      !check(rejectsProtocol(std::move(wrongScope)),
+             "reject a loop-boundary protocol with the wrong scope") ||
+      !check(rejectsProtocol(std::move(wrongLane)),
+             "reject a loop-boundary protocol with the wrong dynamic lane")) {
     return false;
   }
   std::size_t dynamicSets = 0;
   std::size_t dynamicWaits = 0;
-  std::size_t generatedHelpers = 0;
+  std::vector<Operation *> staticPrimes;
+  std::vector<Operation *> staticDrains;
+  Operation *dynamicSet = nullptr;
+  Operation *dynamicWait = nullptr;
+  Operation *vectorBarrier = nullptr;
+  std::size_t targetedBarriers = 0;
+  std::size_t pipeAllBarriers = 0;
   bool unownedDynamicSync = false;
+  const PIPE protocolTarget = static_cast<PIPE>(
+      (*problem)
+          ->getDomains()[loopBoundaryProtocol->descriptor.eventUses.front()
+                             .domain]
+          .targetResource);
   module->walk([&](Operation *operation) {
     dynamicSets += operation->getName().getStringRef() == "pto.set_flag_dyn";
     dynamicWaits += operation->getName().getStringRef() == "pto.wait_flag_dyn";
     const bool generated = operation->hasAttr("pto.canonical_sync");
     const bool dynamic = isa<SetFlagDynOp, WaitFlagDynOp>(operation);
     unownedDynamicSync = unownedDynamicSync || (dynamic && !generated);
-    generatedHelpers +=
-        generated && operation->getDialect() ==
-                         context.getLoadedDialect<arith::ArithDialect>();
+    const auto source = operation->getAttrOfType<PipeAttr>("src_pipe");
+    const auto target = operation->getAttrOfType<PipeAttr>("dst_pipe");
+    const bool protocolDomain = generated && source && target &&
+                                source.getPipe() == PIPE::PIPE_V &&
+                                target.getPipe() == protocolTarget;
+    if (protocolDomain && isa<SetFlagOp>(operation)) {
+      staticPrimes.push_back(operation);
+    } else if (protocolDomain && isa<WaitFlagOp>(operation)) {
+      staticDrains.push_back(operation);
+    } else if (protocolDomain && isa<SetFlagDynOp>(operation)) {
+      dynamicSet = operation;
+    } else if (protocolDomain && isa<WaitFlagDynOp>(operation)) {
+      dynamicWait = operation;
+    }
+    if (auto barrier = dyn_cast<BarrierOp>(operation);
+        barrier && generated &&
+        !barrier->hasAttr("pto.auto_sync_tail_barrier")) {
+      if (barrier.getPipe().getPipe() == PIPE::PIPE_ALL) {
+        ++pipeAllBarriers;
+      } else {
+        ++targetedBarriers;
+        if (barrier.getPipe().getPipe() == PIPE::PIPE_V) {
+          vectorBarrier = operation;
+        }
+      }
+    }
   });
-  if (!check(dynamicSets == 1 && dynamicWaits == 1 && !unownedDynamicSync,
-             "emit one owned modulo-selected body set and wait") ||
-      !check(generatedHelpers != 0,
-             "mark dynamic-lane and guard helpers as pass-owned")) {
+  func::FuncOp function = module->lookupSymbol<func::FuncOp>("reuse");
+  scf::ForOp loop;
+  function.walk([&](scf::ForOp candidate) {
+    if (!loop) {
+      loop = candidate;
+    }
+  });
+  const bool boundaryPlacement =
+      loop && staticPrimes.size() == 2 && staticDrains.size() == 2 &&
+      dynamicSet && dynamicWait && vectorBarrier &&
+      llvm::all_of(staticPrimes,
+                   [&](Operation *prime) {
+                     return prime->getBlock() == loop->getBlock() &&
+                            prime->isBeforeInBlock(loop);
+                   }) &&
+      llvm::all_of(staticDrains,
+                   [&](Operation *drain) {
+                     return drain->getBlock() == loop->getBlock() &&
+                            loop->isBeforeInBlock(drain);
+                   }) &&
+      dynamicWait->getBlock() == loop.getBody() &&
+      vectorBarrier->getBlock() == loop.getBody() &&
+      dynamicSet->getBlock() == loop.getBody() &&
+      dynamicWait->isBeforeInBlock(vectorBarrier) &&
+      vectorBarrier->isBeforeInBlock(dynamicSet) &&
+      dynamicSet->isBeforeInBlock(loop.getBody()->getTerminator());
+  if (!check(dynamicSets == 1 && dynamicWaits == 1 && !unownedDynamicSync &&
+                 targetedBarriers == 1 && pipeAllBarriers == 0,
+             "emit only the selected distance-two protocol without PIPE_ALL") ||
+      !check(boundaryPlacement,
+             "place two primes, body-entry wait, V barrier plus body-exit set, "
+             "and two drains at the exact loop boundaries")) {
     return false;
   }
 
-  func::FuncOp function = module->lookupSymbol<func::FuncOp>("reuse");
   const std::string materialized = printOperation(function);
   CanonicalSyncBuildOptions analysisOnlyOptions = options;
   analysisOnlyOptions.analysisOnly = true;
@@ -675,14 +1176,222 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
   const bool replacementSucceeded =
       check(succeeded(runCanonicalSync(function, options)),
             "replace pass-owned synchronization on rerun");
+  const std::string replacement = printOperation(function);
+  const bool secondReplacementSucceeded =
+      succeeded(runCanonicalSync(function, options));
+  const std::string secondReplacement = printOperation(function);
   const bool replacementIsIdempotent =
-      check(printOperation(function) == materialized,
+      check(replacementSucceeded && secondReplacementSucceeded &&
+                secondReplacement == replacement,
             "make pass-owned replacement idempotent");
   if (!retainedAfterFailure || !replacementSucceeded ||
       !replacementIsIdempotent) {
     return false;
   }
   return true;
+}
+
+bool testA5MatrixLoopBoundaryProtocol() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a5"} {
+      func.func @matrix_reuse(
+          %lhs: !pto.tile_buf<mat, 64x32xf16,
+                              blayout=col_major, slayout=row_major>,
+          %rhs: !pto.tile_buf<mat, 32x64xf16,
+                              blayout=col_major, slayout=row_major>,
+          %limit: index) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %a0 = arith.constant 0 : i64
+        %a1 = arith.constant 8192 : i64
+        %a2 = arith.constant 16384 : i64
+        %a3 = arith.constant 24576 : i64
+        scf.for %i = %c0 to %limit step %c1 {
+          %left0 = pto.alloc_tile addr = %a0 :
+            !pto.tile_buf<left, 32x32xf16,
+                          blayout=col_major, slayout=row_major>
+          pto.textract ins(%lhs, %c0, %c0 :
+            !pto.tile_buf<mat, 64x32xf16,
+                          blayout=col_major, slayout=row_major>, index, index)
+            outs(%left0 : !pto.tile_buf<left, 32x32xf16,
+                                        blayout=col_major,
+                                        slayout=row_major>)
+          %right0 = pto.alloc_tile addr = %a1 :
+            !pto.tile_buf<right, 32x32xf16,
+                          blayout=row_major, slayout=col_major>
+          pto.textract ins(%rhs, %c0, %c0 :
+            !pto.tile_buf<mat, 32x64xf16,
+                          blayout=col_major, slayout=row_major>, index, index)
+            outs(%right0 : !pto.tile_buf<right, 32x32xf16,
+                                         blayout=row_major,
+                                         slayout=col_major>)
+          %acc0 = pto.alloc_tile addr = %a0 :
+            !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                          slayout=row_major, fractal=1024>
+          pto.tmatmul ins(%left0, %right0 :
+            !pto.tile_buf<left, 32x32xf16,
+                          blayout=col_major, slayout=row_major>,
+            !pto.tile_buf<right, 32x32xf16,
+                          blayout=row_major, slayout=col_major>)
+            outs(%acc0 : !pto.tile_buf<acc, 32x32xf32,
+                                       blayout=col_major, slayout=row_major,
+                                       fractal=1024>)
+          %left1 = pto.alloc_tile addr = %a2 :
+            !pto.tile_buf<left, 32x32xf16,
+                          blayout=col_major, slayout=row_major>
+          pto.textract ins(%lhs, %c0, %c0 :
+            !pto.tile_buf<mat, 64x32xf16,
+                          blayout=col_major, slayout=row_major>, index, index)
+            outs(%left1 : !pto.tile_buf<left, 32x32xf16,
+                                        blayout=col_major,
+                                        slayout=row_major>)
+          %right1 = pto.alloc_tile addr = %a3 :
+            !pto.tile_buf<right, 32x32xf16,
+                          blayout=row_major, slayout=col_major>
+          pto.textract ins(%rhs, %c0, %c0 :
+            !pto.tile_buf<mat, 32x64xf16,
+                          blayout=col_major, slayout=row_major>, index, index)
+            outs(%right1 : !pto.tile_buf<right, 32x32xf16,
+                                         blayout=row_major,
+                                         slayout=col_major>)
+          %acc1 = pto.alloc_tile addr = %a1 :
+            !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                          slayout=row_major, fractal=1024>
+          pto.tmatmul ins(%left1, %right1 :
+            !pto.tile_buf<left, 32x32xf16,
+                          blayout=col_major, slayout=row_major>,
+            !pto.tile_buf<right, 32x32xf16,
+                          blayout=row_major, slayout=col_major>)
+            outs(%acc1 : !pto.tile_buf<acc, 32x32xf32,
+                                       blayout=col_major, slayout=row_major,
+                                       fractal=1024>)
+        }
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module),
+             "parse A5 matrix loop-boundary protocol fixture")) {
+    return false;
+  }
+  func::FuncOp function = module->lookupSymbol<func::FuncOp>("matrix_reuse");
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(function);
+  if (!check(succeeded(program),
+             "build A5 matrix loop-boundary protocol graph")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions options;
+  options.enableDemandBasisReduction = false;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem =
+      buildCanonicalSyncSingletonProblem(*program, options);
+  if (!check(succeeded(problem),
+             "build A5 matrix loop-boundary protocol catalog")) {
+    return false;
+  }
+  const std::uint32_t matrix = static_cast<std::uint32_t>(PipelineType::PIPE_M);
+  const std::uint32_t mte1 =
+      static_cast<std::uint32_t>(PipelineType::PIPE_MTE1);
+  const auto isMatrixProtocol = [&](const CanonicalSyncMechanism &mechanism) {
+    return mechanism.descriptor.kind == CanonicalSyncMechanismKind::Protocol &&
+           mechanism.descriptor.eventUses.size() == 1 &&
+           mechanism.descriptor.supplies.size() >= 2 &&
+           llvm::all_of(mechanism.descriptor.supplies,
+                        [&](const CanonicalSyncSupplyBinding &binding) {
+                          return binding.edge.distance == 1 &&
+                                 binding.proof ==
+                                     CanonicalSyncSupplyProof::
+                                         LoopBoundarySourcePrefixProtocol &&
+                                 program->getGraph()
+                                         .getNodes()[binding.edge.source]
+                                         .resource == matrix &&
+                                 program->getGraph()
+                                         .getNodes()[binding.edge.target]
+                                         .resource == mte1;
+                        }) &&
+           llvm::any_of(
+               mechanism.descriptor.actions,
+               [&](const CanonicalSyncAction &action) {
+                 return action.kind == CanonicalSyncActionKind::Barrier &&
+                        action.resource == matrix &&
+                        action.anchor.kind == SyncCoverAnchorKind::LoopBodyExit;
+               });
+  };
+  const auto protocol =
+      llvm::find_if((*problem)->getMechanisms(), isMatrixProtocol);
+  if (!check(protocol != (*problem)->getMechanisms().end(),
+             "generate a supported non-V A5 loop-boundary protocol")) {
+    return false;
+  }
+  std::vector<SyncCoverDemandId> demands;
+  for (const CanonicalSyncSupplyBinding &binding :
+       protocol->descriptor.supplies) {
+    demands.push_back(*binding.attestedDemand);
+  }
+  llvm::sort(demands);
+  demands.erase(std::unique(demands.begin(), demands.end()), demands.end());
+  CanonicalSyncPatternProblem isolated(program->getGraph(), demands);
+  for (const CanonicalSyncEventDomain &domain : (*problem)->getDomains()) {
+    if (!isolated.addEventDomain(domain)) {
+      return check(false, "copy A5 protocol event domains");
+    }
+  }
+  const CanonicalSyncProblemResult added = isolated.internVerifiedProtocol(
+      protocol->descriptor, [&](const CanonicalSyncMechanismDescriptor &value) {
+        CanonicalSyncMechanism mechanism;
+        mechanism.descriptor = value;
+        return isMatrixProtocol(mechanism);
+      });
+  if (!check(added && isolated.freeze(),
+             "freeze the isolated A5 matrix loop-boundary cover")) {
+    return false;
+  }
+  const CanonicalSyncSelection selection =
+      selectCanonicalSyncPatterns(isolated);
+  const CanonicalSyncVerifiedPlan verified =
+      verifyCanonicalSyncSelection(isolated, selection);
+  if (!check(selection &&
+                 selection.mechanisms ==
+                     std::vector<CanonicalSyncMechanismId>{0} &&
+                 verified,
+             "select and freshly verify only the A5 matrix loop-boundary "
+             "protocol") ||
+      !check(
+          succeeded(materializeCanonicalSyncPlan(*program, isolated, verified)),
+          "materialize only the A5 matrix loop-boundary protocol")) {
+    return false;
+  }
+  std::size_t sets = 0;
+  std::size_t waits = 0;
+  std::size_t matrixBarriers = 0;
+  std::size_t generatedPipeAll = 0;
+  function.walk([&](Operation *operation) {
+    const bool generated = operation->hasAttr("pto.canonical_sync");
+    sets += generated && isa<SetFlagOp>(operation);
+    waits += generated && isa<WaitFlagOp>(operation);
+    if (auto barrier = dyn_cast<BarrierOp>(operation);
+        barrier && generated &&
+        !barrier->hasAttr("pto.auto_sync_tail_barrier")) {
+      matrixBarriers += barrier.getPipe().getPipe() == PIPE::PIPE_M;
+      generatedPipeAll += barrier.getPipe().getPipe() == PIPE::PIPE_ALL;
+    }
+  });
+  const bool materializedShape =
+      sets == 2 && waits == 2 && matrixBarriers == 1 && generatedPipeAll == 0;
+
+  (*module)->removeAttr("pto.target_arch");
+  FailureOr<CanonicalSyncProgram> unsupported =
+      buildCanonicalSyncProgram(function);
+  const bool unsupportedRejected =
+      succeeded(unsupported) &&
+      !unsupported->getGraph().supportsBlockingTargetedBarrier(matrix);
+  return check(materializedShape,
+               "emit one A5 M barrier with balanced prime/body/drain flags") &&
+         check(unsupportedRejected,
+               "do not authorize the non-V protocol without target barrier "
+               "capabilities");
 }
 
 bool testDistanceTwoCrossRootSlotRecurrence() {
@@ -830,6 +1539,206 @@ bool testMmadIntrinsicRequiresExactAccumulator() {
   return check(succeeded(conservative), "build conservative MMAD graph") &&
          check(!conservative->getGraph().getDemands().empty(),
                "do not apply MMAD intrinsic rule without exact L0C proof");
+}
+
+bool testA3TargetCompletionCertificatesAreArchitectureQualified() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @certified(
+          %dst: !pto.partition_tensor_view<32x32xf32>) {
+        %c0 = arith.constant 0 : index
+        %a0 = arith.constant 0 : i64
+        %a1 = arith.constant 8192 : i64
+        %mat_a = pto.alloc_tile addr = %a0 :
+          !pto.tile_buf<mat, 64x32xf32, blayout=col_major, slayout=row_major>
+        %mat_b = pto.alloc_tile addr = %a1 :
+          !pto.tile_buf<mat, 32x64xf32, blayout=col_major, slayout=row_major>
+        %left = pto.alloc_tile addr = %a0 :
+          !pto.tile_buf<left, 32x32xf32, slayout=row_major>
+        %right = pto.alloc_tile addr = %a0 :
+          !pto.tile_buf<right, 32x32xf32, slayout=col_major>
+        %acc = pto.alloc_tile addr = %a0 :
+          !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                        slayout=row_major, fractal=1024>
+        pto.textract ins(%mat_a, %c0, %c0 :
+          !pto.tile_buf<mat, 64x32xf32, blayout=col_major, slayout=row_major>,
+          index, index)
+          outs(%left : !pto.tile_buf<left, 32x32xf32, slayout=row_major>)
+        pto.textract ins(%mat_b, %c0, %c0 :
+          !pto.tile_buf<mat, 32x64xf32, blayout=col_major, slayout=row_major>,
+          index, index)
+          outs(%right : !pto.tile_buf<right, 32x32xf32, slayout=col_major>)
+        pto.tmatmul ins(%left, %right :
+          !pto.tile_buf<left, 32x32xf32, slayout=row_major>,
+          !pto.tile_buf<right, 32x32xf32, slayout=col_major>)
+          outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                                    slayout=row_major, fractal=1024>)
+        pto.tstore ins(%acc :
+          !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                        slayout=row_major, fractal=1024>)
+          outs(%dst : !pto.partition_tensor_view<32x32xf32>)
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module),
+             "parse target-completion certificate fixture")) {
+    return false;
+  }
+  func::FuncOp function = module->lookupSymbol<func::FuncOp>("certified");
+  FailureOr<CanonicalSyncProgram> a3 = buildCanonicalSyncProgram(function);
+  if (!check(succeeded(a3), "build A3 target-completion certificates")) {
+    return false;
+  }
+  const auto countKind = [](const CanonicalSyncProgram &program,
+                            SyncCoverTargetCompletionKind kind) {
+    return llvm::count_if(
+        program.getGraph().getTargetCompletionCertificates(),
+        [&](const SyncCoverTargetCompletionCertificate &certificate) {
+          return certificate.kind == kind;
+        });
+  };
+  const bool a3Qualified =
+      check(countKind(*a3, SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix) ==
+                1,
+            "group two exact A3 L0 producers behind one ready certificate") &&
+      check(countKind(
+                *a3,
+                SyncCoverTargetCompletionKind::MToFixAccumulatorBoundary) == 1,
+            "certify the exact A3 accumulator-to-FIX boundary");
+  (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "a5"));
+  FailureOr<CanonicalSyncProgram> a5 = buildCanonicalSyncProgram(function);
+  const bool a5Rejected =
+      check(succeeded(a5), "build the same graph for A5") &&
+      check(a5->getGraph().getTargetCompletionCertificates().empty(),
+            "do not infer A3 target certificates on A5");
+  if (!a3Qualified || !a5Rejected) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions a5Options;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> a5Problem =
+      buildCanonicalSyncSingletonProblem(*a5, a5Options);
+  const std::uint32_t matrixResource =
+      static_cast<std::uint32_t>(PipelineType::PIPE_M);
+  const std::uint32_t fixResource =
+      static_cast<std::uint32_t>(PipelineType::PIPE_FIX);
+  const bool hasBarrierBackedMatrixEvent =
+      succeeded(a5Problem) &&
+      llvm::any_of((*a5Problem)->getMechanisms(), [&](const auto &mechanism) {
+        const auto &descriptor = mechanism.descriptor;
+        const bool hasMatrixToFixSupply = llvm::any_of(
+            descriptor.supplies, [&](const CanonicalSyncSupplyBinding &supply) {
+              return supply.proof == CanonicalSyncSupplyProof::
+                                         SourceLocalCompletionAction &&
+                     (*a5Problem)
+                             ->getGraph()
+                             .getNodes()[supply.edge.source]
+                             .resource == matrixResource &&
+                     (*a5Problem)
+                             ->getGraph()
+                             .getNodes()[supply.edge.target]
+                             .resource == fixResource;
+            });
+        return hasMatrixToFixSupply && descriptor.actions.size() == 3 &&
+               descriptor.actions[0].kind == CanonicalSyncActionKind::Barrier &&
+               descriptor.actions[0].resource == matrixResource &&
+               descriptor.actions[1].kind ==
+                   CanonicalSyncActionKind::EventSet &&
+               descriptor.actions[2].kind == CanonicalSyncActionKind::EventWait;
+      });
+  if (!check(hasBarrierBackedMatrixEvent,
+             "build an A5 barrier-backed M-to-FIX event, not a drain-only "
+             "normal candidate") ||
+      !check(succeeded(runCanonicalSync(function, a5Options)),
+             "materialize the A5 non-direct source event")) {
+    return false;
+  }
+  std::size_t a5MatrixBarriers = 0;
+  std::size_t a5MatrixToFixSets = 0;
+  std::size_t a5MatrixToFixWaits = 0;
+  std::size_t a5BodyPipeAll = 0;
+  Operation *a5MatrixBarrierOp = nullptr;
+  Operation *a5MatrixToFixSetOp = nullptr;
+  Operation *a5MatrixToFixWaitOp = nullptr;
+  function.walk([&](Operation *operation) {
+    const bool generated = operation->hasAttr("pto.canonical_sync");
+    if (auto barrier = dyn_cast<BarrierOp>(operation)) {
+      const bool body =
+          generated && !barrier->hasAttr("pto.auto_sync_tail_barrier");
+      a5MatrixBarriers += body && barrier.getPipe().getPipe() == PIPE::PIPE_M;
+      if (body && barrier.getPipe().getPipe() == PIPE::PIPE_M) {
+        a5MatrixBarrierOp = operation;
+      }
+      a5BodyPipeAll += body && barrier.getPipe().getPipe() == PIPE::PIPE_ALL;
+    }
+    const auto source = operation->getAttrOfType<PipeAttr>("src_pipe");
+    const auto target = operation->getAttrOfType<PipeAttr>("dst_pipe");
+    const bool matrixToFix = generated && source && target &&
+                             source.getPipe() == PIPE::PIPE_M &&
+                             target.getPipe() == PIPE::PIPE_FIX;
+    a5MatrixToFixSets += matrixToFix && isa<SetFlagOp>(operation);
+    a5MatrixToFixWaits += matrixToFix && isa<WaitFlagOp>(operation);
+    if (matrixToFix && isa<SetFlagOp>(operation)) {
+      a5MatrixToFixSetOp = operation;
+    }
+    if (matrixToFix && isa<WaitFlagOp>(operation)) {
+      a5MatrixToFixWaitOp = operation;
+    }
+  });
+  const bool orderedA5Recipe =
+      a5MatrixBarrierOp && a5MatrixToFixSetOp && a5MatrixToFixWaitOp &&
+      a5MatrixBarrierOp->getBlock() == a5MatrixToFixSetOp->getBlock() &&
+      a5MatrixToFixSetOp->getBlock() == a5MatrixToFixWaitOp->getBlock() &&
+      a5MatrixBarrierOp->isBeforeInBlock(a5MatrixToFixSetOp) &&
+      a5MatrixToFixSetOp->isBeforeInBlock(a5MatrixToFixWaitOp);
+  if (!check(a5MatrixBarriers == 1 && a5MatrixToFixSets == 1 &&
+                 a5MatrixToFixWaits == 1 && a5BodyPipeAll == 0,
+             "emit one balanced A5 barrier-backed M-to-FIX event without "
+             "PIPE_ALL") ||
+      !check(orderedA5Recipe,
+             "emit the A5 source barrier, set, and wait in order")) {
+    return false;
+  }
+
+  (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "a3"));
+  if (!check(succeeded(runCanonicalSync(function)),
+             "materialize A3 target-completion certificates")) {
+    return false;
+  }
+  std::size_t mte1ToMatrixSets = 0;
+  std::size_t mte1ToMatrixWaits = 0;
+  std::size_t matrixToFixSets = 0;
+  std::size_t matrixToFixWaits = 0;
+  std::size_t bodyBarriers = 0;
+  function.walk([&](Operation *operation) {
+    const bool generated = operation->hasAttr("pto.canonical_sync");
+    const auto source = operation->getAttrOfType<PipeAttr>("src_pipe");
+    const auto target = operation->getAttrOfType<PipeAttr>("dst_pipe");
+    if (generated && source && target) {
+      const bool mte1ToMatrix = source.getPipe() == PIPE::PIPE_MTE1 &&
+                                target.getPipe() == PIPE::PIPE_M;
+      const bool matrixToFix = source.getPipe() == PIPE::PIPE_M &&
+                               target.getPipe() == PIPE::PIPE_FIX;
+      mte1ToMatrixSets += isa<SetFlagOp>(operation) && mte1ToMatrix;
+      mte1ToMatrixWaits += isa<WaitFlagOp>(operation) && mte1ToMatrix;
+      matrixToFixSets += isa<SetFlagOp>(operation) && matrixToFix;
+      matrixToFixWaits += isa<WaitFlagOp>(operation) && matrixToFix;
+    }
+    if (auto barrier = dyn_cast<BarrierOp>(operation)) {
+      bodyBarriers +=
+          generated && !barrier->hasAttr("pto.auto_sync_tail_barrier");
+    }
+  });
+  return check(mte1ToMatrixSets == 1 && mte1ToMatrixWaits == 1,
+               "materialize one typed MTE1-to-M certificate event") &&
+         check(matrixToFixSets == 1 && matrixToFixWaits == 1,
+               "materialize one typed M-to-FIX certificate event") &&
+         check(bodyBarriers == 0,
+               "materialize certified A3 boundaries without body drains");
 }
 
 bool testAnalysisLimitFailsClosed() {
@@ -1151,6 +2060,17 @@ bool testFixedBarriersSupplyCompletionAndRemainUnowned() {
                   outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
         return
       }
+      func.func @fixed_cross(
+          %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>,
+          %out: !pto.tile_buf<vec, 16x16xf32>) {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.barrier <PIPE_MTE2>
+        pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%out : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
       func.func @fixed_branch(
           %condition: i1,
           %src: !pto.partition_tensor_view<16x16xf32>,
@@ -1330,6 +2250,7 @@ bool testFixedBarriersSupplyCompletionAndRemainUnowned() {
   };
 
   const bool fixedCasesCovered = checkFunction("fixed", false) &&
+                                 checkFunction("fixed_cross", false) &&
                                  checkFunction("fixed_branch", true) &&
                                  checkFunction("fixed_before_branch", true) &&
                                  checkFunction("fixed_after_join", true) &&
@@ -1423,14 +2344,14 @@ bool testFixedBarrierInspectionBoundsAndPersistentControlState() {
   }
   func::FuncOp fixed = module->lookupSymbol<func::FuncOp>("fixed_limit");
   CanonicalSyncBuildOptions exactOptions;
-  exactOptions.analysis.maximumPairInspections = 24;
+  exactOptions.analysis.maximumPairInspections = 27;
   if (!check(succeeded(runCanonicalSync(fixed, exactOptions)),
              "complete fixed-barrier analysis at its exact work bound")) {
     return false;
   }
   const std::string materialized = printOperation(fixed);
   CanonicalSyncBuildOptions belowOptions = exactOptions;
-  belowOptions.analysis.maximumPairInspections = 23;
+  belowOptions.analysis.maximumPairInspections = 26;
   bool failedBelow = false;
   {
     ScopedDiagnosticHandler handler(&context,
@@ -1926,6 +2847,9 @@ bool testGenericRecurrenceWithoutOwnershipDiscovery() {
     return false;
   }
   CanonicalSyncBuildOptions options;
+  // This test inspects the complete recurrence mechanism catalog itself;
+  // demand-basis behavior is covered independently below.
+  options.enableDemandBasisReduction = false;
   FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem =
       buildCanonicalSyncSingletonProblem(*program, options);
   if (!check(succeeded(problem),
@@ -1944,16 +2868,270 @@ bool testGenericRecurrenceWithoutOwnershipDiscovery() {
              "generate a generic prime-body-drain recurrence event")) {
     return false;
   }
+  const auto isExactDrain = [](const CanonicalSyncMechanism &mechanism) {
+    return mechanism.descriptor.kind == CanonicalSyncMechanismKind::Barrier &&
+           llvm::any_of(
+               mechanism.descriptor.supplies,
+               [](const CanonicalSyncSupplyBinding &supply) {
+                 return supply.edge.distance == 1 &&
+                        (supply.proof == CanonicalSyncSupplyProof::
+                                             TargetLocalPipeDrainAction ||
+                         supply.proof == CanonicalSyncSupplyProof::
+                                             SourceLocalPipeDrainAction ||
+                         supply.proof ==
+                             CanonicalSyncSupplyProof::LoopCarryPipeDrain);
+               });
+  };
+  if (!check(llvm::any_of((*problem)->getMechanisms(), isExactDrain),
+             "generate an exact distance-one target drain")) {
+    return false;
+  }
+  const SyncCoverGraph &graph = program->getGraph();
+  const auto isLoopCarryDrain = [&](const CanonicalSyncMechanism &mechanism) {
+    if (mechanism.descriptor.kind != CanonicalSyncMechanismKind::Barrier ||
+        mechanism.descriptor.actions.size() != 1 ||
+        mechanism.descriptor.supplies.empty()) {
+      return false;
+    }
+    const CanonicalSyncAction &action = mechanism.descriptor.actions.front();
+    std::set<std::uint32_t> targetResources;
+    bool crossesResources = false;
+    const bool exactBindings = llvm::all_of(
+        mechanism.descriptor.supplies,
+        [&](const CanonicalSyncSupplyBinding &supply) {
+          if (supply.edge.source >= graph.getNodes().size() ||
+              supply.edge.target >= graph.getNodes().size()) {
+            return false;
+          }
+          const std::uint32_t sourceResource =
+              graph.getNodes()[supply.edge.source].resource;
+          const std::uint32_t targetResource =
+              graph.getNodes()[supply.edge.target].resource;
+          targetResources.insert(targetResource);
+          crossesResources |= sourceResource != targetResource;
+          return sourceResource == action.resource &&
+                 supply.edge.distance != 0 &&
+                 supply.proof == CanonicalSyncSupplyProof::LoopCarryPipeDrain &&
+                 supply.attestedDemand &&
+                 supply.allowedDemands ==
+                     std::vector<SyncCoverDemandId>{*supply.attestedDemand};
+        });
+    return action.anchor.kind == SyncCoverAnchorKind::LoopBodyEntry &&
+           action.guard == CanonicalSyncActionGuardKind::NotFirstIteration &&
+           action.guardScope ==
+               std::optional<SyncCoverScopeId>(action.anchor.scope) &&
+           exactBindings && crossesResources && targetResources.size() >= 2;
+  };
+  if (!check(llvm::any_of((*problem)->getMechanisms(), isLoopCarryDrain),
+             "share one exact loop-entry carry drain across same- and "
+             "cross-pipe targets")) {
+    return false;
+  }
+  const auto loopCarry =
+      llvm::find_if((*problem)->getMechanisms(), isLoopCarryDrain);
+  std::vector<SyncCoverDemandId> loopCarryDemands;
+  for (const CanonicalSyncSupplyBinding &binding :
+       loopCarry->descriptor.supplies) {
+    loopCarryDemands.push_back(*binding.attestedDemand);
+  }
+  llvm::sort(loopCarryDemands);
+  loopCarryDemands.erase(
+      std::unique(loopCarryDemands.begin(), loopCarryDemands.end()),
+      loopCarryDemands.end());
+  CanonicalSyncPatternProblem isolatedLoopCarry(graph, loopCarryDemands);
+  const bool isolatedLoopCarryBuilt =
+      isolatedLoopCarry.internMechanism(loopCarry->descriptor) &&
+      isolatedLoopCarry.freeze();
+  CanonicalSyncSelection isolatedLoopCarrySelection;
+  CanonicalSyncVerifiedPlan isolatedLoopCarryPlan;
+  if (isolatedLoopCarryBuilt) {
+    isolatedLoopCarrySelection = selectCanonicalSyncPatterns(isolatedLoopCarry);
+    isolatedLoopCarryPlan = verifyCanonicalSyncSelection(
+        isolatedLoopCarry, isolatedLoopCarrySelection);
+  }
+  if (!check(isolatedLoopCarryBuilt && isolatedLoopCarrySelection &&
+                 isolatedLoopCarrySelection.mechanisms ==
+                     std::vector<CanonicalSyncMechanismId>{0} &&
+                 isolatedLoopCarryPlan,
+             "select and freshly verify only the mixed-target "
+             "distance-one loop-carry drain")) {
+    return false;
+  }
+  using LoopCarryGroup = std::pair<SyncCoverScopeId, std::uint32_t>;
+  const auto collectLoopCarryGroups =
+      [](const CanonicalSyncPatternProblem &candidateProblem) {
+        std::map<LoopCarryGroup, std::size_t> groups;
+        for (const CanonicalSyncMechanism &mechanism :
+             candidateProblem.getMechanisms()) {
+          if (mechanism.descriptor.supplies.empty() ||
+              !llvm::all_of(
+                  mechanism.descriptor.supplies,
+                  [](const CanonicalSyncSupplyBinding &binding) {
+                    return binding.proof ==
+                           CanonicalSyncSupplyProof::LoopCarryPipeDrain;
+                  })) {
+            continue;
+          }
+          const CanonicalSyncAction &action =
+              mechanism.descriptor.actions.front();
+          groups[{action.anchor.scope, action.resource}] =
+              mechanism.descriptor.supplies.size();
+        }
+        return groups;
+      };
+  const CanonicalSyncPatternStatistics &carryStatistics =
+      (*problem)->getPatternStatistics();
+  const std::map<LoopCarryGroup, std::size_t> fullCarryGroups =
+      collectLoopCarryGroups(**problem);
+  std::size_t fullCarryIncidences = 0;
+  for (const auto &[group, incidences] : fullCarryGroups) {
+    (void)group;
+    fullCarryIncidences += incidences;
+  }
+  if (!check(!fullCarryGroups.empty() &&
+                 carryStatistics.loopCarryInspections ==
+                     (*problem)->getDemands().size() &&
+                 carryStatistics.loopCarryCandidates ==
+                     fullCarryGroups.size() &&
+                 carryStatistics.loopCarryIncidences == fullCarryIncidences &&
+                 carryStatistics.loopCarryIncidences > 1 &&
+                 !carryStatistics.loopCarryGenerationTruncated,
+             "record every complete loop-carry group")) {
+    return false;
+  }
+  const CanonicalSyncAction &mixedTargetCarryAction =
+      loopCarry->descriptor.actions.front();
+  const LoopCarryGroup mixedTargetCarryKey{mixedTargetCarryAction.anchor.scope,
+                                           mixedTargetCarryAction.resource};
+  const std::size_t carryGroupSize = fullCarryGroups.at(mixedTargetCarryKey);
+  const auto firstLoopCarry = llvm::find_if(
+      (*problem)->getMechanisms(), [](const CanonicalSyncMechanism &mechanism) {
+        return !mechanism.descriptor.supplies.empty() &&
+               llvm::all_of(
+                   mechanism.descriptor.supplies,
+                   [](const CanonicalSyncSupplyBinding &binding) {
+                     return binding.proof ==
+                            CanonicalSyncSupplyProof::LoopCarryPipeDrain;
+                   });
+      });
+  std::size_t requiredPrefixSupplies = 0;
+  for (const CanonicalSyncMechanism &mechanism : (*problem)->getMechanisms()) {
+    if (mechanism.id >= firstLoopCarry->id) {
+      break;
+    }
+    requiredPrefixSupplies += mechanism.descriptor.supplies.size();
+  }
+  const std::size_t firstCarryGroupSize =
+      firstLoopCarry->descriptor.supplies.size();
+  const auto buildBoundedCarry = [&](std::size_t inspections,
+                                     std::size_t candidates,
+                                     std::size_t incidences,
+                                     std::size_t suppliesPerMechanism,
+                                     std::size_t totalSupplies) {
+    CanonicalSyncBuildOptions bounded = options;
+    bounded.patterns.maximumLoopCarryInspections = inspections;
+    bounded.patterns.maximumLoopCarryCandidates = candidates;
+    bounded.patterns.maximumLoopCarryIncidences = incidences;
+    bounded.patterns.maximumLoopBoundaryProtocolInspections = 0;
+    bounded.problemLimits.maximumSuppliesPerMechanism = suppliesPerMechanism;
+    bounded.problemLimits.maximumTotalSupplies = totalSupplies;
+    return buildCanonicalSyncSingletonProblem(*program, bounded);
+  };
+  const std::size_t defaultPerMechanism =
+      options.problemLimits.maximumSuppliesPerMechanism;
+  const std::size_t defaultTotal = options.problemLimits.maximumTotalSupplies;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> exactCarry =
+      buildBoundedCarry(carryStatistics.loopCarryInspections,
+                        carryStatistics.loopCarryCandidates,
+                        carryStatistics.loopCarryIncidences,
+                        defaultPerMechanism, defaultTotal);
+  const auto truncatedAndSingletonVerified =
+      [&](const FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>>
+              &built) {
+        if (failed(built) ||
+            !(*built)->getPatternStatistics().loopCarryGenerationTruncated) {
+          return false;
+        }
+        const std::map<LoopCarryGroup, std::size_t> retainedGroups =
+            collectLoopCarryGroups(**built);
+        if (retainedGroups == fullCarryGroups ||
+            llvm::any_of(retainedGroups, [&](const auto &retained) {
+              const auto full = fullCarryGroups.find(retained.first);
+              return full == fullCarryGroups.end() ||
+                     full->second != retained.second;
+            })) {
+          return false;
+        }
+        const CanonicalSyncSelection boundedSelection =
+            selectCanonicalSyncPatterns(**built);
+        const CanonicalSyncVerifiedPlan boundedPlan =
+            verifyCanonicalSyncSelection(**built, boundedSelection);
+        return boundedSelection && boundedPlan;
+      };
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> belowInspection =
+      buildBoundedCarry(carryStatistics.loopCarryInspections - 1,
+                        carryStatistics.loopCarryCandidates,
+                        carryStatistics.loopCarryIncidences,
+                        defaultPerMechanism, defaultTotal);
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> belowCandidate =
+      buildBoundedCarry(carryStatistics.loopCarryInspections,
+                        carryStatistics.loopCarryCandidates - 1,
+                        carryStatistics.loopCarryIncidences,
+                        defaultPerMechanism, defaultTotal);
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> belowIncidence =
+      buildBoundedCarry(carryStatistics.loopCarryInspections,
+                        carryStatistics.loopCarryCandidates,
+                        carryStatistics.loopCarryIncidences - 1,
+                        defaultPerMechanism, defaultTotal);
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> oversizedGroup =
+      buildBoundedCarry(carryStatistics.loopCarryInspections,
+                        carryStatistics.loopCarryCandidates,
+                        carryStatistics.loopCarryIncidences, carryGroupSize - 1,
+                        defaultTotal);
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> aggregateLimited =
+      buildBoundedCarry(carryStatistics.loopCarryInspections,
+                        carryStatistics.loopCarryCandidates,
+                        carryStatistics.loopCarryIncidences,
+                        defaultPerMechanism,
+                        requiredPrefixSupplies + firstCarryGroupSize - 1);
+  const std::map<LoopCarryGroup, std::size_t> oversizedRetainedGroups =
+      succeeded(oversizedGroup) ? collectLoopCarryGroups(**oversizedGroup)
+                                : std::map<LoopCarryGroup, std::size_t>{};
+  if (!check(succeeded(exactCarry) &&
+                 !(*exactCarry)
+                      ->getPatternStatistics()
+                      .loopCarryGenerationTruncated &&
+                 collectLoopCarryGroups(**exactCarry) == fullCarryGroups,
+             "retain every loop-carry group at the exact bounds") ||
+      !check(truncatedAndSingletonVerified(belowInspection),
+             "truncate loop-carry generation one inspection below") ||
+      !check(truncatedAndSingletonVerified(belowCandidate),
+             "truncate loop-carry generation one candidate below") ||
+      !check(truncatedAndSingletonVerified(belowIncidence),
+             "truncate loop-carry generation one incidence below") ||
+      !check(truncatedAndSingletonVerified(oversizedGroup),
+             "skip an oversized cross-target loop-carry group all-or-none") ||
+      !check(succeeded(oversizedGroup) &&
+                 oversizedRetainedGroups.find(mixedTargetCarryKey) ==
+                     oversizedRetainedGroups.end(),
+             "omit the complete oversized mixed-target carry group") ||
+      !check(truncatedAndSingletonVerified(aggregateLimited),
+             "retain singleton correctness when the aggregate supply cap "
+             "rejects loop-carry consolidation")) {
+    return false;
+  }
   const CanonicalSyncSelection selection =
       selectCanonicalSyncPatterns(**problem);
-  const bool selectedGeneric =
+  const bool selectedExactRecurrence =
       selection && llvm::any_of(selection.mechanisms, [&](auto mechanism) {
-        return isGenericRecurrence((*problem)->getMechanisms()[mechanism]);
+        const CanonicalSyncMechanism &selected =
+            (*problem)->getMechanisms()[mechanism];
+        return isExactDrain(selected) || isGenericRecurrence(selected);
       });
   const CanonicalSyncVerifiedPlan verified =
       verifyCanonicalSyncSelection(**problem, selection);
-  if (!check(selectedGeneric,
-             "select the generic recurrence event without PIPE_ALL") ||
+  if (!check(selectedExactRecurrence,
+             "select an exact distance-one recurrence cover") ||
       !check(static_cast<bool>(verified),
              "finalize generic recurrence from certified coverage") ||
       !check(succeeded(runCanonicalSync(function, options)),
@@ -1962,15 +3140,27 @@ bool testGenericRecurrenceWithoutOwnershipDiscovery() {
   }
   std::size_t setCount = 0;
   std::size_t waitCount = 0;
+  std::size_t targetedBarrierCount = 0;
+  std::size_t pipeAllBarrierCount = 0;
   function.walk([&](Operation *operation) {
     setCount += operation->getName().getStringRef() == "pto.set_flag";
     waitCount += operation->getName().getStringRef() == "pto.wait_flag";
+    if (auto barrier = dyn_cast<BarrierOp>(operation)) {
+      const bool bodyBarrier = barrier->hasAttr("pto.canonical_sync") &&
+                               !barrier->hasAttr("pto.auto_sync_tail_barrier");
+      targetedBarrierCount +=
+          bodyBarrier && barrier.getPipe().getPipe() != PIPE::PIPE_ALL;
+      pipeAllBarrierCount +=
+          bodyBarrier && barrier.getPipe().getPipe() == PIPE::PIPE_ALL;
+    }
   });
-  return check(setCount == 3 && waitCount == 3,
-               "emit direct ready plus prime-body-drain recurrence actions");
+  return check(setCount == waitCount &&
+                   (setCount != 0 || targetedBarrierCount != 0) &&
+                   pipeAllBarrierCount == 0,
+               "emit a balanced recurrence plan without PIPE_ALL");
 }
 
-bool testUncoverablePreciseCatalogUsesBackstop() {
+bool testGuardedEndpointUsesSourceLocalCompletionEvent() {
   MLIRContext context;
   loadDialects(context);
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
@@ -1995,6 +3185,8 @@ bool testUncoverablePreciseCatalogUsesBackstop() {
   if (!check(static_cast<bool>(module), "parse uncoverable guarded kernel")) {
     return false;
   }
+  OwningOpRef<Operation *> exactVerificationClone(module->clone());
+  OwningOpRef<Operation *> belowVerificationClone(module->clone());
   func::FuncOp function =
       module->lookupSymbol<func::FuncOp>("uncoverable_guarded_endpoint");
   FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(function);
@@ -2004,11 +3196,8 @@ bool testUncoverablePreciseCatalogUsesBackstop() {
   CanonicalSyncBuildOptions options;
   CanonicalSyncProblemBuildResult precise =
       buildCanonicalSyncPreciseProblem(*program, options);
-  const bool preciselyUncoverable =
-      !precise && precise.problem &&
-      precise.status.error == CanonicalSyncProblemError::UncoverableDemand;
-  if (!check(preciselyUncoverable,
-             "identify the guarded cross-pipe demand as uncoverable")) {
+  if (!check(precise && precise.problem,
+             "cover the guarded cross-pipe demand in the precise catalog")) {
     return false;
   }
   CanonicalSyncComparisonReport report;
@@ -2017,29 +3206,438 @@ bool testUncoverablePreciseCatalogUsesBackstop() {
     return success();
   };
   if (!check(succeeded(runCanonicalSync(function, options)),
-             "materialize the backstop for an uncoverable precise catalog")) {
+             "materialize guarded target-local completeness")) {
     return false;
   }
   std::size_t generatedPipeAllBackstops = 0;
-  function.walk([&](BarrierOp barrier) {
-    generatedPipeAllBackstops +=
-        barrier->hasAttr("pto.canonical_sync") &&
-        !barrier->hasAttr("pto.auto_sync_tail_barrier") &&
-        barrier.getPipe().getPipe() == PIPE::PIPE_ALL;
+  std::size_t generatedTargetedDrains = 0;
+  std::size_t generatedSets = 0;
+  std::size_t generatedWaits = 0;
+  function.walk([&](Operation *operation) {
+    const StringRef name = operation->getName().getStringRef();
+    generatedSets += name == "pto.set_flag";
+    generatedWaits += name == "pto.wait_flag";
   });
-  return check(generatedPipeAllBackstops == 1,
-               "emit one localized PIPE_ALL for the uncovered demand") &&
-         check(report.strategies.size() == 1 &&
-                   report.strategies.front().verified &&
-                   report.strategies.front().usedLocalizedPipeAll,
-               "report the verified uncoverable-demand backstop");
+  function.walk([&](BarrierOp barrier) {
+    const bool generated = barrier->hasAttr("pto.canonical_sync") &&
+                           !barrier->hasAttr("pto.auto_sync_tail_barrier");
+    generatedPipeAllBackstops +=
+        generated && barrier.getPipe().getPipe() == PIPE::PIPE_ALL;
+    generatedTargetedDrains +=
+        generated && barrier.getPipe().getPipe() != PIPE::PIPE_ALL;
+  });
+  if (!check(generatedPipeAllBackstops == 0 && generatedTargetedDrains == 0 &&
+                 generatedSets == 1 && generatedWaits == 1,
+             "use one balanced source-local event for the guarded endpoint") ||
+      !check(report.function == "uncoverable_guarded_endpoint" &&
+                 report.graphNodes != 0 && report.uniqueDemandRows != 0 &&
+                 report.strategies.size() == 1 &&
+                 report.strategies.front().verified &&
+                 !report.strategies.front().usedLocalizedPipeAll &&
+                 report.strategies.front().emittedEventSets == 1 &&
+                 report.strategies.front().emittedEventWaits == 1 &&
+                 report.strategies.front().emittedTargetedBarriers == 0 &&
+                 report.strategies.front().emittedPipeAllBarriers == 0 &&
+                 report.strategies.front().verificationWorkUnits != 0 &&
+                 report.strategies.front().predictedSyncInstructions != 0 &&
+                 report.strategies.front().planSignature != 0,
+             "report the freshly verified source-local event plan")) {
+    return false;
+  }
+  const std::size_t exactVerificationWork =
+      report.strategies.front().verificationWorkUnits;
+  ModuleOp exactModule = cast<ModuleOp>(*exactVerificationClone);
+  func::FuncOp exactFunction =
+      exactModule.lookupSymbol<func::FuncOp>("uncoverable_guarded_endpoint");
+  CanonicalSyncBuildOptions exactOptions = options;
+  exactOptions.reportCallback = {};
+  exactOptions.maximumVerificationWorkUnits = exactVerificationWork;
+  if (!check(succeeded(runCanonicalSync(exactFunction, exactOptions)),
+             "accept final verification at its reported exact work bound")) {
+    return false;
+  }
+  ModuleOp belowModule = cast<ModuleOp>(*belowVerificationClone);
+  func::FuncOp belowFunction =
+      belowModule.lookupSymbol<func::FuncOp>("uncoverable_guarded_endpoint");
+  CanonicalSyncBuildOptions belowOptions = exactOptions;
+  --belowOptions.maximumVerificationWorkUnits;
+  const std::string belowBefore = printOperation(belowFunction);
+  bool rejectedBelow = false;
+  {
+    ScopedDiagnosticHandler handler(&context,
+                                    [](Diagnostic &) { return success(); });
+    rejectedBelow = failed(runCanonicalSync(belowFunction, belowOptions));
+  }
+  return check(rejectedBelow,
+               "reject final verification one unit below its exact bound") &&
+         check(printOperation(belowFunction) == belowBefore,
+               "preserve IR when bounded final verification fails");
+}
+
+bool testDemandBasisReductionIsBoundedAndTruncating() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @basis(%tile: !pto.tile_buf<vec, 16x16xf32>) {
+        %one = arith.constant 1.000000e+00 : f32
+        pto.tmuls ins(%tile, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%tile, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%tile, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
+      func.func @basis_large(%tile: !pto.tile_buf<vec, 16x16xf32>) {
+        %one = arith.constant 1.000000e+00 : f32
+        pto.tmuls ins(%tile, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%tile, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%tile, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%tile, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%tile, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%tile, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module), "parse demand-basis fixture")) {
+    return false;
+  }
+  FailureOr<CanonicalSyncProgram> program =
+      buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>("basis"));
+  if (!check(succeeded(program), "build demand-basis fixture")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions reducedOptions;
+  CanonicalSyncProblemBuildResult reduced =
+      buildCanonicalSyncPreciseProblem(*program, reducedOptions);
+  if (!check(reduced && reduced.problem, "build reduced demand basis")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions boundedOptions = reducedOptions;
+  boundedOptions.maximumDemandBasisGroupEdges = 2;
+  CanonicalSyncProblemBuildResult bounded =
+      buildCanonicalSyncPreciseProblem(*program, boundedOptions);
+  if (!check(bounded && bounded.problem, "truncate bounded demand basis")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions exactOptions = reducedOptions;
+  exactOptions.maximumDemandBasisGroupEdges = 3;
+  exactOptions.maximumDemandBasisReachabilityWords = 6;
+  exactOptions.maximumDemandBasisReductionWork = 151;
+  CanonicalSyncProblemBuildResult exact =
+      buildCanonicalSyncPreciseProblem(*program, exactOptions);
+  if (!check(exact && exact.problem, "accept exact demand-basis bounds")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions wordBelowOptions = exactOptions;
+  --wordBelowOptions.maximumDemandBasisReachabilityWords;
+  CanonicalSyncProblemBuildResult wordBelow =
+      buildCanonicalSyncPreciseProblem(*program, wordBelowOptions);
+  if (!check(wordBelow && wordBelow.problem,
+             "truncate one word below the demand-basis bound")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions workBelowOptions = exactOptions;
+  --workBelowOptions.maximumDemandBasisReductionWork;
+  CanonicalSyncProblemBuildResult workBelow =
+      buildCanonicalSyncPreciseProblem(*program, workBelowOptions);
+  if (!check(workBelow && workBelow.problem,
+             "truncate one unit below the demand-basis work bound")) {
+    return false;
+  }
+  const std::size_t obligations =
+      reduced.problem->getObligationDemands().size();
+  FailureOr<CanonicalSyncProgram> largeProgram = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("basis_large"));
+  if (!check(succeeded(largeProgram), "build large demand-basis fixture")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions largeReferenceOptions;
+  CanonicalSyncProblemBuildResult largeReference =
+      buildCanonicalSyncPreciseProblem(*largeProgram, largeReferenceOptions);
+  if (!check(largeReference && largeReference.problem,
+             "build large demand-basis reference")) {
+    return false;
+  }
+  const std::size_t largeEdges =
+      largeReference.problem->getObligationDemands().size();
+  const std::size_t maximumNodes = largeEdges * 2;
+  const std::size_t wordsPerRow = maximumNodes / 64 + (maximumNodes % 64 != 0);
+  const std::size_t globalWork =
+      4 * largeEdges + largeProgram->getGraph().getScopes().size();
+  const std::size_t groupWork =
+      2 * maximumNodes * maximumNodes + largeEdges * largeEdges +
+      largeEdges * maximumNodes + largeEdges * (wordsPerRow + 2) +
+      maximumNodes * wordsPerRow + 3 * maximumNodes + 2 * largeEdges;
+  CanonicalSyncBuildOptions largeExactOptions = largeReferenceOptions;
+  largeExactOptions.maximumDemandBasisReductionWork = globalWork + groupWork;
+  CanonicalSyncProblemBuildResult largeExact =
+      buildCanonicalSyncPreciseProblem(*largeProgram, largeExactOptions);
+  CanonicalSyncBuildOptions largeBelowOptions = largeExactOptions;
+  --largeBelowOptions.maximumDemandBasisReductionWork;
+  CanonicalSyncProblemBuildResult largeBelow =
+      buildCanonicalSyncPreciseProblem(*largeProgram, largeBelowOptions);
+  return check(obligations == 3,
+               "construct the three dense distance-zero obligations") &&
+         check(reduced.problem->getDemands().size() == 2 &&
+                   !reduced.problem->wasBasisReductionTruncated(),
+               "remove only the transitive selection row") &&
+         check(exact.problem->getDemands().size() == 2 &&
+                   !exact.problem->wasBasisReductionTruncated(),
+               "reduce at the exact word and work bounds") &&
+         check(bounded.problem->getDemands().size() == obligations &&
+                   bounded.problem->wasBasisReductionTruncated(),
+               "retain all rows when the pre-allocation edge cap is hit") &&
+         check(wordBelow.problem->getDemands().size() == obligations &&
+                   wordBelow.problem->wasBasisReductionTruncated(),
+               "retain all rows one word below the bound") &&
+         check(workBelow.problem->getDemands().size() == obligations &&
+                   workBelow.problem->wasBasisReductionTruncated(),
+               "retain all rows one work unit below the bound") &&
+         check(largeEdges > obligations && largeExact && largeExact.problem &&
+                   !largeExact.problem->wasBasisReductionTruncated() &&
+                   largeExact.problem->getDemands().size() < largeEdges,
+               "reduce a larger adversarial group at its exact work bound") &&
+         check(largeBelow && largeBelow.problem &&
+                   largeBelow.problem->wasBasisReductionTruncated() &&
+                   largeBelow.problem->getDemands().size() == largeEdges,
+               "retain the larger group one work unit below its bound");
+}
+
+bool testSourcePrefixGenerationIsBoundedAndTruncating() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a5"} {
+      func.func @prefix(
+          %gm0: !pto.partition_tensor_view<16x16xf32>,
+          %gm1: !pto.partition_tensor_view<16x16xf32>,
+          %gm2: !pto.partition_tensor_view<16x16xf32>,
+          %gm3: !pto.partition_tensor_view<16x16xf32>,
+          %a0: !pto.tile_buf<vec, 16x16xf32>,
+          %a1: !pto.tile_buf<vec, 16x16xf32>,
+          %a2: !pto.tile_buf<vec, 16x16xf32>,
+          %a3: !pto.tile_buf<vec, 16x16xf32>,
+          %o0: !pto.tile_buf<vec, 16x16xf32>,
+          %o1: !pto.tile_buf<vec, 16x16xf32>,
+          %o2: !pto.tile_buf<vec, 16x16xf32>,
+          %o3: !pto.tile_buf<vec, 16x16xf32>) {
+        pto.tload ins(%gm0 : !pto.partition_tensor_view<16x16xf32>)
+          outs(%a0 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%gm1 : !pto.partition_tensor_view<16x16xf32>)
+          outs(%a1 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%gm2 : !pto.partition_tensor_view<16x16xf32>)
+          outs(%a2 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%gm3 : !pto.partition_tensor_view<16x16xf32>)
+          outs(%a3 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%a0 : !pto.tile_buf<vec, 16x16xf32>)
+          outs(%o0 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%a1 : !pto.tile_buf<vec, 16x16xf32>)
+          outs(%o1 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%a2 : !pto.tile_buf<vec, 16x16xf32>)
+          outs(%o2 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%a3 : !pto.tile_buf<vec, 16x16xf32>)
+          outs(%o3 : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
+      func.func @basis_ineligible(
+          %gm: !pto.partition_tensor_view<16x16xf32>, %condition: i1) {
+        %address = arith.constant 0 : i64
+        %tile = pto.alloc_tile addr = %address :
+          !pto.tile_buf<vec, 16x16xf32>
+        scf.if %condition {
+          pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf32>)
+            outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+          pto.tabs ins(%tile : !pto.tile_buf<vec, 16x16xf32>)
+            outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+        }
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module), "parse source-prefix fixture")) {
+    return false;
+  }
+  CanonicalSyncAnalysisOptions analysis;
+  analysis.gmAliasPolicy = CanonicalSyncGmAliasPolicy::DistinctArgumentsNoAlias;
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("prefix"), analysis);
+  if (!check(succeeded(program), "build source-prefix fixture")) {
+    return false;
+  }
+  FailureOr<CanonicalSyncProgram> ineligibleProgram = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("basis_ineligible"), analysis);
+  if (!check(succeeded(ineligibleProgram),
+             "build all-ineligible demand-basis fixture")) {
+    return false;
+  }
+  const std::size_t ineligibleRows =
+      ineligibleProgram->getGraph().getDemands().size();
+  CanonicalSyncBuildOptions ineligibleExactOptions;
+  ineligibleExactOptions.analysis = analysis;
+  ineligibleExactOptions.maximumDemandBasisReductionWork =
+      4 * ineligibleRows + ineligibleProgram->getGraph().getScopes().size();
+  CanonicalSyncProblemBuildResult ineligibleExact =
+      buildCanonicalSyncPreciseProblem(*ineligibleProgram,
+                                       ineligibleExactOptions);
+  CanonicalSyncBuildOptions ineligibleBelowOptions = ineligibleExactOptions;
+  --ineligibleBelowOptions.maximumDemandBasisReductionWork;
+  CanonicalSyncProblemBuildResult ineligibleBelow =
+      buildCanonicalSyncPreciseProblem(*ineligibleProgram,
+                                       ineligibleBelowOptions);
+  if (!check(ineligibleExact && ineligibleExact.problem,
+             "build the exact-bound all-ineligible basis problem") ||
+      !check(!ineligibleExact.problem->wasBasisReductionTruncated(),
+             "finish all-ineligible basis accounting at the exact bound") ||
+      !check(ineligibleExact.problem->getDemands().size() == ineligibleRows,
+             "retain every all-ineligible row at the exact bound") ||
+      !check(ineligibleBelow && ineligibleBelow.problem,
+             "build the below-bound all-ineligible basis problem") ||
+      !check(ineligibleBelow.problem->wasBasisReductionTruncated(),
+             "truncate all-ineligible accounting one work unit below") ||
+      !check(ineligibleBelow.problem->getDemands().size() == ineligibleRows,
+             "retain all-ineligible rows one work unit below the bound")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions referenceOptions;
+  referenceOptions.analysis = analysis;
+  // Exercise source-prefix catalog bounds against the complete demand set;
+  // selection-basis reduction has separate exact-bound coverage above.
+  referenceOptions.enableDemandBasisReduction = false;
+  CanonicalSyncProblemBuildResult preciseReference =
+      buildCanonicalSyncPreciseProblem(*program, referenceOptions);
+  if (!check(preciseReference && preciseReference.problem,
+             "build precise source-prefix fixture")) {
+    return false;
+  }
+  const bool preciseHasCrossSourceDrain = llvm::any_of(
+      preciseReference.problem->getMechanisms(),
+      [&](const CanonicalSyncMechanism &mechanism) {
+        return llvm::any_of(
+            mechanism.descriptor.supplies,
+            [&](const CanonicalSyncSupplyBinding &binding) {
+              const bool sourceDrain =
+                  binding.proof ==
+                      CanonicalSyncSupplyProof::SourceLocalPipeDrainAction ||
+                  binding.proof ==
+                      CanonicalSyncSupplyProof::SourcePrefixPipeDrainAction;
+              return sourceDrain &&
+                     program->getGraph()
+                             .getNodes()[binding.edge.source]
+                             .resource != program->getGraph()
+                                              .getNodes()[binding.edge.target]
+                                              .resource;
+            });
+      });
+  const auto buildRepair = [&](const CanonicalSyncBuildOptions &options) {
+    CanonicalSyncProblemBuildResult precise =
+        buildCanonicalSyncPreciseProblem(*program, options);
+    if (!precise || !precise.problem) {
+      return precise;
+    }
+    std::vector<CanonicalSyncMechanismId> conflictCore;
+    for (const CanonicalSyncMechanism &mechanism :
+         precise.problem->getMechanisms()) {
+      if (llvm::any_of(mechanism.descriptor.supplies,
+                       [](const CanonicalSyncSupplyBinding &binding) {
+                         return binding.eventUse.has_value();
+                       })) {
+        conflictCore.push_back(mechanism.id);
+      }
+    }
+    return buildCanonicalSyncRepairProblem(*program, *precise.problem, options,
+                                           conflictCore);
+  };
+  CanonicalSyncProblemBuildResult reference = buildRepair(referenceOptions);
+  if (!check(reference && reference.problem,
+             "build reference source-prefix catalog")) {
+    return false;
+  }
+  const CanonicalSyncPatternStatistics &statistics =
+      reference.problem->getPatternStatistics();
+  if (!check(statistics.sourcePrefixInspections != 0 &&
+                 statistics.sourcePrefixCandidates != 0 &&
+                 statistics.sourcePrefixIncidences != 0 &&
+                 !statistics.sourcePrefixGenerationTruncated,
+             "record complete source-prefix preparation")) {
+    return false;
+  }
+
+  const auto buildLimited = [&](std::size_t inspections, std::size_t candidates,
+                                std::size_t incidences) {
+    CanonicalSyncBuildOptions options = referenceOptions;
+    options.patterns.maximumSourcePrefixInspections = inspections;
+    options.patterns.maximumSourcePrefixCandidates = candidates;
+    options.patterns.maximumSourcePrefixIncidences = incidences;
+    return buildRepair(options);
+  };
+  CanonicalSyncProblemBuildResult exact = buildLimited(
+      statistics.sourcePrefixInspections, statistics.sourcePrefixCandidates,
+      statistics.sourcePrefixIncidences);
+  CanonicalSyncProblemBuildResult belowInspection = buildLimited(
+      statistics.sourcePrefixInspections - 1, statistics.sourcePrefixCandidates,
+      statistics.sourcePrefixIncidences);
+  CanonicalSyncProblemBuildResult belowCandidate = buildLimited(
+      statistics.sourcePrefixInspections, statistics.sourcePrefixCandidates - 1,
+      statistics.sourcePrefixIncidences);
+  CanonicalSyncProblemBuildResult belowIncidence = buildLimited(
+      statistics.sourcePrefixInspections, statistics.sourcePrefixCandidates,
+      statistics.sourcePrefixIncidences - 1);
+  const auto truncatedAndVerified = [](const auto &built) {
+    if (!built || !built.problem ||
+        !built.problem->getPatternStatistics()
+             .sourcePrefixGenerationTruncated) {
+      std::cerr << "source-prefix bounded build: built="
+                << static_cast<bool>(built)
+                << ", problem=" << static_cast<bool>(built.problem)
+                << ", truncated="
+                << (built.problem ? built.problem->getPatternStatistics()
+                                        .sourcePrefixGenerationTruncated
+                                  : false)
+                << '\n';
+      return false;
+    }
+    const CanonicalSyncSelection selection =
+        selectCanonicalSyncPatterns(*built.problem);
+    const CanonicalSyncVerifiedPlan verified =
+        verifyCanonicalSyncSelection(*built.problem, selection);
+    if (!selection || !verified) {
+      std::cerr << "source-prefix bounded selection error="
+                << static_cast<unsigned>(selection.error)
+                << ", verification error="
+                << static_cast<unsigned>(verified.error) << '\n';
+    }
+    return selection && verified;
+  };
+  return check(!preciseHasCrossSourceDrain,
+               "exclude cross-pipeline source drains from precise covers") &&
+         check(exact && exact.problem &&
+                   !exact.problem->getPatternStatistics()
+                        .sourcePrefixGenerationTruncated,
+               "accept exact source-prefix preparation limits") &&
+         check(truncatedAndVerified(belowInspection),
+               "truncate safely below the source-prefix inspection limit") &&
+         check(truncatedAndVerified(belowCandidate),
+               "truncate safely below the source-prefix candidate limit") &&
+         check(truncatedAndVerified(belowIncidence),
+               "truncate safely below the source-prefix incidence limit");
 }
 
 bool testConflictCoreRepairAvoidsPipeAll() {
   MLIRContext context;
   loadDialects(context);
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
-    module attributes {pto.target_arch = "a3"} {
+    module {
       func.func @scarcity_frontier(
           %first: !pto.partition_tensor_view<16x16xf32>,
           %second: !pto.partition_tensor_view<16x16xf32>) {
@@ -2102,10 +3700,13 @@ bool testConflictCoreRepairAvoidsPipeAll() {
   CanonicalSyncProblemBuildResult partialRepair =
       buildCanonicalSyncRepairProblem(*program, **problem, options,
                                       {conflictCore.front()});
-  const bool partialRepairStayedPrecise =
-      partialRepair && partialRepair.problem->getMechanisms().size() ==
-                           (*problem)->getMechanisms().size();
-  if (!check(partialRepairStayedPrecise,
+  const bool partialRepairStayedWithinCore =
+      partialRepair &&
+      partialRepair.problem->getPatternStatistics().repairFrontierInspections ==
+          0 &&
+      partialRepair.problem->getPatternStatistics().repairFrontierProposals ==
+          0;
+  if (!check(partialRepairStayedWithinCore,
              "do not generate frontiers from events outside the live core")) {
     return false;
   }
@@ -2225,9 +3826,16 @@ bool testConflictCoreRepairAvoidsPipeAll() {
                                              CanonicalSyncBarrierKind::All;
                                 });
                    });
+  const bool preciseHasRepairPattern = llvm::any_of(
+      (*problem)->getPatterns(), [](const CanonicalSyncPattern &pattern) {
+        return pattern.kind == CanonicalSyncPatternKind::RepairFrontier;
+      });
+  const bool repairHasRepairPattern = llvm::any_of(
+      repair.problem->getPatterns(), [](const CanonicalSyncPattern &pattern) {
+        return pattern.kind == CanonicalSyncPatternKind::RepairFrontier;
+      });
   const bool catalogChecks =
-      check(repair.problem->getMechanisms().size() ==
-                (*problem)->getMechanisms().size() + 2,
+      check(!preciseHasRepairPattern && repairHasRepairPattern,
             "keep repair candidates out of the precise catalog") &&
       check(fallbackOnlyContainsPipeAll,
             "keep PIPE_ALL in a barrier-only fallback problem") &&
@@ -2257,10 +3865,13 @@ bool testConflictCoreRepairAvoidsPipeAll() {
       repairReport.strategies.front().verified &&
       !repairReport.strategies.front().usedLocalizedPipeAll &&
       repairReport.strategies.front().repairRounds == 1 &&
-      repairReport.strategies.front().repairTrials == 3 &&
+      repairReport.strategies.front().repairTrials != 0 &&
+      repairReport.strategies.front().repairTrials <=
+          options.maximumRepairTrials &&
       repairReport.strategies.front().repairWorkUnits != 0 &&
       repairReport.strategies.front().selectedEvents == 1 &&
-      repairReport.strategies.front().selectedTargetedBarriers == 1;
+      repairReport.strategies.front().emittedTargetedBarriers == 1 &&
+      repairReport.strategies.front().emittedPipeAllBarriers == 0;
   if (!check(repairReported,
              "report the bounded, freshly verified production repair")) {
     return false;
@@ -2482,8 +4093,10 @@ int main() {
       testEmptyNestedLoopTimelineIsClamped() && testGmAliasPolicies() &&
       testGmAliasContracts() && testStructuredIssueFrontier() &&
       testDistanceTwoPhysicalSlotRecurrence() &&
+      testA5MatrixLoopBoundaryProtocol() &&
       testDistanceTwoCrossRootSlotRecurrence() &&
       testMmadIntrinsicRequiresExactAccumulator() &&
+      testA3TargetCompletionCertificatesAreArchitectureQualified() &&
       testAnalysisLimitFailsClosed() && testFailClosedInputs() &&
       testAcceptsDeclaredStorageProvenanceRoots() &&
       testRejectsOwnedSyncAndAcceptsFixedFence() &&
@@ -2494,7 +4107,9 @@ int main() {
       testStructuralLimitsFailClosed() && testPeriodicBranchEvidence() &&
       testFirstIterationRecurrenceSuppression() &&
       testGenericRecurrenceWithoutOwnershipDiscovery() &&
-      testUncoverablePreciseCatalogUsesBackstop() &&
+      testGuardedEndpointUsesSourceLocalCompletionEvent() &&
+      testDemandBasisReductionIsBoundedAndTruncating() &&
+      testSourcePrefixGenerationIsBoundedAndTruncating() &&
       testConflictCoreRepairAvoidsPipeAll();
   return passed ? 0 : 1;
 }

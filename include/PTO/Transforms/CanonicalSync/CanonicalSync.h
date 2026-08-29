@@ -19,8 +19,11 @@
 #include "mlir/Support/LogicalResult.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace mlir {
@@ -34,12 +37,26 @@ struct CanonicalSyncPatternOptions {
   bool enableConflictCoreRepair = true;
   std::size_t maximumRepairFrontierInspections = 1U << 16;
   std::size_t maximumRepairFrontierProposals = 4096;
+  std::size_t maximumSourcePrefixInspections = 1U << 20;
+  std::size_t maximumSourcePrefixCandidates = 1U << 14;
+  std::size_t maximumSourcePrefixIncidences = 1U << 20;
+  std::size_t maximumLoopCarryInspections = 1U << 20;
+  std::size_t maximumLoopCarryCandidates = 1U << 14;
+  std::size_t maximumLoopCarryIncidences = 1U << 20;
+  std::size_t maximumLoopBoundaryProtocolInspections = 1U << 20;
+  std::size_t maximumLoopBoundaryProtocolCandidates = 1U << 14;
+  std::size_t maximumLoopBoundaryProtocolIncidences = 1U << 20;
 };
 
 struct CanonicalSyncStrategyReport {
   CanonicalSyncSelectionStrategy strategy =
       CanonicalSyncSelectionStrategy::PairLookahead;
   CanonicalSyncSelectionError error = CanonicalSyncSelectionError::None;
+  CanonicalSyncSelectionError verificationError =
+      CanonicalSyncSelectionError::None;
+  /// The precise-plan result retained even when a separately verified
+  /// localized backstop is materialized.
+  CanonicalSyncSelectionError preciseError = CanonicalSyncSelectionError::None;
   bool verified = false;
   bool usedLocalizedPipeAll = false;
   bool repairFrontierTruncated = false;
@@ -53,18 +70,71 @@ struct CanonicalSyncStrategyReport {
   std::size_t selectedEvents = 0;
   std::size_t selectedTargetedBarriers = 0;
   std::size_t selectedPipeAllBarriers = 0;
+  std::size_t emittedEventSets = 0;
+  std::size_t emittedEventWaits = 0;
+  std::size_t emittedTargetedBarriers = 0;
+  std::size_t emittedZeroDistanceTargetedBarriers = 0;
+  std::size_t emittedRecurrenceTargetedBarriers = 0;
+  std::size_t emittedZeroOnlyTargetedBarriers = 0;
+  std::size_t emittedRecurrenceOnlyTargetedBarriers = 0;
+  std::size_t emittedMixedDistanceTargetedBarriers = 0;
+  std::size_t emittedTargetLocalPipeDrainBarriers = 0;
+  std::size_t emittedLoopCarryPipeDrainBarriers = 0;
+  std::size_t emittedSourceLocalPipeDrainBarriers = 0;
+  std::size_t emittedSourcePrefixPipeDrainBarriers = 0;
+  std::size_t emittedPipeAllBarriers = 0;
+  std::size_t predictedSyncInstructions = 0;
+  std::size_t verificationWorkUnits = 0;
+  std::uint64_t selectionNanoseconds = 0;
+  std::uint64_t repairNanoseconds = 0;
+  std::uint64_t verificationNanoseconds = 0;
+  std::uint64_t planSignature = 0;
   CanonicalSyncStructuralCost cost;
   CanonicalSyncGreedyStatistics search;
   CanonicalSyncResourceAllocation allocation;
+  CanonicalSyncGreedyStatistics preciseSearch;
+  CanonicalSyncResourceAllocation preciseAllocation;
 };
 
 struct CanonicalSyncComparisonReport {
+  std::string function;
+  CanonicalSyncGmAliasPolicy gmAliasPolicy =
+      CanonicalSyncGmAliasPolicy::MayAlias;
+  std::size_t graphNodes = 0;
+  std::size_t graphEdges = 0;
+  std::size_t certifiedCompletionFrontiers = 0;
   std::size_t demands = 0;
+  std::size_t uniqueDemandRows = 0;
+  std::size_t selectionBasisRows = 0;
+  std::size_t basisReducedRows = 0;
+  bool basisReductionTruncated = false;
+  std::size_t zeroDistanceDemandRows = 0;
+  std::size_t recurrenceDemandRows = 0;
+  std::size_t sameResourceDemandRows = 0;
+  std::size_t crossResourceDemandRows = 0;
+  std::size_t ssaDemandRows = 0;
+  std::size_t rawDemandRows = 0;
+  std::size_t warDemandRows = 0;
+  std::size_t wawDemandRows = 0;
+  unsigned maximumRecurrenceDistance = 0;
   std::size_t directMechanisms = 0;
   std::size_t directPairProposals = 0;
   std::size_t directPairEvaluations = 0;
   std::size_t synergisticPairs = 0;
   bool pairGenerationTruncated = false;
+  std::size_t sourcePrefixInspections = 0;
+  std::size_t sourcePrefixCandidates = 0;
+  std::size_t sourcePrefixIncidences = 0;
+  bool sourcePrefixGenerationTruncated = false;
+  std::size_t loopCarryInspections = 0;
+  std::size_t loopCarryCandidates = 0;
+  std::size_t loopCarryIncidences = 0;
+  bool loopCarryGenerationTruncated = false;
+  std::size_t loopBoundaryProtocolInspections = 0;
+  std::size_t loopBoundaryProtocolCandidates = 0;
+  std::size_t loopBoundaryProtocolIncidences = 0;
+  bool loopBoundaryProtocolGenerationTruncated = false;
+  std::uint64_t preparationNanoseconds = 0;
   std::vector<CanonicalSyncStrategyReport> strategies;
 };
 
@@ -72,6 +142,7 @@ struct CanonicalSyncBuildOptions {
   unsigned eventIdBudget = 8;
   CanonicalSyncAnalysisOptions analysis;
   CanonicalSyncPatternOptions patterns;
+  CanonicalSyncDirectPairOptions directPairs;
   CanonicalSyncPatternProblem::Limits problemLimits;
   SyncCoverExpansionLimits expansionLimits;
   CanonicalSyncGreedyOptions selection;
@@ -80,18 +151,30 @@ struct CanonicalSyncBuildOptions {
   std::size_t maximumRepairWorkUnits = 1U << 28;
   std::size_t maximumBackstopDeletionTrials = 4096;
   std::size_t maximumBackstopDeletionWorkUnits = 1U << 27;
+  std::size_t maximumVerificationWorkUnits = 1U << 27;
+  bool enableDemandBasisReduction = true;
+  std::size_t maximumDemandBasisGroupEdges = 1U << 18;
+  std::size_t maximumDemandBasisReachabilityWords = 1U << 20;
+  std::size_t maximumDemandBasisReductionWork = 1U << 24;
   bool analysisOnly = false;
   bool compareSelectionStrategies = false;
   std::function<LogicalResult(const CanonicalSyncComparisonReport &)>
       reportCallback;
 };
 
-/// Result of building one immutable candidate catalog. An uncoverable precise
-/// catalog is a normal signal to construct the localized PIPE_ALL backstop,
-/// not an analysis failure.
+/// Result of building one immutable candidate catalog. A precise catalog must
+/// freeze completely; uncoverable rows and construction limits fail closed.
 struct CanonicalSyncProblemBuildResult {
   std::unique_ptr<CanonicalSyncPatternProblem> problem;
   CanonicalSyncProblemResult status;
+  /// Repair-only mechanisms keyed by the precise pressure-core event whose
+  /// removal admitted them. These candidates must remain hidden from every
+  /// other individual repair trial.
+  std::map<CanonicalSyncMechanismId, std::vector<CanonicalSyncMechanismId>>
+      repairMechanismsByOwner;
+  /// Multi-event frontier mechanisms exposed only by the collective core
+  /// trial.
+  std::vector<CanonicalSyncMechanismId> collectiveRepairMechanisms;
 
   explicit operator bool() const {
     return problem != nullptr && static_cast<bool>(status);
@@ -106,7 +189,8 @@ CanonicalSyncProblemBuildResult buildCanonicalSyncRepairProblem(
     const CanonicalSyncProgram &program,
     const CanonicalSyncPatternProblem &preciseProblem,
     const CanonicalSyncBuildOptions &options,
-    const std::vector<CanonicalSyncMechanismId> &conflictCore);
+    const std::vector<CanonicalSyncMechanismId> &conflictCore,
+    const std::vector<CanonicalSyncMechanismId> &selectedMechanisms = {});
 
 CanonicalSyncProblemBuildResult
 buildCanonicalSyncPipeAllProblem(const CanonicalSyncProgram &program,

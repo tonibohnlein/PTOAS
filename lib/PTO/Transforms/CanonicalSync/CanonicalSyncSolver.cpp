@@ -177,35 +177,6 @@ std::optional<std::size_t> countNewCoverage(const SyncCoverDemandSet &covered,
   return result;
 }
 
-std::uint64_t
-mechanismSerializationBreadth(const CanonicalSyncPatternProblem &problem,
-                              CanonicalSyncMechanismId mechanismId) {
-  const SyncCoverGraph &graph = problem.getGraph();
-  const CanonicalSyncMechanism &mechanism =
-      problem.getMechanisms()[mechanismId];
-  std::uint64_t result = 0;
-  for (const CanonicalSyncSupplyBinding &binding :
-       mechanism.descriptor.supplies) {
-    const SyncCoverEdge &edge = binding.edge;
-    const std::size_t nodeCount = graph.getNodes().size();
-    const bool invalidEndpoint =
-        edge.source >= nodeCount || edge.target >= nodeCount;
-    if (invalidEndpoint) {
-      return std::numeric_limits<std::uint64_t>::max();
-    }
-    const SyncCoverNode &source = graph.getNodes()[edge.source];
-    const SyncCoverNode &target = graph.getNodes()[edge.target];
-    const std::uint64_t span =
-        source.order > target.order
-            ? static_cast<std::uint64_t>(source.order - target.order) + 1
-            : static_cast<std::uint64_t>(target.order - source.order) + 1;
-    const std::uint64_t endpointWeight =
-        saturatedAdd(source.weight, target.weight);
-    result = saturatedAdd(result, saturatedMultiply(span, endpointWeight));
-  }
-  return result;
-}
-
 CandidateCost getCost(const CanonicalSyncPatternProblem &problem,
                       const std::vector<CanonicalSyncMechanismId> &members) {
   CandidateCost result;
@@ -227,9 +198,8 @@ CandidateCost getCost(const CanonicalSyncPatternProblem &problem,
       result.value.actionProfile[depth] = saturatedAdd(
           result.value.actionProfile[depth], cost.eventActions[depth]);
     }
-    result.value.serializationBreadth =
-        saturatedAdd(result.value.serializationBreadth,
-                     mechanismSerializationBreadth(problem, mechanismId));
+    result.value.serializationBreadth = saturatedAdd(
+        result.value.serializationBreadth, cost.serializationBreadth);
     for (std::size_t use = 0; use < mechanism.eventLifetimes.size(); ++use) {
       const CanonicalSyncEventLifetime &lifetime =
           mechanism.eventLifetimes[use];
@@ -462,6 +432,42 @@ bool complete(const CanonicalSyncPatternProblem &problem,
   return covered.count() == problem.getDemands().size();
 }
 
+bool consumeMechanismVerificationWork(
+    const CanonicalSyncMechanism &mechanism,
+    SyncCoverCoverageWorkBudget *coverageWork) {
+  if (!coverageWork) {
+    return true;
+  }
+  const CanonicalSyncMechanismDescriptor &descriptor = mechanism.descriptor;
+  const bool mechanismWorkUnavailable =
+      !coverageWork->consume(1) ||
+      !coverageWork->consume(descriptor.supplies.size()) ||
+      !coverageWork->consume(descriptor.eventUses.size()) ||
+      !coverageWork->consume(descriptor.actions.size()) ||
+      !coverageWork->consume(mechanism.eventLifetimes.size()) ||
+      !coverageWork->consume(mechanism.cost.barrierActions.size()) ||
+      !coverageWork->consume(mechanism.cost.eventActions.size()) ||
+      !coverageWork->consume(mechanism.conflicts.size());
+  if (mechanismWorkUnavailable) {
+    return false;
+  }
+  for (const CanonicalSyncSupplyBinding &binding : descriptor.supplies) {
+    const bool bindingWorkUnavailable =
+        !coverageWork->consume(binding.edge.sourceGuard.literals.size()) ||
+        !coverageWork->consume(binding.edge.targetGuard.literals.size()) ||
+        !coverageWork->consume(binding.allowedDemands.size());
+    if (bindingWorkUnavailable) {
+      return false;
+    }
+  }
+  for (const CanonicalSyncAction &action : descriptor.actions) {
+    if (!coverageWork->consume(action.drainedResources.size())) {
+      return false;
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 CanonicalSyncStructuralCost mlir::pto::computeCanonicalSyncStructuralCost(
@@ -563,7 +569,9 @@ CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
   result.mechanisms = std::move(selected);
   result.cost = selectedCost.value;
   result.allocation = allocateCanonicalSyncEvents(problem, result.mechanisms);
-  if (!result.allocation.valid || !result.allocation.feasible) {
+  if (!result.allocation.valid) {
+    result.error = CanonicalSyncSelectionError::InvalidAllocation;
+  } else if (!result.allocation.feasible) {
     result.error = CanonicalSyncSelectionError::ResourceInfeasible;
   }
   return result;
@@ -577,19 +585,40 @@ CanonicalSyncVerifiedPlan mlir::pto::verifyCanonicalSyncSelection(
   bool invalid = !problem.isFrozen() ||
                  selection.error != CanonicalSyncSelectionError::None;
   for (std::size_t index = 0; index < selection.mechanisms.size(); ++index) {
-    if (coverageWork && !coverageWork->consume()) {
+    const CanonicalSyncMechanismId mechanism = selection.mechanisms[index];
+    if (mechanism >= problem.getMechanisms().size()) {
+      invalid = true;
+      continue;
+    }
+    if (!consumeMechanismVerificationWork(problem.getMechanisms()[mechanism],
+                                          coverageWork)) {
       result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
       return result;
     }
     const bool invalidMechanism =
-        selection.mechanisms[index] >= problem.getMechanisms().size() ||
-        (index != 0 &&
-         selection.mechanisms[index - 1] >= selection.mechanisms[index]);
-    invalid = invalid || invalidMechanism;
+        index != 0 && selection.mechanisms[index - 1] >= mechanism;
+    const CanonicalSyncProblemResult verified =
+        problem.verifyMechanism(mechanism, coverageWork);
+    if ((coverageWork && coverageWork->exhausted) ||
+        verified.error == CanonicalSyncProblemError::LimitExceeded) {
+      result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+      return result;
+    }
+    invalid = invalid || invalidMechanism || !verified;
   }
   if (invalid) {
     result.error = CanonicalSyncSelectionError::FinalValidationFailed;
     return result;
+  }
+  for (CanonicalSyncMechanismId mechanism : selection.mechanisms) {
+    for (CanonicalSyncMechanismId conflict :
+         problem.getMechanisms()[mechanism].conflicts) {
+      if (std::binary_search(selection.mechanisms.begin(),
+                             selection.mechanisms.end(), conflict)) {
+        result.error = CanonicalSyncSelectionError::FinalValidationFailed;
+        return result;
+      }
+    }
   }
 
   if (coverageWork &&
@@ -605,7 +634,11 @@ CanonicalSyncVerifiedPlan mlir::pto::verifyCanonicalSyncSelection(
     result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
     return result;
   }
-  if (!result.allocation.valid || !result.allocation.feasible) {
+  if (!result.allocation.valid) {
+    result.error = CanonicalSyncSelectionError::InvalidAllocation;
+    return result;
+  }
+  if (!result.allocation.feasible) {
     result.error = CanonicalSyncSelectionError::ResourceInfeasible;
     return result;
   }
@@ -644,25 +677,105 @@ CanonicalSyncVerifiedPlan mlir::pto::verifyCanonicalSyncSelection(
       }
       supplies.push_back({mechanism, binding.edge, binding.allowedDemands,
                           binding.completionExport ==
-                              CanonicalSyncSupplyExport::ScopeExitAfterDrain});
+                              CanonicalSyncSupplyExport::ScopeExitAfterDrain,
+                          binding.applicability});
     }
   }
-  const SyncCoverCoverageResult coverage =
-      computeSyncCoverCoverage(problem.getGraph(), problem.getExpansion(),
-                               supplies, problem.getDemands(), coverageWork);
-  if (!coverage) {
-    result.error = coverage.error == SyncCoverCoverageError::WorkLimitExceeded
-                       ? CanonicalSyncSelectionError::WorkLimitExceeded
-                       : CanonicalSyncSelectionError::FinalValidationFailed;
+  const auto verifyCovered = [&](const std::vector<SyncCoverDemandId> &demands,
+                                 const SyncCoverCoverageResult &coverage) {
+    for (SyncCoverDemandId graphDemand : demands) {
+      if (coverageWork && !coverageWork->consume()) {
+        result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+        return false;
+      }
+      if (!coverage.covered.contains(graphDemand)) {
+        result.error = CanonicalSyncSelectionError::FinalValidationFailed;
+        result.firstUncoveredDemand = graphDemand;
+        return false;
+      }
+    }
+    return true;
+  };
+  const SyncCoverCoverageResult basisCoverage = computeSyncCoverCoverage(
+      problem.getGraph(), problem.getExpansion(), supplies,
+      problem.getDemands(), coverageWork);
+  if (!basisCoverage) {
+    result.error =
+        basisCoverage.error == SyncCoverCoverageError::WorkLimitExceeded
+            ? CanonicalSyncSelectionError::WorkLimitExceeded
+            : CanonicalSyncSelectionError::FinalValidationFailed;
     return result;
   }
-  for (std::size_t demand = 0; demand < problem.getDemands().size(); ++demand) {
+  if (!verifyCovered(problem.getDemands(), basisCoverage)) {
+    return result;
+  }
+
+  // A basis demand that has just been proved is now a completion lemma.  Its
+  // canonical edge is unrestricted even when the concrete mechanism used to
+  // establish it carried a row-local ownership-release filter.  Verify the
+  // complete original universe from the concrete supplies plus these proved
+  // lemmas; reduced rows never bypass fresh semantic verification.
+  const std::size_t lemmaMechanismBegin = problem.getMechanisms().size();
+  if (problem.getDemands().size() >
+          std::numeric_limits<std::size_t>::max() - lemmaMechanismBegin ||
+      problem.getDemands().size() >
+          std::numeric_limits<std::size_t>::max() - supplies.size()) {
+    result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+    return result;
+  }
+  const std::size_t combinedSupplyCount =
+      supplies.size() + problem.getDemands().size();
+  if (coverageWork && !coverageWork->consume(combinedSupplyCount)) {
+    result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+    return result;
+  }
+  supplies.reserve(combinedSupplyCount);
+  for (std::size_t index = 0; index < problem.getDemands().size(); ++index) {
+    const SyncCoverDemand &demand = problem.getGraph().getDemands()[
+        problem.getDemands()[index]];
+    const bool guardMetadataOverflows =
+        demand.targetGuard.literals.size() >
+        std::numeric_limits<std::size_t>::max() -
+            demand.sourceGuard.literals.size();
+    const std::size_t guardMetadata =
+        guardMetadataOverflows
+            ? 0
+            : demand.sourceGuard.literals.size() +
+                  demand.targetGuard.literals.size();
+    if (guardMetadataOverflows ||
+        (coverageWork &&
+         (!coverageWork->consume() ||
+          !coverageWork->consume(guardMetadata)))) {
+      if (coverageWork && guardMetadataOverflows) {
+        coverageWork->exhausted = true;
+      }
+      result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+      return result;
+    }
+    SyncCoverCompletionSupply lemma;
+    lemma.mechanism = lemmaMechanismBegin + index;
+    lemma.edge = {demand.source, demand.target,
+                  SyncCoverEdgeKind::CompletionSupply, demand.scope,
+                  demand.distance, demand.sourceGuard, demand.targetGuard};
+    lemma.applicability = SyncCoverSupplyApplicability::AllDemands;
+    supplies.push_back(std::move(lemma));
+  }
+  const SyncCoverCoverageResult obligationCoverage = computeSyncCoverCoverage(
+      problem.getGraph(), problem.getExpansion(), supplies,
+      problem.getObligationDemands(), coverageWork);
+  if (!obligationCoverage) {
+    result.error =
+        obligationCoverage.error == SyncCoverCoverageError::WorkLimitExceeded
+            ? CanonicalSyncSelectionError::WorkLimitExceeded
+            : CanonicalSyncSelectionError::FinalValidationFailed;
+    return result;
+  }
+  for (SyncCoverDemandId graphDemand : problem.getObligationDemands()) {
     if (coverageWork && !coverageWork->consume()) {
       result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
       return result;
     }
-    const SyncCoverDemandId graphDemand = problem.getDemands()[demand];
-    if (!coverage.covered.contains(graphDemand)) {
+    if (!obligationCoverage.covered.contains(graphDemand)) {
       result.error = CanonicalSyncSelectionError::FinalValidationFailed;
       result.firstUncoveredDemand = graphDemand;
       return result;

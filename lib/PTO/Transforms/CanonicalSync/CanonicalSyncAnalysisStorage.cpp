@@ -27,6 +27,19 @@ using namespace mlir::pto::canonical_sync_detail;
 
 namespace {
 
+SyncCoverStorageDomainRole getStorageDomainRole(AddressSpace space) {
+  switch (space) {
+  case AddressSpace::LEFT:
+    return SyncCoverStorageDomainRole::L0Left;
+  case AddressSpace::RIGHT:
+    return SyncCoverStorageDomainRole::L0Right;
+  case AddressSpace::ACC:
+    return SyncCoverStorageDomainRole::Accumulator;
+  default:
+    return SyncCoverStorageDomainRole::Other;
+  }
+}
+
 bool checkedIntervalEnd(std::uint64_t begin, std::uint64_t size,
                         std::uint64_t &end) {
   const bool invalid =
@@ -48,7 +61,8 @@ bool sameAccessIdentity(const ExtractedAccess &first,
          first.space == second.scope && sameAddresses &&
          first.size == second.allocateSize &&
          first.knownPhysical == second.hasKnownPhysicalAddresses &&
-         first.unknownRange == second.aliasesUnknownRange;
+         first.unknownRange == second.aliasesUnknownRange &&
+         first.rootRelativeOffset == second.rootRelativeOffset;
 }
 
 std::optional<unsigned> getFunctionArgument(Value value,
@@ -121,6 +135,7 @@ void ProgramBuilder::appendAccesses(SyncCoverNodeId node,
     access.size = memory->allocateSize;
     access.knownPhysical = memory->hasKnownPhysicalAddresses;
     access.unknownRange = memory->aliasesUnknownRange;
+    access.rootRelativeOffset = memory->rootRelativeOffset;
     access.mode = incoming;
     extractedAccesses_.push_back(std::move(access));
     nodeAccessIndices_[node].push_back(extractedAccesses_.size() - 1);
@@ -132,7 +147,8 @@ LogicalResult ProgramBuilder::materializeNodeAccesses(SyncCoverNodeId node) {
     ExtractedAccess &access = extractedAccesses_[accessIndex];
     auto domainPosition = storageDomains_.find(access.space);
     if (domainPosition == storageDomains_.end()) {
-      const SyncCoverGraphResult added = graph_.addStorageDomain();
+      const SyncCoverGraphResult added =
+          graph_.addStorageDomain(getStorageDomainRole(access.space));
       if (!added) {
         return function_.emitError(
             "cannot construct canonical sync storage domain");
@@ -152,8 +168,11 @@ LogicalResult ProgramBuilder::materializeNodeAccesses(SyncCoverNodeId node) {
                             access.space != AddressSpace::Zero &&
                             access.knownPhysical && !access.unknownRange &&
                             access.size != 0 && !access.addresses.empty();
-    const bool hasKnownRange = access.knownPhysical && !access.unknownRange &&
-                               access.size != 0 && !access.addresses.empty();
+    const bool hasRootRelativeGmRange =
+        access.space == AddressSpace::GM && access.rootRelativeOffset;
+    const bool hasKnownRange =
+        (access.knownPhysical || hasRootRelativeGmRange) &&
+        !access.unknownRange && access.size != 0 && !access.addresses.empty();
     if (!hasKnownRange) {
       if (failed(addConservativeAccess(access, domain, family))) {
         return failure();
@@ -241,14 +260,24 @@ LogicalResult ProgramBuilder::buildStorageConflictIndex() {
         "canonical sync storage index lost access ownership");
   }
 
-  std::vector<std::vector<SyncCoverStorageAccessId>> accessesByDomain(
-      graph_.getStorageDomains().size());
+  using StorageConflictGroup =
+      std::pair<SyncCoverStorageDomainId, SyncCoverStorageAccessFamilyId>;
+  std::map<StorageConflictGroup, std::vector<SyncCoverStorageAccessId>>
+      accessesByConflictGroup;
+  std::vector<SyncCoverStorageAccessId> gmAccesses;
   for (const SyncCoverStorageAccess &access : graphAccesses) {
-    if (access.domain >= accessesByDomain.size()) {
+    if (access.domain >= graph_.getStorageDomains().size()) {
       return function_.emitError(
           "canonical sync storage index has invalid domain ownership");
     }
-    accessesByDomain[access.domain].push_back(access.id);
+    const ExtractedAccess &extracted =
+        extractedAccesses_[extractedByGraphAccess[access.id]];
+    const bool isGm = extracted.space == AddressSpace::GM;
+    accessesByConflictGroup[{access.domain, isGm ? access.family : 0}]
+        .push_back(access.id);
+    if (isGm) {
+      gmAccesses.push_back(access.id);
+    }
   }
 
   std::vector<bool> nodeIsInLoop(nodeBindings_.size(), false);
@@ -279,8 +308,8 @@ LogicalResult ProgramBuilder::buildStorageConflictIndex() {
     nodePairs.insert(pair);
     return success();
   };
-  for (std::vector<SyncCoverStorageAccessId> &domainAccesses :
-       accessesByDomain) {
+  for (auto &[group, domainAccesses] : accessesByConflictGroup) {
+    (void)group;
     llvm::sort(domainAccesses, [&](SyncCoverStorageAccessId first,
                                    SyncCoverStorageAccessId second) {
       const SyncCoverStorageAccess &firstAccess = graphAccesses[first];
@@ -340,6 +369,36 @@ LogicalResult ProgramBuilder::buildStorageConflictIndex() {
       } else if (currentReads) {
         activeReaders.insert(currentId);
         readerExpiry.push({current.extent.end, currentId});
+      }
+    }
+  }
+
+  for (std::size_t currentIndex = 0; currentIndex < gmAccesses.size();
+       ++currentIndex) {
+    const SyncCoverStorageAccessId currentId = gmAccesses[currentIndex];
+    const SyncCoverStorageAccess &current = graphAccesses[currentId];
+    for (std::size_t previousIndex = 0; previousIndex < currentIndex;
+         ++previousIndex) {
+      const SyncCoverStorageAccessId previousId = gmAccesses[previousIndex];
+      const SyncCoverStorageAccess &previous = graphAccesses[previousId];
+      if (current.family == previous.family ||
+          (!syncCoverStorageModeWrites(current.mode) &&
+           !syncCoverStorageModeWrites(previous.mode))) {
+        continue;
+      }
+      if (!consumePairInspection()) {
+        return function_.emitError(
+            "canonical sync pair-inspection limit exceeded");
+      }
+      const ExtractedAccess &currentExtracted =
+          extractedAccesses_[extractedByGraphAccess[currentId]];
+      const ExtractedAccess &previousExtracted =
+          extractedAccesses_[extractedByGraphAccess[previousId]];
+      if (gmAccessesAreNoAlias(previousExtracted, currentExtracted)) {
+        continue;
+      }
+      if (failed(retainNodePair(previous.node, current.node))) {
+        return failure();
       }
     }
   }

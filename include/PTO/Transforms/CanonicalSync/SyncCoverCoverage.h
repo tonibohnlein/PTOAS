@@ -23,7 +23,6 @@
 namespace mlir {
 namespace pto {
 
-using SyncCoverDemandId = std::size_t;
 using SyncCoverMechanismId = std::size_t;
 
 /// Bounds the dense bit matrices used by one coverage query. The defaults cap
@@ -84,6 +83,11 @@ private:
 
 /// A mechanism validator has already established that this completion edge is
 /// implemented atomically. Coverage only evaluates its semantic consequence.
+enum class SyncCoverSupplyApplicability : std::uint8_t {
+  AllDemands,
+  DistanceZeroOnly,
+};
+
 struct SyncCoverCompletionSupply {
   SyncCoverMechanismId mechanism = 0;
   SyncCoverEdge edge;
@@ -91,6 +95,8 @@ struct SyncCoverCompletionSupply {
   /// A verified recurrence protocol with a balanced scope-exit drain exports
   /// completion to the enclosing arena through its loop summary.
   bool exportsCompletionAtScopeExit = false;
+  SyncCoverSupplyApplicability applicability =
+      SyncCoverSupplyApplicability::AllDemands;
 };
 
 enum class SyncCoverCoverageError : std::uint8_t {

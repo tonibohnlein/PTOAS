@@ -21,9 +21,33 @@ using namespace mlir::pto::sync_cover_detail;
 SyncCoverGraphResult SyncCoverGraph::validate() const {
   for (SyncCoverGraphResult result :
        {validateScopesControlsAndNodes(), validateDemands(), validateEdges(),
-        validateStorage()}) {
+        validateStorage(), validateTargetCompletionCertificates()}) {
     if (!result) {
       return result;
+    }
+  }
+  for (const auto &[key, sources] : blockingTargetedBarrierPrefixes_) {
+    const auto &[resource, physicalTarget] = key;
+    const bool invalidTarget =
+        physicalTarget >= nodes_.size() ||
+        (physicalTarget < nodes_.size() &&
+         nodes_[physicalTarget].physicalAnchor != physicalTarget) ||
+        !supportsBlockingTargetedBarrier(resource);
+    if (invalidTarget) {
+      return {SyncCoverGraphError::InvalidCompletionTargets, physicalTarget};
+    }
+    const bool invalidSources =
+        !std::is_sorted(sources.begin(), sources.end()) ||
+        std::adjacent_find(sources.begin(), sources.end()) != sources.end() ||
+        std::any_of(sources.begin(), sources.end(), [&](SyncCoverNodeId source) {
+          return source >= nodes_.size() ||
+                 nodes_[source].resource != resource ||
+                 nodes_[source].order >= nodes_[physicalTarget].order ||
+                 !syncCoverGuardsCompatible(nodes_[source].guard,
+                                            nodes_[physicalTarget].guard);
+        });
+    if (invalidSources) {
+      return {SyncCoverGraphError::InvalidCompletionTargets, physicalTarget};
     }
   }
   return {SyncCoverGraphError::None, std::nullopt};
@@ -119,6 +143,17 @@ SyncCoverGraphResult SyncCoverGraph::validateScopesControlsAndNodes() const {
     if (invalidOrder) {
       return {SyncCoverGraphError::InvalidOrder, index};
     }
+    const bool invalidPhysicalAnchor =
+        node.physicalAnchor > index ||
+        nodes_[node.physicalAnchor].physicalAnchor != node.physicalAnchor;
+    const bool invalidPhysicalExit =
+        node.physicalExit < index || node.physicalExit >= nodes_.size() ||
+        nodes_[node.physicalExit].physicalAnchor != node.physicalAnchor ||
+        nodes_[node.physicalExit].physicalExit != node.physicalExit ||
+        node.physicalExit != nodes_[node.physicalAnchor].physicalExit;
+    if (invalidPhysicalAnchor || invalidPhysicalExit) {
+      return {SyncCoverGraphError::InvalidNode, index};
+    }
     if (!std::is_sorted(node.completionTargets.begin(),
                         node.completionTargets.end()) ||
         std::adjacent_find(node.completionTargets.begin(),
@@ -137,8 +172,17 @@ SyncCoverGraphResult SyncCoverGraph::validateScopesControlsAndNodes() const {
       const bool invalidDominance =
           source >= nodes_.size() || source == index ||
           nodes_[source].resource != node.resource ||
+          nodes_[source].scope != node.scope ||
           nodes_[source].order >= node.order ||
-          !syncCoverGuardsCompatible(nodes_[source].guard, node.guard);
+          nodes_[source].guard.literals != node.guard.literals ||
+          !node.completionSignalCoversIssuedPrefix ||
+          !std::any_of(
+              edges_.begin(), edges_.end(), [&](const SyncCoverEdge &edge) {
+                return edge.source == source && edge.target == index &&
+                       edge.distance == 0 &&
+                       edge.kind ==
+                           SyncCoverEdgeKind::CertifiedCompletionFrontier;
+              });
       if (invalidDominance) {
         return {SyncCoverGraphError::InvalidCompletionTargets, index};
       }
@@ -176,7 +220,7 @@ SyncCoverGraphResult SyncCoverGraph::validateDemands() const {
       return {SyncCoverGraphError::InvalidScope, index};
     }
     const bool invalidKind =
-        demand.provenanceKinds.empty() ||
+        demand.originalDemandCount == 0 || demand.provenanceKinds.empty() ||
         !std::is_sorted(demand.provenanceKinds.begin(),
                         demand.provenanceKinds.end()) ||
         std::adjacent_find(demand.provenanceKinds.begin(),
@@ -267,10 +311,15 @@ SyncCoverGraphResult SyncCoverGraph::validateEdges() const {
       return {SyncCoverGraphError::InvalidEdgeKind, index};
     }
     const bool issueOrder =
+        edge.kind == SyncCoverEdgeKind::CertifiedCompletionFrontier ||
         edge.kind == SyncCoverEdgeKind::CompletionPreservingIssueOrder ||
         edge.kind == SyncCoverEdgeKind::NonCompletionPreservingIssueOrder;
     if (issueOrder &&
         nodes_[edge.source].resource != nodes_[edge.target].resource) {
+      return {SyncCoverGraphError::InvalidEdgeKind, index};
+    }
+    if (edge.kind == SyncCoverEdgeKind::CertifiedCompletionFrontier &&
+        !nodes_[edge.target].completionSignalCoversIssuedPrefix) {
       return {SyncCoverGraphError::InvalidEdgeKind, index};
     }
     if (edge.distance != 0 &&
@@ -332,7 +381,14 @@ SyncCoverGraphResult SyncCoverGraph::validateEdges() const {
 
 SyncCoverGraphResult SyncCoverGraph::validateStorage() const {
   for (std::size_t index = 0; index < storageDomains_.size(); ++index) {
-    if (storageDomains_[index].id != index) {
+    const SyncCoverStorageDomainRole role = storageDomains_[index].role;
+    const bool validRole =
+        role == SyncCoverStorageDomainRole::Unspecified ||
+        role == SyncCoverStorageDomainRole::Other ||
+        role == SyncCoverStorageDomainRole::L0Left ||
+        role == SyncCoverStorageDomainRole::L0Right ||
+        role == SyncCoverStorageDomainRole::Accumulator;
+    if (storageDomains_[index].id != index || !validRole) {
       return {SyncCoverGraphError::InvalidStorageDomain, index};
     }
   }
@@ -366,6 +422,145 @@ SyncCoverGraphResult SyncCoverGraph::validateStorage() const {
         witness.overlap.begin != expected.begin ||
         witness.overlap.end != expected.end) {
       return {SyncCoverGraphError::InvalidStorageWitness, index};
+    }
+  }
+  return {SyncCoverGraphError::None, std::nullopt};
+}
+
+SyncCoverGraphResult
+SyncCoverGraph::validateTargetCompletionCertificates() const {
+  for (std::size_t index = 0; index < targetCompletionCertificates_.size();
+       ++index) {
+    const SyncCoverTargetCompletionCertificate &certificate =
+        targetCompletionCertificates_[index];
+    const bool invalidHeader =
+        certificate.id != index || certificate.completionNode >= nodes_.size() ||
+        certificate.target >= nodes_.size() ||
+        certificate.storageDomains.empty() || certificate.demands.empty() ||
+        !std::is_sorted(certificate.storageDomains.begin(),
+                        certificate.storageDomains.end()) ||
+        std::adjacent_find(certificate.storageDomains.begin(),
+                           certificate.storageDomains.end()) !=
+            certificate.storageDomains.end() ||
+        std::any_of(certificate.storageDomains.begin(),
+                    certificate.storageDomains.end(),
+                    [&](SyncCoverStorageDomainId domain) {
+                      return domain >= storageDomains_.size();
+                    }) ||
+        !std::is_sorted(certificate.demands.begin(),
+                        certificate.demands.end()) ||
+        std::adjacent_find(certificate.demands.begin(),
+                           certificate.demands.end()) !=
+            certificate.demands.end() ||
+        std::any_of(certificate.demands.begin(), certificate.demands.end(),
+                    [&](SyncCoverDemandId demand) {
+                      return demand >= demands_.size();
+                    });
+    if (invalidHeader) {
+      return {SyncCoverGraphError::InvalidTargetCompletionCertificate, index};
+    }
+    const SyncCoverNode &completion = nodes_[certificate.completionNode];
+    const SyncCoverNode &physicalTarget = nodes_[certificate.target];
+    if (!targetCompletionResources_) {
+      return {SyncCoverGraphError::InvalidTargetCompletionCertificate, index};
+    }
+    const std::uint32_t mte1 = targetCompletionResources_->mte1;
+    const std::uint32_t matrix = targetCompletionResources_->matrix;
+    const std::uint32_t fix = targetCompletionResources_->fix;
+    const bool mte1L0Ready =
+        certificate.kind ==
+            SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix &&
+        certificate.sourceResource == mte1 &&
+        certificate.targetResource == matrix &&
+        std::all_of(certificate.storageDomains.begin(),
+                    certificate.storageDomains.end(),
+                    [&](SyncCoverStorageDomainId domain) {
+                      const SyncCoverStorageDomainRole role =
+                          storageDomains_[domain].role;
+                      return role == SyncCoverStorageDomainRole::L0Left ||
+                             role == SyncCoverStorageDomainRole::L0Right;
+                    });
+    const bool mToFix =
+        certificate.kind ==
+            SyncCoverTargetCompletionKind::MToFixAccumulatorBoundary &&
+        certificate.sourceResource == matrix &&
+        certificate.targetResource == fix &&
+        std::all_of(certificate.storageDomains.begin(),
+                    certificate.storageDomains.end(),
+                    [&](SyncCoverStorageDomainId domain) {
+                      return storageDomains_[domain].role ==
+                             SyncCoverStorageDomainRole::Accumulator;
+                    });
+    if ((!mte1L0Ready && !mToFix) ||
+        completion.order >= physicalTarget.order ||
+        completion.scope != physicalTarget.scope ||
+        completion.guard.literals != physicalTarget.guard.literals ||
+        physicalTarget.physicalAnchor != certificate.target) {
+      return {SyncCoverGraphError::InvalidTargetCompletionCertificate, index};
+    }
+    bool completionNamesCertifiedSource = false;
+    for (SyncCoverDemandId demandId : certificate.demands) {
+      const SyncCoverDemand &demand = demands_[demandId];
+      const SyncCoverNode &source = nodes_[demand.source];
+      const SyncCoverNode &target = nodes_[demand.target];
+      const SyncCoverNode &physicalSource = nodes_[source.physicalExit];
+      completionNamesCertifiedSource |=
+          source.physicalExit == certificate.completionNode;
+      const bool invalidDemand =
+          demand.distance != 0 ||
+          std::find(demand.provenanceKinds.begin(),
+                    demand.provenanceKinds.end(),
+                    SyncCoverDemandKind::MemoryRAW) ==
+              demand.provenanceKinds.end() ||
+          source.resource != certificate.sourceResource ||
+          target.resource != certificate.targetResource ||
+          target.physicalAnchor != certificate.target ||
+          source.scope != completion.scope || target.scope != completion.scope ||
+          physicalSource.scope != completion.scope ||
+          source.guard.literals != completion.guard.literals ||
+          target.guard.literals != completion.guard.literals ||
+          physicalSource.guard.literals != completion.guard.literals ||
+          source.order > physicalSource.order ||
+          physicalSource.order > completion.order;
+      if (demand.storageWitnesses.empty() || invalidDemand) {
+        return {SyncCoverGraphError::InvalidTargetCompletionCertificate,
+                index};
+      }
+      const bool hasExactRawWitness = std::any_of(
+          demand.storageWitnesses.begin(), demand.storageWitnesses.end(),
+          [&](SyncCoverStorageWitnessId witnessId) {
+            if (witnessId >= storageWitnesses_.size()) {
+              return false;
+            }
+            const SyncCoverStorageWitness &witness =
+                storageWitnesses_[witnessId];
+            const SyncCoverStorageAccess &sourceAccess =
+                storageAccesses_[witness.sourceAccess];
+            const SyncCoverStorageAccess &targetAccess =
+                storageAccesses_[witness.targetAccess];
+            return sourceAccess.node == demand.source &&
+                   targetAccess.node == demand.target &&
+                   sourceAccess.domain == targetAccess.domain &&
+                   std::binary_search(certificate.storageDomains.begin(),
+                                      certificate.storageDomains.end(),
+                                      sourceAccess.domain) &&
+                   sourceAccess.exactPhysical && targetAccess.exactPhysical &&
+                   syncCoverStorageModeWrites(sourceAccess.mode) &&
+                   syncCoverStorageModeReads(targetAccess.mode);
+          });
+      if (!hasExactRawWitness) {
+        return {SyncCoverGraphError::InvalidTargetCompletionCertificate,
+                index};
+      }
+      if (certificate.kind ==
+              SyncCoverTargetCompletionKind::MToFixAccumulatorBoundary &&
+          source.physicalExit != certificate.completionNode) {
+        return {SyncCoverGraphError::InvalidTargetCompletionCertificate,
+                index};
+      }
+    }
+    if (!completionNamesCertifiedSource) {
+      return {SyncCoverGraphError::InvalidTargetCompletionCertificate, index};
     }
   }
   return {SyncCoverGraphError::None, std::nullopt};

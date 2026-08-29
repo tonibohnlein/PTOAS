@@ -320,10 +320,15 @@ mlir::pto::resolveSyncCoverAnchor(const SyncCoverGraph &graph,
     if (anchor.node >= nodes.size()) {
       return std::nullopt;
     }
+    const SyncCoverNodeId physicalEntry = nodes[anchor.node].physicalAnchor;
+    const SyncCoverNodeId physicalExit = nodes[anchor.node].physicalExit;
+    const SyncCoverNodeId physicalNode =
+        anchor.kind == SyncCoverAnchorKind::BeforeNode ? physicalEntry
+                                                       : physicalExit;
     const std::optional<SyncCoverTimelineInterval> nodeAnchors =
-        getNodeAnchorInterval(nodes[anchor.node].order);
+        getNodeAnchorInterval(nodes[physicalNode].order);
     const std::optional<SyncCoverScopeId> timelineScope =
-        graph.getOwningTimelineScope(nodes[anchor.node].scope);
+        graph.getOwningTimelineScope(nodes[physicalNode].scope);
     if (!nodeAnchors || !timelineScope) {
       return std::nullopt;
     }
@@ -416,6 +421,15 @@ mlir::pto::resolveSyncCoverAnchor(const SyncCoverGraph &graph,
                ? std::optional<SyncCoverTimelinePosition>(position)
                : std::nullopt;
   }
+  case SyncCoverAnchorKind::LoopBodyEntry:
+  case SyncCoverAnchorKind::LoopBodyExit:
+    if (anchor.scope >= scopes.size() || !scopes[anchor.scope].isLoop ||
+        !scopes[anchor.scope].timeline) {
+      return std::nullopt;
+    }
+    return anchor.kind == SyncCoverAnchorKind::LoopBodyEntry
+               ? scopes[anchor.scope].timeline->begin
+               : scopes[anchor.scope].timeline->end;
   case SyncCoverAnchorKind::TimelinePoint:
     if (anchor.scope >= scopes.size()) {
       return std::nullopt;

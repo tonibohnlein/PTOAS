@@ -13,6 +13,7 @@
 #include "SyncCoverGraphInternal.h"
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 using namespace mlir::pto;
@@ -133,7 +134,9 @@ SyncCoverGraphResult
 SyncCoverGraph::addNode(std::uint32_t resource, std::uint64_t weight,
                         SyncCoverScopeId scope, std::size_t order,
                         SyncCoverGuard guard,
-                        std::vector<std::uint32_t> completionTargets) {
+                        std::vector<std::uint32_t> completionTargets,
+                        std::optional<SyncCoverNodeId> physicalAnchor,
+                        bool completionSignalCoversIssuedPrefix) {
   if (!canMutateStructure()) {
     return {SyncCoverGraphError::StructureFrozen, nodes_.size()};
   }
@@ -168,9 +171,37 @@ SyncCoverGraph::addNode(std::uint32_t resource, std::uint64_t weight,
       std::unique(completionTargets.begin(), completionTargets.end()),
       completionTargets.end());
   const SyncCoverNodeId id = nodes_.size();
-  nodes_.push_back({id, resource, weight, scope, order, std::move(guard),
-                    std::move(completionTargets)});
+  const SyncCoverNodeId anchor = physicalAnchor.value_or(id);
+  if (anchor > id || (anchor < id && nodes_[anchor].physicalAnchor != anchor)) {
+    return {SyncCoverGraphError::InvalidNode, anchor};
+  }
+  nodes_.push_back({id,
+                    resource,
+                    weight,
+                    scope,
+                    order,
+                    std::move(guard),
+                    std::move(completionTargets),
+                    {},
+                    anchor,
+                    id,
+                    completionSignalCoversIssuedPrefix});
   return {SyncCoverGraphError::None, id};
+}
+
+SyncCoverGraphResult
+SyncCoverGraph::setPhysicalExit(SyncCoverNodeId node,
+                                SyncCoverNodeId physicalExit) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen, node};
+  }
+  if (node >= nodes_.size() || physicalExit >= nodes_.size() ||
+      nodes_[node].physicalAnchor != nodes_[physicalExit].physicalAnchor ||
+      nodes_[node].order > nodes_[physicalExit].order) {
+    return {SyncCoverGraphError::InvalidNode, node};
+  }
+  nodes_[node].physicalExit = physicalExit;
+  return {SyncCoverGraphError::None, node};
 }
 
 SyncCoverGraphResult SyncCoverGraph::addEdge(SyncCoverEdge edge) {
@@ -193,10 +224,15 @@ SyncCoverGraphResult SyncCoverGraph::addEdge(SyncCoverEdge edge) {
     return {SyncCoverGraphError::InvalidEdgeKind, edges_.size()};
   }
   const bool issueOrder =
+      edge.kind == SyncCoverEdgeKind::CertifiedCompletionFrontier ||
       edge.kind == SyncCoverEdgeKind::CompletionPreservingIssueOrder ||
       edge.kind == SyncCoverEdgeKind::NonCompletionPreservingIssueOrder;
   if (issueOrder &&
       nodes_[edge.source].resource != nodes_[edge.target].resource) {
+    return {SyncCoverGraphError::InvalidEdgeKind, edges_.size()};
+  }
+  if (edge.kind == SyncCoverEdgeKind::CertifiedCompletionFrontier &&
+      !nodes_[edge.target].completionSignalCoversIssuedPrefix) {
     return {SyncCoverGraphError::InvalidEdgeKind, edges_.size()};
   }
   if (edge.distance != 0 && (edge.scope == 0 || !scopes_[edge.scope].isLoop)) {
@@ -253,7 +289,7 @@ SyncCoverGraphResult SyncCoverGraph::addDemand(SyncCoverDemand demand) {
     return {SyncCoverGraphError::InvalidScope, demands_.size()};
   }
   const bool invalidKind =
-      demand.provenanceKinds.empty() ||
+      demand.originalDemandCount == 0 || demand.provenanceKinds.empty() ||
       std::any_of(
           demand.provenanceKinds.begin(), demand.provenanceKinds.end(),
           [](SyncCoverDemandKind kind) { return !isValidDemandKind(kind); });
@@ -305,6 +341,13 @@ SyncCoverGraphResult SyncCoverGraph::addDemand(SyncCoverDemand demand) {
   }
 
   SyncCoverDemand merged = demands_[existing->second];
+  const bool provenanceCountOverflows =
+      demand.originalDemandCount >
+      std::numeric_limits<std::size_t>::max() - merged.originalDemandCount;
+  if (provenanceCountOverflows) {
+    return {SyncCoverGraphError::ArithmeticOverflow, existing->second};
+  }
+  merged.originalDemandCount += demand.originalDemandCount;
   merged.provenanceKinds.insert(merged.provenanceKinds.end(),
                                 demand.provenanceKinds.begin(),
                                 demand.provenanceKinds.end());
@@ -346,6 +389,78 @@ SyncCoverGraph::setResourceRecurrenceCarryKind(std::uint32_t resource,
   return {SyncCoverGraphError::None, resource};
 }
 
+SyncCoverGraphResult SyncCoverGraph::setBlockingTargetedBarrierResources(
+    std::vector<std::uint32_t> resources) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen,
+            blockingTargetedBarrierResources_.size()};
+  }
+  std::sort(resources.begin(), resources.end());
+  resources.erase(std::unique(resources.begin(), resources.end()),
+                  resources.end());
+  blockingTargetedBarrierResources_ = std::move(resources);
+  return {SyncCoverGraphError::None, blockingTargetedBarrierResources_.size()};
+}
+
+SyncCoverGraphResult SyncCoverGraph::setTargetCompletionResources(
+    SyncCoverTargetCompletionResources resources) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen, std::nullopt};
+  }
+  const bool invalid = resources.mte1 == resources.matrix ||
+                       resources.mte1 == resources.fix ||
+                       resources.matrix == resources.fix;
+  if (invalid) {
+    return {SyncCoverGraphError::InvalidCompletionTargets, std::nullopt};
+  }
+  targetCompletionResources_ = resources;
+  return {SyncCoverGraphError::None, std::nullopt};
+}
+
+bool SyncCoverGraph::supportsBlockingTargetedBarrier(
+    std::uint32_t resource) const {
+  return std::binary_search(blockingTargetedBarrierResources_.begin(),
+                            blockingTargetedBarrierResources_.end(), resource);
+}
+
+SyncCoverGraphResult SyncCoverGraph::setBlockingTargetedBarrierPrefix(
+    std::uint32_t resource, SyncCoverNodeId physicalTarget,
+    std::vector<SyncCoverNodeId> issuedSources) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen,
+            blockingTargetedBarrierPrefixes_.size()};
+  }
+  if (physicalTarget >= nodes_.size() ||
+      !supportsBlockingTargetedBarrier(resource)) {
+    return {SyncCoverGraphError::InvalidNode, physicalTarget};
+  }
+  std::sort(issuedSources.begin(), issuedSources.end());
+  issuedSources.erase(std::unique(issuedSources.begin(), issuedSources.end()),
+                      issuedSources.end());
+  const SyncCoverNode &target = nodes_[physicalTarget];
+  const bool invalidSource =
+      std::any_of(issuedSources.begin(), issuedSources.end(),
+                  [&](SyncCoverNodeId source) {
+                    return source >= nodes_.size() ||
+                           nodes_[source].resource != resource ||
+                           nodes_[source].order >= target.order ||
+                           !syncCoverGuardsCompatible(nodes_[source].guard,
+                                                      target.guard);
+                  });
+  if (invalidSource) {
+    return {SyncCoverGraphError::InvalidOrder, physicalTarget};
+  }
+  const auto [position, inserted] =
+      blockingTargetedBarrierPrefixes_.emplace(
+          std::make_pair(resource, physicalTarget), std::move(issuedSources));
+  if (!inserted) {
+    (void)position;
+    return {SyncCoverGraphError::DuplicateEdge, physicalTarget};
+  }
+  return {SyncCoverGraphError::None,
+          blockingTargetedBarrierPrefixes_.size() - 1};
+}
+
 SyncCoverGraphResult
 SyncCoverGraph::addCompletionDominance(SyncCoverNodeId source,
                                        SyncCoverNodeId completionNode) {
@@ -359,11 +474,19 @@ SyncCoverGraph::addCompletionDominance(SyncCoverNodeId source,
   }
   const SyncCoverNode &sourceDescription = nodes_[source];
   SyncCoverNode &completion = nodes_[completionNode];
+  const bool hasCertifiedEdge =
+      std::any_of(edges_.begin(), edges_.end(), [&](const SyncCoverEdge &edge) {
+        return edge.source == source && edge.target == completionNode &&
+               edge.distance == 0 &&
+               edge.kind == SyncCoverEdgeKind::CertifiedCompletionFrontier;
+      });
   const bool invalid =
       source == completionNode ||
       sourceDescription.resource != completion.resource ||
+      sourceDescription.scope != completion.scope ||
       sourceDescription.order >= completion.order ||
-      !syncCoverGuardsCompatible(sourceDescription.guard, completion.guard);
+      sourceDescription.guard.literals != completion.guard.literals ||
+      !completion.completionSignalCoversIssuedPrefix || !hasCertifiedEdge;
   if (invalid) {
     return {SyncCoverGraphError::InvalidOrder, completionNode};
   }

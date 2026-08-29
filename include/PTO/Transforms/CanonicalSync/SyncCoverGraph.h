@@ -33,8 +33,10 @@ using SyncCoverControlId = std::size_t;
 using SyncCoverStorageDomainId = std::size_t;
 using SyncCoverStorageAccessId = std::size_t;
 using SyncCoverStorageWitnessId = std::size_t;
+using SyncCoverTargetCompletionCertificateId = std::size_t;
 using SyncCoverStorageAccessFamilyId = std::uint64_t;
 using SyncCoverTimelinePosition = std::size_t;
+using SyncCoverDemandId = std::size_t;
 
 /// Inclusive anchor coordinates. A node with static order n occupies
 /// [2*n, 2*n+1], leaving distinct before/after positions.
@@ -53,6 +55,13 @@ enum class SyncCoverAnchorKind : std::uint8_t {
   ControlExit,
   ScopeEntry,
   ScopeExit,
+  /// The first insertion point inside one loop body. Unlike ScopeEntry this
+  /// anchor executes once per loop iteration rather than before the loop op.
+  LoopBodyEntry,
+  /// The insertion point immediately before the loop-body terminator. Unlike
+  /// ScopeExit this anchor executes once per loop iteration rather than after
+  /// the loop op.
+  LoopBodyExit,
   TimelinePoint,
 };
 
@@ -78,6 +87,11 @@ struct SyncCoverGuard {
 };
 
 enum class SyncCoverEdgeKind : std::uint8_t {
+  /// Fixed issue order on a resource for which completing the target is an
+  /// authoritative certificate that every represented source prefix has also
+  /// completed. Unlike ordinary issue order, this edge may be traversed before
+  /// a completion supply is acquired; it still does not establish completion.
+  CertifiedCompletionFrontier,
   /// Preserves an already-established completion fact but does not establish
   /// one. This models in-order issue on a completion-ordered resource.
   CompletionPreservingIssueOrder,
@@ -106,6 +120,13 @@ struct SyncCoverNode {
   /// Earlier same-resource nodes whose completion is implied when this node
   /// completes. These are explicit target facts, not generic issue order.
   std::vector<SyncCoverNodeId> completionDominatedSources;
+  /// Canonical node whose MLIR operation is the physical insertion anchor.
+  /// Multi-phase macro nodes share the representative of their operation.
+  SyncCoverNodeId physicalAnchor = 0;
+  SyncCoverNodeId physicalExit = 0;
+  /// Target-provided contract: a synchronization set issued after this node
+  /// certifies completion of the previously issued prefix on its resource.
+  bool completionSignalCoversIssuedPrefix = false;
 };
 
 struct SyncCoverEdge {
@@ -129,6 +150,8 @@ struct SyncCoverDemand {
   /// Memory causes require role-compatible overlap witnesses below.
   std::vector<SyncCoverDemandKind> provenanceKinds{SyncCoverDemandKind::SSA};
   std::vector<SyncCoverStorageWitnessId> storageWitnesses;
+  /// Number of original obligations interned into this canonical row.
+  std::size_t originalDemandCount = 1;
 };
 
 struct SyncCoverScope {
@@ -174,8 +197,17 @@ struct SyncCoverStorageInterval {
   std::uint64_t end = 0;
 };
 
+enum class SyncCoverStorageDomainRole : std::uint8_t {
+  Unspecified,
+  Other,
+  L0Left,
+  L0Right,
+  Accumulator,
+};
+
 struct SyncCoverStorageDomain {
   SyncCoverStorageDomainId id = 0;
+  SyncCoverStorageDomainRole role = SyncCoverStorageDomainRole::Unspecified;
 };
 
 struct SyncCoverStorageAccess {
@@ -198,6 +230,41 @@ struct SyncCoverStorageWitness {
   SyncCoverStorageInterval overlap;
 };
 
+/// Target-qualified completion facts admitted only after frontend analysis has
+/// proved the corresponding physical-storage lifecycle.  These facts do not
+/// change generic resource completion or issue-order semantics.
+enum class SyncCoverTargetCompletionKind : std::uint8_t {
+  Mte1L0ReadyPrefix,
+  MToFixAccumulatorBoundary,
+};
+
+struct SyncCoverTargetCompletionCertificate {
+  SyncCoverTargetCompletionCertificateId id = 0;
+  SyncCoverTargetCompletionKind kind =
+      SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix;
+  /// Node after which the target-qualified set is issued.
+  SyncCoverNodeId completionNode = 0;
+  /// Physical node before which the matching wait is issued.
+  SyncCoverNodeId target = 0;
+  /// Authoritative event-domain resources. They are independent of the
+  /// resources of multiphase physical anchor nodes.
+  std::uint32_t sourceResource = 0;
+  std::uint32_t targetResource = 0;
+  /// Exact storage domains participating in the certified lifecycle.
+  std::vector<SyncCoverStorageDomainId> storageDomains;
+  /// Exact distance-zero demand rows discharged by this certificate.
+  std::vector<SyncCoverDemandId> demands;
+};
+
+/// Opaque graph-resource IDs corresponding to the target-specific certificate
+/// vocabulary. The MLIR adapter configures these once; the graph core remains
+/// independent of PTO pipeline enum headers.
+struct SyncCoverTargetCompletionResources {
+  std::uint32_t mte1 = 0;
+  std::uint32_t matrix = 0;
+  std::uint32_t fix = 0;
+};
+
 enum class SyncCoverGraphError : std::uint8_t {
   None,
   InvalidNode,
@@ -214,6 +281,8 @@ enum class SyncCoverGraphError : std::uint8_t {
   InvalidStorageAccess,
   InvalidStorageWitness,
   InvalidStorageProvenance,
+  InvalidTargetCompletionCertificate,
+  ArithmeticOverflow,
   DuplicateEdge,
   DuplicateDemand,
   StructureFrozen,
@@ -255,15 +324,34 @@ public:
   SyncCoverGraphResult
   addNode(std::uint32_t resource, std::uint64_t weight, SyncCoverScopeId scope,
           std::size_t order, SyncCoverGuard guard = {},
-          std::vector<std::uint32_t> completionTargets = {});
+          std::vector<std::uint32_t> completionTargets = {},
+          std::optional<SyncCoverNodeId> physicalAnchor = std::nullopt,
+          bool completionSignalCoversIssuedPrefix = false);
   SyncCoverGraphResult addEdge(SyncCoverEdge edge);
   SyncCoverGraphResult addDemand(SyncCoverDemand demand);
   SyncCoverGraphResult setResourceRecurrenceCarryKind(std::uint32_t resource,
                                                       SyncCoverEdgeKind kind);
+  SyncCoverGraphResult
+  setBlockingTargetedBarrierResources(std::vector<std::uint32_t> resources);
+  SyncCoverGraphResult setTargetCompletionResources(
+      SyncCoverTargetCompletionResources resources);
+  bool supportsBlockingTargetedBarrier(std::uint32_t resource) const;
+  SyncCoverGraphResult setBlockingTargetedBarrierPrefix(
+      std::uint32_t resource, SyncCoverNodeId physicalTarget,
+      std::vector<SyncCoverNodeId> issuedSources);
+  const std::map<std::pair<std::uint32_t, SyncCoverNodeId>,
+                 std::vector<SyncCoverNodeId>> &
+  getBlockingTargetedBarrierPrefixes() const {
+    return blockingTargetedBarrierPrefixes_;
+  }
   SyncCoverGraphResult addCompletionDominance(SyncCoverNodeId source,
                                               SyncCoverNodeId completionNode);
+  SyncCoverGraphResult setPhysicalExit(SyncCoverNodeId node,
+                                       SyncCoverNodeId physicalExit);
   SyncCoverGraphError canonicalizeCompletionEdge(SyncCoverEdge &edge) const;
-  SyncCoverGraphResult addStorageDomain();
+  SyncCoverGraphResult addStorageDomain(
+      SyncCoverStorageDomainRole role =
+          SyncCoverStorageDomainRole::Unspecified);
   SyncCoverGraphResult
   addStorageAccess(SyncCoverNodeId node, SyncCoverStorageDomainId domain,
                    SyncCoverStorageAccessFamilyId family,
@@ -273,6 +361,12 @@ public:
                    bool exactPhysical = false);
   SyncCoverGraphResult addStorageWitness(SyncCoverStorageAccessId sourceAccess,
                                          SyncCoverStorageAccessId targetAccess);
+  SyncCoverGraphResult addTargetCompletionCertificate(
+      SyncCoverTargetCompletionKind kind, SyncCoverNodeId completionNode,
+      SyncCoverNodeId target, std::uint32_t sourceResource,
+      std::uint32_t targetResource,
+      std::vector<SyncCoverStorageDomainId> storageDomains,
+      std::vector<SyncCoverDemandId> demands);
   SyncCoverGraphResult freezeStructure();
 
   const std::vector<SyncCoverNode> &getNodes() const { return nodes_; }
@@ -289,6 +383,16 @@ public:
   const std::vector<SyncCoverStorageWitness> &getStorageWitnesses() const {
     return storageWitnesses_;
   }
+  const std::vector<SyncCoverTargetCompletionCertificate> &
+  getTargetCompletionCertificates() const {
+    return targetCompletionCertificates_;
+  }
+  bool hasTargetCompletionCertificate(SyncCoverTargetCompletionKind kind,
+                                      SyncCoverNodeId completionNode,
+                                      SyncCoverNodeId target,
+                                      std::uint32_t sourceResource,
+                                      std::uint32_t targetResource,
+                                      SyncCoverDemandId demand) const;
   const std::map<std::uint32_t, SyncCoverEdgeKind> &
   getResourceRecurrenceCarryKinds() const {
     return resourceRecurrenceCarryKinds_;
@@ -334,6 +438,7 @@ private:
   SyncCoverGraphResult validateDemands() const;
   SyncCoverGraphResult validateEdges() const;
   SyncCoverGraphResult validateStorage() const;
+  SyncCoverGraphResult validateTargetCompletionCertificates() const;
 
   std::vector<SyncCoverNode> nodes_;
   std::vector<SyncCoverEdge> edges_;
@@ -341,7 +446,15 @@ private:
   std::vector<SyncCoverStorageDomain> storageDomains_;
   std::vector<SyncCoverStorageAccess> storageAccesses_;
   std::vector<SyncCoverStorageWitness> storageWitnesses_;
+  std::vector<SyncCoverTargetCompletionCertificate>
+      targetCompletionCertificates_;
+  std::optional<SyncCoverTargetCompletionResources>
+      targetCompletionResources_;
   std::map<std::uint32_t, SyncCoverEdgeKind> resourceRecurrenceCarryKinds_;
+  std::vector<std::uint32_t> blockingTargetedBarrierResources_;
+  std::map<std::pair<std::uint32_t, SyncCoverNodeId>,
+           std::vector<SyncCoverNodeId>>
+      blockingTargetedBarrierPrefixes_;
   using StorageAccessKey =
       std::tuple<SyncCoverNodeId, SyncCoverStorageDomainId,
                  SyncCoverStorageAccessFamilyId, std::uint64_t, std::uint64_t,

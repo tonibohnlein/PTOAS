@@ -253,6 +253,8 @@ std::optional<std::size_t> transition(SyncCoverEdgeKind kind,
   switch (kind) {
   case SyncCoverEdgeKind::CompletionSupply:
     return getStateIndex(target, true);
+  case SyncCoverEdgeKind::CertifiedCompletionFrontier:
+    return getStateIndex(target, hasCompletion);
   case SyncCoverEdgeKind::CompletionPreservingIssueOrder:
   case SyncCoverEdgeKind::NonCompletionPreservingIssueOrder:
     return hasCompletion
@@ -416,6 +418,11 @@ bool coversDemand(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
           }
           const SyncCoverCompletionSupply &description =
               supplies[indexed.supply];
+          if (description.applicability ==
+                  SyncCoverSupplyApplicability::DistanceZeroOnly &&
+              demand.distance != 0) {
+            return true;
+          }
           const bool restricted = !description.allowedDemands.empty();
           bool demandAllowed = false;
           for (SyncCoverDemandId allowed : description.allowedDemands) {
@@ -530,6 +537,9 @@ bool canonicalizeSupplies(const SyncCoverGraph &graph,
                           std::size_t mechanismCount,
                           SyncCoverCoverageWorkBudget *budget = nullptr) {
   for (SyncCoverCompletionSupply &supply : supplies) {
+    const bool invalidApplicability =
+        supply.applicability != SyncCoverSupplyApplicability::AllDemands &&
+        supply.applicability != SyncCoverSupplyApplicability::DistanceZeroOnly;
     const bool invalidDemandFilter =
         !demandIdsValid(graph, supply.allowedDemands, budget);
     const bool canonicalizationWorkUnavailable =
@@ -545,7 +555,8 @@ bool canonicalizeSupplies(const SyncCoverGraph &graph,
         (edgeError != SyncCoverGraphError::None || supply.edge.distance == 0 ||
          !graph.getScopes()[supply.edge.scope].isLoop);
     if (supply.mechanism >= mechanismCount || invalidDemandFilter ||
-        edgeError != SyncCoverGraphError::None || invalidExport) {
+        invalidApplicability || edgeError != SyncCoverGraphError::None ||
+        invalidExport) {
       return false;
     }
   }
@@ -578,12 +589,13 @@ bool canonicalizeSupplies(const SyncCoverGraph &graph,
                         left.edge.scope, left.edge.distance,
                         left.edge.sourceGuard.literals,
                         left.edge.targetGuard.literals, left.allowedDemands,
-                        left.exportsCompletionAtScopeExit) <
+                        left.exportsCompletionAtScopeExit, left.applicability) <
                std::tie(right.mechanism, right.edge.source, right.edge.target,
                         right.edge.scope, right.edge.distance,
                         right.edge.sourceGuard.literals,
                         right.edge.targetGuard.literals, right.allowedDemands,
-                        right.exportsCompletionAtScopeExit);
+                        right.exportsCompletionAtScopeExit,
+                        right.applicability);
       },
       budget);
 }
@@ -817,6 +829,11 @@ SingletonSeedCollection collectSingletonSeeds(
         supplyIndex, virtualNode, [&](const IndexedSupply &indexed) -> bool {
           const SyncCoverCompletionSupply &description =
               supplies[indexed.supply];
+          if (description.applicability ==
+                  SyncCoverSupplyApplicability::DistanceZeroOnly &&
+              demand.distance != 0) {
+            return true;
+          }
           const bool restricted = !description.allowedDemands.empty();
           const bool demandAllowed =
               std::binary_search(description.allowedDemands.begin(),
@@ -1175,6 +1192,11 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
           [&](const IndexedSupply &indexed) -> bool {
             const SyncCoverCompletionSupply &description =
                 supplies[indexed.supply];
+            if (description.applicability ==
+                    SyncCoverSupplyApplicability::DistanceZeroOnly &&
+                demand.distance != 0) {
+              return true;
+            }
             const bool restricted = !description.allowedDemands.empty();
             const bool demandAllowed =
                 std::binary_search(description.allowedDemands.begin(),
@@ -1358,6 +1380,11 @@ SyncCoverPairCoverageResult mlir::pto::computeSyncCoverPairCoverage(
           [&](const IndexedSupply &indexed) -> bool {
             const SyncCoverCompletionSupply &description =
                 supplies[indexed.supply];
+            if (description.applicability ==
+                    SyncCoverSupplyApplicability::DistanceZeroOnly &&
+                demand.distance != 0) {
+              return true;
+            }
             const bool constrained = !description.allowedDemands.empty();
             const bool demandAllowed =
                 !constrained ||
