@@ -306,9 +306,13 @@ uncovered demand.
 Each round chooses the best exact marginal density globally. Ratios use
 128-bit cross multiplication and stable ID tie-breaks.
 
-The calibration-free cost is lexicographic:
+The calibration-free cost is lexicographic. Barrier and event profiles are
+reported independently so candidate-language experiments can distinguish
+serialization from flag traffic, while production selection ranks their
+aggregate physical action count:
 
-1. action counts by natural loop depth, with deeper loops compared first;
+1. aggregate action counts by natural loop depth, with deeper loops compared
+   first;
 2. serialization breadth induced by the supplied completion edges;
 3. inclusive event lifetime area;
 4. number and stable IDs of newly added mechanisms.

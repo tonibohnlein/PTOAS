@@ -619,6 +619,11 @@ struct CanonicalSyncGreedyStatistics {
 /// Calibration-free static cost. Action profiles are indexed by natural loop
 /// depth, with deeper entries compared before shallower entries.
 struct CanonicalSyncStructuralCost {
+  /// Natural loop-depth profiles reported separately for diagnostics. The
+  /// production selector continues to compare their aggregate action count.
+  std::vector<std::uint64_t> barrierActionProfile;
+  std::vector<std::uint64_t> eventActionProfile;
+  /// Aggregate physical action count retained for reporting compatibility.
   std::vector<std::uint64_t> actionProfile;
   std::uint64_t serializationBreadth = 0;
   std::uint64_t eventLifetimeArea = 0;

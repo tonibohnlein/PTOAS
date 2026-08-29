@@ -186,15 +186,23 @@ CandidateCost getCost(const CanonicalSyncPatternProblem &problem,
     const CanonicalSyncMechanism &mechanism =
         problem.getMechanisms()[mechanismId];
     const CanonicalSyncMechanismCost &cost = mechanism.cost;
+    const std::size_t profileSize =
+        std::max(cost.barrierActions.size(), cost.eventActions.size());
+    result.value.barrierActionProfile.resize(
+        std::max(result.value.barrierActionProfile.size(), profileSize), 0);
+    result.value.eventActionProfile.resize(
+        std::max(result.value.eventActionProfile.size(), profileSize), 0);
     result.value.actionProfile.resize(
-        std::max({result.value.actionProfile.size(), cost.barrierActions.size(),
-                  cost.eventActions.size()}),
-        0);
+        std::max(result.value.actionProfile.size(), profileSize), 0);
     for (std::size_t depth = 0; depth < cost.barrierActions.size(); ++depth) {
+      result.value.barrierActionProfile[depth] = saturatedAdd(
+          result.value.barrierActionProfile[depth], cost.barrierActions[depth]);
       result.value.actionProfile[depth] = saturatedAdd(
           result.value.actionProfile[depth], cost.barrierActions[depth]);
     }
     for (std::size_t depth = 0; depth < cost.eventActions.size(); ++depth) {
+      result.value.eventActionProfile[depth] = saturatedAdd(
+          result.value.eventActionProfile[depth], cost.eventActions[depth]);
       result.value.actionProfile[depth] = saturatedAdd(
           result.value.actionProfile[depth], cost.eventActions[depth]);
     }

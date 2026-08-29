@@ -1349,6 +1349,47 @@ bool testDirectPairComposesAcrossRecurrenceArena() {
                          "select recurrence pair members globally");
 }
 
+bool testStructuralCostSeparatesBarrierAndEventActions() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}), passed,
+                "add barrier-priority source");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(2, 1, 0, 1), passed,
+                                           "add barrier-priority target");
+  const SyncCoverDemandId demandId =
+      takeIndex(graph.addDemand(demand(source, target)), passed,
+                "add barrier-priority demand");
+  passed &= check(graph.setBlockingTargetedBarrierResources({1}),
+                  "enable barrier-priority source drain") &&
+            check(graph.freezeStructure(), "freeze barrier-priority graph");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                  "add barrier-priority event domain");
+  const CanonicalSyncMechanismId barrierId =
+      takeIndex(problem.internMechanism(
+                    targetLocalPipeDrain(1, source, target, demandId)),
+                passed, "add barrier-priority targeted drain");
+  const CanonicalSyncMechanismId eventId =
+      takeIndex(problem.internMechanism(event(0, 1, 2, source, target)), passed,
+                "add barrier-priority event");
+  passed &= check(problem.freeze(), "freeze barrier-priority problem");
+
+  const CanonicalSyncStructuralCost cost =
+      computeCanonicalSyncStructuralCost(problem, {barrierId, eventId});
+  const std::uint64_t barriers = std::accumulate(
+      cost.barrierActionProfile.begin(), cost.barrierActionProfile.end(),
+      std::uint64_t{0});
+  const std::uint64_t events = std::accumulate(
+      cost.eventActionProfile.begin(), cost.eventActionProfile.end(),
+      std::uint64_t{0});
+  const std::uint64_t actions = std::accumulate(
+      cost.actionProfile.begin(), cost.actionProfile.end(), std::uint64_t{0});
+  return passed && check(barriers == 1 && events == 2 && actions == 3,
+                         "report separate and aggregate action profiles");
+}
+
 bool testPipeAllFallbackProblem() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -2580,6 +2621,7 @@ int main() {
       testSiblingAndBarrierPairsComposeAtTheirLca() &&
       testNestedPairExtendsToParentDemand() &&
       testDirectPairComposesAcrossRecurrenceArena() &&
+      testStructuralCostSeparatesBarrierAndEventActions() &&
       testPipeAllFallbackProblem() &&
       testPackagingPatternHasNoExtraCoverage() &&
       testSeparateFallbackRepairsEventPressure() &&
