@@ -1403,7 +1403,7 @@ validateSupplyBindings(const SyncCoverGraph &graph,
           set.anchor.kind == SyncCoverAnchorKind::AfterNode &&
           set.anchor.node == edge.source &&
           wait.anchor.kind == SyncCoverAnchorKind::BeforeNode &&
-          wait.anchor.node == edge.target &&
+          wait.anchor.node == edge.target && correctExactSourceCompletion &&
           syncCoverEndpointsCoExecute(graph, edge);
       if (!localVerifiedAction) {
         return CanonicalSyncProblemError::InvalidMechanism;
@@ -1479,6 +1479,12 @@ void setRecurrenceLifetimes(const SyncCoverGraph &graph,
 }
 
 } // namespace
+
+bool mlir::pto::canonicalSyncMechanismDescriptorsEqual(
+    const CanonicalSyncMechanismDescriptor &left,
+    const CanonicalSyncMechanismDescriptor &right) {
+  return descriptorEqual(left, right);
+}
 
 CanonicalSyncPatternProblem::CanonicalSyncPatternProblem(
     const SyncCoverGraph &graph, std::vector<SyncCoverDemandId> activeDemands)
@@ -2134,6 +2140,8 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns(
       patternStatistics_.slotLifecycleInspections;
   const std::size_t slotLifecycleCandidates =
       patternStatistics_.slotLifecycleCandidates;
+  const std::size_t slotLifecycleConflictIncidences =
+      patternStatistics_.slotLifecycleConflictIncidences;
   const bool slotLifecycleGenerationTruncated =
       patternStatistics_.slotLifecycleGenerationTruncated;
   patternStatistics = {};
@@ -2163,6 +2171,8 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns(
       loopBoundaryProtocolGenerationTruncated;
   patternStatistics.slotLifecycleInspections = slotLifecycleInspections;
   patternStatistics.slotLifecycleCandidates = slotLifecycleCandidates;
+  patternStatistics.slotLifecycleConflictIncidences =
+      slotLifecycleConflictIncidences;
   patternStatistics.slotLifecycleGenerationTruncated =
       slotLifecycleGenerationTruncated;
   patterns.clear();

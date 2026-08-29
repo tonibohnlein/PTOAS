@@ -707,6 +707,29 @@ static llvm::cl::opt<std::int64_t>
                        "synchronization loop-boundary protocols"),
         llvm::cl::init(1U << 20));
 
+static llvm::cl::opt<bool> canonicalSyncEnableSlotLifecycleBundles(
+    "canonical-sync-enable-slot-lifecycle-bundles",
+    llvm::cl::desc(
+        "Enable experimental exact-slot synchronization lifecycle bundles"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumSlotLifecycleInspections(
+    "canonical-sync-maximum-slot-lifecycle-inspections",
+    llvm::cl::desc("Maximum exact-slot lifecycle discovery inspections"),
+    llvm::cl::init(1U << 20));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumSlotLifecycleCandidates(
+    "canonical-sync-maximum-slot-lifecycle-candidates",
+    llvm::cl::desc("Maximum exact-slot lifecycle bundles prepared"),
+    llvm::cl::init(1U << 12));
+
+static llvm::cl::opt<std::int64_t>
+    canonicalSyncMaximumSlotLifecycleConflictIncidences(
+        "canonical-sync-maximum-slot-lifecycle-conflict-incidences",
+        llvm::cl::desc(
+            "Maximum component conflicts retained by lifecycle bundles"),
+        llvm::cl::init(1U << 13));
+
 static llvm::cl::opt<bool> canonicalSyncAnalysisOnly(
     "canonical-sync-analysis-only",
     llvm::cl::desc("Compare canonical synchronization selection strategies "
@@ -4034,6 +4057,14 @@ int mlir::pto::compilePTOASModule(OwningOpRef<ModuleOp> &module,
         canonicalSyncMaximumLoopBoundaryProtocolCandidates;
     options.maximumLoopBoundaryProtocolIncidences =
         canonicalSyncMaximumLoopBoundaryProtocolIncidences;
+    options.enableSlotLifecycleBundles =
+        canonicalSyncEnableSlotLifecycleBundles;
+    options.maximumSlotLifecycleInspections =
+        canonicalSyncMaximumSlotLifecycleInspections;
+    options.maximumSlotLifecycleCandidates =
+        canonicalSyncMaximumSlotLifecycleCandidates;
+    options.maximumSlotLifecycleConflictIncidences =
+        canonicalSyncMaximumSlotLifecycleConflictIncidences;
     options.analysisOnly =
         canonicalSyncAnalysisOnly || analyzeCanonicalSyncStrategies;
     options.comparisonReport = canonicalSyncReport.empty()

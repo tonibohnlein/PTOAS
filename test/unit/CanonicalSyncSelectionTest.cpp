@@ -585,12 +585,14 @@ bool testDirectPairSkipsConflictingMechanisms() {
   bool passed = true;
   SyncCoverGraph graph;
   const SyncCoverNodeId source =
-      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2, 3}), passed,
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2, 3, 4}), passed,
                 "add conflicting-pair source");
-  const SyncCoverNodeId middle =
+  const SyncCoverNodeId conflictingMiddle =
       takeIndex(graph.addNode(2, 1, 0, 1, {}, {3}), passed,
                 "add conflicting-pair middle");
-  const SyncCoverNodeId target = takeIndex(graph.addNode(3, 1, 0, 2), passed,
+  const SyncCoverNodeId validMiddle = takeIndex(
+      graph.addNode(4, 1, 0, 2, {}, {3}), passed, "add valid-pair middle");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(3, 1, 0, 3), passed,
                                            "add conflicting-pair target");
   passed &= check(graph.addDemand(demand(source, target)),
                   "add conflicting-pair demand");
@@ -601,25 +603,46 @@ bool testDirectPairSkipsConflictingMechanisms() {
                   "add conflicting-pair first domain");
   passed &= check(problem.addEventDomain({1, 2, 3, 8, {}}),
                   "add conflicting-pair second domain");
-  passed &= check(problem.addEventDomain({2, 1, 3, 8, {}}),
+  passed &= check(problem.addEventDomain({2, 1, 4, 8, {}}),
+                  "add valid-pair first domain");
+  passed &= check(problem.addEventDomain({3, 4, 3, 8, {}}),
+                  "add valid-pair second domain");
+  passed &= check(problem.addEventDomain({4, 1, 3, 8, {}}),
                   "add conflicting-pair covering domain");
-  const CanonicalSyncMechanismId first =
-      takeIndex(problem.internMechanism(event(0, 1, 2, source, middle)), passed,
-                "add conflicting-pair first event");
-  const CanonicalSyncMechanismId second =
-      takeIndex(problem.internMechanism(event(1, 2, 3, middle, target)), passed,
-                "add conflicting-pair second event");
-  passed &= check(problem.internMechanism(event(2, 1, 3, source, target)),
+  const CanonicalSyncMechanismId first = takeIndex(
+      problem.internMechanism(event(0, 1, 2, source, conflictingMiddle)),
+      passed, "add conflicting-pair first event");
+  const CanonicalSyncMechanismId second = takeIndex(
+      problem.internMechanism(event(1, 2, 3, conflictingMiddle, target)),
+      passed, "add conflicting-pair second event");
+  const CanonicalSyncMechanismId validFirst =
+      takeIndex(problem.internMechanism(event(2, 1, 4, source, validMiddle)),
+                passed, "add valid-pair first event");
+  const CanonicalSyncMechanismId validSecond =
+      takeIndex(problem.internMechanism(event(3, 4, 3, validMiddle, target)),
+                passed, "add valid-pair second event");
+  passed &= check(problem.internMechanism(event(4, 1, 3, source, target)),
                   "add conflicting-pair covering event");
   passed &=
       check(problem.addConflict(first, second), "record direct-pair conflict");
+  CanonicalSyncDirectPairOptions options;
+  options.maximumEvaluationsPerScope = 1;
   const CanonicalSyncProblemResult generated =
-      addCanonicalSyncDirectPairPatterns(problem);
-  passed &= check(generated && generated.index == 0,
-                  "skip a conflicting direct-pair proposal");
+      addCanonicalSyncDirectPairPatterns(problem, options);
+  passed &= check(generated && generated.index == 1 &&
+                      !problem.wasPatternGenerationTruncated(),
+                  "do not charge a conflicting proposal to the pair cap");
+  if (!check(problem.freeze(),
+             "conflicting optional pair does not invalidate the problem")) {
+    return false;
+  }
+  const CanonicalSyncPattern &retained = problem.getPatterns().back();
   return passed &&
-         check(problem.freeze(),
-               "conflicting optional pair does not invalidate the problem");
+         check(retained.kind == CanonicalSyncPatternKind::DirectPair &&
+                   retained.members ==
+                       std::vector<CanonicalSyncMechanismId>{validFirst,
+                                                             validSecond},
+               "retain the valid pair that follows a conflicting proposal");
 }
 
 bool testDirectPairTraversesFixedCompletionSupply() {
@@ -1870,6 +1893,36 @@ bool testVerifiedProtocolTrustBoundary() {
   passed &= check(problem.internVerifiedProtocol(badScope, verifier).error ==
                       CanonicalSyncProblemError::InvalidMechanism,
                   "common admission rejects a non-loop recurrence scope");
+
+  SyncCoverGraph incompleteGraph;
+  const SyncCoverNodeId incompleteSource =
+      takeIndex(incompleteGraph.addNode(1, 1, 0, 0), passed,
+                "add completion-incapable protocol source");
+  const SyncCoverNodeId incompleteTarget =
+      takeIndex(incompleteGraph.addNode(2, 1, 0, 1), passed,
+                "add completion-incapable protocol target");
+  passed &= check(
+      incompleteGraph.addDemand(demand(incompleteSource, incompleteTarget)),
+      "add completion-incapable local demand");
+  passed &= check(incompleteGraph.freezeStructure(),
+                  "freeze completion-incapable protocol graph");
+  CanonicalSyncPatternProblem incomplete(incompleteGraph,
+                                         allDemands(incompleteGraph));
+  passed &= check(incomplete.addEventDomain({0, 1, 2, 2, {}}),
+                  "add completion-incapable protocol domain");
+  CanonicalSyncMechanismDescriptor local =
+      event(0, 1, 2, incompleteSource, incompleteTarget);
+  local.kind = CanonicalSyncMechanismKind::Protocol;
+  local.supplies.front().proof = CanonicalSyncSupplyProof::VerifiedProtocol;
+  local.supplies.front().produceAction = 0;
+  local.supplies.front().consumeAction = 1;
+  passed &= check(
+      incomplete
+              .internVerifiedProtocol(
+                  std::move(local),
+                  [](const CanonicalSyncMechanismDescriptor &) { return true; })
+              .error == CanonicalSyncProblemError::InvalidMechanism,
+      "fresh protocol admission rejects a source without completion proof");
   return passed;
 }
 

@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <iostream>
 #include <iterator>
+#include <numeric>
 #include <set>
 #include <string>
 #include <string_view>
@@ -586,6 +587,52 @@ bool testExactUnitSlotLifecycleBundle() {
         }
         return
       }
+
+      func.func @third_slot_access(
+          %src: !pto.partition_tensor_view<16x16xf32>, %limit: index) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %shared_addr = arith.constant 0 : i64
+        %first_addr = arith.constant 4096 : i64
+        %second_addr = arith.constant 8192 : i64
+        %shared = pto.alloc_tile addr = %shared_addr :
+          !pto.tile_buf<vec, 16x16xf32>
+        %first = pto.alloc_tile addr = %first_addr :
+          !pto.tile_buf<vec, 16x16xf32>
+        %second = pto.alloc_tile addr = %second_addr :
+          !pto.tile_buf<vec, 16x16xf32>
+        scf.for %i = %c0 to %limit step %c1 {
+          pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+            outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+          pto.tabs ins(%shared : !pto.tile_buf<vec, 16x16xf32>)
+            outs(%first : !pto.tile_buf<vec, 16x16xf32>)
+          pto.tabs ins(%shared : !pto.tile_buf<vec, 16x16xf32>)
+            outs(%second : !pto.tile_buf<vec, 16x16xf32>)
+        }
+        return
+      }
+
+      func.func @guarded_slot_access(
+          %src: !pto.partition_tensor_view<16x16xf32>, %limit: index,
+          %condition: i1) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %shared_addr = arith.constant 0 : i64
+        %output_addr = arith.constant 4096 : i64
+        %shared = pto.alloc_tile addr = %shared_addr :
+          !pto.tile_buf<vec, 16x16xf32>
+        %output = pto.alloc_tile addr = %output_addr :
+          !pto.tile_buf<vec, 16x16xf32>
+        scf.for %i = %c0 to %limit step %c1 {
+          pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+            outs(%shared : !pto.tile_buf<vec, 16x16xf32>)
+          scf.if %condition {
+            pto.tabs ins(%shared : !pto.tile_buf<vec, 16x16xf32>)
+              outs(%output : !pto.tile_buf<vec, 16x16xf32>)
+          }
+        }
+        return
+      }
     }
   )mlir",
                                                              &context);
@@ -600,6 +647,10 @@ bool testExactUnitSlotLifecycleBundle() {
   }
   CanonicalSyncBuildOptions options;
   options.enableDemandBasisReduction = false;
+  options.patterns.enableDirectPairs = false;
+  options.patterns.enableSlotLifecycleBundles = true;
+  options.patterns.maximumLoopCarryCandidates = 0;
+  options.patterns.maximumLoopBoundaryProtocolCandidates = 0;
   FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem =
       buildCanonicalSyncSingletonProblem(*program, options);
   if (!check(succeeded(problem), "build exact unit lifecycle catalog")) {
@@ -631,6 +682,7 @@ bool testExactUnitSlotLifecycleBundle() {
       (*problem)->getPatternStatistics();
   if (!check(statistics.slotLifecycleInspections != 0 &&
                  statistics.slotLifecycleCandidates == 1 &&
+                 statistics.slotLifecycleConflictIncidences == 2 &&
                  !statistics.slotLifecycleGenerationTruncated &&
                  llvm::count_if((*problem)->getMechanisms(), isUnitLifecycle) ==
                      1,
@@ -638,21 +690,206 @@ bool testExactUnitSlotLifecycleBundle() {
     return false;
   }
 
+  const auto lifecycle =
+      llvm::find_if((*problem)->getMechanisms(), isUnitLifecycle);
+  if (!check(lifecycle != (*problem)->getMechanisms().end() &&
+                 lifecycle->conflicts.size() == 2 &&
+                 llvm::all_of(
+                     lifecycle->conflicts,
+                     [&](CanonicalSyncMechanismId component) {
+                       const auto &conflicts =
+                           (*problem)->getMechanisms()[component].conflicts;
+                       return std::binary_search(
+                           conflicts.begin(), conflicts.end(), lifecycle->id);
+                     }),
+             "record symmetric lifecycle/component conflicts")) {
+    return false;
+  }
+
+  std::vector<SyncCoverDemandId> lifecycleDemands;
+  const CanonicalSyncPattern &lifecyclePattern =
+      (*problem)->getPatterns()[lifecycle->id];
+  for (SyncCoverDemandId demandId : (*problem)->getDemands()) {
+    if (lifecyclePattern.coverage.contains(demandId)) {
+      lifecycleDemands.push_back(demandId);
+    }
+  }
+  CanonicalSyncPatternProblem isolated(program->getGraph(), lifecycleDemands);
+  bool isolatedBuilt = !lifecycleDemands.empty();
+  for (const CanonicalSyncEventDomain &domain : (*problem)->getDomains()) {
+    isolatedBuilt = isolatedBuilt && isolated.addEventDomain(domain);
+  }
+  const CanonicalSyncMechanismDescriptor lifecycleDescriptor =
+      lifecycle->descriptor;
+  const CanonicalSyncProblemResult isolatedLifecycle =
+      isolated.internVerifiedProtocol(
+          lifecycleDescriptor,
+          [&](const CanonicalSyncMechanismDescriptor &actual) {
+            return canonicalSyncMechanismDescriptorsEqual(actual,
+                                                          lifecycleDescriptor);
+          });
+  isolatedBuilt = isolatedBuilt && isolatedLifecycle && isolated.freeze();
+  if (!check(isolatedBuilt, "freeze the isolated exact-slot lifecycle")) {
+    return false;
+  }
+  const CanonicalSyncSelection selected = selectCanonicalSyncPatterns(isolated);
+  const CanonicalSyncVerifiedPlan verified =
+      verifyCanonicalSyncSelection(isolated, selected);
+  const CanonicalSyncResourceAllocation allocation =
+      allocateCanonicalSyncEvents(isolated, selected.mechanisms);
+  const std::size_t allocatedIds = std::accumulate(
+      allocation.domains.begin(), allocation.domains.end(), std::size_t{0},
+      [](std::size_t count, const auto &domain) {
+        return count + domain.required;
+      });
+  if (!check(selected && verified && allocation.valid && allocation.feasible &&
+                 selected.mechanisms ==
+                     std::vector<CanonicalSyncMechanismId>{0} &&
+                 allocatedIds == 2,
+             "select, allocate, and freshly verify the isolated lifecycle")) {
+    return false;
+  }
+
   CanonicalSyncBuildOptions bounded = options;
   bounded.patterns.maximumSlotLifecycleCandidates = 0;
   FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> truncated =
       buildCanonicalSyncSingletonProblem(*program, bounded);
-  return check(succeeded(truncated),
-               "retain singleton correctness when lifecycle generation is "
-               "bounded") &&
-         check(
-             (*truncated)
+  if (!check(succeeded(truncated),
+             "retain singleton correctness when lifecycle generation is "
+             "bounded") ||
+      !check((*truncated)
                      ->getPatternStatistics()
                      .slotLifecycleGenerationTruncated &&
                  (*truncated)->getPatternStatistics().slotLifecycleCandidates ==
                      0 &&
                  llvm::none_of((*truncated)->getMechanisms(), isUnitLifecycle),
-             "truncate the optional unit lifecycle atomically");
+             "truncate the optional unit lifecycle atomically")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions conflictBounded = options;
+  conflictBounded.patterns.maximumSlotLifecycleConflictIncidences = 1;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> conflictTruncated =
+      buildCanonicalSyncSingletonProblem(*program, conflictBounded);
+  if (!check(succeeded(conflictTruncated) &&
+                 (*conflictTruncated)
+                     ->getPatternStatistics()
+                     .slotLifecycleGenerationTruncated &&
+                 (*conflictTruncated)
+                         ->getPatternStatistics()
+                         .slotLifecycleConflictIncidences == 0 &&
+                 llvm::none_of((*conflictTruncated)->getMechanisms(),
+                               isUnitLifecycle),
+             "preflight and truncate one below the lifecycle conflict bound")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions exactInspectionBound = options;
+  exactInspectionBound.patterns.maximumSlotLifecycleInspections =
+      statistics.slotLifecycleInspections;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> exactInspections =
+      buildCanonicalSyncSingletonProblem(*program, exactInspectionBound);
+  CanonicalSyncBuildOptions lowerInspectionBound = exactInspectionBound;
+  --lowerInspectionBound.patterns.maximumSlotLifecycleInspections;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> lowerInspections =
+      buildCanonicalSyncSingletonProblem(*program, lowerInspectionBound);
+  if (!check(succeeded(exactInspections) && succeeded(lowerInspections) &&
+                 !(*exactInspections)
+                      ->getPatternStatistics()
+                      .slotLifecycleGenerationTruncated &&
+                 (*exactInspections)
+                         ->getPatternStatistics()
+                         .slotLifecycleCandidates == 1 &&
+                 (*lowerInspections)
+                     ->getPatternStatistics()
+                     .slotLifecycleGenerationTruncated,
+             "honor the exact and one-less lifecycle inspection bounds")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions requiredOptions = options;
+  requiredOptions.patterns.enableSlotLifecycleBundles = false;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> required =
+      buildCanonicalSyncSingletonProblem(*program, requiredOptions);
+  if (!check(succeeded(required), "build the required singleton catalog")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions aggregateBounded = options;
+  aggregateBounded.problemLimits.maximumMechanisms =
+      (*required)->getMechanisms().size();
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> aggregateTruncated =
+      buildCanonicalSyncSingletonProblem(*program, aggregateBounded);
+  if (!check(succeeded(aggregateTruncated) &&
+                 (*aggregateTruncated)
+                     ->getPatternStatistics()
+                     .slotLifecycleGenerationTruncated &&
+                 (*aggregateTruncated)->hasSameCandidatePrefix(**required),
+             "preserve the required singleton prefix at its exact aggregate "
+             "mechanism limit")) {
+    return false;
+  }
+  const CanonicalSyncSelection requiredSelection =
+      selectCanonicalSyncPatterns(**required);
+  const CanonicalSyncSelection aggregateSelection =
+      selectCanonicalSyncPatterns(**aggregateTruncated);
+  if (!check(requiredSelection && aggregateSelection &&
+                 requiredSelection.mechanisms ==
+                     aggregateSelection.mechanisms &&
+                 verifyCanonicalSyncSelection(**required, requiredSelection) &&
+                 verifyCanonicalSyncSelection(**aggregateTruncated,
+                                              aggregateSelection),
+             "retain the same freshly verified singleton plan after optional "
+             "aggregate-limit truncation")) {
+    return false;
+  }
+
+  for (StringRef functionName :
+       {StringRef("third_slot_access"), StringRef("guarded_slot_access")}) {
+    FailureOr<CanonicalSyncProgram> rejectedProgram = buildCanonicalSyncProgram(
+        module->lookupSymbol<func::FuncOp>(functionName));
+    if (!check(succeeded(rejectedProgram),
+               "build rejected slot-lifecycle fixture")) {
+      return false;
+    }
+    FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> rejectedProblem =
+        buildCanonicalSyncSingletonProblem(*rejectedProgram, options);
+    if (!check(succeeded(rejectedProblem) &&
+                   (*rejectedProblem)
+                           ->getPatternStatistics()
+                           .slotLifecycleCandidates == 0 &&
+                   llvm::none_of((*rejectedProblem)->getMechanisms(),
+                                 isUnitLifecycle),
+               "reject a slot lifecycle with a third access or optional "
+               "endpoint")) {
+      return false;
+    }
+  }
+
+  if (!check(
+          succeeded(materializeCanonicalSyncPlan(*program, isolated, verified)),
+          "materialize the isolated exact-slot lifecycle")) {
+    return false;
+  }
+  std::size_t sets = 0;
+  std::size_t waits = 0;
+  std::size_t bodyEvents = 0;
+  std::size_t barriers = 0;
+  module->lookupSymbol<func::FuncOp>("unit_lifecycle")
+      .walk([&](Operation *operation) {
+        if (!operation->hasAttr("pto.canonical_sync")) {
+          return;
+        }
+        const bool set = isa<SetFlagOp, SetFlagDynOp>(operation);
+        const bool wait = isa<WaitFlagOp, WaitFlagDynOp>(operation);
+        sets += set;
+        waits += wait;
+        bodyEvents += (set || wait) && operation->getParentOfType<scf::ForOp>();
+        barriers += isa<BarrierOp>(operation) &&
+                    !operation->hasAttr("pto.auto_sync_tail_barrier");
+      });
+  return check(sets == 3 && waits == 3 && bodyEvents == 4 && barriers == 0,
+               "emit balanced entry/body/exit lifecycle events without a "
+               "barrier");
 }
 
 bool testDistanceTwoPhysicalSlotRecurrence() {

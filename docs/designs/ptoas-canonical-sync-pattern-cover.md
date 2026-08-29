@@ -217,15 +217,18 @@ completes the whole admitted producer prefix before the value is exported to
 the next virtual copy. Target capability data, rather than a pipeline-name
 allowlist, determines which source pipes admit the protocol.
 
-The hybrid catalog also admits a deliberately narrow exact-slot lifecycle
-bundle. It recognizes an unguarded, distance-one round trip where one exact
+The opt-in hybrid catalog also admits a deliberately narrow exact-slot
+lifecycle bundle when `enable-slot-lifecycle-bundles` is set. It recognizes an
+unguarded, distance-one round trip where one exact
 physical access is the producer write, one is the consumer read, the
 distance-zero RAW and loop-carried WAR witnesses reverse those same access
 IDs, and no third access overlaps the slot. The already verified ready event
 and release recurrence protocol are merged into one atomic, independently
-verified mechanism. The bundle conflicts with both components and with another
-bundle sharing either component, so materialization cannot duplicate a
-physical recipe. Discovery is bounded and truncating.
+verified mechanism. The bundle conflicts with both components, and discovery
+deterministically assigns each component to at most one bundle, so
+materialization cannot duplicate a physical recipe. Discovery and retained
+component conflicts are independently bounded and truncating. Required
+singleton completeness is established before the optional bundle is admitted.
 
 Broader ownership protocols, path-sensitive or multi-access slot lifecycles,
 pipeline aggregates, merged-prefix events, and arbitrary protocol paths are
@@ -412,6 +415,10 @@ Relevant driver options are:
 --canonical-sync-maximum-loop-boundary-protocol-inspections=1048576
 --canonical-sync-maximum-loop-boundary-protocol-candidates=16384
 --canonical-sync-maximum-loop-boundary-protocol-incidences=1048576
+--canonical-sync-enable-slot-lifecycle-bundles
+--canonical-sync-maximum-slot-lifecycle-inspections=1048576
+--canonical-sync-maximum-slot-lifecycle-candidates=4096
+--canonical-sync-maximum-slot-lifecycle-conflict-incidences=8192
 --canonical-sync-assume-distinct-gm-args-noalias
 --canonical-sync-assume-all-gm-accesses-noalias
 ```

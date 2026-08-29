@@ -2017,64 +2017,6 @@ LogicalResult addExactEvents(
   return success();
 }
 
-bool sameMechanismAction(const CanonicalSyncAction &left,
-                         const CanonicalSyncAction &right) {
-  return left.kind == right.kind && left.resource == right.resource &&
-         left.anchor.kind == right.anchor.kind &&
-         left.anchor.node == right.anchor.node &&
-         left.anchor.scope == right.anchor.scope &&
-         left.anchor.position == right.anchor.position &&
-         left.eventUse == right.eventUse && left.eventLane == right.eventLane &&
-         left.drainedResources == right.drainedResources &&
-         left.barrierKind == right.barrierKind && left.guard == right.guard &&
-         left.guardScope == right.guardScope &&
-         left.eventLaneKind == right.eventLaneKind &&
-         left.eventLaneScope == right.eventLaneScope;
-}
-
-bool sameMechanismSupply(const CanonicalSyncSupplyBinding &left,
-                         const CanonicalSyncSupplyBinding &right) {
-  const SyncCoverEdge &leftEdge = left.edge;
-  const SyncCoverEdge &rightEdge = right.edge;
-  return leftEdge.source == rightEdge.source &&
-         leftEdge.target == rightEdge.target &&
-         leftEdge.kind == rightEdge.kind && leftEdge.scope == rightEdge.scope &&
-         leftEdge.distance == rightEdge.distance &&
-         leftEdge.sourceGuard.literals == rightEdge.sourceGuard.literals &&
-         leftEdge.targetGuard.literals == rightEdge.targetGuard.literals &&
-         left.eventUse == right.eventUse &&
-         left.barrierAction == right.barrierAction &&
-         left.produceAction == right.produceAction &&
-         left.consumeAction == right.consumeAction &&
-         left.proof == right.proof &&
-         left.completionExport == right.completionExport &&
-         left.allowedDemands == right.allowedDemands &&
-         left.attestedDemand == right.attestedDemand &&
-         left.applicability == right.applicability;
-}
-
-bool sameMechanismDescriptor(const CanonicalSyncMechanismDescriptor &left,
-                             const CanonicalSyncMechanismDescriptor &right) {
-  const bool sameUses =
-      left.eventUses.size() == right.eventUses.size() &&
-      std::equal(left.eventUses.begin(), left.eventUses.end(),
-                 right.eventUses.begin(),
-                 [](const CanonicalSyncEventUse &first,
-                    const CanonicalSyncEventUse &second) {
-                   return first.domain == second.domain &&
-                          first.width == second.width &&
-                          first.recurrenceScope == second.recurrenceScope &&
-                          first.lifetimeScope == second.lifetimeScope;
-                 });
-  return left.kind == right.kind && sameUses &&
-         left.actions.size() == right.actions.size() &&
-         left.supplies.size() == right.supplies.size() &&
-         std::equal(left.actions.begin(), left.actions.end(),
-                    right.actions.begin(), sameMechanismAction) &&
-         std::equal(left.supplies.begin(), left.supplies.end(),
-                    right.supplies.begin(), sameMechanismSupply);
-}
-
 void appendMechanismDescriptor(CanonicalSyncMechanismDescriptor &destination,
                                const CanonicalSyncMechanismDescriptor &part) {
   const std::size_t eventUseOffset = destination.eventUses.size();
@@ -2233,6 +2175,7 @@ addExactSlotLifecycleBundles(const CanonicalSyncProgram &program,
   std::map<LifecycleKey, std::vector<Opportunity>> readyBySlot;
   std::size_t inspections = 0;
   std::size_t candidates = 0;
+  std::size_t conflictIncidences = 0;
   bool truncated = false;
   const auto consumeInspection = [&](std::size_t amount = 1) {
     if (inspections > options.maximumSlotLifecycleInspections ||
@@ -2288,8 +2231,8 @@ addExactSlotLifecycleBundles(const CanonicalSyncProgram &program,
 
   std::set<std::pair<CanonicalSyncMechanismId, CanonicalSyncMechanismId>>
       admittedPairs;
-  std::map<CanonicalSyncMechanismId, std::vector<CanonicalSyncMechanismId>>
-      bundlesByComponent;
+  std::map<CanonicalSyncMechanismId, CanonicalSyncMechanismId>
+      bundleByComponent;
   for (const ExactEventRecord &releaseEvent : exactEvents) {
     if (truncated || !consumeInspection()) {
       break;
@@ -2328,6 +2271,10 @@ addExactSlotLifecycleBundles(const CanonicalSyncProgram &program,
         if (pair.first == pair.second || admittedPairs.count(pair) != 0) {
           continue;
         }
+        if (bundleByComponent.count(readyOpportunity.event.mechanism) != 0 ||
+            bundleByComponent.count(releaseEvent.mechanism) != 0) {
+          continue;
+        }
         const std::size_t accessCount = graph.getStorageAccesses().size();
         const bool accessWorkOverflows =
             accessCount > std::numeric_limits<std::size_t>::max() / 2;
@@ -2343,13 +2290,22 @@ addExactSlotLifecycleBundles(const CanonicalSyncProgram &program,
           truncated = true;
           break;
         }
+        constexpr std::size_t requiredConflictIncidences = 2;
+        if (conflictIncidences >
+                options.maximumSlotLifecycleConflictIncidences ||
+            requiredConflictIncidences >
+                options.maximumSlotLifecycleConflictIncidences -
+                    conflictIncidences) {
+          truncated = true;
+          break;
+        }
         const CanonicalSyncMechanismDescriptor &readyDescriptor =
             problem.getMechanisms()[readyOpportunity.event.mechanism]
                 .descriptor;
         const CanonicalSyncMechanismDescriptor &releaseDescriptor =
             problem.getMechanisms()[releaseEvent.mechanism].descriptor;
         const bool exactComponents =
-            sameMechanismDescriptor(
+            canonicalSyncMechanismDescriptorsEqual(
                 readyDescriptor,
                 makeDirectEvent(
                     graph, graph.getDemands()[readyOpportunity.event.demand],
@@ -2370,7 +2326,7 @@ addExactSlotLifecycleBundles(const CanonicalSyncProgram &program,
                          graph, readyOpportunity.event.demand,
                          readyOpportunity.witness, releaseEvent.demand,
                          releaseWitnessId) &&
-                     sameMechanismDescriptor(actual, expected);
+                     canonicalSyncMechanismDescriptorsEqual(actual, expected);
             });
         if (added.error == CanonicalSyncProblemError::LimitExceeded) {
           truncated = true;
@@ -2384,17 +2340,12 @@ addExactSlotLifecycleBundles(const CanonicalSyncProgram &program,
         const CanonicalSyncMechanismId bundle = *added.index;
         for (CanonicalSyncMechanismId component :
              {readyOpportunity.event.mechanism, releaseEvent.mechanism}) {
-          if (bundle != component && !problem.addConflict(bundle, component)) {
+          if (!problem.addConflict(bundle, component)) {
             return program.getFunction().emitError(
                 "cannot record exact-slot lifecycle component conflict");
           }
-          for (CanonicalSyncMechanismId prior : bundlesByComponent[component]) {
-            if (prior != bundle && !problem.addConflict(bundle, prior)) {
-              return program.getFunction().emitError(
-                  "cannot record overlapping exact-slot lifecycle conflict");
-            }
-          }
-          bundlesByComponent[component].push_back(bundle);
+          bundleByComponent.emplace(component, bundle);
+          ++conflictIncidences;
         }
         admittedPairs.insert(pair);
         ++candidates;
@@ -2405,7 +2356,8 @@ addExactSlotLifecycleBundles(const CanonicalSyncProgram &program,
     }
   }
   const CanonicalSyncProblemResult recorded =
-      problem.recordSlotLifecycleGeneration(inspections, candidates, truncated);
+      problem.recordSlotLifecycleGeneration(inspections, candidates,
+                                            conflictIncidences, truncated);
   if (!recorded) {
     return program.getFunction().emitError(
         "cannot record exact-slot lifecycle generation");
@@ -3486,8 +3438,6 @@ CanonicalSyncProblemBuildResult buildCandidateCatalog(
                                baseline.covered, domainIds)) ||
         failed(addExactEvents(program, *problem, baseline.covered, domainIds,
                               directEvents, exactEvents)) ||
-        failed(addExactSlotLifecycleBundles(program, *problem, exactEvents,
-                                            options.patterns)) ||
         failed(addCompletionFrontierEvents(program, *problem, baseline.covered,
                                            domainIds, directEvents)) ||
         failed(addTargetCompletionCertificateEvents(
@@ -3537,6 +3487,10 @@ CanonicalSyncProblemBuildResult buildCandidateCatalog(
       program.getFunction().emitError(
           "canonical sync required singleton catalog is incomplete");
       failedBuild = true;
+    }
+    if (!failedBuild && options.patterns.enableSlotLifecycleBundles) {
+      failedBuild = failed(addExactSlotLifecycleBundles(
+          program, *problem, exactEvents, options.patterns));
     }
     if (!failedBuild) {
       failedBuild = failed(addLoopCarryPipeDrains(

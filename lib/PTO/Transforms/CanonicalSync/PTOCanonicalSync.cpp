@@ -285,6 +285,8 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
        jsonInteger(report.slotLifecycleInspections)},
       {"slot_lifecycle_candidates",
        jsonInteger(report.slotLifecycleCandidates)},
+      {"slot_lifecycle_conflict_incidences",
+       jsonInteger(report.slotLifecycleConflictIncidences)},
       {"slot_lifecycle_generation_truncated",
        report.slotLifecycleGenerationTruncated},
       {"preparation_time_ns", jsonInteger(report.preparationNanoseconds)},
@@ -432,7 +434,11 @@ struct PTOCanonicalSyncPass
         {maximumLoopBoundaryProtocolCandidates,
          "maximum-loop-boundary-protocol-candidates"},
         {maximumLoopBoundaryProtocolIncidences,
-         "maximum-loop-boundary-protocol-incidences"}};
+         "maximum-loop-boundary-protocol-incidences"},
+        {maximumSlotLifecycleInspections, "maximum-slot-lifecycle-inspections"},
+        {maximumSlotLifecycleCandidates, "maximum-slot-lifecycle-candidates"},
+        {maximumSlotLifecycleConflictIncidences,
+         "maximum-slot-lifecycle-conflict-incidences"}};
     const auto invalidBound = llvm::find_if(
         bounds, [&](const auto &bound) { return !validBound(bound.first); });
     if (invalidBound != std::end(bounds)) {
@@ -496,6 +502,13 @@ struct PTOCanonicalSyncPass
         static_cast<std::size_t>(maximumLoopBoundaryProtocolCandidates);
     options.patterns.maximumLoopBoundaryProtocolIncidences =
         static_cast<std::size_t>(maximumLoopBoundaryProtocolIncidences);
+    options.patterns.enableSlotLifecycleBundles = enableSlotLifecycleBundles;
+    options.patterns.maximumSlotLifecycleInspections =
+        static_cast<std::size_t>(maximumSlotLifecycleInspections);
+    options.patterns.maximumSlotLifecycleCandidates =
+        static_cast<std::size_t>(maximumSlotLifecycleCandidates);
+    options.patterns.maximumSlotLifecycleConflictIncidences =
+        static_cast<std::size_t>(maximumSlotLifecycleConflictIncidences);
     options.analysisOnly = analysisOnly;
     options.compareSelectionStrategies = analysisOnly;
     options.reportCallback =

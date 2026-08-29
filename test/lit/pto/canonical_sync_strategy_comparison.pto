@@ -52,6 +52,15 @@
 // RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
 // RUN:   --canonical-sync-maximum-loop-carry-incidences=0 \
 // RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-CARRY-INCIDENCE
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-slot-lifecycle-inspections=0 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-LIFECYCLE-INSPECT
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-slot-lifecycle-candidates=0 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-LIFECYCLE-CANDIDATE
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-slot-lifecycle-conflict-incidences=0 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-LIFECYCLE-CONFLICT
 
 // SUMMARY: canonical sync: demands=
 // SUMMARY-DAG: canonical sync strategy=fixed-cover
@@ -83,6 +92,10 @@
 // REPORT-DAG: "loop_carry_candidates":
 // REPORT-DAG: "loop_carry_incidences":
 // REPORT-DAG: "loop_carry_generation_truncated":
+// REPORT-DAG: "slot_lifecycle_inspections":
+// REPORT-DAG: "slot_lifecycle_candidates":
+// REPORT-DAG: "slot_lifecycle_conflict_incidences":
+// REPORT-DAG: "slot_lifecycle_generation_truncated":
 // REPORT-DAG: "backstop_deletion_trials":
 // REPORT-DAG: "backstop_deletion_truncated":
 // REPORT-DAG: "backstop_deletion_work_units":
@@ -113,6 +126,9 @@
 // INVALID-CARRY-INSPECT: maximum-loop-carry-inspections must be positive
 // INVALID-CARRY-CANDIDATE: maximum-loop-carry-candidates must be positive
 // INVALID-CARRY-INCIDENCE: maximum-loop-carry-incidences must be positive
+// INVALID-LIFECYCLE-INSPECT: maximum-slot-lifecycle-inspections must be positive
+// INVALID-LIFECYCLE-CANDIDATE: maximum-slot-lifecycle-candidates must be positive
+// INVALID-LIFECYCLE-CONFLICT: maximum-slot-lifecycle-conflict-incidences must be positive
 
 module {
   // UNCHANGED-LABEL: func.func @comparison

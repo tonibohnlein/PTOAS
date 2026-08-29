@@ -277,6 +277,7 @@ struct CanonicalSyncPatternStatistics {
   bool loopBoundaryProtocolGenerationTruncated = false;
   std::size_t slotLifecycleInspections = 0;
   std::size_t slotLifecycleCandidates = 0;
+  std::size_t slotLifecycleConflictIncidences = 0;
   bool slotLifecycleGenerationTruncated = false;
 
   const CanonicalSyncPatternKindStatistics &
@@ -490,12 +491,14 @@ public:
   }
   CanonicalSyncProblemResult
   recordSlotLifecycleGeneration(std::size_t inspections, std::size_t candidates,
+                                std::size_t conflictIncidences,
                                 bool truncated) {
     if (frozen_) {
       return {CanonicalSyncProblemError::Frozen, std::nullopt};
     }
     patternStatistics_.slotLifecycleInspections = inspections;
     patternStatistics_.slotLifecycleCandidates = candidates;
+    patternStatistics_.slotLifecycleConflictIncidences = conflictIncidences;
     patternStatistics_.slotLifecycleGenerationTruncated = truncated;
     return {};
   }
@@ -571,6 +574,12 @@ private:
   std::map<std::uint64_t, std::vector<CanonicalSyncMechanismId>>
       mechanismBuckets_;
 };
+
+/// Canonical descriptor equality shared by interning and independently
+/// verified protocol factories.
+bool canonicalSyncMechanismDescriptorsEqual(
+    const CanonicalSyncMechanismDescriptor &left,
+    const CanonicalSyncMechanismDescriptor &right);
 
 struct CanonicalSyncDirectPairOptions {
   /// Proposals are owned by the LCA of their mechanism scopes. An oversized

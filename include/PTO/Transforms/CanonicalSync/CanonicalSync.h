@@ -35,6 +35,7 @@ namespace pto {
 struct CanonicalSyncPatternOptions {
   bool enableDirectPairs = true;
   bool enableConflictCoreRepair = true;
+  bool enableSlotLifecycleBundles = false;
   std::size_t maximumRepairFrontierInspections = 1U << 16;
   std::size_t maximumRepairFrontierProposals = 4096;
   std::size_t maximumSourcePrefixInspections = 1U << 20;
@@ -48,6 +49,7 @@ struct CanonicalSyncPatternOptions {
   std::size_t maximumLoopBoundaryProtocolIncidences = 1U << 20;
   std::size_t maximumSlotLifecycleInspections = 1U << 20;
   std::size_t maximumSlotLifecycleCandidates = 1U << 12;
+  std::size_t maximumSlotLifecycleConflictIncidences = 1U << 13;
 };
 
 struct CanonicalSyncStrategyReport {
@@ -138,6 +140,7 @@ struct CanonicalSyncComparisonReport {
   bool loopBoundaryProtocolGenerationTruncated = false;
   std::size_t slotLifecycleInspections = 0;
   std::size_t slotLifecycleCandidates = 0;
+  std::size_t slotLifecycleConflictIncidences = 0;
   bool slotLifecycleGenerationTruncated = false;
   std::uint64_t preparationNanoseconds = 0;
   std::vector<CanonicalSyncStrategyReport> strategies;
