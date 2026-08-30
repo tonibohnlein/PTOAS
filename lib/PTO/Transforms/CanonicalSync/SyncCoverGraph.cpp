@@ -104,6 +104,24 @@ SyncCoverGraphResult SyncCoverGraph::setControlPhaseRelation(
   return {SyncCoverGraphError::None, control};
 }
 
+SyncCoverGraphResult SyncCoverGraph::setControlSuccessorRelation(
+    SyncCoverControlId control, SyncCoverControlSuccessorRelation relation) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen, control};
+  }
+  const bool invalidRelation =
+      control >= controls_.size() || relation.loopScope == 0 ||
+      !hasValidScope(relation.loopScope) ||
+      !scopes_[relation.loopScope].isLoop ||
+      getNearestEnclosingLoop(controls_[control].scope) != relation.loopScope ||
+      relation.hasSuccessorAlternative >= controls_[control].alternatives;
+  if (invalidRelation) {
+    return {SyncCoverGraphError::InvalidControl, control};
+  }
+  controls_[control].successorRelation = relation;
+  return {SyncCoverGraphError::None, control};
+}
+
 SyncCoverGraphResult
 SyncCoverGraph::setScopeTimeline(SyncCoverScopeId scope,
                                  SyncCoverTimelineInterval timeline) {
@@ -438,21 +456,17 @@ SyncCoverGraphResult SyncCoverGraph::setBlockingTargetedBarrierPrefix(
   issuedSources.erase(std::unique(issuedSources.begin(), issuedSources.end()),
                       issuedSources.end());
   const SyncCoverNode &target = nodes_[physicalTarget];
-  const bool invalidSource =
-      std::any_of(issuedSources.begin(), issuedSources.end(),
-                  [&](SyncCoverNodeId source) {
-                    return source >= nodes_.size() ||
-                           nodes_[source].resource != resource ||
-                           nodes_[source].order >= target.order ||
-                           !syncCoverGuardsCompatible(nodes_[source].guard,
-                                                      target.guard);
-                  });
+  const bool invalidSource = std::any_of(
+      issuedSources.begin(), issuedSources.end(), [&](SyncCoverNodeId source) {
+        return source >= nodes_.size() || nodes_[source].resource != resource ||
+               nodes_[source].order >= target.order ||
+               !syncCoverGuardsCompatible(nodes_[source].guard, target.guard);
+      });
   if (invalidSource) {
     return {SyncCoverGraphError::InvalidOrder, physicalTarget};
   }
-  const auto [position, inserted] =
-      blockingTargetedBarrierPrefixes_.emplace(
-          std::make_pair(resource, physicalTarget), std::move(issuedSources));
+  const auto [position, inserted] = blockingTargetedBarrierPrefixes_.emplace(
+      std::make_pair(resource, physicalTarget), std::move(issuedSources));
   if (!inserted) {
     (void)position;
     return {SyncCoverGraphError::DuplicateEdge, physicalTarget};

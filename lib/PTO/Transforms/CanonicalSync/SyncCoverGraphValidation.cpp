@@ -18,10 +18,84 @@
 using namespace mlir::pto;
 using namespace mlir::pto::sync_cover_detail;
 
+namespace {
+
+constexpr std::size_t kMaximumBasicOwnershipLanes = 8;
+
+template <typename T> bool isSortedUnique(const std::vector<T> &values) {
+  return std::is_sorted(values.begin(), values.end()) &&
+         std::adjacent_find(values.begin(), values.end()) == values.end();
+}
+
+bool ownershipIntervalsOverlap(const SyncCoverStorageInterval &first,
+                               const SyncCoverStorageInterval &second) {
+  return first.begin < second.end && second.begin < first.end;
+}
+
+bool hasValidOwnershipKind(SyncCoverBasicOwnershipKind kind) {
+  switch (kind) {
+  case SyncCoverBasicOwnershipKind::L0Operand:
+  case SyncCoverBasicOwnershipKind::L1Tile:
+  case SyncCoverBasicOwnershipKind::L0Accumulator:
+    return true;
+  }
+  return false;
+}
+
+bool hasValidOwnershipProtocol(SyncCoverBasicOwnershipProtocolKind protocol) {
+  switch (protocol) {
+  case SyncCoverBasicOwnershipProtocolKind::RoundTrip:
+  case SyncCoverBasicOwnershipProtocolKind::AlternatingPrefetch:
+    return true;
+  }
+  return false;
+}
+
+bool ownershipRoleMatches(SyncCoverBasicOwnershipKind kind,
+                          SyncCoverStorageDomainRole role) {
+  switch (kind) {
+  case SyncCoverBasicOwnershipKind::L0Operand:
+    return role == SyncCoverStorageDomainRole::L0Left ||
+           role == SyncCoverStorageDomainRole::L0Right;
+  case SyncCoverBasicOwnershipKind::L1Tile:
+    return role == SyncCoverStorageDomainRole::L1Tile;
+  case SyncCoverBasicOwnershipKind::L0Accumulator:
+    return role == SyncCoverStorageDomainRole::Accumulator;
+  }
+  return false;
+}
+
+bool anchorIsWithinScope(const SyncCoverGraph &graph,
+                         const SyncCoverAnchor &anchor,
+                         SyncCoverScopeId scope) {
+  switch (anchor.kind) {
+  case SyncCoverAnchorKind::BeforeNode:
+  case SyncCoverAnchorKind::AfterNode:
+    return anchor.node < graph.getNodes().size() &&
+           graph.scopeContains(scope, graph.getNodes()[anchor.node].scope);
+  case SyncCoverAnchorKind::ControlEntry:
+  case SyncCoverAnchorKind::ControlExit:
+    return anchor.node < graph.getControls().size() &&
+           anchor.scope == graph.getControls()[anchor.node].scope &&
+           graph.scopeContains(scope, anchor.scope);
+  case SyncCoverAnchorKind::ScopeEntry:
+  case SyncCoverAnchorKind::ScopeExit:
+  case SyncCoverAnchorKind::LoopBodyEntry:
+  case SyncCoverAnchorKind::LoopBodyExit:
+  case SyncCoverAnchorKind::TimelinePoint:
+    return anchor.scope < graph.getScopes().size() &&
+           graph.scopeContains(scope, anchor.scope);
+  }
+  return false;
+}
+
+} // namespace
+
 SyncCoverGraphResult SyncCoverGraph::validate() const {
   for (SyncCoverGraphResult result :
        {validateScopesControlsAndNodes(), validateDemands(), validateEdges(),
-        validateStorage(), validateTargetCompletionCertificates()}) {
+        validateStorage(), validateTargetCompletionCertificates(),
+        validateBasicOwnershipCertificates()}) {
     if (!result) {
       return result;
     }
@@ -39,13 +113,14 @@ SyncCoverGraphResult SyncCoverGraph::validate() const {
     const bool invalidSources =
         !std::is_sorted(sources.begin(), sources.end()) ||
         std::adjacent_find(sources.begin(), sources.end()) != sources.end() ||
-        std::any_of(sources.begin(), sources.end(), [&](SyncCoverNodeId source) {
-          return source >= nodes_.size() ||
-                 nodes_[source].resource != resource ||
-                 nodes_[source].order >= nodes_[physicalTarget].order ||
-                 !syncCoverGuardsCompatible(nodes_[source].guard,
-                                            nodes_[physicalTarget].guard);
-        });
+        std::any_of(
+            sources.begin(), sources.end(), [&](SyncCoverNodeId source) {
+              return source >= nodes_.size() ||
+                     nodes_[source].resource != resource ||
+                     nodes_[source].order >= nodes_[physicalTarget].order ||
+                     !syncCoverGuardsCompatible(nodes_[source].guard,
+                                                nodes_[physicalTarget].guard);
+            });
     if (invalidSources) {
       return {SyncCoverGraphError::InvalidCompletionTargets, physicalTarget};
     }
@@ -121,6 +196,18 @@ SyncCoverGraphResult SyncCoverGraph::validateScopesControlsAndNodes() const {
                       [&](unsigned alternative) {
                         return alternative >= control.alternatives;
                       });
+      if (invalidRelation) {
+        return {SyncCoverGraphError::InvalidControl, index};
+      }
+    }
+    if (control.successorRelation) {
+      const SyncCoverControlSuccessorRelation &relation =
+          *control.successorRelation;
+      const bool invalidRelation =
+          relation.loopScope == 0 || !hasValidScope(relation.loopScope) ||
+          !scopes_[relation.loopScope].isLoop ||
+          getNearestEnclosingLoop(control.scope) != relation.loopScope ||
+          relation.hasSuccessorAlternative >= control.alternatives;
       if (invalidRelation) {
         return {SyncCoverGraphError::InvalidControl, index};
       }
@@ -382,12 +469,12 @@ SyncCoverGraphResult SyncCoverGraph::validateEdges() const {
 SyncCoverGraphResult SyncCoverGraph::validateStorage() const {
   for (std::size_t index = 0; index < storageDomains_.size(); ++index) {
     const SyncCoverStorageDomainRole role = storageDomains_[index].role;
-    const bool validRole =
-        role == SyncCoverStorageDomainRole::Unspecified ||
-        role == SyncCoverStorageDomainRole::Other ||
-        role == SyncCoverStorageDomainRole::L0Left ||
-        role == SyncCoverStorageDomainRole::L0Right ||
-        role == SyncCoverStorageDomainRole::Accumulator;
+    const bool validRole = role == SyncCoverStorageDomainRole::Unspecified ||
+                           role == SyncCoverStorageDomainRole::Other ||
+                           role == SyncCoverStorageDomainRole::L1Tile ||
+                           role == SyncCoverStorageDomainRole::L0Left ||
+                           role == SyncCoverStorageDomainRole::L0Right ||
+                           role == SyncCoverStorageDomainRole::Accumulator;
     if (storageDomains_[index].id != index || !validRole) {
       return {SyncCoverGraphError::InvalidStorageDomain, index};
     }
@@ -434,7 +521,8 @@ SyncCoverGraph::validateTargetCompletionCertificates() const {
     const SyncCoverTargetCompletionCertificate &certificate =
         targetCompletionCertificates_[index];
     const bool invalidHeader =
-        certificate.id != index || certificate.completionNode >= nodes_.size() ||
+        certificate.id != index ||
+        certificate.completionNode >= nodes_.size() ||
         certificate.target >= nodes_.size() ||
         certificate.storageDomains.empty() || certificate.demands.empty() ||
         !std::is_sorted(certificate.storageDomains.begin(),
@@ -468,8 +556,7 @@ SyncCoverGraph::validateTargetCompletionCertificates() const {
     const std::uint32_t matrix = targetCompletionResources_->matrix;
     const std::uint32_t fix = targetCompletionResources_->fix;
     const bool mte1L0Ready =
-        certificate.kind ==
-            SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix &&
+        certificate.kind == SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix &&
         certificate.sourceResource == mte1 &&
         certificate.targetResource == matrix &&
         std::all_of(certificate.storageDomains.begin(),
@@ -491,8 +578,7 @@ SyncCoverGraph::validateTargetCompletionCertificates() const {
                       return storageDomains_[domain].role ==
                              SyncCoverStorageDomainRole::Accumulator;
                     });
-    if ((!mte1L0Ready && !mToFix) ||
-        completion.order >= physicalTarget.order ||
+    if ((!mte1L0Ready && !mToFix) || completion.order >= physicalTarget.order ||
         completion.scope != physicalTarget.scope ||
         completion.guard.literals != physicalTarget.guard.literals ||
         physicalTarget.physicalAnchor != certificate.target) {
@@ -508,14 +594,14 @@ SyncCoverGraph::validateTargetCompletionCertificates() const {
           source.physicalExit == certificate.completionNode;
       const bool invalidDemand =
           demand.distance != 0 ||
-          std::find(demand.provenanceKinds.begin(),
-                    demand.provenanceKinds.end(),
-                    SyncCoverDemandKind::MemoryRAW) ==
-              demand.provenanceKinds.end() ||
+          std::find(
+              demand.provenanceKinds.begin(), demand.provenanceKinds.end(),
+              SyncCoverDemandKind::MemoryRAW) == demand.provenanceKinds.end() ||
           source.resource != certificate.sourceResource ||
           target.resource != certificate.targetResource ||
           target.physicalAnchor != certificate.target ||
-          source.scope != completion.scope || target.scope != completion.scope ||
+          source.scope != completion.scope ||
+          target.scope != completion.scope ||
           physicalSource.scope != completion.scope ||
           source.guard.literals != completion.guard.literals ||
           target.guard.literals != completion.guard.literals ||
@@ -523,8 +609,7 @@ SyncCoverGraph::validateTargetCompletionCertificates() const {
           source.order > physicalSource.order ||
           physicalSource.order > completion.order;
       if (demand.storageWitnesses.empty() || invalidDemand) {
-        return {SyncCoverGraphError::InvalidTargetCompletionCertificate,
-                index};
+        return {SyncCoverGraphError::InvalidTargetCompletionCertificate, index};
       }
       const bool hasExactRawWitness = std::any_of(
           demand.storageWitnesses.begin(), demand.storageWitnesses.end(),
@@ -549,18 +634,458 @@ SyncCoverGraph::validateTargetCompletionCertificates() const {
                    syncCoverStorageModeReads(targetAccess.mode);
           });
       if (!hasExactRawWitness) {
-        return {SyncCoverGraphError::InvalidTargetCompletionCertificate,
-                index};
+        return {SyncCoverGraphError::InvalidTargetCompletionCertificate, index};
       }
       if (certificate.kind ==
               SyncCoverTargetCompletionKind::MToFixAccumulatorBoundary &&
           source.physicalExit != certificate.completionNode) {
-        return {SyncCoverGraphError::InvalidTargetCompletionCertificate,
-                index};
+        return {SyncCoverGraphError::InvalidTargetCompletionCertificate, index};
       }
     }
     if (!completionNamesCertifiedSource) {
       return {SyncCoverGraphError::InvalidTargetCompletionCertificate, index};
+    }
+  }
+  return {SyncCoverGraphError::None, std::nullopt};
+}
+
+SyncCoverGraphResult
+SyncCoverGraph::validateBasicOwnershipCertificates() const {
+  for (std::size_t index = 0; index < basicOwnershipCertificates_.size();
+       ++index) {
+    const SyncCoverBasicOwnershipCertificate &certificate =
+        basicOwnershipCertificates_[index];
+    const std::size_t minimumLanes =
+        certificate.kind == SyncCoverBasicOwnershipKind::L0Accumulator ? 1 : 2;
+    const bool invalidHeader =
+        certificate.id != index || !hasValidOwnershipKind(certificate.kind) ||
+        !hasValidOwnershipProtocol(certificate.protocol) ||
+        certificate.loopScope == 0 || !hasValidScope(certificate.loopScope) ||
+        !scopes_[certificate.loopScope].isLoop ||
+        certificate.producerResource == certificate.consumerResource ||
+        certificate.lanes.size() < minimumLanes ||
+        certificate.lanes.size() > kMaximumBasicOwnershipLanes ||
+        certificate.paths.empty() ||
+        !isSortedUnique(certificate.initialProducers) ||
+        !isSortedUnique(certificate.initiallyFreeLanes);
+    if (invalidHeader) {
+      return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+    }
+
+    std::vector<std::optional<std::size_t>> accessLanes(
+        storageAccesses_.size());
+    std::vector<std::pair<SyncCoverStorageDomainId, SyncCoverStorageInterval>>
+        slots;
+    for (std::size_t laneIndex = 0; laneIndex < certificate.lanes.size();
+         ++laneIndex) {
+      const SyncCoverBasicOwnershipLane &lane = certificate.lanes[laneIndex];
+      std::size_t leftSlots = 0;
+      std::size_t rightSlots = 0;
+      if (lane.id != laneIndex || lane.slots.empty()) {
+        return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+      }
+      for (const SyncCoverBasicOwnershipSlot &slot : lane.slots) {
+        const bool invalidSlot =
+            slot.domain >= storageDomains_.size() ||
+            slot.extent.begin >= slot.extent.end || slot.accesses.empty() ||
+            !isSortedUnique(slot.accesses) ||
+            (slot.domain < storageDomains_.size() &&
+             !ownershipRoleMatches(certificate.kind,
+                                   storageDomains_[slot.domain].role));
+        if (invalidSlot) {
+          return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+        }
+        leftSlots += storageDomains_[slot.domain].role ==
+                     SyncCoverStorageDomainRole::L0Left;
+        rightSlots += storageDomains_[slot.domain].role ==
+                      SyncCoverStorageDomainRole::L0Right;
+        for (const auto &[oldDomain, oldExtent] : slots) {
+          if (oldDomain == slot.domain &&
+              ownershipIntervalsOverlap(oldExtent, slot.extent)) {
+            return {SyncCoverGraphError::InvalidBasicOwnershipCertificate,
+                    index};
+          }
+        }
+        slots.emplace_back(slot.domain, slot.extent);
+        for (SyncCoverStorageAccessId accessId : slot.accesses) {
+          if (accessId >= storageAccesses_.size() || accessLanes[accessId]) {
+            return {SyncCoverGraphError::InvalidBasicOwnershipCertificate,
+                    index};
+          }
+          const SyncCoverStorageAccess &access = storageAccesses_[accessId];
+          const bool relevantOccurrence =
+              scopeContains(certificate.loopScope, nodes_[access.node].scope) ||
+              std::binary_search(certificate.initialProducers.begin(),
+                                 certificate.initialProducers.end(),
+                                 access.node);
+          if (!relevantOccurrence || !access.exactPhysical ||
+              access.domain != slot.domain ||
+              access.extent.begin != slot.extent.begin ||
+              access.extent.end != slot.extent.end) {
+            return {SyncCoverGraphError::InvalidBasicOwnershipCertificate,
+                    index};
+          }
+          accessLanes[accessId] = laneIndex;
+        }
+        for (const SyncCoverStorageAccess &access : storageAccesses_) {
+          const bool relevantOccurrence =
+              scopeContains(certificate.loopScope, nodes_[access.node].scope) ||
+              std::binary_search(certificate.initialProducers.begin(),
+                                 certificate.initialProducers.end(),
+                                 access.node);
+          if (!relevantOccurrence || access.domain != slot.domain ||
+              !ownershipIntervalsOverlap(access.extent, slot.extent)) {
+            continue;
+          }
+          const bool exactMember =
+              access.exactPhysical &&
+              access.extent.begin == slot.extent.begin &&
+              access.extent.end == slot.extent.end &&
+              std::binary_search(slot.accesses.begin(), slot.accesses.end(),
+                                 access.id);
+          if (!exactMember) {
+            return {SyncCoverGraphError::InvalidBasicOwnershipCertificate,
+                    index};
+          }
+        }
+      }
+      const bool invalidLaneSlots =
+          (certificate.kind == SyncCoverBasicOwnershipKind::L0Operand &&
+           (lane.slots.size() != 2 || leftSlots != 1 || rightSlots != 1)) ||
+          (certificate.kind != SyncCoverBasicOwnershipKind::L0Operand &&
+           lane.slots.size() != 1);
+      if (invalidLaneSlots) {
+        return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+      }
+    }
+
+    const auto nodeHasLaneAccess = [&](SyncCoverNodeId node, std::size_t lane,
+                                       bool writes) {
+      return std::any_of(
+          storageAccesses_.begin(), storageAccesses_.end(),
+          [&](const SyncCoverStorageAccess &access) {
+            return access.node == node && accessLanes[access.id] == lane &&
+                   (writes ? syncCoverStorageModeWrites(access.mode)
+                           : syncCoverStorageModeReads(access.mode));
+          });
+    };
+    const auto hasSuccessorGuard = [&](SyncCoverNodeId node) {
+      return std::any_of(
+          nodes_[node].guard.literals.begin(),
+          nodes_[node].guard.literals.end(),
+          [&](const SyncCoverGuardLiteral &literal) {
+            const SyncCoverControl &control = controls_[literal.control];
+            return control.successorRelation &&
+                   control.successorRelation->loopScope ==
+                       certificate.loopScope &&
+                   control.successorRelation->hasSuccessorAlternative ==
+                       literal.alternative;
+          });
+    };
+
+    std::vector<std::set<SyncCoverNodeId>> namedProducers(
+        certificate.lanes.size());
+    std::vector<std::set<SyncCoverNodeId>> namedConsumers(
+        certificate.lanes.size());
+    std::set<SyncCoverScopeId> pathScopes;
+    for (const SyncCoverBasicOwnershipPath &path : certificate.paths) {
+      if (!hasValidScope(path.scope) ||
+          !scopeContains(certificate.loopScope, path.scope) ||
+          path.uses.empty() || !pathScopes.insert(path.scope).second) {
+        return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+      }
+      std::vector<bool> pathLanes(certificate.lanes.size(), false);
+      for (const SyncCoverBasicOwnershipUse &use : path.uses) {
+        const bool invalidUseHeader =
+            use.lane >= certificate.lanes.size() ||
+            use.producerLane >= certificate.lanes.size() ||
+            use.producers.empty() || use.consumers.empty() ||
+            !isSortedUnique(use.producers) || !isSortedUnique(use.consumers) ||
+            !anchorIsWithinScope(*this, use.writeAcquireAnchor, path.scope) ||
+            !anchorIsWithinScope(*this, use.readyAnchor, path.scope) ||
+            !anchorIsWithinScope(*this, use.readAcquireAnchor, path.scope) ||
+            !anchorIsWithinScope(*this, use.releaseAnchor, path.scope);
+        if (invalidUseHeader) {
+          return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+        }
+        const std::optional<SyncCoverTimelinePosition> writeAcquire =
+            resolveSyncCoverAnchor(*this, use.writeAcquireAnchor);
+        const std::optional<SyncCoverTimelinePosition> ready =
+            resolveSyncCoverAnchor(*this, use.readyAnchor);
+        const std::optional<SyncCoverTimelinePosition> readAcquire =
+            resolveSyncCoverAnchor(*this, use.readAcquireAnchor);
+        const std::optional<SyncCoverTimelinePosition> release =
+            resolveSyncCoverAnchor(*this, use.releaseAnchor);
+        if (!writeAcquire || !ready || !readAcquire || !release) {
+          return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+        }
+        const bool alternatingLifecycle =
+            certificate.protocol ==
+            SyncCoverBasicOwnershipProtocolKind::AlternatingPrefetch;
+        const bool validAnchorOrder =
+            alternatingLifecycle
+                ? *readAcquire <= *release && *writeAcquire <= *ready
+                : *writeAcquire <= *ready && *ready < *readAcquire &&
+                      *readAcquire <= *release;
+        if (!validAnchorOrder) {
+          return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+        }
+        SyncCoverTimelinePosition firstProducer =
+            std::numeric_limits<SyncCoverTimelinePosition>::max();
+        SyncCoverTimelinePosition lastProducer = 0;
+        for (SyncCoverNodeId producer : use.producers) {
+          if (producer >= nodes_.size() ||
+              nodes_[producer].resource != certificate.producerResource ||
+              !scopeContains(path.scope, nodes_[producer].scope) ||
+              !nodeHasLaneAccess(producer, use.producerLane, true) ||
+              (certificate.protocol ==
+                   SyncCoverBasicOwnershipProtocolKind::AlternatingPrefetch &&
+               !hasSuccessorGuard(producer))) {
+            return {SyncCoverGraphError::InvalidBasicOwnershipCertificate,
+                    index};
+          }
+          const auto before = resolveSyncCoverAnchor(
+              *this, {SyncCoverAnchorKind::BeforeNode, producer, 0, 0});
+          const auto after = resolveSyncCoverAnchor(
+              *this, {SyncCoverAnchorKind::AfterNode, producer, 0, 0});
+          if (!before || !after) {
+            return {SyncCoverGraphError::InvalidBasicOwnershipCertificate,
+                    index};
+          }
+          firstProducer = std::min(firstProducer, *before);
+          lastProducer = std::max(lastProducer, *after);
+          namedProducers[use.producerLane].insert(producer);
+        }
+        SyncCoverTimelinePosition firstConsumer =
+            std::numeric_limits<SyncCoverTimelinePosition>::max();
+        SyncCoverTimelinePosition lastConsumer = 0;
+        SyncCoverNodeId lastConsumerNode = 0;
+        for (SyncCoverNodeId consumer : use.consumers) {
+          if (consumer >= nodes_.size() ||
+              nodes_[consumer].resource != certificate.consumerResource ||
+              !scopeContains(path.scope, nodes_[consumer].scope) ||
+              !nodeHasLaneAccess(consumer, use.lane, false)) {
+            return {SyncCoverGraphError::InvalidBasicOwnershipCertificate,
+                    index};
+          }
+          const auto before = resolveSyncCoverAnchor(
+              *this, {SyncCoverAnchorKind::BeforeNode, consumer, 0, 0});
+          const auto after = resolveSyncCoverAnchor(
+              *this, {SyncCoverAnchorKind::AfterNode, consumer, 0, 0});
+          if (!before || !after) {
+            return {SyncCoverGraphError::InvalidBasicOwnershipCertificate,
+                    index};
+          }
+          firstConsumer = std::min(firstConsumer, *before);
+          if (*after >= lastConsumer) {
+            lastConsumer = *after;
+            lastConsumerNode = consumer;
+          }
+          namedConsumers[use.lane].insert(consumer);
+        }
+        const bool sharedReleaseNeedsPrefixCompletion =
+            use.consumers.size() > 1 &&
+            use.releaseAnchor.kind == SyncCoverAnchorKind::AfterNode;
+        // A graph-certified L1 ownership cycle is the narrow target contract
+        // that permits one MTE1 release set after the final exact-slot
+        // consumer to release the whole named consumer prefix. Do not promote
+        // this fact to generic MTE1 issue/completion ordering.
+        const bool validSharedOwnershipRelease =
+            certificate.kind == SyncCoverBasicOwnershipKind::L1Tile &&
+            targetCompletionResources_ &&
+            certificate.consumerResource == targetCompletionResources_->mte1 &&
+            use.releaseAnchor.node == lastConsumerNode;
+        if (sharedReleaseNeedsPrefixCompletion &&
+            !validSharedOwnershipRelease) {
+          return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+        }
+        if (*writeAcquire > firstProducer || *ready < lastProducer ||
+            *readAcquire > firstConsumer || *release < lastConsumer) {
+          return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+        }
+        pathLanes[use.lane] = true;
+      }
+      const bool missingRoundTripLane =
+          certificate.protocol ==
+              SyncCoverBasicOwnershipProtocolKind::RoundTrip &&
+          std::any_of(pathLanes.begin(), pathLanes.end(),
+                      [](bool present) { return !present; });
+      if (missingRoundTripLane) {
+        return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+      }
+    }
+
+    const bool isAlternating =
+        certificate.protocol ==
+        SyncCoverBasicOwnershipProtocolKind::AlternatingPrefetch;
+    if (!isAlternating) {
+      const bool invalidRoundTripState =
+          certificate.periodicControl ||
+          !certificate.initialProducers.empty() ||
+          !certificate.initiallyFreeLanes.empty() ||
+          std::any_of(certificate.paths.begin(), certificate.paths.end(),
+                      [](const SyncCoverBasicOwnershipPath &path) {
+                        return std::any_of(
+                            path.uses.begin(), path.uses.end(),
+                            [](const SyncCoverBasicOwnershipUse &use) {
+                              return use.lane != use.producerLane;
+                            });
+                      });
+      if (invalidRoundTripState) {
+        return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+      }
+    } else {
+      const bool invalidAlternatingHeader =
+          certificate.kind != SyncCoverBasicOwnershipKind::L1Tile ||
+          certificate.lanes.size() != 2 || certificate.paths.size() != 2 ||
+          !certificate.periodicControl ||
+          *certificate.periodicControl >= controls_.size() ||
+          certificate.initialProducers.empty() ||
+          certificate.initialReadyLane >= certificate.lanes.size() ||
+          certificate.initiallyFreeLanes.size() != 1 ||
+          certificate.initiallyFreeLanes.front() ==
+              certificate.initialReadyLane ||
+          std::any_of(certificate.paths.begin(), certificate.paths.end(),
+                      [](const SyncCoverBasicOwnershipPath &path) {
+                        return path.uses.size() != 1;
+                      });
+      if (invalidAlternatingHeader) {
+        return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+      }
+      const SyncCoverControl &periodic =
+          controls_[*certificate.periodicControl];
+      if (!periodic.phaseRelation ||
+          periodic.phaseRelation->loopScope != certificate.loopScope ||
+          periodic.phaseRelation->nextPhase.size() !=
+              certificate.lanes.size() ||
+          periodic.phaseRelation->initialPhase !=
+              certificate.initialReadyLane) {
+        return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+      }
+      std::vector<bool> seenPhases(certificate.lanes.size(), false);
+      for (const SyncCoverBasicOwnershipPath &path : certificate.paths) {
+        const auto literal = std::find_if(
+            scopes_[path.scope].guard.literals.begin(),
+            scopes_[path.scope].guard.literals.end(),
+            [&](const SyncCoverGuardLiteral &candidate) {
+              return candidate.control == *certificate.periodicControl;
+            });
+        if (literal == scopes_[path.scope].guard.literals.end()) {
+          return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+        }
+        const auto phase =
+            std::find(periodic.phaseRelation->activeAlternative.begin(),
+                      periodic.phaseRelation->activeAlternative.end(),
+                      literal->alternative);
+        if (phase == periodic.phaseRelation->activeAlternative.end()) {
+          return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+        }
+        const std::size_t phaseIndex = static_cast<std::size_t>(std::distance(
+            periodic.phaseRelation->activeAlternative.begin(), phase));
+        const SyncCoverBasicOwnershipUse &use = path.uses.front();
+        if (phaseIndex >= seenPhases.size() || seenPhases[phaseIndex] ||
+            use.lane != phaseIndex ||
+            use.producerLane != periodic.phaseRelation->nextPhase[phaseIndex]) {
+          return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+        }
+        seenPhases[phaseIndex] = true;
+      }
+      if (std::any_of(seenPhases.begin(), seenPhases.end(),
+                      [](bool seen) { return !seen; })) {
+        return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+      }
+      const std::optional<SyncCoverTimelinePosition> initialWrite =
+          resolveSyncCoverAnchor(*this, certificate.initialWriteAcquireAnchor);
+      const std::optional<SyncCoverTimelinePosition> initialReady =
+          resolveSyncCoverAnchor(*this, certificate.initialReadyAnchor);
+      const auto bodyEntry =
+          resolveSyncCoverAnchor(*this, {SyncCoverAnchorKind::LoopBodyEntry, 0,
+                                         certificate.loopScope, 0});
+      if (!initialWrite || !initialReady || !bodyEntry ||
+          certificate.initialReadyAnchor.kind !=
+              SyncCoverAnchorKind::ScopeEntry ||
+          certificate.initialReadyAnchor.scope != certificate.loopScope ||
+          *initialWrite > *initialReady || *initialReady != *bodyEntry) {
+        return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+      }
+      SyncCoverTimelinePosition firstInitial =
+          std::numeric_limits<SyncCoverTimelinePosition>::max();
+      SyncCoverTimelinePosition lastInitial = 0;
+      for (SyncCoverNodeId producer : certificate.initialProducers) {
+        if (producer >= nodes_.size() ||
+            scopeContains(certificate.loopScope, nodes_[producer].scope) ||
+            nodes_[producer].resource != certificate.producerResource ||
+            !nodeHasLaneAccess(producer, certificate.initialReadyLane, true)) {
+          return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+        }
+        const auto before = resolveSyncCoverAnchor(
+            *this, {SyncCoverAnchorKind::BeforeNode, producer, 0, 0});
+        const auto after = resolveSyncCoverAnchor(
+            *this, {SyncCoverAnchorKind::AfterNode, producer, 0, 0});
+        if (!before || !after) {
+          return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+        }
+        firstInitial = std::min(firstInitial, *before);
+        lastInitial = std::max(lastInitial, *after);
+        namedProducers[certificate.initialReadyLane].insert(producer);
+      }
+      if (*initialWrite > firstInitial || *initialReady < lastInitial) {
+        return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+      }
+    }
+
+    for (const SyncCoverStorageAccess &access : storageAccesses_) {
+      if (!accessLanes[access.id]) {
+        continue;
+      }
+      const std::size_t lane = *accessLanes[access.id];
+      const bool producerAccess =
+          nodes_[access.node].resource == certificate.producerResource &&
+          syncCoverStorageModeWrites(access.mode) &&
+          (certificate.kind == SyncCoverBasicOwnershipKind::L0Accumulator ||
+           !syncCoverStorageModeReads(access.mode));
+      const bool consumerAccess =
+          nodes_[access.node].resource == certificate.consumerResource &&
+          syncCoverStorageModeReads(access.mode) &&
+          !syncCoverStorageModeWrites(access.mode);
+      const bool namedProducer =
+          producerAccess && namedProducers[lane].count(access.node) != 0;
+      const bool namedConsumer =
+          consumerAccess && namedConsumers[lane].count(access.node) != 0;
+      if (!namedProducer && !namedConsumer) {
+        return {SyncCoverGraphError::InvalidBasicOwnershipCertificate, index};
+      }
+    }
+  }
+
+  for (std::size_t first = 0; first < basicOwnershipCertificates_.size();
+       ++first) {
+    for (std::size_t second = first + 1;
+         second < basicOwnershipCertificates_.size(); ++second) {
+      const SyncCoverBasicOwnershipCertificate &left =
+          basicOwnershipCertificates_[first];
+      const SyncCoverBasicOwnershipCertificate &right =
+          basicOwnershipCertificates_[second];
+      const bool nested = scopeContains(left.loopScope, right.loopScope) ||
+                          scopeContains(right.loopScope, left.loopScope);
+      if (!nested) {
+        continue;
+      }
+      for (const SyncCoverBasicOwnershipLane &leftLane : left.lanes) {
+        for (const SyncCoverBasicOwnershipSlot &leftSlot : leftLane.slots) {
+          for (const SyncCoverBasicOwnershipLane &rightLane : right.lanes) {
+            for (const SyncCoverBasicOwnershipSlot &rightSlot :
+                 rightLane.slots) {
+              if (leftSlot.domain == rightSlot.domain &&
+                  ownershipIntervalsOverlap(leftSlot.extent,
+                                            rightSlot.extent)) {
+                return {SyncCoverGraphError::InvalidBasicOwnershipCertificate,
+                        second};
+              }
+            }
+          }
+        }
+      }
     }
   }
   return {SyncCoverGraphError::None, std::nullopt};

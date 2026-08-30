@@ -114,6 +114,9 @@ private:
   LogicalResult addPeriodicControlEvidence(scf::IfOp conditional,
                                            SyncCoverControlId control,
                                            SyncCoverScopeId occurrenceScope);
+  LogicalResult addSuccessorControlEvidence(scf::IfOp conditional,
+                                            SyncCoverControlId control,
+                                            SyncCoverScopeId occurrenceScope);
   LogicalResult buildNodesAndStorage();
   LogicalResult validateControlDataflow();
   LogicalResult refineLoopTimelines();
@@ -153,6 +156,8 @@ private:
   LogicalResult addForwardDependencies();
   LogicalResult addRecurrenceDependencies();
   LogicalResult addTargetCompletionCertificates(
+      const CanonicalSyncTargetCapabilities &capabilities);
+  LogicalResult discoverBasicOwnershipCertificates(
       const CanonicalSyncTargetCapabilities &capabilities);
   bool isDemandImplicitlyComplete(SyncCoverNodeId source,
                                   SyncCoverNodeId target);
@@ -199,6 +204,7 @@ private:
   SyncCoverStorageAccessFamilyId nextStorageFamily_ = 1;
   std::set<std::pair<unsigned, unsigned>> noAliasArguments_;
   CanonicalSyncEventReservations eventReservations_;
+  CanonicalSyncOwnershipDiscoveryStatistics ownershipDiscoveryStatistics_;
   std::size_t pairInspections_ = 0;
 };
 

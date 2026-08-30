@@ -19,6 +19,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Support/LogicalResult.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -46,6 +47,20 @@ struct CanonicalSyncAnalysisOptions {
   /// Maximum undirected node-conflict entries retained by the storage index.
   std::size_t maximumStorageConflictEdges = 1U << 20;
   std::size_t maximumPairInspections = 1U << 24;
+  /// Basic ownership discovery is a bounded optional synthesis analysis. If
+  /// either limit is reached, discovery stops and the direct correctness
+  /// catalog remains available.
+  std::size_t maximumBasicOwnershipInspections = 1U << 20;
+  std::size_t maximumBasicOwnershipCertificates = 1U << 10;
+};
+
+constexpr std::size_t kCanonicalSyncBasicOwnershipKindCount = 3;
+
+struct CanonicalSyncOwnershipDiscoveryStatistics {
+  std::size_t inspections = 0;
+  std::array<std::size_t, kCanonicalSyncBasicOwnershipKindCount>
+      certificatesByKind{};
+  bool truncated = false;
 };
 
 struct CanonicalSyncNodeBinding {
@@ -102,19 +117,22 @@ public:
   CanonicalSyncProgram &operator=(CanonicalSyncProgram &&) = default;
   CanonicalSyncProgram(const CanonicalSyncProgram &) = delete;
   CanonicalSyncProgram &operator=(const CanonicalSyncProgram &) = delete;
-  CanonicalSyncProgram(func::FuncOp function, SyncCoverGraph graph,
-                       std::vector<CanonicalSyncNodeBinding> nodeBindings,
-                       std::vector<CanonicalSyncScopeBinding> scopeBindings,
-                       std::vector<CanonicalSyncControlBinding> controlBindings,
-                       std::vector<AddressSpace> storageSpaces,
-                       CanonicalSyncTargetCapabilities targetCapabilities,
-                       CanonicalSyncEventReservations eventReservations)
+  CanonicalSyncProgram(
+      func::FuncOp function, SyncCoverGraph graph,
+      std::vector<CanonicalSyncNodeBinding> nodeBindings,
+      std::vector<CanonicalSyncScopeBinding> scopeBindings,
+      std::vector<CanonicalSyncControlBinding> controlBindings,
+      std::vector<AddressSpace> storageSpaces,
+      CanonicalSyncTargetCapabilities targetCapabilities,
+      CanonicalSyncOwnershipDiscoveryStatistics ownershipDiscoveryStatistics,
+      CanonicalSyncEventReservations eventReservations)
       : function_(function), graph_(std::move(graph)),
         nodeBindings_(std::move(nodeBindings)),
         scopeBindings_(std::move(scopeBindings)),
         controlBindings_(std::move(controlBindings)),
         storageSpaces_(std::move(storageSpaces)),
         targetCapabilities_(targetCapabilities),
+        ownershipDiscoveryStatistics_(ownershipDiscoveryStatistics),
         eventReservations_(std::move(eventReservations)) {}
 
   SyncCoverGraph &getGraph() { return graph_; }
@@ -135,6 +153,10 @@ public:
   const CanonicalSyncTargetCapabilities &getTargetCapabilities() const {
     return targetCapabilities_;
   }
+  const CanonicalSyncOwnershipDiscoveryStatistics &
+  getOwnershipDiscoveryStatistics() const {
+    return ownershipDiscoveryStatistics_;
+  }
   const CanonicalSyncEventReservations &getEventReservations() const {
     return eventReservations_;
   }
@@ -147,6 +169,7 @@ private:
   std::vector<CanonicalSyncControlBinding> controlBindings_;
   std::vector<AddressSpace> storageSpaces_;
   CanonicalSyncTargetCapabilities targetCapabilities_;
+  CanonicalSyncOwnershipDiscoveryStatistics ownershipDiscoveryStatistics_;
   CanonicalSyncEventReservations eventReservations_;
 };
 

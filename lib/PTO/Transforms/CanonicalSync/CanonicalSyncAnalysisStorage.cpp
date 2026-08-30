@@ -29,6 +29,8 @@ namespace {
 
 SyncCoverStorageDomainRole getStorageDomainRole(AddressSpace space) {
   switch (space) {
+  case AddressSpace::MAT:
+    return SyncCoverStorageDomainRole::L1Tile;
   case AddressSpace::LEFT:
     return SyncCoverStorageDomainRole::L0Left;
   case AddressSpace::RIGHT:

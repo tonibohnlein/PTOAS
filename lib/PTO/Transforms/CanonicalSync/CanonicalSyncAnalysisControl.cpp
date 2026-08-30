@@ -102,7 +102,9 @@ LogicalResult ProgramBuilder::addRegion(Region &region,
       }
       controlBindings_.push_back({conditional.getOperation()});
       if (failed(addPeriodicControlEvidence(conditional, *control.index,
-                                            context.scope))) {
+                                            context.scope)) ||
+          failed(addSuccessorControlEvidence(conditional, *control.index,
+                                             context.scope))) {
         return failure();
       }
       for (unsigned alternative = 0; alternative < 2; ++alternative) {
@@ -227,6 +229,40 @@ ProgramBuilder::addPeriodicControlEvidence(scf::IfOp conditional,
   if (!graph_.setControlPhaseRelation(control, std::move(relation))) {
     return conditional.emitError(
         "cannot register canonical sync periodic control relation");
+  }
+  return success();
+}
+
+LogicalResult
+ProgramBuilder::addSuccessorControlEvidence(scf::IfOp conditional,
+                                            SyncCoverControlId control,
+                                            SyncCoverScopeId occurrenceScope) {
+  const std::optional<SyncCoverScopeId> loopScope =
+      getNearestLoopScope(occurrenceScope);
+  if (!loopScope || *loopScope >= scopeBindings_.size()) {
+    return success();
+  }
+  auto loop = dyn_cast_or_null<scf::ForOp>(scopeBindings_[*loopScope].owner);
+  auto comparison = conditional.getCondition().getDefiningOp<arith::CmpIOp>();
+  if (!loop || !comparison ||
+      comparison.getPredicate() != arith::CmpIPredicate::slt ||
+      comparison.getRhs() != loop.getUpperBound()) {
+    return success();
+  }
+  auto addition = comparison.getLhs().getDefiningOp<arith::AddIOp>();
+  if (!addition) {
+    return success();
+  }
+  const bool exactStep = (addition.getLhs() == loop.getInductionVar() &&
+                          addition.getRhs() == loop.getStep()) ||
+                         (addition.getRhs() == loop.getInductionVar() &&
+                          addition.getLhs() == loop.getStep());
+  if (!exactStep) {
+    return success();
+  }
+  if (!graph_.setControlSuccessorRelation(control, {*loopScope, 0})) {
+    return conditional.emitError(
+        "cannot register canonical sync successor control relation");
   }
   return success();
 }

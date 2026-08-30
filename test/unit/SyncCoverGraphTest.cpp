@@ -688,6 +688,14 @@ bool testPeriodicControlEvidence() {
   relation.loopScope = inner;
   passed &= check(graph.setControlPhaseRelation(innerControl, relation),
                   "accept nearest-loop phase evidence");
+  const SyncCoverControlId successorControl = takeIndex(
+      graph.addControl(2, loop), passed, "add loop-successor control");
+  passed &=
+      check(graph.setControlSuccessorRelation(successorControl, {loop, 0}),
+            "attach exact loop-successor alternative") &&
+      check(graph.setControlSuccessorRelation(successorControl, {loop, 2})
+                    .error == SyncCoverGraphError::InvalidControl,
+            "reject an out-of-range successor alternative");
   passed &= check(graph.freezeStructure(), "freeze periodic graph");
   const std::optional<SyncCoverControlPhaseRelation> &stored =
       graph.getControls()[control].phaseRelation;
@@ -696,6 +704,255 @@ bool testPeriodicControlEvidence() {
                "failed update leaves periodic relation unchanged") &&
          check(static_cast<bool>(graph.validate()),
                "validate periodic control evidence");
+}
+
+bool testBasicOwnershipCertificatesAreExactAndImmutable() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const std::uint32_t producerResource = 1;
+  const std::uint32_t consumerResource = 2;
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 20}, true),
+                passed, "add ownership loop");
+  const SyncCoverNodeId producer0 =
+      takeIndex(graph.addNode(producerResource, 1, loop, 0), passed,
+                "add first ownership producer");
+  const SyncCoverNodeId consumer0 =
+      takeIndex(graph.addNode(consumerResource, 1, loop, 1), passed,
+                "add first ownership consumer");
+  const SyncCoverNodeId producer1 =
+      takeIndex(graph.addNode(producerResource, 1, loop, 2), passed,
+                "add second ownership producer");
+  const SyncCoverNodeId consumer1 =
+      takeIndex(graph.addNode(consumerResource, 1, loop, 3), passed,
+                "add second ownership consumer");
+  const SyncCoverStorageDomainId lane0Domain =
+      takeIndex(graph.addStorageDomain(SyncCoverStorageDomainRole::L1Tile),
+                passed, "add first ownership domain");
+  const SyncCoverStorageDomainId lane1Domain =
+      takeIndex(graph.addStorageDomain(SyncCoverStorageDomainRole::L1Tile),
+                passed, "add second ownership domain");
+  const SyncCoverStorageAccessId producer0Access =
+      takeIndex(graph.addStorageAccess(producer0, lane0Domain, 1, {0, 64},
+                                       SyncCoverStorageAccessMode::Write,
+                                       std::nullopt, true),
+                passed, "add exact first ownership write");
+  const SyncCoverStorageAccessId consumer0Access =
+      takeIndex(graph.addStorageAccess(consumer0, lane0Domain, 1, {0, 64},
+                                       SyncCoverStorageAccessMode::Read,
+                                       std::nullopt, true),
+                passed, "add exact first ownership read");
+  const SyncCoverStorageAccessId producer1Access =
+      takeIndex(graph.addStorageAccess(producer1, lane1Domain, 2, {0, 64},
+                                       SyncCoverStorageAccessMode::Write,
+                                       std::nullopt, true),
+                passed, "add exact second ownership write");
+  const SyncCoverStorageAccessId consumer1Access =
+      takeIndex(graph.addStorageAccess(consumer1, lane1Domain, 2, {0, 64},
+                                       SyncCoverStorageAccessMode::Read,
+                                       std::nullopt, true),
+                passed, "add exact second ownership read");
+
+  SyncCoverBasicOwnershipCertificate certificate;
+  certificate.kind = SyncCoverBasicOwnershipKind::L1Tile;
+  certificate.loopScope = loop;
+  certificate.producerResource = producerResource;
+  certificate.consumerResource = consumerResource;
+  certificate.lanes = {
+      {0, {{lane0Domain, {0, 64}, {producer0Access, consumer0Access}}}},
+      {1, {{lane1Domain, {0, 64}, {producer1Access, consumer1Access}}}},
+  };
+  SyncCoverBasicOwnershipPath path;
+  path.scope = loop;
+  path.uses = {
+      {0,
+       0,
+       {producer0},
+       {consumer0},
+       {SyncCoverAnchorKind::BeforeNode, producer0, 0, 0},
+       {SyncCoverAnchorKind::AfterNode, producer0, 0, 0},
+       {SyncCoverAnchorKind::BeforeNode, consumer0, 0, 0},
+       {SyncCoverAnchorKind::AfterNode, consumer0, 0, 0}},
+      {1,
+       1,
+       {producer1},
+       {consumer1},
+       {SyncCoverAnchorKind::BeforeNode, producer1, 0, 0},
+       {SyncCoverAnchorKind::AfterNode, producer1, 0, 0},
+       {SyncCoverAnchorKind::BeforeNode, consumer1, 0, 0},
+       {SyncCoverAnchorKind::AfterNode, consumer1, 0, 0}},
+  };
+  certificate.paths.push_back(path);
+
+  SyncCoverBasicOwnershipCertificate incomplete = certificate;
+  incomplete.lanes[0].slots[0].accesses.pop_back();
+  passed &=
+      check(graph.addBasicOwnershipCertificate(std::move(incomplete)).error ==
+                SyncCoverGraphError::InvalidBasicOwnershipCertificate,
+            "reject an ownership certificate with an incomplete access census");
+  SyncCoverBasicOwnershipCertificate wrongLane = certificate;
+  wrongLane.paths[0].uses[0].producerLane = 1;
+  passed &=
+      check(graph.addBasicOwnershipCertificate(std::move(wrongLane)).error ==
+                SyncCoverGraphError::InvalidBasicOwnershipCertificate,
+            "reject a round-trip certificate that changes ownership lanes");
+  passed &= check(graph.addBasicOwnershipCertificate(certificate),
+                  "register an exact basic ownership certificate");
+  const std::size_t certificateCount =
+      graph.getBasicOwnershipCertificates().size();
+  passed &= check(
+      graph.addBasicOwnershipCertificate(certificate).error ==
+              SyncCoverGraphError::InvalidBasicOwnershipCertificate &&
+          graph.getBasicOwnershipCertificates().size() == certificateCount,
+      "reject overlapping ownership cycles atomically");
+  passed &= check(graph.freezeStructure(), "freeze ownership graph") &&
+            check(graph.validate(), "validate frozen ownership graph");
+  passed &= check(graph.addBasicOwnershipCertificate(certificate).error ==
+                      SyncCoverGraphError::StructureFrozen,
+                  "reject ownership certificate mutation after graph freeze");
+  return passed;
+}
+
+bool testAlternatingOwnershipRequiresParityAndSuccessorEvidence() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const std::uint32_t producerResource = 1;
+  const std::uint32_t consumerResource = 2;
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{2, 20}, true),
+                passed, "add alternating ownership loop");
+  const SyncCoverControlId parity =
+      takeIndex(graph.addControl(2, loop), passed, "add parity control");
+  passed &=
+      check(graph.setControlPhaseRelation(parity, {loop, 0, {1, 0}, {0, 1}}),
+            "attach alternating parity evidence");
+  const SyncCoverScopeId path0 = takeIndex(
+      graph.addScope(loop, true, std::nullopt, false, {{{parity, 0}}}), passed,
+      "add first parity path");
+  const SyncCoverScopeId path1 = takeIndex(
+      graph.addScope(loop, true, std::nullopt, false, {{{parity, 1}}}), passed,
+      "add second parity path");
+  const SyncCoverControlId successor0 = takeIndex(
+      graph.addControl(2, path0), passed, "add first successor control");
+  const SyncCoverControlId successor1 = takeIndex(
+      graph.addControl(2, path1), passed, "add second successor control");
+  passed &= check(graph.setControlSuccessorRelation(successor0, {loop, 0}),
+                  "attach first successor evidence") &&
+            check(graph.setControlSuccessorRelation(successor1, {loop, 0}),
+                  "attach second successor evidence");
+  const SyncCoverScopeId prefetch0 =
+      takeIndex(graph.addScope(path0, true, std::nullopt, false,
+                               {{{parity, 0}, {successor0, 0}}}),
+                passed, "add first guarded prefetch scope");
+  const SyncCoverScopeId prefetch1 =
+      takeIndex(graph.addScope(path1, true, std::nullopt, false,
+                               {{{parity, 1}, {successor1, 0}}}),
+                passed, "add second guarded prefetch scope");
+
+  const SyncCoverNodeId initial =
+      takeIndex(graph.addNode(producerResource, 1, 0, 0), passed,
+                "add initial alternating producer");
+  const SyncCoverNodeId consumer0 =
+      takeIndex(graph.addNode(consumerResource, 1, path0, 1, {{{parity, 0}}}),
+                passed, "add first alternating consumer");
+  const SyncCoverNodeId producer1 =
+      takeIndex(graph.addNode(producerResource, 1, prefetch0, 2,
+                              {{{parity, 0}, {successor0, 0}}}),
+                passed, "add first guarded alternating producer");
+  const SyncCoverNodeId consumer1 =
+      takeIndex(graph.addNode(consumerResource, 1, path1, 3, {{{parity, 1}}}),
+                passed, "add second alternating consumer");
+  const SyncCoverNodeId producer0 =
+      takeIndex(graph.addNode(producerResource, 1, prefetch1, 4,
+                              {{{parity, 1}, {successor1, 0}}}),
+                passed, "add second guarded alternating producer");
+  const SyncCoverStorageDomainId lane0Domain =
+      takeIndex(graph.addStorageDomain(SyncCoverStorageDomainRole::L1Tile),
+                passed, "add first alternating domain");
+  const SyncCoverStorageDomainId lane1Domain =
+      takeIndex(graph.addStorageDomain(SyncCoverStorageDomainRole::L1Tile),
+                passed, "add second alternating domain");
+  const SyncCoverStorageAccessId initialAccess =
+      takeIndex(graph.addStorageAccess(initial, lane0Domain, 1, {0, 64},
+                                       SyncCoverStorageAccessMode::Write,
+                                       std::nullopt, true),
+                passed, "add initial exact write");
+  const SyncCoverStorageAccessId consumer0Access =
+      takeIndex(graph.addStorageAccess(consumer0, lane0Domain, 1, {0, 64},
+                                       SyncCoverStorageAccessMode::Read,
+                                       std::nullopt, true),
+                passed, "add first alternating read");
+  const SyncCoverStorageAccessId producer0Access =
+      takeIndex(graph.addStorageAccess(producer0, lane0Domain, 1, {0, 64},
+                                       SyncCoverStorageAccessMode::Write,
+                                       std::nullopt, true),
+                passed, "add second alternating write");
+  const SyncCoverStorageAccessId producer1Access =
+      takeIndex(graph.addStorageAccess(producer1, lane1Domain, 2, {0, 64},
+                                       SyncCoverStorageAccessMode::Write,
+                                       std::nullopt, true),
+                passed, "add first alternating write");
+  const SyncCoverStorageAccessId consumer1Access =
+      takeIndex(graph.addStorageAccess(consumer1, lane1Domain, 2, {0, 64},
+                                       SyncCoverStorageAccessMode::Read,
+                                       std::nullopt, true),
+                passed, "add second alternating read");
+
+  SyncCoverBasicOwnershipCertificate certificate;
+  certificate.kind = SyncCoverBasicOwnershipKind::L1Tile;
+  certificate.protocol =
+      SyncCoverBasicOwnershipProtocolKind::AlternatingPrefetch;
+  certificate.loopScope = loop;
+  certificate.producerResource = producerResource;
+  certificate.consumerResource = consumerResource;
+  certificate.lanes = {
+      {0,
+       {{lane0Domain,
+         {0, 64},
+         {initialAccess, consumer0Access, producer0Access}}}},
+      {1, {{lane1Domain, {0, 64}, {producer1Access, consumer1Access}}}},
+  };
+  certificate.paths = {
+      {path0,
+       {{0,
+         1,
+         {producer1},
+         {consumer0},
+         {SyncCoverAnchorKind::BeforeNode, producer1, 0, 0},
+         {SyncCoverAnchorKind::AfterNode, producer1, 0, 0},
+         {SyncCoverAnchorKind::BeforeNode, consumer0, 0, 0},
+         {SyncCoverAnchorKind::AfterNode, consumer0, 0, 0}}}},
+      {path1,
+       {{1,
+         0,
+         {producer0},
+         {consumer1},
+         {SyncCoverAnchorKind::BeforeNode, producer0, 0, 0},
+         {SyncCoverAnchorKind::AfterNode, producer0, 0, 0},
+         {SyncCoverAnchorKind::BeforeNode, consumer1, 0, 0},
+         {SyncCoverAnchorKind::AfterNode, consumer1, 0, 0}}}},
+  };
+  certificate.periodicControl = parity;
+  certificate.initialProducers = {initial};
+  certificate.initialWriteAcquireAnchor = {SyncCoverAnchorKind::BeforeNode,
+                                           initial, 0, 0};
+  certificate.initialReadyAnchor = {SyncCoverAnchorKind::ScopeEntry, 0, loop,
+                                    0};
+  certificate.initialReadyLane = 0;
+  certificate.initiallyFreeLanes = {1};
+
+  SyncCoverBasicOwnershipCertificate missingSuccessor = certificate;
+  missingSuccessor.paths[0].uses[0].producers = {producer0};
+  passed &= check(
+      graph.addBasicOwnershipCertificate(std::move(missingSuccessor)).error ==
+          SyncCoverGraphError::InvalidBasicOwnershipCertificate,
+      "reject alternating ownership without matching successor evidence");
+  passed &=
+      check(graph.addBasicOwnershipCertificate(certificate),
+            "register exact alternating ownership certificate") &&
+      check(graph.freezeStructure(), "freeze alternating ownership graph") &&
+      check(graph.validate(), "validate alternating ownership evidence");
+  return passed;
 }
 
 bool testCompletionDominanceContract() {
@@ -806,9 +1063,9 @@ bool testBlockingBarrierPrefixAndLoopBodyAnchor() {
   SyncCoverGraph graph;
   const SyncCoverControlId control =
       takeIndex(graph.addControl(2), passed, "add prefix branch control");
-  const SyncCoverScopeId loop = takeIndex(
-      graph.addScope(0, true, SyncCoverTimelineInterval{0, 20}, true), passed,
-      "add prefix loop scope");
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 20}, true),
+                passed, "add prefix loop scope");
   const SyncCoverScopeId thenScope = takeIndex(
       graph.addScope(loop, true, std::nullopt, false, {{{control, 0}}}), passed,
       "add prefix then scope");
@@ -832,21 +1089,22 @@ bool testBlockingBarrierPrefixAndLoopBodyAnchor() {
                 "add later prefix source");
   passed &= check(graph.setBlockingTargetedBarrierResources({1}),
                   "enable blocking targeted barrier resource");
-  passed &= check(graph.setBlockingTargetedBarrierPrefix(
-                      1, target, {second, first, first}),
-                  "record a sorted and deduplicated issued prefix");
+  passed &= check(
+      graph.setBlockingTargetedBarrierPrefix(1, target, {second, first, first}),
+      "record a sorted and deduplicated issued prefix");
   const auto prefix =
       graph.getBlockingTargetedBarrierPrefixes().find({1, target});
-  passed &= check(prefix != graph.getBlockingTargetedBarrierPrefixes().end() &&
-                      prefix->second ==
-                          std::vector<SyncCoverNodeId>{first, second},
-                  "retain exactly the earlier compatible prefix");
-  passed &= check(graph.setBlockingTargetedBarrierPrefix(1, later, {later})
-                          .error == SyncCoverGraphError::InvalidOrder,
-                  "reject a source issued at the cut") &&
-            check(graph.setBlockingTargetedBarrierPrefix(1, later, {sibling})
-                          .error == SyncCoverGraphError::InvalidOrder,
-                  "reject an incompatible sibling-branch source");
+  passed &=
+      check(prefix != graph.getBlockingTargetedBarrierPrefixes().end() &&
+                prefix->second == std::vector<SyncCoverNodeId>{first, second},
+            "retain exactly the earlier compatible prefix");
+  passed &=
+      check(graph.setBlockingTargetedBarrierPrefix(1, later, {later}).error ==
+                SyncCoverGraphError::InvalidOrder,
+            "reject a source issued at the cut") &&
+      check(graph.setBlockingTargetedBarrierPrefix(1, later, {sibling}).error ==
+                SyncCoverGraphError::InvalidOrder,
+            "reject an incompatible sibling-branch source");
   const auto loopBody = resolveSyncCoverAnchor(
       graph, {SyncCoverAnchorKind::LoopBodyEntry, 0, loop, 0});
   const auto loopBodyExit = resolveSyncCoverAnchor(
@@ -857,8 +1115,8 @@ bool testBlockingBarrierPrefixAndLoopBodyAnchor() {
                   "resolve loop body exit on the loop timeline");
   passed &= check(graph.freezeStructure(), "freeze prefix graph") &&
             check(graph.validate(), "validate immutable prefix certificate");
-  passed &= check(graph.setBlockingTargetedBarrierPrefix(1, later, {})
-                          .error == SyncCoverGraphError::StructureFrozen,
+  passed &= check(graph.setBlockingTargetedBarrierPrefix(1, later, {}).error ==
+                      SyncCoverGraphError::StructureFrozen,
                   "reject prefix mutation after graph freeze");
   return passed;
 }
@@ -869,113 +1127,106 @@ bool testTargetCompletionCertificatesAreExactAndImmutable() {
   const std::uint32_t mte1 = 3;
   const std::uint32_t matrix = 2;
   const std::uint32_t fix = 10;
-  passed &= check(
-      graph.setTargetCompletionResources({mte1, matrix, fix}),
-      "configure opaque target completion resources");
-  const SyncCoverNodeId first =
-      takeIndex(graph.addNode(mte1, 1, 0, 0), passed,
-                "add first certified producer");
-  const SyncCoverNodeId second =
-      takeIndex(graph.addNode(mte1, 1, 0, 1), passed,
-                "add final certified producer");
-  const SyncCoverNodeId target =
-      takeIndex(graph.addNode(matrix, 1, 0, 2), passed,
-                "add certified physical target");
+  passed &= check(graph.setTargetCompletionResources({mte1, matrix, fix}),
+                  "configure opaque target completion resources");
+  const SyncCoverNodeId first = takeIndex(graph.addNode(mte1, 1, 0, 0), passed,
+                                          "add first certified producer");
+  const SyncCoverNodeId second = takeIndex(graph.addNode(mte1, 1, 0, 1), passed,
+                                           "add final certified producer");
+  const SyncCoverNodeId target = takeIndex(
+      graph.addNode(matrix, 1, 0, 2), passed, "add certified physical target");
   const SyncCoverStorageDomainId left =
       takeIndex(graph.addStorageDomain(SyncCoverStorageDomainRole::L0Left),
-                passed,
-                "add certified exact storage domain");
-  const SyncCoverStorageDomainId other = takeIndex(
-      graph.addStorageDomain(SyncCoverStorageDomainRole::Other), passed,
-      "add wrong certificate storage domain");
-  const SyncCoverStorageAccessId firstWrite = takeIndex(
-      graph.addStorageAccess(first, left, 1, {0, 64},
-                             SyncCoverStorageAccessMode::Write, std::nullopt,
-                             true),
-      passed, "add first exact producer access");
-  const SyncCoverStorageAccessId secondWrite = takeIndex(
-      graph.addStorageAccess(second, left, 2, {64, 128},
-                             SyncCoverStorageAccessMode::Write, std::nullopt,
-                             true),
-      passed, "add second exact producer access");
-  const SyncCoverStorageAccessId firstRead = takeIndex(
-      graph.addStorageAccess(target, left, 1, {0, 64},
-                             SyncCoverStorageAccessMode::Read, std::nullopt,
-                             true),
-      passed, "add first exact target access");
-  const SyncCoverStorageAccessId secondRead = takeIndex(
-      graph.addStorageAccess(target, left, 2, {64, 128},
-                             SyncCoverStorageAccessMode::Read, std::nullopt,
-                             true),
-      passed, "add second exact target access");
-  const SyncCoverStorageWitnessId firstWitness = takeIndex(
-      graph.addStorageWitness(firstWrite, firstRead), passed,
-      "add first exact RAW witness");
-  const SyncCoverStorageWitnessId secondWitness = takeIndex(
-      graph.addStorageWitness(secondWrite, secondRead), passed,
-      "add second exact RAW witness");
+                passed, "add certified exact storage domain");
+  const SyncCoverStorageDomainId other =
+      takeIndex(graph.addStorageDomain(SyncCoverStorageDomainRole::Other),
+                passed, "add wrong certificate storage domain");
+  const SyncCoverStorageAccessId firstWrite =
+      takeIndex(graph.addStorageAccess(first, left, 1, {0, 64},
+                                       SyncCoverStorageAccessMode::Write,
+                                       std::nullopt, true),
+                passed, "add first exact producer access");
+  const SyncCoverStorageAccessId secondWrite =
+      takeIndex(graph.addStorageAccess(second, left, 2, {64, 128},
+                                       SyncCoverStorageAccessMode::Write,
+                                       std::nullopt, true),
+                passed, "add second exact producer access");
+  const SyncCoverStorageAccessId firstRead =
+      takeIndex(graph.addStorageAccess(target, left, 1, {0, 64},
+                                       SyncCoverStorageAccessMode::Read,
+                                       std::nullopt, true),
+                passed, "add first exact target access");
+  const SyncCoverStorageAccessId secondRead =
+      takeIndex(graph.addStorageAccess(target, left, 2, {64, 128},
+                                       SyncCoverStorageAccessMode::Read,
+                                       std::nullopt, true),
+                passed, "add second exact target access");
+  const SyncCoverStorageWitnessId firstWitness =
+      takeIndex(graph.addStorageWitness(firstWrite, firstRead), passed,
+                "add first exact RAW witness");
+  const SyncCoverStorageWitnessId secondWitness =
+      takeIndex(graph.addStorageWitness(secondWrite, secondRead), passed,
+                "add second exact RAW witness");
   SyncCoverDemand firstDemand = makeDemand(first, target);
   firstDemand.provenanceKinds = {SyncCoverDemandKind::MemoryRAW};
   firstDemand.storageWitnesses = {firstWitness};
-  const SyncCoverDemandId firstDemandId = takeIndex(
-      graph.addDemand(std::move(firstDemand)), passed,
-      "add first certified demand");
+  const SyncCoverDemandId firstDemandId =
+      takeIndex(graph.addDemand(std::move(firstDemand)), passed,
+                "add first certified demand");
   SyncCoverDemand secondDemand = makeDemand(second, target);
   secondDemand.provenanceKinds = {SyncCoverDemandKind::MemoryRAW};
   secondDemand.storageWitnesses = {secondWitness};
-  const SyncCoverDemandId secondDemandId = takeIndex(
-      graph.addDemand(std::move(secondDemand)), passed,
-      "add second certified demand");
-  passed &= check(graph.addTargetCompletionCertificate(
-                      SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix,
-                      second, target, mte1, matrix, {left},
-                      {firstDemandId, secondDemandId}),
-                  "register exact target completion certificate");
+  const SyncCoverDemandId secondDemandId =
+      takeIndex(graph.addDemand(std::move(secondDemand)), passed,
+                "add second certified demand");
+  passed &=
+      check(graph.addTargetCompletionCertificate(
+                SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix, second,
+                target, mte1, matrix, {left}, {firstDemandId, secondDemandId}),
+            "register exact target completion certificate");
   passed &= check(graph.hasTargetCompletionCertificate(
-                      SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix,
-                      second, target, mte1, matrix, firstDemandId) &&
+                      SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix, second,
+                      target, mte1, matrix, firstDemandId) &&
                       graph.hasTargetCompletionCertificate(
                           SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix,
                           second, target, mte1, matrix, secondDemandId),
                   "query only explicitly certified demands");
   const std::size_t certificateCount =
       graph.getTargetCompletionCertificates().size();
-  passed &= check(graph.addTargetCompletionCertificate(
-                      SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix,
-                      first, target, mte1, matrix, {left}, {secondDemandId})
-                          .error == SyncCoverGraphError::
-                                        InvalidTargetCompletionCertificate &&
-                      graph.getTargetCompletionCertificates().size() ==
-                          certificateCount,
-                  "reject a cut before its attested producer atomically");
   passed &= check(
       graph.addTargetCompletionCertificate(
-               SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix, second,
-               target, matrix, matrix, {left}, {firstDemandId})
-              .error ==
-          SyncCoverGraphError::InvalidTargetCompletionCertificate,
+               SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix, first, target,
+               mte1, matrix, {left}, {secondDemandId})
+                  .error ==
+              SyncCoverGraphError::InvalidTargetCompletionCertificate &&
+          graph.getTargetCompletionCertificates().size() == certificateCount,
+      "reject a cut before its attested producer atomically");
+  passed &= check(
+      graph.addTargetCompletionCertificate(
+               SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix, second, target,
+               matrix, matrix, {left}, {firstDemandId})
+              .error == SyncCoverGraphError::InvalidTargetCompletionCertificate,
       "reject a target certificate with the wrong source pipe");
   passed &= check(
       graph.addTargetCompletionCertificate(
-               SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix, second,
-               target, mte1, matrix, {other}, {firstDemandId})
-              .error ==
-          SyncCoverGraphError::InvalidTargetCompletionCertificate,
+               SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix, second, target,
+               mte1, matrix, {other}, {firstDemandId})
+              .error == SyncCoverGraphError::InvalidTargetCompletionCertificate,
       "reject a target certificate with the wrong storage role");
   passed &= check(
       graph.addTargetCompletionCertificate(
-               SyncCoverTargetCompletionKind::MToFixAccumulatorBoundary,
-               second, target, mte1, matrix, {left}, {firstDemandId})
-              .error ==
-          SyncCoverGraphError::InvalidTargetCompletionCertificate,
+               SyncCoverTargetCompletionKind::MToFixAccumulatorBoundary, second,
+               target, mte1, matrix, {left}, {firstDemandId})
+              .error == SyncCoverGraphError::InvalidTargetCompletionCertificate,
       "reject resources and storage belonging to another certificate kind");
   passed &= check(graph.freezeStructure(), "freeze certified target graph") &&
             check(graph.validate(), "validate certified target graph");
-  passed &= check(graph.addTargetCompletionCertificate(
-                      SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix,
-                      second, target, mte1, matrix, {left}, {firstDemandId})
-                          .error == SyncCoverGraphError::StructureFrozen,
-                  "reject target certificate mutation after freeze");
+  passed &=
+      check(graph.addTargetCompletionCertificate(
+                     SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix, second,
+                     target, mte1, matrix, {left}, {firstDemandId})
+                    .error == SyncCoverGraphError::StructureFrozen,
+            "reject target certificate mutation after freeze");
   return passed;
 }
 
@@ -994,6 +1245,8 @@ int main() {
   passed &= testStorageProvenanceFailures();
   passed &= testTimelineBoundariesAndOverflow();
   passed &= testPeriodicControlEvidence();
+  passed &= testBasicOwnershipCertificatesAreExactAndImmutable();
+  passed &= testAlternatingOwnershipRequiresParityAndSuccessorEvidence();
   passed &= testCompletionDominanceContract();
   passed &= testControlBoundaryAnchors();
   passed &= testPhysicalMacroEntryAndExitAnchors();

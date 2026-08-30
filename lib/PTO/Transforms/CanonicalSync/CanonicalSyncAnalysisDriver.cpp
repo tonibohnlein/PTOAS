@@ -215,14 +215,14 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
            static_cast<std::uint32_t>(PipelineType::PIPE_FIX)});
   const bool failedStage =
       failedBarrierConfiguration || failedTargetCompletionConfiguration ||
-      failed(validateInput()) ||
-      failed(extract()) || failed(buildScopes()) ||
+      failed(validateInput()) || failed(extract()) || failed(buildScopes()) ||
       failed(buildNodesAndStorage()) || failed(validateControlDataflow()) ||
       failed(addFixedIssueOrder()) ||
       failed(addCertifiedCompletionFrontiers()) ||
       failed(buildStorageConflictIndex()) || failed(addForwardDependencies()) ||
       failed(addRecurrenceDependencies()) ||
-      failed(addTargetCompletionCertificates(targetCapabilities));
+      failed(addTargetCompletionCertificates(targetCapabilities)) ||
+      failed(discoverBasicOwnershipCertificates(targetCapabilities));
   if (failedBarrierConfiguration) {
     function_.emitError(
         "cannot configure canonical sync blocking-barrier resources");
@@ -247,7 +247,7 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
       function_, std::move(graph_), std::move(nodeBindings_),
       std::move(scopeBindings_), std::move(controlBindings_),
       std::move(storageSpaces), targetCapabilities,
-      std::move(eventReservations_));
+      ownershipDiscoveryStatistics_, std::move(eventReservations_));
 }
 
 LogicalResult ProgramBuilder::validateInput() {
@@ -257,7 +257,9 @@ LogicalResult ProgramBuilder::validateInput() {
   const bool invalidLimits =
       options_.maximumNodes == 0 || options_.maximumScopes == 0 ||
       options_.maximumControls == 0 || options_.maximumStorageAccesses == 0 ||
-      options_.maximumPairInspections == 0;
+      options_.maximumPairInspections == 0 ||
+      options_.maximumBasicOwnershipInspections == 0 ||
+      options_.maximumBasicOwnershipCertificates == 0;
   if (invalidLimits) {
     return function_.emitError(
         "canonical sync analysis limits must be positive");
@@ -422,8 +424,7 @@ LogicalResult ProgramBuilder::buildNodesAndStorage() {
         static_cast<std::uint32_t>(compound->kPipeValue);
     std::vector<std::uint32_t> completionTargets;
     for (std::uint32_t candidate : resources) {
-      if (candidate != resource &&
-          canSignalDirectCompletion(resource)) {
+      if (candidate != resource && canSignalDirectCompletion(resource)) {
         completionTargets.push_back(candidate);
       }
     }

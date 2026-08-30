@@ -34,6 +34,7 @@ using SyncCoverStorageDomainId = std::size_t;
 using SyncCoverStorageAccessId = std::size_t;
 using SyncCoverStorageWitnessId = std::size_t;
 using SyncCoverTargetCompletionCertificateId = std::size_t;
+using SyncCoverBasicOwnershipCertificateId = std::size_t;
 using SyncCoverStorageAccessFamilyId = std::uint64_t;
 using SyncCoverTimelinePosition = std::size_t;
 using SyncCoverDemandId = std::size_t;
@@ -179,11 +180,20 @@ struct SyncCoverControlPhaseRelation {
   std::vector<unsigned> activeAlternative;
 };
 
+/// Exact frontend evidence that one branch alternative means that the nearest
+/// enclosing loop has a successor iteration. The MLIR adapter only records
+/// this relation for `iv + step < upperBound`.
+struct SyncCoverControlSuccessorRelation {
+  SyncCoverScopeId loopScope = 0;
+  unsigned hasSuccessorAlternative = 0;
+};
+
 struct SyncCoverControl {
   SyncCoverControlId id = 0;
   unsigned alternatives = 0;
   SyncCoverScopeId scope = 0;
   std::optional<SyncCoverControlPhaseRelation> phaseRelation;
+  std::optional<SyncCoverControlSuccessorRelation> successorRelation;
 };
 
 enum class SyncCoverStorageAccessMode : std::uint8_t {
@@ -200,6 +210,7 @@ struct SyncCoverStorageInterval {
 enum class SyncCoverStorageDomainRole : std::uint8_t {
   Unspecified,
   Other,
+  L1Tile,
   L0Left,
   L0Right,
   Accumulator,
@@ -265,6 +276,71 @@ struct SyncCoverTargetCompletionResources {
   std::uint32_t fix = 0;
 };
 
+/// Basic exact-slot ownership protocols. Composite and hierarchical ownership
+/// are intentionally not part of this certificate vocabulary.
+enum class SyncCoverBasicOwnershipKind : std::uint8_t {
+  L0Operand,
+  L1Tile,
+  L0Accumulator,
+};
+
+enum class SyncCoverBasicOwnershipProtocolKind : std::uint8_t {
+  RoundTrip,
+  AlternatingPrefetch,
+};
+
+struct SyncCoverBasicOwnershipSlot {
+  SyncCoverStorageDomainId domain = 0;
+  SyncCoverStorageInterval extent;
+  /// Complete set of exact physical accesses to this slot that can execute in
+  /// the certified loop. Initial producers outside the loop are also named.
+  std::vector<SyncCoverStorageAccessId> accesses;
+};
+
+struct SyncCoverBasicOwnershipLane {
+  std::size_t id = 0;
+  std::vector<SyncCoverBasicOwnershipSlot> slots;
+};
+
+struct SyncCoverBasicOwnershipUse {
+  /// Lane consumed by this iteration/path and lane produced for a future use.
+  std::size_t lane = 0;
+  std::size_t producerLane = 0;
+  std::vector<SyncCoverNodeId> producers;
+  std::vector<SyncCoverNodeId> consumers;
+  SyncCoverAnchor writeAcquireAnchor;
+  SyncCoverAnchor readyAnchor;
+  SyncCoverAnchor readAcquireAnchor;
+  SyncCoverAnchor releaseAnchor;
+};
+
+struct SyncCoverBasicOwnershipPath {
+  SyncCoverScopeId scope = 0;
+  std::vector<SyncCoverBasicOwnershipUse> uses;
+};
+
+struct SyncCoverBasicOwnershipCertificate {
+  SyncCoverBasicOwnershipCertificateId id = 0;
+  SyncCoverBasicOwnershipKind kind = SyncCoverBasicOwnershipKind::L0Operand;
+  SyncCoverBasicOwnershipProtocolKind protocol =
+      SyncCoverBasicOwnershipProtocolKind::RoundTrip;
+  SyncCoverScopeId loopScope = 0;
+  std::uint32_t producerResource = 0;
+  std::uint32_t consumerResource = 0;
+  std::vector<SyncCoverBasicOwnershipLane> lanes;
+  std::vector<SyncCoverBasicOwnershipPath> paths;
+
+  /// Alternating-prefetch-only state. The periodic control selects the current
+  /// lane. Initial producers establish the initially ready lane before entry;
+  /// the other named lanes start free for a guarded successor prefetch.
+  std::optional<SyncCoverControlId> periodicControl;
+  std::vector<SyncCoverNodeId> initialProducers;
+  SyncCoverAnchor initialWriteAcquireAnchor;
+  SyncCoverAnchor initialReadyAnchor;
+  std::size_t initialReadyLane = 0;
+  std::vector<std::size_t> initiallyFreeLanes;
+};
+
 enum class SyncCoverGraphError : std::uint8_t {
   None,
   InvalidNode,
@@ -282,6 +358,7 @@ enum class SyncCoverGraphError : std::uint8_t {
   InvalidStorageWitness,
   InvalidStorageProvenance,
   InvalidTargetCompletionCertificate,
+  InvalidBasicOwnershipCertificate,
   ArithmeticOverflow,
   DuplicateEdge,
   DuplicateDemand,
@@ -319,6 +396,9 @@ public:
   SyncCoverGraphResult
   setControlPhaseRelation(SyncCoverControlId control,
                           SyncCoverControlPhaseRelation relation);
+  SyncCoverGraphResult
+  setControlSuccessorRelation(SyncCoverControlId control,
+                              SyncCoverControlSuccessorRelation relation);
   SyncCoverGraphResult setScopeTimeline(SyncCoverScopeId scope,
                                         SyncCoverTimelineInterval timeline);
   SyncCoverGraphResult
@@ -333,12 +413,13 @@ public:
                                                       SyncCoverEdgeKind kind);
   SyncCoverGraphResult
   setBlockingTargetedBarrierResources(std::vector<std::uint32_t> resources);
-  SyncCoverGraphResult setTargetCompletionResources(
-      SyncCoverTargetCompletionResources resources);
+  SyncCoverGraphResult
+  setTargetCompletionResources(SyncCoverTargetCompletionResources resources);
   bool supportsBlockingTargetedBarrier(std::uint32_t resource) const;
-  SyncCoverGraphResult setBlockingTargetedBarrierPrefix(
-      std::uint32_t resource, SyncCoverNodeId physicalTarget,
-      std::vector<SyncCoverNodeId> issuedSources);
+  SyncCoverGraphResult
+  setBlockingTargetedBarrierPrefix(std::uint32_t resource,
+                                   SyncCoverNodeId physicalTarget,
+                                   std::vector<SyncCoverNodeId> issuedSources);
   const std::map<std::pair<std::uint32_t, SyncCoverNodeId>,
                  std::vector<SyncCoverNodeId>> &
   getBlockingTargetedBarrierPrefixes() const {
@@ -349,9 +430,9 @@ public:
   SyncCoverGraphResult setPhysicalExit(SyncCoverNodeId node,
                                        SyncCoverNodeId physicalExit);
   SyncCoverGraphError canonicalizeCompletionEdge(SyncCoverEdge &edge) const;
-  SyncCoverGraphResult addStorageDomain(
-      SyncCoverStorageDomainRole role =
-          SyncCoverStorageDomainRole::Unspecified);
+  SyncCoverGraphResult
+  addStorageDomain(SyncCoverStorageDomainRole role =
+                       SyncCoverStorageDomainRole::Unspecified);
   SyncCoverGraphResult
   addStorageAccess(SyncCoverNodeId node, SyncCoverStorageDomainId domain,
                    SyncCoverStorageAccessFamilyId family,
@@ -367,6 +448,8 @@ public:
       std::uint32_t targetResource,
       std::vector<SyncCoverStorageDomainId> storageDomains,
       std::vector<SyncCoverDemandId> demands);
+  SyncCoverGraphResult
+  addBasicOwnershipCertificate(SyncCoverBasicOwnershipCertificate certificate);
   SyncCoverGraphResult freezeStructure();
 
   const std::vector<SyncCoverNode> &getNodes() const { return nodes_; }
@@ -386,6 +469,10 @@ public:
   const std::vector<SyncCoverTargetCompletionCertificate> &
   getTargetCompletionCertificates() const {
     return targetCompletionCertificates_;
+  }
+  const std::vector<SyncCoverBasicOwnershipCertificate> &
+  getBasicOwnershipCertificates() const {
+    return basicOwnershipCertificates_;
   }
   bool hasTargetCompletionCertificate(SyncCoverTargetCompletionKind kind,
                                       SyncCoverNodeId completionNode,
@@ -439,6 +526,7 @@ private:
   SyncCoverGraphResult validateEdges() const;
   SyncCoverGraphResult validateStorage() const;
   SyncCoverGraphResult validateTargetCompletionCertificates() const;
+  SyncCoverGraphResult validateBasicOwnershipCertificates() const;
 
   std::vector<SyncCoverNode> nodes_;
   std::vector<SyncCoverEdge> edges_;
@@ -448,8 +536,8 @@ private:
   std::vector<SyncCoverStorageWitness> storageWitnesses_;
   std::vector<SyncCoverTargetCompletionCertificate>
       targetCompletionCertificates_;
-  std::optional<SyncCoverTargetCompletionResources>
-      targetCompletionResources_;
+  std::vector<SyncCoverBasicOwnershipCertificate> basicOwnershipCertificates_;
+  std::optional<SyncCoverTargetCompletionResources> targetCompletionResources_;
   std::map<std::uint32_t, SyncCoverEdgeKind> resourceRecurrenceCarryKinds_;
   std::vector<std::uint32_t> blockingTargetedBarrierResources_;
   std::map<std::pair<std::uint32_t, SyncCoverNodeId>,
