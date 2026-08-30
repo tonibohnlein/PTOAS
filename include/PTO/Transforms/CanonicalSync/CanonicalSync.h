@@ -213,6 +213,11 @@ struct CanonicalSyncComparisonReport {
   std::size_t storageLifecycleEpochs = 0;
   std::size_t storageLifecycleEdges = 0;
   std::size_t storageLifecycleDemandIncidences = 0;
+  std::size_t storageLifecycleSccs = 0;
+  std::size_t storageLifecycleCyclicSccs = 0;
+  std::size_t storageLifecycleReadyReleaseSccs = 0;
+  std::size_t storageLifecycleSccTransfers = 0;
+  std::size_t storageLifecycleMaximumSccEpochs = 0;
   bool storageLifecycleTruncated = false;
   std::size_t demands = 0;
   std::size_t uniqueDemandRows = 0;

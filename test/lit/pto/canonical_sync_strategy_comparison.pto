@@ -165,6 +165,7 @@
 // CORE-REPORT-DAG: "conflict_core_repair_enabled": false
 // CORE-REPORT-DAG: "storage_lifecycle_analysis_enabled": true
 // CORE-REPORT-DAG: "storage_lifecycle_components": {{[1-9][0-9]*}}
+// CORE-REPORT-DAG: "storage_lifecycle_sccs": {{[1-9][0-9]*}}
 // CORE-REPORT-DAG: "storage_lifecycle_truncated": false
 // CORE-REPORT-DAG: "selection_basis_rows":
 // CORE-REPORT-DAG: "singleton_candidates_covering_multiple_rows":

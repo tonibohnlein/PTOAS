@@ -8,6 +8,7 @@
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverStorageLifecycle.h"
 
+#include <algorithm>
 #include <iostream>
 #include <string_view>
 
@@ -132,7 +133,7 @@ bool testExactLifecycleIndex() {
       takeIndex(graph.addStorageWitness(write0Access, read0Access), passed,
                 "add ready witness");
   const SyncCoverStorageWitnessId release =
-      takeIndex(graph.addStorageWitness(read0Access, write1Access), passed,
+      takeIndex(graph.addStorageWitness(read0Access, write0Access), passed,
                 "add release witness");
   const SyncCoverStorageWitnessId exclusion =
       takeIndex(graph.addStorageWitness(write0Access, write1Access), passed,
@@ -149,7 +150,7 @@ bool testExactLifecycleIndex() {
                   "add ready demand");
   passed &= check(
       graph.addDemand(makeMemoryDemand(
-          read0, write1, SyncCoverDemandKind::MemoryWAR, release, loop, 1)),
+          read0, write0, SyncCoverDemandKind::MemoryWAR, release, loop, 1)),
       "add release demand");
   passed &= check(
       graph.addDemand(makeMemoryDemand(
@@ -178,7 +179,11 @@ bool testExactLifecycleIndex() {
                  statistics.ineligibleWitnesses == 1 &&
                  statistics.components == 1 && statistics.slots == 2 &&
                  statistics.epochs == 5 && statistics.edges == 4 &&
-                 statistics.demandIncidences == 4,
+                 statistics.demandIncidences == 4 && statistics.sccs == 4 &&
+                 statistics.cyclicSccs == 1 &&
+                 statistics.readyReleaseSccs == 1 &&
+                 statistics.sccTransfers == 2 &&
+                 statistics.maximumSccEpochs == 2,
              "report exact retained and rejected lifecycle structure")) {
     return false;
   }
@@ -210,6 +215,18 @@ bool testExactLifecycleIndex() {
                           std::vector<SyncCoverStorageAccessId>(
                               {write2Access, read2Access}),
                   "deduplicate deterministic access epochs per exact slot");
+  const auto readyReleaseKinds = readyBit | releaseBit;
+  const bool hasReadyReleaseCycle = std::any_of(
+      component.sccs.begin(), component.sccs.end(),
+      [&](const SyncCoverStorageLifecycleScc &scc) {
+        return scc.cyclic && scc.epochs.size() == 2 &&
+               (scc.kinds & readyReleaseKinds) == readyReleaseKinds;
+      });
+  passed &= check(hasReadyReleaseCycle,
+                  "detect the exact ready/release lifecycle SCC");
+  passed &= check(component.epochSccs.size() == component.epochs.size() &&
+                      component.sccTransfers.size() == 2,
+                  "publish the deterministic SCC condensation mapping");
 
   SyncCoverStorageLifecycleLimits exact;
   exact.maximumWorkUnits = statistics.workUnits;
@@ -218,6 +235,7 @@ bool testExactLifecycleIndex() {
   exact.maximumEpochs = statistics.epochs;
   exact.maximumEdges = statistics.edges;
   exact.maximumDemandIncidences = statistics.demandIncidences;
+  exact.maximumSccs = statistics.sccs;
   passed &=
       check(buildSyncCoverStorageLifecycleIndex(graph, exact).isComplete(),
             "accept every lifecycle bound exactly");
@@ -230,6 +248,16 @@ bool testExactLifecycleIndex() {
           truncated.getComponents().empty(),
       "discard the complete staged index one edge below its exact bound");
   exact.maximumEdges = statistics.edges;
+  --exact.maximumSccs;
+  const SyncCoverStorageLifecycleIndex sccTruncated =
+      buildSyncCoverStorageLifecycleIndex(graph, exact);
+  passed &= check(
+      sccTruncated.getError() ==
+              SyncCoverStorageLifecycleError::LimitExceeded &&
+          sccTruncated.getStatistics().truncated &&
+          sccTruncated.getComponents().empty(),
+      "discard every SCC when its retained bound is exhausted");
+  exact.maximumSccs = statistics.sccs;
   --exact.maximumWorkUnits;
   const SyncCoverStorageLifecycleIndex workTruncated =
       buildSyncCoverStorageLifecycleIndex(graph, exact);

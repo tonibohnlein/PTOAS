@@ -8,6 +8,8 @@
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverStorageLifecycle.h"
 
+#include "SyncCoverStorageLifecycleInternal.h"
+
 #include <algorithm>
 #include <limits>
 #include <map>
@@ -33,31 +35,9 @@ struct PendingComponent {
   std::set<SyncCoverDemandId> demands;
 };
 
-class LifecycleWorkBudget {
-public:
-  LifecycleWorkBudget(std::size_t limit, std::size_t &used)
-      : limit_(limit), used_(used) {}
-
-  bool consume(std::size_t amount = 1) {
-    if (amount > limit_ - used_) {
-      failed_ = true;
-      return false;
-    }
-    used_ += amount;
-    return true;
-  }
-
-  bool failed() const { return failed_; }
-
-private:
-  std::size_t limit_;
-  std::size_t &used_;
-  bool failed_ = false;
-};
-
 /// Conservatively charge an ordered-container operation as a linear search.
 /// This intentionally over-approximates std::map/std::set logarithmic work.
-bool consumeOrderedOperation(LifecycleWorkBudget &budget,
+bool consumeOrderedOperation(SyncCoverStorageLifecycleWorkBudget &budget,
                              std::size_t elementCount) {
   return budget.consume(elementCount) && budget.consume();
 }
@@ -65,7 +45,7 @@ bool consumeOrderedOperation(LifecycleWorkBudget &budget,
 /// The graph LCA walks at most four full parent chains; finding the nearest
 /// enclosing loop walks at most one more. Reserve their complete portable
 /// upper bound before calling either graph query.
-bool consumeScopeOwnerWork(LifecycleWorkBudget &budget,
+bool consumeScopeOwnerWork(SyncCoverStorageLifecycleWorkBudget &budget,
                            std::size_t scopeCount) {
   for (unsigned walk = 0; walk < 5; ++walk) {
     if (!budget.consume(scopeCount)) {
@@ -145,7 +125,7 @@ std::optional<SyncCoverScopeId>
 getLifecycleOwner(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
                   const SyncCoverStorageAccess &source,
                   const SyncCoverStorageAccess &target,
-                  LifecycleWorkBudget &budget) {
+                  SyncCoverStorageLifecycleWorkBudget &budget) {
   if (demand.distance != 0) {
     return budget.consume() ? std::optional<SyncCoverScopeId>(demand.scope)
                             : std::nullopt;
@@ -175,6 +155,11 @@ SyncCoverStorageLifecycleIndex mlir::pto::buildSyncCoverStorageLifecycleIndex(
     statistics.epochs = 0;
     statistics.edges = 0;
     statistics.demandIncidences = 0;
+    statistics.sccs = 0;
+    statistics.cyclicSccs = 0;
+    statistics.readyReleaseSccs = 0;
+    statistics.sccTransfers = 0;
+    statistics.maximumSccEpochs = 0;
     statistics.truncated =
         error == SyncCoverStorageLifecycleError::LimitExceeded;
     result.statistics_ = statistics;
@@ -184,7 +169,8 @@ SyncCoverStorageLifecycleIndex mlir::pto::buildSyncCoverStorageLifecycleIndex(
   const bool invalidLimit =
       limits.maximumWorkUnits == 0 || limits.maximumComponents == 0 ||
       limits.maximumSlots == 0 || limits.maximumEpochs == 0 ||
-      limits.maximumEdges == 0 || limits.maximumDemandIncidences == 0;
+      limits.maximumEdges == 0 || limits.maximumDemandIncidences == 0 ||
+      limits.maximumSccs == 0;
   if (invalidLimit) {
     return fail({}, SyncCoverStorageLifecycleError::InvalidLimit);
   }
@@ -200,8 +186,8 @@ SyncCoverStorageLifecycleIndex mlir::pto::buildSyncCoverStorageLifecycleIndex(
   const std::vector<SyncCoverDemand> &demands = graph.getDemands();
   std::map<ComponentKey, PendingComponent> pending;
   SyncCoverStorageLifecycleStatistics statistics;
-  LifecycleWorkBudget workBudget(limits.maximumWorkUnits,
-                                 statistics.workUnits);
+  SyncCoverStorageLifecycleWorkBudget workBudget(limits.maximumWorkUnits,
+                                                 statistics.workUnits);
   std::size_t totalSlots = 0;
   std::size_t totalEpochs = 0;
   std::size_t totalEdges = 0;
@@ -379,6 +365,12 @@ SyncCoverStorageLifecycleIndex mlir::pto::buildSyncCoverStorageLifecycleIndex(
 
   result.components_.reserve(pending.size());
   for (auto &[key, entry] : pending) {
+    const SyncCoverStorageLifecycleError sccError =
+        buildSyncCoverStorageLifecycleSccs(entry.component, limits, statistics,
+                                           workBudget);
+    if (sccError != SyncCoverStorageLifecycleError::None) {
+      return fail(statistics, sccError);
+    }
     const bool publicationWorkAvailable =
         workBudget.consume() && workBudget.consume(entry.demands.size());
     if (!publicationWorkAvailable) {

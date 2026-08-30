@@ -1851,6 +1851,13 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
     report.storageLifecycleEdges = lifecycleStatistics.edges;
     report.storageLifecycleDemandIncidences =
         lifecycleStatistics.demandIncidences;
+    report.storageLifecycleSccs = lifecycleStatistics.sccs;
+    report.storageLifecycleCyclicSccs = lifecycleStatistics.cyclicSccs;
+    report.storageLifecycleReadyReleaseSccs =
+        lifecycleStatistics.readyReleaseSccs;
+    report.storageLifecycleSccTransfers = lifecycleStatistics.sccTransfers;
+    report.storageLifecycleMaximumSccEpochs =
+        lifecycleStatistics.maximumSccEpochs;
     report.storageLifecycleTruncated = lifecycleStatistics.truncated;
   }
   report.uniqueDemandRows = problem.getObligationDemands().size();

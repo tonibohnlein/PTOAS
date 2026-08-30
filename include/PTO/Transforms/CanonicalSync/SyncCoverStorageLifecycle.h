@@ -24,6 +24,7 @@ using SyncCoverStorageLifecycleComponentId = std::size_t;
 using SyncCoverStorageLifecycleSlotId = std::size_t;
 using SyncCoverStorageLifecycleEpochId = std::size_t;
 using SyncCoverStorageLifecycleEdgeId = std::size_t;
+using SyncCoverStorageLifecycleSccId = std::size_t;
 
 enum class SyncCoverStorageLifecycleEdgeKind : std::uint8_t {
   Ready = 1,
@@ -72,6 +73,25 @@ struct SyncCoverStorageLifecycleEdge {
   unsigned distance = 0;
 };
 
+/// One strongly connected storage-lifecycle region. A cyclic SCC containing
+/// both ready and release edges is the neutral input to later protocol
+/// synthesis; it is not itself evidence that a physical recipe is legal.
+struct SyncCoverStorageLifecycleScc {
+  SyncCoverStorageLifecycleSccId id = 0;
+  std::vector<SyncCoverStorageLifecycleEpochId> epochs;
+  std::vector<SyncCoverStorageLifecycleEdgeId> internalEdges;
+  SyncCoverStorageLifecycleEdgeKindMask kinds = 0;
+  unsigned maximumDistance = 0;
+  bool cyclic = false;
+};
+
+/// One obligation crossing between SCCs in the component condensation DAG.
+struct SyncCoverStorageLifecycleSccTransfer {
+  SyncCoverStorageLifecycleEdgeId edge = 0;
+  SyncCoverStorageLifecycleSccId source = 0;
+  SyncCoverStorageLifecycleSccId target = 0;
+};
+
 /// Target-neutral exact-storage component. The family is the frontend storage
 /// root; multiple exact slots from that root can participate in one component.
 /// Target recipe policy and ownership vocabulary are deliberately absent.
@@ -84,6 +104,9 @@ struct SyncCoverStorageLifecycleComponent {
   std::vector<SyncCoverStorageLifecycleEpoch> epochs;
   std::vector<SyncCoverStorageLifecycleEdge> edges;
   std::vector<SyncCoverDemandId> demands;
+  std::vector<SyncCoverStorageLifecycleScc> sccs;
+  std::vector<SyncCoverStorageLifecycleSccId> epochSccs;
+  std::vector<SyncCoverStorageLifecycleSccTransfer> sccTransfers;
 };
 
 struct SyncCoverStorageLifecycleLimits {
@@ -95,6 +118,7 @@ struct SyncCoverStorageLifecycleLimits {
   std::size_t maximumEpochs = 1U << 20;
   std::size_t maximumEdges = 1U << 20;
   std::size_t maximumDemandIncidences = 1U << 20;
+  std::size_t maximumSccs = 1U << 20;
 };
 
 struct SyncCoverStorageLifecycleStatistics {
@@ -106,6 +130,11 @@ struct SyncCoverStorageLifecycleStatistics {
   std::size_t epochs = 0;
   std::size_t edges = 0;
   std::size_t demandIncidences = 0;
+  std::size_t sccs = 0;
+  std::size_t cyclicSccs = 0;
+  std::size_t readyReleaseSccs = 0;
+  std::size_t sccTransfers = 0;
+  std::size_t maximumSccEpochs = 0;
   bool truncated = false;
 };
 

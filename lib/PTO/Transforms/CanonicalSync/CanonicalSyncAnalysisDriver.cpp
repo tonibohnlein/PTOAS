@@ -280,7 +280,8 @@ LogicalResult ProgramBuilder::validateInput() {
        lifecycleLimits.maximumSlots == 0 ||
        lifecycleLimits.maximumEpochs == 0 ||
        lifecycleLimits.maximumEdges == 0 ||
-       lifecycleLimits.maximumDemandIncidences == 0);
+       lifecycleLimits.maximumDemandIncidences == 0 ||
+       lifecycleLimits.maximumSccs == 0);
   if (invalidLimits || invalidLifecycleLimits) {
     return function_.emitError(
         "canonical sync analysis limits must be positive");

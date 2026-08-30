@@ -622,9 +622,13 @@ loop, retains recurrence distance and original demand provenance, and labels
 edges as ready, release, or exclusion obligations. It is reporting-only: it
 does not add cover columns or change the selected plan. Partial or symbolic
 overlaps are deliberately omitted until they have a sound compact
-representation. Independent work, component, slot, epoch, edge, and
-demand-incidence limits make construction transactional; limit exhaustion
-reports truncation and exposes no partial index to later synthesis.
+representation. A compact CSR traversal partitions each group into stable
+strongly connected components and records the condensation transfers. A
+cyclic SCC containing both ready and release edges is only a neutral input to
+later protocol synthesis; it does not certify a target recipe. Independent
+work, component, slot, epoch, edge, demand-incidence, and SCC limits make
+construction transactional; limit exhaustion reports truncation and exposes
+no partial index to later synthesis.
 
 This keeps direct columns as the correctness basis while allowing event-ID
 scarcity to motivate generic channel synthesis. Ordinary pair columns remain a
