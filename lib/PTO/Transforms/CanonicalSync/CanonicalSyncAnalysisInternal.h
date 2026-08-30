@@ -63,6 +63,17 @@ struct HazardWitnessPhaseState {
   std::uint16_t waw = 0;
 };
 
+struct OrdinalPairPhaseState {
+  unsigned first = 0;
+  unsigned second = 0;
+  std::uint16_t sourcePhases = 1;
+};
+
+struct HazardWitnessPhaseCandidate {
+  SyncCoverStorageWitnessId witness = 0;
+  std::uint16_t sourcePhases = 0;
+};
+
 struct HazardWitnesses {
   std::vector<HazardWitnessPhaseState> states;
 };
@@ -148,7 +159,7 @@ private:
   LogicalResult buildStorageConflictIndex();
   bool gmAccessesAreNoAlias(const ExtractedAccess &first,
                             const ExtractedAccess &second) const;
-  FailureOr<std::vector<std::pair<unsigned, unsigned>>> getOrdinalPairs(
+  FailureOr<std::vector<OrdinalPairPhaseState>> getOrdinalPairs(
       const ExtractedAccess &first, const ExtractedAccess &second,
       Operation *loop, unsigned distance,
       const std::vector<std::size_t> *reachableSourcePhases = nullptr,
@@ -190,9 +201,9 @@ private:
   buildRecurrencePhaseOrbit(SyncCoverScopeId loopScope,
                             const SyncCoverGuard &sourceGuard,
                             const SyncCoverGuard &targetGuard);
-  std::vector<std::size_t> getReachableRecurrenceSourcePhases(
-      const RecurrencePhaseOrbit &orbit, const SyncCoverGuard &sourceGuard,
-      const SyncCoverGuard &targetGuard, unsigned distance) const;
+  std::vector<std::size_t>
+  getReachableRecurrenceSourcePhases(const RecurrencePhaseOrbit &orbit,
+                                     unsigned distance) const;
   FailureOr<unsigned>
   maximumRecurrenceDistance(SyncCoverNodeId source, SyncCoverNodeId target,
                             const RecurrencePhaseOrbit &orbit);
@@ -204,8 +215,9 @@ private:
       std::size_t phasePeriod = 1);
   LogicalResult addDemand(SyncCoverNodeId source, SyncCoverNodeId target,
                           SyncCoverScopeId scope, unsigned distance,
-                          SyncCoverDemandKind kind,
-                          std::vector<SyncCoverStorageWitnessId> witnesses);
+                          std::vector<SyncCoverDemandKind> kinds,
+                          std::vector<SyncCoverStorageWitnessId> witnesses,
+                          std::size_t originalDemandCount = 1);
 
   func::FuncOp function_;
   const CanonicalSyncAnalysisOptions &options_;

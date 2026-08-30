@@ -21,6 +21,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <limits>
@@ -2027,6 +2028,67 @@ bool testAnalysisLimitFailsClosed() {
          check(sawLimit, "diagnose the exhausted analysis bound");
 }
 
+bool testCanonicalHazardsAggregateBeforeGraphMutation() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @aggregate_access_batches(
+          %gm: !pto.partition_tensor_view<1x512xf32>,
+          %executed: vector<4xi16>) {
+        %base = arith.constant 0 : i64
+        %src0 = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x128xf32>
+        %src1 = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x128xf32>
+        %src2 = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x128xf32>
+        %src3 = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x128xf32>
+        %tmp = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x512xf32>
+        %dst = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x512xf32>
+        %target = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x512xf32>
+        pto.tmrgsort ins(%src0, %src1, %src2, %src3, %tmp
+            {exhausted = false} :
+            !pto.tile_buf<vec, 1x128xf32>,
+            !pto.tile_buf<vec, 1x128xf32>,
+            !pto.tile_buf<vec, 1x128xf32>,
+            !pto.tile_buf<vec, 1x128xf32>,
+            !pto.tile_buf<vec, 1x512xf32>)
+          outs(%dst, %executed : !pto.tile_buf<vec, 1x512xf32>,
+                                vector<4xi16>)
+        pto.tload ins(%gm : !pto.partition_tensor_view<1x512xf32>)
+                  outs(%target : !pto.tile_buf<vec, 1x512xf32>)
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module),
+             "parse canonical hazard aggregation fixture")) {
+    return false;
+  }
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("aggregate_access_batches"));
+  if (!check(succeeded(program), "build aggregated canonical hazards")) {
+    return false;
+  }
+  const std::vector<SyncCoverDemand> &demands =
+      program->getGraph().getDemands();
+  const bool oneCanonicalDemand = demands.size() == 1;
+  if (!check(oneCanonicalDemand,
+             "coalesce all access batches into one canonical demand")) {
+    return false;
+  }
+  const SyncCoverDemand &demand = demands.front();
+  const bool hasWar = llvm::is_contained(demand.provenanceKinds,
+                                         SyncCoverDemandKind::MemoryWAR);
+  const bool hasWaw = llvm::is_contained(demand.provenanceKinds,
+                                         SyncCoverDemandKind::MemoryWAW);
+  return check(hasWar && hasWaw && demand.provenanceKinds.size() == 2,
+               "retain every aggregated hazard kind") &&
+         check(demand.storageWitnesses.size() == 6,
+               "retain every physical witness from the access batches") &&
+         check(demand.originalDemandCount == 2,
+               "mutate the graph once with complete hazard provenance");
+}
+
 bool testFailClosedInputs() {
   constexpr std::string_view malformedNoAlias = R"mlir(
     module attributes {pto.target_arch = "a3"} {
@@ -3148,6 +3210,31 @@ bool testPhaseAwareRecurrenceDistances() {
         }
         return
       }
+      func.func @phase_slot_successor_gaps(
+          %limit: index, %src: !pto.partition_tensor_view<16x16xf32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %c2 = arith.constant 2 : index
+        %c4 = arith.constant 4 : index
+        %base = arith.constant 0 : i64
+        %buffer = pto.alloc_multi_tile addr = %base
+            : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+        scf.for %i = %c0 to %limit step %c1 {
+          %phase = arith.remsi %i, %c4 : index
+          %active = arith.cmpi ne, %phase, %c0 : index
+          %slot_index = arith.remui %i, %c2 : index
+          %slot = pto.multi_tile_get %buffer[%slot_index]
+              : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+             -> !pto.tile_buf<vec, 16x16xf32>
+          scf.if %active {
+            pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                      outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+            pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                     outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+          }
+        }
+        return
+      }
       func.func @unsupported_periodic(
           %limit: index, %src: !pto.partition_tensor_view<16x16xf32>,
           %slot: !pto.tile_buf<vec, 16x16xf32>) {
@@ -3204,6 +3291,41 @@ bool testPhaseAwareRecurrenceDistances() {
                  outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
         return
       }
+      func.func @phase_slot_successor_gaps_unrolled(
+          %src: !pto.partition_tensor_view<16x16xf32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %base = arith.constant 0 : i64
+        %buffer = pto.alloc_multi_tile addr = %base
+            : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+        %slot0 = pto.multi_tile_get %buffer[%c0]
+            : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+           -> !pto.tile_buf<vec, 16x16xf32>
+        %slot1 = pto.multi_tile_get %buffer[%c1]
+            : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+           -> !pto.tile_buf<vec, 16x16xf32>
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot1 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%slot1 : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%slot1 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot0 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%slot0 : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%slot0 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot1 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%slot1 : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%slot1 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot1 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%slot1 : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%slot1 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot0 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%slot0 : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%slot0 : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
     }
   )mlir",
                                                              &context);
@@ -3229,17 +3351,23 @@ bool testPhaseAwareRecurrenceDistances() {
       module->lookupSymbol<func::FuncOp>("joint_controls"));
   FailureOr<CanonicalSyncProgram> jointHorizon = buildCanonicalSyncProgram(
       module->lookupSymbol<func::FuncOp>("joint_phase_slot_horizon"));
+  FailureOr<CanonicalSyncProgram> phaseSlotGaps = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("phase_slot_successor_gaps"));
   FailureOr<CanonicalSyncProgram> unrolled = buildCanonicalSyncProgram(
       module->lookupSymbol<func::FuncOp>("same_parity_unrolled"));
   FailureOr<CanonicalSyncProgram> multipleGapsUnrolled =
       buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>(
           "multiple_successor_gaps_unrolled"));
-  const bool allBuilt = succeeded(same) && succeeded(opposite) &&
-                        succeeded(unreachable) &&
-                        succeeded(phaseRestrictedSlots) &&
-                        succeeded(multipleGaps) && succeeded(periodSixteen) &&
-                        succeeded(jointControls) && succeeded(jointHorizon) &&
-                        succeeded(unrolled) && succeeded(multipleGapsUnrolled);
+  FailureOr<CanonicalSyncProgram> phaseSlotGapsUnrolled =
+      buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>(
+          "phase_slot_successor_gaps_unrolled"));
+  const bool allBuilt =
+      succeeded(same) && succeeded(opposite) && succeeded(unreachable) &&
+      succeeded(phaseRestrictedSlots) && succeeded(multipleGaps) &&
+      succeeded(periodSixteen) && succeeded(jointControls) &&
+      succeeded(jointHorizon) && succeeded(phaseSlotGaps) &&
+      succeeded(unrolled) && succeeded(multipleGapsUnrolled) &&
+      succeeded(phaseSlotGapsUnrolled);
   if (!check(allBuilt, "build phase-aware recurrence fixtures")) {
     return false;
   }
@@ -3266,12 +3394,47 @@ bool testPhaseAwareRecurrenceDistances() {
             "correlate coprime periodic controls in one joint orbit") &&
       check(hasDistance(*jointHorizon, 240),
             "inspect the complete phase-by-slot recurrence horizon") &&
+      check(!hasDistance(*phaseSlotGaps, 1) && hasDistance(*phaseSlotGaps, 2) &&
+                hasDistance(*phaseSlotGaps, 4),
+            "retain distinct phase-to-slot successor distances") &&
       check(llvm::none_of(unreachable->getGraph().getDemands(),
                           [](const SyncCoverDemand &demand) {
                             return demand.distance != 0;
                           }),
             "exclude recurrences in an unreachable modulo alternative");
   if (!basicChecks) {
+    return false;
+  }
+  const auto witnessOrdinalsAtDistance = [](const CanonicalSyncProgram &program,
+                                            unsigned distance) {
+    std::set<std::pair<std::uint32_t, std::uint32_t>> result;
+    const SyncCoverGraph &graph = program.getGraph();
+    for (const SyncCoverDemand &demand : graph.getDemands()) {
+      if (demand.distance != distance) {
+        continue;
+      }
+      for (SyncCoverStorageWitnessId witnessId : demand.storageWitnesses) {
+        const SyncCoverStorageWitness &witness =
+            graph.getStorageWitnesses()[witnessId];
+        const SyncCoverStorageAccess &sourceAccess =
+            graph.getStorageAccesses()[witness.sourceAccess];
+        const SyncCoverStorageAccess &targetAccess =
+            graph.getStorageAccesses()[witness.targetAccess];
+        if (sourceAccess.addressOrdinal && targetAccess.addressOrdinal) {
+          result.insert(
+              {*sourceAccess.addressOrdinal, *targetAccess.addressOrdinal});
+        }
+      }
+    }
+    return result;
+  };
+  const std::set<std::pair<std::uint32_t, std::uint32_t>> slotOne = {{1, 1}};
+  const std::set<std::pair<std::uint32_t, std::uint32_t>> slotZero = {{0, 0}};
+  const bool witnessesPreserveSourcePhases =
+      witnessOrdinalsAtDistance(*phaseSlotGaps, 2) == slotOne &&
+      witnessOrdinalsAtDistance(*phaseSlotGaps, 4) == slotZero;
+  if (!check(witnessesPreserveSourcePhases,
+             "preserve the source-phase mask of each physical witness")) {
     return false;
   }
 
@@ -3417,8 +3580,8 @@ bool testPhaseAwareRecurrenceDistances() {
   using RecurrenceKey =
       std::tuple<unsigned, unsigned, SyncCoverDemandKind, unsigned,
                  AddressSpace, std::uint64_t, std::uint64_t, std::uint64_t,
-                 std::uint64_t, std::uint32_t, std::uint32_t,
-                 SyncCoverStorageAccessMode, SyncCoverStorageAccessMode>;
+                 std::uint64_t, SyncCoverStorageAccessMode,
+                 SyncCoverStorageAccessMode>;
   struct ObligationSnapshot {
     std::map<RecurrenceKey, unsigned> minimumDistances;
     std::map<RecurrenceKey, bool> covered;
@@ -3480,11 +3643,15 @@ bool testPhaseAwareRecurrenceDistances() {
     }
     return result;
   };
+  using WitnessPhaseFilter =
+      std::function<bool(const SyncCoverStorageAccess &,
+                         const SyncCoverStorageAccess &, unsigned, unsigned)>;
   const auto collectSnapshot = [&](const CanonicalSyncProgram &program,
                                    unsigned period,
                                    const std::map<Operation *, unsigned>
                                        *unrolledIterations,
-                                   const SyncCoverDemandSet &covered) {
+                                   const SyncCoverDemandSet &covered,
+                                   const WitnessPhaseFilter &phaseFilter) {
     ObligationSnapshot result;
     const SyncCoverGraph &graph = program.getGraph();
     const auto guardMatches = [&](const SyncCoverGuard &guard,
@@ -3578,9 +3745,11 @@ bool testPhaseAwareRecurrenceDistances() {
           }
           const AddressSpace space =
               program.getStorageSpaces()[sourceAccess.domain];
-          const std::uint32_t missingOrdinal =
-              std::numeric_limits<std::uint32_t>::max();
           for (unsigned sourcePhase : sourcePhases) {
+            if (phaseFilter && !phaseFilter(sourceAccess, targetAccess,
+                                            sourcePhase, distance)) {
+              continue;
+            }
             const RecurrenceKey key{
                 *sourceRole,
                 *targetRole,
@@ -3591,8 +3760,6 @@ bool testPhaseAwareRecurrenceDistances() {
                 sourceAccess.extent.end,
                 targetAccess.extent.begin,
                 targetAccess.extent.end,
-                sourceAccess.addressOrdinal.value_or(missingOrdinal),
-                targetAccess.addressOrdinal.value_or(missingOrdinal),
                 sourceAccess.mode,
                 targetAccess.mode};
             auto [position, inserted] =
@@ -3617,41 +3784,75 @@ bool testPhaseAwareRecurrenceDistances() {
       oracleCoverage(*multipleGaps);
   const std::optional<SyncCoverDemandSet> multipleGapUnrolledCoverage =
       oracleCoverage(*multipleGapsUnrolled);
+  const std::optional<SyncCoverDemandSet> phaseSlotGapCoverage =
+      oracleCoverage(*phaseSlotGaps);
+  const std::optional<SyncCoverDemandSet> phaseSlotGapUnrolledCoverage =
+      oracleCoverage(*phaseSlotGapsUnrolled);
   if (!check(sameCoverage && unrolledCoverage && multipleGapCoverage &&
-                 multipleGapUnrolledCoverage,
+                 multipleGapUnrolledCoverage && phaseSlotGapCoverage &&
+                 phaseSlotGapUnrolledCoverage,
              "ground exact semantic coverage for explicit unroll checks")) {
     return false;
   }
   const std::array<unsigned, 3> sameIterations = {0, 2, 4};
   const std::array<unsigned, 4> multipleGapIterations = {1, 2, 4, 5};
+  const std::array<unsigned, 5> phaseSlotGapIterations = {1, 2, 3, 5, 6};
   const std::map<Operation *, unsigned> sameUnrolledIterations =
       buildIterationMap(*unrolled, sameIterations);
   const std::map<Operation *, unsigned> multipleGapUnrolledIterations =
       buildIterationMap(*multipleGapsUnrolled, multipleGapIterations);
+  const std::map<Operation *, unsigned> phaseSlotGapUnrolledIterations =
+      buildIterationMap(*phaseSlotGapsUnrolled, phaseSlotGapIterations);
+  const WitnessPhaseFilter allWitnessPhases;
+  const WitnessPhaseFilter alternatingSlotPhase =
+      [](const SyncCoverStorageAccess &sourceAccess,
+         const SyncCoverStorageAccess &targetAccess, unsigned sourcePhase,
+         unsigned distance) {
+        const std::uint64_t sourceSize =
+            sourceAccess.extent.end - sourceAccess.extent.begin;
+        const std::uint64_t targetSize =
+            targetAccess.extent.end - targetAccess.extent.begin;
+        const std::uint64_t expectedSource = (sourcePhase % 2) * sourceSize;
+        const std::uint64_t expectedTarget =
+            ((sourcePhase + distance) % 2) * targetSize;
+        return sourceAccess.extent.begin == expectedSource &&
+               targetAccess.extent.begin == expectedTarget;
+      };
   const ObligationSnapshot sameLoop =
-      collectSnapshot(*same, 2, nullptr, *sameCoverage);
+      collectSnapshot(*same, 2, nullptr, *sameCoverage, allWitnessPhases);
   const ObligationSnapshot sameReference =
-      collectSnapshot(*unrolled, 2, &sameUnrolledIterations, *unrolledCoverage);
-  const ObligationSnapshot multipleGapLoop =
-      collectSnapshot(*multipleGaps, 3, nullptr, *multipleGapCoverage);
+      collectSnapshot(*unrolled, 2, &sameUnrolledIterations, *unrolledCoverage,
+                      allWitnessPhases);
+  const ObligationSnapshot multipleGapLoop = collectSnapshot(
+      *multipleGaps, 3, nullptr, *multipleGapCoverage, allWitnessPhases);
   const ObligationSnapshot multipleGapReference =
       collectSnapshot(*multipleGapsUnrolled, 3, &multipleGapUnrolledIterations,
-                      *multipleGapUnrolledCoverage);
+                      *multipleGapUnrolledCoverage, allWitnessPhases);
+  const ObligationSnapshot phaseSlotGapLoop = collectSnapshot(
+      *phaseSlotGaps, 4, nullptr, *phaseSlotGapCoverage, alternatingSlotPhase);
+  const ObligationSnapshot phaseSlotGapReference = collectSnapshot(
+      *phaseSlotGapsUnrolled, 4, &phaseSlotGapUnrolledIterations,
+      *phaseSlotGapUnrolledCoverage, alternatingSlotPhase);
   const auto allCovered = [](const ObligationSnapshot &snapshot) {
     return llvm::all_of(snapshot.covered,
                         [](const auto &entry) { return entry.second; });
   };
   return check(!sameLoop.minimumDistances.empty() &&
-                   !multipleGapLoop.minimumDistances.empty(),
+                   !multipleGapLoop.minimumDistances.empty() &&
+                   !phaseSlotGapLoop.minimumDistances.empty(),
                "construct witness-level phase-aware loop obligations") &&
          check(sameLoop.minimumDistances == sameReference.minimumDistances &&
                    multipleGapLoop.minimumDistances ==
-                       multipleGapReference.minimumDistances,
+                       multipleGapReference.minimumDistances &&
+                   phaseSlotGapLoop.minimumDistances ==
+                       phaseSlotGapReference.minimumDistances,
                "match witness-level successor obligations from explicit "
                "unrollings") &&
          check(sameLoop.covered == sameReference.covered &&
                    multipleGapLoop.covered == multipleGapReference.covered &&
-                   allCovered(sameLoop) && allCovered(multipleGapLoop),
+                   phaseSlotGapLoop.covered == phaseSlotGapReference.covered &&
+                   allCovered(sameLoop) && allCovered(multipleGapLoop) &&
+                   allCovered(phaseSlotGapLoop),
                "match grounded semantic coverage from explicit unrollings");
 }
 
@@ -6619,8 +6820,9 @@ int main() {
       testDistanceTwoCrossRootSlotRecurrence() &&
       testMmadIntrinsicRequiresExactAccumulator() &&
       testA3TargetCompletionCertificatesAreArchitectureQualified() &&
-      testAnalysisLimitFailsClosed() && testFailClosedInputs() &&
-      testAcceptsDeclaredStorageProvenanceRoots() &&
+      testAnalysisLimitFailsClosed() &&
+      testCanonicalHazardsAggregateBeforeGraphMutation() &&
+      testFailClosedInputs() && testAcceptsDeclaredStorageProvenanceRoots() &&
       testRejectsOwnedSyncAndAcceptsFixedFence() &&
       testRejectsMalformedOwnedSynchronization() &&
       testFixedBarriersSupplyCompletionAndRemainUnowned() &&

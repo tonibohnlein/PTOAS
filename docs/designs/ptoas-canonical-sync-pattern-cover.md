@@ -99,15 +99,23 @@ recurrence arenas rather than forming a Cartesian product.
 
 Recurrence construction follows the reachable joint orbit of every periodic
 control used by the two endpoints. It correlates that orbit with the loop
-induction residues used by exact multi-tile slot expressions, then records the
-first reachable distance for each physical witness, hazard kind, and source
-phase class. A phase class with more than one successor gap therefore retains
-each required gap. Unreachable declared phases do not create obligations.
+induction residues used by exact multi-tile slot expressions. Exact ordinal
+pairs retain the source-phase mask that produced them through witness
+deduplication and first-distance filtering; residues from different phases are
+never applied to one another. The analysis then records the first reachable
+distance for each physical witness, hazard kind, and source phase class. A
+phase class with more than one successor gap therefore retains each required
+gap. Unreachable declared phases do not create obligations.
 Recognized periodic controls that cannot be represented exactly fail closed.
 Orbit construction is cached by loop and endpoint guards, and orbit, residue,
 and witness-state work consumes the shared analysis bound before execution.
 Analysis also fails closed if one joint orbit or compact witness-state table
 exceeds its configured limit.
+
+For one canonical `(source, target, scope, distance)` row, storage analysis
+accumulates every RAW, WAR, and WAW witness before mutating the graph. It sorts,
+deduplicates, and validates the complete provenance once, so many physical
+access batches cannot repeatedly copy and revalidate a growing demand row.
 
 Loop-local DAGs are summarized bottom-up with resource-specific entry and exit
 nodes, an explicit zero-trip transfer, recurrence-carry resources, and copied

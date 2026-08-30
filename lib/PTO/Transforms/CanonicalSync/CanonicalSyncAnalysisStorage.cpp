@@ -52,6 +52,36 @@ bool checkedIntervalEnd(std::uint64_t begin, std::uint64_t size,
   return begin < end;
 }
 
+bool checkedAddSize(std::size_t &value, std::size_t amount) {
+  const bool overflows =
+      amount > std::numeric_limits<std::size_t>::max() - value;
+  if (overflows) {
+    return false;
+  }
+  value += amount;
+  return true;
+}
+
+bool checkedMultiplySize(std::size_t first, std::size_t second,
+                         std::size_t &result) {
+  const bool overflows =
+      first != 0 && second > std::numeric_limits<std::size_t>::max() / first;
+  if (overflows) {
+    return false;
+  }
+  result = first * second;
+  return true;
+}
+
+std::size_t logarithmicWorkBound(std::size_t count) {
+  std::size_t result = 1;
+  while (count > 1) {
+    count = count / 2 + count % 2;
+    ++result;
+  }
+  return result;
+}
+
 bool sameAccessIdentity(const ExtractedAccess &first,
                         const BaseMemInfo &second) {
   const bool sameAddresses =
@@ -102,7 +132,8 @@ void expireStorageAccesses(std::uint64_t begin, ActiveStorageHeap &expiry,
   }
 }
 
-std::optional<std::vector<std::uint32_t>> getReachableSymbolResidues(
+std::optional<std::vector<std::vector<std::uint32_t>>>
+getReachableSymbolResiduesByPhase(
     Operation *loop, std::uint32_t modulus,
     const std::vector<std::size_t> *reachableSourcePhases,
     std::size_t phasePeriod) {
@@ -110,7 +141,7 @@ std::optional<std::vector<std::uint32_t>> getReachableSymbolResidues(
     return std::nullopt;
   }
   if (modulus == 0 || phasePeriod == 0) {
-    return std::vector<std::uint32_t>{};
+    return std::vector<std::vector<std::uint32_t>>{};
   }
   auto forOp = dyn_cast_or_null<scf::ForOp>(loop);
   APInt lower;
@@ -134,8 +165,7 @@ std::optional<std::vector<std::uint32_t>> getReachableSymbolResidues(
   const std::size_t horizon = reduced * modulus;
   const std::uint64_t lowerResidue = lower.getZExtValue() % modulus;
   const std::uint64_t stepResidue = step.getZExtValue() % modulus;
-  std::vector<std::uint32_t> residues;
-  residues.reserve(std::min(horizon, static_cast<std::size_t>(modulus)));
+  std::vector<std::vector<std::uint32_t>> residuesByPhase(phasePeriod);
   for (std::size_t iteration = 0; iteration < horizon; ++iteration) {
     const std::size_t phase = iteration % phasePeriod;
     if (!std::binary_search(reachableSourcePhases->begin(),
@@ -145,11 +175,14 @@ std::optional<std::vector<std::uint32_t>> getReachableSymbolResidues(
     const std::uint64_t iterationResidue = iteration % modulus;
     const std::uint64_t residue =
         (lowerResidue + stepResidue * iterationResidue) % modulus;
-    residues.push_back(static_cast<std::uint32_t>(residue));
+    residuesByPhase[phase].push_back(static_cast<std::uint32_t>(residue));
   }
-  llvm::sort(residues);
-  residues.erase(std::unique(residues.begin(), residues.end()), residues.end());
-  return residues;
+  for (std::vector<std::uint32_t> &residues : residuesByPhase) {
+    llvm::sort(residues);
+    residues.erase(std::unique(residues.begin(), residues.end()),
+                   residues.end());
+  }
+  return residuesByPhase;
 }
 
 std::optional<std::size_t>
@@ -167,41 +200,40 @@ getRestrictedOrdinalWorkBound(std::uint32_t modulus, std::size_t phasePeriod,
     return std::nullopt;
   }
   const std::size_t horizon = reduced * modulus;
-  if (reachablePhases == std::numeric_limits<std::size_t>::max()) {
+  std::size_t taggedPairs = 0;
+  if (!checkedMultiplySize(modulus, reachablePhases, taggedPairs)) {
     return std::nullopt;
   }
-  std::size_t searchWork = 1;
-  for (std::size_t count = reachablePhases + 1; count > 1;
-       count = count / 2 + count % 2) {
-    ++searchWork;
-  }
-  const bool perItemWorkOverflows =
-      searchWork > std::numeric_limits<std::size_t>::max() - 4;
-  if (perItemWorkOverflows) {
+  std::size_t workItems = horizon;
+  const bool workItemsUnavailable =
+      !checkedAddSize(workItems, taggedPairs) ||
+      !checkedAddSize(workItems, reachablePhases) ||
+      !checkedAddSize(workItems, 1);
+  if (workItemsUnavailable) {
     return std::nullopt;
   }
-  const std::size_t perIteration = searchWork + 4;
-  const std::size_t perOrdinal = searchWork + 4;
-  const bool productOverflows =
-      horizon > std::numeric_limits<std::size_t>::max() / perIteration ||
-      modulus > std::numeric_limits<std::size_t>::max() / perOrdinal;
-  if (productOverflows) {
+  std::size_t searchUnits = reachablePhases;
+  std::size_t phaseSortUnits = horizon;
+  std::size_t pairSortUnits = taggedPairs;
+  const bool sortUnitsUnavailable = !checkedAddSize(searchUnits, 1) ||
+                                    !checkedAddSize(phaseSortUnits, 1) ||
+                                    !checkedAddSize(pairSortUnits, 1);
+  if (sortUnitsUnavailable) {
     return std::nullopt;
   }
-  const std::size_t iterationWork = horizon * perIteration;
-  const std::size_t ordinalWork = modulus * perOrdinal;
-  const bool fixedWorkOverflows =
-      ordinalWork > std::numeric_limits<std::size_t>::max() - iterationWork;
-  if (fixedWorkOverflows) {
+  std::size_t perItemWork = logarithmicWorkBound(searchUnits);
+  const bool perItemWorkUnavailable =
+      !checkedAddSize(perItemWork, logarithmicWorkBound(phaseSortUnits)) ||
+      !checkedAddSize(perItemWork, logarithmicWorkBound(pairSortUnits)) ||
+      !checkedAddSize(perItemWork, 16);
+  if (perItemWorkUnavailable) {
     return std::nullopt;
   }
-  const std::size_t fixedWork = iterationWork + ordinalWork;
-  const bool totalWorkOverflows =
-      reachablePhases > std::numeric_limits<std::size_t>::max() - fixedWork;
-  if (totalWorkOverflows) {
+  std::size_t result = 0;
+  if (!checkedMultiplySize(workItems, perItemWork, result)) {
     return std::nullopt;
   }
-  return fixedWork + reachablePhases;
+  return result;
 }
 
 } // namespace
@@ -542,16 +574,25 @@ bool ProgramBuilder::gmAccessesAreNoAlias(const ExtractedAccess &first,
          noAliasArguments_.count(pair) != 0;
 }
 
-FailureOr<std::vector<std::pair<unsigned, unsigned>>>
-ProgramBuilder::getOrdinalPairs(
+FailureOr<std::vector<OrdinalPairPhaseState>> ProgramBuilder::getOrdinalPairs(
     const ExtractedAccess &first, const ExtractedAccess &second,
     Operation *loop, unsigned distance,
     const std::vector<std::size_t> *reachableSourcePhases,
     std::size_t phasePeriod) {
   const std::size_t firstCount = first.graphAccesses.size();
   const std::size_t secondCount = second.graphAccesses.size();
+  std::uint16_t sourcePhaseMask = 1;
+  if (reachableSourcePhases) {
+    sourcePhaseMask = 0;
+    for (std::size_t phase : *reachableSourcePhases) {
+      if (phase >= kCanonicalSyncMaximumPeriodicRecurrenceStates) {
+        return failure();
+      }
+      sourcePhaseMask |= std::uint16_t{1} << phase;
+    }
+  }
   if (firstCount == 1 && secondCount == 1) {
-    return std::vector<std::pair<unsigned, unsigned>>{{0, 0}};
+    return std::vector<OrdinalPairPhaseState>{{0, 0, sourcePhaseMask}};
   }
   if (firstCount == secondCount && firstCount <= kMaximumSlotCount &&
       firstCount <= std::numeric_limits<std::uint32_t>::max()) {
@@ -572,23 +613,61 @@ ProgramBuilder::getOrdinalPairs(
           return failure();
         }
       }
-      const std::optional<std::vector<std::uint32_t>> reachableResidues =
-          getReachableSymbolResidues(loop, slotCount, reachableSourcePhases,
-                                     phasePeriod);
-      const auto exact =
-          reachableResidues
-              ? enumerateSlotSSAOrdinalPairsForResidues(
-                    firstSlot, secondSlot, slotCount, *reachableResidues,
-                    shiftedSymbol, *offset)
-              : enumerateSlotSSAOrdinalPairs(firstSlot, secondSlot, slotCount,
-                                             shiftedSymbol, *offset);
-      if (exact) {
-        std::vector<std::pair<unsigned, unsigned>> pairs;
-        pairs.reserve(exact->size());
-        for (const SlotOrdinalPair &pair : *exact) {
-          pairs.push_back({pair.first, pair.second});
+      const std::optional<std::vector<std::vector<std::uint32_t>>>
+          residuesByPhase = getReachableSymbolResiduesByPhase(
+              loop, slotCount, reachableSourcePhases, phasePeriod);
+      if (residuesByPhase) {
+        std::vector<OrdinalPairPhaseState> pairs;
+        bool exactAvailable = true;
+        for (std::size_t phase : *reachableSourcePhases) {
+          if (phase >= residuesByPhase->size()) {
+            exactAvailable = false;
+            break;
+          }
+          const auto exact = enumerateSlotSSAOrdinalPairsForResidues(
+              firstSlot, secondSlot, slotCount, (*residuesByPhase)[phase],
+              shiftedSymbol, *offset);
+          if (!exact) {
+            exactAvailable = false;
+            break;
+          }
+          for (const SlotOrdinalPair &pair : *exact) {
+            pairs.push_back(
+                {pair.first, pair.second,
+                 static_cast<std::uint16_t>(std::uint16_t{1} << phase)});
+          }
         }
-        return pairs;
+        if (exactAvailable) {
+          llvm::sort(pairs, [](const OrdinalPairPhaseState &lhs,
+                               const OrdinalPairPhaseState &rhs) {
+            return std::tie(lhs.first, lhs.second) <
+                   std::tie(rhs.first, rhs.second);
+          });
+          std::vector<OrdinalPairPhaseState> merged;
+          merged.reserve(pairs.size());
+          for (const OrdinalPairPhaseState &pair : pairs) {
+            const bool newPair = merged.empty() ||
+                                 merged.back().first != pair.first ||
+                                 merged.back().second != pair.second;
+            if (newPair) {
+              merged.push_back(pair);
+            } else {
+              merged.back().sourcePhases |= pair.sourcePhases;
+            }
+          }
+          return merged;
+        }
+      } else {
+        const auto exact = enumerateSlotSSAOrdinalPairs(
+            firstSlot, secondSlot, slotCount, shiftedSymbol, *offset);
+        if (exact) {
+          std::vector<OrdinalPairPhaseState> pairs;
+          pairs.reserve(exact->size());
+          for (const SlotOrdinalPair &pair : *exact) {
+            pairs.push_back({pair.first, pair.second, sourcePhaseMask});
+          }
+          return pairs;
+        }
       }
     }
   }
@@ -602,14 +681,15 @@ ProgramBuilder::getOrdinalPairs(
     function_.emitError("canonical sync pair-inspection limit exceeded");
     return failure();
   }
-  std::vector<std::pair<unsigned, unsigned>> conservative;
+  std::vector<OrdinalPairPhaseState> conservative;
   conservative.reserve(firstCount * secondCount);
   for (std::size_t firstOrdinal = 0; firstOrdinal < firstCount;
        ++firstOrdinal) {
     for (std::size_t secondOrdinal = 0; secondOrdinal < secondCount;
          ++secondOrdinal) {
       conservative.push_back({static_cast<unsigned>(firstOrdinal),
-                              static_cast<unsigned>(secondOrdinal)});
+                              static_cast<unsigned>(secondOrdinal),
+                              sourcePhaseMask});
     }
   }
   return conservative;
