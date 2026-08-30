@@ -18,8 +18,10 @@ structured completion graph and hazards
 ```
 
 CanonicalSync does not reuse GraphSync's graph-solver IR, coloring search, or
-code generation. It does not run an exact solver, synthesize ownership
-protocols, or use a broad barrier as an ordinary cover candidate.
+code generation. It does not run an exact solver or use a broad barrier as an
+ordinary cover candidate. In addition to direct correctness mechanisms, it can
+synthesize target-certified ownership protocols from exact physical-storage
+lifecycle certificates.
 
 ## 1. Input contract
 
@@ -113,7 +115,7 @@ only when common validation certifies balanced priming, body lanes, and one
 scope-exit drain per lane. Guarded protocols remain valid locally but do not
 export until phase-qualified export semantics are supported.
 
-## 3. Restricted mechanism catalog
+## 3. Certified mechanism catalog
 
 A mechanism is the smallest selectable and materializable unit. Version one
 contains only:
@@ -129,6 +131,11 @@ contains only:
 - a loop-carry source-pipe drain at the beginning of each non-first iteration;
 - a loop-boundary recurrence channel whose source-prefix completion is
   established by one target-supported targeted barrier at the loop-body exit;
+- exact ownership protocols for supported L0 operand, stable L1, alternating
+  L1, and accumulator lifecycles;
+- boundary-guarded and hierarchical ownership variants, including a composite
+  protocol whose constituent lifecycle transfers are all independently
+  certified;
 - cross-resource source/target drains and targeted-barrier plus event frontiers
   reserved for conflict-core event-pressure repair;
 - a localized target `PIPE_ALL` barrier reserved for the last backstop.
@@ -217,8 +224,27 @@ completes the whole admitted producer prefix before the value is exported to
 the next virtual copy. Target capability data, rather than a pipeline-name
 allowlist, determines which source pipes admit the protocol.
 
-Ownership/slot-lifecycle protocols, pipeline aggregates, named round trips,
-merged-prefix events, and arbitrary protocol paths are not part of the catalog.
+Ownership mechanisms are synthesized recipes, not pair columns. Analysis first
+proves an immutable certificate over one exact local-storage access census,
+including producer and consumer nodes, recurrence scope, physical slot,
+guards, and any required phase or successor evidence. Candidate construction
+then reconstructs the complete ready/release recipe from that certificate.
+The verifier is retained with the frozen problem and rerun during fresh final
+verification; construction-time admission is not trusted. Unsupported target
+capabilities, extra overlapping accesses, incomplete loop boundaries, or
+ambiguous phase evidence simply suppress the optional ownership family.
+
+The basic ownership family contains separate L0 operand, stable L1,
+alternating L1, and accumulator protocols. Boundary ownership adds the guarded
+accumulator form. Hierarchical ownership admits only graph-certified transfers
+whose inner lifecycle exports completion through the enclosing loop boundary;
+the composite form combines the certified stable, alternating, and boundary
+recipes as one atomic protocol. A composite is retained for attribution and
+experimentation even when its physical action list is additive; it is not
+assumed to be cheaper than its parents.
+
+Pipeline aggregates, unchecked named round trips, merged-prefix events, and
+arbitrary protocol paths are not part of the catalog.
 
 The ordinary frozen problem contains only precise mechanisms. Allocation
 failure reports a live conflict core; only then does the pass rebuild the same
@@ -306,8 +332,8 @@ uncovered demand.
 Each round chooses the best exact marginal density globally. Ratios use
 128-bit cross multiplication and stable ID tie-breaks.
 
-The calibration-free cost is lexicographic. Barrier and event profiles are
-reported independently so candidate-language experiments can distinguish
+The default calibration-free cost is lexicographic. Barrier and event profiles
+are reported independently so candidate-language experiments can distinguish
 serialization from flag traffic, while production selection ranks their
 aggregate physical action count:
 
@@ -316,6 +342,12 @@ aggregate physical action count:
 2. serialization breadth induced by the supplied completion edges;
 3. inclusive event lifetime area;
 4. number and stable IDs of newly added mechanisms.
+
+`serialization-first` swaps the first two coordinates without changing the
+candidate catalog or coverage. It is an experimental objective ablation, not
+the production default. Structural-cost arithmetic is checked; overflow fails
+closed rather than saturating and allowing stable IDs to decide between
+otherwise incomparable candidates.
 
 After greedy cover, mechanisms are examined in reverse selection order and
 removed whenever exact activated-pattern coverage remains complete.
@@ -326,9 +358,15 @@ Normal greedy selection does not color events and does not reject a logical
 cover because its partial event allocation is infeasible.
 
 After reverse deletion, each directed pipeline-pair event domain is allocated
-independently. Lifetimes are inclusive, so IDs can be reused only when one
-lifetime ends strictly before the next begins. Allocation respects widths,
-reserved IDs, and the configured hardware budget.
+independently. A linearized IR lifetime is not sufficient evidence that a
+hardware event channel can be reused: a later source-pipeline set may execute
+before an earlier destination-pipeline wait consumes the previous signal.
+CanonicalSync therefore gives every distinct logical event use in one domain
+distinct physical IDs. Repeated loop iterations reuse the lanes owned by that
+same lifecycle-complete event use; the protocol's priming, modulo selection,
+and draining establish that reuse. Allocation respects event widths, reserved
+IDs, and the configured hardware budget. The same numeric ID may occur in two
+different directed event domains.
 
 On failure, the allocator reports:
 
@@ -377,7 +415,11 @@ Relevant driver options are:
 ```text
 --canonical-sync-event-id-max=8
 --canonical-sync-pattern-mode=direct|direct-pair
+--canonical-sync-mechanism-families=all|core|<family>[+<family>...]
 --canonical-sync-selection-strategy=fixed-cover|action-aware-singleton|pair-lookahead
+--canonical-sync-selection-objective=action-first|serialization-first
+--canonical-sync-maximum-basic-ownership-inspections=1048576
+--canonical-sync-maximum-basic-ownership-certificates=1024
 --canonical-sync-maximum-pair-evaluations-per-scope=4096
 --canonical-sync-maximum-selection-work-units=134217728
 --canonical-sync-maximum-repair-rounds=8
@@ -406,6 +448,35 @@ Relevant driver options are:
 ```
 
 `direct` disables optional pair construction. `direct-pair` is the default.
+`core` disables every derived family and is intended only as a direct-catalog
+ablation. It can fail closed for guarded or hierarchical lifecycles whose
+balanced implementation requires a certified ownership protocol. Named
+families are independently composable. The accepted names are:
+
+```text
+completion-frontier
+target-completion-certificate
+target-local-fence
+source-local-completion
+source-local-drain
+source-prefix-drain
+loop-carry-drain
+loop-boundary-protocol
+l0-operand-ownership
+basic-ownership
+boundary-ownership
+hierarchical-ownership
+repair-source-local-drain
+repair-source-prefix-drain
+repair-target-local-drain
+repair-frontier
+```
+
+The ownership discovery bounds apply to the shared certificate census. Hitting
+either bound truncates ownership discovery deterministically. Direct mechanisms
+remain available, but compilation still fails closed if the omitted ownership
+certificates were required for a balanced cover.
+
 The two GM alias contracts are mutually exclusive; the all-accesses contract is
 unsafe unless the caller guarantees that even accesses through the same
 argument are disjoint.
@@ -430,11 +501,13 @@ The JSON root carries schema `ptoas.canonical_sync.v1` and the function name.
 It reports graph nodes and edges, original demand provenance and unique coverage
 rows, complete obligation and selection-basis sizes, reduced-row and truncation
 status, preparation time, direct mechanisms, bounded source-prefix construction,
-pair proposals/evaluations, and retained synergistic pairs. Each strategy
+ownership certificate counts and truncation, enabled mechanism families,
+candidate and selected mechanism origins, pair proposals/evaluations, and
+retained synergistic pairs. Each strategy
 reports selection/cleanup work, selected events and barriers (including each
 targeted-barrier recipe separately), predicted synchronization instructions,
 all structural cost components, event-domain pressure and live mechanisms,
 assigned physical IDs, bounded repair/backstop status,
 selection/repair/verification times, fresh-verification work and result,
-localized `PIPE_ALL` use, and a deterministic signature over the selected
-immutable recipes and allocation.
+checked-arithmetic failure, localized `PIPE_ALL` use, and a deterministic
+signature over the selected immutable recipes and allocation.

@@ -1,12 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under
-// the terms and conditions of CANN Open Software License Agreement Version 2.0
-// (the "License"). Please refer to the License for details. You may not use
-// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
-// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
-// for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 #include "ptoas.h"
 #include "PTO/IR/PTO.h"
@@ -551,17 +549,48 @@ static llvm::cl::opt<bool> canonicalSyncAssumeAllGmAccessesNoAlias(
         "iterations"),
     llvm::cl::init(false));
 
+static llvm::cl::opt<std::int64_t>
+    canonicalSyncMaximumBasicOwnershipInspections(
+        "canonical-sync-maximum-basic-ownership-inspections",
+        llvm::cl::desc("Maximum exact-slot ownership discovery inspection "
+                       "units"),
+        llvm::cl::init(1U << 20));
+
+static llvm::cl::opt<std::int64_t>
+    canonicalSyncMaximumBasicOwnershipCertificates(
+        "canonical-sync-maximum-basic-ownership-certificates",
+        llvm::cl::desc("Maximum exact-slot ownership certificates retained"),
+        llvm::cl::init(1U << 10));
+
 static llvm::cl::opt<std::string> canonicalSyncPatternMode(
     "canonical-sync-pattern-mode",
     llvm::cl::desc("Canonical synchronization candidate ablation: direct or "
                    "direct-pair"),
     llvm::cl::init("direct-pair"));
 
+static llvm::cl::opt<std::string> canonicalSyncMechanismFamilies(
+    "canonical-sync-mechanism-families",
+    llvm::cl::desc("Canonical synchronization derived-mechanism families: "
+                   "all, core, or a '+'-separated list"),
+    llvm::cl::init("all"));
+
+static llvm::cl::opt<bool> canonicalSyncEnableConflictCoreRepair(
+    "canonical-sync-enable-conflict-core-repair",
+    llvm::cl::desc(
+        "Enable bounded canonical synchronization conflict-core repair"),
+    llvm::cl::init(true));
+
 static llvm::cl::opt<std::string> canonicalSyncSelectionStrategy(
     "canonical-sync-selection-strategy",
     llvm::cl::desc("Canonical synchronization selection policy: fixed-cover, "
                    "action-aware-singleton, or pair-lookahead"),
     llvm::cl::init("pair-lookahead"));
+
+static llvm::cl::opt<std::string> canonicalSyncSelectionObjective(
+    "canonical-sync-selection-objective",
+    llvm::cl::desc("Canonical synchronization structural objective: "
+                   "action-first or serialization-first"),
+    llvm::cl::init("action-first"));
 
 static llvm::cl::opt<std::int64_t> canonicalSyncMaximumPairEvaluationsPerScope(
     "canonical-sync-maximum-pair-evaluations-per-scope",
@@ -3991,7 +4020,14 @@ int mlir::pto::compilePTOASModule(OwningOpRef<ModuleOp> &module,
     options.assumeAllGmAccessesNoAlias =
         canonicalSyncAssumeAllGmAccessesNoAlias;
     options.patternMode = canonicalSyncPatternMode;
+    options.mechanismFamilies = canonicalSyncMechanismFamilies;
+    options.maximumBasicOwnershipInspections =
+        canonicalSyncMaximumBasicOwnershipInspections;
+    options.maximumBasicOwnershipCertificates =
+        canonicalSyncMaximumBasicOwnershipCertificates;
+    options.enableConflictCoreRepair = canonicalSyncEnableConflictCoreRepair;
     options.selectionStrategy = canonicalSyncSelectionStrategy;
+    options.selectionObjective = canonicalSyncSelectionObjective;
     options.maximumPairEvaluationsPerScope =
         canonicalSyncMaximumPairEvaluationsPerScope;
     options.maximumSelectionWorkUnits = canonicalSyncMaximumSelectionWorkUnits;

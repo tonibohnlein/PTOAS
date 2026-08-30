@@ -1,12 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under
-// the terms and conditions of CANN Open Software License Agreement Version 2.0
-// (the "License"). Please refer to the License for details. You may not use
-// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
-// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
-// for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSync.h"
 #include "PTO/Transforms/Passes.h"
@@ -14,6 +12,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -21,6 +20,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <iterator>
 #include <limits>
@@ -66,6 +66,88 @@ bool configurePatternMode(StringRef mode,
   return false;
 }
 
+StringRef mechanismFamilyName(pto::CanonicalSyncMechanismFamily family) {
+  using Family = pto::CanonicalSyncMechanismFamily;
+  switch (family) {
+  case Family::CompletionFrontier:
+    return "completion-frontier";
+  case Family::TargetCompletionCertificate:
+    return "target-completion-certificate";
+  case Family::TargetLocalFence:
+    return "target-local-fence";
+  case Family::SourceLocalCompletion:
+    return "source-local-completion";
+  case Family::SourceLocalDrain:
+    return "source-local-drain";
+  case Family::SourcePrefixDrain:
+    return "source-prefix-drain";
+  case Family::LoopCarryDrain:
+    return "loop-carry-drain";
+  case Family::LoopBoundaryProtocol:
+    return "loop-boundary-protocol";
+  case Family::L0OperandOwnership:
+    return "l0-operand-ownership";
+  case Family::BasicOwnership:
+    return "basic-ownership";
+  case Family::BoundaryOwnership:
+    return "boundary-ownership";
+  case Family::HierarchicalOwnership:
+    return "hierarchical-ownership";
+  case Family::RepairSourceLocalDrain:
+    return "repair-source-local-drain";
+  case Family::RepairSourcePrefixDrain:
+    return "repair-source-prefix-drain";
+  case Family::RepairTargetLocalDrain:
+    return "repair-target-local-drain";
+  case Family::RepairFrontier:
+    return "repair-frontier";
+  case Family::Count:
+    break;
+  }
+  return "unknown";
+}
+
+bool configureMechanismFamilies(StringRef value,
+                                pto::CanonicalSyncPatternOptions &options) {
+  if (value == "all") {
+    options.enabledMechanismFamilies = pto::kAllCanonicalSyncMechanismFamilies;
+    return true;
+  }
+  if (value == "core") {
+    options.enabledMechanismFamilies = 0;
+    return true;
+  }
+  SmallVector<StringRef> names;
+  value.split(names, '+', /*MaxSplit=*/-1, /*KeepEmpty=*/true);
+  if (names.empty()) {
+    return false;
+  }
+  pto::CanonicalSyncMechanismFamilyMask mask = 0;
+  for (StringRef name : names) {
+    bool found = false;
+    for (std::size_t index = 0; index < pto::kCanonicalSyncMechanismFamilyCount;
+         ++index) {
+      const auto family = static_cast<pto::CanonicalSyncMechanismFamily>(index);
+      if (name != mechanismFamilyName(family)) {
+        continue;
+      }
+      const pto::CanonicalSyncMechanismFamilyMask bit =
+          pto::canonicalSyncMechanismFamilyBit(family);
+      if ((mask & bit) != 0) {
+        return false;
+      }
+      mask |= bit;
+      found = true;
+      break;
+    }
+    if (!found) {
+      return false;
+    }
+  }
+  options.enabledMechanismFamilies = mask;
+  return true;
+}
+
 bool configureSelectionStrategy(StringRef strategy,
                                 pto::CanonicalSyncGreedyOptions &options) {
   if (strategy == "fixed-cover") {
@@ -84,6 +166,20 @@ bool configureSelectionStrategy(StringRef strategy,
   return false;
 }
 
+bool configureSelectionObjective(StringRef objective,
+                                 pto::CanonicalSyncGreedyOptions &options) {
+  if (objective == "action-first") {
+    options.objective = pto::CanonicalSyncSelectionObjective::ActionFirst;
+    return true;
+  }
+  if (objective == "serialization-first") {
+    options.objective =
+        pto::CanonicalSyncSelectionObjective::SerializationFirst;
+    return true;
+  }
+  return false;
+}
+
 StringRef strategyName(pto::CanonicalSyncSelectionStrategy strategy) {
   switch (strategy) {
   case pto::CanonicalSyncSelectionStrategy::FixedCover:
@@ -92,6 +188,16 @@ StringRef strategyName(pto::CanonicalSyncSelectionStrategy strategy) {
     return "action-aware-singleton";
   case pto::CanonicalSyncSelectionStrategy::PairLookahead:
     return "pair-lookahead";
+  }
+  return "unknown";
+}
+
+StringRef objectiveName(pto::CanonicalSyncSelectionObjective objective) {
+  switch (objective) {
+  case pto::CanonicalSyncSelectionObjective::ActionFirst:
+    return "action-first";
+  case pto::CanonicalSyncSelectionObjective::SerializationFirst:
+    return "serialization-first";
   }
   return "unknown";
 }
@@ -114,6 +220,141 @@ StringRef gmAliasPolicyName(pto::CanonicalSyncGmAliasPolicy policy) {
     return "all-accesses-noalias";
   }
   return "unknown";
+}
+
+StringRef mechanismOriginName(pto::CanonicalSyncMechanismOrigin origin) {
+  using Origin = pto::CanonicalSyncMechanismOrigin;
+  switch (origin) {
+  case Origin::Unclassified:
+    return "unclassified";
+  case Origin::DirectTargetedBarrier:
+    return "direct-targeted-barrier";
+  case Origin::DirectDistanceZeroEvent:
+    return "direct-distance-zero-event";
+  case Origin::DirectForwardRecurrenceEvent:
+    return "direct-forward-recurrence-event";
+  case Origin::DirectReleaseRecurrenceProtocol:
+    return "direct-release-recurrence-protocol";
+  case Origin::CompletionFrontierEvent:
+    return "completion-frontier-event";
+  case Origin::TargetCompletionCertificateEvent:
+    return "target-completion-certificate-event";
+  case Origin::TargetLocalFenceEvent:
+    return "target-local-fence-event";
+  case Origin::SourceLocalCompletionEvent:
+    return "source-local-completion-event";
+  case Origin::SourceLocalPipeDrain:
+    return "source-local-pipe-drain";
+  case Origin::SourcePrefixPipeDrain:
+    return "source-prefix-pipe-drain";
+  case Origin::LoopCarryPipeDrain:
+    return "loop-carry-pipe-drain";
+  case Origin::LoopBoundarySourcePrefixProtocol:
+    return "loop-boundary-source-prefix-protocol";
+  case Origin::BasicOwnershipL0OperandProtocol:
+    return "basic-ownership-l0-operand-protocol";
+  case Origin::BasicOwnershipStableL1Protocol:
+    return "basic-ownership-stable-l1-protocol";
+  case Origin::BasicOwnershipAlternatingL1Protocol:
+    return "basic-ownership-alternating-l1-protocol";
+  case Origin::BasicOwnershipAccumulatorProtocol:
+    return "basic-ownership-accumulator-protocol";
+  case Origin::BoundaryGuardedAccumulatorProtocol:
+    return "boundary-guarded-accumulator-protocol";
+  case Origin::HierarchicalStableL1Protocol:
+    return "hierarchical-stable-l1-protocol";
+  case Origin::HierarchicalAlternatingL1Protocol:
+    return "hierarchical-alternating-l1-protocol";
+  case Origin::CompositeOwnershipProtocol:
+    return "composite-ownership-protocol";
+  case Origin::RepairTargetLocalPipeDrain:
+    return "repair-target-local-pipe-drain";
+  case Origin::RepairSourceLocalPipeDrain:
+    return "repair-source-local-pipe-drain";
+  case Origin::RepairSourcePrefixPipeDrain:
+    return "repair-source-prefix-pipe-drain";
+  case Origin::RepairFrontierBarrier:
+    return "repair-frontier-barrier";
+  case Origin::RepairFrontierEvent:
+    return "repair-frontier-event";
+  case Origin::LocalizedPipeAll:
+    return "localized-pipe-all";
+  case Origin::Count:
+    break;
+  }
+  return "unknown";
+}
+
+StringRef mechanismKindName(pto::CanonicalSyncMechanismKind kind) {
+  switch (kind) {
+  case pto::CanonicalSyncMechanismKind::Event:
+    return "event";
+  case pto::CanonicalSyncMechanismKind::Barrier:
+    return "barrier";
+  case pto::CanonicalSyncMechanismKind::Protocol:
+    return "protocol";
+  }
+  return "unknown";
+}
+
+llvm::json::Array
+jsonMechanismFamilies(pto::CanonicalSyncMechanismFamilyMask mask) {
+  llvm::json::Array families;
+  for (std::size_t index = 0; index < pto::kCanonicalSyncMechanismFamilyCount;
+       ++index) {
+    const auto family = static_cast<pto::CanonicalSyncMechanismFamily>(index);
+    if (pto::canonicalSyncMechanismFamilyEnabled(mask, family)) {
+      families.push_back(mechanismFamilyName(family));
+    }
+  }
+  return families;
+}
+
+llvm::json::Array
+jsonMechanismOrigins(pto::CanonicalSyncMechanismOriginMask mask) {
+  llvm::json::Array origins;
+  for (std::size_t index = 0; index < pto::kCanonicalSyncMechanismOriginCount;
+       ++index) {
+    const auto origin = static_cast<pto::CanonicalSyncMechanismOrigin>(index);
+    if ((mask & pto::canonicalSyncMechanismOriginBit(origin)) != 0) {
+      origins.push_back(mechanismOriginName(origin));
+    }
+  }
+  return origins;
+}
+
+llvm::json::Object jsonMechanismOriginCounts(
+    const std::array<std::size_t, pto::kCanonicalSyncMechanismOriginCount>
+        &counts) {
+  llvm::json::Object result;
+  for (std::size_t index = 0; index < counts.size(); ++index) {
+    result[mechanismOriginName(static_cast<pto::CanonicalSyncMechanismOrigin>(
+        index))] = jsonInteger(counts[index]);
+  }
+  return result;
+}
+
+llvm::json::Array jsonSelectedMechanisms(
+    ArrayRef<pto::CanonicalSyncSelectedMechanismReport> mechanisms) {
+  llvm::json::Array result;
+  for (const pto::CanonicalSyncSelectedMechanismReport &mechanism :
+       mechanisms) {
+    result.push_back(llvm::json::Object{
+        {"mechanism", jsonInteger(mechanism.mechanism)},
+        {"kind", mechanismKindName(mechanism.kind)},
+        {"origin_mask", jsonInteger(mechanism.originMask)},
+        {"origins", jsonMechanismOrigins(mechanism.originMask)},
+        {"supplies", jsonInteger(mechanism.supplies)},
+        {"event_uses", jsonInteger(mechanism.eventUses)},
+        {"actions", jsonInteger(mechanism.actions)},
+        {"event_sets", jsonInteger(mechanism.eventSets)},
+        {"event_waits", jsonInteger(mechanism.eventWaits)},
+        {"targeted_barriers", jsonInteger(mechanism.targetedBarriers)},
+        {"pipe_all_barriers", jsonInteger(mechanism.pipeAllBarriers)},
+        {"maximum_recurrence_distance",
+         jsonInteger(mechanism.maximumRecurrenceDistance)}});
+  }
+  return result;
 }
 
 llvm::json::Object
@@ -179,6 +420,15 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
          jsonInteger(strategy.selectedTargetedBarriers)},
         {"selected_pipe_all_barriers",
          jsonInteger(strategy.selectedPipeAllBarriers)},
+        {"selected_mechanisms_by_origin",
+         jsonMechanismOriginCounts(strategy.selectedMechanismsByOrigin)},
+        {"active_direct_pairs", jsonInteger(strategy.activeDirectPairs)},
+        {"active_direct_pair_extra_coverage",
+         jsonInteger(strategy.activeDirectPairExtraCoverage)},
+        {"selected_mechanism_details_truncated",
+         strategy.selectedMechanismDetailsTruncated},
+        {"selected_mechanisms",
+         jsonSelectedMechanisms(strategy.selectedMechanisms)},
         {"emitted_event_sets", jsonInteger(strategy.emittedEventSets)},
         {"emitted_event_waits", jsonInteger(strategy.emittedEventWaits)},
         {"emitted_targeted_barriers",
@@ -219,6 +469,7 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
         {"deletion_evaluations",
          jsonInteger(strategy.search.deletionEvaluations)},
         {"work_units", jsonInteger(strategy.search.workUnits)},
+        {"arithmetic_overflow", strategy.search.arithmeticOverflow},
         {"verification_work_units",
          jsonInteger(strategy.verificationWorkUnits)},
         {"selection_time_ns", jsonInteger(strategy.selectionNanoseconds)},
@@ -231,17 +482,43 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
         {"precise_deletion_evaluations",
          jsonInteger(strategy.preciseSearch.deletionEvaluations)},
         {"precise_work_units", jsonInteger(strategy.preciseSearch.workUnits)},
+        {"precise_arithmetic_overflow",
+         strategy.preciseSearch.arithmeticOverflow},
         {"precise_event_allocation",
          jsonAllocation(strategy.preciseAllocation)}});
   }
   return llvm::json::Object{
       {"schema", "ptoas.canonical_sync.v1"},
       {"function", report.function},
+      {"selection_objective", objectiveName(report.selectionObjective)},
+      {"enabled_mechanism_family_mask",
+       jsonInteger(report.enabledMechanismFamilies)},
+      {"enabled_mechanism_families",
+       jsonMechanismFamilies(report.enabledMechanismFamilies)},
+      {"direct_pairs_enabled", report.directPairsEnabled},
+      {"conflict_core_repair_enabled", report.conflictCoreRepairEnabled},
       {"gm_alias_policy", gmAliasPolicyName(report.gmAliasPolicy)},
       {"graph_nodes", jsonInteger(report.graphNodes)},
       {"graph_edges", jsonInteger(report.graphEdges)},
       {"certified_completion_frontiers",
        jsonInteger(report.certifiedCompletionFrontiers)},
+      {"ownership_discovery_inspections",
+       jsonInteger(report.ownershipDiscoveryInspections)},
+      {"ownership_certificates_by_kind",
+       llvm::json::Object{
+           {"l0_operand",
+            jsonInteger(
+                report.ownershipCertificatesByKind[static_cast<std::size_t>(
+                    pto::SyncCoverBasicOwnershipKind::L0Operand)])},
+           {"l1_tile",
+            jsonInteger(
+                report.ownershipCertificatesByKind[static_cast<std::size_t>(
+                    pto::SyncCoverBasicOwnershipKind::L1Tile)])},
+           {"l0_accumulator",
+            jsonInteger(
+                report.ownershipCertificatesByKind[static_cast<std::size_t>(
+                    pto::SyncCoverBasicOwnershipKind::L0Accumulator)])}}},
+      {"ownership_discovery_truncated", report.ownershipDiscoveryTruncated},
       {"demands", jsonInteger(report.demands)},
       {"unique_demand_keys", jsonInteger(report.uniqueDemandRows)},
       {"selection_basis_rows", jsonInteger(report.selectionBasisRows)},
@@ -259,6 +536,8 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
       {"maximum_recurrence_distance",
        jsonInteger(report.maximumRecurrenceDistance)},
       {"direct_mechanisms", jsonInteger(report.directMechanisms)},
+      {"candidate_mechanisms_by_origin",
+       jsonMechanismOriginCounts(report.candidateMechanismsByOrigin)},
       {"direct_pair_proposals", jsonInteger(report.directPairProposals)},
       {"direct_pair_evaluations", jsonInteger(report.directPairEvaluations)},
       {"synergistic_pairs", jsonInteger(report.synergisticPairs)},
@@ -398,6 +677,10 @@ struct PTOCanonicalSyncPass
                               std::numeric_limits<std::size_t>::max();
     };
     const std::pair<std::int64_t, StringRef> bounds[] = {
+        {maximumBasicOwnershipInspections,
+         "maximum-basic-ownership-inspections"},
+        {maximumBasicOwnershipCertificates,
+         "maximum-basic-ownership-certificates"},
         {maximumPairEvaluationsPerScope, "maximum-pair-evaluations-per-scope"},
         {maximumSelectionWorkUnits, "maximum-selection-work-units"},
         {maximumRepairRounds, "maximum-repair-rounds"},
@@ -436,14 +719,32 @@ struct PTOCanonicalSyncPass
     }
     pto::CanonicalSyncBuildOptions options;
     options.eventIdBudget = static_cast<unsigned>(eventIdNumMax);
+    options.analysis.maximumBasicOwnershipInspections =
+        static_cast<std::size_t>(maximumBasicOwnershipInspections);
+    options.analysis.maximumBasicOwnershipCertificates =
+        static_cast<std::size_t>(maximumBasicOwnershipCertificates);
     if (!configurePatternMode(patternMode, options.patterns)) {
       function.emitError("pattern-mode must be direct or direct-pair");
       signalPassFailure();
       return;
     }
+    if (!configureMechanismFamilies(mechanismFamilies, options.patterns)) {
+      function.emitError()
+          << "mechanism-families must be all, core, or a nonempty '+'-"
+             "separated list of known family names";
+      signalPassFailure();
+      return;
+    }
+    options.patterns.enableConflictCoreRepair = enableConflictCoreRepair;
     if (!configureSelectionStrategy(selectionStrategy, options.selection)) {
       function.emitError() << "selection-strategy must be fixed-cover, "
                               "action-aware-singleton, or pair-lookahead";
+      signalPassFailure();
+      return;
+    }
+    if (!configureSelectionObjective(selectionObjective, options.selection)) {
+      function.emitError() << "selection-objective must be action-first or "
+                              "serialization-first";
       signalPassFailure();
       return;
     }

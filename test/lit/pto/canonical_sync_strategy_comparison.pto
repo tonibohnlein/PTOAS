@@ -1,12 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under
-// the terms and conditions of CANN Open Software License Agreement Version 2.0
-// (the "License"). Please refer to the License for details. You may not use
-// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
-// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
-// for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
 // RUN:   --analyze-canonical-sync-strategies \
@@ -23,11 +21,20 @@
 // RUN:   --canonical-sync-selection-strategy=invalid --emit-pto-ir %s \
 // RUN:   2>&1 | FileCheck %s --check-prefix=INVALID
 // RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-selection-objective=invalid --emit-pto-ir %s \
+// RUN:   2>&1 | FileCheck %s --check-prefix=INVALID-OBJECTIVE
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
 // RUN:   --canonical-sync-maximum-verification-work-units=0 \
 // RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-BOUND
 // RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
 // RUN:   --canonical-sync-maximum-demand-basis-group-edges=0 \
 // RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-BASIS-EDGE
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-basic-ownership-inspections=0 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-OWNERSHIP-INSPECT
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-basic-ownership-certificates=0 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-OWNERSHIP-CERTIFICATE
 // RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
 // RUN:   --canonical-sync-maximum-demand-basis-reachability-words=0 \
 // RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-BASIS-WORD
@@ -66,15 +73,25 @@
 // SUMMARY-DAG: backstop-deletion-truncated=
 // REPORT-DAG: "schema": "ptoas.canonical_sync.v1"
 // REPORT-DAG: "function": "comparison"
+// REPORT-DAG: "selection_objective": "action-first"
+// REPORT-DAG: "enabled_mechanism_families":
+// REPORT-DAG: "direct_pairs_enabled": true
+// REPORT-DAG: "conflict_core_repair_enabled": true
 // REPORT-DAG: "gm_alias_policy": "distinct-arguments-noalias"
 // REPORT-DAG: "graph_nodes":
 // REPORT-DAG: "graph_edges":
+// REPORT-DAG: "ownership_discovery_inspections":
+// REPORT-DAG: "ownership_certificates_by_kind":
+// REPORT-DAG: "ownership_discovery_truncated":
 // REPORT-DAG: "demands":
 // REPORT-DAG: "unique_demand_keys":
 // REPORT-DAG: "selection_basis_rows":
 // REPORT-DAG: "basis_reduced_rows":
 // REPORT-DAG: "basis_reduction_truncated":
 // REPORT-DAG: "direct_pair_evaluations":
+// REPORT-DAG: "candidate_mechanisms_by_origin":
+// REPORT-DAG: "selected_mechanisms_by_origin":
+// REPORT-DAG: "selected_mechanisms":
 // REPORT-DAG: "source_prefix_inspections":
 // REPORT-DAG: "source_prefix_candidates":
 // REPORT-DAG: "source_prefix_incidences":
@@ -103,7 +120,10 @@
 // REPORT-DAG: "strategy": "action-aware-singleton"
 // REPORT-DAG: "strategy": "pair-lookahead"
 // INVALID: selection-strategy must be fixed-cover, action-aware-singleton, or pair-lookahead
+// INVALID-OBJECTIVE: selection-objective must be action-first or serialization-first
 // INVALID-BOUND: maximum-verification-work-units must be positive
+// INVALID-OWNERSHIP-INSPECT: maximum-basic-ownership-inspections must be positive
+// INVALID-OWNERSHIP-CERTIFICATE: maximum-basic-ownership-certificates must be positive
 // INVALID-BASIS-EDGE: maximum-demand-basis-group-edges must be positive
 // INVALID-BASIS-WORD: maximum-demand-basis-reachability-words must be positive
 // INVALID-BASIS-WORK: maximum-demand-basis-reduction-work must be positive

@@ -1,3 +1,11 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 // RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
 // RUN:   --emit-pto-ir %s | FileCheck %s
 // RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
@@ -15,11 +23,18 @@
 // RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
 // RUN:   --canonical-sync-selection-strategy=pair-lookahead --emit-pto-ir %s \
 // RUN:   | FileCheck %s
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-mechanism-families=core --emit-pto-ir %s \
+// RUN:   | FileCheck %s
 // RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
 // RUN:   --canonical-sync-pattern-mode=invalid --emit-pto-ir %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=INVALID
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-mechanism-families=unknown --emit-pto-ir %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=INVALID-FAMILY
 
 // INVALID: pattern-mode must be direct or direct-pair
+// INVALID-FAMILY: mechanism-families must be all, core, or a nonempty
 
 module {
   // CHECK-LABEL: func.func @empty_kernel
