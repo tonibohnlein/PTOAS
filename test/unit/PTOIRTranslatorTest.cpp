@@ -268,34 +268,54 @@ bool testStrictRecognizedExtendedEffectSucceeds() {
 
 bool testMacroResultCompletionContract() {
   MLIRContext context;
-  context.loadDialect<arith::ArithDialect>();
+  context.allowUnregisteredDialects();
   const Location location = UnknownLoc::get(&context);
   OpBuilder builder(&context);
   auto module = ModuleOp::create(location);
   builder.setInsertionPointToStart(module.getBody());
-  arith::ConstantIntOp operation =
-      builder.create<arith::ConstantIntOp>(location, 0, 32);
+  OperationState state(location, "test.multi_result_macro");
+  state.addTypes({builder.getI32Type(), builder.getI64Type()});
+  Operation *operation = builder.create(state);
 
   SyncMacroModel valid;
-  valid.phases.push_back({0, PipelineType::PIPE_S, {}, {}, {0}});
+  valid.phases.push_back({0, PipelineType::PIPE_S, {}, {}, {1}});
+  valid.phases.push_back({1, PipelineType::PIPE_V, {}, {}, {0}});
   const bool validContract =
       succeeded(verifySyncMacroModel(operation, valid)) &&
-      getSyncMacroResultCompletionPhase(valid, 0) == 0;
+      getSyncMacroResultCompletionPhase(valid, 0) == 1 &&
+      getSyncMacroResultCompletionPhase(valid, 1) == 0;
 
   SyncMacroModel missing;
-  missing.phases.push_back({0, PipelineType::PIPE_S, {}, {}, {}});
+  missing.phases.push_back({0, PipelineType::PIPE_S, {}, {}, {0}});
+  missing.phases.push_back({1, PipelineType::PIPE_V, {}, {}, {}});
+  SyncMacroModel duplicate;
+  duplicate.phases.push_back({0, PipelineType::PIPE_S, {}, {}, {0, 1}});
+  duplicate.phases.push_back({1, PipelineType::PIPE_V, {}, {}, {1}});
+  SyncMacroModel outOfRange;
+  outOfRange.phases.push_back({0, PipelineType::PIPE_S, {}, {}, {0}});
+  outOfRange.phases.push_back({1, PipelineType::PIPE_V, {}, {}, {2}});
   bool diagnosedMissing = false;
+  bool diagnosedInvalid = false;
   ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
     diagnosedMissing |= diagnostic.str().find("one synchronization completion "
                                               "phase for every SSA result") !=
                         std::string::npos;
+    diagnosedInvalid |=
+        diagnostic.str().find("invalid or duplicate macro result completion "
+                              "phase") != std::string::npos;
     return success();
   });
   return check(validContract,
-               "accept explicit macro result completion phase") &&
+               "bind each macro result to its declared completion phase") &&
          check(failed(verifySyncMacroModel(operation, missing)),
                "reject a macro result without a completion phase") &&
-         check(diagnosedMissing, "diagnose missing macro result completion");
+         check(diagnosedMissing, "diagnose missing macro result completion") &&
+         check(failed(verifySyncMacroModel(operation, duplicate)),
+               "reject duplicate macro result completion phases") &&
+         check(failed(verifySyncMacroModel(operation, outOfRange)),
+               "reject an out-of-range macro result completion") &&
+         check(diagnosedInvalid,
+               "diagnose invalid macro result completion declarations");
 }
 
 } // namespace
