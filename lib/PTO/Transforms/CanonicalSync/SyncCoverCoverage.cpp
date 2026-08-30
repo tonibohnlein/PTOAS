@@ -87,25 +87,59 @@ bool meteredStableSort(std::vector<T> &values, Compare compare,
     std::stable_sort(values.begin(), values.end(), compare);
     return true;
   }
-  for (std::size_t index = 1; index < values.size(); ++index) {
-    T value = std::move(values[index]);
-    std::size_t position = index;
-    while (position != 0) {
-      if (!budget->consume()) {
-        return false;
-      }
-      const bool precedes = compare(value, values[position - 1]);
-      if (budget->exhausted) {
-        return false;
-      }
-      if (!precedes) {
-        break;
-      }
-      values[position] = std::move(values[position - 1]);
-      --position;
-    }
-    values[position] = std::move(value);
+  const bool alreadySorted = values.size() < 2;
+  if (alreadySorted) {
+    return true;
   }
+  if (!budget->consume(values.size())) {
+    return false;
+  }
+  std::vector<T> source = std::move(values);
+  std::vector<T> target;
+  target.reserve(source.size());
+  for (std::size_t width = 1; width < source.size();) {
+    target.clear();
+    for (std::size_t begin = 0; begin < source.size();) {
+      const std::size_t middle = std::min(source.size(), begin + width);
+      const std::size_t end = std::min(source.size(), middle + width);
+      std::size_t left = begin;
+      std::size_t right = middle;
+      while (left < middle && right < end) {
+        if (!budget->consume(2)) {
+          return false;
+        }
+        const bool takeRight = compare(source[right], source[left]);
+        if (budget->exhausted) {
+          return false;
+        }
+        if (takeRight) {
+          target.push_back(std::move(source[right++]));
+        } else {
+          target.push_back(std::move(source[left++]));
+        }
+      }
+      while (left < middle) {
+        if (!budget->consume()) {
+          return false;
+        }
+        target.push_back(std::move(source[left++]));
+      }
+      while (right < end) {
+        if (!budget->consume()) {
+          return false;
+        }
+        target.push_back(std::move(source[right++]));
+      }
+      begin = end;
+    }
+    source.swap(target);
+    const bool finalPass = width > source.size() / 2;
+    if (finalPass) {
+      break;
+    }
+    width *= 2;
+  }
+  values = std::move(source);
   return true;
 }
 

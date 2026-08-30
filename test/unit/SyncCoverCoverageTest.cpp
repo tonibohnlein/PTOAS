@@ -1245,6 +1245,55 @@ bool testDeepProjectionReservationFailsEarly() {
   return passed;
 }
 
+bool testMeteredSupplySortingScalesNLogN() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add sort-scaling source");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add sort-scaling target");
+  passed &= check(graph.freezeStructure(), "freeze sort-scaling graph");
+  if (!passed) {
+    return false;
+  }
+  const SyncCoverExpandedProgram expansion(graph);
+  const auto run = [&](std::size_t count,
+                       SyncCoverCoverageWorkBudget &workBudget) {
+    std::vector<SyncCoverCompletionSupply> supplies;
+    supplies.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+      supplies.push_back(
+          {count - index - 1,
+           makeEdge(source, target, SyncCoverEdgeKind::CompletionSupply)});
+    }
+    return computeSyncCoverCoverage(graph, expansion, supplies, {},
+                                    &workBudget);
+  };
+
+  constexpr std::size_t smallCount = 512;
+  constexpr std::size_t largeCount = 2 * smallCount;
+  SyncCoverCoverageWorkBudget smallWork;
+  SyncCoverCoverageWorkBudget largeWork;
+  const SyncCoverCoverageResult small = run(smallCount, smallWork);
+  const SyncCoverCoverageResult large = run(largeCount, largeWork);
+  passed &=
+      check(small && large && largeWork.workUnits < 3 * smallWork.workUnits,
+            "meter reverse-ordered supply sorting with n-log-n growth");
+  if (!passed || largeWork.workUnits == 0) {
+    return false;
+  }
+
+  SyncCoverCoverageWorkBudget exactWork(largeWork.workUnits);
+  const SyncCoverCoverageResult exact = run(largeCount, exactWork);
+  SyncCoverCoverageWorkBudget belowWork(largeWork.workUnits - 1);
+  const SyncCoverCoverageResult below = run(largeCount, belowWork);
+  return check(exact && exactWork.workUnits == largeWork.workUnits,
+               "replay metered supply sorting at its exact work bound") &&
+         check(below.error == SyncCoverCoverageError::WorkLimitExceeded &&
+                   belowWork.exhausted,
+               "reject metered supply sorting one unit below its work bound");
+}
+
 } // namespace
 
 int main() {
@@ -1273,5 +1322,6 @@ int main() {
   passed &= testInvalidSupplyFailsClosed();
   passed &= testBoundedCoverageMetersWholeQuery();
   passed &= testDeepProjectionReservationFailsEarly();
+  passed &= testMeteredSupplySortingScalesNLogN();
   return passed ? 0 : 1;
 }
