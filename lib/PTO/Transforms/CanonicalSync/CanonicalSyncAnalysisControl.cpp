@@ -160,12 +160,10 @@ ProgramBuilder::addPeriodicControlEvidence(scf::IfOp conditional,
         "canonical sync lost the enclosing loop control");
   }
 
-  SmallVector<scf::ForOp, 4> enclosingLoops;
-  for (Operation *parent = conditional->getParentOp(); parent != nullptr;
-       parent = parent->getParentOp()) {
-    if (auto enclosingLoop = dyn_cast<scf::ForOp>(parent)) {
-      enclosingLoops.push_back(enclosingLoop);
-    }
+  llvm::DenseMap<Value, Value> inductionLowerBounds;
+  if (failed(collectEnclosingLoopControls(conditional.getOperation(),
+                                          inductionLowerBounds))) {
+    return failure();
   }
   const auto isFirstIterationControl = [&]() {
     if (!comparison ||
@@ -173,45 +171,31 @@ ProgramBuilder::addPeriodicControlEvidence(scf::IfOp conditional,
          comparison.getPredicate() != arith::CmpIPredicate::ne)) {
       return false;
     }
-    return llvm::any_of(enclosingLoops, [&](scf::ForOp enclosingLoop) {
-      return (comparison.getLhs() == enclosingLoop.getInductionVar() &&
-              comparison.getRhs() == enclosingLoop.getLowerBound()) ||
-             (comparison.getRhs() == enclosingLoop.getInductionVar() &&
-              comparison.getLhs() == enclosingLoop.getLowerBound());
-    });
+    if (!consumePairInspections(2)) {
+      return false;
+    }
+    const auto lhs = inductionLowerBounds.find(comparison.getLhs());
+    const auto rhs = inductionLowerBounds.find(comparison.getRhs());
+    return (lhs != inductionLowerBounds.end() &&
+            lhs->second == comparison.getRhs()) ||
+           (rhs != inductionLowerBounds.end() &&
+            rhs->second == comparison.getLhs());
   };
   const auto rejectUnmodeledLoopVaryingControl = [&]() -> LogicalResult {
     const SyncCoverControl &registeredControl = graph_.getControls()[control];
     if (registeredControl.successorRelation || isFirstIterationControl()) {
       return success();
     }
-    SmallVector<Value, 4> inductionVariables;
-    inductionVariables.reserve(enclosingLoops.size());
-    for (scf::ForOp enclosingLoop : enclosingLoops) {
-      inductionVariables.push_back(enclosingLoop.getInductionVar());
+    llvm::DenseSet<Value> discovered;
+    bool reachesLoopInduction = false;
+    if (failed(walkSsaProvenance(conditional.getCondition(),
+                                 &inductionLowerBounds, nullptr, discovered,
+                                 &reachesLoopInduction))) {
+      return failure();
     }
-    llvm::DenseSet<Value> visited;
-    SmallVector<Value, 16> worklist{conditional.getCondition()};
-    while (!worklist.empty()) {
-      Value current = worklist.pop_back_val();
-      if (!visited.insert(current).second) {
-        continue;
-      }
-      if (!consumePairInspection()) {
-        return conditional.emitError(
-            "canonical sync pair-inspection limit exceeded");
-      }
-      if (llvm::is_contained(inductionVariables, current)) {
-        return conditional.emitError(
-            "canonical sync cannot model this loop-varying control");
-      }
-      Operation *definition = current.getDefiningOp();
-      if (!definition) {
-        continue;
-      }
-      for (Value operand : definition->getOperands()) {
-        worklist.push_back(operand);
-      }
+    if (reachesLoopInduction) {
+      return conditional.emitError(
+          "canonical sync cannot model this loop-varying control");
     }
     return success();
   };
@@ -343,18 +327,26 @@ ProgramBuilder::addSuccessorControlEvidence(scf::IfOp conditional,
 }
 
 LogicalResult ProgramBuilder::validateControlDataflow() {
-  auto rejectScheduledControlValue = [&](Operation *owner, Value value,
-                                         StringRef role) -> LogicalResult {
+  auto rejectUnsupportedControlValue =
+      [&](Operation *owner, Value value, StringRef role,
+          const llvm::DenseMap<Value, Value> *trackedLoopInductions =
+              nullptr) -> LogicalResult {
     llvm::SetVector<SyncCoverNodeId> producers;
-    llvm::DenseSet<Value> visited;
-    if (failed(collectScheduledProducers(value, producers, visited))) {
+    llvm::DenseSet<Value> discovered;
+    bool reachesLoopInduction = false;
+    if (failed(walkSsaProvenance(value, trackedLoopInductions, &producers,
+                                 discovered, &reachesLoopInduction))) {
       return failure();
     }
-    if (producers.empty()) {
-      return success();
+    if (!producers.empty()) {
+      return owner->emitError("canonical sync cannot model asynchronous ")
+             << role << " produced by a scheduled pipe operation";
     }
-    return owner->emitError("canonical sync cannot model asynchronous ")
-           << role << " produced by a scheduled pipe operation";
+    if (reachesLoopInduction) {
+      return owner->emitError("canonical sync cannot model an ")
+             << role << " that varies with an enclosing loop";
+    }
+    return success();
   };
 
   WalkResult walk = function_.walk([&](Operation *operation) {
@@ -362,19 +354,27 @@ LogicalResult ProgramBuilder::validateControlDataflow() {
       return WalkResult::skip();
     }
     if (auto conditional = dyn_cast<scf::IfOp>(operation)) {
-      if (failed(rejectScheduledControlValue(
+      if (failed(rejectUnsupportedControlValue(
               operation, conditional.getCondition(), "scf.if condition"))) {
         return WalkResult::interrupt();
       }
     }
     if (auto loop = dyn_cast<scf::ForOp>(operation)) {
+      llvm::DenseMap<Value, Value> outerInductionLowerBounds;
+      if (failed(collectEnclosingLoopControls(loop.getOperation(),
+                                              outerInductionLowerBounds))) {
+        return WalkResult::interrupt();
+      }
       const bool unsupportedControl =
-          failed(rejectScheduledControlValue(operation, loop.getLowerBound(),
-                                             "scf.for lower bound")) ||
-          failed(rejectScheduledControlValue(operation, loop.getUpperBound(),
-                                             "scf.for upper bound")) ||
-          failed(rejectScheduledControlValue(operation, loop.getStep(),
-                                             "scf.for step"));
+          failed(rejectUnsupportedControlValue(operation, loop.getLowerBound(),
+                                               "scf.for lower bound",
+                                               &outerInductionLowerBounds)) ||
+          failed(rejectUnsupportedControlValue(operation, loop.getUpperBound(),
+                                               "scf.for upper bound",
+                                               &outerInductionLowerBounds)) ||
+          failed(rejectUnsupportedControlValue(operation, loop.getStep(),
+                                               "scf.for step",
+                                               &outerInductionLowerBounds));
       if (unsupportedControl) {
         return WalkResult::interrupt();
       }

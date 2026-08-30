@@ -110,8 +110,11 @@ Recognized periodic controls that cannot be represented exactly fail closed.
 Any other guarded condition that depends on an enclosing induction variable
 also fails closed unless it is an exact first-iteration or successor predicate;
 an absent phase relation is reserved for controls proven invariant across the
-enclosing loops. This prevents a varying guard from being mistaken for a
-one-state recurrence orbit.
+enclosing loops. A nested loop's lower bound, upper bound, and step are also
+execution guards: if any depends on an enclosing induction variable, analysis
+fails closed until that varying trip-count relation has an exact model. This
+prevents a varying guard or conditionally empty child loop from being mistaken
+for a one-state recurrence orbit.
 Orbit construction is cached by loop and endpoint guards, and orbit, residue,
 and witness-state work consumes the shared analysis bound before execution.
 Analysis also fails closed if one joint orbit or compact witness-state table

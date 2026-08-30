@@ -169,6 +169,12 @@ private:
 
   bool consumePairInspections(std::size_t amount = 1);
   bool consumePairInspection() { return consumePairInspections(); }
+  LogicalResult collectEnclosingLoopControls(
+      Operation *operation, llvm::DenseMap<Value, Value> &inductionLowerBounds);
+  LogicalResult walkSsaProvenance(
+      Value seed, const llvm::DenseMap<Value, Value> *trackedLoopInductions,
+      llvm::SetVector<SyncCoverNodeId> *producers,
+      llvm::DenseSet<Value> &discovered, bool *reachesTrackedLoopInduction);
   LogicalResult addFixedIssueOrder();
   LogicalResult addCertifiedCompletionFrontiers();
   LogicalResult addRegionIssueOrder(Region &region, IssueOrderState &state);
@@ -189,10 +195,6 @@ private:
       const CanonicalSyncTargetCapabilities &capabilities);
   bool isDemandImplicitlyComplete(SyncCoverNodeId source,
                                   SyncCoverNodeId target);
-  LogicalResult
-  collectScheduledProducers(Value value,
-                            llvm::SetVector<SyncCoverNodeId> &producers,
-                            llvm::DenseSet<Value> &visited) const;
   bool hasIntrinsicMmadAccumulatorOrdering(
       SyncCoverNodeId source, SyncCoverNodeId target,
       const SyncCoverStorageAccess &sourceAccess,

@@ -883,25 +883,26 @@ LogicalResult ProgramBuilder::mergeIssueStates(IssueOrderState &target,
 
 LogicalResult ProgramBuilder::addForwardDependencies() {
   for (SyncCoverNodeId target = 0; target < nodeBindings_.size(); ++target) {
+    llvm::SetVector<SyncCoverNodeId> producers;
+    llvm::DenseSet<Value> discovered;
     for (Value operand : nodeBindings_[target].operation->getOperands()) {
-      llvm::SetVector<SyncCoverNodeId> producers;
-      llvm::DenseSet<Value> visited;
-      if (failed(collectScheduledProducers(operand, producers, visited))) {
+      if (failed(walkSsaProvenance(operand, nullptr, &producers, discovered,
+                                   nullptr))) {
         return failure();
       }
-      for (SyncCoverNodeId source : producers) {
-        const bool unavailable =
-            source >= target ||
-            !syncCoverGuardsCompatible(graph_.getNodes()[source].guard,
-                                       graph_.getNodes()[target].guard) ||
-            isDemandImplicitlyComplete(source, target);
-        if (unavailable) {
-          continue;
-        }
-        if (failed(addDemand(source, target, 0, 0, {SyncCoverDemandKind::SSA},
-                             {}))) {
-          return failure();
-        }
+    }
+    for (SyncCoverNodeId source : producers) {
+      const bool unavailable =
+          source >= target ||
+          !syncCoverGuardsCompatible(graph_.getNodes()[source].guard,
+                                     graph_.getNodes()[target].guard) ||
+          isDemandImplicitlyComplete(source, target);
+      if (unavailable) {
+        continue;
+      }
+      if (failed(addDemand(source, target, 0, 0, {SyncCoverDemandKind::SSA},
+                           {}))) {
+        return failure();
       }
     }
   }
@@ -998,42 +999,109 @@ bool ProgramBuilder::isDemandImplicitlyComplete(SyncCoverNodeId source,
          isCompletionOrdered(sourceNode.resource, function_.getOperation());
 }
 
-LogicalResult ProgramBuilder::collectScheduledProducers(
-    Value value, llvm::SetVector<SyncCoverNodeId> &producers,
-    llvm::DenseSet<Value> &visited) const {
-  if (!value || !visited.insert(value).second) {
-    return success();
-  }
-  Operation *definition = value.getDefiningOp();
-  if (!definition) {
-    return success();
-  }
-  auto scheduled = operationNodes_.find(definition);
-  if (scheduled != operationNodes_.end()) {
-    const auto completion = ssaCompletionNodes_.find(value);
-    if (completion == ssaCompletionNodes_.end()) {
-      return definition->emitError(
-          "canonical sync has no completion phase for this SSA result");
+LogicalResult ProgramBuilder::collectEnclosingLoopControls(
+    Operation *operation, llvm::DenseMap<Value, Value> &inductionLowerBounds) {
+  for (Operation *parent = operation->getParentOp(); parent != nullptr;
+       parent = parent->getParentOp()) {
+    if (!consumePairInspection()) {
+      return operation->emitError(
+          "canonical sync pair-inspection limit exceeded");
     }
-    producers.insert(completion->second);
+    auto loop = dyn_cast<scf::ForOp>(parent);
+    if (!loop) {
+      continue;
+    }
+    if (!consumePairInspection()) {
+      return operation->emitError(
+          "canonical sync pair-inspection limit exceeded");
+    }
+    inductionLowerBounds.insert({loop.getInductionVar(), loop.getLowerBound()});
+  }
+  return success();
+}
+
+LogicalResult ProgramBuilder::walkSsaProvenance(
+    Value seed, const llvm::DenseMap<Value, Value> *trackedLoopInductions,
+    llvm::SetVector<SyncCoverNodeId> *producers,
+    llvm::DenseSet<Value> &discovered, bool *reachesTrackedLoopInduction) {
+  SmallVector<Value, 16> worklist;
+  const auto enqueue = [&](Value value) -> LogicalResult {
+    // Charge every incoming SSA edge before looking it up. Charge every
+    // unique state again before growing either persistent traversal storage.
+    if (!value) {
+      return success();
+    }
+    if (!consumePairInspection()) {
+      return function_.emitError(
+          "canonical sync pair-inspection limit exceeded");
+    }
+    const bool alreadyDiscovered = discovered.count(value) != 0;
+    if (alreadyDiscovered) {
+      return success();
+    }
+    const bool stateLimitReached =
+        discovered.size() >= options_.maximumPairInspections ||
+        worklist.size() >= worklist.max_size();
+    if (stateLimitReached || !consumePairInspection()) {
+      return function_.emitError(
+          "canonical sync pair-inspection limit exceeded");
+    }
+    discovered.insert(value);
+    worklist.push_back(value);
     return success();
+  };
+  if (failed(enqueue(seed))) {
+    return failure();
   }
-  // Storage handles do not represent asynchronously produced data. Treat
-  // allocation and declaration operations as explicit provenance roots even
-  // though their memory-effect interfaces are not side-effect-free.
-  if (isSyncStorageProvenanceRoot(definition)) {
-    return success();
-  }
-  const bool unsupportedDefinition =
-      !isMemoryEffectFree(definition) || definition->getNumRegions() != 0;
-  if (unsupportedDefinition) {
-    return definition->emitError(
-        "canonical sync cannot trace SSA provenance through this unscheduled "
-        "effectful or region operation");
-  }
-  for (Value operand : definition->getOperands()) {
-    if (failed(collectScheduledProducers(operand, producers, visited))) {
-      return failure();
+  while (!worklist.empty()) {
+    Value current = worklist.pop_back_val();
+    const bool trackedInduction =
+        trackedLoopInductions && trackedLoopInductions->count(current) != 0;
+    if (trackedInduction) {
+      if (reachesTrackedLoopInduction) {
+        *reachesTrackedLoopInduction = true;
+      }
+      continue;
+    }
+    Operation *definition = current.getDefiningOp();
+    if (!definition) {
+      continue;
+    }
+    auto scheduled = operationNodes_.find(definition);
+    if (scheduled != operationNodes_.end()) {
+      if (!producers) {
+        continue;
+      }
+      const auto completion = ssaCompletionNodes_.find(current);
+      if (completion == ssaCompletionNodes_.end()) {
+        return definition->emitError(
+            "canonical sync has no completion phase for this SSA result");
+      }
+      const bool newProducer = !producers->contains(completion->second);
+      if (newProducer && !consumePairInspection()) {
+        return function_.emitError(
+            "canonical sync pair-inspection limit exceeded");
+      }
+      producers->insert(completion->second);
+      continue;
+    }
+    // Storage handles do not represent asynchronously produced data. Treat
+    // allocation and declaration operations as explicit provenance roots even
+    // though their memory-effect interfaces are not side-effect-free.
+    if (isSyncStorageProvenanceRoot(definition)) {
+      continue;
+    }
+    const bool unsupportedDefinition =
+        !isMemoryEffectFree(definition) || definition->getNumRegions() != 0;
+    if (unsupportedDefinition) {
+      return definition->emitError(
+          "canonical sync cannot trace SSA provenance through this "
+          "unscheduled effectful or region operation");
+    }
+    for (Value operand : definition->getOperands()) {
+      if (failed(enqueue(operand))) {
+        return failure();
+      }
     }
   }
   return success();

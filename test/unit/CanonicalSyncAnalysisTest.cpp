@@ -2725,8 +2725,27 @@ bool testFixedBarrierInspectionBoundsAndPersistentControlState() {
     return false;
   }
   func::FuncOp deep = deepModule->lookupSymbol<func::FuncOp>("deep");
+  std::size_t deepLowerBound = 1;
+  std::size_t deepUpperBound = 1U << 18;
+  while (deepLowerBound < deepUpperBound) {
+    const std::size_t middle =
+        deepLowerBound + (deepUpperBound - deepLowerBound) / 2;
+    CanonicalSyncAnalysisOptions options;
+    options.maximumPairInspections = middle;
+    FailureOr<CanonicalSyncProgram> trial = failure();
+    {
+      ScopedDiagnosticHandler handler(&context,
+                                      [](Diagnostic &) { return success(); });
+      trial = buildCanonicalSyncProgram(deep, options);
+    }
+    if (succeeded(trial)) {
+      deepUpperBound = middle;
+    } else {
+      deepLowerBound = middle + 1;
+    }
+  }
   CanonicalSyncAnalysisOptions deepExact;
-  deepExact.maximumPairInspections = 7 * prefixNodes - 4;
+  deepExact.maximumPairInspections = deepLowerBound;
   FailureOr<CanonicalSyncProgram> exact =
       buildCanonicalSyncProgram(deep, deepExact);
   CanonicalSyncAnalysisOptions deepBelow = deepExact;
@@ -2738,7 +2757,7 @@ bool testFixedBarrierInspectionBoundsAndPersistentControlState() {
     below = buildCanonicalSyncProgram(deep, deepBelow);
   }
   if (!check(succeeded(exact),
-             "bound deep no-barrier state independently of control depth") ||
+             "bound deep no-barrier state and control provenance") ||
       !check(failed(below),
              "account every persistent no-barrier issue-state update")) {
     return false;
@@ -4037,6 +4056,24 @@ bool testUnmodeledLoopVaryingControlsFailClosed() {
         }
         return
       }
+      func.func @nested_varying_trip_count(
+          %outer_limit: index,
+          %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        scf.for %i = %c0 to %outer_limit step %c1 {
+          %skip = arith.cmpi eq, %i, %c1 : index
+          %inner_ub = arith.select %skip, %c0, %c1 : index
+          scf.for %j = %c0 to %inner_ub step %c1 {
+            pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                      outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+            pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                     outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+          }
+        }
+        return
+      }
       func.func @gap_two_unrolled(
           %src: !pto.partition_tensor_view<16x16xf32>,
           %slot: !pto.tile_buf<vec, 16x16xf32>) {
@@ -4076,6 +4113,19 @@ bool testUnmodeledLoopVaryingControlsFailClosed() {
                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
         return
       }
+      func.func @nested_varying_trip_count_unrolled(
+          %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>) {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
     }
   )mlir",
                                                              &context);
@@ -4086,14 +4136,13 @@ bool testUnmodeledLoopVaryingControlsFailClosed() {
   const auto build = [&](StringRef name) {
     return buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>(name));
   };
-  const auto rejectsLoopVarying = [&](StringRef name) {
+  const auto rejectsWith = [&](StringRef name, StringRef expectedDiagnostic) {
     bool sawDiagnostic = false;
     FailureOr<CanonicalSyncProgram> rejected = failure();
     {
       ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
-        sawDiagnostic |=
-            diagnostic.str().find("cannot model this loop-varying control") !=
-            std::string::npos;
+        sawDiagnostic |= diagnostic.str().find(expectedDiagnostic.str()) !=
+                         std::string::npos;
         return success();
       });
       rejected = build(name);
@@ -4105,9 +4154,11 @@ bool testUnmodeledLoopVaryingControlsFailClosed() {
       build("shifted_modulo_unrolled");
   FailureOr<CanonicalSyncProgram> nestedUnrolled =
       build("nested_outer_varying_unrolled");
-  const bool unrolledBuilt = succeeded(gapTwoUnrolled) &&
-                             succeeded(shiftedUnrolled) &&
-                             succeeded(nestedUnrolled);
+  FailureOr<CanonicalSyncProgram> nestedTripUnrolled =
+      build("nested_varying_trip_count_unrolled");
+  const bool unrolledBuilt =
+      succeeded(gapTwoUnrolled) && succeeded(shiftedUnrolled) &&
+      succeeded(nestedUnrolled) && succeeded(nestedTripUnrolled);
   if (!check(unrolledBuilt,
              "build explicit unrolls for rejected varying controls")) {
     return false;
@@ -4154,15 +4205,187 @@ bool testUnmodeledLoopVaryingControlsFailClosed() {
   const bool unrollsExposeOmittedGaps =
       mappedHazardGaps(*gapTwoUnrolled, {0, 2}) == gapTwo &&
       mappedHazardGaps(*shiftedUnrolled, {2, 5}) == gapThree &&
-      mappedHazardGaps(*nestedUnrolled, {0, 2}) == gapTwo;
+      mappedHazardGaps(*nestedUnrolled, {0, 2}) == gapTwo &&
+      mappedHazardGaps(*nestedTripUnrolled, {0, 2}) == gapTwo;
   return check(unrollsExposeOmittedGaps,
                "expose the real successor gaps in explicit unrolls") &&
-         check(rejectsLoopVarying("gap_two"),
+         check(rejectsWith("gap_two", "cannot model this loop-varying control"),
                "reject a transient direct induction guard") &&
-         check(rejectsLoopVarying("shifted_modulo"),
+         check(rejectsWith("shifted_modulo",
+                           "cannot model this loop-varying control"),
                "reject a transformed periodic guard") &&
-         check(rejectsLoopVarying("nested_outer_varying"),
-               "reject a nested guard that varies with an outer induction");
+         check(rejectsWith("nested_outer_varying",
+                           "cannot model this loop-varying control"),
+               "reject a nested guard that varies with an outer induction") &&
+         check(rejectsWith("nested_varying_trip_count",
+                           "scf.for upper bound that varies with an enclosing "
+                           "loop"),
+               "reject a nested trip count that varies with an outer "
+               "induction");
+}
+
+bool testSsaProvenanceTraversalIsBoundedAndIterative() {
+  constexpr std::size_t deepLength = 2048;
+  constexpr std::size_t wideLeaves = 256;
+  constexpr std::size_t sharedLevels = 512;
+  std::string source = R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @deep(%seed: i1, %limit: index) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %true = arith.constant 1 : i1
+)mlir";
+  std::string previous = "%seed";
+  for (std::size_t index = 0; index < deepLength; ++index) {
+    const std::string result = "%deep" + std::to_string(index);
+    source +=
+        "        " + result + " = arith.xori " + previous + ", %true : i1\n";
+    previous = result;
+  }
+  source += "        scf.for %i = %c0 to %limit step %c1 {\n"
+            "          scf.if " +
+            previous + " {\n          }\n        }\n        return\n      }\n";
+  source += R"mlir(
+      func.func @wide(%seed: i1, %limit: index) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %true = arith.constant 1 : i1
+)mlir";
+  std::vector<std::string> frontier;
+  frontier.reserve(wideLeaves);
+  for (std::size_t index = 0; index < wideLeaves; ++index) {
+    const std::string result = "%wide" + std::to_string(index);
+    source += "        " + result +
+              " = arith.select %seed, %true, %seed : "
+              "i1\n";
+    frontier.push_back(result);
+  }
+  std::size_t join = 0;
+  bool hasMultipleFrontierNodes = frontier.size() > 1;
+  while (hasMultipleFrontierNodes) {
+    std::vector<std::string> next;
+    next.reserve((frontier.size() + 1) / 2);
+    for (std::size_t index = 0; index < frontier.size(); index += 2) {
+      if (index + 1 == frontier.size()) {
+        next.push_back(frontier[index]);
+        continue;
+      }
+      const std::string result = "%wide_join" + std::to_string(join++);
+      source += "        " + result + " = arith.ori " + frontier[index] + ", " +
+                frontier[index + 1] + " : i1\n";
+      next.push_back(result);
+    }
+    frontier = std::move(next);
+    hasMultipleFrontierNodes = frontier.size() > 1;
+  }
+  source += "        scf.for %i = %c0 to %limit step %c1 {\n"
+            "          scf.if " +
+            frontier.front() +
+            " {\n          }\n        }\n        return\n      }\n";
+  source += R"mlir(
+      func.func @shared(%seed: i1, %limit: index) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+)mlir";
+  previous = "%seed";
+  for (std::size_t level = 0; level < sharedLevels; ++level) {
+    const std::string left = "%shared_left" + std::to_string(level);
+    const std::string right = "%shared_right" + std::to_string(level);
+    const std::string result = "%shared_join" + std::to_string(level);
+    source +=
+        "        " + left + " = arith.andi " + previous + ", %seed : i1\n";
+    source +=
+        "        " + right + " = arith.ori " + previous + ", %seed : i1\n";
+    source += "        " + result + " = arith.xori " + left + ", " + right +
+              " : i1\n";
+    previous = result;
+  }
+  source += "        scf.for %i = %c0 to %limit step %c1 {\n"
+            "          scf.if " +
+            previous +
+            " {\n          }\n        }\n        return\n      }\n    }\n";
+
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(source, &context);
+  if (!check(static_cast<bool>(module),
+             "parse bounded SSA-provenance fixtures")) {
+    return false;
+  }
+  const auto minimumAcceptedBound = [&](func::FuncOp function) {
+    std::size_t lower = 1;
+    std::size_t upper = 1U << 20;
+    {
+      CanonicalSyncAnalysisOptions options;
+      options.maximumPairInspections = upper;
+      if (failed(buildCanonicalSyncProgram(function, options))) {
+        return std::size_t{0};
+      }
+    }
+    while (lower < upper) {
+      const std::size_t middle = lower + (upper - lower) / 2;
+      CanonicalSyncAnalysisOptions options;
+      options.maximumPairInspections = middle;
+      FailureOr<CanonicalSyncProgram> trial = failure();
+      {
+        ScopedDiagnosticHandler handler(&context,
+                                        [](Diagnostic &) { return success(); });
+        trial = buildCanonicalSyncProgram(function, options);
+      }
+      if (succeeded(trial)) {
+        upper = middle;
+      } else {
+        lower = middle + 1;
+      }
+    }
+    return lower;
+  };
+  const auto verifyExactAndBelow = [&](StringRef name, StringRef description,
+                                       std::size_t &minimum) {
+    func::FuncOp function = module->lookupSymbol<func::FuncOp>(name);
+    minimum = minimumAcceptedBound(function);
+    if (minimum <= 1) {
+      return check(false, ("find the exact " + description + " bound").str());
+    }
+    CanonicalSyncAnalysisOptions exactOptions;
+    exactOptions.maximumPairInspections = minimum;
+    FailureOr<CanonicalSyncProgram> exact =
+        buildCanonicalSyncProgram(function, exactOptions);
+    CanonicalSyncAnalysisOptions belowOptions = exactOptions;
+    --belowOptions.maximumPairInspections;
+    bool sawLimit = false;
+    FailureOr<CanonicalSyncProgram> below = failure();
+    {
+      ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
+        sawLimit |= diagnostic.str().find("pair-inspection limit exceeded") !=
+                    std::string::npos;
+        return success();
+      });
+      below = buildCanonicalSyncProgram(function, belowOptions);
+    }
+    return check(succeeded(exact),
+                 ("accept " + description + " at its exact bound").str()) &&
+           check(failed(below) && sawLimit,
+                 ("reject " + description + " one unit below its bound").str());
+  };
+  std::size_t deepMinimum = 0;
+  std::size_t wideMinimum = 0;
+  std::size_t sharedMinimum = 0;
+  const bool exactBounds =
+      verifyExactAndBelow("deep", "deep SSA provenance", deepMinimum) &&
+      verifyExactAndBelow("wide", "wide SSA provenance", wideMinimum) &&
+      verifyExactAndBelow("shared", "shared-diamond SSA provenance",
+                          sharedMinimum);
+  const std::size_t deepEdgeFloor = 2 * (deepLength + 1);
+  const std::size_t wideEdgeFloor = 2 * (5 * wideLeaves - 1);
+  const std::size_t sharedEdgeFloor = 2 * (6 * sharedLevels + 1);
+  return exactBounds &&
+         check(deepMinimum >= deepEdgeFloor,
+               "charge every deep-chain provenance edge") &&
+         check(wideMinimum >= wideEdgeFloor,
+               "charge every wide-frontier provenance edge") &&
+         check(sharedMinimum >= sharedEdgeFloor,
+               "charge repeated edges in a shared provenance DAG");
 }
 
 bool testGuardedOwnershipVerificationWorkIsBounded() {
@@ -7026,6 +7249,7 @@ int main() {
       testPhaseAwareRecurrenceDistances() &&
       testFirstIterationRecurrenceSuppression() &&
       testUnmodeledLoopVaryingControlsFailClosed() &&
+      testSsaProvenanceTraversalIsBoundedAndIterative() &&
       testGuardedOwnershipVerificationWorkIsBounded() &&
       testBasicL0OwnershipSharesExhaustiveBranchBoundaries() &&
       testOwnershipDoesNotHideProducerOverwrite() &&
