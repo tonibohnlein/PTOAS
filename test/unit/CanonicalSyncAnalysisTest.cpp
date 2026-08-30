@@ -23,10 +23,12 @@
 #include <algorithm>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <set>
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <utility>
 
 namespace {
 
@@ -38,6 +40,39 @@ bool check(bool condition, std::string_view message) {
     std::cerr << "CanonicalSyncAnalysisTest failure: " << message << '\n';
   }
   return condition;
+}
+
+template <typename Predicate>
+CanonicalSyncProtocolVerifier testProtocolVerifier(Predicate predicate) {
+  return [predicate = std::move(predicate)](
+             const CanonicalSyncMechanismDescriptor &descriptor,
+             SyncCoverCoverageWorkBudget &work) {
+    const std::size_t supplies = descriptor.supplies.size();
+    const bool squareOverflows =
+        supplies != 0 &&
+        supplies > std::numeric_limits<std::size_t>::max() / supplies;
+    if (squareOverflows) {
+      work.exhausted = true;
+      return CanonicalSyncProblemError::LimitExceeded;
+    }
+    const std::size_t square = supplies * supplies;
+    const std::size_t maximum = std::numeric_limits<std::size_t>::max();
+    const bool fixedOverflows =
+        descriptor.eventUses.size() > maximum - 1 ||
+        descriptor.actions.size() > maximum - 1 - descriptor.eventUses.size();
+    const std::size_t fixed = fixedOverflows ? 0
+                                             : 1 + descriptor.eventUses.size() +
+                                                   descriptor.actions.size();
+    if (fixedOverflows ||
+        square > std::numeric_limits<std::size_t>::max() - fixed ||
+        !work.consume(fixed + square)) {
+      work.exhausted = true;
+      return CanonicalSyncProblemError::LimitExceeded;
+    }
+    return predicate(descriptor)
+               ? CanonicalSyncProblemError::None
+               : CanonicalSyncProblemError::UnverifiedProtocol;
+  };
 }
 
 std::string printOperation(Operation *operation) {
@@ -1146,11 +1181,12 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
   const CanonicalSyncProblemResult isolatedProtocol =
       isolatedProtocolProblem.internVerifiedProtocol(
           loopBoundaryProtocol->descriptor,
-          [&](const CanonicalSyncMechanismDescriptor &descriptor) {
-            CanonicalSyncMechanism mechanism;
-            mechanism.descriptor = descriptor;
-            return isDistanceTwoLoopBoundaryPrefix(mechanism);
-          });
+          testProtocolVerifier(
+              [&](const CanonicalSyncMechanismDescriptor &descriptor) {
+                CanonicalSyncMechanism mechanism;
+                mechanism.descriptor = descriptor;
+                return isDistanceTwoLoopBoundaryPrefix(mechanism);
+              }));
   isolatedProblemBuilt = isolatedProblemBuilt && isolatedProtocol &&
                          isolatedProtocolProblem.freeze();
   if (!check(isolatedProblemBuilt,
@@ -1175,20 +1211,19 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
   if (!recurrenceSelected || !recurrenceMaterialized) {
     return false;
   }
-  const auto rejectsProtocol =
-      [&](CanonicalSyncMechanismDescriptor descriptor) {
-        CanonicalSyncPatternProblem tampered(graph, protocolDemands);
-        bool domainsAdded = true;
-        for (const CanonicalSyncEventDomain &domain :
-             (*problem)->getDomains()) {
-          domainsAdded = domainsAdded && tampered.addEventDomain(domain);
-        }
-        const CanonicalSyncProblemResult added =
-            tampered.internVerifiedProtocol(
-                std::move(descriptor),
-                [](const CanonicalSyncMechanismDescriptor &) { return true; });
-        return domainsAdded && !added;
-      };
+  const auto rejectsProtocol = [&](CanonicalSyncMechanismDescriptor
+                                       descriptor) {
+    CanonicalSyncPatternProblem tampered(graph, protocolDemands);
+    bool domainsAdded = true;
+    for (const CanonicalSyncEventDomain &domain : (*problem)->getDomains()) {
+      domainsAdded = domainsAdded && tampered.addEventDomain(domain);
+    }
+    const CanonicalSyncProblemResult added = tampered.internVerifiedProtocol(
+        std::move(descriptor),
+        testProtocolVerifier(
+            [](const CanonicalSyncMechanismDescriptor &) { return true; }));
+    return domainsAdded && !added;
+  };
   CanonicalSyncMechanismDescriptor wrongWidth =
       loopBoundaryProtocol->descriptor;
   wrongWidth.eventUses.front().width = 1;
@@ -1507,11 +1542,12 @@ bool testA5MatrixLoopBoundaryProtocol() {
     }
   }
   const CanonicalSyncProblemResult added = isolated.internVerifiedProtocol(
-      protocol->descriptor, [&](const CanonicalSyncMechanismDescriptor &value) {
+      protocol->descriptor,
+      testProtocolVerifier([&](const CanonicalSyncMechanismDescriptor &value) {
         CanonicalSyncMechanism mechanism;
         mechanism.descriptor = value;
         return isMatrixProtocol(mechanism);
-      });
+      }));
   if (!check(added && isolated.freeze(),
              "freeze the isolated A5 matrix loop-boundary cover")) {
     return false;

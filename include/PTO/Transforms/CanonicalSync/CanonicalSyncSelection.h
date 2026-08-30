@@ -382,6 +382,12 @@ struct CanonicalSyncProblemResult {
   }
 };
 
+/// Persistent verifier for one admitted protocol mechanism. The callback must
+/// charge the supplied budget for all protocol-specific work before performing
+/// it and may return only None, UnverifiedProtocol, or LimitExceeded.
+using CanonicalSyncProtocolVerifier = std::function<CanonicalSyncProblemError(
+    const CanonicalSyncMechanismDescriptor &, SyncCoverCoverageWorkBudget &)>;
+
 class CanonicalSyncPatternProblem {
 public:
   struct Limits {
@@ -428,12 +434,11 @@ public:
   internMechanism(CanonicalSyncMechanismDescriptor descriptor,
                   CanonicalSyncMechanismOrigin origin =
                       CanonicalSyncMechanismOrigin::Unclassified);
-  CanonicalSyncProblemResult internVerifiedProtocol(
-      CanonicalSyncMechanismDescriptor descriptor,
-      const std::function<bool(const CanonicalSyncMechanismDescriptor &)>
-          &verifier,
-      CanonicalSyncMechanismOrigin origin =
-          CanonicalSyncMechanismOrigin::Unclassified);
+  CanonicalSyncProblemResult
+  internVerifiedProtocol(CanonicalSyncMechanismDescriptor descriptor,
+                         const CanonicalSyncProtocolVerifier &verifier,
+                         CanonicalSyncMechanismOrigin origin =
+                             CanonicalSyncMechanismOrigin::Unclassified);
   CanonicalSyncProblemResult addConflict(CanonicalSyncMechanismId first,
                                          CanonicalSyncMechanismId second);
   CanonicalSyncProblemResult addPattern(CanonicalSyncPatternSpec pattern);
@@ -611,12 +616,12 @@ private:
     std::size_t extraCoverageCount = 0;
   };
 
-  CanonicalSyncProblemResult internMechanismImpl(
-      CanonicalSyncMechanismDescriptor descriptor, bool protocolVerified,
-      const std::function<bool(const CanonicalSyncMechanismDescriptor &)>
-          &verifier = {},
-      CanonicalSyncMechanismOrigin origin =
-          CanonicalSyncMechanismOrigin::Unclassified);
+  CanonicalSyncProblemResult
+  internMechanismImpl(CanonicalSyncMechanismDescriptor descriptor,
+                      bool protocolVerified,
+                      const CanonicalSyncProtocolVerifier &verifier = {},
+                      CanonicalSyncMechanismOrigin origin =
+                          CanonicalSyncMechanismOrigin::Unclassified);
   CanonicalSyncProblemResult validateAndCostMechanism(
       CanonicalSyncMechanismDescriptor &descriptor,
       std::vector<CanonicalSyncEventLifetime> &lifetimes,
@@ -652,8 +657,7 @@ private:
   /// Admission verifiers for protocol mechanisms, aligned with mechanisms_.
   /// They are retained so fresh verification re-runs the protocol-specific
   /// factory/certificate contract instead of trusting the admission result.
-  std::vector<std::function<bool(const CanonicalSyncMechanismDescriptor &)>>
-      protocolVerifiers_;
+  std::vector<CanonicalSyncProtocolVerifier> protocolVerifiers_;
   std::vector<PendingPattern> patternSpecs_;
   std::optional<SyncCoverDemandSet> constructionBaselineCoverage_;
   std::vector<std::optional<SyncCoverDemandSet>> constructionSingletonCoverage_;

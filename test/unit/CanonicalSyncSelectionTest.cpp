@@ -12,6 +12,7 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <string_view>
 #include <utility>
@@ -39,6 +40,39 @@ std::size_t takeIndex(const Result &result, bool &passed,
   passed &=
       check(static_cast<bool>(result) && result.index.has_value(), message);
   return result.index.value_or(0);
+}
+
+template <typename Predicate>
+CanonicalSyncProtocolVerifier testProtocolVerifier(Predicate predicate) {
+  return [predicate = std::move(predicate)](
+             const CanonicalSyncMechanismDescriptor &descriptor,
+             SyncCoverCoverageWorkBudget &work) {
+    const std::size_t supplies = descriptor.supplies.size();
+    const bool squareOverflows =
+        supplies != 0 &&
+        supplies > std::numeric_limits<std::size_t>::max() / supplies;
+    if (squareOverflows) {
+      work.exhausted = true;
+      return CanonicalSyncProblemError::LimitExceeded;
+    }
+    const std::size_t square = supplies * supplies;
+    const std::size_t maximum = std::numeric_limits<std::size_t>::max();
+    const bool fixedOverflows =
+        descriptor.eventUses.size() > maximum - 1 ||
+        descriptor.actions.size() > maximum - 1 - descriptor.eventUses.size();
+    const std::size_t fixed = fixedOverflows ? 0
+                                             : 1 + descriptor.eventUses.size() +
+                                                   descriptor.actions.size();
+    if (fixedOverflows ||
+        square > std::numeric_limits<std::size_t>::max() - fixed ||
+        !work.consume(fixed + square)) {
+      work.exhausted = true;
+      return CanonicalSyncProblemError::LimitExceeded;
+    }
+    return predicate(descriptor)
+               ? CanonicalSyncProblemError::None
+               : CanonicalSyncProblemError::UnverifiedProtocol;
+  };
 }
 
 SyncCoverDemand demand(SyncCoverNodeId source, SyncCoverNodeId target,
@@ -1165,10 +1199,10 @@ bool testPairOwnerUsesEverySupplyScope() {
                          std::make_move_iterator(rightProtocol.actions.end()));
     multi.supplies.push_back(std::move(rightProtocol.supplies.front()));
     passed &= check(
-        problem.internVerifiedProtocol(std::move(multi),
-                                       [](const auto &candidate) {
-                                         return candidate.supplies.size() == 2;
-                                       }),
+        problem.internVerifiedProtocol(
+            std::move(multi), testProtocolVerifier([](const auto &candidate) {
+              return candidate.supplies.size() == 2;
+            })),
         "add multi-supply mechanism");
     passed &= check(problem.internMechanism(
                         eventInScope(2, 2, 3, leftMiddle, leftTarget, left)),
@@ -1558,11 +1592,12 @@ bool testDirectPairComposesAcrossRecurrenceArena() {
   const CanonicalSyncMechanismId carried = takeIndex(
       problem.internVerifiedProtocol(
           carriedDescriptor,
-          [&](const CanonicalSyncMechanismDescriptor &candidate) {
-            return candidate.kind == CanonicalSyncMechanismKind::Protocol &&
-                   candidate.supplies.size() == 1 &&
-                   candidate.supplies.front().edge.distance == 1;
-          }),
+          testProtocolVerifier(
+              [&](const CanonicalSyncMechanismDescriptor &candidate) {
+                return candidate.kind == CanonicalSyncMechanismKind::Protocol &&
+                       candidate.supplies.size() == 1 &&
+                       candidate.supplies.front().edge.distance == 1;
+              })),
       passed, "add recurrence-pair carried event");
   const CanonicalSyncProblemResult generated =
       addCanonicalSyncDirectPairPatterns(problem);
@@ -2030,15 +2065,17 @@ bool testAllocatorWidthsReuseAndConflicts() {
   const CanonicalSyncMechanismId second =
       takeIndex(problem.internMechanism(event(0, 1, 2, sources[1], targets[1])),
                 passed, "add allocator second event");
-  const CanonicalSyncMechanismId wide = takeIndex(
-      problem.internVerifiedProtocol(
-          protocol(0, 1, 2, sources[2], targets[2], loop, 2),
-          [](const CanonicalSyncMechanismDescriptor &descriptor) {
-            return descriptor.kind == CanonicalSyncMechanismKind::Protocol &&
-                   descriptor.eventUses.size() == 1 &&
-                   descriptor.eventUses[0].width == 2;
-          }),
-      passed, "add allocator wide event");
+  const CanonicalSyncMechanismId wide =
+      takeIndex(problem.internVerifiedProtocol(
+                    protocol(0, 1, 2, sources[2], targets[2], loop, 2),
+                    testProtocolVerifier(
+                        [](const CanonicalSyncMechanismDescriptor &descriptor) {
+                          return descriptor.kind ==
+                                     CanonicalSyncMechanismKind::Protocol &&
+                                 descriptor.eventUses.size() == 1 &&
+                                 descriptor.eventUses[0].width == 2;
+                        })),
+                passed, "add allocator wide event");
   const CanonicalSyncResourceAllocation reused =
       allocateCanonicalSyncEvents(problem, {first, second});
   passed &= check(
@@ -2091,20 +2128,24 @@ bool testVerifiedProtocolTrustBoundary() {
   CanonicalSyncPatternProblem problem(graph, allDemands(graph));
   passed &=
       check(problem.addEventDomain({0, 1, 2, 2, {}}), "add protocol domain");
-  const auto verifier = [=](const CanonicalSyncMechanismDescriptor &candidate) {
-    return candidate.kind == CanonicalSyncMechanismKind::Protocol &&
-           candidate.eventUses.size() == 1 &&
-           candidate.eventUses[0].recurrenceScope == loop &&
-           candidate.supplies.size() == 1 && candidate.actions.size() == 2 &&
-           candidate.actions[0].anchor.kind == SyncCoverAnchorKind::AfterNode &&
-           candidate.actions[0].anchor.node == source &&
-           candidate.actions[1].anchor.kind ==
-               SyncCoverAnchorKind::BeforeNode &&
-           candidate.actions[1].anchor.node == target &&
-           candidate.supplies[0].edge.source == source &&
-           candidate.supplies[0].edge.target == target &&
-           candidate.supplies[0].edge.distance == 1;
-  };
+  const auto protocolPredicate =
+      [=](const CanonicalSyncMechanismDescriptor &candidate) {
+        return candidate.kind == CanonicalSyncMechanismKind::Protocol &&
+               candidate.eventUses.size() == 1 &&
+               candidate.eventUses[0].recurrenceScope == loop &&
+               candidate.supplies.size() == 1 &&
+               candidate.actions.size() == 2 &&
+               candidate.actions[0].anchor.kind ==
+                   SyncCoverAnchorKind::AfterNode &&
+               candidate.actions[0].anchor.node == source &&
+               candidate.actions[1].anchor.kind ==
+                   SyncCoverAnchorKind::BeforeNode &&
+               candidate.actions[1].anchor.node == target &&
+               candidate.supplies[0].edge.source == source &&
+               candidate.supplies[0].edge.target == target &&
+               candidate.supplies[0].edge.distance == 1;
+      };
+  const auto verifier = testProtocolVerifier(protocolPredicate);
   const CanonicalSyncProblemResult admitted = problem.internVerifiedProtocol(
       protocol(0, 1, 2, source, target, loop, 1, 1), verifier);
   passed &= check(admitted, "verified recurrence protocol is admitted");
@@ -2116,9 +2157,10 @@ bool testVerifiedProtocolTrustBoundary() {
   const CanonicalSyncProblemResult freshlyAdmitted =
       freshProblem.internVerifiedProtocol(
           protocol(0, 1, 2, source, target, loop, 1, 1),
-          [&](const CanonicalSyncMechanismDescriptor &candidate) {
-            return certificateStillValid && verifier(candidate);
-          });
+          testProtocolVerifier(
+              [&](const CanonicalSyncMechanismDescriptor &candidate) {
+                return certificateStillValid && protocolPredicate(candidate);
+              }));
   passed &= check(freshlyAdmitted && freshlyAdmitted.index,
                   "admit a protocol with a persistent verifier");
   if (freshlyAdmitted.index) {
@@ -2127,6 +2169,56 @@ bool testVerifiedProtocolTrustBoundary() {
         check(freshProblem.verifyMechanism(*freshlyAdmitted.index).error ==
                   CanonicalSyncProblemError::UnverifiedProtocol,
               "fresh verification re-runs the persistent protocol verifier");
+  }
+
+  CanonicalSyncPatternProblem meteredProblem(graph, allDemands(graph));
+  passed &= check(meteredProblem.addEventDomain({0, 1, 2, 2, {}}),
+                  "add metered protocol domain");
+  bool verifierBodyRan = false;
+  constexpr std::size_t callbackWork = 7;
+  const CanonicalSyncProtocolVerifier meteredVerifier =
+      [&](const CanonicalSyncMechanismDescriptor &candidate,
+          SyncCoverCoverageWorkBudget &work) {
+        if (!work.consume(callbackWork)) {
+          return CanonicalSyncProblemError::LimitExceeded;
+        }
+        verifierBodyRan = true;
+        return protocolPredicate(candidate)
+                   ? CanonicalSyncProblemError::None
+                   : CanonicalSyncProblemError::UnverifiedProtocol;
+      };
+  const CanonicalSyncProblemResult meteredAdmission =
+      meteredProblem.internVerifiedProtocol(
+          protocol(0, 1, 2, source, target, loop, 1, 1), meteredVerifier);
+  passed &= check(meteredAdmission && meteredAdmission.index,
+                  "admit an explicitly metered protocol verifier");
+  if (meteredAdmission.index) {
+    verifierBodyRan = false;
+    SyncCoverCoverageWorkBudget shortCallbackWork(callbackWork - 1);
+    passed &=
+        check(meteredProblem
+                          .verifyMechanism(*meteredAdmission.index,
+                                           &shortCallbackWork)
+                          .error == CanonicalSyncProblemError::LimitExceeded &&
+                  !verifierBodyRan,
+              "reject one-less callback work before verifier predicate work");
+
+    SyncCoverCoverageWorkBudget measuredWork;
+    verifierBodyRan = false;
+    const CanonicalSyncProblemResult measured =
+        meteredProblem.verifyMechanism(*meteredAdmission.index, &measuredWork);
+    passed &= check(measured && verifierBodyRan && measuredWork.workUnits != 0,
+                    "measure complete protocol fresh-verification work");
+    SyncCoverCoverageWorkBudget exactWork(measuredWork.workUnits);
+    const CanonicalSyncProblemResult exact =
+        meteredProblem.verifyMechanism(*meteredAdmission.index, &exactWork);
+    passed &= check(exact && exactWork.workUnits == measuredWork.workUnits,
+                    "accept the exact fresh-verification work bound");
+    SyncCoverCoverageWorkBudget oneLessWork(measuredWork.workUnits - 1);
+    passed &= check(
+        meteredProblem.verifyMechanism(*meteredAdmission.index, &oneLessWork)
+                .error == CanonicalSyncProblemError::LimitExceeded,
+        "reject one-less complete fresh-verification work");
   }
 
   CanonicalSyncMechanismDescriptor undrainedExport =
@@ -2199,12 +2291,13 @@ bool testHierarchicalProtocolLifetime() {
   CanonicalSyncMechanismDescriptor descriptor =
       protocol(0, 1, 2, source, target, inner, 1, 1);
   descriptor.eventUses[0].lifetimeScope = outer;
-  const auto verifier = [=](const CanonicalSyncMechanismDescriptor &candidate) {
-    return candidate.kind == CanonicalSyncMechanismKind::Protocol &&
-           candidate.eventUses.size() == 1 &&
-           candidate.eventUses[0].recurrenceScope == inner &&
-           candidate.eventUses[0].lifetimeScope == outer;
-  };
+  const auto verifier = testProtocolVerifier(
+      [=](const CanonicalSyncMechanismDescriptor &candidate) {
+        return candidate.kind == CanonicalSyncMechanismKind::Protocol &&
+               candidate.eventUses.size() == 1 &&
+               candidate.eventUses[0].recurrenceScope == inner &&
+               candidate.eventUses[0].lifetimeScope == outer;
+      });
   const CanonicalSyncProblemResult admitted =
       problem.internVerifiedProtocol(descriptor, verifier);
   passed &= check(admitted && admitted.index,
@@ -2229,6 +2322,75 @@ bool testHierarchicalProtocolLifetime() {
                       CanonicalSyncProblemError::InvalidMechanism,
                   "reject a non-loop lifetime scope");
   return passed;
+}
+
+bool testRepairProtocolAdmissionUsesSharedBudget() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 15}, true),
+                passed, "add repair-budget loop");
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, loop, 1, {}, {2}), passed,
+                "add repair-budget source");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(2, 1, loop, 2), passed,
+                                           "add repair-budget target");
+  passed &= check(graph.addDemand(demand(source, target, loop, 1)),
+                  "add repair-budget demand") &&
+            check(graph.freezeStructure(), "freeze repair-budget graph");
+  CanonicalSyncPatternProblem precise(graph, {});
+  passed &= check(precise.addEventDomain({0, 1, 2, 2, {}}),
+                  "add repair-budget event domain") &&
+            check(precise.freeze(), "freeze empty precise repair prefix");
+  if (!passed) {
+    return false;
+  }
+
+  constexpr std::size_t callbackWork = 11;
+  const CanonicalSyncProtocolVerifier verifier =
+      [](const CanonicalSyncMechanismDescriptor &candidate,
+         SyncCoverCoverageWorkBudget &work) {
+        if (!work.consume(callbackWork)) {
+          return CanonicalSyncProblemError::LimitExceeded;
+        }
+        return candidate.kind == CanonicalSyncMechanismKind::Protocol
+                   ? CanonicalSyncProblemError::None
+                   : CanonicalSyncProblemError::UnverifiedProtocol;
+      };
+  const CanonicalSyncMechanismDescriptor descriptor =
+      protocol(0, 1, 2, source, target, loop, 1, 1);
+
+  SyncCoverCoverageWorkBudget referenceWork;
+  std::unique_ptr<CanonicalSyncPatternProblem> reference =
+      precise.cloneMutableRepairPrefix(&referenceWork);
+  const std::size_t referencePrefixWork = referenceWork.workUnits;
+  const CanonicalSyncProblemResult referenceAdmission =
+      reference->internVerifiedProtocol(descriptor, verifier);
+  const std::size_t admissionWork =
+      referenceWork.workUnits - referencePrefixWork;
+  passed &= check(referenceAdmission && admissionWork >= callbackWork,
+                  "measure repair protocol admission work");
+
+  SyncCoverCoverageWorkBudget exactWork;
+  std::unique_ptr<CanonicalSyncPatternProblem> exact =
+      precise.cloneMutableRepairPrefix(&exactWork);
+  const std::size_t exactPrefixWork = exactWork.workUnits;
+  exactWork.maximumWorkUnits = exactPrefixWork + admissionWork;
+  passed &= check(exact->internVerifiedProtocol(descriptor, verifier) &&
+                      exactWork.workUnits == exactWork.maximumWorkUnits,
+                  "admit repair protocol at the exact shared bound");
+
+  SyncCoverCoverageWorkBudget oneLessWork;
+  std::unique_ptr<CanonicalSyncPatternProblem> oneLess =
+      precise.cloneMutableRepairPrefix(&oneLessWork);
+  const std::size_t oneLessPrefixWork = oneLessWork.workUnits;
+  oneLessWork.maximumWorkUnits = oneLessPrefixWork + admissionWork - 1;
+  const CanonicalSyncProblemResult rejected =
+      oneLess->internVerifiedProtocol(descriptor, verifier);
+  return passed &&
+         check(rejected.error == CanonicalSyncProblemError::LimitExceeded &&
+                   oneLess->getMechanisms().empty(),
+               "reject one-less repair admission without catalog mutation");
 }
 
 bool testFreezeRetryCommitsFreshDerivedState() {
@@ -2512,10 +2674,11 @@ bool testRecurrenceBasisLemmasPreserveExactDistance() {
   if (!passed) {
     return false;
   }
-  const auto admitDistanceOne = [](const auto &descriptor) {
-    return descriptor.supplies.size() == 1 &&
-           descriptor.supplies.front().edge.distance == 1;
-  };
+  const auto admitDistanceOne =
+      testProtocolVerifier([](const auto &descriptor) {
+        return descriptor.supplies.size() == 1 &&
+               descriptor.supplies.front().edge.distance == 1;
+      });
   const auto addBasisProtocols = [&](CanonicalSyncPatternProblem &problem) {
     bool added = true;
     added &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
@@ -3043,6 +3206,7 @@ int main() {
       testOptionalPipelineFallback() && testReservationsAndFinalValidation() &&
       testAllocatorWidthsReuseAndConflicts() &&
       testVerifiedProtocolTrustBoundary() &&
+      testRepairProtocolAdmissionUsesSharedBudget() &&
       testHierarchicalProtocolLifetime() &&
       testFreezeRetryCommitsFreshDerivedState() &&
       testOptionalPairReservesSingletonIncidences() &&

@@ -1802,22 +1802,18 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::verifyMechanism(
     if (missingVerifier) {
       return {CanonicalSyncProblemError::UnverifiedProtocol, mechanism};
     }
-    // Protocol factories may inspect the immutable graph and certificate
-    // tables. Reserve a conservative linear charge before re-running one so
-    // repair/final-verification limits remain end-to-end bounds.
-    if (workBudget) {
-      for (std::size_t units :
-           {graph_.getNodes().size(), graph_.getEdges().size(),
-            graph_.getDemands().size(), graph_.getStorageAccesses().size(),
-            descriptor.actions.size(), descriptor.eventUses.size(),
-            descriptor.supplies.size()}) {
-        if (!workBudget->consume(units)) {
-          return {CanonicalSyncProblemError::LimitExceeded, mechanism};
-        }
-      }
-    }
-    if (!protocolVerifiers_[mechanism](descriptor)) {
+    SyncCoverCoverageWorkBudget localWork;
+    SyncCoverCoverageWorkBudget &protocolWork =
+        workBudget ? *workBudget : localWork;
+    const CanonicalSyncProblemError verification =
+        protocolVerifiers_[mechanism](descriptor, protocolWork);
+    if (verification != CanonicalSyncProblemError::None &&
+        verification != CanonicalSyncProblemError::UnverifiedProtocol &&
+        verification != CanonicalSyncProblemError::LimitExceeded) {
       return {CanonicalSyncProblemError::UnverifiedProtocol, mechanism};
+    }
+    if (verification != CanonicalSyncProblemError::None) {
+      return {verification, mechanism};
     }
   }
   std::vector<CanonicalSyncEventLifetime> lifetimes;
@@ -1930,16 +1926,14 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::internMechanism(
 
 CanonicalSyncProblemResult CanonicalSyncPatternProblem::internVerifiedProtocol(
     CanonicalSyncMechanismDescriptor descriptor,
-    const std::function<bool(const CanonicalSyncMechanismDescriptor &)>
-        &verifier,
+    const CanonicalSyncProtocolVerifier &verifier,
     CanonicalSyncMechanismOrigin origin) {
   return internMechanismImpl(std::move(descriptor), true, verifier, origin);
 }
 
 CanonicalSyncProblemResult CanonicalSyncPatternProblem::internMechanismImpl(
     CanonicalSyncMechanismDescriptor descriptor, bool protocolVerified,
-    const std::function<bool(const CanonicalSyncMechanismDescriptor &)>
-        &verifier,
+    const CanonicalSyncProtocolVerifier &verifier,
     CanonicalSyncMechanismOrigin origin) {
   if (frozen_) {
     return {CanonicalSyncProblemError::Frozen, mechanisms_.size()};
@@ -1954,8 +1948,23 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::internMechanismImpl(
   if (!validated) {
     return validated;
   }
-  if (protocolVerified && (!verifier || !verifier(descriptor))) {
-    return {CanonicalSyncProblemError::UnverifiedProtocol, std::nullopt};
+  if (protocolVerified) {
+    if (!verifier) {
+      return {CanonicalSyncProblemError::UnverifiedProtocol, std::nullopt};
+    }
+    SyncCoverCoverageWorkBudget localWork;
+    SyncCoverCoverageWorkBudget &protocolWork =
+        constructionWorkBudget_ ? *constructionWorkBudget_ : localWork;
+    const CanonicalSyncProblemError verification =
+        verifier(descriptor, protocolWork);
+    if (verification != CanonicalSyncProblemError::None &&
+        verification != CanonicalSyncProblemError::UnverifiedProtocol &&
+        verification != CanonicalSyncProblemError::LimitExceeded) {
+      return {CanonicalSyncProblemError::UnverifiedProtocol, std::nullopt};
+    }
+    if (verification != CanonicalSyncProblemError::None) {
+      return {verification, std::nullopt};
+    }
   }
   const CanonicalSyncMechanismOriginMask originBit =
       canonicalSyncMechanismOriginBit(origin);
@@ -2004,9 +2013,7 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::internMechanismImpl(
                          {},
                          originBit});
   protocolVerifiers_.push_back(
-      protocolVerified
-          ? verifier
-          : std::function<bool(const CanonicalSyncMechanismDescriptor &)>{});
+      protocolVerified ? verifier : CanonicalSyncProtocolVerifier{});
   mechanismBuckets_[hash].push_back(id);
   constructionSingletonCoverage_.push_back(std::nullopt);
   actionCount_ = nextActions;

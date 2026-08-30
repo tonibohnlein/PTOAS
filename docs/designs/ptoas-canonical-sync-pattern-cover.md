@@ -396,6 +396,13 @@ derived lifetime and cost data, rejects selected conflict pairs, recomputes
 event allocation, rebuilds the completion-supply list, and reruns the semantic
 coverage oracle over the complete obligation universe.
 
+Protocol-specific verifiers receive that same work counter and return a
+distinct semantic rejection or work-limit result. Recurrence, loop-boundary,
+and ownership verifiers account their factory-local regeneration before or as
+it executes; ownership regeneration uses a deterministic endpoint index rather
+than repeatedly scanning the complete demand set. There is no opaque callback
+behind a generic graph-linear estimate.
+
 Physical verification then resolves every anchor, guard loop, event lane,
 allocated ID, and barrier resource before any rewrite. This staging step also
 runs in analysis-only mode, so a comparison cannot report a semantically valid
