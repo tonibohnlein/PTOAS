@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/CanonicalSync/CanonicalSync.h"
@@ -3202,19 +3204,24 @@ bool testOwnershipDoesNotHideProducerOverwrite() {
   }
   const std::uint32_t matrix = static_cast<std::uint32_t>(PipelineType::PIPE_M);
   std::optional<SyncCoverDemandId> overwriteDemand;
+  std::optional<SyncCoverDemandId> recurrenceOverwriteDemand;
   for (auto [demandId, demand] :
        llvm::enumerate(program->getGraph().getDemands())) {
-    if (demand.distance == 0 &&
-        program->getGraph().getNodes()[demand.source].resource == matrix &&
+    if (program->getGraph().getNodes()[demand.source].resource == matrix &&
         program->getGraph().getNodes()[demand.target].resource == matrix &&
         llvm::is_contained(demand.provenanceKinds,
                            SyncCoverDemandKind::MemoryWAW)) {
-      overwriteDemand = demandId;
-      break;
+      if (demand.distance == 0 && !overwriteDemand) {
+        overwriteDemand = demandId;
+      } else if (demand.distance != 0 && !recurrenceOverwriteDemand) {
+        recurrenceOverwriteDemand = demandId;
+      }
     }
   }
   if (!check(overwriteDemand.has_value(),
-             "retain a same-slot matrix overwrite demand")) {
+             "retain a same-slot matrix overwrite demand") ||
+      !check(recurrenceOverwriteDemand.has_value(),
+             "retain the cross-iteration matrix overwrite demand")) {
     return false;
   }
 
@@ -3236,9 +3243,12 @@ bool testOwnershipDoesNotHideProducerOverwrite() {
           CanonicalSyncMechanismOrigin::DirectTargetedBarrier);
   bool sawOwnership = false;
   bool ownershipClaimsOverwrite = false;
+  bool ownershipClaimsRecurrenceOverwrite = false;
   bool directBarrierClaimsOverwrite = false;
   const SyncCoverDemand &overwrite =
       program->getGraph().getDemands()[*overwriteDemand];
+  const SyncCoverDemand &recurrenceOverwrite =
+      program->getGraph().getDemands()[*recurrenceOverwriteDemand];
   for (const CanonicalSyncMechanism &mechanism :
        precise.problem->getMechanisms()) {
     const bool ownership = (mechanism.originMask & ownershipOrigin) != 0;
@@ -3256,14 +3266,44 @@ bool testOwnershipDoesNotHideProducerOverwrite() {
            llvm::is_contained(supply.allowedDemands, *overwriteDemand));
       ownershipClaimsOverwrite |= ownership && admitsOverwrite;
       directBarrierClaimsOverwrite |= barrier && admitsOverwrite;
+      const bool sameRecurrenceEdge =
+          supply.edge.source == recurrenceOverwrite.source &&
+          supply.edge.target == recurrenceOverwrite.target &&
+          supply.edge.scope == recurrenceOverwrite.scope &&
+          supply.edge.distance == recurrenceOverwrite.distance;
+      const bool admitsRecurrenceOverwrite =
+          sameRecurrenceEdge &&
+          (supply.allowedDemands.empty() ||
+           llvm::is_contained(supply.allowedDemands,
+                              *recurrenceOverwriteDemand));
+      ownershipClaimsRecurrenceOverwrite |=
+          ownership && admitsRecurrenceOverwrite;
     }
   }
+  const CanonicalSyncSelection selection =
+      selectCanonicalSyncPatterns(*precise.problem);
+  const CanonicalSyncVerifiedPlan verified =
+      verifyCanonicalSyncSelection(*precise.problem, selection);
+  const bool selectedDirectBarrier =
+      selection &&
+      llvm::any_of(
+          selection.mechanisms, [&](CanonicalSyncMechanismId mechanismId) {
+            return mechanismId < precise.problem->getMechanisms().size() &&
+                   (precise.problem->getMechanisms()[mechanismId].originMask &
+                    barrierOrigin) != 0;
+          });
   return check(sawOwnership,
                "recognize the surrounding accumulator ownership lifecycle") &&
          check(!ownershipClaimsOverwrite,
                "do not supply producer-to-producer WAW through ownership") &&
+         check(ownershipClaimsRecurrenceOverwrite,
+               "retain lifecycle coverage for cross-iteration overwrites") &&
          check(directBarrierClaimsOverwrite,
-               "retain a direct barrier fallback for the overwrite");
+               "retain a direct barrier fallback for the overwrite") &&
+         check(selection && verified,
+               "select and freshly verify the overwrite-safe plan") &&
+         check(selectedDirectBarrier,
+               "select the targeted matrix barrier for the overwrite");
 }
 
 bool testGenericRecurrenceWithoutOwnershipDiscovery() {

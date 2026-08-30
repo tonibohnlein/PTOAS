@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSync.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
@@ -1984,8 +1986,7 @@ struct BasicOwnershipDemandIndex {
   std::vector<std::optional<std::size_t>> accessLane;
   std::vector<std::set<SyncCoverNodeId>> producers;
   std::vector<std::set<SyncCoverNodeId>> consumers;
-  std::set<std::pair<SyncCoverNodeId, SyncCoverNodeId>>
-      producersWithinOneReadyRegion;
+  std::vector<std::vector<std::size_t>> producerReadyRegions;
 };
 
 BasicOwnershipDemandIndex buildOwnershipDemandIndex(
@@ -1995,6 +1996,7 @@ BasicOwnershipDemandIndex buildOwnershipDemandIndex(
   result.accessLane.resize(graph.getStorageAccesses().size());
   result.producers.resize(certificate.lanes.size());
   result.consumers.resize(certificate.lanes.size());
+  result.producerReadyRegions.resize(graph.getNodes().size());
   for (const SyncCoverBasicOwnershipLane &lane : certificate.lanes) {
     for (const SyncCoverBasicOwnershipSlot &slot : lane.slots) {
       for (SyncCoverStorageAccessId access : slot.accesses) {
@@ -2004,23 +2006,31 @@ BasicOwnershipDemandIndex buildOwnershipDemandIndex(
       }
     }
   }
+  std::size_t nextReadyRegion = 0;
+  const auto recordReadyRegion = [&](ArrayRef<SyncCoverNodeId> producers) {
+    const std::size_t region = nextReadyRegion++;
+    for (SyncCoverNodeId producer : producers) {
+      if (producer < result.producerReadyRegions.size()) {
+        result.producerReadyRegions[producer].push_back(region);
+      }
+    }
+  };
   for (const SyncCoverBasicOwnershipPath &path : certificate.paths) {
     for (const SyncCoverBasicOwnershipUse &use : path.uses) {
       result.producers[use.producerLane].insert(use.producers.begin(),
                                                 use.producers.end());
       result.consumers[use.lane].insert(use.consumers.begin(),
                                         use.consumers.end());
-      for (SyncCoverNodeId first : use.producers) {
-        for (SyncCoverNodeId second : use.producers) {
-          if (first != second) {
-            result.producersWithinOneReadyRegion.insert({first, second});
-          }
-        }
-      }
+      recordReadyRegion(use.producers);
     }
   }
   result.producers[certificate.initialReadyLane].insert(
       certificate.initialProducers.begin(), certificate.initialProducers.end());
+  recordReadyRegion(certificate.initialProducers);
+  for (std::vector<std::size_t> &regions : result.producerReadyRegions) {
+    llvm::sort(regions);
+    regions.erase(std::unique(regions.begin(), regions.end()), regions.end());
+  }
   return result;
 }
 
@@ -2037,6 +2047,29 @@ bool nodeOwnsLane(const BasicOwnershipDemandIndex &index, SyncCoverNodeId node,
                   std::size_t lane, bool producer) {
   const auto &nodes = producer ? index.producers : index.consumers;
   return lane < nodes.size() && nodes[lane].count(node) != 0;
+}
+
+bool producersShareReadyRegion(const BasicOwnershipDemandIndex &index,
+                               SyncCoverNodeId first, SyncCoverNodeId second) {
+  if (first >= index.producerReadyRegions.size() ||
+      second >= index.producerReadyRegions.size()) {
+    return false;
+  }
+  const std::vector<std::size_t> &left = index.producerReadyRegions[first];
+  const std::vector<std::size_t> &right = index.producerReadyRegions[second];
+  auto leftIt = left.begin();
+  auto rightIt = right.begin();
+  while (leftIt != left.end() && rightIt != right.end()) {
+    if (*leftIt == *rightIt) {
+      return true;
+    }
+    if (*leftIt < *rightIt) {
+      ++leftIt;
+    } else {
+      ++rightIt;
+    }
+  }
+  return false;
 }
 
 bool demandBelongsToOwnership(
@@ -2098,8 +2131,7 @@ bool demandBelongsToOwnership(
                (sourceConsumer && targetProducer) ||
                (sourceProducer && targetProducer &&
                 (demand.distance != 0 ||
-                 index.producersWithinOneReadyRegion.count(
-                     {source.node, target.node}) == 0));
+                 !producersShareReadyRegion(index, source.node, target.node)));
       });
 }
 
