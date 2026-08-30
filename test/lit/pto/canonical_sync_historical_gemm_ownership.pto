@@ -14,22 +14,37 @@
 // d5c3e847cc70185581b87fa686a0ccf285e515cb9b7c7dc8b4f123be2028dcf1.
 // This fixture adds only the proven pairwise no-alias contract for A, B, and C.
 
+// RUN: not ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
+// RUN:   --canonical-sync-pattern-mode=direct \
+// RUN:   --canonical-sync-mechanism-families=source-local-completion \
+// RUN:   --canonical-sync-enable-conflict-core-repair=false %s \
+// RUN:   -o %t.d.pto 2>&1 | FileCheck %s --check-prefix=D-FAIL
+// RUN: not ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
+// RUN:   --canonical-sync-pattern-mode=direct-pair \
+// RUN:   --canonical-sync-mechanism-families=source-local-completion \
+// RUN:   --canonical-sync-enable-conflict-core-repair=false %s \
+// RUN:   -o %t.dp.pto 2>&1 | FileCheck %s --check-prefix=D-FAIL
 // RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
-// RUN:   --canonical-sync-assume-all-gm-accesses-noalias \
+// RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
 // RUN:   --canonical-sync-pattern-mode=direct \
 // RUN:   --canonical-sync-mechanism-families=basic-ownership \
+// RUN:   --canonical-sync-enable-conflict-core-repair=false \
 // RUN:   --canonical-sync-comparison-report=%t.direct.json %s \
 // RUN:   -o %t.direct.pto
 // RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
-// RUN:   --canonical-sync-assume-all-gm-accesses-noalias \
+// RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
 // RUN:   --canonical-sync-pattern-mode=direct-pair \
 // RUN:   --canonical-sync-mechanism-families=basic-ownership \
+// RUN:   --canonical-sync-enable-conflict-core-repair=false \
 // RUN:   --canonical-sync-comparison-report=%t.pair.json %s \
 // RUN:   -o %t.pair.pto
 // RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
-// RUN:   --canonical-sync-assume-all-gm-accesses-noalias \
+// RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
 // RUN:   --canonical-sync-pattern-mode=direct \
 // RUN:   --canonical-sync-mechanism-families=l0-operand-ownership+hierarchical-ownership \
+// RUN:   --canonical-sync-enable-conflict-core-repair=false \
 // RUN:   --canonical-sync-comparison-report=%t.composite.json %s \
 // RUN:   -o %t.composite.pto
 // RUN: diff -u %t.direct.pto %t.pair.pto
@@ -216,8 +231,11 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // WAITS-COUNT-53: pto.wait_flag
 // WAITS-NOT: pto.wait_flag
 // BARRIERS-NOT: pto.pipe_barrier
+// BARRIERS-COUNT-1: pto.barrier <PIPE_FIX>
 // BARRIERS-COUNT-1: pto.barrier <PIPE_ALL>
 // BARRIERS-NOT: pto.barrier
+
+// D-FAIL: canonical sync precise planning failed closed, error=4
 
 // DIRECT-REPORT: "candidate_mechanisms_by_origin":
 // DIRECT-REPORT: "basic-ownership-accumulator-protocol": 1
@@ -227,6 +245,7 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // DIRECT-REPORT: "direct_pair_evaluations": 0
 // DIRECT-REPORT: "direct_pair_proposals": 0
 // DIRECT-REPORT: "direct_pairs_enabled": false
+// DIRECT-REPORT: "gm_alias_policy": "distinct-arguments-noalias"
 // DIRECT-REPORT: "ownership_certificates_by_kind":
 // DIRECT-REPORT: "l0_accumulator": 1
 // DIRECT-REPORT: "l0_operand": 1
@@ -234,7 +253,7 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // DIRECT-REPORT: "emitted_event_sets": 53
 // DIRECT-REPORT: "emitted_event_waits": 53
 // DIRECT-REPORT: "emitted_pipe_all_barriers": 0
-// DIRECT-REPORT: "emitted_targeted_barriers": 0
+// DIRECT-REPORT: "emitted_targeted_barriers": 1
 // DIRECT-REPORT: "selected_mechanisms_by_origin":
 // DIRECT-REPORT: "basic-ownership-accumulator-protocol": 1
 // DIRECT-REPORT: "basic-ownership-alternating-l1-protocol": 1
@@ -256,6 +275,7 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // COMPOSITE-WAITS-COUNT-54: pto.wait_flag
 // COMPOSITE-WAITS-NOT: pto.wait_flag
 // COMPOSITE-BARRIERS-NOT: pto.pipe_barrier
+// COMPOSITE-BARRIERS-COUNT-1: pto.barrier <PIPE_FIX>
 // COMPOSITE-BARRIERS-COUNT-1: pto.barrier <PIPE_ALL>
 // COMPOSITE-BARRIERS-NOT: pto.barrier
 // COMPOSITE-REPORT: "candidate_mechanisms_by_origin":
@@ -264,8 +284,8 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // COMPOSITE-REPORT: "emitted_event_sets": 54
 // COMPOSITE-REPORT: "emitted_event_waits": 54
 // COMPOSITE-REPORT: "emitted_pipe_all_barriers": 0
-// COMPOSITE-REPORT: "emitted_targeted_barriers": 0
-// COMPOSITE-REPORT: "mechanisms": 2
+// COMPOSITE-REPORT: "emitted_targeted_barriers": 1
+// COMPOSITE-REPORT: "mechanisms": 3
 // COMPOSITE-REPORT: "selected_mechanisms_by_origin":
 // COMPOSITE-REPORT: "basic-ownership-l0-operand-protocol": 1
 // COMPOSITE-REPORT: "composite-ownership-protocol": 1
