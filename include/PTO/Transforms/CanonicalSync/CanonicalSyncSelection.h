@@ -699,6 +699,9 @@ struct CanonicalSyncDirectPairOptions {
   /// Pair preparation is optional. A scope whose exact pair matrices exceed
   /// these limits is skipped without weakening singleton correctness.
   SyncCoverCoverageLimits pairCoverageLimits;
+  /// Aggregate dense words simultaneously retained by optional pair
+  /// preparation: singleton rows, one owner pair query, and batch scratch.
+  std::size_t maximumPreparationWords = 1U << 22;
 };
 
 CanonicalSyncProblemResult

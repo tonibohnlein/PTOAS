@@ -20,6 +20,46 @@ using namespace mlir::pto;
 
 namespace {
 
+constexpr std::size_t kBitsPerCoverageWord = 64;
+constexpr std::size_t kPairBatchScratchRows = 5;
+
+bool checkedAdd(std::size_t first, std::size_t second, std::size_t &result) {
+  const bool sumOverflows =
+      second > std::numeric_limits<std::size_t>::max() - first;
+  if (sumOverflows) {
+    return false;
+  }
+  result = first + second;
+  return true;
+}
+
+bool checkedMultiply(std::size_t first, std::size_t second,
+                     std::size_t &result) {
+  const bool productOverflows =
+      first != 0 && second > std::numeric_limits<std::size_t>::max() / first;
+  if (productOverflows) {
+    return false;
+  }
+  result = first * second;
+  return true;
+}
+
+std::size_t coverageWords(std::size_t bits) {
+  return bits / kBitsPerCoverageWord +
+         (bits % kBitsPerCoverageWord != 0 ? 1 : 0);
+}
+
+bool countSingletonCoverageWords(
+    const SyncCoverSingletonCoverageResult &singleton, std::size_t &words) {
+  words = singleton.baseline.getWords().size();
+  for (const SyncCoverDemandSet &coverage : singleton.mechanisms) {
+    if (!checkedAdd(words, coverage.getWords().size(), words)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool isPairCapableBinding(const CanonicalSyncSupplyBinding &binding) {
   return binding.allowedDemands.empty();
 }
@@ -575,13 +615,39 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
                           binding.applicability});
     }
   }
+  SyncCoverCoverageLimits singletonLimits;
+  singletonLimits.maximumTotalWords = std::min(
+      singletonLimits.maximumTotalWords, options.maximumPreparationWords);
   const SyncCoverSingletonCoverageResult singleton =
-      computeSyncCoverSingletonCoverage(graph, problem.getExpansion(),
-                                        problem.getMechanisms().size(),
-                                        supplies, problem.getDemands());
+      computeSyncCoverSingletonCoverage(
+          graph, problem.getExpansion(), problem.getMechanisms().size(),
+          supplies, problem.getDemands(), singletonLimits);
+  if (singleton.error == SyncCoverCoverageError::LimitExceeded) {
+    problem.markPatternGenerationTruncated();
+    problem.recordDirectPairGeneration(proposalCount, 0, connectorInspections);
+    return {CanonicalSyncProblemError::None, 0};
+  }
   if (!singleton) {
     return {CanonicalSyncProblemError::CoverageFailure, std::nullopt};
   }
+
+  std::size_t singletonWords = 0;
+  std::size_t batchScratchWords = 0;
+  std::size_t retainedPreparationWords = 0;
+  const bool preparationLimitExceeded =
+      !countSingletonCoverageWords(singleton, singletonWords) ||
+      !checkedMultiply(coverageWords(problem.getDemands().size()),
+                       kPairBatchScratchRows, batchScratchWords) ||
+      !checkedAdd(singletonWords, batchScratchWords,
+                  retainedPreparationWords) ||
+      retainedPreparationWords > options.maximumPreparationWords;
+  if (preparationLimitExceeded) {
+    problem.markPatternGenerationTruncated();
+    problem.recordDirectPairGeneration(proposalCount, 0, connectorInspections);
+    return {CanonicalSyncProblemError::None, 0};
+  }
+  const std::size_t availablePairWords =
+      options.maximumPreparationWords - retainedPreparationWords;
 
   std::size_t addedCount = 0;
   std::size_t evaluationCount = 0;
@@ -590,9 +656,12 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
     if (owned.empty()) {
       continue;
     }
+    SyncCoverCoverageLimits pairLimits = options.pairCoverageLimits;
+    pairLimits.maximumTotalWords =
+        std::min(pairLimits.maximumTotalWords, availablePairWords);
     const SyncCoverPairCoverageResult joint = computeSyncCoverPairCoverage(
         graph, problem.getExpansion(), problem.getMechanisms().size(), supplies,
-        owned, problem.getDemands(), options.pairCoverageLimits);
+        owned, problem.getDemands(), pairLimits);
     if (joint.error == SyncCoverCoverageError::LimitExceeded) {
       problem.markPatternGenerationTruncated();
       continue;

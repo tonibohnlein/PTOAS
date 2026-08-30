@@ -452,6 +452,26 @@ bool testBatchedSingletonCoverageRejectsOversizedResult() {
   passed &= check(result.error == SyncCoverCoverageError::LimitExceeded &&
                       result.mechanisms.empty(),
                   "oversized singleton result fails before allocation");
+  SyncCoverCoverageLimits baselineLimits;
+  baselineLimits.maximumResultWords = 1;
+  const SyncCoverSingletonCoverageResult baselineLimited =
+      computeSyncCoverSingletonCoverage(
+          graph, expansion, 1, {{0, supply(source, target)}}, baselineLimits);
+  passed &=
+      check(baselineLimited.error == SyncCoverCoverageError::LimitExceeded &&
+                baselineLimited.baseline.size() == 0 &&
+                baselineLimited.mechanisms.empty(),
+            "count the singleton baseline row before allocation");
+  SyncCoverCoverageLimits totalLimits;
+  totalLimits.maximumResultWords = 2;
+  totalLimits.maximumTotalWords = 2;
+  const SyncCoverSingletonCoverageResult totalLimited =
+      computeSyncCoverSingletonCoverage(
+          graph, expansion, 1, {{0, supply(source, target)}}, totalLimits);
+  passed &= check(totalLimited.error == SyncCoverCoverageError::LimitExceeded &&
+                      totalLimited.baseline.size() == 0 &&
+                      totalLimited.mechanisms.empty(),
+                  "bound simultaneous singleton result and workspace words");
   SyncCoverGraph emptyGraph;
   passed &= check(emptyGraph.freezeStructure(), "freeze empty limit graph");
   const SyncCoverExpandedProgram emptyExpansion(emptyGraph);
@@ -599,6 +619,23 @@ bool testDirectPairDiscoversJointCoverage() {
   const CanonicalSyncMechanismId second =
       takeIndex(problem.internMechanism(event(1, 2, 3, middle, target)), passed,
                 "add second pair event");
+  const std::vector<SyncCoverCompletionSupply> supplies = {
+      {first, supply(source, middle)}, {second, supply(middle, target)}};
+  SyncCoverCoverageLimits limitedPairWords;
+  limitedPairWords.maximumTotalWords = 3;
+  const SyncCoverPairCoverageResult limitedPair = computeSyncCoverPairCoverage(
+      graph, problem.getExpansion(), problem.getMechanisms().size(), supplies,
+      {{first, second}}, problem.getDemands(), limitedPairWords);
+  passed &= check(limitedPair.error == SyncCoverCoverageError::LimitExceeded &&
+                      limitedPair.pairs.empty(),
+                  "bound simultaneous pair result and workspace words");
+  limitedPairWords.maximumTotalWords = 4;
+  const SyncCoverPairCoverageResult exactPair = computeSyncCoverPairCoverage(
+      graph, problem.getExpansion(), problem.getMechanisms().size(), supplies,
+      {{first, second}}, problem.getDemands(), limitedPairWords);
+  passed &= check(exactPair && exactPair.pairs.size() == 1 &&
+                      exactPair.pairs[0].contains(0),
+                  "admit pair result and workspace at the exact word bound");
   const CanonicalSyncProblemResult generated =
       addCanonicalSyncDirectPairPatterns(problem);
   passed &= check(generated && generated.index == 1,
@@ -1091,14 +1128,14 @@ bool testPairPreparationLimitKeepsSingletonCorrectness() {
                   "add optional-pair second member");
 
   CanonicalSyncDirectPairOptions options;
-  options.pairCoverageLimits.maximumWorkspaceWords = 0;
+  options.maximumPreparationWords = 7;
   const CanonicalSyncProblemResult generated =
       addCanonicalSyncDirectPairPatterns(problem, options);
   passed &= check(generated && generated.index == 0 &&
                       problem.wasPatternGenerationTruncated() &&
                       problem.getPatternStatistics().directPairProposals == 1 &&
                       problem.getPatternStatistics().directPairEvaluations == 0,
-                  "truncate an optional pair scope at its workspace bound");
+                  "truncate optional pairs at the aggregate preparation bound");
   passed &= check(problem.freeze(),
                   "freeze singleton-valid problem after pair truncation");
   passed &= check(problem.getPatternStatistics().directPairProposals == 1 &&

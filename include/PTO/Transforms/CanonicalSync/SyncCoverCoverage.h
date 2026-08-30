@@ -26,11 +26,13 @@ namespace pto {
 using SyncCoverMechanismId = std::size_t;
 
 /// Bounds the dense bit matrices used by one coverage query. The defaults cap
-/// each result or workspace matrix at 32 MiB and keep result and mechanism
-/// index metadata bounded independently, including with no demand bits.
+/// the simultaneous result-plus-workspace payload at 32 MiB and keep result
+/// and mechanism index metadata bounded independently, including with no
+/// demand bits.
 struct SyncCoverCoverageLimits {
   std::size_t maximumWorkspaceWords = 1U << 22;
   std::size_t maximumResultWords = 1U << 22;
+  std::size_t maximumTotalWords = 1U << 22;
   std::size_t maximumResultRows = 1U << 16;
   std::size_t maximumMechanismRows = 1U << 16;
 };

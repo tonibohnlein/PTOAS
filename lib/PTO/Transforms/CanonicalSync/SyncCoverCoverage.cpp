@@ -51,6 +51,25 @@ bool checkedSum(std::size_t first, std::size_t second, std::size_t &result) {
   return true;
 }
 
+bool checkedProduct(std::size_t first, std::size_t second,
+                    std::size_t &result) {
+  const bool productOverflows =
+      first != 0 && second > std::numeric_limits<std::size_t>::max() / first;
+  if (productOverflows) {
+    return false;
+  }
+  result = first * second;
+  return true;
+}
+
+bool denseWordsFit(std::size_t resultWords, std::size_t workspaceWords,
+                   const SyncCoverCoverageLimits &limits) {
+  return resultWords <= limits.maximumResultWords &&
+         workspaceWords <= limits.maximumWorkspaceWords &&
+         resultWords <= limits.maximumTotalWords &&
+         workspaceWords <= limits.maximumTotalWords - resultWords;
+}
+
 bool checkedSum(std::size_t first, std::size_t second, std::size_t third,
                 std::size_t &result) {
   return checkedSum(first, second, result) && checkedSum(result, third, result);
@@ -1072,7 +1091,6 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
     const std::vector<SyncCoverDemandId> &activeDemands,
     SyncCoverCoverageLimits limits) {
   SyncCoverSingletonCoverageResult result;
-  result.baseline = SyncCoverDemandSet(graph.getDemands().size());
   const bool invalidInputs = !coverageInputsValid(graph, expansion) ||
                              !demandIdsValid(graph, activeDemands);
   if (invalidInputs) {
@@ -1082,14 +1100,18 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
   const std::size_t demandWords =
       graph.getDemands().size() / kBitsPerWord +
       (graph.getDemands().size() % kBitsPerWord != 0 ? 1 : 0);
+  std::size_t resultRows = 0;
+  std::size_t resultWords = 0;
   const bool resultLimitExceeded =
       mechanismCount > limits.maximumResultRows ||
-      (demandWords != 0 &&
-       mechanismCount > limits.maximumResultWords / demandWords);
+      !checkedSum(mechanismCount, 1, resultRows) ||
+      !checkedProduct(resultRows, demandWords, resultWords) ||
+      !denseWordsFit(resultWords, 0, limits);
   if (resultLimitExceeded) {
     result.error = SyncCoverCoverageError::LimitExceeded;
     return result;
   }
+  result.baseline = SyncCoverDemandSet(graph.getDemands().size());
   result.mechanisms.assign(mechanismCount,
                            SyncCoverDemandSet(graph.getDemands().size()));
   const bool baseUnavailable =
@@ -1154,11 +1176,16 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
     const std::size_t wordsPerNode =
         candidates.size() / kBitsPerWord +
         (candidates.size() % kBitsPerWord != 0 ? 1 : 0);
-    if (wordsPerNode > limits.maximumWorkspaceWords ||
-        arena->getVirtualNodeCount() >
-            limits.maximumWorkspaceWords / wordsPerNode) {
-      result.unavailableDemands.push_back(demandId);
-      continue;
+    std::size_t workspaceWords = 0;
+    const bool workspaceLimitExceeded =
+        !checkedProduct(arena->getVirtualNodeCount(), wordsPerNode,
+                        workspaceWords) ||
+        !denseWordsFit(resultWords, workspaceWords, limits);
+    if (workspaceLimitExceeded) {
+      result.error = SyncCoverCoverageError::LimitExceeded;
+      result.baseline = SyncCoverDemandSet();
+      result.mechanisms.clear();
+      return result;
     }
 
     SingletonWorkspace workspace(arena->getVirtualNodeCount(),
@@ -1264,10 +1291,11 @@ SyncCoverPairCoverageResult mlir::pto::computeSyncCoverPairCoverage(
   const std::size_t demandWords =
       graph.getDemands().size() / kBitsPerWord +
       (graph.getDemands().size() % kBitsPerWord != 0 ? 1 : 0);
+  std::size_t resultWords = 0;
   const bool resultLimitExceeded =
       pairs.size() > limits.maximumResultRows ||
-      (demandWords != 0 &&
-       pairs.size() > limits.maximumResultWords / demandWords);
+      !checkedProduct(pairs.size(), demandWords, resultWords) ||
+      !denseWordsFit(resultWords, 0, limits);
   if (resultLimitExceeded) {
     result.error = SyncCoverCoverageError::LimitExceeded;
     return result;
@@ -1338,9 +1366,12 @@ SyncCoverPairCoverageResult mlir::pto::computeSyncCoverPairCoverage(
     const std::size_t wordsPerNode =
         candidates.size() / kBitsPerWord +
         (candidates.size() % kBitsPerWord != 0 ? 1 : 0);
-    if (wordsPerNode > limits.maximumWorkspaceWords ||
-        arena->getVirtualNodeCount() >
-            limits.maximumWorkspaceWords / wordsPerNode) {
+    std::size_t workspaceWords = 0;
+    const bool workspaceLimitExceeded =
+        !checkedProduct(arena->getVirtualNodeCount(), wordsPerNode,
+                        workspaceWords) ||
+        !denseWordsFit(resultWords, workspaceWords, limits);
+    if (workspaceLimitExceeded) {
       result.error = SyncCoverCoverageError::LimitExceeded;
       result.pairs.clear();
       return result;
