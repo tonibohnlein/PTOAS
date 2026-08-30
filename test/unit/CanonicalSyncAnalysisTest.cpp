@@ -3922,11 +3922,23 @@ bool testFirstIterationRecurrenceSuppression() {
     return buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>(name));
   };
   FailureOr<CanonicalSyncProgram> first = build("first");
-  FailureOr<CanonicalSyncProgram> nearMiss = build("near_miss");
+  bool sawLoopVaryingControl = false;
+  FailureOr<CanonicalSyncProgram> nearMiss = failure();
+  {
+    ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
+      sawLoopVaryingControl |=
+          diagnostic.str().find("cannot model this loop-varying control") !=
+          std::string::npos;
+      return success();
+    });
+    nearMiss = build("near_miss");
+  }
   FailureOr<CanonicalSyncProgram> nested = build("nested");
   const bool builtPrograms =
-      check(succeeded(first) && succeeded(nearMiss) && succeeded(nested),
-            "build first-iteration recurrence graphs");
+      check(succeeded(first) && failed(nearMiss) && sawLoopVaryingControl &&
+                succeeded(nested),
+            "accept exact first-iteration controls and reject an unmodeled "
+            "loop-varying control");
   if (!builtPrograms) {
     return false;
   }
@@ -3949,8 +3961,6 @@ bool testFirstIterationRecurrenceSuppression() {
         });
   };
   const std::optional<SyncCoverNodeId> firstTarget = guardedTarget(*first);
-  const std::optional<SyncCoverNodeId> nearMissTarget =
-      guardedTarget(*nearMiss);
   const std::optional<SyncCoverNodeId> nestedTarget = guardedTarget(*nested);
   std::optional<SyncCoverScopeId> outerScope;
   for (const SyncCoverScope &scope : nested->getGraph().getScopes()) {
@@ -3963,12 +3973,196 @@ bool testFirstIterationRecurrenceSuppression() {
   }
   return check(firstTarget && !recurrenceTo(*first, *firstTarget, std::nullopt),
                "remove recurrence into a first-iteration-only target") &&
-         check(nearMissTarget &&
-                   recurrenceTo(*nearMiss, *nearMissTarget, std::nullopt),
-               "retain recurrence for an unrecognized loop condition") &&
          check(nestedTarget && outerScope &&
                    recurrenceTo(*nested, *nestedTarget, outerScope),
                "retain enclosing-loop recurrence for an inner first iteration");
+}
+
+bool testUnmodeledLoopVaryingControlsFailClosed() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @gap_two(
+          %limit: index, %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        scf.for %i = %c0 to %limit step %c1 {
+          %active = arith.cmpi ne, %i, %c1 : index
+          scf.if %active {
+            pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                      outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+            pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                     outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+          }
+        }
+        return
+      }
+      func.func @shifted_modulo(
+          %limit: index, %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %c3 = arith.constant 3 : index
+        scf.for %i = %c0 to %limit step %c1 {
+          %shifted = arith.addi %i, %c1 : index
+          %phase = arith.remui %shifted, %c3 : index
+          %active = arith.cmpi eq, %phase, %c0 : index
+          scf.if %active {
+            pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                      outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+            pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                     outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+          }
+        }
+        return
+      }
+      func.func @nested_outer_varying(
+          %outer_limit: index, %inner_limit: index,
+          %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        scf.for %i = %c0 to %outer_limit step %c1 {
+          scf.for %j = %c0 to %inner_limit step %c1 {
+            %active = arith.cmpi ne, %i, %c1 : index
+            scf.if %active {
+              pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                        outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+              pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                       outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+            }
+          }
+        }
+        return
+      }
+      func.func @gap_two_unrolled(
+          %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>) {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
+      func.func @shifted_modulo_unrolled(
+          %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>) {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
+      func.func @nested_outer_varying_unrolled(
+          %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>) {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module),
+             "parse unmodeled loop-varying control fixtures")) {
+    return false;
+  }
+  const auto build = [&](StringRef name) {
+    return buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>(name));
+  };
+  const auto rejectsLoopVarying = [&](StringRef name) {
+    bool sawDiagnostic = false;
+    FailureOr<CanonicalSyncProgram> rejected = failure();
+    {
+      ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
+        sawDiagnostic |=
+            diagnostic.str().find("cannot model this loop-varying control") !=
+            std::string::npos;
+        return success();
+      });
+      rejected = build(name);
+    }
+    return failed(rejected) && sawDiagnostic;
+  };
+  FailureOr<CanonicalSyncProgram> gapTwoUnrolled = build("gap_two_unrolled");
+  FailureOr<CanonicalSyncProgram> shiftedUnrolled =
+      build("shifted_modulo_unrolled");
+  FailureOr<CanonicalSyncProgram> nestedUnrolled =
+      build("nested_outer_varying_unrolled");
+  const bool unrolledBuilt = succeeded(gapTwoUnrolled) &&
+                             succeeded(shiftedUnrolled) &&
+                             succeeded(nestedUnrolled);
+  if (!check(unrolledBuilt,
+             "build explicit unrolls for rejected varying controls")) {
+    return false;
+  }
+  const auto mappedHazardGaps = [](const CanonicalSyncProgram &program,
+                                   ArrayRef<unsigned> iterations) {
+    std::map<Operation *, unsigned> mappedIterations;
+    std::array<std::size_t, 2> occurrences{};
+    for (const CanonicalSyncNodeBinding &binding : program.getNodeBindings()) {
+      Operation *operation = binding.operation;
+      const bool alreadyMapped =
+          !operation || mappedIterations.count(operation) != 0;
+      if (alreadyMapped) {
+        continue;
+      }
+      const unsigned role = isa<TLoadOp>(operation) ? 0 : 1;
+      const bool supportedRole = isa<TLoadOp, TAbsOp>(operation);
+      if (!supportedRole || occurrences[role] >= iterations.size()) {
+        continue;
+      }
+      mappedIterations[operation] = iterations[occurrences[role]++];
+    }
+    std::set<unsigned> gaps;
+    for (const SyncCoverDemand &demand : program.getGraph().getDemands()) {
+      Operation *source = program.getNodeBindings()[demand.source].operation;
+      Operation *target = program.getNodeBindings()[demand.target].operation;
+      const auto sourceIteration = mappedIterations.find(source);
+      const auto targetIteration = mappedIterations.find(target);
+      const bool mapped = sourceIteration != mappedIterations.end() &&
+                          targetIteration != mappedIterations.end();
+      const bool memoryHazard =
+          llvm::any_of(demand.provenanceKinds, [](SyncCoverDemandKind kind) {
+            return kind != SyncCoverDemandKind::SSA;
+          });
+      if (mapped && memoryHazard &&
+          sourceIteration->second < targetIteration->second) {
+        gaps.insert(targetIteration->second - sourceIteration->second);
+      }
+    }
+    return gaps;
+  };
+  const std::set<unsigned> gapTwo = {2};
+  const std::set<unsigned> gapThree = {3};
+  const bool unrollsExposeOmittedGaps =
+      mappedHazardGaps(*gapTwoUnrolled, {0, 2}) == gapTwo &&
+      mappedHazardGaps(*shiftedUnrolled, {2, 5}) == gapThree &&
+      mappedHazardGaps(*nestedUnrolled, {0, 2}) == gapTwo;
+  return check(unrollsExposeOmittedGaps,
+               "expose the real successor gaps in explicit unrolls") &&
+         check(rejectsLoopVarying("gap_two"),
+               "reject a transient direct induction guard") &&
+         check(rejectsLoopVarying("shifted_modulo"),
+               "reject a transformed periodic guard") &&
+         check(rejectsLoopVarying("nested_outer_varying"),
+               "reject a nested guard that varies with an outer induction");
 }
 
 bool testGuardedOwnershipVerificationWorkIsBounded() {
@@ -6831,6 +7025,7 @@ int main() {
       testStructuralLimitsFailClosed() && testPeriodicBranchEvidence() &&
       testPhaseAwareRecurrenceDistances() &&
       testFirstIterationRecurrenceSuppression() &&
+      testUnmodeledLoopVaryingControlsFailClosed() &&
       testGuardedOwnershipVerificationWorkIsBounded() &&
       testBasicL0OwnershipSharesExhaustiveBranchBoundaries() &&
       testOwnershipDoesNotHideProducerOverwrite() &&

@@ -13,6 +13,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
@@ -99,10 +100,10 @@ LogicalResult ProgramBuilder::addRegion(Region &region,
             "cannot construct canonical sync branch control");
       }
       controlBindings_.push_back({conditional.getOperation()});
-      if (failed(addPeriodicControlEvidence(conditional, *control.index,
-                                            context.scope)) ||
-          failed(addSuccessorControlEvidence(conditional, *control.index,
-                                             context.scope))) {
+      if (failed(addSuccessorControlEvidence(conditional, *control.index,
+                                             context.scope)) ||
+          failed(addPeriodicControlEvidence(conditional, *control.index,
+                                            context.scope))) {
         return failure();
       }
       for (unsigned alternative = 0; alternative < 2; ++alternative) {
@@ -154,8 +155,68 @@ ProgramBuilder::addPeriodicControlEvidence(scf::IfOp conditional,
   }
   auto loop = dyn_cast_or_null<scf::ForOp>(scopeBindings_[*loopScope].owner);
   auto comparison = conditional.getCondition().getDefiningOp<arith::CmpIOp>();
-  if (!loop || !comparison) {
+  if (!loop) {
+    return conditional.emitError(
+        "canonical sync lost the enclosing loop control");
+  }
+
+  SmallVector<scf::ForOp, 4> enclosingLoops;
+  for (Operation *parent = conditional->getParentOp(); parent != nullptr;
+       parent = parent->getParentOp()) {
+    if (auto enclosingLoop = dyn_cast<scf::ForOp>(parent)) {
+      enclosingLoops.push_back(enclosingLoop);
+    }
+  }
+  const auto isFirstIterationControl = [&]() {
+    if (!comparison ||
+        (comparison.getPredicate() != arith::CmpIPredicate::eq &&
+         comparison.getPredicate() != arith::CmpIPredicate::ne)) {
+      return false;
+    }
+    return llvm::any_of(enclosingLoops, [&](scf::ForOp enclosingLoop) {
+      return (comparison.getLhs() == enclosingLoop.getInductionVar() &&
+              comparison.getRhs() == enclosingLoop.getLowerBound()) ||
+             (comparison.getRhs() == enclosingLoop.getInductionVar() &&
+              comparison.getLhs() == enclosingLoop.getLowerBound());
+    });
+  };
+  const auto rejectUnmodeledLoopVaryingControl = [&]() -> LogicalResult {
+    const SyncCoverControl &registeredControl = graph_.getControls()[control];
+    if (registeredControl.successorRelation || isFirstIterationControl()) {
+      return success();
+    }
+    SmallVector<Value, 4> inductionVariables;
+    inductionVariables.reserve(enclosingLoops.size());
+    for (scf::ForOp enclosingLoop : enclosingLoops) {
+      inductionVariables.push_back(enclosingLoop.getInductionVar());
+    }
+    llvm::DenseSet<Value> visited;
+    SmallVector<Value, 16> worklist{conditional.getCondition()};
+    while (!worklist.empty()) {
+      Value current = worklist.pop_back_val();
+      if (!visited.insert(current).second) {
+        continue;
+      }
+      if (!consumePairInspection()) {
+        return conditional.emitError(
+            "canonical sync pair-inspection limit exceeded");
+      }
+      if (llvm::is_contained(inductionVariables, current)) {
+        return conditional.emitError(
+            "canonical sync cannot model this loop-varying control");
+      }
+      Operation *definition = current.getDefiningOp();
+      if (!definition) {
+        continue;
+      }
+      for (Value operand : definition->getOperands()) {
+        worklist.push_back(operand);
+      }
+    }
     return success();
+  };
+  if (!comparison) {
+    return rejectUnmodeledLoopVaryingControl();
   }
 
   Value remainderValue;
@@ -178,14 +239,14 @@ ProgramBuilder::addPeriodicControlEvidence(scf::IfOp conditional,
       !matchComparisonOperand(comparison.getLhs(), comparison.getRhs()) &&
       !matchComparisonOperand(comparison.getRhs(), comparison.getLhs());
   if (unsupportedOperands) {
-    return success();
+    return rejectUnmodeledLoopVaryingControl();
   }
 
   Operation *remainder = remainderValue.getDefiningOp();
   const bool usesLoopInduction =
       remainder->getOperand(0) == loop.getInductionVar();
   if (!usesLoopInduction) {
-    return success();
+    return rejectUnmodeledLoopVaryingControl();
   }
   const bool unsupportedComparisonKind =
       comparison.getPredicate() != arith::CmpIPredicate::eq &&
