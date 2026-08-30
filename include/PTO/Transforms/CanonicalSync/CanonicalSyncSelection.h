@@ -406,6 +406,9 @@ public:
     std::size_t maximumTotalSupplies = 1U << 20;
     std::size_t maximumMembersPerPattern = 64;
     std::size_t maximumIncidences = 1U << 22;
+    /// Aggregate dense words retained by singleton coverage preparation,
+    /// including the fixed baseline and temporary propagation workspace.
+    std::size_t maximumSingletonCoverageWords = 1U << 22;
     /// Aggregate dense coverage words retained by optional patterns.
     std::size_t maximumCoverageWords = 1U << 22;
   };
@@ -443,12 +446,14 @@ public:
                                          CanonicalSyncMechanismId second);
   CanonicalSyncProblemResult addPattern(CanonicalSyncPatternSpec pattern);
   /// Classify and atomically commit one owner scope's exact direct-pair rows.
-  /// Joint and singleton rows use graph-global demand IDs. The result index is
-  /// the number of retained extra-coverage patterns committed by the batch.
+  /// Joint, singleton, and baseline rows use graph-global demand IDs. The
+  /// result index is the number of retained extra-coverage patterns committed
+  /// by the batch.
   CanonicalSyncProblemResult addDirectPairBatch(
       const std::vector<SyncCoverMechanismPair> &pairs,
       const std::vector<SyncCoverDemandSet> &jointCoverage,
-      const std::vector<SyncCoverDemandSet> &singletonMechanismCoverage);
+      const std::vector<SyncCoverDemandSet> &singletonMechanismCoverage,
+      const SyncCoverDemandSet &baselineCoverage);
   CanonicalSyncProblemResult freeze();
 
   /// Copy one immutable precise catalog into a mutable repair extension. The
@@ -459,6 +464,9 @@ public:
   cloneMutableRepairPrefix(SyncCoverCoverageWorkBudget *workBudget) const;
 
   bool isFrozen() const { return frozen_; }
+  /// Direct-pair preparation owns one aggregate dense-memory reservation and
+  /// therefore starts only before any per-pattern construction cache exists.
+  bool canPrepareDirectPairPatterns() const;
   const SyncCoverGraph &getGraph() const { return graph_; }
   const SyncCoverExpandedProgram &getExpansion() const { return *expansion_; }
   const std::vector<SyncCoverDemandId> &getDemands() const {

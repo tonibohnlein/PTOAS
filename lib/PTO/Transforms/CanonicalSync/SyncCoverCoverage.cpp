@@ -1112,8 +1112,10 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
     return result;
   }
   result.baseline = SyncCoverDemandSet(graph.getDemands().size());
-  result.mechanisms.assign(mechanismCount,
-                           SyncCoverDemandSet(graph.getDemands().size()));
+  result.mechanisms.reserve(mechanismCount);
+  for (std::size_t mechanism = 0; mechanism < mechanismCount; ++mechanism) {
+    result.mechanisms.emplace_back(graph.getDemands().size());
+  }
   const bool baseUnavailable =
       expansion.getError() == SyncCoverExpansionError::BaseLimitExceeded;
   if (baseUnavailable) {
@@ -1300,8 +1302,10 @@ SyncCoverPairCoverageResult mlir::pto::computeSyncCoverPairCoverage(
     result.error = SyncCoverCoverageError::LimitExceeded;
     return result;
   }
-  result.pairs.assign(pairs.size(),
-                      SyncCoverDemandSet(graph.getDemands().size()));
+  result.pairs.reserve(pairs.size());
+  for (std::size_t pair = 0; pair < pairs.size(); ++pair) {
+    result.pairs.emplace_back(graph.getDemands().size());
+  }
   const bool baseExpansionUnavailable =
       expansion.getError() == SyncCoverExpansionError::BaseLimitExceeded;
   if (baseExpansionUnavailable) {

@@ -2236,6 +2236,15 @@ bool CanonicalSyncPatternProblem::hasSameCandidatePrefix(
   return true;
 }
 
+bool CanonicalSyncPatternProblem::canPrepareDirectPairPatterns() const {
+  return !frozen_ && frozenPrefixMechanismCount_ == 0 &&
+         patternSpecs_.empty() && !constructionBaselineCoverage_ &&
+         std::none_of(
+             constructionSingletonCoverage_.begin(),
+             constructionSingletonCoverage_.end(),
+             [](const auto &coverage) { return coverage.has_value(); });
+}
+
 CanonicalSyncProblemResult CanonicalSyncPatternProblem::verifyMechanism(
     CanonicalSyncMechanismId mechanism,
     SyncCoverCoverageWorkBudget *workBudget) const {
@@ -2734,13 +2743,15 @@ CanonicalSyncPatternProblem::addPattern(CanonicalSyncPatternSpec pattern) {
 CanonicalSyncProblemResult CanonicalSyncPatternProblem::addDirectPairBatch(
     const std::vector<SyncCoverMechanismPair> &pairs,
     const std::vector<SyncCoverDemandSet> &exactJointCoverage,
-    const std::vector<SyncCoverDemandSet> &exactSingletonMechanismCoverage) {
+    const std::vector<SyncCoverDemandSet> &exactSingletonMechanismCoverage,
+    const SyncCoverDemandSet &exactBaselineCoverage) {
   if (frozen_) {
     return {CanonicalSyncProblemError::Frozen, patternSpecs_.size()};
   }
   const bool invalidBatch =
       pairs.size() != exactJointCoverage.size() ||
       exactSingletonMechanismCoverage.size() != mechanisms_.size() ||
+      exactBaselineCoverage.size() != graph_.getDemands().size() ||
       std::any_of(exactJointCoverage.begin(), exactJointCoverage.end(),
                   [&](const SyncCoverDemandSet &coverage) {
                     return coverage.size() != graph_.getDemands().size();
@@ -2761,16 +2772,8 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::addDirectPairBatch(
     return {CanonicalSyncProblemError::None, 0};
   }
   if (!constructionBaselineCoverage_) {
-    const SyncCoverCoverageResult baseline = computeSyncCoverCoverage(
-        graph_, *expansion_, {}, activeDemands_, constructionWorkBudget_);
-    if (!baseline) {
-      return {constructionWorkBudget_ && constructionWorkBudget_->exhausted
-                  ? CanonicalSyncProblemError::LimitExceeded
-                  : CanonicalSyncProblemError::CoverageFailure,
-              std::nullopt};
-    }
     constructionBaselineCoverage_ =
-        projectCoverage(baseline.covered, activeDemands_);
+        projectCoverage(exactBaselineCoverage, activeDemands_);
   }
 
   std::vector<PendingPattern> pending;
@@ -2894,11 +2897,20 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns(
                              binding.applicability});
     }
   }
+  SyncCoverCoverageLimits coverageLimits;
+  coverageLimits.maximumResultWords = std::min(
+      coverageLimits.maximumResultWords, limits_.maximumSingletonCoverageWords);
+  coverageLimits.maximumTotalWords = std::min(
+      coverageLimits.maximumTotalWords, limits_.maximumSingletonCoverageWords);
   const SyncCoverSingletonCoverageResult singletonCoverage =
       computeSyncCoverSingletonCoverage(graph_, *expansion_, mechanisms_.size(),
-                                        allSupplies, activeDemands_);
+                                        allSupplies, activeDemands_,
+                                        coverageLimits);
   if (!singletonCoverage) {
-    return {CanonicalSyncProblemError::CoverageFailure, std::nullopt};
+    return {singletonCoverage.error == SyncCoverCoverageError::LimitExceeded
+                ? CanonicalSyncProblemError::LimitExceeded
+                : CanonicalSyncProblemError::CoverageFailure,
+            std::nullopt};
   }
   baselineCoverage =
       projectCoverage(singletonCoverage.baseline, activeDemands_);

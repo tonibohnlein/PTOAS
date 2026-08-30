@@ -4990,26 +4990,53 @@ bool testConflictCoreRepairAvoidsPipeAll() {
              "do not generate frontiers from events outside the live core")) {
     return false;
   }
+  const auto rejectsMismatchedPrefix = [&](const CanonicalSyncBuildOptions
+                                               &staleOptions,
+                                           std::string_view message) {
+    bool sawStaleCoreDiagnostic = false;
+    CanonicalSyncProblemBuildResult staleRepair;
+    {
+      ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
+        sawStaleCoreDiagnostic |=
+            diagnostic.str().find("does not match the precise catalog") !=
+            std::string::npos;
+        return success();
+      });
+      staleRepair = buildCanonicalSyncRepairProblem(*program, **problem,
+                                                    staleOptions, conflictCore);
+    }
+    return check(!staleRepair &&
+                     staleRepair.status.error ==
+                         CanonicalSyncProblemError::InvalidPattern &&
+                     sawStaleCoreDiagnostic,
+                 message);
+  };
   CanonicalSyncBuildOptions staleOptions = options;
   staleOptions.eventIdBudget = 2;
-  bool sawStaleCoreDiagnostic = false;
-  CanonicalSyncProblemBuildResult staleRepair;
-  {
-    ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
-      sawStaleCoreDiagnostic |=
-          diagnostic.str().find("does not match the precise catalog") !=
-          std::string::npos;
-      return success();
-    });
-    staleRepair = buildCanonicalSyncRepairProblem(*program, **problem,
-                                                  staleOptions, conflictCore);
-  }
-  if (!check(
-          !staleRepair &&
-              staleRepair.status.error ==
-                  CanonicalSyncProblemError::InvalidPattern &&
-              sawStaleCoreDiagnostic,
+  if (!rejectsMismatchedPrefix(
+          staleOptions,
           "reject a conflict core against a differently configured prefix")) {
+    return false;
+  }
+  staleOptions = options;
+  ++staleOptions.directPairs.pairCoverageLimits.maximumTotalWords;
+  if (!rejectsMismatchedPrefix(
+          staleOptions,
+          "reject a repair prefix with a different pair total-word cap")) {
+    return false;
+  }
+  staleOptions = options;
+  ++staleOptions.directPairs.maximumPreparationWords;
+  if (!rejectsMismatchedPrefix(
+          staleOptions,
+          "reject a repair prefix with a different pair preparation cap")) {
+    return false;
+  }
+  staleOptions = options;
+  ++staleOptions.problemLimits.maximumSingletonCoverageWords;
+  if (!rejectsMismatchedPrefix(
+          staleOptions,
+          "reject a repair prefix with a different singleton coverage cap")) {
     return false;
   }
   CanonicalSyncBuildOptions truncatedOptions = options;

@@ -472,6 +472,15 @@ bool testBatchedSingletonCoverageRejectsOversizedResult() {
                       totalLimited.baseline.size() == 0 &&
                       totalLimited.mechanisms.empty(),
                   "bound simultaneous singleton result and workspace words");
+  const SyncCoverSingletonCoverageResult exactResultOnly =
+      computeSyncCoverSingletonCoverage(graph, expansion, 1, {}, {},
+                                        totalLimits);
+  passed &= check(exactResultOnly &&
+                      exactResultOnly.baseline.getWords().size() == 1 &&
+                      exactResultOnly.mechanisms.size() == 1 &&
+                      exactResultOnly.mechanisms[0].getWords().size() == 1,
+                  "construct singleton rows in place at the exact result-only "
+                  "word bound");
   SyncCoverGraph emptyGraph;
   passed &= check(emptyGraph.freezeStructure(), "freeze empty limit graph");
   const SyncCoverExpandedProgram emptyExpansion(emptyGraph);
@@ -636,6 +645,23 @@ bool testDirectPairDiscoversJointCoverage() {
   passed &= check(exactPair && exactPair.pairs.size() == 1 &&
                       exactPair.pairs[0].contains(0),
                   "admit pair result and workspace at the exact word bound");
+  limitedPairWords.maximumTotalWords = 1;
+  const SyncCoverPairCoverageResult exactPairResultOnly =
+      computeSyncCoverPairCoverage(graph, problem.getExpansion(),
+                                   problem.getMechanisms().size(), supplies,
+                                   {{first, second}}, {}, limitedPairWords);
+  passed &=
+      check(exactPairResultOnly && exactPairResultOnly.pairs.size() == 1 &&
+                exactPairResultOnly.pairs[0].getWords().size() == 1,
+            "construct pair rows in place at the exact result-only word "
+            "bound");
+  limitedPairWords.maximumTotalWords = 0;
+  const SyncCoverPairCoverageResult emptyPairsAtZero =
+      computeSyncCoverPairCoverage(graph, problem.getExpansion(),
+                                   problem.getMechanisms().size(), supplies, {},
+                                   {}, limitedPairWords);
+  passed &= check(emptyPairsAtZero && emptyPairsAtZero.pairs.empty(),
+                  "allocate no hidden fill row for an empty pair query");
   const CanonicalSyncProblemResult generated =
       addCanonicalSyncDirectPairPatterns(problem);
   passed &= check(generated && generated.index == 1,
@@ -1178,6 +1204,117 @@ bool testPairPreparationLimitKeepsSingletonCorrectness() {
   return passed;
 }
 
+bool testPairPreparationRejectsPreexistingCoverageCaches() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source = takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}),
+                                           passed, "add cached-pair source");
+  const SyncCoverNodeId middle = takeIndex(graph.addNode(2, 1, 0, 1, {}, {3}),
+                                           passed, "add cached-pair middle");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(3, 1, 0, 2), passed, "add cached-pair target");
+  passed &= check(graph.addDemand(demand(source, target)),
+                  "add cached-pair demand") &&
+            check(graph.freezeStructure(), "freeze cached-pair graph");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                  "add cached-pair first domain") &&
+            check(problem.addEventDomain({1, 2, 3, 8, {}}),
+                  "add cached-pair second domain");
+  const CanonicalSyncMechanismId first =
+      takeIndex(problem.internMechanism(event(0, 1, 2, source, middle)), passed,
+                "add cached-pair first mechanism");
+  const CanonicalSyncMechanismId second =
+      takeIndex(problem.internMechanism(event(1, 2, 3, middle, target)), passed,
+                "add cached-pair second mechanism");
+  passed &= check(
+      addCanonicalSyncFeasiblePattern(
+          problem, {CanonicalSyncPatternKind::RepairFrontier, {first, second}}),
+      "prepare a composite coverage cache before direct pairs");
+  const CanonicalSyncProblemResult generated =
+      addCanonicalSyncDirectPairPatterns(problem);
+  return passed &&
+         check(generated.error == CanonicalSyncProblemError::InvalidPattern,
+               "reject pair preparation when an earlier pattern owns dense "
+               "construction caches");
+}
+
+bool testPairPreparationCountsReducedBasisLifetimes() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}), passed,
+                "add reduced-basis pair source");
+  const SyncCoverNodeId middle =
+      takeIndex(graph.addNode(2, 1, 0, 1, {}, {3}), passed,
+                "add reduced-basis pair middle");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(3, 1, 0, 2), passed,
+                                           "add reduced-basis pair target");
+  passed &= check(graph.addDemand(demand(source, target)),
+                  "add active reduced-basis demand");
+  constexpr std::size_t additionalDemandCount = 320;
+  for (std::size_t index = 0; index < additionalDemandCount; ++index) {
+    const SyncCoverNodeId otherTarget =
+        takeIndex(graph.addNode(3, 1, 0, index + 3), passed,
+                  "add inactive reduced-basis target");
+    passed &= check(graph.addDemand(demand(source, otherTarget)),
+                    "add inactive reduced-basis demand");
+  }
+  passed &= check(graph.freezeStructure(), "freeze reduced-basis pair graph");
+  if (!passed) {
+    return false;
+  }
+
+  const auto makeProblem = [&]() {
+    auto problem = std::make_unique<CanonicalSyncPatternProblem>(
+        graph, allDemands(graph), std::vector<SyncCoverDemandId>{0},
+        CanonicalSyncPatternProblem::Limits{});
+    passed &= check(problem->addEventDomain({0, 1, 2, 8, {}}),
+                    "add reduced-basis first domain") &&
+              check(problem->addEventDomain({1, 2, 3, 8, {}}),
+                    "add reduced-basis second domain") &&
+              check(problem->internMechanism(event(0, 1, 2, source, middle)),
+                    "add reduced-basis first mechanism") &&
+              check(problem->internMechanism(event(1, 2, 3, middle, target)),
+                    "add reduced-basis second mechanism");
+    return problem;
+  };
+
+  std::unique_ptr<CanonicalSyncPatternProblem> exact = makeProblem();
+  const std::size_t graphWords = graph.getDemands().size() / 64 +
+                                 (graph.getDemands().size() % 64 != 0 ? 1 : 0);
+  const std::size_t activeWords = 1;
+  const std::size_t singletonWords =
+      (exact->getMechanisms().size() + 1) * graphWords;
+  const std::size_t pairResultWords = graphWords;
+  const std::size_t pairWorkspaceWords =
+      exact->getExpansion().getBaseArena().getVirtualNodeCount();
+  const std::size_t batchScratchWords = 5 * activeWords;
+  const std::size_t exactWords =
+      singletonWords + pairResultWords + pairWorkspaceWords + batchScratchWords;
+  CanonicalSyncDirectPairOptions exactOptions;
+  exactOptions.maximumPreparationWords = exactWords;
+  const CanonicalSyncProblemResult exactResult =
+      addCanonicalSyncDirectPairPatterns(*exact, exactOptions);
+  passed &= check(exactResult && exactResult.index == 1 &&
+                      !exact->wasPatternGenerationTruncated(),
+                  "admit reduced-basis pair preparation at its exact dense "
+                  "word bound");
+
+  std::unique_ptr<CanonicalSyncPatternProblem> below = makeProblem();
+  CanonicalSyncDirectPairOptions belowOptions = exactOptions;
+  belowOptions.maximumPreparationWords = exactWords - 1;
+  const CanonicalSyncProblemResult belowResult =
+      addCanonicalSyncDirectPairPatterns(*below, belowOptions);
+  return passed &&
+         check(belowResult && belowResult.index == 0 &&
+                   below->wasPatternGenerationTruncated() &&
+                   below->getPatternStatistics().directPairEvaluations == 0,
+               "truncate reduced-basis pair preparation one word below its "
+               "exact lifetime bound");
+}
+
 bool testPairOwnerUsesEverySupplyScope() {
   bool passed = true;
   const auto run = [&](bool leftNodesFirst) {
@@ -1477,10 +1614,11 @@ bool testOwnerPairCoverageWordLimitIsAtomic() {
   SyncCoverDemandSet emptyJoint(1);
   const std::vector<SyncCoverDemandSet> singletonRows(
       problem.getMechanisms().size(), SyncCoverDemandSet(1));
-  const CanonicalSyncProblemResult rejected =
-      problem.addDirectPairBatch({{0, 1}}, {retainedJoint}, singletonRows);
-  const CanonicalSyncProblemResult continued =
-      problem.addDirectPairBatch({{2, 3}}, {emptyJoint}, singletonRows);
+  const SyncCoverDemandSet baseline(1);
+  const CanonicalSyncProblemResult rejected = problem.addDirectPairBatch(
+      {{0, 1}}, {retainedJoint}, singletonRows, baseline);
+  const CanonicalSyncProblemResult continued = problem.addDirectPairBatch(
+      {{2, 3}}, {emptyJoint}, singletonRows, baseline);
   passed &=
       check(rejected && rejected.index == 0 && continued &&
                 continued.index == 0 && problem.wasPatternGenerationTruncated(),
@@ -2723,8 +2861,9 @@ bool testOptionalPairReservesSingletonIncidences() {
   std::vector<SyncCoverDemandSet> singletonCoverage(
       problem.getMechanisms().size(), SyncCoverDemandSet(1));
   singletonCoverage[2].insert(0);
-  const CanonicalSyncProblemResult generated =
-      problem.addDirectPairBatch({{0, 1}}, {jointCoverage}, singletonCoverage);
+  const SyncCoverDemandSet baselineCoverage(1);
+  const CanonicalSyncProblemResult generated = problem.addDirectPairBatch(
+      {{0, 1}}, {jointCoverage}, singletonCoverage, baselineCoverage);
   passed &= check(generated && generated.index == 0 &&
                       problem.wasPatternGenerationTruncated(),
                   "truncate the optional pair after reserving singleton rows");
@@ -2781,6 +2920,23 @@ bool testFailClosedConstruction() {
   passed &=
       check(limited.freeze().error == CanonicalSyncProblemError::LimitExceeded,
             "incidence limit fails during construction");
+
+  CanonicalSyncPatternProblem::Limits coverageLimits;
+  coverageLimits.maximumSingletonCoverageWords = 1;
+  CanonicalSyncPatternProblem coverageLimited(graph, allDemands(graph),
+                                              coverageLimits);
+  passed &=
+      check(coverageLimited.addEventDomain({0, 1, 2, 8, {}}),
+            "add singleton-coverage-limit domain") &&
+      check(coverageLimited.internMechanism(event(0, 1, 2, source, target)),
+            "add singleton-coverage-limit event");
+  SyncCoverDemandSet preview;
+  passed &= check(coverageLimited.previewCoveredDemands(preview).error ==
+                      CanonicalSyncProblemError::LimitExceeded,
+                  "preserve singleton preparation limit through preview") &&
+            check(coverageLimited.freeze().error ==
+                      CanonicalSyncProblemError::LimitExceeded,
+                  "preserve singleton preparation limit through freeze");
 
   CanonicalSyncPatternProblem::Limits patternLimits;
   patternLimits.maximumPatterns = 2;
@@ -3501,6 +3657,8 @@ int main() {
       testDirectPairIndexesUnrestrictedBindingOfMixedMechanism() &&
       testConnectorIndexRetainsDistinctEndpointNodes() &&
       testPairPreparationLimitKeepsSingletonCorrectness() &&
+      testPairPreparationRejectsPreexistingCoverageCaches() &&
+      testPairPreparationCountsReducedBasisLifetimes() &&
       testPairOwnerUsesEverySupplyScope() && testPairOwnerExact4096Boundary() &&
       testOwnerPairBatchesTruncateAtomicallyAndContinue() &&
       testOwnerPairCoverageWordLimitIsAtomic() &&

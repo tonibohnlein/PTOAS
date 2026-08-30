@@ -473,6 +473,9 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
   if (problem.isFrozen()) {
     return {CanonicalSyncProblemError::Frozen, std::nullopt};
   }
+  if (!problem.canPrepareDirectPairPatterns()) {
+    return {CanonicalSyncProblemError::InvalidPattern, std::nullopt};
+  }
   const SyncCoverGraph &graph = problem.getGraph();
   std::set<std::pair<std::uint32_t, std::uint32_t>> activeDemandResourcePairs;
   std::set<PlausibleDemandEndpoint> activeDemandRows;
@@ -677,8 +680,8 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
     } else {
       evaluationCount += owned.size();
     }
-    const CanonicalSyncProblemResult added =
-        problem.addDirectPairBatch(owned, joint.pairs, singleton.mechanisms);
+    const CanonicalSyncProblemResult added = problem.addDirectPairBatch(
+        owned, joint.pairs, singleton.mechanisms, singleton.baseline);
     if (!added) {
       return {added.error, addedCount};
     }

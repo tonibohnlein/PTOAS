@@ -134,6 +134,8 @@ getCandidateConfigurationSignature(const CanonicalSyncBuildOptions &options) {
   add(options.directPairs.pairCoverageLimits.maximumResultWords);
   add(options.directPairs.pairCoverageLimits.maximumResultRows);
   add(options.directPairs.pairCoverageLimits.maximumMechanismRows);
+  add(options.directPairs.pairCoverageLimits.maximumTotalWords);
+  add(options.directPairs.maximumPreparationWords);
   add(options.problemLimits.maximumDomains);
   add(options.problemLimits.maximumEventBudget);
   add(options.problemLimits.maximumReservedEventIds);
@@ -149,6 +151,7 @@ getCandidateConfigurationSignature(const CanonicalSyncBuildOptions &options) {
   add(options.problemLimits.maximumTotalSupplies);
   add(options.problemLimits.maximumMembersPerPattern);
   add(options.problemLimits.maximumIncidences);
+  add(options.problemLimits.maximumSingletonCoverageWords);
   add(options.problemLimits.maximumCoverageWords);
   add(options.expansionLimits.maximumArenaNodes);
   add(options.expansionLimits.maximumArenaEdges);
