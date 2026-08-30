@@ -1,18 +1,17 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under
-// the terms and conditions of CANN Open Software License Agreement Version 2.0
-// (the "License"). Please refer to the License for details. You may not use
-// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
-// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
-// for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncSelection.h"
 
 #include <algorithm>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <numeric>
 #include <string_view>
 #include <utility>
@@ -579,6 +578,242 @@ bool testDirectPairDiscoversJointCoverage() {
           CanonicalSyncSelectionError::NoCoveringPattern,
       "singleton action selection cannot activate two-member-only coverage");
   return passed;
+}
+
+bool testFixedCoverUsesFrozenCompositeColumn() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source = takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}),
+                                           passed, "add fixed-column source");
+  const SyncCoverNodeId firstMiddle =
+      takeIndex(graph.addNode(2, 1, 0, 1, {}, {3}), passed,
+                "add fixed-column first middle");
+  const SyncCoverNodeId secondMiddle =
+      takeIndex(graph.addNode(3, 1, 0, 2, {}, {4}), passed,
+                "add fixed-column second middle");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(4, 1, 0, 3), passed, "add fixed-column target");
+  passed &= check(graph.addDemand(demand(source, secondMiddle)),
+                  "add fixed-column pair demand");
+  passed &= check(graph.addDemand(demand(source, target)),
+                  "add fixed-column triple demand");
+  passed &= check(graph.freezeStructure(), "freeze fixed-column graph");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                  "add fixed-column first domain");
+  passed &= check(problem.addEventDomain({1, 2, 3, 8, {}}),
+                  "add fixed-column second domain");
+  passed &= check(problem.addEventDomain({2, 3, 4, 8, {}}),
+                  "add fixed-column third domain");
+  const CanonicalSyncMechanismId first =
+      takeIndex(problem.internMechanism(event(0, 1, 2, source, firstMiddle)),
+                passed, "add fixed-column first event");
+  const CanonicalSyncMechanismId second = takeIndex(
+      problem.internMechanism(event(1, 2, 3, firstMiddle, secondMiddle)),
+      passed, "add fixed-column second event");
+  const CanonicalSyncMechanismId third =
+      takeIndex(problem.internMechanism(event(2, 3, 4, secondMiddle, target)),
+                passed, "add fixed-column third event");
+  const CanonicalSyncProblemResult generated =
+      addCanonicalSyncDirectPairPatterns(problem);
+  passed &= check(generated && generated.index == 1,
+                  "retain the fixed-column direct pair");
+  passed &= check(problem.addPattern({CanonicalSyncPatternKind::RepairFrontier,
+                                      {first, second, third}}),
+                  "add the fixed-column three-member pattern");
+  passed &= check(problem.freeze(), "freeze fixed-column problem");
+
+  CanonicalSyncGreedyOptions options;
+  options.strategy = CanonicalSyncSelectionStrategy::FixedCover;
+  const CanonicalSyncSelection firstSelection =
+      selectCanonicalSyncPatterns(problem, options);
+  const CanonicalSyncSelection secondSelection =
+      selectCanonicalSyncPatterns(problem, options);
+  const std::vector<CanonicalSyncMechanismId> expected{first, second, third};
+  return passed &&
+         check(firstSelection && firstSelection.mechanisms == expected &&
+                   firstSelection.selectionOrder == expected,
+               "select the complete frozen composite column in one move") &&
+         check(secondSelection && secondSelection.mechanisms == expected &&
+                   secondSelection.selectionOrder == expected &&
+                   secondSelection.statistics.patternEvaluations ==
+                       firstSelection.statistics.patternEvaluations &&
+                   secondSelection.statistics.workUnits ==
+                       firstSelection.statistics.workUnits,
+               "repeat the fixed-column streaming choice deterministically");
+}
+
+bool testStreamingGreedySelectionIsDeterministic() {
+  bool passed = true;
+  constexpr std::size_t candidateCount = 16;
+  SyncCoverGraph graph;
+  std::vector<SyncCoverNodeId> sources;
+  std::vector<SyncCoverNodeId> targets;
+  sources.reserve(candidateCount);
+  targets.reserve(candidateCount);
+  for (std::size_t candidate = 0; candidate < candidateCount; ++candidate) {
+    const std::uint32_t sourceResource =
+        static_cast<std::uint32_t>(2 * candidate + 1);
+    const std::uint32_t targetResource = sourceResource + 1;
+    sources.push_back(
+        takeIndex(graph.addNode(sourceResource, 1, 0, 2 * candidate, {},
+                                {targetResource}),
+                  passed, "add streaming source"));
+    targets.push_back(
+        takeIndex(graph.addNode(targetResource, 1, 0, 2 * candidate + 1),
+                  passed, "add streaming target"));
+    passed &= check(graph.addDemand(demand(sources.back(), targets.back())),
+                    "add streaming demand");
+  }
+  passed &= check(graph.freezeStructure(), "freeze streaming graph");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  for (std::size_t candidate = 0; candidate < candidateCount; ++candidate) {
+    const std::uint32_t sourceResource =
+        static_cast<std::uint32_t>(2 * candidate + 1);
+    const std::uint32_t targetResource = sourceResource + 1;
+    passed &= check(problem.addEventDomain(
+                        {candidate, sourceResource, targetResource, 1, {}}),
+                    "add streaming event domain");
+    passed &= check(
+        problem.internMechanism(event(candidate, sourceResource, targetResource,
+                                      sources[candidate], targets[candidate])),
+        "add streaming event");
+  }
+  passed &= check(problem.freeze(), "freeze streaming problem");
+
+  CanonicalSyncGreedyOptions options;
+  options.strategy = CanonicalSyncSelectionStrategy::ActionAwareSingleton;
+  const CanonicalSyncSelection first =
+      selectCanonicalSyncPatterns(problem, options);
+  const CanonicalSyncSelection second =
+      selectCanonicalSyncPatterns(problem, options);
+  std::vector<CanonicalSyncMechanismId> expected(candidateCount);
+  std::iota(expected.begin(), expected.end(), 0);
+  return passed &&
+         check(first && first.mechanisms == expected &&
+                   first.selectionOrder == expected,
+               "stream every required singleton in stable order") &&
+         check(second && second.mechanisms == first.mechanisms &&
+                   second.selectionOrder == first.selectionOrder &&
+                   second.statistics.patternEvaluations ==
+                       first.statistics.patternEvaluations &&
+                   second.statistics.workUnits == first.statistics.workUnits,
+               "repeat the streaming singleton scan deterministically");
+}
+
+bool testDirectPairSkipsConflictingMechanisms() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2, 3}), passed,
+                "add conflicting-pair source");
+  const SyncCoverNodeId middle =
+      takeIndex(graph.addNode(2, 1, 0, 1, {}, {3}), passed,
+                "add conflicting-pair middle");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(3, 1, 0, 2), passed,
+                                           "add conflicting-pair target");
+  passed &= check(graph.addDemand(demand(source, target)),
+                  "add conflicting-pair demand");
+  passed &= check(graph.freezeStructure(), "freeze conflicting-pair graph");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                  "add conflicting-pair first domain");
+  passed &= check(problem.addEventDomain({1, 2, 3, 8, {}}),
+                  "add conflicting-pair second domain");
+  passed &= check(problem.addEventDomain({2, 1, 3, 8, {}}),
+                  "add conflicting-pair covering domain");
+  const CanonicalSyncMechanismId first =
+      takeIndex(problem.internMechanism(event(0, 1, 2, source, middle)), passed,
+                "add conflicting-pair first event");
+  const CanonicalSyncMechanismId second =
+      takeIndex(problem.internMechanism(event(1, 2, 3, middle, target)), passed,
+                "add conflicting-pair second event");
+  passed &= check(problem.internMechanism(event(2, 1, 3, source, target)),
+                  "add conflicting-pair covering event");
+  passed &=
+      check(problem.addConflict(first, second), "record direct-pair conflict");
+  const CanonicalSyncProblemResult generated =
+      addCanonicalSyncDirectPairPatterns(problem);
+  passed &= check(generated && generated.index == 0,
+                  "skip a conflicting direct-pair proposal");
+  return passed &&
+         check(problem.freeze(),
+               "conflicting optional pair does not invalidate the problem");
+}
+
+bool testConflictingPairDoesNotConsumeProposalCapacity() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}), passed,
+                "add capacity-conflict source");
+  const SyncCoverNodeId middle =
+      takeIndex(graph.addNode(2, 1, 0, 1, {}, {3}, std::nullopt, true), passed,
+                "add capacity-conflict middle");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(3, 1, 0, 2), passed,
+                                           "add capacity-conflict target");
+  passed &= check(graph.addDemand(demand(source, target)),
+                  "add capacity-conflict transitive demand");
+  const SyncCoverDemandId directDemand =
+      takeIndex(graph.addDemand(demand(middle, target)), passed,
+                "add capacity-conflict directly attested demand");
+  passed &= check(graph.freezeStructure(), "freeze capacity-conflict graph");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                  "add capacity-conflict first domain");
+  passed &= check(problem.addEventDomain({1, 2, 3, 8, {}}),
+                  "add capacity-conflict second domain");
+  const CanonicalSyncMechanismId first =
+      takeIndex(problem.internMechanism(event(0, 1, 2, source, middle)), passed,
+                "add capacity-conflict first event");
+  const CanonicalSyncMechanismId conflicting =
+      takeIndex(problem.internMechanism(event(1, 2, 3, middle, target)), passed,
+                "add capacity-conflict second event");
+  CanonicalSyncMechanismDescriptor targetFence;
+  targetFence.eventUses.push_back({1, 1, std::nullopt});
+  targetFence.actions.push_back(
+      {CanonicalSyncActionKind::EventSet, 2, before(target), 0, 0, {}});
+  targetFence.actions.push_back(
+      {CanonicalSyncActionKind::EventWait, 3, before(target), 0, 0, {}});
+  CanonicalSyncSupplyBinding targetFenceSupply;
+  targetFenceSupply.edge = supply(middle, target);
+  targetFenceSupply.eventUse = 0;
+  targetFenceSupply.proof = CanonicalSyncSupplyProof::TargetLocalFenceAction;
+  targetFenceSupply.attestedDemand = directDemand;
+  targetFenceSupply.applicability =
+      SyncCoverSupplyApplicability::DistanceZeroOnly;
+  targetFence.supplies.push_back(std::move(targetFenceSupply));
+  const CanonicalSyncMechanismId valid =
+      takeIndex(problem.internMechanism(std::move(targetFence)), passed,
+                "add capacity-conflict valid target fence");
+  passed &= check(problem.addConflict(first, conflicting),
+                  "record capacity-conflict pair");
+
+  CanonicalSyncDirectPairOptions options;
+  options.maximumEvaluationsPerScope = 1;
+  const CanonicalSyncProblemResult generated =
+      addCanonicalSyncDirectPairPatterns(problem, options);
+  const CanonicalSyncPatternStatistics &statistics =
+      problem.getPatternStatistics();
+  passed &= check(generated && generated.index == 1 &&
+                      !problem.wasPatternGenerationTruncated() &&
+                      statistics.directPairProposals == 1 &&
+                      statistics.directPairEvaluations == 1,
+                  "exclude conflicts before consuming proposal capacity");
+  passed &= check(problem.freeze(), "freeze capacity-conflict problem");
+  if (!passed) {
+    return false;
+  }
+  const CanonicalSyncPattern &pair = problem.getPatterns().back();
+  return check(pair.kind == CanonicalSyncPatternKind::DirectPair &&
+                   pair.members ==
+                       std::vector<CanonicalSyncMechanismId>{first, valid} &&
+                   pair.extraCoverageCount == 1 && pair.coverage.contains(0),
+               "retain the later valid pair within a one-proposal budget");
 }
 
 bool testDirectPairTraversesFixedCompletionSupply() {
@@ -1351,7 +1586,11 @@ bool testStructuralCostSeparatesBarrierAndEventActions() {
   const SyncCoverNodeId source =
       takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}), passed,
                 "add barrier-priority source");
-  const SyncCoverNodeId target = takeIndex(graph.addNode(2, 1, 0, 1), passed,
+  for (std::size_t order = 1; order < 7; ++order) {
+    takeIndex(graph.addNode(3, 1, 0, order), passed,
+              "add barrier-priority independent work");
+  }
+  const SyncCoverNodeId target = takeIndex(graph.addNode(2, 1, 0, 7), passed,
                                            "add barrier-priority target");
   const SyncCoverDemandId demandId =
       takeIndex(graph.addDemand(demand(source, target)), passed,
@@ -1365,25 +1604,91 @@ bool testStructuralCostSeparatesBarrierAndEventActions() {
                   "add barrier-priority event domain");
   const CanonicalSyncMechanismId barrierId =
       takeIndex(problem.internMechanism(
-                    targetLocalPipeDrain(1, source, target, demandId)),
+                    sourceLocalBarrier(1, source, {{target, demandId}})),
                 passed, "add barrier-priority targeted drain");
   const CanonicalSyncMechanismId eventId =
       takeIndex(problem.internMechanism(event(0, 1, 2, source, target)), passed,
                 "add barrier-priority event");
   passed &= check(problem.freeze(), "freeze barrier-priority problem");
 
-  const CanonicalSyncStructuralCost cost =
+  const std::optional<CanonicalSyncStructuralCost> cost =
       computeCanonicalSyncStructuralCost(problem, {barrierId, eventId});
+  if (!check(cost.has_value(), "compute checked structural cost")) {
+    return false;
+  }
   const std::uint64_t barriers =
-      std::accumulate(cost.barrierActionProfile.begin(),
-                      cost.barrierActionProfile.end(), std::uint64_t{0});
+      std::accumulate(cost->barrierActionProfile.begin(),
+                      cost->barrierActionProfile.end(), std::uint64_t{0});
   const std::uint64_t events =
-      std::accumulate(cost.eventActionProfile.begin(),
-                      cost.eventActionProfile.end(), std::uint64_t{0});
+      std::accumulate(cost->eventActionProfile.begin(),
+                      cost->eventActionProfile.end(), std::uint64_t{0});
   const std::uint64_t actions = std::accumulate(
-      cost.actionProfile.begin(), cost.actionProfile.end(), std::uint64_t{0});
-  return passed && check(barriers == 1 && events == 2 && actions == 3,
-                         "report separate and aggregate action profiles");
+      cost->actionProfile.begin(), cost->actionProfile.end(), std::uint64_t{0});
+  CanonicalSyncGreedyOptions actionFirst;
+  actionFirst.objective = CanonicalSyncSelectionObjective::ActionFirst;
+  const CanonicalSyncSelection actionSelection =
+      selectCanonicalSyncPatterns(problem, actionFirst);
+  CanonicalSyncGreedyOptions serializationFirst;
+  serializationFirst.objective =
+      CanonicalSyncSelectionObjective::SerializationFirst;
+  const CanonicalSyncSelection serializationSelection =
+      selectCanonicalSyncPatterns(problem, serializationFirst);
+  return passed &&
+         check(barriers == 1 && events == 2 && actions == 3,
+               "report separate and aggregate action profiles") &&
+         check(actionSelection &&
+                   actionSelection.mechanisms ==
+                       std::vector<CanonicalSyncMechanismId>{barrierId},
+               "action-first objective prefers one broad barrier") &&
+         check(serializationSelection &&
+                   serializationSelection.mechanisms ==
+                       std::vector<CanonicalSyncMechanismId>{eventId},
+               "serialization-first objective prefers the tight event");
+}
+
+bool testStructuralCostOverflowFailsClosed() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const std::uint64_t heavyWeight =
+      std::numeric_limits<std::uint64_t>::max() / 4;
+  const SyncCoverNodeId firstSource =
+      takeIndex(graph.addNode(1, heavyWeight, 0, 0, {}, {2}), passed,
+                "add first checked-cost source");
+  const SyncCoverNodeId firstTarget = takeIndex(
+      graph.addNode(2, 1, 0, 1), passed, "add first checked-cost target");
+  const SyncCoverNodeId secondSource =
+      takeIndex(graph.addNode(1, heavyWeight, 0, 2, {}, {2}), passed,
+                "add second checked-cost source");
+  const SyncCoverNodeId secondTarget = takeIndex(
+      graph.addNode(2, 1, 0, 3), passed, "add second checked-cost target");
+  passed &= check(graph.addDemand(demand(firstSource, firstTarget)),
+                  "add first checked-cost demand") &&
+            check(graph.addDemand(demand(secondSource, secondTarget)),
+                  "add second checked-cost demand") &&
+            check(graph.freezeStructure(), "freeze checked-cost graph");
+  if (!passed) {
+    return false;
+  }
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &=
+      check(problem.addEventDomain({0, 1, 2, 8, {}}),
+            "add checked-cost event domain") &&
+      check(problem.internMechanism(event(0, 1, 2, firstSource, firstTarget)),
+            "add first individually representable cost") &&
+      check(problem.internMechanism(event(0, 1, 2, secondSource, secondTarget)),
+            "add second individually representable cost") &&
+      check(problem.freeze(), "freeze checked-cost problem");
+  if (!passed) {
+    return false;
+  }
+  const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
+  return check(selection.error ==
+                       CanonicalSyncSelectionError::ArithmeticOverflow &&
+                   selection.statistics.arithmeticOverflow,
+               "reject aggregate cost overflow without saturation") &&
+         check(!computeCanonicalSyncStructuralCost(problem, {0, 1}),
+               "reject direct checked-cost aggregation overflow");
 }
 
 bool testPipeAllFallbackProblem() {
@@ -1737,10 +2042,25 @@ bool testAllocatorWidthsReuseAndConflicts() {
   const CanonicalSyncResourceAllocation reused =
       allocateCanonicalSyncEvents(problem, {first, second});
   passed &= check(
-      reused.valid && reused.feasible && reused.domains[0].required == 1 &&
+      reused.valid && reused.feasible && reused.domains[0].required == 2 &&
           reused.domains[0].uses[0].ids == std::vector<unsigned>{0} &&
-          reused.domains[0].uses[1].ids == std::vector<unsigned>{0},
-      "nonoverlapping lifetimes reuse one physical ID");
+          reused.domains[0].uses[1].ids == std::vector<unsigned>{1},
+      "lexically disjoint event uses retain distinct hardware channels");
+  CanonicalSyncPatternProblem oneIdProblem(graph, allDemands(graph));
+  passed &= check(oneIdProblem.addEventDomain({0, 1, 2, 1, {}}),
+                  "add one-ID allocator domain");
+  const CanonicalSyncMechanismId oneIdFirst = takeIndex(
+      oneIdProblem.internMechanism(event(0, 1, 2, sources[0], targets[0])),
+      passed, "add first one-ID event");
+  const CanonicalSyncMechanismId oneIdSecond = takeIndex(
+      oneIdProblem.internMechanism(event(0, 1, 2, sources[1], targets[1])),
+      passed, "add second one-ID event");
+  const CanonicalSyncResourceAllocation oneIdAllocation =
+      allocateCanonicalSyncEvents(oneIdProblem, {oneIdFirst, oneIdSecond});
+  passed &= check(oneIdAllocation.valid && !oneIdAllocation.feasible &&
+                      oneIdAllocation.domains[0].required == 2 &&
+                      oneIdAllocation.domains[0].available == 1,
+                  "independent event channels fail closed at ID exhaustion");
   const CanonicalSyncResourceAllocation widened =
       allocateCanonicalSyncEvents(problem, {wide});
   passed &= check(
@@ -1788,6 +2108,26 @@ bool testVerifiedProtocolTrustBoundary() {
   const CanonicalSyncProblemResult admitted = problem.internVerifiedProtocol(
       protocol(0, 1, 2, source, target, loop, 1, 1), verifier);
   passed &= check(admitted, "verified recurrence protocol is admitted");
+
+  CanonicalSyncPatternProblem freshProblem(graph, allDemands(graph));
+  passed &= check(freshProblem.addEventDomain({0, 1, 2, 2, {}}),
+                  "add fresh-verification protocol domain");
+  bool certificateStillValid = true;
+  const CanonicalSyncProblemResult freshlyAdmitted =
+      freshProblem.internVerifiedProtocol(
+          protocol(0, 1, 2, source, target, loop, 1, 1),
+          [&](const CanonicalSyncMechanismDescriptor &candidate) {
+            return certificateStillValid && verifier(candidate);
+          });
+  passed &= check(freshlyAdmitted && freshlyAdmitted.index,
+                  "admit a protocol with a persistent verifier");
+  if (freshlyAdmitted.index) {
+    certificateStillValid = false;
+    passed &=
+        check(freshProblem.verifyMechanism(*freshlyAdmitted.index).error ==
+                  CanonicalSyncProblemError::UnverifiedProtocol,
+              "fresh verification re-runs the persistent protocol verifier");
+  }
 
   CanonicalSyncMechanismDescriptor undrainedExport =
       protocol(0, 1, 2, source, target, loop, 1, 1);
@@ -2594,6 +2934,82 @@ bool testSourcePrefixBarrierKeepsDistanceQualifiers() {
                "freshly verify both source-prefix distance classes");
 }
 
+bool testMechanismOriginInterningIsBoundedAndDiagnosticOnly() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source = takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}),
+                                           passed, "add provenance source");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add provenance target");
+  passed &=
+      check(graph.addDemand(demand(source, target)), "add provenance demand") &&
+      check(graph.freezeStructure(), "freeze provenance graph");
+  if (!passed) {
+    return false;
+  }
+
+  CanonicalSyncPatternProblem merged(graph, allDemands(graph));
+  passed &= check(merged.addEventDomain({0, 1, 2, 8, {}}),
+                  "add merged provenance domain");
+  const CanonicalSyncProblemResult direct = merged.internMechanism(
+      event(0, 1, 2, source, target),
+      CanonicalSyncMechanismOrigin::DirectDistanceZeroEvent);
+  const CanonicalSyncProblemResult frontier = merged.internMechanism(
+      event(0, 1, 2, source, target),
+      CanonicalSyncMechanismOrigin::CompletionFrontierEvent);
+  const CanonicalSyncMechanismOriginMask expectedMask =
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::DirectDistanceZeroEvent) |
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::CompletionFrontierEvent);
+  passed &= check(direct && frontier && direct.index == frontier.index &&
+                      merged.getMechanisms().size() == 1 &&
+                      merged.getMechanisms().front().originMask == expectedMask,
+                  "merge explicit origins on one interned descriptor");
+
+  const CanonicalSyncProblemResult invalid = merged.internMechanism(
+      event(0, 1, 2, source, target), static_cast<CanonicalSyncMechanismOrigin>(
+                                          kCanonicalSyncMechanismOriginCount));
+  passed &= check(invalid.error == CanonicalSyncProblemError::InvalidMechanism,
+                  "reject an out-of-range mechanism origin");
+
+  CanonicalSyncPatternProblem directOnly(graph, allDemands(graph));
+  CanonicalSyncPatternProblem frontierOnly(graph, allDemands(graph));
+  passed &= check(directOnly.addEventDomain({0, 1, 2, 8, {}}),
+                  "add direct-only provenance domain") &&
+            check(frontierOnly.addEventDomain({0, 1, 2, 8, {}}),
+                  "add frontier-only provenance domain");
+  const CanonicalSyncMechanismId directId =
+      takeIndex(directOnly.internMechanism(
+                    event(0, 1, 2, source, target),
+                    CanonicalSyncMechanismOrigin::DirectDistanceZeroEvent),
+                passed, "add direct-only provenance mechanism");
+  const CanonicalSyncMechanismId frontierId =
+      takeIndex(frontierOnly.internMechanism(
+                    event(0, 1, 2, source, target),
+                    CanonicalSyncMechanismOrigin::CompletionFrontierEvent),
+                passed, "add frontier-only provenance mechanism");
+  if (!passed) {
+    return false;
+  }
+  const CanonicalSyncMechanism &directMechanism =
+      directOnly.getMechanisms()[directId];
+  const CanonicalSyncMechanism &frontierMechanism =
+      frontierOnly.getMechanisms()[frontierId];
+  return check(directOnly.getMechanismSignature(directId) ==
+                   frontierOnly.getMechanismSignature(frontierId),
+               "exclude provenance from the recipe signature") &&
+         check(directMechanism.cost.barrierActions ==
+                       frontierMechanism.cost.barrierActions &&
+                   directMechanism.cost.eventActions ==
+                       frontierMechanism.cost.eventActions &&
+                   directMechanism.cost.serializationBreadth ==
+                       frontierMechanism.cost.serializationBreadth,
+               "exclude provenance from structural cost") &&
+         check(!directOnly.hasSameCandidatePrefix(frontierOnly),
+               "include provenance in precise-repair prefix comparison");
+}
+
 } // namespace
 
 int main() {
@@ -2606,6 +3022,10 @@ int main() {
       testReverseDeletionPreservesBaselineCoverage() &&
       testInactiveRecurrenceDoesNotBuildAnArena() &&
       testDirectPairDiscoversJointCoverage() &&
+      testFixedCoverUsesFrozenCompositeColumn() &&
+      testStreamingGreedySelectionIsDeterministic() &&
+      testDirectPairSkipsConflictingMechanisms() &&
+      testConflictingPairDoesNotConsumeProposalCapacity() &&
       testDirectPairTraversesFixedCompletionSupply() &&
       testDirectPairIndexesUnrestrictedBindingOfMixedMechanism() &&
       testConnectorIndexRetainsDistinctEndpointNodes() &&
@@ -2617,7 +3037,7 @@ int main() {
       testNestedPairExtendsToParentDemand() &&
       testDirectPairComposesAcrossRecurrenceArena() &&
       testStructuralCostSeparatesBarrierAndEventActions() &&
-      testPipeAllFallbackProblem() &&
+      testStructuralCostOverflowFailsClosed() && testPipeAllFallbackProblem() &&
       testPackagingPatternHasNoExtraCoverage() &&
       testSeparateFallbackRepairsEventPressure() &&
       testOptionalPipelineFallback() && testReservationsAndFinalValidation() &&
@@ -2635,6 +3055,7 @@ int main() {
       testSourcePrefixFinalVerificationWorkIsBounded() &&
       testSourcePrefixBarrierRejectsInvalidCertificates() &&
       testSourcePrefixBarrierKeepsDistanceQualifiers() &&
+      testMechanismOriginInterningIsBoundedAndDiagnosticOnly() &&
       testFailClosedConstruction();
   return passed ? 0 : 1;
 }

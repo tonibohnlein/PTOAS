@@ -1,12 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under
-// the terms and conditions of CANN Open Software License Agreement Version 2.0
-// (the "License"). Please refer to the License for details. You may not use
-// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
-// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
-// for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 //===- CanonicalSyncSelection.h - Bounded pattern cover -------*- C++ -*-===//
 
@@ -20,6 +18,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -37,11 +36,66 @@ enum class CanonicalSyncSelectionStrategy : std::uint8_t {
   PairLookahead,
 };
 
+/// Ordering of the two principal structural-cost coordinates. Both modes use
+/// the same frozen mechanisms and coverage; this is an objective ablation, not
+/// a semantic change.
+enum class CanonicalSyncSelectionObjective : std::uint8_t {
+  ActionFirst,
+  SerializationFirst,
+};
+
 enum class CanonicalSyncMechanismKind : std::uint8_t {
   Event,
   Barrier,
   Protocol,
 };
+
+/// Bounded diagnostic provenance for one physical mechanism recipe. A recipe
+/// may be discovered by more than one generator; interning merges the
+/// corresponding bits without making provenance part of mechanism identity.
+enum class CanonicalSyncMechanismOrigin : std::uint8_t {
+  Unclassified,
+  DirectTargetedBarrier,
+  DirectDistanceZeroEvent,
+  DirectForwardRecurrenceEvent,
+  DirectReleaseRecurrenceProtocol,
+  CompletionFrontierEvent,
+  TargetCompletionCertificateEvent,
+  TargetLocalFenceEvent,
+  SourceLocalCompletionEvent,
+  SourceLocalPipeDrain,
+  SourcePrefixPipeDrain,
+  LoopCarryPipeDrain,
+  LoopBoundarySourcePrefixProtocol,
+  BasicOwnershipL0OperandProtocol,
+  BasicOwnershipStableL1Protocol,
+  BasicOwnershipAlternatingL1Protocol,
+  BasicOwnershipAccumulatorProtocol,
+  BoundaryGuardedAccumulatorProtocol,
+  HierarchicalStableL1Protocol,
+  HierarchicalAlternatingL1Protocol,
+  CompositeOwnershipProtocol,
+  RepairTargetLocalPipeDrain,
+  RepairSourceLocalPipeDrain,
+  RepairSourcePrefixPipeDrain,
+  RepairFrontierBarrier,
+  RepairFrontierEvent,
+  LocalizedPipeAll,
+  Count,
+};
+
+using CanonicalSyncMechanismOriginMask = std::uint32_t;
+
+constexpr std::size_t kCanonicalSyncMechanismOriginCount =
+    static_cast<std::size_t>(CanonicalSyncMechanismOrigin::Count);
+static_assert(kCanonicalSyncMechanismOriginCount <=
+                  sizeof(CanonicalSyncMechanismOriginMask) * 8,
+              "canonical sync mechanism origins must fit their mask");
+
+constexpr CanonicalSyncMechanismOriginMask
+canonicalSyncMechanismOriginBit(CanonicalSyncMechanismOrigin origin) {
+  return CanonicalSyncMechanismOriginMask{1} << static_cast<unsigned>(origin);
+}
 
 enum class CanonicalSyncActionKind : std::uint8_t {
   EventSet,
@@ -157,6 +211,14 @@ enum class CanonicalSyncSupplyProof : std::uint8_t {
   /// followed by the body set at LoopBodyExit completes every admitted source
   /// before the next-copy wait at LoopBodyEntry.
   LoopBoundarySourcePrefixProtocol,
+  /// One action-backed edge of a graph-certified basic ownership lifecycle.
+  /// The complete descriptor is independently reconstructed and verified
+  /// against its immutable exact-slot certificate before interning.
+  VerifiedBasicOwnershipProtocol,
+  /// A completion consequence of the complete ready/release ownership token
+  /// path. It owns no single action; it is admitted only by the same exact
+  /// descriptor verifier and remains restricted to named demand rows.
+  VerifiedBasicOwnershipComposite,
   VerifiedProtocol,
 };
 
@@ -216,6 +278,8 @@ struct CanonicalSyncMechanism {
   std::vector<CanonicalSyncEventLifetime> eventLifetimes;
   CanonicalSyncMechanismCost cost;
   std::vector<CanonicalSyncMechanismId> conflicts;
+  CanonicalSyncMechanismOriginMask originMask = canonicalSyncMechanismOriginBit(
+      CanonicalSyncMechanismOrigin::Unclassified);
 };
 
 enum class CanonicalSyncPatternKind : std::uint8_t {
@@ -239,11 +303,24 @@ struct CanonicalSyncPattern {
   /// Singleton patterns store their complete non-baseline coverage. Composite
   /// patterns store only coverage unavailable from their member singletons.
   SyncCoverDemandSet coverage;
+  /// Exact counts retained so a frozen precise catalog can be cloned into a
+  /// mutable repair extension without rerunning its semantic preparation.
+  std::size_t jointCoverageCount = 0;
+  std::size_t singletonCoverageCount = 0;
   /// Number of covered demands not available from the union of the members'
   /// singleton coverage. Zero means the pattern is greedy packaging, not a
   /// semantic synchronization composition. Detailed extra bits are transient
   /// during construction so diagnostics do not double pattern storage.
   std::size_t extraCoverageCount = 0;
+};
+
+/// Minimal immutable seed needed to generate conflict-core frontier recipes
+/// from an already frozen precise catalog. The seed records only independently
+/// verified event mechanisms; it is not itself a synchronization candidate.
+struct CanonicalSyncRepairEventSeed {
+  SyncCoverDemandId demand = 0;
+  CanonicalSyncMechanismId mechanism = 0;
+  CanonicalSyncEventDomainId domain = 0;
 };
 
 struct CanonicalSyncPatternKindStatistics {
@@ -348,11 +425,15 @@ public:
 
   CanonicalSyncProblemResult addEventDomain(CanonicalSyncEventDomain domain);
   CanonicalSyncProblemResult
-  internMechanism(CanonicalSyncMechanismDescriptor descriptor);
+  internMechanism(CanonicalSyncMechanismDescriptor descriptor,
+                  CanonicalSyncMechanismOrigin origin =
+                      CanonicalSyncMechanismOrigin::Unclassified);
   CanonicalSyncProblemResult internVerifiedProtocol(
       CanonicalSyncMechanismDescriptor descriptor,
       const std::function<bool(const CanonicalSyncMechanismDescriptor &)>
-          &verifier);
+          &verifier,
+      CanonicalSyncMechanismOrigin origin =
+          CanonicalSyncMechanismOrigin::Unclassified);
   CanonicalSyncProblemResult addConflict(CanonicalSyncMechanismId first,
                                          CanonicalSyncMechanismId second);
   CanonicalSyncProblemResult addPattern(CanonicalSyncPatternSpec pattern);
@@ -365,9 +446,16 @@ public:
       const std::vector<SyncCoverDemandSet> &singletonMechanismCoverage);
   CanonicalSyncProblemResult freeze();
 
+  /// Copy one immutable precise catalog into a mutable repair extension. The
+  /// grounded prefix remains byte-for-byte identical; only newly appended
+  /// repair mechanisms and patterns are semantically evaluated. Copy work and
+  /// all subsequent construction work use the supplied shared budget.
+  std::unique_ptr<CanonicalSyncPatternProblem>
+  cloneMutableRepairPrefix(SyncCoverCoverageWorkBudget *workBudget) const;
+
   bool isFrozen() const { return frozen_; }
   const SyncCoverGraph &getGraph() const { return graph_; }
-  const SyncCoverExpandedProgram &getExpansion() const { return expansion_; }
+  const SyncCoverExpandedProgram &getExpansion() const { return *expansion_; }
   const std::vector<SyncCoverDemandId> &getDemands() const {
     return activeDemands_;
   }
@@ -501,6 +589,16 @@ public:
     return baselineCoverage_;
   }
   const Limits &getLimits() const { return limits_; }
+  CanonicalSyncProblemResult
+  recordRepairEventSeed(CanonicalSyncRepairEventSeed seed);
+  const std::vector<CanonicalSyncRepairEventSeed> &getRepairEventSeeds() const {
+    return repairEventSeeds_;
+  }
+  CanonicalSyncProblemResult
+  setCandidateConfigurationSignature(std::uint64_t signature);
+  std::uint64_t getCandidateConfigurationSignature() const {
+    return candidateConfigurationSignature_;
+  }
 
 private:
   struct PendingPattern {
@@ -516,7 +614,9 @@ private:
   CanonicalSyncProblemResult internMechanismImpl(
       CanonicalSyncMechanismDescriptor descriptor, bool protocolVerified,
       const std::function<bool(const CanonicalSyncMechanismDescriptor &)>
-          &verifier = {});
+          &verifier = {},
+      CanonicalSyncMechanismOrigin origin =
+          CanonicalSyncMechanismOrigin::Unclassified);
   CanonicalSyncProblemResult validateAndCostMechanism(
       CanonicalSyncMechanismDescriptor &descriptor,
       std::vector<CanonicalSyncEventLifetime> &lifetimes,
@@ -526,9 +626,16 @@ private:
   buildPatterns(std::vector<CanonicalSyncPattern> &patterns,
                 CanonicalSyncPatternStatistics &statistics,
                 SyncCoverDemandSet &baselineCoverage) const;
+  CanonicalSyncProblemResult
+  buildIncrementalPatterns(std::vector<CanonicalSyncPattern> &patterns,
+                           CanonicalSyncPatternStatistics &statistics,
+                           SyncCoverDemandSet &baselineCoverage);
+  CanonicalSyncPatternProblem(
+      const CanonicalSyncPatternProblem &preciseProblem,
+      SyncCoverCoverageWorkBudget *constructionWorkBudget);
 
   const SyncCoverGraph &graph_;
-  SyncCoverExpandedProgram expansion_;
+  std::shared_ptr<const SyncCoverExpandedProgram> expansion_;
   Limits limits_;
   std::vector<std::uint32_t> issueResources_;
   bool graphValid_ = false;
@@ -542,6 +649,11 @@ private:
   bool basisReductionTruncated_ = false;
   std::vector<CanonicalSyncEventDomain> domains_;
   std::vector<CanonicalSyncMechanism> mechanisms_;
+  /// Admission verifiers for protocol mechanisms, aligned with mechanisms_.
+  /// They are retained so fresh verification re-runs the protocol-specific
+  /// factory/certificate contract instead of trusting the admission result.
+  std::vector<std::function<bool(const CanonicalSyncMechanismDescriptor &)>>
+      protocolVerifiers_;
   std::vector<PendingPattern> patternSpecs_;
   std::optional<SyncCoverDemandSet> constructionBaselineCoverage_;
   std::vector<std::optional<SyncCoverDemandSet>> constructionSingletonCoverage_;
@@ -556,6 +668,10 @@ private:
   std::vector<std::vector<CanonicalSyncPatternId>> mechanismPatterns_;
   std::map<std::uint64_t, std::vector<CanonicalSyncMechanismId>>
       mechanismBuckets_;
+  std::vector<CanonicalSyncRepairEventSeed> repairEventSeeds_;
+  std::uint64_t candidateConfigurationSignature_ = 0;
+  std::size_t frozenPrefixMechanismCount_ = 0;
+  SyncCoverCoverageWorkBudget *constructionWorkBudget_ = nullptr;
 };
 
 struct CanonicalSyncDirectPairOptions {
@@ -614,6 +730,9 @@ struct CanonicalSyncGreedyStatistics {
   /// Aggregate bound over incidence visits, bitset words, selected mechanisms,
   /// and resource evaluations performed by greedy selection and deletion.
   std::size_t workUnits = 0;
+  /// Structural-cost construction failed instead of collapsing distinct
+  /// candidates onto a saturated sentinel value.
+  bool arithmeticOverflow = false;
 };
 
 /// Calibration-free static cost. Action profiles are indexed by natural loop
@@ -637,6 +756,7 @@ enum class CanonicalSyncSelectionError : std::uint8_t {
   InvalidAllocation,
   ResourceInfeasible,
   WorkLimitExceeded,
+  ArithmeticOverflow,
   FinalValidationFailed,
 };
 
@@ -644,6 +764,8 @@ struct CanonicalSyncGreedyOptions {
   std::size_t maximumWorkUnits = 1U << 27;
   CanonicalSyncSelectionStrategy strategy =
       CanonicalSyncSelectionStrategy::PairLookahead;
+  CanonicalSyncSelectionObjective objective =
+      CanonicalSyncSelectionObjective::ActionFirst;
   /// Mechanisms disabled by one bounded resource-repair trial.
   std::vector<CanonicalSyncMechanismId> forbiddenMechanisms;
 };
@@ -666,7 +788,7 @@ CanonicalSyncSelection
 selectCanonicalSyncPatterns(const CanonicalSyncPatternProblem &problem,
                             CanonicalSyncGreedyOptions options = {});
 
-CanonicalSyncStructuralCost computeCanonicalSyncStructuralCost(
+std::optional<CanonicalSyncStructuralCost> computeCanonicalSyncStructuralCost(
     const CanonicalSyncPatternProblem &problem,
     const std::vector<CanonicalSyncMechanismId> &selected);
 

@@ -1,12 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under
-// the terms and conditions of CANN Open Software License Agreement Version 2.0
-// (the "License"). Please refer to the License for details. You may not use
-// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
-// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
-// for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 //===- CanonicalSync.h - Bounded pattern synchronization ------*- C++ -*-===//
 
@@ -18,6 +16,7 @@
 
 #include "mlir/Support/LogicalResult.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -29,10 +28,58 @@
 namespace mlir {
 namespace pto {
 
+/// Independently selectable derived-mechanism families. The direct
+/// correctness atoms remain enabled for every mask.
+enum class CanonicalSyncMechanismFamily : std::uint8_t {
+  CompletionFrontier,
+  TargetCompletionCertificate,
+  TargetLocalFence,
+  SourceLocalCompletion,
+  SourceLocalDrain,
+  SourcePrefixDrain,
+  LoopCarryDrain,
+  LoopBoundaryProtocol,
+  L0OperandOwnership,
+  BasicOwnership,
+  BoundaryOwnership,
+  HierarchicalOwnership,
+  RepairSourceLocalDrain,
+  RepairSourcePrefixDrain,
+  RepairTargetLocalDrain,
+  RepairFrontier,
+  Count,
+};
+
+using CanonicalSyncMechanismFamilyMask = std::uint32_t;
+
+constexpr std::size_t kCanonicalSyncMechanismFamilyCount =
+    static_cast<std::size_t>(CanonicalSyncMechanismFamily::Count);
+static_assert(kCanonicalSyncMechanismFamilyCount <
+                  sizeof(CanonicalSyncMechanismFamilyMask) * 8,
+              "canonical sync mechanism families must fit their mask");
+
+constexpr CanonicalSyncMechanismFamilyMask
+canonicalSyncMechanismFamilyBit(CanonicalSyncMechanismFamily family) {
+  return CanonicalSyncMechanismFamilyMask{1} << static_cast<unsigned>(family);
+}
+
+constexpr CanonicalSyncMechanismFamilyMask kAllCanonicalSyncMechanismFamilies =
+    (CanonicalSyncMechanismFamilyMask{1}
+     << kCanonicalSyncMechanismFamilyCount) -
+    1;
+
+constexpr bool
+canonicalSyncMechanismFamilyEnabled(CanonicalSyncMechanismFamilyMask mask,
+                                    CanonicalSyncMechanismFamily family) {
+  return (mask & canonicalSyncMechanismFamilyBit(family)) != 0;
+}
+
 /// Internal ablation controls for the restricted direct-mechanism catalog.
 /// Repair frontiers are grounded only from a live allocation conflict core in
 /// a separately owned repair problem.
 struct CanonicalSyncPatternOptions {
+  CanonicalSyncMechanismFamilyMask enabledMechanismFamilies =
+      kAllCanonicalSyncMechanismFamilies;
   bool enableDirectPairs = true;
   bool enableConflictCoreRepair = true;
   std::size_t maximumRepairFrontierInspections = 1U << 16;
@@ -46,6 +93,20 @@ struct CanonicalSyncPatternOptions {
   std::size_t maximumLoopBoundaryProtocolInspections = 1U << 20;
   std::size_t maximumLoopBoundaryProtocolCandidates = 1U << 14;
   std::size_t maximumLoopBoundaryProtocolIncidences = 1U << 20;
+};
+
+struct CanonicalSyncSelectedMechanismReport {
+  CanonicalSyncMechanismId mechanism = 0;
+  CanonicalSyncMechanismKind kind = CanonicalSyncMechanismKind::Event;
+  CanonicalSyncMechanismOriginMask originMask = 0;
+  std::size_t supplies = 0;
+  std::size_t eventUses = 0;
+  std::size_t actions = 0;
+  std::size_t eventSets = 0;
+  std::size_t eventWaits = 0;
+  std::size_t targetedBarriers = 0;
+  std::size_t pipeAllBarriers = 0;
+  unsigned maximumRecurrenceDistance = 0;
 };
 
 struct CanonicalSyncStrategyReport {
@@ -70,6 +131,12 @@ struct CanonicalSyncStrategyReport {
   std::size_t selectedEvents = 0;
   std::size_t selectedTargetedBarriers = 0;
   std::size_t selectedPipeAllBarriers = 0;
+  std::array<std::size_t, kCanonicalSyncMechanismOriginCount>
+      selectedMechanismsByOrigin{};
+  std::size_t activeDirectPairs = 0;
+  std::size_t activeDirectPairExtraCoverage = 0;
+  bool selectedMechanismDetailsTruncated = false;
+  std::vector<CanonicalSyncSelectedMechanismReport> selectedMechanisms;
   std::size_t emittedEventSets = 0;
   std::size_t emittedEventWaits = 0;
   std::size_t emittedTargetedBarriers = 0;
@@ -98,11 +165,21 @@ struct CanonicalSyncStrategyReport {
 
 struct CanonicalSyncComparisonReport {
   std::string function;
+  CanonicalSyncSelectionObjective selectionObjective =
+      CanonicalSyncSelectionObjective::ActionFirst;
+  CanonicalSyncMechanismFamilyMask enabledMechanismFamilies =
+      kAllCanonicalSyncMechanismFamilies;
+  bool directPairsEnabled = true;
+  bool conflictCoreRepairEnabled = true;
   CanonicalSyncGmAliasPolicy gmAliasPolicy =
       CanonicalSyncGmAliasPolicy::MayAlias;
   std::size_t graphNodes = 0;
   std::size_t graphEdges = 0;
   std::size_t certifiedCompletionFrontiers = 0;
+  std::size_t ownershipDiscoveryInspections = 0;
+  std::array<std::size_t, kCanonicalSyncBasicOwnershipKindCount>
+      ownershipCertificatesByKind{};
+  bool ownershipDiscoveryTruncated = false;
   std::size_t demands = 0;
   std::size_t uniqueDemandRows = 0;
   std::size_t selectionBasisRows = 0;
@@ -118,6 +195,8 @@ struct CanonicalSyncComparisonReport {
   std::size_t wawDemandRows = 0;
   unsigned maximumRecurrenceDistance = 0;
   std::size_t directMechanisms = 0;
+  std::array<std::size_t, kCanonicalSyncMechanismOriginCount>
+      candidateMechanismsByOrigin{};
   std::size_t directPairProposals = 0;
   std::size_t directPairEvaluations = 0;
   std::size_t synergisticPairs = 0;
@@ -190,7 +269,8 @@ CanonicalSyncProblemBuildResult buildCanonicalSyncRepairProblem(
     const CanonicalSyncPatternProblem &preciseProblem,
     const CanonicalSyncBuildOptions &options,
     const std::vector<CanonicalSyncMechanismId> &conflictCore,
-    const std::vector<CanonicalSyncMechanismId> &selectedMechanisms = {});
+    const std::vector<CanonicalSyncMechanismId> &selectedMechanisms = {},
+    SyncCoverCoverageWorkBudget *workBudget = nullptr);
 
 CanonicalSyncProblemBuildResult
 buildCanonicalSyncPipeAllProblem(const CanonicalSyncProgram &program,

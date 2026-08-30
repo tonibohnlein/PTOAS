@@ -1,12 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under
-// the terms and conditions of CANN Open Software License Agreement Version 2.0
-// (the "License"). Please refer to the License for details. You may not use
-// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
-// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
-// for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncSelection.h"
 
@@ -24,19 +22,23 @@ namespace {
 constexpr std::uint64_t kHashOffset = 1469598103934665603ULL;
 constexpr std::uint64_t kHashPrime = 1099511628211ULL;
 
-std::uint64_t saturatedAdd(std::uint64_t first, std::uint64_t second) {
+bool checkedAddCost(std::uint64_t first, std::uint64_t second,
+                    std::uint64_t &result) {
   if (second > std::numeric_limits<std::uint64_t>::max() - first) {
-    return std::numeric_limits<std::uint64_t>::max();
+    return false;
   }
-  return first + second;
+  result = first + second;
+  return true;
 }
 
-std::uint64_t saturatedMultiply(std::uint64_t first, std::uint64_t second) {
+bool checkedMultiplyCost(std::uint64_t first, std::uint64_t second,
+                         std::uint64_t &result) {
   if (first != 0 &&
       second > std::numeric_limits<std::uint64_t>::max() / first) {
-    return std::numeric_limits<std::uint64_t>::max();
+    return false;
   }
-  return first * second;
+  result = first * second;
+  return true;
 }
 
 bool consumeSerializationWork(SyncCoverCoverageWorkBudget *workBudget,
@@ -44,20 +46,21 @@ bool consumeSerializationWork(SyncCoverCoverageWorkBudget *workBudget,
   return !workBudget || workBudget->consume(amount);
 }
 
-std::optional<std::uint64_t>
+CanonicalSyncProblemResult
 computeSerializationBreadth(const SyncCoverGraph &graph,
                             const CanonicalSyncMechanismDescriptor &descriptor,
-                            SyncCoverCoverageWorkBudget *workBudget) {
-  std::uint64_t result = 0;
+                            SyncCoverCoverageWorkBudget *workBudget,
+                            std::uint64_t &result) {
+  result = 0;
   bool sourceDrain = false;
   for (const CanonicalSyncSupplyBinding &binding : descriptor.supplies) {
     if (!consumeSerializationWork(workBudget)) {
-      return std::nullopt;
+      return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
     }
     const SyncCoverEdge &edge = binding.edge;
     if (edge.source >= graph.getNodes().size() ||
         edge.target >= graph.getNodes().size()) {
-      return std::nullopt;
+      return {CanonicalSyncProblemError::InvalidMechanism, std::nullopt};
     }
     sourceDrain |=
         binding.proof == CanonicalSyncSupplyProof::SourceLocalPipeDrainAction ||
@@ -68,26 +71,32 @@ computeSerializationBreadth(const SyncCoverGraph &graph,
         source.order > target.order
             ? static_cast<std::uint64_t>(source.order - target.order) + 1
             : static_cast<std::uint64_t>(target.order - source.order) + 1;
-    result = saturatedAdd(
-        result,
-        saturatedMultiply(span, saturatedAdd(source.weight, target.weight)));
+    std::uint64_t endpointWeight = 0;
+    std::uint64_t contribution = 0;
+    std::uint64_t nextResult = 0;
+    if (!checkedAddCost(source.weight, target.weight, endpointWeight) ||
+        !checkedMultiplyCost(span, endpointWeight, contribution) ||
+        !checkedAddCost(result, contribution, nextResult)) {
+      return {CanonicalSyncProblemError::ArithmeticOverflow, std::nullopt};
+    }
+    result = nextResult;
   }
   if (!sourceDrain || descriptor.actions.size() != 1) {
-    return result;
+    return {};
   }
   if (!consumeSerializationWork(workBudget)) {
-    return std::nullopt;
+    return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
   }
   const CanonicalSyncAction &action = descriptor.actions.front();
   if (action.anchor.kind != SyncCoverAnchorKind::AfterNode ||
       action.anchor.node >= graph.getNodes().size()) {
-    return std::nullopt;
+    return {CanonicalSyncProblemError::InvalidMechanism, std::nullopt};
   }
   const SyncCoverNode &anchor = graph.getNodes()[action.anchor.node];
   std::optional<SyncCoverScopeId> enclosingScope = anchor.scope;
   for (const CanonicalSyncSupplyBinding &binding : descriptor.supplies) {
     if (!consumeSerializationWork(workBudget)) {
-      return std::nullopt;
+      return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
     }
     const bool bindingUsesSourceDrain =
         binding.proof == CanonicalSyncSupplyProof::SourceLocalPipeDrainAction ||
@@ -102,7 +111,7 @@ computeSerializationBreadth(const SyncCoverGraph &graph,
         !consumeSerializationWork(workBudget) ||
         !consumeSerializationWork(workBudget, graph.getScopes().size()) ||
         !consumeSerializationWork(workBudget)) {
-      return std::nullopt;
+      return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
     }
     enclosingScope =
         enclosingScope
@@ -110,18 +119,18 @@ computeSerializationBreadth(const SyncCoverGraph &graph,
                   *enclosingScope, graph.getNodes()[binding.edge.target].scope)
             : std::nullopt;
     if (!enclosingScope) {
-      return std::nullopt;
+      return {CanonicalSyncProblemError::InvalidMechanism, std::nullopt};
     }
   }
   // The owning-timeline query walks at most one complete parent chain.
   if (!consumeSerializationWork(workBudget, graph.getScopes().size()) ||
       !consumeSerializationWork(workBudget)) {
-    return std::nullopt;
+    return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
   }
   const std::optional<SyncCoverScopeId> timelineScope =
       graph.getOwningTimelineScope(*enclosingScope);
   if (!timelineScope) {
-    return std::nullopt;
+    return {CanonicalSyncProblemError::InvalidMechanism, std::nullopt};
   }
   std::uint64_t prefixWeight = 0;
   std::uint64_t suffixWeight = 0;
@@ -133,19 +142,34 @@ computeSerializationBreadth(const SyncCoverGraph &graph,
         !consumeSerializationWork(workBudget) ||
         !consumeSerializationWork(workBudget, anchor.guard.literals.size()) ||
         !consumeSerializationWork(workBudget, node.guard.literals.size())) {
-      return std::nullopt;
+      return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
     }
     if (!graph.scopeContains(*timelineScope, node.scope) ||
         !syncCoverGuardsCompatible(anchor.guard, node.guard)) {
       continue;
     }
     if (node.resource == action.resource && node.order <= anchor.order) {
-      prefixWeight = saturatedAdd(prefixWeight, node.weight);
+      std::uint64_t nextPrefix = 0;
+      if (!checkedAddCost(prefixWeight, node.weight, nextPrefix)) {
+        return {CanonicalSyncProblemError::ArithmeticOverflow, std::nullopt};
+      }
+      prefixWeight = nextPrefix;
     } else if (node.order > anchor.order) {
-      suffixWeight = saturatedAdd(suffixWeight, node.weight);
+      std::uint64_t nextSuffix = 0;
+      if (!checkedAddCost(suffixWeight, node.weight, nextSuffix)) {
+        return {CanonicalSyncProblemError::ArithmeticOverflow, std::nullopt};
+      }
+      suffixWeight = nextSuffix;
     }
   }
-  return saturatedAdd(result, saturatedMultiply(prefixWeight, suffixWeight));
+  std::uint64_t rectangle = 0;
+  std::uint64_t nextResult = 0;
+  if (!checkedMultiplyCost(prefixWeight, suffixWeight, rectangle) ||
+      !checkedAddCost(result, rectangle, nextResult)) {
+    return {CanonicalSyncProblemError::ArithmeticOverflow, std::nullopt};
+  }
+  result = nextResult;
+  return {};
 }
 
 void hashValue(std::uint64_t &hash, std::uint64_t value) {
@@ -503,13 +527,23 @@ validateSupplyDeclarations(const SyncCoverGraph &graph,
     const bool loopBoundaryPrefix =
         binding.proof ==
         CanonicalSyncSupplyProof::LoopBoundarySourcePrefixProtocol;
+    const bool basicOwnershipAction =
+        binding.proof ==
+        CanonicalSyncSupplyProof::VerifiedBasicOwnershipProtocol;
+    const bool basicOwnershipComposite =
+        binding.proof ==
+        CanonicalSyncSupplyProof::VerifiedBasicOwnershipComposite;
     const bool targetLocal = targetPrefix || targetPipeDrain || loopCarryDrain;
     const bool restrictedLocal = targetCertificate || sourceLocalCompletion ||
                                  loopBoundaryPrefix || targetLocal ||
                                  sourceLocalDrain || sourcePrefixDrain;
     const bool verified =
         binding.proof == CanonicalSyncSupplyProof::VerifiedProtocol ||
-        loopBoundaryPrefix;
+        loopBoundaryPrefix || basicOwnershipAction || basicOwnershipComposite;
+    const bool validBasicOwnershipQualifier =
+        (!basicOwnershipAction && !basicOwnershipComposite) ||
+        (!binding.allowedDemands.empty() && !binding.attestedDemand &&
+         binding.applicability == SyncCoverSupplyApplicability::AllDemands);
     const bool validTargetLocalQualifier =
         !targetLocal ||
         (binding.attestedDemand &&
@@ -569,13 +603,17 @@ validateSupplyDeclarations(const SyncCoverGraph &graph,
         (!binding.attestedDemand &&
          binding.applicability == SyncCoverSupplyApplicability::AllDemands);
     const bool validOwner =
-        protocol ? verified && binding.eventUse && !binding.barrierAction &&
-                       binding.produceAction && binding.consumeAction
-                 : (direct || completionFrontier || targetCertificate ||
-                    restrictedLocal || dominatingDrainCut) &&
-                       (binding.eventUse.has_value() !=
-                        binding.barrierAction.has_value()) &&
-                       !binding.produceAction && !binding.consumeAction;
+        protocol
+            ? basicOwnershipComposite
+                  ? verified && !binding.eventUse && !binding.barrierAction &&
+                        !binding.produceAction && !binding.consumeAction
+                  : verified && binding.eventUse && !binding.barrierAction &&
+                        binding.produceAction && binding.consumeAction
+            : (direct || completionFrontier || targetCertificate ||
+               restrictedLocal || dominatingDrainCut) &&
+                  (binding.eventUse.has_value() !=
+                   binding.barrierAction.has_value()) &&
+                  !binding.produceAction && !binding.consumeAction;
     const bool invalid =
         graph.canonicalizeCompletionEdge(binding.edge) !=
             SyncCoverGraphError::None ||
@@ -585,7 +623,7 @@ validateSupplyDeclarations(const SyncCoverGraph &graph,
         !validTargetCertificateQualifier ||
         !validSourceLocalCompletionQualifier || !validLoopCarryQualifier ||
         !validLoopBoundaryPrefixQualifier || !validSourceLocalQualifier ||
-        !validOrdinaryQualifier || !validOwner;
+        !validBasicOwnershipQualifier || !validOrdinaryQualifier || !validOwner;
     if (invalid) {
       return CanonicalSyncProblemError::InvalidMechanism;
     }
@@ -1004,6 +1042,9 @@ validateSupplyBindings(const SyncCoverGraph &graph,
   std::vector<std::size_t> supplyCounts(descriptor.eventUses.size(), 0);
   for (const CanonicalSyncSupplyBinding &binding : descriptor.supplies) {
     const SyncCoverEdge &edge = binding.edge;
+    const bool basicOwnershipComposite =
+        binding.proof ==
+        CanonicalSyncSupplyProof::VerifiedBasicOwnershipComposite;
     const bool namesExactDemand =
         binding.attestedDemand &&
         *binding.attestedDemand < graph.getDemands().size() &&
@@ -1016,6 +1057,26 @@ validateSupplyBindings(const SyncCoverGraph &graph,
                       graph.getDemands()[*binding.attestedDemand].distance,
                       graph.getDemands()[*binding.attestedDemand].sourceGuard,
                       graph.getDemands()[*binding.attestedDemand].targetGuard});
+    if (basicOwnershipComposite) {
+      const bool exactRestrictedEdge =
+          binding.allowedDemands.size() == 1 &&
+          edgeEqual(
+              edge,
+              SyncCoverEdge{
+                  graph.getDemands()[binding.allowedDemands.front()].source,
+                  graph.getDemands()[binding.allowedDemands.front()].target,
+                  SyncCoverEdgeKind::CompletionSupply,
+                  graph.getDemands()[binding.allowedDemands.front()].scope,
+                  graph.getDemands()[binding.allowedDemands.front()].distance,
+                  graph.getDemands()[binding.allowedDemands.front()]
+                      .sourceGuard,
+                  graph.getDemands()[binding.allowedDemands.front()]
+                      .targetGuard});
+      if (!exactRestrictedEdge) {
+        return CanonicalSyncProblemError::InvalidMechanism;
+      }
+      continue;
+    }
     const auto targetLocalFencePrecedes = [&] {
       if (!namesExactDemand) {
         return false;
@@ -1422,6 +1483,8 @@ validateSupplyBindings(const SyncCoverGraph &graph,
     if (protocol &&
         binding.proof !=
             CanonicalSyncSupplyProof::LoopBoundarySourcePrefixProtocol &&
+        binding.proof !=
+            CanonicalSyncSupplyProof::VerifiedBasicOwnershipProtocol &&
         !sourceCompletesDirectly &&
         (produce == 0 || !isExactSourceBarrier(produce - 1))) {
       return CanonicalSyncProblemError::InvalidMechanism;
@@ -1487,7 +1550,8 @@ CanonicalSyncPatternProblem::CanonicalSyncPatternProblem(
     std::vector<SyncCoverDemandId> obligationDemands,
     std::vector<SyncCoverDemandId> selectionDemands, Limits limits,
     SyncCoverExpansionLimits expansionLimits, bool basisReductionTruncated)
-    : graph_(graph), expansion_(graph, obligationDemands, expansionLimits),
+    : graph_(graph), expansion_(std::make_shared<SyncCoverExpandedProgram>(
+                         graph, obligationDemands, expansionLimits)),
       limits_(limits), issueResources_(getIssueResources(graph)),
       obligationDemands_(std::move(obligationDemands)),
       activeDemands_(std::move(selectionDemands)),
@@ -1513,9 +1577,141 @@ CanonicalSyncPatternProblem::CanonicalSyncPatternProblem(
       std::includes(obligationDemands_.begin(), obligationDemands_.end(),
                     activeDemands_.begin(), activeDemands_.end());
   graphValid_ = graph_.isStructureFrozen() && graph_.validate() &&
-                expansion_.isForGraph(graph_) && obligationsNormalized &&
+                expansion_->isForGraph(graph_) && obligationsNormalized &&
                 normalized && obligationsInRange && inRange &&
                 selectionIsSubset;
+}
+
+CanonicalSyncPatternProblem::CanonicalSyncPatternProblem(
+    const CanonicalSyncPatternProblem &preciseProblem,
+    SyncCoverCoverageWorkBudget *constructionWorkBudget)
+    : graph_(preciseProblem.graph_), expansion_(preciseProblem.expansion_),
+      limits_(preciseProblem.limits_),
+      issueResources_(preciseProblem.issueResources_), graphValid_(true),
+      incidenceCount_(preciseProblem.incidenceCount_),
+      actionCount_(preciseProblem.actionCount_),
+      eventUseCount_(preciseProblem.eventUseCount_),
+      supplyCount_(preciseProblem.supplyCount_),
+      obligationDemands_(preciseProblem.obligationDemands_),
+      activeDemands_(preciseProblem.activeDemands_),
+      basisReductionTruncated_(preciseProblem.basisReductionTruncated_),
+      domains_(preciseProblem.domains_),
+      mechanisms_(preciseProblem.mechanisms_),
+      protocolVerifiers_(preciseProblem.protocolVerifiers_),
+      patternGenerationTruncated_(preciseProblem.patternGenerationTruncated_),
+      patterns_(preciseProblem.patterns_),
+      patternStatistics_(preciseProblem.patternStatistics_),
+      baselineCoverage_(preciseProblem.baselineCoverage_),
+      repairEventSeeds_(preciseProblem.repairEventSeeds_),
+      candidateConfigurationSignature_(
+          preciseProblem.candidateConfigurationSignature_),
+      frozenPrefixMechanismCount_(preciseProblem.mechanisms_.size()),
+      constructionWorkBudget_(constructionWorkBudget) {
+  constructionBaselineCoverage_ = baselineCoverage_;
+  constructionSingletonCoverage_.resize(mechanisms_.size());
+  for (const CanonicalSyncPattern &pattern : patterns_) {
+    if (pattern.kind == CanonicalSyncPatternKind::Singleton) {
+      continue;
+    }
+    ++retainedPatternCount_;
+    coverageWordCount_ += pattern.coverage.getWords().size();
+    pendingCoverageIncidenceCount_ += pattern.extraCoverageCount;
+  }
+  for (const CanonicalSyncMechanism &mechanism : mechanisms_) {
+    mechanismBuckets_[descriptorHash(mechanism.descriptor)].push_back(
+        mechanism.id);
+  }
+}
+
+std::unique_ptr<CanonicalSyncPatternProblem>
+CanonicalSyncPatternProblem::cloneMutableRepairPrefix(
+    SyncCoverCoverageWorkBudget *workBudget) const {
+  if (!frozen_ || !graphValid_) {
+    return nullptr;
+  }
+  const auto consume = [&](std::size_t amount) {
+    return !workBudget || workBudget->consume(amount);
+  };
+  if (!consume(issueResources_.size()) || !consume(obligationDemands_.size()) ||
+      !consume(activeDemands_.size()) || !consume(domains_.size()) ||
+      !consume(mechanisms_.size()) || !consume(patterns_.size()) ||
+      !consume(repairEventSeeds_.size()) ||
+      !consume(baselineCoverage_.getWords().size())) {
+    return nullptr;
+  }
+  for (const CanonicalSyncEventDomain &domain : domains_) {
+    if (!consume(domain.reservedIds.size())) {
+      return nullptr;
+    }
+  }
+  for (const CanonicalSyncMechanism &mechanism : mechanisms_) {
+    const CanonicalSyncMechanismDescriptor &descriptor = mechanism.descriptor;
+    if (!consume(descriptor.actions.size()) ||
+        !consume(descriptor.eventUses.size()) ||
+        !consume(descriptor.supplies.size()) ||
+        !consume(mechanism.eventLifetimes.size()) ||
+        !consume(mechanism.cost.barrierActions.size()) ||
+        !consume(mechanism.cost.eventActions.size()) ||
+        !consume(mechanism.conflicts.size())) {
+      return nullptr;
+    }
+    for (const CanonicalSyncAction &action : descriptor.actions) {
+      if (!consume(action.drainedResources.size())) {
+        return nullptr;
+      }
+    }
+    for (const CanonicalSyncSupplyBinding &supply : descriptor.supplies) {
+      if (!consume(supply.allowedDemands.size())) {
+        return nullptr;
+      }
+    }
+  }
+  for (const CanonicalSyncPattern &pattern : patterns_) {
+    if (!consume(pattern.members.size()) ||
+        !consume(pattern.coverage.getWords().size())) {
+      return nullptr;
+    }
+  }
+  return std::unique_ptr<CanonicalSyncPatternProblem>(
+      new CanonicalSyncPatternProblem(*this, workBudget));
+}
+
+CanonicalSyncProblemResult CanonicalSyncPatternProblem::recordRepairEventSeed(
+    CanonicalSyncRepairEventSeed seed) {
+  if (frozen_) {
+    return {CanonicalSyncProblemError::Frozen, std::nullopt};
+  }
+  const bool invalid = seed.demand >= graph_.getDemands().size() ||
+                       seed.mechanism >= mechanisms_.size() ||
+                       seed.domain >= domains_.size();
+  if (invalid) {
+    return {CanonicalSyncProblemError::InvalidMechanism, std::nullopt};
+  }
+  const auto position = std::lower_bound(
+      repairEventSeeds_.begin(), repairEventSeeds_.end(), seed,
+      [](const CanonicalSyncRepairEventSeed &left,
+         const CanonicalSyncRepairEventSeed &right) {
+        return std::tie(left.mechanism, left.demand, left.domain) <
+               std::tie(right.mechanism, right.demand, right.domain);
+      });
+  const bool duplicate =
+      position != repairEventSeeds_.end() &&
+      std::tie(position->mechanism, position->demand, position->domain) ==
+          std::tie(seed.mechanism, seed.demand, seed.domain);
+  if (!duplicate) {
+    repairEventSeeds_.insert(position, seed);
+  }
+  return {};
+}
+
+CanonicalSyncProblemResult
+CanonicalSyncPatternProblem::setCandidateConfigurationSignature(
+    std::uint64_t signature) {
+  if (frozen_) {
+    return {CanonicalSyncProblemError::Frozen, std::nullopt};
+  }
+  candidateConfigurationSignature_ = signature;
+  return {};
 }
 
 CanonicalSyncProblemResult
@@ -1550,11 +1746,15 @@ CanonicalSyncPatternProblem::addEventDomain(CanonicalSyncEventDomain domain) {
 
 bool CanonicalSyncPatternProblem::hasSameCandidatePrefix(
     const CanonicalSyncPatternProblem &other) const {
-  const bool differentShape = &graph_ != &other.graph_ ||
-                              obligationDemands_ != other.obligationDemands_ ||
-                              activeDemands_ != other.activeDemands_ ||
-                              domains_.size() != other.domains_.size() ||
-                              mechanisms_.size() != other.mechanisms_.size();
+  const bool differentShape =
+      &graph_ != &other.graph_ ||
+      obligationDemands_ != other.obligationDemands_ ||
+      activeDemands_ != other.activeDemands_ ||
+      domains_.size() != other.domains_.size() ||
+      mechanisms_.size() < other.mechanisms_.size() ||
+      repairEventSeeds_.size() != other.repairEventSeeds_.size() ||
+      candidateConfigurationSignature_ !=
+          other.candidateConfigurationSignature_;
   if (differentShape) {
     return false;
   }
@@ -1568,10 +1768,19 @@ bool CanonicalSyncPatternProblem::hasSameCandidatePrefix(
       return false;
     }
   }
-  for (std::size_t index = 0; index < mechanisms_.size(); ++index) {
+  for (std::size_t index = 0; index < other.mechanisms_.size(); ++index) {
     if (!descriptorEqual(mechanisms_[index].descriptor,
                          other.mechanisms_[index].descriptor) ||
-        mechanisms_[index].conflicts != other.mechanisms_[index].conflicts) {
+        mechanisms_[index].conflicts != other.mechanisms_[index].conflicts ||
+        mechanisms_[index].originMask != other.mechanisms_[index].originMask) {
+      return false;
+    }
+  }
+  for (std::size_t index = 0; index < repairEventSeeds_.size(); ++index) {
+    const CanonicalSyncRepairEventSeed &left = repairEventSeeds_[index];
+    const CanonicalSyncRepairEventSeed &right = other.repairEventSeeds_[index];
+    if (std::tie(left.demand, left.mechanism, left.domain) !=
+        std::tie(right.demand, right.mechanism, right.domain)) {
       return false;
     }
   }
@@ -1586,10 +1795,34 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::verifyMechanism(
   }
   const CanonicalSyncMechanism &stored = mechanisms_[mechanism];
   CanonicalSyncMechanismDescriptor descriptor = stored.descriptor;
+  const bool protocol = descriptor.kind == CanonicalSyncMechanismKind::Protocol;
+  if (protocol) {
+    const bool missingVerifier = mechanism >= protocolVerifiers_.size() ||
+                                 !protocolVerifiers_[mechanism];
+    if (missingVerifier) {
+      return {CanonicalSyncProblemError::UnverifiedProtocol, mechanism};
+    }
+    // Protocol factories may inspect the immutable graph and certificate
+    // tables. Reserve a conservative linear charge before re-running one so
+    // repair/final-verification limits remain end-to-end bounds.
+    if (workBudget) {
+      for (std::size_t units :
+           {graph_.getNodes().size(), graph_.getEdges().size(),
+            graph_.getDemands().size(), graph_.getStorageAccesses().size(),
+            descriptor.actions.size(), descriptor.eventUses.size(),
+            descriptor.supplies.size()}) {
+        if (!workBudget->consume(units)) {
+          return {CanonicalSyncProblemError::LimitExceeded, mechanism};
+        }
+      }
+    }
+    if (!protocolVerifiers_[mechanism](descriptor)) {
+      return {CanonicalSyncProblemError::UnverifiedProtocol, mechanism};
+    }
+  }
   std::vector<CanonicalSyncEventLifetime> lifetimes;
   CanonicalSyncMechanismCost cost;
-  const bool protocolVerified =
-      descriptor.kind == CanonicalSyncMechanismKind::Protocol;
+  const bool protocolVerified = protocol;
   const CanonicalSyncProblemResult validated = validateAndCostMechanism(
       descriptor, lifetimes, cost, protocolVerified, workBudget);
   if (!validated) {
@@ -1672,59 +1905,72 @@ CanonicalSyncPatternProblem::validateAndCostMechanism(
   }
 
   validation =
-      validateSupplyBindings(graph_, expansion_, domains_, descriptor, state);
+      validateSupplyBindings(graph_, *expansion_, domains_, descriptor, state);
   if (validation != CanonicalSyncProblemError::None) {
     return {validation, std::nullopt};
   }
   setRecurrenceLifetimes(graph_, descriptor, state);
-  const std::optional<std::uint64_t> serializationBreadth =
-      computeSerializationBreadth(graph_, descriptor, workBudget);
-  if (!serializationBreadth) {
-    return {workBudget && workBudget->exhausted
-                ? CanonicalSyncProblemError::LimitExceeded
-                : CanonicalSyncProblemError::InvalidMechanism,
-            std::nullopt};
+  std::uint64_t serializationBreadth = 0;
+  const CanonicalSyncProblemResult serialization = computeSerializationBreadth(
+      graph_, descriptor, workBudget, serializationBreadth);
+  if (!serialization) {
+    return serialization;
   }
-  state.cost.serializationBreadth = *serializationBreadth;
+  state.cost.serializationBreadth = serializationBreadth;
   lifetimes = std::move(state.lifetimes);
   cost = std::move(state.cost);
   return {};
 }
 
 CanonicalSyncProblemResult CanonicalSyncPatternProblem::internMechanism(
-    CanonicalSyncMechanismDescriptor descriptor) {
-  return internMechanismImpl(std::move(descriptor), false);
+    CanonicalSyncMechanismDescriptor descriptor,
+    CanonicalSyncMechanismOrigin origin) {
+  return internMechanismImpl(std::move(descriptor), false, {}, origin);
 }
 
 CanonicalSyncProblemResult CanonicalSyncPatternProblem::internVerifiedProtocol(
     CanonicalSyncMechanismDescriptor descriptor,
     const std::function<bool(const CanonicalSyncMechanismDescriptor &)>
-        &verifier) {
-  return internMechanismImpl(std::move(descriptor), true, verifier);
+        &verifier,
+    CanonicalSyncMechanismOrigin origin) {
+  return internMechanismImpl(std::move(descriptor), true, verifier, origin);
 }
 
 CanonicalSyncProblemResult CanonicalSyncPatternProblem::internMechanismImpl(
     CanonicalSyncMechanismDescriptor descriptor, bool protocolVerified,
     const std::function<bool(const CanonicalSyncMechanismDescriptor &)>
-        &verifier) {
+        &verifier,
+    CanonicalSyncMechanismOrigin origin) {
   if (frozen_) {
     return {CanonicalSyncProblemError::Frozen, mechanisms_.size()};
   }
+  if (static_cast<std::size_t>(origin) >= kCanonicalSyncMechanismOriginCount) {
+    return {CanonicalSyncProblemError::InvalidMechanism, std::nullopt};
+  }
   CanonicalSyncMechanismCost cost;
   std::vector<CanonicalSyncEventLifetime> lifetimes;
-  CanonicalSyncProblemResult validated =
-      validateAndCostMechanism(descriptor, lifetimes, cost, protocolVerified);
+  CanonicalSyncProblemResult validated = validateAndCostMechanism(
+      descriptor, lifetimes, cost, protocolVerified, constructionWorkBudget_);
   if (!validated) {
     return validated;
   }
   if (protocolVerified && (!verifier || !verifier(descriptor))) {
     return {CanonicalSyncProblemError::UnverifiedProtocol, std::nullopt};
   }
+  const CanonicalSyncMechanismOriginMask originBit =
+      canonicalSyncMechanismOriginBit(origin);
   const std::uint64_t hash = descriptorHash(descriptor);
   const auto bucket = mechanismBuckets_.find(hash);
   if (bucket != mechanismBuckets_.end()) {
     for (CanonicalSyncMechanismId mechanism : bucket->second) {
       if (descriptorEqual(mechanisms_[mechanism].descriptor, descriptor)) {
+        if (protocolVerified && (mechanism >= protocolVerifiers_.size() ||
+                                 !protocolVerifiers_[mechanism])) {
+          return {CanonicalSyncProblemError::UnverifiedProtocol, mechanism};
+        }
+        if (mechanism >= frozenPrefixMechanismCount_) {
+          mechanisms_[mechanism].originMask |= originBit;
+        }
         return {CanonicalSyncProblemError::None, mechanism};
       }
     }
@@ -1751,8 +1997,16 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::internMechanismImpl(
     return {CanonicalSyncProblemError::LimitExceeded, mechanisms_.size()};
   }
   const CanonicalSyncMechanismId id = mechanisms_.size();
-  mechanisms_.push_back(
-      {id, std::move(descriptor), std::move(lifetimes), std::move(cost), {}});
+  mechanisms_.push_back({id,
+                         std::move(descriptor),
+                         std::move(lifetimes),
+                         std::move(cost),
+                         {},
+                         originBit});
+  protocolVerifiers_.push_back(
+      protocolVerified
+          ? verifier
+          : std::function<bool(const CanonicalSyncMechanismDescriptor &)>{});
   mechanismBuckets_[hash].push_back(id);
   constructionSingletonCoverage_.push_back(std::nullopt);
   actionCount_ = nextActions;
@@ -1823,6 +2077,14 @@ CanonicalSyncPatternProblem::addPattern(CanonicalSyncPatternSpec pattern) {
       patternSpecs_.begin(), patternSpecs_.end(), [&](const auto &candidate) {
         return candidate.spec.members == pattern.members;
       });
+  const bool frozenPrefixDuplicate = std::any_of(
+      patterns_.begin(), patterns_.end(), [&](const auto &candidate) {
+        return candidate.kind != CanonicalSyncPatternKind::Singleton &&
+               candidate.members == pattern.members;
+      });
+  if (frozenPrefixDuplicate) {
+    return {CanonicalSyncProblemError::None, std::nullopt};
+  }
   if (existing != patternSpecs_.end()) {
     const bool strongerProvenance =
         patternPriority(pattern.kind) < patternPriority(existing->spec.kind);
@@ -1843,10 +2105,13 @@ CanonicalSyncPatternProblem::addPattern(CanonicalSyncPatternSpec pattern) {
     return {CanonicalSyncProblemError::None, std::nullopt};
   }
   if (!constructionBaselineCoverage_) {
-    const SyncCoverCoverageResult baseline =
-        computeSyncCoverCoverage(graph_, expansion_, {}, activeDemands_);
+    const SyncCoverCoverageResult baseline = computeSyncCoverCoverage(
+        graph_, *expansion_, {}, activeDemands_, constructionWorkBudget_);
     if (!baseline) {
-      return {CanonicalSyncProblemError::CoverageFailure, std::nullopt};
+      return {constructionWorkBudget_ && constructionWorkBudget_->exhausted
+                  ? CanonicalSyncProblemError::LimitExceeded
+                  : CanonicalSyncProblemError::CoverageFailure,
+              std::nullopt};
     }
     constructionBaselineCoverage_ =
         projectCoverage(baseline.covered, activeDemands_);
@@ -1857,10 +2122,13 @@ CanonicalSyncPatternProblem::addPattern(CanonicalSyncPatternSpec pattern) {
         constructionSingletonCoverage_[member];
     if (!cached) {
       const SyncCoverCoverageResult coverage = computeSyncCoverCoverage(
-          graph_, expansion_, getSupplies(mechanisms_, {member}),
-          activeDemands_);
+          graph_, *expansion_, getSupplies(mechanisms_, {member}),
+          activeDemands_, constructionWorkBudget_);
       if (!coverage) {
-        return {CanonicalSyncProblemError::CoverageFailure, std::nullopt};
+        return {constructionWorkBudget_ && constructionWorkBudget_->exhausted
+                    ? CanonicalSyncProblemError::LimitExceeded
+                    : CanonicalSyncProblemError::CoverageFailure,
+                std::nullopt};
       }
       cached = projectCoverage(coverage.covered, activeDemands_);
       cached->subtract(*constructionBaselineCoverage_);
@@ -1868,10 +2136,13 @@ CanonicalSyncPatternProblem::addPattern(CanonicalSyncPatternSpec pattern) {
     singletonCoverage.unite(*cached);
   }
   const SyncCoverCoverageResult coverage = computeSyncCoverCoverage(
-      graph_, expansion_, getSupplies(mechanisms_, pattern.members),
-      activeDemands_);
+      graph_, *expansion_, getSupplies(mechanisms_, pattern.members),
+      activeDemands_, constructionWorkBudget_);
   if (!coverage) {
-    return {CanonicalSyncProblemError::CoverageFailure, std::nullopt};
+    return {constructionWorkBudget_ && constructionWorkBudget_->exhausted
+                ? CanonicalSyncProblemError::LimitExceeded
+                : CanonicalSyncProblemError::CoverageFailure,
+            std::nullopt};
   }
   SyncCoverDemandSet jointCoverage =
       projectCoverage(coverage.covered, activeDemands_);
@@ -1946,10 +2217,13 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::addDirectPairBatch(
     return {CanonicalSyncProblemError::None, 0};
   }
   if (!constructionBaselineCoverage_) {
-    const SyncCoverCoverageResult baseline =
-        computeSyncCoverCoverage(graph_, expansion_, {}, activeDemands_);
+    const SyncCoverCoverageResult baseline = computeSyncCoverCoverage(
+        graph_, *expansion_, {}, activeDemands_, constructionWorkBudget_);
     if (!baseline) {
-      return {CanonicalSyncProblemError::CoverageFailure, std::nullopt};
+      return {constructionWorkBudget_ && constructionWorkBudget_->exhausted
+                  ? CanonicalSyncProblemError::LimitExceeded
+                  : CanonicalSyncProblemError::CoverageFailure,
+              std::nullopt};
     }
     constructionBaselineCoverage_ =
         projectCoverage(baseline.covered, activeDemands_);
@@ -2077,7 +2351,7 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns(
     }
   }
   const SyncCoverSingletonCoverageResult singletonCoverage =
-      computeSyncCoverSingletonCoverage(graph_, expansion_, mechanisms_.size(),
+      computeSyncCoverSingletonCoverage(graph_, *expansion_, mechanisms_.size(),
                                         allSupplies, activeDemands_);
   if (!singletonCoverage) {
     return {CanonicalSyncProblemError::CoverageFailure, std::nullopt};
@@ -2152,16 +2426,19 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns(
     SyncCoverDemandSet coverage = projectCoverage(
         singletonCoverage.mechanisms[mechanism.id], activeDemands_);
     coverage.subtract(baselineCoverage);
+    const std::size_t coverageCount = coverage.count();
     CanonicalSyncPatternKindStatistics &statistics =
         patternStatistics.kinds[static_cast<std::size_t>(
             CanonicalSyncPatternKind::Singleton)];
     ++statistics.patterns;
-    statistics.jointCoverageIncidences += coverage.count();
-    statistics.singletonCoverageIncidences += coverage.count();
+    statistics.jointCoverageIncidences += coverageCount;
+    statistics.singletonCoverageIncidences += coverageCount;
     patterns.push_back({patterns.size(),
                         CanonicalSyncPatternKind::Singleton,
                         {mechanism.id},
                         std::move(coverage),
+                        coverageCount,
+                        coverageCount,
                         0});
   }
   for (const PendingPattern &pending : patternSpecs_) {
@@ -2181,7 +2458,87 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns(
       coverage.insert(demand);
     }
     patterns.push_back({patterns.size(), spec.kind, spec.members,
-                        std::move(coverage), pending.extraCoverageCount});
+                        std::move(coverage), pending.jointCoverageCount,
+                        pending.singletonCoverageCount,
+                        pending.extraCoverageCount});
+  }
+  return {};
+}
+
+CanonicalSyncProblemResult
+CanonicalSyncPatternProblem::buildIncrementalPatterns(
+    std::vector<CanonicalSyncPattern> &patterns,
+    CanonicalSyncPatternStatistics &patternStatistics,
+    SyncCoverDemandSet &baselineCoverage) {
+  patterns = patterns_;
+  patternStatistics = patternStatistics_;
+  baselineCoverage = baselineCoverage_;
+  for (CanonicalSyncMechanismId mechanism = frozenPrefixMechanismCount_;
+       mechanism < mechanisms_.size(); ++mechanism) {
+    if (constructionWorkBudget_ &&
+        !constructionWorkBudget_->consume(
+            mechanisms_[mechanism].descriptor.supplies.size())) {
+      return {CanonicalSyncProblemError::LimitExceeded, mechanism};
+    }
+    std::optional<SyncCoverDemandSet> &cached =
+        constructionSingletonCoverage_[mechanism];
+    if (!cached) {
+      const SyncCoverCoverageResult exact = computeSyncCoverCoverage(
+          graph_, *expansion_, getSupplies(mechanisms_, {mechanism}),
+          activeDemands_, constructionWorkBudget_);
+      if (!exact) {
+        return {constructionWorkBudget_ && constructionWorkBudget_->exhausted
+                    ? CanonicalSyncProblemError::LimitExceeded
+                    : CanonicalSyncProblemError::CoverageFailure,
+                mechanism};
+      }
+      cached = projectCoverage(exact.covered, activeDemands_);
+      cached->subtract(baselineCoverage);
+    }
+    if (constructionWorkBudget_ &&
+        !constructionWorkBudget_->consume(cached->getWords().size())) {
+      return {CanonicalSyncProblemError::LimitExceeded, mechanism};
+    }
+    SyncCoverDemandSet coverage = *cached;
+    const std::size_t coverageCount = coverage.count();
+    CanonicalSyncPatternKindStatistics &statistics =
+        patternStatistics.kinds[static_cast<std::size_t>(
+            CanonicalSyncPatternKind::Singleton)];
+    ++statistics.patterns;
+    statistics.jointCoverageIncidences += coverageCount;
+    statistics.singletonCoverageIncidences += coverageCount;
+    patterns.push_back({patterns.size(),
+                        CanonicalSyncPatternKind::Singleton,
+                        {mechanism},
+                        std::move(coverage),
+                        coverageCount,
+                        coverageCount,
+                        0});
+  }
+  for (const PendingPattern &pending : patternSpecs_) {
+    if (constructionWorkBudget_ &&
+        (!constructionWorkBudget_->consume(pending.spec.members.size()) ||
+         !constructionWorkBudget_->consume(pending.coverage.size()))) {
+      return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
+    }
+    CanonicalSyncPatternKindStatistics &statistics =
+        patternStatistics.kinds[static_cast<std::size_t>(pending.spec.kind)];
+    ++statistics.patterns;
+    statistics.jointCoverageIncidences += pending.jointCoverageCount;
+    statistics.singletonCoverageIncidences += pending.singletonCoverageCount;
+    statistics.extraCoverageIncidences += pending.extraCoverageCount;
+    if (pending.extraCoverageCount == 0) {
+      continue;
+    }
+    ++statistics.patternsWithExtraCoverage;
+    SyncCoverDemandSet coverage(activeDemands_.size());
+    for (SyncCoverDemandId demand : pending.coverage) {
+      coverage.insert(demand);
+    }
+    patterns.push_back(
+        {patterns.size(), pending.spec.kind, pending.spec.members,
+         std::move(coverage), pending.jointCoverageCount,
+         pending.singletonCoverageCount, pending.extraCoverageCount});
   }
   return {};
 }
@@ -2197,7 +2554,10 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::freeze() {
   CanonicalSyncPatternStatistics patternStatistics;
   SyncCoverDemandSet baselineCoverage(activeDemands_.size());
   CanonicalSyncProblemResult built =
-      buildPatterns(patterns, patternStatistics, baselineCoverage);
+      frozenPrefixMechanismCount_ == 0
+          ? buildPatterns(patterns, patternStatistics, baselineCoverage)
+          : buildIncrementalPatterns(patterns, patternStatistics,
+                                     baselineCoverage);
   if (!built) {
     return built;
   }
@@ -2207,6 +2567,12 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::freeze() {
       mechanisms_.size());
   std::size_t incidenceCount = 0;
   for (const CanonicalSyncPattern &pattern : patterns) {
+    if (constructionWorkBudget_ &&
+        (!constructionWorkBudget_->consume(pattern.members.size()) ||
+         !constructionWorkBudget_->consume(
+             pattern.coverage.getWords().size()))) {
+      return {CanonicalSyncProblemError::LimitExceeded, pattern.id};
+    }
     for (CanonicalSyncMechanismId member : pattern.members) {
       mechanismPatterns[member].push_back(pattern.id);
     }
@@ -2217,6 +2583,9 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::freeze() {
         const unsigned bit = static_cast<unsigned>(__builtin_ctzll(word));
         const std::size_t demand = wordIndex * 64 + bit;
         if (demand < demandPatterns.size()) {
+          if (constructionWorkBudget_ && !constructionWorkBudget_->consume()) {
+            return {CanonicalSyncProblemError::LimitExceeded, pattern.id};
+          }
           if (incidenceCount >= limits_.maximumIncidences) {
             return {CanonicalSyncProblemError::LimitExceeded,
                     incidenceCount + 1};
@@ -2230,6 +2599,9 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::freeze() {
   }
   std::optional<std::size_t> missing;
   for (std::size_t demand = 0; demand < demandPatterns.size(); ++demand) {
+    if (constructionWorkBudget_ && !constructionWorkBudget_->consume()) {
+      return {CanonicalSyncProblemError::LimitExceeded, demand};
+    }
     const bool lacksCover =
         demandPatterns[demand].empty() && !baselineCoverage.contains(demand);
     if (lacksCover) {
@@ -2250,6 +2622,10 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::freeze() {
   patternSpecs_.clear();
   coverageWordCount_ = 0;
   pendingCoverageIncidenceCount_ = 0;
+  constructionBaselineCoverage_.reset();
+  constructionSingletonCoverage_.clear();
+  frozenPrefixMechanismCount_ = 0;
+  constructionWorkBudget_ = nullptr;
   frozen_ = true;
   return {};
 }

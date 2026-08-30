@@ -1,12 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under
-// the terms and conditions of CANN Open Software License Agreement Version 2.0
-// (the "License"). Please refer to the License for details. You may not use
-// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
-// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
-// for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncSelection.h"
 
@@ -27,12 +25,35 @@ struct CandidateCost {
   std::vector<CanonicalSyncMechanismId> signature;
 };
 
+enum class CostComputationError : std::uint8_t {
+  None,
+  WorkLimitExceeded,
+  ArithmeticOverflow,
+};
+
+struct CostComputation {
+  CostComputationError error = CostComputationError::None;
+  CandidateCost cost;
+
+  explicit operator bool() const { return error == CostComputationError::None; }
+};
+
 struct GreedyCandidate {
   CanonicalSyncPatternId pattern = 0;
   std::vector<CanonicalSyncMechanismId> additions;
-  SyncCoverDemandSet coverage;
   CandidateCost cost;
   std::size_t gain = 0;
+};
+
+struct GreedyCandidateScan {
+  explicit GreedyCandidateScan(std::size_t demandCount)
+      : scratchCoverage(demandCount), bestCoverage(demandCount) {}
+
+  void reset() { best.reset(); }
+
+  std::optional<GreedyCandidate> best;
+  SyncCoverDemandSet scratchCoverage;
+  SyncCoverDemandSet bestCoverage;
 };
 
 bool consumeWork(std::size_t amount, std::size_t limit, std::size_t &used) {
@@ -43,21 +64,37 @@ bool consumeWork(std::size_t amount, std::size_t limit, std::size_t &used) {
   return true;
 }
 
-std::uint64_t saturatedAdd(std::uint64_t first, std::uint64_t second) {
-  const bool overflows =
-      second > std::numeric_limits<std::uint64_t>::max() - first;
-  if (overflows) {
-    return std::numeric_limits<std::uint64_t>::max();
+bool consumeSortWork(std::size_t count, std::size_t limit, std::size_t &used) {
+  if (count < 2) {
+    return consumeWork(1, limit, used);
   }
-  return first + second;
+  std::size_t levels = 0;
+  for (std::size_t remaining = count - 1; remaining != 0; remaining >>= 1) {
+    ++levels;
+  }
+  if (levels > std::numeric_limits<std::size_t>::max() / count) {
+    return false;
+  }
+  return consumeWork(count * levels, limit, used);
 }
 
-std::uint64_t saturatedMultiply(std::uint64_t first, std::uint64_t second) {
+bool checkedCostAdd(std::uint64_t first, std::uint64_t second,
+                    std::uint64_t &result) {
+  if (second > std::numeric_limits<std::uint64_t>::max() - first) {
+    return false;
+  }
+  result = first + second;
+  return true;
+}
+
+bool checkedCostMultiply(std::uint64_t first, std::uint64_t second,
+                         std::uint64_t &result) {
   if (first != 0 &&
       second > std::numeric_limits<std::uint64_t>::max() / first) {
-    return std::numeric_limits<std::uint64_t>::max();
+    return false;
   }
-  return first * second;
+  result = first * second;
+  return true;
 }
 
 std::vector<CanonicalSyncMechanismId>
@@ -70,30 +107,74 @@ addMembers(const std::vector<CanonicalSyncMechanismId> &selected,
   return result;
 }
 
-std::vector<CanonicalSyncMechanismId>
+std::optional<std::vector<CanonicalSyncMechanismId>>
 missingMembers(const std::vector<CanonicalSyncMechanismId> &selected,
-               const std::vector<CanonicalSyncMechanismId> &members) {
+               const std::vector<CanonicalSyncMechanismId> &members,
+               std::size_t maximumWork, std::size_t &work) {
+  if (!consumeWork(selected.size() + members.size(), maximumWork, work)) {
+    return std::nullopt;
+  }
   std::vector<CanonicalSyncMechanismId> result;
   std::set_difference(members.begin(), members.end(), selected.begin(),
                       selected.end(), std::back_inserter(result));
   return result;
 }
 
-bool containsForbidden(const std::vector<CanonicalSyncMechanismId> &members,
-                       const std::vector<CanonicalSyncMechanismId> &forbidden) {
-  return std::any_of(members.begin(), members.end(), [&](auto mechanism) {
-    return std::binary_search(forbidden.begin(), forbidden.end(), mechanism);
-  });
+std::optional<bool>
+containsSorted(const std::vector<CanonicalSyncMechanismId> &values,
+               CanonicalSyncMechanismId value, std::size_t maximumWork,
+               std::size_t &work) {
+  std::size_t first = 0;
+  std::size_t last = values.size();
+  while (first < last) {
+    if (!consumeWork(1, maximumWork, work)) {
+      return std::nullopt;
+    }
+    const std::size_t middle = first + (last - first) / 2;
+    if (values[middle] < value) {
+      first = middle + 1;
+    } else {
+      last = middle;
+    }
+  }
+  return first != values.size() && values[first] == value;
 }
 
-bool conflictFree(const CanonicalSyncPatternProblem &problem,
-                  const std::vector<CanonicalSyncMechanismId> &selected) {
-  for (CanonicalSyncMechanismId mechanism : selected) {
+std::optional<bool>
+containsForbidden(const std::vector<CanonicalSyncMechanismId> &members,
+                  const std::vector<CanonicalSyncMechanismId> &forbidden,
+                  std::size_t maximumWork, std::size_t &work) {
+  for (CanonicalSyncMechanismId mechanism : members) {
+    const std::optional<bool> forbiddenMember =
+        containsSorted(forbidden, mechanism, maximumWork, work);
+    if (!forbiddenMember) {
+      return std::nullopt;
+    }
+    if (*forbiddenMember) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::optional<bool>
+additionsConflictFree(const CanonicalSyncPatternProblem &problem,
+                      const std::vector<CanonicalSyncMechanismId> &selected,
+                      const std::vector<CanonicalSyncMechanismId> &additions,
+                      std::size_t maximumWork, std::size_t &work) {
+  for (CanonicalSyncMechanismId mechanism : additions) {
     const auto &conflicts = problem.getMechanisms()[mechanism].conflicts;
-    if (std::any_of(conflicts.begin(), conflicts.end(), [&](auto conflict) {
-          return std::binary_search(selected.begin(), selected.end(), conflict);
-        })) {
-      return false;
+    for (CanonicalSyncMechanismId conflict : conflicts) {
+      const std::optional<bool> selectedConflict =
+          containsSorted(selected, conflict, maximumWork, work);
+      const std::optional<bool> additionConflict =
+          containsSorted(additions, conflict, maximumWork, work);
+      if (!selectedConflict || !additionConflict) {
+        return std::nullopt;
+      }
+      if (*selectedConflict || *additionConflict) {
+        return false;
+      }
     }
   }
   return true;
@@ -126,38 +207,50 @@ coveredBy(const CanonicalSyncPatternProblem &problem,
   return result;
 }
 
-std::optional<SyncCoverDemandSet>
-coverageAfterAdding(const CanonicalSyncPatternProblem &problem,
-                    const std::vector<CanonicalSyncMechanismId> &selected,
-                    const SyncCoverDemandSet &covered,
-                    const std::vector<CanonicalSyncMechanismId> &additions,
-                    std::size_t maximumWork, std::size_t &work) {
+bool coverageAfterAdding(const CanonicalSyncPatternProblem &problem,
+                         const std::vector<CanonicalSyncMechanismId> &selected,
+                         const SyncCoverDemandSet &covered,
+                         const std::vector<CanonicalSyncMechanismId> &additions,
+                         std::size_t maximumWork, std::size_t &work,
+                         SyncCoverDemandSet &result) {
+  if (!consumeWork(selected.size() + additions.size(), maximumWork, work)) {
+    return false;
+  }
   const std::vector<CanonicalSyncMechanismId> successor =
       addMembers(selected, additions);
   std::vector<CanonicalSyncPatternId> affected;
   for (CanonicalSyncMechanismId mechanism : additions) {
     const auto &patterns = problem.getMechanismPatterns()[mechanism];
     if (!consumeWork(patterns.size(), maximumWork, work)) {
-      return std::nullopt;
+      return false;
     }
     affected.insert(affected.end(), patterns.begin(), patterns.end());
+  }
+  if (!consumeSortWork(affected.size(), maximumWork, work)) {
+    return false;
   }
   std::sort(affected.begin(), affected.end());
   affected.erase(std::unique(affected.begin(), affected.end()), affected.end());
 
-  SyncCoverDemandSet result = covered;
+  if (!consumeWork(covered.getWords().size(), maximumWork, work)) {
+    return false;
+  }
+  result = covered;
   for (CanonicalSyncPatternId patternId : affected) {
     const CanonicalSyncPattern &pattern = problem.getPatterns()[patternId];
     const bool workAvailable = consumeWork(
         pattern.members.size() + successor.size(), maximumWork, work);
     if (!workAvailable) {
-      return std::nullopt;
+      return false;
     }
     if (patternActive(pattern, successor)) {
+      if (!consumeWork(pattern.coverage.getWords().size(), maximumWork, work)) {
+        return false;
+      }
       result.unite(pattern.coverage);
     }
   }
-  return result;
+  return true;
 }
 
 std::optional<std::size_t> countNewCoverage(const SyncCoverDemandSet &covered,
@@ -177,51 +270,112 @@ std::optional<std::size_t> countNewCoverage(const SyncCoverDemandSet &covered,
   return result;
 }
 
-CandidateCost getCost(const CanonicalSyncPatternProblem &problem,
-                      const std::vector<CanonicalSyncMechanismId> &members) {
-  CandidateCost result;
-  result.signature = members;
-  result.value.mechanismCount = members.size();
+CostComputation getCost(const CanonicalSyncPatternProblem &problem,
+                        const std::vector<CanonicalSyncMechanismId> &members) {
+  CostComputation result;
+  result.cost.signature = members;
+  result.cost.value.mechanismCount = members.size();
   for (CanonicalSyncMechanismId mechanismId : members) {
     const CanonicalSyncMechanism &mechanism =
         problem.getMechanisms()[mechanismId];
     const CanonicalSyncMechanismCost &cost = mechanism.cost;
     const std::size_t profileSize =
         std::max(cost.barrierActions.size(), cost.eventActions.size());
-    result.value.barrierActionProfile.resize(
-        std::max(result.value.barrierActionProfile.size(), profileSize), 0);
-    result.value.eventActionProfile.resize(
-        std::max(result.value.eventActionProfile.size(), profileSize), 0);
-    result.value.actionProfile.resize(
-        std::max(result.value.actionProfile.size(), profileSize), 0);
+    result.cost.value.barrierActionProfile.resize(
+        std::max(result.cost.value.barrierActionProfile.size(), profileSize),
+        0);
+    result.cost.value.eventActionProfile.resize(
+        std::max(result.cost.value.eventActionProfile.size(), profileSize), 0);
+    result.cost.value.actionProfile.resize(
+        std::max(result.cost.value.actionProfile.size(), profileSize), 0);
     for (std::size_t depth = 0; depth < cost.barrierActions.size(); ++depth) {
-      result.value.barrierActionProfile[depth] = saturatedAdd(
-          result.value.barrierActionProfile[depth], cost.barrierActions[depth]);
-      result.value.actionProfile[depth] = saturatedAdd(
-          result.value.actionProfile[depth], cost.barrierActions[depth]);
+      std::uint64_t nextBarrier = 0;
+      std::uint64_t nextTotal = 0;
+      if (!checkedCostAdd(result.cost.value.barrierActionProfile[depth],
+                          cost.barrierActions[depth], nextBarrier) ||
+          !checkedCostAdd(result.cost.value.actionProfile[depth],
+                          cost.barrierActions[depth], nextTotal)) {
+        result.error = CostComputationError::ArithmeticOverflow;
+        return result;
+      }
+      result.cost.value.barrierActionProfile[depth] = nextBarrier;
+      result.cost.value.actionProfile[depth] = nextTotal;
     }
     for (std::size_t depth = 0; depth < cost.eventActions.size(); ++depth) {
-      result.value.eventActionProfile[depth] = saturatedAdd(
-          result.value.eventActionProfile[depth], cost.eventActions[depth]);
-      result.value.actionProfile[depth] = saturatedAdd(
-          result.value.actionProfile[depth], cost.eventActions[depth]);
+      std::uint64_t nextEvent = 0;
+      std::uint64_t nextTotal = 0;
+      if (!checkedCostAdd(result.cost.value.eventActionProfile[depth],
+                          cost.eventActions[depth], nextEvent) ||
+          !checkedCostAdd(result.cost.value.actionProfile[depth],
+                          cost.eventActions[depth], nextTotal)) {
+        result.error = CostComputationError::ArithmeticOverflow;
+        return result;
+      }
+      result.cost.value.eventActionProfile[depth] = nextEvent;
+      result.cost.value.actionProfile[depth] = nextTotal;
     }
-    result.value.serializationBreadth = saturatedAdd(
-        result.value.serializationBreadth, cost.serializationBreadth);
+    std::uint64_t nextSerialization = 0;
+    if (!checkedCostAdd(result.cost.value.serializationBreadth,
+                        cost.serializationBreadth, nextSerialization)) {
+      result.error = CostComputationError::ArithmeticOverflow;
+      return result;
+    }
+    result.cost.value.serializationBreadth = nextSerialization;
     for (std::size_t use = 0; use < mechanism.eventLifetimes.size(); ++use) {
       const CanonicalSyncEventLifetime &lifetime =
           mechanism.eventLifetimes[use];
-      const std::uint64_t span =
-          static_cast<std::uint64_t>(lifetime.end - lifetime.begin) + 1;
+      if (lifetime.end < lifetime.begin) {
+        result.error = CostComputationError::ArithmeticOverflow;
+        return result;
+      }
+      std::uint64_t span = 0;
+      if (!checkedCostAdd(
+              static_cast<std::uint64_t>(lifetime.end - lifetime.begin), 1,
+              span)) {
+        result.error = CostComputationError::ArithmeticOverflow;
+        return result;
+      }
       const std::uint64_t width =
           use < mechanism.descriptor.eventUses.size()
-              ? mechanism.descriptor.eventUses[use].width
+              ? static_cast<std::uint64_t>(
+                    mechanism.descriptor.eventUses[use].width)
               : 0;
-      result.value.eventLifetimeArea = saturatedAdd(
-          result.value.eventLifetimeArea, saturatedMultiply(span, width));
+      std::uint64_t area = 0;
+      std::uint64_t nextArea = 0;
+      if (!checkedCostMultiply(span, width, area) ||
+          !checkedCostAdd(result.cost.value.eventLifetimeArea, area,
+                          nextArea)) {
+        result.error = CostComputationError::ArithmeticOverflow;
+        return result;
+      }
+      result.cost.value.eventLifetimeArea = nextArea;
     }
   }
   return result;
+}
+
+CostComputation
+getCostMetered(const CanonicalSyncPatternProblem &problem,
+               const std::vector<CanonicalSyncMechanismId> &members,
+               std::size_t maximumWork, std::size_t &work) {
+  std::size_t costWork = members.size();
+  for (CanonicalSyncMechanismId mechanismId : members) {
+    const CanonicalSyncMechanism &mechanism =
+        problem.getMechanisms()[mechanismId];
+    const std::size_t profiles = mechanism.cost.barrierActions.size() +
+                                 mechanism.cost.eventActions.size();
+    const std::size_t lifetimes = mechanism.eventLifetimes.size();
+    if (profiles > std::numeric_limits<std::size_t>::max() - costWork ||
+        lifetimes >
+            std::numeric_limits<std::size_t>::max() - costWork - profiles) {
+      return {CostComputationError::WorkLimitExceeded, {}};
+    }
+    costWork += profiles + lifetimes;
+  }
+  if (!consumeWork(costWork, maximumWork, work)) {
+    return {CostComputationError::WorkLimitExceeded, {}};
+  }
+  return getCost(problem, members);
 }
 
 std::uint64_t profileValue(const std::vector<std::uint64_t> &profile,
@@ -244,8 +398,8 @@ int compareRatio(std::uint64_t first, std::size_t firstGain,
   return 0;
 }
 
-bool candidateLess(const GreedyCandidate &first,
-                   const GreedyCandidate &second) {
+int compareActionProfileRatio(const GreedyCandidate &first,
+                              const GreedyCandidate &second) {
   const std::size_t depths = std::max(first.cost.value.actionProfile.size(),
                                       second.cost.value.actionProfile.size());
   for (std::size_t reverse = depths; reverse > 0; --reverse) {
@@ -254,14 +408,32 @@ bool candidateLess(const GreedyCandidate &first,
         profileValue(first.cost.value.actionProfile, depth), first.gain,
         profileValue(second.cost.value.actionProfile, depth), second.gain);
     if (order != 0) {
-      return order < 0;
+      return order;
     }
   }
+  return 0;
+}
+
+bool candidateLess(const GreedyCandidate &first, const GreedyCandidate &second,
+                   CanonicalSyncSelectionObjective objective) {
   const int serialization =
       compareRatio(first.cost.value.serializationBreadth, first.gain,
                    second.cost.value.serializationBreadth, second.gain);
-  if (serialization != 0) {
-    return serialization < 0;
+  const int actions = compareActionProfileRatio(first, second);
+  if (objective == CanonicalSyncSelectionObjective::SerializationFirst) {
+    if (serialization != 0) {
+      return serialization < 0;
+    }
+    if (actions != 0) {
+      return actions < 0;
+    }
+  } else {
+    if (actions != 0) {
+      return actions < 0;
+    }
+    if (serialization != 0) {
+      return serialization < 0;
+    }
   }
   const int lifetime =
       compareRatio(first.cost.value.eventLifetimeArea, first.gain,
@@ -278,7 +450,8 @@ bool candidateLess(const GreedyCandidate &first,
          std::tie(second.additions, second.pattern);
 }
 
-bool costLess(const CandidateCost &first, const CandidateCost &second) {
+int compareActionProfile(const CandidateCost &first,
+                         const CandidateCost &second) {
   const std::size_t depths = std::max(first.value.actionProfile.size(),
                                       second.value.actionProfile.size());
   for (std::size_t reverse = depths; reverse > 0; --reverse) {
@@ -288,7 +461,30 @@ bool costLess(const CandidateCost &first, const CandidateCost &second) {
     const std::uint64_t secondValue =
         profileValue(second.value.actionProfile, depth);
     if (firstValue != secondValue) {
-      return firstValue < secondValue;
+      return firstValue < secondValue ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+bool costLess(const CandidateCost &first, const CandidateCost &second,
+              CanonicalSyncSelectionObjective objective) {
+  const int actions = compareActionProfile(first, second);
+  if (objective == CanonicalSyncSelectionObjective::SerializationFirst) {
+    if (first.value.serializationBreadth != second.value.serializationBreadth) {
+      return first.value.serializationBreadth <
+             second.value.serializationBreadth;
+    }
+    if (actions != 0) {
+      return actions < 0;
+    }
+  } else {
+    if (actions != 0) {
+      return actions < 0;
+    }
+    if (first.value.serializationBreadth != second.value.serializationBreadth) {
+      return first.value.serializationBreadth <
+             second.value.serializationBreadth;
     }
   }
   return std::tie(first.value.serializationBreadth,
@@ -299,25 +495,29 @@ bool costLess(const CandidateCost &first, const CandidateCost &second) {
                                               second.signature);
 }
 
-bool addCandidate(const CanonicalSyncPatternProblem &problem,
-                  const std::vector<CanonicalSyncMechanismId> &selected,
-                  const SyncCoverDemandSet &covered,
-                  CanonicalSyncPatternId pattern,
-                  std::vector<CanonicalSyncMechanismId> additions,
-                  const std::vector<CanonicalSyncMechanismId> &costMembers,
-                  SyncCoverDemandSet successorCoverage,
-                  const CanonicalSyncGreedyOptions &options,
-                  CanonicalSyncGreedyStatistics &statistics,
-                  std::vector<GreedyCandidate> &candidates) {
+bool considerCandidate(const CanonicalSyncPatternProblem &problem,
+                       const std::vector<CanonicalSyncMechanismId> &selected,
+                       const SyncCoverDemandSet &covered,
+                       CanonicalSyncPatternId pattern,
+                       const std::vector<CanonicalSyncMechanismId> &additions,
+                       const std::vector<CanonicalSyncMechanismId> &costMembers,
+                       const SyncCoverDemandSet &successorCoverage,
+                       const CanonicalSyncGreedyOptions &options,
+                       CanonicalSyncGreedyStatistics &statistics,
+                       GreedyCandidateScan &scan) {
   const bool workAvailable =
       consumeWork(additions.size() + costMembers.size() + 1,
                   options.maximumWorkUnits, statistics.workUnits);
   if (!workAvailable) {
     return false;
   }
-  const std::vector<CanonicalSyncMechanismId> successor =
-      addMembers(selected, additions);
-  if (!conflictFree(problem, successor)) {
+  const std::optional<bool> conflictFree =
+      additionsConflictFree(problem, selected, additions,
+                            options.maximumWorkUnits, statistics.workUnits);
+  if (!conflictFree) {
+    return false;
+  }
+  if (!*conflictFree) {
     return true;
   }
   const std::optional<std::size_t> gain =
@@ -329,9 +529,82 @@ bool addCandidate(const CanonicalSyncPatternProblem &problem,
   if (*gain == 0) {
     return true;
   }
-  candidates.push_back({pattern, std::move(additions),
-                        std::move(successorCoverage),
-                        getCost(problem, costMembers), *gain});
+  const bool evaluationCountOverflows =
+      statistics.patternEvaluations == std::numeric_limits<std::size_t>::max();
+  if (evaluationCountOverflows ||
+      !consumeWork(1, options.maximumWorkUnits, statistics.workUnits)) {
+    return false;
+  }
+  ++statistics.patternEvaluations;
+
+  const CostComputation cost = getCostMetered(
+      problem, costMembers, options.maximumWorkUnits, statistics.workUnits);
+  if (!cost) {
+    statistics.arithmeticOverflow =
+        cost.error == CostComputationError::ArithmeticOverflow;
+    return false;
+  }
+  GreedyCandidate candidate{pattern, additions, cost.cost, *gain};
+  // candidateLess includes the stable identity tie-break. A streaming minimum
+  // therefore chooses exactly the same move as sorting the complete catalog.
+  const std::size_t comparisonWork =
+      !scan.best
+          ? 1
+          : std::max(candidate.cost.value.actionProfile.size(),
+                     scan.best->cost.value.actionProfile.size()) +
+                candidate.additions.size() + scan.best->additions.size() + 4;
+  if (!consumeWork(comparisonWork, options.maximumWorkUnits,
+                   statistics.workUnits)) {
+    return false;
+  }
+  const bool improvesBest =
+      !scan.best || candidateLess(candidate, *scan.best, options.objective);
+  if (!improvesBest) {
+    return true;
+  }
+  if (!consumeWork(successorCoverage.getWords().size(),
+                   options.maximumWorkUnits, statistics.workUnits)) {
+    return false;
+  }
+  scan.best = std::move(candidate);
+  scan.bestCoverage = successorCoverage;
+  return true;
+}
+
+bool prepareFixedColumnCoverage(const CanonicalSyncPatternProblem &problem,
+                                const CanonicalSyncPattern &pattern,
+                                const SyncCoverDemandSet &covered,
+                                std::size_t maximumWork, std::size_t &work,
+                                SyncCoverDemandSet &result) {
+  if (!consumeWork(covered.getWords().size(), maximumWork, work)) {
+    return false;
+  }
+  result = covered;
+
+  // Freeze stores a composite's complete joint coverage unavailable from its
+  // member singletons. Its fixed column is consequently the union of those
+  // singleton columns and its own extra bits. Reconstructing it this way avoids
+  // rescanning the complete pattern catalog for every candidate and round.
+  for (CanonicalSyncMechanismId member : pattern.members) {
+    if (member >= problem.getPatterns().size()) {
+      return false;
+    }
+    const CanonicalSyncPattern &singleton = problem.getPatterns()[member];
+    const bool invalidSingleton =
+        singleton.kind != CanonicalSyncPatternKind::Singleton ||
+        singleton.members.size() != 1 || singleton.members.front() != member;
+    if (invalidSingleton ||
+        !consumeWork(singleton.coverage.getWords().size(), maximumWork, work)) {
+      return false;
+    }
+    result.unite(singleton.coverage);
+  }
+  if (pattern.kind != CanonicalSyncPatternKind::Singleton) {
+    if (!consumeWork(pattern.coverage.getWords().size(), maximumWork, work)) {
+      return false;
+    }
+    result.unite(pattern.coverage);
+  }
   return true;
 }
 
@@ -340,30 +613,34 @@ bool buildFixedCandidates(const CanonicalSyncPatternProblem &problem,
                           const SyncCoverDemandSet &covered,
                           const CanonicalSyncGreedyOptions &options,
                           CanonicalSyncGreedyStatistics &statistics,
-                          std::vector<GreedyCandidate> &candidates) {
+                          GreedyCandidateScan &scan) {
   for (const CanonicalSyncPattern &pattern : problem.getPatterns()) {
-    const bool forbidden =
-        containsForbidden(pattern.members, options.forbiddenMechanisms);
-    if (forbidden) {
-      continue;
-    }
-    std::vector<CanonicalSyncMechanismId> additions =
-        missingMembers(selected, pattern.members);
-    if (additions.empty()) {
-      continue;
-    }
-    const std::optional<SyncCoverDemandSet> columnCoverage =
-        coveredBy(problem, pattern.members, options.maximumWorkUnits,
-                  statistics.workUnits);
-    if (!columnCoverage) {
+    const std::optional<bool> forbidden =
+        containsForbidden(pattern.members, options.forbiddenMechanisms,
+                          options.maximumWorkUnits, statistics.workUnits);
+    if (!forbidden) {
       return false;
     }
-    SyncCoverDemandSet successorCoverage = covered;
-    successorCoverage.unite(*columnCoverage);
-    if (!addCandidate(problem, selected, covered, pattern.id,
-                      std::move(additions), pattern.members,
-                      std::move(successorCoverage), options, statistics,
-                      candidates)) {
+    if (*forbidden) {
+      continue;
+    }
+    std::optional<std::vector<CanonicalSyncMechanismId>> additions =
+        missingMembers(selected, pattern.members, options.maximumWorkUnits,
+                       statistics.workUnits);
+    if (!additions) {
+      return false;
+    }
+    if (additions->empty()) {
+      continue;
+    }
+    if (!prepareFixedColumnCoverage(
+            problem, pattern, covered, options.maximumWorkUnits,
+            statistics.workUnits, scan.scratchCoverage)) {
+      return false;
+    }
+    if (!considerCandidate(problem, selected, covered, pattern.id, *additions,
+                           pattern.members, scan.scratchCoverage, options,
+                           statistics, scan)) {
       return false;
     }
   }
@@ -376,16 +653,15 @@ bool buildActionAwareCandidate(
     const SyncCoverDemandSet &covered,
     std::vector<CanonicalSyncMechanismId> additions,
     CanonicalSyncPatternId pattern, const CanonicalSyncGreedyOptions &options,
-    CanonicalSyncGreedyStatistics &statistics,
-    std::vector<GreedyCandidate> &candidates) {
-  const std::optional<SyncCoverDemandSet> successorCoverage =
-      coverageAfterAdding(problem, selected, covered, additions,
-                          options.maximumWorkUnits, statistics.workUnits);
-  if (!successorCoverage) {
+    CanonicalSyncGreedyStatistics &statistics, GreedyCandidateScan &scan) {
+  if (!coverageAfterAdding(problem, selected, covered, additions,
+                           options.maximumWorkUnits, statistics.workUnits,
+                           scan.scratchCoverage)) {
     return false;
   }
-  return addCandidate(problem, selected, covered, pattern, additions, additions,
-                      *successorCoverage, options, statistics, candidates);
+  return considerCandidate(problem, selected, covered, pattern, additions,
+                           additions, scan.scratchCoverage, options, statistics,
+                           scan);
 }
 
 bool buildActionAwareCandidates(
@@ -393,20 +669,21 @@ bool buildActionAwareCandidates(
     const std::vector<CanonicalSyncMechanismId> &selected,
     const SyncCoverDemandSet &covered,
     const CanonicalSyncGreedyOptions &options,
-    CanonicalSyncGreedyStatistics &statistics,
-    std::vector<GreedyCandidate> &candidates) {
+    CanonicalSyncGreedyStatistics &statistics, GreedyCandidateScan &scan) {
   for (const CanonicalSyncMechanism &mechanism : problem.getMechanisms()) {
-    const bool alreadySelected =
-        std::binary_search(selected.begin(), selected.end(), mechanism.id);
-    const bool forbidden =
-        std::binary_search(options.forbiddenMechanisms.begin(),
-                           options.forbiddenMechanisms.end(), mechanism.id);
-    if (alreadySelected || forbidden) {
+    const std::optional<bool> alreadySelected = containsSorted(
+        selected, mechanism.id, options.maximumWorkUnits, statistics.workUnits);
+    const std::optional<bool> forbidden =
+        containsSorted(options.forbiddenMechanisms, mechanism.id,
+                       options.maximumWorkUnits, statistics.workUnits);
+    if (!alreadySelected || !forbidden) {
+      return false;
+    }
+    if (*alreadySelected || *forbidden) {
       continue;
     }
     if (!buildActionAwareCandidate(problem, selected, covered, {mechanism.id},
-                                   mechanism.id, options, statistics,
-                                   candidates)) {
+                                   mechanism.id, options, statistics, scan)) {
       return false;
     }
   }
@@ -415,28 +692,40 @@ bool buildActionAwareCandidates(
   }
   for (const CanonicalSyncPattern &pattern : problem.getPatterns()) {
     const bool isPair = pattern.members.size() == 2;
-    const bool forbidden =
-        containsForbidden(pattern.members, options.forbiddenMechanisms);
-    if (!isPair || forbidden) {
+    const std::optional<bool> forbidden =
+        containsForbidden(pattern.members, options.forbiddenMechanisms,
+                          options.maximumWorkUnits, statistics.workUnits);
+    if (!forbidden) {
+      return false;
+    }
+    if (!isPair || *forbidden) {
       continue;
     }
-    std::vector<CanonicalSyncMechanismId> additions =
-        missingMembers(selected, pattern.members);
-    const bool addsBothMembers = additions.size() == 2;
+    std::optional<std::vector<CanonicalSyncMechanismId>> additions =
+        missingMembers(selected, pattern.members, options.maximumWorkUnits,
+                       statistics.workUnits);
+    if (!additions) {
+      return false;
+    }
+    const bool addsBothMembers = additions->size() == 2;
     if (!addsBothMembers) {
       continue;
     }
     if (!buildActionAwareCandidate(problem, selected, covered,
-                                   std::move(additions), pattern.id, options,
-                                   statistics, candidates)) {
+                                   std::move(*additions), pattern.id, options,
+                                   statistics, scan)) {
       return false;
     }
   }
   return true;
 }
 
-bool complete(const CanonicalSyncPatternProblem &problem,
-              const SyncCoverDemandSet &covered) {
+std::optional<bool> complete(const CanonicalSyncPatternProblem &problem,
+                             const SyncCoverDemandSet &covered,
+                             std::size_t maximumWork, std::size_t &work) {
+  if (!consumeWork(covered.getWords().size(), maximumWork, work)) {
+    return std::nullopt;
+  }
   return covered.count() == problem.getDemands().size();
 }
 
@@ -478,10 +767,15 @@ bool consumeMechanismVerificationWork(
 
 } // namespace
 
-CanonicalSyncStructuralCost mlir::pto::computeCanonicalSyncStructuralCost(
+std::optional<CanonicalSyncStructuralCost>
+mlir::pto::computeCanonicalSyncStructuralCost(
     const CanonicalSyncPatternProblem &problem,
     const std::vector<CanonicalSyncMechanismId> &selected) {
-  return getCost(problem, selected).value;
+  CostComputation result = getCost(problem, selected);
+  if (!result) {
+    return std::nullopt;
+  }
+  return std::move(result.cost.value);
 }
 
 CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
@@ -489,6 +783,15 @@ CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
     CanonicalSyncGreedyOptions options) {
   CanonicalSyncSelection result;
   result.covered = problem.getBaselineCoverage();
+  if (!problem.isFrozen() || options.maximumWorkUnits == 0) {
+    result.error = CanonicalSyncSelectionError::InvalidProblem;
+    return result;
+  }
+  if (!consumeSortWork(options.forbiddenMechanisms.size(),
+                       options.maximumWorkUnits, result.statistics.workUnits)) {
+    result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+    return result;
+  }
   std::sort(options.forbiddenMechanisms.begin(),
             options.forbiddenMechanisms.end());
   options.forbiddenMechanisms.erase(
@@ -498,58 +801,72 @@ CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
   const bool invalidForbidden =
       !options.forbiddenMechanisms.empty() &&
       options.forbiddenMechanisms.back() >= problem.getMechanisms().size();
-  const bool invalidProblem =
-      !problem.isFrozen() || options.maximumWorkUnits == 0 || invalidForbidden;
-  if (invalidProblem) {
+  if (invalidForbidden) {
     result.error = CanonicalSyncSelectionError::InvalidProblem;
     return result;
   }
 
   std::vector<CanonicalSyncMechanismId> selected;
-  while (!complete(problem, result.covered)) {
-    std::vector<GreedyCandidate> candidates;
-    const bool built =
-        options.strategy == CanonicalSyncSelectionStrategy::FixedCover
-            ? buildFixedCandidates(problem, selected, result.covered, options,
-                                   result.statistics, candidates)
-            : buildActionAwareCandidates(problem, selected, result.covered,
-                                         options, result.statistics,
-                                         candidates);
-    if (!built) {
+  GreedyCandidateScan candidateScan(problem.getDemands().size());
+  for (;;) {
+    const std::optional<bool> isComplete =
+        complete(problem, result.covered, options.maximumWorkUnits,
+                 result.statistics.workUnits);
+    if (!isComplete) {
       result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
       return result;
     }
-    if (candidates.empty()) {
+    if (*isComplete) {
+      break;
+    }
+    candidateScan.reset();
+    const bool built =
+        options.strategy == CanonicalSyncSelectionStrategy::FixedCover
+            ? buildFixedCandidates(problem, selected, result.covered, options,
+                                   result.statistics, candidateScan)
+            : buildActionAwareCandidates(problem, selected, result.covered,
+                                         options, result.statistics,
+                                         candidateScan);
+    if (!built) {
+      result.error = result.statistics.arithmeticOverflow
+                         ? CanonicalSyncSelectionError::ArithmeticOverflow
+                         : CanonicalSyncSelectionError::WorkLimitExceeded;
+      return result;
+    }
+    if (!candidateScan.best) {
       result.error = CanonicalSyncSelectionError::NoCoveringPattern;
       return result;
     }
-    if (!consumeWork(candidates.size(), options.maximumWorkUnits,
+    GreedyCandidate chosen = std::move(*candidateScan.best);
+    if (!consumeWork(selected.size() + chosen.additions.size(),
+                     options.maximumWorkUnits, result.statistics.workUnits)) {
+      result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+      return result;
+    }
+    result.selectionOrder.insert(result.selectionOrder.end(),
+                                 chosen.additions.begin(),
+                                 chosen.additions.end());
+    selected = addMembers(selected, chosen.additions);
+    std::swap(result.covered, candidateScan.bestCoverage);
+  }
+
+  CostComputation selectedCost = getCostMetered(
+      problem, selected, options.maximumWorkUnits, result.statistics.workUnits);
+  if (!selectedCost) {
+    result.statistics.arithmeticOverflow =
+        selectedCost.error == CostComputationError::ArithmeticOverflow;
+    result.error = result.statistics.arithmeticOverflow
+                       ? CanonicalSyncSelectionError::ArithmeticOverflow
+                       : CanonicalSyncSelectionError::WorkLimitExceeded;
+    return result;
+  }
+  for (auto position = result.selectionOrder.rbegin();
+       position != result.selectionOrder.rend(); ++position) {
+    if (!consumeWork(selected.size(), options.maximumWorkUnits,
                      result.statistics.workUnits)) {
       result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
       return result;
     }
-    const bool evaluationCountOverflows =
-        candidates.size() > std::numeric_limits<std::size_t>::max() -
-                                result.statistics.patternEvaluations;
-    if (evaluationCountOverflows) {
-      result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
-      return result;
-    }
-    result.statistics.patternEvaluations += candidates.size();
-    std::stable_sort(candidates.begin(), candidates.end(), candidateLess);
-    GreedyCandidate chosen = std::move(candidates.front());
-    for (CanonicalSyncMechanismId mechanism : chosen.additions) {
-      if (!std::binary_search(selected.begin(), selected.end(), mechanism)) {
-        result.selectionOrder.push_back(mechanism);
-      }
-    }
-    selected = addMembers(selected, chosen.additions);
-    result.covered = std::move(chosen.coverage);
-  }
-
-  CandidateCost selectedCost = getCost(problem, selected);
-  for (auto position = result.selectionOrder.rbegin();
-       position != result.selectionOrder.rend(); ++position) {
     std::vector<CanonicalSyncMechanismId> trial = selected;
     const auto found = std::lower_bound(trial.begin(), trial.end(), *position);
     const bool mechanismMissing = found == trial.end() || *found != *position;
@@ -564,10 +881,35 @@ CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
       result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
       return result;
     }
-    const CandidateCost trialCost = getCost(problem, trial);
-    const bool remainsComplete = complete(problem, *trialCoverage);
-    const bool reducesCost = costLess(trialCost, selectedCost);
-    if (remainsComplete && reducesCost) {
+    const CostComputation trialCost = getCostMetered(
+        problem, trial, options.maximumWorkUnits, result.statistics.workUnits);
+    if (!trialCost) {
+      result.statistics.arithmeticOverflow =
+          trialCost.error == CostComputationError::ArithmeticOverflow;
+      result.error = result.statistics.arithmeticOverflow
+                         ? CanonicalSyncSelectionError::ArithmeticOverflow
+                         : CanonicalSyncSelectionError::WorkLimitExceeded;
+      return result;
+    }
+    const std::optional<bool> remainsComplete =
+        complete(problem, *trialCoverage, options.maximumWorkUnits,
+                 result.statistics.workUnits);
+    if (!remainsComplete) {
+      result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+      return result;
+    }
+    const std::size_t comparisonWork =
+        std::max(trialCost.cost.value.actionProfile.size(),
+                 selectedCost.cost.value.actionProfile.size()) +
+        4;
+    if (!consumeWork(comparisonWork, options.maximumWorkUnits,
+                     result.statistics.workUnits)) {
+      result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+      return result;
+    }
+    const bool reducesCost =
+        costLess(trialCost.cost, selectedCost.cost, options.objective);
+    if (*remainsComplete && reducesCost) {
       selected = std::move(trial);
       result.covered = *trialCoverage;
       selectedCost = trialCost;
@@ -575,8 +917,21 @@ CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
   }
 
   result.mechanisms = std::move(selected);
-  result.cost = selectedCost.value;
-  result.allocation = allocateCanonicalSyncEvents(problem, result.mechanisms);
+  result.cost = selectedCost.cost.value;
+  const std::size_t remainingWork =
+      options.maximumWorkUnits - result.statistics.workUnits;
+  if (remainingWork == 0) {
+    result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+    return result;
+  }
+  SyncCoverCoverageWorkBudget allocationWork(remainingWork);
+  result.allocation =
+      allocateCanonicalSyncEvents(problem, result.mechanisms, &allocationWork);
+  result.statistics.workUnits += allocationWork.workUnits;
+  if (allocationWork.exhausted) {
+    result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+    return result;
+  }
   if (!result.allocation.valid) {
     result.error = CanonicalSyncSelectionError::InvalidAllocation;
   } else if (!result.allocation.feasible) {
@@ -704,9 +1059,9 @@ CanonicalSyncVerifiedPlan mlir::pto::verifyCanonicalSyncSelection(
     }
     return true;
   };
-  const SyncCoverCoverageResult basisCoverage = computeSyncCoverCoverage(
-      problem.getGraph(), problem.getExpansion(), supplies,
-      problem.getDemands(), coverageWork);
+  const SyncCoverCoverageResult basisCoverage =
+      computeSyncCoverCoverage(problem.getGraph(), problem.getExpansion(),
+                               supplies, problem.getDemands(), coverageWork);
   if (!basisCoverage) {
     result.error =
         basisCoverage.error == SyncCoverCoverageError::WorkLimitExceeded
@@ -739,21 +1094,19 @@ CanonicalSyncVerifiedPlan mlir::pto::verifyCanonicalSyncSelection(
   }
   supplies.reserve(combinedSupplyCount);
   for (std::size_t index = 0; index < problem.getDemands().size(); ++index) {
-    const SyncCoverDemand &demand = problem.getGraph().getDemands()[
-        problem.getDemands()[index]];
+    const SyncCoverDemand &demand =
+        problem.getGraph().getDemands()[problem.getDemands()[index]];
     const bool guardMetadataOverflows =
         demand.targetGuard.literals.size() >
         std::numeric_limits<std::size_t>::max() -
             demand.sourceGuard.literals.size();
     const std::size_t guardMetadata =
-        guardMetadataOverflows
-            ? 0
-            : demand.sourceGuard.literals.size() +
-                  demand.targetGuard.literals.size();
+        guardMetadataOverflows ? 0
+                               : demand.sourceGuard.literals.size() +
+                                     demand.targetGuard.literals.size();
     if (guardMetadataOverflows ||
         (coverageWork &&
-         (!coverageWork->consume() ||
-          !coverageWork->consume(guardMetadata)))) {
+         (!coverageWork->consume() || !coverageWork->consume(guardMetadata)))) {
       if (coverageWork && guardMetadataOverflows) {
         coverageWork->exhausted = true;
       }
@@ -762,9 +1115,10 @@ CanonicalSyncVerifiedPlan mlir::pto::verifyCanonicalSyncSelection(
     }
     SyncCoverCompletionSupply lemma;
     lemma.mechanism = lemmaMechanismBegin + index;
-    lemma.edge = {demand.source, demand.target,
-                  SyncCoverEdgeKind::CompletionSupply, demand.scope,
-                  demand.distance, demand.sourceGuard, demand.targetGuard};
+    lemma.edge = {
+        demand.source,     demand.target,   SyncCoverEdgeKind::CompletionSupply,
+        demand.scope,      demand.distance, demand.sourceGuard,
+        demand.targetGuard};
     lemma.applicability = SyncCoverSupplyApplicability::AllDemands;
     supplies.push_back(std::move(lemma));
   }

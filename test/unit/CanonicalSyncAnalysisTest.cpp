@@ -1,12 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under
-// the terms and conditions of CANN Open Software License Agreement Version 2.0
-// (the "License"). Please refer to the License for details. You may not use
-// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
-// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
-// for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/CanonicalSync/CanonicalSync.h"
@@ -206,6 +204,176 @@ bool testBuildsOneFrozenGraph() {
                                return access.exactPhysical;
                              }),
                "keep unplanned arguments conservative");
+}
+
+bool testMaterializationRejectsTamperedEventAllocations() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a5"} {
+      func.func @allocation_validation(
+          %first: !pto.partition_tensor_view<16x16xf32>,
+          %second: !pto.partition_tensor_view<16x16xf32>) {
+        %addr0 = arith.constant 0 : i64
+        %addr1024 = arith.constant 1024 : i64
+        %one = arith.constant 1.000000e+00 : f32
+        %firstTile = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<vec, 16x16xf32>
+        %secondTile = pto.alloc_tile addr = %addr1024 :
+          !pto.tile_buf<vec, 16x16xf32>
+        pto.tload ins(%first : !pto.partition_tensor_view<16x16xf32>)
+          outs(%firstTile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%second : !pto.partition_tensor_view<16x16xf32>)
+          outs(%secondTile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%firstTile, %one :
+          !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%firstTile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%secondTile, %one :
+          !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%secondTile : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module),
+             "parse allocation-validation fixture")) {
+    return false;
+  }
+  func::FuncOp function =
+      module->lookupSymbol<func::FuncOp>("allocation_validation");
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(function);
+  if (!check(succeeded(program), "build allocation-validation graph")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions options;
+  options.enableDemandBasisReduction = false;
+  options.eventIdBudget = 4;
+  options.patterns.enabledMechanismFamilies = 0;
+  options.patterns.enableDirectPairs = false;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> directProblem =
+      buildCanonicalSyncSingletonProblem(*program, options);
+  if (!check(succeeded(directProblem),
+             "build allocation-validation direct catalog")) {
+    return false;
+  }
+  const CanonicalSyncSelection directSelection =
+      selectCanonicalSyncPatterns(**directProblem);
+  const bool directShape =
+      directSelection && directSelection.mechanisms.size() == 2 &&
+      (*directProblem)->getDomains().size() == 1 &&
+      llvm::all_of(
+          directSelection.mechanisms, [&](CanonicalSyncMechanismId mechanism) {
+            const CanonicalSyncMechanismDescriptor &descriptor =
+                (*directProblem)->getMechanisms()[mechanism].descriptor;
+            return descriptor.kind == CanonicalSyncMechanismKind::Event &&
+                   descriptor.eventUses.size() == 1 &&
+                   descriptor.eventUses.front().width == 1;
+          });
+  if (!check(directShape,
+             "select two independent direct allocation-validation events")) {
+    return false;
+  }
+
+  const CanonicalSyncEventDomain &directDomain =
+      (*directProblem)->getDomains().front();
+  CanonicalSyncPatternProblem isolated(program->getGraph(),
+                                       (*directProblem)->getDemands());
+  bool isolatedBuilt = static_cast<bool>(isolated.addEventDomain(directDomain));
+  isolatedBuilt =
+      isolatedBuilt && isolated.addEventDomain({1,
+                                                directDomain.targetResource,
+                                                directDomain.sourceResource,
+                                                directDomain.budget,
+                                                {}});
+  for (CanonicalSyncMechanismId mechanism : directSelection.mechanisms) {
+    isolatedBuilt =
+        isolatedBuilt &&
+        isolated.internMechanism(
+            (*directProblem)->getMechanisms()[mechanism].descriptor);
+  }
+  isolatedBuilt = isolatedBuilt && isolated.freeze();
+  if (!check(isolatedBuilt,
+             "freeze allocation-validation catalog with an unused domain")) {
+    return false;
+  }
+  const CanonicalSyncSelection selection =
+      selectCanonicalSyncPatterns(isolated);
+  const CanonicalSyncVerifiedPlan verified =
+      verifyCanonicalSyncSelection(isolated, selection);
+  const bool verifiedShape = selection && verified &&
+                             verified.mechanisms.size() == 2 &&
+                             verified.allocation.domains.size() == 2 &&
+                             verified.allocation.domains[0].domain == 0 &&
+                             verified.allocation.domains[0].uses.size() == 2 &&
+                             verified.allocation.domains[1].domain == 1 &&
+                             verified.allocation.domains[1].uses.empty();
+  if (!check(verifiedShape,
+             "freshly verify the allocation-validation reference plan")) {
+    return false;
+  }
+
+  const std::string irBefore = printOperation(function);
+  const auto rejectsPlan = [&](CanonicalSyncVerifiedPlan plan,
+                               std::string_view message) {
+    bool sawDiagnostic = false;
+    LogicalResult status = success();
+    {
+      ScopedDiagnosticHandler handler(&context, [&](Diagnostic &) {
+        sawDiagnostic = true;
+        return success();
+      });
+      status = materializeCanonicalSyncPlan(*program, isolated, plan);
+    }
+    return check(failed(status) && sawDiagnostic, message);
+  };
+
+  CanonicalSyncVerifiedPlan wrongDomain = verified;
+  wrongDomain.allocation.domains[1].uses.push_back(
+      wrongDomain.allocation.domains[0].uses.front());
+  wrongDomain.allocation.domains[0].uses.erase(
+      wrongDomain.allocation.domains[0].uses.begin());
+
+  CanonicalSyncVerifiedPlan wrongWidth = verified;
+  wrongWidth.allocation.domains[0].uses.front().ids.push_back(3);
+
+  CanonicalSyncVerifiedPlan reusedId = verified;
+  reusedId.allocation.domains[0].uses[1].ids =
+      reusedId.allocation.domains[0].uses[0].ids;
+
+  CanonicalSyncVerifiedPlan missingUse = verified;
+  missingUse.allocation.domains[0].uses.pop_back();
+
+  CanonicalSyncVerifiedPlan extraUse = verified;
+  CanonicalSyncEventAllocation duplicateUse =
+      extraUse.allocation.domains[0].uses.front();
+  duplicateUse.ids = {3};
+  extraUse.allocation.domains[0].uses.push_back(std::move(duplicateUse));
+
+  CanonicalSyncVerifiedPlan missingDomain = verified;
+  missingDomain.allocation.domains.pop_back();
+
+  CanonicalSyncVerifiedPlan extraDomain = verified;
+  extraDomain.allocation.domains.push_back(
+      extraDomain.allocation.domains.back());
+
+  return rejectsPlan(std::move(wrongDomain),
+                     "reject an allocation indexed under the wrong domain") &&
+         rejectsPlan(std::move(wrongWidth),
+                     "reject an allocation with the wrong event width") &&
+         rejectsPlan(std::move(reusedId),
+                     "reject physical event-ID reuse within one domain") &&
+         rejectsPlan(std::move(missingUse),
+                     "reject a missing selected event allocation") &&
+         rejectsPlan(std::move(extraUse),
+                     "reject an extraneous selected event allocation") &&
+         rejectsPlan(std::move(missingDomain),
+                     "reject a missing event-allocation domain") &&
+         rejectsPlan(std::move(extraDomain),
+                     "reject an extraneous event-allocation domain") &&
+         check(printOperation(function) == irBefore,
+               "reject every tampered allocation before mutating IR");
 }
 
 bool testMacroBindingsAndHiddenReservations() {
@@ -2812,6 +2980,169 @@ bool testFirstIterationRecurrenceSuppression() {
                "retain enclosing-loop recurrence for an inner first iteration");
 }
 
+bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @branch_l0(%limit: index, %condition: i1,
+          %left_source: !pto.tile_buf<mat, 128x512xf16,
+            blayout=col_major, slayout=row_major>,
+          %right_source: !pto.tile_buf<mat, 256x256xf16,
+            slayout=col_major>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %c64 = arith.constant 64 : index
+        %addr0 = arith.constant 0 : i64
+        %addr16384 = arith.constant 16384 : i64
+        %addr32768 = arith.constant 32768 : i64
+        %left0 = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+        %left1 = pto.alloc_tile addr = %addr16384 :
+          !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+        %right0 = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+        %right1 = pto.alloc_tile addr = %addr32768 :
+          !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+        %acc = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+            slayout=row_major, fractal=1024>
+        scf.for %i = %c0 to %limit step %c1 {
+          pto.textract ins(%left_source, %c0, %c0 :
+            !pto.tile_buf<mat, 128x512xf16, blayout=col_major,
+              slayout=row_major>, index, index)
+            outs(%left0 : !pto.tile_buf<left, 128x64xf16,
+              slayout=row_major>)
+          pto.textract ins(%right_source, %c0, %c0 :
+            !pto.tile_buf<mat, 256x256xf16, slayout=col_major>, index, index)
+            outs(%right0 : !pto.tile_buf<right, 64x256xf16,
+              slayout=col_major>)
+          scf.if %condition {
+            pto.tmatmul ins(%left0, %right0 :
+              !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+              !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+              outs(%acc : !pto.tile_buf<acc, 128x256xf32,
+                blayout=col_major, slayout=row_major, fractal=1024>)
+          } else {
+            pto.tmatmul.acc ins(%acc, %left0, %right0 :
+              !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+                slayout=row_major, fractal=1024>,
+              !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+              !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+              outs(%acc : !pto.tile_buf<acc, 128x256xf32,
+                blayout=col_major, slayout=row_major, fractal=1024>)
+          }
+          pto.textract ins(%left_source, %c0, %c64 :
+            !pto.tile_buf<mat, 128x512xf16, blayout=col_major,
+              slayout=row_major>, index, index)
+            outs(%left1 : !pto.tile_buf<left, 128x64xf16,
+              slayout=row_major>)
+          pto.textract ins(%right_source, %c64, %c0 :
+            !pto.tile_buf<mat, 256x256xf16, slayout=col_major>, index, index)
+            outs(%right1 : !pto.tile_buf<right, 64x256xf16,
+              slayout=col_major>)
+          pto.tmatmul.acc ins(%acc, %left1, %right1 :
+            !pto.tile_buf<acc, 128x256xf32, blayout=col_major,
+              slayout=row_major, fractal=1024>,
+            !pto.tile_buf<left, 128x64xf16, slayout=row_major>,
+            !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+            outs(%acc : !pto.tile_buf<acc, 128x256xf32,
+              blayout=col_major, slayout=row_major, fractal=1024>)
+        }
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module),
+             "parse exhaustive L0 ownership fixture")) {
+    return false;
+  }
+  func::FuncOp function = module->lookupSymbol<func::FuncOp>("branch_l0");
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(function);
+  if (!check(succeeded(program), "discover exhaustive L0 ownership")) {
+    return false;
+  }
+  const auto certificate = llvm::find_if(
+      program->getGraph().getBasicOwnershipCertificates(),
+      [](const SyncCoverBasicOwnershipCertificate &candidate) {
+        return candidate.kind == SyncCoverBasicOwnershipKind::L0Operand;
+      });
+  const bool exactCertificate =
+      certificate !=
+          program->getGraph().getBasicOwnershipCertificates().end() &&
+      certificate->paths.size() == 1 &&
+      certificate->paths[0].uses.size() == 2 &&
+      certificate->paths[0].uses[0].consumers.size() == 2 &&
+      certificate->paths[0].uses[0].readAcquireAnchor.kind ==
+          SyncCoverAnchorKind::ControlEntry &&
+      certificate->paths[0].uses[0].releaseAnchor.kind ==
+          SyncCoverAnchorKind::ControlExit;
+  if (!check(exactCertificate,
+             "certify one wait and release at the exhaustive branch cut")) {
+    return false;
+  }
+
+  CanonicalSyncAnalysisOptions boundedAnalysis;
+  boundedAnalysis.maximumBasicOwnershipInspections = 1;
+  FailureOr<CanonicalSyncProgram> boundedProgram =
+      buildCanonicalSyncProgram(function, boundedAnalysis);
+  if (!check(succeeded(boundedProgram),
+             "truncate optional ownership discovery without rejecting the "
+             "graph")) {
+    return false;
+  }
+  const CanonicalSyncOwnershipDiscoveryStatistics &boundedStatistics =
+      boundedProgram->getOwnershipDiscoveryStatistics();
+  if (!check(boundedProgram->getGraph().getBasicOwnershipCertificates().empty(),
+             "omit ownership certificates after discovery truncation") ||
+      !check(boundedStatistics.truncated,
+             "report bounded ownership-discovery truncation") ||
+      !check(boundedStatistics.inspections == 1,
+             "charge the complete bounded ownership-discovery allowance")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions options;
+  options.patterns.enabledMechanismFamilies = canonicalSyncMechanismFamilyBit(
+      CanonicalSyncMechanismFamily::BasicOwnership);
+  options.patterns.enableDirectPairs = false;
+  CanonicalSyncProblemBuildResult precise =
+      buildCanonicalSyncPreciseProblem(*program, options);
+  if (!check(precise && precise.problem,
+             "build exhaustive L0 ownership candidate catalog")) {
+    return false;
+  }
+  const CanonicalSyncMechanismOriginMask l0Origin =
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::BasicOwnershipL0OperandProtocol);
+  const auto mechanism = llvm::find_if(precise.problem->getMechanisms(),
+                                       [&](const CanonicalSyncMechanism &m) {
+                                         return (m.originMask & l0Origin) != 0;
+                                       });
+  if (!check(mechanism != precise.problem->getMechanisms().end() &&
+                 mechanism->descriptor.actions.size() == 12 &&
+                 llvm::count_if(mechanism->descriptor.actions,
+                                [](const CanonicalSyncAction &action) {
+                                  return action.anchor.kind ==
+                                         SyncCoverAnchorKind::ControlEntry;
+                                }) == 1 &&
+                 llvm::count_if(mechanism->descriptor.actions,
+                                [](const CanonicalSyncAction &action) {
+                                  return action.anchor.kind ==
+                                         SyncCoverAnchorKind::ControlExit;
+                                }) == 1,
+             "synthesize one shared wait/set pair for branch alternatives")) {
+    return false;
+  }
+  const CanonicalSyncSelection selection =
+      selectCanonicalSyncPatterns(*precise.problem);
+  const CanonicalSyncVerifiedPlan verified =
+      verifyCanonicalSyncSelection(*precise.problem, selection);
+  return check(selection && verified,
+               "select and freshly verify exhaustive L0 ownership");
+}
+
 bool testGenericRecurrenceWithoutOwnershipDiscovery() {
   MLIRContext context;
   loadDialects(context);
@@ -3198,6 +3529,48 @@ bool testGuardedEndpointUsesSourceLocalCompletionEvent() {
       buildCanonicalSyncPreciseProblem(*program, options);
   if (!check(precise && precise.problem,
              "cover the guarded cross-pipe demand in the precise catalog")) {
+    return false;
+  }
+  const CanonicalSyncMechanismOriginMask sourceLocalOrigin =
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::SourceLocalCompletionEvent);
+  const bool hasSourceLocalOrigin =
+      llvm::any_of(precise.problem->getMechanisms(),
+                   [&](const CanonicalSyncMechanism &mechanism) {
+                     return (mechanism.originMask & sourceLocalOrigin) != 0;
+                   });
+  CanonicalSyncBuildOptions explicitAllOptions = options;
+  explicitAllOptions.patterns.enabledMechanismFamilies =
+      kAllCanonicalSyncMechanismFamilies;
+  CanonicalSyncProblemBuildResult explicitAll =
+      buildCanonicalSyncPreciseProblem(*program, explicitAllOptions);
+  if (!check(hasSourceLocalOrigin,
+             "classify guarded completeness as a source-local event") ||
+      !check(explicitAll && explicitAll.problem &&
+                 precise.problem->hasSameCandidatePrefix(*explicitAll.problem),
+             "make the default catalog identical to an explicit ALL mask")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions withoutSourceLocalOptions = options;
+  withoutSourceLocalOptions.patterns.enabledMechanismFamilies &=
+      ~canonicalSyncMechanismFamilyBit(
+          CanonicalSyncMechanismFamily::SourceLocalCompletion);
+  CanonicalSyncBuildOptions coreOptions = options;
+  coreOptions.patterns.enabledMechanismFamilies = 0;
+  bool withoutSourceLocalRejected = false;
+  bool coreRejected = false;
+  {
+    ScopedDiagnosticHandler handler(&context,
+                                    [](Diagnostic &) { return success(); });
+    withoutSourceLocalRejected =
+        !buildCanonicalSyncPreciseProblem(*program, withoutSourceLocalOptions);
+    coreRejected = !buildCanonicalSyncPreciseProblem(*program, coreOptions);
+  }
+  if (!check(withoutSourceLocalRejected,
+             "fail closed when the required source-local family is disabled") ||
+      !check(coreRejected,
+             "fail closed for a core-only catalog without a balanced recipe")) {
     return false;
   }
   CanonicalSyncComparisonReport report;
@@ -3783,6 +4156,38 @@ bool testConflictCoreRepairAvoidsPipeAll() {
              "build repair candidates from the live conflict core")) {
     return false;
   }
+  SyncCoverCoverageWorkBudget preparationReference;
+  CanonicalSyncProblemBuildResult meteredRepair =
+      buildCanonicalSyncRepairProblem(*program, **problem, options,
+                                      conflictCore, {}, &preparationReference);
+  const std::size_t exactPreparationWork = preparationReference.workUnits;
+  SyncCoverCoverageWorkBudget exactPreparationBudget(exactPreparationWork);
+  CanonicalSyncProblemBuildResult exactMeteredRepair =
+      buildCanonicalSyncRepairProblem(*program, **problem, options,
+                                      conflictCore, {},
+                                      &exactPreparationBudget);
+  SyncCoverCoverageWorkBudget belowPreparationBudget(
+      exactPreparationWork == 0 ? 0 : exactPreparationWork - 1);
+  CanonicalSyncProblemBuildResult belowMeteredRepair =
+      buildCanonicalSyncRepairProblem(*program, **problem, options,
+                                      conflictCore, {},
+                                      &belowPreparationBudget);
+  if (!check(meteredRepair && exactMeteredRepair && exactPreparationWork != 0,
+             "meter incremental repair-catalog preparation") ||
+      !check(meteredRepair.problem->hasSameCandidatePrefix(**problem),
+             "preserve the frozen precise candidate prefix during repair") ||
+      !check(&meteredRepair.problem->getExpansion() ==
+                 &(*problem)->getExpansion(),
+             "share the immutable expansion across repair catalogs") ||
+      !check(!exactPreparationBudget.exhausted &&
+                 exactPreparationBudget.workUnits == exactPreparationWork,
+             "accept repair preparation at its exact shared-work bound") ||
+      !check(!belowMeteredRepair && belowPreparationBudget.exhausted &&
+                 belowMeteredRepair.status.error ==
+                     CanonicalSyncProblemError::LimitExceeded,
+             "stop repair preparation one shared-work unit below its bound")) {
+    return false;
+  }
   const CanonicalSyncPatternStatistics &repairStatistics =
       repair.problem->getPatternStatistics();
   if (!check(!repairStatistics.repairFrontierTruncated &&
@@ -4089,7 +4494,9 @@ bool testConflictCoreRepairAvoidsPipeAll() {
 
 int main() {
   const bool passed =
-      testBuildsOneFrozenGraph() && testMacroBindingsAndHiddenReservations() &&
+      testBuildsOneFrozenGraph() &&
+      testMaterializationRejectsTamperedEventAllocations() &&
+      testMacroBindingsAndHiddenReservations() &&
       testEmptyNestedLoopTimelineIsClamped() && testGmAliasPolicies() &&
       testGmAliasContracts() && testStructuredIssueFrontier() &&
       testDistanceTwoPhysicalSlotRecurrence() &&
@@ -4106,6 +4513,7 @@ int main() {
       testFixedBarrierInspectionBoundsAndPersistentControlState() &&
       testStructuralLimitsFailClosed() && testPeriodicBranchEvidence() &&
       testFirstIterationRecurrenceSuppression() &&
+      testBasicL0OwnershipSharesExhaustiveBranchBoundaries() &&
       testGenericRecurrenceWithoutOwnershipDiscovery() &&
       testGuardedEndpointUsesSourceLocalCompletionEvent() &&
       testDemandBasisReductionIsBoundedAndTruncating() &&

@@ -1,12 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under
-// the terms and conditions of CANN Open Software License Agreement Version 2.0
-// (the "License"). Please refer to the License for details. You may not use
-// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
-// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
-// for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncSelection.h"
 
@@ -88,6 +86,21 @@ struct OwnedPairProposals {
   std::size_t proposalCount = 0;
   bool truncated = false;
 };
+
+bool mechanismsConflict(
+    const std::vector<CanonicalSyncMechanism> &mechanisms,
+    const SyncCoverMechanismPair &pair) {
+  if (pair.first >= mechanisms.size() || pair.second >= mechanisms.size()) {
+    return true;
+  }
+  const auto hasConflict = [&](CanonicalSyncMechanismId first,
+                               CanonicalSyncMechanismId second) {
+    const auto &conflicts = mechanisms[first].conflicts;
+    return std::binary_search(conflicts.begin(), conflicts.end(), second);
+  };
+  return hasConflict(pair.first, pair.second) ||
+         hasConflict(pair.second, pair.first);
+}
 
 bool indexMechanismConnectors(
     const SyncCoverGraph &graph, const CanonicalSyncMechanism &mechanism,
@@ -354,6 +367,7 @@ bool buildPlausibleDemandEndpoints(
 }
 
 bool addConnectorGroup(
+    const std::vector<CanonicalSyncMechanism> &mechanisms,
     const std::vector<ConnectorEndpoint> &targets,
     const std::vector<ConnectorEndpoint> &sources,
     const std::set<std::pair<std::uint32_t, std::uint32_t>>
@@ -392,6 +406,9 @@ bool addConnectorGroup(
       }
       const auto members = std::minmax(target.mechanism, source.mechanism);
       const SyncCoverMechanismPair pair{members.first, members.second};
+      if (mechanismsConflict(mechanisms, pair)) {
+        continue;
+      }
       proposals.pairs.insert(pair);
       if (proposals.pairs.size() > maximumProposals) {
         proposals.proposalCount =
@@ -496,8 +513,9 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
           }
           OwnedPairProposals &proposals = indexedProposals[*pairOwner];
           const bool inspected = addConnectorGroup(
-              targetEndpoints, sourceEndpoints, activeDemandResourcePairs,
-              activeDemandEndpoints, options.maximumEvaluationsPerScope,
+              problem.getMechanisms(), targetEndpoints, sourceEndpoints,
+              activeDemandResourcePairs, activeDemandEndpoints,
+              options.maximumEvaluationsPerScope,
               options.maximumConnectorInspections, connectorInspections,
               proposals);
           if (!inspected) {
@@ -537,9 +555,14 @@ CanonicalSyncProblemResult mlir::pto::addCanonicalSyncDirectPairPatterns(
       byOwner.try_emplace(owner);
       continue;
     }
-    byOwner.emplace(
-        owner, std::vector<SyncCoverMechanismPair>(proposals.pairs.begin(),
-                                                   proposals.pairs.end()));
+    std::vector<SyncCoverMechanismPair> conflictFree;
+    conflictFree.reserve(proposals.pairs.size());
+    for (const SyncCoverMechanismPair &pair : proposals.pairs) {
+      if (!mechanismsConflict(problem.getMechanisms(), pair)) {
+        conflictFree.push_back(pair);
+      }
+    }
+    byOwner.emplace(owner, std::move(conflictFree));
   }
 
   std::vector<SyncCoverCompletionSupply> supplies;
