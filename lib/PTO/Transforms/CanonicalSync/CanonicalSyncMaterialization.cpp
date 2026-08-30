@@ -1786,6 +1786,7 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
                       std::uint64_t preparationNanoseconds) {
   CanonicalSyncComparisonReport report;
   report.function = program.getFunction().getSymName().str();
+  report.targetCapabilities = program.getTargetCapabilities();
   report.selectionObjective = options.selection.objective;
   report.enabledMechanismFamilies = options.patterns.enabledMechanismFamilies;
   report.directPairsEnabled = options.patterns.enableDirectPairs;

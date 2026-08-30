@@ -119,9 +119,13 @@ struct IssueOrderState {
 
 bool isCanonicalSyncOwned(Operation *operation);
 bool isTransparentRegionOperation(Operation *operation);
-bool isCompletionOrdered(std::uint32_t resource, Operation *operation);
+bool isCompletionOrdered(
+    std::uint32_t resource,
+    const CanonicalSyncTargetCapabilities &capabilities);
 bool canSignalDirectCompletion(std::uint32_t resource);
-bool canSignalPrefixCompletion(std::uint32_t resource, Operation *operation);
+bool canSignalPrefixCompletion(
+    std::uint32_t resource,
+    const CanonicalSyncTargetCapabilities &capabilities);
 
 class ProgramBuilder {
 public:
@@ -223,6 +227,7 @@ private:
 
   func::FuncOp function_;
   const CanonicalSyncAnalysisOptions &options_;
+  CanonicalSyncTargetCapabilities targetCapabilities_;
   SyncCoverGraph graph_;
   SyncIRs syncIR_;
   Buffer2MemInfoMap bufferMap_;

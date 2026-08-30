@@ -1701,6 +1701,148 @@ bool testDistanceTwoCrossRootSlotRecurrence() {
                "discover periodic aliasing across distinct allocation roots");
 }
 
+bool testTargetCapabilityProfilesAreVersionedAndConservative() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a2"} {
+      func.func @profile(
+          %tile: !pto.tile_buf<vec, 16x16xf32>,
+          %dst: !pto.partition_tensor_view<16x16xf32>) {
+        pto.tabs ins(%tile : !pto.tile_buf<vec, 16x16xf32>)
+          outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf32>)
+          outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module),
+             "parse target-capability profile fixture")) {
+    return false;
+  }
+  func::FuncOp function = module->lookupSymbol<func::FuncOp>("profile");
+  const auto pipe = [](PipelineType resource) {
+    return static_cast<std::uint32_t>(resource);
+  };
+  const auto checkKnownProfile = [&](StringRef arch,
+                                     CanonicalSyncTargetProfile profile,
+                                     bool vectorCompletionOrdered,
+                                     bool vectorBarrierCompletion,
+                                     bool a3Ownership) {
+    (*module)->setAttr("pto.target_arch", StringAttr::get(&context, arch));
+    FailureOr<CanonicalSyncProgram> program =
+        buildCanonicalSyncProgram(function);
+    if (!check(succeeded(program), "build a known target capability profile")) {
+      return false;
+    }
+    const CanonicalSyncTargetCapabilities &capabilities =
+        program->getTargetCapabilities();
+    const std::uint32_t vector = pipe(PipelineType::PIPE_V);
+    const std::uint32_t store = pipe(PipelineType::PIPE_MTE3);
+    const auto carry =
+        program->getGraph().getResourceRecurrenceCarryKinds().find(vector);
+    const auto vectorNode = llvm::find_if(
+        program->getGraph().getNodes(), [&](const SyncCoverNode &node) {
+          return node.resource == vector;
+        });
+    const bool commonContracts =
+        capabilities.profile == profile &&
+        capabilities.sameResourceCompletionOrdering.version == 1 &&
+        capabilities.sameResourceCompletionOrdering.supports(
+            pipe(PipelineType::PIPE_S)) &&
+        capabilities.sameResourceCompletionOrdering.supports(
+            pipe(PipelineType::PIPE_V)) == vectorCompletionOrdered &&
+        capabilities.crossResourceTargetedBarrierCompletion.version == 1 &&
+        capabilities.crossResourceTargetedBarrierCompletion.supports(
+            pipe(PipelineType::PIPE_M)) &&
+        capabilities.crossResourceTargetedBarrierCompletion.supports(
+            pipe(PipelineType::PIPE_V)) == vectorBarrierCompletion;
+    const bool graphContracts =
+        carry !=
+            program->getGraph().getResourceRecurrenceCarryKinds().end() &&
+        carry->second ==
+            (vectorCompletionOrdered
+                 ? SyncCoverEdgeKind::CompletionPreservingIssueOrder
+                 : SyncCoverEdgeKind::NonCompletionPreservingIssueOrder) &&
+        vectorNode != program->getGraph().getNodes().end() &&
+        vectorNode->completionSignalCoversIssuedPrefix ==
+            vectorCompletionOrdered &&
+        llvm::is_contained(vectorNode->completionTargets, store) &&
+        program->getGraph().supportsBlockingTargetedBarrier(vector) ==
+            vectorBarrierCompletion;
+    const bool ownershipContracts =
+        capabilities.mte1L0ReadySetCompletesPrefix.isEnabled() ==
+            a3Ownership &&
+        capabilities.mL0AlternativeJoinSetCompletes.isEnabled() ==
+            a3Ownership &&
+        capabilities.mte1ScopeExitSetCompletesPrefix.isEnabled() ==
+            a3Ownership &&
+        capabilities.mToFixAccumulatorBoundaryCompletes.isEnabled() ==
+            a3Ownership &&
+        capabilities.intrinsicMmadAccumulatorOrdering.isEnabled() ==
+            a3Ownership &&
+        capabilities.targetCompletionResources.has_value() == a3Ownership;
+    return check(commonContracts,
+                 "map the target to its versioned common contracts") &&
+           check(graphContracts,
+                 "apply the profile to graph completion and barrier facts") &&
+           check(ownershipContracts,
+                 "keep A3-only completion contracts target-qualified");
+  };
+  if (!checkKnownProfile("a2", CanonicalSyncTargetProfile::A2V1,
+                         /*vectorCompletionOrdered=*/false,
+                         /*vectorBarrierCompletion=*/true,
+                         /*a3Ownership=*/false) ||
+      !checkKnownProfile(
+          "a2a3", CanonicalSyncTargetProfile::A2A3IntersectionV1,
+          /*vectorCompletionOrdered=*/false,
+          /*vectorBarrierCompletion=*/true,
+          /*a3Ownership=*/false) ||
+      !checkKnownProfile("a3", CanonicalSyncTargetProfile::A3V1,
+                         /*vectorCompletionOrdered=*/false,
+                         /*vectorBarrierCompletion=*/true,
+                         /*a3Ownership=*/true) ||
+      !checkKnownProfile("a5", CanonicalSyncTargetProfile::A5V1,
+                         /*vectorCompletionOrdered=*/true,
+                         /*vectorBarrierCompletion=*/false,
+                         /*a3Ownership=*/false)) {
+    return false;
+  }
+
+  (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "future"));
+  FailureOr<CanonicalSyncProgram> unsupported =
+      buildCanonicalSyncProgram(function);
+  if (!check(succeeded(unsupported),
+             "build a direct-cover graph for an unsupported target")) {
+    return false;
+  }
+  const CanonicalSyncTargetCapabilities &capabilities =
+      unsupported->getTargetCapabilities();
+  const std::uint32_t vector = pipe(PipelineType::PIPE_V);
+  const std::uint32_t store = pipe(PipelineType::PIPE_MTE3);
+  const auto vectorNode = llvm::find_if(
+      unsupported->getGraph().getNodes(), [&](const SyncCoverNode &node) {
+        return node.resource == vector;
+      });
+  return check(capabilities.profile ==
+                       CanonicalSyncTargetProfile::Unsupported &&
+                   capabilities.sameResourceCompletionOrdering.version == 0 &&
+                   capabilities.crossResourceTargetedBarrierCompletion
+                           .version == 0 &&
+                   !capabilities.targetCompletionResources &&
+                   !capabilities.mte1L0ReadySetCompletesPrefix.isEnabled() &&
+                   !capabilities.intrinsicMmadAccumulatorOrdering.isEnabled(),
+               "default every unsupported-target capability to false") &&
+         check(vectorNode != unsupported->getGraph().getNodes().end() &&
+                   !vectorNode->completionSignalCoversIssuedPrefix &&
+                   llvm::is_contained(vectorNode->completionTargets, store) &&
+                   !unsupported->getGraph().supportsBlockingTargetedBarrier(
+                       vector),
+               "retain only the exact-operation direct event basis");
+}
+
 bool testMmadIntrinsicRequiresExactAccumulator() {
   MLIRContext exactContext;
   loadDialects(exactContext);
@@ -1750,6 +1892,19 @@ bool testMmadIntrinsicRequiresExactAccumulator() {
                          }),
             "do not promote MMAD issue order to completion evidence");
   if (!validExact) {
+    return false;
+  }
+  (*exactModule)->setAttr("pto.target_arch",
+                         StringAttr::get(&exactContext, "a2"));
+  FailureOr<CanonicalSyncProgram> a2Exact = buildCanonicalSyncProgram(
+      exactModule->lookupSymbol<func::FuncOp>("exact"));
+  const bool a2Built =
+      check(succeeded(a2Exact), "build exact MMAD graph for A2");
+  if (!a2Built) {
+    return false;
+  }
+  if (!check(!a2Exact->getGraph().getDemands().empty(),
+             "do not apply the A3 MMAD contract to A2")) {
     return false;
   }
 
@@ -1861,13 +2016,25 @@ bool testA3TargetCompletionCertificatesAreArchitectureQualified() {
                 *a3,
                 SyncCoverTargetCompletionKind::MToFixAccumulatorBoundary) == 1,
             "certify the exact A3 accumulator-to-FIX boundary");
+  (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "a2"));
+  FailureOr<CanonicalSyncProgram> a2 = buildCanonicalSyncProgram(function);
+  const bool a2Rejected =
+      check(succeeded(a2), "build the same graph for A2") &&
+      check(a2->getGraph().getTargetCompletionCertificates().empty(),
+            "do not infer A3 target certificates on A2");
+  (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "a2a3"));
+  FailureOr<CanonicalSyncProgram> a2a3 = buildCanonicalSyncProgram(function);
+  const bool a2a3Rejected =
+      check(succeeded(a2a3), "build the same graph for A2/A3 intersection") &&
+      check(a2a3->getGraph().getTargetCompletionCertificates().empty(),
+            "do not infer A3 target certificates from the A2/A3 intersection");
   (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "a5"));
   FailureOr<CanonicalSyncProgram> a5 = buildCanonicalSyncProgram(function);
   const bool a5Rejected =
       check(succeeded(a5), "build the same graph for A5") &&
       check(a5->getGraph().getTargetCompletionCertificates().empty(),
             "do not infer A3 target certificates on A5");
-  if (!a3Qualified || !a5Rejected) {
+  if (!a3Qualified || !a2Rejected || !a2a3Rejected || !a5Rejected) {
     return false;
   }
 
@@ -7235,6 +7402,7 @@ int main() {
       testDistanceTwoPhysicalSlotRecurrence() &&
       testA5MatrixLoopBoundaryProtocol() &&
       testDistanceTwoCrossRootSlotRecurrence() &&
+      testTargetCapabilityProfilesAreVersionedAndConservative() &&
       testMmadIntrinsicRequiresExactAccumulator() &&
       testA3TargetCompletionCertificatesAreArchitectureQualified() &&
       testAnalysisLimitFailsClosed() &&

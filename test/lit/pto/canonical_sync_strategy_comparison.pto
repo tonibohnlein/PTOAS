@@ -88,6 +88,12 @@
 // SUMMARY-DAG: backstop-deletion-truncated=
 // REPORT-DAG: "schema": "ptoas.canonical_sync.v1"
 // REPORT-DAG: "function": "comparison"
+// REPORT-DAG: "target_capabilities":
+// REPORT-DAG: "profile": "a5-v1"
+// REPORT-DAG: "same_resource_completion_ordering":
+// REPORT-DAG: "cross_resource_targeted_barrier_completion":
+// REPORT-DAG: "mte1_l0_ready_set_completes_prefix": 0
+// REPORT-DAG: "intrinsic_mmad_accumulator_ordering": 0
 // REPORT-DAG: "selection_objective": "action-first"
 // REPORT-DAG: "enabled_mechanism_families":
 // REPORT-DAG: "direct_pairs_enabled": true

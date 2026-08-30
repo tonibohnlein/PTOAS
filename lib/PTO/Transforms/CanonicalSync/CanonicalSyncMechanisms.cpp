@@ -3901,10 +3901,10 @@ LogicalResult addTargetCompletionCertificateEvents(
         program.getTargetCapabilities();
     const bool capabilityEnabled =
         (certificate.kind == SyncCoverTargetCompletionKind::Mte1L0ReadyPrefix &&
-         capabilities.mte1L0ReadySetCompletesPrefix) ||
+         capabilities.mte1L0ReadySetCompletesPrefix.isEnabled()) ||
         (certificate.kind ==
              SyncCoverTargetCompletionKind::MToFixAccumulatorBoundary &&
-         capabilities.mToFixAccumulatorBoundaryCompletes);
+         capabilities.mToFixAccumulatorBoundaryCompletes.isEnabled());
     const bool storageSpacesMatch = llvm::all_of(
         certificate.storageDomains, [&](SyncCoverStorageDomainId domain) {
           if (domain >= program.getStorageSpaces().size()) {

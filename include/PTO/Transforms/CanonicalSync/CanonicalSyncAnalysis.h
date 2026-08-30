@@ -17,10 +17,12 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Support/LogicalResult.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -101,29 +103,78 @@ struct CanonicalSyncControlBinding {
 using CanonicalSyncEventReservations =
     std::map<std::pair<std::uint32_t, std::uint32_t>, std::vector<unsigned>>;
 
+enum class CanonicalSyncTargetProfile : std::uint8_t {
+  Unsupported,
+  A2V1,
+  A2A3IntersectionV1,
+  A3V1,
+  A5V1,
+};
+
+/// A zero version disables the capability. Nonzero versions identify the
+/// exact target contract that analysis and materialization rely upon.
+struct CanonicalSyncBooleanCapability {
+  std::uint16_t version = 0;
+
+  bool isEnabled() const { return version != 0; }
+};
+
+/// A versioned capability applying only to the listed graph resources. The
+/// resource list is sorted and deduplicated when the target profile is built.
+struct CanonicalSyncResourceCapability {
+  std::uint16_t version = 0;
+  std::vector<std::uint32_t> resources;
+
+  bool supports(std::uint32_t resource) const {
+    return version != 0 &&
+           std::binary_search(resources.begin(), resources.end(), resource);
+  }
+};
+
 struct CanonicalSyncTargetCapabilities {
+  CanonicalSyncTargetProfile profile =
+      CanonicalSyncTargetProfile::Unsupported;
+
+  /// Issue order on one of these resources preserves an already established
+  /// completion fact and a later set may represent the issued prefix.
+  CanonicalSyncResourceCapability sameResourceCompletionOrdering;
+
+  /// A targeted barrier on one of these source resources drains its issued
+  /// prefix before every later target resource, rather than only ordering the
+  /// same resource. This is the explicit cross-resource barrier contract.
+  CanonicalSyncResourceCapability crossResourceTargetedBarrierCompletion;
+
+  /// Opaque graph-resource vocabulary used by target-qualified completion
+  /// certificates. It is absent when no such certificate contract is active.
+  std::optional<SyncCoverTargetCompletionResources>
+      targetCompletionResources;
+
   /// An A3 PIPE_MTE1 set issued after the final producer of an exact L0
   /// ownership use certifies completion of every earlier MTE1 producer in
   /// that use. The verified recipe may therefore use one ready event lane
   /// instead of one lane per producer.
-  bool mte1L0ReadySetCompletesPrefix = false;
+  CanonicalSyncBooleanCapability mte1L0ReadySetCompletesPrefix;
 
   /// An A3 PIPE_M set at an exhaustive branch join releases the exact L0
   /// operand slots consumed by whichever branch alternative executed. This
   /// is a narrow ownership-lifecycle contract, not generic PIPE_M completion
   /// ordering.
-  bool mL0AlternativeJoinSetCompletes = false;
+  CanonicalSyncBooleanCapability mL0AlternativeJoinSetCompletes;
 
   /// A PIPE_MTE1 set issued after a structured scope certifies completion of
   /// every earlier MTE1 operation issued by that scope. This is target
   /// evidence, not a consequence of ordinary MTE1 issue order.
-  bool mte1ScopeExitSetCompletesPrefix = false;
+  CanonicalSyncBooleanCapability mte1ScopeExitSetCompletesPrefix;
 
   /// An A3 PIPE_M -> PIPE_FIX event at the accumulator boundary orders the
   /// completed accumulator result before the single FIX consumer. This is a
   /// narrow target contract for the verified accumulator lifecycle; it does
   /// not make PIPE_M a generic direct-completion source.
-  bool mToFixAccumulatorBoundaryCompletes = false;
+  CanonicalSyncBooleanCapability mToFixAccumulatorBoundaryCompletes;
+
+  /// Exact physical L0C overwrite by an A3 MMAD accumulation is ordered by
+  /// the target without adding a generic PIPE_M completion rule.
+  CanonicalSyncBooleanCapability intrinsicMmadAccumulatorOrdering;
 };
 
 /// One authoritative synchronization graph plus the minimal MLIR side tables
@@ -152,7 +203,7 @@ public:
         scopeBindings_(std::move(scopeBindings)),
         controlBindings_(std::move(controlBindings)),
         storageSpaces_(std::move(storageSpaces)),
-        targetCapabilities_(targetCapabilities),
+        targetCapabilities_(std::move(targetCapabilities)),
         ownershipDiscoveryStatistics_(ownershipDiscoveryStatistics),
         eventReservations_(std::move(eventReservations)) {}
 

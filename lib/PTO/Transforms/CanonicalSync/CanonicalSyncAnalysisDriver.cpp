@@ -15,6 +15,7 @@
 #include "llvm/ADT/StringSwitch.h"
 
 #include <algorithm>
+#include <initializer_list>
 #include <utility>
 
 using namespace mlir;
@@ -118,6 +119,97 @@ bool isGmArgumentType(Type type) {
   return false;
 }
 
+std::uint32_t resourceId(PipelineType resource) {
+  return static_cast<std::uint32_t>(resource);
+}
+
+CanonicalSyncResourceCapability makeResourceCapability(
+    std::initializer_list<PipelineType> resources) {
+  CanonicalSyncResourceCapability capability;
+  capability.version = 1;
+  capability.resources.reserve(resources.size());
+  for (PipelineType resource : resources) {
+    capability.resources.push_back(resourceId(resource));
+  }
+  llvm::sort(capability.resources);
+  capability.resources.erase(
+      std::unique(capability.resources.begin(), capability.resources.end()),
+      capability.resources.end());
+  return capability;
+}
+
+CanonicalSyncTargetCapabilities makeCoreTargetCapabilities(
+    CanonicalSyncTargetProfile profile, bool vectorCompletionOrdered,
+    bool vectorBarrierCompletesCrossResource) {
+  CanonicalSyncTargetCapabilities capabilities;
+  capabilities.profile = profile;
+  capabilities.sameResourceCompletionOrdering = makeResourceCapability(
+      vectorCompletionOrdered
+          ? std::initializer_list<PipelineType>{PipelineType::PIPE_S,
+                                                PipelineType::PIPE_V}
+          : std::initializer_list<PipelineType>{PipelineType::PIPE_S});
+  capabilities.crossResourceTargetedBarrierCompletion =
+      makeResourceCapability(
+          vectorBarrierCompletesCrossResource
+              ? std::initializer_list<PipelineType>{
+                    PipelineType::PIPE_M, PipelineType::PIPE_MTE1,
+                    PipelineType::PIPE_MTE2, PipelineType::PIPE_MTE3,
+                    PipelineType::PIPE_FIX, PipelineType::PIPE_V}
+              : std::initializer_list<PipelineType>{
+                    PipelineType::PIPE_M, PipelineType::PIPE_MTE1,
+                    PipelineType::PIPE_MTE2, PipelineType::PIPE_MTE3,
+                    PipelineType::PIPE_FIX});
+  return capabilities;
+}
+
+CanonicalSyncTargetCapabilities
+getTargetCapabilities(func::FuncOp function) {
+  ModuleOp module = function->getParentOfType<ModuleOp>();
+  StringAttr targetArch =
+      module ? module->getAttrOfType<StringAttr>(kPTOTargetArchAttrName)
+             : StringAttr{};
+  if (!targetArch) {
+    return {};
+  }
+  const StringRef arch = targetArch.getValue();
+  if (arch == "a2") {
+    return makeCoreTargetCapabilities(CanonicalSyncTargetProfile::A2V1,
+                                      /*vectorCompletionOrdered=*/false,
+                                      /*vectorBarrierCompletesCrossResource=*/
+                                          true);
+  }
+  if (arch == "a2a3") {
+    return makeCoreTargetCapabilities(
+        CanonicalSyncTargetProfile::A2A3IntersectionV1,
+        /*vectorCompletionOrdered=*/false,
+        /*vectorBarrierCompletesCrossResource=*/true);
+  }
+  if (arch == "a3") {
+    CanonicalSyncTargetCapabilities capabilities =
+        makeCoreTargetCapabilities(CanonicalSyncTargetProfile::A3V1,
+                                   /*vectorCompletionOrdered=*/false,
+                                   /*vectorBarrierCompletesCrossResource=*/
+                                       true);
+    capabilities.targetCompletionResources =
+        SyncCoverTargetCompletionResources{resourceId(PipelineType::PIPE_MTE1),
+                                           resourceId(PipelineType::PIPE_M),
+                                           resourceId(PipelineType::PIPE_FIX)};
+    capabilities.mte1L0ReadySetCompletesPrefix.version = 1;
+    capabilities.mL0AlternativeJoinSetCompletes.version = 1;
+    capabilities.mte1ScopeExitSetCompletesPrefix.version = 1;
+    capabilities.mToFixAccumulatorBoundaryCompletes.version = 1;
+    capabilities.intrinsicMmadAccumulatorOrdering.version = 1;
+    return capabilities;
+  }
+  if (arch == "a5") {
+    return makeCoreTargetCapabilities(CanonicalSyncTargetProfile::A5V1,
+                                      /*vectorCompletionOrdered=*/true,
+                                      /*vectorBarrierCompletesCrossResource=*/
+                                          false);
+  }
+  return {};
+}
+
 } // namespace
 
 bool mlir::pto::canonical_sync_detail::isCanonicalSyncOwned(
@@ -132,10 +224,9 @@ bool mlir::pto::canonical_sync_detail::isTransparentRegionOperation(
 }
 
 bool mlir::pto::canonical_sync_detail::isCompletionOrdered(
-    std::uint32_t resource, Operation *operation) {
-  const PipelineType pipe = static_cast<PipelineType>(resource);
-  return pipe == PipelineType::PIPE_S ||
-         (pipe == PipelineType::PIPE_V && isTargetArchA5(operation));
+    std::uint32_t resource,
+    const CanonicalSyncTargetCapabilities &capabilities) {
+  return capabilities.sameResourceCompletionOrdering.supports(resource);
 }
 
 bool mlir::pto::canonical_sync_detail::canSignalDirectCompletion(
@@ -163,54 +254,28 @@ bool mlir::pto::canonical_sync_detail::canSignalDirectCompletion(
 }
 
 bool mlir::pto::canonical_sync_detail::canSignalPrefixCompletion(
-    std::uint32_t resource, Operation *operation) {
+    std::uint32_t resource,
+    const CanonicalSyncTargetCapabilities &capabilities) {
   // A later set may represent an earlier issued prefix only on resources with
   // an explicit in-order completion contract. Other physical resources may
   // still signal the completion of the immediately preceding operation.
-  return isCompletionOrdered(resource, operation);
+  return isCompletionOrdered(resource, capabilities);
 }
 
 ProgramBuilder::ProgramBuilder(func::FuncOp function,
                                const CanonicalSyncAnalysisOptions &options)
-    : function_(function), options_(options) {}
+    : function_(function), options_(options),
+      targetCapabilities_(getTargetCapabilities(function)) {}
 
 FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
-  ModuleOp module = function_->getParentOfType<ModuleOp>();
-  StringAttr targetArch =
-      module ? module->getAttrOfType<StringAttr>(kPTOTargetArchAttrName)
-             : StringAttr{};
-  const bool explicitA3 = targetArch && (targetArch.getValue() == "a2a3" ||
-                                         targetArch.getValue() == "a3");
-  const bool explicitA5 = targetArch && targetArch.getValue() == "a5";
-  std::vector<std::uint32_t> blockingBarrierResources;
-  if (explicitA3 || explicitA5) {
-    blockingBarrierResources = {
-        static_cast<std::uint32_t>(PipelineType::PIPE_M),
-        static_cast<std::uint32_t>(PipelineType::PIPE_MTE1),
-        static_cast<std::uint32_t>(PipelineType::PIPE_MTE2),
-        static_cast<std::uint32_t>(PipelineType::PIPE_MTE3),
-        static_cast<std::uint32_t>(PipelineType::PIPE_FIX)};
-    if (!explicitA5) {
-      blockingBarrierResources.push_back(
-          static_cast<std::uint32_t>(PipelineType::PIPE_V));
-    }
-  }
-  // These narrow A3 completion contracts are silicon-validated by the
-  // ownership-pipelined GEMM. A5 remains disabled until equivalent target
-  // evidence exists.
-  const CanonicalSyncTargetCapabilities targetCapabilities{
-      /*mte1L0ReadySetCompletesPrefix=*/explicitA3,
-      /*mL0AlternativeJoinSetCompletes=*/explicitA3,
-      /*mte1ScopeExitSetCompletesPrefix=*/explicitA3,
-      /*mToFixAccumulatorBoundaryCompletes=*/explicitA3};
   const bool failedBarrierConfiguration =
       !graph_.setBlockingTargetedBarrierResources(
-          std::move(blockingBarrierResources));
+          targetCapabilities_.crossResourceTargetedBarrierCompletion
+              .resources);
   const bool failedTargetCompletionConfiguration =
+      targetCapabilities_.targetCompletionResources &&
       !graph_.setTargetCompletionResources(
-          {static_cast<std::uint32_t>(PipelineType::PIPE_MTE1),
-           static_cast<std::uint32_t>(PipelineType::PIPE_M),
-           static_cast<std::uint32_t>(PipelineType::PIPE_FIX)});
+          *targetCapabilities_.targetCompletionResources);
   const bool failedStage =
       failedBarrierConfiguration || failedTargetCompletionConfiguration ||
       failed(validateInput()) || failed(extract()) || failed(buildScopes()) ||
@@ -219,8 +284,8 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
       failed(addCertifiedCompletionFrontiers()) ||
       failed(buildStorageConflictIndex()) || failed(addForwardDependencies()) ||
       failed(addRecurrenceDependencies()) ||
-      failed(addTargetCompletionCertificates(targetCapabilities)) ||
-      failed(discoverBasicOwnershipCertificates(targetCapabilities));
+      failed(addTargetCompletionCertificates(targetCapabilities_)) ||
+      failed(discoverBasicOwnershipCertificates(targetCapabilities_));
   if (failedBarrierConfiguration) {
     function_.emitError(
         "cannot configure canonical sync blocking-barrier resources");
@@ -244,7 +309,7 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
   return CanonicalSyncProgram(
       function_, std::move(graph_), std::move(nodeBindings_),
       std::move(scopeBindings_), std::move(controlBindings_),
-      std::move(storageSpaces), targetCapabilities,
+      std::move(storageSpaces), std::move(targetCapabilities_),
       ownershipDiscoveryStatistics_, std::move(eventReservations_));
 }
 
@@ -415,7 +480,7 @@ LogicalResult ProgramBuilder::buildNodesAndStorage() {
                   resources.end());
   for (std::uint32_t resource : resources) {
     const SyncCoverEdgeKind kind =
-        isCompletionOrdered(resource, function_.getOperation())
+        isCompletionOrdered(resource, targetCapabilities_)
             ? SyncCoverEdgeKind::CompletionPreservingIssueOrder
             : SyncCoverEdgeKind::NonCompletionPreservingIssueOrder;
     if (!graph_.setResourceRecurrenceCarryKind(resource, kind)) {
@@ -448,7 +513,7 @@ LogicalResult ProgramBuilder::buildNodesAndStorage() {
     const SyncCoverGraphResult node = graph_.addNode(
         resource, 1, context->second.scope, order, context->second.guard,
         std::move(completionTargets), representative,
-        canSignalPrefixCompletion(resource, function_.getOperation()));
+        canSignalPrefixCompletion(resource, targetCapabilities_));
     if (!node) {
       return compound->elementOp->emitError(
           "cannot construct canonical sync operation node");

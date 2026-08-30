@@ -173,6 +173,14 @@ public:
         1,
         1,
         true};
+    const bool l0ReadyEnabled =
+        capabilities_.mte1L0ReadySetCompletesPrefix.isEnabled();
+    const bool alternativeJoinEnabled =
+        capabilities_.mL0AlternativeJoinSetCompletes.isEnabled();
+    const bool scopeExitEnabled =
+        capabilities_.mte1ScopeExitSetCompletesPrefix.isEnabled();
+    const bool accumulatorBoundaryEnabled =
+        capabilities_.mToFixAccumulatorBoundaryCompletes.isEnabled();
 
     if (!initializeWorkCensus()) {
       return true;
@@ -193,22 +201,19 @@ public:
       if (!scope.isLoop) {
         continue;
       }
-      if (capabilities_.mte1L0ReadySetCompletesPrefix &&
-          capabilities_.mL0AlternativeJoinSetCompletes && consumeRecognizer()) {
+      if (l0ReadyEnabled && alternativeJoinEnabled && consumeRecognizer()) {
         add(recognizeL0(scope.id, l0));
       }
       if (statistics_.truncated) {
         break;
       }
-      if (capabilities_.mte1ScopeExitSetCompletesPrefix &&
-          consumeRecognizer()) {
+      if (scopeExitEnabled && consumeRecognizer()) {
         add(recognizeHierarchical(scope.id, l1));
       }
       if (statistics_.truncated) {
         break;
       }
-      if (capabilities_.mte1ScopeExitSetCompletesPrefix &&
-          consumeRecognizer()) {
+      if (scopeExitEnabled && consumeRecognizer()) {
         for (SyncCoverBasicOwnershipCertificate certificate :
              recognizeParity(scope.id, l1)) {
           add(std::move(certificate));
@@ -220,8 +225,7 @@ public:
       if (statistics_.truncated) {
         break;
       }
-      if (capabilities_.mToFixAccumulatorBoundaryCompletes &&
-          consumeRecognizer()) {
+      if (accumulatorBoundaryEnabled && consumeRecognizer()) {
         add(recognizeHierarchical(scope.id, accumulator));
       }
       if (statistics_.truncated) {

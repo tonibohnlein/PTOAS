@@ -137,8 +137,8 @@ LogicalResult ProgramBuilder::addCertifiedCompletionFrontiers() {
     }
     const SyncCoverNode &edgeSource = graph.getNodes()[edge.source];
     const SyncCoverNode &edgeTarget = graph.getNodes()[edge.target];
-    const bool certifiedContract = canSignalPrefixCompletion(
-        edgeSource.resource, function_.getOperation());
+    const bool certifiedContract =
+        canSignalPrefixCompletion(edgeSource.resource, targetCapabilities_);
     const bool sameControlChain =
         edgeSource.scope == edgeTarget.scope &&
         edgeSource.guard.literals == edgeTarget.guard.literals;
@@ -182,8 +182,11 @@ LogicalResult ProgramBuilder::addCertifiedCompletionFrontiers() {
 
 LogicalResult ProgramBuilder::addTargetCompletionCertificates(
     const CanonicalSyncTargetCapabilities &capabilities) {
-  if (!capabilities.mte1L0ReadySetCompletesPrefix &&
-      !capabilities.mToFixAccumulatorBoundaryCompletes) {
+  const bool mte1L0ReadyEnabled =
+      capabilities.mte1L0ReadySetCompletesPrefix.isEnabled();
+  const bool accumulatorBoundaryEnabled =
+      capabilities.mToFixAccumulatorBoundaryCompletes.isEnabled();
+  if (!mte1L0ReadyEnabled && !accumulatorBoundaryEnabled) {
     return success();
   }
   const auto domainFor = [&](AddressSpace space)
@@ -265,18 +268,22 @@ LogicalResult ProgramBuilder::addTargetCompletionCertificates(
     if (!oneControlChain) {
       continue;
     }
-    if (capabilities.mte1L0ReadySetCompletesPrefix && !l0Domains.empty() &&
+    const bool mte1L0ReadyDemand =
+        mte1L0ReadyEnabled && !l0Domains.empty() &&
         source.resource ==
             static_cast<std::uint32_t>(PipelineType::PIPE_MTE1) &&
-        target.resource == static_cast<std::uint32_t>(PipelineType::PIPE_M)) {
+        target.resource == static_cast<std::uint32_t>(PipelineType::PIPE_M);
+    if (mte1L0ReadyDemand) {
       if (const auto domain = exactRawDomain(demand, l0Domains)) {
         mte1Uses[target.physicalAnchor].push_back({demandId, *domain});
       }
     }
-    if (capabilities.mToFixAccumulatorBoundaryCompletes && accumulator &&
+    const bool accumulatorBoundaryDemand =
+        accumulatorBoundaryEnabled && accumulator &&
         source.resource == static_cast<std::uint32_t>(PipelineType::PIPE_M) &&
         target.resource ==
-            static_cast<std::uint32_t>(PipelineType::PIPE_FIX)) {
+            static_cast<std::uint32_t>(PipelineType::PIPE_FIX);
+    if (accumulatorBoundaryDemand) {
       if (const auto domain = exactRawDomain(demand, accumulatorDomains)) {
         accumulatorUses[{source.physicalExit, target.physicalAnchor}]
             .push_back({demandId, *domain});
@@ -520,7 +527,7 @@ LogicalResult ProgramBuilder::addIssueNode(SyncCoverNodeId target,
     edge.target = target;
     edge.scope = *scope;
     edge.kind =
-        isCompletionOrdered(sourceNode.resource, function_.getOperation())
+        isCompletionOrdered(sourceNode.resource, targetCapabilities_)
             ? SyncCoverEdgeKind::CompletionPreservingIssueOrder
             : SyncCoverEdgeKind::NonCompletionPreservingIssueOrder;
     if (!graph_.addEdge(std::move(edge))) {
@@ -996,7 +1003,7 @@ bool ProgramBuilder::isDemandImplicitlyComplete(SyncCoverNodeId source,
   const SyncCoverNode &sourceNode = graph_.getNodes()[source];
   const SyncCoverNode &targetNode = graph_.getNodes()[target];
   return sourceNode.resource == targetNode.resource &&
-         isCompletionOrdered(sourceNode.resource, function_.getOperation());
+         isCompletionOrdered(sourceNode.resource, targetCapabilities_);
 }
 
 LogicalResult ProgramBuilder::collectEnclosingLoopControls(
@@ -1112,7 +1119,7 @@ bool ProgramBuilder::hasIntrinsicMmadAccumulatorOrdering(
     const SyncCoverStorageAccess &sourceAccess,
     const SyncCoverStorageAccess &targetAccess) {
   const bool unsupported =
-      !isTargetArchA3(function_.getOperation()) ||
+      !targetCapabilities_.intrinsicMmadAccumulatorOrdering.isEnabled() ||
       graph_.getNodes()[source].resource !=
           static_cast<std::uint32_t>(PipelineType::PIPE_M) ||
       graph_.getNodes()[target].resource !=

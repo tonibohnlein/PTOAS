@@ -202,10 +202,65 @@ StringRef objectiveName(pto::CanonicalSyncSelectionObjective objective) {
   return "unknown";
 }
 
+StringRef targetProfileName(pto::CanonicalSyncTargetProfile profile) {
+  switch (profile) {
+  case pto::CanonicalSyncTargetProfile::Unsupported:
+    return "unsupported";
+  case pto::CanonicalSyncTargetProfile::A2V1:
+    return "a2-v1";
+  case pto::CanonicalSyncTargetProfile::A2A3IntersectionV1:
+    return "a2a3-intersection-v1";
+  case pto::CanonicalSyncTargetProfile::A3V1:
+    return "a3-v1";
+  case pto::CanonicalSyncTargetProfile::A5V1:
+    return "a5-v1";
+  }
+  return "unknown";
+}
+
 llvm::json::Array jsonUnsignedValues(ArrayRef<std::uint64_t> values) {
   llvm::json::Array result;
   for (std::uint64_t value : values) {
     result.push_back(jsonInteger(value));
+  }
+  return result;
+}
+
+llvm::json::Object jsonResourceCapability(
+    const pto::CanonicalSyncResourceCapability &capability) {
+  llvm::json::Array resources;
+  for (std::uint32_t resource : capability.resources) {
+    resources.push_back(jsonInteger(resource));
+  }
+  return llvm::json::Object{{"version", jsonInteger(capability.version)},
+                            {"resources", std::move(resources)}};
+}
+
+llvm::json::Object jsonTargetCapabilities(
+    const pto::CanonicalSyncTargetCapabilities &capabilities) {
+  llvm::json::Object result{
+      {"profile", targetProfileName(capabilities.profile)},
+      {"same_resource_completion_ordering",
+       jsonResourceCapability(capabilities.sameResourceCompletionOrdering)},
+      {"cross_resource_targeted_barrier_completion",
+       jsonResourceCapability(
+           capabilities.crossResourceTargetedBarrierCompletion)},
+      {"mte1_l0_ready_set_completes_prefix",
+       jsonInteger(capabilities.mte1L0ReadySetCompletesPrefix.version)},
+      {"m_l0_alternative_join_set_completes",
+       jsonInteger(capabilities.mL0AlternativeJoinSetCompletes.version)},
+      {"mte1_scope_exit_set_completes_prefix",
+       jsonInteger(capabilities.mte1ScopeExitSetCompletesPrefix.version)},
+      {"m_to_fix_accumulator_boundary_completes",
+       jsonInteger(capabilities.mToFixAccumulatorBoundaryCompletes.version)},
+      {"intrinsic_mmad_accumulator_ordering",
+       jsonInteger(capabilities.intrinsicMmadAccumulatorOrdering.version)}};
+  if (capabilities.targetCompletionResources) {
+    result["target_completion_resources"] = llvm::json::Object{
+        {"mte1", jsonInteger(capabilities.targetCompletionResources->mte1)},
+        {"matrix",
+         jsonInteger(capabilities.targetCompletionResources->matrix)},
+        {"fix", jsonInteger(capabilities.targetCompletionResources->fix)}};
   }
   return result;
 }
@@ -494,6 +549,8 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
   return llvm::json::Object{
       {"schema", "ptoas.canonical_sync.v1"},
       {"function", report.function},
+      {"target_capabilities",
+       jsonTargetCapabilities(report.targetCapabilities)},
       {"selection_objective", objectiveName(report.selectionObjective)},
       {"enabled_mechanism_family_mask",
        jsonInteger(report.enabledMechanismFamilies)},

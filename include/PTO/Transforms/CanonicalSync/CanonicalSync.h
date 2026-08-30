@@ -172,6 +172,7 @@ struct CanonicalSyncStrategyReport {
 
 struct CanonicalSyncComparisonReport {
   std::string function;
+  CanonicalSyncTargetCapabilities targetCapabilities;
   CanonicalSyncSelectionObjective selectionObjective =
       CanonicalSyncSelectionObjective::ActionFirst;
   CanonicalSyncMechanismFamilyMask enabledMechanismFamilies =

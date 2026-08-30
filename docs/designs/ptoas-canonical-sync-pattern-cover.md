@@ -58,6 +58,29 @@ Barriers inside `scf.for` are rejected until a balanced recurrence contract is
 available. Whole-core synchronization and memory-fence operations remain
 preserved fixed constraints, but are not yet credited as coverage supply.
 
+Target semantics are resolved once into an immutable, versioned capability
+profile. Every individual contract has version zero when disabled; an unknown
+or missing `pto.target_arch` therefore contributes no inferred completion
+semantics. Version-one profiles currently distinguish `a2`, the legacy
+`a2a3` intersection, `a3`, and `a5`:
+
+The exact-operation completion signalled by a direct set/wait is part of the
+target-neutral mechanism basis. The profile controls only stronger facts that
+allow completion to propagate beyond that exact operation.
+
+| Contract | `a2` / `a2a3` | `a3` | `a5` |
+| --- | --- | --- | --- |
+| same-resource completion order | `PIPE_S` | `PIPE_S` | `PIPE_S`, `PIPE_V` |
+| targeted barrier drains before other resources | `M`, `MTE1`, `MTE2`, `MTE3`, `FIX`, `V` | same | `M`, `MTE1`, `MTE2`, `MTE3`, `FIX` |
+| L0-ready, alternative-join, scope-exit, accumulator-boundary ownership | disabled | version 1 | disabled |
+| exact MMAD accumulator overwrite ordering | disabled | version 1 | disabled |
+
+The `a2a3` profile is deliberately the A2/A3 intersection rather than an
+alias for A3. In particular, it cannot enable an A3 ownership certificate or
+the exact MMAD overwrite exception. Adding or widening a contract requires a
+new version and target evidence; pipeline-name tests outside the provider do
+not authorize target behavior.
+
 CanonicalSync marks every synchronization operation, guard, and dynamic event
 lane helper that it creates with the unit attribute `pto.canonical_sync`. This
 attribute is an internal ownership boundary, not a user extension point. An
@@ -546,12 +569,13 @@ produce executable output without synchronization.
 `--canonical-sync-comparison-report` remain accepted compatibility spellings.
 
 The JSON root carries schema `ptoas.canonical_sync.v1` and the function name.
-It reports graph nodes and edges, original demand provenance and unique coverage
+It reports the resolved target profile, every capability version and resource
+set, graph nodes and edges, original demand provenance and unique coverage
 rows, complete obligation and selection-basis sizes, reduced-row and truncation
-status, preparation time, direct mechanisms, bounded source-prefix construction,
-ownership certificate counts and truncation, enabled mechanism families,
-candidate and selected mechanism origins, pair proposals/evaluations, and
-retained synergistic pairs. Each strategy
+status, preparation time, direct mechanisms, bounded source-prefix
+construction, ownership certificate counts and truncation, enabled mechanism
+families, candidate and selected mechanism origins, pair
+proposals/evaluations, and retained synergistic pairs. Each strategy
 reports selection/cleanup work, selected events and barriers (including each
 targeted-barrier recipe separately), predicted synchronization instructions,
 all structural cost components, event-domain pressure and live mechanisms,
