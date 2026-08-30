@@ -19,6 +19,17 @@ using namespace mlir::pto;
 
 namespace {
 
+bool canStandaloneTargetedBarrierComplete(const SyncCoverGraph &graph,
+                                          std::uint32_t sourceResource,
+                                          std::uint32_t targetResource) {
+  if (!graph.supportsBlockingTargetedBarrier(sourceResource)) {
+    return false;
+  }
+  return sourceResource == targetResource ||
+         graph.supportsCrossResourceTargetedBarrier(sourceResource,
+                                                    targetResource);
+}
+
 constexpr std::uint64_t kHashOffset = 1469598103934665603ULL;
 constexpr std::uint64_t kHashPrime = 1099511628211ULL;
 
@@ -1623,7 +1634,8 @@ validateSupplyBindings(const SyncCoverGraph &graph,
       const bool validPipeDrain =
           targetPipeDrain && descriptor.actions.size() == 1 &&
           *binding.barrierAction == 0 && targetLocalFencePrecedes &&
-          graph.supportsBlockingTargetedBarrier(sourceResource) &&
+          canStandaloneTargetedBarrierComplete(graph, sourceResource,
+                                               targetResource) &&
           action.resource == sourceResource &&
           action.drainedResources ==
               std::vector<std::uint32_t>{sourceResource} &&
@@ -1684,7 +1696,8 @@ validateSupplyBindings(const SyncCoverGraph &graph,
           sourceNode.order < targetNode.order &&
           sourceNode.physicalAnchor != targetNode.physicalAnchor &&
           syncCoverGuardsCompatible(sourceNode.guard, targetNode.guard) &&
-          graph.supportsBlockingTargetedBarrier(sourceResource) &&
+          canStandaloneTargetedBarrierComplete(graph, sourceResource,
+                                               targetResource) &&
           action.resource == sourceResource &&
           action.drainedResources ==
               std::vector<std::uint32_t>{sourceResource} &&
@@ -1698,7 +1711,8 @@ validateSupplyBindings(const SyncCoverGraph &graph,
           graph.getScopes()[edge.scope].isLoop &&
           graph.scopeContains(edge.scope, sourceNode.scope) &&
           graph.scopeContains(edge.scope, targetNode.scope) &&
-          graph.supportsBlockingTargetedBarrier(sourceResource) &&
+          canStandaloneTargetedBarrierComplete(graph, sourceResource,
+                                               targetResource) &&
           action.resource == sourceResource &&
           action.anchor.kind == SyncCoverAnchorKind::LoopBodyEntry &&
           action.anchor.scope == edge.scope &&
@@ -1710,7 +1724,8 @@ validateSupplyBindings(const SyncCoverGraph &graph,
       const bool validSourceLocalDrain =
           sourceLocalDrain && namesExactDemand && afterSourceFencePrecedes &&
           descriptor.actions.size() == 1 && *binding.barrierAction == 0 &&
-          graph.supportsBlockingTargetedBarrier(sourceResource) &&
+          canStandaloneTargetedBarrierComplete(graph, sourceResource,
+                                               targetResource) &&
           action.resource == sourceResource &&
           action.anchor.kind == SyncCoverAnchorKind::AfterNode &&
           action.anchor.node == sourceNode.physicalExit &&
@@ -1731,7 +1746,8 @@ validateSupplyBindings(const SyncCoverGraph &graph,
       const bool validSourcePrefixDrain =
           sourcePrefixDrain && namesExactDemand && afterSourceFencePrecedes &&
           descriptor.actions.size() == 1 && *binding.barrierAction == 0 &&
-          graph.supportsBlockingTargetedBarrier(sourceResource) &&
+          canStandaloneTargetedBarrierComplete(graph, sourceResource,
+                                               targetResource) &&
           action.resource == sourceResource &&
           action.anchor.kind == SyncCoverAnchorKind::AfterNode &&
           action.anchor.node == sourcePrefixCut.physicalExit &&

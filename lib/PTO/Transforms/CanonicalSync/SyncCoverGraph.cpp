@@ -418,6 +418,29 @@ SyncCoverGraphResult SyncCoverGraph::setBlockingTargetedBarrierResources(
   return {SyncCoverGraphError::None, blockingTargetedBarrierResources_.size()};
 }
 
+SyncCoverGraphResult SyncCoverGraph::setCrossResourceTargetedBarrierPairs(
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> resourcePairs) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen,
+            crossResourceTargetedBarrierPairs_.size()};
+  }
+  std::sort(resourcePairs.begin(), resourcePairs.end());
+  resourcePairs.erase(
+      std::unique(resourcePairs.begin(), resourcePairs.end()),
+      resourcePairs.end());
+  const bool invalid = std::any_of(resourcePairs.begin(), resourcePairs.end(),
+                                   [](const auto &pair) {
+    return pair.first == pair.second;
+  });
+  if (invalid) {
+    return {SyncCoverGraphError::InvalidCompletionTargets,
+            crossResourceTargetedBarrierPairs_.size()};
+  }
+  crossResourceTargetedBarrierPairs_ = std::move(resourcePairs);
+  return {SyncCoverGraphError::None,
+          crossResourceTargetedBarrierPairs_.size()};
+}
+
 SyncCoverGraphResult SyncCoverGraph::setTargetCompletionResources(
     SyncCoverTargetCompletionResources resources) {
   if (!canMutateStructure()) {
@@ -437,6 +460,14 @@ bool SyncCoverGraph::supportsBlockingTargetedBarrier(
     std::uint32_t resource) const {
   return std::binary_search(blockingTargetedBarrierResources_.begin(),
                             blockingTargetedBarrierResources_.end(), resource);
+}
+
+bool SyncCoverGraph::supportsCrossResourceTargetedBarrier(
+    std::uint32_t sourceResource, std::uint32_t targetResource) const {
+  return sourceResource != targetResource &&
+         std::binary_search(crossResourceTargetedBarrierPairs_.begin(),
+                            crossResourceTargetedBarrierPairs_.end(),
+                            std::make_pair(sourceResource, targetResource));
 }
 
 SyncCoverGraphResult SyncCoverGraph::setBlockingTargetedBarrierPrefix(

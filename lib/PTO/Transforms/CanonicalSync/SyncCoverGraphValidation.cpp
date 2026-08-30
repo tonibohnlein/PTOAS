@@ -123,6 +123,11 @@ SyncCoverGraphResult SyncCoverGraph::validate() const {
       return {SyncCoverGraphError::InvalidCompletionTargets, physicalTarget};
     }
   }
+  for (const auto &[source, target] : crossResourceTargetedBarrierPairs_) {
+    if (source == target || !supportsBlockingTargetedBarrier(source)) {
+      return {SyncCoverGraphError::InvalidCompletionTargets, std::nullopt};
+    }
+  }
   return {SyncCoverGraphError::None, std::nullopt};
 }
 

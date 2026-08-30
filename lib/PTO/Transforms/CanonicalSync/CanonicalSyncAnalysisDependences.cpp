@@ -685,9 +685,7 @@ LogicalResult ProgramBuilder::addFixedBarrier(BarrierOp barrier,
       }
     }
   }
-  const bool blocksSubsequentResources =
-      allPipe || graph_.supportsBlockingTargetedBarrier(resource);
-  if (blocksSubsequentResources) {
+  if (allPipe) {
     for (const SyncCoverNode &node : graph_.getNodes()) {
       if (!consumePairInspection()) {
         return function_.emitError(
@@ -696,7 +694,19 @@ LogicalResult ProgramBuilder::addFixedBarrier(BarrierOp barrier,
       remainingTargetResources.insert(node.resource);
     }
   } else {
-    remainingTargetResources.insert(resource);
+    if (graph_.supportsBlockingTargetedBarrier(resource)) {
+      remainingTargetResources.insert(resource);
+    }
+    for (const SyncCoverNode &node : graph_.getNodes()) {
+      if (!consumePairInspection()) {
+        return function_.emitError(
+            "canonical sync pair-inspection limit exceeded");
+      }
+      if (graph_.supportsCrossResourceTargetedBarrier(resource,
+                                                      node.resource)) {
+        remainingTargetResources.insert(node.resource);
+      }
+    }
   }
   llvm::sort(sources);
   sources.erase(std::unique(sources.begin(), sources.end()), sources.end());

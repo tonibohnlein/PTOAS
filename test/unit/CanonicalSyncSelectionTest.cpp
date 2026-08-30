@@ -1838,6 +1838,8 @@ bool testStructuralCostSeparatesBarrierAndEventActions() {
                 "add barrier-priority demand");
   passed &= check(graph.setBlockingTargetedBarrierResources({1}),
                   "enable barrier-priority source drain") &&
+            check(graph.setCrossResourceTargetedBarrierPairs({{1, 2}}),
+                  "enable directed barrier-priority completion") &&
             check(graph.freezeStructure(), "freeze barrier-priority graph");
 
   CanonicalSyncPatternProblem problem(graph, allDemands(graph));
@@ -4102,6 +4104,9 @@ bool testSourceLocalBarrierCoversFanout() {
   }
   passed &= check(graph.setBlockingTargetedBarrierResources({1}),
                   "enable source-local pipe drain") &&
+            check(graph.setCrossResourceTargetedBarrierPairs(
+                      {{1, 2}, {1, 3}}),
+                  "enable directed source-local completion") &&
             check(graph.freezeStructure(), "freeze source-local graph");
   CanonicalSyncPatternProblem problem(graph, allDemands(graph));
   for (std::size_t index = 0; index < targets.size(); ++index) {
@@ -4140,6 +4145,8 @@ bool testSourceLocalBarrierReconcilesReducedBasis() {
             "add reduced transitive obligation") &&
       check(graph.setBlockingTargetedBarrierResources({1, 2}),
             "enable reduced source drain") &&
+      check(graph.setCrossResourceTargetedBarrierPairs({{1, 2}}),
+            "enable directed reduced source completion") &&
       check(graph.freezeStructure(), "freeze reduced source graph");
   if (!passed) {
     return false;
@@ -4200,6 +4207,8 @@ bool testSourceLocalBarrierRejectsUnsupportedAndSameMacro() {
       check(macro.addDemand(demand(entry, phase)), "add same-macro demand") &&
       check(macro.setBlockingTargetedBarrierResources({1}),
             "enable macro source pipe") &&
+      check(macro.setCrossResourceTargetedBarrierPairs({{1, 2}}),
+            "enable directed macro source completion") &&
       check(macro.freezeStructure(), "freeze same-macro graph");
   CanonicalSyncPatternProblem macroProblem(macro, allDemands(macro));
   return passed &&
@@ -4230,6 +4239,8 @@ bool testSourcePrefixBarrierConsolidatesIssuedSources() {
   }
   passed &= check(graph.setBlockingTargetedBarrierResources({1}),
                   "enable prefix source drain") &&
+            check(graph.setCrossResourceTargetedBarrierPairs({{1, 2}}),
+                  "enable directed prefix completion") &&
             check(graph.setBlockingTargetedBarrierPrefix(
                       1, sources.back(), {sources[0], sources[1], sources[2]}),
                   "certify the issued source prefix") &&
@@ -4294,7 +4305,10 @@ bool testSourcePrefixFinalVerificationWorkIsBounded() {
                   "add bounded-verification cut demand");
     bindings.push_back({{target, sourceDemand}, {target, cutDemand}});
   }
-  passed &= check(graph.freezeStructure(),
+  passed &= check(graph.setCrossResourceTargetedBarrierPairs(
+                      {{1, 11}, {2, 12}, {3, 13}}),
+                  "enable directed bounded-verification completion") &&
+            check(graph.freezeStructure(),
                   "freeze bounded-verification source-prefix graph");
   if (!passed) {
     return false;
@@ -4350,6 +4364,8 @@ bool testDeepScopeLcaVerificationWorkIsBounded() {
         graph.addDemand(demand(source, target)), passed, "add deep-LCA demand");
     passed &= check(graph.setBlockingTargetedBarrierResources({1}),
                     "enable deep-LCA source drain") &&
+              check(graph.setCrossResourceTargetedBarrierPairs({{1, 2}}),
+                    "enable directed deep-LCA completion") &&
               check(graph.freezeStructure(), "freeze deep-LCA graph");
     if (!passed) {
       return std::nullopt;
@@ -4482,6 +4498,8 @@ bool testSourcePrefixBarrierKeepsDistanceQualifiers() {
   passed &=
       check(graph.setBlockingTargetedBarrierResources({1}),
             "enable mixed-distance source pipe") &&
+      check(graph.setCrossResourceTargetedBarrierPairs({{1, 2}}),
+            "enable directed mixed-distance completion") &&
       check(graph.setBlockingTargetedBarrierPrefix(1, cut, {source}),
             "certify mixed-distance issued prefix") &&
       check(graph.freezeStructure(), "freeze mixed-distance prefix graph");

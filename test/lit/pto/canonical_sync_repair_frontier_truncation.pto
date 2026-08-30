@@ -6,9 +6,10 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Force optional collective repair-frontier discovery to truncate after its
-// first inspection. Owner-derived repair mechanisms admitted before discovery
-// must remain selectable and avoid the localized PIPE_ALL backstop.
+// Cross-resource pipe drains are not legal without a target capability that
+// certifies their directed completion contract. The down-projection case then
+// exceeds the event-channel supply, so the pass must use its explicit localized
+// PIPE_ALL backstop instead of selecting an uncertified repair mechanism.
 
 // RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --emit-pto-ir \
@@ -21,16 +22,17 @@
 // RUN: FileCheck %s < %t.json
 
 // CHECK: "selection_objective": "action-first"
-// CHECK: "emitted_pipe_all_barriers": 0
+// CHECK: "emitted_pipe_all_barriers": 31
 // CHECK: "error": 0
-// CHECK: "plan_signature": "0x2c432d26d042bc23"
+// CHECK: "plan_signature": "0x7eb17dfe8ead2b71"
 // CHECK: "precise_error": 4
 // CHECK: "repair_frontier_truncated": true
-// CHECK: "repair_rounds": 1
+// CHECK: "repair_rounds": 3
 // CHECK: "selected_mechanisms_by_origin": {
-// CHECK: "repair-source-local-pipe-drain": 2
-// CHECK-NEXT: "repair-source-prefix-pipe-drain": 1
-// CHECK-NEXT: "repair-target-local-pipe-drain": 7
-// CHECK: "used_localized_pipe_all": false
+// CHECK: "localized-pipe-all": 31
+// CHECK: "repair-source-local-pipe-drain": 0
+// CHECK-NEXT: "repair-source-prefix-pipe-drain": 0
+// CHECK-NEXT: "repair-target-local-pipe-drain": 0
+// CHECK: "used_localized_pipe_all": true
 // CHECK: "verification_error": 0
 // CHECK: "verified": true

@@ -131,6 +131,14 @@ struct CanonicalSyncResourceCapability {
   }
 };
 
+/// A versioned directed capability applying only to the listed source/target
+/// graph-resource pairs. The pair list is sorted and deduplicated when the
+/// target profile is built.
+struct CanonicalSyncDirectedResourceCapability {
+  std::uint16_t version = 0;
+  std::vector<std::pair<std::uint32_t, std::uint32_t>> resourcePairs;
+};
+
 struct CanonicalSyncTargetCapabilities {
   CanonicalSyncTargetProfile profile =
       CanonicalSyncTargetProfile::Unsupported;
@@ -139,10 +147,16 @@ struct CanonicalSyncTargetCapabilities {
   /// completion fact and a later set may represent the issued prefix.
   CanonicalSyncResourceCapability sameResourceCompletionOrdering;
 
-  /// A targeted barrier on one of these source resources drains its issued
-  /// prefix before every later target resource, rather than only ordering the
-  /// same resource. This is the explicit cross-resource barrier contract.
-  CanonicalSyncResourceCapability crossResourceTargetedBarrierCompletion;
+  /// A targeted barrier on one of these resources drains that resource's
+  /// issued prefix. This may order a subsequent signal on the same resource,
+  /// but does not by itself publish completion to another resource.
+  CanonicalSyncResourceCapability targetedBarrierDrainsSourcePrefix;
+
+  /// A naked targeted barrier on the source resource publishes completion to
+  /// the listed target resource. This stronger directed contract is separate
+  /// from source-prefix draining and defaults to unsupported.
+  CanonicalSyncDirectedResourceCapability
+      crossResourceTargetedBarrierCompletion;
 
   /// Opaque graph-resource vocabulary used by target-qualified completion
   /// certificates. It is absent when no such certificate contract is active.

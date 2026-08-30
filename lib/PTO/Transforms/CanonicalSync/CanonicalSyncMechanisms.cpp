@@ -880,9 +880,15 @@ bool canUseDistanceZeroEvent(const SyncCoverGraph &graph,
          syncCoverEndpointsCoExecute(graph, edge);
 }
 
-bool canUseTargetLocalPipeDrain(const CanonicalSyncProgram &program,
-                                std::uint32_t resource) {
-  return program.getGraph().supportsBlockingTargetedBarrier(resource);
+bool canUseStandaloneTargetedBarrier(const SyncCoverGraph &graph,
+                                     std::uint32_t sourceResource,
+                                     std::uint32_t targetResource) {
+  if (!graph.supportsBlockingTargetedBarrier(sourceResource)) {
+    return false;
+  }
+  return sourceResource == targetResource ||
+         graph.supportsCrossResourceTargetedBarrier(sourceResource,
+                                                    targetResource);
 }
 
 bool canUseTargetPrefixEvent(const CanonicalSyncProgram &program,
@@ -901,7 +907,7 @@ bool canUseTargetPrefixEvent(const CanonicalSyncProgram &program,
                                graph.getScopes()[demand.scope].timeline);
   const bool prefixCompletion = source.completionSignalCoversIssuedPrefix;
   const bool barrierCompletesPrefix =
-      canUseTargetLocalPipeDrain(program, source.resource);
+      graph.supportsBlockingTargetedBarrier(source.resource);
   return validRecurrence && !sameMacroOperation &&
          source.resource != target.resource &&
          (prefixCompletion || barrierCompletesPrefix);
@@ -1301,8 +1307,9 @@ makeTargetPrefixEvent(const CanonicalSyncProgram &program,
   const SyncCoverNode &target = graph.getNodes()[demand.target];
   const bool needsBarrier = targetPrefixNeedsBarrier(program, demand);
   CanonicalSyncMechanismDescriptor descriptor;
+  descriptor.kind = CanonicalSyncMechanismKind::Event;
+  descriptor.eventUses.push_back({domain, 1, std::nullopt});
   if (needsBarrier) {
-    descriptor.kind = CanonicalSyncMechanismKind::Barrier;
     descriptor.actions.push_back(
         {CanonicalSyncActionKind::Barrier,
          source.resource,
@@ -1311,34 +1318,26 @@ makeTargetPrefixEvent(const CanonicalSyncProgram &program,
          0,
          {source.resource},
          CanonicalSyncBarrierKind::Targeted});
-  } else {
-    descriptor.kind = CanonicalSyncMechanismKind::Event;
-    descriptor.eventUses.push_back({domain, 1, std::nullopt});
-    descriptor.actions.push_back(
-        {CanonicalSyncActionKind::EventSet,
-         source.resource,
-         {SyncCoverAnchorKind::BeforeNode, target.id, 0, 0},
-         0,
-         0,
-         {}});
-    descriptor.actions.push_back(
-        {CanonicalSyncActionKind::EventWait,
-         target.resource,
-         {SyncCoverAnchorKind::BeforeNode, target.id, 0, 0},
-         0,
-         0,
-         {}});
   }
+  descriptor.actions.push_back(
+      {CanonicalSyncActionKind::EventSet,
+       source.resource,
+       {SyncCoverAnchorKind::BeforeNode, target.id, 0, 0},
+       0,
+       0,
+       {}});
+  descriptor.actions.push_back(
+      {CanonicalSyncActionKind::EventWait,
+       target.resource,
+       {SyncCoverAnchorKind::BeforeNode, target.id, 0, 0},
+       0,
+       0,
+       {}});
   for (SyncCoverDemandId demandId : demandIds) {
     CanonicalSyncSupplyBinding binding;
     binding.edge = getDemandEdge(graph.getDemands()[demandId]);
-    if (needsBarrier) {
-      binding.barrierAction = 0;
-      binding.proof = CanonicalSyncSupplyProof::TargetLocalPipeDrainAction;
-    } else {
-      binding.eventUse = 0;
-      binding.proof = CanonicalSyncSupplyProof::TargetLocalFenceAction;
-    }
+    binding.eventUse = 0;
+    binding.proof = CanonicalSyncSupplyProof::TargetLocalFenceAction;
     binding.attestedDemand = demandId;
     if (binding.edge.distance == 0) {
       binding.applicability = SyncCoverSupplyApplicability::DistanceZeroOnly;
@@ -1361,12 +1360,9 @@ bool verifyTargetPrefixEvent(
   const SyncCoverDemand &demand = graph.getDemands()[demandIds.front()];
   const bool needsBarrier = targetPrefixNeedsBarrier(program, demand);
   const bool correctShape =
-      needsBarrier
-          ? descriptor.kind == CanonicalSyncMechanismKind::Barrier &&
-                descriptor.eventUses.empty() && descriptor.actions.size() == 1
-          : descriptor.kind == CanonicalSyncMechanismKind::Event &&
-                descriptor.eventUses.size() == 1 &&
-                descriptor.actions.size() == 2;
+      descriptor.kind == CanonicalSyncMechanismKind::Event &&
+      descriptor.eventUses.size() == 1 &&
+      descriptor.actions.size() == (needsBarrier ? 3 : 2);
   if (!canUseTargetPrefixEvent(program, demand) || !correctShape ||
       descriptor.supplies.size() != demandIds.size()) {
     return false;
@@ -1407,8 +1403,7 @@ bool verifyTargetPrefixEvent(
                    target.physicalAnchor &&
                targetPrefixNeedsBarrier(program, candidate) == needsBarrier &&
                graph.getNodes()[candidate.source].resource == source.resource &&
-               (needsBarrier ||
-                graph.getNodes()[candidate.target].resource == target.resource);
+               graph.getNodes()[candidate.target].resource == target.resource;
       });
   std::vector<SyncCoverDemandId> attestedDemands;
   const bool suppliesMatch = llvm::all_of(
@@ -1428,14 +1423,10 @@ bool verifyTargetPrefixEvent(
                    candidate.sourceGuard.literals &&
                binding.edge.targetGuard.literals ==
                    candidate.targetGuard.literals &&
-               (needsBarrier
-                    ? !binding.eventUse && binding.barrierAction == 0
-                    : binding.eventUse == 0 && !binding.barrierAction) &&
+               binding.eventUse == 0 && !binding.barrierAction &&
                !binding.produceAction && !binding.consumeAction &&
                binding.proof ==
-                   (needsBarrier
-                        ? CanonicalSyncSupplyProof::TargetLocalPipeDrainAction
-                        : CanonicalSyncSupplyProof::TargetLocalFenceAction) &&
+                   CanonicalSyncSupplyProof::TargetLocalFenceAction &&
                binding.completionExport ==
                    CanonicalSyncSupplyExport::LocalTarget &&
                binding.allowedDemands ==
@@ -1455,16 +1446,16 @@ bool verifyTargetPrefixEvent(
   if (!allDemandsEligible || !suppliesMatch || !oneToOneAttestation) {
     return false;
   }
-  if (needsBarrier) {
-    return barrierActionMatches(descriptor.actions.front());
-  }
   const CanonicalSyncEventUse &use = descriptor.eventUses.front();
+  const std::size_t setAction = needsBarrier ? 1 : 0;
+  const std::size_t waitAction = needsBarrier ? 2 : 1;
   return use.domain == domain && use.width == 1 && !use.recurrenceScope &&
          !use.lifetimeScope &&
-         eventActionMatches(descriptor.actions[0],
+         (!needsBarrier || barrierActionMatches(descriptor.actions[0])) &&
+         eventActionMatches(descriptor.actions[setAction],
                             CanonicalSyncActionKind::EventSet,
                             source.resource) &&
-         eventActionMatches(descriptor.actions[1],
+         eventActionMatches(descriptor.actions[waitAction],
                             CanonicalSyncActionKind::EventWait,
                             target.resource);
 }
@@ -4160,10 +4151,13 @@ LogicalResult addTargetLocalFenceEvents(
     const SyncCoverNode &target = graph.getNodes()[demand.target];
     if (targetPrefixNeedsBarrier(program, demand)) {
       if (mode == TargetLocalCatalogMode::PipeDrainsOnly) {
-        pipeDrainGroups[{source.resource, target.physicalAnchor}].push_back(
-            demandId);
+        if (canUseStandaloneTargetedBarrier(graph, source.resource,
+                                            target.resource)) {
+          pipeDrainGroups[{source.resource, target.physicalAnchor}].push_back(
+              demandId);
+        }
+        continue;
       }
-      continue;
     }
     if (mode != TargetLocalCatalogMode::EventGroupsOnly) {
       continue;
@@ -4364,7 +4358,8 @@ LogicalResult addSourceLocalPipeDrains(
          !sourcePosition || !targetPosition ||
          *sourcePosition >= *targetPosition);
     if (invalidDistanceZeroOrder ||
-        !graph.supportsBlockingTargetedBarrier(source.resource)) {
+        !canUseStandaloneTargetedBarrier(graph, source.resource,
+                                         target.resource)) {
       continue;
     }
     groups[{source.physicalExit, source.resource}].push_back(demandId);
@@ -4470,7 +4465,8 @@ LogicalResult addSourcePrefixPipeDrains(
     if ((source.resource != target.resource) != crossResource) {
       continue;
     }
-    if (!graph.supportsBlockingTargetedBarrier(source.resource)) {
+    if (!canUseStandaloneTargetedBarrier(graph, source.resource,
+                                         target.resource)) {
       continue;
     }
     demandsBySource[source.id].push_back(demandId);
@@ -4693,7 +4689,9 @@ addLoopCarryPipeDrains(const CanonicalSyncProgram &program,
       continue;
     }
     const SyncCoverNode &source = graph.getNodes()[demand.source];
-    if (!graph.supportsBlockingTargetedBarrier(source.resource)) {
+    const SyncCoverNode &target = graph.getNodes()[demand.target];
+    if (!canUseStandaloneTargetedBarrier(graph, source.resource,
+                                         target.resource)) {
       continue;
     }
     groups[{demand.scope, source.resource}].push_back(demandId);

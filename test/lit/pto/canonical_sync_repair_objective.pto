@@ -6,8 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Exercise the production repair driver on a kernel whose action-first and
-// serialization-first repairs deliberately choose different feasible plans.
+// Both objectives must reject cross-resource pipe-drain repairs when the target
+// does not certify their completion contract. The safe localized PIPE_ALL
+// backstop is therefore objective-independent for this pressure-heavy kernel.
 
 // RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --emit-pto-ir \
@@ -27,25 +28,23 @@
 // RUN: FileCheck %s --check-prefix=SERIALIZATION < %t.serialization.json
 
 // ACTION: "selection_objective": "action-first"
-// ACTION: "emitted_pipe_all_barriers": 0
+// ACTION: "emitted_pipe_all_barriers": 31
 // ACTION: "error": 0
-// ACTION: "plan_signature": "0x2c432d26d042bc23"
+// ACTION: "plan_signature": "0x7eb17dfe8ead2b71"
 // ACTION: "precise_error": 4
-// ACTION: "predicted_sync_instructions": 50
-// ACTION: "repair_rounds": 1
-// ACTION: "repair_trials": 33
-// ACTION: "serialization_breadth": 5182
-// ACTION: "used_localized_pipe_all": false
+// ACTION: "predicted_sync_instructions": 32
+// ACTION: "repair_rounds": 3
+// ACTION: "serialization_breadth": 4196
+// ACTION: "used_localized_pipe_all": true
 // ACTION: "verified": true
 
 // SERIALIZATION: "selection_objective": "serialization-first"
-// SERIALIZATION: "emitted_pipe_all_barriers": 0
+// SERIALIZATION: "emitted_pipe_all_barriers": 31
 // SERIALIZATION: "error": 0
-// SERIALIZATION: "plan_signature": "0x6b60b2141c08da15"
+// SERIALIZATION: "plan_signature": "0x7eb17dfe8ead2b71"
 // SERIALIZATION: "precise_error": 4
-// SERIALIZATION: "predicted_sync_instructions": 76
-// SERIALIZATION: "repair_rounds": 1
-// SERIALIZATION: "repair_trials": 44
-// SERIALIZATION: "serialization_breadth": 3145
-// SERIALIZATION: "used_localized_pipe_all": false
+// SERIALIZATION: "predicted_sync_instructions": 32
+// SERIALIZATION: "repair_rounds": 3
+// SERIALIZATION: "serialization_breadth": 4196
+// SERIALIZATION: "used_localized_pipe_all": true
 // SERIALIZATION: "verified": true

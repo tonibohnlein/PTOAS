@@ -236,14 +236,28 @@ llvm::json::Object jsonResourceCapability(
                             {"resources", std::move(resources)}};
 }
 
+llvm::json::Object jsonDirectedResourceCapability(
+    const pto::CanonicalSyncDirectedResourceCapability &capability) {
+  llvm::json::Array resourcePairs;
+  for (const auto &[source, target] : capability.resourcePairs) {
+    resourcePairs.push_back(llvm::json::Object{{"source", jsonInteger(source)},
+                                               {"target", jsonInteger(target)}});
+  }
+  return llvm::json::Object{{"version", jsonInteger(capability.version)},
+                            {"resource_pairs", std::move(resourcePairs)}};
+}
+
 llvm::json::Object jsonTargetCapabilities(
     const pto::CanonicalSyncTargetCapabilities &capabilities) {
   llvm::json::Object result{
       {"profile", targetProfileName(capabilities.profile)},
       {"same_resource_completion_ordering",
        jsonResourceCapability(capabilities.sameResourceCompletionOrdering)},
-      {"cross_resource_targeted_barrier_completion",
+      {"targeted_barrier_drains_source_prefix",
        jsonResourceCapability(
+           capabilities.targetedBarrierDrainsSourcePrefix)},
+      {"cross_resource_targeted_barrier_completion",
+       jsonDirectedResourceCapability(
            capabilities.crossResourceTargetedBarrierCompletion)},
       {"mte1_l0_ready_set_completes_prefix",
        jsonInteger(capabilities.mte1L0ReadySetCompletesPrefix.version)},

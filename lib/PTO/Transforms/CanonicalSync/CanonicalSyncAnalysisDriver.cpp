@@ -140,7 +140,7 @@ CanonicalSyncResourceCapability makeResourceCapability(
 
 CanonicalSyncTargetCapabilities makeCoreTargetCapabilities(
     CanonicalSyncTargetProfile profile, bool vectorCompletionOrdered,
-    bool vectorBarrierCompletesCrossResource) {
+    bool vectorTargetedBarrierSupported) {
   CanonicalSyncTargetCapabilities capabilities;
   capabilities.profile = profile;
   capabilities.sameResourceCompletionOrdering = makeResourceCapability(
@@ -148,9 +148,9 @@ CanonicalSyncTargetCapabilities makeCoreTargetCapabilities(
           ? std::initializer_list<PipelineType>{PipelineType::PIPE_S,
                                                 PipelineType::PIPE_V}
           : std::initializer_list<PipelineType>{PipelineType::PIPE_S});
-  capabilities.crossResourceTargetedBarrierCompletion =
+  capabilities.targetedBarrierDrainsSourcePrefix =
       makeResourceCapability(
-          vectorBarrierCompletesCrossResource
+          vectorTargetedBarrierSupported
               ? std::initializer_list<PipelineType>{
                     PipelineType::PIPE_M, PipelineType::PIPE_MTE1,
                     PipelineType::PIPE_MTE2, PipelineType::PIPE_MTE3,
@@ -159,6 +159,10 @@ CanonicalSyncTargetCapabilities makeCoreTargetCapabilities(
                     PipelineType::PIPE_M, PipelineType::PIPE_MTE1,
                     PipelineType::PIPE_MTE2, PipelineType::PIPE_MTE3,
                     PipelineType::PIPE_FIX});
+  // PTO's targeted barrier contract is intra-pipeline. No supported target
+  // currently certifies that a naked source-pipe barrier publishes completion
+  // to an independently issued operation on another pipe.
+  capabilities.crossResourceTargetedBarrierCompletion = {};
   return capabilities;
 }
 
@@ -168,18 +172,18 @@ getTargetCapabilities(func::FuncOp function) {
   case PTOTargetKind::A2:
     return makeCoreTargetCapabilities(CanonicalSyncTargetProfile::A2V1,
                                       /*vectorCompletionOrdered=*/false,
-                                      /*vectorBarrierCompletesCrossResource=*/
+                                      /*vectorTargetedBarrierSupported=*/
                                           true);
   case PTOTargetKind::A2A3:
     return makeCoreTargetCapabilities(
         CanonicalSyncTargetProfile::A2A3IntersectionV1,
         /*vectorCompletionOrdered=*/false,
-        /*vectorBarrierCompletesCrossResource=*/true);
+        /*vectorTargetedBarrierSupported=*/true);
   case PTOTargetKind::A3: {
     CanonicalSyncTargetCapabilities capabilities =
         makeCoreTargetCapabilities(CanonicalSyncTargetProfile::A3V1,
                                    /*vectorCompletionOrdered=*/false,
-                                   /*vectorBarrierCompletesCrossResource=*/
+                                   /*vectorTargetedBarrierSupported=*/
                                        true);
     capabilities.targetCompletionResources =
         SyncCoverTargetCompletionResources{resourceId(PipelineType::PIPE_MTE1),
@@ -195,7 +199,7 @@ getTargetCapabilities(func::FuncOp function) {
   case PTOTargetKind::A5:
     return makeCoreTargetCapabilities(CanonicalSyncTargetProfile::A5V1,
                                       /*vectorCompletionOrdered=*/true,
-                                      /*vectorBarrierCompletesCrossResource=*/
+                                      /*vectorTargetedBarrierSupported=*/
                                           false);
   case PTOTargetKind::Unspecified:
   case PTOTargetKind::Unsupported:
@@ -265,8 +269,10 @@ ProgramBuilder::ProgramBuilder(func::FuncOp function,
 FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
   const bool failedBarrierConfiguration =
       !graph_.setBlockingTargetedBarrierResources(
+          targetCapabilities_.targetedBarrierDrainsSourcePrefix.resources) ||
+      !graph_.setCrossResourceTargetedBarrierPairs(
           targetCapabilities_.crossResourceTargetedBarrierCompletion
-              .resources);
+              .resourcePairs);
   const bool failedTargetCompletionConfiguration =
       targetCapabilities_.targetCompletionResources &&
       !graph_.setTargetCompletionResources(

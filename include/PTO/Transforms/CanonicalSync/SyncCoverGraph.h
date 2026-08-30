@@ -412,9 +412,13 @@ public:
                                                       SyncCoverEdgeKind kind);
   SyncCoverGraphResult
   setBlockingTargetedBarrierResources(std::vector<std::uint32_t> resources);
+  SyncCoverGraphResult setCrossResourceTargetedBarrierPairs(
+      std::vector<std::pair<std::uint32_t, std::uint32_t>> resourcePairs);
   SyncCoverGraphResult
   setTargetCompletionResources(SyncCoverTargetCompletionResources resources);
   bool supportsBlockingTargetedBarrier(std::uint32_t resource) const;
+  bool supportsCrossResourceTargetedBarrier(std::uint32_t sourceResource,
+                                            std::uint32_t targetResource) const;
   SyncCoverGraphResult
   setBlockingTargetedBarrierPrefix(std::uint32_t resource,
                                    SyncCoverNodeId physicalTarget,
@@ -541,6 +545,8 @@ private:
   std::optional<SyncCoverTargetCompletionResources> targetCompletionResources_;
   std::map<std::uint32_t, SyncCoverEdgeKind> resourceRecurrenceCarryKinds_;
   std::vector<std::uint32_t> blockingTargetedBarrierResources_;
+  std::vector<std::pair<std::uint32_t, std::uint32_t>>
+      crossResourceTargetedBarrierPairs_;
   std::map<std::pair<std::uint32_t, SyncCoverNodeId>,
            std::vector<SyncCoverNodeId>>
       blockingTargetedBarrierPrefixes_;
