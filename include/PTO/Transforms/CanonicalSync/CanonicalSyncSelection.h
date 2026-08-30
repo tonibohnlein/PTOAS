@@ -584,6 +584,13 @@ public:
   CanonicalSyncProblemResult
   verifyMechanism(CanonicalSyncMechanismId mechanism,
                   SyncCoverCoverageWorkBudget *workBudget = nullptr) const;
+  /// Revalidate a candidate recipe against one admitted mechanism's retained
+  /// certificate. This is non-mutating and is used by repair diagnostics and
+  /// adversarial certificate tests.
+  CanonicalSyncProblemResult verifyMechanismDescriptor(
+      CanonicalSyncMechanismId mechanism,
+      CanonicalSyncMechanismDescriptor descriptor,
+      SyncCoverCoverageWorkBudget *workBudget = nullptr) const;
   std::uint64_t getMechanismSignature(CanonicalSyncMechanismId mechanism) const;
   /// Preview the union of baseline, singleton, and retained optional-pattern
   /// coverage without freezing the catalog. Used to ground completeness

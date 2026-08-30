@@ -483,9 +483,319 @@ struct MechanismValidationState {
   std::vector<std::vector<bool>> waitLanes;
 };
 
+bool consumeValidationWork(SyncCoverCoverageWorkBudget *workBudget,
+                           std::size_t amount = 1) {
+  return !workBudget || workBudget->consume(amount);
+}
+
+bool consumeValidationProduct(SyncCoverCoverageWorkBudget *workBudget,
+                              std::size_t first, std::size_t second) {
+  if (!workBudget) {
+    return true;
+  }
+  const bool productOverflows =
+      first != 0 && second > std::numeric_limits<std::size_t>::max() / first;
+  if (productOverflows) {
+    workBudget->exhausted = true;
+    return false;
+  }
+  return workBudget->consume(first * second);
+}
+
+bool addValidationIncidences(std::size_t &total, std::size_t amount,
+                             SyncCoverCoverageWorkBudget *workBudget) {
+  const bool sumOverflows =
+      amount > std::numeric_limits<std::size_t>::max() - total;
+  if (sumOverflows) {
+    if (workBudget) {
+      workBudget->exhausted = true;
+    }
+    return false;
+  }
+  total += amount;
+  return true;
+}
+
+bool addValidationProductIncidences(std::size_t &total, std::size_t first,
+                                    std::size_t second,
+                                    SyncCoverCoverageWorkBudget *workBudget) {
+  const bool productOverflows =
+      first != 0 && second > std::numeric_limits<std::size_t>::max() / first;
+  if (productOverflows) {
+    if (workBudget) {
+      workBudget->exhausted = true;
+    }
+    return false;
+  }
+  return addValidationIncidences(total, first * second, workBudget);
+}
+
+/// Reserve the complete common-validation census before normalization or
+/// validation allocates descriptor-dependent state. The count deliberately
+/// over-approximates helper traversals: scope walks use the full scope count,
+/// ordered lookups use the complete searched vectors, and recurrence validation
+/// reserves every action/lane pair. Supply sorting is metered directly below.
+bool reserveCommonValidationWork(
+    const SyncCoverGraph &graph,
+    const CanonicalSyncMechanismDescriptor &descriptor,
+    SyncCoverCoverageWorkBudget *workBudget) {
+  if (!workBudget) {
+    return true;
+  }
+
+  std::size_t censusWork = 1;
+  if (!addValidationIncidences(censusWork, descriptor.supplies.size(),
+                               workBudget) ||
+      !addValidationIncidences(censusWork, descriptor.eventUses.size(),
+                               workBudget) ||
+      !addValidationIncidences(censusWork, descriptor.actions.size(),
+                               workBudget) ||
+      !addValidationIncidences(censusWork,
+                               graph.getTargetCompletionCertificates().size(),
+                               workBudget) ||
+      !addValidationIncidences(
+          censusWork, graph.getBlockingTargetedBarrierPrefixes().size(),
+          workBudget) ||
+      !workBudget->consume(censusWork)) {
+    return false;
+  }
+
+  std::size_t bindingIncidences = 1;
+  std::size_t recurrenceWork = 0;
+  std::size_t completionLookupWork = 0;
+  for (const CanonicalSyncSupplyBinding &binding : descriptor.supplies) {
+    std::size_t bindingWork = 8;
+    std::size_t sourceGuardIncidences =
+        binding.edge.sourceGuard.literals.size();
+    std::size_t targetGuardIncidences =
+        binding.edge.targetGuard.literals.size();
+    const bool validSource = binding.edge.source < graph.getNodes().size();
+    if (validSource) {
+      const bool sourceWorkAvailable = addValidationIncidences(
+          sourceGuardIncidences,
+          graph.getNodes()[binding.edge.source].guard.literals.size(),
+          workBudget);
+      if (!sourceWorkAvailable) {
+        return false;
+      }
+    }
+    const bool validTarget = binding.edge.target < graph.getNodes().size();
+    if (validTarget) {
+      const bool targetWorkAvailable = addValidationIncidences(
+          targetGuardIncidences,
+          graph.getNodes()[binding.edge.target].guard.literals.size(),
+          workBudget);
+      if (!targetWorkAvailable) {
+        return false;
+      }
+    }
+    if (!addValidationProductIncidences(bindingWork, 4, sourceGuardIncidences,
+                                        workBudget) ||
+        !addValidationProductIncidences(bindingWork, 4, targetGuardIncidences,
+                                        workBudget) ||
+        !addValidationProductIncidences(bindingWork, sourceGuardIncidences,
+                                        sourceGuardIncidences, workBudget) ||
+        !addValidationProductIncidences(bindingWork, targetGuardIncidences,
+                                        targetGuardIncidences, workBudget) ||
+        !addValidationProductIncidences(bindingWork, sourceGuardIncidences,
+                                        graph.getScopes().size(), workBudget) ||
+        !addValidationProductIncidences(bindingWork, targetGuardIncidences,
+                                        graph.getScopes().size(), workBudget) ||
+        !addValidationProductIncidences(
+            bindingWork, 4, binding.allowedDemands.size(), workBudget) ||
+        !addValidationIncidences(bindingIncidences, bindingWork, workBudget) ||
+        !addValidationProductIncidences(recurrenceWork, 2,
+                                        binding.edge.distance, workBudget)) {
+      return false;
+    }
+    std::size_t laneCount = 0;
+    if (!addValidationIncidences(laneCount, binding.edge.distance,
+                                 workBudget) ||
+        !addValidationIncidences(laneCount, 1, workBudget) ||
+        !addValidationProductIncidences(
+            recurrenceWork, descriptor.actions.size(), laneCount, workBudget)) {
+      return false;
+    }
+    if (validSource) {
+      const bool lookupWorkAvailable = addValidationIncidences(
+          completionLookupWork,
+          graph.getNodes()[binding.edge.source].completionTargets.size(),
+          workBudget);
+      if (!lookupWorkAvailable) {
+        return false;
+      }
+    }
+  }
+
+  std::size_t eventLaneWork = 0;
+  for (const CanonicalSyncEventUse &use : descriptor.eventUses) {
+    if (!addValidationProductIncidences(eventLaneWork, 4, use.width,
+                                        workBudget)) {
+      return false;
+    }
+  }
+  std::size_t actionResourceWork = 0;
+  for (const CanonicalSyncAction &action : descriptor.actions) {
+    std::size_t resourceWork = action.drainedResources.size();
+    if (!addValidationProductIncidences(
+            resourceWork, action.drainedResources.size(),
+            action.drainedResources.size(), workBudget) ||
+        !addValidationIncidences(actionResourceWork, resourceWork,
+                                 workBudget)) {
+      return false;
+    }
+  }
+
+  std::size_t certificateIncidences = 1;
+  if (!addValidationIncidences(certificateIncidences,
+                               graph.getTargetCompletionCertificates().size(),
+                               workBudget)) {
+    return false;
+  }
+  for (const SyncCoverTargetCompletionCertificate &certificate :
+       graph.getTargetCompletionCertificates()) {
+    if (!addValidationIncidences(certificateIncidences,
+                                 certificate.demands.size(), workBudget)) {
+      return false;
+    }
+  }
+  std::size_t prefixIncidences = 1;
+  if (!addValidationIncidences(
+          prefixIncidences, graph.getBlockingTargetedBarrierPrefixes().size(),
+          workBudget)) {
+    return false;
+  }
+  for (const auto &prefix : graph.getBlockingTargetedBarrierPrefixes()) {
+    if (!addValidationIncidences(prefixIncidences, prefix.second.size(),
+                                 workBudget)) {
+      return false;
+    }
+  }
+  std::size_t actionScopeWork = 8;
+  std::size_t supplyScopeWork = 32;
+  std::size_t eventSupplyWidth = 1;
+  if (!addValidationProductIncidences(actionScopeWork, 8,
+                                      graph.getScopes().size(), workBudget) ||
+      !addValidationProductIncidences(supplyScopeWork, 16,
+                                      graph.getScopes().size(), workBudget) ||
+      !addValidationProductIncidences(supplyScopeWork, 4,
+                                      graph.getNodes().size(), workBudget) ||
+      !addValidationIncidences(eventSupplyWidth, descriptor.supplies.size(),
+                               workBudget)) {
+    return false;
+  }
+
+  // Supply declaration canonicalization; action anchor/scope validation; and
+  // the complete nested supply-validation traversals. Supply ordering is
+  // metered separately by the stable merge sort below.
+  const bool commonWorkAvailable =
+      consumeValidationWork(workBudget, bindingIncidences) &&
+      consumeValidationWork(workBudget, bindingIncidences) &&
+      consumeValidationProduct(workBudget, descriptor.actions.size(),
+                               actionScopeWork) &&
+      consumeValidationProduct(workBudget, descriptor.supplies.size(),
+                               supplyScopeWork) &&
+      consumeValidationWork(workBudget, actionResourceWork) &&
+      consumeValidationWork(workBudget, eventLaneWork) &&
+      consumeValidationWork(workBudget, recurrenceWork) &&
+      consumeValidationWork(workBudget, completionLookupWork) &&
+      consumeValidationProduct(workBudget, descriptor.supplies.size(),
+                               certificateIncidences) &&
+      consumeValidationProduct(workBudget, descriptor.supplies.size(),
+                               prefixIncidences) &&
+      consumeValidationProduct(workBudget, descriptor.eventUses.size(),
+                               eventSupplyWidth) &&
+      consumeValidationWork(workBudget, descriptor.eventUses.size());
+  if (!commonWorkAvailable) {
+    return false;
+  }
+  return true;
+}
+
+bool consumeBindingComparisonWork(const CanonicalSyncSupplyBinding &left,
+                                  const CanonicalSyncSupplyBinding &right,
+                                  SyncCoverCoverageWorkBudget *workBudget) {
+  if (!workBudget) {
+    return true;
+  }
+  std::size_t comparisonWork = 1;
+  if (!addValidationProductIncidences(comparisonWork, 4,
+                                      left.edge.sourceGuard.literals.size(),
+                                      workBudget) ||
+      !addValidationProductIncidences(comparisonWork, 4,
+                                      left.edge.targetGuard.literals.size(),
+                                      workBudget) ||
+      !addValidationProductIncidences(comparisonWork, 4,
+                                      right.edge.sourceGuard.literals.size(),
+                                      workBudget) ||
+      !addValidationProductIncidences(comparisonWork, 4,
+                                      right.edge.targetGuard.literals.size(),
+                                      workBudget) ||
+      !addValidationProductIncidences(comparisonWork, 2,
+                                      left.allowedDemands.size(), workBudget) ||
+      !addValidationProductIncidences(
+          comparisonWork, 2, right.allowedDemands.size(), workBudget)) {
+    return false;
+  }
+  return workBudget->consume(comparisonWork);
+}
+
+CanonicalSyncProblemError
+stableSortSupplyBindings(std::vector<CanonicalSyncSupplyBinding> &bindings,
+                         SyncCoverCoverageWorkBudget *workBudget) {
+  const std::size_t bindingCount = bindings.size();
+  if (bindingCount < 2) {
+    return CanonicalSyncProblemError::None;
+  }
+  if (workBudget && !workBudget->consume(bindings.size())) {
+    return CanonicalSyncProblemError::LimitExceeded;
+  }
+  std::vector<CanonicalSyncSupplyBinding> scratch(bindings.size());
+  for (std::size_t width = 1; width < bindings.size();) {
+    if (workBudget && !workBudget->consume(bindings.size())) {
+      return CanonicalSyncProblemError::LimitExceeded;
+    }
+    for (std::size_t begin = 0; begin < bindings.size();) {
+      const std::size_t middle =
+          begin + std::min(width, bindings.size() - begin);
+      const std::size_t end =
+          middle + std::min(width, bindings.size() - middle);
+      std::size_t left = begin;
+      std::size_t right = middle;
+      std::size_t output = begin;
+      while (left < middle && right < end) {
+        if (!consumeBindingComparisonWork(bindings[left], bindings[right],
+                                          workBudget)) {
+          return CanonicalSyncProblemError::LimitExceeded;
+        }
+        if (bindingLess(bindings[right], bindings[left])) {
+          scratch[output++] = std::move(bindings[right++]);
+        } else {
+          scratch[output++] = std::move(bindings[left++]);
+        }
+      }
+      while (left < middle) {
+        scratch[output++] = std::move(bindings[left++]);
+      }
+      while (right < end) {
+        scratch[output++] = std::move(bindings[right++]);
+      }
+      begin = end;
+    }
+    bindings.swap(scratch);
+    const std::size_t remainingWidth = bindings.size() - width;
+    if (width >= remainingWidth) {
+      break;
+    }
+    width *= 2;
+  }
+  return CanonicalSyncProblemError::None;
+}
+
 CanonicalSyncProblemError
 validateSupplyDeclarations(const SyncCoverGraph &graph,
-                           CanonicalSyncMechanismDescriptor &descriptor) {
+                           CanonicalSyncMechanismDescriptor &descriptor,
+                           SyncCoverCoverageWorkBudget *workBudget) {
   const bool protocol = descriptor.kind == CanonicalSyncMechanismKind::Protocol;
   for (CanonicalSyncSupplyBinding &binding : descriptor.supplies) {
     const bool invalidDemands =
@@ -628,13 +938,23 @@ validateSupplyDeclarations(const SyncCoverGraph &graph,
       return CanonicalSyncProblemError::InvalidMechanism;
     }
   }
-  std::sort(descriptor.supplies.begin(), descriptor.supplies.end(),
-            bindingLess);
-  const bool duplicate =
-      std::adjacent_find(descriptor.supplies.begin(), descriptor.supplies.end(),
-                         [](const auto &first, const auto &second) {
-                           return edgeEqual(first.edge, second.edge);
-                         }) != descriptor.supplies.end();
+  const CanonicalSyncProblemError sortError =
+      stableSortSupplyBindings(descriptor.supplies, workBudget);
+  if (sortError != CanonicalSyncProblemError::None) {
+    return sortError;
+  }
+  bool duplicate = false;
+  for (std::size_t index = 1; index < descriptor.supplies.size(); ++index) {
+    if (!consumeBindingComparisonWork(descriptor.supplies[index - 1],
+                                      descriptor.supplies[index], workBudget)) {
+      return CanonicalSyncProblemError::LimitExceeded;
+    }
+    if (edgeEqual(descriptor.supplies[index - 1].edge,
+                  descriptor.supplies[index].edge)) {
+      duplicate = true;
+      break;
+    }
+  }
   return duplicate ? CanonicalSyncProblemError::InvalidMechanism
                    : CanonicalSyncProblemError::None;
 }
@@ -1793,9 +2113,24 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::verifyMechanism(
   if (mechanism >= mechanisms_.size()) {
     return {CanonicalSyncProblemError::InvalidMechanism, mechanism};
   }
+  return verifyMechanismDescriptor(mechanism, mechanisms_[mechanism].descriptor,
+                                   workBudget);
+}
+
+CanonicalSyncProblemResult
+CanonicalSyncPatternProblem::verifyMechanismDescriptor(
+    CanonicalSyncMechanismId mechanism,
+    CanonicalSyncMechanismDescriptor descriptor,
+    SyncCoverCoverageWorkBudget *workBudget) const {
+  if (mechanism >= mechanisms_.size()) {
+    return {CanonicalSyncProblemError::InvalidMechanism, mechanism};
+  }
   const CanonicalSyncMechanism &stored = mechanisms_[mechanism];
-  CanonicalSyncMechanismDescriptor descriptor = stored.descriptor;
-  const bool protocol = descriptor.kind == CanonicalSyncMechanismKind::Protocol;
+  if (descriptor.kind != stored.descriptor.kind) {
+    return {CanonicalSyncProblemError::InvalidMechanism, mechanism};
+  }
+  const bool protocol =
+      stored.descriptor.kind == CanonicalSyncMechanismKind::Protocol;
   if (protocol) {
     const bool missingVerifier = mechanism >= protocolVerifiers_.size() ||
                                  !protocolVerifiers_[mechanism];
@@ -1807,6 +2142,9 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::verifyMechanism(
         workBudget ? *workBudget : localWork;
     const CanonicalSyncProblemError verification =
         protocolVerifiers_[mechanism](descriptor, protocolWork);
+    if (protocolWork.exhausted) {
+      return {CanonicalSyncProblemError::LimitExceeded, mechanism};
+    }
     if (verification != CanonicalSyncProblemError::None &&
         verification != CanonicalSyncProblemError::UnverifiedProtocol &&
         verification != CanonicalSyncProblemError::LimitExceeded) {
@@ -1878,8 +2216,12 @@ CanonicalSyncPatternProblem::validateAndCostMechanism(
     return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
   }
 
+  if (!reserveCommonValidationWork(graph_, descriptor, workBudget)) {
+    return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
+  }
+
   CanonicalSyncProblemError validation =
-      validateSupplyDeclarations(graph_, descriptor);
+      validateSupplyDeclarations(graph_, descriptor, workBudget);
   if (validation != CanonicalSyncProblemError::None) {
     return {validation, std::nullopt};
   }
@@ -1957,6 +2299,9 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::internMechanismImpl(
         constructionWorkBudget_ ? *constructionWorkBudget_ : localWork;
     const CanonicalSyncProblemError verification =
         verifier(descriptor, protocolWork);
+    if (protocolWork.exhausted) {
+      return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
+    }
     if (verification != CanonicalSyncProblemError::None &&
         verification != CanonicalSyncProblemError::UnverifiedProtocol &&
         verification != CanonicalSyncProblemError::LimitExceeded) {

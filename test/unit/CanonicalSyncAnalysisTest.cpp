@@ -42,6 +42,37 @@ bool check(bool condition, std::string_view message) {
   return condition;
 }
 
+template <typename Result>
+std::size_t takeIndex(const Result &result, bool &passed,
+                      std::string_view message) {
+  passed &=
+      check(static_cast<bool>(result) && result.index.has_value(), message);
+  return result.index.value_or(0);
+}
+
+bool verifyExactAndOneLessProtocolWork(
+    const CanonicalSyncPatternProblem &problem,
+    CanonicalSyncMechanismId mechanism, std::string_view exactMessage,
+    std::string_view oneLessMessage) {
+  SyncCoverCoverageWorkBudget measured;
+  const CanonicalSyncProblemResult reference =
+      problem.verifyMechanism(mechanism, &measured);
+  if (!check(reference && measured.workUnits != 0,
+             "measure production protocol verification work")) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget exact(measured.workUnits);
+  const CanonicalSyncProblemResult exactResult =
+      problem.verifyMechanism(mechanism, &exact);
+  SyncCoverCoverageWorkBudget oneLess(measured.workUnits - 1);
+  const CanonicalSyncProblemResult oneLessResult =
+      problem.verifyMechanism(mechanism, &oneLess);
+  return check(exactResult && exact.workUnits == measured.workUnits,
+               exactMessage) &&
+         check(oneLessResult.error == CanonicalSyncProblemError::LimitExceeded,
+               oneLessMessage);
+}
+
 template <typename Predicate>
 CanonicalSyncProtocolVerifier testProtocolVerifier(Predicate predicate) {
   return [predicate = std::move(predicate)](
@@ -847,8 +878,14 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
                           return binding.edge.distance == 2;
                         });
   };
-  if (!check(llvm::any_of((*problem)->getMechanisms(), isDistanceTwoRing),
-             "generate a two-lane generic recurrence ring")) {
+  const auto distanceTwoRing =
+      llvm::find_if((*problem)->getMechanisms(), isDistanceTwoRing);
+  if (!check(distanceTwoRing != (*problem)->getMechanisms().end(),
+             "generate a two-lane generic recurrence ring") ||
+      !verifyExactAndOneLessProtocolWork(
+          **problem, distanceTwoRing->id,
+          "verify a direct recurrence at its exact work bound",
+          "reject a direct recurrence at its one-less work bound")) {
     return false;
   }
   const auto isDistanceTwoLoopBoundaryPrefix =
@@ -882,7 +919,11 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
       (*problem)->getMechanisms(), isDistanceTwoLoopBoundaryPrefix);
   if (!check(loopBoundaryProtocol != (*problem)->getMechanisms().end(),
              "generate a balanced two-lane A3 V loop-boundary prefix "
-             "protocol")) {
+             "protocol") ||
+      !verifyExactAndOneLessProtocolWork(
+          **problem, loopBoundaryProtocol->id,
+          "verify a loop-boundary protocol at its exact work bound",
+          "reject a loop-boundary protocol at its one-less work bound")) {
     return false;
   }
   const CanonicalSyncPatternStatistics &protocolStatistics =
@@ -1525,7 +1566,12 @@ bool testA5MatrixLoopBoundaryProtocol() {
   const auto protocol =
       llvm::find_if((*problem)->getMechanisms(), isMatrixProtocol);
   if (!check(protocol != (*problem)->getMechanisms().end(),
-             "generate a supported non-V A5 loop-boundary protocol")) {
+             "generate a supported non-V A5 loop-boundary protocol") ||
+      !verifyExactAndOneLessProtocolWork(
+          **problem, protocol->id,
+          "verify a multi-supply loop-boundary protocol at its exact bound",
+          "reject a multi-supply loop-boundary protocol at its one-less "
+          "bound")) {
     return false;
   }
   std::vector<SyncCoverDemandId> demands;
@@ -3016,6 +3062,181 @@ bool testFirstIterationRecurrenceSuppression() {
                "retain enclosing-loop recurrence for an inner first iteration");
 }
 
+bool testGuardedOwnershipVerificationWorkIsBounded() {
+  bool passed = true;
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @guarded_ownership_host() {
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module),
+             "parse guarded ownership host function")) {
+    return false;
+  }
+
+  SyncCoverGraph graph;
+  constexpr std::uint32_t producerResource = 1;
+  constexpr std::uint32_t consumerResource = 2;
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 31}, true),
+                passed, "add guarded ownership loop");
+  constexpr std::size_t guardDepth = 8;
+  SyncCoverScopeId guardedScope = loop;
+  SyncCoverGuard guard;
+  for (std::size_t depth = 0; depth < guardDepth; ++depth) {
+    const SyncCoverControlId control =
+        takeIndex(graph.addControl(2, guardedScope), passed,
+                  "add guarded ownership control");
+    guard.literals.push_back({control, 0});
+    guardedScope = takeIndex(
+        graph.addScope(guardedScope, true, std::nullopt, false, guard), passed,
+        "add guarded ownership path scope");
+  }
+
+  const SyncCoverNodeId producer0 =
+      takeIndex(graph.addNode(producerResource, 1, guardedScope, 0, guard,
+                              {consumerResource}),
+                passed, "add first guarded producer");
+  const SyncCoverNodeId consumer0 =
+      takeIndex(graph.addNode(consumerResource, 1, guardedScope, 1, guard,
+                              {producerResource}),
+                passed, "add first guarded consumer");
+  const SyncCoverNodeId producer1 =
+      takeIndex(graph.addNode(producerResource, 1, guardedScope, 2, guard,
+                              {consumerResource}),
+                passed, "add second guarded producer");
+  const SyncCoverNodeId consumer1 =
+      takeIndex(graph.addNode(consumerResource, 1, guardedScope, 3, guard,
+                              {producerResource}),
+                passed, "add second guarded consumer");
+  const SyncCoverStorageDomainId domain0 =
+      takeIndex(graph.addStorageDomain(SyncCoverStorageDomainRole::L1Tile),
+                passed, "add first guarded ownership domain");
+  const SyncCoverStorageDomainId domain1 =
+      takeIndex(graph.addStorageDomain(SyncCoverStorageDomainRole::L1Tile),
+                passed, "add second guarded ownership domain");
+  const SyncCoverStorageAccessId producer0Access =
+      takeIndex(graph.addStorageAccess(producer0, domain0, 1, {0, 64},
+                                       SyncCoverStorageAccessMode::Write,
+                                       std::nullopt, true),
+                passed, "add first guarded ownership write");
+  const SyncCoverStorageAccessId consumer0Access =
+      takeIndex(graph.addStorageAccess(consumer0, domain0, 1, {0, 64},
+                                       SyncCoverStorageAccessMode::Read,
+                                       std::nullopt, true),
+                passed, "add first guarded ownership read");
+  const SyncCoverStorageAccessId producer1Access =
+      takeIndex(graph.addStorageAccess(producer1, domain1, 2, {0, 64},
+                                       SyncCoverStorageAccessMode::Write,
+                                       std::nullopt, true),
+                passed, "add second guarded ownership write");
+  const SyncCoverStorageAccessId consumer1Access =
+      takeIndex(graph.addStorageAccess(consumer1, domain1, 2, {0, 64},
+                                       SyncCoverStorageAccessMode::Read,
+                                       std::nullopt, true),
+                passed, "add second guarded ownership read");
+  const auto addMemoryDemand =
+      [&](SyncCoverNodeId source, SyncCoverNodeId target,
+          SyncCoverScopeId scope, unsigned distance, SyncCoverDemandKind kind,
+          SyncCoverStorageAccessId sourceAccess,
+          SyncCoverStorageAccessId targetAccess, std::string_view message) {
+        const SyncCoverStorageWitnessId witness =
+            takeIndex(graph.addStorageWitness(sourceAccess, targetAccess),
+                      passed, "add guarded ownership witness");
+        SyncCoverDemand demand;
+        demand.source = source;
+        demand.target = target;
+        demand.scope = scope;
+        demand.distance = distance;
+        demand.provenanceKinds = {kind};
+        demand.storageWitnesses = {witness};
+        passed &= check(static_cast<bool>(graph.addDemand(std::move(demand))),
+                        message);
+      };
+  addMemoryDemand(producer0, consumer0, guardedScope, 0,
+                  SyncCoverDemandKind::MemoryRAW, producer0Access,
+                  consumer0Access, "add first guarded ready demand");
+  addMemoryDemand(consumer0, producer0, loop, 1, SyncCoverDemandKind::MemoryWAR,
+                  consumer0Access, producer0Access,
+                  "add first guarded release demand");
+  addMemoryDemand(producer1, consumer1, guardedScope, 0,
+                  SyncCoverDemandKind::MemoryRAW, producer1Access,
+                  consumer1Access, "add second guarded ready demand");
+  addMemoryDemand(consumer1, producer1, loop, 1, SyncCoverDemandKind::MemoryWAR,
+                  consumer1Access, producer1Access,
+                  "add second guarded release demand");
+
+  SyncCoverBasicOwnershipCertificate certificate;
+  certificate.kind = SyncCoverBasicOwnershipKind::L1Tile;
+  certificate.loopScope = loop;
+  certificate.producerResource = producerResource;
+  certificate.consumerResource = consumerResource;
+  certificate.lanes = {
+      {0, {{domain0, {0, 64}, {producer0Access, consumer0Access}}}},
+      {1, {{domain1, {0, 64}, {producer1Access, consumer1Access}}}},
+  };
+  certificate.paths = {
+      {guardedScope,
+       {{0,
+         0,
+         {producer0},
+         {consumer0},
+         {SyncCoverAnchorKind::BeforeNode, producer0, 0, 0},
+         {SyncCoverAnchorKind::AfterNode, producer0, 0, 0},
+         {SyncCoverAnchorKind::BeforeNode, consumer0, 0, 0},
+         {SyncCoverAnchorKind::AfterNode, consumer0, 0, 0}},
+        {1,
+         1,
+         {producer1},
+         {consumer1},
+         {SyncCoverAnchorKind::BeforeNode, producer1, 0, 0},
+         {SyncCoverAnchorKind::AfterNode, producer1, 0, 0},
+         {SyncCoverAnchorKind::BeforeNode, consumer1, 0, 0},
+         {SyncCoverAnchorKind::AfterNode, consumer1, 0, 0}}}},
+  };
+  passed &=
+      check(static_cast<bool>(graph.addBasicOwnershipCertificate(certificate)),
+            "register guarded ownership certificate");
+  passed &= check(static_cast<bool>(graph.freezeStructure()),
+                  "freeze guarded ownership graph");
+  if (!passed) {
+    return false;
+  }
+
+  CanonicalSyncProgram program(
+      module->lookupSymbol<func::FuncOp>("guarded_ownership_host"),
+      std::move(graph), {}, {}, {}, {}, {}, {}, {});
+  CanonicalSyncBuildOptions options;
+  options.enableDemandBasisReduction = false;
+  options.patterns.enabledMechanismFamilies = canonicalSyncMechanismFamilyBit(
+      CanonicalSyncMechanismFamily::BasicOwnership);
+  options.patterns.enableDirectPairs = false;
+  CanonicalSyncProblemBuildResult precise =
+      buildCanonicalSyncPreciseProblem(program, options);
+  if (!check(precise && precise.problem,
+             "build guarded ownership candidate catalog")) {
+    return false;
+  }
+  const CanonicalSyncMechanismOriginMask origin =
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::BasicOwnershipStableL1Protocol);
+  const auto mechanism = llvm::find_if(
+      precise.problem->getMechanisms(), [&](const auto &candidate) {
+        return (candidate.originMask & origin) != 0;
+      });
+  return check(mechanism != precise.problem->getMechanisms().end(),
+               "synthesize guarded ownership protocol") &&
+         verifyExactAndOneLessProtocolWork(
+             *precise.problem, mechanism->id,
+             "verify deep-guard ownership at its exact work bound",
+             "reject deep-guard ownership at its one-less work bound");
+}
+
 bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
   MLIRContext context;
   loadDialects(context);
@@ -3472,6 +3693,143 @@ bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
              "synthesize one shared wait/set pair for branch alternatives")) {
     return false;
   }
+  if (!verifyExactAndOneLessProtocolWork(
+          *precise.problem, mechanism->id,
+          "verify basic ownership at its exact work bound",
+          "reject basic ownership at its one-less work bound")) {
+    return false;
+  }
+  CanonicalSyncMechanismDescriptor reordered = mechanism->descriptor;
+  std::reverse(reordered.supplies.begin(), reordered.supplies.end());
+  if (!check(static_cast<bool>(precise.problem->verifyMechanismDescriptor(
+                 mechanism->id, reordered)),
+             "accept reordered ownership supplies as the same certificate")) {
+    return false;
+  }
+  CanonicalSyncMechanismDescriptor alteredBinding = reordered;
+  const bool hasComparisonFixture = alteredBinding.supplies.size() > 1 &&
+                                    program->getGraph().getDemands().size() > 1;
+  if (!check(hasComparisonFixture,
+             "build a multi-supply ownership comparison fixture")) {
+    return false;
+  }
+  const SyncCoverDemandId originalDemand =
+      alteredBinding.supplies.front().allowedDemands.front();
+  const SyncCoverDemandId replacementDemand =
+      originalDemand + 1 < program->getGraph().getDemands().size()
+          ? originalDemand + 1
+          : 0;
+  alteredBinding.supplies.front().allowedDemands = {replacementDemand};
+  SyncCoverCoverageWorkBudget alteredWork;
+  const CanonicalSyncProblemResult alteredResult =
+      precise.problem->verifyMechanismDescriptor(mechanism->id, alteredBinding,
+                                                 &alteredWork);
+  if (!check(
+          alteredResult.error ==
+                  CanonicalSyncProblemError::UnverifiedProtocol &&
+              alteredWork.workUnits != 0,
+          "reject an unmatched ownership binding after exhaustive matching")) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget alteredOneLess(alteredWork.workUnits - 1);
+  if (!check(precise.problem
+                     ->verifyMechanismDescriptor(mechanism->id, alteredBinding,
+                                                 &alteredOneLess)
+                     .error == CanonicalSyncProblemError::LimitExceeded,
+             "stop an unmatched ownership comparison at its one-less bound")) {
+    return false;
+  }
+  CanonicalSyncMechanismDescriptor alteredAction = mechanism->descriptor;
+  const std::size_t actionLane = alteredAction.actions.front().eventLane;
+  alteredAction.actions.front().eventLane =
+      actionLane + 1 < alteredAction.eventUses.front().width ? actionLane + 1
+                                                             : 0;
+  if (!check(precise.problem
+                     ->verifyMechanismDescriptor(mechanism->id, alteredAction)
+                     .error == CanonicalSyncProblemError::UnverifiedProtocol,
+             "reject an altered ownership action before common admission")) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget baseOwnershipWork;
+  if (!check(static_cast<bool>(precise.problem->verifyMechanism(
+                 mechanism->id, &baseOwnershipWork)),
+             "measure base ownership factory work")) {
+    return false;
+  }
+
+  std::string unrelatedSource = ownershipSource;
+  const std::size_t unrelatedName = unrelatedSource.find("@branch_l0");
+  const std::string accumulatorMarker =
+      "        %acc = pto.alloc_tile addr = %addr0 :\n";
+  if (!check(unrelatedName != std::string::npos,
+             "locate unrelated ownership function") ||
+      !check(unrelatedSource.find(accumulatorMarker) != std::string::npos,
+             "locate unrelated ownership allocation") ||
+      !check(unrelatedSource.find(loopMarker) != std::string::npos,
+             "locate unrelated ownership loop entry")) {
+    return false;
+  }
+  unrelatedSource.replace(unrelatedName, std::string("@branch_l0").size(),
+                          "@unrelated_branch_l0");
+  unrelatedSource.insert(
+      unrelatedSource.find(accumulatorMarker),
+      "        %addr49152 = arith.constant 49152 : i64\n"
+      "        %left_unrelated = pto.alloc_tile addr = %addr49152 :\n"
+      "          !pto.tile_buf<left, 128x64xf16, slayout=row_major>\n");
+  unrelatedSource.insert(
+      unrelatedSource.find(loopMarker),
+      "        pto.textract ins(%left_source, %c0, %c0 :\n"
+      "          !pto.tile_buf<mat, 128x512xf16, blayout=col_major,\n"
+      "            slayout=row_major>, index, index)\n"
+      "          outs(%left_unrelated : !pto.tile_buf<left, 128x64xf16,\n"
+      "            slayout=row_major>)\n");
+  OwningOpRef<ModuleOp> unrelatedModule =
+      parseSourceString<ModuleOp>(unrelatedSource, &context);
+  if (!check(static_cast<bool>(unrelatedModule),
+             "parse ownership with unrelated scheduled storage")) {
+    return false;
+  }
+  FailureOr<CanonicalSyncProgram> unrelatedProgram = buildCanonicalSyncProgram(
+      unrelatedModule->lookupSymbol<func::FuncOp>("unrelated_branch_l0"));
+  CanonicalSyncProblemBuildResult unrelatedPrecise;
+  if (succeeded(unrelatedProgram)) {
+    unrelatedPrecise =
+        buildCanonicalSyncPreciseProblem(*unrelatedProgram, options);
+  }
+  const bool builtUnrelatedProblem = succeeded(unrelatedProgram) &&
+                                     unrelatedPrecise &&
+                                     unrelatedPrecise.problem;
+  if (!check(builtUnrelatedProblem,
+             "build ownership with unrelated scheduled storage")) {
+    return false;
+  }
+  const auto unrelatedMechanism =
+      llvm::find_if(unrelatedPrecise.problem->getMechanisms(),
+                    [&](const CanonicalSyncMechanism &candidate) {
+                      return (candidate.originMask & l0Origin) != 0 &&
+                             candidate.descriptor.actions.size() ==
+                                 mechanism->descriptor.actions.size();
+                    });
+  if (!check(unrelatedMechanism !=
+                 unrelatedPrecise.problem->getMechanisms().end(),
+             "retain the original ownership recipe with unrelated storage")) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget unrelatedOwnershipWork;
+  const CanonicalSyncProblemResult unrelatedVerified =
+      unrelatedPrecise.problem->verifyMechanism(unrelatedMechanism->id,
+                                                &unrelatedOwnershipWork);
+  if (!check(unrelatedVerified &&
+                 unrelatedProgram->getGraph().getNodes().size() >
+                     program->getGraph().getNodes().size() &&
+                 unrelatedProgram->getGraph().getStorageAccesses().size() >
+                     program->getGraph().getStorageAccesses().size() &&
+                 unrelatedOwnershipWork.workUnits > baseOwnershipWork.workUnits,
+             "charge unrelated graph nodes and accesses in ownership "
+             "regeneration")) {
+    return false;
+  }
+
   const CanonicalSyncSelection selection =
       selectCanonicalSyncPatterns(*precise.problem);
   const CanonicalSyncVerifiedPlan verified =
@@ -5011,6 +5369,7 @@ int main() {
       testFixedBarrierInspectionBoundsAndPersistentControlState() &&
       testStructuralLimitsFailClosed() && testPeriodicBranchEvidence() &&
       testFirstIterationRecurrenceSuppression() &&
+      testGuardedOwnershipVerificationWorkIsBounded() &&
       testBasicL0OwnershipSharesExhaustiveBranchBoundaries() &&
       testOwnershipDoesNotHideProducerOverwrite() &&
       testGenericRecurrenceWithoutOwnershipDiscovery() &&

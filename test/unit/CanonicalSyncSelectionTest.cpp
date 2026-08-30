@@ -2219,6 +2219,108 @@ bool testVerifiedProtocolTrustBoundary() {
         meteredProblem.verifyMechanism(*meteredAdmission.index, &oneLessWork)
                 .error == CanonicalSyncProblemError::LimitExceeded,
         "reject one-less complete fresh-verification work");
+
+    SyncCoverGraph wideGraph;
+    const SyncCoverScopeId wideLoop = takeIndex(
+        wideGraph.addScope(0, true, SyncCoverTimelineInterval{0, 15}, true),
+        passed, "add wide-completion protocol loop");
+    std::vector<std::uint32_t> completionTargets(128);
+    std::iota(completionTargets.begin(), completionTargets.end(), 2);
+    const SyncCoverNodeId wideSource =
+        takeIndex(wideGraph.addNode(1, 1, wideLoop, 1, {}, completionTargets),
+                  passed, "add wide-completion protocol source");
+    const SyncCoverNodeId wideTarget =
+        takeIndex(wideGraph.addNode(2, 1, wideLoop, 2), passed,
+                  "add wide-completion protocol target");
+    passed &=
+        check(wideGraph.addDemand(demand(wideSource, wideTarget, wideLoop, 1)),
+              "add wide-completion protocol demand");
+    passed &= check(wideGraph.freezeStructure(),
+                    "freeze wide-completion protocol graph");
+    CanonicalSyncPatternProblem wideProblem(wideGraph, allDemands(wideGraph));
+    passed &= check(wideProblem.addEventDomain({0, 1, 2, 2, {}}),
+                    "add wide-completion protocol domain");
+    const CanonicalSyncProblemResult wideAdmission =
+        wideProblem.internVerifiedProtocol(
+            protocol(0, 1, 2, wideSource, wideTarget, wideLoop, 1, 1),
+            [](const CanonicalSyncMechanismDescriptor &candidate,
+               SyncCoverCoverageWorkBudget &work) {
+              if (!work.consume(callbackWork)) {
+                return CanonicalSyncProblemError::LimitExceeded;
+              }
+              return candidate.kind == CanonicalSyncMechanismKind::Protocol
+                         ? CanonicalSyncProblemError::None
+                         : CanonicalSyncProblemError::UnverifiedProtocol;
+            });
+    if (wideAdmission.index) {
+      SyncCoverCoverageWorkBudget wideWork;
+      const CanonicalSyncProblemResult wideVerified =
+          wideProblem.verifyMechanism(*wideAdmission.index, &wideWork);
+      passed &= check(
+          wideVerified && wideWork.workUnits >= measuredWork.workUnits + 127,
+          "charge the complete source completion-target lookup dimension");
+      SyncCoverCoverageWorkBudget wideOneLess(wideWork.workUnits - 1);
+      passed &= check(
+          wideProblem.verifyMechanism(*wideAdmission.index, &wideOneLess)
+                  .error == CanonicalSyncProblemError::LimitExceeded,
+          "reject wide completion-target verification at one less work unit");
+    } else {
+      passed &= check(false, "admit wide-completion protocol");
+    }
+  }
+
+  const auto rejectsBrokenVerifier =
+      [&](CanonicalSyncProblemError returned, bool exhausts,
+          CanonicalSyncProblemError expected, std::string_view message) {
+        CanonicalSyncPatternProblem boundaryProblem(graph, allDemands(graph));
+        if (!boundaryProblem.addEventDomain({0, 1, 2, 2, {}})) {
+          return check(false, "add broken-verifier protocol domain");
+        }
+        const CanonicalSyncProblemResult result =
+            boundaryProblem.internVerifiedProtocol(
+                protocol(0, 1, 2, source, target, loop, 1, 1),
+                [=](const CanonicalSyncMechanismDescriptor &,
+                    SyncCoverCoverageWorkBudget &work) {
+                  work.exhausted = exhausts;
+                  return returned;
+                });
+        return check(result.error == expected &&
+                         boundaryProblem.getMechanisms().empty(),
+                     message);
+      };
+  passed &= rejectsBrokenVerifier(
+      CanonicalSyncProblemError::None, true,
+      CanonicalSyncProblemError::LimitExceeded,
+      "normalize exhausted verifier success to a limit failure");
+  passed &= rejectsBrokenVerifier(
+      CanonicalSyncProblemError::UnverifiedProtocol, true,
+      CanonicalSyncProblemError::LimitExceeded,
+      "normalize exhausted semantic rejection to a limit failure");
+  passed &= rejectsBrokenVerifier(
+      CanonicalSyncProblemError::InvalidGraph, false,
+      CanonicalSyncProblemError::UnverifiedProtocol,
+      "normalize an out-of-contract verifier error to semantic rejection");
+
+  CanonicalSyncPatternProblem freshBoundaryProblem(graph, allDemands(graph));
+  passed &= check(freshBoundaryProblem.addEventDomain({0, 1, 2, 2, {}}),
+                  "add fresh broken-verifier domain");
+  bool exhaustFreshVerifier = false;
+  const CanonicalSyncProblemResult freshBoundaryAdmission =
+      freshBoundaryProblem.internVerifiedProtocol(
+          protocol(0, 1, 2, source, target, loop, 1, 1),
+          [&](const CanonicalSyncMechanismDescriptor &,
+              SyncCoverCoverageWorkBudget &work) {
+            work.exhausted = exhaustFreshVerifier;
+            return CanonicalSyncProblemError::None;
+          });
+  if (freshBoundaryAdmission.index) {
+    exhaustFreshVerifier = true;
+    passed &= check(
+        freshBoundaryProblem.verifyMechanism(*freshBoundaryAdmission.index)
+                .error == CanonicalSyncProblemError::LimitExceeded,
+        "normalize fresh verifier exhaustion before common validation");
+  } else {
+    passed &= check(false, "admit fresh broken-verifier protocol");
   }
 
   CanonicalSyncMechanismDescriptor undrainedExport =

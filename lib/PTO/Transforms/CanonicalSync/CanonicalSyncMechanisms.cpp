@@ -2036,38 +2036,37 @@ bool ownershipDescriptorEqual(const CanonicalSyncMechanismDescriptor &left,
   }
   std::vector<bool> matched(right.supplies.size(), false);
   for (const CanonicalSyncSupplyBinding &binding : left.supplies) {
-    const auto found = std::find_if(
-        right.supplies.begin(), right.supplies.end(),
-        [&](const CanonicalSyncSupplyBinding &candidate) {
-          std::size_t comparisonWork = 1;
-          const bool workOverflows =
-              !checkedProtocolAdd(comparisonWork,
-                                  binding.edge.sourceGuard.literals.size(),
-                                  work) ||
-              !checkedProtocolAdd(comparisonWork,
-                                  binding.edge.targetGuard.literals.size(),
-                                  work) ||
-              !checkedProtocolAdd(comparisonWork, binding.allowedDemands.size(),
-                                  work) ||
-              !checkedProtocolAdd(comparisonWork,
-                                  candidate.edge.sourceGuard.literals.size(),
-                                  work) ||
-              !checkedProtocolAdd(comparisonWork,
-                                  candidate.edge.targetGuard.literals.size(),
-                                  work) ||
-              !checkedProtocolAdd(comparisonWork,
-                                  candidate.allowedDemands.size(), work);
-          if (workOverflows || !work.consume(comparisonWork)) {
-            return false;
-          }
-          const std::size_t index =
-              static_cast<std::size_t>(&candidate - right.supplies.data());
-          return !matched[index] && ownershipBindingEqual(binding, candidate);
-        });
-    if (work.exhausted || found == right.supplies.end()) {
+    std::optional<std::size_t> found;
+    for (std::size_t index = 0; index < right.supplies.size(); ++index) {
+      const CanonicalSyncSupplyBinding &candidate = right.supplies[index];
+      std::size_t comparisonWork = 1;
+      const bool workOverflows =
+          !checkedProtocolAdd(comparisonWork,
+                              binding.edge.sourceGuard.literals.size(), work) ||
+          !checkedProtocolAdd(comparisonWork,
+                              binding.edge.targetGuard.literals.size(), work) ||
+          !checkedProtocolAdd(comparisonWork, binding.allowedDemands.size(),
+                              work) ||
+          !checkedProtocolAdd(comparisonWork,
+                              candidate.edge.sourceGuard.literals.size(),
+                              work) ||
+          !checkedProtocolAdd(comparisonWork,
+                              candidate.edge.targetGuard.literals.size(),
+                              work) ||
+          !checkedProtocolAdd(comparisonWork, candidate.allowedDemands.size(),
+                              work);
+      if (workOverflows || !work.consume(comparisonWork)) {
+        return false;
+      }
+      if (!matched[index] && ownershipBindingEqual(binding, candidate)) {
+        found = index;
+        break;
+      }
+    }
+    if (!found) {
       return false;
     }
-    matched[static_cast<std::size_t>(found - right.supplies.begin())] = true;
+    matched[*found] = true;
   }
   return true;
 }
@@ -2076,6 +2075,16 @@ bool reserveOwnershipFactoryWork(
     const SyncCoverGraph &graph,
     const SyncCoverBasicOwnershipCertificate &certificate,
     SyncCoverCoverageWorkBudget &work) {
+  // buildOwnershipDemandIndex initializes one entry for every graph access and
+  // node, then performs a second all-node pass to normalize ready regions.
+  // Reserve these independent dimensions before either allocation occurs.
+  const bool graphWorkAvailable =
+      consumeProtocolWork(work, graph.getStorageAccesses().size()) &&
+      consumeProtocolWork(work, graph.getNodes().size()) &&
+      consumeProtocolWork(work, graph.getNodes().size());
+  if (!graphWorkAvailable) {
+    return false;
+  }
   std::size_t certificateIncidences = 1;
   const auto addIncidences = [&](std::size_t amount) {
     return checkedProtocolAdd(certificateIncidences, amount, work) &&
@@ -2100,7 +2109,13 @@ bool reserveOwnershipFactoryWork(
     }
   }
   for (const SyncCoverBasicOwnershipPath &path : certificate.paths) {
-    if (!addIncidences(path.uses.size())) {
+    const std::size_t guardIncidences =
+        path.scope < graph.getScopes().size()
+            ? graph.getScopes()[path.scope].guard.literals.size()
+            : 0;
+    const bool pathWorkAvailable =
+        addIncidences(path.uses.size()) && addIncidences(guardIncidences);
+    if (!pathWorkAvailable) {
       return false;
     }
     for (const SyncCoverBasicOwnershipUse &use : path.uses) {
@@ -2322,39 +2337,130 @@ getOwnershipDemands(const SyncCoverGraph &graph,
 using OwnershipBindingKey =
     std::tuple<SyncCoverNodeId, SyncCoverNodeId, unsigned>;
 
+struct OwnershipBindingBucket {
+  OwnershipBindingKey key;
+  std::vector<SyncCoverDemandId> demands;
+};
+
 struct OwnershipBindingIndex {
   std::vector<SyncCoverDemandId> demands;
-  std::map<OwnershipBindingKey, std::vector<SyncCoverDemandId>> byEndpoints;
+  std::vector<OwnershipBindingBucket> byEndpoints;
   std::vector<SyncCoverEdge> suppliedEdges;
 };
 
-std::size_t logarithmicLookupWork(std::size_t size) {
-  std::size_t levels = 1;
-  while (size > 1) {
-    size = size / 2 + size % 2;
-    ++levels;
+struct OwnershipBindingEntry {
+  OwnershipBindingKey key;
+  SyncCoverDemandId demand = 0;
+};
+
+bool stableSortOwnershipEntries(std::vector<OwnershipBindingEntry> &entries,
+                                SyncCoverCoverageWorkBudget *workBudget) {
+  const std::size_t entryCount = entries.size();
+  if (entryCount < 2) {
+    return true;
   }
-  // A red-black tree lookup/insert visits at most twice the binary height.
-  return levels * 2;
+  if (workBudget && !workBudget->consume(entries.size())) {
+    return false;
+  }
+  std::vector<OwnershipBindingEntry> scratch(entries.size());
+  for (std::size_t width = 1; width < entries.size();) {
+    // Every entry is moved exactly once in this merge pass. Comparisons are
+    // metered immediately below and stop before the next comparison.
+    if (workBudget && !workBudget->consume(entries.size())) {
+      return false;
+    }
+    for (std::size_t begin = 0; begin < entries.size();) {
+      const std::size_t middle =
+          begin + std::min(width, entries.size() - begin);
+      const std::size_t end = middle + std::min(width, entries.size() - middle);
+      std::size_t left = begin;
+      std::size_t right = middle;
+      std::size_t output = begin;
+      while (left < middle && right < end) {
+        if (workBudget && !workBudget->consume()) {
+          return false;
+        }
+        if (entries[right].key < entries[left].key) {
+          scratch[output++] = entries[right++];
+        } else {
+          scratch[output++] = entries[left++];
+        }
+      }
+      while (left < middle) {
+        scratch[output++] = entries[left++];
+      }
+      while (right < end) {
+        scratch[output++] = entries[right++];
+      }
+      begin = end;
+    }
+    entries.swap(scratch);
+    const std::size_t remainingWidth = entries.size() - width;
+    if (width >= remainingWidth) {
+      break;
+    }
+    width *= 2;
+  }
+  return true;
 }
 
 std::optional<OwnershipBindingIndex>
 buildOwnershipBindingIndex(const SyncCoverGraph &graph,
                            std::vector<SyncCoverDemandId> demands,
                            SyncCoverCoverageWorkBudget *workBudget) {
-  if (workBudget &&
-      !consumeProtocolProduct(*workBudget, demands.size(),
-                              logarithmicLookupWork(demands.size()))) {
+  if (workBudget && !workBudget->consume(demands.size())) {
     return std::nullopt;
   }
   OwnershipBindingIndex result;
   result.demands = std::move(demands);
+  std::vector<OwnershipBindingEntry> entries;
+  entries.reserve(result.demands.size());
   for (SyncCoverDemandId demandId : result.demands) {
     const SyncCoverDemand &demand = graph.getDemands()[demandId];
-    result.byEndpoints[{demand.source, demand.target, demand.distance}]
-        .push_back(demandId);
+    entries.push_back(
+        {{demand.source, demand.target, demand.distance}, demandId});
+  }
+  const bool indexWorkAvailable =
+      stableSortOwnershipEntries(entries, workBudget) &&
+      (!workBudget || workBudget->consume(entries.size()));
+  if (!indexWorkAvailable) {
+    return std::nullopt;
+  }
+  result.byEndpoints.reserve(entries.size());
+  for (const OwnershipBindingEntry &entry : entries) {
+    const bool needsBucket = result.byEndpoints.empty() ||
+                             result.byEndpoints.back().key != entry.key;
+    if (needsBucket) {
+      result.byEndpoints.push_back({entry.key, {}});
+    }
+    result.byEndpoints.back().demands.push_back(entry.demand);
   }
   return result;
+}
+
+std::optional<std::size_t>
+findOwnershipBindingBucket(const OwnershipBindingIndex &index,
+                           const OwnershipBindingKey &key,
+                           SyncCoverCoverageWorkBudget *workBudget) {
+  std::size_t begin = 0;
+  std::size_t end = index.byEndpoints.size();
+  while (begin < end) {
+    if (workBudget && !workBudget->consume()) {
+      return std::nullopt;
+    }
+    const std::size_t middle = begin + (end - begin) / 2;
+    if (index.byEndpoints[middle].key < key) {
+      begin = middle + 1;
+    } else {
+      end = middle;
+    }
+  }
+  const bool missingBucket =
+      begin == index.byEndpoints.size() || index.byEndpoints[begin].key != key;
+  if (missingBucket) {
+    return std::nullopt;
+  }
+  return begin;
 }
 
 bool addOwnershipActionBindings(CanonicalSyncMechanismDescriptor &descriptor,
@@ -2365,19 +2471,20 @@ bool addOwnershipActionBindings(CanonicalSyncMechanismDescriptor &descriptor,
                                 std::size_t produceAction,
                                 std::size_t consumeAction,
                                 SyncCoverCoverageWorkBudget *workBudget) {
-  if (workBudget && !workBudget->consume(logarithmicLookupWork(
-                        bindingIndex.byEndpoints.size()))) {
+  const std::optional<std::size_t> bucket = findOwnershipBindingBucket(
+      bindingIndex, {source, target, distance}, workBudget);
+  if (workBudget && workBudget->exhausted) {
     return false;
   }
-  const auto candidates =
-      bindingIndex.byEndpoints.find({source, target, distance});
-  if (candidates == bindingIndex.byEndpoints.end()) {
+  if (!bucket) {
     return true;
   }
-  if (workBudget && !workBudget->consume(candidates->second.size())) {
+  const std::vector<SyncCoverDemandId> &candidates =
+      bindingIndex.byEndpoints[*bucket].demands;
+  if (workBudget && !workBudget->consume(candidates.size())) {
     return false;
   }
-  for (SyncCoverDemandId demandId : candidates->second) {
+  for (SyncCoverDemandId demandId : candidates) {
     const SyncCoverDemand &demand = graph.getDemands()[demandId];
     if (demand.distance != 0 &&
         descriptor.eventUses[eventUse].recurrenceScope != demand.scope) {
@@ -3829,8 +3936,16 @@ LogicalResult addExactEvents(
             [&graph, demandId,
              recurrenceDomain](const CanonicalSyncMechanismDescriptor &actual,
                                SyncCoverCoverageWorkBudget &work) {
+              const bool validDemand = demandId < graph.getDemands().size();
+              const SyncCoverNodeId source =
+                  validDemand ? graph.getDemands()[demandId].source : 0;
+              const std::size_t completionLookupWork =
+                  validDemand && source < graph.getNodes().size()
+                      ? graph.getNodes()[source].completionTargets.size()
+                      : 0;
               const bool workAvailable =
                   consumeProtocolProduct(work, graph.getScopes().size(), 4) &&
+                  consumeProtocolWork(work, completionLookupWork) &&
                   consumeProtocolWork(work, actual.actions.size()) &&
                   consumeProtocolWork(work, actual.eventUses.size()) &&
                   consumeProtocolWork(work, actual.supplies.size()) &&
@@ -3839,7 +3954,7 @@ LogicalResult addExactEvents(
                 return CanonicalSyncProblemError::LimitExceeded;
               }
               const bool valid =
-                  demandId < graph.getDemands().size() &&
+                  validDemand &&
                   verifyRecurrenceEvent(graph, graph.getDemands()[demandId],
                                         recurrenceDomain, actual);
               return protocolVerificationResult(work, valid);
