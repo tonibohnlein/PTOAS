@@ -693,12 +693,22 @@ struct PTOCanonicalSyncPass
       signalPassFailure();
       return;
     }
+    if (maximumRecurrenceWitnessStates >
+        static_cast<std::int64_t>(
+            pto::kCanonicalSyncMaximumRecurrenceWitnessStates)) {
+      function.emitError()
+          << "maximum-recurrence-witness-states must not exceed "
+          << pto::kCanonicalSyncMaximumRecurrenceWitnessStates;
+      signalPassFailure();
+      return;
+    }
     const auto validBound = [](std::int64_t value) {
       return value > 0 && static_cast<std::uint64_t>(value) <=
                               std::numeric_limits<std::size_t>::max();
     };
     const std::pair<std::int64_t, StringRef> bounds[] = {
         {maximumPeriodicRecurrenceStates, "maximum-periodic-recurrence-states"},
+        {maximumRecurrenceWitnessStates, "maximum-recurrence-witness-states"},
         {maximumBasicOwnershipInspections,
          "maximum-basic-ownership-inspections"},
         {maximumBasicOwnershipCertificates,
@@ -750,6 +760,8 @@ struct PTOCanonicalSyncPass
     options.eventIdBudget = static_cast<unsigned>(eventIdNumMax);
     options.analysis.maximumPeriodicRecurrenceStates =
         static_cast<std::size_t>(maximumPeriodicRecurrenceStates);
+    options.analysis.maximumRecurrenceWitnessStates =
+        static_cast<std::size_t>(maximumRecurrenceWitnessStates);
     options.analysis.maximumBasicOwnershipInspections =
         static_cast<std::size_t>(maximumBasicOwnershipInspections);
     options.analysis.maximumBasicOwnershipCertificates =

@@ -167,10 +167,11 @@ struct SyncCoverScope {
 
 /// A frontend-proven periodic relation for one structured control inside a
 /// loop. Each phase names the active alternative and its successor phase.
-/// Conservative v1 coverage stores this evidence for later path-sensitive
-/// patterns but still contextualizes loop-local controls independently in each
-/// virtual copy. Controls without this evidence remain nondeterministic across
-/// iterations.
+/// Recurrence demand construction follows this automaton exactly. Coverage
+/// retains the guards on resulting rows and contextualizes loop-local controls
+/// independently in each virtual copy; the demand basis has already removed
+/// unreachable phase/distance combinations. Controls without this evidence
+/// remain nondeterministic across iterations.
 struct SyncCoverControlPhaseRelation {
   SyncCoverScopeId loopScope = 0;
   std::size_t initialPhase = 0;

@@ -68,6 +68,10 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
            "maximum-periodic-recurrence-states", "int64_t", "16",
            "Maximum reachable joint periodic states used for recurrence "
            "analysis">,
+    Option<"maximumRecurrenceWitnessStates",
+           "maximum-recurrence-witness-states", "int64_t", "262144",
+           "Maximum compact recurrence witness/phase states retained for one "
+           "node pair">,
     Option<"maximumBasicOwnershipCertificates",
            "maximum-basic-ownership-certificates", "int64_t", "1024",
            "Maximum exact-slot ownership certificates retained">,

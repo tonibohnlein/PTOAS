@@ -27,6 +27,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -55,17 +56,27 @@ struct ExtractedAccess {
   std::vector<SyncCoverStorageAccessId> graphAccesses;
 };
 
+struct HazardWitnessPhaseState {
+  SyncCoverStorageWitnessId witness = 0;
+  std::uint16_t raw = 0;
+  std::uint16_t war = 0;
+  std::uint16_t waw = 0;
+};
+
 struct HazardWitnesses {
-  std::set<SyncCoverStorageWitnessId> raw;
-  std::set<SyncCoverStorageWitnessId> war;
-  std::set<SyncCoverStorageWitnessId> waw;
+  std::vector<HazardWitnessPhaseState> states;
 };
 
 struct RecurrencePhaseOrbit {
   bool staticallyReachable = true;
-  std::vector<SyncCoverControlId> controls;
-  std::vector<std::vector<std::size_t>> states;
+  std::size_t period = 1;
+  std::uint16_t sourceActivePhases = 1;
+  std::uint16_t targetActivePhases = 1;
 };
+
+using RecurrencePhaseOrbitCacheKey =
+    std::tuple<SyncCoverScopeId, std::vector<SyncCoverGuardLiteral>,
+               std::vector<SyncCoverGuardLiteral>>;
 
 using IssueFrontier = std::map<std::uint32_t, std::vector<SyncCoverNodeId>>;
 
@@ -220,6 +231,8 @@ private:
   std::set<std::pair<unsigned, unsigned>> noAliasArguments_;
   CanonicalSyncEventReservations eventReservations_;
   CanonicalSyncOwnershipDiscoveryStatistics ownershipDiscoveryStatistics_;
+  std::map<RecurrencePhaseOrbitCacheKey, RecurrencePhaseOrbit>
+      recurrencePhaseOrbitCache_;
   std::size_t pairInspections_ = 0;
 };
 

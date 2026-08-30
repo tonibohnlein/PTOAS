@@ -154,10 +154,7 @@ ProgramBuilder::addPeriodicControlEvidence(scf::IfOp conditional,
   }
   auto loop = dyn_cast_or_null<scf::ForOp>(scopeBindings_[*loopScope].owner);
   auto comparison = conditional.getCondition().getDefiningOp<arith::CmpIOp>();
-  const bool unsupportedComparisonKind =
-      comparison && comparison.getPredicate() != arith::CmpIPredicate::eq &&
-      comparison.getPredicate() != arith::CmpIPredicate::ne;
-  if (!loop || !comparison || unsupportedComparisonKind) {
+  if (!loop || !comparison) {
     return success();
   }
 
@@ -185,44 +182,63 @@ ProgramBuilder::addPeriodicControlEvidence(scf::IfOp conditional,
   }
 
   Operation *remainder = remainderValue.getDefiningOp();
+  const bool usesLoopInduction =
+      remainder->getOperand(0) == loop.getInductionVar();
+  if (!usesLoopInduction) {
+    return success();
+  }
+  const bool unsupportedComparisonKind =
+      comparison.getPredicate() != arith::CmpIPredicate::eq &&
+      comparison.getPredicate() != arith::CmpIPredicate::ne;
+  if (unsupportedComparisonKind) {
+    return conditional.emitError(
+        "canonical sync cannot model this periodic loop comparison");
+  }
   APInt divisor;
   APInt lower;
   APInt step;
   const bool unsupportedPhase =
-      remainder->getOperand(0) != loop.getInductionVar() ||
       !matchPattern(remainder->getOperand(1), m_ConstantInt(&divisor)) ||
       !matchPattern(loop.getLowerBound(), m_ConstantInt(&lower)) ||
       !matchPattern(loop.getStep(), m_ConstantInt(&step)) ||
       !divisor.isStrictlyPositive() || lower.isNegative() ||
-      !step.isStrictlyPositive() || divisor.getActiveBits() > 16 ||
-      !lower.isSignedIntN(64) || step.getActiveBits() > 63 ||
+      !step.isStrictlyPositive() || divisor.getActiveBits() > 64 ||
+      lower.getActiveBits() > 63 || step.getActiveBits() > 63 ||
       !selectedPhase.isSignedIntN(64);
   if (unsupportedPhase) {
-    return success();
+    return conditional.emitError(
+        "canonical sync cannot model this periodic loop control");
   }
   const std::size_t phases = divisor.getZExtValue();
-  if (phases == 0 || phases > kMaximumSlotCount) {
-    return success();
+  if (phases == 0 || phases > kCanonicalSyncMaximumPeriodicRecurrenceStates) {
+    return conditional.emitError(
+        "canonical sync periodic loop control exceeds the supported phase "
+        "bound");
   }
   const std::int64_t selected = selectedPhase.getSExtValue();
   const bool invalidSelected =
       selected < 0 || static_cast<std::size_t>(selected) >= phases;
-  if (invalidSelected) {
-    return success();
-  }
 
   SyncCoverControlPhaseRelation relation;
   relation.loopScope = *loopScope;
-  relation.initialPhase = lower.getZExtValue() % phases;
-  relation.nextPhase.resize(phases);
-  relation.activeAlternative.resize(phases);
-  const std::size_t stepPhase = step.getZExtValue() % phases;
-  for (std::size_t phase = 0; phase < phases; ++phase) {
-    relation.nextPhase[phase] = (phase + stepPhase) % phases;
-    const bool equal = phase == static_cast<std::size_t>(selected);
-    const bool takeThen =
-        comparison.getPredicate() == arith::CmpIPredicate::eq ? equal : !equal;
-    relation.activeAlternative[phase] = takeThen ? 0 : 1;
+  if (invalidSelected) {
+    relation.initialPhase = 0;
+    relation.nextPhase = {0};
+    relation.activeAlternative = {
+        comparison.getPredicate() == arith::CmpIPredicate::ne ? 0U : 1U};
+  } else {
+    relation.initialPhase = lower.getZExtValue() % phases;
+    relation.nextPhase.resize(phases);
+    relation.activeAlternative.resize(phases);
+    const std::size_t stepPhase = step.getZExtValue() % phases;
+    for (std::size_t phase = 0; phase < phases; ++phase) {
+      relation.nextPhase[phase] = (phase + stepPhase) % phases;
+      const bool equal = phase == static_cast<std::size_t>(selected);
+      const bool takeThen =
+          comparison.getPredicate() == arith::CmpIPredicate::eq ? equal
+                                                                : !equal;
+      relation.activeAlternative[phase] = takeThen ? 0 : 1;
+    }
   }
   if (!graph_.setControlPhaseRelation(control, std::move(relation))) {
     return conditional.emitError(

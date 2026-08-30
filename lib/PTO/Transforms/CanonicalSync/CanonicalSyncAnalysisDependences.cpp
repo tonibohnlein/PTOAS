@@ -60,20 +60,6 @@ bool executesOnlyOnFirstIteration(Operation *operation, scf::ForOp loop) {
   return false;
 }
 
-bool scopeContains(const SyncCoverGraph &graph, SyncCoverScopeId ancestor,
-                   SyncCoverScopeId descendant) {
-  const std::vector<SyncCoverScope> &scopes = graph.getScopes();
-  const bool invalidScope =
-      ancestor >= scopes.size() || descendant >= scopes.size();
-  if (invalidScope) {
-    return false;
-  }
-  while (descendant != ancestor && descendant != 0) {
-    descendant = scopes[descendant].parent;
-  }
-  return descendant == ancestor;
-}
-
 std::optional<unsigned> checkedLeastCommonMultiple(unsigned first,
                                                    unsigned second) {
   if (first == 0 || second == 0) {
@@ -88,6 +74,39 @@ std::optional<unsigned> checkedLeastCommonMultiple(unsigned first,
   }
   return reduced * second;
 }
+
+bool checkedAddSize(std::size_t &value, std::size_t amount) {
+  const bool overflows =
+      amount > std::numeric_limits<std::size_t>::max() - value;
+  if (overflows) {
+    return false;
+  }
+  value += amount;
+  return true;
+}
+
+bool checkedMultiplySize(std::size_t first, std::size_t second,
+                         std::size_t &result) {
+  const bool overflows =
+      first != 0 && second > std::numeric_limits<std::size_t>::max() / first;
+  if (overflows) {
+    return false;
+  }
+  result = first * second;
+  return true;
+}
+
+std::size_t logarithmicWorkBound(std::size_t count) {
+  std::size_t result = 1;
+  while (count > 1) {
+    count = count / 2 + count % 2;
+    ++result;
+  }
+  return result;
+}
+
+constexpr std::size_t kMaximumRecurrencePhaseOrbitCacheEntries = 4096;
+constexpr std::size_t kMaximumCachedRecurrenceGuardLiterals = 32;
 
 } // namespace
 
@@ -960,9 +979,9 @@ LogicalResult ProgramBuilder::addRecurrenceDependencies() {
           if (reachableSourcePhases.empty()) {
             continue;
           }
-          if (failed(addMemoryHazards(
-                  source, target, loopOperation, distance, loopScope, &covered,
-                  &reachableSourcePhases, orbit->states.size()))) {
+          if (failed(addMemoryHazards(source, target, loopOperation, distance,
+                                      loopScope, &covered,
+                                      &reachableSourcePhases, orbit->period))) {
             return failure();
           }
         }
@@ -1049,7 +1068,57 @@ FailureOr<RecurrencePhaseOrbit>
 ProgramBuilder::buildRecurrencePhaseOrbit(SyncCoverScopeId loopScope,
                                           const SyncCoverGuard &sourceGuard,
                                           const SyncCoverGuard &targetGuard) {
+  std::size_t literalCount = sourceGuard.literals.size();
+  if (!checkedAddSize(literalCount, targetGuard.literals.size())) {
+    function_.emitError("canonical sync recurrence phase work overflow");
+    return failure();
+  }
+  const bool cacheable = literalCount <= kMaximumCachedRecurrenceGuardLiterals;
+  std::size_t literalUnits = literalCount;
+  if (!checkedAddSize(literalUnits, 1)) {
+    function_.emitError("canonical sync recurrence phase work overflow");
+    return failure();
+  }
+  std::optional<RecurrencePhaseOrbitCacheKey> cacheKey;
+  if (cacheable) {
+    std::size_t cacheEntries = recurrencePhaseOrbitCache_.size();
+    std::size_t lookupWork = 0;
+    const bool lookupUnavailable =
+        !checkedAddSize(cacheEntries, 1) ||
+        !checkedMultiplySize(literalUnits, logarithmicWorkBound(cacheEntries),
+                             lookupWork) ||
+        !consumePairInspections(lookupWork);
+    if (lookupUnavailable) {
+      function_.emitError("canonical sync pair-inspection limit exceeded");
+      return failure();
+    }
+    cacheKey.emplace(loopScope, sourceGuard.literals, targetGuard.literals);
+    const auto cached = recurrencePhaseOrbitCache_.find(*cacheKey);
+    if (cached != recurrencePhaseOrbitCache_.end()) {
+      return cached->second;
+    }
+  }
+
+  std::size_t perLiteralWork =
+      8 + 4 * kCanonicalSyncMaximumPeriodicRecurrenceStates;
+  std::size_t buildWork = 0;
+  const bool buildUnavailable =
+      !checkedMultiplySize(literalUnits, perLiteralWork, buildWork) ||
+      !consumePairInspections(buildWork);
+  if (buildUnavailable) {
+    function_.emitError("canonical sync pair-inspection limit exceeded");
+    return failure();
+  }
+
   RecurrencePhaseOrbit result;
+  const auto retainInCache = [&]() {
+    const bool cacheHasRoom =
+        cacheKey && recurrencePhaseOrbitCache_.size() <
+                        kMaximumRecurrencePhaseOrbitCacheEntries;
+    if (cacheHasRoom) {
+      recurrencePhaseOrbitCache_.emplace(std::move(*cacheKey), result);
+    }
+  };
   const std::vector<SyncCoverControl> &controls = graph_.getControls();
   const auto guardIsValid = [&](const SyncCoverGuard &guard) {
     return llvm::all_of(guard.literals,
@@ -1079,67 +1148,116 @@ ProgramBuilder::buildRecurrencePhaseOrbit(SyncCoverScopeId loopScope,
       continue;
     }
     const bool iterationLocal =
-        scopeContains(graph_, loopScope, controls[source.control].scope);
+        graph_.scopeContains(loopScope, controls[source.control].scope);
     if (!iterationLocal && source.alternative != target.alternative) {
       result.staticallyReachable = false;
-      result.states.push_back({});
+      result.sourceActivePhases = 0;
+      result.targetActivePhases = 0;
+      retainInCache();
       return result;
     }
     ++sourceIndex;
     ++targetIndex;
   }
 
+  std::vector<SyncCoverControlId> periodicControls;
   const auto collectPeriodicControls = [&](const SyncCoverGuard &guard) {
     for (const SyncCoverGuardLiteral &literal : guard.literals) {
       const std::optional<SyncCoverControlPhaseRelation> &relation =
           controls[literal.control].phaseRelation;
       if (relation && relation->loopScope == loopScope) {
-        result.controls.push_back(literal.control);
+        periodicControls.push_back(literal.control);
       }
     }
   };
   collectPeriodicControls(sourceGuard);
   collectPeriodicControls(targetGuard);
-  llvm::sort(result.controls);
-  result.controls.erase(
-      std::unique(result.controls.begin(), result.controls.end()),
-      result.controls.end());
-  if (result.controls.empty()) {
-    result.states.push_back({});
+  llvm::sort(periodicControls);
+  periodicControls.erase(
+      std::unique(periodicControls.begin(), periodicControls.end()),
+      periodicControls.end());
+  if (periodicControls.empty()) {
+    retainInCache();
     return result;
   }
 
-  std::vector<std::size_t> state;
-  state.reserve(result.controls.size());
-  for (SyncCoverControlId control : result.controls) {
-    state.push_back(controls[control].phaseRelation->initialPhase);
-  }
-  while (true) {
-    const auto repeated =
-        std::find(result.states.begin(), result.states.end(), state);
-    if (repeated != result.states.end()) {
-      if (repeated != result.states.begin()) {
+  unsigned jointPeriod = 1;
+  for (SyncCoverControlId control : periodicControls) {
+    const SyncCoverControlPhaseRelation &relation =
+        *controls[control].phaseRelation;
+    const std::size_t phases = relation.nextPhase.size();
+    const bool invalidRelation =
+        phases == 0 || phases > kCanonicalSyncMaximumPeriodicRecurrenceStates ||
+        relation.initialPhase >= phases ||
+        relation.activeAlternative.size() != phases ||
+        llvm::any_of(relation.nextPhase,
+                     [&](std::size_t phase) { return phase >= phases; });
+    if (invalidRelation) {
+      function_.emitError(
+          "canonical sync recurrence has an invalid periodic relation");
+      return failure();
+    }
+    std::vector<bool> visited(phases, false);
+    std::size_t state = relation.initialPhase;
+    visited[state] = true;
+    unsigned controlPeriod = 0;
+    while (true) {
+      state = relation.nextPhase[state];
+      ++controlPeriod;
+      if (state == relation.initialPhase) {
+        break;
+      }
+      if (visited[state]) {
         function_.emitError(
             "canonical sync does not support transient periodic recurrence "
             "states");
         return failure();
       }
-      break;
+      if (controlPeriod == options_.maximumPeriodicRecurrenceStates) {
+        function_.emitError(
+            "canonical sync periodic recurrence state limit exceeded");
+        return failure();
+      }
+      visited[state] = true;
     }
-    const bool stateLimitReached =
-        result.states.size() == options_.maximumPeriodicRecurrenceStates;
-    if (stateLimitReached) {
+    const std::optional<unsigned> combined =
+        checkedLeastCommonMultiple(jointPeriod, controlPeriod);
+    if (!combined || *combined > options_.maximumPeriodicRecurrenceStates) {
       function_.emitError(
           "canonical sync periodic recurrence state limit exceeded");
       return failure();
     }
-    result.states.push_back(state);
-    for (std::size_t index = 0; index < result.controls.size(); ++index) {
-      const SyncCoverControlPhaseRelation &relation =
-          *controls[result.controls[index]].phaseRelation;
-      state[index] = relation.nextPhase[state[index]];
-    }
+    jointPeriod = *combined;
   }
+
+  result.period = jointPeriod;
+  const std::uint32_t allPhases =
+      (std::uint32_t{1} << jointPeriod) - std::uint32_t{1};
+  const auto activePhasesFor = [&](const SyncCoverGuard &guard) {
+    std::uint32_t active = allPhases;
+    for (const SyncCoverGuardLiteral &literal : guard.literals) {
+      const std::optional<SyncCoverControlPhaseRelation> &optionalRelation =
+          controls[literal.control].phaseRelation;
+      if (!optionalRelation || optionalRelation->loopScope != loopScope) {
+        continue;
+      }
+      const SyncCoverControlPhaseRelation &relation = *optionalRelation;
+      std::size_t state = relation.initialPhase;
+      for (unsigned iteration = 0; iteration < jointPeriod; ++iteration) {
+        if (relation.activeAlternative[state] != literal.alternative) {
+          active &= ~(std::uint32_t{1} << iteration);
+        }
+        state = relation.nextPhase[state];
+      }
+    }
+    return static_cast<std::uint16_t>(active);
+  };
+  result.sourceActivePhases = activePhasesFor(sourceGuard);
+  result.targetActivePhases = activePhasesFor(targetGuard);
+  if (result.sourceActivePhases == 0 || result.targetActivePhases == 0) {
+    result.staticallyReachable = false;
+  }
+  retainInCache();
   return result;
 }
 
@@ -1147,37 +1265,19 @@ std::vector<std::size_t> ProgramBuilder::getReachableRecurrenceSourcePhases(
     const RecurrencePhaseOrbit &orbit, const SyncCoverGuard &sourceGuard,
     const SyncCoverGuard &targetGuard, unsigned distance) const {
   std::vector<std::size_t> result;
-  if (!orbit.staticallyReachable || orbit.states.empty()) {
+  if (!orbit.staticallyReachable || orbit.period == 0) {
     return result;
   }
-  const std::vector<SyncCoverControl> &controls = graph_.getControls();
-  const auto matches = [&](const SyncCoverGuard &guard,
-                           const std::vector<std::size_t> &state) {
-    for (const SyncCoverGuardLiteral &literal : guard.literals) {
-      const auto position = std::lower_bound(
-          orbit.controls.begin(), orbit.controls.end(), literal.control);
-      const bool missing =
-          position == orbit.controls.end() || *position != literal.control;
-      if (missing) {
-        continue;
-      }
-      const std::size_t index =
-          static_cast<std::size_t>(position - orbit.controls.begin());
-      const SyncCoverControlPhaseRelation &relation =
-          *controls[literal.control].phaseRelation;
-      if (relation.activeAlternative[state[index]] != literal.alternative) {
-        return false;
-      }
-    }
-    return true;
-  };
-
-  const std::size_t period = orbit.states.size();
+  (void)sourceGuard;
+  (void)targetGuard;
+  const std::size_t period = orbit.period;
   const std::size_t offset = static_cast<std::size_t>(distance) % period;
   for (std::size_t sourcePhase = 0; sourcePhase < period; ++sourcePhase) {
     const std::size_t targetPhase = (sourcePhase + offset) % period;
-    const bool sourceMatches = matches(sourceGuard, orbit.states[sourcePhase]);
-    const bool targetMatches = matches(targetGuard, orbit.states[targetPhase]);
+    const bool sourceMatches =
+        (orbit.sourceActivePhases & (std::uint16_t{1} << sourcePhase)) != 0;
+    const bool targetMatches =
+        (orbit.targetActivePhases & (std::uint16_t{1} << targetPhase)) != 0;
     if (sourceMatches && targetMatches) {
       result.push_back(sourcePhase);
     }
@@ -1190,33 +1290,42 @@ ProgramBuilder::maximumRecurrenceDistance(SyncCoverNodeId source,
                                           SyncCoverNodeId target,
                                           const RecurrencePhaseOrbit &orbit) {
   const bool invalidHorizon =
-      orbit.states.empty() ||
-      orbit.states.size() > std::numeric_limits<unsigned>::max();
+      orbit.period == 0 || orbit.period > std::numeric_limits<unsigned>::max();
   if (invalidHorizon) {
     function_.emitError("canonical sync recurrence phase horizon overflow");
     return failure();
   }
-  const unsigned phasePeriod = static_cast<unsigned>(orbit.states.size());
+  const unsigned phasePeriod = static_cast<unsigned>(orbit.period);
   unsigned maximum = phasePeriod;
-  for (std::size_t firstIndex : nodeAccessIndices_[source]) {
-    const ExtractedAccess &first = extractedAccesses_[firstIndex];
-    for (std::size_t secondIndex : nodeAccessIndices_[target]) {
-      const ExtractedAccess &second = extractedAccesses_[secondIndex];
-      if (first.space != second.space || gmAccessesAreNoAlias(first, second)) {
+  std::size_t accessWork = nodeAccessIndices_[source].size();
+  const bool accessWorkUnavailable =
+      !checkedAddSize(accessWork, nodeAccessIndices_[target].size()) ||
+      !checkedAddSize(accessWork, 1) || !consumePairInspections(accessWork);
+  if (accessWorkUnavailable) {
+    function_.emitError("canonical sync pair-inspection limit exceeded");
+    return failure();
+  }
+  const auto admitAccessPeriods = [&](SyncCoverNodeId node) {
+    for (std::size_t accessIndex : nodeAccessIndices_[node]) {
+      const std::size_t slots =
+          extractedAccesses_[accessIndex].graphAccesses.size();
+      if (slots == 0 || slots > kMaximumSlotCount) {
         continue;
       }
-      const std::size_t slots =
-          std::max(first.graphAccesses.size(), second.graphAccesses.size());
-      if (slots <= kMaximumSlotCount) {
-        const std::optional<unsigned> period = checkedLeastCommonMultiple(
-            phasePeriod, std::max(1U, static_cast<unsigned>(slots)));
-        if (!period) {
-          function_.emitError("canonical sync recurrence horizon overflow");
-          return failure();
-        }
-        maximum = std::max(maximum, *period);
+      const std::optional<unsigned> period =
+          checkedLeastCommonMultiple(phasePeriod, static_cast<unsigned>(slots));
+      if (!period) {
+        return false;
       }
+      maximum = std::max(maximum, *period);
     }
+    return true;
+  };
+  const bool invalidAccessPeriod =
+      !admitAccessPeriods(source) || !admitAccessPeriods(target);
+  if (invalidAccessPeriod) {
+    function_.emitError("canonical sync recurrence horizon overflow");
+    return failure();
   }
   return maximum;
 }
@@ -1227,18 +1336,106 @@ LogicalResult ProgramBuilder::addMemoryHazards(
     HazardWitnesses *covered,
     const std::vector<std::size_t> *reachableSourcePhases,
     std::size_t phasePeriod) {
-  const auto emitHazard = [&](SyncCoverDemandKind kind,
-                              std::vector<SyncCoverStorageWitnessId> witnesses,
-                              std::set<SyncCoverStorageWitnessId> *seen) {
+  std::uint16_t sourcePhaseMask = 1;
+  if (reachableSourcePhases) {
+    if (phasePeriod == 0 ||
+        phasePeriod > kCanonicalSyncMaximumPeriodicRecurrenceStates) {
+      return function_.emitError(
+          "canonical sync recurrence phase mask is invalid");
+    }
+    sourcePhaseMask = 0;
+    for (std::size_t phase : *reachableSourcePhases) {
+      if (phase >= phasePeriod) {
+        return function_.emitError(
+            "canonical sync recurrence source phase is invalid");
+      }
+      sourcePhaseMask |= std::uint16_t{1} << phase;
+    }
+  }
+  const auto emitHazard =
+      [&](SyncCoverDemandKind kind,
+          std::vector<SyncCoverStorageWitnessId> witnesses) -> LogicalResult {
+    std::size_t witnessUnits = witnesses.size();
+    std::size_t sortWork = 0;
+    const bool sortWorkUnavailable =
+        !checkedAddSize(witnessUnits, 1) ||
+        !checkedMultiplySize(witnesses.size(),
+                             logarithmicWorkBound(witnessUnits), sortWork) ||
+        !checkedAddSize(sortWork, witnesses.size()) ||
+        !consumePairInspections(sortWork);
+    if (sortWorkUnavailable) {
+      return function_.emitError(
+          "canonical sync pair-inspection limit exceeded");
+    }
     llvm::sort(witnesses);
     witnesses.erase(std::unique(witnesses.begin(), witnesses.end()),
                     witnesses.end());
-    if (seen) {
-      witnesses.erase(std::remove_if(witnesses.begin(), witnesses.end(),
-                                     [&](SyncCoverStorageWitnessId witness) {
-                                       return seen->count(witness) != 0;
-                                     }),
-                      witnesses.end());
+    if (covered) {
+      std::vector<SyncCoverStorageWitnessId> newlyCovered;
+      newlyCovered.reserve(witnesses.size());
+      for (SyncCoverStorageWitnessId witness : witnesses) {
+        std::size_t stateUnits = covered->states.size();
+        if (!checkedAddSize(stateUnits, 1)) {
+          return function_.emitError(
+              "canonical sync recurrence witness-state work overflow");
+        }
+        const std::size_t lookupWork = logarithmicWorkBound(stateUnits);
+        if (!consumePairInspections(lookupWork)) {
+          return function_.emitError(
+              "canonical sync pair-inspection limit exceeded");
+        }
+        auto position = std::lower_bound(
+            covered->states.begin(), covered->states.end(), witness,
+            [](const HazardWitnessPhaseState &state,
+               SyncCoverStorageWitnessId candidate) {
+              return state.witness < candidate;
+            });
+        const bool newWitness =
+            position == covered->states.end() || position->witness != witness;
+        if (newWitness) {
+          const bool stateLimitReached =
+              covered->states.size() == options_.maximumRecurrenceWitnessStates;
+          if (stateLimitReached) {
+            return function_.emitError(
+                "canonical sync recurrence witness-state limit exceeded");
+          }
+          const std::size_t shiftWork =
+              static_cast<std::size_t>(covered->states.end() - position);
+          std::size_t insertionWork = shiftWork;
+          const bool insertionWorkUnavailable =
+              !checkedAddSize(insertionWork, 1) ||
+              !consumePairInspections(insertionWork);
+          if (insertionWorkUnavailable) {
+            return function_.emitError(
+                "canonical sync pair-inspection limit exceeded");
+          }
+          position = covered->states.insert(
+              position, HazardWitnessPhaseState{witness, 0, 0, 0});
+        }
+        std::uint16_t *seenPhases = nullptr;
+        switch (kind) {
+        case SyncCoverDemandKind::MemoryRAW:
+          seenPhases = &position->raw;
+          break;
+        case SyncCoverDemandKind::MemoryWAR:
+          seenPhases = &position->war;
+          break;
+        case SyncCoverDemandKind::MemoryWAW:
+          seenPhases = &position->waw;
+          break;
+        case SyncCoverDemandKind::SSA:
+          return function_.emitError(
+              "canonical sync recurrence hazard kind is invalid");
+        }
+        const std::uint16_t newPhases =
+            sourcePhaseMask & static_cast<std::uint16_t>(~*seenPhases);
+        if (newPhases == 0) {
+          continue;
+        }
+        *seenPhases |= sourcePhaseMask;
+        newlyCovered.push_back(witness);
+      }
+      witnesses = std::move(newlyCovered);
     }
     if (witnesses.empty()) {
       return success();
@@ -1246,9 +1443,6 @@ LogicalResult ProgramBuilder::addMemoryHazards(
     if (failed(addDemand(source, target, recurrenceScope, distance, kind,
                          witnesses))) {
       return failure();
-    }
-    if (seen) {
-      seen->insert(witnesses.begin(), witnesses.end());
     }
     return success();
   };
@@ -1320,18 +1514,11 @@ LogicalResult ProgramBuilder::addMemoryHazards(
           waw.push_back(*witness.index);
         }
       }
-      std::set<SyncCoverStorageWitnessId> *coveredRaw =
-          covered ? &covered->raw : nullptr;
-      std::set<SyncCoverStorageWitnessId> *coveredWar =
-          covered ? &covered->war : nullptr;
-      std::set<SyncCoverStorageWitnessId> *coveredWaw =
-          covered ? &covered->waw : nullptr;
-      if (failed(emitHazard(SyncCoverDemandKind::MemoryRAW, std::move(raw),
-                            coveredRaw)) ||
-          failed(emitHazard(SyncCoverDemandKind::MemoryWAR, std::move(war),
-                            coveredWar)) ||
-          failed(emitHazard(SyncCoverDemandKind::MemoryWAW, std::move(waw),
-                            coveredWaw))) {
+      const bool hazardEmissionFailed =
+          failed(emitHazard(SyncCoverDemandKind::MemoryRAW, std::move(raw))) ||
+          failed(emitHazard(SyncCoverDemandKind::MemoryWAR, std::move(war))) ||
+          failed(emitHazard(SyncCoverDemandKind::MemoryWAW, std::move(waw)));
+      if (hazardEmissionFailed) {
         return failure();
       }
     }

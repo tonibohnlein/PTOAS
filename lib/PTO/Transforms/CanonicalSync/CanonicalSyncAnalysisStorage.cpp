@@ -152,6 +152,58 @@ std::optional<std::vector<std::uint32_t>> getReachableSymbolResidues(
   return residues;
 }
 
+std::optional<std::size_t>
+getRestrictedOrdinalWorkBound(std::uint32_t modulus, std::size_t phasePeriod,
+                              std::size_t reachablePhases) {
+  if (modulus == 0 || phasePeriod == 0) {
+    return std::nullopt;
+  }
+  const std::size_t divisor =
+      std::gcd(phasePeriod, static_cast<std::size_t>(modulus));
+  const std::size_t reduced = phasePeriod / divisor;
+  const bool horizonOverflows =
+      reduced > std::numeric_limits<std::size_t>::max() / modulus;
+  if (horizonOverflows) {
+    return std::nullopt;
+  }
+  const std::size_t horizon = reduced * modulus;
+  if (reachablePhases == std::numeric_limits<std::size_t>::max()) {
+    return std::nullopt;
+  }
+  std::size_t searchWork = 1;
+  for (std::size_t count = reachablePhases + 1; count > 1;
+       count = count / 2 + count % 2) {
+    ++searchWork;
+  }
+  const bool perItemWorkOverflows =
+      searchWork > std::numeric_limits<std::size_t>::max() - 4;
+  if (perItemWorkOverflows) {
+    return std::nullopt;
+  }
+  const std::size_t perIteration = searchWork + 4;
+  const std::size_t perOrdinal = searchWork + 4;
+  const bool productOverflows =
+      horizon > std::numeric_limits<std::size_t>::max() / perIteration ||
+      modulus > std::numeric_limits<std::size_t>::max() / perOrdinal;
+  if (productOverflows) {
+    return std::nullopt;
+  }
+  const std::size_t iterationWork = horizon * perIteration;
+  const std::size_t ordinalWork = modulus * perOrdinal;
+  const bool fixedWorkOverflows =
+      ordinalWork > std::numeric_limits<std::size_t>::max() - iterationWork;
+  if (fixedWorkOverflows) {
+    return std::nullopt;
+  }
+  const std::size_t fixedWork = iterationWork + ordinalWork;
+  const bool totalWorkOverflows =
+      reachablePhases > std::numeric_limits<std::size_t>::max() - fixedWork;
+  if (totalWorkOverflows) {
+    return std::nullopt;
+  }
+  return fixedWork + reachablePhases;
+}
+
 } // namespace
 
 void ProgramBuilder::appendAccesses(SyncCoverNodeId node,
@@ -512,6 +564,14 @@ ProgramBuilder::getOrdinalPairs(
         shiftedSymbol = cast<scf::ForOp>(loop).getInductionVar();
       }
       const std::uint32_t slotCount = static_cast<std::uint32_t>(firstCount);
+      if (reachableSourcePhases) {
+        const std::optional<std::size_t> work = getRestrictedOrdinalWorkBound(
+            slotCount, phasePeriod, reachableSourcePhases->size());
+        if (!work || !consumePairInspections(*work)) {
+          function_.emitError("canonical sync pair-inspection limit exceeded");
+          return failure();
+        }
+      }
       const std::optional<std::vector<std::uint32_t>> reachableResidues =
           getReachableSymbolResidues(loop, slotCount, reachableSourcePhases,
                                      phasePeriod);

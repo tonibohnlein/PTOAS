@@ -258,11 +258,18 @@ LogicalResult ProgramBuilder::validateInput() {
         "canonical sync periodic recurrence state limit exceeds the "
         "supported maximum");
   }
+  if (options_.maximumRecurrenceWitnessStates >
+      kCanonicalSyncMaximumRecurrenceWitnessStates) {
+    return function_.emitError(
+        "canonical sync recurrence witness-state limit exceeds the supported "
+        "maximum");
+  }
   const bool invalidLimits =
       options_.maximumNodes == 0 || options_.maximumScopes == 0 ||
       options_.maximumControls == 0 || options_.maximumStorageAccesses == 0 ||
       options_.maximumPairInspections == 0 ||
       options_.maximumPeriodicRecurrenceStates == 0 ||
+      options_.maximumRecurrenceWitnessStates == 0 ||
       options_.maximumBasicOwnershipInspections == 0 ||
       options_.maximumBasicOwnershipCertificates == 0;
   if (invalidLimits) {

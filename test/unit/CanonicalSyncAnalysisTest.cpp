@@ -2594,15 +2594,33 @@ bool testFixedBarrierInspectionBoundsAndPersistentControlState() {
     return false;
   }
   func::FuncOp fixed = module->lookupSymbol<func::FuncOp>("fixed_limit");
+  std::size_t lowerBound = 1;
+  std::size_t upperBound = 1U << 18;
+  while (lowerBound < upperBound) {
+    const std::size_t middle = lowerBound + (upperBound - lowerBound) / 2;
+    CanonicalSyncAnalysisOptions options;
+    options.maximumPairInspections = middle;
+    FailureOr<CanonicalSyncProgram> trial = failure();
+    {
+      ScopedDiagnosticHandler handler(&context,
+                                      [](Diagnostic &) { return success(); });
+      trial = buildCanonicalSyncProgram(fixed, options);
+    }
+    if (succeeded(trial)) {
+      upperBound = middle;
+    } else {
+      lowerBound = middle + 1;
+    }
+  }
   CanonicalSyncBuildOptions exactOptions;
-  exactOptions.analysis.maximumPairInspections = 27;
+  exactOptions.analysis.maximumPairInspections = lowerBound;
   if (!check(succeeded(runCanonicalSync(fixed, exactOptions)),
              "complete fixed-barrier analysis at its exact work bound")) {
     return false;
   }
   const std::string materialized = printOperation(fixed);
   CanonicalSyncBuildOptions belowOptions = exactOptions;
-  belowOptions.analysis.maximumPairInspections = 26;
+  --belowOptions.analysis.maximumPairInspections;
   bool failedBelow = false;
   {
     ScopedDiagnosticHandler handler(&context,
@@ -2933,19 +2951,25 @@ bool testPeriodicBranchEvidence() {
   if (!validRelation) {
     return false;
   }
-  FailureOr<CanonicalSyncProgram> negative =
-      buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>("negative"));
-  FailureOr<CanonicalSyncProgram> negativeUnsigned = buildCanonicalSyncProgram(
-      module->lookupSymbol<func::FuncOp>("negative_unsigned"));
-  return check(succeeded(negative), "build negative-lower graph") &&
-         check(negative->getGraph().getControls().size() == 1 &&
-                   !negative->getGraph().getControls()[0].phaseRelation,
-               "do not mis-model signed remainder with negative lower bound") &&
-         check(succeeded(negativeUnsigned),
-               "build unsigned negative-lower graph") &&
-         check(negativeUnsigned->getGraph().getControls().size() == 1 &&
-                   !negativeUnsigned->getGraph().getControls()[0].phaseRelation,
-               "do not mis-model unsigned remainder with negative lower");
+  const auto rejectsUnsupportedPeriodic = [&](StringRef name) {
+    bool sawDiagnostic = false;
+    FailureOr<CanonicalSyncProgram> rejected = failure();
+    {
+      ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
+        sawDiagnostic |=
+            diagnostic.str().find("cannot model this periodic loop control") !=
+            std::string::npos;
+        return success();
+      });
+      rejected =
+          buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>(name));
+    }
+    return failed(rejected) && sawDiagnostic;
+  };
+  return check(rejectsUnsupportedPeriodic("negative"),
+               "fail closed for signed remainder with a negative lower") &&
+         check(rejectsUnsupportedPeriodic("negative_unsigned"),
+               "fail closed for unsigned remainder with a negative lower");
 }
 
 bool testPhaseAwareRecurrenceDistances() {
@@ -3037,10 +3061,135 @@ bool testPhaseAwareRecurrenceDistances() {
         }
         return
       }
+      func.func @multiple_successor_gaps(
+          %limit: index, %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>,
+          %dst: !pto.tile_buf<vec, 16x16xf32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %c3 = arith.constant 3 : index
+        scf.for %i = %c0 to %limit step %c1 {
+          %phase = arith.remsi %i, %c3 : index
+          %active = arith.cmpi ne, %phase, %c0 : index
+          scf.if %active {
+            pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                      outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+            pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                     outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+          }
+        }
+        return
+      }
+      func.func @period_sixteen(
+          %limit: index, %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>,
+          %dst: !pto.tile_buf<vec, 16x16xf32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %c16 = arith.constant 16 : index
+        scf.for %i = %c0 to %limit step %c1 {
+          %phase = arith.remsi %i, %c16 : index
+          %active = arith.cmpi eq, %phase, %c0 : index
+          scf.if %active {
+            pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                      outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+            pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                     outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+          }
+        }
+        return
+      }
+      func.func @joint_controls(
+          %limit: index, %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>,
+          %dst: !pto.tile_buf<vec, 16x16xf32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %c3 = arith.constant 3 : index
+        %c4 = arith.constant 4 : index
+        scf.for %i = %c0 to %limit step %c1 {
+          %phase3 = arith.remsi %i, %c3 : index
+          %active3 = arith.cmpi eq, %phase3, %c0 : index
+          scf.if %active3 {
+            %phase4 = arith.remsi %i, %c4 : index
+            %active4 = arith.cmpi eq, %phase4, %c0 : index
+            scf.if %active4 {
+              pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                        outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+              pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                       outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+            }
+          }
+        }
+        return
+      }
+      func.func @joint_phase_slot_horizon(
+          %limit: index, %src: !pto.partition_tensor_view<16x16xf32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %c15 = arith.constant 15 : index
+        %c16 = arith.constant 16 : index
+        %base = arith.constant 0 : i64
+        %buffer = pto.alloc_multi_tile addr = %base
+            : !pto.multi_tile_buf<vec, 16x16xf32, count=16>
+        scf.for %i = %c0 to %limit step %c1 {
+          %phase = arith.remsi %i, %c15 : index
+          %active = arith.cmpi eq, %phase, %c0 : index
+          %slot_index = arith.remui %i, %c16 : index
+          %slot = pto.multi_tile_get %buffer[%slot_index]
+              : !pto.multi_tile_buf<vec, 16x16xf32, count=16>
+             -> !pto.tile_buf<vec, 16x16xf32>
+          scf.if %active {
+            pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                      outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+            pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                     outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+          }
+        }
+        return
+      }
+      func.func @unsupported_periodic(
+          %limit: index, %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %c17 = arith.constant 17 : index
+        scf.for %i = %c0 to %limit step %c1 {
+          %phase = arith.remsi %i, %c17 : index
+          %active = arith.cmpi eq, %phase, %c0 : index
+          scf.if %active {
+            pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                      outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+          }
+        }
+        return
+      }
       func.func @same_parity_unrolled(
           %src: !pto.partition_tensor_view<16x16xf32>,
           %slot: !pto.tile_buf<vec, 16x16xf32>,
           %dst: !pto.tile_buf<vec, 16x16xf32>) {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
+      func.func @multiple_successor_gaps_unrolled(
+          %src: !pto.partition_tensor_view<16x16xf32>,
+          %slot: !pto.tile_buf<vec, 16x16xf32>,
+          %dst: !pto.tile_buf<vec, 16x16xf32>) {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+                  outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
+                 outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
         pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
                   outs(%slot : !pto.tile_buf<vec, 16x16xf32>)
         pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf32>)
@@ -3072,11 +3221,25 @@ bool testPhaseAwareRecurrenceDistances() {
   FailureOr<CanonicalSyncProgram> phaseRestrictedSlots =
       buildCanonicalSyncProgram(
           module->lookupSymbol<func::FuncOp>("phase_restricted_slots"));
+  FailureOr<CanonicalSyncProgram> multipleGaps = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("multiple_successor_gaps"));
+  FailureOr<CanonicalSyncProgram> periodSixteen = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("period_sixteen"));
+  FailureOr<CanonicalSyncProgram> jointControls = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("joint_controls"));
+  FailureOr<CanonicalSyncProgram> jointHorizon = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("joint_phase_slot_horizon"));
   FailureOr<CanonicalSyncProgram> unrolled = buildCanonicalSyncProgram(
       module->lookupSymbol<func::FuncOp>("same_parity_unrolled"));
+  FailureOr<CanonicalSyncProgram> multipleGapsUnrolled =
+      buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>(
+          "multiple_successor_gaps_unrolled"));
   const bool allBuilt = succeeded(same) && succeeded(opposite) &&
                         succeeded(unreachable) &&
-                        succeeded(phaseRestrictedSlots) && succeeded(unrolled);
+                        succeeded(phaseRestrictedSlots) &&
+                        succeeded(multipleGaps) && succeeded(periodSixteen) &&
+                        succeeded(jointControls) && succeeded(jointHorizon) &&
+                        succeeded(unrolled) && succeeded(multipleGapsUnrolled);
   if (!check(allBuilt, "build phase-aware recurrence fixtures")) {
     return false;
   }
@@ -3095,12 +3258,40 @@ bool testPhaseAwareRecurrenceDistances() {
             "retain real same-parity distance-two recurrence") &&
       check(hasDistance(*opposite, 1),
             "retain opposite-parity distance-one recurrence") &&
+      check(hasDistance(*multipleGaps, 1) && hasDistance(*multipleGaps, 2),
+            "retain both reachable successor gaps for one witness") &&
+      check(hasDistance(*periodSixteen, 16),
+            "accept and model the exact sixteen-state boundary") &&
+      check(hasDistance(*jointControls, 12),
+            "correlate coprime periodic controls in one joint orbit") &&
+      check(hasDistance(*jointHorizon, 240),
+            "inspect the complete phase-by-slot recurrence horizon") &&
       check(llvm::none_of(unreachable->getGraph().getDemands(),
                           [](const SyncCoverDemand &demand) {
                             return demand.distance != 0;
                           }),
             "exclude recurrences in an unreachable modulo alternative");
   if (!basicChecks) {
+    return false;
+  }
+
+  bool sawUnsupportedPeriodic = false;
+  FailureOr<CanonicalSyncProgram> unsupportedPeriodic = failure();
+  {
+    ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
+      sawUnsupportedPeriodic |=
+          diagnostic.str().find("exceeds the supported phase bound") !=
+          std::string::npos;
+      return success();
+    });
+    unsupportedPeriodic = buildCanonicalSyncProgram(
+        module->lookupSymbol<func::FuncOp>("unsupported_periodic"));
+  }
+  const bool unsupportedPeriodicRejected =
+      check(failed(unsupportedPeriodic) && sawUnsupportedPeriodic,
+            "fail closed for a recognized periodic control above the hard "
+            "bound");
+  if (!unsupportedPeriodicRejected) {
     return false;
   }
 
@@ -3121,6 +3312,71 @@ bool testPhaseAwareRecurrenceDistances() {
   const bool limitRejected = failed(limited) && sawPhaseLimit;
   if (!check(limitRejected,
              "fail closed at the periodic recurrence state bound")) {
+    return false;
+  }
+
+  CanonicalSyncAnalysisOptions witnessLimit;
+  witnessLimit.maximumRecurrenceWitnessStates = 1;
+  bool sawWitnessLimit = false;
+  FailureOr<CanonicalSyncProgram> witnessLimited = failure();
+  {
+    ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
+      sawWitnessLimit |=
+          diagnostic.str().find("recurrence witness-state limit exceeded") !=
+          std::string::npos;
+      return success();
+    });
+    witnessLimited = buildCanonicalSyncProgram(
+        module->lookupSymbol<func::FuncOp>("phase_restricted_slots"),
+        witnessLimit);
+  }
+  const bool witnessLimitRejected =
+      check(failed(witnessLimited) && sawWitnessLimit,
+            "fail closed before recurrence witness-state storage exceeds "
+            "its bound");
+  if (!witnessLimitRejected) {
+    return false;
+  }
+
+  std::size_t lowerWorkBound = 1;
+  std::size_t upperWorkBound =
+      CanonicalSyncAnalysisOptions{}.maximumPairInspections;
+  func::FuncOp jointHorizonFunction =
+      module->lookupSymbol<func::FuncOp>("joint_phase_slot_horizon");
+  while (lowerWorkBound < upperWorkBound) {
+    const std::size_t middle =
+        lowerWorkBound + (upperWorkBound - lowerWorkBound) / 2;
+    CanonicalSyncAnalysisOptions options;
+    options.maximumPairInspections = middle;
+    FailureOr<CanonicalSyncProgram> trial = failure();
+    {
+      ScopedDiagnosticHandler handler(&context,
+                                      [](Diagnostic &) { return success(); });
+      trial = buildCanonicalSyncProgram(jointHorizonFunction, options);
+    }
+    if (succeeded(trial)) {
+      upperWorkBound = middle;
+    } else {
+      lowerWorkBound = middle + 1;
+    }
+  }
+  CanonicalSyncAnalysisOptions exactWork;
+  exactWork.maximumPairInspections = lowerWorkBound;
+  CanonicalSyncAnalysisOptions belowExactWork = exactWork;
+  --belowExactWork.maximumPairInspections;
+  FailureOr<CanonicalSyncProgram> exactWorkResult =
+      buildCanonicalSyncProgram(jointHorizonFunction, exactWork);
+  FailureOr<CanonicalSyncProgram> belowExactWorkResult = failure();
+  {
+    ScopedDiagnosticHandler handler(&context,
+                                    [](Diagnostic &) { return success(); });
+    belowExactWorkResult =
+        buildCanonicalSyncProgram(jointHorizonFunction, belowExactWork);
+  }
+  const bool exactWorkBounded =
+      check(succeeded(exactWorkResult) && failed(belowExactWorkResult),
+            "bound all joint-phase and slot-residue work exactly");
+  if (!exactWorkBounded) {
     return false;
   }
 
@@ -3158,7 +3414,15 @@ bool testPhaseAwareRecurrenceDistances() {
     return false;
   }
 
-  using RecurrenceKey = std::tuple<unsigned, unsigned, SyncCoverDemandKind>;
+  using RecurrenceKey =
+      std::tuple<unsigned, unsigned, SyncCoverDemandKind, unsigned,
+                 AddressSpace, std::uint64_t, std::uint64_t, std::uint64_t,
+                 std::uint64_t, std::uint32_t, std::uint32_t,
+                 SyncCoverStorageAccessMode, SyncCoverStorageAccessMode>;
+  struct ObligationSnapshot {
+    std::map<RecurrenceKey, unsigned> minimumDistances;
+    std::map<RecurrenceKey, bool> covered;
+  };
   const auto operationRole =
       [](Operation *operation) -> std::optional<unsigned> {
     if (isa<TLoadOp>(operation)) {
@@ -3169,65 +3433,226 @@ bool testPhaseAwareRecurrenceDistances() {
     }
     return std::nullopt;
   };
-  std::map<RecurrenceKey, unsigned> loopMinimumDistances;
-  for (const SyncCoverDemand &demand : same->getGraph().getDemands()) {
-    if (demand.distance == 0) {
-      continue;
+  const auto buildIterationMap = [&](const CanonicalSyncProgram &program,
+                                     ArrayRef<unsigned> iterations) {
+    std::map<Operation *, unsigned> result;
+    std::array<std::size_t, 2> occurrences{};
+    for (const CanonicalSyncNodeBinding &binding : program.getNodeBindings()) {
+      const bool alreadyRecorded =
+          binding.operation && result.count(binding.operation) != 0;
+      if (!binding.operation || alreadyRecorded) {
+        continue;
+      }
+      const std::optional<unsigned> role = operationRole(binding.operation);
+      if (!role || occurrences[*role] >= iterations.size()) {
+        continue;
+      }
+      result[binding.operation] = iterations[occurrences[*role]++];
     }
-    const std::optional<unsigned> sourceRole =
-        operationRole(same->getNodeBindings()[demand.source].operation);
-    const std::optional<unsigned> targetRole =
-        operationRole(same->getNodeBindings()[demand.target].operation);
-    if (!sourceRole || !targetRole) {
-      continue;
-    }
-    for (SyncCoverDemandKind kind : demand.provenanceKinds) {
-      loopMinimumDistances[{*sourceRole, *targetRole, kind}] = demand.distance;
-    }
-  }
-
-  std::map<Operation *, unsigned> unrolledIterations;
-  unsigned loadOccurrence = 0;
-  unsigned absOccurrence = 0;
-  for (const CanonicalSyncNodeBinding &binding : unrolled->getNodeBindings()) {
-    const bool alreadyRecorded =
-        unrolledIterations.count(binding.operation) != 0;
-    if (alreadyRecorded) {
-      continue;
-    }
-    if (isa<TLoadOp>(binding.operation)) {
-      unrolledIterations[binding.operation] = 2 * loadOccurrence++;
-    } else if (isa<TAbsOp>(binding.operation)) {
-      unrolledIterations[binding.operation] = 2 * absOccurrence++;
-    }
-  }
-  std::map<RecurrenceKey, unsigned> unrolledMinimumDistances;
-  for (const SyncCoverDemand &demand : unrolled->getGraph().getDemands()) {
-    Operation *sourceOperation =
-        unrolled->getNodeBindings()[demand.source].operation;
-    Operation *targetOperation =
-        unrolled->getNodeBindings()[demand.target].operation;
-    const std::optional<unsigned> sourceRole = operationRole(sourceOperation);
-    const std::optional<unsigned> targetRole = operationRole(targetOperation);
-    const unsigned sourceIteration = unrolledIterations[sourceOperation];
-    const unsigned targetIteration = unrolledIterations[targetOperation];
-    if (!sourceRole || !targetRole || sourceIteration >= targetIteration) {
-      continue;
-    }
-    const unsigned distance = targetIteration - sourceIteration;
-    for (SyncCoverDemandKind kind : demand.provenanceKinds) {
-      const RecurrenceKey key{*sourceRole, *targetRole, kind};
-      auto [position, inserted] =
-          unrolledMinimumDistances.insert({key, distance});
-      if (!inserted) {
-        position->second = std::min(position->second, distance);
+    return result;
+  };
+  const auto oracleCoverage = [&](const CanonicalSyncProgram &program)
+      -> std::optional<SyncCoverDemandSet> {
+    const SyncCoverGraph &graph = program.getGraph();
+    SyncCoverExpandedProgram expansion(graph);
+    SyncCoverDemandSet result(graph.getDemands().size());
+    for (auto [demandId, demand] : llvm::enumerate(graph.getDemands())) {
+      SyncCoverEdge edge;
+      edge.source = demand.source;
+      edge.target = demand.target;
+      edge.kind = SyncCoverEdgeKind::CompletionSupply;
+      edge.scope = demand.scope;
+      edge.distance = demand.distance;
+      edge.sourceGuard = demand.sourceGuard;
+      edge.targetGuard = demand.targetGuard;
+      SyncCoverCompletionSupply supply;
+      supply.mechanism = demandId;
+      supply.edge = std::move(edge);
+      supply.allowedDemands = {demandId};
+      const SyncCoverCoverageResult coverage = computeSyncCoverCoverage(
+          graph, expansion, {std::move(supply)}, {demandId});
+      if (!coverage) {
+        return std::nullopt;
+      }
+      if (coverage.covered.contains(demandId)) {
+        result.insert(demandId);
       }
     }
+    return result;
+  };
+  const auto collectSnapshot = [&](const CanonicalSyncProgram &program,
+                                   unsigned period,
+                                   const std::map<Operation *, unsigned>
+                                       *unrolledIterations,
+                                   const SyncCoverDemandSet &covered) {
+    ObligationSnapshot result;
+    const SyncCoverGraph &graph = program.getGraph();
+    const auto guardMatches = [&](const SyncCoverGuard &guard,
+                                  SyncCoverScopeId loopScope,
+                                  unsigned iteration) {
+      for (const SyncCoverGuardLiteral &literal : guard.literals) {
+        const SyncCoverControl &control = graph.getControls()[literal.control];
+        if (!control.phaseRelation ||
+            control.phaseRelation->loopScope != loopScope) {
+          continue;
+        }
+        std::size_t state = control.phaseRelation->initialPhase;
+        for (unsigned step = 0; step < iteration; ++step) {
+          state = control.phaseRelation->nextPhase[state];
+        }
+        if (control.phaseRelation->activeAlternative[state] !=
+            literal.alternative) {
+          return false;
+        }
+      }
+      return true;
+    };
+    const auto supportsKind = [](const SyncCoverStorageAccess &sourceAccess,
+                                 const SyncCoverStorageAccess &targetAccess,
+                                 SyncCoverDemandKind kind) {
+      switch (kind) {
+      case SyncCoverDemandKind::MemoryRAW:
+        return syncCoverStorageModeWrites(sourceAccess.mode) &&
+               syncCoverStorageModeReads(targetAccess.mode);
+      case SyncCoverDemandKind::MemoryWAR:
+        return syncCoverStorageModeReads(sourceAccess.mode) &&
+               syncCoverStorageModeWrites(targetAccess.mode);
+      case SyncCoverDemandKind::MemoryWAW:
+        return syncCoverStorageModeWrites(sourceAccess.mode) &&
+               syncCoverStorageModeWrites(targetAccess.mode);
+      case SyncCoverDemandKind::SSA:
+        return false;
+      }
+      return false;
+    };
+    for (auto [demandId, demand] : llvm::enumerate(graph.getDemands())) {
+      Operation *sourceOperation =
+          program.getNodeBindings()[demand.source].operation;
+      Operation *targetOperation =
+          program.getNodeBindings()[demand.target].operation;
+      const std::optional<unsigned> sourceRole = operationRole(sourceOperation);
+      const std::optional<unsigned> targetRole = operationRole(targetOperation);
+      if (!sourceRole || !targetRole) {
+        continue;
+      }
+      std::vector<unsigned> sourcePhases;
+      unsigned distance = demand.distance;
+      if (unrolledIterations) {
+        const auto sourcePosition = unrolledIterations->find(sourceOperation);
+        const auto targetPosition = unrolledIterations->find(targetOperation);
+        const bool missingIteration =
+            sourcePosition == unrolledIterations->end() ||
+            targetPosition == unrolledIterations->end();
+        const bool reversedIteration =
+            !missingIteration &&
+            sourcePosition->second >= targetPosition->second;
+        if (missingIteration || reversedIteration) {
+          continue;
+        }
+        distance = targetPosition->second - sourcePosition->second;
+        sourcePhases.push_back(sourcePosition->second % period);
+      } else {
+        if (distance == 0) {
+          continue;
+        }
+        for (unsigned phase = 0; phase < period; ++phase) {
+          const unsigned targetPhase = (phase + distance) % period;
+          const bool reachable =
+              guardMatches(demand.sourceGuard, demand.scope, phase) &&
+              guardMatches(demand.targetGuard, demand.scope, targetPhase);
+          if (reachable) {
+            sourcePhases.push_back(phase);
+          }
+        }
+      }
+      for (SyncCoverDemandKind kind : demand.provenanceKinds) {
+        for (SyncCoverStorageWitnessId witnessId : demand.storageWitnesses) {
+          const SyncCoverStorageWitness &witness =
+              graph.getStorageWitnesses()[witnessId];
+          const SyncCoverStorageAccess &sourceAccess =
+              graph.getStorageAccesses()[witness.sourceAccess];
+          const SyncCoverStorageAccess &targetAccess =
+              graph.getStorageAccesses()[witness.targetAccess];
+          if (!supportsKind(sourceAccess, targetAccess, kind)) {
+            continue;
+          }
+          const AddressSpace space =
+              program.getStorageSpaces()[sourceAccess.domain];
+          const std::uint32_t missingOrdinal =
+              std::numeric_limits<std::uint32_t>::max();
+          for (unsigned sourcePhase : sourcePhases) {
+            const RecurrenceKey key{
+                *sourceRole,
+                *targetRole,
+                kind,
+                sourcePhase,
+                space,
+                sourceAccess.extent.begin,
+                sourceAccess.extent.end,
+                targetAccess.extent.begin,
+                targetAccess.extent.end,
+                sourceAccess.addressOrdinal.value_or(missingOrdinal),
+                targetAccess.addressOrdinal.value_or(missingOrdinal),
+                sourceAccess.mode,
+                targetAccess.mode};
+            auto [position, inserted] =
+                result.minimumDistances.insert({key, distance});
+            if (inserted || distance < position->second) {
+              position->second = distance;
+              result.covered[key] = covered.contains(demandId);
+            } else if (distance == position->second) {
+              result.covered[key] &= covered.contains(demandId);
+            }
+          }
+        }
+      }
+    }
+    return result;
+  };
+
+  const std::optional<SyncCoverDemandSet> sameCoverage = oracleCoverage(*same);
+  const std::optional<SyncCoverDemandSet> unrolledCoverage =
+      oracleCoverage(*unrolled);
+  const std::optional<SyncCoverDemandSet> multipleGapCoverage =
+      oracleCoverage(*multipleGaps);
+  const std::optional<SyncCoverDemandSet> multipleGapUnrolledCoverage =
+      oracleCoverage(*multipleGapsUnrolled);
+  if (!check(sameCoverage && unrolledCoverage && multipleGapCoverage &&
+                 multipleGapUnrolledCoverage,
+             "ground exact semantic coverage for explicit unroll checks")) {
+    return false;
   }
-  return check(!loopMinimumDistances.empty(),
-               "construct phase-aware loop recurrence obligations") &&
-         check(loopMinimumDistances == unrolledMinimumDistances,
-               "match recurrence distances from a five-iteration unrolling");
+  const std::array<unsigned, 3> sameIterations = {0, 2, 4};
+  const std::array<unsigned, 4> multipleGapIterations = {1, 2, 4, 5};
+  const std::map<Operation *, unsigned> sameUnrolledIterations =
+      buildIterationMap(*unrolled, sameIterations);
+  const std::map<Operation *, unsigned> multipleGapUnrolledIterations =
+      buildIterationMap(*multipleGapsUnrolled, multipleGapIterations);
+  const ObligationSnapshot sameLoop =
+      collectSnapshot(*same, 2, nullptr, *sameCoverage);
+  const ObligationSnapshot sameReference =
+      collectSnapshot(*unrolled, 2, &sameUnrolledIterations, *unrolledCoverage);
+  const ObligationSnapshot multipleGapLoop =
+      collectSnapshot(*multipleGaps, 3, nullptr, *multipleGapCoverage);
+  const ObligationSnapshot multipleGapReference =
+      collectSnapshot(*multipleGapsUnrolled, 3, &multipleGapUnrolledIterations,
+                      *multipleGapUnrolledCoverage);
+  const auto allCovered = [](const ObligationSnapshot &snapshot) {
+    return llvm::all_of(snapshot.covered,
+                        [](const auto &entry) { return entry.second; });
+  };
+  return check(!sameLoop.minimumDistances.empty() &&
+                   !multipleGapLoop.minimumDistances.empty(),
+               "construct witness-level phase-aware loop obligations") &&
+         check(sameLoop.minimumDistances == sameReference.minimumDistances &&
+                   multipleGapLoop.minimumDistances ==
+                       multipleGapReference.minimumDistances,
+               "match witness-level successor obligations from explicit "
+               "unrollings") &&
+         check(sameLoop.covered == sameReference.covered &&
+                   multipleGapLoop.covered == multipleGapReference.covered &&
+                   allCovered(sameLoop) && allCovered(multipleGapLoop),
+               "match grounded semantic coverage from explicit unrollings");
 }
 
 bool testFirstIterationRecurrenceSuppression() {

@@ -100,9 +100,14 @@ recurrence arenas rather than forming a Cartesian product.
 Recurrence construction follows the reachable joint orbit of every periodic
 control used by the two endpoints. It correlates that orbit with the loop
 induction residues used by exact multi-tile slot expressions, then records the
-first reachable distance for each physical witness and hazard kind. Unreachable
-declared phases do not create obligations. Analysis fails closed if one joint
-orbit exceeds `--canonical-sync-maximum-periodic-recurrence-states`.
+first reachable distance for each physical witness, hazard kind, and source
+phase class. A phase class with more than one successor gap therefore retains
+each required gap. Unreachable declared phases do not create obligations.
+Recognized periodic controls that cannot be represented exactly fail closed.
+Orbit construction is cached by loop and endpoint guards, and orbit, residue,
+and witness-state work consumes the shared analysis bound before execution.
+Analysis also fails closed if one joint orbit or compact witness-state table
+exceeds its configured limit.
 
 Loop-local DAGs are summarized bottom-up with resource-specific entry and exit
 nodes, an explicit zero-trip transfer, recurrence-carry resources, and copied
@@ -433,6 +438,7 @@ Relevant driver options are:
 --canonical-sync-selection-strategy=fixed-cover|action-aware-singleton|pair-lookahead
 --canonical-sync-selection-objective=action-first|serialization-first
 --canonical-sync-maximum-periodic-recurrence-states=16
+--canonical-sync-maximum-recurrence-witness-states=262144
 --canonical-sync-maximum-basic-ownership-inspections=268435456
 --canonical-sync-maximum-basic-ownership-certificates=1024
 --canonical-sync-maximum-basic-ownership-slots=16384

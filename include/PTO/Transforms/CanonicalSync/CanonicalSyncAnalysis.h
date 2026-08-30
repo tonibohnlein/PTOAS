@@ -36,6 +36,7 @@ enum class CanonicalSyncGmAliasPolicy : std::uint8_t {
 };
 
 constexpr std::size_t kCanonicalSyncMaximumPeriodicRecurrenceStates = 16;
+constexpr std::size_t kCanonicalSyncMaximumRecurrenceWitnessStates = 1U << 18;
 
 struct CanonicalSyncAnalysisOptions {
   CanonicalSyncGmAliasPolicy gmAliasPolicy =
@@ -52,6 +53,10 @@ struct CanonicalSyncAnalysisOptions {
   /// bound fails analysis before the graph is frozen.
   std::size_t maximumPeriodicRecurrenceStates =
       kCanonicalSyncMaximumPeriodicRecurrenceStates;
+  /// Maximum compact witness/phase records retained while finding the first
+  /// recurrence edge for each reachable phase class of one node pair.
+  std::size_t maximumRecurrenceWitnessStates =
+      kCanonicalSyncMaximumRecurrenceWitnessStates;
   /// Basic ownership discovery is a bounded optional synthesis analysis. If
   /// any limit is reached, discovery stops without retaining partial
   /// certificates; subsequent catalog construction either proves a cover
