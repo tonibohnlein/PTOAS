@@ -177,6 +177,9 @@ ProgramBuilder::ProgramBuilder(func::FuncOp function,
       targetCapabilities_(getCanonicalSyncTargetCapabilities(function)) {}
 
 FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
+  const bool needsTargetCompletionResources =
+      options_.discoverTargetCompletionCertificates ||
+      options_.discoverBasicOwnershipCertificates;
   const bool failedBarrierConfiguration =
       !graph_.setBlockingTargetedBarrierResources(
           targetCapabilities_.targetedBarrierDrainsSourcePrefix.resources) ||
@@ -184,6 +187,7 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
           targetCapabilities_.crossResourceTargetedBarrierCompletion
               .resourcePairs);
   const bool failedTargetCompletionConfiguration =
+      needsTargetCompletionResources &&
       targetCapabilities_.targetCompletionResources &&
       !graph_.setTargetCompletionResources(
           *targetCapabilities_.targetCompletionResources);
@@ -195,8 +199,10 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
       failed(addCertifiedCompletionFrontiers()) ||
       failed(buildStorageConflictIndex()) || failed(addForwardDependencies()) ||
       failed(addRecurrenceDependencies()) ||
-      failed(addTargetCompletionCertificates(targetCapabilities_)) ||
-      failed(discoverBasicOwnershipCertificates(targetCapabilities_));
+      (options_.discoverTargetCompletionCertificates &&
+       failed(addTargetCompletionCertificates(targetCapabilities_))) ||
+      (options_.discoverBasicOwnershipCertificates &&
+       failed(discoverBasicOwnershipCertificates(targetCapabilities_)));
   if (failedBarrierConfiguration) {
     function_.emitError(
         "cannot configure canonical sync blocking-barrier resources");

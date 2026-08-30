@@ -43,6 +43,10 @@ constexpr std::size_t kCanonicalSyncMaximumRecurrenceWitnessStates = 1U << 18;
 struct CanonicalSyncAnalysisOptions {
   CanonicalSyncGmAliasPolicy gmAliasPolicy =
       CanonicalSyncGmAliasPolicy::MayAlias;
+  /// Optional target-qualified certificate discovery. The build driver turns
+  /// these off when no enabled mechanism family can consume their results.
+  bool discoverTargetCompletionCertificates = true;
+  bool discoverBasicOwnershipCertificates = true;
   std::size_t maximumNodes = 1U << 16;
   std::size_t maximumScopes = 1U << 14;
   std::size_t maximumControls = 1U << 14;

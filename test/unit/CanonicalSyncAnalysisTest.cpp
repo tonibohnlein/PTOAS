@@ -2017,6 +2017,16 @@ bool testA3TargetCompletionCertificatesAreArchitectureQualified() {
                 *a3,
                 SyncCoverTargetCompletionKind::MToFixAccumulatorBoundary) == 1,
             "certify the exact A3 accumulator-to-FIX boundary");
+  CanonicalSyncAnalysisOptions targetDiscoveryDisabled;
+  targetDiscoveryDisabled.discoverTargetCompletionCertificates = false;
+  targetDiscoveryDisabled.discoverBasicOwnershipCertificates = false;
+  FailureOr<CanonicalSyncProgram> disabled =
+      buildCanonicalSyncProgram(function, targetDiscoveryDisabled);
+  const bool disabledSkipped =
+      check(succeeded(disabled),
+            "build A3 graph with target certificate discovery disabled") &&
+      check(disabled->getGraph().getTargetCompletionCertificates().empty(),
+            "skip disabled target completion certificate discovery");
   (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "a2"));
   FailureOr<CanonicalSyncProgram> a2 = buildCanonicalSyncProgram(function);
   const bool a2Rejected =
@@ -2035,7 +2045,8 @@ bool testA3TargetCompletionCertificatesAreArchitectureQualified() {
       check(succeeded(a5), "build the same graph for A5") &&
       check(a5->getGraph().getTargetCompletionCertificates().empty(),
             "do not infer A3 target certificates on A5");
-  if (!a3Qualified || !a2Rejected || !a2a3Rejected || !a5Rejected) {
+  if (!a3Qualified || !disabledSkipped || !a2Rejected || !a2a3Rejected ||
+      !a5Rejected) {
     return false;
   }
 
@@ -4855,6 +4866,22 @@ bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
           SyncCoverAnchorKind::ControlExit;
   if (!check(exactCertificate,
              "certify one wait and release at the exhaustive branch cut")) {
+    return false;
+  }
+
+  CanonicalSyncAnalysisOptions ownershipDiscoveryDisabled;
+  ownershipDiscoveryDisabled.discoverBasicOwnershipCertificates = false;
+  FailureOr<CanonicalSyncProgram> ownershipDisabledProgram =
+      buildCanonicalSyncProgram(function, ownershipDiscoveryDisabled);
+  if (!check(succeeded(ownershipDisabledProgram),
+             "build graph with ownership discovery disabled") ||
+      !check(ownershipDisabledProgram->getGraph()
+                 .getBasicOwnershipCertificates()
+                 .empty(),
+             "skip disabled ownership discovery") ||
+      !check(ownershipDisabledProgram->getOwnershipDiscoveryStatistics()
+                     .inspections == 0,
+             "perform no disabled ownership inspections")) {
     return false;
   }
 

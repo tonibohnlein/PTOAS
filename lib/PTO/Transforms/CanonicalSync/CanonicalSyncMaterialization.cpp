@@ -2193,8 +2193,28 @@ LogicalResult
 mlir::pto::runCanonicalSync(func::FuncOp function,
                             const CanonicalSyncBuildOptions &options) {
   const SteadyClock::time_point preparationStart = SteadyClock::now();
+  CanonicalSyncAnalysisOptions analysisOptions = options.analysis;
+  analysisOptions.discoverTargetCompletionCertificates =
+      analysisOptions.discoverTargetCompletionCertificates &&
+      canonicalSyncMechanismFamilyEnabled(
+          options.patterns.enabledMechanismFamilies,
+          CanonicalSyncMechanismFamily::TargetCompletionCertificate);
+  analysisOptions.discoverBasicOwnershipCertificates =
+      analysisOptions.discoverBasicOwnershipCertificates &&
+      (canonicalSyncMechanismFamilyEnabled(
+           options.patterns.enabledMechanismFamilies,
+           CanonicalSyncMechanismFamily::L0OperandOwnership) ||
+       canonicalSyncMechanismFamilyEnabled(
+           options.patterns.enabledMechanismFamilies,
+           CanonicalSyncMechanismFamily::BasicOwnership) ||
+       canonicalSyncMechanismFamilyEnabled(
+           options.patterns.enabledMechanismFamilies,
+           CanonicalSyncMechanismFamily::BoundaryOwnership) ||
+       canonicalSyncMechanismFamilyEnabled(
+           options.patterns.enabledMechanismFamilies,
+           CanonicalSyncMechanismFamily::HierarchicalOwnership));
   FailureOr<CanonicalSyncProgram> program =
-      buildCanonicalSyncProgram(function, options.analysis);
+      buildCanonicalSyncProgram(function, analysisOptions);
   if (failed(program)) {
     return failure();
   }
