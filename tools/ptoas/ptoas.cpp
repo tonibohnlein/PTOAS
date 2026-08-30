@@ -549,6 +549,12 @@ static llvm::cl::opt<bool> canonicalSyncAssumeAllGmAccessesNoAlias(
         "iterations"),
     llvm::cl::init(false));
 
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumPeriodicRecurrenceStates(
+    "canonical-sync-maximum-periodic-recurrence-states",
+    llvm::cl::desc(
+        "Maximum reachable joint periodic states used for recurrence analysis"),
+    llvm::cl::init(16));
+
 static llvm::cl::opt<std::int64_t>
     canonicalSyncMaximumBasicOwnershipInspections(
         "canonical-sync-maximum-basic-ownership-inspections",
@@ -4051,6 +4057,8 @@ int mlir::pto::compilePTOASModule(OwningOpRef<ModuleOp> &module,
         canonicalSyncAssumeAllGmAccessesNoAlias;
     options.patternMode = canonicalSyncPatternMode;
     options.mechanismFamilies = canonicalSyncMechanismFamilies;
+    options.maximumPeriodicRecurrenceStates =
+        canonicalSyncMaximumPeriodicRecurrenceStates;
     options.maximumBasicOwnershipInspections =
         canonicalSyncMaximumBasicOwnershipInspections;
     options.maximumBasicOwnershipCertificates =

@@ -64,6 +64,10 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
     Option<"maximumBasicOwnershipInspections",
            "maximum-basic-ownership-inspections", "int64_t", "268435456",
            "Maximum exact-slot ownership discovery inspection units">,
+    Option<"maximumPeriodicRecurrenceStates",
+           "maximum-periodic-recurrence-states", "int64_t", "16",
+           "Maximum reachable joint periodic states used for recurrence "
+           "analysis">,
     Option<"maximumBasicOwnershipCertificates",
            "maximum-basic-ownership-certificates", "int64_t", "1024",
            "Maximum exact-slot ownership certificates retained">,

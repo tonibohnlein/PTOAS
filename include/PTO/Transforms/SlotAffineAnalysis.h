@@ -23,6 +23,7 @@
 #define PTO_TRANSFORMS_SLOTAFFINEANALYSIS_H
 
 #include "mlir/IR/Value.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include <cstdint>
 #include <optional>
@@ -81,6 +82,15 @@ std::optional<llvm::SmallVector<SlotOrdinalPair, 4>>
 enumerateSlotSSAOrdinalPairs(mlir::Value a, mlir::Value b, std::uint32_t N,
                              mlir::Value shiftedSymbol = {},
                              std::int64_t rhsSymbolOffset = 0);
+
+/// Enumerate selected ordinal pairs only for the supplied residues of the
+/// common loop symbol. This is the phase-sensitive variant used when a
+/// periodic guard restricts which loop iterations can execute both accesses.
+std::optional<llvm::SmallVector<SlotOrdinalPair, 4>>
+enumerateSlotSSAOrdinalPairsForResidues(
+    mlir::Value a, mlir::Value b, std::uint32_t N,
+    llvm::ArrayRef<std::uint32_t> symbolResidues,
+    mlir::Value shiftedSymbol = {}, std::int64_t rhsSymbolOffset = 0);
 
 } // namespace pto
 } // namespace mlir

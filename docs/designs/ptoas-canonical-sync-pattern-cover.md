@@ -97,6 +97,13 @@ Distance-zero demands use one immutable base arena. A loop with maximum active
 distance `d` uses `d + 1` virtual iterations. Nested loops retain separate
 recurrence arenas rather than forming a Cartesian product.
 
+Recurrence construction follows the reachable joint orbit of every periodic
+control used by the two endpoints. It correlates that orbit with the loop
+induction residues used by exact multi-tile slot expressions, then records the
+first reachable distance for each physical witness and hazard kind. Unreachable
+declared phases do not create obligations. Analysis fails closed if one joint
+orbit exceeds `--canonical-sync-maximum-periodic-recurrence-states`.
+
 Loop-local DAGs are summarized bottom-up with resource-specific entry and exit
 nodes, an explicit zero-trip transfer, recurrence-carry resources, and copied
 periodic-control phase relations. Each arena contains its locally owned
@@ -425,6 +432,7 @@ Relevant driver options are:
 --canonical-sync-mechanism-families=all|core|<family>[+<family>...]
 --canonical-sync-selection-strategy=fixed-cover|action-aware-singleton|pair-lookahead
 --canonical-sync-selection-objective=action-first|serialization-first
+--canonical-sync-maximum-periodic-recurrence-states=16
 --canonical-sync-maximum-basic-ownership-inspections=268435456
 --canonical-sync-maximum-basic-ownership-certificates=1024
 --canonical-sync-maximum-basic-ownership-slots=16384

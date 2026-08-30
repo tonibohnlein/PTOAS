@@ -27,6 +27,12 @@
 // RUN:   --canonical-sync-maximum-verification-work-units=0 \
 // RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-BOUND
 // RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-periodic-recurrence-states=0 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-PHASE-BOUND
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-periodic-recurrence-states=17 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=MAX-PHASE-BOUND
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
 // RUN:   --canonical-sync-maximum-demand-basis-group-edges=0 \
 // RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-BASIS-EDGE
 // RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
@@ -130,6 +136,8 @@
 // INVALID: selection-strategy must be fixed-cover, action-aware-singleton, or pair-lookahead
 // INVALID-OBJECTIVE: selection-objective must be action-first or serialization-first
 // INVALID-BOUND: maximum-verification-work-units must be positive
+// INVALID-PHASE-BOUND: maximum-periodic-recurrence-states must be positive
+// MAX-PHASE-BOUND: maximum-periodic-recurrence-states must not exceed 16
 // INVALID-OWNERSHIP-INSPECT: maximum-basic-ownership-inspections must be positive
 // INVALID-OWNERSHIP-CERTIFICATE: maximum-basic-ownership-certificates must be positive
 // INVALID-OWNERSHIP-REFERENCES: maximum-basic-ownership-node-references must be positive

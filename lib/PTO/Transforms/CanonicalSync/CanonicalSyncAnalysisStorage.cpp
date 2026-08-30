@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <numeric>
 #include <queue>
 #include <set>
 #include <tuple>
@@ -99,6 +100,56 @@ void expireStorageAccesses(std::uint64_t begin, ActiveStorageHeap &expiry,
     active.erase(expiry.top().access);
     expiry.pop();
   }
+}
+
+std::optional<std::vector<std::uint32_t>> getReachableSymbolResidues(
+    Operation *loop, std::uint32_t modulus,
+    const std::vector<std::size_t> *reachableSourcePhases,
+    std::size_t phasePeriod) {
+  if (!reachableSourcePhases) {
+    return std::nullopt;
+  }
+  if (modulus == 0 || phasePeriod == 0) {
+    return std::vector<std::uint32_t>{};
+  }
+  auto forOp = dyn_cast_or_null<scf::ForOp>(loop);
+  APInt lower;
+  APInt step;
+  const bool unavailable =
+      !forOp || !matchPattern(forOp.getLowerBound(), m_ConstantInt(&lower)) ||
+      !matchPattern(forOp.getStep(), m_ConstantInt(&step)) ||
+      lower.isNegative() || !step.isStrictlyPositive() ||
+      lower.getActiveBits() > 64 || step.getActiveBits() > 64;
+  if (unavailable) {
+    return std::nullopt;
+  }
+  const std::size_t divisor =
+      std::gcd(phasePeriod, static_cast<std::size_t>(modulus));
+  const std::size_t reduced = phasePeriod / divisor;
+  const bool horizonOverflows =
+      reduced > std::numeric_limits<std::size_t>::max() / modulus;
+  if (horizonOverflows) {
+    return std::nullopt;
+  }
+  const std::size_t horizon = reduced * modulus;
+  const std::uint64_t lowerResidue = lower.getZExtValue() % modulus;
+  const std::uint64_t stepResidue = step.getZExtValue() % modulus;
+  std::vector<std::uint32_t> residues;
+  residues.reserve(std::min(horizon, static_cast<std::size_t>(modulus)));
+  for (std::size_t iteration = 0; iteration < horizon; ++iteration) {
+    const std::size_t phase = iteration % phasePeriod;
+    if (!std::binary_search(reachableSourcePhases->begin(),
+                            reachableSourcePhases->end(), phase)) {
+      continue;
+    }
+    const std::uint64_t iterationResidue = iteration % modulus;
+    const std::uint64_t residue =
+        (lowerResidue + stepResidue * iterationResidue) % modulus;
+    residues.push_back(static_cast<std::uint32_t>(residue));
+  }
+  llvm::sort(residues);
+  residues.erase(std::unique(residues.begin(), residues.end()), residues.end());
+  return residues;
 }
 
 } // namespace
@@ -440,9 +491,11 @@ bool ProgramBuilder::gmAccessesAreNoAlias(const ExtractedAccess &first,
 }
 
 FailureOr<std::vector<std::pair<unsigned, unsigned>>>
-ProgramBuilder::getOrdinalPairs(const ExtractedAccess &first,
-                                const ExtractedAccess &second, Operation *loop,
-                                unsigned distance) {
+ProgramBuilder::getOrdinalPairs(
+    const ExtractedAccess &first, const ExtractedAccess &second,
+    Operation *loop, unsigned distance,
+    const std::vector<std::size_t> *reachableSourcePhases,
+    std::size_t phasePeriod) {
   const std::size_t firstCount = first.graphAccesses.size();
   const std::size_t secondCount = second.graphAccesses.size();
   if (firstCount == 1 && secondCount == 1) {
@@ -458,9 +511,17 @@ ProgramBuilder::getOrdinalPairs(const ExtractedAccess &first,
       if (distance != 0) {
         shiftedSymbol = cast<scf::ForOp>(loop).getInductionVar();
       }
-      auto exact = enumerateSlotSSAOrdinalPairs(
-          firstSlot, secondSlot, static_cast<std::uint32_t>(firstCount),
-          shiftedSymbol, *offset);
+      const std::uint32_t slotCount = static_cast<std::uint32_t>(firstCount);
+      const std::optional<std::vector<std::uint32_t>> reachableResidues =
+          getReachableSymbolResidues(loop, slotCount, reachableSourcePhases,
+                                     phasePeriod);
+      const auto exact =
+          reachableResidues
+              ? enumerateSlotSSAOrdinalPairsForResidues(
+                    firstSlot, secondSlot, slotCount, *reachableResidues,
+                    shiftedSymbol, *offset)
+              : enumerateSlotSSAOrdinalPairs(firstSlot, secondSlot, slotCount,
+                                             shiftedSymbol, *offset);
       if (exact) {
         std::vector<std::pair<unsigned, unsigned>> pairs;
         pairs.reserve(exact->size());

@@ -261,8 +261,8 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // DIRECT-REPORT: "basic-ownership-stable-l1-protocol": 1
 // DIRECT-REPORT: "verified": true
 
-// PAIR-REPORT: "direct_pair_evaluations": 1302
-// PAIR-REPORT: "direct_pair_proposals": 1302
+// PAIR-REPORT: "direct_pair_evaluations": 1334
+// PAIR-REPORT: "direct_pair_proposals": 1334
 // PAIR-REPORT: "direct_pairs_enabled": true
 // PAIR-REPORT: "active_direct_pair_extra_coverage": 0
 // PAIR-REPORT: "active_direct_pairs": 0

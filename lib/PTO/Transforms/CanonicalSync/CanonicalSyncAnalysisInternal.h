@@ -55,10 +55,16 @@ struct ExtractedAccess {
   std::vector<SyncCoverStorageAccessId> graphAccesses;
 };
 
-struct HazardKinds {
-  bool raw = false;
-  bool war = false;
-  bool waw = false;
+struct HazardWitnesses {
+  std::set<SyncCoverStorageWitnessId> raw;
+  std::set<SyncCoverStorageWitnessId> war;
+  std::set<SyncCoverStorageWitnessId> waw;
+};
+
+struct RecurrencePhaseOrbit {
+  bool staticallyReachable = true;
+  std::vector<SyncCoverControlId> controls;
+  std::vector<std::vector<std::size_t>> states;
 };
 
 using IssueFrontier = std::map<std::uint32_t, std::vector<SyncCoverNodeId>>;
@@ -131,9 +137,11 @@ private:
   LogicalResult buildStorageConflictIndex();
   bool gmAccessesAreNoAlias(const ExtractedAccess &first,
                             const ExtractedAccess &second) const;
-  FailureOr<std::vector<std::pair<unsigned, unsigned>>>
-  getOrdinalPairs(const ExtractedAccess &first, const ExtractedAccess &second,
-                  Operation *loop, unsigned distance);
+  FailureOr<std::vector<std::pair<unsigned, unsigned>>> getOrdinalPairs(
+      const ExtractedAccess &first, const ExtractedAccess &second,
+      Operation *loop, unsigned distance,
+      const std::vector<std::size_t> *reachableSourcePhases = nullptr,
+      std::size_t phasePeriod = 1);
   std::optional<std::int64_t> getIterationOffset(Operation *loop,
                                                  unsigned distance) const;
 
@@ -167,13 +175,22 @@ private:
       SyncCoverNodeId source, SyncCoverNodeId target,
       const SyncCoverStorageAccess &sourceAccess,
       const SyncCoverStorageAccess &targetAccess);
-  unsigned maximumRecurrenceDistance(SyncCoverNodeId source,
-                                     SyncCoverNodeId target) const;
-  FailureOr<HazardKinds> addMemoryHazards(SyncCoverNodeId source,
-                                          SyncCoverNodeId target,
-                                          Operation *loop, unsigned distance,
-                                          SyncCoverScopeId recurrenceScope = 0,
-                                          HazardKinds alreadyCovered = {});
+  FailureOr<RecurrencePhaseOrbit>
+  buildRecurrencePhaseOrbit(SyncCoverScopeId loopScope,
+                            const SyncCoverGuard &sourceGuard,
+                            const SyncCoverGuard &targetGuard);
+  std::vector<std::size_t> getReachableRecurrenceSourcePhases(
+      const RecurrencePhaseOrbit &orbit, const SyncCoverGuard &sourceGuard,
+      const SyncCoverGuard &targetGuard, unsigned distance) const;
+  FailureOr<unsigned>
+  maximumRecurrenceDistance(SyncCoverNodeId source, SyncCoverNodeId target,
+                            const RecurrencePhaseOrbit &orbit);
+  LogicalResult addMemoryHazards(
+      SyncCoverNodeId source, SyncCoverNodeId target, Operation *loop,
+      unsigned distance, SyncCoverScopeId recurrenceScope = 0,
+      HazardWitnesses *covered = nullptr,
+      const std::vector<std::size_t> *reachableSourcePhases = nullptr,
+      std::size_t phasePeriod = 1);
   LogicalResult addDemand(SyncCoverNodeId source, SyncCoverNodeId target,
                           SyncCoverScopeId scope, unsigned distance,
                           SyncCoverDemandKind kind,

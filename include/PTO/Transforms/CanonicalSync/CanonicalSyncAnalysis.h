@@ -35,6 +35,8 @@ enum class CanonicalSyncGmAliasPolicy : std::uint8_t {
   AllAccessesNoAlias,
 };
 
+constexpr std::size_t kCanonicalSyncMaximumPeriodicRecurrenceStates = 16;
+
 struct CanonicalSyncAnalysisOptions {
   CanonicalSyncGmAliasPolicy gmAliasPolicy =
       CanonicalSyncGmAliasPolicy::MayAlias;
@@ -45,6 +47,11 @@ struct CanonicalSyncAnalysisOptions {
   /// Maximum undirected node-conflict entries retained by the storage index.
   std::size_t maximumStorageConflictEdges = 1U << 20;
   std::size_t maximumPairInspections = 1U << 24;
+  /// Maximum reachable joint states retained while correlating periodic
+  /// controls for one loop recurrence. Exceeding this correctness-critical
+  /// bound fails analysis before the graph is frozen.
+  std::size_t maximumPeriodicRecurrenceStates =
+      kCanonicalSyncMaximumPeriodicRecurrenceStates;
   /// Basic ownership discovery is a bounded optional synthesis analysis. If
   /// any limit is reached, discovery stops without retaining partial
   /// certificates; subsequent catalog construction either proves a cover

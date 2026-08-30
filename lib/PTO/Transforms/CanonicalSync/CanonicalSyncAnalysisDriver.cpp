@@ -252,10 +252,17 @@ LogicalResult ProgramBuilder::validateInput() {
   if (function_.isExternal()) {
     return function_.emitError("canonical sync requires a function body");
   }
+  if (options_.maximumPeriodicRecurrenceStates >
+      kCanonicalSyncMaximumPeriodicRecurrenceStates) {
+    return function_.emitError(
+        "canonical sync periodic recurrence state limit exceeds the "
+        "supported maximum");
+  }
   const bool invalidLimits =
       options_.maximumNodes == 0 || options_.maximumScopes == 0 ||
       options_.maximumControls == 0 || options_.maximumStorageAccesses == 0 ||
       options_.maximumPairInspections == 0 ||
+      options_.maximumPeriodicRecurrenceStates == 0 ||
       options_.maximumBasicOwnershipInspections == 0 ||
       options_.maximumBasicOwnershipCertificates == 0;
   if (invalidLimits) {

@@ -20,6 +20,7 @@
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/Parser/Parser.h"
 
+#include <cstdint>
 #include <iostream>
 #include <string_view>
 
@@ -163,6 +164,15 @@ bool testShiftedSlotComparisonFailsClosed() {
       builder.create<arith::AddIOp>(location, body->getArgument(0), one);
   builder.create<func::ReturnOp>(location);
 
+  const std::uint32_t evenResidue[] = {0};
+  const std::uint32_t invalidResidue[] = {2};
+  const auto restricted = enumerateSlotSSAOrdinalPairsForResidues(
+      lhs, rhs, 2, evenResidue, body->getArgument(0), 1);
+  const auto empty = enumerateSlotSSAOrdinalPairsForResidues(
+      lhs, rhs, 2, {}, body->getArgument(0), 1);
+  const auto invalid = enumerateSlotSSAOrdinalPairsForResidues(
+      lhs, rhs, 2, invalidResidue, body->getArgument(0), 1);
+
   return check(compareSlotSSAWithOffset(lhs, rhs, 2, {}, 1) ==
                    SlotRelation::kUnknown,
                "missing shifted symbol is unknown") &&
@@ -176,7 +186,13 @@ bool testShiftedSlotComparisonFailsClosed() {
                    SlotRelation::kUnknown,
                "unnormalized shifted forms are unknown") &&
          check(!enumerateSlotSSAOrdinalPairs(lhs, rhs, 2, {}, 1),
-               "ordinal enumeration rejects a missing shifted symbol");
+               "ordinal enumeration rejects a missing shifted symbol") &&
+         check(restricted && restricted->size() == 1 &&
+                   restricted->front() == SlotOrdinalPair{0, 1},
+               "restrict ordinal enumeration to reachable symbol residues") &&
+         check(empty && empty->empty(),
+               "an empty reachable residue set selects no slots") &&
+         check(!invalid, "reject an out-of-range symbol residue");
 }
 
 bool testStrictMalformedHelperEffectsFailClosed() {

@@ -293,8 +293,10 @@ SlotRelation compareSlotSSAWithOffset(Value a, Value b, uint32_t N,
 }
 
 std::optional<llvm::SmallVector<SlotOrdinalPair, 4>>
-enumerateSlotSSAOrdinalPairs(Value a, Value b, uint32_t N, Value shiftedSymbol,
-                             int64_t rhsSymbolOffset) {
+enumerateSlotSSAOrdinalPairsImpl(Value a, Value b, uint32_t N,
+                                 Value shiftedSymbol, int64_t rhsSymbolOffset,
+                                 ArrayRef<uint32_t> restrictedResidues,
+                                 bool restrictResidues) {
   constexpr uint32_t kMaximumEnumeratedSlotCount = 4096;
   if (!a || !b || N == 0 || N > kMaximumEnumeratedSlotCount) {
     return std::nullopt;
@@ -323,13 +325,18 @@ enumerateSlotSSAOrdinalPairs(Value a, Value b, uint32_t N, Value shiftedSymbol,
     }
   }
 
-  const uint32_t residues = firstSymbolic || secondSymbolic ? N : 1;
+  if (restrictResidues &&
+      std::any_of(restrictedResidues.begin(), restrictedResidues.end(),
+                  [&](uint32_t residue) { return residue >= N; })) {
+    return std::nullopt;
+  }
+  const uint32_t residueCount = firstSymbolic || secondSymbolic ? N : 1;
   llvm::SmallVector<SlotOrdinalPair, 4> pairs;
-  pairs.reserve(residues);
+  pairs.reserve(restrictResidues ? restrictedResidues.size() : residueCount);
   const int64_t firstOffset = pyMod(first.innerOffset, N);
   const int64_t secondOffset = pyMod(second.innerOffset, N);
   const int64_t shiftedOffset = secondSymbolic ? pyMod(rhsSymbolOffset, N) : 0;
-  for (uint32_t residue = 0; residue < residues; ++residue) {
+  const auto appendResidue = [&](uint32_t residue) {
     const int64_t firstBase = firstSymbolic ? residue : 0;
     const int64_t secondBase = secondSymbolic ? residue : 0;
     const int64_t firstOrdinal = pyMod(firstBase + firstOffset, N);
@@ -337,6 +344,21 @@ enumerateSlotSSAOrdinalPairs(Value a, Value b, uint32_t N, Value shiftedSymbol,
         pyMod(secondBase + secondOffset + shiftedOffset, N);
     pairs.push_back({static_cast<uint32_t>(firstOrdinal),
                      static_cast<uint32_t>(secondOrdinal)});
+  };
+  if (restrictResidues) {
+    const bool hasRestrictedConstant =
+        !firstSymbolic && !secondSymbolic && !restrictedResidues.empty();
+    if (hasRestrictedConstant) {
+      appendResidue(0);
+    } else {
+      for (uint32_t residue : restrictedResidues) {
+        appendResidue(residue);
+      }
+    }
+  } else {
+    for (uint32_t residue = 0; residue < residueCount; ++residue) {
+      appendResidue(residue);
+    }
   }
   std::sort(pairs.begin(), pairs.end(),
             [](const SlotOrdinalPair &lhs, const SlotOrdinalPair &rhs) {
@@ -345,6 +367,22 @@ enumerateSlotSSAOrdinalPairs(Value a, Value b, uint32_t N, Value shiftedSymbol,
             });
   pairs.erase(std::unique(pairs.begin(), pairs.end()), pairs.end());
   return pairs;
+}
+
+std::optional<llvm::SmallVector<SlotOrdinalPair, 4>>
+enumerateSlotSSAOrdinalPairs(Value a, Value b, uint32_t N, Value shiftedSymbol,
+                             int64_t rhsSymbolOffset) {
+  return enumerateSlotSSAOrdinalPairsImpl(a, b, N, shiftedSymbol,
+                                          rhsSymbolOffset, {}, false);
+}
+
+std::optional<llvm::SmallVector<SlotOrdinalPair, 4>>
+enumerateSlotSSAOrdinalPairsForResidues(Value a, Value b, uint32_t N,
+                                        ArrayRef<uint32_t> symbolResidues,
+                                        Value shiftedSymbol,
+                                        int64_t rhsSymbolOffset) {
+  return enumerateSlotSSAOrdinalPairsImpl(
+      a, b, N, shiftedSymbol, rhsSymbolOffset, symbolResidues, true);
 }
 
 } // namespace pto
