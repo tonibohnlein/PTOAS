@@ -179,6 +179,11 @@ struct CanonicalSyncComparisonReport {
   std::size_t ownershipDiscoveryInspections = 0;
   std::array<std::size_t, kCanonicalSyncBasicOwnershipKindCount>
       ownershipCertificatesByKind{};
+  std::size_t ownershipSlots = 0;
+  std::size_t ownershipPaths = 0;
+  std::size_t ownershipUses = 0;
+  std::size_t ownershipNodeReferences = 0;
+  std::size_t ownershipAccessIncidences = 0;
   bool ownershipDiscoveryTruncated = false;
   std::size_t demands = 0;
   std::size_t uniqueDemandRows = 0;

@@ -1402,6 +1402,11 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
       program.getOwnershipDiscoveryStatistics();
   report.ownershipDiscoveryInspections = ownershipStatistics.inspections;
   report.ownershipCertificatesByKind = ownershipStatistics.certificatesByKind;
+  report.ownershipSlots = ownershipStatistics.slots;
+  report.ownershipPaths = ownershipStatistics.paths;
+  report.ownershipUses = ownershipStatistics.uses;
+  report.ownershipNodeReferences = ownershipStatistics.nodeReferences;
+  report.ownershipAccessIncidences = ownershipStatistics.accessIncidences;
   report.ownershipDiscoveryTruncated = ownershipStatistics.truncated;
   report.uniqueDemandRows = problem.getObligationDemands().size();
   report.selectionBasisRows = problem.getDemands().size();

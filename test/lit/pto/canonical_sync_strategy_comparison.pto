@@ -36,6 +36,9 @@
 // RUN:   --canonical-sync-maximum-basic-ownership-certificates=0 \
 // RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-OWNERSHIP-CERTIFICATE
 // RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-maximum-basic-ownership-node-references=0 \
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-OWNERSHIP-REFERENCES
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
 // RUN:   --canonical-sync-maximum-demand-basis-reachability-words=0 \
 // RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INVALID-BASIS-WORD
 // RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
@@ -82,6 +85,11 @@
 // REPORT-DAG: "graph_edges":
 // REPORT-DAG: "ownership_discovery_inspections":
 // REPORT-DAG: "ownership_certificates_by_kind":
+// REPORT-DAG: "ownership_slots":
+// REPORT-DAG: "ownership_paths":
+// REPORT-DAG: "ownership_uses":
+// REPORT-DAG: "ownership_node_references":
+// REPORT-DAG: "ownership_access_incidences":
 // REPORT-DAG: "ownership_discovery_truncated":
 // REPORT-DAG: "demands":
 // REPORT-DAG: "unique_demand_keys":
@@ -124,6 +132,7 @@
 // INVALID-BOUND: maximum-verification-work-units must be positive
 // INVALID-OWNERSHIP-INSPECT: maximum-basic-ownership-inspections must be positive
 // INVALID-OWNERSHIP-CERTIFICATE: maximum-basic-ownership-certificates must be positive
+// INVALID-OWNERSHIP-REFERENCES: maximum-basic-ownership-node-references must be positive
 // INVALID-BASIS-EDGE: maximum-demand-basis-group-edges must be positive
 // INVALID-BASIS-WORD: maximum-demand-basis-reachability-words must be positive
 // INVALID-BASIS-WORK: maximum-demand-basis-reduction-work must be positive

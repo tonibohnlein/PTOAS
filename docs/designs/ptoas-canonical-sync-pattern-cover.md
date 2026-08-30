@@ -420,6 +420,11 @@ Relevant driver options are:
 --canonical-sync-selection-objective=action-first|serialization-first
 --canonical-sync-maximum-basic-ownership-inspections=1048576
 --canonical-sync-maximum-basic-ownership-certificates=1024
+--canonical-sync-maximum-basic-ownership-slots=16384
+--canonical-sync-maximum-basic-ownership-paths=16384
+--canonical-sync-maximum-basic-ownership-uses=65536
+--canonical-sync-maximum-basic-ownership-node-references=1048576
+--canonical-sync-maximum-basic-ownership-access-incidences=1048576
 --canonical-sync-maximum-pair-evaluations-per-scope=4096
 --canonical-sync-maximum-selection-work-units=134217728
 --canonical-sync-maximum-repair-rounds=8
@@ -472,10 +477,11 @@ repair-target-local-drain
 repair-frontier
 ```
 
-The ownership discovery bounds apply to the shared certificate census. Hitting
-either bound truncates ownership discovery deterministically. Direct mechanisms
-remain available, but compilation still fails closed if the omitted ownership
-certificates were required for a balanced cover.
+The ownership discovery bounds apply to recognizer work and to every retained
+certificate dimension in the shared census. Hitting any bound truncates
+ownership discovery deterministically. Direct mechanisms remain available, but
+compilation still fails closed if the omitted ownership certificates were
+required for a balanced cover.
 
 The two GM alias contracts are mutually exclusive; the all-accesses contract is
 unsafe unless the caller guarantees that even accesses through the same

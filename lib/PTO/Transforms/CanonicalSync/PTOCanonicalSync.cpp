@@ -518,6 +518,13 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
             jsonInteger(
                 report.ownershipCertificatesByKind[static_cast<std::size_t>(
                     pto::SyncCoverBasicOwnershipKind::L0Accumulator)])}}},
+      {"ownership_slots", jsonInteger(report.ownershipSlots)},
+      {"ownership_paths", jsonInteger(report.ownershipPaths)},
+      {"ownership_uses", jsonInteger(report.ownershipUses)},
+      {"ownership_node_references",
+       jsonInteger(report.ownershipNodeReferences)},
+      {"ownership_access_incidences",
+       jsonInteger(report.ownershipAccessIncidences)},
       {"ownership_discovery_truncated", report.ownershipDiscoveryTruncated},
       {"demands", jsonInteger(report.demands)},
       {"unique_demand_keys", jsonInteger(report.uniqueDemandRows)},
@@ -681,6 +688,13 @@ struct PTOCanonicalSyncPass
          "maximum-basic-ownership-inspections"},
         {maximumBasicOwnershipCertificates,
          "maximum-basic-ownership-certificates"},
+        {maximumBasicOwnershipSlots, "maximum-basic-ownership-slots"},
+        {maximumBasicOwnershipPaths, "maximum-basic-ownership-paths"},
+        {maximumBasicOwnershipUses, "maximum-basic-ownership-uses"},
+        {maximumBasicOwnershipNodeReferences,
+         "maximum-basic-ownership-node-references"},
+        {maximumBasicOwnershipAccessIncidences,
+         "maximum-basic-ownership-access-incidences"},
         {maximumPairEvaluationsPerScope, "maximum-pair-evaluations-per-scope"},
         {maximumSelectionWorkUnits, "maximum-selection-work-units"},
         {maximumRepairRounds, "maximum-repair-rounds"},
@@ -723,6 +737,16 @@ struct PTOCanonicalSyncPass
         static_cast<std::size_t>(maximumBasicOwnershipInspections);
     options.analysis.maximumBasicOwnershipCertificates =
         static_cast<std::size_t>(maximumBasicOwnershipCertificates);
+    options.analysis.maximumBasicOwnershipSlots =
+        static_cast<std::size_t>(maximumBasicOwnershipSlots);
+    options.analysis.maximumBasicOwnershipPaths =
+        static_cast<std::size_t>(maximumBasicOwnershipPaths);
+    options.analysis.maximumBasicOwnershipUses =
+        static_cast<std::size_t>(maximumBasicOwnershipUses);
+    options.analysis.maximumBasicOwnershipNodeReferences =
+        static_cast<std::size_t>(maximumBasicOwnershipNodeReferences);
+    options.analysis.maximumBasicOwnershipAccessIncidences =
+        static_cast<std::size_t>(maximumBasicOwnershipAccessIncidences);
     if (!configurePatternMode(patternMode, options.patterns)) {
       function.emitError("pattern-mode must be direct or direct-pair");
       signalPassFailure();

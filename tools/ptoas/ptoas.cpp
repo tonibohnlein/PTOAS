@@ -562,6 +562,36 @@ static llvm::cl::opt<std::int64_t>
         llvm::cl::desc("Maximum exact-slot ownership certificates retained"),
         llvm::cl::init(1U << 10));
 
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumBasicOwnershipSlots(
+    "canonical-sync-maximum-basic-ownership-slots",
+    llvm::cl::desc("Maximum slots retained across ownership certificates"),
+    llvm::cl::init(1U << 14));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumBasicOwnershipPaths(
+    "canonical-sync-maximum-basic-ownership-paths",
+    llvm::cl::desc("Maximum paths retained across ownership certificates"),
+    llvm::cl::init(1U << 14));
+
+static llvm::cl::opt<std::int64_t> canonicalSyncMaximumBasicOwnershipUses(
+    "canonical-sync-maximum-basic-ownership-uses",
+    llvm::cl::desc(
+        "Maximum lifecycle uses retained across ownership certificates"),
+    llvm::cl::init(1U << 16));
+
+static llvm::cl::opt<std::int64_t>
+    canonicalSyncMaximumBasicOwnershipNodeReferences(
+        "canonical-sync-maximum-basic-ownership-node-references",
+        llvm::cl::desc("Maximum producer and consumer references retained "
+                       "across ownership certificates"),
+        llvm::cl::init(1U << 20));
+
+static llvm::cl::opt<std::int64_t>
+    canonicalSyncMaximumBasicOwnershipAccessIncidences(
+        "canonical-sync-maximum-basic-ownership-access-incidences",
+        llvm::cl::desc("Maximum slot-to-access incidences retained across "
+                       "ownership certificates"),
+        llvm::cl::init(1U << 20));
+
 static llvm::cl::opt<std::string> canonicalSyncPatternMode(
     "canonical-sync-pattern-mode",
     llvm::cl::desc("Canonical synchronization candidate ablation: direct or "
@@ -4025,6 +4055,15 @@ int mlir::pto::compilePTOASModule(OwningOpRef<ModuleOp> &module,
         canonicalSyncMaximumBasicOwnershipInspections;
     options.maximumBasicOwnershipCertificates =
         canonicalSyncMaximumBasicOwnershipCertificates;
+    options.maximumBasicOwnershipSlots =
+        canonicalSyncMaximumBasicOwnershipSlots;
+    options.maximumBasicOwnershipPaths =
+        canonicalSyncMaximumBasicOwnershipPaths;
+    options.maximumBasicOwnershipUses = canonicalSyncMaximumBasicOwnershipUses;
+    options.maximumBasicOwnershipNodeReferences =
+        canonicalSyncMaximumBasicOwnershipNodeReferences;
+    options.maximumBasicOwnershipAccessIncidences =
+        canonicalSyncMaximumBasicOwnershipAccessIncidences;
     options.enableConflictCoreRepair = canonicalSyncEnableConflictCoreRepair;
     options.selectionStrategy = canonicalSyncSelectionStrategy;
     options.selectionObjective = canonicalSyncSelectionObjective;
