@@ -3187,6 +3187,64 @@ bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
     return false;
   }
 
+  std::string siblingSource = ownershipSource;
+  const std::size_t siblingName = siblingSource.find("@branch_l0");
+  if (!check(siblingName != std::string::npos,
+             "locate unscheduled-sibling ownership fixture")) {
+    return false;
+  }
+  siblingSource.replace(siblingName, std::string("@branch_l0").size(),
+                        "@sibling_branch_l0");
+  const std::size_t siblingLoop = siblingSource.find(loopMarker);
+  if (!check(siblingLoop != std::string::npos,
+             "locate unscheduled-sibling loop insertion point")) {
+    return false;
+  }
+  std::string unscheduledSiblings;
+  constexpr std::size_t ownershipSiblingCount = 64;
+  for (std::size_t index = 0; index < ownershipSiblingCount; ++index) {
+    unscheduledSiblings += "        %unused" + std::to_string(index) +
+                           " = arith.constant " + std::to_string(index + 2) +
+                           " : index\n";
+  }
+  siblingSource.insert(siblingLoop, unscheduledSiblings);
+  OwningOpRef<ModuleOp> siblingModule =
+      parseSourceString<ModuleOp>(siblingSource, &context);
+  if (!check(static_cast<bool>(siblingModule),
+             "parse unscheduled-sibling ownership fixture")) {
+    return false;
+  }
+  func::FuncOp siblingFunction =
+      siblingModule->lookupSymbol<func::FuncOp>("sibling_branch_l0");
+  siblingFunction.getBody().front().invalidateOpOrder();
+  FailureOr<CanonicalSyncProgram> siblingReference =
+      buildCanonicalSyncProgram(siblingFunction);
+  const bool siblingRecognized =
+      succeeded(siblingReference) &&
+      !siblingReference->getGraph().getBasicOwnershipCertificates().empty() &&
+      !siblingReference->getOwnershipDiscoveryStatistics().truncated;
+  if (!check(siblingRecognized,
+             "recognize ownership across unscheduled block siblings")) {
+    return false;
+  }
+  siblingFunction.getBody().front().invalidateOpOrder();
+  CanonicalSyncAnalysisOptions siblingBoundedOptions;
+  siblingBoundedOptions.maximumBasicOwnershipInspections =
+      program->getOwnershipDiscoveryStatistics().inspections;
+  FailureOr<CanonicalSyncProgram> siblingBounded =
+      buildCanonicalSyncProgram(siblingFunction, siblingBoundedOptions);
+  if (!check(
+          succeeded(siblingBounded) &&
+              siblingBounded->getGraph()
+                  .getBasicOwnershipCertificates()
+                  .empty() &&
+              siblingBounded->getOwnershipDiscoveryStatistics().truncated &&
+              siblingBounded->getOwnershipDiscoveryStatistics().inspections ==
+                  siblingBoundedOptions.maximumBasicOwnershipInspections,
+          "charge unscheduled block siblings before ownership recognition")) {
+    return false;
+  }
+
   std::string overlapSource = ownershipSource;
   const std::size_t overlapName = overlapSource.find("@branch_l0");
   const std::string allocationMarker =
@@ -3197,6 +3255,31 @@ bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
   }
   overlapSource.replace(overlapName, std::string("@branch_l0").size(),
                         "@overlap_branch_l0");
+  const auto eraseOverlapMarker = [&](StringRef marker) {
+    const std::size_t position = overlapSource.find(marker.str());
+    if (position == std::string::npos) {
+      return false;
+    }
+    overlapSource.erase(position, marker.size());
+    return true;
+  };
+  const bool flattenedBranch =
+      eraseOverlapMarker("          scf.if %condition {\n") &&
+      eraseOverlapMarker("          } else {\n");
+  if (!check(flattenedBranch,
+             "flatten the overlap fixture branch for a direct-only control")) {
+    return false;
+  }
+  const std::string flattenedExtract =
+      "          pto.textract ins(%left_source, %c0, %c64";
+  const std::string closingBranch = "          }\n" + flattenedExtract;
+  const std::size_t closingPosition = overlapSource.find(closingBranch);
+  if (!check(closingPosition != std::string::npos,
+             "locate flattened overlap branch exit")) {
+    return false;
+  }
+  overlapSource.replace(closingPosition, closingBranch.size(),
+                        flattenedExtract);
   const std::size_t overlapAllocation = overlapSource.find(allocationMarker);
   if (!check(overlapAllocation != std::string::npos,
              "locate overlapping ownership allocation insertion point")) {
@@ -3229,20 +3312,48 @@ bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
              "retain the direct graph for overlapping ownership storage")) {
     return false;
   }
+
+  std::string directOverlapSource = overlapSource;
+  const std::size_t directOverlapName =
+      directOverlapSource.find("@overlap_branch_l0");
+  const std::size_t directOverlapLoop = directOverlapSource.find(loopMarker);
+  const std::string loopExitMarker = "        }\n        return\n";
+  const std::size_t directOverlapExit =
+      directOverlapSource.find(loopExitMarker);
+  if (!check(directOverlapName != std::string::npos &&
+                 directOverlapLoop != std::string::npos &&
+                 directOverlapExit != std::string::npos,
+             "locate direct-only overlap control markers")) {
+    return false;
+  }
+  directOverlapSource.replace(directOverlapName,
+                              std::string("@overlap_branch_l0").size(),
+                              "@direct_overlap_l0");
+  directOverlapSource.erase(directOverlapLoop, loopMarker.size());
+  const std::size_t adjustedDirectExit =
+      directOverlapSource.find(loopExitMarker);
+  directOverlapSource.replace(adjustedDirectExit, loopExitMarker.size(),
+                              "        return\n");
+  OwningOpRef<ModuleOp> directOverlapModule =
+      parseSourceString<ModuleOp>(directOverlapSource, &context);
+  if (!check(static_cast<bool>(directOverlapModule),
+             "parse direct-only overlap control")) {
+    return false;
+  }
+  func::FuncOp directOverlapFunction =
+      directOverlapModule->lookupSymbol<func::FuncOp>("direct_overlap_l0");
+  FailureOr<CanonicalSyncProgram> directOverlapProgram =
+      buildCanonicalSyncProgram(directOverlapFunction);
+  if (!check(succeeded(directOverlapProgram),
+             "build direct-only overlap control graph")) {
+    return false;
+  }
   CanonicalSyncBuildOptions directFallbackOptions;
-  directFallbackOptions.patterns.enabledMechanismFamilies =
-      kAllCanonicalSyncMechanismFamilies &
-      ~canonicalSyncMechanismFamilyBit(
-          CanonicalSyncMechanismFamily::L0OperandOwnership) &
-      ~canonicalSyncMechanismFamilyBit(
-          CanonicalSyncMechanismFamily::BasicOwnership) &
-      ~canonicalSyncMechanismFamilyBit(
-          CanonicalSyncMechanismFamily::BoundaryOwnership) &
-      ~canonicalSyncMechanismFamilyBit(
-          CanonicalSyncMechanismFamily::HierarchicalOwnership);
+  directFallbackOptions.patterns.enabledMechanismFamilies = 0;
   directFallbackOptions.patterns.enableDirectPairs = false;
   CanonicalSyncProblemBuildResult directFallback =
-      buildCanonicalSyncPreciseProblem(*overlapProgram, directFallbackOptions);
+      buildCanonicalSyncPreciseProblem(*directOverlapProgram,
+                                       directFallbackOptions);
   bool hasPartialOverlap = false;
   const auto &overlapAccesses = overlapProgram->getGraph().getStorageAccesses();
   for (std::size_t first = 0; first < overlapAccesses.size(); ++first) {
@@ -3266,21 +3377,30 @@ bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
           CanonicalSyncMechanismOrigin::DirectForwardRecurrenceEvent) |
       canonicalSyncMechanismOriginBit(
           CanonicalSyncMechanismOrigin::DirectReleaseRecurrenceProtocol);
-  const bool hasDirectFallback =
+  const bool directOnlyCatalog =
       directFallback && directFallback.problem &&
-      llvm::any_of(directFallback.problem->getMechanisms(),
+      llvm::all_of(directFallback.problem->getMechanisms(),
                    [&](const CanonicalSyncMechanism &mechanism) {
-                     return (mechanism.originMask & directOrigins) != 0;
+                     return mechanism.originMask != 0 &&
+                            (mechanism.originMask & ~directOrigins) == 0;
                    });
+  CanonicalSyncSelection directSelection;
+  CanonicalSyncVerifiedPlan directVerification;
+  if (directOnlyCatalog) {
+    directSelection = selectCanonicalSyncPatterns(*directFallback.problem);
+    directVerification =
+        verifyCanonicalSyncSelection(*directFallback.problem, directSelection);
+  }
   if (!check(hasPartialOverlap &&
                  overlapProgram->getGraph()
                      .getBasicOwnershipCertificates()
                      .empty() &&
                  !overlapProgram->getGraph().getDemands().empty() &&
                  !overlapProgram->getOwnershipDiscoveryStatistics().truncated &&
-                 hasDirectFallback,
+                 !directOverlapProgram->getGraph().getDemands().empty() &&
+                 directOnlyCatalog && directSelection && directVerification,
              "reject partial ownership overlap while retaining direct "
-             "fallback")) {
+             "cover and fresh verification")) {
     return false;
   }
 

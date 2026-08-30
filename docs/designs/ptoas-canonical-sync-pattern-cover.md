@@ -418,7 +418,7 @@ Relevant driver options are:
 --canonical-sync-mechanism-families=all|core|<family>[+<family>...]
 --canonical-sync-selection-strategy=fixed-cover|action-aware-singleton|pair-lookahead
 --canonical-sync-selection-objective=action-first|serialization-first
---canonical-sync-maximum-basic-ownership-inspections=134217728
+--canonical-sync-maximum-basic-ownership-inspections=268435456
 --canonical-sync-maximum-basic-ownership-certificates=1024
 --canonical-sync-maximum-basic-ownership-slots=16384
 --canonical-sync-maximum-basic-ownership-paths=16384

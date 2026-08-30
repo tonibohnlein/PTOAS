@@ -554,7 +554,7 @@ static llvm::cl::opt<std::int64_t>
         "canonical-sync-maximum-basic-ownership-inspections",
         llvm::cl::desc("Maximum exact-slot ownership discovery inspection "
                        "units"),
-        llvm::cl::init(1U << 27));
+        llvm::cl::init(1U << 28));
 
 static llvm::cl::opt<std::int64_t>
     canonicalSyncMaximumBasicOwnershipCertificates(

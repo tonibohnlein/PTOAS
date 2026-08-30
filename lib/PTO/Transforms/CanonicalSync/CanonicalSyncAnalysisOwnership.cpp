@@ -137,13 +137,13 @@ bool matchNonNegativeConstant(Value value, std::uint64_t expected) {
 class BasicOwnershipDiscovery {
 public:
   BasicOwnershipDiscovery(
-      SyncCoverGraph &graph,
+      func::FuncOp function, SyncCoverGraph &graph,
       const std::vector<CanonicalSyncNodeBinding> &nodeBindings,
       const std::vector<CanonicalSyncScopeBinding> &scopeBindings,
       const std::vector<CanonicalSyncControlBinding> &controlBindings,
       const CanonicalSyncAnalysisOptions &options,
       const CanonicalSyncTargetCapabilities &capabilities)
-      : graph_(graph), nodeBindings_(nodeBindings),
+      : function_(function), graph_(graph), nodeBindings_(nodeBindings),
         scopeBindings_(scopeBindings), controlBindings_(controlBindings),
         options_(options), capabilities_(capabilities),
         accessesByNode_(graph.getNodes().size()),
@@ -271,6 +271,16 @@ private:
         !account(graph_.getControls().size())) {
       return false;
     }
+    // Operation::isBeforeInBlock() may recompute order indices by scanning the
+    // complete containing block. Include every operation in the function so
+    // arbitrarily many unscheduled siblings remain inside the reserved
+    // recognizer envelope. This walk is itself charged before recognition.
+    const WalkResult operationWalk = function_.walk([&](Operation *) {
+      return account(1) ? WalkResult::advance() : WalkResult::interrupt();
+    });
+    if (operationWalk.wasInterrupted()) {
+      return false;
+    }
     for (const SyncCoverNode &node : graph_.getNodes()) {
       if (!checkedAdd(guardIncidences_, node.guard.literals.size()) ||
           !account(node.guard.literals.size())) {
@@ -330,9 +340,10 @@ private:
       return false;
     }
     // The census includes graph nodes/accesses, scopes, controls, guard
-    // incidences, and every MLIR parent link reachable from a scheduled node.
-    // Sixteen squared-census passes conservatively cover the recognizers'
-    // node/access scans, scope and control lookups, parent walks, bounded
+    // incidences, every function operation (including unscheduled siblings),
+    // and every MLIR parent link reachable from a scheduled node. Sixteen
+    // squared-census passes conservatively cover the recognizers' node/access
+    // scans, scope and control lookups, parent and block-order walks, bounded
     // sorting, boundary-node scans, and pairwise group/slot comparisons.
     // Reserve the complete envelope before allocating recognizer state.
     return consume(work);
@@ -533,9 +544,10 @@ private:
   }
 
   bool reachedCertificateLimit() const {
-    return graph_.getBasicOwnershipCertificates().size() +
-               pendingCertificates_.size() >=
-           options_.maximumBasicOwnershipCertificates;
+    const std::size_t existing = graph_.getBasicOwnershipCertificates().size();
+    return existing >= options_.maximumBasicOwnershipCertificates ||
+           pendingCertificates_.size() >=
+               options_.maximumBasicOwnershipCertificates - existing;
   }
 
   void add(std::optional<SyncCoverBasicOwnershipCertificate> certificate) {
@@ -580,7 +592,10 @@ private:
         }
         const std::vector<SyncCoverStorageAccessId> &matching =
             accessesByDomain_[slot.domain];
-        const std::size_t scopeWalk = scopeBindings_.size() + 1;
+        std::size_t scopeWalk = scopeBindings_.size();
+        if (!checkedAdd(scopeWalk, 1)) {
+          return false;
+        }
         if (matching.size() >
                 std::numeric_limits<std::size_t>::max() / scopeWalk ||
             !consume(matching.size() * scopeWalk)) {
@@ -1427,6 +1442,7 @@ private:
     });
   }
 
+  func::FuncOp function_;
   SyncCoverGraph &graph_;
   const std::vector<CanonicalSyncNodeBinding> &nodeBindings_;
   const std::vector<CanonicalSyncScopeBinding> &scopeBindings_;
@@ -1447,8 +1463,9 @@ private:
 
 LogicalResult ProgramBuilder::discoverBasicOwnershipCertificates(
     const CanonicalSyncTargetCapabilities &capabilities) {
-  BasicOwnershipDiscovery discovery(graph_, nodeBindings_, scopeBindings_,
-                                    controlBindings_, options_, capabilities);
+  BasicOwnershipDiscovery discovery(function_, graph_, nodeBindings_,
+                                    scopeBindings_, controlBindings_, options_,
+                                    capabilities);
   if (!discovery.run()) {
     return function_.emitError(
         "canonical sync ownership certificate validation failed");
