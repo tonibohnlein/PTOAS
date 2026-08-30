@@ -1839,7 +1839,14 @@ bool testStructuralCostSeparatesBarrierAndEventActions() {
 
   const std::optional<CanonicalSyncStructuralCost> cost =
       computeCanonicalSyncStructuralCost(problem, {barrierId, eventId});
-  if (!check(cost.has_value(), "compute checked structural cost")) {
+  const std::optional<CanonicalSyncStructuralCost> barrierCost =
+      computeCanonicalSyncStructuralCost(problem, {barrierId});
+  const std::optional<CanonicalSyncStructuralCost> eventCost =
+      computeCanonicalSyncStructuralCost(problem, {eventId});
+  const bool computedCosts = check(
+      cost.has_value() && barrierCost.has_value() && eventCost.has_value(),
+      "compute checked structural cost");
+  if (!computedCosts) {
     return false;
   }
   const std::uint64_t barriers =
@@ -1869,7 +1876,120 @@ bool testStructuralCostSeparatesBarrierAndEventActions() {
          check(serializationSelection &&
                    serializationSelection.mechanisms ==
                        std::vector<CanonicalSyncMechanismId>{eventId},
-               "serialization-first objective prefers the tight event");
+               "serialization-first objective prefers the tight event") &&
+         check(canonicalSyncStructuralCostLess(
+                   *barrierCost, *eventCost,
+                   CanonicalSyncSelectionObjective::ActionFirst) &&
+                   canonicalSyncStructuralCostLess(
+                       *eventCost, *barrierCost,
+                       CanonicalSyncSelectionObjective::SerializationFirst),
+               "reuse the objective ordering for complete repair costs");
+}
+
+bool testRepairRankingHonorsObjective() {
+  CanonicalSyncStructuralCost broadBarrier;
+  broadBarrier.actionProfile = {1};
+  broadBarrier.serializationBreadth = 100;
+  broadBarrier.eventLifetimeArea = 0;
+  broadBarrier.mechanismCount = 1;
+  CanonicalSyncStructuralCost tightEvents;
+  tightEvents.actionProfile = {2};
+  tightEvents.serializationBreadth = 1;
+  tightEvents.eventLifetimeArea = 2;
+  tightEvents.mechanismCount = 1;
+
+  const auto verified = [](CanonicalSyncMechanismId mechanism,
+                           const CanonicalSyncStructuralCost &cost) {
+    CanonicalSyncSelection result;
+    result.mechanisms = {mechanism};
+    result.cost = cost;
+    return result;
+  };
+  const auto pressure = [&](CanonicalSyncMechanismId mechanism,
+                            const CanonicalSyncStructuralCost &cost,
+                            std::size_t overflow) {
+    CanonicalSyncSelection result = verified(mechanism, cost);
+    result.error = CanonicalSyncSelectionError::ResourceInfeasible;
+    result.allocation.valid = true;
+    result.allocation.feasible = false;
+    result.allocation.domains.push_back({0, overflow + 1, 1, {}, {}, {}});
+    return result;
+  };
+  const CanonicalSyncSelection broadVerified = verified(4, broadBarrier);
+  const CanonicalSyncSelection tightVerified = verified(7, tightEvents);
+  const CanonicalSyncSelection broadPressure = pressure(4, broadBarrier, 2);
+  const CanonicalSyncSelection tightPressure = pressure(7, tightEvents, 2);
+
+  const auto rank = [&](CanonicalSyncSelectionObjective objective,
+                        bool reverse) {
+    CanonicalSyncRepairRoundRanker ranker(objective, 3);
+    if (reverse) {
+      ranker.consider(tightVerified, true);
+      ranker.consider(broadVerified, true);
+      ranker.consider(tightPressure, false);
+      ranker.consider(broadPressure, false);
+    } else {
+      ranker.consider(broadVerified, true);
+      ranker.consider(tightVerified, true);
+      ranker.consider(broadPressure, false);
+      ranker.consider(tightPressure, false);
+    }
+    return std::make_pair(ranker.getBestVerifiedMechanisms(),
+                          ranker.getBestPressureMechanisms());
+  };
+  const auto actionForward =
+      rank(CanonicalSyncSelectionObjective::ActionFirst, false);
+  const auto actionReverse =
+      rank(CanonicalSyncSelectionObjective::ActionFirst, true);
+  const auto serializationForward =
+      rank(CanonicalSyncSelectionObjective::SerializationFirst, false);
+  const auto serializationReverse =
+      rank(CanonicalSyncSelectionObjective::SerializationFirst, true);
+  const auto isMechanism = [](const auto &selection,
+                              CanonicalSyncMechanismId mechanism) {
+    return selection &&
+           *selection == std::vector<CanonicalSyncMechanismId>{mechanism};
+  };
+  bool passed =
+      check(isMechanism(actionForward.first, 4) &&
+                isMechanism(actionForward.second, 4) &&
+                actionForward == actionReverse,
+            "rank identical repair trials action-first in either order") &&
+      check(isMechanism(serializationForward.first, 7) &&
+                isMechanism(serializationForward.second, 7) &&
+                serializationForward == serializationReverse,
+            "rank identical repair trials serialization-first in either "
+            "order");
+
+  CanonicalSyncRepairRoundRanker tieRanker(
+      CanonicalSyncSelectionObjective::ActionFirst, 3);
+  tieRanker.consider(verified(9, broadBarrier), true);
+  tieRanker.consider(verified(1, broadBarrier), true);
+  tieRanker.consider(pressure(9, broadBarrier, 2), false);
+  tieRanker.consider(pressure(1, broadBarrier, 2), false);
+  CanonicalSyncRepairRoundRanker reverseTieRanker(
+      CanonicalSyncSelectionObjective::ActionFirst, 3);
+  reverseTieRanker.consider(verified(1, broadBarrier), true);
+  reverseTieRanker.consider(verified(9, broadBarrier), true);
+  reverseTieRanker.consider(pressure(1, broadBarrier, 2), false);
+  reverseTieRanker.consider(pressure(9, broadBarrier, 2), false);
+  const CanonicalSyncSelection nonImproving = pressure(0, tightEvents, 3);
+  const CanonicalSyncSelection unverified = verified(0, tightEvents);
+  passed &= check(isMechanism(tieRanker.getBestVerifiedMechanisms(), 1) &&
+                      isMechanism(tieRanker.getBestPressureMechanisms(), 1) &&
+                      tieRanker.getBestVerifiedMechanisms() ==
+                          reverseTieRanker.getBestVerifiedMechanisms() &&
+                      tieRanker.getBestPressureMechanisms() ==
+                          reverseTieRanker.getBestPressureMechanisms(),
+                  "break equal repair costs by mechanism identity") &&
+            check(tieRanker.consider(nonImproving, false) ==
+                          CanonicalSyncRepairRoundRanker::Decision::Discard &&
+                      tieRanker.consider(unverified, false) ==
+                          CanonicalSyncRepairRoundRanker::Decision::Discard &&
+                      isMechanism(tieRanker.getBestVerifiedMechanisms(), 1) &&
+                      isMechanism(tieRanker.getBestPressureMechanisms(), 1),
+                  "discard non-improving and unverified repair trials");
+  return passed;
 }
 
 bool testStructuralCostOverflowFailsClosed() {
@@ -3666,6 +3786,7 @@ int main() {
       testNestedPairExtendsToParentDemand() &&
       testDirectPairComposesAcrossRecurrenceArena() &&
       testStructuralCostSeparatesBarrierAndEventActions() &&
+      testRepairRankingHonorsObjective() &&
       testStructuralCostOverflowFailsClosed() && testPipeAllFallbackProblem() &&
       testPackagingPatternHasNoExtraCoverage() &&
       testSeparateFallbackRepairsEventPressure() &&

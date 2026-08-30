@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Exercise the production repair driver on a kernel whose action-first and
+// serialization-first repairs deliberately choose different feasible plans.
+
+// RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
+// RUN:   --canonical-sync-selection-objective=action-first \
+// RUN:   --canonical-sync-comparison-report=%t.action.json \
+// RUN:   %S/../../samples/Qwen3_14BDecodeA3/kernels/aic/down_proj.pto \
+// RUN:   -o %t.action.pto
+// RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
+// RUN:   --canonical-sync-selection-objective=serialization-first \
+// RUN:   --canonical-sync-comparison-report=%t.serialization.json \
+// RUN:   %S/../../samples/Qwen3_14BDecodeA3/kernels/aic/down_proj.pto \
+// RUN:   -o %t.serialization.pto
+// RUN: FileCheck %s --check-prefix=ACTION < %t.action.json
+// RUN: FileCheck %s --check-prefix=SERIALIZATION < %t.serialization.json
+
+// ACTION: "selection_objective": "action-first"
+// ACTION: "emitted_pipe_all_barriers": 0
+// ACTION: "error": 0
+// ACTION: "plan_signature": "0x2c432d26d042bc23"
+// ACTION: "precise_error": 4
+// ACTION: "predicted_sync_instructions": 50
+// ACTION: "repair_rounds": 1
+// ACTION: "repair_trials": 33
+// ACTION: "serialization_breadth": 5182
+// ACTION: "used_localized_pipe_all": false
+// ACTION: "verified": true
+
+// SERIALIZATION: "selection_objective": "serialization-first"
+// SERIALIZATION: "emitted_pipe_all_barriers": 0
+// SERIALIZATION: "error": 0
+// SERIALIZATION: "plan_signature": "0x6b60b2141c08da15"
+// SERIALIZATION: "precise_error": 4
+// SERIALIZATION: "predicted_sync_instructions": 76
+// SERIALIZATION: "repair_rounds": 1
+// SERIALIZATION: "repair_trials": 44
+// SERIALIZATION: "serialization_breadth": 3145
+// SERIALIZATION: "used_localized_pipe_all": false
+// SERIALIZATION: "verified": true

@@ -619,29 +619,6 @@ void emitGuardedActions(IRRewriter &rewriter, func::FuncOp function,
   }
 }
 
-std::uint64_t costValue(const std::vector<std::uint64_t> &profile,
-                        std::size_t depth) {
-  return depth < profile.size() ? profile[depth] : 0;
-}
-
-bool structuralCostLess(const CanonicalSyncStructuralCost &first,
-                        const CanonicalSyncStructuralCost &second) {
-  const std::size_t depths =
-      std::max(first.actionProfile.size(), second.actionProfile.size());
-  for (std::size_t reverse = depths; reverse > 0; --reverse) {
-    const std::size_t depth = reverse - 1;
-    const std::uint64_t firstValue = costValue(first.actionProfile, depth);
-    const std::uint64_t secondValue = costValue(second.actionProfile, depth);
-    if (firstValue != secondValue) {
-      return firstValue < secondValue;
-    }
-  }
-  return std::tie(first.serializationBreadth, first.eventLifetimeArea,
-                  first.mechanismCount) < std::tie(second.serializationBreadth,
-                                                   second.eventLifetimeArea,
-                                                   second.mechanismCount);
-}
-
 std::size_t resourceOverflow(const CanonicalSyncSelection &selection) {
   std::size_t result = 0;
   for (const CanonicalSyncDomainAllocation &domain :
@@ -777,21 +754,6 @@ bool consumesEvent(const CanonicalSyncPatternProblem &problem,
     return false;
   }
   return !problem.getMechanisms()[mechanism].descriptor.eventUses.empty();
-}
-
-void considerVerifiedRepair(const CanonicalSyncPatternProblem &problem,
-                            const CanonicalSyncSelection &selection,
-                            RepairBudget &budget,
-                            std::optional<VerifiedRepairCandidate> &best) {
-  if (!selection) {
-    return;
-  }
-  CanonicalSyncVerifiedPlan plan = budget.verify(problem, selection);
-  if (!plan ||
-      (best && !structuralCostLess(selection.cost, best->selection.cost))) {
-    return;
-  }
-  best = VerifiedRepairCandidate{selection, std::move(plan)};
 }
 
 SelectionOutcome
@@ -950,6 +912,8 @@ selectWithBoundedRepair(const CanonicalSyncProgram &program,
     std::optional<CanonicalSyncSelection> bestPressureTrial;
     CanonicalSyncGreedyOptions bestPressureOptions;
     std::vector<CanonicalSyncMechanismId> bestPressureOwners;
+    CanonicalSyncRepairRoundRanker ranker(options.selection.objective,
+                                          resourceOverflow(lastPressure));
     std::vector<CanonicalSyncMechanismId> replaceableCore;
     llvm::copy_if(core, std::back_inserter(replaceableCore),
                   [&](CanonicalSyncMechanismId mechanism) {
@@ -974,19 +938,21 @@ selectWithBoundedRepair(const CanonicalSyncProgram &program,
           if (!trial) {
             return;
           }
-          considerVerifiedRepair(*outcome.ownedProblem, *trial, budget,
-                                 bestVerified);
-          const std::size_t trialOverflow = resourceOverflow(*trial);
-          const std::size_t baselineOverflow = resourceOverflow(lastPressure);
-          const bool improvesBaseline =
-              trial->error == CanonicalSyncSelectionError::ResourceInfeasible &&
-              trialOverflow < baselineOverflow;
-          const bool improvesBest =
-              !bestPressureTrial ||
-              trialOverflow < resourceOverflow(*bestPressureTrial) ||
-              (trialOverflow == resourceOverflow(*bestPressureTrial) &&
-               structuralCostLess(trial->cost, bestPressureTrial->cost));
-          if (improvesBaseline && improvesBest) {
+          std::optional<CanonicalSyncVerifiedPlan> plan;
+          if (static_cast<bool>(*trial)) {
+            CanonicalSyncVerifiedPlan verified =
+                budget.verify(*outcome.ownedProblem, *trial);
+            if (verified) {
+              plan = std::move(verified);
+            }
+          }
+          const CanonicalSyncRepairRoundRanker::Decision decision =
+              ranker.consider(*trial, plan.has_value());
+          if (decision ==
+              CanonicalSyncRepairRoundRanker::Decision::ReplaceBestVerified) {
+            bestVerified = VerifiedRepairCandidate{*trial, std::move(*plan)};
+          } else if (decision == CanonicalSyncRepairRoundRanker::Decision::
+                                     ReplaceBestPressure) {
             bestPressureTrial = *trial;
             bestPressureOptions = std::move(trialOptions);
             bestPressureOwners.assign(trialOwners.begin(), trialOwners.end());

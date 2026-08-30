@@ -817,6 +817,50 @@ std::optional<CanonicalSyncStructuralCost> computeCanonicalSyncStructuralCost(
     const CanonicalSyncPatternProblem &problem,
     const std::vector<CanonicalSyncMechanismId> &selected);
 
+/// Compare two complete structural costs with the production objective. Equal
+/// costs compare false in both directions; callers supply their own
+/// deterministic identity tie-breaker when one is required.
+bool canonicalSyncStructuralCostLess(const CanonicalSyncStructuralCost &first,
+                                     const CanonicalSyncStructuralCost &second,
+                                     CanonicalSyncSelectionObjective objective);
+
+/// Streaming, objective-aware ranking for one repair round. Verification and
+/// resource diagnosis stay with the repair driver; this object only retains
+/// the stable identity of the cheapest verified trial and the best strictly
+/// pressure-improving trial.
+class CanonicalSyncRepairRoundRanker {
+public:
+  enum class Decision : std::uint8_t {
+    Discard,
+    ReplaceBestVerified,
+    ReplaceBestPressure,
+  };
+
+  CanonicalSyncRepairRoundRanker(CanonicalSyncSelectionObjective objective,
+                                 std::size_t baselineResourceOverflow)
+      : objective_(objective),
+        baselineResourceOverflow_(baselineResourceOverflow) {}
+
+  Decision consider(const CanonicalSyncSelection &trial, bool freshlyVerified);
+
+  std::optional<std::vector<CanonicalSyncMechanismId>>
+  getBestVerifiedMechanisms() const;
+  std::optional<std::vector<CanonicalSyncMechanismId>>
+  getBestPressureMechanisms() const;
+
+private:
+  struct RankKey {
+    std::size_t resourceOverflow = 0;
+    CanonicalSyncStructuralCost cost;
+    std::vector<CanonicalSyncMechanismId> mechanisms;
+  };
+
+  CanonicalSyncSelectionObjective objective_;
+  std::size_t baselineResourceOverflow_ = 0;
+  std::optional<RankKey> bestVerified_;
+  std::optional<RankKey> bestPressure_;
+};
+
 /// The only result future materialization may consume. Finalization recomputes
 /// coverage from the frozen pattern table and exact event allocation from the
 /// selected atomic mechanisms; it does not trust the solver's mutable coverage

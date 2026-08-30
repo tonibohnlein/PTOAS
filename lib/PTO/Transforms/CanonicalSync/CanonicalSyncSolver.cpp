@@ -450,16 +450,14 @@ bool candidateLess(const GreedyCandidate &first, const GreedyCandidate &second,
          std::tie(second.additions, second.pattern);
 }
 
-int compareActionProfile(const CandidateCost &first,
-                         const CandidateCost &second) {
-  const std::size_t depths = std::max(first.value.actionProfile.size(),
-                                      second.value.actionProfile.size());
+int compareActionProfile(const CanonicalSyncStructuralCost &first,
+                         const CanonicalSyncStructuralCost &second) {
+  const std::size_t depths =
+      std::max(first.actionProfile.size(), second.actionProfile.size());
   for (std::size_t reverse = depths; reverse > 0; --reverse) {
     const std::size_t depth = reverse - 1;
-    const std::uint64_t firstValue =
-        profileValue(first.value.actionProfile, depth);
-    const std::uint64_t secondValue =
-        profileValue(second.value.actionProfile, depth);
+    const std::uint64_t firstValue = profileValue(first.actionProfile, depth);
+    const std::uint64_t secondValue = profileValue(second.actionProfile, depth);
     if (firstValue != secondValue) {
       return firstValue < secondValue ? -1 : 1;
     }
@@ -469,30 +467,13 @@ int compareActionProfile(const CandidateCost &first,
 
 bool costLess(const CandidateCost &first, const CandidateCost &second,
               CanonicalSyncSelectionObjective objective) {
-  const int actions = compareActionProfile(first, second);
-  if (objective == CanonicalSyncSelectionObjective::SerializationFirst) {
-    if (first.value.serializationBreadth != second.value.serializationBreadth) {
-      return first.value.serializationBreadth <
-             second.value.serializationBreadth;
-    }
-    if (actions != 0) {
-      return actions < 0;
-    }
-  } else {
-    if (actions != 0) {
-      return actions < 0;
-    }
-    if (first.value.serializationBreadth != second.value.serializationBreadth) {
-      return first.value.serializationBreadth <
-             second.value.serializationBreadth;
-    }
+  if (canonicalSyncStructuralCostLess(first.value, second.value, objective)) {
+    return true;
   }
-  return std::tie(first.value.serializationBreadth,
-                  first.value.eventLifetimeArea, first.value.mechanismCount,
-                  first.signature) < std::tie(second.value.serializationBreadth,
-                                              second.value.eventLifetimeArea,
-                                              second.value.mechanismCount,
-                                              second.signature);
+  if (canonicalSyncStructuralCostLess(second.value, first.value, objective)) {
+    return false;
+  }
+  return first.signature < second.signature;
 }
 
 bool considerCandidate(const CanonicalSyncPatternProblem &problem,
@@ -766,6 +747,97 @@ bool consumeMechanismVerificationWork(
 }
 
 } // namespace
+
+bool mlir::pto::canonicalSyncStructuralCostLess(
+    const CanonicalSyncStructuralCost &first,
+    const CanonicalSyncStructuralCost &second,
+    CanonicalSyncSelectionObjective objective) {
+  const int actions = compareActionProfile(first, second);
+  if (objective == CanonicalSyncSelectionObjective::SerializationFirst) {
+    if (first.serializationBreadth != second.serializationBreadth) {
+      return first.serializationBreadth < second.serializationBreadth;
+    }
+    if (actions != 0) {
+      return actions < 0;
+    }
+  } else {
+    if (actions != 0) {
+      return actions < 0;
+    }
+    if (first.serializationBreadth != second.serializationBreadth) {
+      return first.serializationBreadth < second.serializationBreadth;
+    }
+  }
+  return std::tie(first.eventLifetimeArea, first.mechanismCount) <
+         std::tie(second.eventLifetimeArea, second.mechanismCount);
+}
+
+CanonicalSyncRepairRoundRanker::Decision
+CanonicalSyncRepairRoundRanker::consider(const CanonicalSyncSelection &trial,
+                                         bool freshlyVerified) {
+  const auto rankLess = [&](const RankKey &first, const RankKey &second,
+                            bool comparePressure) {
+    if (comparePressure && first.resourceOverflow != second.resourceOverflow) {
+      return first.resourceOverflow < second.resourceOverflow;
+    }
+    if (canonicalSyncStructuralCostLess(first.cost, second.cost, objective_)) {
+      return true;
+    }
+    if (canonicalSyncStructuralCostLess(second.cost, first.cost, objective_)) {
+      return false;
+    }
+    return first.mechanisms < second.mechanisms;
+  };
+  RankKey candidate;
+  candidate.cost = trial.cost;
+  candidate.mechanisms = trial.mechanisms;
+  if (freshlyVerified && trial.error == CanonicalSyncSelectionError::None) {
+    if (bestVerified_ && !rankLess(candidate, *bestVerified_, false)) {
+      return Decision::Discard;
+    }
+    bestVerified_ = std::move(candidate);
+    return Decision::ReplaceBestVerified;
+  }
+  const bool pressureCandidate =
+      !freshlyVerified &&
+      trial.error == CanonicalSyncSelectionError::ResourceInfeasible &&
+      trial.allocation.valid && !trial.allocation.feasible;
+  if (!pressureCandidate) {
+    return Decision::Discard;
+  }
+  for (const CanonicalSyncDomainAllocation &domain : trial.allocation.domains) {
+    if (domain.required <= domain.available) {
+      continue;
+    }
+    const std::size_t overflow = domain.required - domain.available;
+    if (overflow >
+        std::numeric_limits<std::size_t>::max() - candidate.resourceOverflow) {
+      candidate.resourceOverflow = std::numeric_limits<std::size_t>::max();
+      break;
+    }
+    candidate.resourceOverflow += overflow;
+  }
+  if (candidate.resourceOverflow >= baselineResourceOverflow_ ||
+      (bestPressure_ && !rankLess(candidate, *bestPressure_, true))) {
+    return Decision::Discard;
+  }
+  bestPressure_ = std::move(candidate);
+  return Decision::ReplaceBestPressure;
+}
+
+std::optional<std::vector<CanonicalSyncMechanismId>>
+CanonicalSyncRepairRoundRanker::getBestVerifiedMechanisms() const {
+  return bestVerified_ ? std::optional<std::vector<CanonicalSyncMechanismId>>(
+                             bestVerified_->mechanisms)
+                       : std::nullopt;
+}
+
+std::optional<std::vector<CanonicalSyncMechanismId>>
+CanonicalSyncRepairRoundRanker::getBestPressureMechanisms() const {
+  return bestPressure_ ? std::optional<std::vector<CanonicalSyncMechanismId>>(
+                             bestPressure_->mechanisms)
+                       : std::nullopt;
+}
 
 std::optional<CanonicalSyncStructuralCost>
 mlir::pto::computeCanonicalSyncStructuralCost(
