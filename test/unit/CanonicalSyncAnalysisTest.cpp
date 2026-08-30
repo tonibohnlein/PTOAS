@@ -4397,6 +4397,24 @@ bool testUnmodeledLoopVaryingControlsFailClosed() {
                "induction");
 }
 
+bool testUnsupportedBlockArgumentProvenanceFailsClosed() {
+  return expectAnalysisFailure(R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @unsupported_block_argument() {
+        pto.section.vector {
+        ^bb0(%condition: i1):
+          scf.if %condition {
+          }
+        }
+        return
+      }
+    }
+  )mlir",
+                               "unsupported_block_argument",
+                               "cannot trace SSA provenance through this "
+                               "block argument");
+}
+
 bool testSsaProvenanceTraversalIsBoundedAndIterative() {
   constexpr std::size_t deepLength = 2048;
   constexpr std::size_t wideLeaves = 256;
@@ -6990,6 +7008,7 @@ int main() {
       testPhaseAwareRecurrenceDistances() &&
       testFirstIterationRecurrenceSuppression() &&
       testUnmodeledLoopVaryingControlsFailClosed() &&
+      testUnsupportedBlockArgumentProvenanceFailsClosed() &&
       testSsaProvenanceTraversalIsBoundedAndIterative() &&
       testGuardedOwnershipVerificationWorkIsBounded() &&
       testBasicL0OwnershipSharesExhaustiveBranchBoundaries() &&

@@ -1080,6 +1080,26 @@ LogicalResult ProgramBuilder::walkSsaProvenance(
       }
       continue;
     }
+    if (auto argument = dyn_cast<BlockArgument>(current)) {
+      Block *owner = argument.getOwner();
+      const bool functionArgument = owner == &function_.getBody().front();
+      auto loop = dyn_cast_or_null<scf::ForOp>(owner->getParentOp());
+      const bool loopInduction = loop &&
+                                 owner == &loop.getRegion().front() &&
+                                 argument == loop.getInductionVar();
+      if (functionArgument || loopInduction) {
+        continue;
+      }
+      Operation *parent = owner->getParentOp();
+      if (parent) {
+        return parent->emitError(
+            "canonical sync cannot trace SSA provenance through this block "
+            "argument");
+      }
+      return function_.emitError(
+          "canonical sync cannot trace SSA provenance through this block "
+          "argument");
+    }
     Operation *definition = current.getDefiningOp();
     if (!definition) {
       continue;
