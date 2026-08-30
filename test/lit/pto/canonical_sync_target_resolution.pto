@@ -12,8 +12,9 @@
 // RUN: FileCheck %s --check-prefix=A2A3 < %t/a2a3.json
 // RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
 // RUN:   --canonical-sync-report=%t/a5.json %t/a5-device-spec.pto \
-// RUN:   -o /dev/null
+// RUN:   -o %t/a5.out.pto
 // RUN: FileCheck %s --check-prefix=A5 < %t/a5.json
+// RUN: FileCheck %s --check-prefix=A5-LAYOUT < %t/a5.out.pto
 // RUN: not ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
 // RUN:   %t/unknown.pto -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=UNKNOWN
@@ -28,6 +29,20 @@
 // RUN:   --canonical-sync-report=%t/misleading.json %t/misleading.pto \
 // RUN:   -o /dev/null
 // RUN: FileCheck %s --check-prefix=MISLEADING < %t/misleading.json
+// RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN:   %t/misleading-layout.pto -o %t/misleading-layout.out.pto
+// RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN:   %t/clean-layout.pto -o %t/clean-layout.out.pto
+// RUN: diff -u %t/clean-layout.out.pto %t/misleading-layout.out.pto
+// RUN: FileCheck %s --check-prefix=MISLEADING-LAYOUT \
+// RUN:   < %t/misleading-layout.out.pto
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --emit-pto-ir --canonical-sync-report=%t/nested-override.json \
+// RUN:   %t/nested-override.pto -o %t/nested-override.out.pto
+// RUN: FileCheck %s --check-prefix=NESTED-OVERRIDE \
+// RUN:   < %t/nested-override.json
+// RUN: FileCheck %s --check-prefix=NESTED-OVERRIDE-IR \
+// RUN:   < %t/nested-override.out.pto
 // RUN: not ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
 // RUN:   %t/malformed-arch.pto -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=MALFORMED
@@ -37,8 +52,16 @@
 
 // A2A3: "profile": "a2a3-intersection-v1"
 // A5: "profile": "a5-v1"
+// A5-LAYOUT: !pto.tile_buf<left, 16x16xf16, blayout=col_major
 // OVERRIDE: "profile": "a3-v1"
 // MISLEADING: "profile": "a3-v1"
+// MISLEADING-LAYOUT: !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+// NESTED-OVERRIDE: "profile": "a5-v1"
+// NESTED-OVERRIDE-IR: module attributes
+// NESTED-OVERRIDE-IR-SAME: pto.target_arch = "a5"
+// NESTED-OVERRIDE-IR: module attributes
+// NESTED-OVERRIDE-IR-SAME: pto.target_arch = "a5"
+// NESTED-OVERRIDE-IR-NOT: pto.device-spec
 // UNKNOWN: Error: unsupported PTO target declaration.
 // CONFLICT: Error: conflicting PTO target declarations.
 // MALFORMED: Error: unsupported PTO target declaration.
@@ -52,7 +75,9 @@ module attributes {pto.target_arch = "a2a3"} {
 
 //--- a5-device-spec.pto
 module attributes {"pto.device-spec" = "Ascend950"} {
-  func.func @a5_device_spec() {
+  func.func @a5_device_spec(
+      %left: !pto.tile_buf<left, 16x16xf16,
+          blayout=row_major, slayout=row_major>) {
     return
   }
 }
@@ -77,6 +102,37 @@ module attributes {pto.target_arch = "a3",
 module attributes {pto.target_arch = "a3"} {
   func.func @misleading() attributes {pto.target_arch = "future"} {
     return
+  }
+}
+
+//--- misleading-layout.pto
+// pto.device-spec = "Ascend950"
+module attributes {pto.target_arch = "a3"} {
+  func.func @misleading_layout(
+      %left: !pto.tile_buf<left, 16x16xf16,
+          blayout=col_major, slayout=row_major>)
+      attributes {pto.target_arch = "future"} {
+    return
+  }
+}
+
+//--- clean-layout.pto
+module attributes {pto.target_arch = "a3"} {
+  func.func @misleading_layout(
+      %left: !pto.tile_buf<left, 16x16xf16,
+          blayout=col_major, slayout=row_major>)
+      attributes {pto.target_arch = "future"} {
+    return
+  }
+}
+
+//--- nested-override.pto
+module attributes {pto.target_arch = "a3"} {
+  module attributes {pto.backend = "emitc", pto.target_arch = "a3",
+                     "pto.device-spec" = "Ascend910B"} {
+    func.func @nested_override() {
+      return
+    }
   }
 }
 

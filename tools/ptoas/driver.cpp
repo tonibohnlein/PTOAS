@@ -41,7 +41,6 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
-#include "llvm/Support/Regex.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/raw_ostream.h"
@@ -113,34 +112,7 @@ static bool isSupportedPTOASCLIArch(llvm::StringRef archValue) {
   return archValue == "a2" || archValue == "a3" || archValue == "a5";
 }
 
-constexpr size_t kArchRegexCaptureGroupCount = 3;
 constexpr size_t kPTOBCMagicSize = 6;
-
-static std::optional<std::string>
-detectPTOASTextualModuleArch(llvm::StringRef text) {
-  llvm::SmallVector<llvm::StringRef, mlir::pto::kValue4> matches;
-  llvm::Regex archRegex(
-      R"ptoarch("?(pto\.target_arch)"?[[:space:]]*=[[:space:]]*"([[:alpha:][:digit:]_]+)")ptoarch");
-  if (!archRegex.match(text, &matches) ||
-      matches.size() < kArchRegexCaptureGroupCount) {
-    return std::nullopt;
-  }
-  return normalizePTOASArch(matches[mlir::pto::kValue2]);
-}
-
-static std::optional<std::string>
-detectPTOASTextualDeviceSpec(llvm::StringRef text) {
-  llvm::SmallVector<llvm::StringRef, mlir::pto::kValue4> matches;
-  llvm::Regex deviceSpecRegex(
-      R"ptospec("?(pto\.device-spec)"?[[:space:]]*=[[:space:]]*"([[:alpha:][:digit:]_]+)")ptospec");
-  const bool matched = deviceSpecRegex.match(text, &matches);
-  const bool hasCaptureGroups =
-      matches.size() >= kArchRegexCaptureGroupCount;
-  if (!matched || !hasCaptureGroups) {
-    return std::nullopt;
-  }
-  return matches[mlir::pto::kValue2].str();
-}
 
 static std::optional<std::string>
 getPTOASTargetKindName(mlir::pto::PTOTargetKind target) {
@@ -176,8 +148,7 @@ static std::unique_ptr<llvm::MemoryBuffer> readInputBuffer() {
   return std::move(*fileOrErr);
 }
 
-static bool resolveTextInputArch(llvm::StringRef buffer, bool cliArchSpecified,
-                                 std::string &arch) {
+static bool resolveInitialParserArch(bool cliArchSpecified, std::string &arch) {
   arch = normalizePTOASArch(mlir::pto::ptoTargetArch);
   if (cliArchSpecified && !isSupportedPTOASCLIArch(arch)) {
     llvm::errs() << "Error: invalid --pto-arch='" << mlir::pto::ptoTargetArch
@@ -187,25 +158,11 @@ static bool resolveTextInputArch(llvm::StringRef buffer, bool cliArchSpecified,
   if (cliArchSpecified) {
     return true;
   }
-
-  const std::optional<std::string> detectedArch =
-      detectPTOASTextualModuleArch(buffer);
-  const std::optional<std::string> detectedDeviceSpec =
-      detectPTOASTextualDeviceSpec(buffer);
-  const mlir::pto::PTOTargetKind declaredTarget =
-      mlir::pto::classifyPTOTargetArch(
-          detectedArch ? llvm::StringRef(*detectedArch) : llvm::StringRef{});
-  const mlir::pto::PTOTargetKind deviceTarget =
-      mlir::pto::classifyPTODeviceSpec(
-          detectedDeviceSpec ? llvm::StringRef(*detectedDeviceSpec)
-                             : llvm::StringRef{});
-  if (declaredTarget == mlir::pto::PTOTargetKind::A5 ||
-      deviceTarget == mlir::pto::PTOTargetKind::A5) {
-    arch = "a5";
-    return true;
-  }
-  arch = getPTOASTargetKindName(declaredTarget)
-             .value_or(getPTOASTargetKindName(deviceTarget).value_or("a3"));
+  // Text is not an authoritative target declaration: comments, nested
+  // operation attributes, and string payloads may all contain target-looking
+  // fragments. Parse conservatively first, then reparse below if the parsed
+  // root module itself authoritatively selects A5.
+  arch = "a3";
   return true;
 }
 
@@ -230,10 +187,13 @@ static OwningOpRef<ModuleOp> decodePTOBCModule(llvm::StringRef buffer,
 }
 
 static OwningOpRef<ModuleOp>
-parseTextualModule(std::unique_ptr<llvm::MemoryBuffer> inputBuffer,
+parseTextualModule(const llvm::MemoryBuffer &inputBuffer,
                    MLIRContext &context, llvm::StringRef arch) {
   llvm::SourceMgr sourceMgr;
-  sourceMgr.AddNewSourceBuffer(std::move(inputBuffer), llvm::SMLoc());
+  sourceMgr.AddNewSourceBuffer(
+      llvm::MemoryBuffer::getMemBufferCopy(inputBuffer.getBuffer(),
+                                           inputBuffer.getBufferIdentifier()),
+      llvm::SMLoc());
   mlir::pto::ScopedPTOParserTargetArch scopedParserArch(
       &context, arch == "a5" ? mlir::pto::PTOParserTargetArch::A5
                              : mlir::pto::PTOParserTargetArch::A3);
@@ -265,6 +225,23 @@ parseTextualModule(std::unique_ptr<llvm::MemoryBuffer> inputBuffer,
   return module;
 }
 
+static void applyExplicitTargetOverride(ModuleOp root, llvm::StringRef arch) {
+  root.walk([&](ModuleOp module) {
+    Operation *moduleOp = module.getOperation();
+    moduleOp->setAttr(
+        "pto.target_arch",
+        mlir::StringAttr::get(moduleOp->getContext(), arch));
+    const mlir::pto::PTOTargetKind resolved =
+        mlir::pto::resolvePTOModuleTarget(module);
+    if (resolved == mlir::pto::PTOTargetKind::Unsupported ||
+        resolved == mlir::pto::PTOTargetKind::Conflict) {
+      // An explicit CLI target supersedes stale, malformed, or incompatible
+      // per-module device declarations. Compatible device details remain.
+      moduleOp->removeAttr("pto.device-spec");
+    }
+  });
+}
+
 static OwningOpRef<ModuleOp>
 loadInputModule(std::unique_ptr<llvm::MemoryBuffer> inputBuffer,
                 MLIRContext &context, bool cliArchSpecified,
@@ -281,27 +258,26 @@ loadInputModule(std::unique_ptr<llvm::MemoryBuffer> inputBuffer,
     }
     module = decodePTOBCModule(buffer, context);
   } else {
-    if (!resolveTextInputArch(buffer, cliArchSpecified, arch)) {
+    if (!resolveInitialParserArch(cliArchSpecified, arch)) {
       return {};
     }
-    module = parseTextualModule(std::move(inputBuffer), context, arch);
+    module = parseTextualModule(*inputBuffer, context, arch);
+    if (module && !cliArchSpecified &&
+        mlir::pto::resolvePTOModuleTarget(*module) ==
+            mlir::pto::PTOTargetKind::A5) {
+      arch = "a5";
+      module = parseTextualModule(*inputBuffer, context, arch);
+    }
   }
   if (!module) {
     return {};
   }
 
-  Operation *moduleOp = module.get().getOperation();
   if (cliArchSpecified) {
-    moduleOp->setAttr("pto.target_arch",
-                      mlir::StringAttr::get(moduleOp->getContext(), arch));
-    mlir::pto::PTOTargetKind resolvedOverride =
-        mlir::pto::resolvePTOModuleTarget(*module);
-    if (resolvedOverride == mlir::pto::PTOTargetKind::Unsupported ||
-        resolvedOverride == mlir::pto::PTOTargetKind::Conflict) {
-      moduleOp->removeAttr("pto.device-spec");
-    }
+    applyExplicitTargetOverride(*module, arch);
   }
 
+  Operation *moduleOp = module.get().getOperation();
   mlir::pto::PTOTargetKind resolvedTarget =
       mlir::pto::resolvePTOModuleTarget(*module);
   if (resolvedTarget == mlir::pto::PTOTargetKind::Unsupported) {
