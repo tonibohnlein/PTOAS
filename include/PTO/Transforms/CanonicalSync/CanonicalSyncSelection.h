@@ -436,7 +436,7 @@ public:
                       CanonicalSyncMechanismOrigin::Unclassified);
   CanonicalSyncProblemResult
   internVerifiedProtocol(CanonicalSyncMechanismDescriptor descriptor,
-                         const CanonicalSyncProtocolVerifier &verifier,
+                         CanonicalSyncProtocolVerifier verifier,
                          CanonicalSyncMechanismOrigin origin =
                              CanonicalSyncMechanismOrigin::Unclassified);
   CanonicalSyncProblemResult addConflict(CanonicalSyncMechanismId first,
@@ -626,7 +626,7 @@ private:
   CanonicalSyncProblemResult
   internMechanismImpl(CanonicalSyncMechanismDescriptor descriptor,
                       bool protocolVerified,
-                      const CanonicalSyncProtocolVerifier &verifier = {},
+                      CanonicalSyncProtocolVerifier verifier = {},
                       CanonicalSyncMechanismOrigin origin =
                           CanonicalSyncMechanismOrigin::Unclassified);
   CanonicalSyncProblemResult validateAndCostMechanism(
@@ -664,7 +664,10 @@ private:
   /// Admission verifiers for protocol mechanisms, aligned with mechanisms_.
   /// They are retained so fresh verification re-runs the protocol-specific
   /// factory/certificate contract instead of trusting the admission result.
-  std::vector<CanonicalSyncProtocolVerifier> protocolVerifiers_;
+  /// Shared immutable callbacks keep repair-prefix cloning proportional to the
+  /// number of mechanisms rather than opaque verifier-capture sizes.
+  std::vector<std::shared_ptr<const CanonicalSyncProtocolVerifier>>
+      protocolVerifiers_;
   std::vector<PendingPattern> patternSpecs_;
   std::optional<SyncCoverDemandSet> constructionBaselineCoverage_;
   std::vector<std::optional<SyncCoverDemandSet>> constructionSingletonCoverage_;

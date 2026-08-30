@@ -75,6 +75,22 @@ CanonicalSyncProtocolVerifier testProtocolVerifier(Predicate predicate) {
   };
 }
 
+struct CopyCountedVerifierCapture {
+  CopyCountedVerifierCapture(std::shared_ptr<std::size_t> copyCount,
+                             std::size_t width)
+      : copyCount(std::move(copyCount)), payload(width, 7) {}
+
+  CopyCountedVerifierCapture(const CopyCountedVerifierCapture &other)
+      : copyCount(other.copyCount), payload(other.payload) {
+    ++*copyCount;
+  }
+
+  CopyCountedVerifierCapture(CopyCountedVerifierCapture &&) noexcept = default;
+
+  std::shared_ptr<std::size_t> copyCount;
+  std::vector<std::size_t> payload;
+};
+
 SyncCoverDemand demand(SyncCoverNodeId source, SyncCoverNodeId target,
                        SyncCoverScopeId scope = 0, unsigned distance = 0) {
   SyncCoverDemand result;
@@ -2366,6 +2382,62 @@ bool testVerifiedProtocolTrustBoundary() {
   return passed;
 }
 
+bool testProtocolVerifierStorageSharesOpaqueCapture() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 15}, true),
+                passed, "add shared-verifier loop");
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, loop, 1, {}, {2}), passed,
+                "add shared-verifier source");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(2, 1, loop, 2), passed,
+                                           "add shared-verifier target");
+  passed &= check(graph.addDemand(demand(source, target, loop, 1)),
+                  "add shared-verifier demand") &&
+            check(graph.freezeStructure(), "freeze shared-verifier graph");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 2, {}}),
+                  "add shared-verifier event domain");
+  const auto copyCount = std::make_shared<std::size_t>(0);
+  CanonicalSyncProtocolVerifier verifier =
+      [capture = CopyCountedVerifierCapture(copyCount, 1U << 12)](
+          const CanonicalSyncMechanismDescriptor &candidate,
+          SyncCoverCoverageWorkBudget &work) {
+        if (!work.consume()) {
+          return CanonicalSyncProblemError::LimitExceeded;
+        }
+        const bool valid =
+            capture.payload.size() == (1U << 12) &&
+            capture.payload.front() == 7 &&
+            candidate.kind == CanonicalSyncMechanismKind::Protocol;
+        return valid ? CanonicalSyncProblemError::None
+                     : CanonicalSyncProblemError::UnverifiedProtocol;
+      };
+  const std::size_t copiesAfterCallbackFormation = *copyCount;
+  const CanonicalSyncProblemResult admitted = problem.internVerifiedProtocol(
+      protocol(0, 1, 2, source, target, loop, 1, 1), std::move(verifier));
+  passed &= check(admitted && *copyCount == copiesAfterCallbackFormation,
+                  "move opaque verifier capture into immutable storage") &&
+            check(problem.freeze(), "freeze shared-verifier problem");
+  if (!passed) {
+    return false;
+  }
+
+  SyncCoverCoverageWorkBudget cloneWork;
+  std::unique_ptr<CanonicalSyncPatternProblem> clone =
+      problem.cloneMutableRepairPrefix(&cloneWork);
+  passed &= check(clone && *copyCount == copiesAfterCallbackFormation,
+                  "clone only the shared verifier handle");
+  if (clone && admitted.index) {
+    passed &= check(clone->verifyMechanism(*admitted.index) &&
+                        *copyCount == copiesAfterCallbackFormation,
+                    "invoke a shared cloned verifier without target copies");
+  }
+  return passed;
+}
+
 bool testHierarchicalProtocolLifetime() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -2448,16 +2520,18 @@ bool testRepairProtocolAdmissionUsesSharedBudget() {
                   "add second repair-budget demand") &&
             check(graph.freezeStructure(), "freeze repair-budget graph");
   constexpr std::size_t callbackWork = 11;
-  const CanonicalSyncProtocolVerifier verifier =
-      [](const CanonicalSyncMechanismDescriptor &candidate,
-         SyncCoverCoverageWorkBudget &work) {
-        if (!work.consume(callbackWork)) {
-          return CanonicalSyncProblemError::LimitExceeded;
-        }
-        return candidate.kind == CanonicalSyncMechanismKind::Protocol
-                   ? CanonicalSyncProblemError::None
-                   : CanonicalSyncProblemError::UnverifiedProtocol;
-      };
+  const auto makeVerifier = [] {
+    return CanonicalSyncProtocolVerifier{
+        [](const CanonicalSyncMechanismDescriptor &candidate,
+           SyncCoverCoverageWorkBudget &work) {
+          if (!work.consume(callbackWork)) {
+            return CanonicalSyncProblemError::LimitExceeded;
+          }
+          return candidate.kind == CanonicalSyncMechanismKind::Protocol
+                     ? CanonicalSyncProblemError::None
+                     : CanonicalSyncProblemError::UnverifiedProtocol;
+        }};
+  };
   CanonicalSyncPatternProblem precise(graph, {});
   passed &= check(precise.addEventDomain({0, 1, 2, 2, {}}),
                   "add first repair-budget event domain") &&
@@ -2467,9 +2541,10 @@ bool testRepairProtocolAdmissionUsesSharedBudget() {
       protocol(0, 1, 2, firstSource, firstTarget, loop, 1, 1);
   const CanonicalSyncMechanismDescriptor appendDescriptor =
       protocol(1, 3, 4, secondSource, secondTarget, loop, 1, 1);
-  passed &= check(precise.internVerifiedProtocol(prefixDescriptor, verifier),
-                  "add nonempty repair catalog prefix") &&
-            check(precise.freeze(), "freeze nonempty precise repair prefix");
+  passed &=
+      check(precise.internVerifiedProtocol(prefixDescriptor, makeVerifier()),
+            "add nonempty repair catalog prefix") &&
+      check(precise.freeze(), "freeze nonempty precise repair prefix");
   if (!passed) {
     return false;
   }
@@ -2484,7 +2559,7 @@ bool testRepairProtocolAdmissionUsesSharedBudget() {
             precise.cloneMutableRepairPrefix(&referenceWork);
         const std::size_t referencePrefixWork = referenceWork.workUnits;
         const CanonicalSyncProblemResult referenceAdmission =
-            reference->internVerifiedProtocol(descriptor, verifier);
+            reference->internVerifiedProtocol(descriptor, makeVerifier());
         const std::size_t admissionWork =
             referenceWork.workUnits - referencePrefixWork;
         if (!check(referenceAdmission && admissionWork >= callbackWork &&
@@ -2499,7 +2574,7 @@ bool testRepairProtocolAdmissionUsesSharedBudget() {
         const std::size_t exactPrefixWork = exactWork.workUnits;
         exactWork.maximumWorkUnits = exactPrefixWork + admissionWork;
         const CanonicalSyncProblemResult exactAdmission =
-            exact->internVerifiedProtocol(descriptor, verifier);
+            exact->internVerifiedProtocol(descriptor, makeVerifier());
         if (!check(exactAdmission &&
                        exactWork.workUnits == exactWork.maximumWorkUnits &&
                        exact->getMechanisms().size() == expectedSize,
@@ -2513,7 +2588,7 @@ bool testRepairProtocolAdmissionUsesSharedBudget() {
         const std::size_t oneLessPrefixWork = oneLessWork.workUnits;
         oneLessWork.maximumWorkUnits = oneLessPrefixWork + admissionWork - 1;
         const CanonicalSyncProblemResult rejected =
-            oneLess->internVerifiedProtocol(descriptor, verifier);
+            oneLess->internVerifiedProtocol(descriptor, makeVerifier());
         return check(rejected.error ==
                              CanonicalSyncProblemError::LimitExceeded &&
                          oneLess->getMechanisms().size() == 1 &&
@@ -3402,6 +3477,7 @@ int main() {
       testOptionalPipelineFallback() && testReservationsAndFinalValidation() &&
       testAllocatorWidthsReuseAndConflicts() &&
       testVerifiedProtocolTrustBoundary() &&
+      testProtocolVerifierStorageSharesOpaqueCapture() &&
       testRepairProtocolAdmissionUsesSharedBudget() &&
       testHierarchicalProtocolLifetime() &&
       testFreezeRetryCommitsFreshDerivedState() &&

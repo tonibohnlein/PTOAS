@@ -2270,7 +2270,7 @@ CanonicalSyncPatternProblem::verifyMechanismDescriptor(
     SyncCoverCoverageWorkBudget &protocolWork =
         workBudget ? *workBudget : localWork;
     const CanonicalSyncProblemError verification =
-        protocolVerifiers_[mechanism](descriptor, protocolWork);
+        (*protocolVerifiers_[mechanism])(descriptor, protocolWork);
     if (protocolWork.exhausted) {
       return {CanonicalSyncProblemError::LimitExceeded, mechanism};
     }
@@ -2401,14 +2401,15 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::internMechanism(
 
 CanonicalSyncProblemResult CanonicalSyncPatternProblem::internVerifiedProtocol(
     CanonicalSyncMechanismDescriptor descriptor,
-    const CanonicalSyncProtocolVerifier &verifier,
+    CanonicalSyncProtocolVerifier verifier,
     CanonicalSyncMechanismOrigin origin) {
-  return internMechanismImpl(std::move(descriptor), true, verifier, origin);
+  return internMechanismImpl(std::move(descriptor), true, std::move(verifier),
+                             origin);
 }
 
 CanonicalSyncProblemResult CanonicalSyncPatternProblem::internMechanismImpl(
     CanonicalSyncMechanismDescriptor descriptor, bool protocolVerified,
-    const CanonicalSyncProtocolVerifier &verifier,
+    CanonicalSyncProtocolVerifier verifier,
     CanonicalSyncMechanismOrigin origin) {
   if (frozen_) {
     return {CanonicalSyncProblemError::Frozen, mechanisms_.size()};
@@ -2533,6 +2534,11 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::internMechanismImpl(
       return {CanonicalSyncProblemError::LimitExceeded, mechanisms_.size()};
     }
   }
+  std::shared_ptr<const CanonicalSyncProtocolVerifier> verifierHandle;
+  if (protocolVerified) {
+    verifierHandle = std::make_shared<const CanonicalSyncProtocolVerifier>(
+        std::move(verifier));
+  }
   const CanonicalSyncMechanismId id = mechanisms_.size();
   mechanisms_.push_back({id,
                          std::move(descriptor),
@@ -2540,8 +2546,7 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::internMechanismImpl(
                          std::move(cost),
                          {},
                          originBit});
-  protocolVerifiers_.push_back(
-      protocolVerified ? verifier : CanonicalSyncProtocolVerifier{});
+  protocolVerifiers_.push_back(std::move(verifierHandle));
   if (bucket == mechanismBuckets_.end()) {
     mechanismBuckets_.emplace(hash, std::vector<CanonicalSyncMechanismId>{id});
   } else {
