@@ -144,7 +144,7 @@ selection while emitting identical plans.
 ## Recommended next action
 
 Publish or archive exact compiler commit
-`bf89e4e89e3f5640d0e490846e09e60934a4c8b0`, then execute
-`canonical-sync-current-device-validation-task.md`. Correctness of current
-GEMM on the devices that exposed `507015` is the first gate. Only
-correctness-closed arms should proceed to timing and profiling.
+`bf89e4e89e3f5640d0e490846e09e60934a4c8b0`, then execute the device task
+supplied separately from the repository. Correctness of current GEMM on the
+devices that exposed `507015` is the first gate. Only correctness-closed arms
+should proceed to timing and profiling.
