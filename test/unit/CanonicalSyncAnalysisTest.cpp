@@ -5039,6 +5039,19 @@ bool testConflictCoreRepairAvoidsPipeAll() {
           "reject a repair prefix with a different singleton coverage cap")) {
     return false;
   }
+  for (CanonicalSyncMechanismFamily family :
+       {CanonicalSyncMechanismFamily::L0OperandOwnership,
+        CanonicalSyncMechanismFamily::BoundaryOwnership,
+        CanonicalSyncMechanismFamily::HierarchicalOwnership}) {
+    staleOptions = options;
+    staleOptions.patterns.enabledMechanismFamilies ^=
+        canonicalSyncMechanismFamilyBit(family);
+    if (!rejectsMismatchedPrefix(
+            staleOptions,
+            "reject a repair prefix with a different ownership family")) {
+      return false;
+    }
+  }
   CanonicalSyncBuildOptions truncatedOptions = options;
   truncatedOptions.patterns.maximumRepairFrontierInspections = 0;
   CanonicalSyncProblemBuildResult truncatedRepair =

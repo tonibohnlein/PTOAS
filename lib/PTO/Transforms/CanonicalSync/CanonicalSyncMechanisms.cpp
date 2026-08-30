@@ -110,7 +110,13 @@ getCandidateConfigurationSignature(const CanonicalSyncBuildOptions &options) {
       canonicalSyncMechanismFamilyBit(
           CanonicalSyncMechanismFamily::LoopBoundaryProtocol) |
       canonicalSyncMechanismFamilyBit(
-          CanonicalSyncMechanismFamily::BasicOwnership);
+          CanonicalSyncMechanismFamily::L0OperandOwnership) |
+      canonicalSyncMechanismFamilyBit(
+          CanonicalSyncMechanismFamily::BasicOwnership) |
+      canonicalSyncMechanismFamilyBit(
+          CanonicalSyncMechanismFamily::BoundaryOwnership) |
+      canonicalSyncMechanismFamilyBit(
+          CanonicalSyncMechanismFamily::HierarchicalOwnership);
   std::uint64_t hash = kConfigurationHashOffset;
   const auto add = [&](std::size_t value) {
     hashConfigurationValue(hash, static_cast<std::uint64_t>(value));
