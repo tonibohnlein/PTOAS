@@ -174,9 +174,7 @@ public:
         1,
         true};
 
-    const std::size_t passCost =
-        graph_.getNodes().size() + graph_.getStorageAccesses().size();
-    if (!consume(passCost)) {
+    if (!initializeWorkCensus()) {
       return true;
     }
     for (const SyncCoverStorageAccess &access : graph_.getStorageAccesses()) {
@@ -188,7 +186,7 @@ public:
       }
     }
     for (const SyncCoverScope &scope : graph_.getScopes()) {
-      if (reachedCertificateLimit()) {
+      if (!consume(1) || statistics_.truncated || reachedCertificateLimit()) {
         statistics_.truncated = true;
         break;
       }
@@ -196,24 +194,38 @@ public:
         continue;
       }
       if (capabilities_.mte1L0ReadySetCompletesPrefix &&
-          capabilities_.mL0AlternativeJoinSetCompletes &&
-          consumeRecognizer(passCost)) {
+          capabilities_.mL0AlternativeJoinSetCompletes && consumeRecognizer()) {
         add(recognizeL0(scope.id, l0));
       }
-      if (capabilities_.mte1ScopeExitSetCompletesPrefix &&
-          consumeRecognizer(passCost)) {
-        add(recognizeHierarchical(scope.id, l1));
+      if (statistics_.truncated) {
+        break;
       }
       if (capabilities_.mte1ScopeExitSetCompletesPrefix &&
-          consumeRecognizer(passCost)) {
+          consumeRecognizer()) {
+        add(recognizeHierarchical(scope.id, l1));
+      }
+      if (statistics_.truncated) {
+        break;
+      }
+      if (capabilities_.mte1ScopeExitSetCompletesPrefix &&
+          consumeRecognizer()) {
         for (SyncCoverBasicOwnershipCertificate certificate :
              recognizeParity(scope.id, l1)) {
           add(std::move(certificate));
+          if (statistics_.truncated) {
+            break;
+          }
         }
       }
+      if (statistics_.truncated) {
+        break;
+      }
       if (capabilities_.mToFixAccumulatorBoundaryCompletes &&
-          consumeRecognizer(passCost)) {
+          consumeRecognizer()) {
         add(recognizeHierarchical(scope.id, accumulator));
+      }
+      if (statistics_.truncated) {
+        break;
       }
     }
     if (!commitCertificates()) {
@@ -228,6 +240,74 @@ public:
   }
 
 private:
+  bool checkedAdd(std::size_t &value, std::size_t amount) {
+    if (amount > std::numeric_limits<std::size_t>::max() - value) {
+      exhaustBudget();
+      return false;
+    }
+    value += amount;
+    return true;
+  }
+
+  bool checkedMultiply(std::size_t left, std::size_t right,
+                       std::size_t &result) {
+    if (left != 0 && right > std::numeric_limits<std::size_t>::max() / left) {
+      exhaustBudget();
+      return false;
+    }
+    result = left * right;
+    return true;
+  }
+
+  bool initializeWorkCensus() {
+    recognizerCensus_ = 1;
+    const auto account = [&](std::size_t amount) {
+      return checkedAdd(recognizerCensus_, amount) && consume(amount);
+    };
+    if (!account(graph_.getNodes().size()) ||
+        !account(graph_.getStorageAccesses().size()) ||
+        !account(graph_.getStorageDomains().size()) ||
+        !account(graph_.getScopes().size()) ||
+        !account(graph_.getControls().size())) {
+      return false;
+    }
+    for (const SyncCoverNode &node : graph_.getNodes()) {
+      if (!checkedAdd(guardIncidences_, node.guard.literals.size()) ||
+          !account(node.guard.literals.size())) {
+        return false;
+      }
+    }
+    for (const SyncCoverScope &scope : graph_.getScopes()) {
+      if (!checkedAdd(guardIncidences_, scope.guard.literals.size()) ||
+          !account(scope.guard.literals.size())) {
+        return false;
+      }
+    }
+    for (const SyncCoverControl &control : graph_.getControls()) {
+      std::size_t incidences = control.alternatives;
+      if (control.phaseRelation &&
+          (!checkedAdd(incidences,
+                       control.phaseRelation->activeAlternative.size()) ||
+           !checkedAdd(incidences, control.phaseRelation->nextPhase.size()))) {
+        return false;
+      }
+      if (!checkedAdd(controlIncidences_, incidences) || !account(incidences)) {
+        return false;
+      }
+    }
+    // Parent-operation walks are independent of the scheduled graph census.
+    // Account their complete depth before any recognizer may traverse them.
+    for (const CanonicalSyncNodeBinding &binding : nodeBindings_) {
+      for (Operation *operation = binding.operation; operation;
+           operation = operation->getParentOp()) {
+        if (!account(1)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
   bool consume(std::size_t amount) {
     if (amount >
         options_.maximumBasicOwnershipInspections -
@@ -242,20 +322,20 @@ private:
     return true;
   }
 
-  bool consumeRecognizer(std::size_t inputSize) {
-    if (inputSize != 0 &&
-        inputSize > std::numeric_limits<std::size_t>::max() / inputSize) {
-      return exhaustBudget();
+  bool consumeRecognizer() {
+    std::size_t square = 0;
+    std::size_t work = 0;
+    if (!checkedMultiply(recognizerCensus_, recognizerCensus_, square) ||
+        !checkedMultiply(square, 16, work)) {
+      return false;
     }
-    const std::size_t square = inputSize * inputSize;
-    if (square > std::numeric_limits<std::size_t>::max() / 2) {
-      return exhaustBudget();
-    }
-    // Every recognizer is composed of linear scans, bounded sorting, and at
-    // most two pairwise group/slot comparisons over the same input census.
-    // Reserving twice the squared census is a conservative upper bound and is
-    // charged before any recognizer-owned allocation or sort begins.
-    return consume(square * 2);
+    // The census includes graph nodes/accesses, scopes, controls, guard
+    // incidences, and every MLIR parent link reachable from a scheduled node.
+    // Sixteen squared-census passes conservatively cover the recognizers'
+    // node/access scans, scope and control lookups, parent walks, bounded
+    // sorting, boundary-node scans, and pairwise group/slot comparisons.
+    // Reserve the complete envelope before allocating recognizer state.
+    return consume(work);
   }
 
   bool exhaustBudget() {
@@ -354,40 +434,94 @@ private:
     if (pendingCertificates_.empty()) {
       return true;
     }
-    std::size_t structures = pendingCertificates_.size();
-    const auto addChecked = [&](std::size_t amount) {
-      if (amount > std::numeric_limits<std::size_t>::max() - structures) {
-        return false;
+    std::size_t structures = 1;
+    const auto accountCertificate =
+        [&](const SyncCoverBasicOwnershipCertificate &certificate) {
+          if (!consume(1) || !checkedAdd(structures, 1) ||
+              !checkedAdd(structures, certificate.lanes.size()) ||
+              !checkedAdd(structures, certificate.paths.size()) ||
+              !checkedAdd(structures, certificate.initialProducers.size()) ||
+              !checkedAdd(structures, certificate.initiallyFreeLanes.size())) {
+            return false;
+          }
+          for (const SyncCoverBasicOwnershipLane &lane : certificate.lanes) {
+            if (!consume(1) || !checkedAdd(structures, lane.slots.size())) {
+              return false;
+            }
+            for (const SyncCoverBasicOwnershipSlot &slot : lane.slots) {
+              if (!consume(1) ||
+                  !checkedAdd(structures, slot.accesses.size())) {
+                return false;
+              }
+            }
+          }
+          for (const SyncCoverBasicOwnershipPath &path : certificate.paths) {
+            if (!consume(1) || !checkedAdd(structures, path.uses.size())) {
+              return false;
+            }
+            for (const SyncCoverBasicOwnershipUse &use : path.uses) {
+              if (!consume(1) ||
+                  !checkedAdd(structures, use.producers.size()) ||
+                  !checkedAdd(structures, use.consumers.size())) {
+                return false;
+              }
+            }
+          }
+          return true;
+        };
+    for (const SyncCoverBasicOwnershipCertificate &certificate :
+         graph_.getBasicOwnershipCertificates()) {
+      if (!accountCertificate(certificate)) {
+        discardPendingCertificates();
+        return true;
       }
-      structures += amount;
-      return true;
-    };
-    if (!addChecked(statistics_.slots) || !addChecked(statistics_.paths) ||
-        !addChecked(statistics_.uses) ||
-        !addChecked(statistics_.nodeReferences) ||
-        !addChecked(statistics_.accessIncidences)) {
-      discardPendingCertificates();
-      return exhaustBudget();
     }
-    const auto multiplyChecked = [](std::size_t left, std::size_t right,
-                                    std::size_t &result) {
-      if (left != 0 && right > std::numeric_limits<std::size_t>::max() / left) {
-        return false;
+    for (const SyncCoverBasicOwnershipCertificate &certificate :
+         pendingCertificates_) {
+      if (!accountCertificate(certificate)) {
+        discardPendingCertificates();
+        return true;
       }
-      result = left * right;
-      return true;
-    };
-    std::size_t perAccessWork = 0;
-    std::size_t crossCertificateWork = 0;
-    if (!multiplyChecked(structures, graph_.getStorageAccesses().size(),
-                         perAccessWork) ||
-        !multiplyChecked(structures, structures, crossCertificateWork) ||
-        crossCertificateWork >
-            std::numeric_limits<std::size_t>::max() - perAccessWork) {
-      discardPendingCertificates();
-      return exhaustBudget();
     }
-    const std::size_t validationWork = perAccessWork + crossCertificateWork;
+
+    std::size_t scopeFactor = graph_.getScopes().size();
+    if (!checkedAdd(scopeFactor, 1)) {
+      discardPendingCertificates();
+      return true;
+    }
+    std::size_t accessScopeWork = 0;
+    std::size_t nodeScopeWork = 0;
+    std::size_t structureScopeWork = 0;
+    if (!checkedMultiply(graph_.getStorageAccesses().size(), scopeFactor,
+                         accessScopeWork) ||
+        !checkedMultiply(graph_.getNodes().size(), scopeFactor,
+                         nodeScopeWork) ||
+        !checkedMultiply(structures, scopeFactor, structureScopeWork)) {
+      discardPendingCertificates();
+      return true;
+    }
+    std::size_t graphTraversal = 1;
+    if (!checkedAdd(graphTraversal, accessScopeWork) ||
+        !checkedAdd(graphTraversal, nodeScopeWork) ||
+        !checkedAdd(graphTraversal, guardIncidences_) ||
+        !checkedAdd(graphTraversal, controlIncidences_) ||
+        !checkedAdd(graphTraversal, graph_.getControls().size()) ||
+        !checkedAdd(graphTraversal, graph_.getStorageDomains().size()) ||
+        !checkedAdd(graphTraversal, graph_.getNodes().size()) ||
+        !checkedAdd(graphTraversal, graph_.getStorageAccesses().size()) ||
+        !checkedAdd(structureScopeWork, graphTraversal)) {
+      discardPendingCertificates();
+      return true;
+    }
+    std::size_t validationWork = 0;
+    if (!checkedMultiply(structures, structureScopeWork, validationWork) ||
+        !checkedMultiply(validationWork, 16, validationWork)) {
+      discardPendingCertificates();
+      return true;
+    }
+    // This complete existing-plus-pending envelope covers normalization,
+    // access/slot validation, all scope walks, node/guard scans performed by
+    // anchor resolution, and cross-certificate slot comparisons.
     if (!consume(validationWork)) {
       discardPendingCertificates();
       return true;
@@ -1302,6 +1436,9 @@ private:
   StorageAccessIndex accessesByNode_;
   std::vector<std::vector<SyncCoverStorageAccessId>> accessesByDomain_;
   std::vector<SyncCoverBasicOwnershipCertificate> pendingCertificates_;
+  std::size_t recognizerCensus_ = 0;
+  std::size_t guardIncidences_ = 0;
+  std::size_t controlIncidences_ = 0;
   std::size_t inspections_ = 0;
   CanonicalSyncOwnershipDiscoveryStatistics statistics_;
 };

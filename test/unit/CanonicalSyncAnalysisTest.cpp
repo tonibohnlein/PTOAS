@@ -2983,7 +2983,7 @@ bool testFirstIterationRecurrenceSuppression() {
 bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
   MLIRContext context;
   loadDialects(context);
-  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+  const std::string ownershipSource = R"mlir(
     module attributes {pto.target_arch = "a3"} {
       func.func @branch_l0(%limit: index, %condition: i1,
           %left_source: !pto.tile_buf<mat, 128x512xf16,
@@ -3052,8 +3052,9 @@ bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
         return
       }
     }
-  )mlir",
-                                                             &context);
+  )mlir";
+  OwningOpRef<ModuleOp> module =
+      parseSourceString<ModuleOp>(ownershipSource, &context);
   if (!check(static_cast<bool>(module),
              "parse exhaustive L0 ownership fixture")) {
     return false;
@@ -3122,6 +3123,164 @@ bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
              "report aggregate ownership-discovery truncation") ||
       !check(aggregateStatistics.nodeReferences == 0,
              "retain no partial ownership node-reference census")) {
+    return false;
+  }
+
+  std::string deepSource = ownershipSource;
+  const std::size_t deepName = deepSource.find("@branch_l0");
+  const std::string loopMarker =
+      "        scf.for %i = %c0 to %limit step %c1 {\n";
+  if (!check(deepName != std::string::npos,
+             "locate deep ownership fixture insertion points")) {
+    return false;
+  }
+  deepSource.replace(deepName, std::string("@branch_l0").size(),
+                     "@deep_branch_l0");
+  const std::size_t deepLoop = deepSource.find(loopMarker);
+  if (!check(deepLoop != std::string::npos,
+             "locate deep ownership loop insertion point")) {
+    return false;
+  }
+  std::string nestedControls;
+  constexpr std::size_t ownershipControlDepth = 24;
+  for (std::size_t depth = 0; depth < ownershipControlDepth; ++depth) {
+    nestedControls.append(10 + depth * 2, ' ');
+    nestedControls += "scf.if %condition {\n";
+  }
+  for (std::size_t depth = ownershipControlDepth; depth != 0; --depth) {
+    nestedControls.append(10 + (depth - 1) * 2, ' ');
+    nestedControls += "}\n";
+  }
+  deepSource.insert(deepLoop + loopMarker.size(), nestedControls);
+  OwningOpRef<ModuleOp> deepModule =
+      parseSourceString<ModuleOp>(deepSource, &context);
+  if (!check(static_cast<bool>(deepModule),
+             "parse deeply controlled ownership fixture")) {
+    return false;
+  }
+  func::FuncOp deepFunction =
+      deepModule->lookupSymbol<func::FuncOp>("deep_branch_l0");
+  CanonicalSyncAnalysisOptions deepReferenceOptions;
+  deepReferenceOptions.maximumBasicOwnershipInspections = 1U << 28;
+  FailureOr<CanonicalSyncProgram> deepReference =
+      buildCanonicalSyncProgram(deepFunction, deepReferenceOptions);
+  if (!check(succeeded(deepReference) &&
+                 !deepReference->getGraph()
+                      .getBasicOwnershipCertificates()
+                      .empty() &&
+                 !deepReference->getOwnershipDiscoveryStatistics().truncated,
+             "recognize ownership with a complete deep traversal budget")) {
+    return false;
+  }
+  CanonicalSyncAnalysisOptions deepBoundedOptions;
+  deepBoundedOptions.maximumBasicOwnershipInspections =
+      program->getOwnershipDiscoveryStatistics().inspections;
+  FailureOr<CanonicalSyncProgram> deepBounded =
+      buildCanonicalSyncProgram(deepFunction, deepBoundedOptions);
+  if (!check(
+          succeeded(deepBounded) &&
+              deepBounded->getGraph().getBasicOwnershipCertificates().empty() &&
+              deepBounded->getOwnershipDiscoveryStatistics().truncated &&
+              deepBounded->getOwnershipDiscoveryStatistics().inspections ==
+                  deepBoundedOptions.maximumBasicOwnershipInspections,
+          "charge independent control/scope depth before recognition")) {
+    return false;
+  }
+
+  std::string overlapSource = ownershipSource;
+  const std::size_t overlapName = overlapSource.find("@branch_l0");
+  const std::string allocationMarker =
+      "        %acc = pto.alloc_tile addr = %addr0 :\n";
+  if (!check(overlapName != std::string::npos,
+             "locate overlapping ownership fixture insertion points")) {
+    return false;
+  }
+  overlapSource.replace(overlapName, std::string("@branch_l0").size(),
+                        "@overlap_branch_l0");
+  const std::size_t overlapAllocation = overlapSource.find(allocationMarker);
+  if (!check(overlapAllocation != std::string::npos,
+             "locate overlapping ownership allocation insertion point")) {
+    return false;
+  }
+  overlapSource.insert(
+      overlapAllocation,
+      "        %addr8192 = arith.constant 8192 : i64\n"
+      "        %left_overlap = pto.alloc_tile addr = %addr8192 :\n"
+      "          !pto.tile_buf<left, 128x64xf16, slayout=row_major>\n");
+  const std::size_t adjustedLoop = overlapSource.find(loopMarker);
+  overlapSource.insert(
+      adjustedLoop + loopMarker.size(),
+      "          pto.textract ins(%left_source, %c0, %c0 :\n"
+      "            !pto.tile_buf<mat, 128x512xf16, blayout=col_major,\n"
+      "              slayout=row_major>, index, index)\n"
+      "            outs(%left_overlap : !pto.tile_buf<left, 128x64xf16,\n"
+      "              slayout=row_major>)\n");
+  OwningOpRef<ModuleOp> overlapModule =
+      parseSourceString<ModuleOp>(overlapSource, &context);
+  if (!check(static_cast<bool>(overlapModule),
+             "parse overlapping ownership fixture")) {
+    return false;
+  }
+  func::FuncOp overlapFunction =
+      overlapModule->lookupSymbol<func::FuncOp>("overlap_branch_l0");
+  FailureOr<CanonicalSyncProgram> overlapProgram =
+      buildCanonicalSyncProgram(overlapFunction);
+  if (!check(succeeded(overlapProgram),
+             "retain the direct graph for overlapping ownership storage")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions directFallbackOptions;
+  directFallbackOptions.patterns.enabledMechanismFamilies =
+      kAllCanonicalSyncMechanismFamilies &
+      ~canonicalSyncMechanismFamilyBit(
+          CanonicalSyncMechanismFamily::L0OperandOwnership) &
+      ~canonicalSyncMechanismFamilyBit(
+          CanonicalSyncMechanismFamily::BasicOwnership) &
+      ~canonicalSyncMechanismFamilyBit(
+          CanonicalSyncMechanismFamily::BoundaryOwnership) &
+      ~canonicalSyncMechanismFamilyBit(
+          CanonicalSyncMechanismFamily::HierarchicalOwnership);
+  directFallbackOptions.patterns.enableDirectPairs = false;
+  CanonicalSyncProblemBuildResult directFallback =
+      buildCanonicalSyncPreciseProblem(*overlapProgram, directFallbackOptions);
+  bool hasPartialOverlap = false;
+  const auto &overlapAccesses = overlapProgram->getGraph().getStorageAccesses();
+  for (std::size_t first = 0; first < overlapAccesses.size(); ++first) {
+    for (std::size_t second = first + 1; second < overlapAccesses.size();
+         ++second) {
+      const SyncCoverStorageAccess &left = overlapAccesses[first];
+      const SyncCoverStorageAccess &right = overlapAccesses[second];
+      const bool differentExtent = left.extent.begin != right.extent.begin ||
+                                   left.extent.end != right.extent.end;
+      hasPartialOverlap |= left.domain == right.domain && differentExtent &&
+                           left.extent.begin < right.extent.end &&
+                           right.extent.begin < left.extent.end;
+    }
+  }
+  const CanonicalSyncMechanismOriginMask directOrigins =
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::DirectTargetedBarrier) |
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::DirectDistanceZeroEvent) |
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::DirectForwardRecurrenceEvent) |
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::DirectReleaseRecurrenceProtocol);
+  const bool hasDirectFallback =
+      directFallback && directFallback.problem &&
+      llvm::any_of(directFallback.problem->getMechanisms(),
+                   [&](const CanonicalSyncMechanism &mechanism) {
+                     return (mechanism.originMask & directOrigins) != 0;
+                   });
+  if (!check(hasPartialOverlap &&
+                 overlapProgram->getGraph()
+                     .getBasicOwnershipCertificates()
+                     .empty() &&
+                 !overlapProgram->getGraph().getDemands().empty() &&
+                 !overlapProgram->getOwnershipDiscoveryStatistics().truncated &&
+                 hasDirectFallback,
+             "reject partial ownership overlap while retaining direct "
+             "fallback")) {
     return false;
   }
 

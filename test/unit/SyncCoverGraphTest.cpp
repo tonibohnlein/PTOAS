@@ -782,6 +782,23 @@ bool testBasicOwnershipCertificatesAreExactAndImmutable() {
   };
   certificate.paths.push_back(path);
 
+  const SyncCoverGraphResult emptyBatch =
+      graph.addBasicOwnershipCertificates({});
+  passed &=
+      check(emptyBatch.error == SyncCoverGraphError::None && !emptyBatch.index,
+            "treat an empty ownership batch as a no-op");
+
+  SyncCoverBasicOwnershipCertificate invalidBatchMember = certificate;
+  invalidBatchMember.paths[0].uses[0].producerLane = 1;
+  std::vector<SyncCoverBasicOwnershipCertificate> invalidBatch{
+      certificate, std::move(invalidBatchMember)};
+  passed &= check(
+      graph.addBasicOwnershipCertificates(std::move(invalidBatch)).error ==
+              SyncCoverGraphError::InvalidBasicOwnershipCertificate &&
+          graph.getBasicOwnershipCertificates().empty(),
+      "roll back a valid ownership certificate before an invalid batch "
+      "member");
+
   SyncCoverBasicOwnershipCertificate incomplete = certificate;
   incomplete.lanes[0].slots[0].accesses.pop_back();
   passed &=
@@ -798,6 +815,12 @@ bool testBasicOwnershipCertificatesAreExactAndImmutable() {
                   "register an exact basic ownership certificate");
   const std::size_t certificateCount =
       graph.getBasicOwnershipCertificates().size();
+  std::vector<SyncCoverBasicOwnershipCertificate> conflictingBatch{certificate};
+  passed &= check(
+      graph.addBasicOwnershipCertificates(std::move(conflictingBatch)).error ==
+              SyncCoverGraphError::InvalidBasicOwnershipCertificate &&
+          graph.getBasicOwnershipCertificates().size() == certificateCount,
+      "leave an existing certificate unchanged after a conflicting batch");
   passed &= check(
       graph.addBasicOwnershipCertificate(certificate).error ==
               SyncCoverGraphError::InvalidBasicOwnershipCertificate &&

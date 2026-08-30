@@ -62,7 +62,7 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
            "Treat every GM access as disjoint; the caller must guarantee this "
            "even for accesses from the same argument and across iterations">,
     Option<"maximumBasicOwnershipInspections",
-           "maximum-basic-ownership-inspections", "int64_t", "1048576",
+           "maximum-basic-ownership-inspections", "int64_t", "134217728",
            "Maximum exact-slot ownership discovery inspection units">,
     Option<"maximumBasicOwnershipCertificates",
            "maximum-basic-ownership-certificates", "int64_t", "1024",

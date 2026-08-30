@@ -418,7 +418,7 @@ Relevant driver options are:
 --canonical-sync-mechanism-families=all|core|<family>[+<family>...]
 --canonical-sync-selection-strategy=fixed-cover|action-aware-singleton|pair-lookahead
 --canonical-sync-selection-objective=action-first|serialization-first
---canonical-sync-maximum-basic-ownership-inspections=1048576
+--canonical-sync-maximum-basic-ownership-inspections=134217728
 --canonical-sync-maximum-basic-ownership-certificates=1024
 --canonical-sync-maximum-basic-ownership-slots=16384
 --canonical-sync-maximum-basic-ownership-paths=16384
@@ -482,6 +482,11 @@ certificate dimension in the shared census. Hitting any bound truncates
 ownership discovery deterministically. Direct mechanisms remain available, but
 compilation still fails closed if the omitted ownership certificates were
 required for a balanced cover.
+
+The inspection default reserves a conservative checked envelope for scope and
+control traversal, MLIR parent walks, normalization, and complete
+existing-plus-pending certificate validation. It is a work bound, not a memory
+allowance; the independent certificate-dimension limits bound retained memory.
 
 The two GM alias contracts are mutually exclusive; the all-accesses contract is
 unsafe unless the caller guarantees that even accesses through the same

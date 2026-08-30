@@ -144,6 +144,9 @@ SyncCoverGraphResult SyncCoverGraph::addBasicOwnershipCertificate(
 
 SyncCoverGraphResult SyncCoverGraph::addBasicOwnershipCertificates(
     std::vector<SyncCoverBasicOwnershipCertificate> certificates) {
+  if (certificates.empty()) {
+    return {SyncCoverGraphError::None, std::nullopt};
+  }
   if (!canMutateStructure()) {
     return {SyncCoverGraphError::StructureFrozen,
             basicOwnershipCertificates_.size()};

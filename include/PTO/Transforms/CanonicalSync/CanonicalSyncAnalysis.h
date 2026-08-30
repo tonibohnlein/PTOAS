@@ -46,9 +46,9 @@ struct CanonicalSyncAnalysisOptions {
   std::size_t maximumStorageConflictEdges = 1U << 20;
   std::size_t maximumPairInspections = 1U << 24;
   /// Basic ownership discovery is a bounded optional synthesis analysis. If
-  /// either limit is reached, discovery stops and the direct correctness
+  /// any limit is reached, discovery stops and the direct correctness
   /// catalog remains available.
-  std::size_t maximumBasicOwnershipInspections = 1U << 20;
+  std::size_t maximumBasicOwnershipInspections = 1U << 27;
   std::size_t maximumBasicOwnershipCertificates = 1U << 10;
   std::size_t maximumBasicOwnershipSlots = 1U << 14;
   std::size_t maximumBasicOwnershipPaths = 1U << 14;
