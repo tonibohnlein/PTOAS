@@ -161,6 +161,8 @@ private:
                                       SyncCoverStorageDomainId domain,
                                       SyncCoverStorageAccessFamilyId family);
   LogicalResult buildStorageConflictIndex();
+  FailureOr<std::vector<Value>> getSsaOperands(Operation *operation,
+                                               int macroPhase);
   bool gmAccessesAreNoAlias(const ExtractedAccess &first,
                             const ExtractedAccess &second) const;
   FailureOr<std::vector<OrdinalPairPhaseState>> getOrdinalPairs(

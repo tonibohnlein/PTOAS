@@ -902,7 +902,7 @@ LogicalResult ProgramBuilder::addForwardDependencies() {
   for (SyncCoverNodeId target = 0; target < nodeBindings_.size(); ++target) {
     llvm::SetVector<SyncCoverNodeId> producers;
     llvm::DenseSet<Value> discovered;
-    for (Value operand : nodeBindings_[target].operation->getOperands()) {
+    for (Value operand : nodeBindings_[target].ssaOperands) {
       if (failed(walkSsaProvenance(operand, nullptr, &producers, discovered,
                                    nullptr))) {
         return failure();

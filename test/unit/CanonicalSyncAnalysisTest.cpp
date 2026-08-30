@@ -477,6 +477,9 @@ bool testMacroBindingsAndHiddenReservations() {
   Operation *macro = tput.getOperation();
   const std::vector<CanonicalSyncNodeBinding> &bindings =
       program->getNodeBindings();
+  const std::vector<Value> sourcePhaseOperands{tput.getSrc()};
+  const std::vector<Value> destinationPhaseOperands{tput.getPing(),
+                                                    tput.getPong()};
   const auto &reservations = program->getEventReservations();
   const std::pair<std::uint32_t, std::uint32_t> forward{
       static_cast<std::uint32_t>(PipelineType::PIPE_MTE2),
@@ -488,6 +491,9 @@ bool testMacroBindingsAndHiddenReservations() {
                "bind both macro phases to one original operation") &&
          check(bindings[0].macroPhase == 0 && bindings[1].macroPhase == 1,
                "preserve deterministic macro phase identities") &&
+         check(bindings[0].ssaOperands == sourcePhaseOperands &&
+                   bindings[1].ssaOperands == destinationPhaseOperands,
+               "bind only phase-local synchronization macro operands") &&
          check(reservations.count(forward) == 1 &&
                    reservations.at(forward) == std::vector<unsigned>({0, 1}),
                "reserve hidden forward macro event IDs") &&

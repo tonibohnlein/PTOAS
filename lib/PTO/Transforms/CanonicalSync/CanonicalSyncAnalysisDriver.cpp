@@ -465,6 +465,31 @@ LogicalResult ProgramBuilder::extract() {
   return success();
 }
 
+FailureOr<std::vector<Value>>
+ProgramBuilder::getSsaOperands(Operation *operation, int macroPhase) {
+  if (macroPhase < 0) {
+    return std::vector<Value>(operation->operand_begin(),
+                              operation->operand_end());
+  }
+  const std::optional<SyncMacroModel> model = getSyncMacroModel(operation);
+  if (!model) {
+    operation->emitError(
+        "cannot determine synchronization macro phase operands");
+    return failure();
+  }
+  if (failed(verifySyncMacroModel(operation, *model))) {
+    return failure();
+  }
+  const auto phase = llvm::find_if(model->phases, [&](const auto &candidate) {
+    return candidate.phaseId == static_cast<unsigned>(macroPhase);
+  });
+  if (phase == model->phases.end()) {
+    operation->emitError("cannot bind synchronization macro phase operands");
+    return failure();
+  }
+  return std::vector<Value>(phase->useValues.begin(), phase->useValues.end());
+}
+
 LogicalResult ProgramBuilder::buildNodesAndStorage() {
   std::vector<std::uint32_t> resources;
   for (const CompoundInstanceElement *compound : compounds_) {
@@ -519,8 +544,14 @@ LogicalResult ProgramBuilder::buildNodesAndStorage() {
       return compound->elementOp->emitError(
           "cannot construct canonical sync operation node");
     }
+    FailureOr<std::vector<Value>> ssaOperands = getSsaOperands(
+        compound->elementOp, compound->macroOpInstanceId);
+    if (failed(ssaOperands)) {
+      return failure();
+    }
     physicalAnchors.try_emplace(compound->elementOp, *node.index);
-    nodeBindings_.push_back({compound->elementOp, compound->macroOpInstanceId});
+    nodeBindings_.push_back({compound->elementOp, compound->macroOpInstanceId,
+                             std::move(*ssaOperands)});
     operationNodes_[compound->elementOp].push_back(*node.index);
     nodeAccessIndices_.emplace_back();
     appendAccesses(*node.index, compound->useVec, false);

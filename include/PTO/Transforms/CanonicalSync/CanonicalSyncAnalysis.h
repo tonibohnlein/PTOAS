@@ -89,6 +89,9 @@ struct CanonicalSyncOwnershipDiscoveryStatistics {
 struct CanonicalSyncNodeBinding {
   Operation *operation = nullptr;
   int macroPhase = -1;
+  /// SSA values consumed by this exact graph node. Ordinary operations retain
+  /// all operands; synchronization-macro nodes retain only their phase uses.
+  std::vector<Value> ssaOperands;
 };
 
 struct CanonicalSyncScopeBinding {
