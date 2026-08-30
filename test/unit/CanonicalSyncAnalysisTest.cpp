@@ -3143,6 +3143,129 @@ bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
                "select and freshly verify exhaustive L0 ownership");
 }
 
+bool testOwnershipDoesNotHideProducerOverwrite() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @overwrite(
+          %limit: index,
+          %lhs: !pto.tile_buf<left, 32x32xf16,
+                              blayout=row_major, slayout=row_major>,
+          %rhs: !pto.tile_buf<right, 32x32xf16,
+                              blayout=row_major, slayout=col_major>,
+          %dst: !pto.partition_tensor_view<32x32xf32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %addr0 = arith.constant 0 : i64
+        %acc = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                        slayout=row_major, fractal=1024>
+        scf.for %outer = %c0 to %limit step %c1 {
+          scf.for %inner = %c0 to %limit step %c1 {
+            pto.tmatmul ins(%lhs, %rhs :
+              !pto.tile_buf<left, 32x32xf16,
+                            blayout=row_major, slayout=row_major>,
+              !pto.tile_buf<right, 32x32xf16,
+                            blayout=row_major, slayout=col_major>)
+              outs(%acc : !pto.tile_buf<acc, 32x32xf32,
+                                        blayout=col_major,
+                                        slayout=row_major, fractal=1024>)
+            pto.tmatmul ins(%lhs, %rhs :
+              !pto.tile_buf<left, 32x32xf16,
+                            blayout=row_major, slayout=row_major>,
+              !pto.tile_buf<right, 32x32xf16,
+                            blayout=row_major, slayout=col_major>)
+              outs(%acc : !pto.tile_buf<acc, 32x32xf32,
+                                        blayout=col_major,
+                                        slayout=row_major, fractal=1024>)
+          }
+          pto.tstore ins(%acc : !pto.tile_buf<acc, 32x32xf32,
+                                             blayout=col_major,
+                                             slayout=row_major,
+                                             fractal=1024>)
+            outs(%dst : !pto.partition_tensor_view<32x32xf32>)
+        }
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module),
+             "parse producer-overwrite ownership fixture")) {
+    return false;
+  }
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("overwrite"));
+  if (!check(succeeded(program), "build producer-overwrite ownership graph")) {
+    return false;
+  }
+  const std::uint32_t matrix = static_cast<std::uint32_t>(PipelineType::PIPE_M);
+  std::optional<SyncCoverDemandId> overwriteDemand;
+  for (auto [demandId, demand] :
+       llvm::enumerate(program->getGraph().getDemands())) {
+    if (demand.distance == 0 &&
+        program->getGraph().getNodes()[demand.source].resource == matrix &&
+        program->getGraph().getNodes()[demand.target].resource == matrix &&
+        llvm::is_contained(demand.provenanceKinds,
+                           SyncCoverDemandKind::MemoryWAW)) {
+      overwriteDemand = demandId;
+      break;
+    }
+  }
+  if (!check(overwriteDemand.has_value(),
+             "retain a same-slot matrix overwrite demand")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions options;
+  options.patterns.enabledMechanismFamilies = canonicalSyncMechanismFamilyBit(
+      CanonicalSyncMechanismFamily::BasicOwnership);
+  options.patterns.enableDirectPairs = false;
+  CanonicalSyncProblemBuildResult precise =
+      buildCanonicalSyncPreciseProblem(*program, options);
+  if (!check(precise && precise.problem,
+             "build producer-overwrite ownership catalog")) {
+    return false;
+  }
+  const CanonicalSyncMechanismOriginMask ownershipOrigin =
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::BasicOwnershipAccumulatorProtocol);
+  const CanonicalSyncMechanismOriginMask barrierOrigin =
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::DirectTargetedBarrier);
+  bool sawOwnership = false;
+  bool ownershipClaimsOverwrite = false;
+  bool directBarrierClaimsOverwrite = false;
+  const SyncCoverDemand &overwrite =
+      program->getGraph().getDemands()[*overwriteDemand];
+  for (const CanonicalSyncMechanism &mechanism :
+       precise.problem->getMechanisms()) {
+    const bool ownership = (mechanism.originMask & ownershipOrigin) != 0;
+    const bool barrier = (mechanism.originMask & barrierOrigin) != 0;
+    sawOwnership |= ownership;
+    for (const CanonicalSyncSupplyBinding &supply :
+         mechanism.descriptor.supplies) {
+      const bool sameEdge = supply.edge.source == overwrite.source &&
+                            supply.edge.target == overwrite.target &&
+                            supply.edge.scope == overwrite.scope &&
+                            supply.edge.distance == overwrite.distance;
+      const bool admitsOverwrite =
+          sameEdge &&
+          (supply.allowedDemands.empty() ||
+           llvm::is_contained(supply.allowedDemands, *overwriteDemand));
+      ownershipClaimsOverwrite |= ownership && admitsOverwrite;
+      directBarrierClaimsOverwrite |= barrier && admitsOverwrite;
+    }
+  }
+  return check(sawOwnership,
+               "recognize the surrounding accumulator ownership lifecycle") &&
+         check(!ownershipClaimsOverwrite,
+               "do not supply producer-to-producer WAW through ownership") &&
+         check(directBarrierClaimsOverwrite,
+               "retain a direct barrier fallback for the overwrite");
+}
+
 bool testGenericRecurrenceWithoutOwnershipDiscovery() {
   MLIRContext context;
   loadDialects(context);
@@ -4514,6 +4637,7 @@ int main() {
       testStructuralLimitsFailClosed() && testPeriodicBranchEvidence() &&
       testFirstIterationRecurrenceSuppression() &&
       testBasicL0OwnershipSharesExhaustiveBranchBoundaries() &&
+      testOwnershipDoesNotHideProducerOverwrite() &&
       testGenericRecurrenceWithoutOwnershipDiscovery() &&
       testGuardedEndpointUsesSourceLocalCompletionEvent() &&
       testDemandBasisReductionIsBoundedAndTruncating() &&

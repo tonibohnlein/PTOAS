@@ -1984,6 +1984,8 @@ struct BasicOwnershipDemandIndex {
   std::vector<std::optional<std::size_t>> accessLane;
   std::vector<std::set<SyncCoverNodeId>> producers;
   std::vector<std::set<SyncCoverNodeId>> consumers;
+  std::set<std::pair<SyncCoverNodeId, SyncCoverNodeId>>
+      producersWithinOneReadyRegion;
 };
 
 BasicOwnershipDemandIndex buildOwnershipDemandIndex(
@@ -2008,6 +2010,13 @@ BasicOwnershipDemandIndex buildOwnershipDemandIndex(
                                                 use.producers.end());
       result.consumers[use.lane].insert(use.consumers.begin(),
                                         use.consumers.end());
+      for (SyncCoverNodeId first : use.producers) {
+        for (SyncCoverNodeId second : use.producers) {
+          if (first != second) {
+            result.producersWithinOneReadyRegion.insert({first, second});
+          }
+        }
+      }
     }
   }
   result.producers[certificate.initialReadyLane].insert(
@@ -2080,9 +2089,17 @@ bool demandBelongsToOwnership(
         const bool targetConsumer =
             syncCoverStorageModeReads(target.mode) &&
             nodeOwnsLane(index, target.node, lane, false);
+        // The ownership token orders producers in distinct lifecycle uses via
+        // an intervening ready/consume/release transfer. It does not order two
+        // distance-zero writes grouped behind the same ready set, which is
+        // emitted only after both producers have issued. A positive-distance
+        // transition crosses the consumer release and is lifecycle-backed.
         return (sourceProducer && targetConsumer) ||
                (sourceConsumer && targetProducer) ||
-               (sourceProducer && targetProducer);
+               (sourceProducer && targetProducer &&
+                (demand.distance != 0 ||
+                 index.producersWithinOneReadyRegion.count(
+                     {source.node, target.node}) == 0));
       });
 }
 
