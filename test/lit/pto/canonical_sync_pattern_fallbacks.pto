@@ -1,3 +1,11 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 // RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
 // RUN:   | FileCheck %s
 
@@ -31,8 +39,10 @@ module attributes {pto.target_arch = "a3"} {
 
   // CHECK-LABEL: func.func @cross_pipe_fallback
   // CHECK: pto.tmatmul
-  // CHECK-NEXT: pto.barrier <PIPE_ALL>
+  // CHECK-NEXT: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+  // CHECK-NEXT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
   // CHECK-NEXT: pto.tstore
+  // CHECK-NEXT: pto.barrier <PIPE_ALL>
   func.func @cross_pipe_fallback(
       %output: !pto.partition_tensor_view<32x32xf32>) {
     %addr0 = arith.constant 0 : i64
@@ -84,9 +94,11 @@ module attributes {pto.target_arch = "a3"} {
 
   // CHECK-LABEL: func.func @guarded_endpoint_fallback
   // CHECK: pto.tload
-  // CHECK: scf.if
-  // CHECK-NEXT: pto.barrier <PIPE_ALL>
+  // CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>
+  // CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>
+  // CHECK-NEXT: scf.if
   // CHECK-NEXT: pto.tmuls
+  // CHECK: pto.barrier <PIPE_ALL>
   func.func @guarded_endpoint_fallback(
       %input: !pto.partition_tensor_view<16x16xf32>, %condition: i1) {
     %addr0 = arith.constant 0 : i64
