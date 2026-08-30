@@ -17,13 +17,13 @@
 // RUN: not ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
 // RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
 // RUN:   --canonical-sync-pattern-mode=direct \
-// RUN:   --canonical-sync-mechanism-families=source-local-completion \
+// RUN:   --canonical-sync-mechanism-families=core \
 // RUN:   --canonical-sync-enable-conflict-core-repair=false %s \
 // RUN:   -o %t.d.pto 2>&1 | FileCheck %s --check-prefix=D-FAIL
 // RUN: not ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
 // RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
 // RUN:   --canonical-sync-pattern-mode=direct-pair \
-// RUN:   --canonical-sync-mechanism-families=source-local-completion \
+// RUN:   --canonical-sync-mechanism-families=core \
 // RUN:   --canonical-sync-enable-conflict-core-repair=false %s \
 // RUN:   -o %t.dp.pto 2>&1 | FileCheck %s --check-prefix=D-FAIL
 // RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
@@ -235,7 +235,7 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // BARRIERS-COUNT-1: pto.barrier <PIPE_ALL>
 // BARRIERS-NOT: pto.barrier
 
-// D-FAIL: canonical sync precise planning failed closed, error=4
+// D-FAIL: canonical sync required singleton catalog is incomplete
 
 // DIRECT-REPORT: "candidate_mechanisms_by_origin":
 // DIRECT-REPORT: "basic-ownership-accumulator-protocol": 1
