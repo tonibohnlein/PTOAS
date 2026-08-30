@@ -177,16 +177,33 @@ SyncCoverGraph::getLowestCommonScope(SyncCoverScopeId first,
   if (invalidScope) {
     return std::nullopt;
   }
-  for (SyncCoverScopeId candidate = first;;
-       candidate = scopes_[candidate].parent) {
-    if (scopeContains(candidate, second)) {
-      return candidate;
+
+  // Align the two parent-chain depths and then ascend them together. Each
+  // chain is traversed at most twice, so callers can reserve a portable 4*S
+  // upper bound instead of relying on the former nested ancestry search.
+  const auto getDepth = [&](SyncCoverScopeId scope) {
+    std::size_t depth = 0;
+    while (scope != 0) {
+      ++depth;
+      scope = scopes_[scope].parent;
     }
-    if (candidate == 0) {
-      break;
-    }
+    return depth;
+  };
+  std::size_t firstDepth = getDepth(first);
+  std::size_t secondDepth = getDepth(second);
+  while (firstDepth > secondDepth) {
+    first = scopes_[first].parent;
+    --firstDepth;
   }
-  return std::nullopt;
+  while (secondDepth > firstDepth) {
+    second = scopes_[second].parent;
+    --secondDepth;
+  }
+  while (first != second) {
+    first = scopes_[first].parent;
+    second = scopes_[second].parent;
+  }
+  return first;
 }
 
 std::optional<std::size_t>

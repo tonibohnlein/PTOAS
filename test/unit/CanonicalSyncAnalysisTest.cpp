@@ -3701,9 +3701,24 @@ bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
   }
   CanonicalSyncMechanismDescriptor reordered = mechanism->descriptor;
   std::reverse(reordered.supplies.begin(), reordered.supplies.end());
-  if (!check(static_cast<bool>(precise.problem->verifyMechanismDescriptor(
-                 mechanism->id, reordered)),
+  SyncCoverCoverageWorkBudget reorderedWork;
+  const CanonicalSyncProblemResult reorderedResult =
+      precise.problem->verifyMechanismDescriptor(mechanism->id, reordered,
+                                                 &reorderedWork);
+  if (!check(static_cast<bool>(reorderedResult),
              "accept reordered ownership supplies as the same certificate")) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget reorderedExact(reorderedWork.workUnits);
+  SyncCoverCoverageWorkBudget reorderedOneLess(reorderedWork.workUnits - 1);
+  if (!check(static_cast<bool>(precise.problem->verifyMechanismDescriptor(
+                 mechanism->id, reordered, &reorderedExact)),
+             "sort reordered ownership supplies at the exact work bound") ||
+      !check(precise.problem
+                     ->verifyMechanismDescriptor(mechanism->id, reordered,
+                                                 &reorderedOneLess)
+                     .error == CanonicalSyncProblemError::LimitExceeded,
+             "stop reordered ownership sorting one work unit below")) {
     return false;
   }
   CanonicalSyncMechanismDescriptor alteredBinding = reordered;
@@ -3778,11 +3793,19 @@ bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
       "          !pto.tile_buf<left, 128x64xf16, slayout=row_major>\n");
   unrelatedSource.insert(
       unrelatedSource.find(loopMarker),
-      "        pto.textract ins(%left_source, %c0, %c0 :\n"
-      "          !pto.tile_buf<mat, 128x512xf16, blayout=col_major,\n"
-      "            slayout=row_major>, index, index)\n"
-      "          outs(%left_unrelated : !pto.tile_buf<left, 128x64xf16,\n"
-      "            slayout=row_major>)\n");
+      "        scf.if %condition {\n"
+      "          pto.textract ins(%left_source, %c0, %c0 :\n"
+      "            !pto.tile_buf<mat, 128x512xf16, blayout=col_major,\n"
+      "              slayout=row_major>, index, index)\n"
+      "            outs(%left_unrelated : !pto.tile_buf<left, 128x64xf16,\n"
+      "              slayout=row_major>)\n"
+      "        } else {\n"
+      "          pto.textract ins(%left_source, %c0, %c0 :\n"
+      "            !pto.tile_buf<mat, 128x512xf16, blayout=col_major,\n"
+      "              slayout=row_major>, index, index)\n"
+      "            outs(%left_unrelated : !pto.tile_buf<left, 128x64xf16,\n"
+      "              slayout=row_major>)\n"
+      "        }\n");
   OwningOpRef<ModuleOp> unrelatedModule =
       parseSourceString<ModuleOp>(unrelatedSource, &context);
   if (!check(static_cast<bool>(unrelatedModule),
@@ -3819,14 +3842,42 @@ bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
   const CanonicalSyncProblemResult unrelatedVerified =
       unrelatedPrecise.problem->verifyMechanism(unrelatedMechanism->id,
                                                 &unrelatedOwnershipWork);
+  const auto anchorDimension = [](const SyncCoverGraph &graph) {
+    std::size_t guardIncidences = 0;
+    for (const SyncCoverNode &node : graph.getNodes()) {
+      guardIncidences += node.guard.literals.size();
+    }
+    std::size_t controlAlternatives = 0;
+    for (const SyncCoverControl &control : graph.getControls()) {
+      controlAlternatives += control.alternatives;
+    }
+    return graph.getNodes().size() * graph.getScopes().size() +
+           guardIncidences + controlAlternatives + graph.getNodes().size() +
+           4 * graph.getScopes().size();
+  };
+  const std::size_t baseAnchorDimension = anchorDimension(program->getGraph());
+  const std::size_t unrelatedAnchorDimension =
+      anchorDimension(unrelatedProgram->getGraph());
+  const std::size_t minimumAnchorGrowth =
+      mechanism->descriptor.actions.size() *
+      (unrelatedAnchorDimension - baseAnchorDimension);
   if (!check(unrelatedVerified &&
                  unrelatedProgram->getGraph().getNodes().size() >
                      program->getGraph().getNodes().size() &&
                  unrelatedProgram->getGraph().getStorageAccesses().size() >
                      program->getGraph().getStorageAccesses().size() &&
-                 unrelatedOwnershipWork.workUnits > baseOwnershipWork.workUnits,
-             "charge unrelated graph nodes and accesses in ownership "
-             "regeneration")) {
+                 unrelatedProgram->getGraph().getControls().size() >
+                     program->getGraph().getControls().size() &&
+                 unrelatedOwnershipWork.workUnits >=
+                     baseOwnershipWork.workUnits + minimumAnchorGrowth,
+             "charge unrelated guarded nodes, controls, accesses, and anchor "
+             "resolution")) {
+    return false;
+  }
+  if (!verifyExactAndOneLessProtocolWork(
+          *unrelatedPrecise.problem, unrelatedMechanism->id,
+          "verify guarded ControlEntry/Exit anchors at the exact work bound",
+          "reject guarded ControlEntry/Exit anchors one work unit below")) {
     return false;
   }
 

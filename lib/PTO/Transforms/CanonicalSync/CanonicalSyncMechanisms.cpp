@@ -2455,8 +2455,13 @@ findOwnershipBindingBucket(const OwnershipBindingIndex &index,
       end = middle;
     }
   }
-  const bool missingBucket =
-      begin == index.byEndpoints.size() || index.byEndpoints[begin].key != key;
+  if (begin == index.byEndpoints.size()) {
+    return std::nullopt;
+  }
+  if (workBudget && !workBudget->consume()) {
+    return std::nullopt;
+  }
+  const bool missingBucket = index.byEndpoints[begin].key != key;
   if (missingBucket) {
     return std::nullopt;
   }

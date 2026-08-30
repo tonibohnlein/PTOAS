@@ -2432,22 +2432,21 @@ bool testRepairProtocolAdmissionUsesSharedBudget() {
   const SyncCoverScopeId loop =
       takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 15}, true),
                 passed, "add repair-budget loop");
-  const SyncCoverNodeId source =
+  const SyncCoverNodeId firstSource =
       takeIndex(graph.addNode(1, 1, loop, 1, {}, {2}), passed,
-                "add repair-budget source");
-  const SyncCoverNodeId target = takeIndex(graph.addNode(2, 1, loop, 2), passed,
-                                           "add repair-budget target");
-  passed &= check(graph.addDemand(demand(source, target, loop, 1)),
-                  "add repair-budget demand") &&
+                "add first repair-budget source");
+  const SyncCoverNodeId firstTarget = takeIndex(
+      graph.addNode(2, 1, loop, 2), passed, "add first repair-budget target");
+  const SyncCoverNodeId secondSource =
+      takeIndex(graph.addNode(3, 1, loop, 3, {}, {4}), passed,
+                "add second repair-budget source");
+  const SyncCoverNodeId secondTarget = takeIndex(
+      graph.addNode(4, 1, loop, 4), passed, "add second repair-budget target");
+  passed &= check(graph.addDemand(demand(firstSource, firstTarget, loop, 1)),
+                  "add first repair-budget demand") &&
+            check(graph.addDemand(demand(secondSource, secondTarget, loop, 1)),
+                  "add second repair-budget demand") &&
             check(graph.freezeStructure(), "freeze repair-budget graph");
-  CanonicalSyncPatternProblem precise(graph, {});
-  passed &= check(precise.addEventDomain({0, 1, 2, 2, {}}),
-                  "add repair-budget event domain") &&
-            check(precise.freeze(), "freeze empty precise repair prefix");
-  if (!passed) {
-    return false;
-  }
-
   constexpr std::size_t callbackWork = 11;
   const CanonicalSyncProtocolVerifier verifier =
       [](const CanonicalSyncMechanismDescriptor &candidate,
@@ -2459,40 +2458,77 @@ bool testRepairProtocolAdmissionUsesSharedBudget() {
                    ? CanonicalSyncProblemError::None
                    : CanonicalSyncProblemError::UnverifiedProtocol;
       };
-  const CanonicalSyncMechanismDescriptor descriptor =
-      protocol(0, 1, 2, source, target, loop, 1, 1);
+  CanonicalSyncPatternProblem precise(graph, {});
+  passed &= check(precise.addEventDomain({0, 1, 2, 2, {}}),
+                  "add first repair-budget event domain") &&
+            check(precise.addEventDomain({1, 3, 4, 2, {}}),
+                  "add second repair-budget event domain");
+  const CanonicalSyncMechanismDescriptor prefixDescriptor =
+      protocol(0, 1, 2, firstSource, firstTarget, loop, 1, 1);
+  const CanonicalSyncMechanismDescriptor appendDescriptor =
+      protocol(1, 3, 4, secondSource, secondTarget, loop, 1, 1);
+  passed &= check(precise.internVerifiedProtocol(prefixDescriptor, verifier),
+                  "add nonempty repair catalog prefix") &&
+            check(precise.freeze(), "freeze nonempty precise repair prefix");
+  if (!passed) {
+    return false;
+  }
+  const std::uint64_t prefixSignature = precise.getMechanismSignature(0);
 
-  SyncCoverCoverageWorkBudget referenceWork;
-  std::unique_ptr<CanonicalSyncPatternProblem> reference =
-      precise.cloneMutableRepairPrefix(&referenceWork);
-  const std::size_t referencePrefixWork = referenceWork.workUnits;
-  const CanonicalSyncProblemResult referenceAdmission =
-      reference->internVerifiedProtocol(descriptor, verifier);
-  const std::size_t admissionWork =
-      referenceWork.workUnits - referencePrefixWork;
-  passed &= check(referenceAdmission && admissionWork >= callbackWork,
-                  "measure repair protocol admission work");
+  const auto verifyAdmissionBoundary =
+      [&](const CanonicalSyncMechanismDescriptor &descriptor,
+          std::size_t expectedSize, std::string_view exactMessage,
+          std::string_view belowMessage) {
+        SyncCoverCoverageWorkBudget referenceWork;
+        std::unique_ptr<CanonicalSyncPatternProblem> reference =
+            precise.cloneMutableRepairPrefix(&referenceWork);
+        const std::size_t referencePrefixWork = referenceWork.workUnits;
+        const CanonicalSyncProblemResult referenceAdmission =
+            reference->internVerifiedProtocol(descriptor, verifier);
+        const std::size_t admissionWork =
+            referenceWork.workUnits - referencePrefixWork;
+        if (!check(referenceAdmission && admissionWork >= callbackWork &&
+                       reference->getMechanisms().size() == expectedSize,
+                   "measure nonempty repair catalog admission work")) {
+          return false;
+        }
 
-  SyncCoverCoverageWorkBudget exactWork;
-  std::unique_ptr<CanonicalSyncPatternProblem> exact =
-      precise.cloneMutableRepairPrefix(&exactWork);
-  const std::size_t exactPrefixWork = exactWork.workUnits;
-  exactWork.maximumWorkUnits = exactPrefixWork + admissionWork;
-  passed &= check(exact->internVerifiedProtocol(descriptor, verifier) &&
-                      exactWork.workUnits == exactWork.maximumWorkUnits,
-                  "admit repair protocol at the exact shared bound");
+        SyncCoverCoverageWorkBudget exactWork;
+        std::unique_ptr<CanonicalSyncPatternProblem> exact =
+            precise.cloneMutableRepairPrefix(&exactWork);
+        const std::size_t exactPrefixWork = exactWork.workUnits;
+        exactWork.maximumWorkUnits = exactPrefixWork + admissionWork;
+        const CanonicalSyncProblemResult exactAdmission =
+            exact->internVerifiedProtocol(descriptor, verifier);
+        if (!check(exactAdmission &&
+                       exactWork.workUnits == exactWork.maximumWorkUnits &&
+                       exact->getMechanisms().size() == expectedSize,
+                   exactMessage)) {
+          return false;
+        }
 
-  SyncCoverCoverageWorkBudget oneLessWork;
-  std::unique_ptr<CanonicalSyncPatternProblem> oneLess =
-      precise.cloneMutableRepairPrefix(&oneLessWork);
-  const std::size_t oneLessPrefixWork = oneLessWork.workUnits;
-  oneLessWork.maximumWorkUnits = oneLessPrefixWork + admissionWork - 1;
-  const CanonicalSyncProblemResult rejected =
-      oneLess->internVerifiedProtocol(descriptor, verifier);
-  return passed &&
-         check(rejected.error == CanonicalSyncProblemError::LimitExceeded &&
-                   oneLess->getMechanisms().empty(),
-               "reject one-less repair admission without catalog mutation");
+        SyncCoverCoverageWorkBudget oneLessWork;
+        std::unique_ptr<CanonicalSyncPatternProblem> oneLess =
+            precise.cloneMutableRepairPrefix(&oneLessWork);
+        const std::size_t oneLessPrefixWork = oneLessWork.workUnits;
+        oneLessWork.maximumWorkUnits = oneLessPrefixWork + admissionWork - 1;
+        const CanonicalSyncProblemResult rejected =
+            oneLess->internVerifiedProtocol(descriptor, verifier);
+        return check(rejected.error ==
+                             CanonicalSyncProblemError::LimitExceeded &&
+                         oneLess->getMechanisms().size() == 1 &&
+                         oneLess->getMechanismSignature(0) == prefixSignature,
+                     belowMessage);
+      };
+
+  return verifyAdmissionBoundary(
+             prefixDescriptor, 1,
+             "resolve a duplicate collision bucket at the exact shared bound",
+             "reject duplicate lookup one below without prefix mutation") &&
+         verifyAdmissionBoundary(
+             appendDescriptor, 2,
+             "append every catalog vector at the exact shared bound",
+             "reject catalog growth one below without prefix mutation");
 }
 
 bool testFreezeRetryCommitsFreshDerivedState() {
@@ -3074,6 +3110,64 @@ bool testSourcePrefixFinalVerificationWorkIsBounded() {
                "reject source-prefix verification one unit below its bound");
 }
 
+bool testDeepScopeLcaVerificationWorkIsBounded() {
+  bool passed = true;
+  const auto measure =
+      [&](std::size_t depth,
+          std::string_view label) -> std::optional<std::size_t> {
+    SyncCoverGraph graph;
+    SyncCoverScopeId sourceScope = 0;
+    SyncCoverScopeId targetScope = 0;
+    for (std::size_t index = 0; index < depth; ++index) {
+      sourceScope = takeIndex(graph.addScope(sourceScope, true), passed,
+                              "add deep-LCA source scope");
+      targetScope = takeIndex(graph.addScope(targetScope, true), passed,
+                              "add deep-LCA target scope");
+    }
+    const SyncCoverNodeId source = takeIndex(
+        graph.addNode(1, 1, sourceScope, 0), passed, "add deep-LCA source");
+    const SyncCoverNodeId target = takeIndex(
+        graph.addNode(2, 1, targetScope, 1), passed, "add deep-LCA target");
+    const SyncCoverDemandId demandId = takeIndex(
+        graph.addDemand(demand(source, target)), passed, "add deep-LCA demand");
+    passed &= check(graph.setBlockingTargetedBarrierResources({1}),
+                    "enable deep-LCA source drain") &&
+              check(graph.freezeStructure(), "freeze deep-LCA graph");
+    if (!passed) {
+      return std::nullopt;
+    }
+    CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+    const CanonicalSyncMechanismId mechanism =
+        takeIndex(problem.internMechanism(
+                      sourceLocalBarrier(1, source, {{target, demandId}})),
+                  passed, "add deep-LCA source drain");
+    if (!passed) {
+      return std::nullopt;
+    }
+    SyncCoverCoverageWorkBudget measured;
+    const CanonicalSyncProblemResult verified =
+        problem.verifyMechanism(mechanism, &measured);
+    SyncCoverCoverageWorkBudget exact(measured.workUnits);
+    SyncCoverCoverageWorkBudget oneLess(measured.workUnits - 1);
+    const bool exactBoundary =
+        verified && problem.verifyMechanism(mechanism, &exact) &&
+        exact.workUnits == measured.workUnits &&
+        problem.verifyMechanism(mechanism, &oneLess).error ==
+            CanonicalSyncProblemError::LimitExceeded;
+    passed &= check(exactBoundary, label);
+    return exactBoundary ? std::optional<std::size_t>(measured.workUnits)
+                         : std::nullopt;
+  };
+
+  const std::optional<std::size_t> shallow =
+      measure(1, "bound shallow source-drain LCA verification exactly");
+  const std::optional<std::size_t> deep =
+      measure(32, "bound deep source-drain LCA verification exactly");
+  return passed &&
+         check(shallow && deep && *deep > *shallow,
+               "charge linear parent-chain LCA growth in fresh verification");
+}
+
 bool testSourcePrefixBarrierRejectsInvalidCertificates() {
   bool passed = true;
   SyncCoverGraph missing;
@@ -3319,6 +3413,7 @@ int main() {
       testSourceLocalBarrierRejectsUnsupportedAndSameMacro() &&
       testSourcePrefixBarrierConsolidatesIssuedSources() &&
       testSourcePrefixFinalVerificationWorkIsBounded() &&
+      testDeepScopeLcaVerificationWorkIsBounded() &&
       testSourcePrefixBarrierRejectsInvalidCertificates() &&
       testSourcePrefixBarrierKeepsDistanceQualifiers() &&
       testMechanismOriginInterningIsBoundedAndDiagnosticOnly() &&
