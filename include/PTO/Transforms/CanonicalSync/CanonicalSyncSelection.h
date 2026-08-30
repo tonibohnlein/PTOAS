@@ -296,6 +296,14 @@ struct CanonicalSyncPatternSpec {
   std::vector<CanonicalSyncMechanismId> members;
 };
 
+/// One independently valid barrier/event recipe proposed by conflict-core
+/// repair. A batch is admitted transactionally so optional truncation cannot
+/// leak a partial frontier into the owner-repair catalog.
+struct CanonicalSyncRepairFrontierBatchEntry {
+  CanonicalSyncMechanismDescriptor barrier;
+  CanonicalSyncMechanismDescriptor event;
+};
+
 struct CanonicalSyncPattern {
   CanonicalSyncPatternId id = 0;
   CanonicalSyncPatternKind kind = CanonicalSyncPatternKind::Singleton;
@@ -454,6 +462,10 @@ public:
       const std::vector<SyncCoverDemandSet> &jointCoverage,
       const std::vector<SyncCoverDemandSet> &singletonMechanismCoverage,
       const SyncCoverDemandSet &baselineCoverage);
+  /// Atomically admit a bounded batch of repair-frontier recipes. Limit or
+  /// semantic failure restores the exact mutable catalog prefix.
+  CanonicalSyncProblemResult addRepairFrontierBatch(
+      std::vector<CanonicalSyncRepairFrontierBatchEntry> entries);
   CanonicalSyncProblemResult freeze();
 
   /// Copy one immutable precise catalog into a mutable repair extension. The
@@ -621,6 +633,7 @@ public:
   }
 
 private:
+  struct MutableBatchJournal;
   struct PendingPattern {
     CanonicalSyncPatternSpec spec;
     /// Sparse active-demand IDs. Dense rows are materialized only during
@@ -636,7 +649,16 @@ private:
                       bool protocolVerified,
                       CanonicalSyncProtocolVerifier verifier = {},
                       CanonicalSyncMechanismOrigin origin =
-                          CanonicalSyncMechanismOrigin::Unclassified);
+                          CanonicalSyncMechanismOrigin::Unclassified,
+                      MutableBatchJournal *journal = nullptr);
+  CanonicalSyncProblemResult addPatternImpl(CanonicalSyncPatternSpec pattern,
+                                            MutableBatchJournal *journal);
+  void rollbackMutableBatch(MutableBatchJournal &journal);
+  CanonicalSyncProblemResult
+  checkDenseConstructionEnvelope(std::size_t additionalMechanisms,
+                                 std::size_t additionalPatternCacheCandidates,
+                                 std::size_t additionalRetainedPatterns,
+                                 bool includeGroundingPeak);
   CanonicalSyncProblemResult validateAndCostMechanism(
       CanonicalSyncMechanismDescriptor &descriptor,
       std::vector<CanonicalSyncEventLifetime> &lifetimes,

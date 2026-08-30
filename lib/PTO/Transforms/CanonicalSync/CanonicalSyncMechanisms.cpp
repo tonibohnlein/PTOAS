@@ -4780,6 +4780,9 @@ addRepairFrontierPatterns(const CanonicalSyncProgram &program,
     return frontierProposalLess(left, right);
   };
   std::set<RepairFrontierProposal, decltype(less)> proposals(less);
+  const std::size_t proposalLimit =
+      std::min(options.maximumRepairFrontierProposals,
+               problem.getLimits().maximumPatternProposals);
   for (std::size_t first = 0; first < liveEvents.size(); ++first) {
     const SyncCoverDemand &firstDemand =
         graph.getDemands()[liveEvents[first].demand];
@@ -4854,8 +4857,7 @@ addRepairFrontierPatterns(const CanonicalSyncProgram &program,
       if (duplicate) {
         continue;
       }
-      const bool proposalLimitReached =
-          proposals.size() == options.maximumRepairFrontierProposals;
+      const bool proposalLimitReached = proposals.size() == proposalLimit;
       if (proposalLimitReached) {
         result.status = RepairFrontierBuildStatus::Truncated;
         result.proposals = proposals.size();
@@ -4865,49 +4867,36 @@ addRepairFrontierPatterns(const CanonicalSyncProgram &program,
     }
   }
   result.proposals = proposals.size();
-  for (const RepairFrontierProposal &proposal : proposals) {
-    const CanonicalSyncProblemResult barrier = problem.internMechanism(
-        makeRepairBarrier(graph, proposal.barrier),
-        CanonicalSyncMechanismOrigin::RepairFrontierBarrier);
-    const CanonicalSyncProblemResult event = problem.internMechanism(
-        makeRepairEvent(graph, proposal.event, proposal.domain),
-        CanonicalSyncMechanismOrigin::RepairFrontierEvent);
-    const bool barrierSemanticFailure =
-        !barrier && barrier.error != CanonicalSyncProblemError::LimitExceeded;
-    const bool eventSemanticFailure =
-        !event && event.error != CanonicalSyncProblemError::LimitExceeded;
-    if (barrierSemanticFailure || eventSemanticFailure) {
-      result.status = RepairFrontierBuildStatus::Failed;
-      program.getFunction().emitError(
-          "cannot add canonical sync repair-frontier mechanisms");
-      return result;
-    }
-    const bool limitExceeded =
-        barrier.error == CanonicalSyncProblemError::LimitExceeded ||
-        event.error == CanonicalSyncProblemError::LimitExceeded;
-    if (limitExceeded) {
-      result.status = RepairFrontierBuildStatus::Truncated;
-      return result;
-    }
-    if (!barrier || !event || !barrier.index || !event.index) {
-      result.status = RepairFrontierBuildStatus::Failed;
-      program.getFunction().emitError(
-          "cannot add canonical sync repair-frontier mechanisms");
-      return result;
-    }
-    const CanonicalSyncProblemResult pattern = addCanonicalSyncFeasiblePattern(
-        problem, {CanonicalSyncPatternKind::RepairFrontier,
-                  {*barrier.index, *event.index}});
-    if (pattern.error == CanonicalSyncProblemError::LimitExceeded) {
-      result.status = RepairFrontierBuildStatus::Truncated;
-      return result;
-    }
-    if (!pattern) {
-      result.status = RepairFrontierBuildStatus::Failed;
-      program.getFunction().emitError(
-          "cannot add canonical sync repair-frontier pattern");
-      return result;
-    }
+  constexpr std::size_t stagingEntriesPerProposal = 8;
+  const bool stagingSizeOverflows =
+      proposals.size() >
+      std::numeric_limits<std::size_t>::max() / stagingEntriesPerProposal;
+  const std::size_t stagingEntries =
+      stagingSizeOverflows ? 0 : proposals.size() * stagingEntriesPerProposal;
+  if (stagingSizeOverflows ||
+      (workBudget && !workBudget->consume(stagingEntries))) {
+    result.status = RepairFrontierBuildStatus::Truncated;
+    return result;
+  }
+  std::vector<CanonicalSyncRepairFrontierBatchEntry> batch;
+  batch.reserve(proposals.size());
+  while (!proposals.empty()) {
+    const auto proposal = proposals.begin();
+    batch.push_back(
+        {makeRepairBarrier(graph, proposal->barrier),
+         makeRepairEvent(graph, proposal->event, proposal->domain)});
+    proposals.erase(proposal);
+  }
+  const CanonicalSyncProblemResult committed =
+      problem.addRepairFrontierBatch(std::move(batch));
+  if (committed.error == CanonicalSyncProblemError::LimitExceeded) {
+    result.status = RepairFrontierBuildStatus::Truncated;
+    return result;
+  }
+  if (!committed) {
+    result.status = RepairFrontierBuildStatus::Failed;
+    program.getFunction().emitError(
+        "cannot add canonical sync repair-frontier batch");
   }
   return result;
 }
@@ -5414,11 +5403,6 @@ CanonicalSyncProblemBuildResult buildRepairCatalogFromPrefix(
             {CanonicalSyncProblemError::InvalidMechanism, std::nullopt}};
   }
   if (frontier.status == RepairFrontierBuildStatus::Truncated) {
-    problem = preciseProblem.cloneMutableRepairPrefix(workBudget);
-    if (!problem) {
-      return {nullptr,
-              {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
-    }
     const CanonicalSyncProblemResult recorded =
         problem->recordRepairFrontierGeneration(frontier.inspections,
                                                 frontier.proposals, true);
@@ -5426,7 +5410,7 @@ CanonicalSyncProblemBuildResult buildRepairCatalogFromPrefix(
       return {nullptr, recorded};
     }
     const CanonicalSyncProblemResult frozen = problem->freeze();
-    return {std::move(problem), frozen, {}, {}};
+    return {std::move(problem), frozen, std::move(repairMechanismsByOwner), {}};
   }
   std::vector<CanonicalSyncMechanismId> collectiveRepairMechanisms;
   for (CanonicalSyncMechanismId mechanism = frontierMechanismBegin;

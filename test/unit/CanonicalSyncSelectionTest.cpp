@@ -101,6 +101,21 @@ SyncCoverDemand demand(SyncCoverNodeId source, SyncCoverNodeId target,
   return result;
 }
 
+std::size_t
+singleCoverageWorkspaceWords(const SyncCoverExpandedProgram &expansion) {
+  const std::size_t virtualNodes = expansion.getStatistics().virtualNodes;
+  const std::size_t stateCount = virtualNodes * 2;
+  const auto storageWords = [](std::size_t elements,
+                               std::size_t bytesPerElement) {
+    const std::size_t bytes = elements * bytesPerElement;
+    return bytes / sizeof(std::uint64_t) + (bytes % sizeof(std::uint64_t) != 0);
+  };
+  return storageWords(stateCount, sizeof(std::uint32_t)) +
+         storageWords(virtualNodes, sizeof(std::uint32_t)) +
+         storageWords(virtualNodes, sizeof(std::uint8_t)) +
+         storageWords(stateCount, sizeof(std::size_t));
+}
+
 SyncCoverEdge supply(SyncCoverNodeId source, SyncCoverNodeId target,
                      SyncCoverScopeId scope = 0, unsigned distance = 0) {
   SyncCoverEdge result;
@@ -2733,6 +2748,763 @@ bool testProtocolVerifierStorageSharesOpaqueCapture() {
   return passed;
 }
 
+bool testRepairFrontierBatchRollsBackPartialCommit() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId ownerSource = takeIndex(
+      graph.addNode(1, 1, 0, 0, {}, {2}), passed, "add batch owner source");
+  const SyncCoverNodeId ownerTarget =
+      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add batch owner target");
+  const SyncCoverNodeId firstSource = takeIndex(
+      graph.addNode(1, 1, 0, 2, {}, {2}), passed, "add batch first source");
+  const SyncCoverNodeId firstTarget =
+      takeIndex(graph.addNode(2, 1, 0, 3), passed, "add batch first target");
+  const SyncCoverNodeId secondBarrierSource = takeIndex(
+      graph.addNode(3, 1, 0, 4), passed, "add batch second barrier source");
+  const SyncCoverNodeId secondSource = takeIndex(
+      graph.addNode(1, 1, 0, 5, {}, {3}), passed, "add batch second source");
+  const SyncCoverNodeId secondTarget =
+      takeIndex(graph.addNode(3, 1, 0, 6), passed, "add batch second target");
+  passed &= check(graph.addDemand(demand(ownerSource, ownerTarget)),
+                  "add batch owner demand") &&
+            check(graph.freezeStructure(), "freeze batch rollback graph");
+
+  CanonicalSyncPatternProblem::Limits limits;
+  limits.maximumMechanisms = 4;
+  CanonicalSyncPatternProblem precise(graph, allDemands(graph), limits);
+  passed &= check(precise.addEventDomain({0, 1, 2, 8, {}}),
+                  "add batch first event domain") &&
+            check(precise.addEventDomain({1, 1, 3, 8, {}}),
+                  "add batch second event domain");
+  const CanonicalSyncMechanismId preciseEvent =
+      takeIndex(precise.internMechanism(
+                    event(0, 1, 2, ownerSource, ownerTarget),
+                    CanonicalSyncMechanismOrigin::DirectDistanceZeroEvent),
+                passed, "add batch precise event");
+  passed &= check(precise.freeze(), "freeze batch precise prefix");
+  if (!passed) {
+    return false;
+  }
+
+  const CanonicalSyncMechanismDescriptor ownerDescriptor =
+      targetedBarrier(2, ownerTarget, firstTarget);
+  const auto extendOwnerCatalog = [&](SyncCoverCoverageWorkBudget &work) {
+    std::unique_ptr<CanonicalSyncPatternProblem> problem =
+        precise.cloneMutableRepairPrefix(&work);
+    if (!problem) {
+      return problem;
+    }
+    const CanonicalSyncProblemResult owner = problem->internMechanism(
+        ownerDescriptor,
+        CanonicalSyncMechanismOrigin::RepairTargetLocalPipeDrain);
+    if (!owner || !owner.index ||
+        !problem->recordRepairEventSeed({0, preciseEvent, 0}) ||
+        !problem->addPattern({CanonicalSyncPatternKind::RepairFrontier,
+                              {preciseEvent, *owner.index}})) {
+      return std::unique_ptr<CanonicalSyncPatternProblem>{};
+    }
+    return problem;
+  };
+  const auto makeBatch = [&] {
+    std::vector<CanonicalSyncRepairFrontierBatchEntry> batch;
+    batch.push_back(
+        {ownerDescriptor, event(0, 1, 2, firstSource, firstTarget)});
+    batch.push_back({targetedBarrier(3, secondBarrierSource, secondTarget),
+                     event(1, 1, 3, secondSource, secondTarget)});
+    return batch;
+  };
+
+  SyncCoverCoverageWorkBudget referenceWork;
+  std::unique_ptr<CanonicalSyncPatternProblem> reference =
+      extendOwnerCatalog(referenceWork);
+  SyncCoverCoverageWorkBudget rollbackWork;
+  std::unique_ptr<CanonicalSyncPatternProblem> rolledBack =
+      extendOwnerCatalog(rollbackWork);
+  if (!check(reference && rolledBack, "build batch owner catalogs")) {
+    return false;
+  }
+  const std::vector<CanonicalSyncMechanism> ownerMechanisms =
+      rolledBack->getMechanisms();
+  std::vector<std::uint64_t> ownerSignatures;
+  ownerSignatures.reserve(ownerMechanisms.size());
+  for (std::size_t index = 0; index < ownerMechanisms.size(); ++index) {
+    ownerSignatures.push_back(rolledBack->getMechanismSignature(index));
+  }
+  const std::size_t ownerPatternCount = rolledBack->getPatterns().size();
+  const std::size_t ownerSeedCount = rolledBack->getRepairEventSeeds().size();
+  const CanonicalSyncProblemResult rejected =
+      rolledBack->addRepairFrontierBatch(makeBatch());
+  passed &=
+      check(rejected.error == CanonicalSyncProblemError::LimitExceeded &&
+                !rollbackWork.exhausted,
+            "truncate during the second frontier commit") &&
+      check(rolledBack->getMechanisms().size() == ownerMechanisms.size() &&
+                rolledBack->getPatterns().size() == ownerPatternCount &&
+                rolledBack->getRepairEventSeeds().size() == ownerSeedCount &&
+                !rolledBack->wasPatternGenerationTruncated(),
+            "restore owner catalog sizes and truncation state");
+  for (std::size_t index = 0; index < ownerMechanisms.size(); ++index) {
+    passed &= check(rolledBack->getMechanisms()[index].originMask ==
+                            ownerMechanisms[index].originMask &&
+                        rolledBack->getMechanismSignature(index) ==
+                            ownerSignatures[index],
+                    "restore owner mechanism origin and signature");
+  }
+  passed &= check(reference->freeze(), "freeze owner reference catalog") &&
+            check(rolledBack->freeze(), "freeze rolled-back owner catalog");
+  if (!passed) {
+    return false;
+  }
+  const CanonicalSyncSelection referenceSelection =
+      selectCanonicalSyncPatterns(*reference);
+  const CanonicalSyncSelection rolledBackSelection =
+      selectCanonicalSyncPatterns(*rolledBack);
+  const auto &referencePatterns = reference->getPatterns();
+  const auto &rolledBackPatterns = rolledBack->getPatterns();
+  const bool identicalPatterns =
+      referencePatterns.size() == rolledBackPatterns.size() &&
+      std::equal(referencePatterns.begin(), referencePatterns.end(),
+                 rolledBackPatterns.begin(),
+                 [](const CanonicalSyncPattern &left,
+                    const CanonicalSyncPattern &right) {
+                   return left.kind == right.kind &&
+                          left.members == right.members &&
+                          left.coverage == right.coverage &&
+                          left.jointCoverageCount == right.jointCoverageCount &&
+                          left.singletonCoverageCount ==
+                              right.singletonCoverageCount &&
+                          left.extraCoverageCount == right.extraCoverageCount;
+                 });
+  return check(
+      referenceSelection && rolledBackSelection &&
+          referenceSelection.mechanisms == rolledBackSelection.mechanisms &&
+          identicalPatterns && reference->hasSameCandidatePrefix(*rolledBack) &&
+          verifyCanonicalSyncSelection(*reference, referenceSelection) &&
+          verifyCanonicalSyncSelection(*rolledBack, rolledBackSelection),
+      "select and verify the exact owner plan after rollback");
+}
+
+bool testRepairFrontierBatchRollsBackFreshCaches() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId firstEventSource =
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}), passed,
+                "add fresh-cache first event source");
+  const SyncCoverNodeId firstBarrierSource =
+      takeIndex(graph.addNode(2, 1, 0, 1), passed,
+                "add fresh-cache first barrier source");
+  const SyncCoverNodeId firstTarget = takeIndex(
+      graph.addNode(2, 1, 0, 2), passed, "add fresh-cache first target");
+  const SyncCoverNodeId secondEventSource =
+      takeIndex(graph.addNode(1, 1, 0, 3, {}, {3}), passed,
+                "add fresh-cache second event source");
+  const SyncCoverNodeId secondBarrierSource =
+      takeIndex(graph.addNode(3, 1, 0, 4), passed,
+                "add fresh-cache second barrier source");
+  const SyncCoverNodeId secondTarget = takeIndex(
+      graph.addNode(3, 1, 0, 5), passed, "add fresh-cache second target");
+  passed &= check(graph.addDemand(demand(firstEventSource, firstTarget)),
+                  "add fresh-cache demand") &&
+            check(graph.freezeStructure(), "freeze fresh-cache graph");
+  if (!passed) {
+    return false;
+  }
+
+  CanonicalSyncPatternProblem::Limits limits;
+  limits.maximumMechanisms = 3;
+  const auto makeProblem = [&] {
+    auto problem = std::make_unique<CanonicalSyncPatternProblem>(
+        graph, allDemands(graph), limits);
+    const bool initialized =
+        problem->addEventDomain({0, 1, 2, 8, {}}) &&
+        problem->addEventDomain({1, 1, 3, 8, {}}) &&
+        problem->internMechanism(
+            event(0, 1, 2, firstEventSource, firstTarget),
+            CanonicalSyncMechanismOrigin::DirectDistanceZeroEvent);
+    if (!initialized) {
+      return std::unique_ptr<CanonicalSyncPatternProblem>{};
+    }
+    return problem;
+  };
+  const auto firstEntry = [&] {
+    return CanonicalSyncRepairFrontierBatchEntry{
+        targetedBarrier(2, firstBarrierSource, firstTarget),
+        event(0, 1, 2, firstEventSource, firstTarget)};
+  };
+  const auto secondEntry = [&] {
+    return CanonicalSyncRepairFrontierBatchEntry{
+        targetedBarrier(3, secondBarrierSource, secondTarget),
+        event(1, 1, 3, secondEventSource, secondTarget)};
+  };
+
+  std::unique_ptr<CanonicalSyncPatternProblem> reference = makeProblem();
+  std::unique_ptr<CanonicalSyncPatternProblem> rolledBack = makeProblem();
+  if (!check(reference && rolledBack, "build fresh-cache catalogs")) {
+    return false;
+  }
+  const CanonicalSyncMechanismOriginMask directOrigin =
+      rolledBack->getMechanisms().front().originMask;
+  const CanonicalSyncProblemResult rejected =
+      rolledBack->addRepairFrontierBatch({firstEntry(), secondEntry()});
+  passed &= check(
+      rejected.error == CanonicalSyncProblemError::LimitExceeded &&
+          rolledBack->getMechanisms().size() == 1 &&
+          rolledBack->getMechanisms().front().originMask == directOrigin &&
+          !rolledBack->wasPatternGenerationTruncated(),
+      "restore an absent baseline and empty preexisting singleton cache");
+  passed &= check(reference->addRepairFrontierBatch({firstEntry()}),
+                  "add reference fresh-cache frontier") &&
+            check(rolledBack->addRepairFrontierBatch({firstEntry()}),
+                  "retry fresh-cache frontier after rollback") &&
+            check(reference->freeze(), "freeze fresh-cache reference") &&
+            check(rolledBack->freeze(), "freeze retried fresh-cache catalog");
+  if (!passed) {
+    return false;
+  }
+  const CanonicalSyncSelection referenceSelection =
+      selectCanonicalSyncPatterns(*reference);
+  const CanonicalSyncSelection rolledBackSelection =
+      selectCanonicalSyncPatterns(*rolledBack);
+  return check(
+      referenceSelection && rolledBackSelection &&
+          referenceSelection.mechanisms == rolledBackSelection.mechanisms &&
+          reference->hasSameCandidatePrefix(*rolledBack) &&
+          verifyCanonicalSyncSelection(*rolledBack, rolledBackSelection),
+      "fresh-cache rollback is identical after retry and freeze");
+}
+
+bool testRepairFrontierBatchWorkAndProposalBounds() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId firstSource =
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}), passed,
+                "add bounded batch first source");
+  const SyncCoverNodeId firstBarrierSource =
+      takeIndex(graph.addNode(2, 1, 0, 1), passed,
+                "add bounded batch first barrier source");
+  const SyncCoverNodeId firstTarget = takeIndex(
+      graph.addNode(2, 1, 0, 2), passed, "add bounded batch first target");
+  const SyncCoverNodeId secondSource =
+      takeIndex(graph.addNode(1, 1, 0, 3, {}, {3}), passed,
+                "add bounded batch second source");
+  const SyncCoverNodeId secondBarrierSource =
+      takeIndex(graph.addNode(3, 1, 0, 4), passed,
+                "add bounded batch second barrier source");
+  const SyncCoverNodeId secondTarget = takeIndex(
+      graph.addNode(3, 1, 0, 5), passed, "add bounded batch second target");
+  passed &= check(graph.freezeStructure(), "freeze bounded batch graph");
+  if (!passed) {
+    return false;
+  }
+
+  const auto makeBatch = [&] {
+    std::vector<CanonicalSyncRepairFrontierBatchEntry> batch;
+    batch.push_back({targetedBarrier(2, firstBarrierSource, firstTarget),
+                     event(0, 1, 2, firstSource, firstTarget)});
+    batch.push_back({targetedBarrier(3, secondBarrierSource, secondTarget),
+                     event(1, 1, 3, secondSource, secondTarget)});
+    return batch;
+  };
+  const auto makePrecise = [&](std::size_t maximumPatternProposals) {
+    CanonicalSyncPatternProblem::Limits limits;
+    limits.maximumPatternProposals = maximumPatternProposals;
+    auto problem = std::make_unique<CanonicalSyncPatternProblem>(
+        graph, std::vector<SyncCoverDemandId>{}, limits);
+    const bool initialized = problem->addEventDomain({0, 1, 2, 8, {}}) &&
+                             problem->addEventDomain({1, 1, 3, 8, {}}) &&
+                             problem->freeze();
+    if (!initialized) {
+      return std::unique_ptr<CanonicalSyncPatternProblem>{};
+    }
+    return problem;
+  };
+
+  std::unique_ptr<CanonicalSyncPatternProblem> precise = makePrecise(2);
+  if (!check(precise, "build bounded batch precise catalog")) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget measuredWork;
+  std::unique_ptr<CanonicalSyncPatternProblem> measured =
+      precise->cloneMutableRepairPrefix(&measuredWork);
+  if (!check(measured, "clone measured frontier batch catalog")) {
+    return false;
+  }
+  const std::size_t prefixWork = measuredWork.workUnits;
+  const CanonicalSyncProblemResult measuredResult =
+      measured->addRepairFrontierBatch(makeBatch());
+  const std::size_t batchWork = measuredWork.workUnits - prefixWork;
+  if (!check(measuredResult && batchWork != 0,
+             "measure complete frontier batch work")) {
+    return false;
+  }
+  passed &= check(measured->freeze(),
+                  "freeze after successful frontier journal release");
+
+  SyncCoverCoverageWorkBudget exactWork(prefixWork + batchWork);
+  std::unique_ptr<CanonicalSyncPatternProblem> exact =
+      precise->cloneMutableRepairPrefix(&exactWork);
+  if (!check(exact, "clone exact-work frontier batch catalog")) {
+    return false;
+  }
+  const CanonicalSyncProblemResult exactResult =
+      exact->addRepairFrontierBatch(makeBatch());
+  passed &=
+      check(exactResult && exactWork.workUnits == exactWork.maximumWorkUnits,
+            "admit the frontier batch at its exact work bound");
+
+  SyncCoverCoverageWorkBudget oneLessWork(prefixWork + batchWork - 1);
+  std::unique_ptr<CanonicalSyncPatternProblem> oneLess =
+      precise->cloneMutableRepairPrefix(&oneLessWork);
+  if (!check(oneLess, "clone one-less frontier batch catalog")) {
+    return false;
+  }
+  const CanonicalSyncProblemResult oneLessResult =
+      oneLess->addRepairFrontierBatch(makeBatch());
+  passed &=
+      check(oneLessResult.error == CanonicalSyncProblemError::LimitExceeded &&
+                oneLessWork.exhausted && oneLessWork.workUnits > prefixWork &&
+                oneLess->getMechanisms().empty() &&
+                !oneLess->wasPatternGenerationTruncated(),
+            "roll back a frontier batch one below its work bound");
+
+  std::unique_ptr<CanonicalSyncPatternProblem> proposalLimitedPrecise =
+      makePrecise(1);
+  if (!check(proposalLimitedPrecise,
+             "build proposal-limited precise catalog")) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget proposalWork;
+  std::unique_ptr<CanonicalSyncPatternProblem> proposalLimited =
+      proposalLimitedPrecise->cloneMutableRepairPrefix(&proposalWork);
+  if (!check(proposalLimited, "clone proposal-limited frontier catalog")) {
+    return false;
+  }
+  const CanonicalSyncProblemResult proposalResult =
+      proposalLimited->addRepairFrontierBatch(makeBatch());
+  return passed && check(proposalResult.error ==
+                                 CanonicalSyncProblemError::LimitExceeded &&
+                             !proposalWork.exhausted &&
+                             proposalLimited->getMechanisms().empty() &&
+                             proposalLimited->freeze(),
+                         "reject an oversized frontier delta before mutation");
+}
+
+bool testRepairFrontierBatchRejectsInvalidRecipes() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId eventSource =
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}), passed,
+                "add invalid-batch event source");
+  const SyncCoverNodeId barrierSource = takeIndex(
+      graph.addNode(2, 1, 0, 1), passed, "add invalid-batch barrier source");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(2, 1, 0, 2), passed, "add invalid-batch target");
+  passed &= check(graph.addDemand(demand(eventSource, target)),
+                  "add invalid-batch demand") &&
+            check(graph.freezeStructure(), "freeze invalid-batch graph");
+
+  CanonicalSyncPatternProblem precise(graph, allDemands(graph));
+  passed &= check(precise.addEventDomain({0, 1, 2, 8, {}}),
+                  "add invalid-batch event domain") &&
+            check(precise.internMechanism(event(0, 1, 2, eventSource, target)),
+                  "add invalid-batch precise event") &&
+            check(precise.freeze(), "freeze invalid-batch precise catalog");
+  if (!passed) {
+    return false;
+  }
+
+  SyncCoverCoverageWorkBudget work;
+  std::unique_ptr<CanonicalSyncPatternProblem> problem =
+      precise.cloneMutableRepairPrefix(&work);
+  if (!check(problem, "clone invalid-batch repair catalog")) {
+    return false;
+  }
+  const std::size_t prefixWork = work.workUnits;
+  const std::size_t prefixMechanisms = problem->getMechanisms().size();
+  const CanonicalSyncMechanismDescriptor frontierBarrier =
+      targetedBarrier(2, barrierSource, target);
+  const CanonicalSyncMechanismDescriptor frontierEvent =
+      event(0, 1, 2, eventSource, target);
+  CanonicalSyncMechanismDescriptor pipeAll =
+      barrier(2, {1, 2}, barrierSource, target);
+  CanonicalSyncMechanismDescriptor embeddedPipeAll = frontierEvent;
+  embeddedPipeAll.actions.push_back(pipeAll.actions.front());
+  CanonicalSyncMechanismDescriptor actionlessBarrier;
+  actionlessBarrier.kind = CanonicalSyncMechanismKind::Barrier;
+
+  const auto reject = [&](CanonicalSyncRepairFrontierBatchEntry entry,
+                          const char *message) {
+    const CanonicalSyncProblemResult result =
+        problem->addRepairFrontierBatch({std::move(entry)});
+    return check(result.error == CanonicalSyncProblemError::InvalidMechanism &&
+                     work.workUnits == prefixWork &&
+                     problem->getMechanisms().size() == prefixMechanisms &&
+                     !problem->wasPatternGenerationTruncated(),
+                 message);
+  };
+  passed &= reject({frontierEvent, frontierBarrier},
+                   "reject swapped frontier recipe slots before work");
+  passed &= reject({frontierEvent, frontierEvent},
+                   "reject two frontier events before work");
+  passed &= reject({frontierBarrier, frontierBarrier},
+                   "reject two frontier barriers before work");
+  passed &= reject({pipeAll, frontierEvent},
+                   "reject PIPE_ALL from the normal repair frontier");
+  passed &= reject({frontierBarrier, embeddedPipeAll},
+                   "reject PIPE_ALL embedded in a frontier event");
+  passed &= reject({actionlessBarrier, frontierEvent},
+                   "reject an actionless frontier barrier before work");
+  passed &=
+      check(problem->freeze(), "freeze catalog after invalid frontier recipes");
+  if (!passed) {
+    return false;
+  }
+  const CanonicalSyncSelection preciseSelection =
+      selectCanonicalSyncPatterns(precise);
+  const CanonicalSyncSelection rejectedSelection =
+      selectCanonicalSyncPatterns(*problem);
+  return check(preciseSelection && rejectedSelection &&
+                   preciseSelection.mechanisms ==
+                       rejectedSelection.mechanisms &&
+                   precise.hasSameCandidatePrefix(*problem) &&
+                   verifyCanonicalSyncSelection(*problem, rejectedSelection),
+               "invalid frontier recipes leave the precise plan unchanged");
+}
+
+bool testRepairFrontierBatchBoundsDensePeakMemory() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  std::vector<SyncCoverNodeId> sources;
+  std::vector<SyncCoverNodeId> targets;
+  constexpr std::size_t demandCount = 65;
+  sources.reserve(demandCount);
+  targets.reserve(demandCount);
+  for (std::size_t index = 0; index < demandCount; ++index) {
+    const SyncCoverNodeId source =
+        takeIndex(graph.addNode(1, 1, 0, index * 2, {}, {2}), passed,
+                  "add dense-bound source");
+    const SyncCoverNodeId target =
+        takeIndex(graph.addNode(2, 1, 0, index * 2 + 1), passed,
+                  "add dense-bound target");
+    sources.push_back(source);
+    targets.push_back(target);
+    passed &= check(graph.addEdge(supply(source, target)),
+                    "add dense-bound fixed completion") &&
+              check(graph.addDemand(demand(source, target)),
+                    "add dense-bound demand");
+  }
+  passed &= check(graph.freezeStructure(), "freeze dense-bound graph");
+  if (!passed) {
+    return false;
+  }
+
+  const std::size_t activeWords = demandCount / 64 + 1;
+  const std::size_t queryWorkspaceWords =
+      singleCoverageWorkspaceWords(SyncCoverExpandedProgram(graph));
+  // Two proposals can retain four cache rows and two pending pattern rows.
+  // Incremental freeze also keeps and copies the prefix singleton row, may
+  // populate its empty construction cache, retains three baseline rows, and
+  // materializes four singleton output rows plus one graph-sized query result.
+  const std::size_t exactDensePeakWords =
+      queryWorkspaceWords + 17 * activeWords;
+
+  const auto makePrecise = [&](std::size_t maximumWords) {
+    CanonicalSyncPatternProblem::Limits limits;
+    limits.maximumSingletonCoverageWords = maximumWords;
+    auto problem = std::make_unique<CanonicalSyncPatternProblem>(
+        graph, allDemands(graph), limits);
+    const bool initialized =
+        problem->addEventDomain({0, 1, 2, 8, {}}) &&
+        problem->internMechanism(event(0, 1, 2, sources[0], targets[0])) &&
+        problem->freeze();
+    if (!initialized) {
+      return std::unique_ptr<CanonicalSyncPatternProblem>{};
+    }
+    return problem;
+  };
+  const auto makeBatch = [&] {
+    std::vector<CanonicalSyncRepairFrontierBatchEntry> batch;
+    batch.push_back({targetedBarrier(2, targets[0], targets[1]),
+                     event(0, 1, 2, sources[0], targets[1])});
+    batch.push_back({targetedBarrier(2, targets[2], targets[3]),
+                     event(0, 1, 2, sources[2], targets[3])});
+    return batch;
+  };
+
+  std::unique_ptr<CanonicalSyncPatternProblem> exactPrecise =
+      makePrecise(exactDensePeakWords);
+  if (!check(exactPrecise, "build exact-memory precise catalog")) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget exactWork;
+  std::unique_ptr<CanonicalSyncPatternProblem> exact =
+      exactPrecise->cloneMutableRepairPrefix(&exactWork);
+  if (!check(exact, "clone exact-memory repair catalog")) {
+    return false;
+  }
+  const CanonicalSyncProblemResult exactBatch =
+      exact->addRepairFrontierBatch(makeBatch());
+  passed &= check(exactBatch && exact->freeze(),
+                  "admit and freeze at the exact dense-word peak");
+  if (passed) {
+    const CanonicalSyncSelection selection =
+        selectCanonicalSyncPatterns(*exact);
+    passed &=
+        check(selection && verifyCanonicalSyncSelection(*exact, selection),
+              "verify the exact-memory frontier plan");
+  }
+
+  std::unique_ptr<CanonicalSyncPatternProblem> limitedPrecise =
+      makePrecise(exactDensePeakWords - 1);
+  if (!check(limitedPrecise, "build one-word-less precise catalog")) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget limitedWork;
+  std::unique_ptr<CanonicalSyncPatternProblem> limited =
+      limitedPrecise->cloneMutableRepairPrefix(&limitedWork);
+  if (!check(limited, "clone one-word-less repair catalog")) {
+    return false;
+  }
+  const std::size_t prefixMechanisms = limited->getMechanisms().size();
+  const CanonicalSyncProblemResult rejected =
+      limited->addRepairFrontierBatch(makeBatch());
+  passed &= check(rejected.error == CanonicalSyncProblemError::LimitExceeded &&
+                      !limitedWork.exhausted &&
+                      limited->getMechanisms().size() == prefixMechanisms &&
+                      !limited->wasPatternGenerationTruncated(),
+                  "reject the dense frontier one word before mutation") &&
+            check(limited->freeze(),
+                  "freeze the owner catalog after dense-limit rejection");
+  if (!passed) {
+    return false;
+  }
+  const CanonicalSyncSelection ownerSelection =
+      selectCanonicalSyncPatterns(*limited);
+  passed &= check(
+      ownerSelection && verifyCanonicalSyncSelection(*limited, ownerSelection),
+      "retain a selectable verified owner plan after dense rejection");
+
+  // Four resident prefix rows and their deep freeze copies coexist with one
+  // owner-only mutable cache/output pair. No frontier proposal is needed to
+  // reach this incremental path.
+  const std::size_t ownerOnlyDensePeakWords =
+      queryWorkspaceWords + 14 * activeWords;
+  const auto makeOwnerPrecise = [&](std::size_t maximumWords) {
+    CanonicalSyncPatternProblem::Limits limits;
+    limits.maximumSingletonCoverageWords = maximumWords;
+    auto problem = std::make_unique<CanonicalSyncPatternProblem>(
+        graph, allDemands(graph), limits);
+    bool initialized =
+        static_cast<bool>(problem->addEventDomain({0, 1, 2, 8, {}}));
+    for (std::size_t index = 0; initialized && index < 4; ++index) {
+      initialized = static_cast<bool>(problem->internMechanism(
+          event(0, 1, 2, sources[index], targets[index])));
+    }
+    initialized = initialized && static_cast<bool>(problem->freeze());
+    if (!initialized) {
+      return std::unique_ptr<CanonicalSyncPatternProblem>{};
+    }
+    return problem;
+  };
+  const auto addOwner = [&](CanonicalSyncPatternProblem &problem) {
+    return problem.internMechanism(
+        event(0, 1, 2, sources[4], targets[4]),
+        CanonicalSyncMechanismOrigin::RepairFrontierEvent);
+  };
+
+  std::unique_ptr<CanonicalSyncPatternProblem> ownerPrecise =
+      makeOwnerPrecise(ownerOnlyDensePeakWords);
+  if (!check(ownerPrecise, "build owner-only exact prefix")) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget ownerWork;
+  std::unique_ptr<CanonicalSyncPatternProblem> ownerExact =
+      ownerPrecise->cloneMutableRepairPrefix(&ownerWork);
+  passed &= check(ownerExact && addOwner(*ownerExact),
+                  "add owner-only mutable mechanism") &&
+            check(ownerExact->addRepairFrontierBatch({}),
+                  "admit an empty frontier at the exact owner-only bound") &&
+            check(ownerExact->freeze(),
+                  "freeze owner-only catalog at the exact dense bound");
+  if (passed) {
+    const CanonicalSyncSelection selection =
+        selectCanonicalSyncPatterns(*ownerExact);
+    passed &=
+        check(selection && verifyCanonicalSyncSelection(*ownerExact, selection),
+              "verify the exact owner-only catalog");
+  }
+
+  std::unique_ptr<CanonicalSyncPatternProblem> ownerLimitedPrecise =
+      makeOwnerPrecise(ownerOnlyDensePeakWords - 1);
+  if (!check(ownerLimitedPrecise, "build owner-only one-word-less prefix")) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget ownerLimitedWork;
+  std::unique_ptr<CanonicalSyncPatternProblem> ownerLimited =
+      ownerLimitedPrecise->cloneMutableRepairPrefix(&ownerLimitedWork);
+  passed &= check(ownerLimited && addOwner(*ownerLimited),
+                  "add one-word-less owner mechanism");
+  if (!passed) {
+    return false;
+  }
+  const std::size_t ownerMechanisms = ownerLimited->getMechanisms().size();
+  const CanonicalSyncProblemResult emptyFrontier =
+      ownerLimited->addRepairFrontierBatch({});
+  return check(
+      emptyFrontier.error == CanonicalSyncProblemError::LimitExceeded &&
+          !ownerLimitedWork.exhausted &&
+          ownerLimited->getMechanisms().size() == ownerMechanisms &&
+          ownerLimited->freeze().error ==
+              CanonicalSyncProblemError::LimitExceeded &&
+          !ownerLimited->isFrozen(),
+      "reject empty and disabled frontiers one word before owner freeze");
+}
+
+bool testIncrementalFreezeBoundsRetainedPendingRows() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2, 3}), passed,
+                "add pending-bound source");
+  const SyncCoverNodeId middle = takeIndex(graph.addNode(2, 1, 0, 1, {}, {3}),
+                                           passed, "add pending-bound middle");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(3, 1, 0, 2), passed, "add pending-bound target");
+  passed &= check(graph.addDemand(demand(source, target)),
+                  "add pending-bound demand") &&
+            check(graph.freezeStructure(), "freeze pending-bound graph");
+  if (!passed) {
+    return false;
+  }
+  const std::size_t exactDensePeakWords =
+      singleCoverageWorkspaceWords(SyncCoverExpandedProgram(graph)) + 11;
+  const auto makePrecise = [&](std::size_t maximumWords) {
+    CanonicalSyncPatternProblem::Limits limits;
+    limits.maximumSingletonCoverageWords = maximumWords;
+    auto problem = std::make_unique<CanonicalSyncPatternProblem>(
+        graph, allDemands(graph), limits);
+    const bool initialized =
+        problem->addEventDomain({0, 1, 2, 8, {}}) &&
+        problem->addEventDomain({1, 2, 3, 8, {}}) &&
+        problem->addEventDomain({2, 1, 3, 8, {}}) &&
+        problem->internMechanism(event(2, 1, 3, source, target)) &&
+        problem->freeze();
+    if (!initialized) {
+      return std::unique_ptr<CanonicalSyncPatternProblem>{};
+    }
+    return problem;
+  };
+  const auto addPendingPair = [&](CanonicalSyncPatternProblem &problem) {
+    const CanonicalSyncProblemResult first =
+        problem.internMechanism(event(0, 1, 2, source, middle));
+    const CanonicalSyncProblemResult second =
+        problem.internMechanism(event(1, 2, 3, middle, target));
+    return first && first.index && second && second.index &&
+           problem.addPattern({CanonicalSyncPatternKind::RepairFrontier,
+                               {*first.index, *second.index}});
+  };
+
+  std::unique_ptr<CanonicalSyncPatternProblem> precise =
+      makePrecise(exactDensePeakWords);
+  if (!check(precise, "build pending-row exact prefix")) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget exactWork;
+  std::unique_ptr<CanonicalSyncPatternProblem> exact =
+      precise->cloneMutableRepairPrefix(&exactWork);
+  passed &=
+      check(exact && addPendingPair(*exact),
+            "add retained pending repair pattern") &&
+      check(exact->freeze(), "freeze retained pending row at its exact bound");
+  if (passed) {
+    const auto retained = std::find_if(
+        exact->getPatterns().begin(), exact->getPatterns().end(),
+        [](const CanonicalSyncPattern &pattern) {
+          return pattern.kind == CanonicalSyncPatternKind::RepairFrontier &&
+                 pattern.extraCoverageCount == 1;
+        });
+    const CanonicalSyncSelection selection =
+        selectCanonicalSyncPatterns(*exact);
+    passed &= check(retained != exact->getPatterns().end() && selection &&
+                        verifyCanonicalSyncSelection(*exact, selection),
+                    "retain and verify the pending dense row");
+  }
+
+  std::unique_ptr<CanonicalSyncPatternProblem> limitedPrecise =
+      makePrecise(exactDensePeakWords - 1);
+  if (!check(limitedPrecise, "build pending-row one-word-less prefix")) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget limitedWork;
+  std::unique_ptr<CanonicalSyncPatternProblem> limited =
+      limitedPrecise->cloneMutableRepairPrefix(&limitedWork);
+  passed &= check(limited && addPendingPair(*limited),
+                  "add one-word-less retained pending pattern");
+  return passed &&
+         check(limited->freeze().error ==
+                       CanonicalSyncProblemError::LimitExceeded &&
+                   !limitedWork.exhausted && !limited->isFrozen(),
+               "count the retained pending dense row before freeze allocation");
+}
+
+bool testRepairPrefixCloneAccountsGuardedDescriptors() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverControlId control =
+      takeIndex(graph.addControl(2), passed, "add guarded clone control");
+  SyncCoverGuard guard;
+  guard.literals.push_back({control, 0});
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0, guard, {2}), passed,
+                "add guarded clone source");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(2, 1, 0, 1, guard),
+                                           passed, "add guarded clone target");
+  SyncCoverDemand guardedDemand = demand(source, target);
+  guardedDemand.sourceGuard = guard;
+  guardedDemand.targetGuard = guard;
+  passed &= check(graph.addDemand(std::move(guardedDemand)),
+                  "add guarded clone demand") &&
+            check(graph.freezeStructure(), "freeze guarded clone graph");
+
+  CanonicalSyncPatternProblem precise(graph, allDemands(graph));
+  passed &= check(precise.addEventDomain({0, 1, 2, 8, {}}),
+                  "add guarded clone event domain");
+  CanonicalSyncMechanismDescriptor descriptor = event(0, 1, 2, source, target);
+  descriptor.supplies.front().edge.sourceGuard = guard;
+  descriptor.supplies.front().edge.targetGuard = guard;
+  const CanonicalSyncMechanismId mechanism =
+      takeIndex(precise.internMechanism(std::move(descriptor)), passed,
+                "add guarded clone mechanism");
+  passed &= check(precise.freeze(), "freeze guarded clone prefix");
+  if (!passed) {
+    return false;
+  }
+
+  SyncCoverCoverageWorkBudget measuredWork;
+  std::unique_ptr<CanonicalSyncPatternProblem> measured =
+      precise.cloneMutableRepairPrefix(&measuredWork);
+  const std::size_t cloneWork = measuredWork.workUnits;
+  if (!check(measured && cloneWork != 0 &&
+                 measured->getMechanismSignature(mechanism) ==
+                     precise.getMechanismSignature(mechanism),
+             "measure guarded repair-prefix clone work")) {
+    return false;
+  }
+
+  SyncCoverCoverageWorkBudget exactWork(cloneWork);
+  std::unique_ptr<CanonicalSyncPatternProblem> exact =
+      precise.cloneMutableRepairPrefix(&exactWork);
+  passed &= check(exact && exactWork.workUnits == cloneWork,
+                  "clone guarded repair prefix at its exact work bound");
+
+  SyncCoverCoverageWorkBudget oneLessWork(cloneWork - 1);
+  std::unique_ptr<CanonicalSyncPatternProblem> rejected =
+      precise.cloneMutableRepairPrefix(&oneLessWork);
+  return passed &&
+         check(!rejected && oneLessWork.exhausted,
+               "reject guarded repair-prefix clone one below its work bound");
+}
+
 bool testHierarchicalProtocolLifetime() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -3794,6 +4566,13 @@ int main() {
       testAllocatorWidthsReuseAndConflicts() &&
       testVerifiedProtocolTrustBoundary() &&
       testProtocolVerifierStorageSharesOpaqueCapture() &&
+      testRepairFrontierBatchRollsBackPartialCommit() &&
+      testRepairFrontierBatchRollsBackFreshCaches() &&
+      testRepairFrontierBatchWorkAndProposalBounds() &&
+      testRepairFrontierBatchRejectsInvalidRecipes() &&
+      testRepairFrontierBatchBoundsDensePeakMemory() &&
+      testIncrementalFreezeBoundsRetainedPendingRows() &&
+      testRepairPrefixCloneAccountsGuardedDescriptors() &&
       testRepairProtocolAdmissionUsesSharedBudget() &&
       testHierarchicalProtocolLifetime() &&
       testFreezeRetryCommitsFreshDerivedState() &&
