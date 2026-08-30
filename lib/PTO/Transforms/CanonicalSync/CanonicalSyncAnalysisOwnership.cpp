@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -145,15 +146,10 @@ public:
       : graph_(graph), nodeBindings_(nodeBindings),
         scopeBindings_(scopeBindings), controlBindings_(controlBindings),
         options_(options), capabilities_(capabilities),
-        accessesByNode_(graph.getNodes().size()) {
-    for (const SyncCoverStorageAccess &access : graph_.getStorageAccesses()) {
-      if (access.node < accessesByNode_.size()) {
-        accessesByNode_[access.node].push_back(&access);
-      }
-    }
-  }
+        accessesByNode_(graph.getNodes().size()),
+        accessesByDomain_(graph.getStorageDomains().size()) {}
 
-  void run() {
+  bool run() {
     const OwnershipSpec l0{SyncCoverBasicOwnershipKind::L0Operand,
                            static_cast<std::uint32_t>(PipelineType::PIPE_MTE1),
                            static_cast<std::uint32_t>(PipelineType::PIPE_M),
@@ -181,7 +177,15 @@ public:
     const std::size_t passCost =
         graph_.getNodes().size() + graph_.getStorageAccesses().size();
     if (!consume(passCost)) {
-      return;
+      return true;
+    }
+    for (const SyncCoverStorageAccess &access : graph_.getStorageAccesses()) {
+      if (access.node < accessesByNode_.size()) {
+        accessesByNode_[access.node].push_back(&access);
+      }
+      if (access.domain < accessesByDomain_.size()) {
+        accessesByDomain_[access.domain].push_back(access.id);
+      }
     }
     for (const SyncCoverScope &scope : graph_.getScopes()) {
       if (reachedCertificateLimit()) {
@@ -192,24 +196,31 @@ public:
         continue;
       }
       if (capabilities_.mte1L0ReadySetCompletesPrefix &&
-          capabilities_.mL0AlternativeJoinSetCompletes && consume(passCost)) {
+          capabilities_.mL0AlternativeJoinSetCompletes &&
+          consumeRecognizer(passCost)) {
         add(recognizeL0(scope.id, l0));
       }
-      if (capabilities_.mte1ScopeExitSetCompletesPrefix && consume(passCost)) {
+      if (capabilities_.mte1ScopeExitSetCompletesPrefix &&
+          consumeRecognizer(passCost)) {
         add(recognizeHierarchical(scope.id, l1));
       }
-      if (capabilities_.mte1ScopeExitSetCompletesPrefix && consume(passCost)) {
+      if (capabilities_.mte1ScopeExitSetCompletesPrefix &&
+          consumeRecognizer(passCost)) {
         for (SyncCoverBasicOwnershipCertificate certificate :
              recognizeParity(scope.id, l1)) {
           add(std::move(certificate));
         }
       }
       if (capabilities_.mToFixAccumulatorBoundaryCompletes &&
-          consume(passCost)) {
+          consumeRecognizer(passCost)) {
         add(recognizeHierarchical(scope.id, accumulator));
       }
     }
+    if (!commitCertificates()) {
+      return false;
+    }
     statistics_.inspections = inspections_;
+    return true;
   }
 
   const CanonicalSyncOwnershipDiscoveryStatistics &statistics() const {
@@ -231,8 +242,165 @@ private:
     return true;
   }
 
+  bool consumeRecognizer(std::size_t inputSize) {
+    if (inputSize != 0 &&
+        inputSize > std::numeric_limits<std::size_t>::max() / inputSize) {
+      return exhaustBudget();
+    }
+    const std::size_t square = inputSize * inputSize;
+    if (square > std::numeric_limits<std::size_t>::max() / 2) {
+      return exhaustBudget();
+    }
+    // Every recognizer is composed of linear scans, bounded sorting, and at
+    // most two pairwise group/slot comparisons over the same input census.
+    // Reserving twice the squared census is a conservative upper bound and is
+    // charged before any recognizer-owned allocation or sort begins.
+    return consume(square * 2);
+  }
+
+  bool exhaustBudget() {
+    inspections_ = options_.maximumBasicOwnershipInspections;
+    statistics_.inspections = inspections_;
+    statistics_.truncated = true;
+    return false;
+  }
+
+  bool addWouldExceed(std::size_t current, std::size_t added,
+                      std::size_t maximum) const {
+    return current > maximum || added > maximum - current;
+  }
+
+  struct CertificateFootprint {
+    std::size_t slots = 0;
+    std::size_t paths = 0;
+    std::size_t uses = 0;
+    std::size_t nodeReferences = 0;
+    std::size_t accessIncidences = 0;
+  };
+
+  std::optional<CertificateFootprint>
+  getFootprint(const SyncCoverBasicOwnershipCertificate &certificate) const {
+    CertificateFootprint footprint;
+    footprint.paths = certificate.paths.size();
+    footprint.nodeReferences = certificate.initialProducers.size();
+    const auto addChecked = [](std::size_t &value, std::size_t amount) {
+      if (amount > std::numeric_limits<std::size_t>::max() - value) {
+        return false;
+      }
+      value += amount;
+      return true;
+    };
+    for (const SyncCoverBasicOwnershipLane &lane : certificate.lanes) {
+      if (!addChecked(footprint.slots, lane.slots.size())) {
+        return std::nullopt;
+      }
+      for (const SyncCoverBasicOwnershipSlot &slot : lane.slots) {
+        if (!addChecked(footprint.accessIncidences, slot.accesses.size())) {
+          return std::nullopt;
+        }
+      }
+    }
+    for (const SyncCoverBasicOwnershipPath &path : certificate.paths) {
+      if (!addChecked(footprint.uses, path.uses.size())) {
+        return std::nullopt;
+      }
+      for (const SyncCoverBasicOwnershipUse &use : path.uses) {
+        if (!addChecked(footprint.nodeReferences, use.producers.size()) ||
+            !addChecked(footprint.nodeReferences, use.consumers.size())) {
+          return std::nullopt;
+        }
+      }
+    }
+    return footprint;
+  }
+
+  bool footprintFits(const CertificateFootprint &footprint) {
+    const bool exceeded =
+        addWouldExceed(statistics_.slots, footprint.slots,
+                       options_.maximumBasicOwnershipSlots) ||
+        addWouldExceed(statistics_.paths, footprint.paths,
+                       options_.maximumBasicOwnershipPaths) ||
+        addWouldExceed(statistics_.uses, footprint.uses,
+                       options_.maximumBasicOwnershipUses) ||
+        addWouldExceed(statistics_.nodeReferences, footprint.nodeReferences,
+                       options_.maximumBasicOwnershipNodeReferences) ||
+        addWouldExceed(statistics_.accessIncidences, footprint.accessIncidences,
+                       options_.maximumBasicOwnershipAccessIncidences);
+    if (exceeded) {
+      statistics_.truncated = true;
+    }
+    return !exceeded;
+  }
+
+  void recordFootprint(const CertificateFootprint &footprint) {
+    statistics_.slots += footprint.slots;
+    statistics_.paths += footprint.paths;
+    statistics_.uses += footprint.uses;
+    statistics_.nodeReferences += footprint.nodeReferences;
+    statistics_.accessIncidences += footprint.accessIncidences;
+  }
+
+  void discardPendingCertificates() {
+    pendingCertificates_.clear();
+    statistics_.certificatesByKind.fill(0);
+    statistics_.slots = 0;
+    statistics_.paths = 0;
+    statistics_.uses = 0;
+    statistics_.nodeReferences = 0;
+    statistics_.accessIncidences = 0;
+  }
+
+  bool commitCertificates() {
+    if (pendingCertificates_.empty()) {
+      return true;
+    }
+    std::size_t structures = pendingCertificates_.size();
+    const auto addChecked = [&](std::size_t amount) {
+      if (amount > std::numeric_limits<std::size_t>::max() - structures) {
+        return false;
+      }
+      structures += amount;
+      return true;
+    };
+    if (!addChecked(statistics_.slots) || !addChecked(statistics_.paths) ||
+        !addChecked(statistics_.uses) ||
+        !addChecked(statistics_.nodeReferences) ||
+        !addChecked(statistics_.accessIncidences)) {
+      discardPendingCertificates();
+      return exhaustBudget();
+    }
+    const auto multiplyChecked = [](std::size_t left, std::size_t right,
+                                    std::size_t &result) {
+      if (left != 0 && right > std::numeric_limits<std::size_t>::max() / left) {
+        return false;
+      }
+      result = left * right;
+      return true;
+    };
+    std::size_t perAccessWork = 0;
+    std::size_t crossCertificateWork = 0;
+    if (!multiplyChecked(structures, graph_.getStorageAccesses().size(),
+                         perAccessWork) ||
+        !multiplyChecked(structures, structures, crossCertificateWork) ||
+        crossCertificateWork >
+            std::numeric_limits<std::size_t>::max() - perAccessWork) {
+      discardPendingCertificates();
+      return exhaustBudget();
+    }
+    const std::size_t validationWork = perAccessWork + crossCertificateWork;
+    if (!consume(validationWork)) {
+      discardPendingCertificates();
+      return true;
+    }
+    const SyncCoverGraphResult added =
+        graph_.addBasicOwnershipCertificates(std::move(pendingCertificates_));
+    pendingCertificates_.clear();
+    return static_cast<bool>(added);
+  }
+
   bool reachedCertificateLimit() const {
-    return graph_.getBasicOwnershipCertificates().size() >=
+    return graph_.getBasicOwnershipCertificates().size() +
+               pendingCertificates_.size() >=
            options_.maximumBasicOwnershipCertificates;
   }
 
@@ -244,10 +412,23 @@ private:
       statistics_.truncated = true;
       return;
     }
-    populateSlotAccesses(*certificate);
+    std::optional<CertificateFootprint> footprint = getFootprint(*certificate);
+    if (!footprint || !footprintFits(*footprint)) {
+      statistics_.truncated = true;
+      return;
+    }
+    if (!populateSlotAccesses(*certificate)) {
+      return;
+    }
+    footprint = getFootprint(*certificate);
+    if (!footprint || !footprintFits(*footprint)) {
+      statistics_.truncated = true;
+      return;
+    }
     const std::size_t kind = static_cast<std::size_t>(certificate->kind);
-    if (graph_.addBasicOwnershipCertificate(std::move(*certificate)) &&
-        kind < statistics_.certificatesByKind.size()) {
+    recordFootprint(*footprint);
+    pendingCertificates_.push_back(std::move(*certificate));
+    if (kind < statistics_.certificatesByKind.size()) {
       ++statistics_.certificatesByKind[kind];
     }
   }
@@ -257,24 +438,43 @@ private:
         std::move(certificate)));
   }
 
-  void
-  populateSlotAccesses(SyncCoverBasicOwnershipCertificate &certificate) const {
+  bool populateSlotAccesses(SyncCoverBasicOwnershipCertificate &certificate) {
     for (SyncCoverBasicOwnershipLane &lane : certificate.lanes) {
       for (SyncCoverBasicOwnershipSlot &slot : lane.slots) {
-        for (const SyncCoverStorageAccess &access :
-             graph_.getStorageAccesses()) {
+        if (slot.domain >= accessesByDomain_.size()) {
+          return false;
+        }
+        const std::vector<SyncCoverStorageAccessId> &matching =
+            accessesByDomain_[slot.domain];
+        const std::size_t scopeWalk = scopeBindings_.size() + 1;
+        if (matching.size() >
+                std::numeric_limits<std::size_t>::max() / scopeWalk ||
+            !consume(matching.size() * scopeWalk)) {
+          return false;
+        }
+        for (SyncCoverStorageAccessId accessId : matching) {
+          const SyncCoverStorageAccess &access =
+              graph_.getStorageAccesses()[accessId];
           const bool relevant =
               graph_.scopeContains(certificate.loopScope,
                                    graph_.getNodes()[access.node].scope) ||
               llvm::is_contained(certificate.initialProducers, access.node);
-          if (relevant && access.domain == slot.domain &&
-              access.extent.begin == slot.extent.begin &&
-              access.extent.end == slot.extent.end) {
-            slot.accesses.push_back(access.id);
+          if (!relevant || !intervalsOverlap(access.extent, slot.extent)) {
+            continue;
           }
+          if (!access.exactPhysical ||
+              access.extent.begin != slot.extent.begin ||
+              access.extent.end != slot.extent.end) {
+            return false;
+          }
+          slot.accesses.push_back(access.id);
+        }
+        if (slot.accesses.empty()) {
+          return false;
         }
       }
     }
+    return true;
   }
 
   std::optional<SyncCoverScopeId> findScope(Region *region) const {
@@ -1100,6 +1300,8 @@ private:
   const CanonicalSyncAnalysisOptions &options_;
   const CanonicalSyncTargetCapabilities &capabilities_;
   StorageAccessIndex accessesByNode_;
+  std::vector<std::vector<SyncCoverStorageAccessId>> accessesByDomain_;
+  std::vector<SyncCoverBasicOwnershipCertificate> pendingCertificates_;
   std::size_t inspections_ = 0;
   CanonicalSyncOwnershipDiscoveryStatistics statistics_;
 };
@@ -1110,7 +1312,10 @@ LogicalResult ProgramBuilder::discoverBasicOwnershipCertificates(
     const CanonicalSyncTargetCapabilities &capabilities) {
   BasicOwnershipDiscovery discovery(graph_, nodeBindings_, scopeBindings_,
                                     controlBindings_, options_, capabilities);
-  discovery.run();
+  if (!discovery.run()) {
+    return function_.emitError(
+        "canonical sync ownership certificate validation failed");
+  }
   ownershipDiscoveryStatistics_ = discovery.statistics();
   return success();
 }

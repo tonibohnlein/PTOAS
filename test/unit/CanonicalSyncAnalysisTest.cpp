@@ -3103,6 +3103,28 @@ bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
     return false;
   }
 
+  CanonicalSyncAnalysisOptions aggregateBoundedAnalysis;
+  aggregateBoundedAnalysis.maximumBasicOwnershipNodeReferences = 1;
+  FailureOr<CanonicalSyncProgram> aggregateBoundedProgram =
+      buildCanonicalSyncProgram(function, aggregateBoundedAnalysis);
+  if (!check(succeeded(aggregateBoundedProgram),
+             "truncate aggregate ownership storage without rejecting the "
+             "graph")) {
+    return false;
+  }
+  const CanonicalSyncOwnershipDiscoveryStatistics &aggregateStatistics =
+      aggregateBoundedProgram->getOwnershipDiscoveryStatistics();
+  if (!check(aggregateBoundedProgram->getGraph()
+                 .getBasicOwnershipCertificates()
+                 .empty(),
+             "omit ownership certificates beyond the aggregate bound") ||
+      !check(aggregateStatistics.truncated,
+             "report aggregate ownership-discovery truncation") ||
+      !check(aggregateStatistics.nodeReferences == 0,
+             "retain no partial ownership node-reference census")) {
+    return false;
+  }
+
   CanonicalSyncBuildOptions options;
   options.patterns.enabledMechanismFamilies = canonicalSyncMechanismFamilyBit(
       CanonicalSyncMechanismFamily::BasicOwnership);

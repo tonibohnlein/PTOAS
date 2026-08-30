@@ -50,6 +50,11 @@ struct CanonicalSyncAnalysisOptions {
   /// catalog remains available.
   std::size_t maximumBasicOwnershipInspections = 1U << 20;
   std::size_t maximumBasicOwnershipCertificates = 1U << 10;
+  std::size_t maximumBasicOwnershipSlots = 1U << 14;
+  std::size_t maximumBasicOwnershipPaths = 1U << 14;
+  std::size_t maximumBasicOwnershipUses = 1U << 16;
+  std::size_t maximumBasicOwnershipNodeReferences = 1U << 20;
+  std::size_t maximumBasicOwnershipAccessIncidences = 1U << 20;
 };
 
 constexpr std::size_t kCanonicalSyncBasicOwnershipKindCount = 3;
@@ -58,6 +63,11 @@ struct CanonicalSyncOwnershipDiscoveryStatistics {
   std::size_t inspections = 0;
   std::array<std::size_t, kCanonicalSyncBasicOwnershipKindCount>
       certificatesByKind{};
+  std::size_t slots = 0;
+  std::size_t paths = 0;
+  std::size_t uses = 0;
+  std::size_t nodeReferences = 0;
+  std::size_t accessIncidences = 0;
   bool truncated = false;
 };
 

@@ -137,52 +137,61 @@ SyncCoverGraphResult SyncCoverGraph::addTargetCompletionCertificate(
 
 SyncCoverGraphResult SyncCoverGraph::addBasicOwnershipCertificate(
     SyncCoverBasicOwnershipCertificate certificate) {
+  std::vector<SyncCoverBasicOwnershipCertificate> certificates;
+  certificates.push_back(std::move(certificate));
+  return addBasicOwnershipCertificates(std::move(certificates));
+}
+
+SyncCoverGraphResult SyncCoverGraph::addBasicOwnershipCertificates(
+    std::vector<SyncCoverBasicOwnershipCertificate> certificates) {
   if (!canMutateStructure()) {
     return {SyncCoverGraphError::StructureFrozen,
             basicOwnershipCertificates_.size()};
   }
-  const SyncCoverBasicOwnershipCertificateId id =
+  const SyncCoverBasicOwnershipCertificateId firstId =
       basicOwnershipCertificates_.size();
-  certificate.id = id;
-  for (SyncCoverBasicOwnershipLane &lane : certificate.lanes) {
-    for (SyncCoverBasicOwnershipSlot &slot : lane.slots) {
-      std::sort(slot.accesses.begin(), slot.accesses.end());
-      slot.accesses.erase(
-          std::unique(slot.accesses.begin(), slot.accesses.end()),
-          slot.accesses.end());
+  for (SyncCoverBasicOwnershipCertificate &certificate : certificates) {
+    certificate.id = basicOwnershipCertificates_.size();
+    for (SyncCoverBasicOwnershipLane &lane : certificate.lanes) {
+      for (SyncCoverBasicOwnershipSlot &slot : lane.slots) {
+        std::sort(slot.accesses.begin(), slot.accesses.end());
+        slot.accesses.erase(
+            std::unique(slot.accesses.begin(), slot.accesses.end()),
+            slot.accesses.end());
+      }
     }
-  }
-  for (SyncCoverBasicOwnershipPath &path : certificate.paths) {
-    for (SyncCoverBasicOwnershipUse &use : path.uses) {
-      std::sort(use.producers.begin(), use.producers.end());
-      use.producers.erase(
-          std::unique(use.producers.begin(), use.producers.end()),
-          use.producers.end());
-      std::sort(use.consumers.begin(), use.consumers.end());
-      use.consumers.erase(
-          std::unique(use.consumers.begin(), use.consumers.end()),
-          use.consumers.end());
+    for (SyncCoverBasicOwnershipPath &path : certificate.paths) {
+      for (SyncCoverBasicOwnershipUse &use : path.uses) {
+        std::sort(use.producers.begin(), use.producers.end());
+        use.producers.erase(
+            std::unique(use.producers.begin(), use.producers.end()),
+            use.producers.end());
+        std::sort(use.consumers.begin(), use.consumers.end());
+        use.consumers.erase(
+            std::unique(use.consumers.begin(), use.consumers.end()),
+            use.consumers.end());
+      }
     }
+    std::sort(certificate.initialProducers.begin(),
+              certificate.initialProducers.end());
+    certificate.initialProducers.erase(
+        std::unique(certificate.initialProducers.begin(),
+                    certificate.initialProducers.end()),
+        certificate.initialProducers.end());
+    std::sort(certificate.initiallyFreeLanes.begin(),
+              certificate.initiallyFreeLanes.end());
+    certificate.initiallyFreeLanes.erase(
+        std::unique(certificate.initiallyFreeLanes.begin(),
+                    certificate.initiallyFreeLanes.end()),
+        certificate.initiallyFreeLanes.end());
+    basicOwnershipCertificates_.push_back(std::move(certificate));
   }
-  std::sort(certificate.initialProducers.begin(),
-            certificate.initialProducers.end());
-  certificate.initialProducers.erase(
-      std::unique(certificate.initialProducers.begin(),
-                  certificate.initialProducers.end()),
-      certificate.initialProducers.end());
-  std::sort(certificate.initiallyFreeLanes.begin(),
-            certificate.initiallyFreeLanes.end());
-  certificate.initiallyFreeLanes.erase(
-      std::unique(certificate.initiallyFreeLanes.begin(),
-                  certificate.initiallyFreeLanes.end()),
-      certificate.initiallyFreeLanes.end());
-  basicOwnershipCertificates_.push_back(std::move(certificate));
   const SyncCoverGraphResult validated = validateBasicOwnershipCertificates();
   if (!validated) {
-    basicOwnershipCertificates_.pop_back();
-    return {validated.error, id};
+    basicOwnershipCertificates_.resize(firstId);
+    return {validated.error, firstId};
   }
-  return {SyncCoverGraphError::None, id};
+  return {SyncCoverGraphError::None, firstId};
 }
 
 bool SyncCoverGraph::hasTargetCompletionCertificate(

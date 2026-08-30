@@ -448,6 +448,8 @@ public:
       std::vector<SyncCoverDemandId> demands);
   SyncCoverGraphResult
   addBasicOwnershipCertificate(SyncCoverBasicOwnershipCertificate certificate);
+  SyncCoverGraphResult addBasicOwnershipCertificates(
+      std::vector<SyncCoverBasicOwnershipCertificate> certificates);
   SyncCoverGraphResult freezeStructure();
 
   const std::vector<SyncCoverNode> &getNodes() const { return nodes_; }
