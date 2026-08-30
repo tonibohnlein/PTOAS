@@ -12,6 +12,7 @@
 #define PTO_TRANSFORMS_CANONICALSYNC_CANONICALSYNCANALYSIS_H
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverGraph.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverStorageLifecycle.h"
 
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -47,6 +48,11 @@ struct CanonicalSyncAnalysisOptions {
   /// these off when no enabled mechanism family can consume their results.
   bool discoverTargetCompletionCertificates = true;
   bool discoverBasicOwnershipCertificates = true;
+  /// Build the target-neutral exact-storage lifecycle index. This is opt-in
+  /// until generic cut synthesis consumes it; truncation never invalidates the
+  /// direct correctness catalog.
+  bool discoverStorageLifecycleComponents = false;
+  SyncCoverStorageLifecycleLimits storageLifecycleLimits;
   std::size_t maximumNodes = 1U << 16;
   std::size_t maximumScopes = 1U << 14;
   std::size_t maximumControls = 1U << 14;
@@ -216,6 +222,7 @@ public:
       std::vector<CanonicalSyncScopeBinding> scopeBindings,
       std::vector<CanonicalSyncControlBinding> controlBindings,
       std::vector<AddressSpace> storageSpaces,
+      std::optional<SyncCoverStorageLifecycleIndex> storageLifecycleIndex,
       CanonicalSyncTargetCapabilities targetCapabilities,
       CanonicalSyncOwnershipDiscoveryStatistics ownershipDiscoveryStatistics,
       CanonicalSyncEventReservations eventReservations)
@@ -224,6 +231,7 @@ public:
         scopeBindings_(std::move(scopeBindings)),
         controlBindings_(std::move(controlBindings)),
         storageSpaces_(std::move(storageSpaces)),
+        storageLifecycleIndex_(std::move(storageLifecycleIndex)),
         targetCapabilities_(std::move(targetCapabilities)),
         ownershipDiscoveryStatistics_(ownershipDiscoveryStatistics),
         eventReservations_(std::move(eventReservations)) {}
@@ -243,6 +251,10 @@ public:
   const std::vector<AddressSpace> &getStorageSpaces() const {
     return storageSpaces_;
   }
+  const std::optional<SyncCoverStorageLifecycleIndex> &
+  getStorageLifecycleIndex() const {
+    return storageLifecycleIndex_;
+  }
   const CanonicalSyncTargetCapabilities &getTargetCapabilities() const {
     return targetCapabilities_;
   }
@@ -261,6 +273,7 @@ private:
   std::vector<CanonicalSyncScopeBinding> scopeBindings_;
   std::vector<CanonicalSyncControlBinding> controlBindings_;
   std::vector<AddressSpace> storageSpaces_;
+  std::optional<SyncCoverStorageLifecycleIndex> storageLifecycleIndex_;
   CanonicalSyncTargetCapabilities targetCapabilities_;
   CanonicalSyncOwnershipDiscoveryStatistics ownershipDiscoveryStatistics_;
   CanonicalSyncEventReservations eventReservations_;

@@ -558,6 +558,12 @@ static llvm::cl::opt<bool> canonicalSyncAssumeAllGmAccessesNoAlias(
         "iterations"),
     llvm::cl::init(false));
 
+static llvm::cl::opt<bool> canonicalSyncAnalyzeStorageLifecycles(
+    "canonical-sync-analyze-storage-lifecycles",
+    llvm::cl::desc("Build and report the bounded target-neutral exact-storage "
+                   "lifecycle index without enabling synthesized mechanisms"),
+    llvm::cl::init(false));
+
 static llvm::cl::opt<std::int64_t> canonicalSyncMaximumPeriodicRecurrenceStates(
     "canonical-sync-maximum-periodic-recurrence-states",
     llvm::cl::desc(
@@ -3845,7 +3851,7 @@ int mlir::pto::compilePTOASModule(OwningOpRef<ModuleOp> &module,
   }
   const bool hasCanonicalAnalysisOption =
       canonicalAnalysisRequested || !canonicalSyncComparisonReport.empty() ||
-      !canonicalSyncReport.empty();
+      !canonicalSyncReport.empty() || canonicalSyncAnalyzeStorageLifecycles;
   if (hasCanonicalAnalysisOption && !enableCanonicalSync) {
     llvm::errs() << "Error: canonical synchronization analysis/report options "
                     "require --enable-canonical-sync.\n";
@@ -4079,6 +4085,8 @@ int mlir::pto::compilePTOASModule(OwningOpRef<ModuleOp> &module,
         canonicalSyncAssumeDistinctGmArgsNoAlias;
     options.assumeAllGmAccessesNoAlias =
         canonicalSyncAssumeAllGmAccessesNoAlias;
+    options.analyzeStorageLifecycles =
+        canonicalSyncAnalyzeStorageLifecycles;
     options.patternMode = canonicalSyncPatternMode;
     options.mechanismFamilies = canonicalSyncMechanismFamilies;
     options.catalogMode = canonicalSyncCatalogMode;

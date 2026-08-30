@@ -1836,6 +1836,23 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
   report.ownershipNodeReferences = ownershipStatistics.nodeReferences;
   report.ownershipAccessIncidences = ownershipStatistics.accessIncidences;
   report.ownershipDiscoveryTruncated = ownershipStatistics.truncated;
+  if (program.getStorageLifecycleIndex()) {
+    report.storageLifecycleAnalysisEnabled = true;
+    const SyncCoverStorageLifecycleStatistics &lifecycleStatistics =
+        program.getStorageLifecycleIndex()->getStatistics();
+    report.storageLifecycleWorkUnits = lifecycleStatistics.workUnits;
+    report.storageLifecycleEligibleWitnesses =
+        lifecycleStatistics.eligibleWitnesses;
+    report.storageLifecycleIneligibleWitnesses =
+        lifecycleStatistics.ineligibleWitnesses;
+    report.storageLifecycleComponents = lifecycleStatistics.components;
+    report.storageLifecycleSlots = lifecycleStatistics.slots;
+    report.storageLifecycleEpochs = lifecycleStatistics.epochs;
+    report.storageLifecycleEdges = lifecycleStatistics.edges;
+    report.storageLifecycleDemandIncidences =
+        lifecycleStatistics.demandIncidences;
+    report.storageLifecycleTruncated = lifecycleStatistics.truncated;
+  }
   report.uniqueDemandRows = problem.getObligationDemands().size();
   report.selectionBasisRows = problem.getDemands().size();
   report.basisReducedRows = report.uniqueDemandRows - report.selectionBasisRows;

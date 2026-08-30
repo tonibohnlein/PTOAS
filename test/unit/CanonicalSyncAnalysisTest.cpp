@@ -839,8 +839,10 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
   if (!check(static_cast<bool>(module), "parse slot recurrence fixture")) {
     return false;
   }
-  FailureOr<CanonicalSyncProgram> program =
-      buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>("reuse"));
+  CanonicalSyncAnalysisOptions lifecycleOptions;
+  lifecycleOptions.discoverStorageLifecycleComponents = true;
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("reuse"), lifecycleOptions);
   if (!check(succeeded(program), "build slot recurrence graph")) {
     return false;
   }
@@ -864,6 +866,25 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
                          }),
             "retain exact physical slot ordinals");
   if (!graphChecks) {
+    return false;
+  }
+  const std::optional<SyncCoverStorageLifecycleIndex> &lifecycle =
+      program->getStorageLifecycleIndex();
+  const bool hasDistanceTwoRelease =
+      lifecycle && lifecycle->isComplete() &&
+      llvm::any_of(
+          lifecycle->getComponents(),
+          [](const SyncCoverStorageLifecycleComponent &component) {
+            return llvm::any_of(
+                component.edges, [](const SyncCoverStorageLifecycleEdge &edge) {
+                  return edge.distance == 2 &&
+                         (edge.kinds &
+                          syncCoverStorageLifecycleEdgeKindBit(
+                              SyncCoverStorageLifecycleEdgeKind::Release)) != 0;
+                });
+          });
+  if (!check(hasDistanceTwoRelease,
+             "index the phase-aware distance-two release lifecycle")) {
     return false;
   }
 
@@ -4738,7 +4759,7 @@ bool testGuardedOwnershipVerificationWorkIsBounded() {
 
   CanonicalSyncProgram program(
       module->lookupSymbol<func::FuncOp>("guarded_ownership_host"),
-      std::move(graph), {}, {}, {}, {}, {}, {}, {});
+      std::move(graph), {}, {}, {}, {}, {}, {}, {}, {});
   CanonicalSyncBuildOptions options;
   options.enableDemandBasisReduction = false;
   options.patterns.enabledMechanismFamilies = canonicalSyncMechanismFamilyBit(

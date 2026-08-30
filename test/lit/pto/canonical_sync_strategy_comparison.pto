@@ -23,6 +23,7 @@
 // RUN:   --canonical-sync-pattern-mode=direct \
 // RUN:   --canonical-sync-enable-conflict-core-repair=false \
 // RUN:   --canonical-sync-selection-strategy=action-aware-singleton \
+// RUN:   --canonical-sync-analyze-storage-lifecycles \
 // RUN:   --canonical-sync-report=%t.core.json --emit-pto-ir %s > /dev/null
 // RUN: FileCheck %s --check-prefix=CORE-REPORT < %t.core.json
 // RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
@@ -162,6 +163,9 @@
 // CORE-REPORT-DAG: "catalog_mode": "strict-direct"
 // CORE-REPORT-DAG: "direct_pairs_enabled": false
 // CORE-REPORT-DAG: "conflict_core_repair_enabled": false
+// CORE-REPORT-DAG: "storage_lifecycle_analysis_enabled": true
+// CORE-REPORT-DAG: "storage_lifecycle_components": {{[1-9][0-9]*}}
+// CORE-REPORT-DAG: "storage_lifecycle_truncated": false
 // CORE-REPORT-DAG: "selection_basis_rows":
 // CORE-REPORT-DAG: "singleton_candidates_covering_multiple_rows":
 // CORE-REPORT-DAG: "maximum_singleton_candidate_coverage_rows":

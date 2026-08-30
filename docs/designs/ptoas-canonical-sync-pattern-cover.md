@@ -614,6 +614,18 @@ than from named kernel patterns:
 5. Fail before mutation when no certified channel plan fits the event budget.
    This path does not enable `PIPE_ALL`.
 
+The first analysis layer is available behind
+`--canonical-sync-analyze-storage-lifecycles`. It builds a deterministic,
+target-neutral index from exact whole-slot RAW, WAR, and WAW witnesses. The
+index groups physical slots and access epochs by storage family and owning
+loop, retains recurrence distance and original demand provenance, and labels
+edges as ready, release, or exclusion obligations. It is reporting-only: it
+does not add cover columns or change the selected plan. Partial or symbolic
+overlaps are deliberately omitted until they have a sound compact
+representation. Independent work, component, slot, epoch, edge, and
+demand-incidence limits make construction transactional; limit exhaustion
+reports truncation and exposes no partial index to later synthesis.
+
 This keeps direct columns as the correctness basis while allowing event-ID
 scarcity to motivate generic channel synthesis. Ordinary pair columns remain a
 separate transitive-coverage optimization: they retain both parent recipes and

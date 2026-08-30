@@ -61,6 +61,9 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
            "assume-all-gm-accesses-noalias", "bool", "false",
            "Treat every GM access as disjoint; the caller must guarantee this "
            "even for accesses from the same argument and across iterations">,
+    Option<"analyzeStorageLifecycles", "analyze-storage-lifecycles", "bool",
+           "false", "Build and report the bounded target-neutral exact-storage "
+           "lifecycle index without enabling synthesized mechanisms">,
     Option<"maximumBasicOwnershipInspections",
            "maximum-basic-ownership-inspections", "int64_t", "268435456",
            "Maximum exact-slot ownership discovery inspection units">,

@@ -218,6 +218,22 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
     function_.emitError("cannot freeze canonical sync graph");
     return failure();
   }
+  std::optional<SyncCoverStorageLifecycleIndex> storageLifecycleIndex;
+  if (options_.discoverStorageLifecycleComponents) {
+    storageLifecycleIndex = buildSyncCoverStorageLifecycleIndex(
+        graph_, options_.storageLifecycleLimits);
+    const SyncCoverStorageLifecycleError error =
+        storageLifecycleIndex->getError();
+    const bool invalidLifecycleIndex =
+        error != SyncCoverStorageLifecycleError::None &&
+        error != SyncCoverStorageLifecycleError::LimitExceeded;
+    if (invalidLifecycleIndex) {
+      function_.emitError("cannot build canonical sync storage lifecycle "
+                          "index, error=")
+          << static_cast<unsigned>(error);
+      return failure();
+    }
+  }
   std::vector<AddressSpace> storageSpaces(graph_.getStorageDomains().size(),
                                           AddressSpace::Zero);
   for (const auto &[space, domain] : storageDomains_) {
@@ -226,8 +242,9 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
   return CanonicalSyncProgram(
       function_, std::move(graph_), std::move(nodeBindings_),
       std::move(scopeBindings_), std::move(controlBindings_),
-      std::move(storageSpaces), std::move(targetCapabilities_),
-      ownershipDiscoveryStatistics_, std::move(eventReservations_));
+      std::move(storageSpaces), std::move(storageLifecycleIndex),
+      std::move(targetCapabilities_), ownershipDiscoveryStatistics_,
+      std::move(eventReservations_));
 }
 
 LogicalResult ProgramBuilder::validateInput() {
@@ -254,7 +271,17 @@ LogicalResult ProgramBuilder::validateInput() {
       options_.maximumRecurrenceWitnessStates == 0 ||
       options_.maximumBasicOwnershipInspections == 0 ||
       options_.maximumBasicOwnershipCertificates == 0;
-  if (invalidLimits) {
+  const SyncCoverStorageLifecycleLimits &lifecycleLimits =
+      options_.storageLifecycleLimits;
+  const bool invalidLifecycleLimits =
+      options_.discoverStorageLifecycleComponents &&
+      (lifecycleLimits.maximumWorkUnits == 0 ||
+       lifecycleLimits.maximumComponents == 0 ||
+       lifecycleLimits.maximumSlots == 0 ||
+       lifecycleLimits.maximumEpochs == 0 ||
+       lifecycleLimits.maximumEdges == 0 ||
+       lifecycleLimits.maximumDemandIncidences == 0);
+  if (invalidLimits || invalidLifecycleLimits) {
     return function_.emitError(
         "canonical sync analysis limits must be positive");
   }

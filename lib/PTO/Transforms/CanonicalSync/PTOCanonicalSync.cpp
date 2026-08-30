@@ -628,6 +628,22 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
       {"ownership_access_incidences",
        jsonInteger(report.ownershipAccessIncidences)},
       {"ownership_discovery_truncated", report.ownershipDiscoveryTruncated},
+      {"storage_lifecycle_analysis_enabled",
+       report.storageLifecycleAnalysisEnabled},
+      {"storage_lifecycle_work_units",
+       jsonInteger(report.storageLifecycleWorkUnits)},
+      {"storage_lifecycle_eligible_witnesses",
+       jsonInteger(report.storageLifecycleEligibleWitnesses)},
+      {"storage_lifecycle_ineligible_witnesses",
+       jsonInteger(report.storageLifecycleIneligibleWitnesses)},
+      {"storage_lifecycle_components",
+       jsonInteger(report.storageLifecycleComponents)},
+      {"storage_lifecycle_slots", jsonInteger(report.storageLifecycleSlots)},
+      {"storage_lifecycle_epochs", jsonInteger(report.storageLifecycleEpochs)},
+      {"storage_lifecycle_edges", jsonInteger(report.storageLifecycleEdges)},
+      {"storage_lifecycle_demand_incidences",
+       jsonInteger(report.storageLifecycleDemandIncidences)},
+      {"storage_lifecycle_truncated", report.storageLifecycleTruncated},
       {"demands", jsonInteger(report.demands)},
       {"unique_demand_keys", jsonInteger(report.uniqueDemandRows)},
       {"selection_basis_rows", jsonInteger(report.selectionBasisRows)},
@@ -977,6 +993,8 @@ struct PTOCanonicalSyncPass
         : assumeDistinctGmArgsNoAlias
             ? pto::CanonicalSyncGmAliasPolicy::DistinctArgumentsNoAlias
             : pto::CanonicalSyncGmAliasPolicy::MayAlias;
+    options.analysis.discoverStorageLifecycleComponents =
+        analyzeStorageLifecycles;
     if (failed(pto::runCanonicalSync(function, options))) {
       signalPassFailure();
     }

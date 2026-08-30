@@ -204,6 +204,16 @@ struct CanonicalSyncComparisonReport {
   std::size_t ownershipNodeReferences = 0;
   std::size_t ownershipAccessIncidences = 0;
   bool ownershipDiscoveryTruncated = false;
+  bool storageLifecycleAnalysisEnabled = false;
+  std::size_t storageLifecycleWorkUnits = 0;
+  std::size_t storageLifecycleEligibleWitnesses = 0;
+  std::size_t storageLifecycleIneligibleWitnesses = 0;
+  std::size_t storageLifecycleComponents = 0;
+  std::size_t storageLifecycleSlots = 0;
+  std::size_t storageLifecycleEpochs = 0;
+  std::size_t storageLifecycleEdges = 0;
+  std::size_t storageLifecycleDemandIncidences = 0;
+  bool storageLifecycleTruncated = false;
   std::size_t demands = 0;
   std::size_t uniqueDemandRows = 0;
   std::size_t selectionBasisRows = 0;
