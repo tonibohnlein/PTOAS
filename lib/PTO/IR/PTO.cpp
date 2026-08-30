@@ -413,9 +413,20 @@ PTOTargetKind mlir::pto::resolvePTOModuleTarget(ModuleOp module) {
   if (!module) {
     return PTOTargetKind::Unspecified;
   }
-  StringAttr targetArch =
-      module->getAttrOfType<StringAttr>(kPTOTargetArchAttrName);
-  StringAttr deviceSpec = module->getAttrOfType<StringAttr>("pto.device-spec");
+  StringAttr targetArch;
+  if (Attribute declaration = module->getAttr(kPTOTargetArchAttrName)) {
+    targetArch = dyn_cast<StringAttr>(declaration);
+    if (!targetArch) {
+      return PTOTargetKind::Unsupported;
+    }
+  }
+  StringAttr deviceSpec;
+  if (Attribute declaration = module->getAttr("pto.device-spec")) {
+    deviceSpec = dyn_cast<StringAttr>(declaration);
+    if (!deviceSpec) {
+      return PTOTargetKind::Unsupported;
+    }
+  }
   return resolvePTOTarget(
       classifyPTOTargetArch(targetArch ? targetArch.getValue() : StringRef{}),
       classifyPTODeviceSpec(deviceSpec ? deviceSpec.getValue() : StringRef{}));

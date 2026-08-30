@@ -184,31 +184,28 @@ static bool resolveTextInputArch(llvm::StringRef buffer, bool cliArchSpecified,
                  << "'. Expected 'a2', 'a3', or 'a5'.\n";
     return false;
   }
+  if (cliArchSpecified) {
+    return true;
+  }
 
   const std::optional<std::string> detectedArch =
       detectPTOASTextualModuleArch(buffer);
   const std::optional<std::string> detectedDeviceSpec =
       detectPTOASTextualDeviceSpec(buffer);
   const mlir::pto::PTOTargetKind declaredTarget =
-      cliArchSpecified ? mlir::pto::classifyPTOTargetArch(arch)
-                       : mlir::pto::classifyPTOTargetArch(
-                             detectedArch ? llvm::StringRef(*detectedArch)
-                                          : llvm::StringRef{});
+      mlir::pto::classifyPTOTargetArch(
+          detectedArch ? llvm::StringRef(*detectedArch) : llvm::StringRef{});
   const mlir::pto::PTOTargetKind deviceTarget =
       mlir::pto::classifyPTODeviceSpec(
           detectedDeviceSpec ? llvm::StringRef(*detectedDeviceSpec)
                              : llvm::StringRef{});
-  const mlir::pto::PTOTargetKind resolvedTarget =
-      mlir::pto::resolvePTOTarget(declaredTarget, deviceTarget);
-  if (resolvedTarget == mlir::pto::PTOTargetKind::Unsupported) {
-    llvm::errs() << "Error: unsupported PTO target declaration.\n";
-    return false;
+  if (declaredTarget == mlir::pto::PTOTargetKind::A5 ||
+      deviceTarget == mlir::pto::PTOTargetKind::A5) {
+    arch = "a5";
+    return true;
   }
-  if (resolvedTarget == mlir::pto::PTOTargetKind::Conflict) {
-    llvm::errs() << "Error: conflicting PTO target declarations.\n";
-    return false;
-  }
-  arch = getPTOASTargetKindName(resolvedTarget).value_or("a3");
+  arch = getPTOASTargetKindName(declaredTarget)
+             .value_or(getPTOASTargetKindName(deviceTarget).value_or("a3"));
   return true;
 }
 
@@ -297,6 +294,12 @@ loadInputModule(std::unique_ptr<llvm::MemoryBuffer> inputBuffer,
   if (cliArchSpecified) {
     moduleOp->setAttr("pto.target_arch",
                       mlir::StringAttr::get(moduleOp->getContext(), arch));
+    mlir::pto::PTOTargetKind resolvedOverride =
+        mlir::pto::resolvePTOModuleTarget(*module);
+    if (resolvedOverride == mlir::pto::PTOTargetKind::Unsupported ||
+        resolvedOverride == mlir::pto::PTOTargetKind::Conflict) {
+      moduleOp->removeAttr("pto.device-spec");
+    }
   }
 
   mlir::pto::PTOTargetKind resolvedTarget =

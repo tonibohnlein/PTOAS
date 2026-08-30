@@ -20,14 +20,28 @@
 // RUN: not ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
 // RUN:   %t/conflict.pto -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=CONFLICT
-// RUN: not ptoas --pto-level=level3 --pto-arch=a3 \
-// RUN:   --enable-canonical-sync --emit-pto-ir %t/a5-device-spec.pto \
-// RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=CONFLICT
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
+// RUN:   --emit-pto-ir --canonical-sync-report=%t/override.json \
+// RUN:   %t/a5-device-spec.pto -o /dev/null
+// RUN: FileCheck %s --check-prefix=OVERRIDE < %t/override.json
+// RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN:   --canonical-sync-report=%t/misleading.json %t/misleading.pto \
+// RUN:   -o /dev/null
+// RUN: FileCheck %s --check-prefix=MISLEADING < %t/misleading.json
+// RUN: not ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN:   %t/malformed-arch.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=MALFORMED
+// RUN: not ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN:   %t/malformed-spec.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=MALFORMED
 
 // A2A3: "profile": "a2a3-intersection-v1"
 // A5: "profile": "a5-v1"
+// OVERRIDE: "profile": "a3-v1"
+// MISLEADING: "profile": "a3-v1"
 // UNKNOWN: Error: unsupported PTO target declaration.
 // CONFLICT: Error: conflicting PTO target declarations.
+// MALFORMED: Error: unsupported PTO target declaration.
 
 //--- a2a3.pto
 module attributes {pto.target_arch = "a2a3"} {
@@ -54,6 +68,28 @@ module attributes {pto.target_arch = "future"} {
 module attributes {pto.target_arch = "a3",
                    "pto.device-spec" = "Ascend950"} {
   func.func @conflict() {
+    return
+  }
+}
+
+//--- misleading.pto
+// Textual hints are not declarations: pto.device-spec = "Ascend950"
+module attributes {pto.target_arch = "a3"} {
+  func.func @misleading() attributes {pto.target_arch = "future"} {
+    return
+  }
+}
+
+//--- malformed-arch.pto
+module attributes {pto.target_arch = 3 : i64} {
+  func.func @malformed_arch() {
+    return
+  }
+}
+
+//--- malformed-spec.pto
+module attributes {"pto.device-spec" = 3 : i64} {
+  func.func @malformed_spec() {
     return
   }
 }

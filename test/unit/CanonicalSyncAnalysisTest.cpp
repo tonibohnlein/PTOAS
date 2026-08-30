@@ -1844,6 +1844,33 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
   }
   (*module)->removeAttr("pto.device-spec");
 
+  (*module)->setAttr("pto.target_arch",
+                     IntegerAttr::get(IntegerType::get(&context, 64), 3));
+  FailureOr<CanonicalSyncProgram> malformedArch =
+      buildCanonicalSyncProgram(function);
+  const bool malformedArchIsUnsupported =
+      succeeded(malformedArch) &&
+      malformedArch->getTargetCapabilities().profile ==
+          CanonicalSyncTargetProfile::Unsupported;
+  if (!check(malformedArchIsUnsupported,
+             "fail closed on a malformed target architecture")) {
+    return false;
+  }
+  (*module)->removeAttr("pto.target_arch");
+  (*module)->setAttr("pto.device-spec",
+                     IntegerAttr::get(IntegerType::get(&context, 64), 3));
+  FailureOr<CanonicalSyncProgram> malformedDevice =
+      buildCanonicalSyncProgram(function);
+  const bool malformedDeviceIsUnsupported =
+      succeeded(malformedDevice) &&
+      malformedDevice->getTargetCapabilities().profile ==
+          CanonicalSyncTargetProfile::Unsupported;
+  if (!check(malformedDeviceIsUnsupported,
+             "fail closed on a malformed device specification")) {
+    return false;
+  }
+  (*module)->removeAttr("pto.device-spec");
+
   (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "future"));
   FailureOr<CanonicalSyncProgram> unsupported =
       buildCanonicalSyncProgram(function);

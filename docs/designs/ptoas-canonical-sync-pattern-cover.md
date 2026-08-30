@@ -70,8 +70,11 @@ The PTO driver and CanonicalSync share one declared-target resolver. A textual
 Unknown target declarations and conflicting architecture/device declarations
 are rejected by the driver; direct pass invocation treats them as unsupported
 and therefore enables no target-specific completion facts. A command-line
-`--pto-arch` remains an explicit architecture override, but it must agree with
-any device specification retained by the module.
+`--pto-arch` remains an explicit architecture override. When it conflicts with
+the input device specification, the driver drops that superseded specification
+from the normalized module so every later consumer sees one effective target.
+Textual attribute scanning selects only the parser mode; validation always uses
+the parsed module attributes through the shared resolver.
 
 The exact-operation completion signalled by a direct set/wait is part of the
 target-neutral mechanism basis. The profile controls only stronger facts that
