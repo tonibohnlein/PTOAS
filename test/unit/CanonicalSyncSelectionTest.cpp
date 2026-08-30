@@ -9,6 +9,7 @@
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncSelection.h"
 
 #include <algorithm>
+#include <array>
 #include <iostream>
 #include <iterator>
 #include <limits>
@@ -566,13 +567,36 @@ bool testReverseDeletionPreservesBaselineCoverage() {
       problem.internMechanism(barrier(2, {1, 2, 3, 4, 5}, source, first)),
       passed, "add mixed barrier");
   passed &= check(problem.freeze(), "freeze mixed problem");
-  const CanonicalSyncSelection selection = selectCanonicalSyncPatterns(problem);
-  passed &= check(selection && selection.statistics.deletionEvaluations != 0 &&
-                      selection.mechanisms ==
-                          std::vector<CanonicalSyncMechanismId>{barrierId} &&
-                      !std::binary_search(selection.mechanisms.begin(),
-                                          selection.mechanisms.end(), eventId),
+  CanonicalSyncGreedyOptions options;
+  options.strategy = CanonicalSyncSelectionStrategy::ActionAwareSingleton;
+  const CanonicalSyncSelection selection =
+      selectCanonicalSyncPatterns(problem, options);
+  const bool deletedRedundantEvent =
+      selection && selection.statistics.deletionEvaluations != 0 &&
+      selection.mechanisms ==
+          std::vector<CanonicalSyncMechanismId>{barrierId} &&
+      !std::binary_search(selection.mechanisms.begin(),
+                          selection.mechanisms.end(), eventId);
+  passed &= check(deletedRedundantEvent,
                   "reverse deletion retains baseline while removing event");
+  if (!passed || selection.statistics.workUnits == 0) {
+    return false;
+  }
+  CanonicalSyncGreedyOptions exactOptions = options;
+  exactOptions.maximumWorkUnits = selection.statistics.workUnits;
+  const CanonicalSyncSelection exact =
+      selectCanonicalSyncPatterns(problem, exactOptions);
+  CanonicalSyncGreedyOptions belowOptions = exactOptions;
+  --belowOptions.maximumWorkUnits;
+  const CanonicalSyncSelection below =
+      selectCanonicalSyncPatterns(problem, belowOptions);
+  passed &= check(exact && exact.mechanisms == selection.mechanisms &&
+                      exact.statistics.workUnits ==
+                          selection.statistics.workUnits,
+                  "admit reverse deletion at its exact work bound");
+  passed &= check(
+      below.error == CanonicalSyncSelectionError::WorkLimitExceeded,
+      "reject reverse deletion when one work unit is unavailable");
   return passed;
 }
 
@@ -829,6 +853,103 @@ bool testStreamingGreedySelectionIsDeterministic() {
                        first.statistics.patternEvaluations &&
                    second.statistics.workUnits == first.statistics.workUnits,
                "repeat the streaming singleton scan deterministically");
+}
+
+bool testLazySingletonSelectionRefreshesStaleGains() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  SyncCoverScopeId deepScope = 0;
+  for (unsigned depth = 0; depth < 8; ++depth) {
+    deepScope = takeIndex(graph.addScope(deepScope, true), passed,
+                          "add lazy singleton nested scope");
+  }
+  std::array<SyncCoverNodeId, 4> sources{};
+  std::array<SyncCoverNodeId, 4> targets{};
+  for (std::size_t index = 0; index < sources.size(); ++index) {
+    sources[index] = takeIndex(
+        graph.addNode(1, 1, deepScope, index, {}, {2}, std::nullopt,
+                      index != 0),
+        passed,
+        "add lazy singleton source");
+  }
+  for (std::size_t index = 0; index < targets.size(); ++index) {
+    targets[index] = takeIndex(
+        graph.addNode(2, 1, deepScope, sources.size() + index), passed,
+        "add lazy singleton target");
+    passed &= check(graph.addDemand(demand(sources[index], targets[index])),
+                    "add lazy singleton demand");
+  }
+  for (std::size_t index = 1; index < sources.size(); ++index) {
+    SyncCoverEdge sourceFrontier =
+        supply(sources[index - 1], sources[index]);
+    sourceFrontier.kind = SyncCoverEdgeKind::CertifiedCompletionFrontier;
+    passed &= check(graph.addEdge(sourceFrontier),
+                    "add lazy singleton source frontier");
+    passed &= check(
+        graph.addCompletionDominance(sources[index - 1], sources[index]),
+        "add lazy singleton completion dominance");
+    SyncCoverEdge targetOrder = supply(targets[index - 1], targets[index]);
+    targetOrder.kind = SyncCoverEdgeKind::NonCompletionPreservingIssueOrder;
+    passed &= check(graph.addEdge(targetOrder),
+                    "add lazy singleton target order");
+  }
+  passed &= check(graph.freezeStructure(), "freeze lazy singleton graph");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
+                  "add lazy singleton event domain");
+  const CanonicalSyncMechanismId first = takeIndex(
+      problem.internMechanism(event(0, 1, 2, sources[1], targets[0])), passed,
+      "add first overlapping singleton");
+  takeIndex(problem.internMechanism(
+                event(0, 1, 2, sources[2], targets[1])),
+            passed, "add stale overlapping singleton");
+  const CanonicalSyncMechanismId last = takeIndex(
+      problem.internMechanism(event(0, 1, 2, sources[3], targets[2])), passed,
+      "add last overlapping singleton");
+  passed &= check(problem.freeze(), "freeze lazy singleton problem");
+  if (!passed) {
+    return false;
+  }
+
+  CanonicalSyncGreedyOptions options;
+  options.strategy = CanonicalSyncSelectionStrategy::ActionAwareSingleton;
+  const CanonicalSyncSelection firstSelection =
+      selectCanonicalSyncPatterns(problem, options);
+  const CanonicalSyncSelection secondSelection =
+      selectCanonicalSyncPatterns(problem, options);
+  const std::vector<CanonicalSyncMechanismId> expected{first, last};
+  passed &= check(firstSelection && firstSelection.mechanisms == expected &&
+                      firstSelection.selectionOrder == expected,
+                  "refresh a stale singleton gain before selecting it");
+  passed &= check(
+      secondSelection &&
+          secondSelection.mechanisms == firstSelection.mechanisms &&
+          secondSelection.selectionOrder == firstSelection.selectionOrder &&
+          secondSelection.statistics.patternEvaluations ==
+              firstSelection.statistics.patternEvaluations &&
+          secondSelection.statistics.workUnits ==
+              firstSelection.statistics.workUnits,
+      "repeat lazy singleton invalidation deterministically");
+  if (!passed || firstSelection.statistics.workUnits == 0) {
+    return false;
+  }
+  CanonicalSyncGreedyOptions exactOptions = options;
+  exactOptions.maximumWorkUnits = firstSelection.statistics.workUnits;
+  const CanonicalSyncSelection exact =
+      selectCanonicalSyncPatterns(problem, exactOptions);
+  CanonicalSyncGreedyOptions belowOptions = exactOptions;
+  --belowOptions.maximumWorkUnits;
+  const CanonicalSyncSelection below =
+      selectCanonicalSyncPatterns(problem, belowOptions);
+  return check(exact && exact.mechanisms == expected &&
+                   exact.selectionOrder == expected &&
+                   exact.statistics.workUnits ==
+                       firstSelection.statistics.workUnits,
+               "admit deep stale-heap selection at its exact work bound") &&
+         check(below.error ==
+                   CanonicalSyncSelectionError::WorkLimitExceeded,
+               "reject deep stale-heap selection one work unit below bound");
 }
 
 bool testDirectPairSkipsConflictingMechanisms() {
@@ -4619,6 +4740,7 @@ int main() {
       testDirectPairDiscoversJointCoverage() &&
       testFixedCoverUsesFrozenCompositeColumn() &&
       testStreamingGreedySelectionIsDeterministic() &&
+      testLazySingletonSelectionRefreshesStaleGains() &&
       testDirectPairSkipsConflictingMechanisms() &&
       testConflictingPairDoesNotConsumeProposalCapacity() &&
       testDirectPairTraversesFixedCompletionSupply() &&

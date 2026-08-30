@@ -5150,8 +5150,11 @@ bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
     return false;
   }
   CanonicalSyncBuildOptions directFallbackOptions;
+  directFallbackOptions.patterns.catalogMode =
+      CanonicalSyncCatalogMode::StrictMinimalDirect;
   directFallbackOptions.patterns.enabledMechanismFamilies = 0;
   directFallbackOptions.patterns.enableDirectPairs = false;
+  directFallbackOptions.patterns.enableConflictCoreRepair = false;
   CanonicalSyncProblemBuildResult directFallback =
       buildCanonicalSyncPreciseProblem(*directOverlapProgram,
                                        directFallbackOptions);
@@ -5177,7 +5180,9 @@ bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
       canonicalSyncMechanismOriginBit(
           CanonicalSyncMechanismOrigin::DirectForwardRecurrenceEvent) |
       canonicalSyncMechanismOriginBit(
-          CanonicalSyncMechanismOrigin::DirectReleaseRecurrenceProtocol);
+          CanonicalSyncMechanismOrigin::DirectReleaseRecurrenceProtocol) |
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::DirectBalancedTargetFenceEvent);
   const bool directOnlyCatalog =
       directFallback && directFallback.problem &&
       llvm::all_of(directFallback.problem->getMechanisms(),
@@ -5777,15 +5782,19 @@ bool testGuardedEndpointUsesSourceLocalCompletionEvent() {
       ~canonicalSyncMechanismFamilyBit(
           CanonicalSyncMechanismFamily::TargetLocalFence);
   CanonicalSyncBuildOptions coreOptions = options;
+  coreOptions.patterns.catalogMode =
+      CanonicalSyncCatalogMode::StrictMinimalDirect;
   coreOptions.patterns.enabledMechanismFamilies = 0;
+  coreOptions.patterns.enableDirectPairs = false;
+  coreOptions.patterns.enableConflictCoreRepair = false;
   CanonicalSyncProblemBuildResult withoutTargetLocal;
-  bool coreRejected = false;
+  CanonicalSyncProblemBuildResult core;
   {
     ScopedDiagnosticHandler handler(&context,
                                     [](Diagnostic &) { return success(); });
     withoutTargetLocal =
         buildCanonicalSyncPreciseProblem(*program, withoutTargetLocalOptions);
-    coreRejected = !buildCanonicalSyncPreciseProblem(*program, coreOptions);
+    core = buildCanonicalSyncPreciseProblem(*program, coreOptions);
   }
   const CanonicalSyncMechanismOriginMask sourceLocalOrigin =
       canonicalSyncMechanismOriginBit(
@@ -5796,10 +5805,19 @@ bool testGuardedEndpointUsesSourceLocalCompletionEvent() {
                    [&](const CanonicalSyncMechanism &mechanism) {
                      return (mechanism.originMask & sourceLocalOrigin) != 0;
                    });
+  const CanonicalSyncMechanismOriginMask directBalancedOrigin =
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::DirectBalancedTargetFenceEvent);
+  const bool hasDirectBalancedFallback =
+      core && core.problem &&
+      llvm::any_of(core.problem->getMechanisms(),
+                   [&](const CanonicalSyncMechanism &mechanism) {
+                     return (mechanism.originMask & directBalancedOrigin) != 0;
+                   });
   if (!check(hasSourceLocalFallback,
              "fall back to a balanced source-local completion event") ||
-      !check(coreRejected,
-             "fail closed for a core-only catalog without a balanced recipe")) {
+      !check(hasDirectBalancedFallback,
+             "retain a per-demand balanced recipe in the core catalog")) {
     return false;
   }
   CanonicalSyncComparisonReport report;
@@ -5874,6 +5892,167 @@ bool testGuardedEndpointUsesSourceLocalCompletionEvent() {
                "reject final verification one unit below its exact bound") &&
          check(printOperation(belowFunction) == belowBefore,
                "preserve IR when bounded final verification fails");
+}
+
+bool testMinimalDirectCatalogIsCompleteAndNeverFallsBack() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a5"} {
+      func.func @direct_chain(
+          %input: !pto.partition_tensor_view<16x16xf32>,
+          %output: !pto.partition_tensor_view<16x16xf32>) {
+        %addr0 = arith.constant 0 : i64
+        %one = arith.constant 1.000000e+00 : f32
+        %tile = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<vec, 16x16xf32>
+        pto.tload ins(%input : !pto.partition_tensor_view<16x16xf32>)
+          outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%tile, %one : !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf32>)
+          outs(%output : !pto.partition_tensor_view<16x16xf32>)
+        return
+      }
+      func.func @direct_scarcity(
+          %first: !pto.partition_tensor_view<16x16xf32>,
+          %second: !pto.partition_tensor_view<16x16xf32>) {
+        %addr0 = arith.constant 0 : i64
+        %addr1024 = arith.constant 1024 : i64
+        %one = arith.constant 1.000000e+00 : f32
+        %firstTile = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<vec, 16x16xf32>
+        %secondTile = pto.alloc_tile addr = %addr1024 :
+          !pto.tile_buf<vec, 16x16xf32>
+        pto.tload ins(%first : !pto.partition_tensor_view<16x16xf32>)
+          outs(%firstTile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%second : !pto.partition_tensor_view<16x16xf32>)
+          outs(%secondTile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%firstTile, %one :
+          !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%firstTile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%secondTile, %one :
+          !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%secondTile : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module),
+             "parse minimal direct catalog fixtures")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions options;
+  options.patterns.catalogMode =
+      CanonicalSyncCatalogMode::StrictMinimalDirect;
+  options.patterns.enabledMechanismFamilies = 0;
+  options.patterns.enableDirectPairs = false;
+  options.patterns.enableConflictCoreRepair = false;
+  options.selection.strategy =
+      CanonicalSyncSelectionStrategy::ActionAwareSingleton;
+  func::FuncOp chain = module->lookupSymbol<func::FuncOp>("direct_chain");
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(chain);
+  if (!check(succeeded(program), "build minimal direct catalog graph")) {
+    return false;
+  }
+  CanonicalSyncProblemBuildResult problem =
+      buildCanonicalSyncPreciseProblem(*program, options);
+  if (!check(problem && problem.problem,
+             "build complete minimal direct catalog")) {
+    return false;
+  }
+  CanonicalSyncProblemBuildResult forbiddenRepair;
+  {
+    ScopedDiagnosticHandler handler(&context,
+                                    [](Diagnostic &) { return success(); });
+    forbiddenRepair = buildCanonicalSyncRepairProblem(
+        *program, *problem.problem, options, {});
+  }
+  if (!check(!forbiddenRepair && !forbiddenRepair.problem &&
+                 forbiddenRepair.status.error ==
+                     CanonicalSyncProblemError::InvalidPattern,
+             "reject repair-catalog extension of strict-direct problems")) {
+    return false;
+  }
+
+  const CanonicalSyncMechanismOriginMask directOrigins =
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::DirectTargetedBarrier) |
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::DirectDistanceZeroEvent) |
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::DirectForwardRecurrenceEvent) |
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::DirectReleaseRecurrenceProtocol) |
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::DirectBalancedTargetFenceEvent);
+  const bool fullDemandUniverse =
+      problem.problem->getDemands().size() ==
+          program->getGraph().getDemands().size() &&
+      problem.problem->getObligationDemands().size() ==
+          program->getGraph().getDemands().size();
+  const bool singletonOnly =
+      problem.problem->getPatterns().size() ==
+          problem.problem->getMechanisms().size() &&
+      llvm::all_of(problem.problem->getPatterns(),
+                   [](const CanonicalSyncPattern &pattern) {
+                     return pattern.kind == CanonicalSyncPatternKind::Singleton &&
+                            pattern.members.size() == 1;
+                   });
+  const bool directOnly = llvm::all_of(
+      problem.problem->getMechanisms(),
+      [&](const CanonicalSyncMechanism &mechanism) {
+        return mechanism.originMask != 0 &&
+               (mechanism.originMask & ~directOrigins) == 0;
+      });
+  const CanonicalSyncSelection selection =
+      selectCanonicalSyncPatterns(*problem.problem, options.selection);
+  if (!check(fullDemandUniverse,
+             "retain every unique hazard row in minimal direct mode") ||
+      !check(singletonOnly && directOnly,
+             "restrict minimal direct mode to direct singleton columns") ||
+      !check(selection &&
+                 verifyCanonicalSyncSelection(*problem.problem, selection),
+             "select and freshly verify the minimal direct cover")) {
+    return false;
+  }
+
+  func::FuncOp scarcity =
+      module->lookupSymbol<func::FuncOp>("direct_scarcity");
+  CanonicalSyncBuildOptions scarcityOptions = options;
+  scarcityOptions.eventIdBudget = 1;
+  CanonicalSyncComparisonReport scarcityReport;
+  scarcityOptions.reportCallback =
+      [&](const CanonicalSyncComparisonReport &report) {
+        scarcityReport = report;
+        return success();
+      };
+  const std::string before = printOperation(scarcity);
+  bool sawScarcityDiagnostic = false;
+  LogicalResult scarcityResult = success();
+  {
+    ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
+      sawScarcityDiagnostic |=
+          diagnostic.str().find("exhausted the event-ID budget") !=
+          std::string::npos;
+      return success();
+    });
+    scarcityResult = runCanonicalSync(scarcity, scarcityOptions);
+  }
+  const bool reportedInfeasible =
+      scarcityReport.strategies.size() == 1 &&
+      scarcityReport.strategies.front().error ==
+          CanonicalSyncSelectionError::ResourceInfeasible &&
+      !scarcityReport.strategies.front().verified &&
+      !scarcityReport.strategies.front().usedLocalizedPipeAll;
+  return check(failed(scarcityResult) && sawScarcityDiagnostic,
+               "fail explicitly when direct events exceed the ID budget") &&
+         check(printOperation(scarcity) == before,
+               "leave IR unchanged after direct event scarcity") &&
+         check(reportedInfeasible,
+               "report direct scarcity without a verified fallback plan");
 }
 
 bool testDemandBasisReductionIsBoundedAndTruncating() {
@@ -7042,6 +7221,7 @@ int main() {
       testOwnershipDoesNotHideProducerOverwrite() &&
       testGenericRecurrenceWithoutOwnershipDiscovery() &&
       testGuardedEndpointUsesSourceLocalCompletionEvent() &&
+      testMinimalDirectCatalogIsCompleteAndNeverFallsBack() &&
       testDemandBasisReductionIsBoundedAndTruncating() &&
       testSourcePrefixGenerationIsBoundedAndTruncating() &&
       testConflictCoreRepairAvoidsPipeAll();

@@ -201,11 +201,48 @@ bool patternActive(const CanonicalSyncPattern &pattern,
                        pattern.members.begin(), pattern.members.end());
 }
 
+bool hasOnlySingletonPatterns(const CanonicalSyncPatternProblem &problem) {
+  return problem.getPatterns().size() == problem.getMechanisms().size();
+}
+
+std::optional<bool> hasIndependentSingletonPatterns(
+    const CanonicalSyncPatternProblem &problem, std::size_t maximumWork,
+    std::size_t &work) {
+  if (!hasOnlySingletonPatterns(problem)) {
+    return false;
+  }
+  if (!consumeWork(problem.getMechanisms().size(), maximumWork, work)) {
+    return std::nullopt;
+  }
+  return std::all_of(problem.getMechanisms().begin(),
+                     problem.getMechanisms().end(),
+                     [](const CanonicalSyncMechanism &mechanism) {
+                       return mechanism.conflicts.empty();
+                     });
+}
+
 std::optional<SyncCoverDemandSet>
 coveredBy(const CanonicalSyncPatternProblem &problem,
           const std::vector<CanonicalSyncMechanismId> &selected,
           std::size_t maximumWork, std::size_t &work) {
   SyncCoverDemandSet result = problem.getBaselineCoverage();
+  if (hasOnlySingletonPatterns(problem)) {
+    for (CanonicalSyncMechanismId mechanism : selected) {
+      if (mechanism >= problem.getPatterns().size()) {
+        return std::nullopt;
+      }
+      const CanonicalSyncPattern &pattern = problem.getPatterns()[mechanism];
+      const bool invalid =
+          pattern.kind != CanonicalSyncPatternKind::Singleton ||
+          pattern.members.size() != 1 || pattern.members.front() != mechanism;
+      if (invalid ||
+          !consumeWork(pattern.coverage.getWords().size(), maximumWork, work)) {
+        return std::nullopt;
+      }
+      result.unite(pattern.coverage);
+    }
+    return result;
+  }
   for (const CanonicalSyncPattern &pattern : problem.getPatterns()) {
     const bool workAvailable = consumeWork(
         pattern.members.size() + selected.size() + 1, maximumWork, work);
@@ -228,6 +265,27 @@ bool coverageAfterAdding(const CanonicalSyncPatternProblem &problem,
                          const std::vector<CanonicalSyncMechanismId> &additions,
                          std::size_t maximumWork, std::size_t &work,
                          SyncCoverDemandSet &result) {
+  if (hasOnlySingletonPatterns(problem)) {
+    if (!consumeWork(covered.getWords().size(), maximumWork, work)) {
+      return false;
+    }
+    result = covered;
+    for (CanonicalSyncMechanismId mechanism : additions) {
+      if (mechanism >= problem.getPatterns().size()) {
+        return false;
+      }
+      const CanonicalSyncPattern &pattern = problem.getPatterns()[mechanism];
+      const bool invalid =
+          pattern.kind != CanonicalSyncPatternKind::Singleton ||
+          pattern.members.size() != 1 || pattern.members.front() != mechanism;
+      if (invalid ||
+          !consumeWork(pattern.coverage.getWords().size(), maximumWork, work)) {
+        return false;
+      }
+      result.unite(pattern.coverage);
+    }
+    return true;
+  }
   if (!consumeWork(selected.size() + additions.size(), maximumWork, work)) {
     return false;
   }
@@ -666,16 +724,38 @@ bool buildActionAwareCandidates(
     const SyncCoverDemandSet &covered,
     const CanonicalSyncGreedyOptions &options,
     CanonicalSyncGreedyStatistics &statistics, GreedyCandidateScan &scan) {
+  std::size_t selectedPosition = 0;
+  std::size_t forbiddenPosition = 0;
   for (const CanonicalSyncMechanism &mechanism : problem.getMechanisms()) {
-    const std::optional<bool> alreadySelected = containsSorted(
-        selected, mechanism.id, options.maximumWorkUnits, statistics.workUnits);
-    const std::optional<bool> forbidden =
-        containsSorted(options.forbiddenMechanisms, mechanism.id,
-                       options.maximumWorkUnits, statistics.workUnits);
-    if (!alreadySelected || !forbidden) {
+    const auto selectedPrecedesMechanism = [&] {
+      return selectedPosition < selected.size() &&
+             selected[selectedPosition] < mechanism.id;
+    };
+    while (selectedPrecedesMechanism()) {
+      if (!consumeWork(1, options.maximumWorkUnits, statistics.workUnits)) {
+        return false;
+      }
+      ++selectedPosition;
+    }
+    const auto forbiddenPrecedesMechanism = [&] {
+      return forbiddenPosition < options.forbiddenMechanisms.size() &&
+             options.forbiddenMechanisms[forbiddenPosition] < mechanism.id;
+    };
+    while (forbiddenPrecedesMechanism()) {
+      if (!consumeWork(1, options.maximumWorkUnits, statistics.workUnits)) {
+        return false;
+      }
+      ++forbiddenPosition;
+    }
+    if (!consumeWork(2, options.maximumWorkUnits, statistics.workUnits)) {
       return false;
     }
-    if (*alreadySelected || *forbidden) {
+    const bool alreadySelected = selectedPosition < selected.size() &&
+                                 selected[selectedPosition] == mechanism.id;
+    const bool forbidden =
+        forbiddenPosition < options.forbiddenMechanisms.size() &&
+        options.forbiddenMechanisms[forbiddenPosition] == mechanism.id;
+    if (alreadySelected || forbidden) {
       continue;
     }
     if (!buildActionAwareCandidate(problem, selected, covered, {mechanism.id},
@@ -723,6 +803,437 @@ std::optional<bool> complete(const CanonicalSyncPatternProblem &problem,
     return std::nullopt;
   }
   return covered.count() == problem.getDemands().size();
+}
+
+struct SingletonQueueEntry {
+  CanonicalSyncMechanismId mechanism = 0;
+  std::size_t gain = 0;
+  std::uint64_t eventLifetimeArea = 0;
+};
+
+std::uint64_t singletonActionProfileValue(
+    const CanonicalSyncMechanism &mechanism, std::size_t depth) {
+  const std::uint64_t barriers = profileValue(mechanism.cost.barrierActions,
+                                              depth);
+  const std::uint64_t events =
+      profileValue(mechanism.cost.eventActions, depth);
+  std::uint64_t total = 0;
+  // Queue preparation rejects overflow. Keep this observer defined and
+  // maximally expensive if an invalid internal entry nevertheless reaches it.
+  return checkedCostAdd(barriers, events, total)
+             ? total
+             : std::numeric_limits<std::uint64_t>::max();
+}
+
+int compareSingletonActionProfileRatio(
+    const CanonicalSyncPatternProblem &problem,
+    const SingletonQueueEntry &first, const SingletonQueueEntry &second) {
+  const CanonicalSyncMechanism &firstMechanism =
+      problem.getMechanisms()[first.mechanism];
+  const CanonicalSyncMechanism &secondMechanism =
+      problem.getMechanisms()[second.mechanism];
+  const std::size_t firstDepths =
+      std::max(firstMechanism.cost.barrierActions.size(),
+               firstMechanism.cost.eventActions.size());
+  const std::size_t secondDepths =
+      std::max(secondMechanism.cost.barrierActions.size(),
+               secondMechanism.cost.eventActions.size());
+  const std::size_t depths = std::max(firstDepths, secondDepths);
+  for (std::size_t reverse = depths; reverse > 0; --reverse) {
+    const std::size_t depth = reverse - 1;
+    const int order = compareRatio(
+        singletonActionProfileValue(firstMechanism, depth), first.gain,
+        singletonActionProfileValue(secondMechanism, depth), second.gain);
+    if (order != 0) {
+      return order;
+    }
+  }
+  return 0;
+}
+
+bool singletonCandidateLess(const CanonicalSyncPatternProblem &problem,
+                            const SingletonQueueEntry &first,
+                            const SingletonQueueEntry &second,
+                            CanonicalSyncSelectionObjective objective) {
+  const CanonicalSyncMechanism &firstMechanism =
+      problem.getMechanisms()[first.mechanism];
+  const CanonicalSyncMechanism &secondMechanism =
+      problem.getMechanisms()[second.mechanism];
+  const int serialization = compareRatio(
+      firstMechanism.cost.serializationBreadth, first.gain,
+      secondMechanism.cost.serializationBreadth, second.gain);
+  const int actions =
+      compareSingletonActionProfileRatio(problem, first, second);
+  if (objective == CanonicalSyncSelectionObjective::SerializationFirst) {
+    if (serialization != 0) {
+      return serialization < 0;
+    }
+    if (actions != 0) {
+      return actions < 0;
+    }
+  } else {
+    if (actions != 0) {
+      return actions < 0;
+    }
+    if (serialization != 0) {
+      return serialization < 0;
+    }
+  }
+  const int lifetime = compareRatio(first.eventLifetimeArea, first.gain,
+                                    second.eventLifetimeArea, second.gain);
+  if (lifetime != 0) {
+    return lifetime < 0;
+  }
+  const int mechanisms = compareRatio(1, first.gain, 1, second.gain);
+  if (mechanisms != 0) {
+    return mechanisms < 0;
+  }
+  return first.mechanism < second.mechanism;
+}
+
+struct SingletonQueueCompare {
+  const CanonicalSyncPatternProblem *problem = nullptr;
+  CanonicalSyncSelectionObjective objective =
+      CanonicalSyncSelectionObjective::ActionFirst;
+
+  bool operator()(const SingletonQueueEntry &first,
+                  const SingletonQueueEntry &second) const {
+    return singletonCandidateLess(*problem, second, first, objective);
+  }
+};
+
+std::size_t heapComparisonLevels(std::size_t heapSize) {
+  std::size_t levels = 1;
+  while (heapSize > 1) {
+    heapSize = (heapSize + 1) / 2;
+    ++levels;
+  }
+  return levels;
+}
+
+bool consumeSingletonComparisonWork(std::size_t maximumProfileDepth,
+                                    std::size_t maximumWork,
+                                    std::size_t &work) {
+  std::size_t comparisonWork = 0;
+  return checkedWorkSum(maximumProfileDepth, 6, comparisonWork) &&
+         consumeWork(comparisonWork, maximumWork, work);
+}
+
+bool consumeHeapOperationWork(std::size_t heapSize,
+                              std::size_t maximumProfileDepth, bool popping,
+                              std::size_t maximumWork, std::size_t &work) {
+  const std::size_t levels = heapComparisonLevels(heapSize);
+  std::size_t comparisons = levels;
+  if (popping &&
+      (!checkedWorkProduct(levels, 2, comparisons) ||
+       !checkedWorkSum(comparisons, 2, comparisons))) {
+    return false;
+  }
+  std::size_t comparisonWork = 0;
+  std::size_t operationWork = 0;
+  return checkedWorkSum(maximumProfileDepth, 6, comparisonWork) &&
+         checkedWorkProduct(comparisons, comparisonWork, operationWork) &&
+         checkedWorkSum(operationWork, 1, operationWork) &&
+         consumeWork(operationWork, maximumWork, work);
+}
+
+bool evaluateSingletonGain(
+    const CanonicalSyncPatternProblem &problem,
+    CanonicalSyncMechanismId mechanism, const SyncCoverDemandSet &covered,
+    const CanonicalSyncGreedyOptions &options,
+    CanonicalSyncGreedyStatistics &statistics,
+    std::optional<std::size_t> &gain) {
+  gain.reset();
+  if (mechanism >= problem.getPatterns().size()) {
+    return false;
+  }
+  const CanonicalSyncPattern &pattern = problem.getPatterns()[mechanism];
+  const bool invalid =
+      pattern.kind != CanonicalSyncPatternKind::Singleton ||
+      pattern.members.size() != 1 || pattern.members.front() != mechanism;
+  if (invalid) {
+    return false;
+  }
+  const std::optional<std::size_t> newCoverage =
+      countNewCoverage(covered, pattern.coverage, options.maximumWorkUnits,
+                       statistics.workUnits);
+  if (!newCoverage) {
+    return false;
+  }
+  if (*newCoverage == 0) {
+    return true;
+  }
+  if (statistics.patternEvaluations ==
+          std::numeric_limits<std::size_t>::max() ||
+      !consumeWork(1, options.maximumWorkUnits, statistics.workUnits)) {
+    return false;
+  }
+  ++statistics.patternEvaluations;
+  gain = *newCoverage;
+  return true;
+}
+
+bool prepareSingletonQueueEntry(
+    const CanonicalSyncPatternProblem &problem,
+    CanonicalSyncMechanismId mechanism, const SyncCoverDemandSet &covered,
+    const CanonicalSyncGreedyOptions &options,
+    CanonicalSyncGreedyStatistics &statistics,
+    std::optional<SingletonQueueEntry> &candidate) {
+  candidate.reset();
+  std::optional<std::size_t> gain;
+  if (!evaluateSingletonGain(problem, mechanism, covered, options, statistics,
+                             gain)) {
+    return false;
+  }
+  if (!gain) {
+    return true;
+  }
+  const CanonicalSyncMechanism &mechanismData =
+      problem.getMechanisms()[mechanism];
+  std::size_t profileWork = 0;
+  std::size_t costWork = 0;
+  if (!checkedWorkSum(mechanismData.cost.barrierActions.size(),
+                      mechanismData.cost.eventActions.size(), profileWork) ||
+      !checkedWorkSum(profileWork, mechanismData.eventLifetimes.size(),
+                      costWork) ||
+      !checkedWorkSum(costWork, 1, costWork) ||
+      !consumeWork(costWork, options.maximumWorkUnits,
+                   statistics.workUnits)) {
+    return false;
+  }
+  const std::size_t profileDepth =
+      std::max(mechanismData.cost.barrierActions.size(),
+               mechanismData.cost.eventActions.size());
+  for (std::size_t depth = 0; depth < profileDepth; ++depth) {
+    std::uint64_t total = 0;
+    if (!checkedCostAdd(profileValue(mechanismData.cost.barrierActions, depth),
+                        profileValue(mechanismData.cost.eventActions, depth),
+                        total)) {
+      statistics.arithmeticOverflow = true;
+      return false;
+    }
+  }
+  std::uint64_t lifetimeArea = 0;
+  for (std::size_t use = 0; use < mechanismData.eventLifetimes.size(); ++use) {
+    const CanonicalSyncEventLifetime &lifetime =
+        mechanismData.eventLifetimes[use];
+    if (lifetime.end < lifetime.begin) {
+      statistics.arithmeticOverflow = true;
+      return false;
+    }
+    std::uint64_t span = 0;
+    const std::uint64_t width =
+        use < mechanismData.descriptor.eventUses.size()
+            ? static_cast<std::uint64_t>(
+                  mechanismData.descriptor.eventUses[use].width)
+            : 0;
+    std::uint64_t area = 0;
+    if (!checkedCostAdd(
+            static_cast<std::uint64_t>(lifetime.end - lifetime.begin), 1,
+            span) ||
+        !checkedCostMultiply(span, width, area) ||
+        !checkedCostAdd(lifetimeArea, area, lifetimeArea)) {
+      statistics.arithmeticOverflow = true;
+      return false;
+    }
+  }
+  candidate = SingletonQueueEntry{mechanism, *gain, lifetimeArea};
+  return true;
+}
+
+CanonicalSyncSelectionError selectIndependentSingletonCover(
+    const CanonicalSyncPatternProblem &problem,
+    const CanonicalSyncGreedyOptions &options, CanonicalSyncSelection &result,
+    std::vector<CanonicalSyncMechanismId> &selected) {
+  std::vector<SingletonQueueEntry> candidates;
+  candidates.reserve(problem.getMechanisms().size());
+  const SingletonQueueCompare queueCompare{&problem, options.objective};
+  std::size_t maximumProfileDepth = 0;
+  std::size_t forbiddenPosition = 0;
+  for (const CanonicalSyncMechanism &mechanism : problem.getMechanisms()) {
+    const auto forbiddenPrecedesMechanism = [&] {
+      return forbiddenPosition < options.forbiddenMechanisms.size() &&
+             options.forbiddenMechanisms[forbiddenPosition] < mechanism.id;
+    };
+    while (forbiddenPrecedesMechanism()) {
+      if (!consumeWork(1, options.maximumWorkUnits,
+                       result.statistics.workUnits)) {
+        return CanonicalSyncSelectionError::WorkLimitExceeded;
+      }
+      ++forbiddenPosition;
+    }
+    const bool forbidden =
+        forbiddenPosition < options.forbiddenMechanisms.size() &&
+        options.forbiddenMechanisms[forbiddenPosition] == mechanism.id;
+    if (forbidden) {
+      continue;
+    }
+    std::optional<SingletonQueueEntry> candidate;
+    if (!prepareSingletonQueueEntry(problem, mechanism.id, result.covered,
+                                    options, result.statistics, candidate)) {
+      return result.statistics.arithmeticOverflow
+                 ? CanonicalSyncSelectionError::ArithmeticOverflow
+                 : CanonicalSyncSelectionError::WorkLimitExceeded;
+    }
+    if (!candidate) {
+      continue;
+    }
+    maximumProfileDepth = std::max(
+        maximumProfileDepth,
+        std::max(mechanism.cost.barrierActions.size(),
+                 mechanism.cost.eventActions.size()));
+    const bool initialHeapWork = consumeHeapOperationWork(
+        candidates.size() + 1, maximumProfileDepth, /*popping=*/false,
+        options.maximumWorkUnits,
+        result.statistics.workUnits);
+    if (!initialHeapWork) {
+      return CanonicalSyncSelectionError::WorkLimitExceeded;
+    }
+    candidates.push_back(std::move(*candidate));
+    std::push_heap(candidates.begin(), candidates.end(), queueCompare);
+  }
+
+  for (;;) {
+    const std::optional<bool> isComplete =
+        complete(problem, result.covered, options.maximumWorkUnits,
+                 result.statistics.workUnits);
+    if (!isComplete) {
+      return CanonicalSyncSelectionError::WorkLimitExceeded;
+    }
+    if (*isComplete) {
+      return CanonicalSyncSelectionError::None;
+    }
+    if (candidates.empty()) {
+      return CanonicalSyncSelectionError::NoCoveringPattern;
+    }
+    if (!consumeHeapOperationWork(candidates.size(), maximumProfileDepth,
+                                  /*popping=*/true,
+                                  options.maximumWorkUnits,
+                                  result.statistics.workUnits)) {
+      return CanonicalSyncSelectionError::WorkLimitExceeded;
+    }
+    std::pop_heap(candidates.begin(), candidates.end(), queueCompare);
+    SingletonQueueEntry candidate = std::move(candidates.back());
+    candidates.pop_back();
+    std::optional<std::size_t> refreshedGain;
+    if (!evaluateSingletonGain(problem, candidate.mechanism, result.covered,
+                               options, result.statistics, refreshedGain)) {
+      return result.statistics.arithmeticOverflow
+                 ? CanonicalSyncSelectionError::ArithmeticOverflow
+                 : CanonicalSyncSelectionError::WorkLimitExceeded;
+    }
+    if (!refreshedGain) {
+      continue;
+    }
+    candidate.gain = *refreshedGain;
+    bool isBest = candidates.empty();
+    if (!isBest) {
+      if (!consumeSingletonComparisonWork(
+              maximumProfileDepth, options.maximumWorkUnits,
+              result.statistics.workUnits)) {
+        return CanonicalSyncSelectionError::WorkLimitExceeded;
+      }
+      isBest = singletonCandidateLess(problem, candidate, candidates.front(),
+                                      options.objective);
+    }
+    if (!isBest) {
+      const bool replacementHeapWork = consumeHeapOperationWork(
+          candidates.size() + 1, maximumProfileDepth, /*popping=*/false,
+          options.maximumWorkUnits,
+          result.statistics.workUnits);
+      if (!replacementHeapWork) {
+        return CanonicalSyncSelectionError::WorkLimitExceeded;
+      }
+      candidates.push_back(std::move(candidate));
+      std::push_heap(candidates.begin(), candidates.end(), queueCompare);
+      continue;
+    }
+    const CanonicalSyncMechanismId mechanism = candidate.mechanism;
+    const CanonicalSyncPattern &pattern = problem.getPatterns()[mechanism];
+    const bool selectionWork = consumeWork(
+        selected.size() + pattern.coverage.getWords().size() + 1,
+        options.maximumWorkUnits, result.statistics.workUnits);
+    if (!selectionWork) {
+      return CanonicalSyncSelectionError::WorkLimitExceeded;
+    }
+    result.selectionOrder.push_back(mechanism);
+    selected.insert(std::lower_bound(selected.begin(), selected.end(),
+                                     mechanism),
+                    mechanism);
+    result.covered.unite(pattern.coverage);
+  }
+}
+
+bool reverseDeleteIndependentSingletons(
+    const CanonicalSyncPatternProblem &problem,
+    const CanonicalSyncGreedyOptions &options, CanonicalSyncSelection &result,
+    std::vector<CanonicalSyncMechanismId> &selected) {
+  std::size_t selectedCoverageWork = 0;
+  std::size_t preparationWork = 0;
+  const bool preparationAvailable =
+      checkedWorkProduct(selected.size(), problem.getDemands().size(),
+                         selectedCoverageWork) &&
+      checkedWorkSum(problem.getDemands().size(), selectedCoverageWork,
+                     preparationWork) &&
+      consumeWork(preparationWork, options.maximumWorkUnits,
+                  result.statistics.workUnits);
+  if (!preparationAvailable) {
+    return false;
+  }
+  std::vector<std::size_t> coverageCounts(problem.getDemands().size(), 0);
+  for (std::size_t demand = 0; demand < coverageCounts.size(); ++demand) {
+    coverageCounts[demand] = problem.getBaselineCoverage().contains(demand);
+  }
+  for (CanonicalSyncMechanismId mechanism : selected) {
+    const SyncCoverDemandSet &coverage =
+        problem.getPatterns()[mechanism].coverage;
+    for (std::size_t demand = 0; demand < coverageCounts.size(); ++demand) {
+      if (coverage.contains(demand)) {
+        ++coverageCounts[demand];
+      }
+    }
+  }
+  for (auto position = result.selectionOrder.rbegin();
+       position != result.selectionOrder.rend(); ++position) {
+    const bool deletionWork =
+        consumeWork(coverageCounts.size() + selected.size(),
+                    options.maximumWorkUnits, result.statistics.workUnits);
+    if (!deletionWork) {
+      return false;
+    }
+    const auto found = std::lower_bound(selected.begin(), selected.end(),
+                                        *position);
+    const bool mechanismMissing = found == selected.end() || *found != *position;
+    if (mechanismMissing) {
+      continue;
+    }
+    ++result.statistics.deletionEvaluations;
+    const SyncCoverDemandSet &coverage =
+        problem.getPatterns()[*position].coverage;
+    bool removable = true;
+    for (std::size_t demand = 0; demand < coverageCounts.size(); ++demand) {
+      const bool uniquelyCovered =
+          coverage.contains(demand) && coverageCounts[demand] == 1;
+      if (uniquelyCovered) {
+        removable = false;
+        break;
+      }
+    }
+    if (!removable) {
+      continue;
+    }
+    if (!consumeWork(coverageCounts.size(), options.maximumWorkUnits,
+                     result.statistics.workUnits)) {
+      return false;
+    }
+    for (std::size_t demand = 0; demand < coverageCounts.size(); ++demand) {
+      if (coverage.contains(demand)) {
+        --coverageCounts[demand];
+      }
+    }
+    selected.erase(found);
+  }
+  return true;
 }
 
 bool consumeMechanismVerificationWork(
@@ -920,47 +1431,68 @@ CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
   }
 
   std::vector<CanonicalSyncMechanismId> selected;
-  GreedyCandidateScan candidateScan(problem.getDemands().size());
-  for (;;) {
-    const std::optional<bool> isComplete =
-        complete(problem, result.covered, options.maximumWorkUnits,
-                 result.statistics.workUnits);
-    if (!isComplete) {
-      result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+  const std::optional<bool> independentSingletonProblem =
+      options.strategy == CanonicalSyncSelectionStrategy::FixedCover
+          ? std::optional<bool>{false}
+          : hasIndependentSingletonPatterns(
+                problem, options.maximumWorkUnits,
+                result.statistics.workUnits);
+  if (!independentSingletonProblem) {
+    result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+    return result;
+  }
+  const bool independentSingletons = *independentSingletonProblem;
+  if (independentSingletons) {
+    result.error =
+        selectIndependentSingletonCover(problem, options, result, selected);
+    if (result.error != CanonicalSyncSelectionError::None) {
       return result;
     }
-    if (*isComplete) {
-      break;
+  } else {
+    GreedyCandidateScan candidateScan(problem.getDemands().size());
+    for (;;) {
+      const std::optional<bool> isComplete =
+          complete(problem, result.covered, options.maximumWorkUnits,
+                   result.statistics.workUnits);
+      if (!isComplete) {
+        result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+        return result;
+      }
+      if (*isComplete) {
+        break;
+      }
+      candidateScan.reset();
+      const bool built =
+          options.strategy == CanonicalSyncSelectionStrategy::FixedCover
+              ? buildFixedCandidates(problem, selected, result.covered,
+                                     options, result.statistics, candidateScan)
+              : buildActionAwareCandidates(problem, selected, result.covered,
+                                           options, result.statistics,
+                                           candidateScan);
+      if (!built) {
+        result.error = result.statistics.arithmeticOverflow
+                           ? CanonicalSyncSelectionError::ArithmeticOverflow
+                           : CanonicalSyncSelectionError::WorkLimitExceeded;
+        return result;
+      }
+      if (!candidateScan.best) {
+        result.error = CanonicalSyncSelectionError::NoCoveringPattern;
+        return result;
+      }
+      GreedyCandidate chosen = std::move(*candidateScan.best);
+      const bool selectionWork =
+          consumeWork(selected.size() + chosen.additions.size(),
+                      options.maximumWorkUnits, result.statistics.workUnits);
+      if (!selectionWork) {
+        result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+        return result;
+      }
+      result.selectionOrder.insert(result.selectionOrder.end(),
+                                   chosen.additions.begin(),
+                                   chosen.additions.end());
+      selected = addMembers(selected, chosen.additions);
+      std::swap(result.covered, candidateScan.bestCoverage);
     }
-    candidateScan.reset();
-    const bool built =
-        options.strategy == CanonicalSyncSelectionStrategy::FixedCover
-            ? buildFixedCandidates(problem, selected, result.covered, options,
-                                   result.statistics, candidateScan)
-            : buildActionAwareCandidates(problem, selected, result.covered,
-                                         options, result.statistics,
-                                         candidateScan);
-    if (!built) {
-      result.error = result.statistics.arithmeticOverflow
-                         ? CanonicalSyncSelectionError::ArithmeticOverflow
-                         : CanonicalSyncSelectionError::WorkLimitExceeded;
-      return result;
-    }
-    if (!candidateScan.best) {
-      result.error = CanonicalSyncSelectionError::NoCoveringPattern;
-      return result;
-    }
-    GreedyCandidate chosen = std::move(*candidateScan.best);
-    if (!consumeWork(selected.size() + chosen.additions.size(),
-                     options.maximumWorkUnits, result.statistics.workUnits)) {
-      result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
-      return result;
-    }
-    result.selectionOrder.insert(result.selectionOrder.end(),
-                                 chosen.additions.begin(),
-                                 chosen.additions.end());
-    selected = addMembers(selected, chosen.additions);
-    std::swap(result.covered, candidateScan.bestCoverage);
   }
 
   CostComputation selectedCost = getCostMetered(
@@ -973,8 +1505,26 @@ CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
                        : CanonicalSyncSelectionError::WorkLimitExceeded;
     return result;
   }
+  if (independentSingletons && !reverseDeleteIndependentSingletons(
+                                   problem, options, result, selected)) {
+    result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+    return result;
+  }
+  if (independentSingletons) {
+    selectedCost = getCostMetered(problem, selected, options.maximumWorkUnits,
+                                  result.statistics.workUnits);
+    if (!selectedCost) {
+      result.statistics.arithmeticOverflow =
+          selectedCost.error == CostComputationError::ArithmeticOverflow;
+      result.error = result.statistics.arithmeticOverflow
+                         ? CanonicalSyncSelectionError::ArithmeticOverflow
+                         : CanonicalSyncSelectionError::WorkLimitExceeded;
+      return result;
+    }
+  }
   for (auto position = result.selectionOrder.rbegin();
-       position != result.selectionOrder.rend(); ++position) {
+       !independentSingletons && position != result.selectionOrder.rend();
+       ++position) {
     if (!consumeWork(selected.size(), options.maximumWorkUnits,
                      result.statistics.workUnits)) {
       result.error = CanonicalSyncSelectionError::WorkLimitExceeded;

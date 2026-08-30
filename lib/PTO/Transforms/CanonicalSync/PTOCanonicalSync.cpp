@@ -148,6 +148,29 @@ bool configureMechanismFamilies(StringRef value,
   return true;
 }
 
+bool configureCatalogMode(StringRef value,
+                          pto::CanonicalSyncPatternOptions &options) {
+  if (value == "standard") {
+    options.catalogMode = pto::CanonicalSyncCatalogMode::Standard;
+    return true;
+  }
+  if (value == "strict-direct") {
+    options.catalogMode = pto::CanonicalSyncCatalogMode::StrictMinimalDirect;
+    return true;
+  }
+  return false;
+}
+
+StringRef catalogModeName(pto::CanonicalSyncCatalogMode mode) {
+  switch (mode) {
+  case pto::CanonicalSyncCatalogMode::Standard:
+    return "standard";
+  case pto::CanonicalSyncCatalogMode::StrictMinimalDirect:
+    return "strict-direct";
+  }
+  return "unknown";
+}
+
 bool configureSelectionStrategy(StringRef strategy,
                                 pto::CanonicalSyncGreedyOptions &options) {
   if (strategy == "fixed-cover") {
@@ -304,6 +327,8 @@ StringRef mechanismOriginName(pto::CanonicalSyncMechanismOrigin origin) {
     return "direct-forward-recurrence-event";
   case Origin::DirectReleaseRecurrenceProtocol:
     return "direct-release-recurrence-protocol";
+  case Origin::DirectBalancedTargetFenceEvent:
+    return "direct-balanced-target-fence-event";
   case Origin::CompletionFrontierEvent:
     return "completion-frontier-event";
   case Origin::TargetCompletionCertificateEvent:
@@ -414,6 +439,7 @@ llvm::json::Array jsonSelectedMechanisms(
         {"origin_mask", jsonInteger(mechanism.originMask)},
         {"origins", jsonMechanismOrigins(mechanism.originMask)},
         {"supplies", jsonInteger(mechanism.supplies)},
+        {"grounded_coverage_rows", jsonInteger(mechanism.groundedCoverageRows)},
         {"event_uses", jsonInteger(mechanism.eventUses)},
         {"actions", jsonInteger(mechanism.actions)},
         {"event_sets", jsonInteger(mechanism.eventSets)},
@@ -566,6 +592,7 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
       {"target_capabilities",
        jsonTargetCapabilities(report.targetCapabilities)},
       {"selection_objective", objectiveName(report.selectionObjective)},
+      {"catalog_mode", catalogModeName(report.catalogMode)},
       {"enabled_mechanism_family_mask",
        jsonInteger(report.enabledMechanismFamilies)},
       {"enabled_mechanism_families",
@@ -618,6 +645,12 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
       {"maximum_recurrence_distance",
        jsonInteger(report.maximumRecurrenceDistance)},
       {"direct_mechanisms", jsonInteger(report.directMechanisms)},
+      {"singleton_candidates_covering_multiple_rows",
+       jsonInteger(report.singletonCandidatesCoveringMultipleRows)},
+      {"maximum_singleton_candidate_coverage_rows",
+       jsonInteger(report.maximumSingletonCandidateCoverageRows)},
+      {"total_singleton_candidate_coverage_rows",
+       jsonInteger(report.totalSingletonCandidateCoverageRows)},
       {"candidate_mechanisms_by_origin",
        jsonMechanismOriginCounts(report.candidateMechanismsByOrigin)},
       {"direct_pair_proposals", jsonInteger(report.directPairProposals)},
@@ -859,7 +892,24 @@ struct PTOCanonicalSyncPass
       signalPassFailure();
       return;
     }
+    if (!configureCatalogMode(catalogMode, options.patterns)) {
+      function.emitError("catalog-mode must be standard or strict-direct");
+      signalPassFailure();
+      return;
+    }
     options.patterns.enableConflictCoreRepair = enableConflictCoreRepair;
+    const bool invalidStrictDirectConfiguration =
+        options.patterns.catalogMode ==
+            pto::CanonicalSyncCatalogMode::StrictMinimalDirect &&
+        (options.patterns.enabledMechanismFamilies != 0 ||
+         options.patterns.enableConflictCoreRepair);
+    if (invalidStrictDirectConfiguration) {
+      function.emitError(
+          "strict-direct catalog mode requires mechanism-families=core, "
+          "and enable-conflict-core-repair=false");
+      signalPassFailure();
+      return;
+    }
     if (!configureSelectionStrategy(selectionStrategy, options.selection)) {
       function.emitError() << "selection-strategy must be fixed-cover, "
                               "action-aware-singleton, or pair-lookahead";

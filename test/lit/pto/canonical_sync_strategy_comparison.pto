@@ -17,6 +17,19 @@
 // RUN: FileCheck %s --check-prefix=UNCHANGED < %t.mlir
 // RUN: FileCheck %s --check-prefix=SUMMARY < %t.log
 // RUN: FileCheck %s --check-prefix=REPORT < %t.json
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-catalog-mode=strict-direct \
+// RUN:   --canonical-sync-mechanism-families=core \
+// RUN:   --canonical-sync-pattern-mode=direct \
+// RUN:   --canonical-sync-enable-conflict-core-repair=false \
+// RUN:   --canonical-sync-selection-strategy=action-aware-singleton \
+// RUN:   --canonical-sync-report=%t.core.json --emit-pto-ir %s > /dev/null
+// RUN: FileCheck %s --check-prefix=CORE-REPORT < %t.core.json
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN:   --canonical-sync-catalog-mode=strict-direct \
+// RUN:   --canonical-sync-mechanism-families=core \
+// RUN:   --canonical-sync-pattern-mode=direct --emit-pto-ir %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=INVALID-STRICT
 // RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
 // RUN:   --canonical-sync-selection-strategy=invalid --emit-pto-ir %s \
 // RUN:   2>&1 | FileCheck %s --check-prefix=INVALID
@@ -145,9 +158,21 @@
 // REPORT-DAG: "strategy": "fixed-cover"
 // REPORT-DAG: "strategy": "action-aware-singleton"
 // REPORT-DAG: "strategy": "pair-lookahead"
+// CORE-REPORT-DAG: "enabled_mechanism_family_mask": 0
+// CORE-REPORT-DAG: "catalog_mode": "strict-direct"
+// CORE-REPORT-DAG: "direct_pairs_enabled": false
+// CORE-REPORT-DAG: "conflict_core_repair_enabled": false
+// CORE-REPORT-DAG: "selection_basis_rows":
+// CORE-REPORT-DAG: "singleton_candidates_covering_multiple_rows":
+// CORE-REPORT-DAG: "maximum_singleton_candidate_coverage_rows":
+// CORE-REPORT-DAG: "total_singleton_candidate_coverage_rows":
+// CORE-REPORT-DAG: "grounded_coverage_rows":
+// CORE-REPORT-DAG: "used_localized_pipe_all": false
+// CORE-REPORT-DAG: "verified": true
 // INVALID: selection-strategy must be fixed-cover, action-aware-singleton, or pair-lookahead
 // INVALID-OBJECTIVE: selection-objective must be action-first or serialization-first
 // INVALID-BOUND: maximum-verification-work-units must be positive
+// INVALID-STRICT: strict-direct catalog mode requires mechanism-families=core, and enable-conflict-core-repair=false
 // INVALID-PHASE-BOUND: maximum-periodic-recurrence-states must be positive
 // MAX-PHASE-BOUND: maximum-periodic-recurrence-states must not exceed 16
 // INVALID-WITNESS-BOUND: maximum-recurrence-witness-states must be positive

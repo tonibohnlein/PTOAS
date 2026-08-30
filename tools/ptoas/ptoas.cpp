@@ -625,6 +625,12 @@ static llvm::cl::opt<std::string> canonicalSyncMechanismFamilies(
                    "all, core, or a '+'-separated list"),
     llvm::cl::init("all"));
 
+static llvm::cl::opt<std::string> canonicalSyncCatalogMode(
+    "canonical-sync-catalog-mode",
+    llvm::cl::desc(
+        "Canonical synchronization catalog policy: standard or strict-direct"),
+    llvm::cl::init("standard"));
+
 static llvm::cl::opt<bool> canonicalSyncEnableConflictCoreRepair(
     "canonical-sync-enable-conflict-core-repair",
     llvm::cl::desc(
@@ -4075,6 +4081,7 @@ int mlir::pto::compilePTOASModule(OwningOpRef<ModuleOp> &module,
         canonicalSyncAssumeAllGmAccessesNoAlias;
     options.patternMode = canonicalSyncPatternMode;
     options.mechanismFamilies = canonicalSyncMechanismFamilies;
+    options.catalogMode = canonicalSyncCatalogMode;
     options.maximumPeriodicRecurrenceStates =
         canonicalSyncMaximumPeriodicRecurrenceStates;
     options.maximumRecurrenceWitnessStates =

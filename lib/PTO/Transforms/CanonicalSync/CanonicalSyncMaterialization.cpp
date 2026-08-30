@@ -49,6 +49,11 @@ void addNanoseconds(std::uint64_t &total, std::uint64_t amount) {
               : total + amount;
 }
 
+bool usesMinimalDirectCatalog(const CanonicalSyncBuildOptions &options) {
+  return options.patterns.catalogMode ==
+         CanonicalSyncCatalogMode::StrictMinimalDirect;
+}
+
 bool checkedWorkSum(std::size_t first, std::size_t second,
                     std::size_t &result) {
   const bool valid = second <= std::numeric_limits<std::size_t>::max() - first;
@@ -906,6 +911,7 @@ selectWithBoundedRepair(const CanonicalSyncProgram &program,
   outcome.preciseAllocation = selection.allocation;
   if (selection ||
       selection.error != CanonicalSyncSelectionError::ResourceInfeasible ||
+      usesMinimalDirectCatalog(options) ||
       !options.patterns.enableConflictCoreRepair ||
       options.maximumRepairRounds == 0) {
     outcome.feasible = static_cast<bool>(selection);
@@ -1582,6 +1588,14 @@ struct FreshVerificationResult {
   CanonicalSyncVerifiedPlan plan;
   std::size_t workUnits = 0;
   std::uint64_t nanoseconds = 0;
+
+  FreshVerificationResult() {
+    // A default-constructed result means verification was not attempted.
+    // CanonicalSyncVerifiedPlan otherwise defaults to a successful error code,
+    // which would make infeasible analysis-only selections look verified and
+    // replace their diagnostic allocation with an empty one.
+    plan.error = CanonicalSyncSelectionError::FinalValidationFailed;
+  }
 };
 
 FreshVerificationResult
@@ -1640,6 +1654,16 @@ buildStrategyReport(CanonicalSyncSelectionStrategy strategy,
                                         : outcome.selection.allocation;
   report.preciseSearch = outcome.preciseSearch;
   report.preciseAllocation = outcome.preciseAllocation;
+  std::vector<std::size_t> groundedCoverageRows(problem.getMechanisms().size(),
+                                                0);
+  for (const CanonicalSyncPattern &pattern : problem.getPatterns()) {
+    if (pattern.kind != CanonicalSyncPatternKind::Singleton ||
+        pattern.members.size() != 1 ||
+        pattern.members.front() >= groundedCoverageRows.size()) {
+      continue;
+    }
+    groundedCoverageRows[pattern.members.front()] = pattern.coverage.count();
+  }
   constexpr std::size_t maximumSelectedMechanismDetails = 4096;
   for (CanonicalSyncMechanismId mechanismId : outcome.selection.mechanisms) {
     const CanonicalSyncMechanism &mechanism =
@@ -1658,6 +1682,7 @@ buildStrategyReport(CanonicalSyncSelectionStrategy strategy,
     detail.kind = descriptor.kind;
     detail.originMask = mechanism.originMask;
     detail.supplies = descriptor.supplies.size();
+    detail.groundedCoverageRows = groundedCoverageRows[mechanismId];
     detail.eventUses = descriptor.eventUses.size();
     detail.actions = descriptor.actions.size();
     const bool hasRecurrenceSupply =
@@ -1788,9 +1813,11 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
   report.function = program.getFunction().getSymName().str();
   report.targetCapabilities = program.getTargetCapabilities();
   report.selectionObjective = options.selection.objective;
+  report.catalogMode = options.patterns.catalogMode;
   report.enabledMechanismFamilies = options.patterns.enabledMechanismFamilies;
   report.directPairsEnabled = options.patterns.enableDirectPairs;
-  report.conflictCoreRepairEnabled = options.patterns.enableConflictCoreRepair;
+  report.conflictCoreRepairEnabled = !usesMinimalDirectCatalog(options) &&
+                                     options.patterns.enableConflictCoreRepair;
   report.gmAliasPolicy = options.analysis.gmAliasPolicy;
   report.graphNodes = program.getGraph().getNodes().size();
   report.graphEdges = program.getGraph().getEdges().size();
@@ -1854,6 +1881,20 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
     report.demands += demand.originalDemandCount;
   }
   report.directMechanisms = problem.getMechanisms().size();
+  for (const CanonicalSyncPattern &pattern : problem.getPatterns()) {
+    if (pattern.kind != CanonicalSyncPatternKind::Singleton) {
+      continue;
+    }
+    const std::size_t coverageRows = pattern.coverage.count();
+    report.singletonCandidatesCoveringMultipleRows += coverageRows > 1;
+    report.maximumSingletonCandidateCoverageRows =
+        std::max(report.maximumSingletonCandidateCoverageRows, coverageRows);
+    report.totalSingletonCandidateCoverageRows =
+        coverageRows > std::numeric_limits<std::size_t>::max() -
+                           report.totalSingletonCandidateCoverageRows
+            ? std::numeric_limits<std::size_t>::max()
+            : report.totalSingletonCandidateCoverageRows + coverageRows;
+  }
   for (const CanonicalSyncMechanism &mechanism : problem.getMechanisms()) {
     for (std::size_t origin = 0; origin < kCanonicalSyncMechanismOriginCount;
          ++origin) {
@@ -2266,7 +2307,9 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
         return failure();
       }
       bool usedLocalizedPipeAll = false;
-      if (canUseLocalizedPipeAllBackstop(outcome)) {
+      const bool canUseFallback = !usesMinimalDirectCatalog(trialOptions) &&
+                                  canUseLocalizedPipeAllBackstop(outcome);
+      if (canUseFallback) {
         const SteadyClock::time_point fallbackStart = SteadyClock::now();
         std::optional<PipeAllFallbackOutcome> fallback =
             buildLocalizedPipeAllFallback(*program, trialOptions);
@@ -2352,6 +2395,43 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
     }
     return materializeCanonicalSyncPlan(*program, selection.getProblem(),
                                         verification.plan);
+  }
+
+  if (usesMinimalDirectCatalog(options)) {
+    if (!options.compareSelectionStrategies) {
+      FreshVerificationResult verification;
+      report.strategies.push_back(buildStrategyReport(
+          options.selection.strategy, *program, selection, verification));
+      if (options.reportCallback && failed(options.reportCallback(report))) {
+        return failure();
+      }
+    }
+    for (const CanonicalSyncDomainAllocation &domain :
+         selection.selection.allocation.domains) {
+      if (domain.required <= domain.available) {
+        continue;
+      }
+      const CanonicalSyncEventDomain &eventDomain =
+          selection.getProblem().getDomains()[domain.domain];
+      function.emitRemark()
+          << "canonical sync direct-catalog event pressure: source_resource="
+          << eventDomain.sourceResource
+          << ", target_resource=" << eventDomain.targetResource
+          << ", required=" << domain.required
+          << ", available=" << domain.available
+          << ", live_mechanisms=" << domain.liveMechanisms.size();
+    }
+    if (selection.selection.error ==
+        CanonicalSyncSelectionError::ResourceInfeasible) {
+      function.emitError(
+          "canonical sync direct catalog exhausted the event-ID budget; "
+          "repair and PIPE_ALL fallback are disabled in strict-direct mode");
+    } else {
+      function.emitError()
+          << "canonical sync direct planning failed closed, error="
+          << static_cast<unsigned>(selection.selection.error);
+    }
+    return failure();
   }
 
   if (!canUseLocalizedPipeAllBackstop(selection)) {

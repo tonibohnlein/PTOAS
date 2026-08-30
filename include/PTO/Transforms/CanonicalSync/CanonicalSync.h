@@ -75,10 +75,19 @@ canonicalSyncMechanismFamilyEnabled(CanonicalSyncMechanismFamilyMask mask,
   return (mask & canonicalSyncMechanismFamilyBit(family)) != 0;
 }
 
-/// Internal ablation controls for the restricted direct-mechanism catalog.
+/// Catalog construction policy. StrictMinimalDirect is an explicit
+/// correctness baseline rather than a special interpretation of an empty
+/// derived-family mask.
+enum class CanonicalSyncCatalogMode : std::uint8_t {
+  Standard,
+  StrictMinimalDirect,
+};
+
+/// Internal ablation controls for synchronization mechanism construction.
 /// Repair frontiers are grounded only from a live allocation conflict core in
 /// a separately owned repair problem.
 struct CanonicalSyncPatternOptions {
+  CanonicalSyncCatalogMode catalogMode = CanonicalSyncCatalogMode::Standard;
   CanonicalSyncMechanismFamilyMask enabledMechanismFamilies =
       kAllCanonicalSyncMechanismFamilies;
   bool enableDirectPairs = true;
@@ -104,6 +113,7 @@ struct CanonicalSyncSelectedMechanismReport {
   CanonicalSyncMechanismKind kind = CanonicalSyncMechanismKind::Event;
   CanonicalSyncMechanismOriginMask originMask = 0;
   std::size_t supplies = 0;
+  std::size_t groundedCoverageRows = 0;
   std::size_t eventUses = 0;
   std::size_t actions = 0;
   std::size_t eventSets = 0;
@@ -175,6 +185,7 @@ struct CanonicalSyncComparisonReport {
   CanonicalSyncTargetCapabilities targetCapabilities;
   CanonicalSyncSelectionObjective selectionObjective =
       CanonicalSyncSelectionObjective::ActionFirst;
+  CanonicalSyncCatalogMode catalogMode = CanonicalSyncCatalogMode::Standard;
   CanonicalSyncMechanismFamilyMask enabledMechanismFamilies =
       kAllCanonicalSyncMechanismFamilies;
   bool directPairsEnabled = true;
@@ -208,6 +219,9 @@ struct CanonicalSyncComparisonReport {
   std::size_t wawDemandRows = 0;
   unsigned maximumRecurrenceDistance = 0;
   std::size_t directMechanisms = 0;
+  std::size_t singletonCandidatesCoveringMultipleRows = 0;
+  std::size_t maximumSingletonCandidateCoverageRows = 0;
+  std::size_t totalSingletonCandidateCoverageRows = 0;
   std::array<std::size_t, kCanonicalSyncMechanismOriginCount>
       candidateMechanismsByOrigin{};
   std::size_t directPairProposals = 0;

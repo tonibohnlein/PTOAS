@@ -81,6 +81,8 @@ enum class CanonicalSyncMechanismOrigin : std::uint8_t {
   RepairFrontierBarrier,
   RepairFrontierEvent,
   LocalizedPipeAll,
+  /// Appended to preserve the numeric origin-mask encoding of schema v1.
+  DirectBalancedTargetFenceEvent,
   Count,
 };
 

@@ -489,6 +489,7 @@ Relevant driver options are:
 --canonical-sync-event-id-max=8
 --canonical-sync-pattern-mode=direct|direct-pair
 --canonical-sync-mechanism-families=all|core|<family>[+<family>...]
+--canonical-sync-catalog-mode=standard|strict-direct
 --canonical-sync-selection-strategy=fixed-cover|action-aware-singleton|pair-lookahead
 --canonical-sync-selection-objective=action-first|serialization-first
 --canonical-sync-maximum-periodic-recurrence-states=16
@@ -528,10 +529,32 @@ Relevant driver options are:
 ```
 
 `direct` disables optional pair construction. `direct-pair` is the default.
-`core` disables every derived family and is intended only as a direct-catalog
-ablation. It can fail closed for guarded or hierarchical lifecycles whose
-balanced implementation requires a certified ownership protocol. Named
-families are independently composable. The accepted names are:
+`core` disables every derived family but remains orthogonal to pair generation
+and repair, so both `core + direct` and `core + direct-pair` are expressible.
+
+`strict-direct` is the minimal correctness catalog. It requires
+`mechanism-families=core` and `enable-conflict-core-repair=false`;
+contradictory combinations are rejected. Pattern mode remains orthogonal:
+`direct` selects only singleton columns, while `direct-pair` may additionally
+compose two direct recipes without synthesizing a new physical mechanism.
+Its set-cover rows are the complete unique hazard universe, and demand-basis
+pre-reduction is disabled. It creates one direct recipe for each otherwise
+uncovered row: a same-resource targeted barrier, an exact distance-zero event,
+a direct recurrence event/protocol, or a balanced target-local direct fence.
+Grounding may prove that one of these singleton columns covers additional
+hazard rows, and the selector may remove redundant direct recipes.
+
+`strict-direct` never constructs derived ownership/cut mechanisms,
+conflict-core repair candidates, or a localized `PIPE_ALL` backstop. Event-ID
+scarcity is therefore reported as `ResourceInfeasible` before IR mutation. The
+JSON report includes the number of singleton columns that cover multiple rows,
+the maximum rows covered by one singleton, the total singleton coverage
+incidences, and each selected mechanism's grounded row count. This makes
+strict-direct mode a baseline for distinguishing three outcomes: a complete
+direct cover, genuine event-resource scarcity, and an unsupported
+control/lifecycle shape.
+
+Named families are independently composable. The accepted names are:
 
 ```text
 completion-frontier
@@ -566,6 +589,35 @@ allowance; the independent certificate-dimension limits bound retained memory.
 The two GM alias contracts are mutually exclusive; the all-accesses contract is
 unsafe unless the caller guarantees that even accesses through the same
 argument are disjoint.
+
+### Scarcity-only lifecycle extension
+
+The minimal direct catalog is also the completeness and diagnostic baseline
+for subsequent lifecycle work. A resource extension may run only after a
+direct cover is `ResourceInfeasible`; it must not add ordinary fallback
+candidates to the initial catalog.
+
+The intended extension is derived from the overfull direct mechanisms rather
+than from named kernel patterns:
+
+1. Build a storage-lifecycle graph whose vertices are selected direct event
+   uses and whose typed edges are certified producer-to-consumer and
+   consumer-to-next-producer orderings.
+2. Find bounded strongly connected components and source/target cuts that can
+   share a ready/release channel without changing guards, scopes, recurrence
+   distance, or physical-storage witnesses.
+3. Synthesize a lifecycle-complete descriptor with explicit priming, body,
+   return, and exit-drain actions. Record the direct parent mechanisms and
+   witness rows as derivation provenance.
+4. Verify the descriptor independently, ground it as a new singleton column,
+   and rerun selection and exact event allocation.
+5. Fail before mutation when no certified channel plan fits the event budget.
+   This path does not enable `PIPE_ALL`.
+
+This keeps direct columns as the correctness basis while allowing event-ID
+scarcity to motivate generic channel synthesis. Ordinary pair columns remain a
+separate transitive-coverage optimization: they retain both parent recipes and
+therefore cannot, by themselves, reduce event pressure.
 
 To compare all three selectors on the same frozen problem without inserting
 synchronization:
