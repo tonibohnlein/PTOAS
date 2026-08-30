@@ -181,6 +181,13 @@ PTOTargetKind classifyPTODeviceSpec(StringRef deviceSpec);
 PTOTargetKind resolvePTOTarget(PTOTargetKind targetArch,
                                PTOTargetKind deviceSpec);
 PTOTargetKind resolvePTOModuleTarget(ModuleOp module);
+/// Resolve one target for a complete module hierarchy. Distinct supported
+/// declarations in the same hierarchy are a conflict; absent declarations do
+/// not affect the result.
+PTOTargetKind resolvePTOHierarchyTarget(ModuleOp root);
+/// Resolve the target declarations on the containing-module chain. This gives
+/// operations in an undeclared child module the nearest enclosing target.
+PTOTargetKind resolvePTOInheritedTarget(Operation *op);
 PTOArch getTargetArch(ModuleOp module);
 PTOArch getTargetArch(Operation *op);
 bool isTargetArchA3(ModuleOp module);

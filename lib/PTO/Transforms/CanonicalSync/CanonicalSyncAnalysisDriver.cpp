@@ -164,8 +164,7 @@ CanonicalSyncTargetCapabilities makeCoreTargetCapabilities(
 
 CanonicalSyncTargetCapabilities
 getTargetCapabilities(func::FuncOp function) {
-  ModuleOp module = function->getParentOfType<ModuleOp>();
-  switch (resolvePTOModuleTarget(module)) {
+  switch (resolvePTOInheritedTarget(function)) {
   case PTOTargetKind::A2:
     return makeCoreTargetCapabilities(CanonicalSyncTargetProfile::A2V1,
                                       /*vectorCompletionOrdered=*/false,

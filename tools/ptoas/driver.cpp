@@ -242,6 +242,17 @@ static void applyExplicitTargetOverride(ModuleOp root, llvm::StringRef arch) {
   });
 }
 
+static void materializeInheritedTarget(ModuleOp root, llvm::StringRef arch) {
+  root.walk([&](ModuleOp module) {
+    if (module->hasAttr(mlir::pto::kPTOTargetArchAttrName)) {
+      return;
+    }
+    module->setAttr(
+        mlir::pto::kPTOTargetArchAttrName,
+        mlir::StringAttr::get(module.getContext(), arch));
+  });
+}
+
 static OwningOpRef<ModuleOp>
 loadInputModule(std::unique_ptr<llvm::MemoryBuffer> inputBuffer,
                 MLIRContext &context, bool cliArchSpecified,
@@ -263,7 +274,7 @@ loadInputModule(std::unique_ptr<llvm::MemoryBuffer> inputBuffer,
     }
     module = parseTextualModule(*inputBuffer, context, arch);
     if (module && !cliArchSpecified &&
-        mlir::pto::resolvePTOModuleTarget(*module) ==
+        mlir::pto::resolvePTOHierarchyTarget(*module) ==
             mlir::pto::PTOTargetKind::A5) {
       arch = "a5";
       module = parseTextualModule(*inputBuffer, context, arch);
@@ -277,9 +288,8 @@ loadInputModule(std::unique_ptr<llvm::MemoryBuffer> inputBuffer,
     applyExplicitTargetOverride(*module, arch);
   }
 
-  Operation *moduleOp = module.get().getOperation();
   mlir::pto::PTOTargetKind resolvedTarget =
-      mlir::pto::resolvePTOModuleTarget(*module);
+      mlir::pto::resolvePTOHierarchyTarget(*module);
   if (resolvedTarget == mlir::pto::PTOTargetKind::Unsupported) {
     llvm::errs() << "Error: unsupported PTO target declaration.\n";
     return {};
@@ -292,10 +302,7 @@ loadInputModule(std::unique_ptr<llvm::MemoryBuffer> inputBuffer,
     resolvedTarget = mlir::pto::PTOTargetKind::A3;
   }
   arch = *getPTOASTargetKindName(resolvedTarget);
-  if (!moduleOp->hasAttr("pto.target_arch")) {
-    moduleOp->setAttr("pto.target_arch",
-                      mlir::StringAttr::get(moduleOp->getContext(), arch));
-  }
+  materializeInheritedTarget(*module, arch);
 
   if (failed(mlir::verify(*module))) {
     llvm::errs() << "Error: input module verification failed.\n";

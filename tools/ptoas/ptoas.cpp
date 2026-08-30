@@ -277,8 +277,9 @@ static bool isSupportedPTOASTargetArch(llvm::StringRef arch) {
          target == pto::PTOTargetKind::A3 || target == pto::PTOTargetKind::A5;
 }
 
-static std::optional<std::string> getModuleTargetArchAttr(ModuleOp module) {
-  switch (pto::resolvePTOModuleTarget(module)) {
+static std::string resolveEffectiveTargetArch(ModuleOp module,
+                                              llvm::StringRef fallbackArch) {
+  switch (pto::resolvePTOHierarchyTarget(module)) {
   case pto::PTOTargetKind::A2:
     return "a2";
   case pto::PTOTargetKind::A2A3:
@@ -290,33 +291,7 @@ static std::optional<std::string> getModuleTargetArchAttr(ModuleOp module) {
   case pto::PTOTargetKind::Unspecified:
   case pto::PTOTargetKind::Unsupported:
   case pto::PTOTargetKind::Conflict:
-    return std::nullopt;
-  }
-  return std::nullopt;
-}
-
-static std::string resolveEffectiveTargetArch(ModuleOp module,
-                                              llvm::StringRef fallbackArch) {
-  if (std::optional<std::string> arch = getModuleTargetArchAttr(module)) {
-    return *arch;
-  }
-
-  std::optional<std::string> childArch;
-  for (ModuleOp child : module.getOps<ModuleOp>()) {
-    std::optional<std::string> arch = getModuleTargetArchAttr(child);
-    if (!arch) {
-      continue;
-    }
-    if (!childArch) {
-      childArch = std::move(arch);
-      continue;
-    }
-    if (*childArch != *arch) {
-      return normalizeArch(fallbackArch);
-    }
-  }
-  if (childArch) {
-    return *childArch;
+    break;
   }
 
   std::string fallback = normalizeArch(fallbackArch);
@@ -339,7 +314,16 @@ static LogicalResult validatePTOTargetDeclarations(ModuleOp root) {
     }
     return WalkResult::advance();
   });
-  return result.wasInterrupted() ? failure() : success();
+  if (result.wasInterrupted()) {
+    return failure();
+  }
+  const pto::PTOTargetKind hierarchyTarget =
+      pto::resolvePTOHierarchyTarget(root);
+  if (hierarchyTarget == pto::PTOTargetKind::Conflict) {
+    root.emitError("heterogeneous PTO target declarations are not supported");
+    return failure();
+  }
+  return success();
 }
 
 } // namespace

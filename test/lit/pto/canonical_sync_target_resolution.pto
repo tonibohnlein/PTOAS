@@ -43,6 +43,16 @@
 // RUN:   < %t/nested-override.json
 // RUN: FileCheck %s --check-prefix=NESTED-OVERRIDE-IR \
 // RUN:   < %t/nested-override.out.pto
+// RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN:   --canonical-sync-report=%t/nested-inherit.json \
+// RUN:   %t/nested-inherit.pto -o %t/nested-inherit.out.pto
+// RUN: FileCheck %s --check-prefix=NESTED-INHERIT \
+// RUN:   < %t/nested-inherit.json
+// RUN: FileCheck %s --check-prefix=NESTED-INHERIT-IR \
+// RUN:   < %t/nested-inherit.out.pto
+// RUN: not ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN:   %t/nested-conflict.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=NESTED-CONFLICT
 // RUN: not ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
 // RUN:   %t/malformed-arch.pto -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=MALFORMED
@@ -62,6 +72,13 @@
 // NESTED-OVERRIDE-IR: module attributes
 // NESTED-OVERRIDE-IR-SAME: pto.target_arch = "a5"
 // NESTED-OVERRIDE-IR-NOT: pto.device-spec
+// NESTED-INHERIT: "profile": "a5-v1"
+// NESTED-INHERIT-IR: module attributes
+// NESTED-INHERIT-IR-SAME: pto.target_arch = "a5"
+// NESTED-INHERIT-IR: module attributes
+// NESTED-INHERIT-IR-SAME: pto.target_arch = "a5"
+// NESTED-INHERIT-IR: !pto.tile_buf<left, 16x16xf16, blayout=col_major
+// NESTED-CONFLICT: Error: conflicting PTO target declarations.
 // UNKNOWN: Error: unsupported PTO target declaration.
 // CONFLICT: Error: conflicting PTO target declarations.
 // MALFORMED: Error: unsupported PTO target declaration.
@@ -131,6 +148,26 @@ module attributes {pto.target_arch = "a3"} {
   module attributes {pto.backend = "emitc", pto.target_arch = "a3",
                      "pto.device-spec" = "Ascend910B"} {
     func.func @nested_override() {
+      return
+    }
+  }
+}
+
+//--- nested-inherit.pto
+module attributes {"pto.device-spec" = "Ascend950"} {
+  module attributes {pto.backend = "emitc"} {
+    func.func @nested_inherit(
+        %left: !pto.tile_buf<left, 16x16xf16,
+            blayout=row_major, slayout=row_major>) {
+      return
+    }
+  }
+}
+
+//--- nested-conflict.pto
+module attributes {pto.target_arch = "a3"} {
+  module attributes {pto.backend = "emitc", pto.target_arch = "a5"} {
+    func.func @nested_conflict() {
       return
     }
   }

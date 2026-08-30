@@ -432,9 +432,63 @@ PTOTargetKind mlir::pto::resolvePTOModuleTarget(ModuleOp module) {
       classifyPTODeviceSpec(deviceSpec ? deviceSpec.getValue() : StringRef{}));
 }
 
+PTOTargetKind mlir::pto::resolvePTOHierarchyTarget(ModuleOp root) {
+  if (!root) {
+    return PTOTargetKind::Unspecified;
+  }
+  PTOTargetKind hierarchyTarget = PTOTargetKind::Unspecified;
+  root.walk([&](ModuleOp module) -> WalkResult {
+    const PTOTargetKind moduleTarget = resolvePTOModuleTarget(module);
+    if (moduleTarget == PTOTargetKind::Unsupported ||
+        moduleTarget == PTOTargetKind::Conflict) {
+      hierarchyTarget = moduleTarget;
+      return WalkResult::interrupt();
+    }
+    if (moduleTarget == PTOTargetKind::Unspecified) {
+      return WalkResult::advance();
+    }
+    if (hierarchyTarget == PTOTargetKind::Unspecified) {
+      hierarchyTarget = moduleTarget;
+      return WalkResult::advance();
+    }
+    if (hierarchyTarget != moduleTarget) {
+      hierarchyTarget = PTOTargetKind::Conflict;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return hierarchyTarget;
+}
+
+PTOTargetKind mlir::pto::resolvePTOInheritedTarget(Operation *op) {
+  if (!op) {
+    return PTOTargetKind::Unspecified;
+  }
+  PTOTargetKind inheritedTarget = PTOTargetKind::Unspecified;
+  Operation *current = op;
+  while (current) {
+    if (auto module = dyn_cast<ModuleOp>(current)) {
+      const PTOTargetKind moduleTarget = resolvePTOModuleTarget(module);
+      if (moduleTarget == PTOTargetKind::Unsupported ||
+          moduleTarget == PTOTargetKind::Conflict) {
+        return moduleTarget;
+      }
+      if (moduleTarget != PTOTargetKind::Unspecified) {
+        if (inheritedTarget != PTOTargetKind::Unspecified &&
+            inheritedTarget != moduleTarget) {
+          return PTOTargetKind::Conflict;
+        }
+        inheritedTarget = moduleTarget;
+      }
+    }
+    current = current->getParentOp();
+  }
+  return inheritedTarget;
+}
+
 PTOArch mlir::pto::getTargetArch(ModuleOp module) {
   const bool isA5Target =
-      resolvePTOModuleTarget(module) == PTOTargetKind::A5;
+      resolvePTOInheritedTarget(module) == PTOTargetKind::A5;
   if (isA5Target) {
     return PTOArch::A5;
   }
@@ -453,8 +507,10 @@ PTOArch mlir::pto::getTargetArch(Operation *op) {
   if (!op) {
     return PTOArch::A3;
   }
-  if (auto module = op->getParentOfType<ModuleOp>()) {
-    return getTargetArch(module);
+  const bool isA5Target =
+      resolvePTOInheritedTarget(op) == PTOTargetKind::A5;
+  if (isA5Target) {
+    return PTOArch::A5;
   }
   switch (getPTOParserTargetArch(op->getContext())) {
   case PTOParserTargetArch::A5:

@@ -71,10 +71,13 @@ Unknown target declarations and conflicting architecture/device declarations
 are rejected by the driver; direct pass invocation treats them as unsupported
 and therefore enables no target-specific completion facts. A command-line
 `--pto-arch` remains an explicit architecture override. When it conflicts with
-the input device specification, the driver drops that superseded specification
-from the normalized module so every later consumer sees one effective target.
-Textual attribute scanning selects only the parser mode; validation always uses
-the parsed module attributes through the shared resolver.
+an input device specification, the driver drops that superseded specification
+from every affected nested module so every later consumer sees one effective
+target. Without an override, one supported target is required across the full
+module hierarchy and missing child declarations inherit it; heterogeneous
+declarations are rejected. Textual input is first parsed conservatively and is
+reparsed with A5 type semantics only when the parsed module hierarchy
+authoritatively selects A5.
 
 The exact-operation completion signalled by a direct set/wait is part of the
 target-neutral mechanism basis. The profile controls only stronger facts that
