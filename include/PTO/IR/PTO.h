@@ -151,6 +151,19 @@ enum class PTOArch {
   A5,
 };
 
+/// The target contract declared by module-level PTO attributes. Unlike
+/// PTOArch, this preserves portable A2/A3 inputs and invalid declarations so
+/// semantic passes can fail closed instead of silently selecting A3.
+enum class PTOTargetKind {
+  Unspecified,
+  Unsupported,
+  Conflict,
+  A2,
+  A2A3,
+  A3,
+  A5,
+};
+
 /// The semantic form selected by the optional third tile of pto.tmov.  The
 /// public operand remains named `fp` for API compatibility; address space is
 /// the sole discriminator between legacy FP and exponent X-to-ZZ lowering.
@@ -163,6 +176,11 @@ enum class TMovForm {
 TMovForm classifyTMovForm(Value fp);
 
 /// Resolve the effective PTO target architecture from module-level IR state.
+PTOTargetKind classifyPTOTargetArch(StringRef arch);
+PTOTargetKind classifyPTODeviceSpec(StringRef deviceSpec);
+PTOTargetKind resolvePTOTarget(PTOTargetKind targetArch,
+                               PTOTargetKind deviceSpec);
+PTOTargetKind resolvePTOModuleTarget(ModuleOp module);
 PTOArch getTargetArch(ModuleOp module);
 PTOArch getTargetArch(Operation *op);
 bool isTargetArchA3(ModuleOp module);

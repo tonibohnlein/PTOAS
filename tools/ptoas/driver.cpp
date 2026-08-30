@@ -109,7 +109,7 @@ static std::string normalizePTOASArch(llvm::StringRef archValue) {
   return normalized;
 }
 
-static bool isSupportedPTOASArch(llvm::StringRef archValue) {
+static bool isSupportedPTOASCLIArch(llvm::StringRef archValue) {
   return archValue == "a2" || archValue == "a3" || archValue == "a5";
 }
 
@@ -126,6 +126,39 @@ detectPTOASTextualModuleArch(llvm::StringRef text) {
     return std::nullopt;
   }
   return normalizePTOASArch(matches[mlir::pto::kValue2]);
+}
+
+static std::optional<std::string>
+detectPTOASTextualDeviceSpec(llvm::StringRef text) {
+  llvm::SmallVector<llvm::StringRef, mlir::pto::kValue4> matches;
+  llvm::Regex deviceSpecRegex(
+      R"ptospec("?(pto\.device-spec)"?[[:space:]]*=[[:space:]]*"([[:alpha:][:digit:]_]+)")ptospec");
+  const bool matched = deviceSpecRegex.match(text, &matches);
+  const bool hasCaptureGroups =
+      matches.size() >= kArchRegexCaptureGroupCount;
+  if (!matched || !hasCaptureGroups) {
+    return std::nullopt;
+  }
+  return matches[mlir::pto::kValue2].str();
+}
+
+static std::optional<std::string>
+getPTOASTargetKindName(mlir::pto::PTOTargetKind target) {
+  switch (target) {
+  case mlir::pto::PTOTargetKind::A2:
+    return "a2";
+  case mlir::pto::PTOTargetKind::A2A3:
+    return "a2a3";
+  case mlir::pto::PTOTargetKind::A3:
+    return "a3";
+  case mlir::pto::PTOTargetKind::A5:
+    return "a5";
+  case mlir::pto::PTOTargetKind::Unspecified:
+  case mlir::pto::PTOTargetKind::Unsupported:
+  case mlir::pto::PTOTargetKind::Conflict:
+    return std::nullopt;
+  }
+  return std::nullopt;
 }
 
 static bool isPTOBCBuffer(llvm::StringRef buffer) {
@@ -146,21 +179,36 @@ static std::unique_ptr<llvm::MemoryBuffer> readInputBuffer() {
 static bool resolveTextInputArch(llvm::StringRef buffer, bool cliArchSpecified,
                                  std::string &arch) {
   arch = normalizePTOASArch(mlir::pto::ptoTargetArch);
-  if (cliArchSpecified) {
-    if (!isSupportedPTOASArch(arch)) {
-      llvm::errs() << "Error: invalid --pto-arch='" << mlir::pto::ptoTargetArch
-                   << "'. Expected 'a2', 'a3', or 'a5'.\n";
-      return false;
-    }
-    return true;
+  if (cliArchSpecified && !isSupportedPTOASCLIArch(arch)) {
+    llvm::errs() << "Error: invalid --pto-arch='" << mlir::pto::ptoTargetArch
+                 << "'. Expected 'a2', 'a3', or 'a5'.\n";
+    return false;
   }
 
-  if (auto detectedArch = detectPTOASTextualModuleArch(buffer)) {
-    arch = *detectedArch;
+  const std::optional<std::string> detectedArch =
+      detectPTOASTextualModuleArch(buffer);
+  const std::optional<std::string> detectedDeviceSpec =
+      detectPTOASTextualDeviceSpec(buffer);
+  const mlir::pto::PTOTargetKind declaredTarget =
+      cliArchSpecified ? mlir::pto::classifyPTOTargetArch(arch)
+                       : mlir::pto::classifyPTOTargetArch(
+                             detectedArch ? llvm::StringRef(*detectedArch)
+                                          : llvm::StringRef{});
+  const mlir::pto::PTOTargetKind deviceTarget =
+      mlir::pto::classifyPTODeviceSpec(
+          detectedDeviceSpec ? llvm::StringRef(*detectedDeviceSpec)
+                             : llvm::StringRef{});
+  const mlir::pto::PTOTargetKind resolvedTarget =
+      mlir::pto::resolvePTOTarget(declaredTarget, deviceTarget);
+  if (resolvedTarget == mlir::pto::PTOTargetKind::Unsupported) {
+    llvm::errs() << "Error: unsupported PTO target declaration.\n";
+    return false;
   }
-  if (!isSupportedPTOASArch(arch)) {
-    arch = "a3";
+  if (resolvedTarget == mlir::pto::PTOTargetKind::Conflict) {
+    llvm::errs() << "Error: conflicting PTO target declarations.\n";
+    return false;
   }
+  arch = getPTOASTargetKindName(resolvedTarget).value_or("a3");
   return true;
 }
 
@@ -229,7 +277,7 @@ loadInputModule(std::unique_ptr<llvm::MemoryBuffer> inputBuffer,
   OwningOpRef<ModuleOp> module;
   if (isPTOBCBuffer(buffer)) {
     arch = normalizePTOASArch(mlir::pto::ptoTargetArch);
-    if (cliArchSpecified && !isSupportedPTOASArch(arch)) {
+    if (cliArchSpecified && !isSupportedPTOASCLIArch(arch)) {
       llvm::errs() << "Error: invalid --pto-arch='" << mlir::pto::ptoTargetArch
                    << "'. Expected 'a2', 'a3', or 'a5'.\n";
       return {};
@@ -249,21 +297,23 @@ loadInputModule(std::unique_ptr<llvm::MemoryBuffer> inputBuffer,
   if (cliArchSpecified) {
     moduleOp->setAttr("pto.target_arch",
                       mlir::StringAttr::get(moduleOp->getContext(), arch));
-  } else if (auto archAttr = moduleOp->getAttrOfType<StringAttr>("pto.target_arch")) {
-    std::string moduleArch = normalizePTOASArch(archAttr.getValue());
-    if (isSupportedPTOASArch(moduleArch)) {
-      arch = std::move(moduleArch);
-    } else {
-      if (!isSupportedPTOASArch(arch)) {
-        arch = "a3";
-      }
-      moduleOp->setAttr("pto.target_arch",
-                        mlir::StringAttr::get(moduleOp->getContext(), arch));
-    }
-  } else {
-    if (!isSupportedPTOASArch(arch)) {
-      arch = "a3";
-    }
+  }
+
+  mlir::pto::PTOTargetKind resolvedTarget =
+      mlir::pto::resolvePTOModuleTarget(*module);
+  if (resolvedTarget == mlir::pto::PTOTargetKind::Unsupported) {
+    llvm::errs() << "Error: unsupported PTO target declaration.\n";
+    return {};
+  }
+  if (resolvedTarget == mlir::pto::PTOTargetKind::Conflict) {
+    llvm::errs() << "Error: conflicting PTO target declarations.\n";
+    return {};
+  }
+  if (resolvedTarget == mlir::pto::PTOTargetKind::Unspecified) {
+    resolvedTarget = mlir::pto::PTOTargetKind::A3;
+  }
+  arch = *getPTOASTargetKindName(resolvedTarget);
+  if (!moduleOp->hasAttr("pto.target_arch")) {
     moduleOp->setAttr("pto.target_arch",
                       mlir::StringAttr::get(moduleOp->getContext(), arch));
   }

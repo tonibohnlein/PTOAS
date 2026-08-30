@@ -9,13 +9,15 @@
 // Exercise the production repair driver on a kernel whose action-first and
 // serialization-first repairs deliberately choose different feasible plans.
 
-// RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
+// RUN:   --emit-pto-ir \
 // RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
 // RUN:   --canonical-sync-selection-objective=action-first \
 // RUN:   --canonical-sync-comparison-report=%t.action.json \
 // RUN:   %S/../../samples/Qwen3_14BDecodeA3/kernels/aic/down_proj.pto \
 // RUN:   -o %t.action.pto
-// RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
+// RUN:   --emit-pto-ir \
 // RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
 // RUN:   --canonical-sync-selection-objective=serialization-first \
 // RUN:   --canonical-sync-comparison-report=%t.serialization.json \

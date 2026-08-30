@@ -10,7 +10,8 @@
 // first inspection. Owner-derived repair mechanisms admitted before discovery
 // must remain selectable and avoid the localized PIPE_ALL backstop.
 
-// RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
+// RUN:   --emit-pto-ir \
 // RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
 // RUN:   --canonical-sync-selection-objective=action-first \
 // RUN:   --canonical-sync-maximum-repair-frontier-inspections=1 \

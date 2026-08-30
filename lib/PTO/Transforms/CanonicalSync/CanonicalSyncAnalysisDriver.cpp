@@ -165,26 +165,18 @@ CanonicalSyncTargetCapabilities makeCoreTargetCapabilities(
 CanonicalSyncTargetCapabilities
 getTargetCapabilities(func::FuncOp function) {
   ModuleOp module = function->getParentOfType<ModuleOp>();
-  StringAttr targetArch =
-      module ? module->getAttrOfType<StringAttr>(kPTOTargetArchAttrName)
-             : StringAttr{};
-  if (!targetArch) {
-    return {};
-  }
-  const StringRef arch = targetArch.getValue();
-  if (arch == "a2") {
+  switch (resolvePTOModuleTarget(module)) {
+  case PTOTargetKind::A2:
     return makeCoreTargetCapabilities(CanonicalSyncTargetProfile::A2V1,
                                       /*vectorCompletionOrdered=*/false,
                                       /*vectorBarrierCompletesCrossResource=*/
                                           true);
-  }
-  if (arch == "a2a3") {
+  case PTOTargetKind::A2A3:
     return makeCoreTargetCapabilities(
         CanonicalSyncTargetProfile::A2A3IntersectionV1,
         /*vectorCompletionOrdered=*/false,
         /*vectorBarrierCompletesCrossResource=*/true);
-  }
-  if (arch == "a3") {
+  case PTOTargetKind::A3: {
     CanonicalSyncTargetCapabilities capabilities =
         makeCoreTargetCapabilities(CanonicalSyncTargetProfile::A3V1,
                                    /*vectorCompletionOrdered=*/false,
@@ -201,11 +193,15 @@ getTargetCapabilities(func::FuncOp function) {
     capabilities.intrinsicMmadAccumulatorOrdering.version = 1;
     return capabilities;
   }
-  if (arch == "a5") {
+  case PTOTargetKind::A5:
     return makeCoreTargetCapabilities(CanonicalSyncTargetProfile::A5V1,
                                       /*vectorCompletionOrdered=*/true,
                                       /*vectorBarrierCompletesCrossResource=*/
                                           false);
+  case PTOTargetKind::Unspecified:
+  case PTOTargetKind::Unsupported:
+  case PTOTargetKind::Conflict:
+    return {};
   }
   return {};
 }

@@ -352,27 +352,79 @@ func::FuncOp mlir::pto::lookupPeerFuncAcrossContainer(Operation *op,
   return {};
 }
 
-static bool isA5DeviceSpec(StringRef spec) {
-  return spec.starts_with("Ascend950") || spec.starts_with("Ascend910_95");
+PTOTargetKind mlir::pto::classifyPTOTargetArch(StringRef arch) {
+  if (arch.empty()) {
+    return PTOTargetKind::Unspecified;
+  }
+  if (arch.equals_insensitive("a2")) {
+    return PTOTargetKind::A2;
+  }
+  if (arch.equals_insensitive("a2a3")) {
+    return PTOTargetKind::A2A3;
+  }
+  if (arch.equals_insensitive("a3")) {
+    return PTOTargetKind::A3;
+  }
+  if (arch.equals_insensitive("a5")) {
+    return PTOTargetKind::A5;
+  }
+  return PTOTargetKind::Unsupported;
 }
 
-static bool isA5ModuleTarget(ModuleOp module) {
+PTOTargetKind mlir::pto::classifyPTODeviceSpec(StringRef deviceSpec) {
+  if (deviceSpec.empty()) {
+    return PTOTargetKind::Unspecified;
+  }
+  const bool isA5Device = deviceSpec.starts_with("Ascend950") ||
+                          deviceSpec.starts_with("Ascend910_95");
+  if (isA5Device) {
+    return PTOTargetKind::A5;
+  }
+  if (deviceSpec.starts_with("Ascend910B")) {
+    return PTOTargetKind::A3;
+  }
+  return PTOTargetKind::Unsupported;
+}
+
+PTOTargetKind mlir::pto::resolvePTOTarget(PTOTargetKind targetArch,
+                                          PTOTargetKind deviceSpec) {
+  if (targetArch == PTOTargetKind::Unsupported ||
+      deviceSpec == PTOTargetKind::Unsupported) {
+    return PTOTargetKind::Unsupported;
+  }
+  if (targetArch == PTOTargetKind::Conflict ||
+      deviceSpec == PTOTargetKind::Conflict) {
+    return PTOTargetKind::Conflict;
+  }
+  if (targetArch == PTOTargetKind::Unspecified) {
+    return deviceSpec;
+  }
+  if (deviceSpec == PTOTargetKind::Unspecified || targetArch == deviceSpec) {
+    return targetArch;
+  }
+  if (targetArch == PTOTargetKind::A2A3 &&
+      (deviceSpec == PTOTargetKind::A2 || deviceSpec == PTOTargetKind::A3)) {
+    return PTOTargetKind::A2A3;
+  }
+  return PTOTargetKind::Conflict;
+}
+
+PTOTargetKind mlir::pto::resolvePTOModuleTarget(ModuleOp module) {
   if (!module) {
-    return false;
+    return PTOTargetKind::Unspecified;
   }
-  if (auto arch = module->getAttrOfType<StringAttr>(kPTOTargetArchAttrName)) {
-    if (arch.getValue().equals_insensitive("a5")) {
-      return true;
-    }
-  }
-  if (auto spec = module->getAttrOfType<StringAttr>("pto.device-spec")) {
-    return isA5DeviceSpec(spec.getValue());
-  }
-  return false;
+  StringAttr targetArch =
+      module->getAttrOfType<StringAttr>(kPTOTargetArchAttrName);
+  StringAttr deviceSpec = module->getAttrOfType<StringAttr>("pto.device-spec");
+  return resolvePTOTarget(
+      classifyPTOTargetArch(targetArch ? targetArch.getValue() : StringRef{}),
+      classifyPTODeviceSpec(deviceSpec ? deviceSpec.getValue() : StringRef{}));
 }
 
 PTOArch mlir::pto::getTargetArch(ModuleOp module) {
-  if (isA5ModuleTarget(module)) {
+  const bool isA5Target =
+      resolvePTOModuleTarget(module) == PTOTargetKind::A5;
+  if (isA5Target) {
     return PTOArch::A5;
   }
 
@@ -617,7 +669,9 @@ uint64_t mlir::pto::BF16x2Type::getPreferredAlignment(
 
 static VerifierTargetArch getVerifierTargetArch(Operation *op) {
   auto module = op ? op->getParentOfType<ModuleOp>() : ModuleOp();
-  if (isA5ModuleTarget(module)) {
+  const bool isA5Target =
+      resolvePTOModuleTarget(module) == PTOTargetKind::A5;
+  if (isA5Target) {
     return VerifierTargetArch::A5;
   }
 

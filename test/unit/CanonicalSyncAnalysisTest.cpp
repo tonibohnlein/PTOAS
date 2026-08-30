@@ -1811,6 +1811,39 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
     return false;
   }
 
+  (*module)->removeAttr("pto.target_arch");
+  FailureOr<CanonicalSyncProgram> missing = buildCanonicalSyncProgram(function);
+  const bool missingIsUnsupported =
+      succeeded(missing) && missing->getTargetCapabilities().profile ==
+                                CanonicalSyncTargetProfile::Unsupported;
+  if (!check(missingIsUnsupported,
+             "fail closed when the target declaration is missing")) {
+    return false;
+  }
+  (*module)->setAttr("pto.device-spec", StringAttr::get(&context, "Ascend950"));
+  FailureOr<CanonicalSyncProgram> deviceSpecified =
+      buildCanonicalSyncProgram(function);
+  const bool deviceSpecIsA5 =
+      succeeded(deviceSpecified) &&
+      deviceSpecified->getTargetCapabilities().profile ==
+          CanonicalSyncTargetProfile::A5V1;
+  if (!check(deviceSpecIsA5,
+             "resolve an A5 device specification authoritatively")) {
+    return false;
+  }
+  (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "a3"));
+  FailureOr<CanonicalSyncProgram> conflicting =
+      buildCanonicalSyncProgram(function);
+  const bool conflictIsUnsupported =
+      succeeded(conflicting) &&
+      conflicting->getTargetCapabilities().profile ==
+          CanonicalSyncTargetProfile::Unsupported;
+  if (!check(conflictIsUnsupported,
+             "fail closed on conflicting target declarations")) {
+    return false;
+  }
+  (*module)->removeAttr("pto.device-spec");
+
   (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "future"));
   FailureOr<CanonicalSyncProgram> unsupported =
       buildCanonicalSyncProgram(function);

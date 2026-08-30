@@ -265,25 +265,34 @@ static std::string normalizeArch(llvm::StringRef arch) {
 }
 
 static bool isA2A3Arch(llvm::StringRef arch) {
-  std::string normalized = normalizeArch(arch);
-  return normalized == "a2" || normalized == "a3";
+  const pto::PTOTargetKind target = pto::classifyPTOTargetArch(arch);
+  return target == pto::PTOTargetKind::A2 ||
+         target == pto::PTOTargetKind::A2A3 || target == pto::PTOTargetKind::A3;
 }
 
 static bool isSupportedPTOASTargetArch(llvm::StringRef arch) {
-  std::string normalized = normalizeArch(arch);
-  return normalized == "a2" || normalized == "a3" || normalized == "a5";
+  const pto::PTOTargetKind target = pto::classifyPTOTargetArch(arch);
+  return target == pto::PTOTargetKind::A2 ||
+         target == pto::PTOTargetKind::A2A3 ||
+         target == pto::PTOTargetKind::A3 || target == pto::PTOTargetKind::A5;
 }
 
 static std::optional<std::string> getModuleTargetArchAttr(ModuleOp module) {
-  auto attr = module->getAttrOfType<mlir::StringAttr>("pto.target_arch");
-  if (!attr) {
+  switch (pto::resolvePTOModuleTarget(module)) {
+  case pto::PTOTargetKind::A2:
+    return "a2";
+  case pto::PTOTargetKind::A2A3:
+    return "a2a3";
+  case pto::PTOTargetKind::A3:
+    return "a3";
+  case pto::PTOTargetKind::A5:
+    return "a5";
+  case pto::PTOTargetKind::Unspecified:
+  case pto::PTOTargetKind::Unsupported:
+  case pto::PTOTargetKind::Conflict:
     return std::nullopt;
   }
-  std::string arch = normalizeArch(attr.getValue());
-  if (!isSupportedPTOASTargetArch(arch)) {
-    return std::nullopt;
-  }
-  return arch;
+  return std::nullopt;
 }
 
 static std::string resolveEffectiveTargetArch(ModuleOp module,
@@ -315,6 +324,22 @@ static std::string resolveEffectiveTargetArch(ModuleOp module,
     return "a3";
   }
   return fallback;
+}
+
+static LogicalResult validatePTOTargetDeclarations(ModuleOp root) {
+  WalkResult result = root.walk([](ModuleOp module) -> WalkResult {
+    const pto::PTOTargetKind target = pto::resolvePTOModuleTarget(module);
+    if (target == pto::PTOTargetKind::Unsupported) {
+      module.emitError("unsupported PTO target declaration");
+      return WalkResult::interrupt();
+    }
+    if (target == pto::PTOTargetKind::Conflict) {
+      module.emitError("conflicting PTO target declarations");
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return result.wasInterrupted() ? failure() : success();
 }
 
 } // namespace
@@ -3654,6 +3679,9 @@ int mlir::pto::compilePTOASModule(OwningOpRef<ModuleOp> &module,
                                   PTOASCompileResult &result,
                                   bool emitVPTOHostStub) {
   result.reset();
+  if (failed(validatePTOTargetDeclarations(*module))) {
+    return 1;
+  }
   if (failed(validateSCFForConstantSteps(*module))) {
     return 1;
   }

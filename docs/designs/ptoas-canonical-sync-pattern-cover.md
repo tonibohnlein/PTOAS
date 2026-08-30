@@ -64,6 +64,15 @@ or missing `pto.target_arch` therefore contributes no inferred completion
 semantics. Version-one profiles currently distinguish `a2`, the legacy
 `a2a3` intersection, `a3`, and `a5`:
 
+The PTO driver and CanonicalSync share one declared-target resolver. A textual
+`a2a3` declaration is preserved through the driver rather than upgraded to
+`a3`. An A5 `pto.device-spec` selects A5 even when `pto.target_arch` is absent.
+Unknown target declarations and conflicting architecture/device declarations
+are rejected by the driver; direct pass invocation treats them as unsupported
+and therefore enables no target-specific completion facts. A command-line
+`--pto-arch` remains an explicit architecture override, but it must agree with
+any device specification retained by the module.
+
 The exact-operation completion signalled by a direct set/wait is part of the
 target-neutral mechanism basis. The profile controls only stronger facts that
 allow completion to propagate beyond that exact operation.

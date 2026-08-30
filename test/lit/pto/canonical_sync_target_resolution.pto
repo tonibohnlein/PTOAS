@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN:   --canonical-sync-report=%t/a2a3.json %t/a2a3.pto -o /dev/null
+// RUN: FileCheck %s --check-prefix=A2A3 < %t/a2a3.json
+// RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN:   --canonical-sync-report=%t/a5.json %t/a5-device-spec.pto \
+// RUN:   -o /dev/null
+// RUN: FileCheck %s --check-prefix=A5 < %t/a5.json
+// RUN: not ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN:   %t/unknown.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=UNKNOWN
+// RUN: not ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN:   %t/conflict.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=CONFLICT
+// RUN: not ptoas --pto-level=level3 --pto-arch=a3 \
+// RUN:   --enable-canonical-sync --emit-pto-ir %t/a5-device-spec.pto \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=CONFLICT
+
+// A2A3: "profile": "a2a3-intersection-v1"
+// A5: "profile": "a5-v1"
+// UNKNOWN: Error: unsupported PTO target declaration.
+// CONFLICT: Error: conflicting PTO target declarations.
+
+//--- a2a3.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @a2a3() {
+    return
+  }
+}
+
+//--- a5-device-spec.pto
+module attributes {"pto.device-spec" = "Ascend950"} {
+  func.func @a5_device_spec() {
+    return
+  }
+}
+
+//--- unknown.pto
+module attributes {pto.target_arch = "future"} {
+  func.func @unknown() {
+    return
+  }
+}
+
+//--- conflict.pto
+module attributes {pto.target_arch = "a3",
+                   "pto.device-spec" = "Ascend950"} {
+  func.func @conflict() {
+    return
+  }
+}
