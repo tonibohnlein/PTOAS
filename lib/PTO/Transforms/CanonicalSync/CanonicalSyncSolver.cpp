@@ -64,6 +64,21 @@ bool consumeWork(std::size_t amount, std::size_t limit, std::size_t &used) {
   return true;
 }
 
+bool checkedWorkSum(std::size_t first, std::size_t second,
+                    std::size_t &result) {
+  const bool valid = second <= std::numeric_limits<std::size_t>::max() - first;
+  result = valid ? first + second : 0;
+  return valid;
+}
+
+bool checkedWorkProduct(std::size_t first, std::size_t second,
+                        std::size_t &result) {
+  const bool valid =
+      first == 0 || second <= std::numeric_limits<std::size_t>::max() / first;
+  result = valid ? first * second : 0;
+  return valid;
+}
+
 bool consumeSortWork(std::size_t count, std::size_t limit, std::size_t &used) {
   if (count < 2) {
     return consumeWork(1, limit, used);
@@ -773,8 +788,10 @@ bool mlir::pto::canonicalSyncStructuralCostLess(
 }
 
 CanonicalSyncRepairRoundRanker::Decision
-CanonicalSyncRepairRoundRanker::consider(const CanonicalSyncSelection &trial,
-                                         bool freshlyVerified) {
+CanonicalSyncRepairRoundRanker::consider(
+    const CanonicalSyncSelection &trial, bool freshlyVerified,
+    std::size_t diagnosedResourceOverflow,
+    SyncCoverCoverageWorkBudget *workBudget) {
   const auto rankLess = [&](const RankKey &first, const RankKey &second,
                             bool comparePressure) {
     if (comparePressure && first.resourceOverflow != second.resourceOverflow) {
@@ -788,37 +805,61 @@ CanonicalSyncRepairRoundRanker::consider(const CanonicalSyncSelection &trial,
     }
     return first.mechanisms < second.mechanisms;
   };
+  const bool verifiedCandidate =
+      freshlyVerified && trial.error == CanonicalSyncSelectionError::None;
+  const bool pressureCandidate =
+      !freshlyVerified &&
+      trial.error == CanonicalSyncSelectionError::ResourceInfeasible &&
+      trial.allocation.valid && !trial.allocation.feasible;
+  if (!verifiedCandidate && !pressureCandidate) {
+    return Decision::Discard;
+  }
+  if (pressureCandidate &&
+      diagnosedResourceOverflow >= baselineResourceOverflow_) {
+    return Decision::Discard;
+  }
+  const std::optional<RankKey> &incumbent =
+      verifiedCandidate ? bestVerified_ : bestPressure_;
+  std::size_t copiedProfiles = 0;
+  std::size_t comparedProfiles = 0;
+  std::size_t mechanismWork = 0;
+  std::size_t rankWork = 0;
+  const bool profileCopiesAvailable =
+      checkedWorkSum(trial.cost.barrierActionProfile.size(),
+                     trial.cost.eventActionProfile.size(), copiedProfiles) &&
+      checkedWorkSum(copiedProfiles, trial.cost.actionProfile.size(),
+                     copiedProfiles);
+  bool comparisonWorkAvailable = true;
+  mechanismWork = trial.mechanisms.size();
+  if (incumbent) {
+    const std::size_t comparedDepths = std::max(
+        trial.cost.actionProfile.size(), incumbent->cost.actionProfile.size());
+    comparisonWorkAvailable =
+        checkedWorkProduct(comparedDepths, 2, comparedProfiles) &&
+        checkedWorkSum(mechanismWork, incumbent->mechanisms.size(),
+                       mechanismWork);
+  }
+  const bool rankWorkAvailable =
+      profileCopiesAvailable && comparisonWorkAvailable &&
+      checkedWorkSum(copiedProfiles, comparedProfiles, rankWork) &&
+      checkedWorkSum(rankWork, mechanismWork, rankWork) &&
+      checkedWorkSum(rankWork, 4, rankWork) &&
+      (!workBudget || workBudget->consume(rankWork));
+  if (!rankWorkAvailable) {
+    return Decision::WorkLimitExceeded;
+  }
   RankKey candidate;
   candidate.cost = trial.cost;
   candidate.mechanisms = trial.mechanisms;
-  if (freshlyVerified && trial.error == CanonicalSyncSelectionError::None) {
+  if (verifiedCandidate) {
     if (bestVerified_ && !rankLess(candidate, *bestVerified_, false)) {
       return Decision::Discard;
     }
     bestVerified_ = std::move(candidate);
     return Decision::ReplaceBestVerified;
   }
-  const bool pressureCandidate =
-      !freshlyVerified &&
-      trial.error == CanonicalSyncSelectionError::ResourceInfeasible &&
-      trial.allocation.valid && !trial.allocation.feasible;
-  if (!pressureCandidate) {
-    return Decision::Discard;
-  }
-  for (const CanonicalSyncDomainAllocation &domain : trial.allocation.domains) {
-    if (domain.required <= domain.available) {
-      continue;
-    }
-    const std::size_t overflow = domain.required - domain.available;
-    if (overflow >
-        std::numeric_limits<std::size_t>::max() - candidate.resourceOverflow) {
-      candidate.resourceOverflow = std::numeric_limits<std::size_t>::max();
-      break;
-    }
-    candidate.resourceOverflow += overflow;
-  }
-  if (candidate.resourceOverflow >= baselineResourceOverflow_ ||
-      (bestPressure_ && !rankLess(candidate, *bestPressure_, true))) {
+  candidate.resourceOverflow = diagnosedResourceOverflow;
+  if (bestPressure_ && !rankLess(candidate, *bestPressure_, true)) {
     return Decision::Discard;
   }
   bestPressure_ = std::move(candidate);

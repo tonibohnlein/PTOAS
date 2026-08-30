@@ -49,6 +49,21 @@ void addNanoseconds(std::uint64_t &total, std::uint64_t amount) {
               : total + amount;
 }
 
+bool checkedWorkSum(std::size_t first, std::size_t second,
+                    std::size_t &result) {
+  const bool valid = second <= std::numeric_limits<std::size_t>::max() - first;
+  result = valid ? first + second : 0;
+  return valid;
+}
+
+bool checkedWorkProduct(std::size_t first, std::size_t second,
+                        std::size_t &result) {
+  const bool valid =
+      first == 0 || second <= std::numeric_limits<std::size_t>::max() / first;
+  result = valid ? first * second : 0;
+  return valid;
+}
+
 using AllocationKey = std::pair<CanonicalSyncMechanismId, std::size_t>;
 
 struct ConcreteAction {
@@ -619,23 +634,6 @@ void emitGuardedActions(IRRewriter &rewriter, func::FuncOp function,
   }
 }
 
-std::size_t resourceOverflow(const CanonicalSyncSelection &selection) {
-  std::size_t result = 0;
-  for (const CanonicalSyncDomainAllocation &domain :
-       selection.allocation.domains) {
-    if (domain.required > domain.available) {
-      const std::size_t overflow = domain.required - domain.available;
-      const bool accumulationOverflows =
-          overflow > std::numeric_limits<std::size_t>::max() - result;
-      if (accumulationOverflows) {
-        return std::numeric_limits<std::size_t>::max();
-      }
-      result += overflow;
-    }
-  }
-  return result;
-}
-
 std::vector<CanonicalSyncMechanismId>
 firstConflictCore(const CanonicalSyncSelection &selection) {
   for (const CanonicalSyncDomainAllocation &domain :
@@ -645,21 +643,6 @@ firstConflictCore(const CanonicalSyncSelection &selection) {
     }
   }
   return {};
-}
-
-std::vector<CanonicalSyncMechanismId>
-allConflictCore(const CanonicalSyncSelection &selection) {
-  std::vector<CanonicalSyncMechanismId> result;
-  for (const CanonicalSyncDomainAllocation &domain :
-       selection.allocation.domains) {
-    if (domain.required > domain.available) {
-      result.insert(result.end(), domain.liveMechanisms.begin(),
-                    domain.liveMechanisms.end());
-    }
-  }
-  llvm::sort(result);
-  result.erase(std::unique(result.begin(), result.end()), result.end());
-  return result;
 }
 
 struct SelectionOutcome {
@@ -678,6 +661,8 @@ struct SelectionOutcome {
   bool repairBudgetExhausted = false;
   bool backstopDeletionTruncated = false;
   std::size_t repairRounds = 0;
+  std::size_t repairCatalogRebuilds = 0;
+  std::size_t firstRepairCatalogRebuildWorkUnits = 0;
   std::size_t repairTrials = 0;
   std::size_t repairWorkUnits = 0;
   std::size_t backstopDeletionTrials = 0;
@@ -743,6 +728,155 @@ private:
   std::size_t trials_ = 0;
 };
 
+template <typename T>
+bool stableSortAndUniqueRepairValues(std::vector<T> &values,
+                                     SyncCoverCoverageWorkBudget *workBudget) {
+  const bool needsSorting = values.size() > 1;
+  if (needsSorting) {
+    if (workBudget && !workBudget->consume(values.size())) {
+      return false;
+    }
+    std::vector<T> scratch(values.size());
+    for (std::size_t width = 1; width < values.size();) {
+      if (workBudget && !workBudget->consume(values.size())) {
+        return false;
+      }
+      for (std::size_t begin = 0; begin < values.size();) {
+        const std::size_t middle =
+            begin + std::min(width, values.size() - begin);
+        const std::size_t end =
+            middle + std::min(width, values.size() - middle);
+        std::size_t left = begin;
+        std::size_t right = middle;
+        std::size_t output = begin;
+        while (left < middle && right < end) {
+          if (workBudget && !workBudget->consume()) {
+            return false;
+          }
+          if (values[right] < values[left]) {
+            scratch[output++] = values[right++];
+          } else {
+            scratch[output++] = values[left++];
+          }
+        }
+        while (left < middle) {
+          scratch[output++] = values[left++];
+        }
+        while (right < end) {
+          scratch[output++] = values[right++];
+        }
+        begin = end;
+      }
+      values.swap(scratch);
+      const std::size_t remainingWidth = values.size() - width;
+      if (width >= remainingWidth) {
+        break;
+      }
+      width *= 2;
+    }
+  }
+  if (workBudget && !workBudget->consume(values.size())) {
+    return false;
+  }
+  values.erase(std::unique(values.begin(), values.end()), values.end());
+  return true;
+}
+
+template <typename T>
+std::optional<bool>
+meteredRepairContains(ArrayRef<T> values, const T &value,
+                      SyncCoverCoverageWorkBudget *workBudget) {
+  std::size_t begin = 0;
+  std::size_t end = values.size();
+  while (begin < end) {
+    if (workBudget && !workBudget->consume()) {
+      return std::nullopt;
+    }
+    const std::size_t middle = begin + (end - begin) / 2;
+    if (values[middle] < value) {
+      begin = middle + 1;
+    } else {
+      end = middle;
+    }
+  }
+  if (workBudget && !workBudget->consume()) {
+    return std::nullopt;
+  }
+  return begin != values.size() && values[begin] == value;
+}
+
+template <typename T>
+std::optional<bool>
+meteredRepairEqual(ArrayRef<T> first, ArrayRef<T> second,
+                   SyncCoverCoverageWorkBudget *workBudget) {
+  std::size_t comparisonWork = 0;
+  const bool comparisonWorkAvailable =
+      checkedWorkSum(first.size(), second.size(), comparisonWork) &&
+      (!workBudget || workBudget->consume(comparisonWork));
+  if (!comparisonWorkAvailable) {
+    return std::nullopt;
+  }
+  return first == second;
+}
+
+std::optional<std::size_t>
+meteredResourceOverflow(const CanonicalSyncSelection &selection,
+                        SyncCoverCoverageWorkBudget *workBudget) {
+  if (workBudget && !workBudget->consume(selection.allocation.domains.size())) {
+    return std::nullopt;
+  }
+  std::size_t result = 0;
+  for (const CanonicalSyncDomainAllocation &domain :
+       selection.allocation.domains) {
+    if (domain.required <= domain.available) {
+      continue;
+    }
+    const std::size_t overflow = domain.required - domain.available;
+    if (!checkedWorkSum(result, overflow, result)) {
+      result = std::numeric_limits<std::size_t>::max();
+    }
+  }
+  return result;
+}
+
+std::optional<std::vector<CanonicalSyncMechanismId>>
+meteredConflictCore(const CanonicalSyncSelection &selection,
+                    SyncCoverCoverageWorkBudget *workBudget) {
+  if (workBudget && !workBudget->consume(selection.allocation.domains.size())) {
+    return std::nullopt;
+  }
+  std::size_t liveMechanisms = 0;
+  for (const CanonicalSyncDomainAllocation &domain :
+       selection.allocation.domains) {
+    if (domain.required > domain.available &&
+        !checkedWorkSum(liveMechanisms, domain.liveMechanisms.size(),
+                        liveMechanisms)) {
+      return std::nullopt;
+    }
+  }
+  std::size_t copyWork = 0;
+  const bool copyWorkAvailable =
+      checkedWorkSum(selection.allocation.domains.size(), liveMechanisms,
+                     copyWork) &&
+      (!workBudget || workBudget->consume(copyWork));
+  if (!copyWorkAvailable) {
+    return std::nullopt;
+  }
+  std::vector<CanonicalSyncMechanismId> result;
+  result.reserve(liveMechanisms);
+  for (const CanonicalSyncDomainAllocation &domain :
+       selection.allocation.domains) {
+    if (domain.required > domain.available) {
+      result.insert(result.end(), domain.liveMechanisms.begin(),
+                    domain.liveMechanisms.end());
+    }
+  }
+  if (!stableSortAndUniqueRepairValues(result, workBudget)) {
+    return std::nullopt;
+  }
+  return result;
+}
+
 struct VerifiedRepairCandidate {
   CanonicalSyncSelection selection;
   CanonicalSyncVerifiedPlan plan;
@@ -780,8 +914,22 @@ selectWithBoundedRepair(const CanonicalSyncProgram &program,
   }
 
   const SteadyClock::time_point repairStart = SteadyClock::now();
-  const std::vector<CanonicalSyncMechanismId> initialCore =
-      allConflictCore(selection);
+  RepairBudget budget(options.maximumRepairTrials,
+                      options.maximumRepairWorkUnits);
+  outcome.repairAttempted = true;
+  std::optional<std::vector<CanonicalSyncMechanismId>> meteredInitialCore =
+      meteredConflictCore(selection, budget.sharedWorkBudget());
+  if (!meteredInitialCore) {
+    outcome.selection = std::move(selection);
+    outcome.repairSearchExhausted = true;
+    outcome.repairBudgetExhausted = budget.exhausted();
+    outcome.repairTrials = budget.trials();
+    outcome.repairWorkUnits = budget.workUnits();
+    outcome.repairNanoseconds = elapsedNanoseconds(repairStart);
+    return outcome;
+  }
+  std::vector<CanonicalSyncMechanismId> initialCore =
+      std::move(*meteredInitialCore);
   if (initialCore.empty()) {
     outcome.selection = std::move(selection);
     outcome.fatalConstructionError = true;
@@ -790,9 +938,6 @@ selectWithBoundedRepair(const CanonicalSyncProgram &program,
         "canonical sync allocation pressure has no valid conflict core");
     return outcome;
   }
-  RepairBudget budget(options.maximumRepairTrials,
-                      options.maximumRepairWorkUnits);
-  outcome.repairAttempted = true;
   CanonicalSyncProblemBuildResult repair = buildCanonicalSyncRepairProblem(
       program, problem, options, initialCore, selection.mechanisms,
       budget.sharedWorkBudget());
@@ -812,108 +957,298 @@ selectWithBoundedRepair(const CanonicalSyncProgram &program,
       outcome.ownedProblem->getPatternStatistics().repairFrontierTruncated;
   std::map<CanonicalSyncMechanismId, std::vector<CanonicalSyncMechanismId>>
       repairMechanismsByOwner = std::move(repair.repairMechanismsByOwner);
+  std::map<CanonicalSyncMechanismId, std::vector<SyncCoverDemandId>>
+      repairCriticalDemandsByOwner =
+          std::move(repair.repairCriticalDemandsByOwner);
   std::vector<CanonicalSyncMechanismId> collectiveRepairMechanisms =
       std::move(repair.collectiveRepairMechanisms);
-  std::vector<CanonicalSyncMechanismId> allRepairMechanisms =
-      collectiveRepairMechanisms;
-  const auto rebuildRepairMechanismIndex = [&] {
-    allRepairMechanisms = collectiveRepairMechanisms;
-    for (const auto &[owner, mechanisms] : repairMechanismsByOwner) {
-      (void)owner;
-      allRepairMechanisms.insert(allRepairMechanisms.end(), mechanisms.begin(),
-                                 mechanisms.end());
-    }
-    llvm::sort(allRepairMechanisms);
-    allRepairMechanisms.erase(
-        std::unique(allRepairMechanisms.begin(), allRepairMechanisms.end()),
-        allRepairMechanisms.end());
-  };
-  rebuildRepairMechanismIndex();
-  const auto constrainRepairCatalog =
-      [&](CanonicalSyncGreedyOptions &trialOptions,
-          ArrayRef<CanonicalSyncMechanismId> owners, bool collective) {
-        std::vector<CanonicalSyncMechanismId> allowed;
-        for (CanonicalSyncMechanismId owner : owners) {
-          const auto position = repairMechanismsByOwner.find(owner);
-          if (position != repairMechanismsByOwner.end()) {
-            allowed.insert(allowed.end(), position->second.begin(),
-                           position->second.end());
+  const std::size_t preciseMechanismCount = problem.getMechanisms().size();
+  std::vector<const std::vector<CanonicalSyncMechanismId> *>
+      repairMechanismsByOwnerIndex;
+  std::vector<const std::vector<SyncCoverDemandId> *>
+      repairCriticalDemandsByOwnerIndex;
+  std::vector<CanonicalSyncMechanismId> allRepairMechanisms;
+  const auto prepareRepairMechanismIndex =
+      [&](const std::map<CanonicalSyncMechanismId,
+                         std::vector<CanonicalSyncMechanismId>>
+              &mechanismsByOwner,
+          const std::map<CanonicalSyncMechanismId,
+                         std::vector<SyncCoverDemandId>> &demandsByOwner,
+          ArrayRef<CanonicalSyncMechanismId> collectiveMechanisms,
+          std::vector<const std::vector<CanonicalSyncMechanismId> *>
+              &mechanismIndex,
+          std::vector<const std::vector<SyncCoverDemandId> *> &demandIndex,
+          std::vector<CanonicalSyncMechanismId> &allMechanisms) {
+        std::size_t mapEntries = 0;
+        std::size_t mapScanWork = 0;
+        const bool mapScanWorkAvailable =
+            checkedWorkSum(mechanismsByOwner.size(), demandsByOwner.size(),
+                           mapEntries) &&
+            checkedWorkProduct(mapEntries, 2, mapScanWork) &&
+            budget.sharedWorkBudget()->consume(mapScanWork);
+        if (!mapScanWorkAvailable) {
+          return false;
+        }
+        std::size_t ownerMechanismEntries = 0;
+        for (const auto &[owner, mechanisms] : mechanismsByOwner) {
+          if (owner >= preciseMechanismCount ||
+              !checkedWorkSum(ownerMechanismEntries, mechanisms.size(),
+                              ownerMechanismEntries)) {
+            return false;
           }
         }
-        if (collective) {
-          allowed.insert(allowed.end(), collectiveRepairMechanisms.begin(),
-                         collectiveRepairMechanisms.end());
-        }
-        llvm::sort(allowed);
-        allowed.erase(std::unique(allowed.begin(), allowed.end()),
-                      allowed.end());
-        trialOptions.forbiddenMechanisms.erase(
-            std::remove_if(trialOptions.forbiddenMechanisms.begin(),
-                           trialOptions.forbiddenMechanisms.end(),
-                           [&](CanonicalSyncMechanismId mechanism) {
-                             return std::binary_search(
-                                 allRepairMechanisms.begin(),
-                                 allRepairMechanisms.end(), mechanism);
-                           }),
-            trialOptions.forbiddenMechanisms.end());
-        for (CanonicalSyncMechanismId mechanism : allRepairMechanisms) {
-          if (!std::binary_search(allowed.begin(), allowed.end(), mechanism)) {
-            trialOptions.forbiddenMechanisms.push_back(mechanism);
+        for (const auto &[owner, demands] : demandsByOwner) {
+          (void)demands;
+          if (owner >= preciseMechanismCount) {
+            return false;
           }
         }
+        std::size_t indexEntries = 0;
+        std::size_t copiedMechanisms = 0;
+        std::size_t allocationWork = 0;
+        const bool allocationWorkAvailable =
+            checkedWorkProduct(preciseMechanismCount, 2, indexEntries) &&
+            checkedWorkSum(collectiveMechanisms.size(), ownerMechanismEntries,
+                           copiedMechanisms) &&
+            checkedWorkSum(indexEntries, copiedMechanisms, allocationWork) &&
+            budget.sharedWorkBudget()->consume(allocationWork);
+        if (!allocationWorkAvailable) {
+          return false;
+        }
+        mechanismIndex.assign(preciseMechanismCount, nullptr);
+        demandIndex.assign(preciseMechanismCount, nullptr);
+        allMechanisms.clear();
+        allMechanisms.reserve(copiedMechanisms);
+        allMechanisms.insert(allMechanisms.end(), collectiveMechanisms.begin(),
+                             collectiveMechanisms.end());
+        for (const auto &[owner, mechanisms] : mechanismsByOwner) {
+          mechanismIndex[owner] = &mechanisms;
+          allMechanisms.insert(allMechanisms.end(), mechanisms.begin(),
+                               mechanisms.end());
+        }
+        for (const auto &[owner, demands] : demandsByOwner) {
+          demandIndex[owner] = &demands;
+        }
+        return stableSortAndUniqueRepairValues(allMechanisms,
+                                               budget.sharedWorkBudget());
       };
+  if (!prepareRepairMechanismIndex(
+          repairMechanismsByOwner, repairCriticalDemandsByOwner,
+          collectiveRepairMechanisms, repairMechanismsByOwnerIndex,
+          repairCriticalDemandsByOwnerIndex, allRepairMechanisms)) {
+    outcome.selection = std::move(selection);
+    outcome.repairSearchExhausted = true;
+    outcome.repairBudgetExhausted = true;
+    outcome.repairTrials = budget.trials();
+    outcome.repairWorkUnits = budget.workUnits();
+    outcome.repairNanoseconds = elapsedNanoseconds(repairStart);
+    return outcome;
+  }
   // The repair catalog is never an unrestricted replacement catalog. Preserve
   // the precise pressure result and expose its extra mechanisms only in a
   // trial that forbids at least one live conflicting event.
-  CanonicalSyncSelection lastPressure = selection;
-  std::vector<CanonicalSyncMechanismId> core = initialCore;
+  std::size_t initialCoreCopyWork = 0;
+  const bool initialCoreCopyWorkAvailable =
+      checkedWorkProduct(initialCore.size(), 2, initialCoreCopyWork) &&
+      budget.sharedWorkBudget()->consume(initialCoreCopyWork);
+  if (!initialCoreCopyWorkAvailable) {
+    outcome.selection = std::move(selection);
+    outcome.repairSearchExhausted = true;
+    outcome.repairBudgetExhausted = true;
+    outcome.repairTrials = budget.trials();
+    outcome.repairWorkUnits = budget.workUnits();
+    outcome.repairNanoseconds = elapsedNanoseconds(repairStart);
+    return outcome;
+  }
+  CanonicalSyncSelection lastPressure = std::move(selection);
   std::vector<CanonicalSyncMechanismId> activeCatalogCore = initialCore;
+  std::vector<CanonicalSyncMechanismId> activeLivePreciseCore = initialCore;
+  std::vector<CanonicalSyncMechanismId> core = std::move(initialCore);
   std::vector<CanonicalSyncMechanismId> forbiddenRepairOwners;
-  const std::size_t preciseMechanismCount = problem.getMechanisms().size();
+  std::vector<CanonicalSyncMechanismId> forcedRepairExclusions;
+  bool collectiveRepairEnabled = false;
 
   for (std::size_t round = 1; round <= options.maximumRepairRounds; ++round) {
     outcome.repairRounds = round;
+    if (!budget.sharedWorkBudget()->consume(core.size())) {
+      break;
+    }
     std::vector<CanonicalSyncMechanismId> preciseCore;
     llvm::copy_if(core, std::back_inserter(preciseCore),
                   [&](CanonicalSyncMechanismId mechanism) {
                     return mechanism < preciseMechanismCount;
                   });
-    llvm::sort(preciseCore);
-    preciseCore.erase(std::unique(preciseCore.begin(), preciseCore.end()),
-                      preciseCore.end());
-    if (!preciseCore.empty() && preciseCore != activeCatalogCore) {
+    if (!stableSortAndUniqueRepairValues(preciseCore,
+                                         budget.sharedWorkBudget())) {
+      break;
+    }
+    std::size_t catalogCoreEntries = 0;
+    const bool catalogCoreWorkAvailable =
+        checkedWorkSum(forbiddenRepairOwners.size(), preciseCore.size(),
+                       catalogCoreEntries) &&
+        budget.sharedWorkBudget()->consume(catalogCoreEntries);
+    if (!catalogCoreWorkAvailable) {
+      break;
+    }
+    std::vector<CanonicalSyncMechanismId> catalogCore = forbiddenRepairOwners;
+    catalogCore.insert(catalogCore.end(), preciseCore.begin(),
+                       preciseCore.end());
+    if (!stableSortAndUniqueRepairValues(catalogCore,
+                                         budget.sharedWorkBudget())) {
+      break;
+    }
+    const std::optional<bool> sameCatalogCore = meteredRepairEqual(
+        ArrayRef<CanonicalSyncMechanismId>(catalogCore),
+        ArrayRef<CanonicalSyncMechanismId>(activeCatalogCore),
+        budget.sharedWorkBudget());
+    const std::optional<bool> sameLivePreciseCore = meteredRepairEqual(
+        ArrayRef<CanonicalSyncMechanismId>(preciseCore),
+        ArrayRef<CanonicalSyncMechanismId>(activeLivePreciseCore),
+        budget.sharedWorkBudget());
+    if (!sameCatalogCore || !sameLivePreciseCore) {
+      break;
+    }
+    const bool catalogChanged =
+        !preciseCore.empty() && (!*sameCatalogCore || !*sameLivePreciseCore);
+    if (catalogChanged) {
+      const bool rebuildWorkAvailable =
+          budget.sharedWorkBudget()->consume(lastPressure.mechanisms.size()) &&
+          budget.sharedWorkBudget()->consume(catalogCore.size());
+      if (!rebuildWorkAvailable) {
+        break;
+      }
+      std::vector<CanonicalSyncMechanismId> preciseSelectedMechanisms;
+      llvm::copy_if(lastPressure.mechanisms,
+                    std::back_inserter(preciseSelectedMechanisms),
+                    [&](CanonicalSyncMechanismId mechanism) {
+                      return mechanism < preciseMechanismCount;
+                    });
+      std::vector<CanonicalSyncRepairCriticalDemandSeed>
+          retainedCriticalDemands;
+      retainedCriticalDemands.reserve(catalogCore.size());
+      for (CanonicalSyncMechanismId owner : catalogCore) {
+        const bool hasRetainedCriticalDemands =
+            owner < repairCriticalDemandsByOwnerIndex.size() &&
+            repairCriticalDemandsByOwnerIndex[owner];
+        if (hasRetainedCriticalDemands) {
+          retainedCriticalDemands.push_back(
+              {owner, *repairCriticalDemandsByOwnerIndex[owner]});
+        }
+      }
       CanonicalSyncProblemBuildResult nextRepair =
-          buildCanonicalSyncRepairProblem(program, problem, options,
-                                          preciseCore, lastPressure.mechanisms,
-                                          budget.sharedWorkBudget());
+          buildCanonicalSyncRepairProblem(
+              program, problem, options, catalogCore, preciseSelectedMechanisms,
+              budget.sharedWorkBudget(), retainedCriticalDemands);
       if (!nextRepair) {
         outcome.fatalConstructionError = !budget.exhausted();
         break;
       }
-      outcome.ownedProblem = std::move(nextRepair.problem);
+      auto nextMechanismsByOwner =
+          std::move(nextRepair.repairMechanismsByOwner);
+      auto nextCriticalDemandsByOwner =
+          std::move(nextRepair.repairCriticalDemandsByOwner);
+      std::vector<CanonicalSyncMechanismId> nextCollectiveMechanisms =
+          std::move(nextRepair.collectiveRepairMechanisms);
+      std::vector<const std::vector<CanonicalSyncMechanismId> *>
+          nextMechanismIndex;
+      std::vector<const std::vector<SyncCoverDemandId> *> nextDemandIndex;
+      std::vector<CanonicalSyncMechanismId> nextAllRepairMechanisms;
+      if (!prepareRepairMechanismIndex(
+              nextMechanismsByOwner, nextCriticalDemandsByOwner,
+              nextCollectiveMechanisms, nextMechanismIndex, nextDemandIndex,
+              nextAllRepairMechanisms)) {
+        break;
+      }
+      std::size_t nextOptionWork = 0;
+      const bool nextOptionWorkAvailable =
+          checkedWorkSum(options.selection.forbiddenMechanisms.size(),
+                         forbiddenRepairOwners.size(), nextOptionWork) &&
+          budget.sharedWorkBudget()->consume(nextOptionWork);
+      if (!nextOptionWorkAvailable) {
+        break;
+      }
+      CanonicalSyncGreedyOptions nextCurrent = options.selection;
+      nextCurrent.forbiddenMechanisms.insert(
+          nextCurrent.forbiddenMechanisms.end(), forbiddenRepairOwners.begin(),
+          forbiddenRepairOwners.end());
+      const std::vector<CanonicalSyncMechanismId> nextForcedExclusions;
+      if (!prepareCanonicalSyncRepairTrial(
+              nextCurrent, nextAllRepairMechanisms, nextMechanismIndex,
+              nextCollectiveMechanisms, forbiddenRepairOwners,
+              collectiveRepairEnabled, nextForcedExclusions,
+              budget.sharedWorkBudget())) {
+        break;
+      }
+      if (!budget.sharedWorkBudget()->consume(
+              nextCurrent.forbiddenMechanisms.size())) {
+        break;
+      }
+      std::optional<CanonicalSyncSelection> rebuiltPressure =
+          budget.run(*nextRepair.problem, nextCurrent);
+      if (!rebuiltPressure) {
+        break;
+      }
+      std::optional<CanonicalSyncVerifiedPlan> rebuiltVerified;
+      std::optional<std::vector<CanonicalSyncMechanismId>> rebuiltCore;
+      if (*rebuiltPressure) {
+        CanonicalSyncVerifiedPlan verified =
+            budget.verify(*nextRepair.problem, *rebuiltPressure);
+        if (verified) {
+          rebuiltVerified = std::move(verified);
+        } else if (!budget.exhausted()) {
+          outcome.fatalConstructionError = true;
+        }
+      } else if (rebuiltPressure->error ==
+                 CanonicalSyncSelectionError::ResourceInfeasible) {
+        rebuiltCore =
+            meteredConflictCore(*rebuiltPressure, budget.sharedWorkBudget());
+      } else {
+        outcome.fatalConstructionError = !budget.exhausted();
+      }
+      const bool validRebuiltResult = rebuiltVerified || rebuiltCore;
+      if (!validRebuiltResult) {
+        break;
+      }
+      outcome.ownedProblem.swap(nextRepair.problem);
+      repairMechanismsByOwner.swap(nextMechanismsByOwner);
+      repairCriticalDemandsByOwner.swap(nextCriticalDemandsByOwner);
+      collectiveRepairMechanisms.swap(nextCollectiveMechanisms);
+      repairMechanismsByOwnerIndex = std::move(nextMechanismIndex);
+      repairCriticalDemandsByOwnerIndex = std::move(nextDemandIndex);
+      allRepairMechanisms = std::move(nextAllRepairMechanisms);
+      activeCatalogCore = std::move(catalogCore);
+      activeLivePreciseCore = std::move(preciseCore);
+      current = std::move(nextCurrent);
+      forcedRepairExclusions.clear();
       outcome.selectedProblem = outcome.ownedProblem.get();
       outcome.repairFrontierTruncated |=
           outcome.ownedProblem->getPatternStatistics().repairFrontierTruncated;
-      repairMechanismsByOwner = std::move(nextRepair.repairMechanismsByOwner);
-      collectiveRepairMechanisms =
-          std::move(nextRepair.collectiveRepairMechanisms);
-      rebuildRepairMechanismIndex();
-      activeCatalogCore = preciseCore;
-      core = preciseCore;
-      current = options.selection;
-      current.forbiddenMechanisms = forbiddenRepairOwners;
-      llvm::sort(current.forbiddenMechanisms);
-      current.forbiddenMechanisms.erase(
-          std::unique(current.forbiddenMechanisms.begin(),
-                      current.forbiddenMechanisms.end()),
-          current.forbiddenMechanisms.end());
+      if (outcome.repairCatalogRebuilds == 0) {
+        outcome.firstRepairCatalogRebuildWorkUnits = budget.workUnits();
+      }
+      ++outcome.repairCatalogRebuilds;
+      if (rebuiltVerified) {
+        outcome.selection = std::move(*rebuiltPressure);
+        outcome.verifiedPlan = std::move(*rebuiltVerified);
+        outcome.feasible = true;
+        break;
+      }
+      lastPressure = std::move(*rebuiltPressure);
+      core = std::move(*rebuiltCore);
     }
     std::optional<VerifiedRepairCandidate> bestVerified;
     std::optional<CanonicalSyncSelection> bestPressureTrial;
     CanonicalSyncGreedyOptions bestPressureOptions;
     std::vector<CanonicalSyncMechanismId> bestPressureOwners;
+    std::vector<CanonicalSyncMechanismId> bestPressureRepairExclusions;
+    bool bestPressureUsesCollective = false;
+    const std::optional<std::size_t> overflow =
+        meteredResourceOverflow(lastPressure, budget.sharedWorkBudget());
+    if (!overflow || !budget.sharedWorkBudget()->consume(core.size())) {
+      break;
+    }
     CanonicalSyncRepairRoundRanker ranker(options.selection.objective,
-                                          resourceOverflow(lastPressure));
+                                          *overflow);
     std::vector<CanonicalSyncMechanismId> replaceableCore;
     llvm::copy_if(core, std::back_inserter(replaceableCore),
                   [&](CanonicalSyncMechanismId mechanism) {
@@ -922,17 +1257,34 @@ selectWithBoundedRepair(const CanonicalSyncProgram &program,
     // Try owners with a certified repair alternative first. Stable ordering
     // within each class keeps the search deterministic while avoiding work on
     // exclusions that can only reshuffle the same over-pressured event plan.
-    llvm::stable_sort(replaceableCore, [&](CanonicalSyncMechanismId first,
-                                           CanonicalSyncMechanismId second) {
-      const bool firstHasRepair =
-          repairMechanismsByOwner.find(first) != repairMechanismsByOwner.end();
-      const bool secondHasRepair =
-          repairMechanismsByOwner.find(second) != repairMechanismsByOwner.end();
-      return firstHasRepair > secondHasRepair;
-    });
+    if (!budget.sharedWorkBudget()->consume(replaceableCore.size())) {
+      break;
+    }
+    std::vector<CanonicalSyncMechanismId> withoutOwnerRepair;
+    withoutOwnerRepair.reserve(replaceableCore.size());
+    std::size_t ownerRepairPosition = 0;
+    for (CanonicalSyncMechanismId mechanism : replaceableCore) {
+      const bool hasOwnerRepair =
+          mechanism < repairMechanismsByOwnerIndex.size() &&
+          repairMechanismsByOwnerIndex[mechanism];
+      if (hasOwnerRepair) {
+        replaceableCore[ownerRepairPosition++] = mechanism;
+      } else {
+        withoutOwnerRepair.push_back(mechanism);
+      }
+    }
+    replaceableCore.resize(ownerRepairPosition);
+    replaceableCore.insert(replaceableCore.end(), withoutOwnerRepair.begin(),
+                           withoutOwnerRepair.end());
     const auto considerTrial =
         [&](CanonicalSyncGreedyOptions trialOptions,
-            ArrayRef<CanonicalSyncMechanismId> trialOwners) {
+            ArrayRef<CanonicalSyncMechanismId> trialOwners,
+            ArrayRef<CanonicalSyncMechanismId> trialRepairExclusions,
+            bool trialUsesCollective) {
+          if (!budget.sharedWorkBudget()->consume(
+                  trialOptions.forbiddenMechanisms.size())) {
+            return;
+          }
           std::optional<CanonicalSyncSelection> trial =
               budget.run(*outcome.ownedProblem, trialOptions);
           if (!trial) {
@@ -946,37 +1298,82 @@ selectWithBoundedRepair(const CanonicalSyncProgram &program,
               plan = std::move(verified);
             }
           }
+          std::size_t trialOverflow = 0;
+          if (!plan) {
+            const std::optional<std::size_t> diagnosedOverflow =
+                meteredResourceOverflow(*trial, budget.sharedWorkBudget());
+            if (!diagnosedOverflow) {
+              return;
+            }
+            trialOverflow = *diagnosedOverflow;
+          }
           const CanonicalSyncRepairRoundRanker::Decision decision =
-              ranker.consider(*trial, plan.has_value());
+              ranker.consider(*trial, plan.has_value(), trialOverflow,
+                              budget.sharedWorkBudget());
+          if (decision ==
+              CanonicalSyncRepairRoundRanker::Decision::WorkLimitExceeded) {
+            return;
+          }
           if (decision ==
               CanonicalSyncRepairRoundRanker::Decision::ReplaceBestVerified) {
-            bestVerified = VerifiedRepairCandidate{*trial, std::move(*plan)};
+            bestVerified =
+                VerifiedRepairCandidate{std::move(*trial), std::move(*plan)};
           } else if (decision == CanonicalSyncRepairRoundRanker::Decision::
                                      ReplaceBestPressure) {
-            bestPressureTrial = *trial;
+            std::size_t retainedTrialWork = 0;
+            const bool retainedTrialWorkAvailable =
+                checkedWorkSum(trialOwners.size(), trialRepairExclusions.size(),
+                               retainedTrialWork) &&
+                budget.sharedWorkBudget()->consume(retainedTrialWork);
+            if (!retainedTrialWorkAvailable) {
+              return;
+            }
+            bestPressureTrial = std::move(*trial);
             bestPressureOptions = std::move(trialOptions);
             bestPressureOwners.assign(trialOwners.begin(), trialOwners.end());
+            bestPressureRepairExclusions.assign(trialRepairExclusions.begin(),
+                                                trialRepairExclusions.end());
+            bestPressureUsesCollective = trialUsesCollective;
           }
         };
     // Required search: forbid one live conflicting event at a time from the
     // current pressure baseline.
     for (CanonicalSyncMechanismId mechanism : replaceableCore) {
+      std::size_t trialCopyWork = 0;
+      const bool trialCopyWorkAvailable =
+          checkedWorkSum(current.forbiddenMechanisms.size(),
+                         forbiddenRepairOwners.size(), trialCopyWork) &&
+          checkedWorkSum(trialCopyWork, forcedRepairExclusions.size(),
+                         trialCopyWork) &&
+          checkedWorkSum(trialCopyWork, 1, trialCopyWork) &&
+          budget.sharedWorkBudget()->consume(trialCopyWork);
+      if (!trialCopyWorkAvailable) {
+        break;
+      }
       CanonicalSyncGreedyOptions trialOptions = current;
       trialOptions.forbiddenMechanisms.push_back(mechanism);
       std::vector<CanonicalSyncMechanismId> trialOwners = forbiddenRepairOwners;
+      std::vector<CanonicalSyncMechanismId> trialRepairExclusions =
+          forcedRepairExclusions;
       if (mechanism < preciseMechanismCount) {
         trialOwners.push_back(mechanism);
+      } else {
+        trialRepairExclusions.push_back(mechanism);
       }
-      llvm::sort(trialOwners);
-      trialOwners.erase(std::unique(trialOwners.begin(), trialOwners.end()),
-                        trialOwners.end());
-      constrainRepairCatalog(trialOptions, trialOwners, false);
-      llvm::sort(trialOptions.forbiddenMechanisms);
-      trialOptions.forbiddenMechanisms.erase(
-          std::unique(trialOptions.forbiddenMechanisms.begin(),
-                      trialOptions.forbiddenMechanisms.end()),
-          trialOptions.forbiddenMechanisms.end());
-      considerTrial(std::move(trialOptions), trialOwners);
+      const bool trialPrepared =
+          stableSortAndUniqueRepairValues(trialOwners,
+                                          budget.sharedWorkBudget()) &&
+          stableSortAndUniqueRepairValues(trialRepairExclusions,
+                                          budget.sharedWorkBudget()) &&
+          prepareCanonicalSyncRepairTrial(
+              trialOptions, allRepairMechanisms, repairMechanismsByOwnerIndex,
+              collectiveRepairMechanisms, trialOwners, collectiveRepairEnabled,
+              trialRepairExclusions, budget.sharedWorkBudget());
+      if (!trialPrepared) {
+        break;
+      }
+      considerTrial(std::move(trialOptions), trialOwners, trialRepairExclusions,
+                    collectiveRepairEnabled);
       if (budget.exhausted()) {
         break;
       }
@@ -984,28 +1381,55 @@ selectWithBoundedRepair(const CanonicalSyncProgram &program,
     // Optional acceleration: try replacing the entire live core, but never
     // allow an uncoverable/work-limited collective trial to replace the last
     // valid resource-pressure diagnosis.
-    if (!budget.exhausted() && !replaceableCore.empty()) {
+    const bool runCollectiveRepair =
+        !budget.exhausted() && !replaceableCore.empty() &&
+        options.patterns.enableCollectiveRepairTrial;
+    if (runCollectiveRepair) {
+      std::size_t replaceableCopies = 0;
+      std::size_t collectiveCopyWork = 0;
+      const bool collectiveCopyWorkAvailable =
+          checkedWorkProduct(replaceableCore.size(), 3, replaceableCopies) &&
+          checkedWorkSum(current.forbiddenMechanisms.size(),
+                         forbiddenRepairOwners.size(), collectiveCopyWork) &&
+          checkedWorkSum(collectiveCopyWork, forcedRepairExclusions.size(),
+                         collectiveCopyWork) &&
+          checkedWorkSum(collectiveCopyWork, replaceableCopies,
+                         collectiveCopyWork) &&
+          budget.sharedWorkBudget()->consume(collectiveCopyWork);
+      if (!collectiveCopyWorkAvailable) {
+        break;
+      }
       CanonicalSyncGreedyOptions collectiveOptions = current;
       std::vector<CanonicalSyncMechanismId> collectiveOwners =
           forbiddenRepairOwners;
+      std::vector<CanonicalSyncMechanismId> collectiveRepairExclusions =
+          forcedRepairExclusions;
       llvm::copy_if(replaceableCore, std::back_inserter(collectiveOwners),
                     [&](CanonicalSyncMechanismId mechanism) {
                       return mechanism < preciseMechanismCount;
                     });
-      llvm::sort(collectiveOwners);
-      collectiveOwners.erase(
-          std::unique(collectiveOwners.begin(), collectiveOwners.end()),
-          collectiveOwners.end());
+      llvm::copy_if(replaceableCore,
+                    std::back_inserter(collectiveRepairExclusions),
+                    [&](CanonicalSyncMechanismId mechanism) {
+                      return mechanism >= preciseMechanismCount;
+                    });
       collectiveOptions.forbiddenMechanisms.insert(
           collectiveOptions.forbiddenMechanisms.end(), replaceableCore.begin(),
           replaceableCore.end());
-      constrainRepairCatalog(collectiveOptions, collectiveOwners, true);
-      llvm::sort(collectiveOptions.forbiddenMechanisms);
-      collectiveOptions.forbiddenMechanisms.erase(
-          std::unique(collectiveOptions.forbiddenMechanisms.begin(),
-                      collectiveOptions.forbiddenMechanisms.end()),
-          collectiveOptions.forbiddenMechanisms.end());
-      considerTrial(std::move(collectiveOptions), collectiveOwners);
+      const bool collectivePrepared =
+          stableSortAndUniqueRepairValues(collectiveOwners,
+                                          budget.sharedWorkBudget()) &&
+          stableSortAndUniqueRepairValues(collectiveRepairExclusions,
+                                          budget.sharedWorkBudget()) &&
+          prepareCanonicalSyncRepairTrial(
+              collectiveOptions, allRepairMechanisms,
+              repairMechanismsByOwnerIndex, collectiveRepairMechanisms,
+              collectiveOwners, true, collectiveRepairExclusions,
+              budget.sharedWorkBudget());
+      if (collectivePrepared) {
+        considerTrial(std::move(collectiveOptions), collectiveOwners,
+                      collectiveRepairExclusions, true);
+      }
     }
     if (bestVerified) {
       outcome.selection = std::move(bestVerified->selection);
@@ -1018,10 +1442,17 @@ selectWithBoundedRepair(const CanonicalSyncProgram &program,
     if (cannotContinue) {
       break;
     }
-    lastPressure = *bestPressureTrial;
+    std::optional<std::vector<CanonicalSyncMechanismId>> nextCore =
+        meteredConflictCore(*bestPressureTrial, budget.sharedWorkBudget());
+    if (!nextCore) {
+      break;
+    }
+    lastPressure = std::move(*bestPressureTrial);
     current = std::move(bestPressureOptions);
     forbiddenRepairOwners = std::move(bestPressureOwners);
-    core = allConflictCore(lastPressure);
+    forcedRepairExclusions = std::move(bestPressureRepairExclusions);
+    collectiveRepairEnabled = bestPressureUsesCollective;
+    core = std::move(*nextCore);
   }
   if (!outcome.feasible) {
     outcome.selection = std::move(lastPressure);
@@ -1192,6 +1623,9 @@ buildStrategyReport(CanonicalSyncSelectionStrategy strategy,
   report.repairBudgetExhausted = outcome.repairBudgetExhausted;
   report.backstopDeletionTruncated = outcome.backstopDeletionTruncated;
   report.repairRounds = outcome.repairRounds;
+  report.repairCatalogRebuilds = outcome.repairCatalogRebuilds;
+  report.firstRepairCatalogRebuildWorkUnits =
+      outcome.firstRepairCatalogRebuildWorkUnits;
   report.repairTrials = outcome.repairTrials;
   report.repairWorkUnits = outcome.repairWorkUnits;
   report.backstopDeletionTrials = outcome.backstopDeletionTrials;
@@ -1570,6 +2004,9 @@ SelectionOutcome takeFallbackSelection(PipeAllFallbackOutcome fallback,
   outcome.repairFrontierTruncated = failed.repairFrontierTruncated;
   outcome.repairBudgetExhausted = failed.repairBudgetExhausted;
   outcome.repairRounds = failed.repairRounds;
+  outcome.repairCatalogRebuilds = failed.repairCatalogRebuilds;
+  outcome.firstRepairCatalogRebuildWorkUnits =
+      failed.firstRepairCatalogRebuildWorkUnits;
   outcome.repairTrials = failed.repairTrials;
   outcome.repairWorkUnits = failed.repairWorkUnits;
   outcome.selection.mechanisms = fallback.plan.mechanisms;
@@ -1593,6 +2030,116 @@ SelectionOutcome takeFallbackSelection(PipeAllFallbackOutcome fallback,
 }
 
 } // namespace
+
+bool mlir::pto::prepareCanonicalSyncRepairTrial(
+    CanonicalSyncGreedyOptions &trialOptions,
+    ArrayRef<CanonicalSyncMechanismId> allRepairMechanisms,
+    ArrayRef<const std::vector<CanonicalSyncMechanismId> *>
+        repairMechanismsByOwner,
+    ArrayRef<CanonicalSyncMechanismId> collectiveRepairMechanisms,
+    ArrayRef<CanonicalSyncMechanismId> owners, bool collective,
+    ArrayRef<CanonicalSyncMechanismId> forcedRepairExclusions,
+    SyncCoverCoverageWorkBudget *workBudget) {
+  bool invalidRepairOrder = false;
+  std::optional<CanonicalSyncMechanismId> previousRepair;
+  for (CanonicalSyncMechanismId mechanism : allRepairMechanisms) {
+    if (workBudget && !workBudget->consume()) {
+      return false;
+    }
+    invalidRepairOrder |= previousRepair && *previousRepair >= mechanism;
+    previousRepair = mechanism;
+  }
+  if (invalidRepairOrder) {
+    return false;
+  }
+
+  std::vector<CanonicalSyncMechanismId> allowed;
+  for (CanonicalSyncMechanismId owner : owners) {
+    if (workBudget && !workBudget->consume()) {
+      return false;
+    }
+    const bool ownerHasNoRepairs = owner >= repairMechanismsByOwner.size() ||
+                                   !repairMechanismsByOwner[owner];
+    if (ownerHasNoRepairs) {
+      continue;
+    }
+    const std::vector<CanonicalSyncMechanismId> &ownerMechanisms =
+        *repairMechanismsByOwner[owner];
+    if (workBudget && !workBudget->consume(ownerMechanisms.size())) {
+      return false;
+    }
+    allowed.insert(allowed.end(), ownerMechanisms.begin(),
+                   ownerMechanisms.end());
+  }
+  if (collective) {
+    if (workBudget && !workBudget->consume(collectiveRepairMechanisms.size())) {
+      return false;
+    }
+    allowed.insert(allowed.end(), collectiveRepairMechanisms.begin(),
+                   collectiveRepairMechanisms.end());
+  }
+  const bool allowedPrepared =
+      stableSortAndUniqueRepairValues(allowed, workBudget) &&
+      (!workBudget ||
+       workBudget->consume(trialOptions.forbiddenMechanisms.size()));
+  if (!allowedPrepared) {
+    return false;
+  }
+
+  std::size_t retainedCapacity = 0;
+  const bool retainedCapacityAvailable =
+      checkedWorkSum(trialOptions.forbiddenMechanisms.size(),
+                     forcedRepairExclusions.size(), retainedCapacity) &&
+      (!workBudget || workBudget->consume(forcedRepairExclusions.size()));
+  if (!retainedCapacityAvailable) {
+    return false;
+  }
+  std::vector<CanonicalSyncMechanismId> retainedForbidden;
+  retainedForbidden.reserve(retainedCapacity);
+  for (CanonicalSyncMechanismId mechanism : trialOptions.forbiddenMechanisms) {
+    const std::optional<bool> isRepair =
+        meteredRepairContains(allRepairMechanisms, mechanism, workBudget);
+    if (!isRepair) {
+      return false;
+    }
+    if (!*isRepair) {
+      retainedForbidden.push_back(mechanism);
+    }
+  }
+  for (CanonicalSyncMechanismId mechanism : forcedRepairExclusions) {
+    const std::optional<bool> isRepair =
+        meteredRepairContains(allRepairMechanisms, mechanism, workBudget);
+    if (!isRepair || !*isRepair) {
+      return false;
+    }
+    retainedForbidden.push_back(mechanism);
+  }
+  trialOptions.forbiddenMechanisms = std::move(retainedForbidden);
+
+  const bool lookupWorkAvailable =
+      !workBudget || (workBudget->consume(allRepairMechanisms.size()) &&
+                      workBudget->consume(allowed.size()));
+  if (!lookupWorkAvailable) {
+    return false;
+  }
+  std::size_t allowedPosition = 0;
+  for (CanonicalSyncMechanismId mechanism : allRepairMechanisms) {
+    bool hasEarlierAllowed = allowedPosition < allowed.size() &&
+                             allowed[allowedPosition] < mechanism;
+    while (hasEarlierAllowed) {
+      ++allowedPosition;
+      hasEarlierAllowed = allowedPosition < allowed.size() &&
+                          allowed[allowedPosition] < mechanism;
+    }
+    const bool mechanismAllowed = allowedPosition < allowed.size() &&
+                                  allowed[allowedPosition] == mechanism;
+    if (!mechanismAllowed) {
+      trialOptions.forbiddenMechanisms.push_back(mechanism);
+    }
+  }
+  return stableSortAndUniqueRepairValues(trialOptions.forbiddenMechanisms,
+                                         workBudget);
+}
 
 LogicalResult mlir::pto::materializeCanonicalSyncPlan(
     const CanonicalSyncProgram &program,

@@ -409,6 +409,10 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
         {"repair_budget_exhausted", strategy.repairBudgetExhausted},
         {"backstop_deletion_truncated", strategy.backstopDeletionTruncated},
         {"repair_rounds", jsonInteger(strategy.repairRounds)},
+        {"repair_catalog_rebuilds",
+         jsonInteger(strategy.repairCatalogRebuilds)},
+        {"first_repair_catalog_rebuild_work_units",
+         jsonInteger(strategy.firstRepairCatalogRebuildWorkUnits)},
         {"repair_trials", jsonInteger(strategy.repairTrials)},
         {"repair_work_units", jsonInteger(strategy.repairWorkUnits)},
         {"backstop_deletion_trials",
@@ -600,6 +604,7 @@ LogicalResult emitReport(func::FuncOp function, StringRef path,
         << ", targeted-barriers=" << strategy.selectedTargetedBarriers
         << ", pipe-all-barriers=" << strategy.selectedPipeAllBarriers
         << ", repairs=" << strategy.repairRounds
+        << ", repair-rebuilds=" << strategy.repairCatalogRebuilds
         << ", repair-trials=" << strategy.repairTrials
         << ", repair-work=" << strategy.repairWorkUnits
         << ", repair-frontier-truncated=" << strategy.repairFrontierTruncated

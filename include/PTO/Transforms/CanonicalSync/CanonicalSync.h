@@ -15,6 +15,7 @@
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncSelection.h"
 
 #include "mlir/Support/LogicalResult.h"
+#include "llvm/ADT/ArrayRef.h"
 
 #include <array>
 #include <cstddef>
@@ -82,6 +83,9 @@ struct CanonicalSyncPatternOptions {
       kAllCanonicalSyncMechanismFamilies;
   bool enableDirectPairs = true;
   bool enableConflictCoreRepair = true;
+  /// Optional same-round acceleration. Tests may disable it to exercise the
+  /// ordinary multi-round changed-core path without changing its semantics.
+  bool enableCollectiveRepairTrial = true;
   std::size_t maximumRepairFrontierInspections = 1U << 16;
   std::size_t maximumRepairFrontierProposals = 4096;
   std::size_t maximumSourcePrefixInspections = 1U << 20;
@@ -124,6 +128,9 @@ struct CanonicalSyncStrategyReport {
   bool repairBudgetExhausted = false;
   bool backstopDeletionTruncated = false;
   std::size_t repairRounds = 0;
+  std::size_t repairCatalogRebuilds = 0;
+  /// Cumulative shared work at the first committed catalog replacement.
+  std::size_t firstRepairCatalogRebuildWorkUnits = 0;
   std::size_t repairTrials = 0;
   std::size_t repairWorkUnits = 0;
   std::size_t backstopDeletionTrials = 0;
@@ -256,6 +263,12 @@ struct CanonicalSyncProblemBuildResult {
   /// other individual repair trial.
   std::map<CanonicalSyncMechanismId, std::vector<CanonicalSyncMechanismId>>
       repairMechanismsByOwner;
+  /// Stable graph-demand provenance for every precise owner represented in a
+  /// repair catalog. Changed-core rebuilding carries these rows forward so an
+  /// owner that was forbidden in an earlier round does not lose the certified
+  /// replacement mechanisms that keep its obligations covered.
+  std::map<CanonicalSyncMechanismId, std::vector<SyncCoverDemandId>>
+      repairCriticalDemandsByOwner;
   /// Multi-event frontier mechanisms exposed only by the collective core
   /// trial.
   std::vector<CanonicalSyncMechanismId> collectiveRepairMechanisms;
@@ -263,6 +276,15 @@ struct CanonicalSyncProblemBuildResult {
   explicit operator bool() const {
     return problem != nullptr && static_cast<bool>(status);
   }
+};
+
+/// Non-owning changed-core seed for one previously forbidden precise owner.
+/// The caller retains the owning build-result map for the duration of repair
+/// catalog construction; only owners named in the new accumulated core may be
+/// supplied.
+struct CanonicalSyncRepairCriticalDemandSeed {
+  CanonicalSyncMechanismId owner = 0;
+  llvm::ArrayRef<SyncCoverDemandId> demands;
 };
 
 CanonicalSyncProblemBuildResult
@@ -275,6 +297,21 @@ CanonicalSyncProblemBuildResult buildCanonicalSyncRepairProblem(
     const CanonicalSyncBuildOptions &options,
     const std::vector<CanonicalSyncMechanismId> &conflictCore,
     const std::vector<CanonicalSyncMechanismId> &selectedMechanisms = {},
+    SyncCoverCoverageWorkBudget *workBudget = nullptr,
+    llvm::ArrayRef<CanonicalSyncRepairCriticalDemandSeed>
+        retainedCriticalDemands = {});
+
+/// Recompute repair-only visibility for one exclusion trial. Explicitly
+/// forced repair IDs remain forbidden even when their owner is otherwise
+/// allowed; policy exclusions left by an earlier trial are replaced.
+bool prepareCanonicalSyncRepairTrial(
+    CanonicalSyncGreedyOptions &trialOptions,
+    llvm::ArrayRef<CanonicalSyncMechanismId> allRepairMechanisms,
+    llvm::ArrayRef<const std::vector<CanonicalSyncMechanismId> *>
+        repairMechanismsByOwner,
+    llvm::ArrayRef<CanonicalSyncMechanismId> collectiveRepairMechanisms,
+    llvm::ArrayRef<CanonicalSyncMechanismId> owners, bool collective,
+    llvm::ArrayRef<CanonicalSyncMechanismId> forcedRepairExclusions,
     SyncCoverCoverageWorkBudget *workBudget = nullptr);
 
 CanonicalSyncProblemBuildResult

@@ -4940,6 +4940,96 @@ bool testConflictCoreRepairAvoidsPipeAll() {
           outs(%secondTile : !pto.tile_buf<vec, 16x16xf32>)
         return
       }
+      func.func @repair_pair_overlap(
+          %input: !pto.partition_tensor_view<16x16xf32>,
+          %output: !pto.partition_tensor_view<16x16xf32>) {
+        %addr0 = arith.constant 0 : i64
+        %tile = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<vec, 16x16xf32>
+        pto.tload ins(%input : !pto.partition_tensor_view<16x16xf32>)
+          outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tabs ins(%tile : !pto.tile_buf<vec, 16x16xf32>)
+          outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf32>)
+          outs(%output : !pto.partition_tensor_view<16x16xf32>)
+        return
+      }
+      func.func @changed_core_driver(
+          %input0: !pto.partition_tensor_view<16x16xf32>,
+          %input1: !pto.partition_tensor_view<16x16xf32>,
+          %input2: !pto.partition_tensor_view<16x16xf32>,
+          %input3: !pto.partition_tensor_view<16x16xf32>,
+          %input4: !pto.partition_tensor_view<16x16xf32>,
+          %input5: !pto.partition_tensor_view<16x16xf32>,
+          %input6: !pto.partition_tensor_view<16x16xf32>,
+          %input7: !pto.partition_tensor_view<16x16xf32>) {
+        %addr0 = arith.constant 0 : i64
+        %addr1024 = arith.constant 1024 : i64
+        %addr2048 = arith.constant 2048 : i64
+        %addr3072 = arith.constant 3072 : i64
+        %addr4096 = arith.constant 4096 : i64
+        %addr5120 = arith.constant 5120 : i64
+        %addr6144 = arith.constant 6144 : i64
+        %addr7168 = arith.constant 7168 : i64
+        %one = arith.constant 1.000000e+00 : f32
+        %tile0 = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<vec, 16x16xf32>
+        %tile1 = pto.alloc_tile addr = %addr1024 :
+          !pto.tile_buf<vec, 16x16xf32>
+        %tile2 = pto.alloc_tile addr = %addr2048 :
+          !pto.tile_buf<vec, 16x16xf32>
+        %tile3 = pto.alloc_tile addr = %addr3072 :
+          !pto.tile_buf<vec, 16x16xf32>
+        %tile4 = pto.alloc_tile addr = %addr4096 :
+          !pto.tile_buf<vec, 16x16xf32>
+        %tile5 = pto.alloc_tile addr = %addr5120 :
+          !pto.tile_buf<vec, 16x16xf32>
+        %tile6 = pto.alloc_tile addr = %addr6144 :
+          !pto.tile_buf<vec, 16x16xf32>
+        %tile7 = pto.alloc_tile addr = %addr7168 :
+          !pto.tile_buf<vec, 16x16xf32>
+        pto.tload ins(%input0 : !pto.partition_tensor_view<16x16xf32>)
+          outs(%tile0 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%input1 : !pto.partition_tensor_view<16x16xf32>)
+          outs(%tile1 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%input2 : !pto.partition_tensor_view<16x16xf32>)
+          outs(%tile2 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%input3 : !pto.partition_tensor_view<16x16xf32>)
+          outs(%tile3 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%input4 : !pto.partition_tensor_view<16x16xf32>)
+          outs(%tile4 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%input5 : !pto.partition_tensor_view<16x16xf32>)
+          outs(%tile5 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%input6 : !pto.partition_tensor_view<16x16xf32>)
+          outs(%tile6 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%input7 : !pto.partition_tensor_view<16x16xf32>)
+          outs(%tile7 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%tile0, %one :
+          !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile0 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%tile1, %one :
+          !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile1 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%tile2, %one :
+          !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile2 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%tile3, %one :
+          !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile3 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%tile4, %one :
+          !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile4 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%tile5, %one :
+          !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile5 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%tile6, %one :
+          !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile6 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tmuls ins(%tile7, %one :
+          !pto.tile_buf<vec, 16x16xf32>, f32)
+          outs(%tile7 : !pto.tile_buf<vec, 16x16xf32>)
+        return
+      }
     }
   )mlir",
                                                              &context);
@@ -4955,6 +5045,10 @@ bool testConflictCoreRepairAvoidsPipeAll() {
   OwningOpRef<Operation *> cleanupExactClone(module->clone());
   OwningOpRef<Operation *> cleanupBelowClone(module->clone());
   OwningOpRef<Operation *> cleanupRetainedClone(module->clone());
+  OwningOpRef<Operation *> changedCoreClone(module->clone());
+  OwningOpRef<Operation *> changedDriverClone(module->clone());
+  OwningOpRef<Operation *> changedDriverExactClone(module->clone());
+  OwningOpRef<Operation *> changedDriverBeforeRebuildClone(module->clone());
   func::FuncOp function =
       module->lookupSymbol<func::FuncOp>("scarcity_frontier");
   FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(function);
@@ -4988,6 +5082,372 @@ bool testConflictCoreRepairAvoidsPipeAll() {
           0;
   if (!check(partialRepairStayedWithinCore,
              "do not generate frontiers from events outside the live core")) {
+    return false;
+  }
+
+  ModuleOp changedCoreModule = cast<ModuleOp>(*changedCoreClone);
+  changedCoreModule->setAttr("pto.target_arch",
+                             StringAttr::get(&context, "a3"));
+  func::FuncOp changedCoreFunction =
+      changedCoreModule.lookupSymbol<func::FuncOp>("scarcity_frontier");
+  FailureOr<CanonicalSyncProgram> changedCoreProgram =
+      buildCanonicalSyncProgram(changedCoreFunction);
+  CanonicalSyncProblemBuildResult changedCorePrecise =
+      succeeded(changedCoreProgram)
+          ? buildCanonicalSyncPreciseProblem(*changedCoreProgram, options)
+          : CanonicalSyncProblemBuildResult{};
+  CanonicalSyncSelection changedCoreSelection;
+  if (changedCorePrecise) {
+    changedCoreSelection =
+        selectCanonicalSyncPatterns(*changedCorePrecise.problem);
+  }
+  const std::vector<CanonicalSyncMechanismId> changedConflictCore =
+      changedCoreSelection.allocation.domains.empty()
+          ? std::vector<CanonicalSyncMechanismId>{}
+          : changedCoreSelection.allocation.domains.front().liveMechanisms;
+  if (!check(changedCoreSelection.error ==
+                     CanonicalSyncSelectionError::ResourceInfeasible &&
+                 changedConflictCore.size() >= 2,
+             "expose a second precise owner for changed-core repair")) {
+    return false;
+  }
+  const CanonicalSyncMechanismId retainedOwner = changedConflictCore.front();
+  CanonicalSyncProblemBuildResult retainedOwnerRepair =
+      buildCanonicalSyncRepairProblem(
+          *changedCoreProgram, *changedCorePrecise.problem, options,
+          {retainedOwner}, changedCoreSelection.mechanisms);
+  if (!check(retainedOwnerRepair &&
+                 retainedOwnerRepair.repairCriticalDemandsByOwner.count(
+                     retainedOwner) == 1 &&
+                 !retainedOwnerRepair.repairCriticalDemandsByOwner
+                      .at(retainedOwner)
+                      .empty() &&
+                 retainedOwnerRepair.repairMechanismsByOwner.count(
+                     retainedOwner) == 1 &&
+                 !retainedOwnerRepair.repairMechanismsByOwner.at(retainedOwner)
+                      .empty(),
+             "retain the first owner's certified repair provenance")) {
+    return false;
+  }
+  std::vector<CanonicalSyncMechanismId> changedSelected =
+      changedCoreSelection.mechanisms;
+  changedSelected.erase(std::remove(changedSelected.begin(),
+                                    changedSelected.end(), retainedOwner),
+                        changedSelected.end());
+  const CanonicalSyncMechanismId changedOwner = changedConflictCore.back();
+  const std::vector<CanonicalSyncMechanismId> accumulatedCore = {retainedOwner,
+                                                                 changedOwner};
+  const auto retainedCriticalDemandMap =
+      retainedOwnerRepair.repairCriticalDemandsByOwner;
+  const std::vector<CanonicalSyncRepairCriticalDemandSeed>
+      retainedCriticalDemands = {
+          {retainedOwner, retainedCriticalDemandMap.at(retainedOwner)}};
+  SyncCoverCoverageWorkBudget changedCoreWork;
+  CanonicalSyncProblemBuildResult changedCoreRepair =
+      buildCanonicalSyncRepairProblem(
+          *changedCoreProgram, *changedCorePrecise.problem, options,
+          accumulatedCore, changedSelected, &changedCoreWork,
+          retainedCriticalDemands);
+  const std::size_t exactChangedCoreWork = changedCoreWork.workUnits;
+  SyncCoverCoverageWorkBudget exactChangedCoreBudget(exactChangedCoreWork);
+  CanonicalSyncProblemBuildResult exactChangedCoreRepair =
+      buildCanonicalSyncRepairProblem(
+          *changedCoreProgram, *changedCorePrecise.problem, options,
+          accumulatedCore, changedSelected, &exactChangedCoreBudget,
+          retainedCriticalDemands);
+  SyncCoverCoverageWorkBudget belowChangedCoreBudget(
+      exactChangedCoreWork == 0 ? 0 : exactChangedCoreWork - 1);
+  CanonicalSyncProblemBuildResult belowChangedCoreRepair =
+      buildCanonicalSyncRepairProblem(
+          *changedCoreProgram, *changedCorePrecise.problem, options,
+          accumulatedCore, changedSelected, &belowChangedCoreBudget,
+          retainedCriticalDemands);
+  const bool changedCoreRetainsOwners =
+      changedCoreRepair && exactChangedCoreRepair &&
+      exactChangedCoreWork != 0 &&
+      exactChangedCoreBudget.workUnits == exactChangedCoreWork &&
+      !exactChangedCoreBudget.exhausted && !belowChangedCoreRepair &&
+      belowChangedCoreRepair.status.error ==
+          CanonicalSyncProblemError::LimitExceeded &&
+      belowChangedCoreBudget.exhausted &&
+      changedCoreRepair.repairCriticalDemandsByOwner.count(retainedOwner) ==
+          1 &&
+      changedCoreRepair.repairCriticalDemandsByOwner.at(retainedOwner) ==
+          retainedCriticalDemandMap.at(retainedOwner) &&
+      changedCoreRepair.repairCriticalDemandsByOwner.count(changedOwner) == 1 &&
+      !changedCoreRepair.repairCriticalDemandsByOwner.at(changedOwner)
+           .empty() &&
+      changedCoreRepair.repairMechanismsByOwner.count(retainedOwner) == 1 &&
+      !changedCoreRepair.repairMechanismsByOwner.at(retainedOwner).empty() &&
+      changedCoreRepair.repairMechanismsByOwner.count(changedOwner) == 1 &&
+      !changedCoreRepair.repairMechanismsByOwner.at(changedOwner).empty();
+  if (!check(changedCoreRetainsOwners,
+             "carry forbidden-owner provenance into a changed repair core")) {
+    return false;
+  }
+
+  func::FuncOp pairOverlapFunction =
+      changedCoreModule.lookupSymbol<func::FuncOp>("repair_pair_overlap");
+  FailureOr<CanonicalSyncProgram> pairOverlapProgram =
+      buildCanonicalSyncProgram(pairOverlapFunction);
+  CanonicalSyncBuildOptions pairOverlapOptions;
+  pairOverlapOptions.enableDemandBasisReduction = false;
+  pairOverlapOptions.patterns.enabledMechanismFamilies =
+      canonicalSyncMechanismFamilyBit(
+          CanonicalSyncMechanismFamily::RepairSourceLocalDrain) |
+      canonicalSyncMechanismFamilyBit(
+          CanonicalSyncMechanismFamily::RepairSourcePrefixDrain) |
+      canonicalSyncMechanismFamilyBit(
+          CanonicalSyncMechanismFamily::RepairTargetLocalDrain);
+  CanonicalSyncProblemBuildResult pairOverlapPrecise =
+      succeeded(pairOverlapProgram)
+          ? buildCanonicalSyncPreciseProblem(*pairOverlapProgram,
+                                             pairOverlapOptions)
+          : CanonicalSyncProblemBuildResult{};
+  const CanonicalSyncPattern *overlapPair = nullptr;
+  if (pairOverlapPrecise) {
+    const auto pair = llvm::find_if(
+        pairOverlapPrecise.problem->getPatterns(),
+        [](const CanonicalSyncPattern &pattern) {
+          return pattern.kind == CanonicalSyncPatternKind::DirectPair &&
+                 pattern.members.size() == 2 && !pattern.coverage.empty();
+        });
+    if (pair != pairOverlapPrecise.problem->getPatterns().end()) {
+      overlapPair = &*pair;
+    }
+  }
+  if (!check(overlapPair,
+             "construct a direct pair with shared critical coverage")) {
+    return false;
+  }
+  std::vector<CanonicalSyncMechanismId> pairOwners(overlapPair->members.begin(),
+                                                   overlapPair->members.end());
+  llvm::sort(pairOwners);
+  CanonicalSyncProblemBuildResult firstPairOwnerRepair =
+      buildCanonicalSyncRepairProblem(
+          *pairOverlapProgram, *pairOverlapPrecise.problem, pairOverlapOptions,
+          {pairOwners.front()}, pairOwners);
+  CanonicalSyncProblemBuildResult bothPairOwnersRepair =
+      buildCanonicalSyncRepairProblem(
+          *pairOverlapProgram, *pairOverlapPrecise.problem, pairOverlapOptions,
+          pairOwners, pairOwners);
+  std::vector<CanonicalSyncMechanismId> reversedPairOwners = pairOwners;
+  std::reverse(reversedPairOwners.begin(), reversedPairOwners.end());
+  CanonicalSyncProblemBuildResult reversedPairOwnersRepair =
+      buildCanonicalSyncRepairProblem(
+          *pairOverlapProgram, *pairOverlapPrecise.problem, pairOverlapOptions,
+          reversedPairOwners, pairOwners);
+  std::vector<SyncCoverDemandId> sharedPairDemands;
+  if (bothPairOwnersRepair) {
+    const auto &firstDemands =
+        bothPairOwnersRepair.repairCriticalDemandsByOwner.at(
+            pairOwners.front());
+    const auto &secondDemands =
+        bothPairOwnersRepair.repairCriticalDemandsByOwner.at(pairOwners.back());
+    std::set_intersection(firstDemands.begin(), firstDemands.end(),
+                          secondDemands.begin(), secondDemands.end(),
+                          std::back_inserter(sharedPairDemands));
+  }
+  bool earlierOwnerSeesLaterMechanism = false;
+  if (firstPairOwnerRepair && bothPairOwnersRepair) {
+    const std::size_t laterMechanismBegin =
+        firstPairOwnerRepair.problem->getMechanisms().size();
+    const auto &firstOwnerMechanisms =
+        bothPairOwnersRepair.repairMechanismsByOwner.at(pairOwners.front());
+    const auto &secondOwnerMechanisms =
+        bothPairOwnersRepair.repairMechanismsByOwner.at(pairOwners.back());
+    earlierOwnerSeesLaterMechanism = llvm::any_of(
+        firstOwnerMechanisms, [&](CanonicalSyncMechanismId mechanism) {
+          return mechanism >= laterMechanismBegin &&
+                 llvm::is_contained(secondOwnerMechanisms, mechanism);
+        });
+  }
+  if (!check(firstPairOwnerRepair && bothPairOwnersRepair &&
+                 reversedPairOwnersRepair && !sharedPairDemands.empty() &&
+                 earlierOwnerSeesLaterMechanism,
+             "attribute later synthesized shared repairs to both owners")) {
+    return false;
+  }
+  if (!check(reversedPairOwnersRepair.repairMechanismsByOwner ==
+                     bothPairOwnersRepair.repairMechanismsByOwner &&
+                 reversedPairOwnersRepair.repairCriticalDemandsByOwner ==
+                     bothPairOwnersRepair.repairCriticalDemandsByOwner,
+             "make overlapping-owner attribution independent of core order")) {
+    return false;
+  }
+  const std::vector<CanonicalSyncMechanismId> syntheticRepairMechanisms = {
+      10, 11, 12};
+  const std::vector<CanonicalSyncMechanismId> syntheticOwnerRepairs = {10, 11};
+  const std::vector<const std::vector<CanonicalSyncMechanismId> *>
+      syntheticOwnerIndex = {&syntheticOwnerRepairs};
+  const auto prepareSyntheticTrial = [&](SyncCoverCoverageWorkBudget *budget) {
+    CanonicalSyncGreedyOptions trial;
+    trial.forbiddenMechanisms = {5, 11, 12};
+    const bool prepared = prepareCanonicalSyncRepairTrial(
+        trial, syntheticRepairMechanisms, syntheticOwnerIndex, {}, {0}, false,
+        {10}, budget);
+    return std::make_pair(prepared, trial.forbiddenMechanisms);
+  };
+  SyncCoverCoverageWorkBudget syntheticRepairWork;
+  const auto syntheticReference = prepareSyntheticTrial(&syntheticRepairWork);
+  SyncCoverCoverageWorkBudget syntheticExact(syntheticRepairWork.workUnits);
+  const auto syntheticAtExact = prepareSyntheticTrial(&syntheticExact);
+  SyncCoverCoverageWorkBudget syntheticBelow(
+      syntheticRepairWork.workUnits == 0 ? 0
+                                         : syntheticRepairWork.workUnits - 1);
+  const auto syntheticBelowBound = prepareSyntheticTrial(&syntheticBelow);
+  if (!check(syntheticReference.first && syntheticAtExact.first &&
+                 syntheticReference.second ==
+                     std::vector<CanonicalSyncMechanismId>({5, 10, 12}) &&
+                 syntheticAtExact.second == syntheticReference.second &&
+                 !syntheticExact.exhausted && !syntheticBelowBound.first &&
+                 syntheticBelow.exhausted,
+             "preserve explicit repair-local exclusions at exact work bound")) {
+    return false;
+  }
+
+  const auto runChangedCoreDriver =
+      [&](OwningOpRef<Operation *> &clone, CanonicalSyncBuildOptions runOptions,
+          CanonicalSyncComparisonReport &runReport) {
+        ModuleOp cloneModule = cast<ModuleOp>(*clone);
+        cloneModule->setAttr("pto.target_arch",
+                             StringAttr::get(&context, "a3"));
+        func::FuncOp cloneFunction =
+            cloneModule.lookupSymbol<func::FuncOp>("changed_core_driver");
+        runOptions.reportCallback =
+            [&](const CanonicalSyncComparisonReport &actual) {
+              runReport = actual;
+              return success();
+            };
+        return runCanonicalSync(cloneFunction, runOptions);
+      };
+  CanonicalSyncBuildOptions changedDriverOptions;
+  changedDriverOptions.eventIdBudget = 1;
+  changedDriverOptions.patterns.enableCollectiveRepairTrial = false;
+  changedDriverOptions.patterns.enabledMechanismFamilies =
+      canonicalSyncMechanismFamilyBit(
+          CanonicalSyncMechanismFamily::RepairSourceLocalDrain);
+  CanonicalSyncComparisonReport changedDriverReport;
+  if (!check(succeeded(runChangedCoreDriver(changedDriverClone,
+                                            changedDriverOptions,
+                                            changedDriverReport)),
+             "run the production changed-core repair path")) {
+    return false;
+  }
+  const bool hasChangedDriverReport =
+      changedDriverReport.strategies.size() == 1;
+  if (!check(hasChangedDriverReport,
+             "report one changed-core production strategy")) {
+    return false;
+  }
+  const CanonicalSyncStrategyReport &changedDriver =
+      changedDriverReport.strategies.front();
+  const bool changedDriverVerified =
+      changedDriver.verified && !changedDriver.usedLocalizedPipeAll &&
+      changedDriver.repairRounds >= 7 &&
+      changedDriver.repairCatalogRebuilds >= 6 &&
+      changedDriver.firstRepairCatalogRebuildWorkUnits != 0 &&
+      changedDriver.repairWorkUnits >=
+          changedDriver.firstRepairCatalogRebuildWorkUnits &&
+      changedDriver.emittedEventSets == 1 &&
+      changedDriver.emittedEventWaits == 1 &&
+      changedDriver.emittedTargetedBarriers == 7 &&
+      changedDriver.emittedPipeAllBarriers == 0;
+  if (!check(changedDriverVerified,
+             "freshly verify a seven-round rebuilt catalog without PIPE_ALL")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions changedDriverExactOptions = changedDriverOptions;
+  changedDriverExactOptions.maximumRepairTrials = changedDriver.repairTrials;
+  changedDriverExactOptions.maximumRepairWorkUnits =
+      changedDriver.repairWorkUnits;
+  CanonicalSyncComparisonReport changedDriverExactReport;
+  if (!check(succeeded(runChangedCoreDriver(changedDriverExactClone,
+                                            changedDriverExactOptions,
+                                            changedDriverExactReport)),
+             "accept the changed-core repair at its exact aggregate bound")) {
+    return false;
+  }
+  const bool hasChangedDriverExactReport =
+      changedDriverExactReport.strategies.size() == 1;
+  if (!check(hasChangedDriverExactReport,
+             "report the exact-bound changed-core strategy")) {
+    return false;
+  }
+  const CanonicalSyncStrategyReport &changedDriverExact =
+      changedDriverExactReport.strategies.front();
+  if (!check(changedDriverExact.verified &&
+                 !changedDriverExact.repairBudgetExhausted &&
+                 !changedDriverExact.usedLocalizedPipeAll &&
+                 changedDriverExact.repairCatalogRebuilds ==
+                     changedDriver.repairCatalogRebuilds &&
+                 changedDriverExact.repairWorkUnits ==
+                     changedDriver.repairWorkUnits &&
+                 changedDriverExact.planSignature ==
+                     changedDriver.planSignature,
+             "replay the rebuilt plan deterministically at the exact bound")) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions changedDriverBeforeRebuildOptions =
+      changedDriverOptions;
+  changedDriverBeforeRebuildOptions.maximumRepairWorkUnits =
+      changedDriver.firstRepairCatalogRebuildWorkUnits - 1;
+  CanonicalSyncComparisonReport changedDriverBeforeRebuildReport;
+  if (!check(succeeded(runChangedCoreDriver(changedDriverBeforeRebuildClone,
+                                            changedDriverBeforeRebuildOptions,
+                                            changedDriverBeforeRebuildReport)),
+             "stop one work unit before changed-catalog replacement")) {
+    return false;
+  }
+  const bool hasChangedDriverBeforeRebuildReport =
+      changedDriverBeforeRebuildReport.strategies.size() == 1;
+  if (!check(hasChangedDriverBeforeRebuildReport,
+             "report the pre-rebuild bounded strategy")) {
+    return false;
+  }
+  const CanonicalSyncStrategyReport &changedDriverBeforeRebuild =
+      changedDriverBeforeRebuildReport.strategies.front();
+  if (!check(changedDriverBeforeRebuild.verified &&
+                 changedDriverBeforeRebuild.repairBudgetExhausted &&
+                 changedDriverBeforeRebuild.usedLocalizedPipeAll &&
+                 changedDriverBeforeRebuild.repairCatalogRebuilds == 0 &&
+                 changedDriverBeforeRebuild.emittedPipeAllBarriers == 8,
+             "retain a consistent old-catalog pressure plan before rebuild")) {
+    return false;
+  }
+  bool sawStaleSelectionDiagnostic = false;
+  bool sawMismatchedProvenanceDiagnostic = false;
+  CanonicalSyncProblemBuildResult staleSelectionRepair;
+  CanonicalSyncProblemBuildResult mismatchedProvenanceRepair;
+  const std::vector<CanonicalSyncMechanismId> changedOnlyCore = {changedOwner};
+  {
+    ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
+      sawStaleSelectionDiagnostic |=
+          diagnostic.str().find("does not match the precise catalog") !=
+          std::string::npos;
+      sawMismatchedProvenanceDiagnostic |=
+          diagnostic.str().find("provenance does not match the repair core") !=
+          std::string::npos;
+      return success();
+    });
+    staleSelectionRepair = buildCanonicalSyncRepairProblem(
+        *changedCoreProgram, *changedCorePrecise.problem, options,
+        accumulatedCore, {changedCorePrecise.problem->getMechanisms().size()},
+        nullptr, retainedCriticalDemands);
+    mismatchedProvenanceRepair = buildCanonicalSyncRepairProblem(
+        *changedCoreProgram, *changedCorePrecise.problem, options,
+        changedOnlyCore, changedSelected, nullptr, retainedCriticalDemands);
+  }
+  if (!check(!staleSelectionRepair &&
+                 staleSelectionRepair.status.error ==
+                     CanonicalSyncProblemError::InvalidPattern &&
+                 sawStaleSelectionDiagnostic && !mismatchedProvenanceRepair &&
+                 mismatchedProvenanceRepair.status.error ==
+                     CanonicalSyncProblemError::InvalidPattern &&
+                 sawMismatchedProvenanceDiagnostic,
+             "reject stale repair-local IDs and provenance outside the core")) {
     return false;
   }
   const auto rejectsMismatchedPrefix = [&](const CanonicalSyncBuildOptions

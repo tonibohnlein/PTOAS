@@ -241,6 +241,93 @@ bool checkedBasisSum(std::size_t first, std::size_t second,
   return true;
 }
 
+bool checkedOrderedLookupWork(std::size_t entries, std::size_t &result) {
+  std::size_t levels = 1;
+  for (std::size_t remaining = entries; remaining > 1;
+       remaining = remaining / 2 + remaining % 2) {
+    ++levels;
+  }
+  return checkedBasisProduct(levels, 2, result) &&
+         checkedBasisSum(result, 2, result);
+}
+
+template <typename T>
+bool stableSortAndUniqueRepairValues(std::vector<T> &values,
+                                     SyncCoverCoverageWorkBudget *workBudget) {
+  const bool needsSorting = values.size() > 1;
+  if (needsSorting) {
+    if (workBudget && !workBudget->consume(values.size())) {
+      return false;
+    }
+    std::vector<T> scratch(values.size());
+    for (std::size_t width = 1; width < values.size();) {
+      if (workBudget && !workBudget->consume(values.size())) {
+        return false;
+      }
+      for (std::size_t begin = 0; begin < values.size();) {
+        const std::size_t middle =
+            begin + std::min(width, values.size() - begin);
+        const std::size_t end =
+            middle + std::min(width, values.size() - middle);
+        std::size_t left = begin;
+        std::size_t right = middle;
+        std::size_t output = begin;
+        while (left < middle && right < end) {
+          if (workBudget && !workBudget->consume()) {
+            return false;
+          }
+          if (values[right] < values[left]) {
+            scratch[output++] = values[right++];
+          } else {
+            scratch[output++] = values[left++];
+          }
+        }
+        while (left < middle) {
+          scratch[output++] = values[left++];
+        }
+        while (right < end) {
+          scratch[output++] = values[right++];
+        }
+        begin = end;
+      }
+      values.swap(scratch);
+      const std::size_t remainingWidth = values.size() - width;
+      if (width >= remainingWidth) {
+        break;
+      }
+      width *= 2;
+    }
+  }
+  if (workBudget && !workBudget->consume(values.size())) {
+    return false;
+  }
+  values.erase(std::unique(values.begin(), values.end()), values.end());
+  return true;
+}
+
+template <typename T>
+std::optional<bool>
+meteredRepairContains(ArrayRef<T> values, const T &value,
+                      SyncCoverCoverageWorkBudget *workBudget) {
+  std::size_t begin = 0;
+  std::size_t end = values.size();
+  while (begin < end) {
+    if (workBudget && !workBudget->consume()) {
+      return std::nullopt;
+    }
+    const std::size_t middle = begin + (end - begin) / 2;
+    if (values[middle] < value) {
+      begin = middle + 1;
+    } else {
+      end = middle;
+    }
+  }
+  if (workBudget && !workBudget->consume()) {
+    return std::nullopt;
+  }
+  return begin != values.size() && values[begin] == value;
+}
+
 DemandBasisResult
 buildDemandSelectionBasis(const SyncCoverGraph &graph,
                           const SyncCoverExpandedProgram &expansion,
@@ -4761,20 +4848,27 @@ addRepairFrontierPatterns(const CanonicalSyncProgram &program,
   RepairFrontierBuildResult result;
   std::vector<CanonicalSyncMechanismId> sortedCore(conflictCore.begin(),
                                                    conflictCore.end());
-  llvm::sort(sortedCore);
-  sortedCore.erase(std::unique(sortedCore.begin(), sortedCore.end()),
-                   sortedCore.end());
-  std::vector<DirectEventRecord> liveEvents;
-  if (workBudget && (!workBudget->consume(sortedCore.size()) ||
-                     !workBudget->consume(directEvents.size()))) {
+  if (!stableSortAndUniqueRepairValues(sortedCore, workBudget)) {
     result.status = RepairFrontierBuildStatus::Truncated;
     return result;
   }
-  llvm::copy_if(directEvents, std::back_inserter(liveEvents),
-                [&](const DirectEventRecord &event) {
-                  return std::binary_search(sortedCore.begin(),
-                                            sortedCore.end(), event.mechanism);
-                });
+  std::vector<DirectEventRecord> liveEvents;
+  if (workBudget && !workBudget->consume(directEvents.size())) {
+    result.status = RepairFrontierBuildStatus::Truncated;
+    return result;
+  }
+  for (const DirectEventRecord &event : directEvents) {
+    const std::optional<bool> live =
+        meteredRepairContains(ArrayRef<CanonicalSyncMechanismId>(sortedCore),
+                              event.mechanism, workBudget);
+    if (!live) {
+      result.status = RepairFrontierBuildStatus::Truncated;
+      return result;
+    }
+    if (*live) {
+      liveEvents.push_back(event);
+    }
+  }
   const auto less = [](const RepairFrontierProposal &left,
                        const RepairFrontierProposal &right) {
     return frontierProposalLess(left, right);
@@ -4851,6 +4945,15 @@ addRepairFrontierPatterns(const CanonicalSyncProgram &program,
         continue;
       }
       RepairFrontierProposal proposal{barrier, event, liveEvents[first].domain};
+      std::size_t proposalLookupWork = 0;
+      const bool proposalLookupAvailable =
+          checkedOrderedLookupWork(proposals.size() + 1, proposalLookupWork) &&
+          (!workBudget || workBudget->consume(proposalLookupWork));
+      if (!proposalLookupAvailable) {
+        result.status = RepairFrontierBuildStatus::Truncated;
+        result.proposals = proposals.size();
+        return result;
+      }
       const auto insertion = proposals.lower_bound(proposal);
       const bool duplicate =
           insertion != proposals.end() && !less(proposal, *insertion);
@@ -4915,6 +5018,7 @@ LogicalResult addDirectPairPatterns(const CanonicalSyncProgram &program,
 
 struct RepairCriticalDemandResult {
   std::map<CanonicalSyncMechanismId, std::vector<SyncCoverDemandId>> demands;
+  std::size_t incidences = 0;
   bool workExceeded = false;
 };
 
@@ -4922,6 +5026,7 @@ RepairCriticalDemandResult
 findRepairCriticalDemands(const CanonicalSyncPatternProblem &preciseProblem,
                           ArrayRef<CanonicalSyncMechanismId> conflictCore,
                           ArrayRef<CanonicalSyncMechanismId> selectedMechanisms,
+                          std::size_t maximumIncidences,
                           SyncCoverCoverageWorkBudget *workBudget) {
   RepairCriticalDemandResult result;
   const auto consume = [&](std::size_t amount) {
@@ -4931,46 +5036,76 @@ findRepairCriticalDemands(const CanonicalSyncPatternProblem &preciseProblem,
     }
     return true;
   };
+  if (!consume(selectedMechanisms.size())) {
+    return result;
+  }
   std::vector<CanonicalSyncMechanismId> selected(selectedMechanisms.begin(),
                                                  selectedMechanisms.end());
-  llvm::sort(selected);
-  selected.erase(std::unique(selected.begin(), selected.end()), selected.end());
+  if (!stableSortAndUniqueRepairValues(selected, workBudget)) {
+    result.workExceeded = true;
+    return result;
+  }
+  std::size_t coverageWorkspaceWork = 0;
+  const bool coverageWorkspaceAvailable =
+      checkedBasisSum(preciseProblem.getPatterns().size(),
+                      preciseProblem.getDemands().size(),
+                      coverageWorkspaceWork) &&
+      consume(coverageWorkspaceWork);
+  if (!coverageWorkspaceAvailable) {
+    return result;
+  }
   std::vector<bool> active(preciseProblem.getPatterns().size(), false);
   std::vector<std::size_t> totalCoverage(preciseProblem.getDemands().size(), 0);
   const bool useSelectedPlan = !selected.empty();
   for (const CanonicalSyncPattern &pattern : preciseProblem.getPatterns()) {
-    if (!consume(pattern.members.size() + pattern.coverage.getWords().size())) {
-      return result;
+    bool patternActive = !useSelectedPlan;
+    if (useSelectedPlan) {
+      patternActive = true;
+      for (CanonicalSyncMechanismId mechanism : pattern.members) {
+        const std::optional<bool> selectedMember =
+            meteredRepairContains(ArrayRef<CanonicalSyncMechanismId>(selected),
+                                  mechanism, workBudget);
+        if (!selectedMember) {
+          result.workExceeded = true;
+          return result;
+        }
+        if (!*selectedMember) {
+          patternActive = false;
+          break;
+        }
+      }
     }
-    const bool patternActive =
-        !useSelectedPlan ||
-        llvm::all_of(pattern.members, [&](CanonicalSyncMechanismId mechanism) {
-          return std::binary_search(selected.begin(), selected.end(),
-                                    mechanism);
-        });
     if (!patternActive) {
       continue;
     }
     active[pattern.id] = true;
+    if (!consume(preciseProblem.getDemands().size())) {
+      return result;
+    }
     for (std::size_t demand = 0; demand < preciseProblem.getDemands().size();
          ++demand) {
       if (!pattern.coverage.contains(demand)) {
         continue;
       }
-      if (!consume(1)) {
-        return result;
-      }
       ++totalCoverage[demand];
     }
   }
 
+  if (!consume(conflictCore.size())) {
+    return result;
+  }
   std::vector<CanonicalSyncMechanismId> owners(conflictCore.begin(),
                                                conflictCore.end());
-  llvm::sort(owners);
-  owners.erase(std::unique(owners.begin(), owners.end()), owners.end());
+  if (!stableSortAndUniqueRepairValues(owners, workBudget)) {
+    result.workExceeded = true;
+    return result;
+  }
   for (CanonicalSyncMechanismId owner : owners) {
     if (owner >= preciseProblem.getMechanismPatterns().size()) {
       result.workExceeded = true;
+      return result;
+    }
+    if (!consume(preciseProblem.getDemands().size())) {
       return result;
     }
     std::vector<std::size_t> removedCoverage(preciseProblem.getDemands().size(),
@@ -4986,7 +5121,7 @@ findRepairCriticalDemands(const CanonicalSyncPatternProblem &preciseProblem,
       }
       const CanonicalSyncPattern &pattern =
           preciseProblem.getPatterns()[patternId];
-      if (!consume(pattern.coverage.getWords().size())) {
+      if (!consume(preciseProblem.getDemands().size())) {
         return result;
       }
       for (std::size_t demand = 0; demand < preciseProblem.getDemands().size();
@@ -4994,22 +5129,35 @@ findRepairCriticalDemands(const CanonicalSyncPatternProblem &preciseProblem,
         if (!pattern.coverage.contains(demand)) {
           continue;
         }
-        if (!consume(1)) {
-          return result;
-        }
         ++removedCoverage[demand];
       }
     }
-    std::vector<SyncCoverDemandId> &critical = result.demands[owner];
+    std::size_t criticalMapEntries = 0;
+    std::size_t criticalMapWork = 0;
+    const bool criticalMapWorkAvailable =
+        checkedBasisSum(result.demands.size(), 1, criticalMapEntries) &&
+        checkedOrderedLookupWork(criticalMapEntries, criticalMapWork) &&
+        consume(criticalMapWork);
+    if (!criticalMapWorkAvailable) {
+      return result;
+    }
+    auto [criticalPosition, inserted] = result.demands.try_emplace(owner);
+    (void)inserted;
+    std::vector<SyncCoverDemandId> &critical = criticalPosition->second;
+    if (!consume(preciseProblem.getDemands().size())) {
+      return result;
+    }
     for (std::size_t demand = 0; demand < preciseProblem.getDemands().size();
          ++demand) {
-      if (!consume(1)) {
-        return result;
-      }
       const bool fixed = preciseProblem.getBaselineCoverage().contains(demand);
       if (!fixed && removedCoverage[demand] != 0 &&
           removedCoverage[demand] == totalCoverage[demand]) {
+        if (result.incidences == maximumIncidences) {
+          result.workExceeded = true;
+          return result;
+        }
         critical.push_back(preciseProblem.getDemands()[demand]);
+        ++result.incidences;
       }
     }
   }
@@ -5250,7 +5398,7 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
         "limit; singleton candidates remain available");
   }
   const CanonicalSyncProblemResult frozen = problem->freeze();
-  return {std::move(problem), frozen, {}, {}};
+  return {std::move(problem), frozen, {}, {}, {}};
 }
 
 CanonicalSyncProblemBuildResult buildRepairCatalogFromPrefix(
@@ -5259,7 +5407,8 @@ CanonicalSyncProblemBuildResult buildRepairCatalogFromPrefix(
     const CanonicalSyncBuildOptions &options,
     ArrayRef<CanonicalSyncMechanismId> conflictCore,
     ArrayRef<CanonicalSyncMechanismId> selectedMechanisms,
-    SyncCoverCoverageWorkBudget *workBudget) {
+    SyncCoverCoverageWorkBudget *workBudget,
+    ArrayRef<CanonicalSyncRepairCriticalDemandSeed> retainedCriticalDemands) {
   const CanonicalSyncMechanismFamilyMask familyMask =
       options.patterns.enabledMechanismFamilies;
   const bool invalidConfiguration =
@@ -5268,21 +5417,97 @@ CanonicalSyncProblemBuildResult buildRepairCatalogFromPrefix(
       !preciseProblem.isFrozen() ||
       preciseProblem.getCandidateConfigurationSignature() !=
           getCandidateConfigurationSignature(options);
-  const bool invalidOwner =
-      llvm::any_of(conflictCore, [&](CanonicalSyncMechanismId mechanism) {
-        return mechanism >= preciseProblem.getMechanisms().size();
-      });
-  if (invalidConfiguration || invalidOwner) {
+  if (invalidConfiguration) {
     program.getFunction().emitError(
         "canonical sync repair core does not match the precise catalog");
     return {nullptr, {CanonicalSyncProblemError::InvalidPattern, std::nullopt}};
   }
+  std::size_t validationWork = 0;
+  const bool validationWorkAvailable =
+      checkedBasisSum(conflictCore.size(), selectedMechanisms.size(),
+                      validationWork) &&
+      (!workBudget || workBudget->consume(validationWork));
+  if (!validationWorkAvailable) {
+    return {nullptr, {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+  }
+  const bool invalidOwner =
+      llvm::any_of(conflictCore, [&](CanonicalSyncMechanismId mechanism) {
+        return mechanism >= preciseProblem.getMechanisms().size();
+      });
+  const bool invalidSelectedMechanism =
+      llvm::any_of(selectedMechanisms, [&](CanonicalSyncMechanismId mechanism) {
+        return mechanism >= preciseProblem.getMechanisms().size();
+      });
+  if (invalidOwner || invalidSelectedMechanism) {
+    program.getFunction().emitError(
+        "canonical sync repair core does not match the precise catalog");
+    return {nullptr, {CanonicalSyncProblemError::InvalidPattern, std::nullopt}};
+  }
+  if (workBudget && !workBudget->consume(conflictCore.size())) {
+    return {nullptr, {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+  }
   std::vector<CanonicalSyncMechanismId> sortedCore(conflictCore.begin(),
                                                    conflictCore.end());
-  llvm::sort(sortedCore);
-  sortedCore.erase(std::unique(sortedCore.begin(), sortedCore.end()),
-                   sortedCore.end());
+  if (!stableSortAndUniqueRepairValues(sortedCore, workBudget)) {
+    return {nullptr, {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+  }
   if (sortedCore.empty()) {
+    return {nullptr, {CanonicalSyncProblemError::InvalidPattern, std::nullopt}};
+  }
+  bool invalidRetainedProvenance = false;
+  if (!retainedCriticalDemands.empty()) {
+    std::optional<CanonicalSyncMechanismId> previousOwner;
+    for (const CanonicalSyncRepairCriticalDemandSeed &seed :
+         retainedCriticalDemands) {
+      if (workBudget && !workBudget->consume()) {
+        return {nullptr,
+                {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+      }
+      const CanonicalSyncMechanismId owner = seed.owner;
+      const ArrayRef<SyncCoverDemandId> retainedDemands = seed.demands;
+      const bool retainedIncidencesWithinLimit =
+          retainedDemands.size() <=
+          preciseProblem.getLimits().maximumIncidences;
+      if (!retainedIncidencesWithinLimit) {
+        return {nullptr,
+                {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+      }
+      const std::optional<bool> ownerInCore = meteredRepairContains(
+          ArrayRef<CanonicalSyncMechanismId>(sortedCore), owner, workBudget);
+      if (!ownerInCore) {
+        return {nullptr,
+                {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+      }
+      bool invalidDemandOrder = false;
+      bool invalidDemand = false;
+      std::optional<SyncCoverDemandId> previousDemand;
+      for (SyncCoverDemandId demand : retainedDemands) {
+        if (workBudget && !workBudget->consume()) {
+          return {nullptr,
+                  {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+        }
+        invalidDemandOrder |= previousDemand && *previousDemand >= demand;
+        const std::optional<bool> demandIsActive = meteredRepairContains(
+            ArrayRef<SyncCoverDemandId>(preciseProblem.getDemands()), demand,
+            workBudget);
+        if (!demandIsActive) {
+          return {nullptr,
+                  {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+        }
+        invalidDemand |= !*demandIsActive;
+        previousDemand = demand;
+      }
+      const bool invalidOwner =
+          !*ownerInCore || (previousOwner && *previousOwner >= owner);
+      invalidRetainedProvenance |=
+          invalidOwner || invalidDemandOrder || invalidDemand;
+      previousOwner = owner;
+    }
+  }
+  if (invalidRetainedProvenance) {
+    program.getFunction().emitError(
+        "canonical sync retained repair provenance does not match the repair "
+        "core");
     return {nullptr, {CanonicalSyncProblemError::InvalidPattern, std::nullopt}};
   }
 
@@ -5298,6 +5523,12 @@ CanonicalSyncProblemBuildResult buildRepairCatalogFromPrefix(
     return canonicalSyncMechanismFamilyEnabled(familyMask, family);
   };
   const SyncCoverGraph &graph = program.getGraph();
+  const std::size_t baselineWords =
+      graph.getDemands().size() / 64 +
+      static_cast<std::size_t>(graph.getDemands().size() % 64 != 0);
+  if (workBudget && !workBudget->consume(baselineWords)) {
+    return {nullptr, {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+  }
   SyncCoverDemandSet baseline(graph.getDemands().size());
   for (std::size_t demand = 0; demand < preciseProblem.getDemands().size();
        ++demand) {
@@ -5311,7 +5542,13 @@ CanonicalSyncProblemBuildResult buildRepairCatalogFromPrefix(
   }
   std::map<EventDomainKey, CanonicalSyncEventDomainId> domainIds;
   for (const CanonicalSyncEventDomain &domain : problem->getDomains()) {
-    if (workBudget && !workBudget->consume()) {
+    std::size_t domainMapEntries = 0;
+    std::size_t domainMapWork = 0;
+    const bool domainMapWorkAvailable =
+        checkedBasisSum(domainIds.size(), 1, domainMapEntries) &&
+        checkedOrderedLookupWork(domainMapEntries, domainMapWork) &&
+        (!workBudget || workBudget->consume(domainMapWork));
+    if (!domainMapWorkAvailable) {
       return {nullptr,
               {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
     }
@@ -5320,6 +5557,10 @@ CanonicalSyncProblemBuildResult buildRepairCatalogFromPrefix(
         domain.id);
   }
   std::vector<DirectEventRecord> directEvents;
+  if (workBudget &&
+      !workBudget->consume(problem->getRepairEventSeeds().size())) {
+    return {nullptr, {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+  }
   directEvents.reserve(problem->getRepairEventSeeds().size());
   for (const CanonicalSyncRepairEventSeed &seed :
        problem->getRepairEventSeeds()) {
@@ -5330,16 +5571,126 @@ CanonicalSyncProblemBuildResult buildRepairCatalogFromPrefix(
     directEvents.push_back({seed.demand, seed.mechanism, seed.domain});
   }
 
-  const RepairCriticalDemandResult critical = findRepairCriticalDemands(
-      preciseProblem, sortedCore, selectedMechanisms, workBudget);
+  RepairCriticalDemandResult critical = findRepairCriticalDemands(
+      preciseProblem, sortedCore, selectedMechanisms,
+      preciseProblem.getLimits().maximumIncidences, workBudget);
   if (critical.workExceeded) {
     return {nullptr, {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+  }
+  if (!retainedCriticalDemands.empty()) {
+    for (const CanonicalSyncRepairCriticalDemandSeed &seed :
+         retainedCriticalDemands) {
+      if (workBudget && !workBudget->consume()) {
+        return {nullptr,
+                {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+      }
+      const CanonicalSyncMechanismId owner = seed.owner;
+      const ArrayRef<SyncCoverDemandId> retainedDemands = seed.demands;
+      std::size_t criticalMapEntries = 0;
+      std::size_t criticalMapWork = 0;
+      const bool criticalMapWorkAvailable =
+          checkedBasisSum(critical.demands.size(), 1, criticalMapEntries) &&
+          checkedOrderedLookupWork(criticalMapEntries, criticalMapWork) &&
+          (!workBudget || workBudget->consume(criticalMapWork));
+      if (!criticalMapWorkAvailable) {
+        return {nullptr,
+                {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+      }
+      auto [criticalPosition, inserted] = critical.demands.try_emplace(owner);
+      (void)inserted;
+      std::vector<SyncCoverDemandId> &demands = criticalPosition->second;
+      std::size_t maximumUnionSize = 0;
+      if (!checkedBasisSum(demands.size(), retainedDemands.size(),
+                           maximumUnionSize)) {
+        return {nullptr,
+                {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+      }
+      std::size_t current = 0;
+      std::size_t retained = 0;
+      std::size_t unionSize = 0;
+      bool hasPendingDemand =
+          current < demands.size() || retained < retainedDemands.size();
+      while (hasPendingDemand) {
+        if (workBudget && !workBudget->consume()) {
+          return {nullptr,
+                  {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+        }
+        const bool takeCurrent = retained == retainedDemands.size() ||
+                                 (current < demands.size() &&
+                                  demands[current] < retainedDemands[retained]);
+        const bool takeRetained =
+            !takeCurrent && (current == demands.size() ||
+                             retainedDemands[retained] < demands[current]);
+        if (takeCurrent) {
+          ++current;
+        } else if (takeRetained) {
+          ++retained;
+        } else {
+          ++current;
+          ++retained;
+        }
+        ++unionSize;
+        hasPendingDemand =
+            current < demands.size() || retained < retainedDemands.size();
+      }
+      if (critical.incidences < demands.size()) {
+        return {nullptr,
+                {CanonicalSyncProblemError::InvalidPattern, std::nullopt}};
+      }
+      const std::size_t otherIncidences = critical.incidences - demands.size();
+      if (otherIncidences > preciseProblem.getLimits().maximumIncidences ||
+          unionSize >
+              preciseProblem.getLimits().maximumIncidences - otherIncidences) {
+        return {nullptr,
+                {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+      }
+      if (workBudget && !workBudget->consume(unionSize)) {
+        return {nullptr,
+                {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+      }
+      std::vector<SyncCoverDemandId> merged;
+      merged.reserve(unionSize);
+      current = 0;
+      retained = 0;
+      hasPendingDemand =
+          current < demands.size() || retained < retainedDemands.size();
+      while (hasPendingDemand) {
+        if (workBudget && !workBudget->consume()) {
+          return {nullptr,
+                  {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+        }
+        const bool takeCurrent = retained == retainedDemands.size() ||
+                                 (current < demands.size() &&
+                                  demands[current] < retainedDemands[retained]);
+        const bool takeRetained =
+            !takeCurrent && (current == demands.size() ||
+                             retainedDemands[retained] < demands[current]);
+        if (takeCurrent) {
+          merged.push_back(demands[current++]);
+        } else if (takeRetained) {
+          merged.push_back(retainedDemands[retained++]);
+        } else {
+          merged.push_back(demands[current]);
+          ++current;
+          ++retained;
+        }
+        hasPendingDemand =
+            current < demands.size() || retained < retainedDemands.size();
+      }
+      demands = std::move(merged);
+      critical.incidences = otherIncidences + unionSize;
+    }
   }
   std::map<CanonicalSyncMechanismId, std::vector<CanonicalSyncMechanismId>>
       repairMechanismsByOwner;
   const std::size_t preciseMechanismCount =
       preciseProblem.getMechanisms().size();
   for (const auto &[owner, criticalDemands] : critical.demands) {
+    (void)owner;
+    if (workBudget && !workBudget->consume()) {
+      return {nullptr,
+              {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+    }
     const bool failedRepairMechanism =
         (familyEnabled(CanonicalSyncMechanismFamily::RepairSourceLocalDrain) &&
          failed(addSourceLocalPipeDrains(program, *problem, baseline,
@@ -5359,33 +5710,128 @@ CanonicalSyncProblemBuildResult buildRepairCatalogFromPrefix(
                    : CanonicalSyncProblemError::InvalidMechanism,
                std::nullopt}};
     }
-    std::vector<SyncCoverDemandId> sortedDemands(criticalDemands.begin(),
-                                                 criticalDemands.end());
-    llvm::sort(sortedDemands);
-    for (CanonicalSyncMechanismId mechanism = preciseMechanismCount;
-         mechanism < problem->getMechanisms().size(); ++mechanism) {
-      if (workBudget && !workBudget->consume()) {
+  }
+
+  std::size_t demandIndexLookupWork = 0;
+  std::size_t ownerMapLookupWork = 0;
+  std::size_t demandIndexEntryWork = 0;
+  std::size_t ownerMapEntryWork = 0;
+  std::size_t criticalIndexWork = 0;
+  const bool indexWorkAvailable =
+      checkedOrderedLookupWork(critical.incidences, demandIndexLookupWork) &&
+      checkedOrderedLookupWork(critical.demands.size(), ownerMapLookupWork) &&
+      checkedBasisSum(demandIndexLookupWork, 1, demandIndexLookupWork) &&
+      checkedBasisSum(ownerMapLookupWork, 1, ownerMapLookupWork) &&
+      checkedBasisProduct(critical.incidences, demandIndexLookupWork,
+                          demandIndexEntryWork) &&
+      checkedBasisProduct(critical.demands.size(), ownerMapLookupWork,
+                          ownerMapEntryWork) &&
+      checkedBasisSum(demandIndexEntryWork, ownerMapEntryWork,
+                      criticalIndexWork) &&
+      checkedBasisSum(criticalIndexWork, preciseMechanismCount,
+                      criticalIndexWork);
+  if (!indexWorkAvailable ||
+      (workBudget && !workBudget->consume(criticalIndexWork))) {
+    return {nullptr, {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+  }
+  std::map<SyncCoverDemandId, std::vector<CanonicalSyncMechanismId>>
+      ownersByDemand;
+  std::vector<std::vector<CanonicalSyncMechanismId> *> ownerMechanisms(
+      preciseMechanismCount, nullptr);
+  for (const auto &[owner, criticalDemands] : critical.demands) {
+    auto [position, inserted] = repairMechanismsByOwner.try_emplace(owner);
+    (void)inserted;
+    ownerMechanisms[owner] = &position->second;
+    for (SyncCoverDemandId demand : criticalDemands) {
+      ownersByDemand[demand].push_back(owner);
+    }
+  }
+
+  const std::size_t repairMechanismCount =
+      problem->getMechanisms().size() - preciseMechanismCount;
+  if (workBudget && !workBudget->consume(repairMechanismCount)) {
+    return {nullptr, {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+  }
+  std::size_t repairSupplyCount = 0;
+  std::size_t attestedSupplyCount = 0;
+  for (CanonicalSyncMechanismId mechanism = preciseMechanismCount;
+       mechanism < problem->getMechanisms().size(); ++mechanism) {
+    const auto &supplies =
+        problem->getMechanisms()[mechanism].descriptor.supplies;
+    if (workBudget && !workBudget->consume(supplies.size())) {
+      return {nullptr,
+              {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+    }
+    if (!checkedBasisSum(repairSupplyCount, supplies.size(),
+                         repairSupplyCount)) {
+      return {nullptr,
+              {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+    }
+    for (const CanonicalSyncSupplyBinding &binding : supplies) {
+      if (binding.attestedDemand &&
+          !checkedBasisSum(attestedSupplyCount, 1, attestedSupplyCount)) {
         return {nullptr,
                 {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
       }
-      const bool owned =
-          llvm::any_of(problem->getMechanisms()[mechanism].descriptor.supplies,
-                       [&](const CanonicalSyncSupplyBinding &binding) {
-                         return binding.attestedDemand &&
-                                std::binary_search(sortedDemands.begin(),
-                                                   sortedDemands.end(),
-                                                   *binding.attestedDemand);
-                       });
-      if (owned) {
-        repairMechanismsByOwner[owner].push_back(mechanism);
+    }
+  }
+  std::size_t demandLookupWork = 0;
+  std::size_t attestedLookupWork = 0;
+  std::size_t classificationWork = 0;
+  const bool classificationWorkAvailable =
+      checkedOrderedLookupWork(ownersByDemand.size(), demandLookupWork) &&
+      checkedBasisProduct(attestedSupplyCount, demandLookupWork,
+                          attestedLookupWork) &&
+      checkedBasisSum(repairMechanismCount, repairSupplyCount,
+                      classificationWork) &&
+      checkedBasisSum(classificationWork, attestedLookupWork,
+                      classificationWork) &&
+      checkedBasisSum(classificationWork, critical.demands.size(),
+                      classificationWork);
+  if (!classificationWorkAvailable ||
+      (workBudget && !workBudget->consume(classificationWork))) {
+    return {nullptr, {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+  }
+  std::size_t ownerAssociations = 0;
+  for (CanonicalSyncMechanismId mechanism = preciseMechanismCount;
+       mechanism < problem->getMechanisms().size(); ++mechanism) {
+    for (const CanonicalSyncSupplyBinding &binding :
+         problem->getMechanisms()[mechanism].descriptor.supplies) {
+      if (!binding.attestedDemand) {
+        continue;
+      }
+      const auto owners = ownersByDemand.find(*binding.attestedDemand);
+      if (owners == ownersByDemand.end()) {
+        continue;
+      }
+      const std::size_t ownerCount = owners->second.size();
+      const std::size_t maximumAssociations =
+          preciseProblem.getLimits().maximumIncidences;
+      if (ownerAssociations > maximumAssociations ||
+          ownerCount > maximumAssociations - ownerAssociations ||
+          (workBudget && !workBudget->consume(ownerCount))) {
+        return {nullptr,
+                {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+      }
+      ownerAssociations += ownerCount;
+      for (CanonicalSyncMechanismId owner : owners->second) {
+        std::vector<CanonicalSyncMechanismId> &mechanisms =
+            *ownerMechanisms[owner];
+        const bool newOwnerMechanism =
+            mechanisms.empty() || mechanisms.back() != mechanism;
+        if (newOwnerMechanism) {
+          mechanisms.push_back(mechanism);
+        }
       }
     }
   }
-  for (auto &[owner, mechanisms] : repairMechanismsByOwner) {
-    (void)owner;
-    llvm::sort(mechanisms);
-    mechanisms.erase(std::unique(mechanisms.begin(), mechanisms.end()),
-                     mechanisms.end());
+  for (auto position = repairMechanismsByOwner.begin();
+       position != repairMechanismsByOwner.end();) {
+    if (position->second.empty()) {
+      position = repairMechanismsByOwner.erase(position);
+    } else {
+      ++position;
+    }
   }
 
   const std::size_t frontierMechanismBegin = problem->getMechanisms().size();
@@ -5410,9 +5856,19 @@ CanonicalSyncProblemBuildResult buildRepairCatalogFromPrefix(
       return {nullptr, recorded};
     }
     const CanonicalSyncProblemResult frozen = problem->freeze();
-    return {std::move(problem), frozen, std::move(repairMechanismsByOwner), {}};
+    return {std::move(problem),
+            frozen,
+            std::move(repairMechanismsByOwner),
+            std::move(critical.demands),
+            {}};
   }
   std::vector<CanonicalSyncMechanismId> collectiveRepairMechanisms;
+  const std::size_t collectiveMechanismCount =
+      problem->getMechanisms().size() - frontierMechanismBegin;
+  if (workBudget && !workBudget->consume(collectiveMechanismCount)) {
+    return {nullptr, {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+  }
+  collectiveRepairMechanisms.reserve(collectiveMechanismCount);
   for (CanonicalSyncMechanismId mechanism = frontierMechanismBegin;
        mechanism < problem->getMechanisms().size(); ++mechanism) {
     collectiveRepairMechanisms.push_back(mechanism);
@@ -5425,7 +5881,7 @@ CanonicalSyncProblemBuildResult buildRepairCatalogFromPrefix(
   }
   const CanonicalSyncProblemResult frozen = problem->freeze();
   return {std::move(problem), frozen, std::move(repairMechanismsByOwner),
-          std::move(collectiveRepairMechanisms)};
+          std::move(critical.demands), std::move(collectiveRepairMechanisms)};
 }
 
 } // namespace
@@ -5442,10 +5898,11 @@ CanonicalSyncProblemBuildResult mlir::pto::buildCanonicalSyncRepairProblem(
     const CanonicalSyncBuildOptions &options,
     const std::vector<CanonicalSyncMechanismId> &conflictCore,
     const std::vector<CanonicalSyncMechanismId> &selectedMechanisms,
-    SyncCoverCoverageWorkBudget *workBudget) {
+    SyncCoverCoverageWorkBudget *workBudget,
+    ArrayRef<CanonicalSyncRepairCriticalDemandSeed> retainedCriticalDemands) {
   return buildRepairCatalogFromPrefix(program, preciseProblem, options,
                                       conflictCore, selectedMechanisms,
-                                      workBudget);
+                                      workBudget, retainedCriticalDemands);
 }
 
 CanonicalSyncProblemBuildResult mlir::pto::buildCanonicalSyncPipeAllProblem(

@@ -1939,15 +1939,15 @@ bool testRepairRankingHonorsObjective() {
                         bool reverse) {
     CanonicalSyncRepairRoundRanker ranker(objective, 3);
     if (reverse) {
-      ranker.consider(tightVerified, true);
-      ranker.consider(broadVerified, true);
-      ranker.consider(tightPressure, false);
-      ranker.consider(broadPressure, false);
+      ranker.consider(tightVerified, true, 0);
+      ranker.consider(broadVerified, true, 0);
+      ranker.consider(tightPressure, false, 2);
+      ranker.consider(broadPressure, false, 2);
     } else {
-      ranker.consider(broadVerified, true);
-      ranker.consider(tightVerified, true);
-      ranker.consider(broadPressure, false);
-      ranker.consider(tightPressure, false);
+      ranker.consider(broadVerified, true, 0);
+      ranker.consider(tightVerified, true, 0);
+      ranker.consider(broadPressure, false, 2);
+      ranker.consider(tightPressure, false, 2);
     }
     return std::make_pair(ranker.getBestVerifiedMechanisms(),
                           ranker.getBestPressureMechanisms());
@@ -1978,16 +1978,16 @@ bool testRepairRankingHonorsObjective() {
 
   CanonicalSyncRepairRoundRanker tieRanker(
       CanonicalSyncSelectionObjective::ActionFirst, 3);
-  tieRanker.consider(verified(9, broadBarrier), true);
-  tieRanker.consider(verified(1, broadBarrier), true);
-  tieRanker.consider(pressure(9, broadBarrier, 2), false);
-  tieRanker.consider(pressure(1, broadBarrier, 2), false);
+  tieRanker.consider(verified(9, broadBarrier), true, 0);
+  tieRanker.consider(verified(1, broadBarrier), true, 0);
+  tieRanker.consider(pressure(9, broadBarrier, 2), false, 2);
+  tieRanker.consider(pressure(1, broadBarrier, 2), false, 2);
   CanonicalSyncRepairRoundRanker reverseTieRanker(
       CanonicalSyncSelectionObjective::ActionFirst, 3);
-  reverseTieRanker.consider(verified(1, broadBarrier), true);
-  reverseTieRanker.consider(verified(9, broadBarrier), true);
-  reverseTieRanker.consider(pressure(1, broadBarrier, 2), false);
-  reverseTieRanker.consider(pressure(9, broadBarrier, 2), false);
+  reverseTieRanker.consider(verified(1, broadBarrier), true, 0);
+  reverseTieRanker.consider(verified(9, broadBarrier), true, 0);
+  reverseTieRanker.consider(pressure(1, broadBarrier, 2), false, 2);
+  reverseTieRanker.consider(pressure(9, broadBarrier, 2), false, 2);
   const CanonicalSyncSelection nonImproving = pressure(0, tightEvents, 3);
   const CanonicalSyncSelection unverified = verified(0, tightEvents);
   passed &= check(isMechanism(tieRanker.getBestVerifiedMechanisms(), 1) &&
@@ -1997,13 +1997,71 @@ bool testRepairRankingHonorsObjective() {
                       tieRanker.getBestPressureMechanisms() ==
                           reverseTieRanker.getBestPressureMechanisms(),
                   "break equal repair costs by mechanism identity") &&
-            check(tieRanker.consider(nonImproving, false) ==
+            check(tieRanker.consider(nonImproving, false, 3) ==
                           CanonicalSyncRepairRoundRanker::Decision::Discard &&
-                      tieRanker.consider(unverified, false) ==
+                      tieRanker.consider(unverified, false, 0) ==
                           CanonicalSyncRepairRoundRanker::Decision::Discard &&
                       isMechanism(tieRanker.getBestVerifiedMechanisms(), 1) &&
                       isMechanism(tieRanker.getBestPressureMechanisms(), 1),
                   "discard non-improving and unverified repair trials");
+
+  CanonicalSyncStructuralCost deepCost;
+  constexpr std::size_t deepProfileSize = 257;
+  deepCost.barrierActionProfile.assign(deepProfileSize, 1);
+  deepCost.eventActionProfile.assign(deepProfileSize, 1);
+  deepCost.actionProfile.assign(deepProfileSize, 2);
+  deepCost.serializationBreadth = 3;
+  deepCost.eventLifetimeArea = 4;
+  deepCost.mechanismCount = 1;
+  const CanonicalSyncSelection highIdentity = verified(9, deepCost);
+  const CanonicalSyncSelection lowIdentity = verified(1, deepCost);
+  SyncCoverCoverageWorkBudget deepReferenceBudget;
+  CanonicalSyncRepairRoundRanker deepReferenceRanker(
+      CanonicalSyncSelectionObjective::ActionFirst, 0);
+  const auto referenceFirst =
+      deepReferenceRanker.consider(highIdentity, true, 0, &deepReferenceBudget);
+  const auto referenceSecond =
+      deepReferenceRanker.consider(lowIdentity, true, 0, &deepReferenceBudget);
+  const std::size_t deepRankingWork = deepReferenceBudget.workUnits;
+  SyncCoverCoverageWorkBudget deepExactBudget(deepRankingWork);
+  CanonicalSyncRepairRoundRanker deepExactRanker(
+      CanonicalSyncSelectionObjective::ActionFirst, 0);
+  const auto exactFirst =
+      deepExactRanker.consider(highIdentity, true, 0, &deepExactBudget);
+  const auto exactSecond =
+      deepExactRanker.consider(lowIdentity, true, 0, &deepExactBudget);
+  SyncCoverCoverageWorkBudget deepBelowBudget(
+      deepRankingWork == 0 ? 0 : deepRankingWork - 1);
+  CanonicalSyncRepairRoundRanker deepBelowRanker(
+      CanonicalSyncSelectionObjective::ActionFirst, 0);
+  const auto belowFirst =
+      deepBelowRanker.consider(highIdentity, true, 0, &deepBelowBudget);
+  const auto belowSecond =
+      deepBelowRanker.consider(lowIdentity, true, 0, &deepBelowBudget);
+  passed &=
+      check(referenceFirst == CanonicalSyncRepairRoundRanker::Decision::
+                                  ReplaceBestVerified &&
+                referenceSecond == CanonicalSyncRepairRoundRanker::Decision::
+                                       ReplaceBestVerified &&
+                deepRankingWork != 0 &&
+                isMechanism(deepReferenceRanker.getBestVerifiedMechanisms(), 1),
+            "meter deep repair rank-key copies and comparisons") &&
+      check(exactFirst == CanonicalSyncRepairRoundRanker::Decision::
+                              ReplaceBestVerified &&
+                exactSecond == CanonicalSyncRepairRoundRanker::Decision::
+                                   ReplaceBestVerified &&
+                !deepExactBudget.exhausted &&
+                deepExactBudget.workUnits == deepRankingWork &&
+                isMechanism(deepExactRanker.getBestVerifiedMechanisms(), 1),
+            "accept deep repair ranking at the exact shared-work bound") &&
+      check(
+          belowFirst == CanonicalSyncRepairRoundRanker::Decision::
+                            ReplaceBestVerified &&
+              belowSecond ==
+                  CanonicalSyncRepairRoundRanker::Decision::WorkLimitExceeded &&
+              deepBelowBudget.exhausted &&
+              isMechanism(deepBelowRanker.getBestVerifiedMechanisms(), 9),
+          "stop deep repair ranking before a one-less partial replacement");
   return passed;
 }
 

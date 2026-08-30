@@ -856,6 +856,7 @@ public:
     Discard,
     ReplaceBestVerified,
     ReplaceBestPressure,
+    WorkLimitExceeded,
   };
 
   CanonicalSyncRepairRoundRanker(CanonicalSyncSelectionObjective objective,
@@ -863,7 +864,11 @@ public:
       : objective_(objective),
         baselineResourceOverflow_(baselineResourceOverflow) {}
 
-  Decision consider(const CanonicalSyncSelection &trial, bool freshlyVerified);
+  /// `diagnosedResourceOverflow` is supplied by the metered repair driver and
+  /// ignored for freshly verified trials.
+  Decision consider(const CanonicalSyncSelection &trial, bool freshlyVerified,
+                    std::size_t diagnosedResourceOverflow,
+                    SyncCoverCoverageWorkBudget *workBudget = nullptr);
 
   std::optional<std::vector<CanonicalSyncMechanismId>>
   getBestVerifiedMechanisms() const;
