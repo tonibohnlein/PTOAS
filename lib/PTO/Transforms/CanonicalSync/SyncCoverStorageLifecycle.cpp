@@ -160,6 +160,9 @@ SyncCoverStorageLifecycleIndex mlir::pto::buildSyncCoverStorageLifecycleIndex(
     statistics.readyReleaseSccs = 0;
     statistics.sccTransfers = 0;
     statistics.maximumSccEpochs = 0;
+    statistics.transitionClasses = 0;
+    statistics.transitionGuardLiterals = 0;
+    statistics.maximumTransitionClassEdges = 0;
     statistics.truncated =
         error == SyncCoverStorageLifecycleError::LimitExceeded;
     result.statistics_ = statistics;
@@ -170,7 +173,8 @@ SyncCoverStorageLifecycleIndex mlir::pto::buildSyncCoverStorageLifecycleIndex(
       limits.maximumWorkUnits == 0 || limits.maximumComponents == 0 ||
       limits.maximumSlots == 0 || limits.maximumEpochs == 0 ||
       limits.maximumEdges == 0 || limits.maximumDemandIncidences == 0 ||
-      limits.maximumSccs == 0;
+      limits.maximumSccs == 0 || limits.maximumTransitionClasses == 0 ||
+      limits.maximumTransitionGuardLiterals == 0;
   if (invalidLimit) {
     return fail({}, SyncCoverStorageLifecycleError::InvalidLimit);
   }
@@ -192,6 +196,8 @@ SyncCoverStorageLifecycleIndex mlir::pto::buildSyncCoverStorageLifecycleIndex(
   std::size_t totalEpochs = 0;
   std::size_t totalEdges = 0;
   std::size_t totalDemandIncidences = 0;
+  std::size_t totalTransitionClasses = 0;
+  std::size_t totalTransitionGuardLiterals = 0;
 
   for (SyncCoverDemandId demandId = 0; demandId < demands.size(); ++demandId) {
     if (!workBudget.consume()) {
@@ -338,9 +344,84 @@ SyncCoverStorageLifecycleIndex mlir::pto::buildSyncCoverStorageLifecycleIndex(
       if (!checkedIncrement(totalEdges, limits.maximumEdges)) {
         return fail(statistics, SyncCoverStorageLifecycleError::LimitExceeded);
       }
+      const SyncCoverStorageLifecycleEdgeId edgeId =
+          pendingComponent.component.edges.size();
       pendingComponent.component.edges.push_back(
-          {pendingComponent.component.edges.size(), demandId, witnessId,
-           *sourceEpoch, *targetEpoch, kinds, demand.scope, demand.distance});
+          {edgeId, demandId, witnessId, *sourceEpoch, *targetEpoch, kinds,
+           demand.scope, demand.distance});
+      const SyncCoverNode &sourceNode = nodes[source.node];
+      const SyncCoverNode &targetNode = nodes[target.node];
+      std::optional<SyncCoverStorageLifecycleTransitionClassId>
+          transitionPosition;
+      for (const SyncCoverStorageLifecycleTransitionClass &transition :
+           pendingComponent.component.transitionClasses) {
+        const bool comparisonWorkAvailable =
+            workBudget.consume(7) &&
+            workBudget.consume(transition.sourceGuard.literals.size()) &&
+            workBudget.consume(transition.targetGuard.literals.size()) &&
+            workBudget.consume(demand.sourceGuard.literals.size()) &&
+            workBudget.consume(demand.targetGuard.literals.size());
+        if (!comparisonWorkAvailable) {
+          return fail(statistics,
+                      SyncCoverStorageLifecycleError::LimitExceeded);
+        }
+        const bool matches =
+            transition.kinds == kinds &&
+            transition.sourceResource == sourceNode.resource &&
+            transition.targetResource == targetNode.resource &&
+            transition.scope == demand.scope &&
+            transition.distance == demand.distance &&
+            transition.sourceGuard.literals == demand.sourceGuard.literals &&
+            transition.targetGuard.literals == demand.targetGuard.literals;
+        if (matches) {
+          transitionPosition = transition.id;
+          break;
+        }
+      }
+      if (!transitionPosition) {
+        const std::size_t sourceGuardLiterals =
+            demand.sourceGuard.literals.size();
+        const std::size_t targetGuardLiterals =
+            demand.targetGuard.literals.size();
+        if (sourceGuardLiterals >
+            std::numeric_limits<std::size_t>::max() - targetGuardLiterals) {
+          return fail(statistics,
+                      SyncCoverStorageLifecycleError::ArithmeticOverflow);
+        }
+        const std::size_t guardLiterals =
+            sourceGuardLiterals + targetGuardLiterals;
+        const bool guardLimitReached =
+            totalTransitionGuardLiterals >
+                limits.maximumTransitionGuardLiterals ||
+            guardLiterals > limits.maximumTransitionGuardLiterals -
+                                totalTransitionGuardLiterals;
+        if (!checkedIncrement(totalTransitionClasses,
+                              limits.maximumTransitionClasses) ||
+            guardLimitReached || !workBudget.consume() ||
+            !workBudget.consume(guardLiterals)) {
+          return fail(statistics,
+                      SyncCoverStorageLifecycleError::LimitExceeded);
+        }
+        const SyncCoverStorageLifecycleTransitionClassId transition =
+            pendingComponent.component.transitionClasses.size();
+        transitionPosition = transition;
+        totalTransitionGuardLiterals += guardLiterals;
+        pendingComponent.component.transitionClasses.push_back(
+            {transition, kinds, sourceNode.resource, targetNode.resource,
+             demand.scope,
+             demand.distance, demand.sourceGuard, demand.targetGuard, {}});
+      }
+      if (!workBudget.consume()) {
+        return fail(statistics, SyncCoverStorageLifecycleError::LimitExceeded);
+      }
+      pendingComponent.component
+          .transitionClasses[*transitionPosition]
+          .edges.push_back(edgeId);
+      statistics.maximumTransitionClassEdges =
+          std::max(statistics.maximumTransitionClassEdges,
+                   pendingComponent.component
+                       .transitionClasses[*transitionPosition]
+                       .edges.size());
       if (!consumeOrderedOperation(workBudget,
                                    pendingComponent.demands.size())) {
         return fail(statistics, SyncCoverStorageLifecycleError::LimitExceeded);
@@ -386,6 +467,8 @@ SyncCoverStorageLifecycleIndex mlir::pto::buildSyncCoverStorageLifecycleIndex(
   statistics.epochs = totalEpochs;
   statistics.edges = totalEdges;
   statistics.demandIncidences = totalDemandIncidences;
+  statistics.transitionClasses = totalTransitionClasses;
+  statistics.transitionGuardLiterals = totalTransitionGuardLiterals;
   result.statistics_ = statistics;
   return result;
 }

@@ -123,6 +123,34 @@ struct CanonicalSyncSelectedMechanismReport {
   unsigned maximumRecurrenceDistance = 0;
 };
 
+struct CanonicalSyncStorageLifecycleComponentReport {
+  SyncCoverStorageLifecycleComponentId component = 0;
+  SyncCoverStorageAccessFamilyId family = 0;
+  SyncCoverScopeId owningScope = 0;
+  std::size_t slots = 0;
+  std::size_t epochs = 0;
+  std::size_t edges = 0;
+  std::size_t demands = 0;
+  std::size_t sccs = 0;
+  std::size_t cyclicSccs = 0;
+  std::size_t readyReleaseSccs = 0;
+  std::size_t sccTransfers = 0;
+  std::size_t transitionClasses = 0;
+};
+
+struct CanonicalSyncStorageLifecycleTransitionReport {
+  SyncCoverStorageLifecycleComponentId component = 0;
+  SyncCoverStorageLifecycleTransitionClassId transition = 0;
+  SyncCoverStorageLifecycleEdgeKindMask kinds = 0;
+  std::uint32_t sourceResource = 0;
+  std::uint32_t targetResource = 0;
+  SyncCoverScopeId scope = 0;
+  unsigned distance = 0;
+  SyncCoverGuard sourceGuard;
+  SyncCoverGuard targetGuard;
+  std::size_t edges = 0;
+};
+
 struct CanonicalSyncStrategyReport {
   CanonicalSyncSelectionStrategy strategy =
       CanonicalSyncSelectionStrategy::PairLookahead;
@@ -218,6 +246,14 @@ struct CanonicalSyncComparisonReport {
   std::size_t storageLifecycleReadyReleaseSccs = 0;
   std::size_t storageLifecycleSccTransfers = 0;
   std::size_t storageLifecycleMaximumSccEpochs = 0;
+  std::size_t storageLifecycleTransitionClasses = 0;
+  std::size_t storageLifecycleTransitionGuardLiterals = 0;
+  std::size_t storageLifecycleMaximumTransitionClassEdges = 0;
+  bool storageLifecycleDetailsTruncated = false;
+  std::vector<CanonicalSyncStorageLifecycleComponentReport>
+      storageLifecycleComponentDetails;
+  std::vector<CanonicalSyncStorageLifecycleTransitionReport>
+      storageLifecycleTransitionDetails;
   bool storageLifecycleTruncated = false;
   std::size_t demands = 0;
   std::size_t uniqueDemandRows = 0;

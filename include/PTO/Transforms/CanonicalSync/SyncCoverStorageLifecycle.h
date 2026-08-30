@@ -25,6 +25,7 @@ using SyncCoverStorageLifecycleSlotId = std::size_t;
 using SyncCoverStorageLifecycleEpochId = std::size_t;
 using SyncCoverStorageLifecycleEdgeId = std::size_t;
 using SyncCoverStorageLifecycleSccId = std::size_t;
+using SyncCoverStorageLifecycleTransitionClassId = std::size_t;
 
 enum class SyncCoverStorageLifecycleEdgeKind : std::uint8_t {
   Ready = 1,
@@ -92,6 +93,22 @@ struct SyncCoverStorageLifecycleSccTransfer {
   SyncCoverStorageLifecycleSccId target = 0;
 };
 
+/// Target-neutral execution class for lifecycle obligations that can be
+/// considered together by later cut enumeration. Storage identity and
+/// physical insertion anchors are intentionally absent: this classification
+/// records semantic compatibility, not a synchronization recipe.
+struct SyncCoverStorageLifecycleTransitionClass {
+  SyncCoverStorageLifecycleTransitionClassId id = 0;
+  SyncCoverStorageLifecycleEdgeKindMask kinds = 0;
+  std::uint32_t sourceResource = 0;
+  std::uint32_t targetResource = 0;
+  SyncCoverScopeId scope = 0;
+  unsigned distance = 0;
+  SyncCoverGuard sourceGuard;
+  SyncCoverGuard targetGuard;
+  std::vector<SyncCoverStorageLifecycleEdgeId> edges;
+};
+
 /// Target-neutral exact-storage component. The family is the frontend storage
 /// root; multiple exact slots from that root can participate in one component.
 /// Target recipe policy and ownership vocabulary are deliberately absent.
@@ -107,6 +124,7 @@ struct SyncCoverStorageLifecycleComponent {
   std::vector<SyncCoverStorageLifecycleScc> sccs;
   std::vector<SyncCoverStorageLifecycleSccId> epochSccs;
   std::vector<SyncCoverStorageLifecycleSccTransfer> sccTransfers;
+  std::vector<SyncCoverStorageLifecycleTransitionClass> transitionClasses;
 };
 
 struct SyncCoverStorageLifecycleLimits {
@@ -119,6 +137,8 @@ struct SyncCoverStorageLifecycleLimits {
   std::size_t maximumEdges = 1U << 20;
   std::size_t maximumDemandIncidences = 1U << 20;
   std::size_t maximumSccs = 1U << 20;
+  std::size_t maximumTransitionClasses = 1U << 20;
+  std::size_t maximumTransitionGuardLiterals = 1U << 20;
 };
 
 struct SyncCoverStorageLifecycleStatistics {
@@ -135,6 +155,9 @@ struct SyncCoverStorageLifecycleStatistics {
   std::size_t readyReleaseSccs = 0;
   std::size_t sccTransfers = 0;
   std::size_t maximumSccEpochs = 0;
+  std::size_t transitionClasses = 0;
+  std::size_t transitionGuardLiterals = 0;
+  std::size_t maximumTransitionClassEdges = 0;
   bool truncated = false;
 };
 

@@ -34,6 +34,10 @@ using namespace mlir::pto;
 
 namespace {
 
+constexpr std::size_t kMaximumStorageLifecycleComponentReportEntries = 256;
+constexpr std::size_t kMaximumStorageLifecycleTransitionReportEntries = 4096;
+constexpr std::size_t kMaximumStorageLifecycleReportGuardLiterals = 1U << 16;
+
 using SteadyClock = std::chrono::steady_clock;
 
 std::uint64_t elapsedNanoseconds(SteadyClock::time_point begin) {
@@ -1858,7 +1862,87 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
     report.storageLifecycleSccTransfers = lifecycleStatistics.sccTransfers;
     report.storageLifecycleMaximumSccEpochs =
         lifecycleStatistics.maximumSccEpochs;
+    report.storageLifecycleTransitionClasses =
+        lifecycleStatistics.transitionClasses;
+    report.storageLifecycleTransitionGuardLiterals =
+        lifecycleStatistics.transitionGuardLiterals;
+    report.storageLifecycleMaximumTransitionClassEdges =
+        lifecycleStatistics.maximumTransitionClassEdges;
     report.storageLifecycleTruncated = lifecycleStatistics.truncated;
+    std::size_t reportedGuardLiterals = 0;
+    for (const SyncCoverStorageLifecycleComponent &component :
+         program.getStorageLifecycleIndex()->getComponents()) {
+      const bool componentReportLimitReached =
+          report.storageLifecycleComponentDetails.size() >=
+          kMaximumStorageLifecycleComponentReportEntries;
+      if (componentReportLimitReached) {
+        report.storageLifecycleDetailsTruncated = true;
+        break;
+      }
+      const SyncCoverStorageLifecycleEdgeKindMask readyRelease =
+          syncCoverStorageLifecycleEdgeKindBit(
+              SyncCoverStorageLifecycleEdgeKind::Ready) |
+          syncCoverStorageLifecycleEdgeKindBit(
+              SyncCoverStorageLifecycleEdgeKind::Release);
+      CanonicalSyncStorageLifecycleComponentReport componentReport;
+      componentReport.component = component.id;
+      componentReport.family = component.family;
+      componentReport.owningScope = component.owningScope;
+      componentReport.slots = component.slots.size();
+      componentReport.epochs = component.epochs.size();
+      componentReport.edges = component.edges.size();
+      componentReport.demands = component.demands.size();
+      componentReport.sccs = component.sccs.size();
+      componentReport.sccTransfers = component.sccTransfers.size();
+      componentReport.transitionClasses = component.transitionClasses.size();
+      for (const SyncCoverStorageLifecycleScc &scc : component.sccs) {
+        componentReport.cyclicSccs += scc.cyclic ? 1 : 0;
+        componentReport.readyReleaseSccs +=
+            scc.cyclic && (scc.kinds & readyRelease) == readyRelease ? 1 : 0;
+      }
+      report.storageLifecycleComponentDetails.push_back(componentReport);
+      for (const SyncCoverStorageLifecycleTransitionClass &transition :
+           component.transitionClasses) {
+        const std::size_t sourceGuardLiterals =
+            transition.sourceGuard.literals.size();
+        const std::size_t targetGuardLiterals =
+            transition.targetGuard.literals.size();
+        const bool guardLiteralOverflow =
+            sourceGuardLiterals > std::numeric_limits<std::size_t>::max() -
+                                      targetGuardLiterals;
+        const std::size_t guardLiterals =
+            guardLiteralOverflow ? 0
+                                 : sourceGuardLiterals + targetGuardLiterals;
+        const bool transitionLimitReached =
+            report.storageLifecycleTransitionDetails.size() >=
+            kMaximumStorageLifecycleTransitionReportEntries;
+        const bool guardLimitReached =
+            reportedGuardLiterals >
+                kMaximumStorageLifecycleReportGuardLiterals ||
+            guardLiterals > kMaximumStorageLifecycleReportGuardLiterals -
+                                reportedGuardLiterals;
+        if (transitionLimitReached || guardLiteralOverflow ||
+            guardLimitReached) {
+          report.storageLifecycleDetailsTruncated = true;
+          break;
+        }
+        report.storageLifecycleTransitionDetails.push_back(
+            {component.id,
+             transition.id,
+             transition.kinds,
+             transition.sourceResource,
+             transition.targetResource,
+             transition.scope,
+             transition.distance,
+             transition.sourceGuard,
+             transition.targetGuard,
+             transition.edges.size()});
+        reportedGuardLiterals += guardLiterals;
+      }
+      if (report.storageLifecycleDetailsTruncated) {
+        break;
+      }
+    }
   }
   report.uniqueDemandRows = problem.getObligationDemands().size();
   report.selectionBasisRows = problem.getDemands().size();

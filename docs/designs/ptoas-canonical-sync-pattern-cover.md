@@ -626,9 +626,14 @@ representation. A compact CSR traversal partitions each group into stable
 strongly connected components and records the condensation transfers. A
 cyclic SCC containing both ready and release edges is only a neutral input to
 later protocol synthesis; it does not certify a target recipe. Independent
-work, component, slot, epoch, edge, demand-incidence, and SCC limits make
-construction transactional; limit exhaustion reports truncation and exposes
-no partial index to later synthesis.
+transition classes group edges by hazard kind, directed resources, recurrence
+scope and distance, and endpoint guards while deliberately excluding storage
+identity and physical insertion anchors. These classes are the neutral input
+to later cut factoring, not recipes. The opt-in JSON report includes bounded
+component and transition details and explicitly marks diagnostic truncation.
+Independent work, component, slot, epoch, edge, demand-incidence, SCC, and
+transition-class limits make construction transactional; limit exhaustion
+reports truncation and exposes no partial index to later synthesis.
 
 This keeps direct columns as the correctness basis while allowing event-ID
 scarcity to motivate generic channel synthesis. Ordinary pair columns remain a

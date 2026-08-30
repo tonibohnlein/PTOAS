@@ -166,6 +166,13 @@
 // CORE-REPORT-DAG: "storage_lifecycle_analysis_enabled": true
 // CORE-REPORT-DAG: "storage_lifecycle_components": {{[1-9][0-9]*}}
 // CORE-REPORT-DAG: "storage_lifecycle_sccs": {{[1-9][0-9]*}}
+// CORE-REPORT-DAG: "storage_lifecycle_transition_classes": {{[1-9][0-9]*}}
+// CORE-REPORT-DAG: "storage_lifecycle_transition_guard_literals":
+// CORE-REPORT-DAG: "storage_lifecycle_details_truncated": false
+// CORE-REPORT-DAG: "storage_lifecycle_component_details":
+// CORE-REPORT-DAG: "storage_lifecycle_transition_details":
+// CORE-REPORT-DAG: "source_resource":
+// CORE-REPORT-DAG: "target_resource":
 // CORE-REPORT-DAG: "storage_lifecycle_truncated": false
 // CORE-REPORT-DAG: "selection_basis_rows":
 // CORE-REPORT-DAG: "singleton_candidates_covering_multiple_rows":

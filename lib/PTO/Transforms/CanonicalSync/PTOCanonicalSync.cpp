@@ -302,6 +302,59 @@ llvm::json::Object jsonTargetCapabilities(
   return result;
 }
 
+llvm::json::Array jsonGuard(const pto::SyncCoverGuard &guard) {
+  llvm::json::Array result;
+  for (const pto::SyncCoverGuardLiteral &literal : guard.literals) {
+    result.push_back(
+        llvm::json::Object{{"control", jsonInteger(literal.control)},
+                           {"alternative", jsonInteger(literal.alternative)}});
+  }
+  return result;
+}
+
+llvm::json::Array jsonStorageLifecycleComponents(
+    ArrayRef<pto::CanonicalSyncStorageLifecycleComponentReport> components) {
+  llvm::json::Array result;
+  for (const pto::CanonicalSyncStorageLifecycleComponentReport &component :
+       components) {
+    result.push_back(llvm::json::Object{
+        {"component", jsonInteger(component.component)},
+        {"family", jsonInteger(component.family)},
+        {"owning_scope", jsonInteger(component.owningScope)},
+        {"slots", jsonInteger(component.slots)},
+        {"epochs", jsonInteger(component.epochs)},
+        {"edges", jsonInteger(component.edges)},
+        {"demands", jsonInteger(component.demands)},
+        {"sccs", jsonInteger(component.sccs)},
+        {"cyclic_sccs", jsonInteger(component.cyclicSccs)},
+        {"ready_release_sccs", jsonInteger(component.readyReleaseSccs)},
+        {"scc_transfers", jsonInteger(component.sccTransfers)},
+        {"transition_classes", jsonInteger(component.transitionClasses)}});
+  }
+  return result;
+}
+
+llvm::json::Array jsonStorageLifecycleTransitions(
+    ArrayRef<pto::CanonicalSyncStorageLifecycleTransitionReport>
+        transitions) {
+  llvm::json::Array result;
+  for (const pto::CanonicalSyncStorageLifecycleTransitionReport &transition :
+       transitions) {
+    result.push_back(llvm::json::Object{
+        {"component", jsonInteger(transition.component)},
+        {"transition", jsonInteger(transition.transition)},
+        {"kinds", jsonInteger(transition.kinds)},
+        {"source_resource", jsonInteger(transition.sourceResource)},
+        {"target_resource", jsonInteger(transition.targetResource)},
+        {"scope", jsonInteger(transition.scope)},
+        {"distance", jsonInteger(transition.distance)},
+        {"source_guard", jsonGuard(transition.sourceGuard)},
+        {"target_guard", jsonGuard(transition.targetGuard)},
+        {"edges", jsonInteger(transition.edges)}});
+  }
+  return result;
+}
+
 StringRef gmAliasPolicyName(pto::CanonicalSyncGmAliasPolicy policy) {
   switch (policy) {
   case pto::CanonicalSyncGmAliasPolicy::MayAlias:
@@ -652,6 +705,19 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
        jsonInteger(report.storageLifecycleSccTransfers)},
       {"storage_lifecycle_maximum_scc_epochs",
        jsonInteger(report.storageLifecycleMaximumSccEpochs)},
+      {"storage_lifecycle_transition_classes",
+       jsonInteger(report.storageLifecycleTransitionClasses)},
+      {"storage_lifecycle_transition_guard_literals",
+       jsonInteger(report.storageLifecycleTransitionGuardLiterals)},
+      {"storage_lifecycle_maximum_transition_class_edges",
+       jsonInteger(report.storageLifecycleMaximumTransitionClassEdges)},
+      {"storage_lifecycle_details_truncated",
+       report.storageLifecycleDetailsTruncated},
+      {"storage_lifecycle_component_details",
+       jsonStorageLifecycleComponents(report.storageLifecycleComponentDetails)},
+      {"storage_lifecycle_transition_details",
+       jsonStorageLifecycleTransitions(
+           report.storageLifecycleTransitionDetails)},
       {"storage_lifecycle_truncated", report.storageLifecycleTruncated},
       {"demands", jsonInteger(report.demands)},
       {"unique_demand_keys", jsonInteger(report.uniqueDemandRows)},

@@ -69,26 +69,32 @@ bool testExactLifecycleIndex() {
         takeIndex(graph.addScope(occurrenceScope, true), passed,
                   "add deep lifecycle occurrence scope");
   }
+  SyncCoverGuard deepGuard;
+  for (unsigned index = 0; index < 12; ++index) {
+    const SyncCoverControlId control =
+        takeIndex(graph.addControl(2, loop), passed, "add lifecycle guard");
+    deepGuard.literals.push_back({control, 0});
+  }
   const SyncCoverNodeId write0 =
-      takeIndex(graph.addNode(1, 1, occurrenceScope, 0), passed,
+      takeIndex(graph.addNode(1, 1, occurrenceScope, 0, deepGuard), passed,
                 "add first writer");
   const SyncCoverNodeId read0 =
-      takeIndex(graph.addNode(2, 1, occurrenceScope, 1), passed,
+      takeIndex(graph.addNode(2, 1, occurrenceScope, 1, deepGuard), passed,
                 "add first reader");
   const SyncCoverNodeId write1 =
-      takeIndex(graph.addNode(1, 1, occurrenceScope, 2), passed,
+      takeIndex(graph.addNode(1, 1, occurrenceScope, 2, deepGuard), passed,
                 "add reuse writer");
   const SyncCoverNodeId write2 =
-      takeIndex(graph.addNode(1, 1, occurrenceScope, 3), passed,
+      takeIndex(graph.addNode(1, 1, occurrenceScope, 3, deepGuard), passed,
                 "add second-slot writer");
   const SyncCoverNodeId read2 =
-      takeIndex(graph.addNode(2, 1, occurrenceScope, 4), passed,
+      takeIndex(graph.addNode(2, 1, occurrenceScope, 4, deepGuard), passed,
                 "add second-slot reader");
   const SyncCoverNodeId partialWrite =
-      takeIndex(graph.addNode(1, 1, occurrenceScope, 5), passed,
+      takeIndex(graph.addNode(1, 1, occurrenceScope, 5, deepGuard), passed,
                 "add partial writer");
   const SyncCoverNodeId partialRead =
-      takeIndex(graph.addNode(2, 1, occurrenceScope, 6), passed,
+      takeIndex(graph.addNode(2, 1, occurrenceScope, 6, deepGuard), passed,
                 "add partial reader");
   const SyncCoverStorageDomainId domain =
       takeIndex(graph.addStorageDomain(), passed, "add storage domain");
@@ -183,7 +189,10 @@ bool testExactLifecycleIndex() {
                  statistics.cyclicSccs == 1 &&
                  statistics.readyReleaseSccs == 1 &&
                  statistics.sccTransfers == 2 &&
-                 statistics.maximumSccEpochs == 2,
+                 statistics.maximumSccEpochs == 2 &&
+                 statistics.transitionClasses == 3 &&
+                 statistics.transitionGuardLiterals == 72 &&
+                 statistics.maximumTransitionClassEdges == 2,
              "report exact retained and rejected lifecycle structure")) {
     return false;
   }
@@ -198,7 +207,8 @@ bool testExactLifecycleIndex() {
   passed &=
       check(component.family == family && component.owningScope == loop &&
                 component.slots.size() == 2 && component.epochs.size() == 5 &&
-                component.edges.size() == 4,
+                component.edges.size() == 4 &&
+                component.transitionClasses.size() == 3,
             "group exact slots by storage family and owning loop");
   passed &= check(component.edges[0].kinds == readyBit &&
                       component.edges[0].distance == 0 &&
@@ -208,6 +218,20 @@ bool testExactLifecycleIndex() {
                       component.edges[2].distance == 1 &&
                       component.edges[3].kinds == readyBit,
                   "retain ready, release, exclusion, and recurrence meaning");
+  passed &= check(
+      component.transitionClasses[0].kinds == readyBit &&
+          component.transitionClasses[0].sourceResource == 1 &&
+          component.transitionClasses[0].targetResource == 2 &&
+          component.transitionClasses[0].distance == 0 &&
+          component.transitionClasses[0].edges ==
+              std::vector<SyncCoverStorageLifecycleEdgeId>({0, 3}) &&
+          component.transitionClasses[1].kinds == releaseBit &&
+          component.transitionClasses[1].sourceResource == 2 &&
+          component.transitionClasses[1].targetResource == 1 &&
+          component.transitionClasses[1].scope == loop &&
+          component.transitionClasses[1].distance == 1 &&
+          component.transitionClasses[2].kinds == exclusionBit,
+      "classify compatible lifecycle edges without storage identity");
   passed &= check(component.slots[0].accesses ==
                           std::vector<SyncCoverStorageAccessId>(
                               {write0Access, read0Access, write1Access}) &&
@@ -236,6 +260,9 @@ bool testExactLifecycleIndex() {
   exact.maximumEdges = statistics.edges;
   exact.maximumDemandIncidences = statistics.demandIncidences;
   exact.maximumSccs = statistics.sccs;
+  exact.maximumTransitionClasses = statistics.transitionClasses;
+  exact.maximumTransitionGuardLiterals =
+      statistics.transitionGuardLiterals;
   passed &=
       check(buildSyncCoverStorageLifecycleIndex(graph, exact).isComplete(),
             "accept every lifecycle bound exactly");
@@ -258,6 +285,32 @@ bool testExactLifecycleIndex() {
           sccTruncated.getComponents().empty(),
       "discard every SCC when its retained bound is exhausted");
   exact.maximumSccs = statistics.sccs;
+  --exact.maximumTransitionClasses;
+  const SyncCoverStorageLifecycleIndex transitionTruncated =
+      buildSyncCoverStorageLifecycleIndex(graph, exact);
+  passed &= check(
+      transitionTruncated.getError() ==
+              SyncCoverStorageLifecycleError::LimitExceeded &&
+          transitionTruncated.getStatistics().truncated &&
+          transitionTruncated.getComponents().empty(),
+      "discard every transition class below its exact retained bound");
+  exact.maximumTransitionClasses = statistics.transitionClasses;
+  --exact.maximumTransitionGuardLiterals;
+  const SyncCoverStorageLifecycleIndex guardTruncated =
+      buildSyncCoverStorageLifecycleIndex(graph, exact);
+  passed &= check(
+      guardTruncated.getError() ==
+              SyncCoverStorageLifecycleError::LimitExceeded &&
+          guardTruncated.getStatistics().truncated &&
+          guardTruncated.getComponents().empty(),
+      "bound retained transition guard literals transactionally");
+  exact.maximumTransitionGuardLiterals = 0;
+  passed &= check(
+      buildSyncCoverStorageLifecycleIndex(graph, exact).getError() ==
+          SyncCoverStorageLifecycleError::InvalidLimit,
+      "reject a zero transition guard-literal bound");
+  exact.maximumTransitionGuardLiterals =
+      statistics.transitionGuardLiterals;
   --exact.maximumWorkUnits;
   const SyncCoverStorageLifecycleIndex workTruncated =
       buildSyncCoverStorageLifecycleIndex(graph, exact);
