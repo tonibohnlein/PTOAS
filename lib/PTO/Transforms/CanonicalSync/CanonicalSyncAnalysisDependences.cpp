@@ -1538,7 +1538,7 @@ LogicalResult ProgramBuilder::addMemoryHazards(
           }
           position = covered->states.insert(
               covered->states.begin() + positionIndex,
-              HazardWitnessPhaseState{candidate.witness, 0, 0, 0});
+              HazardWitnessPhaseState{candidate.witness, 0, 0, 0, 0});
         }
         std::uint16_t *seenPhases = nullptr;
         switch (kind) {
@@ -1550,6 +1550,9 @@ LogicalResult ProgramBuilder::addMemoryHazards(
           break;
         case SyncCoverDemandKind::MemoryWAW:
           seenPhases = &position->waw;
+          break;
+        case SyncCoverDemandKind::HardwareAccRAR:
+          seenPhases = &position->accRar;
           break;
         case SyncCoverDemandKind::SSA:
           return function_.emitError(
@@ -1570,6 +1573,7 @@ LogicalResult ProgramBuilder::addMemoryHazards(
   std::vector<HazardWitnessPhaseCandidate> rawCandidates;
   std::vector<HazardWitnessPhaseCandidate> warCandidates;
   std::vector<HazardWitnessPhaseCandidate> wawCandidates;
+  std::vector<HazardWitnessPhaseCandidate> accRarCandidates;
   const auto appendCandidate =
       [&](std::vector<HazardWitnessPhaseCandidate> &candidates,
           SyncCoverStorageWitnessId witness,
@@ -1638,13 +1642,25 @@ LogicalResult ProgramBuilder::addMemoryHazards(
                                syncCoverStorageModeWrites(secondAccess.mode);
         const bool wawHazard = syncCoverStorageModeWrites(firstAccess.mode) &&
                                syncCoverStorageModeWrites(secondAccess.mode);
+        const bool accumulatorReadReadHazard =
+            targetCapabilities_.crossPipeAccumulatorReadReadHazard
+                .isEnabled() &&
+            graph_.getStorageDomains()[firstAccess.domain].role ==
+                SyncCoverStorageDomainRole::Accumulator &&
+            graph_.getNodes()[source].resource !=
+                graph_.getNodes()[target].resource &&
+            syncCoverStorageModeReads(firstAccess.mode) &&
+            syncCoverStorageModeReads(secondAccess.mode);
         const bool appendFailed =
             (rawHazard && failed(appendCandidate(rawCandidates, *witness.index,
                                                  ordinalPair.sourcePhases))) ||
             (warHazard && failed(appendCandidate(warCandidates, *witness.index,
                                                  ordinalPair.sourcePhases))) ||
             (wawHazard && failed(appendCandidate(wawCandidates, *witness.index,
-                                                 ordinalPair.sourcePhases)));
+                                                 ordinalPair.sourcePhases))) ||
+            (accumulatorReadReadHazard &&
+             failed(appendCandidate(accRarCandidates, *witness.index,
+                                    ordinalPair.sourcePhases)));
         if (appendFailed) {
           return failure();
         }
@@ -1655,13 +1671,16 @@ LogicalResult ProgramBuilder::addMemoryHazards(
   std::vector<SyncCoverStorageWitnessId> raw;
   std::vector<SyncCoverStorageWitnessId> war;
   std::vector<SyncCoverStorageWitnessId> waw;
+  std::vector<SyncCoverStorageWitnessId> accRar;
   const bool hazardFilteringFailed =
       failed(filterHazard(SyncCoverDemandKind::MemoryRAW,
                           std::move(rawCandidates), raw)) ||
       failed(filterHazard(SyncCoverDemandKind::MemoryWAR,
                           std::move(warCandidates), war)) ||
       failed(filterHazard(SyncCoverDemandKind::MemoryWAW,
-                          std::move(wawCandidates), waw));
+                          std::move(wawCandidates), waw)) ||
+      failed(filterHazard(SyncCoverDemandKind::HardwareAccRAR,
+                          std::move(accRarCandidates), accRar));
   if (hazardFilteringFailed) {
     return failure();
   }
@@ -1670,7 +1689,8 @@ LogicalResult ProgramBuilder::addMemoryHazards(
   std::size_t witnessCount = raw.size();
   const bool witnessCountUnavailable =
       !checkedAddSize(witnessCount, war.size()) ||
-      !checkedAddSize(witnessCount, waw.size());
+      !checkedAddSize(witnessCount, waw.size()) ||
+      !checkedAddSize(witnessCount, accRar.size());
   if (witnessCountUnavailable) {
     return function_.emitError("canonical sync demand witness-count overflow");
   }
@@ -1688,6 +1708,7 @@ LogicalResult ProgramBuilder::addMemoryHazards(
   appendKind(SyncCoverDemandKind::MemoryRAW, raw);
   appendKind(SyncCoverDemandKind::MemoryWAR, war);
   appendKind(SyncCoverDemandKind::MemoryWAW, waw);
+  appendKind(SyncCoverDemandKind::HardwareAccRAR, accRar);
   if (kinds.empty()) {
     return success();
   }
@@ -1734,6 +1755,11 @@ ProgramBuilder::addDemand(SyncCoverNodeId source, SyncCoverNodeId target,
   demand.provenanceKinds = std::move(kinds);
   demand.orderingRequirements = syncCoverOrderingRequirementBit(
       SyncCoverOrderingRequirement::PipelineCompletionBeforeAccess);
+  if (llvm::is_contained(demand.provenanceKinds,
+                         SyncCoverDemandKind::HardwareAccRAR)) {
+    demand.orderingRequirements |= syncCoverOrderingRequirementBit(
+        SyncCoverOrderingRequirement::HardwareSpecialOrder);
+  }
   const bool hasGlobalMemoryWitness =
       llvm::any_of(witnesses, [&](SyncCoverStorageWitnessId witnessId) {
         const SyncCoverStorageWitness &witness =

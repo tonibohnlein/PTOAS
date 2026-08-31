@@ -219,6 +219,7 @@ struct CanonicalSyncComparisonReport {
   std::size_t rawDemandRows = 0;
   std::size_t warDemandRows = 0;
   std::size_t wawDemandRows = 0;
+  std::size_t hardwareAccRarDemandRows = 0;
   unsigned maximumRecurrenceDistance = 0;
   std::size_t directMechanisms = 0;
   std::size_t singletonCandidatesCoveringMultipleRows = 0;

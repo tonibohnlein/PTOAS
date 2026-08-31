@@ -256,6 +256,8 @@ bool testBuildsOneFrozenGraph() {
       rawDump.find("node 0 op=0 phase=-1") != std::string::npos &&
       rawDump.find("access 0 node=0") != std::string::npos &&
       rawDump.find("requirements=1") != std::string::npos;
+  FailureOr<CanonicalSyncHazardParityReport> parity =
+      compareCanonicalSyncRawHazardsWithInsertSync(*program);
   return check(graph.isStructureFrozen(), "freeze authoritative graph") &&
          check(static_cast<bool>(graph.validate()), "validate adapter graph") &&
          check(graph.getNodes().size() == 2, "extract two scheduled nodes") &&
@@ -295,6 +297,17 @@ bool testBuildsOneFrozenGraph() {
                "type translated accesses as physical-pipeline occurrences") &&
          check(typedRawDump,
                "serialize the typed raw graph deterministically") &&
+         check(succeeded(parity) && parity->complete &&
+                   parity->canonicalOnly.size() == 1 &&
+                   parity->canonicalOnly.front().find("kind=WAW") !=
+                       std::string::npos &&
+                   parity->insertSyncOnly.empty() &&
+                   parity->canonicalRawHazards.find("kind=RAW") !=
+                       std::string::npos &&
+                   parity->insertSyncRawHazards.find("kind=RAW") !=
+                       std::string::npos,
+               "match InsertSync's flat RAW ledger and classify Canonical's "
+               "conservative unknown-root WAW") &&
          check(llvm::none_of(graph.getStorageAccesses(),
                              [](const SyncCoverStorageAccess &access) {
                                return access.exactPhysical;
@@ -1673,7 +1686,8 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
         capabilities.coreDomain == CanonicalSyncCoreDomain::AIV &&
         capabilities.syncSpecVersion !=
             CanonicalSyncTargetSyncSpecVersion::None &&
-        capabilities.evidence.size() == 4 &&
+        capabilities.evidence.size() ==
+            (profile == CanonicalSyncTargetProfile::A5V1 ? 4 : 5) &&
         capabilities.compilerUsableEventIds ==
             std::vector<unsigned>({0, 1, 2, 3, 4, 5}) &&
         capabilities.legalPipeBarriers.supports(pipe(PipelineType::PIPE_V)) ==
@@ -1697,6 +1711,8 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
         capabilities.directEventCompletion.resourcePairs.size() ==
             (profile != CanonicalSyncTargetProfile::A5V1 ? 12 : 0) &&
         capabilities.hardwareEventCompletion.supports(vector, store) ==
+            (profile != CanonicalSyncTargetProfile::A5V1) &&
+        capabilities.crossPipeAccumulatorReadReadHazard.isEnabled() ==
             (profile != CanonicalSyncTargetProfile::A5V1);
     const bool graphContracts =
         carry != program->getGraph().getResourceRecurrenceCarryKinds().end() &&
@@ -1921,7 +1937,8 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
                      0 &&
                  !capabilities.targetCompletionResources &&
                  !capabilities.mte1L0ReadySetCompletesPrefix.isEnabled() &&
-                 !capabilities.intrinsicMmadAccumulatorOrdering.isEnabled(),
+                 !capabilities.intrinsicMmadAccumulatorOrdering.isEnabled() &&
+                 !capabilities.crossPipeAccumulatorReadReadHazard.isEnabled(),
              "default every unsupported-target capability to false") &&
          check(vectorNode != unsupported->getGraph().getNodes().end() &&
                    !vectorNode->completionSignalCoversIssuedPrefix &&
@@ -1929,6 +1946,107 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
                    !unsupported->getGraph().supportsBlockingTargetedBarrier(
                        vector),
                "retain only the exact-operation direct event basis");
+}
+
+bool testAccumulatorReadReadHardwareHazardIsRawDemand() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @acc_rar(
+          %lhs: !pto.tile_buf<left, 32x32xf32,
+                              blayout=row_major, slayout=row_major>,
+          %rhs: !pto.tile_buf<right, 32x32xf32,
+                              blayout=row_major, slayout=col_major>) attributes {
+          pto.kernel_kind = #pto.kernel_kind<cube>} {
+        %addr0 = arith.constant 0 : i64
+        %addr1 = arith.constant 8192 : i64
+        %acc = pto.alloc_tile addr = %addr0 :
+          !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                        slayout=row_major, fractal=1024>
+        %mat = pto.alloc_tile addr = %addr1 :
+          !pto.tile_buf<mat, 32x32xf32, blayout=col_major,
+                        slayout=row_major>
+        pto.tmov ins(%acc :
+          !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                        slayout=row_major, fractal=1024>)
+          outs(%mat : !pto.tile_buf<mat, 32x32xf32,
+                                    blayout=col_major, slayout=row_major>)
+        pto.tmatmul.acc ins(%acc, %lhs, %rhs :
+          !pto.tile_buf<acc, 32x32xf32, blayout=col_major,
+                        slayout=row_major, fractal=1024>,
+          !pto.tile_buf<left, 32x32xf32,
+                        blayout=row_major, slayout=row_major>,
+          !pto.tile_buf<right, 32x32xf32,
+                        blayout=row_major, slayout=col_major>)
+          outs(%acc : !pto.tile_buf<acc, 32x32xf32,
+                                    blayout=col_major, slayout=row_major,
+                                    fractal=1024>)
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module),
+             "parse accumulator read/read hardware-hazard fixture")) {
+    return false;
+  }
+  FailureOr<CanonicalSyncProgram> program =
+      buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>("acc_rar"));
+  if (!check(succeeded(program),
+             "build accumulator read/read hardware-hazard graph")) {
+    return false;
+  }
+  const SyncCoverGraph &graph = program->getGraph();
+  const auto demand =
+      llvm::find_if(graph.getDemands(), [](const SyncCoverDemand &candidate) {
+        return llvm::is_contained(candidate.provenanceKinds,
+                                  SyncCoverDemandKind::HardwareAccRAR);
+      });
+  if (!check(demand != graph.getDemands().end(),
+             "retain the InsertSync ACC read/read hardware hazard")) {
+    return false;
+  }
+  const SyncCoverOrderingRequirementMask expectedRequirements =
+      syncCoverOrderingRequirementBit(
+          SyncCoverOrderingRequirement::PipelineCompletionBeforeAccess) |
+      syncCoverOrderingRequirementBit(
+          SyncCoverOrderingRequirement::HardwareSpecialOrder);
+  const bool exactAccumulatorWitness =
+      demand->storageWitnesses.size() == 1 &&
+      graph.getStorageDomains()
+              [graph
+                   .getStorageAccesses()
+                       [graph
+                            .getStorageWitnesses()[demand->storageWitnesses
+                                                       .front()]
+                            .sourceAccess]
+                   .domain]
+                  .role == SyncCoverStorageDomainRole::Accumulator;
+  FailureOr<CanonicalSyncHazardParityReport> parity =
+      compareCanonicalSyncRawHazardsWithInsertSync(*program);
+  FailureOr<CanonicalSyncHazardParityReport> boundedParity =
+      compareCanonicalSyncRawHazardsWithInsertSync(*program, 0);
+  return check(demand->distance == 0 &&
+                   graph.getNodes()[demand->source].resource !=
+                       graph.getNodes()[demand->target].resource,
+               "restrict the ACC read/read rule to cross-pipeline accesses") &&
+         check(demand->orderingRequirements == expectedRequirements,
+               "type the ACC read/read row as a hardware-special order") &&
+         check(exactAccumulatorWitness,
+               "retain the exact ACC overlap witness on the raw row") &&
+         check(succeeded(parity) && parity->complete &&
+                   parity->canonicalOnly.empty() &&
+                   parity->insertSyncOnly.empty() &&
+                   parity->canonicalRawHazards.find("kind=ACC_RAR") !=
+                       std::string::npos &&
+                   parity->insertSyncRawHazards.find("kind=ACC_RAR") !=
+                       std::string::npos,
+               "match InsertSync's flat pre-pruning ACC hazard ledger") &&
+         check(succeeded(boundedParity) && !boundedParity->complete &&
+                   boundedParity->incompleteReason.find("budget") !=
+                       std::string::npos,
+               "bound the diagnostic InsertSync parity oracle");
 }
 
 bool testMmadIntrinsicRequiresExactAccumulator() {
@@ -3914,6 +4032,9 @@ bool testPhaseAwareRecurrenceDistances() {
       case SyncCoverDemandKind::MemoryWAW:
         return syncCoverStorageModeWrites(sourceAccess.mode) &&
                syncCoverStorageModeWrites(targetAccess.mode);
+      case SyncCoverDemandKind::HardwareAccRAR:
+        return syncCoverStorageModeReads(sourceAccess.mode) &&
+               syncCoverStorageModeReads(targetAccess.mode);
       case SyncCoverDemandKind::SSA:
         return false;
       }
@@ -7236,6 +7357,7 @@ int main() {
       testA5MatrixLoopBoundaryProtocolRequiresSourcedEventContract() &&
       testDistanceTwoCrossRootSlotRecurrence() &&
       testTargetCapabilityProfilesAreVersionedAndConservative() &&
+      testAccumulatorReadReadHardwareHazardIsRawDemand() &&
       testMmadIntrinsicRequiresExactAccumulator() &&
       testA3TargetCompletionCertificatesAreArchitectureQualified() &&
       testAnalysisLimitFailsClosed() &&

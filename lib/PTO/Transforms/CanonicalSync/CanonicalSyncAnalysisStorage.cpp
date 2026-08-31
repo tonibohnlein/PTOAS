@@ -461,7 +461,11 @@ LogicalResult ProgramBuilder::buildStorageConflictIndex() {
     return success();
   };
   for (auto &[group, domainAccesses] : accessesByConflictGroup) {
-    (void)group;
+    const SyncCoverStorageDomain &domain =
+        graph_.getStorageDomains()[group.first];
+    const bool indexAccumulatorReadRead =
+        domain.role == SyncCoverStorageDomainRole::Accumulator &&
+        targetCapabilities_.crossPipeAccumulatorReadReadHazard.isEnabled();
     llvm::sort(domainAccesses, [&](SyncCoverStorageAccessId first,
                                    SyncCoverStorageAccessId second) {
       const SyncCoverStorageAccess &firstAccess = graphAccesses[first];
@@ -481,7 +485,8 @@ LogicalResult ProgramBuilder::buildStorageConflictIndex() {
       expireStorageAccesses(current.extent.begin, readerExpiry, activeReaders);
       const bool currentWrites = syncCoverStorageModeWrites(current.mode);
       const bool currentReads = syncCoverStorageModeReads(current.mode);
-      const auto joinActive = [&](const auto &active) -> LogicalResult {
+      const auto joinActive = [&](const auto &active,
+                                  bool crossResourceOnly) -> LogicalResult {
         for (SyncCoverStorageAccessId previousId : active) {
           if (!consumePairInspection()) {
             return function_.emitError(
@@ -491,6 +496,11 @@ LogicalResult ProgramBuilder::buildStorageConflictIndex() {
               extractedAccesses_[extractedByGraphAccess[previousId]];
           const ExtractedAccess &currentExtracted =
               extractedAccesses_[extractedByGraphAccess[currentId]];
+          if (crossResourceOnly &&
+              graph_.getNodes()[graphAccesses[previousId].node].resource ==
+                  graph_.getNodes()[current.node].resource) {
+            continue;
+          }
           if (gmAccessesAreNoAlias(previousExtracted, currentExtracted)) {
             continue;
           }
@@ -502,9 +512,12 @@ LogicalResult ProgramBuilder::buildStorageConflictIndex() {
         return success();
       };
       const bool failedJoin =
-          (currentWrites && (failed(joinActive(activeReaders)) ||
-                             failed(joinActive(activeWriters)))) ||
-          (!currentWrites && currentReads && failed(joinActive(activeWriters)));
+          (currentWrites && (failed(joinActive(activeReaders, false)) ||
+                             failed(joinActive(activeWriters, false)))) ||
+          (!currentWrites && currentReads &&
+           (failed(joinActive(activeWriters, false)) ||
+            (indexAccumulatorReadRead &&
+             failed(joinActive(activeReaders, true)))));
       if (failedJoin) {
         return failure();
       }

@@ -63,6 +63,7 @@ struct HazardWitnessPhaseState {
   std::uint16_t raw = 0;
   std::uint16_t war = 0;
   std::uint16_t waw = 0;
+  std::uint16_t accRar = 0;
 };
 
 struct OrdinalPairPhaseState {

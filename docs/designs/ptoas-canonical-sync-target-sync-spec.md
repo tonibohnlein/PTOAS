@@ -59,6 +59,20 @@ both sets.
 The same 2201 contract is used for A2, A3, and their intersection profile.
 No 2201 pair is reused as evidence for A5/3510.
 
+## PTOAS hardware-special hazards
+
+The generic Ascend synchronization pages describe ordinary RAW, WAR, and WAW
+ordering. PTOAS also carries a device-derived exception for overlapping ACC
+(L0C) reads on different pipelines. InsertSync has required explicit ordering
+for this case since commit `ffe46c09e`.
+
+CanonicalSync records that exception as version 1 of the
+`crossPipeAccumulatorReadReadHazard` capability on the A2/A3 2201 profiles.
+It creates a first-class `HardwareAccRAR` raw demand requiring both pipeline
+completion and hardware-special ordering. It is not treated as an ordinary
+language-level memory dependence and is not enabled for A5 without matching
+target evidence.
+
 ## Same-pipeline completion and barriers
 
 Ordinary issue order does not establish completion. A2/A3 same-pipeline
