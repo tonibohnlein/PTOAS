@@ -23,6 +23,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Pass/Pass.h"
 #include "PTO/IR/PTODialect.h"
+#include "PTO/Transforms/CanonicalSync/CanonicalSync.h"
 #include "PTO/Transforms/TileLibService.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"

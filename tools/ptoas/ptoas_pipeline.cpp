@@ -674,10 +674,14 @@ struct SerialAutoSyncPass
     : public PassWrapper<SerialAutoSyncPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SerialAutoSyncPass)
 
-  enum class Mode { InsertSync, Bufid, BarrierAll };
+  enum class Mode { InsertSync, Canonical, Bufid, BarrierAll };
 
-  SerialAutoSyncPass(Mode mode, bool enableBufidDebug)
-      : mode(mode), enableBufidDebug(enableBufidDebug) {}
+  SerialAutoSyncPass(Mode mode, bool enableBufidDebug,
+                     bool canonicalAnalysisOnly = false,
+                     bool canonicalDump = false)
+      : mode(mode), enableBufidDebug(enableBufidDebug),
+        canonicalAnalysisOnly(canonicalAnalysisOnly),
+        canonicalDump(canonicalDump) {}
 
   void runOnOperation() override {
     OpPassManager functionPM(func::FuncOp::getOperationName());
@@ -685,6 +689,13 @@ struct SerialAutoSyncPass
     case Mode::InsertSync:
       functionPM.addPass(pto::createPTOInsertSyncPass());
       break;
+    case Mode::Canonical: {
+      pto::CanonicalSyncOptions options;
+      options.analysisOnly = canonicalAnalysisOnly;
+      options.dump = canonicalDump;
+      functionPM.addPass(pto::createPTOCanonicalSyncPass(options));
+      break;
+    }
     case Mode::Bufid: {
       PTOBufidSyncOptions options;
       options.enableBufidSyncDebug = enableBufidDebug;
@@ -708,6 +719,8 @@ struct SerialAutoSyncPass
 private:
   Mode mode;
   bool enableBufidDebug;
+  bool canonicalAnalysisOnly;
+  bool canonicalDump;
 };
 } // namespace
 
@@ -1054,6 +1067,17 @@ static LogicalResult validateCompileBackendFlags(PTOBackend backend,
     llvm::errs() << "Error: --enable-bufid_sync requires --pto-arch=a5.\n";
     return failure();
   }
+  if (enableCanonicalSync && !isA2A3Arch(arch)) {
+    llvm::errs() << "Error: --enable-canonical-sync requires --pto-arch=a2 or a3.\n";
+    return failure();
+  }
+  const bool canonicalDiagnostics =
+      canonicalSyncAnalysisOnly || canonicalSyncDump;
+  if (canonicalDiagnostics && !enableCanonicalSync) {
+    llvm::errs() << "Error: canonical sync analysis/dump flags require "
+                    "--enable-canonical-sync.\n";
+    return failure();
+  }
   if (vptoSchedulerMode != VPTOSchedulerCLIMode::Off && arch != "a5") {
     llvm::errs() << "Error: --vpto-scheduler requires --pto-arch=a5.\n";
     return failure();
@@ -1171,6 +1195,12 @@ static LogicalResult validateAutoSyncTailHints(ModuleOp module) {
     }
     func->setAttr("pto.auto_sync_tail_hint",
                   mlir::StringAttr::get(module.getContext(), normalizedHint));
+    if (enableCanonicalSync &&
+        normalizedHint == kAutoSyncTailPolicyMte3ToSEvent0) {
+      func.emitError(
+          "canonical synchronization requires the barrier-all tail policy");
+      invalid = true;
+    }
   });
   return invalid ? failure() : success();
 }
@@ -1194,12 +1224,18 @@ static LogicalResult validateTAssignConfiguration(ModuleOp module,
                     "disabled.\n";
     return failure();
   }
+  if (hasTAssign && enableCanonicalSync) {
+    llvm::errs() << "Error: pto.tassign requires --enable-canonical-sync to be "
+                    "disabled.\n";
+    return failure();
+  }
   const int enabledAutoSyncModes =
-      (enableInsertSync ? 1 : 0) + (enableBufidSync ? 1 : 0) +
-      (enableInjectBarrierAllSync ? 1 : 0);
+      (enableInsertSync ? 1 : 0) + (enableCanonicalSync ? 1 : 0) +
+      (enableBufidSync ? 1 : 0) + (enableInjectBarrierAllSync ? 1 : 0);
   if (enabledAutoSyncModes > 1) {
-    llvm::errs() << "Error: --enable-insert-sync, --enable-bufid_sync, "
-                    "and --enable-inject-barrier-all-sync are mutually "
+    llvm::errs() << "Error: --enable-insert-sync, --enable-canonical-sync, "
+                    "--enable-bufid_sync, and --enable-inject-barrier-all-sync "
+                    "are mutually "
                     "exclusive.\n";
     return failure();
   }
@@ -1371,8 +1407,18 @@ static void appendAutoSyncPasses(PassManager &pm) {
     } else {
       pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass());
     }
-  }
-  else if (enableBufidSync) {
+  } else if (enableCanonicalSync) {
+    pto::CanonicalSyncOptions options;
+    options.analysisOnly = canonicalSyncAnalysisOnly;
+    options.dump = canonicalSyncDump || canonicalSyncAnalysisOnly;
+    if (emitMlirIR) {
+      pm.addPass(std::make_unique<SerialAutoSyncPass>(
+          SerialAutoSyncPass::Mode::Canonical, false, options.analysisOnly,
+          options.dump));
+    } else {
+      pm.addNestedPass<func::FuncOp>(pto::createPTOCanonicalSyncPass(options));
+    }
+  } else if (enableBufidSync) {
     if (emitMlirIR) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::Bufid, enableBufidSyncDebug));

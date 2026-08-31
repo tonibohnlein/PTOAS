@@ -1,0 +1,64 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-analysis-only --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=ANALYZE
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --emit-pto-ir --mlir-print-ir-after=pto-canonical-sync %s \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=MATERIALIZE
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @canonical_sync_graph_and_materialize(
+      %src: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input_addr = arith.constant 0 : i64
+    %output_addr = arith.constant 8192 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %input = pto.alloc_tile addr = %input_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output = pto.alloc_tile addr = %output_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+              outs(%input : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%input, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                    rows=16, cols=128, v_row=16, v_col=128,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                    f32)
+              outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// ANALYZE: TARGET npu2201-a2a3-v1
+// ANALYZE: REGIONS
+// ANALYZE: PHASES
+// ANALYZE: ACCESSES
+// ANALYZE: DEMANDS
+// ANALYZE: kind=RAW
+// ANALYZE: MECHANISMS
+// ANALYZE: kind=event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// ANALYZE: COVERAGE
+// ANALYZE: PLAN
+// ANALYZE: VERIFY skipped (analysis-only; IR unchanged)
+
+// MATERIALIZE-LABEL: IR Dump After PTOCanonicalSync (pto-canonical-sync)
+// MATERIALIZE: pto.tload
+// MATERIALIZE-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// MATERIALIZE-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// MATERIALIZE-NEXT: pto.tmuls
+// MATERIALIZE: pto.barrier <PIPE_ALL>
+// MATERIALIZE-NEXT: return

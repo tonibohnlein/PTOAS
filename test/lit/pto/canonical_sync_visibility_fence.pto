@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --enable-canonical-sync --canonical-sync-dump \
+// RUN:   --emit-pto-ir --mlir-print-ir-after=pto-canonical-sync %s \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @visibility_with_fence(%dst: !pto.ptr<ui32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %fill_i32 = arith.constant 5 : i32
+    %fill = builtin.unrealized_conversion_cast %fill_i32 : i32 to ui32
+    %tile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=1,
+      cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+      fractal=512, pad=0>
+    %view = pto.make_tensor_view %dst, shape = [%c1, %c32],
+      strides = [%c32, %c1] : !pto.tensor_view<1x32xui32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0],
+      sizes = [%c1, %c32] : !pto.tensor_view<1x32xui32> ->
+      !pto.partition_tensor_view<1x32xui32>
+    pto.tci ins(%fill : ui32)
+      outs(%tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32,
+        v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+        fractal=512, pad=0>)
+    pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=1,
+      cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+      fractal=512, pad=0>)
+      outs(%part : !pto.partition_tensor_view<1x32xui32>)
+    pto.fence.barrier_all #pto.fence_scope<gm>
+    %dst1 = pto.addptr %dst, %c1 : !pto.ptr<ui32, gm> ->
+      !pto.ptr<ui32, gm>
+    pto.store_scalar %fill, %dst1[%c0] : !pto.ptr<ui32, gm>, ui32
+    return
+  }
+}
+
+// CHECK: kind=VISIBILITY
+// CHECK: kind=fixed-fence
+// CHECK: pto.fence.barrier_all <gm>
+// CHECK: pto.barrier <PIPE_ALL>

@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Two consumers read the same ACC range on different AIC pipelines. This is a
+// hardware scheduling conflict even though neither access writes ACC.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-analysis-only --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @canonical_sync_acc_rar(
+      %dst: !pto.partition_tensor_view<32x32xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %acc_input_addr = arith.constant 0 : i64
+    %acc_output_addr = arith.constant 4096 : i64
+    %left_addr = arith.constant 0 : i64
+    %right_addr = arith.constant 0 : i64
+    %acc_input = pto.alloc_tile addr = %acc_input_addr :
+      !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32,
+                    v_col=32, blayout=col_major, slayout=row_major,
+                    fractal=1024, pad=0>
+    %acc_output = pto.alloc_tile addr = %acc_output_addr :
+      !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32,
+                    v_col=32, blayout=col_major, slayout=row_major,
+                    fractal=1024, pad=0>
+    %left = pto.alloc_tile addr = %left_addr :
+      !pto.tile_buf<loc=left, dtype=f16, rows=32, cols=32, v_row=32,
+                    v_col=32, blayout=row_major, slayout=row_major,
+                    fractal=512, pad=0>
+    %right = pto.alloc_tile addr = %right_addr :
+      !pto.tile_buf<loc=right, dtype=f16, rows=32, cols=32, v_row=32,
+                    v_col=32, blayout=row_major, slayout=col_major,
+                    fractal=512, pad=0>
+    pto.tmatmul.acc ins(%acc_input, %left, %right :
+                    !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32,
+                      v_row=32, v_col=32, blayout=col_major,
+                      slayout=row_major, fractal=1024, pad=0>,
+                    !pto.tile_buf<loc=left, dtype=f16, rows=32, cols=32,
+                      v_row=32, v_col=32, blayout=row_major,
+                      slayout=row_major, fractal=512, pad=0>,
+                    !pto.tile_buf<loc=right, dtype=f16, rows=32, cols=32,
+                      v_row=32, v_col=32, blayout=row_major,
+                      slayout=col_major, fractal=512, pad=0>)
+              outs(%acc_output : !pto.tile_buf<loc=acc, dtype=f32,
+                     rows=32, cols=32, v_row=32, v_col=32,
+                     blayout=col_major, slayout=row_major,
+                     fractal=1024, pad=0>)
+    pto.tstore ins(%acc_input : !pto.tile_buf<loc=acc, dtype=f32, rows=32,
+                    cols=32, v_row=32, v_col=32, blayout=col_major,
+                    slayout=row_major, fractal=1024, pad=0>)
+               outs(%dst : !pto.partition_tensor_view<32x32xf32>)
+    return
+  }
+}
+
+// CHECK: DEMANDS
+// CHECK: kind=ACC_RAR
+// CHECK: MECHANISMS
+// CHECK: kind=event resource=AIC:PIPE_M->AIC:PIPE_FIX
+// CHECK: VERIFY skipped (analysis-only; IR unchanged)

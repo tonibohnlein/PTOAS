@@ -98,6 +98,23 @@ add_mlir_dialect_library(PTOTransforms
   PTOInferVPTOVecScope.cpp
 
   InsertSync/PTOInsertSync.cpp
+  CanonicalSync/CanonicalSyncAlias.cpp
+  CanonicalSync/CanonicalSyncAliasQueries.cpp
+  CanonicalSync/CanonicalSyncAllocation.cpp
+  CanonicalSync/CanonicalSyncBuilder.cpp
+  CanonicalSync/CanonicalSyncCoverage.cpp
+  CanonicalSync/CanonicalSyncDemands.cpp
+  CanonicalSync/CanonicalSyncDump.cpp
+  CanonicalSync/CanonicalSyncMaterialization.cpp
+  CanonicalSync/CanonicalSyncMechanisms.cpp
+  CanonicalSync/CanonicalSyncModel.cpp
+  CanonicalSync/CanonicalSyncResources.cpp
+  CanonicalSync/CanonicalSyncTarget.cpp
+  CanonicalSync/CanonicalSyncVerifierDataflow.cpp
+  CanonicalSync/CanonicalSyncVerifierExtraction.cpp
+  CanonicalSync/CanonicalSyncVerifierState.cpp
+  CanonicalSync/CanonicalSyncVerifierSync.cpp
+  CanonicalSync/PTOCanonicalSync.cpp
   PTOInjectBarrierAllSync.cpp
   InsertSync/InsertSyncDebug.cpp
   PTOMaterializeImplicitTmp.cpp

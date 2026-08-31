@@ -41,6 +41,31 @@ def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
   ];
 }
 
+def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
+  let summary = "Plan synchronization from a hardware dependency graph";
+  let description = [{
+    Builds an immutable structured dependency and demand graph, assigns one
+    direct hardware mechanism to each demand, evaluates group coverage, and
+    verifies the staged result with an independent dataflow model before
+    changing the function.
+  }];
+
+  let constructor = "mlir::pto::createPTOCanonicalSyncPass()";
+
+  let options = [
+    Option<"analysisOnly", "analysis-only", "bool", "false",
+           "Build and dump the plan without changing the function">,
+    Option<"dump", "dump", "bool", "false",
+           "Print the canonical graph, demands, mechanisms, and coverage">
+  ];
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::func::FuncDialect",
+    "mlir::scf::SCFDialect"
+  ];
+}
+
 def PTOInjectBarrierAllSync : Pass<"pto-inject-barrier-all-sync", "func::FuncOp"> {
   let summary = "Conservatively insert PIPE_ALL barriers for PTO dialect";
   let description = [{

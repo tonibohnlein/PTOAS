@@ -1,0 +1,246 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+//===- CanonicalSyncModel.h - Immutable synchronization model ---*- C++ -*-===//
+//
+// CanonicalSync separates hardware obligations from ways of satisfying them.
+// Builders may append records until freeze(); every later phase receives the
+// same immutable, stably numbered program.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef PTO_TRANSFORMS_CANONICALSYNC_CANONICALSYNCMODEL_H
+#define PTO_TRANSFORMS_CANONICALSYNC_CANONICALSYNCMODEL_H
+
+#include "PTO/IR/PTO.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Support/LogicalResult.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/raw_ostream.h"
+
+#include <cstdint>
+#include <limits>
+#include <optional>
+#include <string>
+
+namespace mlir {
+namespace pto {
+
+using CanonicalRegionId = std::uint32_t;
+using CanonicalPhaseId = std::uint32_t;
+using CanonicalAccessId = std::uint32_t;
+using CanonicalDemandId = std::uint32_t;
+using CanonicalMechanismId = std::uint32_t;
+
+inline constexpr std::uint32_t kInvalidCanonicalSyncId =
+    std::numeric_limits<std::uint32_t>::max();
+inline constexpr int64_t kCanonicalAnyPositiveDistance = -1;
+
+enum class CanonicalCore : std::uint8_t { AIC, AIV };
+enum class CanonicalRegionKind : std::uint8_t {
+  Function,
+  Sequence,
+  Choice,
+  Loop,
+  Transparent,
+};
+enum class CanonicalCardinality : std::uint8_t {
+  ExactlyOnce,
+  ZeroOrOne,
+  ZeroOrMore,
+  OneOrMore,
+};
+enum class CanonicalAccessMode : std::uint8_t { Read, Write, ReadWrite };
+enum class CanonicalDemandKind : std::uint8_t {
+  Raw,
+  War,
+  Waw,
+  HardwareAccReadConflict,
+  SsaCompletion,
+  ExitCompletion,
+  Visibility,
+};
+enum class CanonicalRequirement : std::uint8_t { Completion, Visibility };
+enum class CanonicalMechanismKind : std::uint8_t {
+  IntrinsicOrder,
+  PipeBarrier,
+  Event,
+  FixedFence,
+  TailBarrier,
+};
+
+struct CanonicalPhysicalResource {
+  CanonicalCore core = CanonicalCore::AIV;
+  PIPE pipe = PIPE::PIPE_UNASSIGNED;
+
+  bool operator==(const CanonicalPhysicalResource &other) const {
+    return core == other.core && pipe == other.pipe;
+  }
+  bool operator!=(const CanonicalPhysicalResource &other) const {
+    return !(*this == other);
+  }
+  bool operator<(const CanonicalPhysicalResource &other) const;
+};
+
+struct CanonicalControlAtom {
+  CanonicalRegionId choice = kInvalidCanonicalSyncId;
+  unsigned arm = 0;
+
+  bool operator==(const CanonicalControlAtom &other) const {
+    return choice == other.choice && arm == other.arm;
+  }
+};
+
+struct CanonicalRegion {
+  CanonicalRegionId id = kInvalidCanonicalSyncId;
+  CanonicalRegionId parent = kInvalidCanonicalSyncId;
+  CanonicalRegionKind kind = CanonicalRegionKind::Sequence;
+  CanonicalCardinality cardinality = CanonicalCardinality::ExactlyOnce;
+  Operation *operation = nullptr;
+  unsigned depth = 0;
+  unsigned arm = 0;
+};
+
+struct CanonicalPhase {
+  CanonicalPhaseId id = kInvalidCanonicalSyncId;
+  CanonicalRegionId region = kInvalidCanonicalSyncId;
+  CanonicalPhysicalResource resource;
+  Operation *operation = nullptr;
+  unsigned sourceOrder = 0;
+  std::optional<unsigned> macroPhase;
+  llvm::SmallVector<CanonicalControlAtom, 2> controlPath;
+  llvm::SmallVector<CanonicalRegionId, 2> loopPath;
+};
+
+struct CanonicalByteInterval {
+  std::uint64_t begin = 0;
+  std::uint64_t size = 0;
+
+  std::optional<std::uint64_t> end() const;
+};
+
+struct CanonicalAccess {
+  CanonicalAccessId id = kInvalidCanonicalSyncId;
+  CanonicalPhaseId phase = kInvalidCanonicalSyncId;
+  CanonicalAccessMode mode = CanonicalAccessMode::Read;
+  AddressSpace space = AddressSpace::Zero;
+  Value value;
+  Value aliasRoot;
+  llvm::SmallVector<CanonicalByteInterval, 2> intervals;
+  bool physical = false;
+  bool unknownRange = true;
+  Value slotExpression;
+  std::string provenance;
+};
+
+struct CanonicalDemandCause {
+  CanonicalAccessId sourceAccess = kInvalidCanonicalSyncId;
+  CanonicalAccessId targetAccess = kInvalidCanonicalSyncId;
+  std::string provenance;
+};
+
+struct CanonicalDemand {
+  CanonicalDemandId id = kInvalidCanonicalSyncId;
+  CanonicalPhaseId source = kInvalidCanonicalSyncId;
+  CanonicalPhaseId target = kInvalidCanonicalSyncId;
+  CanonicalRegionId owner = kInvalidCanonicalSyncId;
+  CanonicalDemandKind kind = CanonicalDemandKind::Raw;
+  CanonicalRequirement requirement = CanonicalRequirement::Completion;
+  llvm::SmallVector<int64_t, 2> iterationDistance;
+  llvm::SmallVector<CanonicalControlAtom, 2> guard;
+  llvm::SmallVector<CanonicalDemandCause, 1> causes;
+};
+
+struct CanonicalMechanism {
+  CanonicalMechanismId id = kInvalidCanonicalSyncId;
+  CanonicalMechanismKind kind = CanonicalMechanismKind::PipeBarrier;
+  CanonicalPhysicalResource source;
+  CanonicalPhysicalResource target;
+  CanonicalPhaseId sourceCut = kInvalidCanonicalSyncId;
+  CanonicalPhaseId targetCut = kInvalidCanonicalSyncId;
+  Operation *setAfter = nullptr;
+  Operation *waitBefore = nullptr;
+  CanonicalRegionId actionRegion = kInvalidCanonicalSyncId;
+  llvm::SmallVector<CanonicalControlAtom, 2> guard;
+  std::optional<unsigned> eventId;
+};
+
+struct CanonicalCoverageWorld {
+  std::string name;
+  llvm::SmallVector<CanonicalMechanismId, 8> mechanisms;
+  llvm::SmallVector<CanonicalDemandId, 8> covered;
+};
+
+class CanonicalSyncProgram {
+public:
+  explicit CanonicalSyncProgram(func::FuncOp function) : function(function) {}
+
+  CanonicalRegionId appendRegion(CanonicalRegion region);
+  CanonicalPhaseId appendPhase(CanonicalPhase phase);
+  CanonicalAccessId appendAccess(CanonicalAccess access);
+  CanonicalDemandId appendDemand(CanonicalDemand demand);
+  void appendDemandCause(CanonicalDemandId demand, CanonicalDemandCause cause);
+  CanonicalMechanismId appendMechanism(CanonicalMechanism mechanism);
+  void setMechanismEventId(CanonicalMechanismId mechanism, unsigned eventId);
+  void setDirectMechanism(CanonicalDemandId demand,
+                          CanonicalMechanismId mechanism);
+  void appendCoverageWorld(CanonicalCoverageWorld world);
+
+  LogicalResult freezeGraph();
+  LogicalResult freeze();
+  bool isGraphFrozen() const { return graphFrozen; }
+  bool isFrozen() const { return frozen; }
+  func::FuncOp getFunction() const { return function; }
+  llvm::ArrayRef<CanonicalRegion> getRegions() const { return regions; }
+  llvm::ArrayRef<CanonicalPhase> getPhases() const { return phases; }
+  llvm::ArrayRef<CanonicalAccess> getAccesses() const { return accesses; }
+  llvm::ArrayRef<CanonicalDemand> getDemands() const { return demands; }
+  llvm::ArrayRef<CanonicalMechanism> getMechanisms() const {
+    return mechanisms;
+  }
+  llvm::ArrayRef<CanonicalCoverageWorld> getCoverageWorlds() const {
+    return coverageWorlds;
+  }
+  llvm::ArrayRef<CanonicalMechanismId> getDirectMechanisms() const {
+    return directMechanisms;
+  }
+
+  const CanonicalRegion &getRegion(CanonicalRegionId id) const;
+  const CanonicalPhase &getPhase(CanonicalPhaseId id) const;
+  const CanonicalAccess &getAccess(CanonicalAccessId id) const;
+  const CanonicalDemand &getDemand(CanonicalDemandId id) const;
+  const CanonicalMechanism &getMechanism(CanonicalMechanismId id) const;
+
+private:
+  func::FuncOp function;
+  llvm::SmallVector<CanonicalRegion> regions;
+  llvm::SmallVector<CanonicalPhase> phases;
+  llvm::SmallVector<CanonicalAccess> accesses;
+  llvm::SmallVector<CanonicalDemand> demands;
+  llvm::SmallVector<CanonicalMechanism> mechanisms;
+  llvm::SmallVector<CanonicalMechanismId> directMechanisms;
+  llvm::SmallVector<CanonicalCoverageWorld> coverageWorlds;
+  bool graphFrozen = false;
+  bool frozen = false;
+};
+
+llvm::StringRef stringifyCanonicalCore(CanonicalCore core);
+llvm::StringRef stringifyCanonicalRegionKind(CanonicalRegionKind kind);
+llvm::StringRef stringifyCanonicalAccessMode(CanonicalAccessMode mode);
+llvm::StringRef stringifyCanonicalDemandKind(CanonicalDemandKind kind);
+llvm::StringRef stringifyCanonicalMechanismKind(CanonicalMechanismKind kind);
+void printCanonicalSyncProgram(const CanonicalSyncProgram &program,
+                               llvm::raw_ostream &os);
+
+} // namespace pto
+} // namespace mlir
+
+#endif // PTO_TRANSFORMS_CANONICALSYNC_CANONICALSYNCMODEL_H

@@ -210,8 +210,24 @@ llvm::cl::opt<VPTOSchedulerCLIMode> vptoSchedulerMode(
     llvm::cl::init(VPTOSchedulerCLIMode::Off));
 
 llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
-                                            llvm::cl::desc("Enable automatic synchronization insertion pass"),
-                                            llvm::cl::init(false));
+    llvm::cl::desc("Enable automatic synchronization insertion pass"),
+    llvm::cl::init(false));
+
+llvm::cl::opt<bool> enableCanonicalSync(
+    "enable-canonical-sync",
+    llvm::cl::desc("Enable hardware-grounded canonical synchronization"),
+    llvm::cl::init(false));
+
+llvm::cl::opt<bool> canonicalSyncAnalysisOnly(
+    "canonical-sync-analysis-only",
+    llvm::cl::desc(
+        "Analyze and dump canonical synchronization without changing IR"),
+    llvm::cl::init(false));
+
+llvm::cl::opt<bool> canonicalSyncDump(
+    "canonical-sync-dump",
+    llvm::cl::desc("Dump the canonical synchronization plan"),
+    llvm::cl::init(false));
 
 llvm::cl::opt<bool> planMemoryOrderBySize(
     "plan-memory-order-by-size",

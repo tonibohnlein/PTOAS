@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not ptoas --pto-arch=a5 --enable-canonical-sync %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=A5
+// RUN: not ptoas --pto-arch=a3 --canonical-sync-dump %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=DEPENDENT
+// RUN: not ptoas --pto-arch=a3 --enable-canonical-sync \
+// RUN:   --enable-insert-sync %s 2>&1 | FileCheck %s --check-prefix=EXCLUSIVE
+
+module {
+  func.func @empty() {
+    return
+  }
+}
+
+// A5: --enable-canonical-sync requires --pto-arch=a2 or a3
+// DEPENDENT: canonical sync analysis/dump flags require --enable-canonical-sync
+// EXCLUSIVE: --enable-insert-sync, --enable-canonical-sync
+// EXCLUSIVE-SAME: mutually exclusive
