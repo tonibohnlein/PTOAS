@@ -101,6 +101,8 @@ StringRef mechanismFamilyName(pto::CanonicalSyncMechanismFamily family) {
     return "repair-target-local-drain";
   case Family::RepairFrontier:
     return "repair-frontier";
+  case Family::StorageCutEvent:
+    return "storage-cut-event";
   case Family::Count:
     break;
   }
@@ -109,6 +111,11 @@ StringRef mechanismFamilyName(pto::CanonicalSyncMechanismFamily family) {
 
 bool configureMechanismFamilies(StringRef value,
                                 pto::CanonicalSyncPatternOptions &options) {
+  if (value == "default") {
+    options.enabledMechanismFamilies =
+        pto::kDefaultCanonicalSyncMechanismFamilies;
+    return true;
+  }
   if (value == "all") {
     options.enabledMechanismFamilies = pto::kAllCanonicalSyncMechanismFamilies;
     return true;
@@ -396,6 +403,8 @@ StringRef mechanismOriginName(pto::CanonicalSyncMechanismOrigin origin) {
     return "direct-release-recurrence-protocol";
   case Origin::DirectBalancedTargetFenceEvent:
     return "direct-balanced-target-fence-event";
+  case Origin::StorageCutEvent:
+    return "storage-cut-event";
   case Origin::CompletionFrontierEvent:
     return "completion-frontier-event";
   case Origin::TargetCompletionCertificateEvent:
@@ -1047,8 +1056,8 @@ struct PTOCanonicalSyncPass
     }
     if (!configureMechanismFamilies(mechanismFamilies, options.patterns)) {
       function.emitError()
-          << "mechanism-families must be all, core, or a nonempty '+'-"
-             "separated list of known family names";
+          << "mechanism-families must be default, all, core, or a nonempty "
+             "'+'-separated list of known family names";
       signalPassFailure();
       return;
     }
@@ -1058,15 +1067,20 @@ struct PTOCanonicalSyncPass
       return;
     }
     options.patterns.enableConflictCoreRepair = enableConflictCoreRepair;
+    const pto::CanonicalSyncMechanismFamilyMask strictOptionalFamilies =
+        pto::canonicalSyncMechanismFamilyBit(
+            pto::CanonicalSyncMechanismFamily::StorageCutEvent);
     const bool invalidStrictDirectConfiguration =
         options.patterns.catalogMode ==
             pto::CanonicalSyncCatalogMode::StrictMinimalDirect &&
-        (options.patterns.enabledMechanismFamilies != 0 ||
+        ((options.patterns.enabledMechanismFamilies &
+          ~strictOptionalFamilies) != 0 ||
          options.patterns.enableConflictCoreRepair);
     if (invalidStrictDirectConfiguration) {
       function.emitError(
-          "strict-direct catalog mode requires mechanism-families=core, "
-          "and enable-conflict-core-repair=false");
+          "strict-direct catalog mode permits only mechanism-families=core "
+          "or storage-cut-event, and requires "
+          "enable-conflict-core-repair=false");
       signalPassFailure();
       return;
     }

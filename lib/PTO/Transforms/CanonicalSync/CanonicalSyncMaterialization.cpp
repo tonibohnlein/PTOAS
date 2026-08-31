@@ -2412,6 +2412,11 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
                             const CanonicalSyncBuildOptions &options) {
   const SteadyClock::time_point preparationStart = SteadyClock::now();
   CanonicalSyncAnalysisOptions analysisOptions = options.analysis;
+  analysisOptions.discoverStorageLifecycleComponents =
+      analysisOptions.discoverStorageLifecycleComponents ||
+      canonicalSyncMechanismFamilyEnabled(
+          options.patterns.enabledMechanismFamilies,
+          CanonicalSyncMechanismFamily::StorageCutEvent);
   analysisOptions.discoverTargetCompletionCertificates =
       analysisOptions.discoverTargetCompletionCertificates &&
       canonicalSyncMechanismFamilyEnabled(

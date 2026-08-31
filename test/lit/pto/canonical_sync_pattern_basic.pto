@@ -34,7 +34,7 @@
 // RUN:   | FileCheck %s --check-prefix=INVALID-FAMILY
 
 // INVALID: pattern-mode must be direct or direct-pair
-// INVALID-FAMILY: mechanism-families must be all, core, or a nonempty
+// INVALID-FAMILY: mechanism-families must be default, all, core, or a nonempty
 
 module {
   // CHECK-LABEL: func.func @empty_kernel

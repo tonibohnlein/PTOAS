@@ -4757,9 +4757,24 @@ bool testGuardedOwnershipVerificationWorkIsBounded() {
     return false;
   }
 
+  SyncCoverStorageLifecycleIndex lifecycle =
+      buildSyncCoverStorageLifecycleIndex(graph);
+  SyncCoverStorageCutIndex cuts =
+      buildSyncCoverStorageCutIndex(graph, lifecycle);
+  SyncCoverStorageFactoredRectangleIndex rectangles =
+      buildSyncCoverStorageFactoredRectangleIndex(graph, cuts);
+  const bool hasCompleteSyntheticCuts =
+      lifecycle.isComplete() && cuts.isComplete() && rectangles.isComplete() &&
+      rectangles.getStatistics().syntheticRectangles != 0;
+  if (!check(hasCompleteSyntheticCuts,
+             "build complete synthetic cuts for mixed-family limit test")) {
+    return false;
+  }
+
   CanonicalSyncProgram program(
       module->lookupSymbol<func::FuncOp>("guarded_ownership_host"),
-      std::move(graph), {}, {}, {}, {}, {}, {}, {}, {}, {}, {});
+      std::move(graph), {}, {}, {}, {}, std::move(lifecycle), std::move(cuts),
+      std::move(rectangles), {}, {}, {});
   CanonicalSyncBuildOptions options;
   options.enableDemandBasisReduction = false;
   options.patterns.enabledMechanismFamilies = canonicalSyncMechanismFamilyBit(
@@ -4771,14 +4786,37 @@ bool testGuardedOwnershipVerificationWorkIsBounded() {
              "build guarded ownership candidate catalog")) {
     return false;
   }
-  const CanonicalSyncMechanismOriginMask origin =
+  CanonicalSyncBuildOptions mixedOptions = options;
+  mixedOptions.patterns.enabledMechanismFamilies |=
+      canonicalSyncMechanismFamilyBit(
+          CanonicalSyncMechanismFamily::StorageCutEvent);
+  mixedOptions.problemLimits.maximumMechanisms =
+      precise.problem->getMechanisms().size();
+  CanonicalSyncProblemBuildResult mixed =
+      buildCanonicalSyncPreciseProblem(program, mixedOptions);
+  const CanonicalSyncMechanismOriginMask storageCutOrigin =
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::StorageCutEvent);
+  const CanonicalSyncMechanismOriginMask ownershipOrigin =
       canonicalSyncMechanismOriginBit(
           CanonicalSyncMechanismOrigin::BasicOwnershipStableL1Protocol);
+  const bool mixedRetainsOwnershipBeforeCutTruncation =
+      mixed && mixed.problem && mixed.problem->wasPatternGenerationTruncated() &&
+      mixed.problem->getMechanisms().size() ==
+          precise.problem->getMechanisms().size() &&
+      llvm::any_of(mixed.problem->getMechanisms(), [&](const auto &candidate) {
+        return (candidate.originMask & ownershipOrigin) != 0;
+      }) &&
+      llvm::none_of(mixed.problem->getMechanisms(), [&](const auto &candidate) {
+        return (candidate.originMask & storageCutOrigin) != 0;
+      });
   const auto mechanism = llvm::find_if(
       precise.problem->getMechanisms(), [&](const auto &candidate) {
-        return (candidate.originMask & origin) != 0;
+        return (candidate.originMask & ownershipOrigin) != 0;
       });
-  return check(mechanism != precise.problem->getMechanisms().end(),
+  return check(mixedRetainsOwnershipBeforeCutTruncation,
+               "truncate optional storage cuts after retaining ownership") &&
+         check(mechanism != precise.problem->getMechanisms().end(),
                "synthesize guarded ownership protocol") &&
          verifyExactAndOneLessProtocolWork(
              *precise.problem, mechanism->id,
@@ -5785,16 +5823,17 @@ bool testGuardedEndpointUsesSourceLocalCompletionEvent() {
                    [&](const CanonicalSyncMechanism &mechanism) {
                      return (mechanism.originMask & targetLocalOrigin) != 0;
                    });
-  CanonicalSyncBuildOptions explicitAllOptions = options;
-  explicitAllOptions.patterns.enabledMechanismFamilies =
-      kAllCanonicalSyncMechanismFamilies;
-  CanonicalSyncProblemBuildResult explicitAll =
-      buildCanonicalSyncPreciseProblem(*program, explicitAllOptions);
+  CanonicalSyncBuildOptions explicitDefaultOptions = options;
+  explicitDefaultOptions.patterns.enabledMechanismFamilies =
+      kDefaultCanonicalSyncMechanismFamilies;
+  CanonicalSyncProblemBuildResult explicitDefault =
+      buildCanonicalSyncPreciseProblem(*program, explicitDefaultOptions);
   if (!check(hasTargetLocalOrigin,
              "classify guarded completeness as a target-local fence") ||
-      !check(explicitAll && explicitAll.problem &&
-                 precise.problem->hasSameCandidatePrefix(*explicitAll.problem),
-             "make the default catalog identical to an explicit ALL mask")) {
+      !check(explicitDefault && explicitDefault.problem &&
+                 precise.problem->hasSameCandidatePrefix(
+                     *explicitDefault.problem),
+             "make the default catalog identical to its explicit mask")) {
     return false;
   }
 

@@ -48,6 +48,7 @@ enum class CanonicalSyncMechanismFamily : std::uint8_t {
   RepairSourcePrefixDrain,
   RepairTargetLocalDrain,
   RepairFrontier,
+  StorageCutEvent,
   Count,
 };
 
@@ -69,6 +70,14 @@ constexpr CanonicalSyncMechanismFamilyMask kAllCanonicalSyncMechanismFamilies =
      << kCanonicalSyncMechanismFamilyCount) -
     1;
 
+/// Production-default derived families. Newly synthesized storage-cut events
+/// remain opt-in until their emitted plans pass the device correctness gate.
+constexpr CanonicalSyncMechanismFamilyMask
+    kDefaultCanonicalSyncMechanismFamilies =
+        kAllCanonicalSyncMechanismFamilies &
+        ~canonicalSyncMechanismFamilyBit(
+            CanonicalSyncMechanismFamily::StorageCutEvent);
+
 constexpr bool
 canonicalSyncMechanismFamilyEnabled(CanonicalSyncMechanismFamilyMask mask,
                                     CanonicalSyncMechanismFamily family) {
@@ -89,7 +98,7 @@ enum class CanonicalSyncCatalogMode : std::uint8_t {
 struct CanonicalSyncPatternOptions {
   CanonicalSyncCatalogMode catalogMode = CanonicalSyncCatalogMode::Standard;
   CanonicalSyncMechanismFamilyMask enabledMechanismFamilies =
-      kAllCanonicalSyncMechanismFamilies;
+      kDefaultCanonicalSyncMechanismFamilies;
   bool enableDirectPairs = true;
   bool enableConflictCoreRepair = true;
   /// Optional same-round acceleration. Tests may disable it to exercise the
@@ -222,7 +231,7 @@ struct CanonicalSyncComparisonReport {
       CanonicalSyncSelectionObjective::ActionFirst;
   CanonicalSyncCatalogMode catalogMode = CanonicalSyncCatalogMode::Standard;
   CanonicalSyncMechanismFamilyMask enabledMechanismFamilies =
-      kAllCanonicalSyncMechanismFamilies;
+      kDefaultCanonicalSyncMechanismFamilies;
   bool directPairsEnabled = true;
   bool conflictCoreRepairEnabled = true;
   CanonicalSyncGmAliasPolicy gmAliasPolicy =

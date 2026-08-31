@@ -488,7 +488,7 @@ Relevant driver options are:
 ```text
 --canonical-sync-event-id-max=8
 --canonical-sync-pattern-mode=direct|direct-pair
---canonical-sync-mechanism-families=all|core|<family>[+<family>...]
+--canonical-sync-mechanism-families=default|all|core|<family>[+<family>...]
 --canonical-sync-catalog-mode=standard|strict-direct
 --canonical-sync-selection-strategy=fixed-cover|action-aware-singleton|pair-lookahead
 --canonical-sync-selection-objective=action-first|serialization-first
@@ -532,9 +532,12 @@ Relevant driver options are:
 `core` disables every derived family but remains orthogonal to pair generation
 and repair, so both `core + direct` and `core + direct-pair` are expressible.
 
-`strict-direct` is the minimal correctness catalog. It requires
-`mechanism-families=core` and `enable-conflict-core-repair=false`;
-contradictory combinations are rejected. Pattern mode remains orthogonal:
+`default` enables every production family and excludes experimental families;
+`all` additionally enables those experimental families. `strict-direct` is
+the minimal correctness catalog. It permits `mechanism-families=core` or the
+single experimental `storage-cut-event` family and requires
+`enable-conflict-core-repair=false`; contradictory combinations are rejected.
+Pattern mode remains orthogonal:
 `direct` selects only singleton columns, while `direct-pair` may additionally
 compose two direct recipes without synthesizing a new physical mechanism.
 Its set-cover rows are the complete unique hazard universe, and demand-basis
@@ -544,15 +547,18 @@ a direct recurrence event/protocol, or a balanced target-local direct fence.
 Grounding may prove that one of these singleton columns covers additional
 hazard rows, and the selector may remove redundant direct recipes.
 
-`strict-direct` never constructs derived ownership/cut mechanisms,
-conflict-core repair candidates, or a localized `PIPE_ALL` backstop. Event-ID
-scarcity is therefore reported as `ResourceInfeasible` before IR mutation. The
-JSON report includes the number of singleton columns that cover multiple rows,
-the maximum rows covered by one singleton, the total singleton coverage
+With `mechanism-families=core`, `strict-direct` constructs no derived
+ownership or cut mechanisms, conflict-core repair candidates, or localized
+`PIPE_ALL` backstop. The opt-in `storage-cut-event` setting adds only balanced
+distance-zero event transfers synthesized from complete storage-cut
+rectangles. It does not add repair or fallback. Event-ID scarcity is therefore
+reported as `ResourceInfeasible` before IR mutation in either configuration.
+The JSON report includes the number of singleton columns that cover multiple
+rows, the maximum rows covered by one singleton, the total singleton coverage
 incidences, and each selected mechanism's grounded row count. This makes
-strict-direct mode a baseline for distinguishing three outcomes: a complete
-direct cover, genuine event-resource scarcity, and an unsupported
-control/lifecycle shape.
+strict-direct mode a baseline for distinguishing a complete direct cover,
+useful acyclic cut factoring, genuine event-resource scarcity, and an
+unsupported control/lifecycle shape.
 
 Named families are independently composable. The accepted names are:
 
@@ -573,7 +579,15 @@ repair-source-local-drain
 repair-source-prefix-drain
 repair-target-local-drain
 repair-frontier
+storage-cut-event
 ```
+
+`storage-cut-event` is experimental and excluded by `default`. It enumerates
+only synthetic rectangles from complete bounded lifecycle, cut, and rectangle
+indexes. Each retained descriptor is an ordinary balanced set/wait event and
+is independently grounded and freshly verified. In the standard catalog the
+family runs after all established singleton families, so truncation cannot
+consume capacity required by them.
 
 The ownership discovery bounds apply to recognizer work and to every retained
 certificate dimension in the shared census. Hitting any bound truncates

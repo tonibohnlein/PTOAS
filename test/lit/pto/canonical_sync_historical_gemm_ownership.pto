@@ -28,6 +28,15 @@
 // RUN:   --canonical-sync-mechanism-families=core \
 // RUN:   --canonical-sync-enable-conflict-core-repair=false %s \
 // RUN:   -o %t.dp.pto 2>&1 | FileCheck %s --check-prefix=DP-FAIL
+// RUN: not ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
+// RUN:   --canonical-sync-catalog-mode=strict-direct \
+// RUN:   --canonical-sync-pattern-mode=direct \
+// RUN:   --canonical-sync-mechanism-families=storage-cut-event \
+// RUN:   --canonical-sync-enable-conflict-core-repair=false \
+// RUN:   --canonical-sync-comparison-report=%t.cut.json %s \
+// RUN:   -o %t.cut.pto 2>&1 | FileCheck %s --check-prefix=CUT-FAIL
+// RUN: FileCheck %s --check-prefix=CUT-REPORT < %t.cut.json
 // RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
 // RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
 // RUN:   --canonical-sync-pattern-mode=direct \
@@ -239,6 +248,17 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 
 // D-FAIL: canonical sync direct catalog exhausted the event-ID budget
 // DP-FAIL: canonical sync direct planning failed closed, error=5
+// CUT-FAIL: canonical sync direct catalog exhausted the event-ID budget
+
+// CUT-REPORT: "candidate_mechanisms_by_origin":
+// CUT-REPORT: "storage-cut-event": 72
+// CUT-REPORT: "enabled_mechanism_families":
+// CUT-REPORT-NEXT: "storage-cut-event"
+// CUT-REPORT: "storage_synthetic_rectangles_covering_multiple_rows": 72
+// CUT-REPORT: "storage_synthetic_rectangles_with_coverage": 72
+// CUT-REPORT: "selected_mechanisms_by_origin":
+// CUT-REPORT: "storage-cut-event": 4
+// CUT-REPORT: "used_localized_pipe_all": false
 
 // DIRECT-REPORT: "candidate_mechanisms_by_origin":
 // DIRECT-REPORT: "basic-ownership-accumulator-protocol": 1

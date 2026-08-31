@@ -116,7 +116,9 @@ getCandidateConfigurationSignature(const CanonicalSyncBuildOptions &options) {
       canonicalSyncMechanismFamilyBit(
           CanonicalSyncMechanismFamily::BoundaryOwnership) |
       canonicalSyncMechanismFamilyBit(
-          CanonicalSyncMechanismFamily::HierarchicalOwnership);
+          CanonicalSyncMechanismFamily::HierarchicalOwnership) |
+      canonicalSyncMechanismFamilyBit(
+          CanonicalSyncMechanismFamily::StorageCutEvent);
   std::uint64_t hash = kConfigurationHashOffset;
   const auto add = [&](std::size_t value) {
     hashConfigurationValue(hash, static_cast<std::uint64_t>(value));
@@ -3976,6 +3978,77 @@ LogicalResult addTargetCompletionCertificateEvents(
   return success();
 }
 
+LogicalResult addStorageCutEvents(
+    const CanonicalSyncProgram &program, CanonicalSyncPatternProblem &problem,
+    const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds) {
+  const std::optional<SyncCoverStorageCutIndex> &cutIndex =
+      program.getStorageCutIndex();
+  const std::optional<SyncCoverStorageFactoredRectangleIndex> &rectangleIndex =
+      program.getStorageRectangleIndex();
+  const bool completeIndices = cutIndex && rectangleIndex &&
+                               cutIndex->isComplete() &&
+                               rectangleIndex->isComplete();
+  if (!completeIndices) {
+    return success();
+  }
+  for (const SyncCoverStorageFactoredRectangle &rectangle :
+       rectangleIndex->getRectangles()) {
+    if (rectangle.directRectangle.has_value()) {
+      continue;
+    }
+    const bool invalidRectangle =
+        rectangle.completionCut >= cutIndex->getCuts().size() ||
+        rectangle.acquisitionCut >= cutIndex->getCuts().size();
+    if (invalidRectangle) {
+      return program.getFunction().emitError(
+          "canonical sync storage-cut event names an invalid rectangle");
+    }
+    const SyncCoverStorageCut &completion =
+        cutIndex->getCuts()[rectangle.completionCut];
+    const SyncCoverStorageCut &acquisition =
+        cutIndex->getCuts()[rectangle.acquisitionCut];
+    const auto domain =
+        domainIds.find({completion.resource, acquisition.resource});
+    if (domain == domainIds.end()) {
+      continue;
+    }
+
+    CanonicalSyncMechanismDescriptor descriptor;
+    descriptor.kind = CanonicalSyncMechanismKind::Event;
+    descriptor.eventUses.push_back({domain->second, 1, std::nullopt});
+    descriptor.actions.push_back(
+        {CanonicalSyncActionKind::EventSet, completion.resource,
+         completion.anchor, 0, 0, {}});
+    descriptor.actions.push_back(
+        {CanonicalSyncActionKind::EventWait, acquisition.resource,
+         acquisition.anchor, 0, 0, {}});
+    CanonicalSyncSupplyBinding binding;
+    binding.edge = {completion.anchor.node,
+                    acquisition.anchor.node,
+                    SyncCoverEdgeKind::CompletionSupply,
+                    rectangle.scope,
+                    0,
+                    rectangle.guard,
+                    rectangle.guard};
+    binding.eventUse = 0;
+    binding.proof = CanonicalSyncSupplyProof::DirectAction;
+    descriptor.supplies.push_back(std::move(binding));
+    const CanonicalSyncProblemResult added = problem.internMechanism(
+        std::move(descriptor), CanonicalSyncMechanismOrigin::StorageCutEvent);
+    if (added.error == CanonicalSyncProblemError::LimitExceeded) {
+      const CanonicalSyncProblemResult marked =
+          problem.markPatternGenerationTruncated();
+      return marked ? success() : failure();
+    }
+    if (!added || !added.index) {
+      return program.getFunction().emitError(
+                 "cannot add canonical sync storage-cut event, error=")
+             << static_cast<unsigned>(added.error);
+    }
+  }
+  return success();
+}
+
 LogicalResult addExactEvents(
     const CanonicalSyncProgram &program, CanonicalSyncPatternProblem &problem,
     const SyncCoverDemandSet &baseline,
@@ -5328,14 +5401,19 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
   const bool strictMinimalDirect =
       options.patterns.catalogMode ==
       CanonicalSyncCatalogMode::StrictMinimalDirect;
+  const CanonicalSyncMechanismFamilyMask strictOptionalFamilies =
+      canonicalSyncMechanismFamilyBit(
+          CanonicalSyncMechanismFamily::StorageCutEvent);
   const bool invalidStrictConfiguration =
       strictMinimalDirect &&
-      (familyMask != 0 || options.patterns.enableConflictCoreRepair ||
+      ((familyMask & ~strictOptionalFamilies) != 0 ||
+       options.patterns.enableConflictCoreRepair ||
        kind != CandidateCatalogKind::Precise);
   if (invalidStrictConfiguration) {
     program.getFunction().emitError(
-        "canonical sync strict-direct catalog requires a core family mask, "
-        "disabled repair, and precise construction");
+        "canonical sync strict-direct catalog permits only the optional "
+        "storage-cut-event family, disabled repair, and precise "
+        "construction");
     return {nullptr,
             {CanonicalSyncProblemError::InvalidMechanism, std::nullopt}};
   }
@@ -5395,6 +5473,8 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
         failed(addDirectBalancedTargetFences(program, *problem,
                                              baseline.covered, domainIds)) ||
         failed(requireCompleteDirectCatalog(program, *problem)) ||
+        (familyEnabled(CanonicalSyncMechanismFamily::StorageCutEvent) &&
+         failed(addStorageCutEvents(program, *problem, domainIds))) ||
         (options.patterns.enableDirectPairs &&
          failed(addDirectPairPatterns(program, *problem,
                                       options.directPairs)));
@@ -5536,6 +5616,13 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
         familyEnabled(CanonicalSyncMechanismFamily::LoopBoundaryProtocol)) {
       failedBuild = failed(addLoopBoundarySourcePrefixProtocols(
           program, *problem, domainIds, options.patterns));
+    }
+    // Storage-cut synthesis is experimental and truncating. Run it only after
+    // every established singleton family so that its deterministic prefix
+    // cannot consume capacity required by a completeness-critical family.
+    if (!failedBuild &&
+        familyEnabled(CanonicalSyncMechanismFamily::StorageCutEvent)) {
+      failedBuild = failed(addStorageCutEvents(program, *problem, domainIds));
     }
     if (!failedBuild && options.patterns.enableDirectPairs) {
       failedBuild =

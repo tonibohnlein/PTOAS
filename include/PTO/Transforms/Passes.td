@@ -99,8 +99,9 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
            "\"direct-pair\"",
            "Candidate ablation: direct or direct-pair">,
     Option<"mechanismFamilies", "mechanism-families", "std::string",
-           "\"all\"",
-           "Derived-mechanism families: all, core, or a '+'-separated list">,
+           "\"default\"",
+           "Derived-mechanism families: default, all, core, or a "
+           "'+'-separated list">,
     Option<"catalogMode", "catalog-mode", "std::string", "\"standard\"",
            "Catalog policy: standard or strict-direct">,
     Option<"enableConflictCoreRepair", "enable-conflict-core-repair", "bool",
