@@ -222,6 +222,14 @@ struct CanonicalSyncStorageProtocolFrontierPlanReport {
   std::size_t sameResourceRecurrenceReuses = 0;
 };
 
+struct CanonicalSyncStorageProtocolRectangleGroundingReport {
+  SyncCoverStorageProtocolRectangleId rectangle = 0;
+  SyncCoverStorageProtocolAutomatonId automaton = 0;
+  std::size_t frontierCount = 0;
+  std::size_t admittedDemands = 0;
+  std::size_t coverageRows = 0;
+};
+
 struct CanonicalSyncSyntheticRectangleGroundingReport {
   SyncCoverStorageFactoredRectangleId rectangle = 0;
   SyncCoverStorageCutId completionCut = 0;
@@ -430,6 +438,33 @@ struct CanonicalSyncComparisonReport {
       storageProtocolFrontierDetails;
   bool storageProtocolFrontierDetailsTruncated = false;
   bool storageProtocolFrontierTruncated = false;
+  bool storageProtocolRectangleAnalysisEnabled = false;
+  std::size_t storageProtocolRectangleWorkUnits = 0;
+  std::size_t storageProtocolRectanglePlans = 0;
+  std::size_t storageProtocolRectangleFrontierInspections = 0;
+  std::size_t storageProtocolRectangles = 0;
+  std::size_t storageProtocolReadyRectangles = 0;
+  std::size_t storageProtocolReuseRectangles = 0;
+  std::size_t storageProtocolMergedRectangles = 0;
+  std::size_t storageProtocolRectangleFrontierIncidences = 0;
+  std::size_t storageProtocolMaximumRectangleFrontiers = 0;
+  bool storageProtocolRectangleTruncated = false;
+  bool storageProtocolRectangleGroundingEnabled = false;
+  std::size_t storageProtocolRectangleGroundingWorkUnits = 0;
+  std::size_t storageProtocolRectangleGroundingEvaluated = 0;
+  std::size_t storageProtocolRectangleGroundingBatches = 0;
+  std::size_t storageProtocolRectanglesWithCoverage = 0;
+  std::size_t storageProtocolRectanglesCoveringMultipleRows = 0;
+  std::size_t storageProtocolRectangleAdmittedDemandIncidences = 0;
+  std::size_t storageProtocolRectangleMaximumCoverageRows = 0;
+  std::size_t storageProtocolRectangleTotalCoverageRows = 0;
+  SyncCoverStorageProtocolRectangleGroundingError
+      storageProtocolRectangleGroundingError =
+          SyncCoverStorageProtocolRectangleGroundingError::None;
+  std::vector<CanonicalSyncStorageProtocolRectangleGroundingReport>
+      storageProtocolRectangleGroundingDetails;
+  bool storageProtocolRectangleGroundingDetailsTruncated = false;
+  bool storageProtocolRectangleGroundingTruncated = false;
   bool storageCutAnalysisEnabled = false;
   std::size_t storageCutWorkUnits = 0;
   std::size_t storageCutEligibleEdges = 0;

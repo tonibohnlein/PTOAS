@@ -726,6 +726,24 @@ automata retain 910 candidate frontiers: 878 direct, 14 certificate-derived,
 and 18 provider-cut-derived. This admits the guarded accumulator boundary for
 later lifecycle proof without treating it as an independently balanced event.
 
+A seventh reporting-only index factors that frontier pool by exact automaton,
+transfer kind, completion/acquisition anchors, scope, recurrence distance, and
+directed resources. Equal endpoint alternatives become one compact rectangle
+with a half-open provenance-incidence range. Rectangle grounding enables only
+the demand rows admitted by its direct transfer, provider completion-cut fact,
+or target completion certificate; it then uses the ordinary completion oracle
+to reject any admitted row not actually implied by that supply. Grounding is
+performed in bounded singleton batches, with an explicit conservative work
+reservation and independent result/workspace word limits, rather than one
+graph traversal or one retained dense matrix per rectangle. These rectangles
+still do not enter selection: a later SCC certificate must select enough ready
+and reuse rectangles and prove priming, periodic circulation, zero-trip paths,
+and draining. On the historical GEMM the current exact endpoint lattice has
+910 singleton rectangles and therefore demonstrates that endpoint equality
+alone does not recover the four ownership protocols; the next closure step
+must factor compatible cuts across the lifecycle automaton rather than infer
+them from transitive mechanism pairs.
+
 The same analysis flag also builds a bounded direct-cut index when the
 lifecycle index is complete. It admits only distance-zero, cross-resource
 obligations whose source can signal completion to the target resource and

@@ -2184,6 +2184,71 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
            plan.sameResourceRecurrenceReuses});
     }
   }
+  if (program.getStorageProtocolRectangleIndex()) {
+    report.storageProtocolRectangleAnalysisEnabled = true;
+    const SyncCoverStorageProtocolRectangleStatistics &rectangleStatistics =
+        program.getStorageProtocolRectangleIndex()->getStatistics();
+    report.storageProtocolRectangleWorkUnits = rectangleStatistics.workUnits;
+    report.storageProtocolRectanglePlans = rectangleStatistics.plans;
+    report.storageProtocolRectangleFrontierInspections =
+        rectangleStatistics.frontierInspections;
+    report.storageProtocolRectangles = rectangleStatistics.rectangles;
+    report.storageProtocolReadyRectangles = rectangleStatistics.readyRectangles;
+    report.storageProtocolReuseRectangles = rectangleStatistics.reuseRectangles;
+    report.storageProtocolMergedRectangles =
+        rectangleStatistics.mergedRectangles;
+    report.storageProtocolRectangleFrontierIncidences =
+        rectangleStatistics.frontierIncidences;
+    report.storageProtocolMaximumRectangleFrontiers =
+        rectangleStatistics.maximumRectangleFrontiers;
+    report.storageProtocolRectangleTruncated = rectangleStatistics.truncated;
+    const bool canGroundProtocolRectangles =
+        program.getStorageProtocolAutomatonIndex() &&
+        program.getStorageProtocolAutomatonIndex()->isComplete() &&
+        program.getStorageProtocolFrontierIndex() &&
+        program.getStorageProtocolFrontierIndex()->isComplete() &&
+        program.getStorageProtocolRectangleIndex()->isComplete();
+    if (canGroundProtocolRectangles) {
+      report.storageProtocolRectangleGroundingEnabled = true;
+      const SyncCoverStorageProtocolRectangleGrounding grounding =
+          groundSyncCoverStorageProtocolRectangles(
+              program.getGraph(), problem.getExpansion(),
+              *program.getStorageProtocolAutomatonIndex(),
+              *program.getStorageProtocolFrontierIndex(),
+              *program.getStorageProtocolRectangleIndex(),
+              problem.getObligationDemands(),
+              options.analysis.storageProtocolRectangleGroundingLimits);
+      const SyncCoverStorageProtocolRectangleGroundingStatistics
+          &groundingStatistics = grounding.getStatistics();
+      report.storageProtocolRectangleGroundingWorkUnits =
+          groundingStatistics.workUnits;
+      report.storageProtocolRectangleGroundingEvaluated =
+          groundingStatistics.evaluatedRectangles;
+      report.storageProtocolRectangleGroundingBatches =
+          groundingStatistics.coverageBatches;
+      report.storageProtocolRectanglesWithCoverage =
+          groundingStatistics.rectanglesWithCoverage;
+      report.storageProtocolRectanglesCoveringMultipleRows =
+          groundingStatistics.rectanglesCoveringMultipleRows;
+      report.storageProtocolRectangleAdmittedDemandIncidences =
+          groundingStatistics.admittedDemandIncidences;
+      report.storageProtocolRectangleMaximumCoverageRows =
+          groundingStatistics.maximumCoverageRows;
+      report.storageProtocolRectangleTotalCoverageRows =
+          groundingStatistics.totalCoverageRows;
+      report.storageProtocolRectangleGroundingError = grounding.getError();
+      report.storageProtocolRectangleGroundingDetailsTruncated =
+          groundingStatistics.detailsTruncated;
+      report.storageProtocolRectangleGroundingTruncated =
+          groundingStatistics.truncated;
+      for (const SyncCoverStorageProtocolRectangleGroundingDetail &detail :
+           grounding.getDetails()) {
+        report.storageProtocolRectangleGroundingDetails.push_back(
+            {detail.rectangle, detail.automaton, detail.frontierCount,
+             detail.admittedDemands, detail.coverageRows});
+      }
+    }
+  }
   if (program.getStorageCutIndex()) {
     report.storageCutAnalysisEnabled = true;
     const SyncCoverStorageCutStatistics &cutStatistics =

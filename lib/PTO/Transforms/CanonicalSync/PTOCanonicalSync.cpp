@@ -474,6 +474,22 @@ llvm::json::Array jsonStorageProtocolFrontierPlans(
   return result;
 }
 
+llvm::json::Array jsonStorageProtocolRectangleGrounding(
+    ArrayRef<pto::CanonicalSyncStorageProtocolRectangleGroundingReport>
+        details) {
+  llvm::json::Array result;
+  for (const pto::CanonicalSyncStorageProtocolRectangleGroundingReport &detail :
+       details) {
+    result.push_back(llvm::json::Object{
+        {"rectangle", jsonInteger(detail.rectangle)},
+        {"automaton", jsonInteger(detail.automaton)},
+        {"frontier_count", jsonInteger(detail.frontierCount)},
+        {"admitted_demands", jsonInteger(detail.admittedDemands)},
+        {"coverage_rows", jsonInteger(detail.coverageRows)}});
+  }
+  return result;
+}
+
 llvm::json::Array jsonSyntheticStorageRectangleGrounding(
     ArrayRef<pto::CanonicalSyncSyntheticRectangleGroundingReport> details) {
   llvm::json::Array result;
@@ -879,8 +895,7 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
        jsonStorageProtocolSeeds(report.storageProtocolSeedDetails)},
       {"storage_protocol_seed_details_truncated",
        report.storageProtocolSeedDetailsTruncated},
-      {"storage_protocol_seed_truncated",
-       report.storageProtocolSeedTruncated},
+      {"storage_protocol_seed_truncated", report.storageProtocolSeedTruncated},
       {"storage_protocol_group_analysis_enabled",
        report.storageProtocolGroupAnalysisEnabled},
       {"storage_protocol_group_work_units",
@@ -980,8 +995,7 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
       {"storage_protocol_cut_plan_direct_ready_transfers",
        jsonInteger(report.storageProtocolCutPlanDirectReadyTransfers)},
       {"storage_protocol_cut_plan_recurrence_release_transfers",
-       jsonInteger(
-           report.storageProtocolCutPlanRecurrenceReleaseTransfers)},
+       jsonInteger(report.storageProtocolCutPlanRecurrenceReleaseTransfers)},
       {"storage_protocol_cut_plan_ready_rectangle_incidences",
        jsonInteger(report.storageProtocolCutPlanReadyRectangleIncidences)},
       {"storage_protocol_cut_plan_maximum_ready_rectangles",
@@ -1024,11 +1038,10 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
       {"storage_protocol_same_resource_recurrence_reuses",
        jsonInteger(report.storageProtocolSameResourceRecurrenceReuses)},
       {"storage_protocol_frontier_certificate_demand_incidences",
-       jsonInteger(
-           report.storageProtocolFrontierCertificateDemandIncidences)},
+       jsonInteger(report.storageProtocolFrontierCertificateDemandIncidences)},
       {"storage_protocol_frontier_completion_cut_fact_demand_incidences",
-       jsonInteger(report
-                       .storageProtocolFrontierCompletionCutFactDemandIncidences)},
+       jsonInteger(
+           report.storageProtocolFrontierCompletionCutFactDemandIncidences)},
       {"storage_protocol_frontier_transfer_inspections",
        jsonInteger(report.storageProtocolFrontierTransferInspections)},
       {"storage_protocol_frontier_state_pair_inspections",
@@ -1038,12 +1051,61 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
       {"storage_protocol_maximum_plan_frontiers",
        jsonInteger(report.storageProtocolMaximumPlanFrontiers)},
       {"storage_protocol_frontier_details",
-       jsonStorageProtocolFrontierPlans(
-           report.storageProtocolFrontierDetails)},
+       jsonStorageProtocolFrontierPlans(report.storageProtocolFrontierDetails)},
       {"storage_protocol_frontier_details_truncated",
        report.storageProtocolFrontierDetailsTruncated},
       {"storage_protocol_frontier_truncated",
        report.storageProtocolFrontierTruncated},
+      {"storage_protocol_rectangle_analysis_enabled",
+       report.storageProtocolRectangleAnalysisEnabled},
+      {"storage_protocol_rectangle_work_units",
+       jsonInteger(report.storageProtocolRectangleWorkUnits)},
+      {"storage_protocol_rectangle_plans",
+       jsonInteger(report.storageProtocolRectanglePlans)},
+      {"storage_protocol_rectangle_frontier_inspections",
+       jsonInteger(report.storageProtocolRectangleFrontierInspections)},
+      {"storage_protocol_rectangles",
+       jsonInteger(report.storageProtocolRectangles)},
+      {"storage_protocol_ready_rectangles",
+       jsonInteger(report.storageProtocolReadyRectangles)},
+      {"storage_protocol_reuse_rectangles",
+       jsonInteger(report.storageProtocolReuseRectangles)},
+      {"storage_protocol_merged_rectangles",
+       jsonInteger(report.storageProtocolMergedRectangles)},
+      {"storage_protocol_rectangle_frontier_incidences",
+       jsonInteger(report.storageProtocolRectangleFrontierIncidences)},
+      {"storage_protocol_maximum_rectangle_frontiers",
+       jsonInteger(report.storageProtocolMaximumRectangleFrontiers)},
+      {"storage_protocol_rectangle_truncated",
+       report.storageProtocolRectangleTruncated},
+      {"storage_protocol_rectangle_grounding_enabled",
+       report.storageProtocolRectangleGroundingEnabled},
+      {"storage_protocol_rectangle_grounding_work_units",
+       jsonInteger(report.storageProtocolRectangleGroundingWorkUnits)},
+      {"storage_protocol_rectangle_grounding_evaluated",
+       jsonInteger(report.storageProtocolRectangleGroundingEvaluated)},
+      {"storage_protocol_rectangle_grounding_batches",
+       jsonInteger(report.storageProtocolRectangleGroundingBatches)},
+      {"storage_protocol_rectangles_with_coverage",
+       jsonInteger(report.storageProtocolRectanglesWithCoverage)},
+      {"storage_protocol_rectangles_covering_multiple_rows",
+       jsonInteger(report.storageProtocolRectanglesCoveringMultipleRows)},
+      {"storage_protocol_rectangle_admitted_demand_incidences",
+       jsonInteger(report.storageProtocolRectangleAdmittedDemandIncidences)},
+      {"storage_protocol_rectangle_maximum_coverage_rows",
+       jsonInteger(report.storageProtocolRectangleMaximumCoverageRows)},
+      {"storage_protocol_rectangle_total_coverage_rows",
+       jsonInteger(report.storageProtocolRectangleTotalCoverageRows)},
+      {"storage_protocol_rectangle_grounding_error",
+       jsonInteger(static_cast<unsigned>(
+           report.storageProtocolRectangleGroundingError))},
+      {"storage_protocol_rectangle_grounding_details",
+       jsonStorageProtocolRectangleGrounding(
+           report.storageProtocolRectangleGroundingDetails)},
+      {"storage_protocol_rectangle_grounding_details_truncated",
+       report.storageProtocolRectangleGroundingDetailsTruncated},
+      {"storage_protocol_rectangle_grounding_truncated",
+       report.storageProtocolRectangleGroundingTruncated},
       {"storage_cut_analysis_enabled", report.storageCutAnalysisEnabled},
       {"storage_cut_work_units", jsonInteger(report.storageCutWorkUnits)},
       {"storage_cut_eligible_edges",
@@ -1051,8 +1113,7 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
       {"storage_cut_ineligible_edges",
        jsonInteger(report.storageCutIneligibleEdges)},
       {"storage_completion_cuts", jsonInteger(report.storageCompletionCuts)},
-      {"storage_acquisition_cuts",
-       jsonInteger(report.storageAcquisitionCuts)},
+      {"storage_acquisition_cuts", jsonInteger(report.storageAcquisitionCuts)},
       {"storage_rectangles", jsonInteger(report.storageRectangles)},
       {"storage_cut_incidences", jsonInteger(report.storageCutIncidences)},
       {"storage_cut_guard_literals",
