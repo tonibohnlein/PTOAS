@@ -681,19 +681,46 @@ Relevant driver options are:
 and repair, so both `core + direct` and `core + direct-pair` are expressible.
 
 `default` enables every production family and excludes experimental families;
-`all` additionally enables those experimental families. `strict-direct` is
-the minimal correctness catalog. It permits `mechanism-families=core` or the
-single experimental `storage-cut-event` family and requires
+`all` additionally enables those experimental families.
+`strict-direct` is the minimal correctness catalog. It requires
+`mechanism-families=core`, `pattern-mode=direct`, and
 `enable-conflict-core-repair=false`; contradictory combinations are rejected.
-Pattern mode remains orthogonal:
-`direct` selects only singleton columns, while `direct-pair` may additionally
-compose two direct recipes without synthesizing a new physical mechanism.
 Its set-cover rows are the complete unique hazard universe, and demand-basis
-pre-reduction is disabled. It creates one direct recipe for each otherwise
-uncovered row: a same-resource targeted barrier, an exact distance-zero event,
-a direct recurrence event/protocol, or a balanced target-local direct fence.
-Grounding may prove that one of these singleton columns covers additional
-hazard rows, and the selector may remove redundant direct recipes.
+pre-reduction is disabled. It grounds exactly the same independently admitted
+recipes as `mechanical-direct`: same-resource targeted barriers, exact
+single-shot distance-zero events outside repeated control, and verified
+recurrence protocols. Grounding may prove that one singleton column covers
+additional hazard rows, and the selector may remove redundant direct recipes.
+For a distance-zero demand universe, singleton columns are grounded in bounded
+batches of exact physical-cut worlds. Each event contributes its documented
+source-prefix by target-suffix rectangle; the selected set is re-evaluated as
+one exact world before materialization. Recurrence protocols continue through
+the lifecycle-aware expanded-graph verifier until grouped recurrence cuts are
+admitted.
+
+The cut semantics are target-owned. A demand records the ordering properties
+it requires, but cannot grant those properties to the mechanism proposed for
+it. The target contract independently authorizes the directed HardEvent or
+targeted PipeBarrier and its supplied ordering mask. The current event contract
+supplies pipeline completion, memory order, and the explicitly modeled
+hardware-special ordering; targeted pipe barriers supply pipeline completion
+and memory order. Neither primitive claims cache visibility. SetFlag source-
+prefix completion is also an explicit target capability and is intentionally
+separate from ordinary same-pipeline issue-order semantics.
+
+Exact worlds contain both selected cuts and pre-existing fixed completion
+supplies. Consequently a fixed barrier or event can compose with a proposed
+direct cut, but cannot silently disappear from either singleton grounding or
+fresh selected-world verification. World count, cut count, aggregate enabled-
+mechanism incidences, state words, result words, actions, and total grounding
+work are all checked before their corresponding bulk allocation or traversal.
+All singleton batches and final publication consume one shared construction
+work budget. State bounds include simultaneous branch/optional-region clones,
+not only the base world vector, and the work meter charges state initialization,
+copying, fixed-supply transfer, must-intersection, and result publication.
+When a fixed completion supply upgrades an existing issue-order edge, its
+target-owned capability mask replaces the issue edge's ignored default mask;
+only two actual completion supplies may union their authorized capabilities.
 
 With `mechanism-families=core`, `strict-direct` constructs no derived
 ownership or cut mechanisms, conflict-core repair candidates, or localized
@@ -709,16 +736,15 @@ useful acyclic cut factoring, genuine event-resource scarcity, and an
 unsupported control/lifecycle shape.
 
 `mechanical-direct` is the non-optimizing correctness oracle. It additionally
-requires `pattern-mode=direct`, selects every independently admitted direct
-recipe, and performs no set-cover deletion or reverse deletion. It does not
-admit the balanced target-local fallback because that recipe is a synthesized
-cut rather than the exact source-to-target primitive being tested. A repeated
-one-bit event inside a loop is rejected unless it is represented by an
-independently verified lifecycle protocol; lexical set/wait balance does not
-prove that iteration `i + 1` cannot set the token before iteration `i` has
-consumed it. Like `strict-direct`, this mode retains the complete unique raw
-demand universe, disables repair and body `PIPE_ALL`, and reports event-ID
-scarcity before mutating the IR.
+selects every independently admitted direct recipe and performs no set-cover
+deletion or reverse deletion. Neither direct-only mode admits the balanced
+target-local fallback because that recipe is a synthesized cut rather than the
+exact source-to-target primitive being tested. A repeated one-bit event inside
+a loop is rejected unless it is represented by an independently verified
+lifecycle protocol; lexical set/wait balance does not prove that iteration
+`i + 1` cannot set the token before iteration `i` has consumed it. Both modes
+retain the complete unique raw demand universe, disable repair and body
+`PIPE_ALL`, and report event-ID scarcity before mutating the IR.
 
 Named families are independently composable. The accepted names are:
 

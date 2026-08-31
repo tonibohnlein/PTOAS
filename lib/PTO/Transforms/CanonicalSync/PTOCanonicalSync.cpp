@@ -1505,20 +1505,16 @@ struct PTOCanonicalSyncPass
       return;
     }
     options.patterns.enableConflictCoreRepair = enableConflictCoreRepair;
-    const pto::CanonicalSyncMechanismFamilyMask strictOptionalFamilies =
-        pto::canonicalSyncMechanismFamilyBit(
-            pto::CanonicalSyncMechanismFamily::StorageCutEvent);
     const bool invalidStrictDirectConfiguration =
         options.patterns.catalogMode ==
             pto::CanonicalSyncCatalogMode::StrictMinimalDirect &&
-        ((options.patterns.enabledMechanismFamilies &
-          ~strictOptionalFamilies) != 0 ||
+        (options.patterns.enabledMechanismFamilies != 0 ||
+         options.patterns.enableDirectPairs ||
          options.patterns.enableConflictCoreRepair);
     if (invalidStrictDirectConfiguration) {
       function.emitError(
-          "strict-direct catalog mode permits only mechanism-families=core "
-          "or storage-cut-event, and requires "
-          "enable-conflict-core-repair=false");
+          "strict-direct catalog mode requires mechanism-families=core, "
+          "pattern-mode=direct, and enable-conflict-core-repair=false");
       signalPassFailure();
       return;
     }

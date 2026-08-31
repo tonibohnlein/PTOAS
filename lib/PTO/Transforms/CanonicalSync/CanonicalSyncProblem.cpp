@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncSelection.h"
 
@@ -207,17 +209,18 @@ void hashEdge(std::uint64_t &hash, const SyncCoverEdge &edge) {
   hashValue(hash, edge.scope);
   hashValue(hash, edge.distance);
   hashValue(hash, static_cast<std::uint8_t>(edge.kind));
+  hashValue(hash, edge.suppliedRequirements);
   hashGuard(hash, edge.sourceGuard);
   hashGuard(hash, edge.targetGuard);
 }
 
 bool edgeLess(const SyncCoverEdge &left, const SyncCoverEdge &right) {
   return std::tie(left.source, left.target, left.scope, left.distance,
-                  left.kind, left.sourceGuard.literals,
-                  left.targetGuard.literals) <
+                  left.kind, left.suppliedRequirements,
+                  left.sourceGuard.literals, left.targetGuard.literals) <
          std::tie(right.source, right.target, right.scope, right.distance,
-                  right.kind, right.sourceGuard.literals,
-                  right.targetGuard.literals);
+                  right.kind, right.suppliedRequirements,
+                  right.sourceGuard.literals, right.targetGuard.literals);
 }
 
 bool edgeEqual(const SyncCoverEdge &left, const SyncCoverEdge &right) {
@@ -418,9 +421,9 @@ getActionRegion(const SyncCoverGraph &graph,
   return std::nullopt;
 }
 
-std::optional<SyncCoverRegionId> getMechanismOwnerRegion(
-    const SyncCoverGraph &graph,
-    const CanonicalSyncMechanismDescriptor &descriptor) {
+std::optional<SyncCoverRegionId>
+getMechanismOwnerRegion(const SyncCoverGraph &graph,
+                        const CanonicalSyncMechanismDescriptor &descriptor) {
   std::optional<SyncCoverRegionId> owner;
   for (const CanonicalSyncAction &action : descriptor.actions) {
     const std::optional<SyncCoverRegionId> actionRegion =
@@ -465,6 +468,20 @@ bool checkedMultiply(std::size_t first, std::size_t second,
   }
   result = first * second;
   return true;
+}
+
+bool consumeSortWork(std::size_t elements,
+                     SyncCoverCoverageWorkBudget *workBudget) {
+  if (!workBudget || elements < 2) {
+    return true;
+  }
+  std::size_t levels = 0;
+  for (std::size_t remaining = elements; remaining > 1; remaining >>= 1) {
+    ++levels;
+  }
+  std::size_t work = 0;
+  return checkedMultiply(elements, levels + 1, work) &&
+         workBudget->consume(work);
 }
 
 bool checkedAddProduct(std::size_t &total, std::size_t count,
@@ -1142,7 +1159,8 @@ validateSupplyDeclarations(const SyncCoverGraph &graph,
            binding.applicability == SyncCoverSupplyApplicability::AllDemands)));
     const bool validOrdinaryQualifier =
         restrictedLocal || dominatingDrainCut ||
-        (!binding.attestedDemand &&
+        ((!binding.attestedDemand ||
+          (direct && binding.allowedDemands.empty())) &&
          binding.applicability == SyncCoverSupplyApplicability::AllDemands);
     const bool validOwner =
         protocol
@@ -2089,6 +2107,118 @@ void setRecurrenceLifetimes(const SyncCoverGraph &graph,
   }
 }
 
+std::optional<SyncCoverDirectCut>
+makeExactDirectCut(const SyncCoverGraph &graph,
+                   const CanonicalSyncMechanism &mechanism,
+                   SyncCoverOrderingRequirementMask eventRequirements,
+                   SyncCoverOrderingRequirementMask barrierRequirements,
+                   bool eventCompletesSourcePrefix) {
+  const CanonicalSyncMechanismDescriptor &descriptor = mechanism.descriptor;
+  SyncCoverOrderingRequirementMask requiredRequirements = 0;
+  for (const CanonicalSyncSupplyBinding &binding : descriptor.supplies) {
+    if (!binding.attestedDemand ||
+        *binding.attestedDemand >= graph.getDemands().size()) {
+      return std::nullopt;
+    }
+    const SyncCoverDemand &demand = graph.getDemands()[*binding.attestedDemand];
+    const SyncCoverEdge attestedEdge{
+        demand.source,     demand.target,   SyncCoverEdgeKind::CompletionSupply,
+        demand.scope,      demand.distance, demand.sourceGuard,
+        demand.targetGuard};
+    if (!edgeEqual(binding.edge, attestedEdge)) {
+      return std::nullopt;
+    }
+    requiredRequirements |= demand.orderingRequirements;
+  }
+  if (requiredRequirements == 0) {
+    return std::nullopt;
+  }
+
+  const auto makePoint = [](const CanonicalSyncAction &action,
+                            SyncCoverCutPointKind kind, std::size_t ordinal) {
+    SyncCoverCutPoint point;
+    point.kind = kind;
+    point.resource = action.resource;
+    point.anchor = action.anchor;
+    point.ordinal = ordinal;
+    return point;
+  };
+  const auto actionIsFlat = [](const CanonicalSyncAction &action) {
+    return action.guard == CanonicalSyncActionGuardKind::None &&
+           !action.guardScope &&
+           action.eventLaneKind == CanonicalSyncEventLaneKind::Static &&
+           !action.eventLaneScope &&
+           (action.anchor.kind == SyncCoverAnchorKind::BeforeNode ||
+            action.anchor.kind == SyncCoverAnchorKind::AfterNode);
+  };
+
+  SyncCoverDirectCut cut;
+  cut.mechanism = mechanism.id;
+  if (descriptor.kind == CanonicalSyncMechanismKind::Event) {
+    cut.suppliedRequirements = eventRequirements;
+    cut.sourcePrefixCompletion = eventCompletesSourcePrefix;
+    if (descriptor.eventUses.size() != 1 ||
+        descriptor.eventUses.front().width != 1 ||
+        descriptor.eventUses.front().recurrenceScope ||
+        descriptor.eventUses.front().lifetimeScope ||
+        descriptor.actions.size() != 2) {
+      return std::nullopt;
+    }
+    const CanonicalSyncAction *set = nullptr;
+    const CanonicalSyncAction *wait = nullptr;
+    std::size_t setOrdinal = 0;
+    std::size_t waitOrdinal = 0;
+    for (std::size_t ordinal = 0; ordinal < descriptor.actions.size();
+         ++ordinal) {
+      const CanonicalSyncAction &action = descriptor.actions[ordinal];
+      if (!actionIsFlat(action) || action.eventUse != 0 ||
+          action.eventLane != 0 || !action.drainedResources.empty()) {
+        return std::nullopt;
+      }
+      if (action.kind == CanonicalSyncActionKind::EventSet && !set) {
+        set = &action;
+        setOrdinal = ordinal;
+      } else if (action.kind == CanonicalSyncActionKind::EventWait && !wait) {
+        wait = &action;
+        waitOrdinal = ordinal;
+      } else {
+        return std::nullopt;
+      }
+    }
+    if (!set || !wait) {
+      return std::nullopt;
+    }
+    cut.kind = SyncCoverDirectCutKind::Event;
+    cut.source = makePoint(*set, SyncCoverCutPointKind::EventSet, setOrdinal);
+    cut.target =
+        makePoint(*wait, SyncCoverCutPointKind::EventWait, waitOrdinal);
+  } else {
+    if (descriptor.kind != CanonicalSyncMechanismKind::Barrier ||
+        !descriptor.eventUses.empty() || descriptor.actions.size() != 1) {
+      return std::nullopt;
+    }
+    const CanonicalSyncAction &barrier = descriptor.actions.front();
+    if (!actionIsFlat(barrier) ||
+        barrier.kind != CanonicalSyncActionKind::Barrier || barrier.eventUse ||
+        barrier.barrierKind != CanonicalSyncBarrierKind::Targeted ||
+        barrier.drainedResources !=
+            std::vector<std::uint32_t>{barrier.resource}) {
+      return std::nullopt;
+    }
+    cut.kind = SyncCoverDirectCutKind::PipeBarrier;
+    cut.suppliedRequirements = barrierRequirements;
+    cut.sourcePrefixCompletion = true;
+    cut.source = makePoint(barrier, SyncCoverCutPointKind::PipeBarrier, 0);
+    cut.target = cut.source;
+  }
+  if (cut.suppliedRequirements == 0 ||
+      (requiredRequirements & cut.suppliedRequirements) !=
+          requiredRequirements) {
+    return std::nullopt;
+  }
+  return cut;
+}
+
 } // namespace
 
 struct CanonicalSyncPatternProblem::MutableBatchJournal {
@@ -2191,7 +2321,14 @@ CanonicalSyncPatternProblem::CanonicalSyncPatternProblem(
       candidateConfigurationSignature_(
           preciseProblem.candidateConfigurationSignature_),
       frozenPrefixMechanismCount_(preciseProblem.mechanisms_.size()),
-      constructionWorkBudget_(constructionWorkBudget) {
+      constructionWorkBudget_(constructionWorkBudget),
+      exactDirectCutGrounding_(preciseProblem.exactDirectCutGrounding_),
+      exactDirectEventRequirements_(
+          preciseProblem.exactDirectEventRequirements_),
+      exactDirectBarrierRequirements_(
+          preciseProblem.exactDirectBarrierRequirements_),
+      exactDirectEventCompletesSourcePrefix_(
+          preciseProblem.exactDirectEventCompletesSourcePrefix_) {
   constructionBaselineCoverage_ = baselineCoverage_;
   constructionSingletonCoverage_.resize(mechanisms_.size());
   for (const CanonicalSyncPattern &pattern : patterns_) {
@@ -2336,6 +2473,114 @@ CanonicalSyncPatternProblem::setCandidateConfigurationSignature(
 }
 
 CanonicalSyncProblemResult
+CanonicalSyncPatternProblem::enableExactDirectCutGrounding(
+    SyncCoverOrderingRequirementMask eventRequirements,
+    SyncCoverOrderingRequirementMask barrierRequirements,
+    bool eventCompletesSourcePrefix) {
+  if (frozen_ || frozenPrefixMechanismCount_ != 0) {
+    return {CanonicalSyncProblemError::Frozen, std::nullopt};
+  }
+  const bool invalid =
+      (eventRequirements & ~kAllSyncCoverOrderingRequirements) != 0 ||
+      (barrierRequirements & ~kAllSyncCoverOrderingRequirements) != 0;
+  if (invalid) {
+    return {CanonicalSyncProblemError::InvalidMechanism, std::nullopt};
+  }
+  exactDirectCutGrounding_ = true;
+  exactDirectEventRequirements_ = eventRequirements;
+  exactDirectBarrierRequirements_ = barrierRequirements;
+  exactDirectEventCompletesSourcePrefix_ = eventCompletesSourcePrefix;
+  return {};
+}
+
+SyncCoverRegionWorldResult
+CanonicalSyncPatternProblem::computeExactDirectCutWorlds(
+    const std::vector<SyncCoverExactWorld> &worlds,
+    SyncCoverRegionWorldLimits limits,
+    SyncCoverCoverageWorkBudget *workBudget) const {
+  SyncCoverRegionWorldResult invalid;
+  if (worlds.size() > limits.maximumWorldsPerBatch) {
+    invalid.error = SyncCoverFlatWorldError::LimitExceeded;
+    return invalid;
+  }
+  std::size_t incidenceCount = 0;
+  for (const SyncCoverExactWorld &world : worlds) {
+    if (!checkedAdd(incidenceCount, world.enabledMechanisms.size(),
+                    incidenceCount) ||
+        incidenceCount > limits.maximumWorldMechanismIncidences) {
+      invalid.error = SyncCoverFlatWorldError::LimitExceeded;
+      return invalid;
+    }
+  }
+  std::size_t validationWork = 0;
+  const bool validationWorkAvailable =
+      checkedMultiply(incidenceCount, 2, validationWork) &&
+      checkedAdd(validationWork, worlds.size(), validationWork) &&
+      (!workBudget || workBudget->consume(validationWork));
+  if (!validationWorkAvailable) {
+    invalid.error = workBudget && workBudget->exhausted
+                        ? SyncCoverFlatWorldError::WorkLimitExceeded
+                        : SyncCoverFlatWorldError::LimitExceeded;
+    return invalid;
+  }
+  for (std::size_t world = 0; world < worlds.size(); ++world) {
+    const std::vector<CanonicalSyncMechanismId> &enabled =
+        worlds[world].enabledMechanisms;
+    const bool invalidWorld =
+        !std::is_sorted(enabled.begin(), enabled.end()) ||
+        std::adjacent_find(enabled.begin(), enabled.end()) != enabled.end();
+    if (invalidWorld) {
+      invalid.error = SyncCoverFlatWorldError::InvalidWorld;
+      invalid.invalidIndex = world;
+      return invalid;
+    }
+  }
+  if (workBudget && (!workBudget->consume(incidenceCount) ||
+                     !consumeSortWork(incidenceCount, workBudget))) {
+    invalid.error = SyncCoverFlatWorldError::WorkLimitExceeded;
+    return invalid;
+  }
+  std::vector<CanonicalSyncMechanismId> referenced;
+  referenced.reserve(incidenceCount);
+  for (const SyncCoverExactWorld &world : worlds) {
+    referenced.insert(referenced.end(), world.enabledMechanisms.begin(),
+                      world.enabledMechanisms.end());
+  }
+  std::sort(referenced.begin(), referenced.end());
+  referenced.erase(std::unique(referenced.begin(), referenced.end()),
+                   referenced.end());
+  if (referenced.size() > limits.maximumCuts) {
+    invalid.error = SyncCoverFlatWorldError::LimitExceeded;
+    return invalid;
+  }
+  if (workBudget && !workBudget->consume(referenced.size())) {
+    invalid.error = SyncCoverFlatWorldError::WorkLimitExceeded;
+    return invalid;
+  }
+  std::vector<SyncCoverDirectCut> cuts;
+  cuts.reserve(referenced.size());
+  for (CanonicalSyncMechanismId mechanism : referenced) {
+    if (mechanism >= mechanisms_.size()) {
+      invalid.error = SyncCoverFlatWorldError::InvalidWorld;
+      invalid.invalidIndex = mechanism;
+      return invalid;
+    }
+    const std::optional<SyncCoverDirectCut> cut = makeExactDirectCut(
+        graph_, mechanisms_[mechanism], exactDirectEventRequirements_,
+        exactDirectBarrierRequirements_,
+        exactDirectEventCompletesSourcePrefix_);
+    if (!cut) {
+      invalid.error = SyncCoverFlatWorldError::InvalidCut;
+      invalid.invalidIndex = mechanism;
+      return invalid;
+    }
+    cuts.push_back(*cut);
+  }
+  return computeSyncCoverRegionExactWorlds(graph_, cuts, worlds, limits,
+                                           workBudget);
+}
+
+CanonicalSyncProblemResult
 CanonicalSyncPatternProblem::addEventDomain(CanonicalSyncEventDomain domain) {
   if (frozen_) {
     return {CanonicalSyncProblemError::Frozen, domains_.size()};
@@ -2375,7 +2620,13 @@ bool CanonicalSyncPatternProblem::hasSameCandidatePrefix(
       mechanisms_.size() < other.mechanisms_.size() ||
       repairEventSeeds_.size() != other.repairEventSeeds_.size() ||
       candidateConfigurationSignature_ !=
-          other.candidateConfigurationSignature_;
+          other.candidateConfigurationSignature_ ||
+      exactDirectCutGrounding_ != other.exactDirectCutGrounding_ ||
+      exactDirectEventRequirements_ != other.exactDirectEventRequirements_ ||
+      exactDirectBarrierRequirements_ !=
+          other.exactDirectBarrierRequirements_ ||
+      exactDirectEventCompletesSourcePrefix_ !=
+          other.exactDirectEventCompletesSourcePrefix_;
   if (differentShape) {
     return false;
   }
@@ -3446,10 +3697,205 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::addDirectPairBatch(
   return {CanonicalSyncProblemError::None, addedRetainedPatterns};
 }
 
+CanonicalSyncProblemResult
+CanonicalSyncPatternProblem::buildExactDirectCutPatterns(
+    std::vector<CanonicalSyncPattern> &patterns,
+    CanonicalSyncPatternStatistics &statistics,
+    SyncCoverDemandSet &baselineCoverage) const {
+  const bool identityDemandUniverse =
+      activeDemands_.size() == graph_.getDemands().size() &&
+      std::all_of(activeDemands_.begin(), activeDemands_.end(),
+                  [next = std::size_t{0}](SyncCoverDemandId demand) mutable {
+                    return demand == next++;
+                  });
+  if (!identityDemandUniverse) {
+    return {CanonicalSyncProblemError::InvalidPattern, std::nullopt};
+  }
+  const std::size_t activeWords =
+      activeDemands_.size() / 64 + (activeDemands_.size() % 64 != 0 ? 1 : 0);
+  const std::size_t graphWords = graph_.getDemands().size() / 64 +
+                                 (graph_.getDemands().size() % 64 != 0 ? 1 : 0);
+  std::size_t persistentSets = 0;
+  std::size_t persistentWords = 0;
+  const bool persistentEnvelopeUnavailable =
+      !checkedAdd(mechanisms_.size(), 1, persistentSets) ||
+      !checkedMultiply(persistentSets, activeWords, persistentWords) ||
+      persistentWords > limits_.maximumSingletonCoverageWords;
+  if (persistentEnvelopeUnavailable) {
+    return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
+  }
+
+  std::size_t fixedSupplyCount = 0;
+  for (const SyncCoverEdge &edge : graph_.getEdges()) {
+    fixedSupplyCount += edge.kind == SyncCoverEdgeKind::CompletionSupply;
+  }
+
+  std::vector<std::uint32_t> resources;
+  resources.reserve(graph_.getNodes().size());
+  for (const SyncCoverNode &node : graph_.getNodes()) {
+    resources.push_back(node.resource);
+  }
+  if (constructionWorkBudget_ &&
+      (!constructionWorkBudget_->consume(resources.size()) ||
+       !consumeSortWork(resources.size(), constructionWorkBudget_))) {
+    return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
+  }
+  std::sort(resources.begin(), resources.end());
+  resources.erase(std::unique(resources.begin(), resources.end()),
+                  resources.end());
+
+  patterns.clear();
+  patterns.reserve(mechanisms_.size());
+  statistics = {};
+
+  std::size_t baselineStateWords = 0;
+  std::size_t baselineNonStateWords = 0;
+  std::size_t baselineStateAllowance = 0;
+  const bool baselineEnvelopeUnavailable =
+      !checkedAdd(resources.size(), fixedSupplyCount, baselineStateWords) ||
+      !checkedAdd(baselineStateWords, 2, baselineStateWords) ||
+      !checkedAdd(persistentWords, graphWords, baselineNonStateWords) ||
+      baselineNonStateWords > limits_.maximumSingletonCoverageWords ||
+      baselineStateWords >
+          limits_.maximumSingletonCoverageWords - baselineNonStateWords;
+  if (baselineEnvelopeUnavailable) {
+    return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
+  }
+  baselineStateAllowance =
+      limits_.maximumSingletonCoverageWords - baselineNonStateWords;
+  SyncCoverRegionWorldLimits baselineLimits;
+  baselineLimits.maximumWorldsPerBatch = 1;
+  baselineLimits.maximumCuts = 0;
+  baselineLimits.maximumWorldMechanismIncidences = 0;
+  baselineLimits.maximumStateWords = baselineStateAllowance;
+  baselineLimits.maximumResultWords = graphWords;
+  baselineLimits.maximumCutActions = 0;
+  const SyncCoverRegionWorldResult baseline = computeExactDirectCutWorlds(
+      {SyncCoverExactWorld{}}, baselineLimits, constructionWorkBudget_);
+  if (!baseline) {
+    const bool limit =
+        baseline.error == SyncCoverFlatWorldError::LimitExceeded ||
+        baseline.error == SyncCoverFlatWorldError::WorkLimitExceeded;
+    return {limit ? CanonicalSyncProblemError::LimitExceeded
+                  : CanonicalSyncProblemError::CoverageFailure,
+            baseline.invalidIndex};
+  }
+  if (constructionWorkBudget_ &&
+      !constructionWorkBudget_->consume(activeWords)) {
+    return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
+  }
+  baselineCoverage = baseline.coveredByWorld.front();
+
+  std::size_t firstMechanism = 0;
+  while (firstMechanism < mechanisms_.size()) {
+    const std::size_t remaining = mechanisms_.size() - firstMechanism;
+    std::size_t batchMechanisms = std::min<std::size_t>(remaining, 256);
+    std::size_t resultWords = 0;
+    std::size_t wordsPerState = 0;
+    std::size_t liveStateWords = 0;
+    std::size_t nonStateWords = 0;
+    std::size_t stateAllowance = 0;
+    while (true) {
+      const bool envelopeAvailable =
+          checkedMultiply(batchMechanisms, graphWords, resultWords) &&
+          checkedAdd(resources.size(), batchMechanisms, wordsPerState) &&
+          checkedAdd(wordsPerState, fixedSupplyCount, wordsPerState) &&
+          checkedAdd(wordsPerState, 2, wordsPerState) &&
+          checkedMultiply(wordsPerState, batchMechanisms, liveStateWords) &&
+          checkedAdd(persistentWords, resultWords, nonStateWords) &&
+          nonStateWords <= limits_.maximumSingletonCoverageWords &&
+          liveStateWords <=
+              limits_.maximumSingletonCoverageWords - nonStateWords;
+      if (envelopeAvailable) {
+        stateAllowance = limits_.maximumSingletonCoverageWords - nonStateWords;
+        break;
+      }
+      --batchMechanisms;
+    }
+    if (remaining != 0 && batchMechanisms == 0) {
+      return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
+    }
+
+    std::vector<SyncCoverExactWorld> worlds(batchMechanisms);
+    if (constructionWorkBudget_ &&
+        !constructionWorkBudget_->consume(batchMechanisms)) {
+      return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
+    }
+    for (std::size_t local = 0; local < batchMechanisms; ++local) {
+      worlds[local].enabledMechanisms.push_back(firstMechanism + local);
+    }
+    SyncCoverRegionWorldLimits worldLimits;
+    worldLimits.maximumWorldsPerBatch = batchMechanisms;
+    worldLimits.maximumCuts = batchMechanisms;
+    worldLimits.maximumWorldMechanismIncidences = batchMechanisms;
+    worldLimits.maximumStateWords = stateAllowance;
+    worldLimits.maximumResultWords = resultWords;
+    if (batchMechanisms >
+        std::numeric_limits<std::size_t>::max() / std::size_t{2}) {
+      return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
+    }
+    worldLimits.maximumCutActions = batchMechanisms * 2;
+    const SyncCoverRegionWorldResult grounded = computeExactDirectCutWorlds(
+        worlds, worldLimits, constructionWorkBudget_);
+    if (!grounded) {
+      const bool limit =
+          grounded.error == SyncCoverFlatWorldError::LimitExceeded ||
+          grounded.error == SyncCoverFlatWorldError::WorkLimitExceeded;
+      return {limit ? CanonicalSyncProblemError::LimitExceeded
+                    : CanonicalSyncProblemError::CoverageFailure,
+              grounded.invalidIndex};
+    }
+    for (std::size_t local = 0; local < batchMechanisms; ++local) {
+      std::size_t projectionWork = 0;
+      if (!checkedMultiply(activeWords, 3, projectionWork) ||
+          (constructionWorkBudget_ &&
+           !constructionWorkBudget_->consume(projectionWork))) {
+        return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
+      }
+      SyncCoverDemandSet coverage = grounded.coveredByWorld[local];
+      coverage.subtract(baselineCoverage);
+      const std::size_t coverageCount = coverage.count();
+      CanonicalSyncPatternKindStatistics &singleton =
+          statistics.kinds[static_cast<std::size_t>(
+              CanonicalSyncPatternKind::Singleton)];
+      ++singleton.patterns;
+      singleton.jointCoverageIncidences += coverageCount;
+      singleton.singletonCoverageIncidences += coverageCount;
+      patterns.push_back({patterns.size(),
+                          CanonicalSyncPatternKind::Singleton,
+                          {firstMechanism + local},
+                          std::move(coverage),
+                          coverageCount,
+                          coverageCount,
+                          0});
+    }
+    firstMechanism += batchMechanisms;
+  }
+  return {};
+}
+
 CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns(
     std::vector<CanonicalSyncPattern> &patterns,
     CanonicalSyncPatternStatistics &patternStatistics,
     SyncCoverDemandSet &baselineCoverage) const {
+  const bool flatDemandUniverse = std::all_of(
+      graph_.getDemands().begin(), graph_.getDemands().end(),
+      [](const SyncCoverDemand &demand) { return demand.distance == 0; });
+  if (exactDirectCutGrounding_ && flatDemandUniverse) {
+    const auto malformed =
+        std::find_if(mechanisms_.begin(), mechanisms_.end(),
+                     [&](const CanonicalSyncMechanism &mechanism) {
+                       return !makeExactDirectCut(
+                           graph_, mechanism, exactDirectEventRequirements_,
+                           exactDirectBarrierRequirements_,
+                           exactDirectEventCompletesSourcePrefix_);
+                     });
+    if (malformed != mechanisms_.end()) {
+      return {CanonicalSyncProblemError::InvalidMechanism, malformed->id};
+    }
+    return buildExactDirectCutPatterns(patterns, patternStatistics,
+                                       baselineCoverage);
+  }
   std::vector<SyncCoverCompletionSupply> allSupplies;
   for (const CanonicalSyncMechanism &mechanism : mechanisms_) {
     for (const CanonicalSyncSupplyBinding &binding :
@@ -3667,13 +4113,27 @@ CanonicalSyncPatternProblem::buildIncrementalPatterns(
   return {};
 }
 
-CanonicalSyncProblemResult CanonicalSyncPatternProblem::freeze() {
+CanonicalSyncProblemResult
+CanonicalSyncPatternProblem::freeze(SyncCoverCoverageWorkBudget *workBudget) {
   if (frozen_) {
     return {CanonicalSyncProblemError::Frozen, std::nullopt};
   }
   if (!graphValid_) {
     return {CanonicalSyncProblemError::InvalidGraph, std::nullopt};
   }
+  SyncCoverCoverageWorkBudget *previousWorkBudget = constructionWorkBudget_;
+  if (workBudget && previousWorkBudget && workBudget != previousWorkBudget) {
+    return {CanonicalSyncProblemError::InvalidPattern, std::nullopt};
+  }
+  if (workBudget) {
+    constructionWorkBudget_ = workBudget;
+  }
+  const auto finish = [&](CanonicalSyncProblemResult result) {
+    if (!frozen_) {
+      constructionWorkBudget_ = previousWorkBudget;
+    }
+    return result;
+  };
   std::vector<CanonicalSyncPattern> patterns;
   CanonicalSyncPatternStatistics patternStatistics;
   SyncCoverDemandSet baselineCoverage;
@@ -3683,7 +4143,7 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::freeze() {
           : buildIncrementalPatterns(patterns, patternStatistics,
                                      baselineCoverage);
   if (!built) {
-    return built;
+    return finish(built);
   }
   std::vector<std::vector<CanonicalSyncPatternId>> demandPatterns(
       activeDemands_.size());
@@ -3695,7 +4155,7 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::freeze() {
         (!constructionWorkBudget_->consume(pattern.members.size()) ||
          !constructionWorkBudget_->consume(
              pattern.coverage.getWords().size()))) {
-      return {CanonicalSyncProblemError::LimitExceeded, pattern.id};
+      return finish({CanonicalSyncProblemError::LimitExceeded, pattern.id});
     }
     for (CanonicalSyncMechanismId member : pattern.members) {
       mechanismPatterns[member].push_back(pattern.id);
@@ -3708,11 +4168,12 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::freeze() {
         const std::size_t demand = wordIndex * 64 + bit;
         if (demand < demandPatterns.size()) {
           if (constructionWorkBudget_ && !constructionWorkBudget_->consume()) {
-            return {CanonicalSyncProblemError::LimitExceeded, pattern.id};
+            return finish(
+                {CanonicalSyncProblemError::LimitExceeded, pattern.id});
           }
           if (incidenceCount >= limits_.maximumIncidences) {
-            return {CanonicalSyncProblemError::LimitExceeded,
-                    incidenceCount + 1};
+            return finish(
+                {CanonicalSyncProblemError::LimitExceeded, incidenceCount + 1});
           }
           demandPatterns[demand].push_back(pattern.id);
           ++incidenceCount;
@@ -3724,7 +4185,7 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::freeze() {
   std::optional<std::size_t> missing;
   for (std::size_t demand = 0; demand < demandPatterns.size(); ++demand) {
     if (constructionWorkBudget_ && !constructionWorkBudget_->consume()) {
-      return {CanonicalSyncProblemError::LimitExceeded, demand};
+      return finish({CanonicalSyncProblemError::LimitExceeded, demand});
     }
     const bool lacksCover =
         demandPatterns[demand].empty() && !baselineCoverage.contains(demand);
@@ -3734,7 +4195,7 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::freeze() {
     }
   }
   if (missing) {
-    return {CanonicalSyncProblemError::UncoverableDemand, *missing};
+    return finish({CanonicalSyncProblemError::UncoverableDemand, *missing});
   }
   patterns_ = std::move(patterns);
   patternStatistics_ = std::move(patternStatistics);

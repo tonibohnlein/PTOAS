@@ -1772,6 +1772,49 @@ CanonicalSyncVerifiedPlan mlir::pto::verifyCanonicalSyncSelection(
     return result;
   }
 
+  const bool exactDirectWorldSupported =
+      problem.usesExactDirectCutGrounding() &&
+      std::all_of(
+          problem.getGraph().getDemands().begin(),
+          problem.getGraph().getDemands().end(),
+          [](const SyncCoverDemand &demand) { return demand.distance == 0; });
+  if (exactDirectWorldSupported) {
+    SyncCoverExactWorld world;
+    world.enabledMechanisms = result.mechanisms;
+    SyncCoverRegionWorldLimits limits;
+    limits.maximumWorldsPerBatch = 1;
+    limits.maximumCuts = problem.getLimits().maximumMechanisms;
+    limits.maximumWorldMechanismIncidences = result.mechanisms.size();
+    limits.maximumStateWords =
+        problem.getLimits().maximumSingletonCoverageWords;
+    limits.maximumResultWords =
+        problem.getGraph().getDemands().size() / 64 +
+        (problem.getGraph().getDemands().size() % 64 != 0);
+    limits.maximumCutActions = problem.getLimits().maximumTotalActions;
+    const SyncCoverRegionWorldResult coverage =
+        problem.computeExactDirectCutWorlds({world}, limits, coverageWork);
+    if (!coverage) {
+      result.error =
+          coverage.error == SyncCoverFlatWorldError::LimitExceeded ||
+                  coverage.error == SyncCoverFlatWorldError::WorkLimitExceeded
+              ? CanonicalSyncSelectionError::WorkLimitExceeded
+              : CanonicalSyncSelectionError::FinalValidationFailed;
+      return result;
+    }
+    for (SyncCoverDemandId demand : problem.getObligationDemands()) {
+      if (coverageWork && !coverageWork->consume()) {
+        result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+        return result;
+      }
+      if (!coverage.coveredByWorld.front().contains(demand)) {
+        result.error = CanonicalSyncSelectionError::FinalValidationFailed;
+        result.firstUncoveredDemand = demand;
+        return result;
+      }
+    }
+    return result;
+  }
+
   std::vector<SyncCoverCompletionSupply> supplies;
   for (CanonicalSyncMechanismId mechanism : result.mechanisms) {
     if (coverageWork && !coverageWork->consume()) {

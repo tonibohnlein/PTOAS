@@ -143,9 +143,9 @@ bool mlir::pto::canonical_sync_detail::isCompletionOrdered(
 bool mlir::pto::canonical_sync_detail::canSignalPrefixCompletion(
     std::uint32_t resource,
     const CanonicalSyncTargetCapabilities &capabilities) {
-  // A later set may represent an earlier issued prefix only on resources with
-  // an explicit in-order completion contract. Other physical resources may
-  // still signal the completion of the immediately preceding operation.
+  // Legacy completion-frontier mechanisms require an operation-level
+  // completion certificate. Direct physical cuts carry SetFlag's distinct
+  // source-prefix contract explicitly and do not broaden this graph fact.
   return isCompletionOrdered(resource, capabilities);
 }
 
@@ -402,8 +402,8 @@ LogicalResult ProgramBuilder::validateInput() {
   }
   const bool invalidLimits =
       options_.maximumNodes == 0 || options_.maximumScopes == 0 ||
-      options_.maximumRegions == 0 ||
-      options_.maximumControls == 0 || options_.maximumStorageAccesses == 0 ||
+      options_.maximumRegions == 0 || options_.maximumControls == 0 ||
+      options_.maximumStorageAccesses == 0 ||
       options_.maximumPairInspections == 0 ||
       options_.maximumPeriodicRecurrenceStates == 0 ||
       options_.maximumRecurrenceWitnessStates == 0 ||

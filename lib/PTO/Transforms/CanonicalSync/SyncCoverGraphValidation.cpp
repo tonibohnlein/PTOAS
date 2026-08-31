@@ -161,10 +161,9 @@ SyncCoverGraphResult SyncCoverGraph::validate() const {
 SyncCoverGraphResult SyncCoverGraph::validateScopesControlsAndNodes() const {
   for (std::size_t index = 0; index < scopes_.size(); ++index) {
     const SyncCoverScope &scope = scopes_[index];
-    const bool invalidScope = scope.id != index ||
-                              !hasValidScope(scope.parent) ||
-                              !hasValidRegion(scope.region) ||
-                              (index != 0 && scope.parent == index);
+    const bool invalidScope =
+        scope.id != index || !hasValidScope(scope.parent) ||
+        !hasValidRegion(scope.region) || (index != 0 && scope.parent == index);
     if (invalidScope) {
       return {SyncCoverGraphError::InvalidScope, index};
     }
@@ -379,8 +378,7 @@ SyncCoverGraphResult SyncCoverGraph::validateRegions() const {
       return {SyncCoverGraphError::InvalidRegion, index};
     }
     const bool isChoice = region.kind == SyncCoverRegionKind::Choice;
-    const bool isAlternative =
-        region.kind == SyncCoverRegionKind::Alternative;
+    const bool isAlternative = region.kind == SyncCoverRegionKind::Alternative;
     const bool invalidControl =
         (isChoice && (!region.control || region.alternative)) ||
         (isAlternative && (!region.control || !region.alternative)) ||
@@ -439,24 +437,22 @@ SyncCoverGraphResult SyncCoverGraph::validateRegions() const {
               index};
     }
     if (regionInterfacesBuilt_) {
-      std::set<std::pair<SyncCoverRegionElementKind, std::size_t>>
-          seenElements;
+      std::set<std::pair<SyncCoverRegionElementKind, std::size_t>> seenElements;
       for (const SyncCoverRegionElement &element : region.elements) {
         if (!seenElements.emplace(element.kind, element.value).second) {
           return {SyncCoverGraphError::InvalidRegion, index};
         }
         if (element.kind == SyncCoverRegionElementKind::Node) {
-          const bool invalidNode =
-              element.value >= nodes_.size() ||
-              nodes_[element.value].region != index;
+          const bool invalidNode = element.value >= nodes_.size() ||
+                                   nodes_[element.value].region != index;
           if (invalidNode) {
             return {SyncCoverGraphError::InvalidRegion, index};
           }
           ++nodeOwners[element.value];
         } else if (element.kind == SyncCoverRegionElementKind::ChildRegion) {
-          const bool invalidChild =
-              element.value == 0 || element.value >= regions_.size() ||
-              regions_[element.value].parent != index;
+          const bool invalidChild = element.value == 0 ||
+                                    element.value >= regions_.size() ||
+                                    regions_[element.value].parent != index;
           if (invalidChild) {
             return {SyncCoverGraphError::InvalidRegion, index};
           }
@@ -469,9 +465,8 @@ SyncCoverGraphResult SyncCoverGraph::validateRegions() const {
         return {SyncCoverGraphError::InvalidRegionPort, index};
       }
       for (SyncCoverRegionPortId portId : region.ports) {
-        const bool invalidPort =
-            portId >= regionPorts_.size() ||
-            regionPorts_[portId].region != index;
+        const bool invalidPort = portId >= regionPorts_.size() ||
+                                 regionPorts_[portId].region != index;
         if (invalidPort) {
           return {SyncCoverGraphError::InvalidRegionPort, index};
         }
@@ -640,6 +635,10 @@ SyncCoverGraphResult SyncCoverGraph::validateEdges() const {
     }
     if (!isValidEdgeKind(edge.kind)) {
       return {SyncCoverGraphError::InvalidEdgeKind, index};
+    }
+    if (edge.kind == SyncCoverEdgeKind::CompletionSupply &&
+        !isValidOrderingRequirements(edge.suppliedRequirements)) {
+      return {SyncCoverGraphError::InvalidOrderingRequirement, index};
     }
     const bool issueOrder =
         edge.kind == SyncCoverEdgeKind::CertifiedCompletionFrontier ||

@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverGraph.h"
 
@@ -172,14 +174,14 @@ bool testRecurrenceScopes() {
 bool testStructuralRegionOwnershipAndPorts() {
   bool passed = true;
   SyncCoverGraph graph;
-  const SyncCoverRegionId rootSequence = takeIndex(
-      graph.addRegion(0, SyncCoverRegionKind::Sequence,
-                      SyncCoverRegionCardinality::ExactlyOnce),
-      passed, "add root sequence region");
-  const SyncCoverScopeId loopScope = takeIndex(
-      graph.addScope(0, true, SyncCoverTimelineInterval{0, 20}, true, {},
-                     rootSequence),
-      passed, "add structural loop scope");
+  const SyncCoverRegionId rootSequence =
+      takeIndex(graph.addRegion(0, SyncCoverRegionKind::Sequence,
+                                SyncCoverRegionCardinality::ExactlyOnce),
+                passed, "add root sequence region");
+  const SyncCoverScopeId loopScope =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 20}, true,
+                               {}, rootSequence),
+                passed, "add structural loop scope");
   const SyncCoverRegionId loop = takeIndex(
       graph.addRegion(rootSequence, SyncCoverRegionKind::Loop,
                       SyncCoverRegionCardinality::ZeroOrMore, loopScope),
@@ -192,11 +194,11 @@ bool testStructuralRegionOwnershipAndPorts() {
       passed, "add loop body sequence");
   const SyncCoverControlId control =
       takeIndex(graph.addControl(2, loopScope), passed, "add branch control");
-  const SyncCoverRegionId choice = takeIndex(
-      graph.addRegion(body, SyncCoverRegionKind::Choice,
-                      SyncCoverRegionCardinality::ExactlyOnce, loopScope, {},
-                      control),
-      passed, "add choice region");
+  const SyncCoverRegionId choice =
+      takeIndex(graph.addRegion(body, SyncCoverRegionKind::Choice,
+                                SyncCoverRegionCardinality::ExactlyOnce,
+                                loopScope, {}, control),
+                passed, "add choice region");
   passed &= check(graph.setControlRegion(control, choice),
                   "bind control to choice region");
 
@@ -207,11 +209,11 @@ bool testStructuralRegionOwnershipAndPorts() {
     const SyncCoverScopeId scope = takeIndex(
         graph.addScope(loopScope, true, std::nullopt, false, guard, choice),
         passed, "add alternative scope");
-    const SyncCoverRegionId alternativeRegion = takeIndex(
-        graph.addRegion(choice, SyncCoverRegionKind::Alternative,
-                        SyncCoverRegionCardinality::ZeroOrOne, scope, guard,
-                        control, alternative),
-        passed, "add alternative region");
+    const SyncCoverRegionId alternativeRegion =
+        takeIndex(graph.addRegion(choice, SyncCoverRegionKind::Alternative,
+                                  SyncCoverRegionCardinality::ZeroOrOne, scope,
+                                  guard, control, alternative),
+                  passed, "add alternative region");
     passed &= check(graph.setScopeRegion(scope, alternativeRegion),
                     "bind alternative scope to its owner");
     alternatives.push_back(alternativeRegion);
@@ -242,14 +244,15 @@ bool testStructuralRegionOwnershipAndPorts() {
                   "own a distance-zero row at the endpoint-region LCA");
   std::vector<SyncCoverRegionId> exposedAt;
   for (const SyncCoverRegionPort &port : graph.getRegionPorts()) {
-    if (port.kind == SyncCoverRegionPortKind::DemandSource && port.demand == 0) {
+    if (port.kind == SyncCoverRegionPortKind::DemandSource &&
+        port.demand == 0) {
       exposedAt.push_back(port.region);
     }
   }
-  passed &= check(exposedAt == std::vector<SyncCoverRegionId>(
-                                  {sequences.front(), alternatives.front(),
-                                   choice}),
-                  "thread a nested endpoint through immediate-child ports");
+  passed &=
+      check(exposedAt == std::vector<SyncCoverRegionId>(
+                             {sequences.front(), alternatives.front(), choice}),
+            "thread a nested endpoint through immediate-child ports");
   for (const SyncCoverRegion &region : graph.getRegions()) {
     for (const SyncCoverRegionElement &element : region.elements) {
       const bool immediate =
@@ -546,6 +549,8 @@ bool testCanonicalRowsAndInvalidKinds() {
   const SyncCoverGraphResult firstEdge = graph.addEdge(edge);
   passed &= check(firstEdge, "add canonical edge");
   edge.kind = SyncCoverEdgeKind::CompletionSupply;
+  edge.suppliedRequirements = syncCoverOrderingRequirementBit(
+      SyncCoverOrderingRequirement::MemoryOrderBeforeAccess);
   const SyncCoverGraphResult strongerEdge = graph.addEdge(edge);
   passed &= check(strongerEdge && strongerEdge.index == firstEdge.index,
                   "duplicate edge returns its canonical row");
@@ -553,6 +558,11 @@ bool testCanonicalRowsAndInvalidKinds() {
       check(graph.getEdges().size() == 1 &&
                 graph.getEdges()[0].kind == SyncCoverEdgeKind::CompletionSupply,
             "duplicate edge retains the strongest semantics");
+  passed &= check(
+      graph.getEdges()[0].suppliedRequirements ==
+          syncCoverOrderingRequirementBit(
+              SyncCoverOrderingRequirement::MemoryOrderBeforeAccess),
+      "upgrading issue order replaces its ignored default capability mask");
   edge.kind = SyncCoverEdgeKind::CompletionPreservingIssueOrder;
   passed &=
       check(graph.addEdge(edge).index == firstEdge.index &&
@@ -563,6 +573,26 @@ bool testCanonicalRowsAndInvalidKinds() {
       check(graph.addEdge(edge).index == firstEdge.index &&
                 graph.getEdges()[0].kind == SyncCoverEdgeKind::CompletionSupply,
             "strongest edge merge is insertion-order stable");
+
+  SyncCoverGraph reverseOrder;
+  const SyncCoverNodeId reverseSource = takeIndex(
+      reverseOrder.addNode(1, 1, 0, 0), passed, "add reverse-order source");
+  const SyncCoverNodeId reverseTarget = takeIndex(
+      reverseOrder.addNode(1, 1, 0, 1), passed, "add reverse-order target");
+  SyncCoverEdge reverseSupply = makeEdge(reverseSource, reverseTarget,
+                                         SyncCoverEdgeKind::CompletionSupply);
+  reverseSupply.suppliedRequirements = syncCoverOrderingRequirementBit(
+      SyncCoverOrderingRequirement::MemoryOrderBeforeAccess);
+  passed &= check(reverseOrder.addEdge(reverseSupply),
+                  "add completion supply before issue order");
+  passed &= check(reverseOrder.addEdge(makeEdge(
+                      reverseSource, reverseTarget,
+                      SyncCoverEdgeKind::NonCompletionPreservingIssueOrder)),
+                  "merge issue order after completion supply");
+  passed &=
+      check(reverseOrder.getEdges()[0].suppliedRequirements ==
+                graph.getEdges()[0].suppliedRequirements,
+            "completion-supply capabilities are insertion-order independent");
   for (SyncCoverEdgeKind kind :
        {SyncCoverEdgeKind::CompletionPreservingIssueOrder,
         SyncCoverEdgeKind::NonCompletionPreservingIssueOrder}) {

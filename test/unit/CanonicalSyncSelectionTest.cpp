@@ -4952,6 +4952,153 @@ bool testTypedRawGraphValidationAndDump() {
   return passed;
 }
 
+bool testExactDirectGroundingUsesOneAggregateMultiBatchBudget() {
+  bool passed = true;
+  constexpr std::size_t kMechanisms = 257;
+  constexpr SyncCoverOrderingRequirementMask kPrimitiveRequirements =
+      syncCoverOrderingRequirementBit(
+          SyncCoverOrderingRequirement::PipelineCompletionBeforeAccess) |
+      syncCoverOrderingRequirementBit(
+          SyncCoverOrderingRequirement::MemoryOrderBeforeAccess);
+  SyncCoverGraph graph;
+  passed &= check(graph.setBlockingTargetedBarrierResources({1}),
+                  "enable exact direct targeted barriers");
+  std::vector<std::pair<SyncCoverNodeId, SyncCoverNodeId>> endpoints;
+  endpoints.reserve(kMechanisms);
+  for (std::size_t index = 0; index < kMechanisms; ++index) {
+    const SyncCoverNodeId source =
+        takeIndex(graph.addNode(1, 1, 0, index * 2), passed,
+                  "add multi-batch direct source");
+    const SyncCoverNodeId target =
+        takeIndex(graph.addNode(1, 1, 0, index * 2 + 1), passed,
+                  "add multi-batch direct target");
+    endpoints.emplace_back(source, target);
+    passed &= check(graph.addDemand(demand(source, target)),
+                    "add multi-batch direct demand");
+  }
+  passed &= check(graph.freezeStructure(), "freeze multi-batch direct graph");
+  if (!passed) {
+    return false;
+  }
+
+  const auto makeProblem = [&]() {
+    auto problem =
+        std::make_unique<CanonicalSyncPatternProblem>(graph, allDemands(graph));
+    if (!problem->enableExactDirectCutGrounding(
+            kPrimitiveRequirements, kPrimitiveRequirements,
+            /*eventCompletesSourcePrefix=*/true)) {
+      return std::unique_ptr<CanonicalSyncPatternProblem>{};
+    }
+    for (SyncCoverDemandId demandId = 0; demandId < endpoints.size();
+         ++demandId) {
+      CanonicalSyncMechanismDescriptor descriptor = targetedBarrier(
+          1, endpoints[demandId].first, endpoints[demandId].second);
+      descriptor.supplies.front().attestedDemand = demandId;
+      if (!problem->internMechanism(
+              std::move(descriptor),
+              CanonicalSyncMechanismOrigin::DirectTargetedBarrier)) {
+        return std::unique_ptr<CanonicalSyncPatternProblem>{};
+      }
+    }
+    return problem;
+  };
+
+  std::unique_ptr<CanonicalSyncPatternProblem> measured = makeProblem();
+  if (!check(measured, "build measured multi-batch direct problem")) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget measuredWork;
+  const CanonicalSyncProblemResult measuredResult =
+      measured->freeze(&measuredWork);
+  if (!check(measuredResult && measured->getPatterns().size() == kMechanisms &&
+                 measuredWork.workUnits != 0,
+             "ground more than one direct-world batch")) {
+    return false;
+  }
+
+  std::unique_ptr<CanonicalSyncPatternProblem> exact = makeProblem();
+  SyncCoverCoverageWorkBudget exactWork(measuredWork.workUnits);
+  const CanonicalSyncProblemResult exactResult = exact->freeze(&exactWork);
+  std::unique_ptr<CanonicalSyncPatternProblem> below = makeProblem();
+  SyncCoverCoverageWorkBudget belowWork(measuredWork.workUnits - 1);
+  const CanonicalSyncProblemResult belowResult = below->freeze(&belowWork);
+  return check(exactResult && exactWork.workUnits == measuredWork.workUnits,
+               "accept multi-batch grounding at its exact aggregate bound") &&
+         check(belowResult.error == CanonicalSyncProblemError::LimitExceeded &&
+                   belowWork.exhausted && !below->isFrozen(),
+               "reject multi-batch grounding one below its aggregate bound");
+}
+
+bool testExactDirectFreezeBudgetsChoiceScratchState() {
+  bool passed = true;
+  constexpr SyncCoverOrderingRequirementMask kPrimitiveRequirements =
+      syncCoverOrderingRequirementBit(
+          SyncCoverOrderingRequirement::PipelineCompletionBeforeAccess) |
+      syncCoverOrderingRequirementBit(
+          SyncCoverOrderingRequirement::MemoryOrderBeforeAccess);
+  SyncCoverGraph graph;
+  passed &= check(graph.setBlockingTargetedBarrierResources({1}),
+                  "enable choice direct targeted barrier");
+  const SyncCoverRegionId sequence =
+      takeIndex(graph.addRegion(0, SyncCoverRegionKind::Sequence,
+                                SyncCoverRegionCardinality::ExactlyOnce),
+                passed, "add choice direct root sequence");
+  const SyncCoverNodeId source = takeIndex(
+      graph.addNode(1, 1, 0, 0, {}, {}, std::nullopt, false,
+                    std::numeric_limits<std::size_t>::max(), -1, {}, sequence),
+      passed, "add choice direct source");
+  const SyncCoverControlId control =
+      takeIndex(graph.addControl(2), passed, "add choice direct control");
+  const SyncCoverRegionId choice = takeIndex(
+      graph.addRegion(sequence, SyncCoverRegionKind::Choice,
+                      SyncCoverRegionCardinality::ExactlyOnce, 0, {}, control),
+      passed, "add choice direct region");
+  passed &= check(graph.setControlRegion(control, choice),
+                  "bind choice direct control");
+  for (unsigned alternative = 0; alternative < 2; ++alternative) {
+    SyncCoverGuard guard{{{control, alternative}}};
+    const SyncCoverRegionId alternativeRegion =
+        takeIndex(graph.addRegion(choice, SyncCoverRegionKind::Alternative,
+                                  SyncCoverRegionCardinality::ZeroOrOne, 0,
+                                  guard, control, alternative),
+                  passed, "add choice direct alternative");
+    takeIndex(graph.addNode(1, 1, 0, alternative + 1, guard, {}, std::nullopt,
+                            false, std::numeric_limits<std::size_t>::max(), -1,
+                            {}, alternativeRegion),
+              passed, "add choice direct alternative node");
+  }
+  const SyncCoverNodeId target = takeIndex(
+      graph.addNode(1, 1, 0, 3, {}, {}, std::nullopt, false,
+                    std::numeric_limits<std::size_t>::max(), -1, {}, sequence),
+      passed, "add choice direct target");
+  passed &= check(graph.addDemand(demand(source, target)),
+                  "add choice direct demand");
+  passed &= check(graph.freezeStructure(), "freeze choice direct graph");
+  if (!passed) {
+    return false;
+  }
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.enableExactDirectCutGrounding(
+                      kPrimitiveRequirements, kPrimitiveRequirements,
+                      /*eventCompletesSourcePrefix=*/true),
+                  "enable exact choice direct grounding");
+  CanonicalSyncMechanismDescriptor descriptor =
+      targetedBarrier(1, source, target);
+  descriptor.supplies.front().attestedDemand = 0;
+  passed &= check(problem.internMechanism(
+                      std::move(descriptor),
+                      CanonicalSyncMechanismOrigin::DirectTargetedBarrier),
+                  "add choice direct barrier");
+  SyncCoverCoverageWorkBudget work;
+  const CanonicalSyncProblemResult frozen = problem.freeze(&work);
+  return passed &&
+         check(frozen && problem.getPatterns().size() == 1 &&
+                   work.workUnits != 0,
+               "freeze direct singleton worlds with branch scratch inside "
+               "the aggregate memory envelope");
+}
+
 } // namespace
 
 int main() {
@@ -5014,6 +5161,9 @@ int main() {
       testSourcePrefixBarrierRejectsInvalidCertificates() &&
       testSourcePrefixBarrierKeepsDistanceQualifiers() &&
       testMechanismOriginInterningIsBoundedAndDiagnosticOnly() &&
-      testTypedRawGraphValidationAndDump() && testFailClosedConstruction();
+      testTypedRawGraphValidationAndDump() &&
+      testExactDirectGroundingUsesOneAggregateMultiBatchBudget() &&
+      testExactDirectFreezeBudgetsChoiceScratchState() &&
+      testFailClosedConstruction();
   return passed ? 0 : 1;
 }

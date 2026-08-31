@@ -21,22 +21,6 @@
 // RUN:   --canonical-sync-mechanism-families=core \
 // RUN:   --canonical-sync-enable-conflict-core-repair=false %s \
 // RUN:   -o %t.d.pto 2>&1 | FileCheck %s --check-prefix=D-FAIL
-// RUN: not ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
-// RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
-// RUN:   --canonical-sync-catalog-mode=strict-direct \
-// RUN:   --canonical-sync-pattern-mode=direct-pair \
-// RUN:   --canonical-sync-mechanism-families=core \
-// RUN:   --canonical-sync-enable-conflict-core-repair=false %s \
-// RUN:   -o %t.dp.pto 2>&1 | FileCheck %s --check-prefix=DP-FAIL
-// RUN: not ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
-// RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
-// RUN:   --canonical-sync-catalog-mode=strict-direct \
-// RUN:   --canonical-sync-pattern-mode=direct \
-// RUN:   --canonical-sync-mechanism-families=storage-cut-event \
-// RUN:   --canonical-sync-enable-conflict-core-repair=false \
-// RUN:   --canonical-sync-comparison-report=%t.cut.json %s \
-// RUN:   -o %t.cut.pto 2>&1 | FileCheck %s --check-prefix=CUT-FAIL
-// RUN: FileCheck %s --check-prefix=CUT-REPORT < %t.cut.json
 // RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
 // RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
 // RUN:   --canonical-sync-pattern-mode=direct \
@@ -246,112 +230,7 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // BARRIERS-COUNT-1: pto.barrier <PIPE_ALL>
 // BARRIERS-NOT: pto.barrier
 
-// D-FAIL: canonical sync direct catalog exhausted the event-ID budget
-// DP-FAIL: canonical sync direct planning failed closed, error=5
-// CUT-FAIL: canonical sync direct catalog exhausted the event-ID budget
-
-// CUT-REPORT: "candidate_mechanisms_by_origin":
-// CUT-REPORT: "storage-cut-event": 72
-// CUT-REPORT: "enabled_mechanism_families":
-// CUT-REPORT-NEXT: "storage-cut-event"
-// CUT-REPORT: "storage_protocol_automata": 5
-// CUT-REPORT: "storage_protocol_automaton_analysis_enabled": true
-// CUT-REPORT: "storage_protocol_automaton_eligible_groups": 5
-// CUT-REPORT: "storage_protocol_automaton_ineligible_groups": 0
-// CUT-REPORT: "storage_protocol_automaton_state_pair_incidences": 2227
-// CUT-REPORT: "storage_protocol_automaton_transfers": 2170
-// CUT-REPORT: "storage_protocol_certificate_frontiers": 14
-// CUT-REPORT: "storage_protocol_completion_cut_fact_frontiers": 18
-// CUT-REPORT: "storage_protocol_component_incidences": 17
-// CUT-REPORT: "storage_protocol_cut_plan_analysis_enabled": true
-// CUT-REPORT: "storage_protocol_cut_plan_details":
-// CUT-REPORT: "direct_ready_transfers": 16
-// CUT-REPORT: "ready_rectangles": 16
-// CUT-REPORT: "storage_protocol_cut_plan_eligible_automata": 1
-// CUT-REPORT: "storage_protocol_cut_plan_ineligible_automata": 4
-// CUT-REPORT: "storage_protocol_cut_plan_missing_ready_cut_automata": 4
-// CUT-REPORT: "storage_protocol_cut_plans": 1
-// CUT-REPORT: "storage_protocol_demand_incidences": 2170
-// CUT-REPORT: "storage_protocol_direct_frontiers": 878
-// CUT-REPORT: "storage_protocol_eligible_seeds": 9
-// CUT-REPORT: "storage_protocol_frontier_analysis_enabled": true
-// CUT-REPORT: "storage_protocol_frontier_certificate_demand_incidences": 76
-// CUT-REPORT: "storage_protocol_frontier_completion_cut_fact_demand_incidences": 18
-// CUT-REPORT: "storage_protocol_frontier_eligible_automata": 5
-// CUT-REPORT: "storage_protocol_frontier_ineligible_automata": 0
-// CUT-REPORT: "storage_protocol_frontier_missing_completion_automata": 2
-// CUT-REPORT: "storage_protocol_frontier_missing_ready_automata": 0
-// CUT-REPORT: "storage_protocol_frontier_missing_recurrence_reuse_automata": 0
-// CUT-REPORT: "storage_protocol_frontier_plan_incidences": 910
-// CUT-REPORT: "storage_protocol_frontier_plans": 5
-// CUT-REPORT: "storage_protocol_frontiers": 910
-// CUT-REPORT: "storage_protocol_group_control_incidences": 5
-// CUT-REPORT: "storage_protocol_group_demand_incidences": 2170
-// CUT-REPORT: "storage_protocol_group_details":
-// CUT-REPORT: "behavior": "phase-rotating-round-trip"
-// CUT-REPORT: "demands": 62
-// CUT-REPORT: "seeds":
-// CUT-REPORT-NEXT: 0
-// CUT-REPORT: "behavior": "phase-rotating-round-trip"
-// CUT-REPORT: "demands": 160
-// CUT-REPORT: "seeds":
-// CUT-REPORT-NEXT: 1
-// CUT-REPORT-NEXT: 7
-// CUT-REPORT: "behavior": "phase-rotating-round-trip"
-// CUT-REPORT: "demands": 1824
-// CUT-REPORT: "seeds":
-// CUT-REPORT-NEXT: 2
-// CUT-REPORT-NEXT: 3
-// CUT-REPORT-NEXT: 5
-// CUT-REPORT-NEXT: 6
-// CUT-REPORT: "behavior": "stable-round-trip"
-// CUT-REPORT: "demands": 90
-// CUT-REPORT: "seeds":
-// CUT-REPORT-NEXT: 4
-// CUT-REPORT: "behavior": "phase-rotating-round-trip"
-// CUT-REPORT: "demands": 34
-// CUT-REPORT: "seeds":
-// CUT-REPORT-NEXT: 8
-// CUT-REPORT: "storage_protocol_group_details_truncated": false
-// CUT-REPORT: "storage_protocol_group_seed_incidences": 9
-// CUT-REPORT: "storage_protocol_group_truncated": false
-// CUT-REPORT: "storage_protocol_groups": 5
-// CUT-REPORT: "storage_protocol_ineligible_seeds": 0
-// CUT-REPORT: "storage_protocol_maximum_group_seeds": 4
-// CUT-REPORT: "storage_protocol_maximum_rectangle_frontiers": 1
-// CUT-REPORT: "storage_protocol_maximum_seed_components": 2
-// CUT-REPORT: "storage_protocol_maximum_seed_sccs": 2
-// CUT-REPORT: "storage_protocol_maximum_seed_slots": 1
-// CUT-REPORT: "storage_protocol_merged_rectangles": 0
-// CUT-REPORT: "storage_protocol_phase_rotating_seeds": 8
-// CUT-REPORT: "storage_protocol_ready_frontiers": 788
-// CUT-REPORT: "storage_protocol_ready_rectangles": 788
-// CUT-REPORT: "storage_protocol_ready_release_seeds": 9
-// CUT-REPORT: "storage_protocol_rectangle_analysis_enabled": true
-// CUT-REPORT: "storage_protocol_rectangle_frontier_incidences": 910
-// CUT-REPORT: "storage_protocol_rectangle_frontier_inspections": 910
-// CUT-REPORT: "storage_protocol_rectangle_grounding_batches": 1
-// CUT-REPORT: "storage_protocol_rectangle_grounding_error": 0
-// CUT-REPORT: "storage_protocol_rectangle_grounding_evaluated": 910
-// CUT-REPORT: "storage_protocol_rectangle_grounding_truncated": false
-// CUT-REPORT: "storage_protocol_rectangle_plans": 5
-// CUT-REPORT: "storage_protocol_rectangles": 910
-// CUT-REPORT: "storage_protocol_rectangles_covering_multiple_rows": 0
-// CUT-REPORT: "storage_protocol_rectangles_with_coverage": 910
-// CUT-REPORT: "storage_protocol_reuse_frontiers": 122
-// CUT-REPORT: "storage_protocol_reuse_rectangles": 122
-// CUT-REPORT: "storage_protocol_same_resource_recurrence_reuses": 571
-// CUT-REPORT: "storage_protocol_scc_incidences": 17
-// CUT-REPORT: "storage_protocol_seed_analysis_enabled": true
-// CUT-REPORT: "storage_protocol_seed_truncated": false
-// CUT-REPORT: "storage_protocol_seeds": 9
-// CUT-REPORT: "storage_protocol_slot_incidences": 9
-// CUT-REPORT: "storage_protocol_stable_seeds": 1
-// CUT-REPORT: "storage_synthetic_rectangles_covering_multiple_rows": 72
-// CUT-REPORT: "storage_synthetic_rectangles_with_coverage": 72
-// CUT-REPORT: "selected_mechanisms_by_origin":
-// CUT-REPORT: "storage-cut-event": 4
-// CUT-REPORT: "used_localized_pipe_all": false
+// D-FAIL: canonical sync direct-only mode cannot admit a loop-repeated one-bit event without an independent token lifecycle protocol
 
 // DIRECT-REPORT: "candidate_mechanisms_by_origin":
 // DIRECT-REPORT: "basic-ownership-accumulator-protocol": 1
