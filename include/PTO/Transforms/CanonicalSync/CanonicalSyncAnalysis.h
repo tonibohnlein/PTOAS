@@ -12,8 +12,9 @@
 #define PTO_TRANSFORMS_CANONICALSYNC_CANONICALSYNCANALYSIS_H
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverGraph.h"
-#include "PTO/Transforms/CanonicalSync/SyncCoverStorageLifecycle.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverStorageCuts.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverStorageLifecycle.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverStorageRectangles.h"
 
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -55,6 +56,7 @@ struct CanonicalSyncAnalysisOptions {
   bool discoverStorageLifecycleComponents = false;
   SyncCoverStorageLifecycleLimits storageLifecycleLimits;
   SyncCoverStorageCutLimits storageCutLimits;
+  SyncCoverStorageFactoredRectangleLimits storageRectangleLimits;
   std::size_t maximumNodes = 1U << 16;
   std::size_t maximumScopes = 1U << 14;
   std::size_t maximumControls = 1U << 14;
@@ -226,6 +228,8 @@ public:
       std::vector<AddressSpace> storageSpaces,
       std::optional<SyncCoverStorageLifecycleIndex> storageLifecycleIndex,
       std::optional<SyncCoverStorageCutIndex> storageCutIndex,
+      std::optional<SyncCoverStorageFactoredRectangleIndex>
+          storageRectangleIndex,
       CanonicalSyncTargetCapabilities targetCapabilities,
       CanonicalSyncOwnershipDiscoveryStatistics ownershipDiscoveryStatistics,
       CanonicalSyncEventReservations eventReservations)
@@ -236,6 +240,7 @@ public:
         storageSpaces_(std::move(storageSpaces)),
         storageLifecycleIndex_(std::move(storageLifecycleIndex)),
         storageCutIndex_(std::move(storageCutIndex)),
+        storageRectangleIndex_(std::move(storageRectangleIndex)),
         targetCapabilities_(std::move(targetCapabilities)),
         ownershipDiscoveryStatistics_(ownershipDiscoveryStatistics),
         eventReservations_(std::move(eventReservations)) {}
@@ -262,6 +267,10 @@ public:
   const std::optional<SyncCoverStorageCutIndex> &getStorageCutIndex() const {
     return storageCutIndex_;
   }
+  const std::optional<SyncCoverStorageFactoredRectangleIndex> &
+  getStorageRectangleIndex() const {
+    return storageRectangleIndex_;
+  }
   const CanonicalSyncTargetCapabilities &getTargetCapabilities() const {
     return targetCapabilities_;
   }
@@ -282,6 +291,7 @@ private:
   std::vector<AddressSpace> storageSpaces_;
   std::optional<SyncCoverStorageLifecycleIndex> storageLifecycleIndex_;
   std::optional<SyncCoverStorageCutIndex> storageCutIndex_;
+  std::optional<SyncCoverStorageFactoredRectangleIndex> storageRectangleIndex_;
   CanonicalSyncTargetCapabilities targetCapabilities_;
   CanonicalSyncOwnershipDiscoveryStatistics ownershipDiscoveryStatistics_;
   CanonicalSyncEventReservations eventReservations_;

@@ -266,6 +266,14 @@ struct CanonicalSyncComparisonReport {
   std::size_t storageCutGuardLiterals = 0;
   std::size_t storageMaximumRectangleEdges = 0;
   bool storageCutTruncated = false;
+  bool storageRectangleAnalysisEnabled = false;
+  std::size_t storageRectangleWorkUnits = 0;
+  std::size_t storageRectangleInspections = 0;
+  std::size_t storageFactoredRectangles = 0;
+  std::size_t storageDirectFactoredRectangles = 0;
+  std::size_t storageSyntheticFactoredRectangles = 0;
+  std::size_t storageRectangleGuardLiterals = 0;
+  bool storageRectangleTruncated = false;
   std::size_t demands = 0;
   std::size_t uniqueDemandRows = 0;
   std::size_t selectionBasisRows = 0;

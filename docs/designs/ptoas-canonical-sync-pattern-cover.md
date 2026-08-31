@@ -642,8 +642,13 @@ whose endpoints coexecute. Completion cuts are keyed by source node and target
 resource; acquisition cuts are keyed by target node and source resource.
 Compact rectangles retain lifecycle-edge incidences between those cuts rather
 than expanding producer-by-consumer pairs. This layer is also reporting-only:
-it does not yet combine a cut with multiple opposite-side frontiers or add a
-set-cover column.
+it does not add a set-cover column. A second bounded analysis layer enumerates
+balanced, distance-zero event rectangles between compatible completion and
+acquisition cuts. It includes synthetic cross-cut pairs that have no direct
+hazard at the exact endpoints, because those are the schedule rectangles that
+may cover several original obligations after semantic grounding. Candidate
+coverage is not guessed or stored by this layer; the ordinary completion
+oracle will ground each compact supply before any later selector integration.
 
 This keeps direct columns as the correctness basis while allowing event-ID
 scarcity to motivate generic channel synthesis. Ordinary pair columns remain a

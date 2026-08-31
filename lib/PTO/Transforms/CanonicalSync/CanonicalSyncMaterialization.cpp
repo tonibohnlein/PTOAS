@@ -1960,6 +1960,20 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
         cutStatistics.maximumRectangleEdges;
     report.storageCutTruncated = cutStatistics.truncated;
   }
+  if (program.getStorageRectangleIndex()) {
+    report.storageRectangleAnalysisEnabled = true;
+    const SyncCoverStorageFactoredRectangleStatistics &rectangleStatistics =
+        program.getStorageRectangleIndex()->getStatistics();
+    report.storageRectangleWorkUnits = rectangleStatistics.workUnits;
+    report.storageRectangleInspections = rectangleStatistics.inspections;
+    report.storageFactoredRectangles = rectangleStatistics.rectangles;
+    report.storageDirectFactoredRectangles =
+        rectangleStatistics.directRectangles;
+    report.storageSyntheticFactoredRectangles =
+        rectangleStatistics.syntheticRectangles;
+    report.storageRectangleGuardLiterals = rectangleStatistics.guardLiterals;
+    report.storageRectangleTruncated = rectangleStatistics.truncated;
+  }
   report.uniqueDemandRows = problem.getObligationDemands().size();
   report.selectionBasisRows = problem.getDemands().size();
   report.basisReducedRows = report.uniqueDemandRows - report.selectionBasisRows;

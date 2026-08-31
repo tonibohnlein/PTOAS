@@ -220,6 +220,7 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
   }
   std::optional<SyncCoverStorageLifecycleIndex> storageLifecycleIndex;
   std::optional<SyncCoverStorageCutIndex> storageCutIndex;
+  std::optional<SyncCoverStorageFactoredRectangleIndex> storageRectangleIndex;
   if (options_.discoverStorageLifecycleComponents) {
     storageLifecycleIndex = buildSyncCoverStorageLifecycleIndex(
         graph_, options_.storageLifecycleLimits);
@@ -247,6 +248,22 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
             << static_cast<unsigned>(cutError);
         return failure();
       }
+      if (storageCutIndex->isComplete()) {
+        storageRectangleIndex = buildSyncCoverStorageFactoredRectangleIndex(
+            graph_, *storageCutIndex, options_.storageRectangleLimits);
+        const SyncCoverStorageFactoredRectangleError rectangleError =
+            storageRectangleIndex->getError();
+        const bool invalidRectangleIndex =
+            rectangleError != SyncCoverStorageFactoredRectangleError::None &&
+            rectangleError !=
+                SyncCoverStorageFactoredRectangleError::LimitExceeded;
+        if (invalidRectangleIndex) {
+          function_.emitError(
+              "cannot build canonical sync storage rectangle index, error=")
+              << static_cast<unsigned>(rectangleError);
+          return failure();
+        }
+      }
     }
   }
   std::vector<AddressSpace> storageSpaces(graph_.getStorageDomains().size(),
@@ -259,6 +276,7 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
       std::move(scopeBindings_), std::move(controlBindings_),
       std::move(storageSpaces), std::move(storageLifecycleIndex),
       std::move(storageCutIndex),
+      std::move(storageRectangleIndex),
       std::move(targetCapabilities_), ownershipDiscoveryStatistics_,
       std::move(eventReservations_));
 }
@@ -304,7 +322,11 @@ LogicalResult ProgramBuilder::validateInput() {
        options_.storageCutLimits.maximumCuts == 0 ||
        options_.storageCutLimits.maximumRectangles == 0 ||
        options_.storageCutLimits.maximumIncidences == 0 ||
-       options_.storageCutLimits.maximumGuardLiterals == 0);
+       options_.storageCutLimits.maximumGuardLiterals == 0 ||
+       options_.storageRectangleLimits.maximumWorkUnits == 0 ||
+       options_.storageRectangleLimits.maximumInspections == 0 ||
+       options_.storageRectangleLimits.maximumRectangles == 0 ||
+       options_.storageRectangleLimits.maximumGuardLiterals == 0);
   if (invalidLimits || invalidLifecycleLimits) {
     return function_.emitError(
         "canonical sync analysis limits must be positive");
