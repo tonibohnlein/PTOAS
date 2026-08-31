@@ -48,6 +48,9 @@ struct SyncCoverStorageProtocolGroup {
   std::vector<std::uint64_t> behaviorSignature;
   std::vector<SyncCoverStorageProtocolSeedId> seeds;
   std::vector<SyncCoverControlId> periodicControls;
+  /// Reachable joint control phases in iteration order, beginning at the
+  /// declared initial phases. The successor of the last state is state zero.
+  std::vector<std::vector<std::size_t>> reachablePhaseStates;
   std::vector<SyncCoverDemandId> demands;
   unsigned maximumDistance = 0;
 };

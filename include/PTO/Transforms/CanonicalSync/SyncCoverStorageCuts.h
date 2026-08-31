@@ -23,11 +23,6 @@ namespace pto {
 using SyncCoverStorageCutId = std::size_t;
 using SyncCoverStorageRectangleId = std::size_t;
 
-struct SyncCoverStorageLifecycleEdgeRef {
-  SyncCoverStorageLifecycleComponentId component = 0;
-  SyncCoverStorageLifecycleEdgeId edge = 0;
-};
-
 enum class SyncCoverStorageCutKind : std::uint8_t {
   Completion,
   Acquisition,

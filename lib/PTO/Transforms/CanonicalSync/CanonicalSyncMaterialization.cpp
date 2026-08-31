@@ -42,6 +42,7 @@ constexpr std::size_t kMaximumStorageProtocolGroupReportEntries = 256;
 constexpr std::size_t kMaximumStorageProtocolGroupReportSeedEntries = 4096;
 constexpr std::size_t
     kMaximumStorageProtocolGroupReportBehaviorSignatureEntries = 4096;
+constexpr std::size_t kMaximumStorageProtocolAutomatonReportEntries = 256;
 
 using SteadyClock = std::chrono::steady_clock;
 
@@ -2026,6 +2027,62 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
            group.readySourceResource, group.readyTargetResource,
            group.behaviorSignature, group.seeds, group.periodicControls.size(),
            group.demands.size(), group.maximumDistance});
+    }
+  }
+  if (program.getStorageProtocolAutomatonIndex()) {
+    report.storageProtocolAutomatonAnalysisEnabled = true;
+    const SyncCoverStorageProtocolAutomatonStatistics &automatonStatistics =
+        program.getStorageProtocolAutomatonIndex()->getStatistics();
+    report.storageProtocolAutomatonWorkUnits = automatonStatistics.workUnits;
+    report.storageProtocolAutomatonEligibleGroups =
+        automatonStatistics.eligibleGroups;
+    report.storageProtocolAutomatonIneligibleGroups =
+        automatonStatistics.ineligibleGroups;
+    report.storageProtocolAutomatonLaneLimitedGroups =
+        automatonStatistics.laneLimitedGroups;
+    report.storageProtocolAutomatonScopeRejectedGroups =
+        automatonStatistics.scopeRejectedGroups;
+    report.storageProtocolAutomatonMembershipRejectedGroups =
+        automatonStatistics.membershipRejectedGroups;
+    report.storageProtocolAutomatonDirectionRejectedGroups =
+        automatonStatistics.directionRejectedGroups;
+    report.storageProtocolAutomatonUnreachableTransferGroups =
+        automatonStatistics.unreachableTransferGroups;
+    report.storageProtocolAutomatonUnreachableReadyTransferGroups =
+        automatonStatistics.unreachableReadyTransferGroups;
+    report.storageProtocolAutomatonUnreachableReleaseTransferGroups =
+        automatonStatistics.unreachableReleaseTransferGroups;
+    report.storageProtocolAutomatonUnreachableExclusionTransferGroups =
+        automatonStatistics.unreachableExclusionTransferGroups;
+    report.storageProtocolAutomatonDemandSetMismatchGroups =
+        automatonStatistics.demandSetMismatchGroups;
+    report.storageProtocolAutomatonDistanceMismatchGroups =
+        automatonStatistics.distanceMismatchGroups;
+    report.storageProtocolAutomata = automatonStatistics.automata;
+    report.storageProtocolAutomatonStates = automatonStatistics.states;
+    report.storageProtocolAutomatonTransfers = automatonStatistics.transfers;
+    report.storageProtocolAutomatonStatePairIncidences =
+        automatonStatistics.statePairIncidences;
+    report.storageProtocolMaximumAutomatonTransfers =
+        automatonStatistics.maximumAutomatonTransfers;
+    report.storageProtocolMaximumTransferStatePairs =
+        automatonStatistics.maximumTransferStatePairs;
+    report.storageProtocolAutomatonTruncated = automatonStatistics.truncated;
+    const std::vector<SyncCoverStorageProtocolAutomaton> &automata =
+        program.getStorageProtocolAutomatonIndex()->getAutomata();
+    const std::size_t retainedAutomata = std::min(
+        automata.size(), kMaximumStorageProtocolAutomatonReportEntries);
+    report.storageProtocolAutomatonDetailsTruncated =
+        retainedAutomata != automata.size();
+    report.storageProtocolAutomatonDetails.reserve(retainedAutomata);
+    for (std::size_t automatonIndex = 0; automatonIndex < retainedAutomata;
+         ++automatonIndex) {
+      const SyncCoverStorageProtocolAutomaton &automaton =
+          automata[automatonIndex];
+      report.storageProtocolAutomatonDetails.push_back(
+          {automaton.id, automaton.group, automaton.owningScope,
+           automaton.stateCount, automaton.transfers.size(),
+           automaton.statePairIncidences, automaton.maximumDistance});
     }
   }
   if (program.getStorageCutIndex()) {

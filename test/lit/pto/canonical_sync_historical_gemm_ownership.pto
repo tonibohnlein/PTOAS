@@ -254,6 +254,12 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // CUT-REPORT: "storage-cut-event": 72
 // CUT-REPORT: "enabled_mechanism_families":
 // CUT-REPORT-NEXT: "storage-cut-event"
+// CUT-REPORT: "storage_protocol_automata": 5
+// CUT-REPORT: "storage_protocol_automaton_analysis_enabled": true
+// CUT-REPORT: "storage_protocol_automaton_eligible_groups": 5
+// CUT-REPORT: "storage_protocol_automaton_ineligible_groups": 0
+// CUT-REPORT: "storage_protocol_automaton_state_pair_incidences": 2227
+// CUT-REPORT: "storage_protocol_automaton_transfers": 2170
 // CUT-REPORT: "storage_protocol_component_incidences": 17
 // CUT-REPORT: "storage_protocol_demand_incidences": 2170
 // CUT-REPORT: "storage_protocol_eligible_seeds": 9

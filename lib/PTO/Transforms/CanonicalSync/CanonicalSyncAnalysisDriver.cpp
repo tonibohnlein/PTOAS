@@ -221,6 +221,8 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
   std::optional<SyncCoverStorageLifecycleIndex> storageLifecycleIndex;
   std::optional<SyncCoverStorageProtocolSeedIndex> storageProtocolSeedIndex;
   std::optional<SyncCoverStorageProtocolGroupIndex> storageProtocolGroupIndex;
+  std::optional<SyncCoverStorageProtocolAutomatonIndex>
+      storageProtocolAutomatonIndex;
   std::optional<SyncCoverStorageCutIndex> storageCutIndex;
   std::optional<SyncCoverStorageFactoredRectangleIndex> storageRectangleIndex;
   if (options_.discoverStorageLifecycleComponents) {
@@ -267,6 +269,26 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
               << static_cast<unsigned>(groupError);
           return failure();
         }
+        if (storageProtocolGroupIndex->isComplete()) {
+          storageProtocolAutomatonIndex =
+              buildSyncCoverStorageProtocolAutomatonIndex(
+                  graph_, *storageLifecycleIndex, *storageProtocolSeedIndex,
+                  *storageProtocolGroupIndex,
+                  options_.storageProtocolAutomatonLimits);
+          const SyncCoverStorageProtocolAutomatonError automatonError =
+              storageProtocolAutomatonIndex->getError();
+          const bool invalidAutomatonIndex =
+              automatonError != SyncCoverStorageProtocolAutomatonError::None &&
+              automatonError !=
+                  SyncCoverStorageProtocolAutomatonError::LimitExceeded;
+          if (invalidAutomatonIndex) {
+            function_.emitError(
+                "cannot build canonical sync storage protocol-automaton "
+                "index, error=")
+                << static_cast<unsigned>(automatonError);
+            return failure();
+          }
+        }
       }
       storageCutIndex = buildSyncCoverStorageCutIndex(
           graph_, *storageLifecycleIndex, options_.storageCutLimits);
@@ -308,9 +330,9 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
       std::move(scopeBindings_), std::move(controlBindings_),
       std::move(storageSpaces), std::move(storageLifecycleIndex),
       std::move(storageProtocolSeedIndex), std::move(storageProtocolGroupIndex),
-      std::move(storageCutIndex), std::move(storageRectangleIndex),
-      std::move(targetCapabilities_), ownershipDiscoveryStatistics_,
-      std::move(eventReservations_));
+      std::move(storageProtocolAutomatonIndex), std::move(storageCutIndex),
+      std::move(storageRectangleIndex), std::move(targetCapabilities_),
+      ownershipDiscoveryStatistics_, std::move(eventReservations_));
 }
 
 LogicalResult ProgramBuilder::validateInput() {
@@ -365,6 +387,14 @@ LogicalResult ProgramBuilder::validateInput() {
        options_.storageProtocolGroupLimits.maximumJointStateIncidences == 0 ||
        options_.storageProtocolGroupLimits.maximumReachablePhases == 0 ||
        options_.storageProtocolGroupLimits.maximumReachablePhases > 64 ||
+       options_.storageProtocolAutomatonLimits.maximumWorkUnits == 0 ||
+       options_.storageProtocolAutomatonLimits.maximumAutomata == 0 ||
+       options_.storageProtocolAutomatonLimits.maximumStates == 0 ||
+       options_.storageProtocolAutomatonLimits.maximumTransfers == 0 ||
+       options_.storageProtocolAutomatonLimits.maximumStatePairIncidences ==
+           0 ||
+       options_.storageProtocolAutomatonLimits.maximumLanes == 0 ||
+       options_.storageProtocolAutomatonLimits.maximumLanes > 8 ||
        options_.storageCutLimits.maximumWorkUnits == 0 ||
        options_.storageCutLimits.maximumCuts == 0 ||
        options_.storageCutLimits.maximumRectangles == 0 ||

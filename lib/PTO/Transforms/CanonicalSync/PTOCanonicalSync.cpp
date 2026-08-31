@@ -415,6 +415,23 @@ llvm::json::Array jsonStorageProtocolGroups(
   return result;
 }
 
+llvm::json::Array jsonStorageProtocolAutomata(
+    ArrayRef<pto::CanonicalSyncStorageProtocolAutomatonReport> automata) {
+  llvm::json::Array result;
+  for (const pto::CanonicalSyncStorageProtocolAutomatonReport &automaton :
+       automata) {
+    result.push_back(llvm::json::Object{
+        {"automaton", jsonInteger(automaton.automaton)},
+        {"group", jsonInteger(automaton.group)},
+        {"owning_scope", jsonInteger(automaton.owningScope)},
+        {"states", jsonInteger(automaton.states)},
+        {"transfers", jsonInteger(automaton.transfers)},
+        {"state_pair_incidences", jsonInteger(automaton.statePairIncidences)},
+        {"maximum_distance", jsonInteger(automaton.maximumDistance)}});
+  }
+  return result;
+}
+
 llvm::json::Array jsonSyntheticStorageRectangleGrounding(
     ArrayRef<pto::CanonicalSyncSyntheticRectangleGroundingReport> details) {
   llvm::json::Array result;
@@ -853,6 +870,55 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
        report.storageProtocolGroupDetailsTruncated},
       {"storage_protocol_group_truncated",
        report.storageProtocolGroupTruncated},
+      {"storage_protocol_automaton_analysis_enabled",
+       report.storageProtocolAutomatonAnalysisEnabled},
+      {"storage_protocol_automaton_work_units",
+       jsonInteger(report.storageProtocolAutomatonWorkUnits)},
+      {"storage_protocol_automaton_eligible_groups",
+       jsonInteger(report.storageProtocolAutomatonEligibleGroups)},
+      {"storage_protocol_automaton_ineligible_groups",
+       jsonInteger(report.storageProtocolAutomatonIneligibleGroups)},
+      {"storage_protocol_automaton_lane_limited_groups",
+       jsonInteger(report.storageProtocolAutomatonLaneLimitedGroups)},
+      {"storage_protocol_automaton_scope_rejected_groups",
+       jsonInteger(report.storageProtocolAutomatonScopeRejectedGroups)},
+      {"storage_protocol_automaton_membership_rejected_groups",
+       jsonInteger(report.storageProtocolAutomatonMembershipRejectedGroups)},
+      {"storage_protocol_automaton_direction_rejected_groups",
+       jsonInteger(report.storageProtocolAutomatonDirectionRejectedGroups)},
+      {"storage_protocol_automaton_unreachable_transfer_groups",
+       jsonInteger(report.storageProtocolAutomatonUnreachableTransferGroups)},
+      {"storage_protocol_automaton_unreachable_ready_transfer_groups",
+       jsonInteger(
+           report.storageProtocolAutomatonUnreachableReadyTransferGroups)},
+      {"storage_protocol_automaton_unreachable_release_transfer_groups",
+       jsonInteger(
+           report.storageProtocolAutomatonUnreachableReleaseTransferGroups)},
+      {"storage_protocol_automaton_unreachable_exclusion_transfer_groups",
+       jsonInteger(
+           report.storageProtocolAutomatonUnreachableExclusionTransferGroups)},
+      {"storage_protocol_automaton_demand_set_mismatch_groups",
+       jsonInteger(report.storageProtocolAutomatonDemandSetMismatchGroups)},
+      {"storage_protocol_automaton_distance_mismatch_groups",
+       jsonInteger(report.storageProtocolAutomatonDistanceMismatchGroups)},
+      {"storage_protocol_automata",
+       jsonInteger(report.storageProtocolAutomata)},
+      {"storage_protocol_automaton_states",
+       jsonInteger(report.storageProtocolAutomatonStates)},
+      {"storage_protocol_automaton_transfers",
+       jsonInteger(report.storageProtocolAutomatonTransfers)},
+      {"storage_protocol_automaton_state_pair_incidences",
+       jsonInteger(report.storageProtocolAutomatonStatePairIncidences)},
+      {"storage_protocol_maximum_automaton_transfers",
+       jsonInteger(report.storageProtocolMaximumAutomatonTransfers)},
+      {"storage_protocol_maximum_transfer_state_pairs",
+       jsonInteger(report.storageProtocolMaximumTransferStatePairs)},
+      {"storage_protocol_automaton_details",
+       jsonStorageProtocolAutomata(report.storageProtocolAutomatonDetails)},
+      {"storage_protocol_automaton_details_truncated",
+       report.storageProtocolAutomatonDetailsTruncated},
+      {"storage_protocol_automaton_truncated",
+       report.storageProtocolAutomatonTruncated},
       {"storage_cut_analysis_enabled", report.storageCutAnalysisEnabled},
       {"storage_cut_work_units", jsonInteger(report.storageCutWorkUnits)},
       {"storage_cut_eligible_edges",

@@ -35,6 +35,7 @@ struct ClassifiedSeed {
   SyncCoverStorageProtocolSeedId seed = 0;
   GroupKey key;
   std::vector<SyncCoverControlId> periodicControls;
+  std::vector<std::vector<std::size_t>> reachablePhaseStates;
   std::vector<SyncCoverDemandId> demands;
   std::vector<SlotKey> slots;
   unsigned maximumDistance = 0;
@@ -42,6 +43,7 @@ struct ClassifiedSeed {
 
 struct PendingGroup {
   GroupKey key;
+  std::vector<std::vector<std::size_t>> reachablePhaseStates;
   std::vector<SyncCoverStorageProtocolSeedId> seeds;
   std::set<SyncCoverControlId> periodicControls;
   std::vector<SyncCoverDemandId> demands;
@@ -641,7 +643,7 @@ mlir::pto::buildSyncCoverStorageProtocolGroupIndex(
       continue;
     }
     const ResourcePair readyPair = readyPairs.front();
-    const JointOrbit orbit = buildJointOrbit(
+    JointOrbit orbit = buildJointOrbit(
         graph, seed.owningScope, periodicControls, controls, limits, budget);
     if (orbit.error == JointOrbitError::UnsupportedScope) {
       ++statistics.ineligibleSeeds;
@@ -765,6 +767,7 @@ mlir::pto::buildSyncCoverStorageProtocolGroupIndex(
     description.key = {seed.owningScope, behavior, readyPair.first,
                        readyPair.second, *behaviorSignatureId};
     description.periodicControls = std::move(periodicControls);
+    description.reachablePhaseStates = std::move(orbit.phaseStates);
     description.demands = std::move(demands);
     description.maximumDistance = seed.maximumDistance;
     description.slots.reserve(seed.slots.size());
@@ -820,7 +823,7 @@ mlir::pto::buildSyncCoverStorageProtocolGroupIndex(
   std::size_t pendingControlEntries = 0;
   std::size_t pendingDemandEntries = 0;
   std::size_t pendingSlotEntries = 0;
-  for (const ClassifiedSeed &seed : classified) {
+  for (ClassifiedSeed &seed : classified) {
     if (!consumeOrderedOperation(budget, groupsByKey.size())) {
       return fail(statistics,
                   SyncCoverStorageProtocolGroupError::LimitExceeded);
@@ -861,7 +864,10 @@ mlir::pto::buildSyncCoverStorageProtocolGroupIndex(
                     SyncCoverStorageProtocolGroupError::LimitExceeded);
       }
       destination = pendingGroups.size();
-      pendingGroups.push_back({seed.key, {}, {}, {}, {}, 0});
+      PendingGroup pending;
+      pending.key = seed.key;
+      pending.reachablePhaseStates = std::move(seed.reachablePhaseStates);
+      pendingGroups.push_back(std::move(pending));
       keyPosition->second.push_back(*destination);
     }
     PendingGroup &group = pendingGroups[*destination];
@@ -967,6 +973,7 @@ mlir::pto::buildSyncCoverStorageProtocolGroupIndex(
     group.seeds = std::move(pending.seeds);
     group.periodicControls.assign(pending.periodicControls.begin(),
                                   pending.periodicControls.end());
+    group.reachablePhaseStates = std::move(pending.reachablePhaseStates);
     group.demands = std::move(pending.demands);
     group.maximumDistance = pending.maximumDistance;
     statistics.maximumGroupSeeds =

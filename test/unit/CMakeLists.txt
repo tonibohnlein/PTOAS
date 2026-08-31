@@ -96,6 +96,18 @@ add_test(NAME pto_sync_cover_storage_protocol_groups_unit
 set_tests_properties(pto_sync_cover_storage_protocol_groups_unit
   PROPERTIES LABELS "PTO;unit")
 
+add_executable(pto-sync-cover-storage-protocol-automata-unit-test
+  SyncCoverStorageProtocolAutomataTest.cpp
+)
+target_link_libraries(pto-sync-cover-storage-protocol-automata-unit-test PRIVATE
+  PTOSyncCoverCore
+)
+add_test(NAME pto_sync_cover_storage_protocol_automata_unit
+  COMMAND pto-sync-cover-storage-protocol-automata-unit-test
+)
+set_tests_properties(pto_sync_cover_storage_protocol_automata_unit
+  PROPERTIES LABELS "PTO;unit")
+
 add_executable(pto-sync-cover-storage-cuts-unit-test
   SyncCoverStorageCutsTest.cpp
 )

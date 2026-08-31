@@ -186,6 +186,16 @@ struct CanonicalSyncStorageProtocolGroupReport {
   unsigned maximumDistance = 0;
 };
 
+struct CanonicalSyncStorageProtocolAutomatonReport {
+  SyncCoverStorageProtocolAutomatonId automaton = 0;
+  SyncCoverStorageProtocolGroupId group = 0;
+  SyncCoverScopeId owningScope = 0;
+  std::size_t states = 0;
+  std::size_t transfers = 0;
+  std::size_t statePairIncidences = 0;
+  unsigned maximumDistance = 0;
+};
+
 struct CanonicalSyncSyntheticRectangleGroundingReport {
   SyncCoverStorageFactoredRectangleId rectangle = 0;
   SyncCoverStorageCutId completionCut = 0;
@@ -329,6 +339,30 @@ struct CanonicalSyncComparisonReport {
       storageProtocolGroupDetails;
   bool storageProtocolGroupDetailsTruncated = false;
   bool storageProtocolGroupTruncated = false;
+  bool storageProtocolAutomatonAnalysisEnabled = false;
+  std::size_t storageProtocolAutomatonWorkUnits = 0;
+  std::size_t storageProtocolAutomatonEligibleGroups = 0;
+  std::size_t storageProtocolAutomatonIneligibleGroups = 0;
+  std::size_t storageProtocolAutomatonLaneLimitedGroups = 0;
+  std::size_t storageProtocolAutomatonScopeRejectedGroups = 0;
+  std::size_t storageProtocolAutomatonMembershipRejectedGroups = 0;
+  std::size_t storageProtocolAutomatonDirectionRejectedGroups = 0;
+  std::size_t storageProtocolAutomatonUnreachableTransferGroups = 0;
+  std::size_t storageProtocolAutomatonUnreachableReadyTransferGroups = 0;
+  std::size_t storageProtocolAutomatonUnreachableReleaseTransferGroups = 0;
+  std::size_t storageProtocolAutomatonUnreachableExclusionTransferGroups = 0;
+  std::size_t storageProtocolAutomatonDemandSetMismatchGroups = 0;
+  std::size_t storageProtocolAutomatonDistanceMismatchGroups = 0;
+  std::size_t storageProtocolAutomata = 0;
+  std::size_t storageProtocolAutomatonStates = 0;
+  std::size_t storageProtocolAutomatonTransfers = 0;
+  std::size_t storageProtocolAutomatonStatePairIncidences = 0;
+  std::size_t storageProtocolMaximumAutomatonTransfers = 0;
+  std::size_t storageProtocolMaximumTransferStatePairs = 0;
+  std::vector<CanonicalSyncStorageProtocolAutomatonReport>
+      storageProtocolAutomatonDetails;
+  bool storageProtocolAutomatonDetailsTruncated = false;
+  bool storageProtocolAutomatonTruncated = false;
   bool storageCutAnalysisEnabled = false;
   std::size_t storageCutWorkUnits = 0;
   std::size_t storageCutEligibleEdges = 0;

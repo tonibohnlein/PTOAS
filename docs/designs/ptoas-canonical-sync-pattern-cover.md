@@ -681,6 +681,20 @@ limits are checked before scratch or publication growth. Exhaustion is
 transactional and publishes no partial index; report-detail truncation never
 changes analysis, selection, verification, or materialization.
 
+A fourth reporting-only index projects each group onto a finite-state lifecycle
+automaton. It retains explicit reachable source/target state pairs. When the
+edge recurrence and periodic control share a loop, the target state is reached
+after exactly `d` successor transitions. A recurrence nested under the phase
+loop retains the enclosing phase. A recurrence enclosing the phase loop crosses
+complete child-loop invocations, so source and target phases are matched
+independently. Every original ready, release, and exclusion edge retains its
+component, demand, kind, resource, scope, distance, and state-pair provenance. A
+group containing a periodically unreachable edge or exceeding the configured
+eight-lane synthesis bound produces no automaton.
+The automaton is still not a certificate or recipe: it cannot establish
+coverage until a later validator proves balanced priming, steady-state transfer,
+successor behavior, zero-trip handling, and draining.
+
 The same analysis flag also builds a bounded direct-cut index when the
 lifecycle index is complete. It admits only distance-zero, cross-resource
 obligations whose source can signal completion to the target resource and

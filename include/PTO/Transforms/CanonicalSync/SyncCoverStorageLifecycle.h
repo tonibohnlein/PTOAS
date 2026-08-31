@@ -27,6 +27,11 @@ using SyncCoverStorageLifecycleEdgeId = std::size_t;
 using SyncCoverStorageLifecycleSccId = std::size_t;
 using SyncCoverStorageLifecycleTransitionClassId = std::size_t;
 
+struct SyncCoverStorageLifecycleEdgeRef {
+  SyncCoverStorageLifecycleComponentId component = 0;
+  SyncCoverStorageLifecycleEdgeId edge = 0;
+};
+
 enum class SyncCoverStorageLifecycleEdgeKind : std::uint8_t {
   Ready = 1,
   Release = 2,
