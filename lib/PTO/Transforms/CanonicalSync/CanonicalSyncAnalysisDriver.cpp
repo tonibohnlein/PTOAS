@@ -219,6 +219,7 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
     return failure();
   }
   std::optional<SyncCoverStorageLifecycleIndex> storageLifecycleIndex;
+  std::optional<SyncCoverStorageCutIndex> storageCutIndex;
   if (options_.discoverStorageLifecycleComponents) {
     storageLifecycleIndex = buildSyncCoverStorageLifecycleIndex(
         graph_, options_.storageLifecycleLimits);
@@ -233,6 +234,20 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
           << static_cast<unsigned>(error);
       return failure();
     }
+    if (storageLifecycleIndex->isComplete()) {
+      storageCutIndex = buildSyncCoverStorageCutIndex(
+          graph_, *storageLifecycleIndex, options_.storageCutLimits);
+      const SyncCoverStorageCutError cutError = storageCutIndex->getError();
+      const bool invalidCutIndex =
+          cutError != SyncCoverStorageCutError::None &&
+          cutError != SyncCoverStorageCutError::LimitExceeded;
+      if (invalidCutIndex) {
+        function_.emitError("cannot build canonical sync storage cut index, "
+                            "error=")
+            << static_cast<unsigned>(cutError);
+        return failure();
+      }
+    }
   }
   std::vector<AddressSpace> storageSpaces(graph_.getStorageDomains().size(),
                                           AddressSpace::Zero);
@@ -243,6 +258,7 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
       function_, std::move(graph_), std::move(nodeBindings_),
       std::move(scopeBindings_), std::move(controlBindings_),
       std::move(storageSpaces), std::move(storageLifecycleIndex),
+      std::move(storageCutIndex),
       std::move(targetCapabilities_), ownershipDiscoveryStatistics_,
       std::move(eventReservations_));
 }
@@ -281,7 +297,14 @@ LogicalResult ProgramBuilder::validateInput() {
        lifecycleLimits.maximumEpochs == 0 ||
        lifecycleLimits.maximumEdges == 0 ||
        lifecycleLimits.maximumDemandIncidences == 0 ||
-       lifecycleLimits.maximumSccs == 0);
+       lifecycleLimits.maximumSccs == 0 ||
+       lifecycleLimits.maximumTransitionClasses == 0 ||
+       lifecycleLimits.maximumTransitionGuardLiterals == 0 ||
+       options_.storageCutLimits.maximumWorkUnits == 0 ||
+       options_.storageCutLimits.maximumCuts == 0 ||
+       options_.storageCutLimits.maximumRectangles == 0 ||
+       options_.storageCutLimits.maximumIncidences == 0 ||
+       options_.storageCutLimits.maximumGuardLiterals == 0);
   if (invalidLimits || invalidLifecycleLimits) {
     return function_.emitError(
         "canonical sync analysis limits must be positive");

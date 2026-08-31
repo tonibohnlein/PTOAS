@@ -72,6 +72,18 @@ add_test(NAME pto_sync_cover_storage_lifecycle_unit
 set_tests_properties(pto_sync_cover_storage_lifecycle_unit
   PROPERTIES LABELS "PTO;unit")
 
+add_executable(pto-sync-cover-storage-cuts-unit-test
+  SyncCoverStorageCutsTest.cpp
+)
+target_link_libraries(pto-sync-cover-storage-cuts-unit-test PRIVATE
+  PTOSyncCoverCore
+)
+add_test(NAME pto_sync_cover_storage_cuts_unit
+  COMMAND pto-sync-cover-storage-cuts-unit-test
+)
+set_tests_properties(pto_sync_cover_storage_cuts_unit
+  PROPERTIES LABELS "PTO;unit")
+
 add_executable(pto-sync-cover-coverage-unit-test
   SyncCoverCoverageTest.cpp
 )

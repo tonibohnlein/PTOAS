@@ -1944,6 +1944,22 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
       }
     }
   }
+  if (program.getStorageCutIndex()) {
+    report.storageCutAnalysisEnabled = true;
+    const SyncCoverStorageCutStatistics &cutStatistics =
+        program.getStorageCutIndex()->getStatistics();
+    report.storageCutWorkUnits = cutStatistics.workUnits;
+    report.storageCutEligibleEdges = cutStatistics.eligibleEdges;
+    report.storageCutIneligibleEdges = cutStatistics.ineligibleEdges;
+    report.storageCompletionCuts = cutStatistics.completionCuts;
+    report.storageAcquisitionCuts = cutStatistics.acquisitionCuts;
+    report.storageRectangles = cutStatistics.rectangles;
+    report.storageCutIncidences = cutStatistics.incidences;
+    report.storageCutGuardLiterals = cutStatistics.guardLiterals;
+    report.storageMaximumRectangleEdges =
+        cutStatistics.maximumRectangleEdges;
+    report.storageCutTruncated = cutStatistics.truncated;
+  }
   report.uniqueDemandRows = problem.getObligationDemands().size();
   report.selectionBasisRows = problem.getDemands().size();
   report.basisReducedRows = report.uniqueDemandRows - report.selectionBasisRows;

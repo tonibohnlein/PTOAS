@@ -34,6 +34,7 @@ add_library(PTOSyncCoverCore OBJECT
   CanonicalSync/SyncCoverGraphValidation.cpp
   CanonicalSync/SyncCoverStorageLifecycle.cpp
   CanonicalSync/SyncCoverStorageLifecycleScc.cpp
+  CanonicalSync/SyncCoverStorageCuts.cpp
 )
 target_include_directories(PTOSyncCoverCore PUBLIC
   "${PROJECT_SOURCE_DIR}/include"

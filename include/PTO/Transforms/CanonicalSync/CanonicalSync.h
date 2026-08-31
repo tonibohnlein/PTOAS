@@ -255,6 +255,17 @@ struct CanonicalSyncComparisonReport {
   std::vector<CanonicalSyncStorageLifecycleTransitionReport>
       storageLifecycleTransitionDetails;
   bool storageLifecycleTruncated = false;
+  bool storageCutAnalysisEnabled = false;
+  std::size_t storageCutWorkUnits = 0;
+  std::size_t storageCutEligibleEdges = 0;
+  std::size_t storageCutIneligibleEdges = 0;
+  std::size_t storageCompletionCuts = 0;
+  std::size_t storageAcquisitionCuts = 0;
+  std::size_t storageRectangles = 0;
+  std::size_t storageCutIncidences = 0;
+  std::size_t storageCutGuardLiterals = 0;
+  std::size_t storageMaximumRectangleEdges = 0;
+  bool storageCutTruncated = false;
   std::size_t demands = 0;
   std::size_t uniqueDemandRows = 0;
   std::size_t selectionBasisRows = 0;

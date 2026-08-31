@@ -635,6 +635,16 @@ Independent work, component, slot, epoch, edge, demand-incidence, SCC, and
 transition-class limits make construction transactional; limit exhaustion
 reports truncation and exposes no partial index to later synthesis.
 
+The same analysis flag also builds a bounded direct-cut index when the
+lifecycle index is complete. It admits only distance-zero, cross-resource
+obligations whose source can signal completion to the target resource and
+whose endpoints coexecute. Completion cuts are keyed by source node and target
+resource; acquisition cuts are keyed by target node and source resource.
+Compact rectangles retain lifecycle-edge incidences between those cuts rather
+than expanding producer-by-consumer pairs. This layer is also reporting-only:
+it does not yet combine a cut with multiple opposite-side frontiers or add a
+set-cover column.
+
 This keeps direct columns as the correctness basis while allowing event-ID
 scarcity to motivate generic channel synthesis. Ordinary pair columns remain a
 separate transitive-coverage optimization: they retain both parent recipes and
