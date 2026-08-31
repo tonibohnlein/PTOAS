@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- CanonicalSyncSelection.h - Bounded pattern cover -------*- C++ -*-===//
 
@@ -34,6 +36,9 @@ enum class CanonicalSyncSelectionStrategy : std::uint8_t {
   FixedCover,
   ActionAwareSingleton,
   PairLookahead,
+  /// Reporting identity for the non-optimizing select-all policy. This value
+  /// is internal and is not accepted by the greedy-selector CLI option.
+  MechanicalAll,
 };
 
 /// Ordering of the two principal structural-cost coordinates. Both modes use
@@ -840,6 +845,14 @@ struct CanonicalSyncSelection {
 CanonicalSyncSelection
 selectCanonicalSyncPatterns(const CanonicalSyncPatternProblem &problem,
                             CanonicalSyncGreedyOptions options = {});
+
+/// Select every mechanism in a frozen, conflict-free singleton problem. This
+/// generic select-all primitive performs no set-cover reduction, pair
+/// composition, or reverse deletion. Callers remain responsible for
+/// validating the catalog policy at their boundary.
+CanonicalSyncSelection selectAllCanonicalSyncSingletonMechanisms(
+    const CanonicalSyncPatternProblem &problem,
+    std::size_t maximumWorkUnits = 1U << 27);
 
 std::optional<CanonicalSyncStructuralCost> computeCanonicalSyncStructuralCost(
     const CanonicalSyncPatternProblem &problem,

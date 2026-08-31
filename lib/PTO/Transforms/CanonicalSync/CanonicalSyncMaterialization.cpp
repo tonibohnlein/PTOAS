@@ -63,9 +63,23 @@ void addNanoseconds(std::uint64_t &total, std::uint64_t amount) {
               : total + amount;
 }
 
-bool usesMinimalDirectCatalog(const CanonicalSyncBuildOptions &options) {
+bool usesDirectOnlyCatalog(const CanonicalSyncBuildOptions &options) {
   return options.patterns.catalogMode ==
-         CanonicalSyncCatalogMode::StrictMinimalDirect;
+             CanonicalSyncCatalogMode::StrictMinimalDirect ||
+         options.patterns.catalogMode ==
+             CanonicalSyncCatalogMode::MechanicalDirect;
+}
+
+bool usesMechanicalDirectCatalog(const CanonicalSyncBuildOptions &options) {
+  return options.patterns.catalogMode ==
+         CanonicalSyncCatalogMode::MechanicalDirect;
+}
+
+CanonicalSyncSelectionStrategy
+effectiveSelectionStrategy(const CanonicalSyncBuildOptions &options) {
+  return usesMechanicalDirectCatalog(options)
+             ? CanonicalSyncSelectionStrategy::MechanicalAll
+             : options.selection.strategy;
 }
 
 bool checkedWorkSum(std::size_t first, std::size_t second,
@@ -931,7 +945,10 @@ selectWithBoundedRepair(const CanonicalSyncProgram &program,
   CanonicalSyncGreedyOptions current = options.selection;
   const SteadyClock::time_point selectionStart = SteadyClock::now();
   CanonicalSyncSelection selection =
-      selectCanonicalSyncPatterns(problem, current);
+      usesMechanicalDirectCatalog(options)
+          ? selectAllCanonicalSyncSingletonMechanisms(problem,
+                                                      current.maximumWorkUnits)
+          : selectCanonicalSyncPatterns(problem, current);
   SelectionOutcome outcome;
   outcome.selectionNanoseconds = elapsedNanoseconds(selectionStart);
   outcome.selectedProblem = &problem;
@@ -940,7 +957,7 @@ selectWithBoundedRepair(const CanonicalSyncProgram &program,
   outcome.preciseAllocation = selection.allocation;
   if (selection ||
       selection.error != CanonicalSyncSelectionError::ResourceInfeasible ||
-      usesMinimalDirectCatalog(options) ||
+      usesDirectOnlyCatalog(options) ||
       !options.patterns.enableConflictCoreRepair ||
       options.maximumRepairRounds == 0) {
     outcome.feasible = static_cast<bool>(selection);
@@ -1845,7 +1862,7 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
   report.catalogMode = options.patterns.catalogMode;
   report.enabledMechanismFamilies = options.patterns.enabledMechanismFamilies;
   report.directPairsEnabled = options.patterns.enableDirectPairs;
-  report.conflictCoreRepairEnabled = !usesMinimalDirectCatalog(options) &&
+  report.conflictCoreRepairEnabled = !usesDirectOnlyCatalog(options) &&
                                      options.patterns.enableConflictCoreRepair;
   report.gmAliasPolicy = options.analysis.gmAliasPolicy;
   report.graphNodes = program.getGraph().getNodes().size();
@@ -2802,7 +2819,29 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
   CanonicalSyncComparisonReport report =
       buildComparisonHeader(*program, *precise.problem, options,
                             elapsedNanoseconds(preparationStart));
-  if (options.analysisOnly || options.compareSelectionStrategies) {
+  if (usesMechanicalDirectCatalog(options) &&
+      (options.analysisOnly || options.compareSelectionStrategies)) {
+    SelectionOutcome outcome =
+        selectWithBoundedRepair(*program, *precise.problem, options);
+    if (outcome.fatalConstructionError) {
+      return failure();
+    }
+    FreshVerificationResult verification;
+    if (outcome.feasible) {
+      verification = freshlyVerifySelection(
+          *program, outcome.getProblem(), outcome.selection,
+          options.maximumVerificationWorkUnits);
+    }
+    report.strategies.push_back(
+        buildStrategyReport(CanonicalSyncSelectionStrategy::MechanicalAll,
+                            *program, outcome, verification));
+    if (options.reportCallback && failed(options.reportCallback(report))) {
+      return failure();
+    }
+    if (options.analysisOnly) {
+      return success();
+    }
+  } else if (options.analysisOnly || options.compareSelectionStrategies) {
     for (CanonicalSyncSelectionStrategy strategy :
          {CanonicalSyncSelectionStrategy::FixedCover,
           CanonicalSyncSelectionStrategy::ActionAwareSingleton,
@@ -2815,7 +2854,7 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
         return failure();
       }
       bool usedLocalizedPipeAll = false;
-      const bool canUseFallback = !usesMinimalDirectCatalog(trialOptions) &&
+      const bool canUseFallback = !usesDirectOnlyCatalog(trialOptions) &&
                                   canUseLocalizedPipeAllBackstop(outcome);
       if (canUseFallback) {
         const SteadyClock::time_point fallbackStart = SteadyClock::now();
@@ -2895,8 +2934,9 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
       return failure();
     }
     if (!options.compareSelectionStrategies) {
-      report.strategies.push_back(buildStrategyReport(
-          options.selection.strategy, *program, selection, verification));
+      report.strategies.push_back(
+          buildStrategyReport(effectiveSelectionStrategy(options), *program,
+                              selection, verification));
       if (options.reportCallback && failed(options.reportCallback(report))) {
         return failure();
       }
@@ -2905,11 +2945,12 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
                                         verification.plan);
   }
 
-  if (usesMinimalDirectCatalog(options)) {
+  if (usesDirectOnlyCatalog(options)) {
     if (!options.compareSelectionStrategies) {
       FreshVerificationResult verification;
-      report.strategies.push_back(buildStrategyReport(
-          options.selection.strategy, *program, selection, verification));
+      report.strategies.push_back(
+          buildStrategyReport(effectiveSelectionStrategy(options), *program,
+                              selection, verification));
       if (options.reportCallback && failed(options.reportCallback(report))) {
         return failure();
       }
@@ -2933,7 +2974,7 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
         CanonicalSyncSelectionError::ResourceInfeasible) {
       function.emitError(
           "canonical sync direct catalog exhausted the event-ID budget; "
-          "repair and PIPE_ALL fallback are disabled in strict-direct mode");
+          "repair and PIPE_ALL fallback are disabled in direct-only mode");
     } else {
       function.emitError()
           << "canonical sync direct planning failed closed, error="
