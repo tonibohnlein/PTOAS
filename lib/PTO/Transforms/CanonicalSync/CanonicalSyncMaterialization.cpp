@@ -38,6 +38,10 @@ constexpr std::size_t kMaximumStorageLifecycleComponentReportEntries = 256;
 constexpr std::size_t kMaximumStorageLifecycleTransitionReportEntries = 4096;
 constexpr std::size_t kMaximumStorageLifecycleReportGuardLiterals = 1U << 16;
 constexpr std::size_t kMaximumStorageProtocolSeedReportEntries = 256;
+constexpr std::size_t kMaximumStorageProtocolGroupReportEntries = 256;
+constexpr std::size_t kMaximumStorageProtocolGroupReportSeedEntries = 4096;
+constexpr std::size_t
+    kMaximumStorageProtocolGroupReportBehaviorSignatureEntries = 4096;
 
 using SteadyClock = std::chrono::steady_clock;
 
@@ -1982,6 +1986,46 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
            seed.demands.size(),
            seed.kinds,
            seed.maximumDistance});
+    }
+  }
+  if (program.getStorageProtocolGroupIndex()) {
+    report.storageProtocolGroupAnalysisEnabled = true;
+    const SyncCoverStorageProtocolGroupStatistics &groupStatistics =
+        program.getStorageProtocolGroupIndex()->getStatistics();
+    report.storageProtocolGroupWorkUnits = groupStatistics.workUnits;
+    report.storageProtocolEligibleSeeds = groupStatistics.eligibleSeeds;
+    report.storageProtocolIneligibleSeeds = groupStatistics.ineligibleSeeds;
+    report.storageProtocolStableSeeds = groupStatistics.stableSeeds;
+    report.storageProtocolPhaseRotatingSeeds =
+        groupStatistics.phaseRotatingSeeds;
+    report.storageProtocolGroups = groupStatistics.groups;
+    report.storageProtocolGroupSeedIncidences = groupStatistics.seedIncidences;
+    report.storageProtocolGroupControlIncidences =
+        groupStatistics.controlIncidences;
+    report.storageProtocolGroupDemandIncidences =
+        groupStatistics.demandIncidences;
+    report.storageProtocolGroupSlotIncidences = groupStatistics.slotIncidences;
+    report.storageProtocolGroupJointStateIncidences =
+        groupStatistics.jointStateIncidences;
+    report.storageProtocolMaximumGroupSeeds = groupStatistics.maximumGroupSeeds;
+    report.storageProtocolGroupTruncated = groupStatistics.truncated;
+    const std::vector<SyncCoverStorageProtocolGroup> &groups =
+        program.getStorageProtocolGroupIndex()->getGroups();
+    const SyncCoverStorageProtocolGroupPrefix reportPrefix =
+        boundedSyncCoverStorageProtocolGroupPrefix(
+            groups, kMaximumStorageProtocolGroupReportEntries,
+            kMaximumStorageProtocolGroupReportSeedEntries,
+            kMaximumStorageProtocolGroupReportBehaviorSignatureEntries);
+    report.storageProtocolGroupDetailsTruncated = reportPrefix.truncated;
+    report.storageProtocolGroupDetails.reserve(reportPrefix.retainedGroups);
+    for (std::size_t groupIndex = 0;
+         groupIndex < reportPrefix.retainedGroups; ++groupIndex) {
+      const SyncCoverStorageProtocolGroup &group = groups[groupIndex];
+      report.storageProtocolGroupDetails.push_back(
+          {group.id, group.owningScope, group.behavior,
+           group.readySourceResource, group.readyTargetResource,
+           group.behaviorSignature, group.seeds, group.periodicControls.size(),
+           group.demands.size(), group.maximumDistance});
     }
   }
   if (program.getStorageCutIndex()) {

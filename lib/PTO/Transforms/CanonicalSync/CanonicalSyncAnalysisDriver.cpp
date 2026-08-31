@@ -220,6 +220,7 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
   }
   std::optional<SyncCoverStorageLifecycleIndex> storageLifecycleIndex;
   std::optional<SyncCoverStorageProtocolSeedIndex> storageProtocolSeedIndex;
+  std::optional<SyncCoverStorageProtocolGroupIndex> storageProtocolGroupIndex;
   std::optional<SyncCoverStorageCutIndex> storageCutIndex;
   std::optional<SyncCoverStorageFactoredRectangleIndex> storageRectangleIndex;
   if (options_.discoverStorageLifecycleComponents) {
@@ -249,6 +250,23 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
             "cannot build canonical sync storage protocol-seed index, error=")
             << static_cast<unsigned>(seedError);
         return failure();
+      }
+      if (storageProtocolSeedIndex->isComplete()) {
+        storageProtocolGroupIndex = buildSyncCoverStorageProtocolGroupIndex(
+            graph_, *storageLifecycleIndex, *storageProtocolSeedIndex,
+            options_.storageProtocolGroupLimits);
+        const SyncCoverStorageProtocolGroupError groupError =
+            storageProtocolGroupIndex->getError();
+        const bool invalidGroupIndex =
+            groupError != SyncCoverStorageProtocolGroupError::None &&
+            groupError != SyncCoverStorageProtocolGroupError::LimitExceeded;
+        if (invalidGroupIndex) {
+          function_.emitError(
+              "cannot build canonical sync storage protocol-group index, "
+              "error=")
+              << static_cast<unsigned>(groupError);
+          return failure();
+        }
       }
       storageCutIndex = buildSyncCoverStorageCutIndex(
           graph_, *storageLifecycleIndex, options_.storageCutLimits);
@@ -289,9 +307,8 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
       function_, std::move(graph_), std::move(nodeBindings_),
       std::move(scopeBindings_), std::move(controlBindings_),
       std::move(storageSpaces), std::move(storageLifecycleIndex),
-      std::move(storageProtocolSeedIndex),
-      std::move(storageCutIndex),
-      std::move(storageRectangleIndex),
+      std::move(storageProtocolSeedIndex), std::move(storageProtocolGroupIndex),
+      std::move(storageCutIndex), std::move(storageRectangleIndex),
       std::move(targetCapabilities_), ownershipDiscoveryStatistics_,
       std::move(eventReservations_));
 }
@@ -333,6 +350,21 @@ LogicalResult ProgramBuilder::validateInput() {
        lifecycleLimits.maximumSccs == 0 ||
        lifecycleLimits.maximumTransitionClasses == 0 ||
        lifecycleLimits.maximumTransitionGuardLiterals == 0 ||
+       options_.storageProtocolSeedLimits.maximumWorkUnits == 0 ||
+       options_.storageProtocolSeedLimits.maximumSeeds == 0 ||
+       options_.storageProtocolSeedLimits.maximumComponentIncidences == 0 ||
+       options_.storageProtocolSeedLimits.maximumSlotIncidences == 0 ||
+       options_.storageProtocolSeedLimits.maximumSccIncidences == 0 ||
+       options_.storageProtocolSeedLimits.maximumDemandIncidences == 0 ||
+       options_.storageProtocolGroupLimits.maximumWorkUnits == 0 ||
+       options_.storageProtocolGroupLimits.maximumGroups == 0 ||
+       options_.storageProtocolGroupLimits.maximumSeedIncidences == 0 ||
+       options_.storageProtocolGroupLimits.maximumControlIncidences == 0 ||
+       options_.storageProtocolGroupLimits.maximumDemandIncidences == 0 ||
+       options_.storageProtocolGroupLimits.maximumSlotIncidences == 0 ||
+       options_.storageProtocolGroupLimits.maximumJointStateIncidences == 0 ||
+       options_.storageProtocolGroupLimits.maximumReachablePhases == 0 ||
+       options_.storageProtocolGroupLimits.maximumReachablePhases > 64 ||
        options_.storageCutLimits.maximumWorkUnits == 0 ||
        options_.storageCutLimits.maximumCuts == 0 ||
        options_.storageCutLimits.maximumRectangles == 0 ||

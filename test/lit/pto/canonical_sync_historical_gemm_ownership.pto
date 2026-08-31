@@ -256,15 +256,51 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // CUT-REPORT-NEXT: "storage-cut-event"
 // CUT-REPORT: "storage_protocol_component_incidences": 17
 // CUT-REPORT: "storage_protocol_demand_incidences": 2170
+// CUT-REPORT: "storage_protocol_eligible_seeds": 9
+// CUT-REPORT: "storage_protocol_group_control_incidences": 5
+// CUT-REPORT: "storage_protocol_group_demand_incidences": 2170
+// CUT-REPORT: "storage_protocol_group_details":
+// CUT-REPORT: "behavior": "phase-rotating-round-trip"
+// CUT-REPORT: "demands": 62
+// CUT-REPORT: "seeds":
+// CUT-REPORT-NEXT: 0
+// CUT-REPORT: "behavior": "phase-rotating-round-trip"
+// CUT-REPORT: "demands": 160
+// CUT-REPORT: "seeds":
+// CUT-REPORT-NEXT: 1
+// CUT-REPORT-NEXT: 7
+// CUT-REPORT: "behavior": "phase-rotating-round-trip"
+// CUT-REPORT: "demands": 1824
+// CUT-REPORT: "seeds":
+// CUT-REPORT-NEXT: 2
+// CUT-REPORT-NEXT: 3
+// CUT-REPORT-NEXT: 5
+// CUT-REPORT-NEXT: 6
+// CUT-REPORT: "behavior": "stable-round-trip"
+// CUT-REPORT: "demands": 90
+// CUT-REPORT: "seeds":
+// CUT-REPORT-NEXT: 4
+// CUT-REPORT: "behavior": "phase-rotating-round-trip"
+// CUT-REPORT: "demands": 34
+// CUT-REPORT: "seeds":
+// CUT-REPORT-NEXT: 8
+// CUT-REPORT: "storage_protocol_group_details_truncated": false
+// CUT-REPORT: "storage_protocol_group_seed_incidences": 9
+// CUT-REPORT: "storage_protocol_group_truncated": false
+// CUT-REPORT: "storage_protocol_groups": 5
+// CUT-REPORT: "storage_protocol_ineligible_seeds": 0
+// CUT-REPORT: "storage_protocol_maximum_group_seeds": 4
 // CUT-REPORT: "storage_protocol_maximum_seed_components": 2
 // CUT-REPORT: "storage_protocol_maximum_seed_sccs": 2
 // CUT-REPORT: "storage_protocol_maximum_seed_slots": 1
+// CUT-REPORT: "storage_protocol_phase_rotating_seeds": 8
 // CUT-REPORT: "storage_protocol_ready_release_seeds": 9
 // CUT-REPORT: "storage_protocol_scc_incidences": 17
 // CUT-REPORT: "storage_protocol_seed_analysis_enabled": true
 // CUT-REPORT: "storage_protocol_seed_truncated": false
 // CUT-REPORT: "storage_protocol_seeds": 9
 // CUT-REPORT: "storage_protocol_slot_incidences": 9
+// CUT-REPORT: "storage_protocol_stable_seeds": 1
 // CUT-REPORT: "storage_synthetic_rectangles_covering_multiple_rows": 72
 // CUT-REPORT: "storage_synthetic_rectangles_with_coverage": 72
 // CUT-REPORT: "selected_mechanisms_by_origin":

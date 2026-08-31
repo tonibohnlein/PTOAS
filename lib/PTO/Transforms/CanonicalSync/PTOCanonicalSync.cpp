@@ -380,6 +380,41 @@ llvm::json::Array jsonStorageProtocolSeeds(
   return result;
 }
 
+StringRef
+storageProtocolBehaviorName(pto::SyncCoverStorageProtocolBehavior behavior) {
+  using Behavior = pto::SyncCoverStorageProtocolBehavior;
+  switch (behavior) {
+  case Behavior::StableRoundTrip:
+    return "stable-round-trip";
+  case Behavior::PhaseRotatingRoundTrip:
+    return "phase-rotating-round-trip";
+  }
+  return "unknown";
+}
+
+llvm::json::Array jsonStorageProtocolGroups(
+    ArrayRef<pto::CanonicalSyncStorageProtocolGroupReport> groups) {
+  llvm::json::Array result;
+  for (const pto::CanonicalSyncStorageProtocolGroupReport &group : groups) {
+    llvm::json::Array seeds;
+    for (pto::SyncCoverStorageProtocolSeedId seed : group.seeds) {
+      seeds.push_back(jsonInteger(seed));
+    }
+    result.push_back(llvm::json::Object{
+        {"group", jsonInteger(group.group)},
+        {"owning_scope", jsonInteger(group.owningScope)},
+        {"behavior", storageProtocolBehaviorName(group.behavior)},
+        {"ready_source_resource", jsonInteger(group.readySourceResource)},
+        {"ready_target_resource", jsonInteger(group.readyTargetResource)},
+        {"behavior_signature", jsonUnsignedValues(group.behaviorSignature)},
+        {"seeds", std::move(seeds)},
+        {"periodic_controls", jsonInteger(group.periodicControls)},
+        {"demands", jsonInteger(group.demands)},
+        {"maximum_distance", jsonInteger(group.maximumDistance)}});
+  }
+  return result;
+}
+
 llvm::json::Array jsonSyntheticStorageRectangleGrounding(
     ArrayRef<pto::CanonicalSyncSyntheticRectangleGroundingReport> details) {
   llvm::json::Array result;
@@ -787,6 +822,37 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
        report.storageProtocolSeedDetailsTruncated},
       {"storage_protocol_seed_truncated",
        report.storageProtocolSeedTruncated},
+      {"storage_protocol_group_analysis_enabled",
+       report.storageProtocolGroupAnalysisEnabled},
+      {"storage_protocol_group_work_units",
+       jsonInteger(report.storageProtocolGroupWorkUnits)},
+      {"storage_protocol_eligible_seeds",
+       jsonInteger(report.storageProtocolEligibleSeeds)},
+      {"storage_protocol_ineligible_seeds",
+       jsonInteger(report.storageProtocolIneligibleSeeds)},
+      {"storage_protocol_stable_seeds",
+       jsonInteger(report.storageProtocolStableSeeds)},
+      {"storage_protocol_phase_rotating_seeds",
+       jsonInteger(report.storageProtocolPhaseRotatingSeeds)},
+      {"storage_protocol_groups", jsonInteger(report.storageProtocolGroups)},
+      {"storage_protocol_group_seed_incidences",
+       jsonInteger(report.storageProtocolGroupSeedIncidences)},
+      {"storage_protocol_group_control_incidences",
+       jsonInteger(report.storageProtocolGroupControlIncidences)},
+      {"storage_protocol_group_demand_incidences",
+       jsonInteger(report.storageProtocolGroupDemandIncidences)},
+      {"storage_protocol_group_slot_incidences",
+       jsonInteger(report.storageProtocolGroupSlotIncidences)},
+      {"storage_protocol_group_joint_state_incidences",
+       jsonInteger(report.storageProtocolGroupJointStateIncidences)},
+      {"storage_protocol_maximum_group_seeds",
+       jsonInteger(report.storageProtocolMaximumGroupSeeds)},
+      {"storage_protocol_group_details",
+       jsonStorageProtocolGroups(report.storageProtocolGroupDetails)},
+      {"storage_protocol_group_details_truncated",
+       report.storageProtocolGroupDetailsTruncated},
+      {"storage_protocol_group_truncated",
+       report.storageProtocolGroupTruncated},
       {"storage_cut_analysis_enabled", report.storageCutAnalysisEnabled},
       {"storage_cut_work_units", jsonInteger(report.storageCutWorkUnits)},
       {"storage_cut_eligible_edges",

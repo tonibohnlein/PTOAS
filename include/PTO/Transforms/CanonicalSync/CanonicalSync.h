@@ -172,6 +172,20 @@ struct CanonicalSyncStorageProtocolSeedReport {
   unsigned maximumDistance = 0;
 };
 
+struct CanonicalSyncStorageProtocolGroupReport {
+  SyncCoverStorageProtocolGroupId group = 0;
+  SyncCoverScopeId owningScope = 0;
+  SyncCoverStorageProtocolBehavior behavior =
+      SyncCoverStorageProtocolBehavior::StableRoundTrip;
+  std::uint32_t readySourceResource = 0;
+  std::uint32_t readyTargetResource = 0;
+  std::vector<std::uint64_t> behaviorSignature;
+  std::vector<SyncCoverStorageProtocolSeedId> seeds;
+  std::size_t periodicControls = 0;
+  std::size_t demands = 0;
+  unsigned maximumDistance = 0;
+};
+
 struct CanonicalSyncSyntheticRectangleGroundingReport {
   SyncCoverStorageFactoredRectangleId rectangle = 0;
   SyncCoverStorageCutId completionCut = 0;
@@ -298,6 +312,23 @@ struct CanonicalSyncComparisonReport {
       storageProtocolSeedDetails;
   bool storageProtocolSeedDetailsTruncated = false;
   bool storageProtocolSeedTruncated = false;
+  bool storageProtocolGroupAnalysisEnabled = false;
+  std::size_t storageProtocolGroupWorkUnits = 0;
+  std::size_t storageProtocolEligibleSeeds = 0;
+  std::size_t storageProtocolIneligibleSeeds = 0;
+  std::size_t storageProtocolStableSeeds = 0;
+  std::size_t storageProtocolPhaseRotatingSeeds = 0;
+  std::size_t storageProtocolGroups = 0;
+  std::size_t storageProtocolGroupSeedIncidences = 0;
+  std::size_t storageProtocolGroupControlIncidences = 0;
+  std::size_t storageProtocolGroupDemandIncidences = 0;
+  std::size_t storageProtocolGroupSlotIncidences = 0;
+  std::size_t storageProtocolGroupJointStateIncidences = 0;
+  std::size_t storageProtocolMaximumGroupSeeds = 0;
+  std::vector<CanonicalSyncStorageProtocolGroupReport>
+      storageProtocolGroupDetails;
+  bool storageProtocolGroupDetailsTruncated = false;
+  bool storageProtocolGroupTruncated = false;
   bool storageCutAnalysisEnabled = false;
   std::size_t storageCutWorkUnits = 0;
   std::size_t storageCutEligibleEdges = 0;

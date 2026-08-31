@@ -663,6 +663,24 @@ produces nine exact-storage seeds spanning 17 scoped lifecycle components and
 all 2,170 lifecycle demands; later synthesis must prove how those storage owners
 can share the four balanced protocols used by the reference ownership plan.
 
+A third reporting-only index proposes compatible protocol groups. It evaluates
+all periodic controls from one loop scope as a synchronized, bounded joint
+orbit; controls from different loop scopes are not composed by this layer.
+Every constituent ready/release SCC must have an applicable distance-zero ready
+transfer in every reachable joint state before a seed is classified as stable.
+Otherwise the seed remains phase-rotating and a later finite-state certificate
+must prove its lane transition. Group compatibility requires the same owning
+scope, directed resource cycle, behavior signature, and pairwise-disjoint exact
+slots, including slots contributed by one seed. The behavior signature retains
+the joint period, participating controls, and the complete SCC readiness-mask
+multiset normalized by one common rotation; relative SCC phases are never
+normalized independently. A group remains only a proposal: it supplies no
+completion fact, set-cover column, or physical recipe. Independent work, group,
+seed, control, demand, slot, joint-state, phase, and aggregate report incidence
+limits are checked before scratch or publication growth. Exhaustion is
+transactional and publishes no partial index; report-detail truncation never
+changes analysis, selection, verification, or materialization.
+
 The same analysis flag also builds a bounded direct-cut index when the
 lifecycle index is complete. It admits only distance-zero, cross-resource
 obligations whose source can signal completion to the target resource and
