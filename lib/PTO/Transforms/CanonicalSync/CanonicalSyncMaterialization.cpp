@@ -37,6 +37,7 @@ namespace {
 constexpr std::size_t kMaximumStorageLifecycleComponentReportEntries = 256;
 constexpr std::size_t kMaximumStorageLifecycleTransitionReportEntries = 4096;
 constexpr std::size_t kMaximumStorageLifecycleReportGuardLiterals = 1U << 16;
+constexpr std::size_t kMaximumStorageProtocolSeedReportEntries = 256;
 
 using SteadyClock = std::chrono::steady_clock;
 
@@ -1942,6 +1943,45 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
       if (report.storageLifecycleDetailsTruncated) {
         break;
       }
+    }
+  }
+  if (program.getStorageProtocolSeedIndex()) {
+    report.storageProtocolSeedAnalysisEnabled = true;
+    const SyncCoverStorageProtocolSeedStatistics &seedStatistics =
+        program.getStorageProtocolSeedIndex()->getStatistics();
+    report.storageProtocolSeedWorkUnits = seedStatistics.workUnits;
+    report.storageProtocolSeeds = seedStatistics.seeds;
+    report.storageProtocolReadyReleaseSeeds =
+        seedStatistics.readyReleaseSeeds;
+    report.storageProtocolComponentIncidences =
+        seedStatistics.componentIncidences;
+    report.storageProtocolSlotIncidences = seedStatistics.slotIncidences;
+    report.storageProtocolSccIncidences = seedStatistics.sccIncidences;
+    report.storageProtocolDemandIncidences = seedStatistics.demandIncidences;
+    report.storageProtocolMaximumSeedComponents =
+        seedStatistics.maximumSeedComponents;
+    report.storageProtocolMaximumSeedSlots = seedStatistics.maximumSeedSlots;
+    report.storageProtocolMaximumSeedSccs = seedStatistics.maximumSeedSccs;
+    report.storageProtocolSeedTruncated = seedStatistics.truncated;
+    for (const SyncCoverStorageProtocolSeed &seed :
+         program.getStorageProtocolSeedIndex()->getSeeds()) {
+      const bool reportLimitReached =
+          report.storageProtocolSeedDetails.size() >=
+          kMaximumStorageProtocolSeedReportEntries;
+      if (reportLimitReached) {
+        report.storageProtocolSeedDetailsTruncated = true;
+        break;
+      }
+      report.storageProtocolSeedDetails.push_back(
+          {seed.id,
+           seed.family,
+           seed.owningScope,
+           seed.components.size(),
+           seed.slots.size(),
+           seed.readyReleaseSccs.size(),
+           seed.demands.size(),
+           seed.kinds,
+           seed.maximumDistance});
     }
   }
   if (program.getStorageCutIndex()) {

@@ -160,6 +160,18 @@ struct CanonicalSyncStorageLifecycleTransitionReport {
   std::size_t edges = 0;
 };
 
+struct CanonicalSyncStorageProtocolSeedReport {
+  SyncCoverStorageProtocolSeedId seed = 0;
+  SyncCoverStorageAccessFamilyId family = 0;
+  SyncCoverScopeId owningScope = 0;
+  std::size_t components = 0;
+  std::size_t slots = 0;
+  std::size_t readyReleaseSccs = 0;
+  std::size_t demands = 0;
+  SyncCoverStorageLifecycleEdgeKindMask kinds = 0;
+  unsigned maximumDistance = 0;
+};
+
 struct CanonicalSyncSyntheticRectangleGroundingReport {
   SyncCoverStorageFactoredRectangleId rectangle = 0;
   SyncCoverStorageCutId completionCut = 0;
@@ -271,6 +283,21 @@ struct CanonicalSyncComparisonReport {
   std::vector<CanonicalSyncStorageLifecycleTransitionReport>
       storageLifecycleTransitionDetails;
   bool storageLifecycleTruncated = false;
+  bool storageProtocolSeedAnalysisEnabled = false;
+  std::size_t storageProtocolSeedWorkUnits = 0;
+  std::size_t storageProtocolSeeds = 0;
+  std::size_t storageProtocolReadyReleaseSeeds = 0;
+  std::size_t storageProtocolComponentIncidences = 0;
+  std::size_t storageProtocolSlotIncidences = 0;
+  std::size_t storageProtocolSccIncidences = 0;
+  std::size_t storageProtocolDemandIncidences = 0;
+  std::size_t storageProtocolMaximumSeedComponents = 0;
+  std::size_t storageProtocolMaximumSeedSlots = 0;
+  std::size_t storageProtocolMaximumSeedSccs = 0;
+  std::vector<CanonicalSyncStorageProtocolSeedReport>
+      storageProtocolSeedDetails;
+  bool storageProtocolSeedDetailsTruncated = false;
+  bool storageProtocolSeedTruncated = false;
   bool storageCutAnalysisEnabled = false;
   std::size_t storageCutWorkUnits = 0;
   std::size_t storageCutEligibleEdges = 0;

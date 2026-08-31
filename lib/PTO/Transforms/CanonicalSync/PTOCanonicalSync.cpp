@@ -362,6 +362,24 @@ llvm::json::Array jsonStorageLifecycleTransitions(
   return result;
 }
 
+llvm::json::Array jsonStorageProtocolSeeds(
+    ArrayRef<pto::CanonicalSyncStorageProtocolSeedReport> seeds) {
+  llvm::json::Array result;
+  for (const pto::CanonicalSyncStorageProtocolSeedReport &seed : seeds) {
+    result.push_back(llvm::json::Object{
+        {"seed", jsonInteger(seed.seed)},
+        {"family", jsonInteger(seed.family)},
+        {"owning_scope", jsonInteger(seed.owningScope)},
+        {"components", jsonInteger(seed.components)},
+        {"slots", jsonInteger(seed.slots)},
+        {"ready_release_sccs", jsonInteger(seed.readyReleaseSccs)},
+        {"demands", jsonInteger(seed.demands)},
+        {"kinds", jsonInteger(seed.kinds)},
+        {"maximum_distance", jsonInteger(seed.maximumDistance)}});
+  }
+  return result;
+}
+
 llvm::json::Array jsonSyntheticStorageRectangleGrounding(
     ArrayRef<pto::CanonicalSyncSyntheticRectangleGroundingReport> details) {
   llvm::json::Array result;
@@ -742,6 +760,33 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
        jsonStorageLifecycleTransitions(
            report.storageLifecycleTransitionDetails)},
       {"storage_lifecycle_truncated", report.storageLifecycleTruncated},
+      {"storage_protocol_seed_analysis_enabled",
+       report.storageProtocolSeedAnalysisEnabled},
+      {"storage_protocol_seed_work_units",
+       jsonInteger(report.storageProtocolSeedWorkUnits)},
+      {"storage_protocol_seeds", jsonInteger(report.storageProtocolSeeds)},
+      {"storage_protocol_ready_release_seeds",
+       jsonInteger(report.storageProtocolReadyReleaseSeeds)},
+      {"storage_protocol_component_incidences",
+       jsonInteger(report.storageProtocolComponentIncidences)},
+      {"storage_protocol_slot_incidences",
+       jsonInteger(report.storageProtocolSlotIncidences)},
+      {"storage_protocol_scc_incidences",
+       jsonInteger(report.storageProtocolSccIncidences)},
+      {"storage_protocol_demand_incidences",
+       jsonInteger(report.storageProtocolDemandIncidences)},
+      {"storage_protocol_maximum_seed_components",
+       jsonInteger(report.storageProtocolMaximumSeedComponents)},
+      {"storage_protocol_maximum_seed_slots",
+       jsonInteger(report.storageProtocolMaximumSeedSlots)},
+      {"storage_protocol_maximum_seed_sccs",
+       jsonInteger(report.storageProtocolMaximumSeedSccs)},
+      {"storage_protocol_seed_details",
+       jsonStorageProtocolSeeds(report.storageProtocolSeedDetails)},
+      {"storage_protocol_seed_details_truncated",
+       report.storageProtocolSeedDetailsTruncated},
+      {"storage_protocol_seed_truncated",
+       report.storageProtocolSeedTruncated},
       {"storage_cut_analysis_enabled", report.storageCutAnalysisEnabled},
       {"storage_cut_work_units", jsonInteger(report.storageCutWorkUnits)},
       {"storage_cut_eligible_edges",

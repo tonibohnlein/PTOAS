@@ -4759,12 +4759,15 @@ bool testGuardedOwnershipVerificationWorkIsBounded() {
 
   SyncCoverStorageLifecycleIndex lifecycle =
       buildSyncCoverStorageLifecycleIndex(graph);
+  SyncCoverStorageProtocolSeedIndex protocolSeeds =
+      buildSyncCoverStorageProtocolSeedIndex(graph, lifecycle);
   SyncCoverStorageCutIndex cuts =
       buildSyncCoverStorageCutIndex(graph, lifecycle);
   SyncCoverStorageFactoredRectangleIndex rectangles =
       buildSyncCoverStorageFactoredRectangleIndex(graph, cuts);
   const bool hasCompleteSyntheticCuts =
-      lifecycle.isComplete() && cuts.isComplete() && rectangles.isComplete() &&
+      lifecycle.isComplete() && protocolSeeds.isComplete() &&
+      cuts.isComplete() && rectangles.isComplete() &&
       rectangles.getStatistics().syntheticRectangles != 0;
   if (!check(hasCompleteSyntheticCuts,
              "build complete synthetic cuts for mixed-family limit test")) {
@@ -4773,8 +4776,9 @@ bool testGuardedOwnershipVerificationWorkIsBounded() {
 
   CanonicalSyncProgram program(
       module->lookupSymbol<func::FuncOp>("guarded_ownership_host"),
-      std::move(graph), {}, {}, {}, {}, std::move(lifecycle), std::move(cuts),
-      std::move(rectangles), {}, {}, {});
+      std::move(graph), {}, {}, {}, {}, std::move(lifecycle),
+      std::move(protocolSeeds), std::move(cuts), std::move(rectangles), {}, {},
+      {});
   CanonicalSyncBuildOptions options;
   options.enableDemandBasisReduction = false;
   options.patterns.enabledMechanismFamilies = canonicalSyncMechanismFamilyBit(

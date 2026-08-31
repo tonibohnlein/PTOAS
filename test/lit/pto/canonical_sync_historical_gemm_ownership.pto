@@ -254,6 +254,17 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // CUT-REPORT: "storage-cut-event": 72
 // CUT-REPORT: "enabled_mechanism_families":
 // CUT-REPORT-NEXT: "storage-cut-event"
+// CUT-REPORT: "storage_protocol_component_incidences": 17
+// CUT-REPORT: "storage_protocol_demand_incidences": 2170
+// CUT-REPORT: "storage_protocol_maximum_seed_components": 2
+// CUT-REPORT: "storage_protocol_maximum_seed_sccs": 2
+// CUT-REPORT: "storage_protocol_maximum_seed_slots": 1
+// CUT-REPORT: "storage_protocol_ready_release_seeds": 9
+// CUT-REPORT: "storage_protocol_scc_incidences": 17
+// CUT-REPORT: "storage_protocol_seed_analysis_enabled": true
+// CUT-REPORT: "storage_protocol_seed_truncated": false
+// CUT-REPORT: "storage_protocol_seeds": 9
+// CUT-REPORT: "storage_protocol_slot_incidences": 9
 // CUT-REPORT: "storage_synthetic_rectangles_covering_multiple_rows": 72
 // CUT-REPORT: "storage_synthetic_rectangles_with_coverage": 72
 // CUT-REPORT: "selected_mechanisms_by_origin":

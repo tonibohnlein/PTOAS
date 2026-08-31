@@ -219,6 +219,7 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
     return failure();
   }
   std::optional<SyncCoverStorageLifecycleIndex> storageLifecycleIndex;
+  std::optional<SyncCoverStorageProtocolSeedIndex> storageProtocolSeedIndex;
   std::optional<SyncCoverStorageCutIndex> storageCutIndex;
   std::optional<SyncCoverStorageFactoredRectangleIndex> storageRectangleIndex;
   if (options_.discoverStorageLifecycleComponents) {
@@ -236,6 +237,19 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
       return failure();
     }
     if (storageLifecycleIndex->isComplete()) {
+      storageProtocolSeedIndex = buildSyncCoverStorageProtocolSeedIndex(
+          graph_, *storageLifecycleIndex, options_.storageProtocolSeedLimits);
+      const SyncCoverStorageProtocolSeedError seedError =
+          storageProtocolSeedIndex->getError();
+      const bool invalidSeedIndex =
+          seedError != SyncCoverStorageProtocolSeedError::None &&
+          seedError != SyncCoverStorageProtocolSeedError::LimitExceeded;
+      if (invalidSeedIndex) {
+        function_.emitError(
+            "cannot build canonical sync storage protocol-seed index, error=")
+            << static_cast<unsigned>(seedError);
+        return failure();
+      }
       storageCutIndex = buildSyncCoverStorageCutIndex(
           graph_, *storageLifecycleIndex, options_.storageCutLimits);
       const SyncCoverStorageCutError cutError = storageCutIndex->getError();
@@ -275,6 +289,7 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
       function_, std::move(graph_), std::move(nodeBindings_),
       std::move(scopeBindings_), std::move(controlBindings_),
       std::move(storageSpaces), std::move(storageLifecycleIndex),
+      std::move(storageProtocolSeedIndex),
       std::move(storageCutIndex),
       std::move(storageRectangleIndex),
       std::move(targetCapabilities_), ownershipDiscoveryStatistics_,

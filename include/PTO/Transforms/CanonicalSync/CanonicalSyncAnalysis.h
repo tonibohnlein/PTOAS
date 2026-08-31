@@ -14,6 +14,7 @@
 #include "PTO/Transforms/CanonicalSync/SyncCoverGraph.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverStorageCuts.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverStorageLifecycle.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverStorageProtocolSeeds.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverStorageRectangleGrounding.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverStorageRectangles.h"
 
@@ -56,6 +57,7 @@ struct CanonicalSyncAnalysisOptions {
   /// direct correctness catalog.
   bool discoverStorageLifecycleComponents = false;
   SyncCoverStorageLifecycleLimits storageLifecycleLimits;
+  SyncCoverStorageProtocolSeedLimits storageProtocolSeedLimits;
   SyncCoverStorageCutLimits storageCutLimits;
   SyncCoverStorageFactoredRectangleLimits storageRectangleLimits;
   SyncCoverSyntheticRectangleGroundingLimits syntheticRectangleGroundingLimits;
@@ -229,6 +231,7 @@ public:
       std::vector<CanonicalSyncControlBinding> controlBindings,
       std::vector<AddressSpace> storageSpaces,
       std::optional<SyncCoverStorageLifecycleIndex> storageLifecycleIndex,
+      std::optional<SyncCoverStorageProtocolSeedIndex> storageProtocolSeedIndex,
       std::optional<SyncCoverStorageCutIndex> storageCutIndex,
       std::optional<SyncCoverStorageFactoredRectangleIndex>
           storageRectangleIndex,
@@ -241,6 +244,7 @@ public:
         controlBindings_(std::move(controlBindings)),
         storageSpaces_(std::move(storageSpaces)),
         storageLifecycleIndex_(std::move(storageLifecycleIndex)),
+        storageProtocolSeedIndex_(std::move(storageProtocolSeedIndex)),
         storageCutIndex_(std::move(storageCutIndex)),
         storageRectangleIndex_(std::move(storageRectangleIndex)),
         targetCapabilities_(std::move(targetCapabilities)),
@@ -265,6 +269,10 @@ public:
   const std::optional<SyncCoverStorageLifecycleIndex> &
   getStorageLifecycleIndex() const {
     return storageLifecycleIndex_;
+  }
+  const std::optional<SyncCoverStorageProtocolSeedIndex> &
+  getStorageProtocolSeedIndex() const {
+    return storageProtocolSeedIndex_;
   }
   const std::optional<SyncCoverStorageCutIndex> &getStorageCutIndex() const {
     return storageCutIndex_;
@@ -292,6 +300,7 @@ private:
   std::vector<CanonicalSyncControlBinding> controlBindings_;
   std::vector<AddressSpace> storageSpaces_;
   std::optional<SyncCoverStorageLifecycleIndex> storageLifecycleIndex_;
+  std::optional<SyncCoverStorageProtocolSeedIndex> storageProtocolSeedIndex_;
   std::optional<SyncCoverStorageCutIndex> storageCutIndex_;
   std::optional<SyncCoverStorageFactoredRectangleIndex> storageRectangleIndex_;
   CanonicalSyncTargetCapabilities targetCapabilities_;

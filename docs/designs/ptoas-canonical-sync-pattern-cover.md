@@ -649,6 +649,20 @@ Independent work, component, slot, epoch, edge, demand-incidence, SCC, and
 transition-class limits make construction transactional; limit exhaustion
 reports truncation and exposes no partial index to later synthesis.
 
+When that lifecycle index is complete, a second target-neutral index merges the
+same exact storage family across an actual chain of nested lifecycle owners. It
+retains the contributing components, deduplicated physical slots, cyclic
+ready/release SCCs, and original demand provenance. Sibling components are not
+merged merely because they share a family identifier; they require a matching
+ancestor component that connects the ownership chain. These protocol seeds are
+inputs to bounded lane grouping and finite-state synthesis. They are neither a
+completion certificate nor an executable synchronization recipe, and therefore
+cannot add coverage or change materialization. Their independent work and
+retained-incidence limits are transactional. The historical GEMM currently
+produces nine exact-storage seeds spanning 17 scoped lifecycle components and
+all 2,170 lifecycle demands; later synthesis must prove how those storage owners
+can share the four balanced protocols used by the reference ownership plan.
+
 The same analysis flag also builds a bounded direct-cut index when the
 lifecycle index is complete. It admits only distance-zero, cross-resource
 obligations whose source can signal completion to the target resource and
