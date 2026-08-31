@@ -384,6 +384,37 @@ ProgramBuilder::getSsaOperands(Operation *operation, int macroPhase) {
   return std::vector<Value>(phase->useValues.begin(), phase->useValues.end());
 }
 
+FailureOr<std::vector<unsigned>>
+ProgramBuilder::getCompletedResults(Operation *operation, int macroPhase) {
+  std::vector<unsigned> results;
+  if (macroPhase < 0) {
+    results.reserve(operation->getNumResults());
+    for (unsigned result = 0; result < operation->getNumResults(); ++result) {
+      results.push_back(result);
+    }
+    return results;
+  }
+  const std::optional<SyncMacroModel> model = getSyncMacroModel(operation);
+  if (!model || failed(verifySyncMacroModel(operation, *model))) {
+    operation->emitError(
+        "cannot determine synchronization macro result-completion phases");
+    return failure();
+  }
+  for (unsigned result = 0; result < operation->getNumResults(); ++result) {
+    const std::optional<unsigned> completion =
+        getSyncMacroResultCompletionPhase(*model, result);
+    if (!completion) {
+      operation->emitError(
+          "cannot bind an SSA result to its synchronization macro phase");
+      return failure();
+    }
+    if (*completion == static_cast<unsigned>(macroPhase)) {
+      results.push_back(result);
+    }
+  }
+  return results;
+}
+
 LogicalResult ProgramBuilder::buildNodesAndStorage() {
   std::vector<std::uint32_t> resources;
   for (const CompoundInstanceElement *compound : compounds_) {
@@ -410,6 +441,7 @@ LogicalResult ProgramBuilder::buildNodesAndStorage() {
   }
 
   std::map<Operation *, SyncCoverNodeId> physicalAnchors;
+  std::size_t nextPhysicalOperation = 0;
   for (std::size_t order = 0; order < compounds_.size(); ++order) {
     CompoundInstanceElement *compound = compounds_[order];
     auto context = contexts_.find(compound->elementOp->getParentRegion());
@@ -431,10 +463,20 @@ LogicalResult ProgramBuilder::buildNodesAndStorage() {
         physicalAnchor == physicalAnchors.end()
             ? std::nullopt
             : std::optional<SyncCoverNodeId>(physicalAnchor->second);
+    FailureOr<std::vector<unsigned>> completedResults =
+        getCompletedResults(compound->elementOp, compound->macroOpInstanceId);
+    if (failed(completedResults)) {
+      return failure();
+    }
+    const std::size_t physicalOperation =
+        representative ? graph_.getNodes()[*representative].physicalOperation
+                       : nextPhysicalOperation++;
     const SyncCoverGraphResult node = graph_.addNode(
         resource, 1, context->second.scope, order, context->second.guard,
         std::move(completionTargets), representative,
-        canSignalPrefixCompletion(resource, targetCapabilities_));
+        canSignalPrefixCompletion(resource, targetCapabilities_),
+        physicalOperation, compound->macroOpInstanceId,
+        std::move(*completedResults));
     if (!node) {
       return compound->elementOp->emitError(
           "cannot construct canonical sync operation node");
@@ -484,32 +526,10 @@ LogicalResult ProgramBuilder::indexSsaCompletionNodes() {
     if (hasNoResults) {
       continue;
     }
-    const bool ordinary =
-        nodes.size() == 1 && nodeBindings_[nodes.front()].macroPhase < 0;
-    if (ordinary) {
-      for (Value result : operation->getResults()) {
-        ssaCompletionNodes_[result] = nodes.front();
-      }
-      continue;
-    }
-
-    const std::optional<SyncMacroModel> model = getSyncMacroModel(operation);
-    if (!model) {
-      return operation->emitError(
-          "cannot determine synchronization completion phases for SSA results");
-    }
-    if (failed(verifySyncMacroModel(operation, *model))) {
-      return failure();
-    }
     for (OpResult result : operation->getResults()) {
-      const std::optional<unsigned> phase =
-          getSyncMacroResultCompletionPhase(*model, result.getResultNumber());
-      if (!phase) {
-        return operation->emitError(
-            "cannot bind an SSA result to its synchronization macro phase");
-      }
       const auto node = llvm::find_if(nodes, [&](SyncCoverNodeId candidate) {
-        return nodeBindings_[candidate].macroPhase == static_cast<int>(*phase);
+        return llvm::is_contained(graph_.getNodes()[candidate].completedResults,
+                                  result.getResultNumber());
       });
       if (node == nodes.end()) {
         return operation->emitError(

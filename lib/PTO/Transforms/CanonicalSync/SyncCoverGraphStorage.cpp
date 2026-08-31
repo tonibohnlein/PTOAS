@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverGraph.h"
 
@@ -26,12 +28,13 @@ bool mlir::pto::syncCoverStorageModeWrites(SyncCoverStorageAccessMode mode) {
 }
 
 SyncCoverGraphResult
-SyncCoverGraph::addStorageDomain(SyncCoverStorageDomainRole role) {
+SyncCoverGraph::addStorageDomain(SyncCoverStorageDomainRole role,
+                                 std::uint32_t addressSpace) {
   if (!canMutateStructure()) {
     return {SyncCoverGraphError::StructureFrozen, storageDomains_.size()};
   }
   const SyncCoverStorageDomainId id = storageDomains_.size();
-  storageDomains_.push_back({id, role});
+  storageDomains_.push_back({id, role, addressSpace});
   return {SyncCoverGraphError::None, id};
 }
 
@@ -39,7 +42,7 @@ SyncCoverGraphResult SyncCoverGraph::addStorageAccess(
     SyncCoverNodeId node, SyncCoverStorageDomainId domain,
     SyncCoverStorageAccessFamilyId family, SyncCoverStorageInterval extent,
     SyncCoverStorageAccessMode mode, std::optional<unsigned> addressOrdinal,
-    bool exactPhysical) {
+    bool exactPhysical, SyncCoverStorageAccessPath path) {
   if (!canMutateStructure()) {
     return {SyncCoverGraphError::StructureFrozen, storageAccesses_.size()};
   }
@@ -49,11 +52,14 @@ SyncCoverGraphResult SyncCoverGraph::addStorageAccess(
   if (domain >= storageDomains_.size()) {
     return {SyncCoverGraphError::InvalidStorageDomain, storageAccesses_.size()};
   }
-  if (extent.begin >= extent.end || !isValidAccessMode(mode)) {
+  const bool invalidAccess = extent.begin >= extent.end ||
+                             !isValidAccessMode(mode) ||
+                             !isValidAccessPath(path);
+  if (invalidAccess) {
     return {SyncCoverGraphError::InvalidStorageAccess, storageAccesses_.size()};
   }
-  const StorageAccessKey key{node,         domain,     family,
-                             extent.begin, extent.end, addressOrdinal};
+  const StorageAccessKey key{node,       domain,         family, extent.begin,
+                             extent.end, addressOrdinal, path};
   auto existing = storageAccessIds_.find(key);
   if (existing != storageAccessIds_.end()) {
     SyncCoverStorageAccess &access = storageAccesses_[existing->second];
@@ -64,8 +70,8 @@ SyncCoverGraphResult SyncCoverGraph::addStorageAccess(
     return {SyncCoverGraphError::None, access.id};
   }
   const SyncCoverStorageAccessId id = storageAccesses_.size();
-  storageAccesses_.push_back(
-      {id, node, domain, family, extent, mode, addressOrdinal, exactPhysical});
+  storageAccesses_.push_back({id, node, domain, family, extent, mode,
+                              addressOrdinal, exactPhysical, path});
   storageAccessIds_.emplace(key, id);
   return {SyncCoverGraphError::None, id};
 }

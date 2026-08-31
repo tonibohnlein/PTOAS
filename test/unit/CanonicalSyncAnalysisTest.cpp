@@ -242,6 +242,20 @@ bool testBuildsOneFrozenGraph() {
   TAbsOp tabs = *function.getBody().front().getOps<TAbsOp>().begin();
   const std::uint32_t vectorPipe =
       static_cast<std::uint32_t>(PipelineType::PIPE_V);
+  const std::string rawDump = graph.getDeterministicRawDump();
+  const bool typedPhysicalNodes = graph.getNodes()[0].physicalOperation == 0 &&
+                                  graph.getNodes()[1].physicalOperation == 1 &&
+                                  graph.getNodes()[0].macroPhase == -1 &&
+                                  graph.getNodes()[1].macroPhase == -1;
+  const bool typedPhysicalAccesses = llvm::all_of(
+      graph.getStorageAccesses(), [](const SyncCoverStorageAccess &access) {
+        return access.path == SyncCoverStorageAccessPath::PhysicalPipeline;
+      });
+  const bool typedRawDump =
+      rawDump == graph.getDeterministicRawDump() &&
+      rawDump.find("node 0 op=0 phase=-1") != std::string::npos &&
+      rawDump.find("access 0 node=0") != std::string::npos &&
+      rawDump.find("requirements=1") != std::string::npos;
   return check(graph.isStructureFrozen(), "freeze authoritative graph") &&
          check(static_cast<bool>(graph.validate()), "validate adapter graph") &&
          check(graph.getNodes().size() == 2, "extract two scheduled nodes") &&
@@ -256,6 +270,8 @@ bool testBuildsOneFrozenGraph() {
          check(program->getNodeBindings()[0].macroPhase == -1 &&
                    program->getNodeBindings()[1].macroPhase == -1,
                "mark ordinary operations as non-macro nodes") &&
+         check(typedPhysicalNodes,
+               "record deterministic physical operation and phase IDs") &&
          check(program->getScopeBindings()[0].owner ==
                        function.getOperation() &&
                    program->getScopeBindings()[0].region == &function.getBody(),
@@ -270,6 +286,15 @@ bool testBuildsOneFrozenGraph() {
          check(llvm::is_contained(graph.getDemands().front().provenanceKinds,
                                   SyncCoverDemandKind::MemoryRAW),
                "retain RAW memory provenance") &&
+         check(graph.getDemands().front().orderingRequirements ==
+                   syncCoverOrderingRequirementBit(
+                       SyncCoverOrderingRequirement::
+                           PipelineCompletionBeforeAccess),
+               "type the local RAW ordering requirement") &&
+         check(typedPhysicalAccesses,
+               "type translated accesses as physical-pipeline occurrences") &&
+         check(typedRawDump,
+               "serialize the typed raw graph deterministically") &&
          check(llvm::none_of(graph.getStorageAccesses(),
                              [](const SyncCoverStorageAccess &access) {
                                return access.exactPhysical;
@@ -486,6 +511,7 @@ bool testMacroBindingsAndHiddenReservations() {
   Operation *macro = tput.getOperation();
   const std::vector<CanonicalSyncNodeBinding> &bindings =
       program->getNodeBindings();
+  const std::vector<SyncCoverNode> &nodes = program->getGraph().getNodes();
   const std::vector<Value> sourcePhaseOperands{tput.getSrc()};
   const std::vector<Value> destinationPhaseOperands{tput.getPing(),
                                                     tput.getPong()};
@@ -500,6 +526,9 @@ bool testMacroBindingsAndHiddenReservations() {
                "bind both macro phases to one original operation") &&
          check(bindings[0].macroPhase == 0 && bindings[1].macroPhase == 1,
                "preserve deterministic macro phase identities") &&
+         check(nodes[0].physicalOperation == nodes[1].physicalOperation &&
+                   nodes[0].macroPhase == 0 && nodes[1].macroPhase == 1,
+               "record authoritative macro phases on one physical op") &&
          check(bindings[0].ssaOperands == sourcePhaseOperands &&
                    bindings[1].ssaOperands == destinationPhaseOperands,
                "bind only phase-local synchronization macro operands") &&
@@ -593,7 +622,14 @@ bool testGmAliasPolicies() {
   const bool validMayAlias =
       check(succeeded(mayAlias), "build may-alias graph") &&
       check(mayAlias->getGraph().getDemands().size() == 1,
-            "conservative GM arguments may alias");
+            "conservative GM arguments may alias") &&
+      check(mayAlias->getGraph().getDemands().front().orderingRequirements ==
+                (syncCoverOrderingRequirementBit(
+                     SyncCoverOrderingRequirement::
+                         PipelineCompletionBeforeAccess) |
+                 syncCoverOrderingRequirementBit(
+                     SyncCoverOrderingRequirement::MemoryOrderBeforeAccess)),
+            "type GM hazards as completion plus memory-order obligations");
   if (!validMayAlias) {
     return false;
   }

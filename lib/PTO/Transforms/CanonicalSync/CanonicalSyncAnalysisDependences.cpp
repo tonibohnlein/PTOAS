@@ -189,8 +189,8 @@ LogicalResult ProgramBuilder::addTargetCompletionCertificates(
   if (!mte1L0ReadyEnabled && !accumulatorBoundaryEnabled) {
     return success();
   }
-  const auto domainFor = [&](AddressSpace space)
-      -> std::optional<SyncCoverStorageDomainId> {
+  const auto domainFor =
+      [&](AddressSpace space) -> std::optional<SyncCoverStorageDomainId> {
     const auto domain = storageDomains_.find(space);
     return domain == storageDomains_.end()
                ? std::nullopt
@@ -254,8 +254,7 @@ LogicalResult ProgramBuilder::addTargetCompletionCertificates(
     const SyncCoverDemand &demand = graph.getDemands()[demandId];
     const SyncCoverNode &source = graph.getNodes()[demand.source];
     const SyncCoverNode &target = graph.getNodes()[demand.target];
-    const SyncCoverNode &physicalSource =
-        graph.getNodes()[source.physicalExit];
+    const SyncCoverNode &physicalSource = graph.getNodes()[source.physicalExit];
     const SyncCoverNode &physicalTarget =
         graph.getNodes()[target.physicalAnchor];
     const bool oneControlChain =
@@ -281,12 +280,11 @@ LogicalResult ProgramBuilder::addTargetCompletionCertificates(
     const bool accumulatorBoundaryDemand =
         accumulatorBoundaryEnabled && accumulator &&
         source.resource == static_cast<std::uint32_t>(PipelineType::PIPE_M) &&
-        target.resource ==
-            static_cast<std::uint32_t>(PipelineType::PIPE_FIX);
+        target.resource == static_cast<std::uint32_t>(PipelineType::PIPE_FIX);
     if (accumulatorBoundaryDemand) {
       if (const auto domain = exactRawDomain(demand, accumulatorDomains)) {
-        accumulatorUses[{source.physicalExit, target.physicalAnchor}]
-            .push_back({demandId, *domain});
+        accumulatorUses[{source.physicalExit, target.physicalAnchor}].push_back(
+            {demandId, *domain});
       }
     }
   }
@@ -331,9 +329,8 @@ LogicalResult ProgramBuilder::addTargetCompletionCertificates(
       domains.push_back(domain);
     }
     const SyncCoverGraphResult added = graph_.addTargetCompletionCertificate(
-        SyncCoverTargetCompletionKind::MToFixAccumulatorBoundary,
-        anchors.first, anchors.second,
-        static_cast<std::uint32_t>(PipelineType::PIPE_M),
+        SyncCoverTargetCompletionKind::MToFixAccumulatorBoundary, anchors.first,
+        anchors.second, static_cast<std::uint32_t>(PipelineType::PIPE_M),
         static_cast<std::uint32_t>(PipelineType::PIPE_FIX), std::move(domains),
         std::move(demands));
     if (!added) {
@@ -526,10 +523,9 @@ LogicalResult ProgramBuilder::addIssueNode(SyncCoverNodeId target,
     edge.source = source;
     edge.target = target;
     edge.scope = *scope;
-    edge.kind =
-        isCompletionOrdered(sourceNode.resource, targetCapabilities_)
-            ? SyncCoverEdgeKind::CompletionPreservingIssueOrder
-            : SyncCoverEdgeKind::NonCompletionPreservingIssueOrder;
+    edge.kind = isCompletionOrdered(sourceNode.resource, targetCapabilities_)
+                    ? SyncCoverEdgeKind::CompletionPreservingIssueOrder
+                    : SyncCoverEdgeKind::NonCompletionPreservingIssueOrder;
     if (!graph_.addEdge(std::move(edge))) {
       return function_.emitError(
           "cannot construct canonical sync issue-order edge");
@@ -581,8 +577,9 @@ LogicalResult ProgramBuilder::addIssueNode(SyncCoverNodeId target,
   return success();
 }
 
-LogicalResult ProgramBuilder::recordBlockingBarrierPrefixes(
-    SyncCoverNodeId target, IssueOrderState &state) {
+LogicalResult
+ProgramBuilder::recordBlockingBarrierPrefixes(SyncCoverNodeId target,
+                                              IssueOrderState &state) {
   const SyncCoverNode &targetNode = graph_.getNodes()[target];
   const SyncCoverNodeId physicalTarget = targetNode.physicalAnchor;
   static const IssueHistoryHeads emptyIssued;
@@ -601,8 +598,8 @@ LogicalResult ProgramBuilder::recordBlockingBarrierPrefixes(
     std::vector<SyncCoverNodeId> sources;
     const auto history = issued.find(resource);
     if (history != issued.end() &&
-        failed(collectIssuedSources(history->second, targetNode.guard,
-                                    sources))) {
+        failed(
+            collectIssuedSources(history->second, targetNode.guard, sources))) {
       return failure();
     }
     const SyncCoverGraphResult recorded =
@@ -913,7 +910,7 @@ LogicalResult ProgramBuilder::addForwardDependencies() {
           source >= target ||
           !syncCoverGuardsCompatible(graph_.getNodes()[source].guard,
                                      graph_.getNodes()[target].guard) ||
-          isDemandImplicitlyComplete(source, target);
+          isDemandTargetCertifiedComplete(source, target);
       if (unavailable) {
         continue;
       }
@@ -933,7 +930,7 @@ LogicalResult ProgramBuilder::addForwardDependencies() {
           nodeBindings_[source].operation == nodeBindings_[target].operation ||
           !syncCoverGuardsCompatible(graph_.getNodes()[source].guard,
                                      graph_.getNodes()[target].guard) ||
-          isDemandImplicitlyComplete(source, target);
+          isDemandTargetCertifiedComplete(source, target);
       if (unavailable) {
         continue;
       }
@@ -963,7 +960,7 @@ LogicalResult ProgramBuilder::addRecurrenceDependencies() {
         if (!std::binary_search(loopNodes.begin(), loopNodes.end(), target)) {
           continue;
         }
-        if (isDemandImplicitlyComplete(source, target)) {
+        if (isDemandTargetCertifiedComplete(source, target)) {
           continue;
         }
         const SyncCoverGuard &sourceGuard = graph_.getNodes()[source].guard;
@@ -1008,8 +1005,8 @@ LogicalResult ProgramBuilder::addRecurrenceDependencies() {
   return success();
 }
 
-bool ProgramBuilder::isDemandImplicitlyComplete(SyncCoverNodeId source,
-                                                SyncCoverNodeId target) {
+bool ProgramBuilder::isDemandTargetCertifiedComplete(SyncCoverNodeId source,
+                                                     SyncCoverNodeId target) {
   const SyncCoverNode &sourceNode = graph_.getNodes()[source];
   const SyncCoverNode &targetNode = graph_.getNodes()[target];
   return sourceNode.resource == targetNode.resource &&
@@ -1084,8 +1081,7 @@ LogicalResult ProgramBuilder::walkSsaProvenance(
       Block *owner = argument.getOwner();
       const bool functionArgument = owner == &function_.getBody().front();
       auto loop = dyn_cast_or_null<scf::ForOp>(owner->getParentOp());
-      const bool loopInduction = loop &&
-                                 owner == &loop.getRegion().front() &&
+      const bool loopInduction = loop && owner == &loop.getRegion().front() &&
                                  argument == loop.getInductionVar();
       if (functionArgument || loopInduction) {
         continue;
@@ -1736,6 +1732,36 @@ ProgramBuilder::addDemand(SyncCoverNodeId source, SyncCoverNodeId target,
   demand.scope = scope;
   demand.distance = distance;
   demand.provenanceKinds = std::move(kinds);
+  demand.orderingRequirements = syncCoverOrderingRequirementBit(
+      SyncCoverOrderingRequirement::PipelineCompletionBeforeAccess);
+  const bool hasGlobalMemoryWitness =
+      llvm::any_of(witnesses, [&](SyncCoverStorageWitnessId witnessId) {
+        const SyncCoverStorageWitness &witness =
+            graph_.getStorageWitnesses()[witnessId];
+        const SyncCoverStorageAccess &access =
+            graph_.getStorageAccesses()[witness.sourceAccess];
+        return graph_.getStorageDomains()[access.domain].addressSpace ==
+               static_cast<std::uint32_t>(AddressSpace::GM);
+      });
+  if (hasGlobalMemoryWitness) {
+    demand.orderingRequirements |= syncCoverOrderingRequirementBit(
+        SyncCoverOrderingRequirement::MemoryOrderBeforeAccess);
+  }
+  const bool hasScalarDCacheWitness =
+      llvm::any_of(witnesses, [&](SyncCoverStorageWitnessId witnessId) {
+        const SyncCoverStorageWitness &witness =
+            graph_.getStorageWitnesses()[witnessId];
+        const SyncCoverStorageAccess &sourceAccess =
+            graph_.getStorageAccesses()[witness.sourceAccess];
+        const SyncCoverStorageAccess &targetAccess =
+            graph_.getStorageAccesses()[witness.targetAccess];
+        return sourceAccess.path == SyncCoverStorageAccessPath::ScalarDCache ||
+               targetAccess.path == SyncCoverStorageAccessPath::ScalarDCache;
+      });
+  if (hasScalarDCacheWitness) {
+    demand.orderingRequirements |= syncCoverOrderingRequirementBit(
+        SyncCoverOrderingRequirement::CacheVisibilityBeforeAccess);
+  }
   demand.storageWitnesses = std::move(witnesses);
   demand.originalDemandCount = originalDemandCount;
   const SyncCoverGraphResult added = graph_.addDemand(std::move(demand));

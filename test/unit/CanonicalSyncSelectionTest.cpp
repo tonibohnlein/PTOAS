@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncSelection.h"
 
@@ -15,6 +17,7 @@
 #include <limits>
 #include <memory>
 #include <numeric>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -590,13 +593,12 @@ bool testReverseDeletionPreservesBaselineCoverage() {
   --belowOptions.maximumWorkUnits;
   const CanonicalSyncSelection below =
       selectCanonicalSyncPatterns(problem, belowOptions);
-  passed &= check(exact && exact.mechanisms == selection.mechanisms &&
-                      exact.statistics.workUnits ==
-                          selection.statistics.workUnits,
-                  "admit reverse deletion at its exact work bound");
-  passed &= check(
-      below.error == CanonicalSyncSelectionError::WorkLimitExceeded,
-      "reject reverse deletion when one work unit is unavailable");
+  passed &=
+      check(exact && exact.mechanisms == selection.mechanisms &&
+                exact.statistics.workUnits == selection.statistics.workUnits,
+            "admit reverse deletion at its exact work bound");
+  passed &= check(below.error == CanonicalSyncSelectionError::WorkLimitExceeded,
+                  "reject reverse deletion when one work unit is unavailable");
   return passed;
 }
 
@@ -866,47 +868,43 @@ bool testLazySingletonSelectionRefreshesStaleGains() {
   std::array<SyncCoverNodeId, 4> sources{};
   std::array<SyncCoverNodeId, 4> targets{};
   for (std::size_t index = 0; index < sources.size(); ++index) {
-    sources[index] = takeIndex(
-        graph.addNode(1, 1, deepScope, index, {}, {2}, std::nullopt,
-                      index != 0),
-        passed,
-        "add lazy singleton source");
+    sources[index] = takeIndex(graph.addNode(1, 1, deepScope, index, {}, {2},
+                                             std::nullopt, index != 0),
+                               passed, "add lazy singleton source");
   }
   for (std::size_t index = 0; index < targets.size(); ++index) {
-    targets[index] = takeIndex(
-        graph.addNode(2, 1, deepScope, sources.size() + index), passed,
-        "add lazy singleton target");
+    targets[index] =
+        takeIndex(graph.addNode(2, 1, deepScope, sources.size() + index),
+                  passed, "add lazy singleton target");
     passed &= check(graph.addDemand(demand(sources[index], targets[index])),
                     "add lazy singleton demand");
   }
   for (std::size_t index = 1; index < sources.size(); ++index) {
-    SyncCoverEdge sourceFrontier =
-        supply(sources[index - 1], sources[index]);
+    SyncCoverEdge sourceFrontier = supply(sources[index - 1], sources[index]);
     sourceFrontier.kind = SyncCoverEdgeKind::CertifiedCompletionFrontier;
     passed &= check(graph.addEdge(sourceFrontier),
                     "add lazy singleton source frontier");
-    passed &= check(
-        graph.addCompletionDominance(sources[index - 1], sources[index]),
-        "add lazy singleton completion dominance");
+    passed &=
+        check(graph.addCompletionDominance(sources[index - 1], sources[index]),
+              "add lazy singleton completion dominance");
     SyncCoverEdge targetOrder = supply(targets[index - 1], targets[index]);
     targetOrder.kind = SyncCoverEdgeKind::NonCompletionPreservingIssueOrder;
-    passed &= check(graph.addEdge(targetOrder),
-                    "add lazy singleton target order");
+    passed &=
+        check(graph.addEdge(targetOrder), "add lazy singleton target order");
   }
   passed &= check(graph.freezeStructure(), "freeze lazy singleton graph");
 
   CanonicalSyncPatternProblem problem(graph, allDemands(graph));
   passed &= check(problem.addEventDomain({0, 1, 2, 8, {}}),
                   "add lazy singleton event domain");
-  const CanonicalSyncMechanismId first = takeIndex(
-      problem.internMechanism(event(0, 1, 2, sources[1], targets[0])), passed,
-      "add first overlapping singleton");
-  takeIndex(problem.internMechanism(
-                event(0, 1, 2, sources[2], targets[1])),
+  const CanonicalSyncMechanismId first =
+      takeIndex(problem.internMechanism(event(0, 1, 2, sources[1], targets[0])),
+                passed, "add first overlapping singleton");
+  takeIndex(problem.internMechanism(event(0, 1, 2, sources[2], targets[1])),
             passed, "add stale overlapping singleton");
-  const CanonicalSyncMechanismId last = takeIndex(
-      problem.internMechanism(event(0, 1, 2, sources[3], targets[2])), passed,
-      "add last overlapping singleton");
+  const CanonicalSyncMechanismId last =
+      takeIndex(problem.internMechanism(event(0, 1, 2, sources[3], targets[2])),
+                passed, "add last overlapping singleton");
   passed &= check(problem.freeze(), "freeze lazy singleton problem");
   if (!passed) {
     return false;
@@ -922,15 +920,15 @@ bool testLazySingletonSelectionRefreshesStaleGains() {
   passed &= check(firstSelection && firstSelection.mechanisms == expected &&
                       firstSelection.selectionOrder == expected,
                   "refresh a stale singleton gain before selecting it");
-  passed &= check(
-      secondSelection &&
-          secondSelection.mechanisms == firstSelection.mechanisms &&
-          secondSelection.selectionOrder == firstSelection.selectionOrder &&
-          secondSelection.statistics.patternEvaluations ==
-              firstSelection.statistics.patternEvaluations &&
-          secondSelection.statistics.workUnits ==
-              firstSelection.statistics.workUnits,
-      "repeat lazy singleton invalidation deterministically");
+  passed &= check(secondSelection &&
+                      secondSelection.mechanisms == firstSelection.mechanisms &&
+                      secondSelection.selectionOrder ==
+                          firstSelection.selectionOrder &&
+                      secondSelection.statistics.patternEvaluations ==
+                          firstSelection.statistics.patternEvaluations &&
+                      secondSelection.statistics.workUnits ==
+                          firstSelection.statistics.workUnits,
+                  "repeat lazy singleton invalidation deterministically");
   if (!passed || firstSelection.statistics.workUnits == 0) {
     return false;
   }
@@ -947,8 +945,7 @@ bool testLazySingletonSelectionRefreshesStaleGains() {
                    exact.statistics.workUnits ==
                        firstSelection.statistics.workUnits,
                "admit deep stale-heap selection at its exact work bound") &&
-         check(below.error ==
-                   CanonicalSyncSelectionError::WorkLimitExceeded,
+         check(below.error == CanonicalSyncSelectionError::WorkLimitExceeded,
                "reject deep stale-heap selection one work unit below bound");
 }
 
@@ -4225,8 +4222,7 @@ bool testSourceLocalBarrierCoversFanout() {
   }
   passed &= check(graph.setBlockingTargetedBarrierResources({1}),
                   "enable source-local pipe drain") &&
-            check(graph.setCrossResourceTargetedBarrierPairs(
-                      {{1, 2}, {1, 3}}),
+            check(graph.setCrossResourceTargetedBarrierPairs({{1, 2}, {1, 3}}),
                   "enable directed source-local completion") &&
             check(graph.freezeStructure(), "freeze source-local graph");
   CanonicalSyncPatternProblem problem(graph, allDemands(graph));
@@ -4726,6 +4722,107 @@ bool testMechanismOriginInterningIsBoundedAndDiagnosticOnly() {
                "include provenance in precise-repair prefix comparison");
 }
 
+bool testTypedRawGraphValidationAndDump() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId firstPhase =
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}, std::nullopt, true, 0, 0),
+                passed, "add typed raw first macro phase");
+  const SyncCoverNodeId completingPhase =
+      takeIndex(graph.addNode(1, 1, 0, 1, {}, {2}, firstPhase, true, 0, 1, {0}),
+                passed, "add typed raw completing macro phase");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(2, 1, 0, 2), passed, "add typed raw target");
+  passed &= check(graph.setPhysicalExit(firstPhase, completingPhase),
+                  "set typed raw first phase exit") &&
+            check(graph.setPhysicalExit(completingPhase, completingPhase),
+                  "set typed raw completing phase exit");
+  const SyncCoverStorageDomainId domain =
+      takeIndex(graph.addStorageDomain(SyncCoverStorageDomainRole::L1Tile, 3),
+                passed, "add typed raw storage domain");
+  const SyncCoverStorageAccessId sourceAccess =
+      takeIndex(graph.addStorageAccess(
+                    completingPhase, domain, 11, {0, 64},
+                    SyncCoverStorageAccessMode::Write, std::nullopt, true,
+                    SyncCoverStorageAccessPath::PhysicalPipeline),
+                passed, "add typed raw source access");
+  const SyncCoverStorageAccessId targetAccess = takeIndex(
+      graph.addStorageAccess(
+          target, domain, 11, {0, 64}, SyncCoverStorageAccessMode::Read,
+          std::nullopt, true, SyncCoverStorageAccessPath::PhysicalPipeline),
+      passed, "add typed raw target access");
+  const SyncCoverStorageWitnessId witness =
+      takeIndex(graph.addStorageWitness(sourceAccess, targetAccess), passed,
+                "add typed raw overlap witness");
+
+  SyncCoverDemand memoryDemand = demand(completingPhase, target);
+  memoryDemand.provenanceKinds = {SyncCoverDemandKind::MemoryRAW};
+  memoryDemand.storageWitnesses = {witness};
+  const SyncCoverDemandId row = takeIndex(graph.addDemand(memoryDemand), passed,
+                                          "add typed raw memory demand");
+  SyncCoverDemand duplicate = demand(completingPhase, target);
+  duplicate.orderingRequirements = syncCoverOrderingRequirementBit(
+      SyncCoverOrderingRequirement::MemoryOrderBeforeAccess);
+  passed &=
+      check(graph.addDemand(duplicate),
+            "merge typed raw ordering requirement") &&
+      check(
+          graph.getDemands()[row].originalDemandCount == 2 &&
+              graph.getDemands()[row].orderingRequirements ==
+                  (syncCoverOrderingRequirementBit(
+                       SyncCoverOrderingRequirement::
+                           PipelineCompletionBeforeAccess) |
+                   syncCoverOrderingRequirementBit(
+                       SyncCoverOrderingRequirement::MemoryOrderBeforeAccess)),
+          "retain every ordering requirement on the canonical row") &&
+      check(graph.freezeStructure(), "freeze typed raw graph");
+  const std::string dump = graph.getDeterministicRawDump();
+  passed &= check(dump == graph.getDeterministicRawDump(),
+                  "dump typed raw graph deterministically") &&
+            check(dump.find("node 1 op=0 phase=1") != std::string::npos &&
+                      dump.find("space=3") != std::string::npos &&
+                      dump.find("path=1") != std::string::npos &&
+                      dump.find("requirements=3") != std::string::npos,
+                  "dump typed physical and demand evidence");
+
+  SyncCoverGraph invalid;
+  const SyncCoverNodeId invalidSource = takeIndex(
+      invalid.addNode(1, 1, 0, 0), passed, "add invalid typed raw source");
+  const SyncCoverNodeId invalidTarget = takeIndex(
+      invalid.addNode(2, 1, 0, 1), passed, "add invalid typed raw target");
+  SyncCoverDemand missingRequirement = demand(invalidSource, invalidTarget);
+  missingRequirement.orderingRequirements = 0;
+  passed &= check(invalid.addDemand(missingRequirement).error ==
+                      SyncCoverGraphError::InvalidOrderingRequirement,
+                  "reject an empty ordering requirement");
+  const SyncCoverStorageDomainId invalidDomain = takeIndex(
+      invalid.addStorageDomain(), passed, "add invalid-path storage domain");
+  passed &=
+      check(invalid.addStorageAccess(
+                       invalidSource, invalidDomain, 0, {0, 1},
+                       SyncCoverStorageAccessMode::Read, std::nullopt, false,
+                       static_cast<SyncCoverStorageAccessPath>(255))
+                    .error == SyncCoverGraphError::InvalidStorageAccess,
+            "reject an unknown physical access path");
+
+  SyncCoverGraph ambiguousMacro;
+  const SyncCoverNodeId ambiguousFirst = takeIndex(
+      ambiguousMacro.addNode(1, 1, 0, 0, {}, {}, std::nullopt, false, 0, 0),
+      passed, "add ambiguous first macro phase");
+  const SyncCoverNodeId ambiguousSecond = takeIndex(
+      ambiguousMacro.addNode(1, 1, 0, 1, {}, {}, ambiguousFirst, false, 0, 0),
+      passed, "add duplicate macro phase");
+  passed &=
+      check(ambiguousMacro.setPhysicalExit(ambiguousFirst, ambiguousSecond),
+            "set ambiguous first macro exit") &&
+      check(ambiguousMacro.setPhysicalExit(ambiguousSecond, ambiguousSecond),
+            "set ambiguous second macro exit") &&
+      check(ambiguousMacro.freezeStructure().error ==
+                SyncCoverGraphError::InvalidNode,
+            "reject duplicate phases for one physical operation");
+  return passed;
+}
+
 } // namespace
 
 int main() {
@@ -4786,6 +4883,6 @@ int main() {
       testSourcePrefixBarrierRejectsInvalidCertificates() &&
       testSourcePrefixBarrierKeepsDistanceQualifiers() &&
       testMechanismOriginInterningIsBoundedAndDiagnosticOnly() &&
-      testFailClosedConstruction();
+      testTypedRawGraphValidationAndDump() && testFailClosedConstruction();
   return passed ? 0 : 1;
 }

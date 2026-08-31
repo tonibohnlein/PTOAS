@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- SyncCoverGraph.h - Synchronization covering graph -------*- C++ -*-===//
 
@@ -17,6 +19,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -108,6 +111,32 @@ enum class SyncCoverDemandKind : std::uint8_t {
   MemoryWAW,
 };
 
+/// Target-neutral ordering obligations carried by raw demand rows. Multiple
+/// bits may be required when independently interned hazards share endpoints.
+enum class SyncCoverOrderingRequirement : std::uint8_t {
+  PipelineCompletionBeforeAccess = 1U << 0,
+  MemoryOrderBeforeAccess = 1U << 1,
+  CacheVisibilityBeforeAccess = 1U << 2,
+  HardwareSpecialOrder = 1U << 3,
+};
+
+using SyncCoverOrderingRequirementMask = std::uint8_t;
+
+constexpr SyncCoverOrderingRequirementMask
+syncCoverOrderingRequirementBit(SyncCoverOrderingRequirement requirement) {
+  return static_cast<SyncCoverOrderingRequirementMask>(requirement);
+}
+
+constexpr SyncCoverOrderingRequirementMask kAllSyncCoverOrderingRequirements =
+    syncCoverOrderingRequirementBit(
+        SyncCoverOrderingRequirement::PipelineCompletionBeforeAccess) |
+    syncCoverOrderingRequirementBit(
+        SyncCoverOrderingRequirement::MemoryOrderBeforeAccess) |
+    syncCoverOrderingRequirementBit(
+        SyncCoverOrderingRequirement::CacheVisibilityBeforeAccess) |
+    syncCoverOrderingRequirementBit(
+        SyncCoverOrderingRequirement::HardwareSpecialOrder);
+
 struct SyncCoverNode {
   SyncCoverNodeId id = 0;
   std::uint32_t resource = 0;
@@ -126,6 +155,12 @@ struct SyncCoverNode {
   /// Target-provided contract: a synchronization set issued after this node
   /// certifies completion of the previously issued prefix on its resource.
   bool completionSignalCoversIssuedPrefix = false;
+  /// Stable physical operation identity assigned in scheduled traversal order.
+  std::size_t physicalOperation = 0;
+  /// Authoritative synchronization-macro phase, or -1 for an ordinary op.
+  int macroPhase = -1;
+  /// Result ordinals whose values become complete at this exact phase.
+  std::vector<unsigned> completedResults;
 };
 
 struct SyncCoverEdge {
@@ -148,6 +183,9 @@ struct SyncCoverDemand {
   /// One completion obligation may have several SSA or memory-hazard causes.
   /// Memory causes require role-compatible overlap witnesses below.
   std::vector<SyncCoverDemandKind> provenanceKinds{SyncCoverDemandKind::SSA};
+  SyncCoverOrderingRequirementMask orderingRequirements =
+      syncCoverOrderingRequirementBit(
+          SyncCoverOrderingRequirement::PipelineCompletionBeforeAccess);
   std::vector<SyncCoverStorageWitnessId> storageWitnesses;
   /// Number of original obligations interned into this canonical row.
   std::size_t originalDemandCount = 1;
@@ -218,6 +256,14 @@ enum class SyncCoverStorageDomainRole : std::uint8_t {
 struct SyncCoverStorageDomain {
   SyncCoverStorageDomainId id = 0;
   SyncCoverStorageDomainRole role = SyncCoverStorageDomainRole::Unspecified;
+  /// Target-neutral numeric address-space identity from the physical IR.
+  std::uint32_t addressSpace = 0;
+};
+
+enum class SyncCoverStorageAccessPath : std::uint8_t {
+  Unknown,
+  PhysicalPipeline,
+  ScalarDCache,
 };
 
 struct SyncCoverStorageAccess {
@@ -231,6 +277,7 @@ struct SyncCoverStorageAccess {
   /// True only when the interval denotes an exact physical slot rather than a
   /// conservative may-alias range.
   bool exactPhysical = false;
+  SyncCoverStorageAccessPath path = SyncCoverStorageAccessPath::Unknown;
 };
 
 struct SyncCoverStorageWitness {
@@ -348,6 +395,7 @@ enum class SyncCoverGraphError : std::uint8_t {
   InvalidGuard,
   InvalidEdgeKind,
   InvalidDemandKind,
+  InvalidOrderingRequirement,
   InvalidDistance,
   InvalidOrder,
   InvalidTimeline,
@@ -400,12 +448,14 @@ public:
                               SyncCoverControlSuccessorRelation relation);
   SyncCoverGraphResult setScopeTimeline(SyncCoverScopeId scope,
                                         SyncCoverTimelineInterval timeline);
-  SyncCoverGraphResult
-  addNode(std::uint32_t resource, std::uint64_t weight, SyncCoverScopeId scope,
-          std::size_t order, SyncCoverGuard guard = {},
-          std::vector<std::uint32_t> completionTargets = {},
-          std::optional<SyncCoverNodeId> physicalAnchor = std::nullopt,
-          bool completionSignalCoversIssuedPrefix = false);
+  SyncCoverGraphResult addNode(
+      std::uint32_t resource, std::uint64_t weight, SyncCoverScopeId scope,
+      std::size_t order, SyncCoverGuard guard = {},
+      std::vector<std::uint32_t> completionTargets = {},
+      std::optional<SyncCoverNodeId> physicalAnchor = std::nullopt,
+      bool completionSignalCoversIssuedPrefix = false,
+      std::size_t physicalOperation = std::numeric_limits<std::size_t>::max(),
+      int macroPhase = -1, std::vector<unsigned> completedResults = {});
   SyncCoverGraphResult addEdge(SyncCoverEdge edge);
   SyncCoverGraphResult addDemand(SyncCoverDemand demand);
   SyncCoverGraphResult setResourceRecurrenceCarryKind(std::uint32_t resource,
@@ -433,16 +483,16 @@ public:
   SyncCoverGraphResult setPhysicalExit(SyncCoverNodeId node,
                                        SyncCoverNodeId physicalExit);
   SyncCoverGraphError canonicalizeCompletionEdge(SyncCoverEdge &edge) const;
-  SyncCoverGraphResult
-  addStorageDomain(SyncCoverStorageDomainRole role =
-                       SyncCoverStorageDomainRole::Unspecified);
-  SyncCoverGraphResult
-  addStorageAccess(SyncCoverNodeId node, SyncCoverStorageDomainId domain,
-                   SyncCoverStorageAccessFamilyId family,
-                   SyncCoverStorageInterval extent,
-                   SyncCoverStorageAccessMode mode,
-                   std::optional<unsigned> addressOrdinal = std::nullopt,
-                   bool exactPhysical = false);
+  SyncCoverGraphResult addStorageDomain(
+      SyncCoverStorageDomainRole role = SyncCoverStorageDomainRole::Unspecified,
+      std::uint32_t addressSpace = 0);
+  SyncCoverGraphResult addStorageAccess(
+      SyncCoverNodeId node, SyncCoverStorageDomainId domain,
+      SyncCoverStorageAccessFamilyId family, SyncCoverStorageInterval extent,
+      SyncCoverStorageAccessMode mode,
+      std::optional<unsigned> addressOrdinal = std::nullopt,
+      bool exactPhysical = false,
+      SyncCoverStorageAccessPath path = SyncCoverStorageAccessPath::Unknown);
   SyncCoverGraphResult addStorageWitness(SyncCoverStorageAccessId sourceAccess,
                                          SyncCoverStorageAccessId targetAccess);
   SyncCoverGraphResult addTargetCompletionCertificate(
@@ -507,6 +557,10 @@ public:
   getOwningTimelineScope(SyncCoverScopeId scope) const;
   bool isStructureFrozen() const { return structureFrozen_; }
 
+  /// Stable, line-oriented serialization for raw-graph review and parity
+  /// tooling. It contains no pointer values or process-dependent identities.
+  std::string getDeterministicRawDump() const;
+
   SyncCoverGraphResult validate() const;
 
 private:
@@ -553,7 +607,7 @@ private:
   using StorageAccessKey =
       std::tuple<SyncCoverNodeId, SyncCoverStorageDomainId,
                  SyncCoverStorageAccessFamilyId, std::uint64_t, std::uint64_t,
-                 std::optional<unsigned>>;
+                 std::optional<unsigned>, SyncCoverStorageAccessPath>;
   std::map<StorageAccessKey, SyncCoverStorageAccessId> storageAccessIds_;
   std::map<std::pair<SyncCoverStorageAccessId, SyncCoverStorageAccessId>,
            SyncCoverStorageWitnessId>

@@ -42,11 +42,27 @@ inline bool isValidDemandKind(SyncCoverDemandKind kind) {
   return false;
 }
 
+inline bool
+isValidOrderingRequirements(SyncCoverOrderingRequirementMask requirements) {
+  return requirements != 0 &&
+         (requirements & ~kAllSyncCoverOrderingRequirements) == 0;
+}
+
 inline bool isValidAccessMode(SyncCoverStorageAccessMode mode) {
   switch (mode) {
   case SyncCoverStorageAccessMode::Read:
   case SyncCoverStorageAccessMode::Write:
   case SyncCoverStorageAccessMode::ReadWrite:
+    return true;
+  }
+  return false;
+}
+
+inline bool isValidAccessPath(SyncCoverStorageAccessPath path) {
+  switch (path) {
+  case SyncCoverStorageAccessPath::Unknown:
+  case SyncCoverStorageAccessPath::PhysicalPipeline:
+  case SyncCoverStorageAccessPath::ScalarDCache:
     return true;
   }
   return false;

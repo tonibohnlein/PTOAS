@@ -163,6 +163,8 @@ private:
   LogicalResult buildStorageConflictIndex();
   FailureOr<std::vector<Value>> getSsaOperands(Operation *operation,
                                                int macroPhase);
+  FailureOr<std::vector<unsigned>> getCompletedResults(Operation *operation,
+                                                       int macroPhase);
   bool gmAccessesAreNoAlias(const ExtractedAccess &first,
                             const ExtractedAccess &second) const;
   FailureOr<std::vector<OrdinalPairPhaseState>> getOrdinalPairs(
@@ -199,8 +201,8 @@ private:
       const CanonicalSyncTargetCapabilities &capabilities);
   LogicalResult discoverBasicOwnershipCertificates(
       const CanonicalSyncTargetCapabilities &capabilities);
-  bool isDemandImplicitlyComplete(SyncCoverNodeId source,
-                                  SyncCoverNodeId target);
+  bool isDemandTargetCertifiedComplete(SyncCoverNodeId source,
+                                       SyncCoverNodeId target);
   bool hasIntrinsicMmadAccumulatorOrdering(
       SyncCoverNodeId source, SyncCoverNodeId target,
       const SyncCoverStorageAccess &sourceAccess,
