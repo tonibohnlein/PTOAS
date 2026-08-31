@@ -44,6 +44,7 @@ constexpr std::size_t
     kMaximumStorageProtocolGroupReportBehaviorSignatureEntries = 4096;
 constexpr std::size_t kMaximumStorageProtocolAutomatonReportEntries = 256;
 constexpr std::size_t kMaximumStorageProtocolCutPlanReportEntries = 256;
+constexpr std::size_t kMaximumStorageProtocolFrontierReportEntries = 256;
 
 using SteadyClock = std::chrono::steady_clock;
 
@@ -2126,6 +2127,58 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
            plan.recurrenceReleaseTransfers, plan.readyRectangles.size()});
     }
   }
+  if (program.getStorageProtocolFrontierIndex()) {
+    report.storageProtocolFrontierAnalysisEnabled = true;
+    const SyncCoverStorageProtocolFrontierStatistics &frontierStatistics =
+        program.getStorageProtocolFrontierIndex()->getStatistics();
+    report.storageProtocolFrontierWorkUnits = frontierStatistics.workUnits;
+    report.storageProtocolFrontierEligibleAutomata =
+        frontierStatistics.eligibleAutomata;
+    report.storageProtocolFrontierIneligibleAutomata =
+        frontierStatistics.ineligibleAutomata;
+    report.storageProtocolFrontierMissingReadyAutomata =
+        frontierStatistics.missingReadyAutomata;
+    report.storageProtocolFrontierMissingRecurrenceReuseAutomata =
+        frontierStatistics.missingRecurrenceReuseAutomata;
+    report.storageProtocolFrontierMissingCompletionAutomata =
+        frontierStatistics.missingCompletionFrontierAutomata;
+    report.storageProtocolFrontierPlans = frontierStatistics.plans;
+    report.storageProtocolFrontiers = frontierStatistics.frontiers;
+    report.storageProtocolReadyFrontiers = frontierStatistics.readyFrontiers;
+    report.storageProtocolReuseFrontiers = frontierStatistics.reuseFrontiers;
+    report.storageProtocolDirectFrontiers =
+        frontierStatistics.directFrontiers;
+    report.storageProtocolCertificateFrontiers =
+        frontierStatistics.certificateFrontiers;
+    report.storageProtocolSameResourceRecurrenceReuses =
+        frontierStatistics.sameResourceRecurrenceReuses;
+    report.storageProtocolFrontierCertificateDemandIncidences =
+        frontierStatistics.certificateDemandIncidences;
+    report.storageProtocolFrontierTransferInspections =
+        frontierStatistics.transferInspections;
+    report.storageProtocolFrontierStatePairInspections =
+        frontierStatistics.statePairInspections;
+    report.storageProtocolFrontierPlanIncidences =
+        frontierStatistics.planFrontierIncidences;
+    report.storageProtocolMaximumPlanFrontiers =
+        frontierStatistics.maximumPlanFrontiers;
+    report.storageProtocolFrontierTruncated = frontierStatistics.truncated;
+    const std::vector<SyncCoverStorageProtocolFrontierPlan> &plans =
+        program.getStorageProtocolFrontierIndex()->getPlans();
+    const std::size_t retainedPlans = std::min(
+        plans.size(), kMaximumStorageProtocolFrontierReportEntries);
+    report.storageProtocolFrontierDetailsTruncated =
+        retainedPlans != plans.size();
+    report.storageProtocolFrontierDetails.reserve(retainedPlans);
+    for (std::size_t planIndex = 0; planIndex < retainedPlans; ++planIndex) {
+      const SyncCoverStorageProtocolFrontierPlan &plan = plans[planIndex];
+      report.storageProtocolFrontierDetails.push_back(
+          {plan.id, plan.automaton, plan.group, plan.owningScope,
+           plan.laneCount, plan.frontiers.size(), plan.readyFrontiers,
+           plan.reuseFrontiers, plan.directFrontiers,
+           plan.certificateFrontiers, plan.sameResourceRecurrenceReuses});
+    }
+  }
   if (program.getStorageCutIndex()) {
     report.storageCutAnalysisEnabled = true;
     const SyncCoverStorageCutStatistics &cutStatistics =
@@ -2601,9 +2654,10 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
           CanonicalSyncMechanismFamily::StorageCutEvent);
   analysisOptions.discoverTargetCompletionCertificates =
       analysisOptions.discoverTargetCompletionCertificates &&
-      canonicalSyncMechanismFamilyEnabled(
-          options.patterns.enabledMechanismFamilies,
-          CanonicalSyncMechanismFamily::TargetCompletionCertificate);
+      (analysisOptions.discoverStorageLifecycleComponents ||
+       canonicalSyncMechanismFamilyEnabled(
+           options.patterns.enabledMechanismFamilies,
+           CanonicalSyncMechanismFamily::TargetCompletionCertificate));
   analysisOptions.discoverBasicOwnershipCertificates =
       analysisOptions.discoverBasicOwnershipCertificates &&
       (canonicalSyncMechanismFamilyEnabled(

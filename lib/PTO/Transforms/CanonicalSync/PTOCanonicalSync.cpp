@@ -450,6 +450,28 @@ llvm::json::Array jsonStorageProtocolCutPlans(
   return result;
 }
 
+llvm::json::Array jsonStorageProtocolFrontierPlans(
+    ArrayRef<pto::CanonicalSyncStorageProtocolFrontierPlanReport> plans) {
+  llvm::json::Array result;
+  for (const pto::CanonicalSyncStorageProtocolFrontierPlanReport &plan :
+       plans) {
+    result.push_back(llvm::json::Object{
+        {"plan", jsonInteger(plan.plan)},
+        {"automaton", jsonInteger(plan.automaton)},
+        {"group", jsonInteger(plan.group)},
+        {"owning_scope", jsonInteger(plan.owningScope)},
+        {"lanes", jsonInteger(plan.lanes)},
+        {"frontiers", jsonInteger(plan.frontiers)},
+        {"ready_frontiers", jsonInteger(plan.readyFrontiers)},
+        {"reuse_frontiers", jsonInteger(plan.reuseFrontiers)},
+        {"direct_frontiers", jsonInteger(plan.directFrontiers)},
+        {"certificate_frontiers", jsonInteger(plan.certificateFrontiers)},
+        {"same_resource_recurrence_reuses",
+         jsonInteger(plan.sameResourceRecurrenceReuses)}});
+  }
+  return result;
+}
+
 llvm::json::Array jsonSyntheticStorageRectangleGrounding(
     ArrayRef<pto::CanonicalSyncSyntheticRectangleGroundingReport> details) {
   llvm::json::Array result;
@@ -968,6 +990,53 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
        report.storageProtocolCutPlanDetailsTruncated},
       {"storage_protocol_cut_plan_truncated",
        report.storageProtocolCutPlanTruncated},
+      {"storage_protocol_frontier_analysis_enabled",
+       report.storageProtocolFrontierAnalysisEnabled},
+      {"storage_protocol_frontier_work_units",
+       jsonInteger(report.storageProtocolFrontierWorkUnits)},
+      {"storage_protocol_frontier_eligible_automata",
+       jsonInteger(report.storageProtocolFrontierEligibleAutomata)},
+      {"storage_protocol_frontier_ineligible_automata",
+       jsonInteger(report.storageProtocolFrontierIneligibleAutomata)},
+      {"storage_protocol_frontier_missing_ready_automata",
+       jsonInteger(report.storageProtocolFrontierMissingReadyAutomata)},
+      {"storage_protocol_frontier_missing_recurrence_reuse_automata",
+       jsonInteger(
+           report.storageProtocolFrontierMissingRecurrenceReuseAutomata)},
+      {"storage_protocol_frontier_missing_completion_automata",
+       jsonInteger(report.storageProtocolFrontierMissingCompletionAutomata)},
+      {"storage_protocol_frontier_plans",
+       jsonInteger(report.storageProtocolFrontierPlans)},
+      {"storage_protocol_frontiers",
+       jsonInteger(report.storageProtocolFrontiers)},
+      {"storage_protocol_ready_frontiers",
+       jsonInteger(report.storageProtocolReadyFrontiers)},
+      {"storage_protocol_reuse_frontiers",
+       jsonInteger(report.storageProtocolReuseFrontiers)},
+      {"storage_protocol_direct_frontiers",
+       jsonInteger(report.storageProtocolDirectFrontiers)},
+      {"storage_protocol_certificate_frontiers",
+       jsonInteger(report.storageProtocolCertificateFrontiers)},
+      {"storage_protocol_same_resource_recurrence_reuses",
+       jsonInteger(report.storageProtocolSameResourceRecurrenceReuses)},
+      {"storage_protocol_frontier_certificate_demand_incidences",
+       jsonInteger(
+           report.storageProtocolFrontierCertificateDemandIncidences)},
+      {"storage_protocol_frontier_transfer_inspections",
+       jsonInteger(report.storageProtocolFrontierTransferInspections)},
+      {"storage_protocol_frontier_state_pair_inspections",
+       jsonInteger(report.storageProtocolFrontierStatePairInspections)},
+      {"storage_protocol_frontier_plan_incidences",
+       jsonInteger(report.storageProtocolFrontierPlanIncidences)},
+      {"storage_protocol_maximum_plan_frontiers",
+       jsonInteger(report.storageProtocolMaximumPlanFrontiers)},
+      {"storage_protocol_frontier_details",
+       jsonStorageProtocolFrontierPlans(
+           report.storageProtocolFrontierDetails)},
+      {"storage_protocol_frontier_details_truncated",
+       report.storageProtocolFrontierDetailsTruncated},
+      {"storage_protocol_frontier_truncated",
+       report.storageProtocolFrontierTruncated},
       {"storage_cut_analysis_enabled", report.storageCutAnalysisEnabled},
       {"storage_cut_work_units", jsonInteger(report.storageCutWorkUnits)},
       {"storage_cut_eligible_edges",

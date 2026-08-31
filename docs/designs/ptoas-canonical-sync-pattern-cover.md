@@ -705,6 +705,23 @@ distinction leaves four of five automata awaiting lifecycle-aware cuts and
 exposes sixteen direct rectangles for the remaining proposal. The result is an
 input to cut synthesis, not a synchronization mechanism or coverage claim.
 
+A sixth reporting-only index enumerates a broader lifecycle-local frontier
+pool before rectangle grounding. It retains target-authorized direct endpoint
+cuts for ready and positive-distance reuse transfers even when the complete
+set/wait recipe would not coexecute as an independently balanced event. It also
+admits exact target-completion certificates whose demand rows belong to the
+same automaton. Same-resource recurrence reuse remains an implicit issue-order
+obligation rather than an event frontier. Retaining an automaton requires at
+least one ready frontier and one recurrence-reuse path, but that condition is
+only candidate completeness: it does not prove that the pool covers every
+transfer or that a balanced finite-state protocol exists. Construction is
+transactional under independent work, plan, frontier, transfer, state-pair,
+plan-incidence, and certificate-demand limits. On the historical GEMM, four of
+five automata retain 874 candidate frontiers: 860 direct and 14
+certificate-derived. The missing accumulator automaton is reported explicitly;
+its guarded M-to-FIX boundary requires a provider-authorized lifecycle cut and
+cannot be inferred from an independently balanced direct event.
+
 The same analysis flag also builds a bounded direct-cut index when the
 lifecycle index is complete. It admits only distance-zero, cross-resource
 obligations whose source can signal completion to the target resource and

@@ -207,6 +207,20 @@ struct CanonicalSyncStorageProtocolCutPlanReport {
   std::size_t readyRectangles = 0;
 };
 
+struct CanonicalSyncStorageProtocolFrontierPlanReport {
+  SyncCoverStorageProtocolFrontierPlanId plan = 0;
+  SyncCoverStorageProtocolAutomatonId automaton = 0;
+  SyncCoverStorageProtocolGroupId group = 0;
+  SyncCoverScopeId owningScope = 0;
+  std::size_t lanes = 0;
+  std::size_t frontiers = 0;
+  std::size_t readyFrontiers = 0;
+  std::size_t reuseFrontiers = 0;
+  std::size_t directFrontiers = 0;
+  std::size_t certificateFrontiers = 0;
+  std::size_t sameResourceRecurrenceReuses = 0;
+};
+
 struct CanonicalSyncSyntheticRectangleGroundingReport {
   SyncCoverStorageFactoredRectangleId rectangle = 0;
   SyncCoverStorageCutId completionCut = 0;
@@ -390,6 +404,29 @@ struct CanonicalSyncComparisonReport {
       storageProtocolCutPlanDetails;
   bool storageProtocolCutPlanDetailsTruncated = false;
   bool storageProtocolCutPlanTruncated = false;
+  bool storageProtocolFrontierAnalysisEnabled = false;
+  std::size_t storageProtocolFrontierWorkUnits = 0;
+  std::size_t storageProtocolFrontierEligibleAutomata = 0;
+  std::size_t storageProtocolFrontierIneligibleAutomata = 0;
+  std::size_t storageProtocolFrontierMissingReadyAutomata = 0;
+  std::size_t storageProtocolFrontierMissingRecurrenceReuseAutomata = 0;
+  std::size_t storageProtocolFrontierMissingCompletionAutomata = 0;
+  std::size_t storageProtocolFrontierPlans = 0;
+  std::size_t storageProtocolFrontiers = 0;
+  std::size_t storageProtocolReadyFrontiers = 0;
+  std::size_t storageProtocolReuseFrontiers = 0;
+  std::size_t storageProtocolDirectFrontiers = 0;
+  std::size_t storageProtocolCertificateFrontiers = 0;
+  std::size_t storageProtocolSameResourceRecurrenceReuses = 0;
+  std::size_t storageProtocolFrontierCertificateDemandIncidences = 0;
+  std::size_t storageProtocolFrontierTransferInspections = 0;
+  std::size_t storageProtocolFrontierStatePairInspections = 0;
+  std::size_t storageProtocolFrontierPlanIncidences = 0;
+  std::size_t storageProtocolMaximumPlanFrontiers = 0;
+  std::vector<CanonicalSyncStorageProtocolFrontierPlanReport>
+      storageProtocolFrontierDetails;
+  bool storageProtocolFrontierDetailsTruncated = false;
+  bool storageProtocolFrontierTruncated = false;
   bool storageCutAnalysisEnabled = false;
   std::size_t storageCutWorkUnits = 0;
   std::size_t storageCutEligibleEdges = 0;

@@ -260,6 +260,7 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // CUT-REPORT: "storage_protocol_automaton_ineligible_groups": 0
 // CUT-REPORT: "storage_protocol_automaton_state_pair_incidences": 2227
 // CUT-REPORT: "storage_protocol_automaton_transfers": 2170
+// CUT-REPORT: "storage_protocol_certificate_frontiers": 14
 // CUT-REPORT: "storage_protocol_component_incidences": 17
 // CUT-REPORT: "storage_protocol_cut_plan_analysis_enabled": true
 // CUT-REPORT: "storage_protocol_cut_plan_details":
@@ -270,7 +271,18 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // CUT-REPORT: "storage_protocol_cut_plan_missing_ready_cut_automata": 4
 // CUT-REPORT: "storage_protocol_cut_plans": 1
 // CUT-REPORT: "storage_protocol_demand_incidences": 2170
+// CUT-REPORT: "storage_protocol_direct_frontiers": 860
 // CUT-REPORT: "storage_protocol_eligible_seeds": 9
+// CUT-REPORT: "storage_protocol_frontier_analysis_enabled": true
+// CUT-REPORT: "storage_protocol_frontier_certificate_demand_incidences": 76
+// CUT-REPORT: "storage_protocol_frontier_eligible_automata": 4
+// CUT-REPORT: "storage_protocol_frontier_ineligible_automata": 1
+// CUT-REPORT: "storage_protocol_frontier_missing_completion_automata": 2
+// CUT-REPORT: "storage_protocol_frontier_missing_ready_automata": 1
+// CUT-REPORT: "storage_protocol_frontier_missing_recurrence_reuse_automata": 0
+// CUT-REPORT: "storage_protocol_frontier_plan_incidences": 874
+// CUT-REPORT: "storage_protocol_frontier_plans": 4
+// CUT-REPORT: "storage_protocol_frontiers": 874
 // CUT-REPORT: "storage_protocol_group_control_incidences": 5
 // CUT-REPORT: "storage_protocol_group_demand_incidences": 2170
 // CUT-REPORT: "storage_protocol_group_details":
@@ -308,7 +320,10 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // CUT-REPORT: "storage_protocol_maximum_seed_sccs": 2
 // CUT-REPORT: "storage_protocol_maximum_seed_slots": 1
 // CUT-REPORT: "storage_protocol_phase_rotating_seeds": 8
+// CUT-REPORT: "storage_protocol_ready_frontiers": 770
 // CUT-REPORT: "storage_protocol_ready_release_seeds": 9
+// CUT-REPORT: "storage_protocol_reuse_frontiers": 104
+// CUT-REPORT: "storage_protocol_same_resource_recurrence_reuses": 535
 // CUT-REPORT: "storage_protocol_scc_incidences": 17
 // CUT-REPORT: "storage_protocol_seed_analysis_enabled": true
 // CUT-REPORT: "storage_protocol_seed_truncated": false
