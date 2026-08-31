@@ -51,9 +51,11 @@ Operations that consume the intra-core event resources owned by CanonicalSync
 are rejected as user input. Targeted and `PIPE_ALL` `pto.barrier` operations
 outside loops are accepted, preserved, and modeled as fixed completion supply.
 On an architecture that advertises the blocking targeted-barrier contract, a
-targeted barrier drains earlier work on its named pipeline before the first
-subsequent operation on every resource; `PIPE_ALL` drains earlier work on every
-pipeline. Unsupported targeted pipes retain only same-resource completion.
+targeted barrier drains earlier work on its named pipeline before subsequent
+work on that same pipeline. It does not publish completion to another pipeline
+unless a separate directed target contract says so; no current profile does.
+`PIPE_ALL` drains earlier work on every pipeline. Unsupported targeted pipes
+retain only same-resource completion.
 Barriers inside `scf.for` are rejected until a balanced recurrence contract is
 available. Whole-core synchronization and memory-fence operations remain
 preserved fixed constraints, but are not yet credited as coverage supply.
@@ -86,7 +88,7 @@ allow completion to propagate beyond that exact operation.
 | Contract | `a2` / `a2a3` | `a3` | `a5` |
 | --- | --- | --- | --- |
 | same-resource completion order | `PIPE_S` | `PIPE_S` | `PIPE_S`, `PIPE_V` |
-| targeted barrier drains before other resources | `M`, `MTE1`, `MTE2`, `MTE3`, `FIX`, `V` | same | `M`, `MTE1`, `MTE2`, `MTE3`, `FIX` |
+| targeted barrier drains its named source prefix | `M`, `MTE1`, `MTE2`, `MTE3`, `FIX`, `V` | same | `M`, `MTE1`, `MTE2`, `MTE3`, `FIX` |
 | L0-ready, alternative-join, scope-exit, accumulator-boundary ownership | disabled | version 1 | disabled |
 | exact MMAD accumulator overwrite ordering | disabled | version 1 | disabled |
 
@@ -632,10 +634,10 @@ Enable the pass with:
 Relevant driver options are:
 
 ```text
---canonical-sync-event-id-max=8
+--canonical-sync-event-id-num-max=6
 --canonical-sync-pattern-mode=direct|direct-pair
 --canonical-sync-mechanism-families=all|core|<family>[+<family>...]
---canonical-sync-catalog-mode=standard|strict-direct
+--canonical-sync-catalog-mode=standard|strict-direct|mechanical-direct
 --canonical-sync-selection-strategy=fixed-cover|action-aware-singleton|pair-lookahead
 --canonical-sync-selection-objective=action-first|serialization-first
 --canonical-sync-maximum-periodic-recurrence-states=16
@@ -699,6 +701,18 @@ incidences, and each selected mechanism's grounded row count. This makes
 strict-direct mode a baseline for distinguishing three outcomes: a complete
 direct cover, genuine event-resource scarcity, and an unsupported
 control/lifecycle shape.
+
+`mechanical-direct` is the non-optimizing correctness oracle. It additionally
+requires `pattern-mode=direct`, selects every independently admitted direct
+recipe, and performs no set-cover deletion or reverse deletion. It does not
+admit the balanced target-local fallback because that recipe is a synthesized
+cut rather than the exact source-to-target primitive being tested. A repeated
+one-bit event inside a loop is rejected unless it is represented by an
+independently verified lifecycle protocol; lexical set/wait balance does not
+prove that iteration `i + 1` cannot set the token before iteration `i` has
+consumed it. Like `strict-direct`, this mode retains the complete unique raw
+demand universe, disables repair and body `PIPE_ALL`, and reports event-ID
+scarcity before mutating the IR.
 
 Named families are independently composable. The accepted names are:
 

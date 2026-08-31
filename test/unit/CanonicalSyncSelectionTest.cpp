@@ -430,45 +430,45 @@ bool testBatchedSingletonCoverageHandlesRecurrence() {
 bool testMechanismOwnerUsesActionRegionLca() {
   bool passed = true;
   SyncCoverGraph graph;
-  const SyncCoverRegionId rootSequence = takeIndex(
-      graph.addRegion(0, SyncCoverRegionKind::Sequence,
-                      SyncCoverRegionCardinality::ExactlyOnce),
-      passed, "add mechanism-owner root sequence");
-  const SyncCoverRegionId firstTransparent = takeIndex(
-      graph.addRegion(rootSequence, SyncCoverRegionKind::Transparent,
-                      SyncCoverRegionCardinality::ExactlyOnce),
-      passed, "add first transparent owner");
-  const SyncCoverRegionId firstSequence = takeIndex(
-      graph.addRegion(firstTransparent, SyncCoverRegionKind::Sequence,
-                      SyncCoverRegionCardinality::ExactlyOnce),
-      passed, "add first transparent sequence");
-  const SyncCoverRegionId secondTransparent = takeIndex(
-      graph.addRegion(rootSequence, SyncCoverRegionKind::Transparent,
-                      SyncCoverRegionCardinality::ExactlyOnce),
-      passed, "add second transparent owner");
+  const SyncCoverRegionId rootSequence =
+      takeIndex(graph.addRegion(0, SyncCoverRegionKind::Sequence,
+                                SyncCoverRegionCardinality::ExactlyOnce),
+                passed, "add mechanism-owner root sequence");
+  const SyncCoverRegionId firstTransparent =
+      takeIndex(graph.addRegion(rootSequence, SyncCoverRegionKind::Transparent,
+                                SyncCoverRegionCardinality::ExactlyOnce),
+                passed, "add first transparent owner");
+  const SyncCoverRegionId firstSequence =
+      takeIndex(graph.addRegion(firstTransparent, SyncCoverRegionKind::Sequence,
+                                SyncCoverRegionCardinality::ExactlyOnce),
+                passed, "add first transparent sequence");
+  const SyncCoverRegionId secondTransparent =
+      takeIndex(graph.addRegion(rootSequence, SyncCoverRegionKind::Transparent,
+                                SyncCoverRegionCardinality::ExactlyOnce),
+                passed, "add second transparent owner");
   const SyncCoverRegionId secondSequence = takeIndex(
       graph.addRegion(secondTransparent, SyncCoverRegionKind::Sequence,
                       SyncCoverRegionCardinality::ExactlyOnce),
       passed, "add second transparent sequence");
-  const SyncCoverNodeId source = takeIndex(
-      graph.addNode(1, 1, 0, 0, {}, {2}, std::nullopt, false,
-                    std::numeric_limits<std::size_t>::max(), -1, {},
-                    firstSequence),
-      passed, "add mechanism-owner source");
-  const SyncCoverNodeId target = takeIndex(
-      graph.addNode(2, 1, 0, 1, {}, {}, std::nullopt, false,
-                    std::numeric_limits<std::size_t>::max(), -1, {},
-                    secondSequence),
-      passed, "add mechanism-owner target");
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}, std::nullopt, false,
+                              std::numeric_limits<std::size_t>::max(), -1, {},
+                              firstSequence),
+                passed, "add mechanism-owner source");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(2, 1, 0, 1, {}, {}, std::nullopt, false,
+                              std::numeric_limits<std::size_t>::max(), -1, {},
+                              secondSequence),
+                passed, "add mechanism-owner target");
   passed &= check(graph.addDemand(demand(source, target)),
                   "add mechanism-owner demand") &&
             check(graph.freezeStructure(), "freeze mechanism-owner graph");
   CanonicalSyncPatternProblem problem(graph, allDemands(graph));
   passed &= check(problem.addEventDomain({0, 1, 2, 6, {}}),
                   "add mechanism-owner domain");
-  const CanonicalSyncMechanismId mechanism = takeIndex(
-      problem.internMechanism(event(0, 1, 2, source, target)), passed,
-      "intern mechanism with structural owner");
+  const CanonicalSyncMechanismId mechanism =
+      takeIndex(problem.internMechanism(event(0, 1, 2, source, target)), passed,
+                "intern mechanism with structural owner");
   return passed &&
          check(problem.getMechanisms()[mechanism].descriptor.ownerRegion ==
                    rootSequence,
@@ -647,6 +647,87 @@ bool testReverseDeletionPreservesBaselineCoverage() {
             "admit reverse deletion at its exact work bound");
   passed &= check(below.error == CanonicalSyncSelectionError::WorkLimitExceeded,
                   "reject reverse deletion when one work unit is unavailable");
+  return passed;
+}
+
+bool testMechanicalSelectionNeverDeletesDirectMechanisms() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source = takeIndex(graph.addNode(1, 1, 0, 0, {}, {2}),
+                                           passed, "add mechanical source");
+  const SyncCoverNodeId first = takeIndex(graph.addNode(2, 1, 0, 1), passed,
+                                          "add mechanical first target");
+  const SyncCoverNodeId second = takeIndex(graph.addNode(2, 1, 0, 2), passed,
+                                           "add mechanical second target");
+  SyncCoverEdge targetOrder = supply(first, second);
+  targetOrder.kind = SyncCoverEdgeKind::NonCompletionPreservingIssueOrder;
+  passed &=
+      check(graph.addEdge(targetOrder), "add mechanical target issue order");
+  passed &= check(graph.addDemand(demand(source, first)),
+                  "add mechanical first demand");
+  passed &= check(graph.addDemand(demand(source, second)),
+                  "add mechanical second demand");
+  passed &= check(graph.freezeStructure(), "freeze mechanical graph");
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 2, {}}),
+                  "add mechanical event domain");
+  const CanonicalSyncMechanismId firstMechanism =
+      takeIndex(problem.internMechanism(event(0, 1, 2, source, first)), passed,
+                "add mechanical narrow event");
+  const CanonicalSyncMechanismId secondMechanism =
+      takeIndex(problem.internMechanism(event(0, 1, 2, source, second)), passed,
+                "add mechanical broad event");
+  passed &= check(problem.freeze(), "freeze mechanical problem");
+
+  const CanonicalSyncSelection reduced = selectCanonicalSyncPatterns(problem);
+  CanonicalSyncGreedyOptions invalidGreedyOptions;
+  invalidGreedyOptions.strategy = CanonicalSyncSelectionStrategy::MechanicalAll;
+  const CanonicalSyncSelection invalidGreedy =
+      selectCanonicalSyncPatterns(problem, invalidGreedyOptions);
+  const CanonicalSyncSelection mechanical =
+      selectAllCanonicalSyncSingletonMechanisms(problem);
+  const CanonicalSyncSelection exactWork =
+      selectAllCanonicalSyncSingletonMechanisms(
+          problem, mechanical.statistics.workUnits);
+  const CanonicalSyncSelection oneLessWork =
+      selectAllCanonicalSyncSingletonMechanisms(
+          problem, mechanical.statistics.workUnits - 1);
+  const std::vector<CanonicalSyncMechanismId> expected{firstMechanism,
+                                                       secondMechanism};
+  passed &=
+      check(reduced && reduced.mechanisms.size() == 1,
+            "ordinary cover may delete a redundant direct mechanism") &&
+      check(invalidGreedy.error == CanonicalSyncSelectionError::InvalidProblem,
+            "reject the report-only mechanical policy in greedy selection") &&
+      check(mechanical && mechanical.mechanisms == expected &&
+                mechanical.selectionOrder == expected &&
+                mechanical.statistics.deletionEvaluations == 0,
+            "mechanical selection retains every direct mechanism") &&
+      check(exactWork && exactWork.statistics.workUnits ==
+                             mechanical.statistics.workUnits,
+            "admit mechanical selection at its exact work bound") &&
+      check(oneLessWork.error == CanonicalSyncSelectionError::WorkLimitExceeded,
+            "reject mechanical selection below its exact work bound") &&
+      check(verifyCanonicalSyncSelection(problem, mechanical),
+            "freshly verify the complete mechanical selection");
+
+  CanonicalSyncPatternProblem conflicting(graph, allDemands(graph));
+  passed &= check(conflicting.addEventDomain({0, 1, 2, 2, {}}),
+                  "add conflicting mechanical event domain");
+  const CanonicalSyncMechanismId conflictingFirst =
+      takeIndex(conflicting.internMechanism(event(0, 1, 2, source, first)),
+                passed, "add first conflicting mechanical event");
+  const CanonicalSyncMechanismId conflictingSecond =
+      takeIndex(conflicting.internMechanism(event(0, 1, 2, source, second)),
+                passed, "add second conflicting mechanical event");
+  passed &=
+      check(conflicting.addConflict(conflictingFirst, conflictingSecond),
+            "add mechanical conflict") &&
+      check(conflicting.freeze(), "freeze conflicting mechanical problem") &&
+      check(selectAllCanonicalSyncSingletonMechanisms(conflicting).error ==
+                CanonicalSyncSelectionError::InvalidProblem,
+            "reject a conflicting select-all catalog");
   return passed;
 }
 
@@ -4882,6 +4963,7 @@ int main() {
       testBatchedSingletonCoverageRejectsOversizedResult() &&
       testFixedCompletionNeedsNoSelectedMechanism() &&
       testReverseDeletionPreservesBaselineCoverage() &&
+      testMechanicalSelectionNeverDeletesDirectMechanisms() &&
       testInactiveRecurrenceDoesNotBuildAnArena() &&
       testDirectPairDiscoversJointCoverage() &&
       testFixedCoverUsesFrozenCompositeColumn() &&

@@ -1,16 +1,19 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncSelection.h"
 
 #include <algorithm>
 #include <iterator>
 #include <limits>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <tuple>
@@ -205,9 +208,9 @@ bool hasOnlySingletonPatterns(const CanonicalSyncPatternProblem &problem) {
   return problem.getPatterns().size() == problem.getMechanisms().size();
 }
 
-std::optional<bool> hasIndependentSingletonPatterns(
-    const CanonicalSyncPatternProblem &problem, std::size_t maximumWork,
-    std::size_t &work) {
+std::optional<bool>
+hasIndependentSingletonPatterns(const CanonicalSyncPatternProblem &problem,
+                                std::size_t maximumWork, std::size_t &work) {
   if (!hasOnlySingletonPatterns(problem)) {
     return false;
   }
@@ -225,8 +228,15 @@ std::optional<SyncCoverDemandSet>
 coveredBy(const CanonicalSyncPatternProblem &problem,
           const std::vector<CanonicalSyncMechanismId> &selected,
           std::size_t maximumWork, std::size_t &work) {
+  if (!consumeWork(problem.getBaselineCoverage().getWords().size(), maximumWork,
+                   work)) {
+    return std::nullopt;
+  }
   SyncCoverDemandSet result = problem.getBaselineCoverage();
   if (hasOnlySingletonPatterns(problem)) {
+    if (!consumeWork(selected.size(), maximumWork, work)) {
+      return std::nullopt;
+    }
     for (CanonicalSyncMechanismId mechanism : selected) {
       if (mechanism >= problem.getPatterns().size()) {
         return std::nullopt;
@@ -431,6 +441,9 @@ CostComputation
 getCostMetered(const CanonicalSyncPatternProblem &problem,
                const std::vector<CanonicalSyncMechanismId> &members,
                std::size_t maximumWork, std::size_t &work) {
+  if (!consumeWork(members.size(), maximumWork, work)) {
+    return {CostComputationError::WorkLimitExceeded, {}};
+  }
   std::size_t costWork = members.size();
   for (CanonicalSyncMechanismId mechanismId : members) {
     const CanonicalSyncMechanism &mechanism =
@@ -811,12 +824,12 @@ struct SingletonQueueEntry {
   std::uint64_t eventLifetimeArea = 0;
 };
 
-std::uint64_t singletonActionProfileValue(
-    const CanonicalSyncMechanism &mechanism, std::size_t depth) {
-  const std::uint64_t barriers = profileValue(mechanism.cost.barrierActions,
-                                              depth);
-  const std::uint64_t events =
-      profileValue(mechanism.cost.eventActions, depth);
+std::uint64_t
+singletonActionProfileValue(const CanonicalSyncMechanism &mechanism,
+                            std::size_t depth) {
+  const std::uint64_t barriers =
+      profileValue(mechanism.cost.barrierActions, depth);
+  const std::uint64_t events = profileValue(mechanism.cost.eventActions, depth);
   std::uint64_t total = 0;
   // Queue preparation rejects overflow. Keep this observer defined and
   // maximally expensive if an invalid internal entry nevertheless reaches it.
@@ -859,9 +872,9 @@ bool singletonCandidateLess(const CanonicalSyncPatternProblem &problem,
       problem.getMechanisms()[first.mechanism];
   const CanonicalSyncMechanism &secondMechanism =
       problem.getMechanisms()[second.mechanism];
-  const int serialization = compareRatio(
-      firstMechanism.cost.serializationBreadth, first.gain,
-      secondMechanism.cost.serializationBreadth, second.gain);
+  const int serialization =
+      compareRatio(firstMechanism.cost.serializationBreadth, first.gain,
+                   secondMechanism.cost.serializationBreadth, second.gain);
   const int actions =
       compareSingletonActionProfileRatio(problem, first, second);
   if (objective == CanonicalSyncSelectionObjective::SerializationFirst) {
@@ -924,9 +937,8 @@ bool consumeHeapOperationWork(std::size_t heapSize,
                               std::size_t maximumWork, std::size_t &work) {
   const std::size_t levels = heapComparisonLevels(heapSize);
   std::size_t comparisons = levels;
-  if (popping &&
-      (!checkedWorkProduct(levels, 2, comparisons) ||
-       !checkedWorkSum(comparisons, 2, comparisons))) {
+  if (popping && (!checkedWorkProduct(levels, 2, comparisons) ||
+                  !checkedWorkSum(comparisons, 2, comparisons))) {
     return false;
   }
   std::size_t comparisonWork = 0;
@@ -937,20 +949,20 @@ bool consumeHeapOperationWork(std::size_t heapSize,
          consumeWork(operationWork, maximumWork, work);
 }
 
-bool evaluateSingletonGain(
-    const CanonicalSyncPatternProblem &problem,
-    CanonicalSyncMechanismId mechanism, const SyncCoverDemandSet &covered,
-    const CanonicalSyncGreedyOptions &options,
-    CanonicalSyncGreedyStatistics &statistics,
-    std::optional<std::size_t> &gain) {
+bool evaluateSingletonGain(const CanonicalSyncPatternProblem &problem,
+                           CanonicalSyncMechanismId mechanism,
+                           const SyncCoverDemandSet &covered,
+                           const CanonicalSyncGreedyOptions &options,
+                           CanonicalSyncGreedyStatistics &statistics,
+                           std::optional<std::size_t> &gain) {
   gain.reset();
   if (mechanism >= problem.getPatterns().size()) {
     return false;
   }
   const CanonicalSyncPattern &pattern = problem.getPatterns()[mechanism];
-  const bool invalid =
-      pattern.kind != CanonicalSyncPatternKind::Singleton ||
-      pattern.members.size() != 1 || pattern.members.front() != mechanism;
+  const bool invalid = pattern.kind != CanonicalSyncPatternKind::Singleton ||
+                       pattern.members.size() != 1 ||
+                       pattern.members.front() != mechanism;
   if (invalid) {
     return false;
   }
@@ -973,12 +985,12 @@ bool evaluateSingletonGain(
   return true;
 }
 
-bool prepareSingletonQueueEntry(
-    const CanonicalSyncPatternProblem &problem,
-    CanonicalSyncMechanismId mechanism, const SyncCoverDemandSet &covered,
-    const CanonicalSyncGreedyOptions &options,
-    CanonicalSyncGreedyStatistics &statistics,
-    std::optional<SingletonQueueEntry> &candidate) {
+bool prepareSingletonQueueEntry(const CanonicalSyncPatternProblem &problem,
+                                CanonicalSyncMechanismId mechanism,
+                                const SyncCoverDemandSet &covered,
+                                const CanonicalSyncGreedyOptions &options,
+                                CanonicalSyncGreedyStatistics &statistics,
+                                std::optional<SingletonQueueEntry> &candidate) {
   candidate.reset();
   std::optional<std::size_t> gain;
   if (!evaluateSingletonGain(problem, mechanism, covered, options, statistics,
@@ -997,8 +1009,7 @@ bool prepareSingletonQueueEntry(
       !checkedWorkSum(profileWork, mechanismData.eventLifetimes.size(),
                       costWork) ||
       !checkedWorkSum(costWork, 1, costWork) ||
-      !consumeWork(costWork, options.maximumWorkUnits,
-                   statistics.workUnits)) {
+      !consumeWork(costWork, options.maximumWorkUnits, statistics.workUnits)) {
     return false;
   }
   const std::size_t profileDepth =
@@ -1079,13 +1090,11 @@ CanonicalSyncSelectionError selectIndependentSingletonCover(
       continue;
     }
     maximumProfileDepth = std::max(
-        maximumProfileDepth,
-        std::max(mechanism.cost.barrierActions.size(),
-                 mechanism.cost.eventActions.size()));
+        maximumProfileDepth, std::max(mechanism.cost.barrierActions.size(),
+                                      mechanism.cost.eventActions.size()));
     const bool initialHeapWork = consumeHeapOperationWork(
         candidates.size() + 1, maximumProfileDepth, /*popping=*/false,
-        options.maximumWorkUnits,
-        result.statistics.workUnits);
+        options.maximumWorkUnits, result.statistics.workUnits);
     if (!initialHeapWork) {
       return CanonicalSyncSelectionError::WorkLimitExceeded;
     }
@@ -1107,8 +1116,7 @@ CanonicalSyncSelectionError selectIndependentSingletonCover(
       return CanonicalSyncSelectionError::NoCoveringPattern;
     }
     if (!consumeHeapOperationWork(candidates.size(), maximumProfileDepth,
-                                  /*popping=*/true,
-                                  options.maximumWorkUnits,
+                                  /*popping=*/true, options.maximumWorkUnits,
                                   result.statistics.workUnits)) {
       return CanonicalSyncSelectionError::WorkLimitExceeded;
     }
@@ -1128,9 +1136,9 @@ CanonicalSyncSelectionError selectIndependentSingletonCover(
     candidate.gain = *refreshedGain;
     bool isBest = candidates.empty();
     if (!isBest) {
-      if (!consumeSingletonComparisonWork(
-              maximumProfileDepth, options.maximumWorkUnits,
-              result.statistics.workUnits)) {
+      if (!consumeSingletonComparisonWork(maximumProfileDepth,
+                                          options.maximumWorkUnits,
+                                          result.statistics.workUnits)) {
         return CanonicalSyncSelectionError::WorkLimitExceeded;
       }
       isBest = singletonCandidateLess(problem, candidate, candidates.front(),
@@ -1139,8 +1147,7 @@ CanonicalSyncSelectionError selectIndependentSingletonCover(
     if (!isBest) {
       const bool replacementHeapWork = consumeHeapOperationWork(
           candidates.size() + 1, maximumProfileDepth, /*popping=*/false,
-          options.maximumWorkUnits,
-          result.statistics.workUnits);
+          options.maximumWorkUnits, result.statistics.workUnits);
       if (!replacementHeapWork) {
         return CanonicalSyncSelectionError::WorkLimitExceeded;
       }
@@ -1150,16 +1157,16 @@ CanonicalSyncSelectionError selectIndependentSingletonCover(
     }
     const CanonicalSyncMechanismId mechanism = candidate.mechanism;
     const CanonicalSyncPattern &pattern = problem.getPatterns()[mechanism];
-    const bool selectionWork = consumeWork(
-        selected.size() + pattern.coverage.getWords().size() + 1,
-        options.maximumWorkUnits, result.statistics.workUnits);
+    const bool selectionWork =
+        consumeWork(selected.size() + pattern.coverage.getWords().size() + 1,
+                    options.maximumWorkUnits, result.statistics.workUnits);
     if (!selectionWork) {
       return CanonicalSyncSelectionError::WorkLimitExceeded;
     }
     result.selectionOrder.push_back(mechanism);
-    selected.insert(std::lower_bound(selected.begin(), selected.end(),
-                                     mechanism),
-                    mechanism);
+    selected.insert(
+        std::lower_bound(selected.begin(), selected.end(), mechanism),
+        mechanism);
     result.covered.unite(pattern.coverage);
   }
 }
@@ -1201,9 +1208,10 @@ bool reverseDeleteIndependentSingletons(
     if (!deletionWork) {
       return false;
     }
-    const auto found = std::lower_bound(selected.begin(), selected.end(),
-                                        *position);
-    const bool mechanismMissing = found == selected.end() || *found != *position;
+    const auto found =
+        std::lower_bound(selected.begin(), selected.end(), *position);
+    const bool mechanismMissing =
+        found == selected.end() || *found != *position;
     if (mechanismMissing) {
       continue;
     }
@@ -1402,12 +1410,108 @@ mlir::pto::computeCanonicalSyncStructuralCost(
   return std::move(result.cost.value);
 }
 
+CanonicalSyncSelection mlir::pto::selectAllCanonicalSyncSingletonMechanisms(
+    const CanonicalSyncPatternProblem &problem, std::size_t maximumWorkUnits) {
+  CanonicalSyncSelection result;
+  const bool invalid = !problem.isFrozen() || maximumWorkUnits == 0 ||
+                       !hasOnlySingletonPatterns(problem);
+  if (invalid) {
+    result.error = CanonicalSyncSelectionError::InvalidProblem;
+    return result;
+  }
+
+  const std::size_t mechanismCount = problem.getMechanisms().size();
+  if (!consumeWork(mechanismCount, maximumWorkUnits,
+                   result.statistics.workUnits)) {
+    result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+    return result;
+  }
+  const bool hasConflict = std::any_of(
+      problem.getMechanisms().begin(), problem.getMechanisms().end(),
+      [](const CanonicalSyncMechanism &mechanism) {
+        return !mechanism.conflicts.empty();
+      });
+  if (hasConflict) {
+    result.error = CanonicalSyncSelectionError::InvalidProblem;
+    return result;
+  }
+
+  std::size_t retainedVectorWork = 0;
+  const bool vectorWorkAvailable =
+      checkedWorkProduct(mechanismCount, 3, retainedVectorWork) &&
+      consumeWork(retainedVectorWork, maximumWorkUnits,
+                  result.statistics.workUnits);
+  if (!vectorWorkAvailable) {
+    result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+    return result;
+  }
+  result.mechanisms.resize(mechanismCount);
+  std::iota(result.mechanisms.begin(), result.mechanisms.end(), 0);
+  result.selectionOrder = result.mechanisms;
+
+  std::optional<SyncCoverDemandSet> coverage =
+      coveredBy(problem, result.mechanisms, maximumWorkUnits,
+                result.statistics.workUnits);
+  if (!coverage) {
+    result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+    return result;
+  }
+  result.covered = std::move(*coverage);
+  if (!consumeWork(problem.getDemands().size(), maximumWorkUnits,
+                   result.statistics.workUnits)) {
+    result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+    return result;
+  }
+  const bool missesDemand =
+      std::any_of(problem.getDemands().begin(), problem.getDemands().end(),
+                  [&](SyncCoverDemandId demand) {
+                    return !result.covered.contains(demand);
+                  });
+  if (missesDemand) {
+    result.error = CanonicalSyncSelectionError::NoCoveringPattern;
+    return result;
+  }
+
+  CostComputation cost =
+      getCostMetered(problem, result.mechanisms, maximumWorkUnits,
+                     result.statistics.workUnits);
+  if (!cost) {
+    result.statistics.arithmeticOverflow =
+        cost.error == CostComputationError::ArithmeticOverflow;
+    result.error = result.statistics.arithmeticOverflow
+                       ? CanonicalSyncSelectionError::ArithmeticOverflow
+                       : CanonicalSyncSelectionError::WorkLimitExceeded;
+    return result;
+  }
+  result.cost = std::move(cost.cost.value);
+
+  const std::size_t remainingWork =
+      maximumWorkUnits - result.statistics.workUnits;
+  if (remainingWork == 0) {
+    result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+    return result;
+  }
+  SyncCoverCoverageWorkBudget allocationWork(remainingWork);
+  result.allocation =
+      allocateCanonicalSyncEvents(problem, result.mechanisms, &allocationWork);
+  result.statistics.workUnits += allocationWork.workUnits;
+  if (allocationWork.exhausted) {
+    result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+  } else if (!result.allocation.valid) {
+    result.error = CanonicalSyncSelectionError::InvalidAllocation;
+  } else if (!result.allocation.feasible) {
+    result.error = CanonicalSyncSelectionError::ResourceInfeasible;
+  }
+  return result;
+}
+
 CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
     const CanonicalSyncPatternProblem &problem,
     CanonicalSyncGreedyOptions options) {
   CanonicalSyncSelection result;
   result.covered = problem.getBaselineCoverage();
-  if (!problem.isFrozen() || options.maximumWorkUnits == 0) {
+  if (!problem.isFrozen() || options.maximumWorkUnits == 0 ||
+      options.strategy == CanonicalSyncSelectionStrategy::MechanicalAll) {
     result.error = CanonicalSyncSelectionError::InvalidProblem;
     return result;
   }
@@ -1434,9 +1538,8 @@ CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
   const std::optional<bool> independentSingletonProblem =
       options.strategy == CanonicalSyncSelectionStrategy::FixedCover
           ? std::optional<bool>{false}
-          : hasIndependentSingletonPatterns(
-                problem, options.maximumWorkUnits,
-                result.statistics.workUnits);
+          : hasIndependentSingletonPatterns(problem, options.maximumWorkUnits,
+                                            result.statistics.workUnits);
   if (!independentSingletonProblem) {
     result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
     return result;
@@ -1464,8 +1567,8 @@ CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
       candidateScan.reset();
       const bool built =
           options.strategy == CanonicalSyncSelectionStrategy::FixedCover
-              ? buildFixedCandidates(problem, selected, result.covered,
-                                     options, result.statistics, candidateScan)
+              ? buildFixedCandidates(problem, selected, result.covered, options,
+                                     result.statistics, candidateScan)
               : buildActionAwareCandidates(problem, selected, result.covered,
                                            options, result.statistics,
                                            candidateScan);
@@ -1505,8 +1608,8 @@ CanonicalSyncSelection mlir::pto::selectCanonicalSyncPatterns(
                        : CanonicalSyncSelectionError::WorkLimitExceeded;
     return result;
   }
-  if (independentSingletons && !reverseDeleteIndependentSingletons(
-                                   problem, options, result, selected)) {
+  if (independentSingletons &&
+      !reverseDeleteIndependentSingletons(problem, options, result, selected)) {
     result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
     return result;
   }

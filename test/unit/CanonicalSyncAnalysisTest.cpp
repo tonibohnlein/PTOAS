@@ -254,8 +254,7 @@ bool testBuildsOneFrozenGraph() {
   const bool typedRawDump =
       rawDump == graph.getDeterministicRawDump() &&
       rawDump.find("node 0 op=0 phase=-1") != std::string::npos &&
-      rawDump.find("region 1 parent=0 scope=0 kind=1") !=
-          std::string::npos &&
+      rawDump.find("region 1 parent=0 scope=0 kind=1") != std::string::npos &&
       rawDump.find("access 0 node=0") != std::string::npos &&
       rawDump.find("requirements=1") != std::string::npos;
   FailureOr<CanonicalSyncHazardParityReport> parity =
@@ -263,15 +262,14 @@ bool testBuildsOneFrozenGraph() {
   return check(graph.isStructureFrozen(), "freeze authoritative graph") &&
          check(static_cast<bool>(graph.validate()), "validate adapter graph") &&
          check(graph.getNodes().size() == 2, "extract two scheduled nodes") &&
-         check(graph.getRegions().size() == 2 &&
-                   graph.getRegions()[0].kind ==
-                       SyncCoverRegionKind::Function &&
-                   graph.getRegions()[1].kind ==
-                       SyncCoverRegionKind::Sequence &&
-                   graph.getNodes()[0].region == 1 &&
-                   graph.getNodes()[1].region == 1 &&
-                   graph.getDemands().front().ownerRegion == 1,
-               "build a flat function/sequence ownership tree") &&
+         check(
+             graph.getRegions().size() == 2 &&
+                 graph.getRegions()[0].kind == SyncCoverRegionKind::Function &&
+                 graph.getRegions()[1].kind == SyncCoverRegionKind::Sequence &&
+                 graph.getNodes()[0].region == 1 &&
+                 graph.getNodes()[1].region == 1 &&
+                 graph.getDemands().front().ownerRegion == 1,
+             "build a flat function/sequence ownership tree") &&
          check(program->getNodeBindings().size() == graph.getNodes().size(),
                "keep one minimal node side table") &&
          check(program->getScopeBindings().size() == graph.getScopes().size(),
@@ -5956,12 +5954,17 @@ bool testGuardedEndpointUsesSourceLocalCompletionEvent() {
   coreOptions.patterns.enableConflictCoreRepair = false;
   CanonicalSyncProblemBuildResult withoutTargetLocal;
   CanonicalSyncProblemBuildResult core;
+  CanonicalSyncProblemBuildResult mechanical;
   {
     ScopedDiagnosticHandler handler(&context,
                                     [](Diagnostic &) { return success(); });
     withoutTargetLocal =
         buildCanonicalSyncPreciseProblem(*program, withoutTargetLocalOptions);
     core = buildCanonicalSyncPreciseProblem(*program, coreOptions);
+    CanonicalSyncBuildOptions mechanicalOptions = coreOptions;
+    mechanicalOptions.patterns.catalogMode =
+        CanonicalSyncCatalogMode::MechanicalDirect;
+    mechanical = buildCanonicalSyncPreciseProblem(*program, mechanicalOptions);
   }
   const CanonicalSyncMechanismOriginMask sourceLocalOrigin =
       canonicalSyncMechanismOriginBit(
@@ -5984,7 +5987,9 @@ bool testGuardedEndpointUsesSourceLocalCompletionEvent() {
   if (!check(hasSourceLocalFallback,
              "fall back to a balanced source-local completion event") ||
       !check(hasDirectBalancedFallback,
-             "retain a per-demand balanced recipe in the core catalog")) {
+             "retain a per-demand balanced recipe in the core catalog") ||
+      !check(!mechanical && !mechanical.problem,
+             "fail mechanical-direct when no exact direct cut exists")) {
     return false;
   }
   CanonicalSyncComparisonReport report;
@@ -6177,18 +6182,37 @@ bool testMinimalDirectCatalogIsCompleteAndNeverFallsBack() {
                    });
   const CanonicalSyncSelection selection =
       selectCanonicalSyncPatterns(*problem.problem, options.selection);
+  CanonicalSyncBuildOptions mechanicalOptions = options;
+  mechanicalOptions.patterns.catalogMode =
+      CanonicalSyncCatalogMode::MechanicalDirect;
+  CanonicalSyncProblemBuildResult mechanicalProblem =
+      buildCanonicalSyncPreciseProblem(*program, mechanicalOptions);
+  CanonicalSyncSelection mechanicalSelection;
+  if (mechanicalProblem && mechanicalProblem.problem) {
+    mechanicalSelection = selectAllCanonicalSyncSingletonMechanisms(
+        *mechanicalProblem.problem,
+        mechanicalOptions.selection.maximumWorkUnits);
+  }
   if (!check(fullDemandUniverse,
              "retain every unique hazard row in minimal direct mode") ||
       !check(singletonOnly && directOnly,
              "restrict minimal direct mode to direct singleton columns") ||
       !check(selection &&
                  verifyCanonicalSyncSelection(*problem.problem, selection),
-             "select and freshly verify the minimal direct cover")) {
+             "select and freshly verify the minimal direct cover") ||
+      !check(mechanicalProblem && mechanicalProblem.problem &&
+                 mechanicalSelection &&
+                 mechanicalSelection.mechanisms.size() ==
+                     mechanicalProblem.problem->getMechanisms().size() &&
+                 mechanicalSelection.statistics.deletionEvaluations == 0 &&
+                 verifyCanonicalSyncSelection(*mechanicalProblem.problem,
+                                              mechanicalSelection),
+             "retain and freshly verify every mechanical direct recipe")) {
     return false;
   }
 
   func::FuncOp scarcity = module->lookupSymbol<func::FuncOp>("direct_scarcity");
-  CanonicalSyncBuildOptions scarcityOptions = options;
+  CanonicalSyncBuildOptions scarcityOptions = mechanicalOptions;
   scarcityOptions.eventIdBudget = 1;
   CanonicalSyncComparisonReport scarcityReport;
   scarcityOptions.reportCallback =

@@ -100,7 +100,7 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
            "\"all\"",
            "Derived-mechanism families: all, core, or a '+'-separated list">,
     Option<"catalogMode", "catalog-mode", "std::string", "\"standard\"",
-           "Catalog policy: standard or strict-direct">,
+           "Catalog policy: standard, strict-direct, or mechanical-direct">,
     Option<"enableConflictCoreRepair", "enable-conflict-core-repair", "bool",
            "true", "Enable bounded event-pressure conflict-core repair">,
     Option<"selectionStrategy", "selection-strategy", "std::string",

@@ -160,6 +160,10 @@ bool configureCatalogMode(StringRef value,
     options.catalogMode = pto::CanonicalSyncCatalogMode::StrictMinimalDirect;
     return true;
   }
+  if (value == "mechanical-direct") {
+    options.catalogMode = pto::CanonicalSyncCatalogMode::MechanicalDirect;
+    return true;
+  }
   return false;
 }
 
@@ -169,6 +173,8 @@ StringRef catalogModeName(pto::CanonicalSyncCatalogMode mode) {
     return "standard";
   case pto::CanonicalSyncCatalogMode::StrictMinimalDirect:
     return "strict-direct";
+  case pto::CanonicalSyncCatalogMode::MechanicalDirect:
+    return "mechanical-direct";
   }
   return "unknown";
 }
@@ -213,6 +219,8 @@ StringRef strategyName(pto::CanonicalSyncSelectionStrategy strategy) {
     return "action-aware-singleton";
   case pto::CanonicalSyncSelectionStrategy::PairLookahead:
     return "pair-lookahead";
+  case pto::CanonicalSyncSelectionStrategy::MechanicalAll:
+    return "mechanical-all";
   }
   return "unknown";
 }
@@ -959,7 +967,8 @@ struct PTOCanonicalSyncPass
       return;
     }
     if (!configureCatalogMode(catalogMode, options.patterns)) {
-      function.emitError("catalog-mode must be standard or strict-direct");
+      function.emitError("catalog-mode must be standard, strict-direct, or "
+                         "mechanical-direct");
       signalPassFailure();
       return;
     }
@@ -973,6 +982,19 @@ struct PTOCanonicalSyncPass
       function.emitError(
           "strict-direct catalog mode requires mechanism-families=core, "
           "and enable-conflict-core-repair=false");
+      signalPassFailure();
+      return;
+    }
+    const bool invalidMechanicalDirectConfiguration =
+        options.patterns.catalogMode ==
+            pto::CanonicalSyncCatalogMode::MechanicalDirect &&
+        (options.patterns.enabledMechanismFamilies != 0 ||
+         options.patterns.enableDirectPairs ||
+         options.patterns.enableConflictCoreRepair);
+    if (invalidMechanicalDirectConfiguration) {
+      function.emitError(
+          "mechanical-direct catalog mode requires mechanism-families=core, "
+          "pattern-mode=direct, and enable-conflict-core-repair=false");
       signalPassFailure();
       return;
     }

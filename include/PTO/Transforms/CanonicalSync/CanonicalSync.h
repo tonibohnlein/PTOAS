@@ -77,12 +77,13 @@ canonicalSyncMechanismFamilyEnabled(CanonicalSyncMechanismFamilyMask mask,
   return (mask & canonicalSyncMechanismFamilyBit(family)) != 0;
 }
 
-/// Catalog construction policy. StrictMinimalDirect is an explicit
-/// correctness baseline rather than a special interpretation of an empty
-/// derived-family mask.
+/// Catalog construction policy. MechanicalDirect emits the complete direct
+/// catalog without cover-based deletion. StrictMinimalDirect grounds the same
+/// direct basis for the later singleton-cover experiment.
 enum class CanonicalSyncCatalogMode : std::uint8_t {
   Standard,
   StrictMinimalDirect,
+  MechanicalDirect,
 };
 
 /// Internal ablation controls for synchronization mechanism construction.
