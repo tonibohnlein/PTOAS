@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <vector>
 
 namespace mlir {
@@ -81,6 +82,93 @@ public:
 private:
   std::size_t size_ = 0;
   std::vector<std::uint64_t> words_;
+};
+
+/// A physical synchronization point. The point kind is part of the hardware
+/// contract: an event cut contains exactly one source-pipe Set and one
+/// target-pipe Wait, while a pipe cut contains one same-pipe barrier.
+enum class SyncCoverCutPointKind : std::uint8_t {
+  EventSet,
+  EventWait,
+  PipeBarrier,
+};
+
+struct SyncCoverCutPoint {
+  SyncCoverCutPointKind kind = SyncCoverCutPointKind::EventSet;
+  std::uint32_t resource = 0;
+  SyncCoverAnchor anchor;
+  SyncCoverGuard guard;
+};
+
+enum class SyncCoverDirectCutKind : std::uint8_t {
+  Event,
+  PipeBarrier,
+};
+
+/// One token-independent physical cut. Target legality and event lifecycle are
+/// separate admission proofs: this descriptor records only the ordering effect
+/// of an already-authorized event pair or barrier at concrete cut points.
+struct SyncCoverDirectCut {
+  SyncCoverMechanismId mechanism = 0;
+  SyncCoverDirectCutKind kind = SyncCoverDirectCutKind::Event;
+  SyncCoverCutPoint source;
+  SyncCoverCutPoint target;
+  SyncCoverOrderingRequirementMask suppliedRequirements = 0;
+};
+
+/// One exact enabled-mechanism set. IDs are strictly increasing so the world
+/// has one deterministic identity and membership is logarithmic.
+struct SyncCoverExactWorld {
+  std::vector<SyncCoverMechanismId> enabledMechanisms;
+};
+
+/// Compact semantic effect of one enabled physical cut. The two boundaries
+/// denote a source-resource prefix and target-resource suffix. Guards qualify
+/// the dynamic occurrences for which the rectangle exists.
+struct SyncCoverCompletionOrigin {
+  SyncCoverMechanismId mechanism = 0;
+  SyncCoverDirectCutKind kind = SyncCoverDirectCutKind::Event;
+  std::uint32_t sourceResource = 0;
+  std::uint32_t targetResource = 0;
+  SyncCoverTimelinePosition sourceBoundary = 0;
+  SyncCoverTimelinePosition targetBoundary = 0;
+  SyncCoverGuard sourceGuard;
+  SyncCoverGuard targetGuard;
+  SyncCoverOrderingRequirementMask suppliedRequirements = 0;
+};
+
+struct SyncCoverFlatWorldLimits {
+  std::size_t maximumCuts = 1U << 16;
+  std::size_t maximumEnabledMechanisms = 1U << 16;
+  std::size_t maximumCompletionOrigins = 1U << 16;
+  std::size_t maximumStates = 1U << 22;
+  std::size_t maximumGuardLiteralsPerPoint = 1U << 16;
+  std::size_t maximumTotalGuardLiterals = 1U << 20;
+};
+
+enum class SyncCoverFlatWorldError : std::uint8_t {
+  None,
+  InvalidGraph,
+  InvalidWorld,
+  InvalidCut,
+  UnsupportedStructure,
+  LimitExceeded,
+  WorkLimitExceeded,
+};
+
+struct SyncCoverFlatWorldResult {
+  SyncCoverFlatWorldError error = SyncCoverFlatWorldError::None;
+  SyncCoverDemandSet covered;
+  std::vector<SyncCoverCompletionOrigin> completionOrigins;
+  std::optional<std::size_t> invalidIndex;
+
+  bool coversAll() const {
+    return error == SyncCoverFlatWorldError::None &&
+           covered.count() == covered.size();
+  }
+  explicit operator bool() const {
+    return error == SyncCoverFlatWorldError::None;
+  }
 };
 
 /// A mechanism validator has already established that this completion edge is
@@ -191,6 +279,16 @@ SyncCoverPairCoverageResult computeSyncCoverPairCoverage(
     const std::vector<SyncCoverMechanismPair> &pairs,
     const std::vector<SyncCoverDemandId> &activeDemands,
     SyncCoverCoverageLimits limits = {});
+
+/// Computes exact distance-zero coverage for one enabled set of physical cuts.
+/// This is the deliberately flat reference engine used before hierarchical
+/// must summaries are admitted. A Set/Wait or pipe barrier contributes a typed
+/// source-prefix x target-suffix rectangle. Rectangles and fixed issue order
+/// are closed transitively, but issue order alone never creates completion.
+SyncCoverFlatWorldResult computeSyncCoverFlatExactWorld(
+    const SyncCoverGraph &graph, const std::vector<SyncCoverDirectCut> &cuts,
+    const SyncCoverExactWorld &world, SyncCoverFlatWorldLimits limits = {},
+    SyncCoverCoverageWorkBudget *workBudget = nullptr);
 
 } // namespace pto
 } // namespace mlir

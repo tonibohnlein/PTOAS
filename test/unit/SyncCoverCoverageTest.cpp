@@ -59,6 +59,232 @@ SyncCoverEdge makeEdge(SyncCoverNodeId source, SyncCoverNodeId target,
   return edge;
 }
 
+constexpr SyncCoverOrderingRequirementMask kDirectOrdering =
+    syncCoverOrderingRequirementBit(
+        SyncCoverOrderingRequirement::PipelineCompletionBeforeAccess) |
+    syncCoverOrderingRequirementBit(
+        SyncCoverOrderingRequirement::MemoryOrderBeforeAccess) |
+    syncCoverOrderingRequirementBit(
+        SyncCoverOrderingRequirement::HardwareSpecialOrder);
+
+SyncCoverCutPoint makeCutPoint(SyncCoverCutPointKind kind,
+                               std::uint32_t resource,
+                               SyncCoverAnchorKind anchorKind,
+                               SyncCoverNodeId node,
+                               SyncCoverGuard guard = {}) {
+  return {kind, resource, {anchorKind, node, 0, 0}, std::move(guard)};
+}
+
+SyncCoverDirectCut
+makeEventCut(SyncCoverMechanismId mechanism, std::uint32_t sourceResource,
+             SyncCoverNodeId setAfter, std::uint32_t targetResource,
+             SyncCoverNodeId waitBefore,
+             SyncCoverOrderingRequirementMask requirements = kDirectOrdering) {
+  return {mechanism, SyncCoverDirectCutKind::Event,
+          makeCutPoint(SyncCoverCutPointKind::EventSet, sourceResource,
+                       SyncCoverAnchorKind::AfterNode, setAfter),
+          makeCutPoint(SyncCoverCutPointKind::EventWait, targetResource,
+                       SyncCoverAnchorKind::BeforeNode, waitBefore),
+          requirements};
+}
+
+SyncCoverDirectCut makeBarrierCut(
+    SyncCoverMechanismId mechanism, std::uint32_t resource,
+    SyncCoverNodeId barrierBefore,
+    SyncCoverOrderingRequirementMask requirements = kDirectOrdering) {
+  const SyncCoverCutPoint point =
+      makeCutPoint(SyncCoverCutPointKind::PipeBarrier, resource,
+                   SyncCoverAnchorKind::BeforeNode, barrierBefore);
+  return {mechanism, SyncCoverDirectCutKind::PipeBarrier, point, point,
+          requirements};
+}
+
+bool testFlatEventCutCoversFourCorners() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId firstSource =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add first event source");
+  const SyncCoverNodeId secondSource =
+      takeIndex(graph.addNode(1, 1, 0, 1), passed, "add second event source");
+  const SyncCoverNodeId firstTarget =
+      takeIndex(graph.addNode(2, 1, 0, 2), passed, "add first event target");
+  const SyncCoverNodeId secondTarget =
+      takeIndex(graph.addNode(2, 1, 0, 3), passed, "add second event target");
+  for (SyncCoverNodeId source : {firstSource, secondSource}) {
+    for (SyncCoverNodeId target : {firstTarget, secondTarget}) {
+      passed &= check(graph.addDemand(makeDemand(source, target)),
+                      "add event rectangle corner");
+    }
+  }
+  passed &= check(graph.freezeStructure(), "freeze event rectangle graph");
+  const SyncCoverFlatWorldResult result = computeSyncCoverFlatExactWorld(
+      graph, {makeEventCut(7, 1, secondSource, 2, firstTarget)}, {{7}});
+  return passed &&
+         check(result && result.coversAll() &&
+                   result.completionOrigins.size() == 1 &&
+                   result.covered.count() == 4,
+               "one event cut grounds its complete four-corner rectangle");
+}
+
+bool testFlatBarrierCutCoversFourCorners() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId firstSource =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add first barrier source");
+  const SyncCoverNodeId secondSource =
+      takeIndex(graph.addNode(1, 1, 0, 1), passed, "add second barrier source");
+  const SyncCoverNodeId firstTarget =
+      takeIndex(graph.addNode(1, 1, 0, 2), passed, "add first barrier target");
+  const SyncCoverNodeId secondTarget =
+      takeIndex(graph.addNode(1, 1, 0, 3), passed, "add second barrier target");
+  for (SyncCoverNodeId source : {firstSource, secondSource}) {
+    for (SyncCoverNodeId target : {firstTarget, secondTarget}) {
+      passed &= check(graph.addDemand(makeDemand(source, target)),
+                      "add barrier rectangle corner");
+    }
+  }
+  passed &= check(graph.freezeStructure(), "freeze barrier rectangle graph");
+  const SyncCoverFlatWorldResult result = computeSyncCoverFlatExactWorld(
+      graph, {makeBarrierCut(3, 1, firstTarget)}, {{3}});
+  return passed &&
+         check(result && result.coversAll() &&
+                   result.completionOrigins.size() == 1 &&
+                   result.completionOrigins.front().kind ==
+                       SyncCoverDirectCutKind::PipeBarrier,
+               "one pipe cut grounds its complete four-corner rectangle");
+}
+
+bool testFlatWorldQualifiersFailClosed() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverControlId control =
+      takeIndex(graph.addControl(2), passed, "add flat qualifier control");
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add qualifier source");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add qualifier target");
+  SyncCoverDemand demand = makeDemand(source, target);
+  demand.sourceGuard.literals.push_back({control, 0});
+  demand.targetGuard.literals.push_back({control, 0});
+  demand.orderingRequirements =
+      syncCoverOrderingRequirementBit(
+          SyncCoverOrderingRequirement::PipelineCompletionBeforeAccess) |
+      syncCoverOrderingRequirementBit(
+          SyncCoverOrderingRequirement::CacheVisibilityBeforeAccess);
+  passed &= check(graph.addDemand(std::move(demand)),
+                  "add guarded cache-visible demand");
+  passed &= check(graph.freezeStructure(), "freeze qualifier graph");
+
+  SyncCoverDirectCut guarded = makeEventCut(1, 1, source, 2, target);
+  guarded.source.guard.literals.push_back({control, 1});
+  guarded.target.guard.literals.push_back({control, 1});
+  const SyncCoverFlatWorldResult wrongGuard =
+      computeSyncCoverFlatExactWorld(graph, {guarded}, {{1}});
+  passed &= check(wrongGuard && !wrongGuard.coversAll(),
+                  "a cut on another alternative cannot cover the demand");
+
+  const SyncCoverFlatWorldResult wrongCapability =
+      computeSyncCoverFlatExactWorld(
+          graph, {makeEventCut(2, 1, source, 2, target)}, {{2}});
+  passed &= check(wrongCapability && !wrongCapability.coversAll(),
+                  "pipeline completion cannot manufacture cache visibility");
+
+  SyncCoverDirectCut invalidResource = makeEventCut(3, 9, source, 2, target);
+  const SyncCoverFlatWorldResult invalid =
+      computeSyncCoverFlatExactWorld(graph, {invalidResource}, {{3}});
+  return passed && check(invalid.error == SyncCoverFlatWorldError::InvalidCut &&
+                             invalid.invalidIndex == 0,
+                         "a point on the wrong physical resource fails closed");
+}
+
+bool testFlatWorldIssueOrderCannotCreateCompletion() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add flat issue source");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(1, 1, 0, 1), passed, "add flat issue target");
+  passed &= check(graph.addEdge(makeEdge(
+                      source, target,
+                      SyncCoverEdgeKind::NonCompletionPreservingIssueOrder)),
+                  "add flat issue order");
+  passed &= check(graph.addDemand(makeDemand(source, target)),
+                  "add flat issue demand");
+  passed &= check(graph.freezeStructure(), "freeze flat issue graph");
+  const SyncCoverFlatWorldResult result =
+      computeSyncCoverFlatExactWorld(graph, {}, {});
+  return passed && check(result && !result.coversAll(),
+                         "ordinary issue order cannot create completion");
+}
+
+bool testFlatWorldHonorsBoundariesAndRejectsRecurrence() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add boundary source");
+  const SyncCoverNodeId setCut =
+      takeIndex(graph.addNode(1, 1, 0, 1), passed, "add boundary set cut");
+  const SyncCoverNodeId tooLate =
+      takeIndex(graph.addNode(1, 1, 0, 2), passed, "add post-cut source");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(2, 1, 0, 3), passed, "add boundary target");
+  passed &= check(graph.addDemand(makeDemand(source, target)),
+                  "add source within prefix");
+  passed &= check(graph.addDemand(makeDemand(tooLate, target)),
+                  "add source outside prefix");
+  passed &= check(graph.freezeStructure(), "freeze boundary graph");
+  const SyncCoverFlatWorldResult boundary = computeSyncCoverFlatExactWorld(
+      graph, {makeEventCut(8, 1, setCut, 2, target)}, {{8}});
+  passed &= check(boundary && boundary.covered.contains(0) &&
+                      !boundary.covered.contains(1),
+                  "a cut cannot complete a source issued after its Set");
+
+  SyncCoverGraph loopGraph;
+  const SyncCoverScopeId loop = takeIndex(
+      loopGraph.addScope(0, true, SyncCoverTimelineInterval{0, 20}, true),
+      passed, "add unsupported flat-world loop");
+  const SyncCoverNodeId loopSource =
+      takeIndex(loopGraph.addNode(1, 1, loop, 0), passed, "add loop source");
+  const SyncCoverNodeId loopTarget =
+      takeIndex(loopGraph.addNode(2, 1, loop, 1), passed, "add loop target");
+  passed &=
+      check(loopGraph.addDemand(makeDemand(loopSource, loopTarget, loop, 1)),
+            "add recurrence demand for flat refusal");
+  passed &= check(loopGraph.freezeStructure(), "freeze recurrence refusal");
+  const SyncCoverFlatWorldResult unsupported =
+      computeSyncCoverFlatExactWorld(loopGraph, {}, {});
+  return passed &&
+         check(unsupported.error ==
+                   SyncCoverFlatWorldError::UnsupportedStructure,
+               "the flat reference refuses recurrence before token modeling");
+}
+
+bool testFlatWorldComposesCompleteEnabledSet() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add flat composed source");
+  const SyncCoverNodeId middle =
+      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add flat composed middle");
+  const SyncCoverNodeId target =
+      takeIndex(graph.addNode(3, 1, 0, 2), passed, "add flat composed target");
+  passed &= check(graph.addDemand(makeDemand(source, target)),
+                  "add flat composed demand");
+  passed &= check(graph.freezeStructure(), "freeze flat composed graph");
+  const std::vector<SyncCoverDirectCut> cuts{
+      makeEventCut(4, 1, source, 2, middle),
+      makeEventCut(5, 2, middle, 3, target)};
+  const SyncCoverFlatWorldResult firstOnly =
+      computeSyncCoverFlatExactWorld(graph, cuts, {{4}});
+  const SyncCoverFlatWorldResult complete =
+      computeSyncCoverFlatExactWorld(graph, cuts, {{4, 5}});
+  return passed &&
+         check(firstOnly && !firstOnly.coversAll(),
+               "one physical cut cannot cover a two-cut chain") &&
+         check(complete && complete.coversAll(),
+               "the exact enabled world closes over both physical cuts");
+}
+
 bool testOneSupplyCoversSeveralDemands() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -1373,6 +1599,12 @@ bool testMeteredSingletonCoverageBoundsAdversarialMetadata() {
 
 int main() {
   bool passed = true;
+  passed &= testFlatEventCutCoversFourCorners();
+  passed &= testFlatBarrierCutCoversFourCorners();
+  passed &= testFlatWorldQualifiersFailClosed();
+  passed &= testFlatWorldIssueOrderCannotCreateCompletion();
+  passed &= testFlatWorldHonorsBoundariesAndRejectsRecurrence();
+  passed &= testFlatWorldComposesCompleteEnabledSet();
   passed &= testOneSupplyCoversSeveralDemands();
   passed &= testTwoSuppliesCompose();
   passed &= testDemandQualifiedSupplyDoesNotEscape();

@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <deque>
+#include <functional>
 #include <limits>
 #include <map>
 #include <optional>
@@ -1658,6 +1659,451 @@ SyncCoverPairCoverageResult mlir::pto::computeSyncCoverPairCoverage(
   }
   if (!result.unavailableDemands.empty()) {
     result.error = SyncCoverCoverageError::ExpansionUnavailable;
+  }
+  return result;
+}
+
+namespace {
+
+struct FlatNodePositions {
+  SyncCoverTimelinePosition before = 0;
+  SyncCoverTimelinePosition after = 0;
+};
+
+bool sameAnchor(const SyncCoverAnchor &left, const SyncCoverAnchor &right) {
+  return std::tie(left.kind, left.node, left.scope, left.position) ==
+         std::tie(right.kind, right.node, right.scope, right.position);
+}
+
+bool flatPointGuardValid(const SyncCoverGraph &graph,
+                         const SyncCoverGuard &guard) {
+  SyncCoverGuard normalized = guard;
+  if (!normalizeSyncCoverGuard(normalized)) {
+    return false;
+  }
+  return std::all_of(
+      normalized.literals.begin(), normalized.literals.end(),
+      [&](const auto &literal) {
+        return literal.control < graph.getControls().size() &&
+               literal.alternative <
+                   graph.getControls()[literal.control].alternatives;
+      });
+}
+
+std::optional<SyncCoverGuard>
+effectivePointGuard(const SyncCoverGraph &graph,
+                    const SyncCoverCutPoint &point) {
+  SyncCoverGuard result = point.guard;
+  if (point.anchor.kind == SyncCoverAnchorKind::BeforeNode ||
+      point.anchor.kind == SyncCoverAnchorKind::AfterNode) {
+    if (point.anchor.node >= graph.getNodes().size()) {
+      return std::nullopt;
+    }
+    const SyncCoverGuard &nodeGuard = graph.getNodes()[point.anchor.node].guard;
+    result.literals.insert(result.literals.end(), nodeGuard.literals.begin(),
+                           nodeGuard.literals.end());
+  }
+  if (!normalizeSyncCoverGuard(result)) {
+    return std::nullopt;
+  }
+  return result;
+}
+
+bool flatCutPointValid(const SyncCoverGraph &graph,
+                       const SyncCoverCutPoint &point,
+                       SyncCoverCutPointKind expected) {
+  const bool invalid =
+      point.kind != expected || !flatPointGuardValid(graph, point.guard) ||
+      (point.anchor.kind != SyncCoverAnchorKind::BeforeNode &&
+       point.anchor.kind != SyncCoverAnchorKind::AfterNode) ||
+      point.anchor.node >= graph.getNodes().size() ||
+      graph.getNodes()[point.anchor.node].scope != 0 ||
+      graph.getNodes()[point.anchor.node].resource != point.resource;
+  if (invalid) {
+    return false;
+  }
+  return resolveSyncCoverAnchor(graph, point.anchor).has_value() &&
+         effectivePointGuard(graph, point).has_value();
+}
+
+std::optional<SyncCoverCompletionOrigin>
+makeFlatCompletionOrigin(const SyncCoverGraph &graph,
+                         const SyncCoverDirectCut &cut) {
+  const bool validRequirements =
+      cut.suppliedRequirements != 0 &&
+      (cut.suppliedRequirements & ~kAllSyncCoverOrderingRequirements) == 0;
+  if (!validRequirements) {
+    return std::nullopt;
+  }
+
+  const bool event = cut.kind == SyncCoverDirectCutKind::Event;
+  const bool barrier = cut.kind == SyncCoverDirectCutKind::PipeBarrier;
+  const bool invalidPoints =
+      (!event && !barrier) ||
+      !flatCutPointValid(graph, cut.source,
+                         event ? SyncCoverCutPointKind::EventSet
+                               : SyncCoverCutPointKind::PipeBarrier) ||
+      !flatCutPointValid(graph, cut.target,
+                         event ? SyncCoverCutPointKind::EventWait
+                               : SyncCoverCutPointKind::PipeBarrier);
+  if (invalidPoints) {
+    return std::nullopt;
+  }
+  const bool invalidResources =
+      (event && cut.source.resource == cut.target.resource) ||
+      (barrier && (cut.source.resource != cut.target.resource ||
+                   !sameAnchor(cut.source.anchor, cut.target.anchor)));
+  if (invalidResources) {
+    return std::nullopt;
+  }
+
+  const std::optional<SyncCoverTimelinePosition> sourceBoundary =
+      resolveSyncCoverAnchor(graph, cut.source.anchor);
+  const std::optional<SyncCoverTimelinePosition> targetBoundary =
+      resolveSyncCoverAnchor(graph, cut.target.anchor);
+  const std::optional<SyncCoverGuard> sourceGuard =
+      effectivePointGuard(graph, cut.source);
+  const std::optional<SyncCoverGuard> targetGuard =
+      effectivePointGuard(graph, cut.target);
+  if (!sourceBoundary || !targetBoundary || !sourceGuard || !targetGuard ||
+      *sourceBoundary > *targetBoundary) {
+    return std::nullopt;
+  }
+
+  SyncCoverCompletionOrigin result;
+  result.mechanism = cut.mechanism;
+  result.kind = cut.kind;
+  result.sourceResource = cut.source.resource;
+  result.targetResource = cut.target.resource;
+  result.sourceBoundary = *sourceBoundary;
+  result.targetBoundary = *targetBoundary;
+  result.sourceGuard = *sourceGuard;
+  result.targetGuard = *targetGuard;
+  result.suppliedRequirements = cut.suppliedRequirements;
+  return result;
+}
+
+bool flatDemandCondition(const SyncCoverGraph &graph,
+                         const SyncCoverDemand &demand,
+                         SyncCoverGuard &condition) {
+  condition = demand.sourceGuard;
+  condition.literals.insert(condition.literals.end(),
+                            demand.targetGuard.literals.begin(),
+                            demand.targetGuard.literals.end());
+  const SyncCoverGuard &sourceGuard = graph.getNodes()[demand.source].guard;
+  const SyncCoverGuard &targetGuard = graph.getNodes()[demand.target].guard;
+  condition.literals.insert(condition.literals.end(),
+                            sourceGuard.literals.begin(),
+                            sourceGuard.literals.end());
+  condition.literals.insert(condition.literals.end(),
+                            targetGuard.literals.begin(),
+                            targetGuard.literals.end());
+  return normalizeSyncCoverGuard(condition);
+}
+
+bool flatOriginActive(const SyncCoverGuard &condition,
+                      const SyncCoverCompletionOrigin &origin) {
+  return syncCoverGuardImplies(condition, origin.sourceGuard) &&
+         syncCoverGuardImplies(condition, origin.targetGuard);
+}
+
+bool flatNodeActive(const SyncCoverGraph &graph,
+                    const SyncCoverGuard &condition, SyncCoverNodeId node) {
+  return node < graph.getNodes().size() &&
+         syncCoverGuardImplies(condition, graph.getNodes()[node].guard);
+}
+
+bool flatNodeInSourcePrefix(const SyncCoverGraph &graph,
+                            const std::vector<FlatNodePositions> &positions,
+                            const SyncCoverCompletionOrigin &origin,
+                            const SyncCoverGuard &condition,
+                            SyncCoverNodeId node) {
+  return node < graph.getNodes().size() &&
+         graph.getNodes()[node].resource == origin.sourceResource &&
+         positions[node].after <= origin.sourceBoundary &&
+         flatNodeActive(graph, condition, node);
+}
+
+bool flatNodeInTargetSuffix(const SyncCoverGraph &graph,
+                            const std::vector<FlatNodePositions> &positions,
+                            const SyncCoverCompletionOrigin &origin,
+                            const SyncCoverGuard &condition,
+                            SyncCoverNodeId node) {
+  return node < graph.getNodes().size() &&
+         graph.getNodes()[node].resource == origin.targetResource &&
+         positions[node].before >= origin.targetBoundary &&
+         flatNodeActive(graph, condition, node);
+}
+
+bool flatEdgeActive(const SyncCoverGraph &graph, const SyncCoverEdge &edge,
+                    const SyncCoverGuard &condition) {
+  const bool invalid = edge.distance != 0 ||
+                       edge.source >= graph.getNodes().size() ||
+                       edge.target >= graph.getNodes().size() ||
+                       !syncCoverGuardImplies(condition, edge.sourceGuard) ||
+                       !syncCoverGuardImplies(condition, edge.targetGuard) ||
+                       !flatNodeActive(graph, condition, edge.source) ||
+                       !flatNodeActive(graph, condition, edge.target);
+  if (invalid) {
+    return false;
+  }
+  return edge.kind == SyncCoverEdgeKind::CertifiedCompletionFrontier ||
+         edge.kind == SyncCoverEdgeKind::CompletionPreservingIssueOrder ||
+         edge.kind == SyncCoverEdgeKind::NonCompletionPreservingIssueOrder;
+}
+
+bool originLess(const SyncCoverCompletionOrigin &left,
+                const SyncCoverCompletionOrigin &right) {
+  return std::tie(left.mechanism, left.kind, left.sourceResource,
+                  left.targetResource, left.sourceBoundary, left.targetBoundary,
+                  left.sourceGuard.literals, left.targetGuard.literals,
+                  left.suppliedRequirements) <
+         std::tie(right.mechanism, right.kind, right.sourceResource,
+                  right.targetResource, right.sourceBoundary,
+                  right.targetBoundary, right.sourceGuard.literals,
+                  right.targetGuard.literals, right.suppliedRequirements);
+}
+
+} // namespace
+
+SyncCoverFlatWorldResult mlir::pto::computeSyncCoverFlatExactWorld(
+    const SyncCoverGraph &graph, const std::vector<SyncCoverDirectCut> &cuts,
+    const SyncCoverExactWorld &world, SyncCoverFlatWorldLimits limits,
+    SyncCoverCoverageWorkBudget *workBudget) {
+  SyncCoverFlatWorldResult result;
+  result.covered = SyncCoverDemandSet(graph.getDemands().size());
+  const auto fail = [&](SyncCoverFlatWorldError error,
+                        std::optional<std::size_t> index = std::nullopt) {
+    result.error = error;
+    result.invalidIndex = index;
+    result.completionOrigins.clear();
+    return result;
+  };
+  const bool invalidGraph = !graph.isStructureFrozen() || !graph.validate();
+  if (invalidGraph) {
+    return fail(SyncCoverFlatWorldError::InvalidGraph);
+  }
+  const bool limitsExceeded =
+      cuts.size() > limits.maximumCuts ||
+      world.enabledMechanisms.size() > limits.maximumEnabledMechanisms;
+  if (limitsExceeded) {
+    return fail(SyncCoverFlatWorldError::LimitExceeded);
+  }
+  if (!std::is_sorted(world.enabledMechanisms.begin(),
+                      world.enabledMechanisms.end()) ||
+      std::adjacent_find(world.enabledMechanisms.begin(),
+                         world.enabledMechanisms.end()) !=
+          world.enabledMechanisms.end()) {
+    return fail(SyncCoverFlatWorldError::InvalidWorld);
+  }
+  const bool unsupportedStructure =
+      graph.getScopes().size() != 1 ||
+      std::any_of(graph.getDemands().begin(), graph.getDemands().end(),
+                  [](const SyncCoverDemand &demand) {
+                    return demand.scope != 0 || demand.distance != 0;
+                  }) ||
+      std::any_of(graph.getNodes().begin(), graph.getNodes().end(),
+                  [](const SyncCoverNode &node) { return node.scope != 0; });
+  if (unsupportedStructure) {
+    return fail(SyncCoverFlatWorldError::UnsupportedStructure);
+  }
+
+  std::vector<FlatNodePositions> positions(graph.getNodes().size());
+  for (const SyncCoverNode &node : graph.getNodes()) {
+    if (!consumeWork(workBudget, 2)) {
+      return fail(SyncCoverFlatWorldError::WorkLimitExceeded);
+    }
+    const auto before = resolveSyncCoverAnchor(
+        graph, {SyncCoverAnchorKind::BeforeNode, node.id, 0, 0});
+    const auto after = resolveSyncCoverAnchor(
+        graph, {SyncCoverAnchorKind::AfterNode, node.id, 0, 0});
+    if (!before || !after || *before > *after) {
+      return fail(SyncCoverFlatWorldError::InvalidGraph, node.id);
+    }
+    positions[node.id] = {*before, *after};
+  }
+
+  std::vector<SyncCoverMechanismId> describedMechanisms;
+  describedMechanisms.reserve(cuts.size());
+  std::size_t totalGuardLiterals = 0;
+  for (std::size_t index = 0; index < cuts.size(); ++index) {
+    const std::size_t sourceLiterals = cuts[index].source.guard.literals.size();
+    const std::size_t targetLiterals = cuts[index].target.guard.literals.size();
+    std::size_t cutLiterals = 0;
+    if (sourceLiterals > limits.maximumGuardLiteralsPerPoint ||
+        targetLiterals > limits.maximumGuardLiteralsPerPoint ||
+        !checkedSum(sourceLiterals, targetLiterals, cutLiterals) ||
+        !checkedSum(totalGuardLiterals, cutLiterals, totalGuardLiterals) ||
+        totalGuardLiterals > limits.maximumTotalGuardLiterals) {
+      return fail(SyncCoverFlatWorldError::LimitExceeded, index);
+    }
+    std::size_t cutWork = 0;
+    const bool cutWorkUnavailable = !checkedSum(cutLiterals, 1, cutWork) ||
+                                    !consumeWork(workBudget, cutWork);
+    if (cutWorkUnavailable) {
+      return fail(SyncCoverFlatWorldError::WorkLimitExceeded);
+    }
+    const std::optional<SyncCoverCompletionOrigin> origin =
+        makeFlatCompletionOrigin(graph, cuts[index]);
+    if (!origin) {
+      return fail(SyncCoverFlatWorldError::InvalidCut, index);
+    }
+    describedMechanisms.push_back(cuts[index].mechanism);
+    if (std::binary_search(world.enabledMechanisms.begin(),
+                           world.enabledMechanisms.end(),
+                           cuts[index].mechanism)) {
+      const bool originLimitReached =
+          result.completionOrigins.size() == limits.maximumCompletionOrigins;
+      if (originLimitReached) {
+        return fail(SyncCoverFlatWorldError::LimitExceeded, index);
+      }
+      result.completionOrigins.push_back(*origin);
+    }
+  }
+  if (!meteredStableSort(describedMechanisms, std::less<>(), workBudget)) {
+    return fail(SyncCoverFlatWorldError::WorkLimitExceeded);
+  }
+  describedMechanisms.erase(
+      std::unique(describedMechanisms.begin(), describedMechanisms.end()),
+      describedMechanisms.end());
+  std::size_t inclusionWork = 0;
+  if (!checkedSum(describedMechanisms.size(), world.enabledMechanisms.size(),
+                  inclusionWork) ||
+      !consumeWork(workBudget, inclusionWork)) {
+    return fail(SyncCoverFlatWorldError::WorkLimitExceeded);
+  }
+  if (!std::includes(describedMechanisms.begin(), describedMechanisms.end(),
+                     world.enabledMechanisms.begin(),
+                     world.enabledMechanisms.end())) {
+    return fail(SyncCoverFlatWorldError::InvalidWorld);
+  }
+  if (!meteredStableSort(result.completionOrigins, originLess, workBudget)) {
+    return fail(SyncCoverFlatWorldError::WorkLimitExceeded);
+  }
+
+  constexpr std::size_t maskCount =
+      static_cast<std::size_t>(kAllSyncCoverOrderingRequirements) + 1;
+  static_assert(maskCount <= 16,
+                "flat-world capability states must fit one uint16_t");
+  const bool stateOverflow =
+      !graph.getNodes().empty() &&
+      maskCount >
+          std::numeric_limits<std::size_t>::max() / graph.getNodes().size();
+  const std::size_t maximumStates =
+      stateOverflow ? std::numeric_limits<std::size_t>::max()
+                    : graph.getNodes().size() * maskCount;
+  if (stateOverflow || maximumStates > limits.maximumStates) {
+    return fail(SyncCoverFlatWorldError::LimitExceeded);
+  }
+
+  for (SyncCoverDemandId demandId = 0; demandId < graph.getDemands().size();
+       ++demandId) {
+    if (!consumeWork(workBudget)) {
+      return fail(SyncCoverFlatWorldError::WorkLimitExceeded);
+    }
+    const SyncCoverDemand &demand = graph.getDemands()[demandId];
+    SyncCoverGuard condition;
+    if (!flatDemandCondition(graph, demand, condition)) {
+      return fail(SyncCoverFlatWorldError::InvalidGraph, demandId);
+    }
+
+    std::vector<std::uint16_t> reached(graph.getNodes().size(), 0);
+    std::deque<std::pair<SyncCoverNodeId, SyncCoverOrderingRequirementMask>>
+        ready;
+    const auto addState = [&](SyncCoverNodeId node,
+                              SyncCoverOrderingRequirementMask mask) {
+      const bool invalidState =
+          node >= reached.size() || mask == 0 ||
+          (mask & ~kAllSyncCoverOrderingRequirements) != 0;
+      if (invalidState) {
+        return false;
+      }
+      const std::uint16_t bit =
+          static_cast<std::uint16_t>(std::uint16_t{1} << mask);
+      const bool alreadyReached = (reached[node] & bit) != 0;
+      if (alreadyReached) {
+        return false;
+      }
+      reached[node] |= bit;
+      ready.emplace_back(node, mask);
+      return true;
+    };
+    const auto applyOrigin = [&](const SyncCoverCompletionOrigin &origin,
+                                 SyncCoverOrderingRequirementMask incoming,
+                                 bool direct) {
+      if (!flatOriginActive(condition, origin)) {
+        return true;
+      }
+      const SyncCoverOrderingRequirementMask transferred =
+          direct ? origin.suppliedRequirements
+                 : static_cast<SyncCoverOrderingRequirementMask>(
+                       incoming & origin.suppliedRequirements);
+      if (transferred == 0) {
+        return true;
+      }
+      for (const SyncCoverNode &node : graph.getNodes()) {
+        if (!consumeWork(workBudget)) {
+          return false;
+        }
+        if (flatNodeInTargetSuffix(graph, positions, origin, condition,
+                                   node.id)) {
+          addState(node.id, transferred);
+        }
+      }
+      return true;
+    };
+
+    for (const SyncCoverCompletionOrigin &origin : result.completionOrigins) {
+      if (!consumeWork(workBudget)) {
+        return fail(SyncCoverFlatWorldError::WorkLimitExceeded);
+      }
+      if (flatNodeInSourcePrefix(graph, positions, origin, condition,
+                                 demand.source) &&
+          !applyOrigin(origin, 0, true)) {
+        return fail(SyncCoverFlatWorldError::WorkLimitExceeded);
+      }
+    }
+
+    while (!ready.empty()) {
+      if (!consumeWork(workBudget)) {
+        return fail(SyncCoverFlatWorldError::WorkLimitExceeded);
+      }
+      const auto [node, mask] = ready.front();
+      ready.pop_front();
+      for (const SyncCoverEdge &edge : graph.getEdges()) {
+        if (!consumeWork(workBudget)) {
+          return fail(SyncCoverFlatWorldError::WorkLimitExceeded);
+        }
+        if (edge.source == node && flatEdgeActive(graph, edge, condition)) {
+          addState(edge.target, mask);
+        }
+      }
+      for (const SyncCoverCompletionOrigin &origin : result.completionOrigins) {
+        if (!consumeWork(workBudget)) {
+          return fail(SyncCoverFlatWorldError::WorkLimitExceeded);
+        }
+        const bool activationFailed =
+            flatNodeInSourcePrefix(graph, positions, origin, condition, node) &&
+            !applyOrigin(origin, mask, false);
+        if (activationFailed) {
+          return fail(SyncCoverFlatWorldError::WorkLimitExceeded);
+        }
+      }
+    }
+
+    const SyncCoverOrderingRequirementMask required =
+        demand.orderingRequirements;
+    const std::uint16_t targetMasks = reached[demand.target];
+    bool covered = false;
+    for (SyncCoverOrderingRequirementMask mask = 1;
+         mask <= kAllSyncCoverOrderingRequirements; ++mask) {
+      const std::uint16_t bit =
+          static_cast<std::uint16_t>(std::uint16_t{1} << mask);
+      covered |= (targetMasks & bit) != 0 && (mask & required) == required;
+    }
+    if (covered) {
+      result.covered.insert(demandId);
+    }
   }
   return result;
 }

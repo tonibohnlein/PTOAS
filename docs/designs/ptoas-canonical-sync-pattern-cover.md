@@ -152,6 +152,40 @@ Distance-zero demands use one immutable base arena. A loop with maximum active
 distance `d` uses `d + 1` virtual iterations. Nested loops retain separate
 recurrence arenas rather than forming a Cartesian product.
 
+### 2.1 Physical cuts and the flat exact-world reference
+
+A synchronization action is represented by its physical cut rather than by
+the demand that first proposed it. An event cut contains one source-resource
+`Set` point and one target-resource `Wait` point. A pipe cut contains one
+same-resource barrier point. The target provider authorizes the directed event
+pair or barrier before the target-neutral coverage engine receives the cut.
+
+For one exact enabled-mechanism set, the flat reference engine resolves every
+cut to a compact typed completion origin:
+
+```text
+source-resource prefix before Set/barrier
+    x
+target-resource suffix after Wait/barrier
+```
+
+The origin records its two physical boundaries, execution guards, resources,
+and supplied ordering capabilities. It does not materialize every rectangle
+edge. Coverage propagates an acquired completion fact through fixed issue order
+and through any number of other enabled cuts. The capability of a composed
+path is the intersection of its links, so a pipeline-completion cut cannot
+cover a cache-visibility obligation.
+
+Ordinary issue order can carry a completion fact that already exists, but can
+never create one. Guards must imply both cut points and every intermediate
+operation used by the proof. The flat engine rejects recurrence scopes and
+positive-distance demands; loop protocols and bottom-up region summaries are
+separate layers rather than optimistic behavior hidden in this reference.
+
+This exact-world API is initially a differential oracle alongside the existing
+expanded coverage path. Later commits make it the semantic basis for direct
+mechanical placement and hierarchical grounding.
+
 Recurrence construction follows the reachable joint orbit of every periodic
 control used by the two endpoints. It correlates that orbit with the loop
 induction residues used by exact multi-tile slot expressions. Exact ordinal
