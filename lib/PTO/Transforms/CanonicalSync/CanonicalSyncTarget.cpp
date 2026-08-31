@@ -189,6 +189,12 @@ void add2201EventCapabilities(CanonicalSyncTargetCapabilities &capabilities) {
   }
 }
 
+void add2201HardwareHazards(CanonicalSyncTargetCapabilities &capabilities) {
+  capabilities.crossPipeAccumulatorReadReadHazard.version = 1;
+  capabilities.evidence.push_back(
+      CanonicalSyncTargetEvidence::PTOASInsertSyncAccRarFfe46c09);
+}
+
 CanonicalSyncTargetCapabilities makeCoreTargetCapabilities(
     CanonicalSyncTargetProfile profile, CanonicalSyncCoreDomain coreDomain,
     bool vectorCompletionOrdered, bool vectorTargetedBarrierSupported) {
@@ -237,6 +243,7 @@ mlir::pto::canonical_sync_detail::getCanonicalSyncTargetCapabilities(
     capabilities.syncSpecVersion =
         CanonicalSyncTargetSyncSpecVersion::Ascend2201V1;
     add2201EventCapabilities(capabilities);
+    add2201HardwareHazards(capabilities);
     return capabilities;
   }
   case PTOTargetKind::A2A3: {
@@ -247,6 +254,7 @@ mlir::pto::canonical_sync_detail::getCanonicalSyncTargetCapabilities(
     capabilities.syncSpecVersion =
         CanonicalSyncTargetSyncSpecVersion::Ascend2201V1;
     add2201EventCapabilities(capabilities);
+    add2201HardwareHazards(capabilities);
     return capabilities;
   }
   case PTOTargetKind::A3: {
@@ -257,6 +265,7 @@ mlir::pto::canonical_sync_detail::getCanonicalSyncTargetCapabilities(
     capabilities.syncSpecVersion =
         CanonicalSyncTargetSyncSpecVersion::Ascend2201V1;
     add2201EventCapabilities(capabilities);
+    add2201HardwareHazards(capabilities);
     capabilities.targetCompletionResources = SyncCoverTargetCompletionResources{
         resourceId(PipelineType::PIPE_MTE1), resourceId(PipelineType::PIPE_M),
         resourceId(PipelineType::PIPE_FIX)};

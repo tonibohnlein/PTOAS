@@ -2368,6 +2368,9 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
       case SyncCoverDemandKind::MemoryWAW:
         ++report.wawDemandRows;
         break;
+      case SyncCoverDemandKind::HardwareAccRAR:
+        ++report.hardwareAccRarDemandRows;
+        break;
       }
     }
     const bool provenanceCountOverflows =

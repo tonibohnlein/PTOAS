@@ -172,6 +172,7 @@ enum class CanonicalSyncTargetEvidence : std::uint16_t {
   AscendSetWait7008190b,
   AscendKeyFeatures7008190b,
   AscendPipeBarrier850,
+  PTOASInsertSyncAccRarFfe46c09,
 };
 
 /// A zero version disables the capability. Nonzero versions identify the
@@ -284,6 +285,11 @@ struct CanonicalSyncTargetCapabilities {
   /// Exact physical L0C overwrite by an A3 MMAD accumulation is ordered by
   /// the target without adding a generic PIPE_M completion rule.
   CanonicalSyncBooleanCapability intrinsicMmadAccumulatorOrdering;
+
+  /// Overlapping cross-pipeline ACC/L0C reads require explicit ordering.
+  /// This is a PTOAS device rule inherited from InsertSync, not a generic
+  /// language-level read-after-read memory dependence.
+  CanonicalSyncBooleanCapability crossPipeAccumulatorReadReadHazard;
 };
 
 /// One authoritative synchronization graph plus the minimal MLIR side tables
@@ -427,6 +433,28 @@ private:
   CanonicalSyncOwnershipDiscoveryStatistics ownershipDiscoveryStatistics_;
   CanonicalSyncEventReservations eventReservations_;
 };
+
+/// A bounded diagnostic comparison between CanonicalSync's immutable raw
+/// storage-demand rows and InsertSync's pre-pruning memory-hazard oracle.
+///
+/// The first implementation is deliberately exact only for flat functions.
+/// Structured control is reported as incomplete instead of being flattened
+/// into a potentially misleading parity result; recurrence has a separate
+/// bounded explicit-unroll oracle in the analysis tests.
+struct CanonicalSyncHazardParityReport {
+  bool complete = false;
+  std::string incompleteReason;
+  std::string canonicalRawHazards;
+  std::string insertSyncRawHazards;
+  std::vector<std::string> canonicalOnly;
+  std::vector<std::string> insertSyncOnly;
+  std::size_t pairInspections = 0;
+};
+
+FailureOr<CanonicalSyncHazardParityReport>
+compareCanonicalSyncRawHazardsWithInsertSync(
+    const CanonicalSyncProgram &program,
+    std::size_t maximumPairInspections = 1U << 20);
 
 FailureOr<CanonicalSyncProgram>
 buildCanonicalSyncProgram(func::FuncOp function,

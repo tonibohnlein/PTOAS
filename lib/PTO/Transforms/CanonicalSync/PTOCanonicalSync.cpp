@@ -288,6 +288,8 @@ StringRef targetEvidenceName(pto::CanonicalSyncTargetEvidence evidence) {
     return "ascend-sync-key-features@7008190b";
   case pto::CanonicalSyncTargetEvidence::AscendPipeBarrier850:
     return "ascend-pipe-barrier@cann-8.5.0";
+  case pto::CanonicalSyncTargetEvidence::PTOASInsertSyncAccRarFfe46c09:
+    return "ptoas-insert-sync-acc-rar@ffe46c09";
   }
   return "unknown";
 }
@@ -359,7 +361,9 @@ llvm::json::Object jsonTargetCapabilities(
       {"m_to_fix_accumulator_boundary_completes",
        jsonInteger(capabilities.mToFixAccumulatorBoundaryCompletes.version)},
       {"intrinsic_mmad_accumulator_ordering",
-       jsonInteger(capabilities.intrinsicMmadAccumulatorOrdering.version)}};
+       jsonInteger(capabilities.intrinsicMmadAccumulatorOrdering.version)},
+      {"cross_pipe_accumulator_read_read_hazard",
+       jsonInteger(capabilities.crossPipeAccumulatorReadReadHazard.version)}};
   if (capabilities.targetCompletionResources) {
     result["target_completion_resources"] = llvm::json::Object{
         {"mte1", jsonInteger(capabilities.targetCompletionResources->mte1)},
@@ -1234,6 +1238,8 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
       {"raw_demand_keys", jsonInteger(report.rawDemandRows)},
       {"war_demand_keys", jsonInteger(report.warDemandRows)},
       {"waw_demand_keys", jsonInteger(report.wawDemandRows)},
+      {"hardware_acc_rar_demand_keys",
+       jsonInteger(report.hardwareAccRarDemandRows)},
       {"maximum_recurrence_distance",
        jsonInteger(report.maximumRecurrenceDistance)},
       {"direct_mechanisms", jsonInteger(report.directMechanisms)},

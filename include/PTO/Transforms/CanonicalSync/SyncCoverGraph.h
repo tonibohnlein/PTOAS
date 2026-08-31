@@ -113,6 +113,7 @@ enum class SyncCoverDemandKind : std::uint8_t {
   MemoryRAW,
   MemoryWAR,
   MemoryWAW,
+  HardwareAccRAR,
 };
 
 /// Target-neutral ordering obligations carried by raw demand rows. Multiple

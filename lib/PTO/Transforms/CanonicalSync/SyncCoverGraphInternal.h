@@ -37,6 +37,7 @@ inline bool isValidDemandKind(SyncCoverDemandKind kind) {
   case SyncCoverDemandKind::MemoryRAW:
   case SyncCoverDemandKind::MemoryWAR:
   case SyncCoverDemandKind::MemoryWAW:
+  case SyncCoverDemandKind::HardwareAccRAR:
     return true;
   }
   return false;
@@ -97,6 +98,9 @@ inline bool accessModesMatchDemand(SyncCoverDemandKind kind,
   case SyncCoverDemandKind::MemoryWAW:
     return syncCoverStorageModeWrites(source) &&
            syncCoverStorageModeWrites(target);
+  case SyncCoverDemandKind::HardwareAccRAR:
+    return syncCoverStorageModeReads(source) &&
+           syncCoverStorageModeReads(target);
   }
   return false;
 }

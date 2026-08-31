@@ -57,6 +57,15 @@ omitted only when the versioned target provider supplies an explicit
 completion certificate for the exact operation classes, pipeline, and memory
 space.
 
+Storage hazards are generated from interval-indexed access chains rather than
+from a Cartesian operation-pair scan. The index retains active readers and
+writers for each storage family and emits RAW, WAR, and WAW overlap witnesses.
+On a target that enables the ACC read/read device rule, the same index also
+joins cross-pipeline active readers in the accumulator domain and emits a
+`HardwareAccRAR` witness. Recurrence filtering follows reachable phase states
+and retains the first real conflicting distance for each physical slot and
+phase class.
+
 ## Deterministic evidence dump
 
 `SyncCoverGraph::getDeterministicRawDump()` emits a pointer-free, line-oriented
@@ -64,6 +73,22 @@ representation of nodes, storage domains, accesses, witnesses, and demands.
 Stable numeric identities make dumps comparable across repeated builds and
 between hazard providers. The dump is diagnostic evidence; it is not the
 coverage oracle or final correctness verifier.
+
+`compareCanonicalSyncRawHazardsWithInsertSync()` additionally constructs a
+bounded pre-pruning InsertSync ledger for flat functions and reports normalized
+RAW, WAR, WAW, and ACC-RAR differences in both directions. It prints range
+details for review but compares stable operation/phase, hazard, and address
+space identities because the two providers use different allocation-family
+representations. Structured control is explicitly reported as incomplete;
+phase-aware recurrence parity is checked against bounded explicit unrollings
+instead of silently flattening loops.
+
+The first reviewed difference is intentional: for two distinct local roots
+without planned physical addresses, CanonicalSync retains a conservative
+may-alias row while InsertSync's legacy alias oracle treats the roots as
+independent. The parity report labels this as Canonical-only; it is not a
+missing-hazard defect. Once physical planning supplies disjoint intervals,
+both providers omit the row.
 
 ## Separation from covering
 

@@ -2312,11 +2312,16 @@ BasicOwnershipDemandIndex buildOwnershipDemandIndex(
 }
 
 bool isOwnershipMemoryDemand(const SyncCoverDemand &demand) {
+  // The target's ACC read/read exception requires the same completed-before
+  // relation as the exact ownership lifecycle.  It is not an ordinary memory
+  // dependence, but a verified ownership protocol may discharge it when the
+  // overlap witness belongs to the protocol's physical lane.
   return !demand.provenanceKinds.empty() &&
          llvm::all_of(demand.provenanceKinds, [](SyncCoverDemandKind kind) {
            return kind == SyncCoverDemandKind::MemoryRAW ||
                   kind == SyncCoverDemandKind::MemoryWAR ||
-                  kind == SyncCoverDemandKind::MemoryWAW;
+                  kind == SyncCoverDemandKind::MemoryWAW ||
+                  kind == SyncCoverDemandKind::HardwareAccRAR;
          });
 }
 
