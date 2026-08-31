@@ -44,7 +44,34 @@ LogicalResult ProgramBuilder::buildScopes() {
     return function_.emitError("canonical sync timeline overflow");
   }
   scopeBindings_.push_back({function_.getOperation(), &function_.getBody()});
-  return addRegion(function_.getBody(), {0, {}}, timelineEnd);
+  FailureOr<SyncCoverRegionId> sequence = addStructuralRegion(
+      function_.getOperation(), 0, SyncCoverRegionKind::Sequence,
+      SyncCoverRegionCardinality::ExactlyOnce, 0, {});
+  if (failed(sequence)) {
+    return failure();
+  }
+  return addRegion(function_.getBody(), {0, *sequence, {}}, timelineEnd);
+}
+
+FailureOr<SyncCoverRegionId> ProgramBuilder::addStructuralRegion(
+    Operation *owner, SyncCoverRegionId parent, SyncCoverRegionKind kind,
+    SyncCoverRegionCardinality cardinality, SyncCoverScopeId scope,
+    SyncCoverGuard guard, std::optional<SyncCoverControlId> control,
+    std::optional<unsigned> alternative) {
+  const bool regionLimitReached =
+      graph_.getRegions().size() >= options_.maximumRegions;
+  if (regionLimitReached) {
+    owner->emitError("canonical sync region limit exceeded");
+    return failure();
+  }
+  const SyncCoverGraphResult region =
+      graph_.addRegion(parent, kind, cardinality, scope, std::move(guard),
+                       control, alternative);
+  if (!region) {
+    owner->emitError("cannot construct canonical sync structural region");
+    return failure();
+  }
+  return *region.index;
 }
 
 LogicalResult ProgramBuilder::addRegion(Region &region,
@@ -70,13 +97,31 @@ LogicalResult ProgramBuilder::addRegion(Region &region,
       }
       const SyncCoverGraphResult scope = graph_.addScope(
           context.scope, false, SyncCoverTimelineInterval{0, timelineEnd}, true,
-          context.guard);
+          context.guard, context.region);
       if (!scope) {
         return loop.emitError("cannot construct canonical sync loop scope");
       }
+      FailureOr<SyncCoverRegionId> loopRegion = addStructuralRegion(
+          loop.getOperation(), context.region, SyncCoverRegionKind::Loop,
+          SyncCoverRegionCardinality::ZeroOrMore, *scope.index, context.guard);
+      const bool invalidLoopRegion =
+          failed(loopRegion) ||
+          !graph_.setScopeRegion(*scope.index, *loopRegion);
+      if (invalidLoopRegion) {
+        return loop.emitError(
+            "cannot bind canonical sync loop structural region");
+      }
+      FailureOr<SyncCoverRegionId> bodySequence = addStructuralRegion(
+          loop.getOperation(), *loopRegion, SyncCoverRegionKind::Sequence,
+          SyncCoverRegionCardinality::ExactlyOnce, *scope.index,
+          context.guard);
+      if (failed(bodySequence)) {
+        return failure();
+      }
       loopScopes_.push_back({loop.getOperation(), *scope.index});
       scopeBindings_.push_back({loop.getOperation(), &loop.getRegion()});
-      if (failed(addRegion(loop.getRegion(), {*scope.index, context.guard},
+      if (failed(addRegion(loop.getRegion(),
+                           {*scope.index, *bodySequence, context.guard},
                            timelineEnd))) {
         return failure();
       }
@@ -106,6 +151,18 @@ LogicalResult ProgramBuilder::addRegion(Region &region,
                                             context.scope))) {
         return failure();
       }
+      FailureOr<SyncCoverRegionId> choice = addStructuralRegion(
+          conditional.getOperation(), context.region,
+          SyncCoverRegionKind::Choice,
+          SyncCoverRegionCardinality::ExactlyOnce, context.scope,
+          context.guard, *control.index);
+      if (failed(choice)) {
+        return failure();
+      }
+      if (!graph_.setControlRegion(*control.index, *choice)) {
+        return conditional.emitError(
+            "cannot bind canonical sync choice structural region");
+      }
       for (unsigned alternative = 0; alternative < 2; ++alternative) {
         Region &alternativeRegion = conditional->getRegion(alternative);
         SyncCoverGuard alternativeGuard = context.guard;
@@ -118,7 +175,28 @@ LogicalResult ProgramBuilder::addRegion(Region &region,
         }
         scopeBindings_.push_back(
             {conditional.getOperation(), &alternativeRegion});
-        RegionContext alternativeContext{*scope.index,
+        FailureOr<SyncCoverRegionId> alternativeOwner = addStructuralRegion(
+            conditional.getOperation(), *choice,
+            SyncCoverRegionKind::Alternative,
+            SyncCoverRegionCardinality::ZeroOrOne, *scope.index,
+            alternativeGuard, *control.index, alternative);
+        const bool invalidAlternativeOwner =
+            failed(alternativeOwner) ||
+            !graph_.setScopeRegion(*scope.index, *alternativeOwner);
+        if (invalidAlternativeOwner) {
+          return conditional.emitError(
+              "cannot bind canonical sync alternative structural region");
+        }
+        FailureOr<SyncCoverRegionId> alternativeSequence =
+            addStructuralRegion(
+                conditional.getOperation(), *alternativeOwner,
+                SyncCoverRegionKind::Sequence,
+                SyncCoverRegionCardinality::ExactlyOnce, *scope.index,
+                alternativeGuard);
+        if (failed(alternativeSequence)) {
+          return failure();
+        }
+        RegionContext alternativeContext{*scope.index, *alternativeSequence,
                                          std::move(alternativeGuard)};
         if (failed(addRegion(alternativeRegion, alternativeContext,
                              timelineEnd))) {
@@ -130,8 +208,23 @@ LogicalResult ProgramBuilder::addRegion(Region &region,
     if (!isTransparentRegionOperation(&operation)) {
       continue;
     }
+    FailureOr<SyncCoverRegionId> transparent = addStructuralRegion(
+        &operation, context.region, SyncCoverRegionKind::Transparent,
+        SyncCoverRegionCardinality::ExactlyOnce, context.scope, context.guard);
+    if (failed(transparent)) {
+      return failure();
+    }
     for (Region &nested : operation.getRegions()) {
-      if (failed(addRegion(nested, context, timelineEnd))) {
+      FailureOr<SyncCoverRegionId> nestedSequence = addStructuralRegion(
+          &operation, *transparent, SyncCoverRegionKind::Sequence,
+          SyncCoverRegionCardinality::ExactlyOnce, context.scope,
+          context.guard);
+      const bool invalidNestedRegion =
+          failed(nestedSequence) ||
+          failed(addRegion(nested,
+                           {context.scope, *nestedSequence, context.guard},
+                           timelineEnd));
+      if (invalidNestedRegion) {
         return failure();
       }
     }

@@ -427,6 +427,54 @@ bool testBatchedSingletonCoverageHandlesRecurrence() {
   return passed;
 }
 
+bool testMechanismOwnerUsesActionRegionLca() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverRegionId rootSequence = takeIndex(
+      graph.addRegion(0, SyncCoverRegionKind::Sequence,
+                      SyncCoverRegionCardinality::ExactlyOnce),
+      passed, "add mechanism-owner root sequence");
+  const SyncCoverRegionId firstTransparent = takeIndex(
+      graph.addRegion(rootSequence, SyncCoverRegionKind::Transparent,
+                      SyncCoverRegionCardinality::ExactlyOnce),
+      passed, "add first transparent owner");
+  const SyncCoverRegionId firstSequence = takeIndex(
+      graph.addRegion(firstTransparent, SyncCoverRegionKind::Sequence,
+                      SyncCoverRegionCardinality::ExactlyOnce),
+      passed, "add first transparent sequence");
+  const SyncCoverRegionId secondTransparent = takeIndex(
+      graph.addRegion(rootSequence, SyncCoverRegionKind::Transparent,
+                      SyncCoverRegionCardinality::ExactlyOnce),
+      passed, "add second transparent owner");
+  const SyncCoverRegionId secondSequence = takeIndex(
+      graph.addRegion(secondTransparent, SyncCoverRegionKind::Sequence,
+                      SyncCoverRegionCardinality::ExactlyOnce),
+      passed, "add second transparent sequence");
+  const SyncCoverNodeId source = takeIndex(
+      graph.addNode(1, 1, 0, 0, {}, {2}, std::nullopt, false,
+                    std::numeric_limits<std::size_t>::max(), -1, {},
+                    firstSequence),
+      passed, "add mechanism-owner source");
+  const SyncCoverNodeId target = takeIndex(
+      graph.addNode(2, 1, 0, 1, {}, {}, std::nullopt, false,
+                    std::numeric_limits<std::size_t>::max(), -1, {},
+                    secondSequence),
+      passed, "add mechanism-owner target");
+  passed &= check(graph.addDemand(demand(source, target)),
+                  "add mechanism-owner demand") &&
+            check(graph.freezeStructure(), "freeze mechanism-owner graph");
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 6, {}}),
+                  "add mechanism-owner domain");
+  const CanonicalSyncMechanismId mechanism = takeIndex(
+      problem.internMechanism(event(0, 1, 2, source, target)), passed,
+      "intern mechanism with structural owner");
+  return passed &&
+         check(problem.getMechanisms()[mechanism].descriptor.ownerRegion ==
+                   rootSequence,
+               "derive mechanism owner from the action-region LCA");
+}
+
 bool testBatchedSingletonCoverageHandlesFixedCompletionPrefix() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -4829,6 +4877,7 @@ int main() {
   const bool passed =
       testBatchedSingletonCoverageMatchesIndependentQueries() &&
       testBatchedSingletonCoverageHandlesRecurrence() &&
+      testMechanismOwnerUsesActionRegionLca() &&
       testBatchedSingletonCoverageHandlesFixedCompletionPrefix() &&
       testBatchedSingletonCoverageRejectsOversizedResult() &&
       testFixedCompletionNeedsNoSelectedMechanism() &&

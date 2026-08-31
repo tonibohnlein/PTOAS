@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <set>
 #include <sstream>
 #include <utility>
 
@@ -23,12 +24,16 @@ using namespace mlir::pto::sync_cover_detail;
 SyncCoverGraphResult
 SyncCoverGraph::addScope(SyncCoverScopeId parent, bool mustExecuteWithinParent,
                          std::optional<SyncCoverTimelineInterval> timeline,
-                         bool isLoop, SyncCoverGuard guard) {
+                         bool isLoop, SyncCoverGuard guard,
+                         SyncCoverRegionId region) {
   if (!canMutateStructure()) {
     return {SyncCoverGraphError::StructureFrozen, scopes_.size()};
   }
   if (!hasValidScope(parent)) {
     return {SyncCoverGraphError::InvalidScope, parent};
+  }
+  if (!hasValidRegion(region)) {
+    return {SyncCoverGraphError::InvalidRegion, region};
   }
   const SyncCoverGraphError guardError =
       normalizeAndValidateGuard(guard, parent);
@@ -56,8 +61,57 @@ SyncCoverGraph::addScope(SyncCoverScopeId parent, bool mustExecuteWithinParent,
     }
   }
   const SyncCoverScopeId id = scopes_.size();
-  scopes_.push_back({id, parent, mustExecuteWithinParent, timeline, isLoop,
-                     std::move(guard)});
+  scopes_.push_back({id, parent, region, mustExecuteWithinParent, timeline,
+                     isLoop, std::move(guard)});
+  return {SyncCoverGraphError::None, id};
+}
+
+SyncCoverGraphResult SyncCoverGraph::setScopeRegion(SyncCoverScopeId scope,
+                                                    SyncCoverRegionId region) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen, scope};
+  }
+  const bool invalidScope = !hasValidScope(scope) || scope == 0;
+  if (invalidScope) {
+    return {SyncCoverGraphError::InvalidScope, scope};
+  }
+  const bool invalidRegion =
+      !hasValidRegion(region) ||
+      (region != 0 && regions_[region].scope != scope);
+  if (invalidRegion) {
+    return {SyncCoverGraphError::InvalidRegion, region};
+  }
+  scopes_[scope].region = region;
+  return {SyncCoverGraphError::None, scope};
+}
+
+SyncCoverGraphResult
+SyncCoverGraph::addRegion(SyncCoverRegionId parent, SyncCoverRegionKind kind,
+                          SyncCoverRegionCardinality cardinality,
+                          SyncCoverScopeId scope, SyncCoverGuard guard,
+                          std::optional<SyncCoverControlId> control,
+                          std::optional<unsigned> alternative) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen, regions_.size()};
+  }
+  if (!hasValidRegion(parent)) {
+    return {SyncCoverGraphError::InvalidRegion, parent};
+  }
+  if (!hasValidScope(scope)) {
+    return {SyncCoverGraphError::InvalidScope, scope};
+  }
+  const SyncCoverGraphError guardError = normalizeAndValidateGuard(guard, scope);
+  if (guardError != SyncCoverGraphError::None) {
+    return {guardError, regions_.size()};
+  }
+  if (!std::includes(guard.literals.begin(), guard.literals.end(),
+                     regions_[parent].guard.literals.begin(),
+                     regions_[parent].guard.literals.end())) {
+    return {SyncCoverGraphError::InvalidGuard, regions_.size()};
+  }
+  const SyncCoverRegionId id = regions_.size();
+  regions_.push_back({id, parent, scope, kind, cardinality, control,
+                      alternative, std::move(guard), {}, {}});
   return {SyncCoverGraphError::None, id};
 }
 
@@ -73,8 +127,29 @@ SyncCoverGraphResult SyncCoverGraph::addControl(unsigned alternatives,
     return {SyncCoverGraphError::InvalidScope, scope};
   }
   const SyncCoverControlId id = controls_.size();
-  controls_.push_back({id, alternatives, scope});
+  controls_.push_back({id, alternatives, scope, scopes_[scope].region});
   return {SyncCoverGraphError::None, id};
+}
+
+SyncCoverGraphResult
+SyncCoverGraph::setControlRegion(SyncCoverControlId control,
+                                 SyncCoverRegionId region) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen, control};
+  }
+  if (control >= controls_.size()) {
+    return {SyncCoverGraphError::InvalidControl, control};
+  }
+  const bool invalidRegion =
+      !hasValidRegion(region) ||
+      regions_[region].scope != controls_[control].scope ||
+      regions_[region].kind != SyncCoverRegionKind::Choice ||
+      regions_[region].control != control;
+  if (invalidRegion) {
+    return {SyncCoverGraphError::InvalidRegion, region};
+  }
+  controls_[control].region = region;
+  return {SyncCoverGraphError::None, control};
 }
 
 SyncCoverGraphResult SyncCoverGraph::setControlPhaseRelation(
@@ -155,12 +230,19 @@ SyncCoverGraphResult SyncCoverGraph::addNode(
     std::vector<std::uint32_t> completionTargets,
     std::optional<SyncCoverNodeId> physicalAnchor,
     bool completionSignalCoversIssuedPrefix, std::size_t physicalOperation,
-    int macroPhase, std::vector<unsigned> completedResults) {
+    int macroPhase, std::vector<unsigned> completedResults,
+    SyncCoverRegionId region) {
   if (!canMutateStructure()) {
     return {SyncCoverGraphError::StructureFrozen, nodes_.size()};
   }
   if (!hasValidScope(scope)) {
     return {SyncCoverGraphError::InvalidScope, scope};
+  }
+  const bool invalidRegion =
+      !hasValidRegion(region) ||
+      (region != 0 && regions_[region].scope != scope);
+  if (invalidRegion) {
+    return {SyncCoverGraphError::InvalidRegion, region};
   }
   const SyncCoverGraphError error = normalizeAndValidateGuard(guard, scope);
   if (error != SyncCoverGraphError::None) {
@@ -205,6 +287,7 @@ SyncCoverGraphResult SyncCoverGraph::addNode(
                     resource,
                     weight,
                     scope,
+                    region,
                     order,
                     std::move(guard),
                     std::move(completionTargets),
@@ -317,6 +400,18 @@ SyncCoverGraphResult SyncCoverGraph::addDemand(SyncCoverDemand demand) {
   if (invalidScope) {
     return {SyncCoverGraphError::InvalidScope, demands_.size()};
   }
+  const std::optional<SyncCoverRegionId> owner =
+      demand.distance == 0
+          ? getLowestCommonRegion(nodes_[demand.source].region,
+                                  nodes_[demand.target].region)
+          : std::optional<SyncCoverRegionId>(scopes_[demand.scope].region);
+  const bool invalidOwner =
+      !owner || !regionContains(*owner, nodes_[demand.source].region) ||
+      !regionContains(*owner, nodes_[demand.target].region);
+  if (invalidOwner) {
+    return {SyncCoverGraphError::InvalidRegion, demands_.size()};
+  }
+  demand.ownerRegion = *owner;
   const bool invalidKind =
       demand.originalDemandCount == 0 || demand.provenanceKinds.empty() ||
       std::any_of(
@@ -419,6 +514,7 @@ std::string SyncCoverGraph::getDeterministicRawDump() const {
   };
   for (const SyncCoverScope &scope : scopes_) {
     output << "scope " << scope.id << " parent=" << scope.parent
+           << " region=" << scope.region
            << " must=" << scope.mustExecuteWithinParent
            << " loop=" << scope.isLoop << " timeline=";
     if (scope.timeline) {
@@ -431,10 +527,64 @@ std::string SyncCoverGraph::getDeterministicRawDump() const {
     printGuard(scope.guard);
     output << '\n';
   }
+  for (const SyncCoverRegion &region : regions_) {
+    output << "region " << region.id << " parent=" << region.parent
+           << " scope=" << region.scope
+           << " kind=" << static_cast<unsigned>(region.kind)
+           << " cardinality=" << static_cast<unsigned>(region.cardinality)
+           << " control=";
+    if (region.control) {
+      output << *region.control;
+    } else {
+      output << "none";
+    }
+    output << " alternative=";
+    if (region.alternative) {
+      output << *region.alternative;
+    } else {
+      output << "none";
+    }
+    output << " guard=";
+    printGuard(region.guard);
+    output << " elements=[";
+    for (std::size_t index = 0; index < region.elements.size(); ++index) {
+      if (index != 0) {
+        output << ',';
+      }
+      output << static_cast<unsigned>(region.elements[index].kind) << ':'
+             << region.elements[index].value;
+    }
+    output << "] ports=[";
+    for (std::size_t index = 0; index < region.ports.size(); ++index) {
+      if (index != 0) {
+        output << ',';
+      }
+      output << region.ports[index];
+    }
+    output << "]\n";
+  }
+  for (const SyncCoverRegionPort &port : regionPorts_) {
+    output << "region-port " << port.id << " region=" << port.region
+           << " kind=" << static_cast<unsigned>(port.kind)
+           << " pipe=" << port.resource << " node=";
+    if (port.node) {
+      output << *port.node;
+    } else {
+      output << "none";
+    }
+    output << " demand=";
+    if (port.demand) {
+      output << *port.demand;
+    } else {
+      output << "none";
+    }
+    output << '\n';
+  }
   for (const SyncCoverControl &control : controls_) {
     output << "control " << control.id
            << " alternatives=" << control.alternatives
-           << " scope=" << control.scope << " phase-relation=";
+           << " scope=" << control.scope << " region=" << control.region
+           << " phase-relation=";
     if (control.phaseRelation) {
       output << "loop:" << control.phaseRelation->loopScope
              << ",initial:" << control.phaseRelation->initialPhase
@@ -465,7 +615,8 @@ std::string SyncCoverGraph::getDeterministicRawDump() const {
   for (const SyncCoverNode &node : nodes_) {
     output << "node " << node.id << " op=" << node.physicalOperation
            << " phase=" << node.macroPhase << " pipe=" << node.resource
-           << " scope=" << node.scope << " order=" << node.order
+           << " scope=" << node.scope << " region=" << node.region
+           << " order=" << node.order
            << " anchor=" << node.physicalAnchor << " exit=" << node.physicalExit
            << " prefix-signal=" << node.completionSignalCoversIssuedPrefix
            << " complete-results=";
@@ -528,6 +679,7 @@ std::string SyncCoverGraph::getDeterministicRawDump() const {
     const SyncCoverDemand &demand = demands_[demandId];
     output << "demand " << demandId << " source=" << demand.source
            << " target=" << demand.target << " scope=" << demand.scope
+           << " owner-region=" << demand.ownerRegion
            << " distance=" << demand.distance << " requirements="
            << static_cast<unsigned>(demand.orderingRequirements)
            << " original-count=" << demand.originalDemandCount << " kinds=";
@@ -743,8 +895,122 @@ SyncCoverGraph::canonicalizeCompletionEdge(SyncCoverEdge &edge) const {
                                 edge.targetGuard);
 }
 
+SyncCoverGraphResult SyncCoverGraph::rebuildRegionInterfaces() {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen, std::nullopt};
+  }
+  constexpr std::size_t kMaximumRegionPorts = 1U << 20;
+  regionInterfacesBuilt_ = false;
+  const std::size_t noOrder = std::numeric_limits<std::size_t>::max();
+  std::vector<std::size_t> firstOrder(regions_.size(), noOrder);
+  std::vector<std::set<std::uint32_t>> resources(regions_.size());
+  for (SyncCoverRegion &region : regions_) {
+    region.elements.clear();
+    region.ports.clear();
+  }
+  regionPorts_.clear();
+
+  for (const SyncCoverNode &node : nodes_) {
+    if (!hasValidRegion(node.region)) {
+      return {SyncCoverGraphError::InvalidRegion, node.id};
+    }
+    firstOrder[node.region] = std::min(firstOrder[node.region], node.order);
+    resources[node.region].insert(node.resource);
+    regions_[node.region].elements.push_back(
+        {SyncCoverRegionElementKind::Node, node.id});
+  }
+  for (std::size_t region = regions_.size(); region-- > 1;) {
+    const SyncCoverRegionId parent = regions_[region].parent;
+    if (!hasValidRegion(parent)) {
+      return {SyncCoverGraphError::InvalidRegion, region};
+    }
+    firstOrder[parent] = std::min(firstOrder[parent], firstOrder[region]);
+    resources[parent].insert(resources[region].begin(), resources[region].end());
+    regions_[parent].elements.push_back(
+        {SyncCoverRegionElementKind::ChildRegion, region});
+  }
+  for (SyncCoverRegion &region : regions_) {
+    const auto elementOrder = [&](const SyncCoverRegionElement &element) {
+      return element.kind == SyncCoverRegionElementKind::Node
+                 ? nodes_[element.value].order
+                 : firstOrder[element.value];
+    };
+    std::sort(region.elements.begin(), region.elements.end(),
+              [&](const SyncCoverRegionElement &left,
+                  const SyncCoverRegionElement &right) {
+                const auto leftKey = std::make_tuple(
+                    elementOrder(left), static_cast<unsigned>(left.kind),
+                    left.value);
+                const auto rightKey = std::make_tuple(
+                    elementOrder(right), static_cast<unsigned>(right.kind),
+                    right.value);
+                return leftKey < rightKey;
+              });
+  }
+
+  const auto addPort = [&](SyncCoverRegionId region,
+                           SyncCoverRegionPortKind kind,
+                           std::uint32_t resource,
+                           std::optional<SyncCoverNodeId> node,
+                           std::optional<SyncCoverDemandId> demand) {
+    const bool portLimitReached =
+        regionPorts_.size() >= kMaximumRegionPorts;
+    if (portLimitReached) {
+      return false;
+    }
+    const SyncCoverRegionPortId id = regionPorts_.size();
+    regionPorts_.push_back({id, region, kind, resource, node, demand});
+    regions_[region].ports.push_back(id);
+    return true;
+  };
+  for (SyncCoverRegionId region = 0; region < regions_.size(); ++region) {
+    for (std::uint32_t resource : resources[region]) {
+      if (!addPort(region, SyncCoverRegionPortKind::Entry, resource,
+                   std::nullopt, std::nullopt) ||
+          !addPort(region, SyncCoverRegionPortKind::Exit, resource,
+                   std::nullopt, std::nullopt)) {
+        return {SyncCoverGraphError::InvalidRegionPort, regionPorts_.size()};
+      }
+    }
+  }
+  const auto exposeEndpoint = [&](SyncCoverDemandId demandId,
+                                  SyncCoverNodeId endpoint,
+                                  SyncCoverRegionPortKind kind,
+                                  SyncCoverRegionId owner) {
+    SyncCoverRegionId current = nodes_[endpoint].region;
+    while (current != owner) {
+      const bool invalidExposure =
+          current == 0 || !regionContains(owner, current) ||
+          !addPort(current, kind, nodes_[endpoint].resource, endpoint,
+                   demandId);
+      if (invalidExposure) {
+        return false;
+      }
+      current = regions_[current].parent;
+    }
+    return true;
+  };
+  for (SyncCoverDemandId demandId = 0; demandId < demands_.size(); ++demandId) {
+    const SyncCoverDemand &demand = demands_[demandId];
+    if (!exposeEndpoint(demandId, demand.source,
+                        SyncCoverRegionPortKind::DemandSource,
+                        demand.ownerRegion) ||
+        !exposeEndpoint(demandId, demand.target,
+                        SyncCoverRegionPortKind::DemandTarget,
+                        demand.ownerRegion)) {
+      return {SyncCoverGraphError::InvalidRegionPort, demandId};
+    }
+  }
+  regionInterfacesBuilt_ = true;
+  return {SyncCoverGraphError::None, std::nullopt};
+}
+
 SyncCoverGraphResult SyncCoverGraph::freezeStructure() {
-  SyncCoverGraphResult result = validate();
+  SyncCoverGraphResult result = rebuildRegionInterfaces();
+  if (!result) {
+    return result;
+  }
+  result = validate();
   if (!result) {
     return result;
   }

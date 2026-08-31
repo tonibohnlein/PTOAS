@@ -169,6 +169,100 @@ bool testRecurrenceScopes() {
   return passed;
 }
 
+bool testStructuralRegionOwnershipAndPorts() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverRegionId rootSequence = takeIndex(
+      graph.addRegion(0, SyncCoverRegionKind::Sequence,
+                      SyncCoverRegionCardinality::ExactlyOnce),
+      passed, "add root sequence region");
+  const SyncCoverScopeId loopScope = takeIndex(
+      graph.addScope(0, true, SyncCoverTimelineInterval{0, 20}, true, {},
+                     rootSequence),
+      passed, "add structural loop scope");
+  const SyncCoverRegionId loop = takeIndex(
+      graph.addRegion(rootSequence, SyncCoverRegionKind::Loop,
+                      SyncCoverRegionCardinality::ZeroOrMore, loopScope),
+      passed, "add structural loop region");
+  passed &= check(graph.setScopeRegion(loopScope, loop),
+                  "bind recurrence scope to loop region");
+  const SyncCoverRegionId body = takeIndex(
+      graph.addRegion(loop, SyncCoverRegionKind::Sequence,
+                      SyncCoverRegionCardinality::ExactlyOnce, loopScope),
+      passed, "add loop body sequence");
+  const SyncCoverControlId control =
+      takeIndex(graph.addControl(2, loopScope), passed, "add branch control");
+  const SyncCoverRegionId choice = takeIndex(
+      graph.addRegion(body, SyncCoverRegionKind::Choice,
+                      SyncCoverRegionCardinality::ExactlyOnce, loopScope, {},
+                      control),
+      passed, "add choice region");
+  passed &= check(graph.setControlRegion(control, choice),
+                  "bind control to choice region");
+
+  std::vector<SyncCoverRegionId> alternatives;
+  std::vector<SyncCoverRegionId> sequences;
+  for (unsigned alternative = 0; alternative < 2; ++alternative) {
+    SyncCoverGuard guard{{{control, alternative}}};
+    const SyncCoverScopeId scope = takeIndex(
+        graph.addScope(loopScope, true, std::nullopt, false, guard, choice),
+        passed, "add alternative scope");
+    const SyncCoverRegionId alternativeRegion = takeIndex(
+        graph.addRegion(choice, SyncCoverRegionKind::Alternative,
+                        SyncCoverRegionCardinality::ZeroOrOne, scope, guard,
+                        control, alternative),
+        passed, "add alternative region");
+    passed &= check(graph.setScopeRegion(scope, alternativeRegion),
+                    "bind alternative scope to its owner");
+    alternatives.push_back(alternativeRegion);
+    sequences.push_back(takeIndex(
+        graph.addRegion(alternativeRegion, SyncCoverRegionKind::Sequence,
+                        SyncCoverRegionCardinality::ExactlyOnce, scope, guard),
+        passed, "add alternative sequence"));
+  }
+  const SyncCoverScopeId sourceScope =
+      graph.getRegions()[alternatives.front()].scope;
+  const SyncCoverGuard sourceGuard{{{control, 0}}};
+  const SyncCoverNodeId source = takeIndex(
+      graph.addNode(1, 1, sourceScope, 0, sourceGuard, {}, std::nullopt, false,
+                    std::numeric_limits<std::size_t>::max(), -1, {},
+                    sequences.front()),
+      passed, "add nested source node");
+  const SyncCoverNodeId target = takeIndex(
+      graph.addNode(2, 1, loopScope, 1, {}, {}, std::nullopt, false,
+                    std::numeric_limits<std::size_t>::max(), -1, {}, body),
+      passed, "add loop-local target node");
+  passed &= check(graph.addDemand(makeDemand(source, target)),
+                  "add demand crossing an immediate-child boundary");
+  passed &= check(graph.freezeStructure(), "freeze structural region graph") &&
+            check(graph.validate(), "validate structural region graph");
+
+  const SyncCoverDemand &demand = graph.getDemands().front();
+  passed &= check(demand.ownerRegion == body,
+                  "own a distance-zero row at the endpoint-region LCA");
+  std::vector<SyncCoverRegionId> exposedAt;
+  for (const SyncCoverRegionPort &port : graph.getRegionPorts()) {
+    if (port.kind == SyncCoverRegionPortKind::DemandSource && port.demand == 0) {
+      exposedAt.push_back(port.region);
+    }
+  }
+  passed &= check(exposedAt == std::vector<SyncCoverRegionId>(
+                                  {sequences.front(), alternatives.front(),
+                                   choice}),
+                  "thread a nested endpoint through immediate-child ports");
+  for (const SyncCoverRegion &region : graph.getRegions()) {
+    for (const SyncCoverRegionElement &element : region.elements) {
+      const bool immediate =
+          element.kind == SyncCoverRegionElementKind::Node
+              ? graph.getNodes()[element.value].region == region.id
+              : graph.getRegions()[element.value].parent == region.id;
+      passed &= check(immediate,
+                      "region elements never reference arbitrary descendants");
+    }
+  }
+  return passed;
+}
+
 bool testStructuredGuards() {
   bool passed = true;
   SyncCoverGuard unsorted{{{2, 1}, {1, 0}, {2, 1}}};
@@ -1374,6 +1468,7 @@ int main() {
   bool passed = true;
   passed &= testZeroDistanceDag();
   passed &= testRecurrenceScopes();
+  passed &= testStructuralRegionOwnershipAndPorts();
   passed &= testStructuredGuards();
   passed &= testRecurrenceGuardContexts();
   passed &= testInvalidReferencesDoNotMutate();

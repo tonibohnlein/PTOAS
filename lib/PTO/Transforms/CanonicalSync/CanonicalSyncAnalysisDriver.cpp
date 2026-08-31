@@ -402,6 +402,7 @@ LogicalResult ProgramBuilder::validateInput() {
   }
   const bool invalidLimits =
       options_.maximumNodes == 0 || options_.maximumScopes == 0 ||
+      options_.maximumRegions == 0 ||
       options_.maximumControls == 0 || options_.maximumStorageAccesses == 0 ||
       options_.maximumPairInspections == 0 ||
       options_.maximumPeriodicRecurrenceStates == 0 ||
@@ -731,7 +732,7 @@ LogicalResult ProgramBuilder::buildNodesAndStorage() {
         std::move(completionTargets), representative,
         canSignalPrefixCompletion(resource, targetCapabilities_),
         physicalOperation, compound->macroOpInstanceId,
-        std::move(*completedResults));
+        std::move(*completedResults), context->second.region);
     if (!node) {
       return compound->elementOp->emitError(
           "cannot construct canonical sync operation node");
