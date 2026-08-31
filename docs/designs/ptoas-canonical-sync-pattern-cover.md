@@ -186,6 +186,35 @@ This exact-world API is initially a differential oracle alongside the existing
 expanded coverage path. Later commits make it the semantic basis for direct
 mechanical placement and hierarchical grounding.
 
+### 2.2 Bottom-up guarded-region worlds
+
+An exact world specifies which physical cuts are enabled; it is not itself the
+program-state representation. Within each world, hierarchical grounding runs
+a structured forward transfer over compact completion capabilities and logical
+event tokens. This follows the scoreboard/dataflow separation used by
+production asynchronous-pipeline compilers: dependency correctness, hardware
+encoding, and scarce-token allocation remain distinct layers.
+
+Exactly-once Sequence and Transparent children are evaluated through their
+immediate-child interfaces. A Choice evaluates every feasible alternative from
+the same incoming state and intersects the outgoing completion, token, source,
+and coverage facts. A demand guard that selects one alternative specializes
+that transfer; an unconditional demand receives only facts established on
+every alternative. Optional regions similarly intersect their zero-execution
+and one-execution states. Thus neither a completion fact nor a live event token
+can leak from only one branch into an unconditional parent proof.
+
+This evaluator processes bounded batches of exact worlds, charges structured
+transfer work, and limits live state words before allocation. Small
+exactly-once and guarded programs are checked against the flat reference
+engine. Repeated regions remain fail-closed here: loop backedges require the
+separate lifecycle automata and phase-aware summaries described below.
+
+World propagation is the implementation of cut-effect grounding, not the raw
+correctness oracle. The raw demand graph remains immutable, and final
+verification will independently reconstruct physical actions and rerun typed
+structured dataflow rather than trusting candidate coverage bitsets.
+
 Recurrence construction follows the reachable joint orbit of every periodic
 control used by the two endpoints. It correlates that orbit with the loop
 induction residues used by exact multi-tile slot expressions. Exact ordinal
@@ -214,15 +243,14 @@ accumulates every RAW, WAR, and WAW witness before mutating the graph. It sorts,
 deduplicates, and validates the complete provenance once, so many physical
 access batches cannot repeatedly copy and revalidate a growing demand row.
 
-The structural interfaces are intentionally built before the hierarchical
-coverage engine. Until bottom-up must summaries are installed, existing
-recurrence expansion remains the coverage implementation and must not claim
-that a parent consumes a child's semantic completion transfer. The next layer
-will add resource-specific entry/exit transfer, explicit zero-trip behavior,
-recurrence carry, and periodic phase summaries without copying child bodies
-into parent arenas. A recurrence protocol may export completion only after
-common validation certifies balanced priming, body circulation, and one
-scope-exit drain per lane.
+The structural interfaces and bottom-up must transfer are intentionally built
+before recurrence semantics. Existing recurrence expansion remains the legacy
+coverage implementation and must not be treated as a parent-visible summary.
+The next layer adds explicit zero-trip behavior, recurrence carry, periodic
+phase summaries, and token-state validation without copying child bodies into
+parent arenas. A recurrence protocol may export completion only after common
+validation certifies balanced priming, body circulation, and one scope-exit
+drain per lane.
 
 ## 3. Certified mechanism catalog
 
