@@ -224,6 +224,8 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
   std::optional<SyncCoverStorageProtocolAutomatonIndex>
       storageProtocolAutomatonIndex;
   std::optional<SyncCoverStorageCutIndex> storageCutIndex;
+  std::optional<SyncCoverStorageProtocolCutPlanIndex>
+      storageProtocolCutPlanIndex;
   std::optional<SyncCoverStorageFactoredRectangleIndex> storageRectangleIndex;
   if (options_.discoverStorageLifecycleComponents) {
     storageLifecycleIndex = buildSyncCoverStorageLifecycleIndex(
@@ -303,6 +305,27 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
         return failure();
       }
       if (storageCutIndex->isComplete()) {
+        if (storageProtocolAutomatonIndex &&
+            storageProtocolAutomatonIndex->isComplete()) {
+          storageProtocolCutPlanIndex =
+              buildSyncCoverStorageProtocolCutPlanIndex(
+                  graph_, *storageLifecycleIndex,
+                  *storageProtocolAutomatonIndex, *storageCutIndex,
+                  options_.storageProtocolCutPlanLimits);
+          const SyncCoverStorageProtocolCutPlanError protocolCutError =
+              storageProtocolCutPlanIndex->getError();
+          const bool invalidProtocolCutIndex =
+              protocolCutError != SyncCoverStorageProtocolCutPlanError::None &&
+              protocolCutError !=
+                  SyncCoverStorageProtocolCutPlanError::LimitExceeded;
+          if (invalidProtocolCutIndex) {
+            function_.emitError(
+                "cannot build canonical sync storage protocol-cut plan "
+                "index, error=")
+                << static_cast<unsigned>(protocolCutError);
+            return failure();
+          }
+        }
         storageRectangleIndex = buildSyncCoverStorageFactoredRectangleIndex(
             graph_, *storageCutIndex, options_.storageRectangleLimits);
         const SyncCoverStorageFactoredRectangleError rectangleError =
@@ -331,6 +354,7 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
       std::move(storageSpaces), std::move(storageLifecycleIndex),
       std::move(storageProtocolSeedIndex), std::move(storageProtocolGroupIndex),
       std::move(storageProtocolAutomatonIndex), std::move(storageCutIndex),
+      std::move(storageProtocolCutPlanIndex),
       std::move(storageRectangleIndex), std::move(targetCapabilities_),
       ownershipDiscoveryStatistics_, std::move(eventReservations_));
 }
@@ -395,6 +419,13 @@ LogicalResult ProgramBuilder::validateInput() {
            0 ||
        options_.storageProtocolAutomatonLimits.maximumLanes == 0 ||
        options_.storageProtocolAutomatonLimits.maximumLanes > 8 ||
+       options_.storageProtocolCutPlanLimits.maximumWorkUnits == 0 ||
+       options_.storageProtocolCutPlanLimits.maximumPlans == 0 ||
+       options_.storageProtocolCutPlanLimits
+               .maximumRectangleEdgeIncidences == 0 ||
+       options_.storageProtocolCutPlanLimits.maximumTransferInspections == 0 ||
+       options_.storageProtocolCutPlanLimits
+               .maximumReadyRectangleIncidences == 0 ||
        options_.storageCutLimits.maximumWorkUnits == 0 ||
        options_.storageCutLimits.maximumCuts == 0 ||
        options_.storageCutLimits.maximumRectangles == 0 ||

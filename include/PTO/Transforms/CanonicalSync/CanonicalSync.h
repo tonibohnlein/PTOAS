@@ -196,6 +196,17 @@ struct CanonicalSyncStorageProtocolAutomatonReport {
   unsigned maximumDistance = 0;
 };
 
+struct CanonicalSyncStorageProtocolCutPlanReport {
+  SyncCoverStorageProtocolCutPlanId plan = 0;
+  SyncCoverStorageProtocolAutomatonId automaton = 0;
+  SyncCoverStorageProtocolGroupId group = 0;
+  SyncCoverScopeId owningScope = 0;
+  std::size_t lanes = 0;
+  std::size_t directReadyTransfers = 0;
+  std::size_t recurrenceReleaseTransfers = 0;
+  std::size_t readyRectangles = 0;
+};
+
 struct CanonicalSyncSyntheticRectangleGroundingReport {
   SyncCoverStorageFactoredRectangleId rectangle = 0;
   SyncCoverStorageCutId completionCut = 0;
@@ -363,6 +374,22 @@ struct CanonicalSyncComparisonReport {
       storageProtocolAutomatonDetails;
   bool storageProtocolAutomatonDetailsTruncated = false;
   bool storageProtocolAutomatonTruncated = false;
+  bool storageProtocolCutPlanAnalysisEnabled = false;
+  std::size_t storageProtocolCutPlanWorkUnits = 0;
+  std::size_t storageProtocolCutPlanEligibleAutomata = 0;
+  std::size_t storageProtocolCutPlanIneligibleAutomata = 0;
+  std::size_t storageProtocolCutPlanMissingReadyCutAutomata = 0;
+  std::size_t storageProtocolCutPlanMissingReleaseAutomata = 0;
+  std::size_t storageProtocolCutPlans = 0;
+  std::size_t storageProtocolCutPlanTransferInspections = 0;
+  std::size_t storageProtocolCutPlanDirectReadyTransfers = 0;
+  std::size_t storageProtocolCutPlanRecurrenceReleaseTransfers = 0;
+  std::size_t storageProtocolCutPlanReadyRectangleIncidences = 0;
+  std::size_t storageProtocolCutPlanMaximumReadyRectangles = 0;
+  std::vector<CanonicalSyncStorageProtocolCutPlanReport>
+      storageProtocolCutPlanDetails;
+  bool storageProtocolCutPlanDetailsTruncated = false;
+  bool storageProtocolCutPlanTruncated = false;
   bool storageCutAnalysisEnabled = false;
   std::size_t storageCutWorkUnits = 0;
   std::size_t storageCutEligibleEdges = 0;

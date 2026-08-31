@@ -43,6 +43,7 @@ constexpr std::size_t kMaximumStorageProtocolGroupReportSeedEntries = 4096;
 constexpr std::size_t
     kMaximumStorageProtocolGroupReportBehaviorSignatureEntries = 4096;
 constexpr std::size_t kMaximumStorageProtocolAutomatonReportEntries = 256;
+constexpr std::size_t kMaximumStorageProtocolCutPlanReportEntries = 256;
 
 using SteadyClock = std::chrono::steady_clock;
 
@@ -2083,6 +2084,46 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
           {automaton.id, automaton.group, automaton.owningScope,
            automaton.stateCount, automaton.transfers.size(),
            automaton.statePairIncidences, automaton.maximumDistance});
+    }
+  }
+  if (program.getStorageProtocolCutPlanIndex()) {
+    report.storageProtocolCutPlanAnalysisEnabled = true;
+    const SyncCoverStorageProtocolCutPlanStatistics &planStatistics =
+        program.getStorageProtocolCutPlanIndex()->getStatistics();
+    report.storageProtocolCutPlanWorkUnits = planStatistics.workUnits;
+    report.storageProtocolCutPlanEligibleAutomata =
+        planStatistics.eligibleAutomata;
+    report.storageProtocolCutPlanIneligibleAutomata =
+        planStatistics.ineligibleAutomata;
+    report.storageProtocolCutPlanMissingReadyCutAutomata =
+        planStatistics.missingReadyCutAutomata;
+    report.storageProtocolCutPlanMissingReleaseAutomata =
+        planStatistics.missingReleaseAutomata;
+    report.storageProtocolCutPlans = planStatistics.plans;
+    report.storageProtocolCutPlanTransferInspections =
+        planStatistics.transferInspections;
+    report.storageProtocolCutPlanDirectReadyTransfers =
+        planStatistics.directReadyTransfers;
+    report.storageProtocolCutPlanRecurrenceReleaseTransfers =
+        planStatistics.recurrenceReleaseTransfers;
+    report.storageProtocolCutPlanReadyRectangleIncidences =
+        planStatistics.readyRectangleIncidences;
+    report.storageProtocolCutPlanMaximumReadyRectangles =
+        planStatistics.maximumPlanReadyRectangles;
+    report.storageProtocolCutPlanTruncated = planStatistics.truncated;
+    const std::vector<SyncCoverStorageProtocolCutPlan> &plans =
+        program.getStorageProtocolCutPlanIndex()->getPlans();
+    const std::size_t retainedPlans = std::min(
+        plans.size(), kMaximumStorageProtocolCutPlanReportEntries);
+    report.storageProtocolCutPlanDetailsTruncated =
+        retainedPlans != plans.size();
+    report.storageProtocolCutPlanDetails.reserve(retainedPlans);
+    for (std::size_t planIndex = 0; planIndex < retainedPlans; ++planIndex) {
+      const SyncCoverStorageProtocolCutPlan &plan = plans[planIndex];
+      report.storageProtocolCutPlanDetails.push_back(
+          {plan.id, plan.automaton, plan.group, plan.owningScope,
+           plan.laneCount, plan.directReadyTransfers,
+           plan.recurrenceReleaseTransfers, plan.readyRectangles.size()});
     }
   }
   if (program.getStorageCutIndex()) {

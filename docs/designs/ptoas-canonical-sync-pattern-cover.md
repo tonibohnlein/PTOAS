@@ -695,6 +695,16 @@ The automaton is still not a certificate or recipe: it cannot establish
 coverage until a later validator proves balanced priming, steady-state transfer,
 successor behavior, zero-trip handling, and draining.
 
+A fifth reporting-only index associates each automaton's coexecuting,
+distance-zero ready transfers with the exact direct completion/acquisition
+rectangles already authorized by the target-neutral graph. Missing direct cuts
+reject only that protocol proposal. This is intentionally narrower than the
+later lifecycle cut lattice: guarded phase transfers and prefix-factored cuts
+are not treated as standalone balanced events. On the historical GEMM this
+distinction leaves four of five automata awaiting lifecycle-aware cuts and
+exposes sixteen direct rectangles for the remaining proposal. The result is an
+input to cut synthesis, not a synchronization mechanism or coverage claim.
+
 The same analysis flag also builds a bounded direct-cut index when the
 lifecycle index is complete. It admits only distance-zero, cross-resource
 obligations whose source can signal completion to the target resource and

@@ -4777,7 +4777,7 @@ bool testGuardedOwnershipVerificationWorkIsBounded() {
   CanonicalSyncProgram program(
       module->lookupSymbol<func::FuncOp>("guarded_ownership_host"),
       std::move(graph), {}, {}, {}, {}, std::move(lifecycle),
-      std::move(protocolSeeds), {}, {}, std::move(cuts),
+      std::move(protocolSeeds), {}, {}, std::move(cuts), {},
       std::move(rectangles), {}, {}, {});
   CanonicalSyncBuildOptions options;
   options.enableDemandBasisReduction = false;

@@ -432,6 +432,24 @@ llvm::json::Array jsonStorageProtocolAutomata(
   return result;
 }
 
+llvm::json::Array jsonStorageProtocolCutPlans(
+    ArrayRef<pto::CanonicalSyncStorageProtocolCutPlanReport> plans) {
+  llvm::json::Array result;
+  for (const pto::CanonicalSyncStorageProtocolCutPlanReport &plan : plans) {
+    result.push_back(llvm::json::Object{
+        {"plan", jsonInteger(plan.plan)},
+        {"automaton", jsonInteger(plan.automaton)},
+        {"group", jsonInteger(plan.group)},
+        {"owning_scope", jsonInteger(plan.owningScope)},
+        {"lanes", jsonInteger(plan.lanes)},
+        {"direct_ready_transfers", jsonInteger(plan.directReadyTransfers)},
+        {"recurrence_release_transfers",
+         jsonInteger(plan.recurrenceReleaseTransfers)},
+        {"ready_rectangles", jsonInteger(plan.readyRectangles)}});
+  }
+  return result;
+}
+
 llvm::json::Array jsonSyntheticStorageRectangleGrounding(
     ArrayRef<pto::CanonicalSyncSyntheticRectangleGroundingReport> details) {
   llvm::json::Array result;
@@ -919,6 +937,37 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
        report.storageProtocolAutomatonDetailsTruncated},
       {"storage_protocol_automaton_truncated",
        report.storageProtocolAutomatonTruncated},
+      {"storage_protocol_cut_plan_analysis_enabled",
+       report.storageProtocolCutPlanAnalysisEnabled},
+      {"storage_protocol_cut_plan_work_units",
+       jsonInteger(report.storageProtocolCutPlanWorkUnits)},
+      {"storage_protocol_cut_plan_eligible_automata",
+       jsonInteger(report.storageProtocolCutPlanEligibleAutomata)},
+      {"storage_protocol_cut_plan_ineligible_automata",
+       jsonInteger(report.storageProtocolCutPlanIneligibleAutomata)},
+      {"storage_protocol_cut_plan_missing_ready_cut_automata",
+       jsonInteger(report.storageProtocolCutPlanMissingReadyCutAutomata)},
+      {"storage_protocol_cut_plan_missing_release_automata",
+       jsonInteger(report.storageProtocolCutPlanMissingReleaseAutomata)},
+      {"storage_protocol_cut_plans",
+       jsonInteger(report.storageProtocolCutPlans)},
+      {"storage_protocol_cut_plan_transfer_inspections",
+       jsonInteger(report.storageProtocolCutPlanTransferInspections)},
+      {"storage_protocol_cut_plan_direct_ready_transfers",
+       jsonInteger(report.storageProtocolCutPlanDirectReadyTransfers)},
+      {"storage_protocol_cut_plan_recurrence_release_transfers",
+       jsonInteger(
+           report.storageProtocolCutPlanRecurrenceReleaseTransfers)},
+      {"storage_protocol_cut_plan_ready_rectangle_incidences",
+       jsonInteger(report.storageProtocolCutPlanReadyRectangleIncidences)},
+      {"storage_protocol_cut_plan_maximum_ready_rectangles",
+       jsonInteger(report.storageProtocolCutPlanMaximumReadyRectangles)},
+      {"storage_protocol_cut_plan_details",
+       jsonStorageProtocolCutPlans(report.storageProtocolCutPlanDetails)},
+      {"storage_protocol_cut_plan_details_truncated",
+       report.storageProtocolCutPlanDetailsTruncated},
+      {"storage_protocol_cut_plan_truncated",
+       report.storageProtocolCutPlanTruncated},
       {"storage_cut_analysis_enabled", report.storageCutAnalysisEnabled},
       {"storage_cut_work_units", jsonInteger(report.storageCutWorkUnits)},
       {"storage_cut_eligible_edges",
