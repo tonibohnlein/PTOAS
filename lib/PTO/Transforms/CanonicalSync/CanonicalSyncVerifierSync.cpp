@@ -48,17 +48,6 @@ void addPendingKeys(const VerifierResourceState &resource,
   }
 }
 
-bool cacheActionCovers(const VerifierCacheAction &action,
-                       const CanonicalAccess &access) {
-  if (action.allGm) {
-    return access.unknownSpace || access.space == AddressSpace::GM;
-  }
-  const bool exactAccessStart =
-      access.addressByteOffset && *access.addressByteOffset == 0 &&
-      access.addressByteSize && *access.addressByteSize > 0;
-  return action.access.value == access.value && exactAccessStart;
-}
-
 bool cacheActionsEqual(const VerifierCacheAction &first,
                        const VerifierCacheAction &second) {
   return first.operation == second.operation && first.allGm == second.allGm &&
@@ -233,7 +222,8 @@ void applyCmo(const VerifierProgram &program, CmoCacheInvalidOp operation,
       }
       for (const VerifierEffect &effect : resource.pending) {
         const bool writes = accessWrites(effect.access.mode);
-        const bool cacheCovered = cacheActionCovers(action, effect.access);
+        const bool cacheCovered =
+            verifierCacheActionCovers(action, effect.access);
         if (writes && cacheCovered) {
           addKey(state.cacheMaintained, effect.key);
         }

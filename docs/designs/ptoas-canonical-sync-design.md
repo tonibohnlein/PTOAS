@@ -125,6 +125,12 @@ invalidation. Directions that do not read stale scalar cache state record no
 cache-maintenance requirement. An event cannot satisfy visibility by itself;
 missing scope, cache maintenance, or ordering fails closed.
 
+An addressed single-cache-line CMO covers only an access proved to remain in
+the line containing that exact address. The current graph does not encode GM
+pointer alignment or target cache-line geometry, so it can make that proof only
+for an exact one-byte access. Wider accesses require whole-GM cache maintenance
+until alignment and line intervals become explicit hardware facts.
+
 Loop-carried demands record iteration distance. A zero denotes the current
 iteration, while an explicit positive-distance marker denotes a summarized
 later iteration. A physical phase that accesses the same storage on successive

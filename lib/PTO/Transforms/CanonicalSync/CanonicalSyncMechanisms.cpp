@@ -113,10 +113,14 @@ bool cmoCoversAccess(CmoCacheInvalidOp operation,
   if (!address) {
     return true;
   }
-  const bool exactAccessStart =
+  // SINGLE_CACHE_LINE covers only the line containing the CMO address. The
+  // canonical model does not yet carry GM pointer alignment or cache-line
+  // geometry, so only a one-byte access at that exact address is guaranteed
+  // not to cross into another line. Wider accesses require whole-GM CMO.
+  const bool provenSingleLineAccess =
       access.addressByteOffset && *access.addressByteOffset == 0 &&
-      access.addressByteSize && *access.addressByteSize > 0;
-  return address == access.value && exactAccessStart;
+      access.addressByteSize && *access.addressByteSize == 1;
+  return address == access.value && provenSingleLineAccess;
 }
 
 Operation *findFixedCmo(Operation *begin, Operation *end,

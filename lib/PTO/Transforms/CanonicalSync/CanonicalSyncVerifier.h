@@ -91,6 +91,9 @@ struct VerifierState {
   llvm::SmallVector<VerifierEffectKey, 16> loopCarried;
 };
 
+bool verifierCacheActionCovers(const VerifierCacheAction &action,
+                               const CanonicalAccess &access);
+
 bool operator==(const VerifierState &first, const VerifierState &second);
 VerifierState mergeVerifierStates(const VerifierState &first,
                                   const VerifierState &second);

@@ -101,6 +101,20 @@ intersectKeys(ArrayRef<VerifierEffectKey> first,
 
 } // namespace
 
+bool mlir::pto::canonical_sync_detail::verifierCacheActionCovers(
+    const VerifierCacheAction &action, const CanonicalAccess &access) {
+  if (action.allGm) {
+    return access.unknownSpace || access.space == AddressSpace::GM;
+  }
+  // SINGLE_CACHE_LINE covers the line containing the action address. Without
+  // independently proved pointer alignment and line geometry, only one byte
+  // at that exact address is certain to remain within the maintained line.
+  const bool provenSingleLineAccess =
+      access.addressByteOffset && *access.addressByteOffset == 0 &&
+      access.addressByteSize && *access.addressByteSize == 1;
+  return action.access.value == access.value && provenSingleLineAccess;
+}
+
 bool mlir::pto::canonical_sync_detail::operator==(const VerifierState &first,
                                                   const VerifierState &second) {
   if (!unorderedEqual<VerifierEffectKey>(

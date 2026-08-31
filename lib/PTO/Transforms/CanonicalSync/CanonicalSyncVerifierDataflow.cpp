@@ -98,17 +98,6 @@ bool requiresVisibility(const VerifierEffect &source,
           (target.resource.pipe == PIPE::PIPE_S));
 }
 
-bool cacheActionCovers(const VerifierCacheAction &action,
-                       const CanonicalAccess &access) {
-  if (action.allGm) {
-    return access.unknownSpace || access.space == AddressSpace::GM;
-  }
-  const bool exactAccessStart =
-      access.addressByteOffset && *access.addressByteOffset == 0 &&
-      access.addressByteSize && *access.addressByteSize > 0;
-  return action.access.value == access.value && exactAccessStart;
-}
-
 bool completionKnown(const CanonicalSyncTarget &target,
                      CanonicalPhysicalResource sourceResource,
                      const VerifierEffectKey &source,
@@ -143,10 +132,10 @@ bool visibilityKnown(const VerifierEffect &source,
   const bool scalarRead = destination.resource.pipe == PIPE::PIPE_S &&
                           accessReads(destination.access.mode);
   return !scalarRead ||
-         llvm::any_of(state.cacheInvalidations,
-                      [&](const VerifierCacheAction &action) {
-                        return cacheActionCovers(action, destination.access);
-                      });
+         llvm::any_of(
+             state.cacheInvalidations, [&](const VerifierCacheAction &action) {
+               return verifierCacheActionCovers(action, destination.access);
+             });
 }
 
 LogicalResult reportHazard(const VerifierEffect &source,
@@ -335,7 +324,7 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyAndIssuePhase(
     if (accessWrites(effect.access.mode)) {
       llvm::erase_if(state.cacheInvalidations,
                      [&](const VerifierCacheAction &action) {
-                       return cacheActionCovers(action, effect.access);
+                       return verifierCacheActionCovers(action, effect.access);
                      });
     }
     if (!containsEffect(resource.pending, effect.key)) {

@@ -28,7 +28,7 @@ module attributes {pto.target_arch = "a2a3"} {
       sizes = [%c1, %c32] : !pto.tensor_view<1x32xui32> ->
       !pto.partition_tensor_view<1x32xui32>
     pto.store_scalar %value, %payload[%c0] : !pto.ptr<ui32, gm>, ui32
-    pto.cmo.cacheinvalid %payload single_cache_line : !pto.ptr<ui32, gm>
+    pto.cmo.cacheinvalid all #pto.address_space<gm>
     pto.fence.barrier_all #pto.fence_scope<gm>
     pto.tload ins(%part : !pto.partition_tensor_view<1x32xui32>)
       outs(%tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32,
@@ -62,9 +62,34 @@ module attributes {pto.target_arch = "a2a3"} {
       fractal=512, pad=0>)
       outs(%part : !pto.partition_tensor_view<1x32xui32>)
     pto.fence.barrier_all #pto.fence_scope<gm>
-    pto.cmo.cacheinvalid %payload single_cache_line : !pto.ptr<ui32, gm>
+    pto.cmo.cacheinvalid all #pto.address_space<gm>
     %loaded = pto.load_scalar %payload[%c0] : !pto.ptr<ui32, gm> -> ui32
     pto.store_scalar %loaded, %sink[%c0] : !pto.ptr<ui32, gm>, ui32
+    return
+  }
+
+  func.func @scalar_publish_single_byte(%payload: !pto.ptr<ui8, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %value_i8 = arith.constant 7 : i8
+    %value = builtin.unrealized_conversion_cast %value_i8 : i8 to ui8
+    %tile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui8, rows=1,
+      cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+      fractal=512, pad=0>
+    %view = pto.make_tensor_view %payload, shape = [%c1, %c32],
+      strides = [%c32, %c1] : !pto.tensor_view<1x32xui8>
+    %part = pto.partition_view %view, offsets = [%c0, %c0],
+      sizes = [%c1, %c32] : !pto.tensor_view<1x32xui8> ->
+      !pto.partition_tensor_view<1x32xui8>
+    pto.store_scalar %value, %payload[%c0] : !pto.ptr<ui8, gm>, ui8
+    pto.cmo.cacheinvalid %payload single_cache_line : !pto.ptr<ui8, gm>
+    pto.fence.barrier_all #pto.fence_scope<gm>
+    pto.tload ins(%part : !pto.partition_tensor_view<1x32xui8>)
+      outs(%tile : !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=32,
+        v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512,
+        pad=0>)
     return
   }
 }
@@ -74,4 +99,7 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: kind=fixed-fence
 // CHECK-LABEL: CANONICAL-SYNC function=scalar_acquire
 // CHECK: visibility=nonscalar-to-scalar:gm:invalidate-target
+// CHECK: kind=fixed-fence
+// CHECK-LABEL: CANONICAL-SYNC function=scalar_publish_single_byte
+// CHECK: visibility=scalar-to-nonscalar:gm:clean-source
 // CHECK: kind=fixed-fence
