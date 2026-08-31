@@ -54,10 +54,13 @@ std::optional<std::uint64_t> getTypeBytes(Type type) {
   if (auto view = dyn_cast<PartitionTensorViewType>(type)) {
     return checkedShapeBytes(view.getShape(), view.getElementType());
   }
+  if (auto memref = dyn_cast<MemRefType>(type)) {
+    return checkedShapeBytes(memref.getShape(), memref.getElementType());
+  }
   return std::nullopt;
 }
 
-AddressSpace getTypeSpace(Type type) {
+std::optional<AddressSpace> getTypeSpace(Type type) {
   if (auto tile = dyn_cast<TileBufType>(type)) {
     if (auto space =
             dyn_cast_or_null<AddressSpaceAttr>(tile.getMemorySpace())) {
@@ -70,10 +73,17 @@ AddressSpace getTypeSpace(Type type) {
   if (auto space = getPTOAddressSpaceAttr(type)) {
     return space.getAddressSpace();
   }
+  if (auto memref = dyn_cast<BaseMemRefType>(type)) {
+    if (auto space =
+            dyn_cast_or_null<AddressSpaceAttr>(memref.getMemorySpace())) {
+      return space.getAddressSpace();
+    }
+    return std::nullopt;
+  }
   if (isa<PtrType, TensorViewType, PartitionTensorViewType>(type)) {
     return AddressSpace::GM;
   }
-  return AddressSpace::Zero;
+  return std::nullopt;
 }
 
 std::optional<std::uint64_t> getConstantUnsigned(Value value) {
@@ -91,7 +101,11 @@ std::optional<std::uint64_t> getConstantUnsigned(Value value) {
 AliasFact makeRootFact(Value value) {
   AliasFact fact;
   fact.root = value;
-  fact.space = getTypeSpace(value.getType());
+  if (std::optional<AddressSpace> space = getTypeSpace(value.getType())) {
+    fact.space = *space;
+  } else {
+    fact.unknownSpace = true;
+  }
   if (std::optional<std::uint64_t> bytes = getTypeBytes(value.getType())) {
     fact.intervals.push_back({0, *bytes});
     fact.unknownRange = false;
@@ -102,8 +116,7 @@ AliasFact makeRootFact(Value value) {
 void offsetFacts(SmallVectorImpl<AliasFact> &facts, std::uint64_t offset) {
   for (AliasFact &fact : facts) {
     for (CanonicalByteInterval &interval : fact.intervals) {
-      const std::uint64_t maximum =
-          std::numeric_limits<std::uint64_t>::max();
+      const std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max();
       if (offset > maximum - interval.begin) {
         fact.intervals.clear();
         fact.unknownRange = true;
@@ -118,7 +131,7 @@ void offsetFacts(SmallVectorImpl<AliasFact> &facts, std::uint64_t offset) {
 
 bool mlir::pto::canonical_sync_detail::areMemoryLikeTypes(Type type) {
   return isa<PtrType, TileBufType, MultiTileBufType, TensorViewType,
-             PartitionTensorViewType>(type);
+             PartitionTensorViewType, BaseMemRefType>(type);
 }
 
 AliasAnalysis::AliasAnalysis(func::FuncOp function) : function(function) {
@@ -168,7 +181,8 @@ LogicalResult AliasAnalysis::bindAllocation(Operation *operation) {
       fact.intervals = {
           {*address, fact.intervals.empty() ? 0 : fact.intervals[0].size}};
       fact.unknownRange = fact.intervals[0].size == 0;
-      fact.physical = fact.space != AddressSpace::GM;
+      fact.physical = !fact.unknownSpace && fact.space != AddressSpace::GM &&
+                      fact.space != AddressSpace::Zero;
     }
     facts[alloc.getResult()].push_back(std::move(fact));
     return success();

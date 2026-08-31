@@ -62,8 +62,13 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
   os << "ACCESSES " << program.getAccesses().size() << '\n';
   for (const CanonicalAccess &access : program.getAccesses()) {
     os << "  a" << access.id << " phase=p" << access.phase
-       << " mode=" << stringifyCanonicalAccessMode(access.mode)
-       << " space=" << stringifyAddressSpace(access.space) << " range=";
+       << " mode=" << stringifyCanonicalAccessMode(access.mode) << " space=";
+    if (access.unknownSpace) {
+      os << "unknown";
+    } else {
+      os << stringifyAddressSpace(access.space);
+    }
+    os << " range=";
     if (access.unknownRange) {
       os << "unknown";
     } else {
@@ -72,7 +77,8 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
             os << '[' << interval.begin << ',' << *interval.end() << ')';
           });
     }
-    os << " physical=" << (access.physical ? "yes" : "no")
+    os << " ordered=" << (access.ordered ? "yes" : "no")
+       << " physical=" << (access.physical ? "yes" : "no")
        << " provenance=" << access.provenance << '\n';
   }
   os << "DEMANDS " << program.getDemands().size() << '\n';
@@ -97,6 +103,13 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
                             }
                           });
     os << "] causes=" << demand.causes.size();
+    if (demand.visibility) {
+      os << " visibility="
+         << stringifyCanonicalVisibilityDirection(demand.visibility->direction)
+         << ":" << stringifyFenceScope(demand.visibility->scope) << ':'
+         << stringifyCanonicalCacheMaintenance(
+                demand.visibility->cacheMaintenance);
+    }
     if (demand.id < program.getDirectMechanisms().size()) {
       os << " direct=m" << program.getDirectMechanisms()[demand.id];
     }

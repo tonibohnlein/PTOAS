@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: not ptoas --pto-arch=a3 --enable-canonical-sync --emit-pto-ir %s \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @scalar_acquire_without_cmo(%payload: !pto.ptr<ui32, gm>,
+                                        %sink: !pto.ptr<ui32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %value_i32 = arith.constant 7 : i32
+    %value = builtin.unrealized_conversion_cast %value_i32 : i32 to ui32
+    %tile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=1,
+      cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+      fractal=512, pad=0>
+    %view = pto.make_tensor_view %payload, shape = [%c1, %c32],
+      strides = [%c32, %c1] : !pto.tensor_view<1x32xui32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0],
+      sizes = [%c1, %c32] : !pto.tensor_view<1x32xui32> ->
+      !pto.partition_tensor_view<1x32xui32>
+    pto.tci ins(%value : ui32)
+      outs(%tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32,
+        v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512,
+        pad=0>)
+    pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=1,
+      cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+      fractal=512, pad=0>)
+      outs(%part : !pto.partition_tensor_view<1x32xui32>)
+    pto.fence.barrier_all #pto.fence_scope<gm>
+    %loaded = pto.load_scalar %payload[%c0] : !pto.ptr<ui32, gm> -> ui32
+    pto.store_scalar %loaded, %sink[%c0] : !pto.ptr<ui32, gm>, ui32
+    return
+  }
+}
+
+// CHECK: error: canonical sync visibility demand is missing required GM cache maintenance
+// CHECK-SAME: requires invalidate-target

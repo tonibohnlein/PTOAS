@@ -70,6 +70,13 @@ bool tokenEqual(const VerifierToken &first, const VerifierToken &second) {
              });
 }
 
+bool cacheActionEqual(const VerifierCacheAction &first,
+                      const VerifierCacheAction &second) {
+  return first.operation == second.operation && first.allGm == second.allGm &&
+         first.access.value == second.access.value &&
+         first.access.aliasRoot == second.access.aliasRoot;
+}
+
 template <typename T, typename Equal>
 void appendUnion(SmallVectorImpl<T> &result, ArrayRef<T> values, Equal equal) {
   for (const T &value : values) {
@@ -106,6 +113,14 @@ bool mlir::pto::canonical_sync_detail::operator==(const VerifierState &first,
           [](const VerifierEffectKey &left, const VerifierEffectKey &right) {
             return left == right;
           }) ||
+      !unorderedEqual<VerifierEffectKey>(
+          first.cacheMaintained, second.cacheMaintained,
+          [](const VerifierEffectKey &left, const VerifierEffectKey &right) {
+            return left == right;
+          }) ||
+      !unorderedEqual<VerifierCacheAction>(first.cacheInvalidations,
+                                           second.cacheInvalidations,
+                                           cacheActionEqual) ||
       !unorderedEqual<VerifierEffectKey>(
           first.exitComplete, second.exitComplete,
           [](const VerifierEffectKey &left, const VerifierEffectKey &right) {
@@ -190,6 +205,16 @@ VerifierState mlir::pto::canonical_sync_detail::mergeVerifierStates(
   result.globalKnown = intersectKeys(first.globalKnown, second.globalKnown);
   result.globalVisible =
       intersectKeys(first.globalVisible, second.globalVisible);
+  result.cacheMaintained =
+      intersectKeys(first.cacheMaintained, second.cacheMaintained);
+  for (const VerifierCacheAction &action : first.cacheInvalidations) {
+    if (llvm::any_of(second.cacheInvalidations,
+                     [&](const VerifierCacheAction &other) {
+                       return cacheActionEqual(action, other);
+                     })) {
+      result.cacheInvalidations.push_back(action);
+    }
+  }
   result.exitComplete = intersectKeys(first.exitComplete, second.exitComplete);
   result.loopCarried = first.loopCarried;
   appendUnion<VerifierEffectKey>(

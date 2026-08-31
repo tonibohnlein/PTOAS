@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- VPTOScheduling.cpp - VPTO scheduling semantics --------------------===//
 
@@ -81,7 +83,8 @@ static std::optional<int64_t> getElementByteSize(Value pointer) {
     return std::nullopt;
 
   int64_t byteSize;
-  if (llvm::MulOverflow(elementCount, static_cast<int64_t>(bitWidth / kBitsPerByte),
+  if (llvm::MulOverflow(elementCount,
+                        static_cast<int64_t>(bitWidth / kBitsPerByte),
                         byteSize))
     return std::nullopt;
   return byteSize;
@@ -89,8 +92,14 @@ static std::optional<int64_t> getElementByteSize(Value pointer) {
 
 static std::optional<int64_t> getConstantOffset(Value offset) {
   APInt value;
-  if (!matchPattern(offset, m_ConstantInt(&value)) || !value.isSignedIntN(kInt64BitWidth))
+  const bool isConstant = matchPattern(offset, m_ConstantInt(&value));
+  if (!isConstant) {
     return std::nullopt;
+  }
+  const bool fitsInt64 = value.isSignedIntN(kInt64BitWidth);
+  if (!fitsInt64) {
+    return std::nullopt;
+  }
   return value.getSExtValue();
 }
 
@@ -135,6 +144,12 @@ static bool hasKnownNoOrdinaryMemoryAccess(Operation *op) {
   return isa<MemBarOp, SprclrOp, GetCtrlOp, SetCtrlOp>(op);
 }
 
+/// Logical local-buffer declarations participate in alias and memory-planning
+/// analyses, but do not execute on a device pipe and do not access tile data.
+static bool isKnownAdministrativeOperation(Operation *op) {
+  return isa<AllocTileOp, AllocMultiTileOp>(op);
+}
+
 static void collectMemoryAccesses(Operation *op,
                                   VPTOSchedulingSemantics &semantics) {
   SmallVectorImpl<VPTOMemoryAccess> &accesses = semantics.memoryAccesses;
@@ -164,17 +179,23 @@ static void collectMemoryAccesses(Operation *op,
   bool storeLike = isStoreLikeName(op->getName().getStringRef());
   for (const MemoryEffects::EffectInstance &effect : effects) {
     Value value = effect.getValue();
-    if (value && !isMemoryAddress(value))
-      continue;
     VPTOMemoryAccess access;
-    access.address = value;
-    access.addressSpace = value ? getAddressSpace(value) : Attribute();
     access.reads = isa<MemoryEffects::Read>(effect.getEffect());
     access.writes =
         isa<MemoryEffects::Write, MemoryEffects::Allocate, MemoryEffects::Free>(
             effect.getEffect());
     if (value && storeLike)
       access.writes = true;
+    if (value && !isMemoryAddress(value)) {
+      // Preserve the effect even when this contract cannot recover ordinary
+      // memory provenance from its value type. Consumers must model this as a
+      // conservative unknown access rather than silently dropping it.
+      access.unknown = true;
+      accesses.push_back(access);
+      continue;
+    }
+    access.address = value;
+    access.addressSpace = value ? getAddressSpace(value) : Attribute();
     access.unknown = !value || (!access.reads && !access.writes);
     setStaticAccessRange(op, access);
     accesses.push_back(access);
@@ -284,6 +305,13 @@ VPTOSchedulingSemantics mlir::pto::getVPTOSchedulingSemantics(Operation *op) {
 
   if (auto scheduling = dyn_cast<VPTOSchedulingOpInterface>(op))
     return scheduling.getVPTOSchedulingSemantics();
+
+  if (isKnownAdministrativeOperation(op)) {
+    semantics.schedulingClass = VPTOSchedulingClass::Structural;
+    semantics.classificationKnown = true;
+    semantics.memoryBehavior = VPTOMemoryBehavior::None;
+    return semantics;
+  }
 
   if (isMemoryEffectFree(op)) {
     semantics.schedulingClass = VPTOSchedulingClass::Structural;

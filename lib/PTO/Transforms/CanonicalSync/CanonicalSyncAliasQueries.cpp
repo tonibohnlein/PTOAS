@@ -46,6 +46,12 @@ bool mlir::pto::canonical_sync_detail::accessWrites(CanonicalAccessMode mode) {
 
 bool mlir::pto::canonical_sync_detail::accessesMayAlias(
     const CanonicalAccess &first, const CanonicalAccess &second) {
+  // An unknown address space may denote GM or any local physical storage.
+  // Neither a differing default enum value nor distinct SSA roots can prove
+  // such accesses disjoint.
+  if (first.unknownSpace || second.unknownSpace) {
+    return true;
+  }
   if (first.space != second.space) {
     return false;
   }

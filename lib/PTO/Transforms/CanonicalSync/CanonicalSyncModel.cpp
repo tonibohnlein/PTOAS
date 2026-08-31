@@ -147,7 +147,11 @@ LogicalResult CanonicalSyncProgram::freezeGraph() {
     const bool validSource = demand.source < phases.size();
     const bool validOwner = demand.owner < regions.size();
     const bool validGuard = validControlPath(demand.guard, regions.size());
-    if (!validSource || !validTarget || !validOwner || !validGuard) {
+    const bool validVisibility =
+        (demand.requirement == CanonicalRequirement::Visibility) ==
+        demand.visibility.has_value();
+    if (!validSource || !validTarget || !validOwner || !validGuard ||
+        !validVisibility) {
       return fail("demand has an invalid endpoint, owner, or guard");
     }
   }
@@ -264,6 +268,8 @@ StringRef mlir::pto::stringifyCanonicalDemandKind(CanonicalDemandKind kind) {
     return "WAR";
   case CanonicalDemandKind::Waw:
     return "WAW";
+  case CanonicalDemandKind::OrderedMemory:
+    return "ORDERED";
   case CanonicalDemandKind::HardwareAccReadConflict:
     return "ACC_RAR";
   case CanonicalDemandKind::SsaCompletion:
@@ -274,6 +280,30 @@ StringRef mlir::pto::stringifyCanonicalDemandKind(CanonicalDemandKind kind) {
     return "VISIBILITY";
   }
   llvm_unreachable("unknown canonical demand kind");
+}
+
+StringRef mlir::pto::stringifyCanonicalVisibilityDirection(
+    CanonicalVisibilityDirection direction) {
+  switch (direction) {
+  case CanonicalVisibilityDirection::ScalarToNonScalar:
+    return "scalar-to-nonscalar";
+  case CanonicalVisibilityDirection::NonScalarToScalar:
+    return "nonscalar-to-scalar";
+  }
+  llvm_unreachable("unknown canonical visibility direction");
+}
+
+StringRef mlir::pto::stringifyCanonicalCacheMaintenance(
+    CanonicalCacheMaintenance maintenance) {
+  switch (maintenance) {
+  case CanonicalCacheMaintenance::None:
+    return "none";
+  case CanonicalCacheMaintenance::CleanSource:
+    return "clean-source";
+  case CanonicalCacheMaintenance::InvalidateTarget:
+    return "invalidate-target";
+  }
+  llvm_unreachable("unknown canonical cache maintenance requirement");
 }
 
 StringRef

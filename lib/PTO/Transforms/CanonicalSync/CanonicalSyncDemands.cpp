@@ -36,6 +36,9 @@ classifyHazard(const CanonicalSyncProgram &program,
   const bool targetRead = accessReads(target.mode);
   const bool targetWrite = accessWrites(target.mode);
 
+  if (source.ordered || target.ordered) {
+    return CanonicalDemandKind::OrderedMemory;
+  }
   if (sourceWrite && targetRead) {
     return CanonicalDemandKind::Raw;
   }
@@ -45,8 +48,12 @@ classifyHazard(const CanonicalSyncProgram &program,
   if (sourceWrite && targetWrite) {
     return CanonicalDemandKind::Waw;
   }
-  const bool accReadConflict = sourceRead && targetRead &&
-                               source.space == AddressSpace::ACC &&
+  const bool sourceMayBeAcc =
+      source.unknownSpace || source.space == AddressSpace::ACC;
+  const bool targetMayBeAcc =
+      target.unknownSpace || target.space == AddressSpace::ACC;
+  const bool accReadConflict = sourceRead && targetRead && sourceMayBeAcc &&
+                               targetMayBeAcc &&
                                sourceResource.core == CanonicalCore::AIC &&
                                targetResource.core == CanonicalCore::AIC &&
                                sourceResource.pipe != targetResource.pipe;
@@ -70,6 +77,7 @@ bool sameDemand(const CanonicalDemand &left, const CanonicalDemand &right) {
   return left.source == right.source && left.target == right.target &&
          left.owner == right.owner && left.kind == right.kind &&
          left.requirement == right.requirement &&
+         left.visibility == right.visibility &&
          left.iterationDistance == right.iterationDistance &&
          left.guard == right.guard;
 }
@@ -279,12 +287,35 @@ LogicalResult deriveSsaDemands(CanonicalSyncProgram &program) {
 bool requiresVisibility(const CanonicalSyncProgram &program,
                         const CanonicalAccess &source,
                         const CanonicalAccess &target) {
-  if (source.space != AddressSpace::GM) {
+  const bool sourceMayBeGm =
+      source.unknownSpace || source.space == AddressSpace::GM;
+  const bool targetMayBeGm =
+      target.unknownSpace || target.space == AddressSpace::GM;
+  if (!sourceMayBeGm || !targetMayBeGm) {
     return false;
   }
   const PIPE sourcePipe = program.getPhase(source.phase).resource.pipe;
   const PIPE targetPipe = program.getPhase(target.phase).resource.pipe;
   return (sourcePipe == PIPE::PIPE_S) != (targetPipe == PIPE::PIPE_S);
+}
+
+CanonicalVisibilityRequirement
+buildVisibilityRequirement(const CanonicalSyncProgram &program,
+                           const CanonicalAccess &source,
+                           const CanonicalAccess &target) {
+  const bool scalarSource =
+      program.getPhase(source.phase).resource.pipe == PIPE::PIPE_S;
+  CanonicalVisibilityRequirement requirement;
+  requirement.direction = scalarSource
+                              ? CanonicalVisibilityDirection::ScalarToNonScalar
+                              : CanonicalVisibilityDirection::NonScalarToScalar;
+  requirement.scope = FenceScope::GM;
+  if (scalarSource && accessWrites(source.mode)) {
+    requirement.cacheMaintenance = CanonicalCacheMaintenance::CleanSource;
+  } else if (!scalarSource && accessReads(target.mode)) {
+    requirement.cacheMaintenance = CanonicalCacheMaintenance::InvalidateTarget;
+  }
+  return requirement;
 }
 
 void addHazardDemand(CanonicalSyncProgram &program,
@@ -301,6 +332,9 @@ void addHazardDemand(CanonicalSyncProgram &program,
   demand.requirement = demand.kind == CanonicalDemandKind::Visibility
                            ? CanonicalRequirement::Visibility
                            : CanonicalRequirement::Completion;
+  if (demand.requirement == CanonicalRequirement::Visibility) {
+    demand.visibility = buildVisibilityRequirement(program, source, target);
+  }
   demand.iterationDistance.assign(distance.begin(), distance.end());
   demand.guard =
       intersectControlPaths(program.getPhase(source.phase).controlPath,
@@ -320,9 +354,8 @@ void deriveMemoryDemands(CanonicalSyncProgram &program) {
     const CanonicalPhase &sourcePhase = program.getPhase(source.phase);
     for (const CanonicalAccess &target : program.getAccesses()) {
       const CanonicalPhase &targetPhase = program.getPhase(target.phase);
-      if (source.phase == target.phase ||
-          sourcePhase.operation == targetPhase.operation ||
-          !controlsCanCoexecute(sourcePhase.controlPath,
+      const bool samePhase = source.phase == target.phase;
+      if (!controlsCanCoexecute(sourcePhase.controlPath,
                                 targetPhase.controlPath) ||
           !accessesMayAlias(source, target)) {
         continue;
@@ -334,7 +367,8 @@ void deriveMemoryDemands(CanonicalSyncProgram &program) {
       }
       const SmallVector<CanonicalRegionId, 2> loops =
           commonLoops(sourcePhase, targetPhase);
-      if (sourcePhase.sourceOrder < targetPhase.sourceOrder) {
+      if (!samePhase && sourcePhase.operation != targetPhase.operation &&
+          sourcePhase.sourceOrder < targetPhase.sourceOrder) {
         SmallVector<int64_t, 2> zeroDistance(loops.size(), 0);
         addHazardDemand(
             program, source, target, *hazard, zeroDistance,

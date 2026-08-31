@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @normalized_simt_unknown_space(%source: memref<4xi32>,
+                                           %destination: memref<4xi32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %value = pto.load %source[%c0] : memref<4xi32> -> i32
+    pto.store %value, %destination[%c0] : memref<4xi32>, i32
+    return
+  }
+
+  func.func @normalized_volatile_reads(%source: memref<4xi32>,
+                                       %destination: memref<4xi32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %first = pto.load %source[%c0] {volatile} : memref<4xi32> -> i32
+    %second = pto.load %destination[%c0] : memref<4xi32> -> i32
+    %sum = arith.addi %first, %second : i32
+    pto.store %sum, %source[%c0] : memref<4xi32>, i32
+    return
+  }
+}
+
+// CHECK-LABEL: CANONICAL-SYNC function=normalized_simt_unknown_space
+// CHECK: PHASES 2
+// CHECK: p0 op=pto.load resource=AIV:PIPE_S
+// CHECK: p1 op=pto.store resource=AIV:PIPE_S
+// CHECK: a0 phase=p0 mode=R space=unknown
+// CHECK: a1 phase=p1 mode=W space=unknown
+// CHECK: kind=WAR p0->p1
+// CHECK: VERIFY ok
+// CHECK-LABEL: CANONICAL-SYNC function=normalized_volatile_reads
+// CHECK: a0 phase=p0 mode=R space=unknown{{.*}}ordered=yes
+// CHECK: a1 phase=p1 mode=R space=unknown{{.*}}ordered=no
+// CHECK: kind=ORDERED p0->p1
+// CHECK: VERIFY ok

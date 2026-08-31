@@ -48,8 +48,33 @@ module attributes {pto.target_arch = "a2a3"} {
     }
     return
   }
+
+  func.func @canonical_sync_loop_self_recurrence()
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %buffer_addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %buffer = pto.alloc_tile addr = %buffer_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %iteration = %zero to %two step %one_index {
+      pto.tmuls ins(%buffer, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%buffer : !pto.tile_buf<loc=vec, dtype=f32,
+                       rows=16, cols=128, v_row=16, v_col=128,
+                       blayout=row_major, slayout=none_box, fractal=512,
+                       pad=0>)
+    }
+    return
+  }
 }
 
+// CHECK-LABEL: CANONICAL-SYNC function=canonical_sync_loop_barrier
 // CHECK: kind=loop
 // CHECK: distance=[+]
 // CHECK: kind=barrier resource=AIV:PIPE_V->AIV:PIPE_V
@@ -57,5 +82,14 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK-LABEL: scf.for
 // CHECK-NEXT: pto.barrier <PIPE_V>
 // CHECK: pto.tmuls
+// CHECK-NEXT: pto.barrier <PIPE_V>
+// CHECK-NEXT: pto.tmuls
+// CHECK-LABEL: CANONICAL-SYNC function=canonical_sync_loop_self_recurrence
+// CHECK: kind={{RAW|WAR|WAW}} p0->p0
+// CHECK-SAME: distance=[+]
+// CHECK: kind=barrier resource=AIV:PIPE_V->AIV:PIPE_V
+// CHECK: VERIFY ok
+// CHECK-LABEL: func.func @canonical_sync_loop_self_recurrence
+// CHECK: scf.for
 // CHECK-NEXT: pto.barrier <PIPE_V>
 // CHECK-NEXT: pto.tmuls

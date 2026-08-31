@@ -74,7 +74,13 @@ commonGuard(ArrayRef<CanonicalControlAtom> first,
   return result;
 }
 
-Operation *findFixedVisibilityFence(Operation *source, Operation *target) {
+bool fenceCoversScope(FenceBarrierAllOp fence, FenceScope required) {
+  const FenceScope actual = fence.getScope().getScope();
+  return actual == FenceScope::All || actual == required;
+}
+
+Operation *findFixedVisibilityFence(Operation *source, Operation *target,
+                                    FenceScope scope) {
   Block *block = findCommonBlock(source, target);
   Operation *sourceAnchor = liftToBlock(source, block);
   Operation *targetAnchor = liftToBlock(target, block);
@@ -85,11 +91,79 @@ Operation *findFixedVisibilityFence(Operation *source, Operation *target) {
   }
   for (Operation *current = sourceAnchor->getNextNode();
        current && current != targetAnchor; current = current->getNextNode()) {
-    if (isa<FenceBarrierAllOp>(current)) {
+    auto fence = dyn_cast<FenceBarrierAllOp>(current);
+    if (fence && fenceCoversScope(fence, scope)) {
       return current;
     }
   }
   return nullptr;
+}
+
+bool isGmCmo(CmoCacheInvalidOp operation) {
+  const AddressSpace space = operation.getSpace().getAddressSpace();
+  return space == AddressSpace::GM || space == AddressSpace::Zero;
+}
+
+bool cmoCoversAccess(CmoCacheInvalidOp operation,
+                     const CanonicalAccess &access) {
+  if (!isGmCmo(operation)) {
+    return false;
+  }
+  Value address = operation.getAddr();
+  if (!address) {
+    return true;
+  }
+  const bool exactAccessStart =
+      access.addressByteOffset && *access.addressByteOffset == 0 &&
+      access.addressByteSize && *access.addressByteSize > 0;
+  return address == access.value && exactAccessStart;
+}
+
+Operation *findFixedCmo(Operation *begin, Operation *end,
+                        const CanonicalAccess &access) {
+  Operation *first = begin ? begin->getNextNode() : nullptr;
+  for (Operation *current = first; current && current != end;
+       current = current->getNextNode()) {
+    if (auto cmo = dyn_cast<CmoCacheInvalidOp>(current);
+        cmo && cmoCoversAccess(cmo, access)) {
+      return current;
+    }
+  }
+  return nullptr;
+}
+
+FailureOr<SmallVector<Operation *, 2>>
+findFixedCacheMaintenance(const CanonicalSyncProgram &program,
+                          const CanonicalDemand &demand, Operation *fence) {
+  SmallVector<Operation *, 2> result;
+  if (!demand.visibility ||
+      demand.visibility->cacheMaintenance == CanonicalCacheMaintenance::None) {
+    return result;
+  }
+  const CanonicalPhase &source = program.getPhase(demand.source);
+  const CanonicalPhase &target = program.getPhase(demand.target);
+  Block *block = fence->getBlock();
+  Operation *sourceAnchor = liftToBlock(source.operation, block);
+  Operation *targetAnchor = liftToBlock(target.operation, block);
+  const bool cleanSource = demand.visibility->cacheMaintenance ==
+                           CanonicalCacheMaintenance::CleanSource;
+  Operation *begin = cleanSource ? sourceAnchor : fence;
+  Operation *end = cleanSource ? fence : targetAnchor;
+  for (const CanonicalDemandCause &cause : demand.causes) {
+    const CanonicalAccessId accessId =
+        cleanSource ? cause.sourceAccess : cause.targetAccess;
+    if (accessId == kInvalidCanonicalSyncId) {
+      continue;
+    }
+    Operation *cmo = findFixedCmo(begin, end, program.getAccess(accessId));
+    if (!cmo) {
+      return failure();
+    }
+    if (!llvm::is_contained(result, cmo)) {
+      result.push_back(cmo);
+    }
+  }
+  return result;
 }
 
 bool sameMechanism(const CanonicalMechanism &left,
@@ -107,7 +181,8 @@ bool sameMechanism(const CanonicalMechanism &left,
     return left.setAfter == right.setAfter &&
            left.waitBefore == right.waitBefore;
   case CanonicalMechanismKind::FixedFence:
-    return left.waitBefore == right.waitBefore;
+    return left.waitBefore == right.waitBefore &&
+           left.cacheMaintenance == right.cacheMaintenance;
   case CanonicalMechanismKind::IntrinsicOrder:
   case CanonicalMechanismKind::TailBarrier:
     return true;
@@ -185,14 +260,30 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
   const CanonicalPhysicalResource source = sourcePhase.resource;
   const CanonicalPhysicalResource destination = targetPhase.resource;
   if (demand.requirement == CanonicalRequirement::Visibility) {
-    Operation *fence =
-        findFixedVisibilityFence(sourcePhase.operation, targetPhase.operation);
+    if (!demand.visibility) {
+      targetPhase.operation->emitError(
+          "canonical sync visibility demand lacks explicit requirements");
+      return failure();
+    }
+    Operation *fence = findFixedVisibilityFence(
+        sourcePhase.operation, targetPhase.operation, demand.visibility->scope);
     if (!fence) {
       targetPhase.operation->emitError(
           "canonical sync cannot satisfy a GM cache-visibility demand with "
           "SetFlag/WaitFlag")
           << "; demand d" << demand.id
           << " requires an existing explicit visibility fence";
+      return failure();
+    }
+    FailureOr<SmallVector<Operation *, 2>> cacheMaintenance =
+        findFixedCacheMaintenance(program, demand, fence);
+    if (failed(cacheMaintenance)) {
+      targetPhase.operation->emitError(
+          "canonical sync visibility demand is missing required GM cache "
+          "maintenance")
+          << "; demand d" << demand.id << " requires "
+          << stringifyCanonicalCacheMaintenance(
+                 demand.visibility->cacheMaintenance);
       return failure();
     }
     CanonicalMechanism mechanism;
@@ -202,6 +293,7 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
     mechanism.sourceCut = demand.source;
     mechanism.targetCut = demand.target;
     mechanism.waitBefore = fence;
+    mechanism.cacheMaintenance = std::move(*cacheMaintenance);
     mechanism.actionRegion = demand.owner;
     mechanism.guard = demand.guard;
     return mechanism;

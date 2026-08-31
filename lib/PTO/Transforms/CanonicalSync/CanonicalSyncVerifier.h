@@ -13,6 +13,8 @@
 
 #include "CanonicalSyncInternal.h"
 
+#include "llvm/ADT/DenseSet.h"
+
 namespace mlir {
 namespace pto {
 namespace canonical_sync_detail {
@@ -46,9 +48,18 @@ struct VerifierPhase {
   llvm::SmallVector<VerifierEffect, 4> effects;
 };
 
+struct VerifierCacheAction {
+  Operation *operation = nullptr;
+  bool allGm = false;
+  CanonicalAccess access;
+};
+
 struct VerifierProgram {
   func::FuncOp function;
   llvm::DenseMap<Operation *, llvm::SmallVector<VerifierPhase, 2>> phases;
+  llvm::DenseMap<Operation *, llvm::SmallVector<VerifierCacheAction, 2>>
+      cacheActions;
+  llvm::DenseSet<Operation *> normalizedOperations;
 };
 
 FailureOr<std::unique_ptr<VerifierProgram>>
@@ -74,6 +85,8 @@ struct VerifierState {
   llvm::SmallVector<VerifierToken, 8> tokens;
   llvm::SmallVector<VerifierEffectKey, 16> globalKnown;
   llvm::SmallVector<VerifierEffectKey, 16> globalVisible;
+  llvm::SmallVector<VerifierEffectKey, 16> cacheMaintained;
+  llvm::SmallVector<VerifierCacheAction, 8> cacheInvalidations;
   llvm::SmallVector<VerifierEffectKey, 16> exitComplete;
   llvm::SmallVector<VerifierEffectKey, 16> loopCarried;
 };

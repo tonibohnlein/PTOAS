@@ -10,10 +10,14 @@
 
 #include "CanonicalSyncInternal.h"
 
+#include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/IR/VPTOScheduling.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/Support/MathExtras.h"
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -53,6 +57,127 @@ CanonicalAccessMode accessMode(unsigned bits) {
                            : CanonicalAccessMode::Read;
 }
 
+CanonicalAccessMode accessMode(const VPTOMemoryAccess &access) {
+  const bool readsAndWrites = access.reads && access.writes;
+  const bool hasNoMode = !access.reads && !access.writes;
+  if (access.unknown || readsAndWrites || hasNoMode) {
+    return CanonicalAccessMode::ReadWrite;
+  }
+  return access.writes ? CanonicalAccessMode::Write : CanonicalAccessMode::Read;
+}
+
+std::optional<std::pair<int64_t, int64_t>>
+getScalarAccessRange(Operation *operation, Value address) {
+  Value offset;
+  if (auto load = dyn_cast<LoadScalarOp>(operation)) {
+    const Value pointer = load.getPtr();
+    if (pointer != address) {
+      return std::nullopt;
+    }
+    offset = load.getOffset();
+  } else if (auto store = dyn_cast<StoreScalarOp>(operation)) {
+    const Value pointer = store.getPtr();
+    if (pointer != address) {
+      return std::nullopt;
+    }
+    offset = store.getOffset();
+  } else {
+    return std::nullopt;
+  }
+  APInt constant;
+  auto pointer = dyn_cast<PtrType>(address.getType());
+  if (!pointer) {
+    return std::nullopt;
+  }
+  const bool isConstant = matchPattern(offset, m_ConstantInt(&constant));
+  if (!isConstant) {
+    return std::nullopt;
+  }
+  const bool fitsInt64 = constant.isSignedIntN(64);
+  if (!fitsInt64) {
+    return std::nullopt;
+  }
+  const int64_t elementOffset = constant.getSExtValue();
+  const std::uint64_t elementBytes =
+      getPTOStorageElemByteSize(pointer.getElementType());
+  if (elementOffset < 0 || elementBytes == 0 ||
+      elementBytes >
+          static_cast<std::uint64_t>(std::numeric_limits<int64_t>::max())) {
+    return std::nullopt;
+  }
+  int64_t byteOffset;
+  if (llvm::MulOverflow(elementOffset, static_cast<int64_t>(elementBytes),
+                        byteOffset)) {
+    return std::nullopt;
+  }
+  return std::make_pair(byteOffset, static_cast<int64_t>(elementBytes));
+}
+
+std::optional<PIPE> getNormalizedPipe(Operation *operation) {
+  if (auto pipeOperation = dyn_cast<OpPipeInterface>(operation)) {
+    const PIPE pipe = pipeOperation.getPipe();
+    if (pipe != PIPE::PIPE_ALL && pipe != PIPE::PIPE_UNASSIGNED) {
+      return pipe;
+    }
+    return std::nullopt;
+  }
+  if (isa<VectorMicroOpInterface>(operation)) {
+    return PIPE::PIPE_V;
+  }
+  if (isa<CubeMicroOpInterface>(operation)) {
+    return PIPE::PIPE_M;
+  }
+  if (isa<SimtOpInterface>(operation)) {
+    return PIPE::PIPE_S;
+  }
+  return std::nullopt;
+}
+
+bool isCanonicalVisibilityOperation(Operation *operation) {
+  return isa<CmoCacheInvalidOp, FenceBarrierAllOp>(operation);
+}
+
+LogicalResult
+validateNormalizedEffects(Operation *operation,
+                          const VPTOSchedulingSemantics &semantics) {
+  const bool noneWithAccesses =
+      semantics.memoryBehavior == VPTOMemoryBehavior::None &&
+      !semantics.memoryAccesses.empty();
+  const bool explicitWithoutAccesses =
+      semantics.memoryBehavior == VPTOMemoryBehavior::Explicit &&
+      semantics.memoryAccesses.empty();
+  if (noneWithAccesses || explicitWithoutAccesses) {
+    return operation->emitError(
+        "canonical sync rejects inconsistent normalized memory semantics");
+  }
+  for (const VPTOMemoryAccess &access : semantics.memoryAccesses) {
+    const bool unknownMode = !access.reads && !access.writes;
+    const bool invalidUnknownMode = unknownMode && !access.unknown;
+    const bool incompleteRange =
+        access.byteOffset.has_value() != access.byteSize.has_value();
+    if (invalidUnknownMode || incompleteRange) {
+      return operation->emitError(
+          "canonical sync rejects an incomplete normalized memory access");
+    }
+  }
+  for (const VPTOSchedulingEffect &effect : semantics.effects) {
+    switch (effect.kind) {
+    case VPTOSchedulingEffectKind::PostUpdate:
+    case VPTOSchedulingEffectKind::VolatileMemory:
+    case VPTOSchedulingEffectKind::AtomicMemory:
+      break;
+    case VPTOSchedulingEffectKind::ImplicitRead:
+    case VPTOSchedulingEffectKind::ImplicitWrite:
+    case VPTOSchedulingEffectKind::Barrier:
+    case VPTOSchedulingEffectKind::Unknown:
+      return operation->emitError(
+          "canonical sync does not yet model this normalized scheduling "
+          "effect; lower it or provide an explicit canonical contract");
+    }
+  }
+  return success();
+}
+
 class ProgramBuilder {
 public:
   ProgramBuilder(CanonicalSyncProgram &program,
@@ -81,6 +206,9 @@ private:
                              CanonicalRegionId sequence);
   LogicalResult addRegularPhase(Operation *operation,
                                 CanonicalRegionId sequence, PIPE pipe);
+  LogicalResult addNormalizedPhase(Operation *operation,
+                                   CanonicalRegionId sequence, PIPE pipe,
+                                   const VPTOSchedulingSemantics &semantics);
   LogicalResult addMacroPhases(Operation *operation, CanonicalRegionId sequence,
                                const SyncMacroModel &model);
   LogicalResult addPhase(Operation *operation, CanonicalRegionId sequence,
@@ -90,6 +218,13 @@ private:
   void addAccesses(CanonicalPhaseId phase, Operation *operation,
                    const llvm::SmallDenseMap<Value, unsigned, 8> &effects,
                    ArrayRef<Value> effectOrder);
+  void addNormalizedAccesses(CanonicalPhaseId phase, Operation *operation,
+                             const VPTOSchedulingSemantics &semantics);
+  void appendAccess(CanonicalPhaseId phase, Operation *operation,
+                    CanonicalAccessMode mode, Value value,
+                    Attribute addressSpace, std::optional<int64_t> byteOffset,
+                    std::optional<int64_t> byteSize, bool forceUnknown,
+                    bool ordered = false);
   void bindIfResults(scf::IfOp operation);
   void bindForInputs(scf::ForOp operation);
   void bindForResults(scf::ForOp operation);
@@ -156,8 +291,35 @@ LogicalResult ProgramBuilder::visitOperation(Operation *operation,
     return operation->emitError(
         "canonical sync v1 does not support this region-bearing operation");
   }
+  const bool isTerminator = operation->hasTrait<OpTrait::IsTerminator>();
+  const bool isVisibility = isCanonicalVisibilityOperation(operation);
+  if (isTerminator || isVisibility) {
+    return success();
+  }
   if (std::optional<SyncMacroModel> macro = getSyncMacroModel(operation)) {
     return addMacroPhases(operation, sequence, *macro);
+  }
+  const VPTOSchedulingSemantics semantics =
+      getVPTOSchedulingSemantics(operation);
+  if (isa<MicroOpInterface>(operation)) {
+    const bool normalizedPhysical =
+        semantics.classificationKnown &&
+        semantics.schedulingClass == VPTOSchedulingClass::Schedulable;
+    if (!normalizedPhysical) {
+      return operation->emitError(
+          "canonical sync rejects a raw physical operation without "
+          "schedulable normalized VPTOSchedulingSemantics");
+    }
+    std::optional<PIPE> pipe = getNormalizedPipe(operation);
+    if (!pipe) {
+      return operation->emitError(
+          "canonical sync normalized scheduling semantics do not identify a "
+          "concrete physical pipe");
+    }
+    if (failed(validateNormalizedEffects(operation, semantics))) {
+      return failure();
+    }
+    return addNormalizedPhase(operation, sequence, *pipe, semantics);
   }
   if (isa<LoadScalarOp, StoreScalarOp>(operation)) {
     return addRegularPhase(operation, sequence, PIPE::PIPE_S);
@@ -165,11 +327,32 @@ LogicalResult ProgramBuilder::visitOperation(Operation *operation,
   if (auto pipeOperation = dyn_cast<OpPipeInterface>(operation)) {
     return addRegularPhase(operation, sequence, pipeOperation.getPipe());
   }
-  if (auto call = dyn_cast<func::CallOp>(operation)) {
-    if (llvm::any_of(call.getOperandTypes(), areMemoryLikeTypes)) {
-      return call.emitError("canonical sync cannot infer the physical effects "
-                            "of this helper call");
+  const bool physicalMarker = isa<VectorMicroOpInterface, CubeMicroOpInterface,
+                                  MteOpInterface, SimtOpInterface>(operation);
+  if (semantics.classificationKnown &&
+      semantics.schedulingClass == VPTOSchedulingClass::Schedulable) {
+    std::optional<PIPE> pipe = getNormalizedPipe(operation);
+    if (!pipe) {
+      return operation->emitError(
+          "canonical sync normalized scheduling semantics do not identify a "
+          "concrete physical pipe");
     }
+    if (failed(validateNormalizedEffects(operation, semantics))) {
+      return failure();
+    }
+    return addNormalizedPhase(operation, sequence, *pipe, semantics);
+  }
+  if (semantics.classificationKnown &&
+      semantics.schedulingClass == VPTOSchedulingClass::Structural) {
+    return success();
+  }
+  const bool isEffectful = !isPure(operation);
+  const bool isUnsupported =
+      semantics.schedulingClass == VPTOSchedulingClass::Unsupported;
+  if (physicalMarker || isEffectful || isUnsupported) {
+    return operation->emitError(
+        "canonical sync rejects an unclassified physical or effectful "
+        "operation; provide normalized VPTOSchedulingSemantics");
   }
   return success();
 }
@@ -284,6 +467,19 @@ LogicalResult ProgramBuilder::addRegularPhase(Operation *operation,
   return addPhase(operation, sequence, pipe, std::nullopt, {}, {}, true);
 }
 
+LogicalResult
+ProgramBuilder::addNormalizedPhase(Operation *operation,
+                                   CanonicalRegionId sequence, PIPE pipe,
+                                   const VPTOSchedulingSemantics &semantics) {
+  if (failed(
+          addPhase(operation, sequence, pipe, std::nullopt, {}, {}, false))) {
+    return failure();
+  }
+  CanonicalPhaseId phase = program.getPhases().back().id;
+  addNormalizedAccesses(phase, operation, semantics);
+  return success();
+}
+
 LogicalResult ProgramBuilder::addMacroPhases(Operation *operation,
                                              CanonicalRegionId sequence,
                                              const SyncMacroModel &model) {
@@ -334,6 +530,7 @@ LogicalResult ProgramBuilder::addPhase(Operation *operation,
 
   llvm::SmallDenseMap<Value, unsigned, 8> effects;
   SmallVector<Value, 8> effectOrder;
+  unsigned unknownEffects = 0;
   const auto addEffect = [&](Value value, unsigned effect) {
     const bool firstEffect = effects.find(value) == effects.end();
     if (firstEffect) {
@@ -350,25 +547,36 @@ LogicalResult ProgramBuilder::addPhase(Operation *operation,
   if (useMemoryInterface) {
     auto interface = dyn_cast<MemoryEffectOpInterface>(operation);
     if (!interface) {
-      return success();
+      if (isPure(operation)) {
+        return success();
+      }
+      return operation->emitError(
+          "canonical sync requires a complete memory-effect interface for "
+          "this physical operation");
     }
     SmallVector<MemoryEffects::EffectInstance, 8> instances;
     interface.getEffects(instances);
     for (const MemoryEffects::EffectInstance &instance : instances) {
       Value value = instance.getValue();
       const bool read = isa<MemoryEffects::Read>(instance.getEffect());
-      const bool write = isa<MemoryEffects::Write>(instance.getEffect());
+      const bool write = isa<MemoryEffects::Write, MemoryEffects::Allocate,
+                             MemoryEffects::Free>(instance.getEffect());
       if (!read && !write) {
         continue;
       }
       if (!value) {
-        return operation->emitError(
-            "canonical sync requires value-scoped read/write memory effects");
+        unknownEffects |= (read ? kReadBit : 0) | (write ? kWriteBit : 0);
+        continue;
       }
-      addEffect(value, read ? kReadBit : kWriteBit);
+      addEffect(value, (read ? kReadBit : 0) | (write ? kWriteBit : 0));
     }
   }
   addAccesses(phaseId, operation, effects, effectOrder);
+  if (unknownEffects != 0) {
+    appendAccess(phaseId, operation, accessMode(unknownEffects), Value(),
+                 Attribute(), std::nullopt, std::nullopt,
+                 /*forceUnknown=*/true);
+  }
   return success();
 }
 
@@ -382,11 +590,22 @@ void ProgramBuilder::addAccesses(
       continue;
     }
     SmallVector<AliasFact, 2> facts = aliases.describe(value);
+    if (facts.empty()) {
+      appendAccess(phase, operation, accessMode(entry->second), value,
+                   Attribute(), std::nullopt, std::nullopt,
+                   /*forceUnknown=*/true);
+      continue;
+    }
     for (const AliasFact &fact : facts) {
       CanonicalAccess access;
       access.phase = phase;
       access.mode = accessMode(entry->second);
       access.space = fact.space;
+      access.unknownSpace = fact.unknownSpace;
+      if (auto range = getScalarAccessRange(operation, value)) {
+        access.addressByteOffset = range->first;
+        access.addressByteSize = range->second;
+      }
       access.value = value;
       access.aliasRoot = fact.root;
       access.intervals = fact.intervals;
@@ -396,6 +615,65 @@ void ProgramBuilder::addAccesses(
       access.provenance = operation->getName().getStringRef().str();
       program.appendAccess(std::move(access));
     }
+  }
+}
+
+void ProgramBuilder::addNormalizedAccesses(
+    CanonicalPhaseId phase, Operation *operation,
+    const VPTOSchedulingSemantics &semantics) {
+  if (semantics.memoryBehavior == VPTOMemoryBehavior::Unknown) {
+    appendAccess(phase, operation, CanonicalAccessMode::ReadWrite, Value(),
+                 Attribute(), std::nullopt, std::nullopt,
+                 /*forceUnknown=*/true);
+  }
+  for (const VPTOMemoryAccess &memory : semantics.memoryAccesses) {
+    appendAccess(phase, operation, accessMode(memory), memory.address,
+                 memory.addressSpace, memory.byteOffset, memory.byteSize,
+                 memory.unknown, memory.ordered);
+  }
+}
+
+void ProgramBuilder::appendAccess(CanonicalPhaseId phase, Operation *operation,
+                                  CanonicalAccessMode mode, Value value,
+                                  Attribute addressSpace,
+                                  std::optional<int64_t> byteOffset,
+                                  std::optional<int64_t> byteSize,
+                                  bool forceUnknown, bool ordered) {
+  SmallVector<AliasFact, 2> facts = aliases.describe(value);
+  if (facts.empty()) {
+    facts.push_back({});
+    facts.back().unknownSpace = !addressSpace;
+  }
+  for (const AliasFact &fact : facts) {
+    CanonicalAccess access;
+    access.phase = phase;
+    access.mode = mode;
+    access.ordered = ordered;
+    access.value = value;
+    access.aliasRoot = fact.root;
+    access.space = fact.space;
+    access.unknownSpace = fact.unknownSpace;
+    if (auto space = dyn_cast_or_null<AddressSpaceAttr>(addressSpace)) {
+      access.space = space.getAddressSpace();
+      access.unknownSpace = false;
+    } else if (!value && !addressSpace) {
+      access.unknownSpace = true;
+    }
+    access.intervals = fact.intervals;
+    access.physical = fact.physical;
+    access.unknownRange = fact.unknownRange || forceUnknown;
+    access.slotExpression = fact.slotExpression;
+    const bool validRange =
+        byteOffset && byteSize && *byteOffset >= 0 && *byteSize > 0;
+    access.addressByteOffset = byteOffset;
+    access.addressByteSize = byteSize;
+    if (validRange && !forceUnknown && !fact.physical && fact.root == value) {
+      access.intervals = {{static_cast<std::uint64_t>(*byteOffset),
+                           static_cast<std::uint64_t>(*byteSize)}};
+      access.unknownRange = false;
+    }
+    access.provenance = operation->getName().getStringRef().str();
+    program.appendAccess(std::move(access));
   }
 }
 

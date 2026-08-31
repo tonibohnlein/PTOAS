@@ -48,6 +48,24 @@ void addPendingKeys(const VerifierResourceState &resource,
   }
 }
 
+bool cacheActionCovers(const VerifierCacheAction &action,
+                       const CanonicalAccess &access) {
+  if (action.allGm) {
+    return access.unknownSpace || access.space == AddressSpace::GM;
+  }
+  const bool exactAccessStart =
+      access.addressByteOffset && *access.addressByteOffset == 0 &&
+      access.addressByteSize && *access.addressByteSize > 0;
+  return action.access.value == access.value && exactAccessStart;
+}
+
+bool cacheActionsEqual(const VerifierCacheAction &first,
+                       const VerifierCacheAction &second) {
+  return first.operation == second.operation && first.allGm == second.allGm &&
+         first.access.value == second.access.value &&
+         first.access.aliasRoot == second.access.aliasRoot;
+}
+
 void completeResource(VerifierResourceState &resource, VerifierState &state) {
   addPendingKeys(resource, resource.known);
   for (const VerifierEffect &effect : resource.pending) {
@@ -195,20 +213,59 @@ LogicalResult applyBarrier(const VerifierProgram &program,
   return success();
 }
 
-void applyFenceAll(VerifierState &state) {
+void applyCmo(const VerifierProgram &program, CmoCacheInvalidOp operation,
+              VerifierState &state) {
+  auto found = program.cacheActions.find(operation);
+  if (found == program.cacheActions.end()) {
+    return;
+  }
+  for (const VerifierCacheAction &action : found->second) {
+    const bool alreadyInvalidated = llvm::any_of(
+        state.cacheInvalidations, [&](const VerifierCacheAction &existing) {
+          return cacheActionsEqual(existing, action);
+        });
+    if (!alreadyInvalidated) {
+      state.cacheInvalidations.push_back(action);
+    }
+    for (const VerifierResourceState &resource : state.resources) {
+      if (resource.resource.pipe != PIPE::PIPE_S) {
+        continue;
+      }
+      for (const VerifierEffect &effect : resource.pending) {
+        const bool writes = accessWrites(effect.access.mode);
+        const bool cacheCovered = cacheActionCovers(action, effect.access);
+        if (writes && cacheCovered) {
+          addKey(state.cacheMaintained, effect.key);
+        }
+      }
+    }
+  }
+}
+
+void applyFenceAll(FenceBarrierAllOp operation, VerifierState &state) {
+  const FenceScope scope = operation.getScope().getScope();
+  if (scope != FenceScope::GM && scope != FenceScope::All) {
+    return;
+  }
   for (VerifierResourceState &resource : state.resources) {
     completeResource(resource, state);
     for (const VerifierEffect &effect : resource.pending) {
       addKey(state.globalKnown, effect.key);
-      addKey(state.globalVisible, effect.key);
+      const bool scalarWrite = resource.resource.pipe == PIPE::PIPE_S &&
+                               accessWrites(effect.access.mode);
+      if (!scalarWrite ||
+          llvm::is_contained(state.cacheMaintained, effect.key)) {
+        addKey(state.globalVisible, effect.key);
+      }
     }
     for (const VerifierEffectKey &key : resource.pendingCompletions) {
       addKey(state.globalKnown, key);
     }
-    for (const VerifierEffectKey &key : resource.known) {
-      addKey(state.globalVisible, key);
-    }
   }
+  // A cache invalidation performed before this publication point cannot
+  // acquire data that only becomes globally visible at this fence. Require a
+  // fresh target-side invalidation after the fence.
+  state.cacheInvalidations.clear();
 }
 
 } // namespace
@@ -226,8 +283,12 @@ LogicalResult mlir::pto::canonical_sync_detail::applyVerifierSyncOperation(
   if (auto barrier = dyn_cast<BarrierOp>(operation)) {
     return applyBarrier(program, target, barrier, state);
   }
-  if (isa<FenceBarrierAllOp>(operation)) {
-    applyFenceAll(state);
+  if (auto cmo = dyn_cast<CmoCacheInvalidOp>(operation)) {
+    applyCmo(program, cmo, state);
+    return success();
+  }
+  if (auto fence = dyn_cast<FenceBarrierAllOp>(operation)) {
+    applyFenceAll(fence, state);
     return success();
   }
   handled = false;

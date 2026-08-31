@@ -23,6 +23,7 @@ namespace canonical_sync_detail {
 struct AliasFact {
   Value root;
   AddressSpace space = AddressSpace::Zero;
+  bool unknownSpace = false;
   llvm::SmallVector<CanonicalByteInterval, 2> intervals;
   bool physical = false;
   bool unknownRange = true;

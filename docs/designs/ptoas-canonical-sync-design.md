@@ -71,6 +71,13 @@ loop path, and optional macro phase. Accesses retain the logical alias root,
 post-allocation physical intervals where available, address space, access mode,
 dynamic slot expression, and provenance.
 
+Raw physical instructions are classified through the normalized
+`VPTOSchedulingSemantics` contract. A physical or observably effectful
+operation without a known scheduling classification is rejected. Logical tile
+allocations are explicitly classified as structural operations: they establish
+alias roots but do not execute on a device pipeline. Pure structural IR may be
+ignored only when purity is independently established.
+
 The graph is frozen before mechanisms are generated. Later stages cannot remove
 or rewrite a demand.
 
@@ -81,6 +88,10 @@ addresses, constant and dynamic slot selection, pointer arithmetic, pointer
 round trips, views, reshapes, bitcasts, and selections. Known physical byte
 ranges prove disjointness or overlap. Unknown ranges conservatively alias.
 Distinct GM roots are also conservative because kernel arguments can alias.
+An unsupported memory type, absent address space, unscoped memory effect, or
+unrecoverable provenance produces an unknown access. Unknown accesses are kept
+in both the planner and verifier and may alias every compatible access; they
+are never discarded as an analysis convenience.
 
 The pass runs after memory planning and before multi-buffer selection is
 resolved so that it can use both planned addresses and per-use slot identity.
@@ -88,7 +99,10 @@ resolved so that it can use both planned addresses and per-use slot identity.
 ### Demands
 
 Overlapping accesses produce the usual `RAW`, `WAR`, and `WAW` completion
-demands. Generic read/read pairs do not produce a demand.
+demands. An access marked ordered by normalized scheduling semantics produces
+an ordered-memory demand against every may-alias access; this preserves
+volatile and atomic ordering, including read/read ordering. Generic unordered
+read/read pairs do not produce a demand.
 
 SSA results produced by a physical phase also produce completion demands when
 they reach a later physical consumer, including through pure SSA operations and
@@ -102,14 +116,22 @@ represents the documented hardware scheduling restriction and remains visible
 in graph dumps.
 
 GM conflicts between scalar and non-scalar pipelines require visibility, not
-only pipeline completion. An event cannot satisfy such a demand by itself. The
-first implementation accepts an existing visibility fence and otherwise fails
-closed.
+only pipeline completion. Every visibility demand records three independent
+requirements: direction (`scalar-to-nonscalar` or
+`nonscalar-to-scalar`), fence scope, and cache maintenance. Scalar publication
+requires source cache maintenance before a GM fence. A scalar read acquiring a
+non-scalar publication requires a GM fence followed by target cache
+invalidation. Directions that do not read stale scalar cache state record no
+cache-maintenance requirement. An event cannot satisfy visibility by itself;
+missing scope, cache maintenance, or ordering fails closed.
 
 Loop-carried demands record iteration distance. A zero denotes the current
 iteration, while an explicit positive-distance marker denotes a summarized
-later iteration. Cross-pipeline recurrence events are rejected until a proven
-repeating protocol exists. A same-pipeline barrier may remain inside a loop.
+later iteration. A physical phase that accesses the same storage on successive
+iterations produces a self-recurrence demand; it is not removed merely because
+both endpoints have the same static phase ID. Cross-pipeline recurrence events
+are rejected until a proven repeating protocol exists. A same-pipeline barrier
+may remain inside a loop.
 
 Every issued phase also has an exit-completion demand. All returns receive a
 tagged `PIPE_ALL` barrier, including returns in structured control flow.
@@ -121,7 +143,8 @@ Each demand is assigned one direct mechanism:
 - documented intrinsic ordering;
 - a targeted same-pipeline barrier;
 - a legal directed set/wait event;
-- an existing visibility fence;
+- an existing visibility sequence with the required cache maintenance and
+  fence scope;
 - the mandatory exit barrier.
 
 Equivalent physical cuts are interned. Event sets are placed after the source
@@ -159,6 +182,13 @@ imported by waits and barriers, visibility facts, live event tokens, loop-carrie
 effects, and exit completion. It checks hazards from memory effects directly,
 including ACC read/read and loop recurrences; it does not consume the planner's
 demand or coverage lists.
+
+Extraction ends with a separate function-wide coverage walk. Every modeled
+physical instruction, normalized schedulable operation, explicit sync
+operation, and unclassified effectful operation must be accounted for. A
+normalized operation that reports memory behavior must yield at least one
+verifier effect. This makes omissions fail closed even if the extraction
+dispatch accidentally overlooks a newly added operation class.
 
 The original function body is replaced only after both the independent semantic
 verification and the MLIR verifier succeed. Any failure leaves the original IR

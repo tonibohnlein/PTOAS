@@ -63,12 +63,22 @@ enum class CanonicalDemandKind : std::uint8_t {
   Raw,
   War,
   Waw,
+  OrderedMemory,
   HardwareAccReadConflict,
   SsaCompletion,
   ExitCompletion,
   Visibility,
 };
 enum class CanonicalRequirement : std::uint8_t { Completion, Visibility };
+enum class CanonicalVisibilityDirection : std::uint8_t {
+  ScalarToNonScalar,
+  NonScalarToScalar,
+};
+enum class CanonicalCacheMaintenance : std::uint8_t {
+  None,
+  CleanSource,
+  InvalidateTarget,
+};
 enum class CanonicalMechanismKind : std::uint8_t {
   IntrinsicOrder,
   PipeBarrier,
@@ -132,13 +142,29 @@ struct CanonicalAccess {
   CanonicalPhaseId phase = kInvalidCanonicalSyncId;
   CanonicalAccessMode mode = CanonicalAccessMode::Read;
   AddressSpace space = AddressSpace::Zero;
+  bool unknownSpace = false;
+  bool ordered = false;
   Value value;
   Value aliasRoot;
+  std::optional<int64_t> addressByteOffset;
+  std::optional<int64_t> addressByteSize;
   llvm::SmallVector<CanonicalByteInterval, 2> intervals;
   bool physical = false;
   bool unknownRange = true;
   Value slotExpression;
   std::string provenance;
+};
+
+struct CanonicalVisibilityRequirement {
+  CanonicalVisibilityDirection direction =
+      CanonicalVisibilityDirection::ScalarToNonScalar;
+  FenceScope scope = FenceScope::GM;
+  CanonicalCacheMaintenance cacheMaintenance = CanonicalCacheMaintenance::None;
+
+  bool operator==(const CanonicalVisibilityRequirement &other) const {
+    return direction == other.direction && scope == other.scope &&
+           cacheMaintenance == other.cacheMaintenance;
+  }
 };
 
 struct CanonicalDemandCause {
@@ -154,6 +180,7 @@ struct CanonicalDemand {
   CanonicalRegionId owner = kInvalidCanonicalSyncId;
   CanonicalDemandKind kind = CanonicalDemandKind::Raw;
   CanonicalRequirement requirement = CanonicalRequirement::Completion;
+  std::optional<CanonicalVisibilityRequirement> visibility;
   llvm::SmallVector<int64_t, 2> iterationDistance;
   llvm::SmallVector<CanonicalControlAtom, 2> guard;
   llvm::SmallVector<CanonicalDemandCause, 1> causes;
@@ -168,6 +195,7 @@ struct CanonicalMechanism {
   CanonicalPhaseId targetCut = kInvalidCanonicalSyncId;
   Operation *setAfter = nullptr;
   Operation *waitBefore = nullptr;
+  llvm::SmallVector<Operation *, 2> cacheMaintenance;
   CanonicalRegionId actionRegion = kInvalidCanonicalSyncId;
   llvm::SmallVector<CanonicalControlAtom, 2> guard;
   std::optional<unsigned> eventId;
@@ -236,6 +264,10 @@ llvm::StringRef stringifyCanonicalCore(CanonicalCore core);
 llvm::StringRef stringifyCanonicalRegionKind(CanonicalRegionKind kind);
 llvm::StringRef stringifyCanonicalAccessMode(CanonicalAccessMode mode);
 llvm::StringRef stringifyCanonicalDemandKind(CanonicalDemandKind kind);
+llvm::StringRef
+stringifyCanonicalVisibilityDirection(CanonicalVisibilityDirection direction);
+llvm::StringRef
+stringifyCanonicalCacheMaintenance(CanonicalCacheMaintenance maintenance);
 llvm::StringRef stringifyCanonicalMechanismKind(CanonicalMechanismKind kind);
 void printCanonicalSyncProgram(const CanonicalSyncProgram &program,
                                llvm::raw_ostream &os);

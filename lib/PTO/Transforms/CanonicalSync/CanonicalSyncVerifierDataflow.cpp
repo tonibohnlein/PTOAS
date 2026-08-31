@@ -56,6 +56,7 @@ void eraseKey(SmallVectorImpl<VerifierEffectKey> &keys,
 void invalidateCompletion(VerifierState &state, const VerifierEffectKey &key) {
   eraseKey(state.globalKnown, key);
   eraseKey(state.globalVisible, key);
+  eraseKey(state.cacheMaintained, key);
   eraseKey(state.exitComplete, key);
   for (VerifierResourceState &resource : state.resources) {
     eraseKey(resource.known, key);
@@ -65,9 +66,12 @@ void invalidateCompletion(VerifierState &state, const VerifierEffectKey &key) {
 
 bool isAccReadConflict(const VerifierEffect &source,
                        const VerifierEffect &target) {
+  const bool sourceMayBeAcc =
+      source.access.unknownSpace || source.access.space == AddressSpace::ACC;
+  const bool targetMayBeAcc =
+      target.access.unknownSpace || target.access.space == AddressSpace::ACC;
   return accessReads(source.access.mode) && accessReads(target.access.mode) &&
-         source.access.space == AddressSpace::ACC &&
-         target.access.space == AddressSpace::ACC &&
+         sourceMayBeAcc && targetMayBeAcc &&
          source.resource.core == CanonicalCore::AIC &&
          target.resource.core == CanonicalCore::AIC &&
          source.resource.pipe != target.resource.pipe;
@@ -78,15 +82,31 @@ bool isHazard(const VerifierEffect &source, const VerifierEffect &target) {
   const bool sourceWrite = accessWrites(source.access.mode);
   const bool targetRead = accessReads(target.access.mode);
   const bool targetWrite = accessWrites(target.access.mode);
-  return (sourceWrite && targetRead) || (sourceRead && targetWrite) ||
+  return source.access.ordered || target.access.ordered ||
+         (sourceWrite && targetRead) || (sourceRead && targetWrite) ||
          (sourceWrite && targetWrite) || isAccReadConflict(source, target);
 }
 
 bool requiresVisibility(const VerifierEffect &source,
                         const VerifierEffect &target) {
-  return source.access.space == AddressSpace::GM &&
+  const bool sourceMayBeGm =
+      source.access.unknownSpace || source.access.space == AddressSpace::GM;
+  const bool targetMayBeGm =
+      target.access.unknownSpace || target.access.space == AddressSpace::GM;
+  return sourceMayBeGm && targetMayBeGm &&
          ((source.resource.pipe == PIPE::PIPE_S) !=
           (target.resource.pipe == PIPE::PIPE_S));
+}
+
+bool cacheActionCovers(const VerifierCacheAction &action,
+                       const CanonicalAccess &access) {
+  if (action.allGm) {
+    return access.unknownSpace || access.space == AddressSpace::GM;
+  }
+  const bool exactAccessStart =
+      access.addressByteOffset && *access.addressByteOffset == 0 &&
+      access.addressByteSize && *access.addressByteSize > 0;
+  return action.access.value == access.value && exactAccessStart;
 }
 
 bool completionKnown(const CanonicalSyncTarget &target,
@@ -117,12 +137,16 @@ bool completionKnown(const CanonicalSyncTarget &target,
 bool visibilityKnown(const VerifierEffect &source,
                      const VerifierEffect &destination,
                      const VerifierState &state) {
-  if (containsKey(state.globalVisible, source.key)) {
-    return true;
+  if (!containsKey(state.globalVisible, source.key)) {
+    return false;
   }
-  const VerifierResourceState *resource =
-      getResource(state, destination.resource);
-  return resource && containsKey(resource->visible, source.key);
+  const bool scalarRead = destination.resource.pipe == PIPE::PIPE_S &&
+                          accessReads(destination.access.mode);
+  return !scalarRead ||
+         llvm::any_of(state.cacheInvalidations,
+                      [&](const VerifierCacheAction &action) {
+                        return cacheActionCovers(action, destination.access);
+                      });
 }
 
 LogicalResult reportHazard(const VerifierEffect &source,
@@ -308,6 +332,12 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyAndIssuePhase(
   }
   for (const VerifierEffect &effect : phase.effects) {
     invalidateCompletion(state, effect.key);
+    if (accessWrites(effect.access.mode)) {
+      llvm::erase_if(state.cacheInvalidations,
+                     [&](const VerifierCacheAction &action) {
+                       return cacheActionCovers(action, effect.access);
+                     });
+    }
     if (!containsEffect(resource.pending, effect.key)) {
       resource.pending.push_back(effect);
     }

@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @normalized_rebased_range(%base: !pto.ptr<i32, ub>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %derived = pto.addptr %base, %c1 : !pto.ptr<i32, ub> ->
+      !pto.ptr<i32, ub>
+    %value = pto.load %derived[%c0] : !pto.ptr<i32, ub> -> i32
+    pto.store %value, %base[%c1] : !pto.ptr<i32, ub>, i32
+    return
+  }
+}
+
+// CHECK-LABEL: CANONICAL-SYNC function=normalized_rebased_range
+// The derived pointer has no statically bounded allocation extent. Its
+// operation-local [0,4) range must not be incorrectly rebased onto %base;
+// retaining an unknown range conservatively overlaps %base[1].
+// CHECK: a0 phase=p0 mode=R space=vec range=unknown
+// CHECK: a1 phase=p1 mode=W space=vec range=[4,8)
+// CHECK: kind=WAR p0->p1
+// CHECK: kind=intrinsic resource=AIV:PIPE_S->AIV:PIPE_S
+// CHECK: VERIFY ok
