@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSync.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
@@ -29,7 +31,7 @@ using namespace mlir::pto;
 
 namespace {
 
-constexpr unsigned kHardwareEventIdCount = 8;
+constexpr unsigned kCompilerUsableEventIdCount = 6;
 
 constexpr std::uint64_t kConfigurationHashOffset = 1469598103934665603ULL;
 constexpr std::uint64_t kConfigurationHashPrime = 1099511628211ULL;
@@ -3840,6 +3842,8 @@ addEventDomains(const CanonicalSyncProgram &program, unsigned budget,
                 std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds,
                 bool includeBasicOwnership) {
   const SyncCoverGraph &graph = program.getGraph();
+  const CanonicalSyncDirectedResourceCapability &directEvents =
+      program.getTargetCapabilities().directEventCompletion;
   std::set<EventDomainKey> keys;
   for (SyncCoverDemandId demandId : problem.getDemands()) {
     const SyncCoverDemand &demand = graph.getDemands()[demandId];
@@ -3853,13 +3857,23 @@ addEventDomains(const CanonicalSyncProgram &program, unsigned budget,
     }
     const EventDomainKey key{graph.getNodes()[demand.source].resource,
                              graph.getNodes()[demand.target].resource};
-    keys.insert(key);
+    if (directEvents.supports(key.first, key.second)) {
+      keys.insert(key);
+    }
   }
   if (includeBasicOwnership) {
     for (const SyncCoverBasicOwnershipCertificate &certificate :
          graph.getBasicOwnershipCertificates()) {
-      keys.insert({certificate.producerResource, certificate.consumerResource});
-      keys.insert({certificate.consumerResource, certificate.producerResource});
+      const EventDomainKey ready{certificate.producerResource,
+                                 certificate.consumerResource};
+      const EventDomainKey release{certificate.consumerResource,
+                                   certificate.producerResource};
+      if (directEvents.supports(ready.first, ready.second)) {
+        keys.insert(ready);
+      }
+      if (directEvents.supports(release.first, release.second)) {
+        keys.insert(release);
+      }
     }
   }
   for (const EventDomainKey &key : keys) {
@@ -5312,9 +5326,9 @@ CanonicalSyncProblemBuildResult
 buildCandidateCatalog(const CanonicalSyncProgram &program,
                       const CanonicalSyncBuildOptions &options,
                       CandidateCatalogKind kind) {
-  if (options.eventIdBudget > kHardwareEventIdCount) {
+  if (options.eventIdBudget > kCompilerUsableEventIdCount) {
     program.getFunction().emitError(
-        "canonical sync event-id budget must be in [0, 8]");
+        "canonical sync event-id budget must be in [0, 6]");
     return {nullptr, {CanonicalSyncProblemError::InvalidDomain, std::nullopt}};
   }
   const CanonicalSyncMechanismFamilyMask familyMask =
@@ -5396,8 +5410,7 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
                                              baseline.covered, domainIds)) ||
         failed(requireCompleteDirectCatalog(program, *problem)) ||
         (options.patterns.enableDirectPairs &&
-         failed(addDirectPairPatterns(program, *problem,
-                                      options.directPairs)));
+         failed(addDirectPairPatterns(program, *problem, options.directPairs)));
   } else {
     std::map<EventDomainKey, CanonicalSyncEventDomainId> domainIds;
     std::vector<DirectEventRecord> directEvents;
@@ -5590,7 +5603,7 @@ CanonicalSyncProblemBuildResult buildRepairCatalogFromPrefix(
   const CanonicalSyncMechanismFamilyMask familyMask =
       options.patterns.enabledMechanismFamilies;
   const bool invalidConfiguration =
-      options.eventIdBudget > kHardwareEventIdCount ||
+      options.eventIdBudget > kCompilerUsableEventIdCount ||
       (familyMask & ~kAllCanonicalSyncMechanismFamilies) != 0 ||
       options.patterns.catalogMode ==
           CanonicalSyncCatalogMode::StrictMinimalDirect ||

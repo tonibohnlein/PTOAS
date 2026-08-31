@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- CanonicalSyncAnalysis.h - Lean MLIR graph adapter ------*- C++ -*-===//
 
@@ -118,6 +120,34 @@ enum class CanonicalSyncTargetProfile : std::uint8_t {
   A5V1,
 };
 
+/// The physical AI-core domain selected by an authoritative kernel-kind or
+/// explicit section contract. Pipeline observation is intentionally not a
+/// source of truth.
+enum class CanonicalSyncCoreDomain : std::uint8_t {
+  Unresolved,
+  AIC,
+  AIV,
+  Conflict,
+};
+
+/// Version of the target synchronization contract consumed by CanonicalSync.
+/// The A5 entry is deliberately partial: it authorizes same-PIPE_V completion
+/// and documented barriers, but no directed HardEvent pair.
+enum class CanonicalSyncTargetSyncSpecVersion : std::uint16_t {
+  None,
+  Ascend2201V1,
+  Ascend3510PartialV1,
+};
+
+/// Stable identifiers for the device specifications behind a capability.
+enum class CanonicalSyncTargetEvidence : std::uint16_t {
+  None,
+  AscendIntraCoreSync7008190b,
+  AscendSetWait7008190b,
+  AscendKeyFeatures7008190b,
+  AscendPipeBarrier850,
+};
+
 /// A zero version disables the capability. Nonzero versions identify the
 /// exact target contract that analysis and materialization rely upon.
 struct CanonicalSyncBooleanCapability {
@@ -144,11 +174,44 @@ struct CanonicalSyncResourceCapability {
 struct CanonicalSyncDirectedResourceCapability {
   std::uint16_t version = 0;
   std::vector<std::pair<std::uint32_t, std::uint32_t>> resourcePairs;
+
+  bool supports(std::uint32_t source, std::uint32_t target) const {
+    return version != 0 &&
+           std::binary_search(resourcePairs.begin(), resourcePairs.end(),
+                              std::make_pair(source, target));
+  }
 };
 
 struct CanonicalSyncTargetCapabilities {
-  CanonicalSyncTargetProfile profile =
-      CanonicalSyncTargetProfile::Unsupported;
+  CanonicalSyncTargetProfile profile = CanonicalSyncTargetProfile::Unsupported;
+  CanonicalSyncCoreDomain coreDomain = CanonicalSyncCoreDomain::Unresolved;
+  CanonicalSyncTargetSyncSpecVersion syncSpecVersion =
+      CanonicalSyncTargetSyncSpecVersion::None;
+  std::vector<CanonicalSyncTargetEvidence> evidence;
+
+  /// Every directed event combination documented as present in hardware.
+  /// This includes combinations marked as having no current programming
+  /// scenario and is diagnostic only.
+  CanonicalSyncDirectedResourceCapability hardwareEventCompletion;
+
+  /// Directed HardEvent pairs exposed for compiler-generated static-Tensor
+  /// synchronization. This excludes combinations with no documented current
+  /// programming scenario.
+  CanonicalSyncDirectedResourceCapability directEventCompletion;
+
+  /// Same-pipeline barriers admitted by the target contract. PIPE_ALL is
+  /// handled separately as the required tail fence and is never a direct
+  /// set-cover candidate.
+  CanonicalSyncResourceCapability legalPipeBarriers;
+
+  /// Compiler-owned IDs after static-Tensor reservations. The initial
+  /// A2/A3/A5 contract admits only IDs 0 through 5.
+  std::vector<unsigned> compilerUsableEventIds;
+
+  bool isCompilerUsableEventId(unsigned eventId) const {
+    return std::binary_search(compilerUsableEventIds.begin(),
+                              compilerUsableEventIds.end(), eventId);
+  }
 
   /// Issue order on one of these resources preserves an already established
   /// completion fact and a later set may represent the issued prefix.
@@ -167,8 +230,7 @@ struct CanonicalSyncTargetCapabilities {
 
   /// Opaque graph-resource vocabulary used by target-qualified completion
   /// certificates. It is absent when no such certificate contract is active.
-  std::optional<SyncCoverTargetCompletionResources>
-      targetCompletionResources;
+  std::optional<SyncCoverTargetCompletionResources> targetCompletionResources;
 
   /// An A3 PIPE_MTE1 set issued after the final producer of an exact L0
   /// ownership use certifies completion of every earlier MTE1 producer in

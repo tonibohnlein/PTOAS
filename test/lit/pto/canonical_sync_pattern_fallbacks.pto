@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=6' \
 // RUN:   | FileCheck %s
 
 module attributes {pto.target_arch = "a3"} {
@@ -14,7 +14,8 @@ module attributes {pto.target_arch = "a3"} {
   // CHECK: pto.tmatmul
   // CHECK-NEXT: pto.barrier <PIPE_M>
   // CHECK-NEXT: pto.tmatmul
-  func.func @same_pipe_fallback() {
+  func.func @same_pipe_fallback() attributes {
+      pto.kernel_kind = #pto.kernel_kind<cube>} {
     %addr0 = arith.constant 0 : i64
     %left = pto.alloc_tile addr = %addr0 :
       !pto.tile_buf<left, 32x32xf16, slayout=row_major>
@@ -44,7 +45,8 @@ module attributes {pto.target_arch = "a3"} {
   // CHECK-NEXT: pto.tstore
   // CHECK-NEXT: pto.barrier <PIPE_ALL>
   func.func @cross_pipe_fallback(
-      %output: !pto.partition_tensor_view<32x32xf32>) {
+      %output: !pto.partition_tensor_view<32x32xf32>) attributes {
+      pto.kernel_kind = #pto.kernel_kind<cube>} {
     %addr0 = arith.constant 0 : i64
     %left = pto.alloc_tile addr = %addr0 :
       !pto.tile_buf<left, 32x32xf16, slayout=row_major>
@@ -70,7 +72,8 @@ module attributes {pto.target_arch = "a3"} {
   // CHECK: scf.for
   // CHECK-NEXT: pto.barrier <PIPE_M>
   // CHECK-NEXT: pto.tmatmul
-  func.func @recurrence_fallback(%limit: index) {
+  func.func @recurrence_fallback(%limit: index) attributes {
+      pto.kernel_kind = #pto.kernel_kind<cube>} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %addr0 = arith.constant 0 : i64
@@ -101,7 +104,8 @@ module attributes {pto.target_arch = "a3"} {
   // CHECK-NEXT: pto.tmuls
   // CHECK: pto.barrier <PIPE_ALL>
   func.func @guarded_endpoint_fallback(
-      %input: !pto.partition_tensor_view<16x16xf32>, %condition: i1) {
+      %input: !pto.partition_tensor_view<16x16xf32>, %condition: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %addr0 = arith.constant 0 : i64
     %one = arith.constant 1.000000e+00 : f32
     %shared = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
@@ -126,7 +130,8 @@ module attributes {pto.target_arch = "a3"} {
   // CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>
   // CHECK-NEXT: pto.tload
   func.func @mixed_pipe_target_fallback(
-      %input: !pto.partition_tensor_view<16x16xf32>) {
+      %input: !pto.partition_tensor_view<16x16xf32>) attributes {
+      pto.kernel_kind = #pto.kernel_kind<vector>} {
     %addr0 = arith.constant 0 : i64
     %one = arith.constant 1.000000e+00 : f32
     %shared = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>

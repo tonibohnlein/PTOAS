@@ -8,10 +8,10 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=8' \
+// RUN: pto-test-opt %s '-pto-canonical-sync=event-id-num-max=6' \
 // RUN:   | FileCheck %s --check-prefix=MAY-ALIAS
 // RUN: pto-test-opt %s \
-// RUN:   '-pto-canonical-sync=event-id-num-max=8 assume-all-gm-accesses-noalias=true' \
+// RUN:   '-pto-canonical-sync=event-id-num-max=6 assume-all-gm-accesses-noalias=true' \
 // RUN:   | FileCheck %s --check-prefix=ALL-NOALIAS
 // RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --canonical-sync-assume-all-gm-accesses-noalias --emit-pto-ir %s \
@@ -20,7 +20,8 @@
 // RUN:   '-pto-canonical-sync=assume-distinct-gm-args-noalias=true assume-all-gm-accesses-noalias=true' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=CONFLICT
 
-module attributes {pto.target_arch = "a3"} {
+module attributes {pto.target_arch = "a3",
+                   pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @same_argument(
       %gm: !pto.partition_tensor_view<16x16xf32>) {
     %a0 = arith.constant 0 : i64

@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "CanonicalSyncAnalysisInternal.h"
 #include "CanonicalSyncTarget.h"
@@ -136,30 +138,6 @@ bool mlir::pto::canonical_sync_detail::isCompletionOrdered(
     std::uint32_t resource,
     const CanonicalSyncTargetCapabilities &capabilities) {
   return capabilities.sameResourceCompletionOrdering.supports(resource);
-}
-
-bool mlir::pto::canonical_sync_detail::canSignalDirectCompletion(
-    std::uint32_t resource) {
-  switch (static_cast<PipelineType>(resource)) {
-  case PipelineType::PIPE_S:
-  case PipelineType::PIPE_V:
-  case PipelineType::PIPE_MTE1:
-  case PipelineType::PIPE_MTE2:
-  case PipelineType::PIPE_MTE3:
-  case PipelineType::PIPE_FIX:
-    return true;
-  case PipelineType::PIPE_M:
-  case PipelineType::PIPE_ALL:
-  case PipelineType::PIPE_MTE4:
-  case PipelineType::PIPE_MTE5:
-  case PipelineType::PIPE_V2:
-  case PipelineType::VIRTUAL_PIPE_MTE2_L1A:
-  case PipelineType::VIRTUAL_PIPE_MTE2_L1B:
-  case PipelineType::PIPE_NUM:
-  case PipelineType::PIPE_UNASSIGNED:
-    return false;
-  }
-  return false;
 }
 
 bool mlir::pto::canonical_sync_detail::canSignalPrefixCompletion(
@@ -443,7 +421,8 @@ LogicalResult ProgramBuilder::buildNodesAndStorage() {
         static_cast<std::uint32_t>(compound->kPipeValue);
     std::vector<std::uint32_t> completionTargets;
     for (std::uint32_t candidate : resources) {
-      if (candidate != resource && canSignalDirectCompletion(resource)) {
+      if (targetCapabilities_.directEventCompletion.supports(resource,
+                                                             candidate)) {
         completionTargets.push_back(candidate);
       }
     }
@@ -460,8 +439,8 @@ LogicalResult ProgramBuilder::buildNodesAndStorage() {
       return compound->elementOp->emitError(
           "cannot construct canonical sync operation node");
     }
-    FailureOr<std::vector<Value>> ssaOperands = getSsaOperands(
-        compound->elementOp, compound->macroOpInstanceId);
+    FailureOr<std::vector<Value>> ssaOperands =
+        getSsaOperands(compound->elementOp, compound->macroOpInstanceId);
     if (failed(ssaOperands)) {
       return failure();
     }
