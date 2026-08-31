@@ -116,6 +116,7 @@ struct SyncCoverDirectCut {
   SyncCoverCutPoint source;
   SyncCoverCutPoint target;
   SyncCoverOrderingRequirementMask suppliedRequirements = 0;
+  bool sourcePrefixCompletion = false;
 };
 
 /// One exact enabled-mechanism set. IDs are strictly increasing so the world
@@ -137,6 +138,10 @@ struct SyncCoverCompletionOrigin {
   SyncCoverGuard sourceGuard;
   SyncCoverGuard targetGuard;
   SyncCoverOrderingRequirementMask suppliedRequirements = 0;
+  /// Whether a Set at the source boundary certifies every earlier issued
+  /// source-resource operation. PipeBarrier origins always have this effect.
+  bool sourcePrefixCompletion = false;
+  SyncCoverNodeId sourceNode = 0;
   std::size_t sourceOrdinal = 0;
   std::size_t targetOrdinal = 0;
 };
@@ -178,8 +183,11 @@ struct SyncCoverFlatWorldResult {
 struct SyncCoverRegionWorldLimits {
   std::size_t maximumWorldsPerBatch = 256;
   std::size_t maximumCuts = 1U << 16;
+  /// Sum of enabled-mechanism entries across every requested world.
+  std::size_t maximumWorldMechanismIncidences = 1U << 20;
   std::size_t maximumRegionEvaluations = 1U << 20;
   std::size_t maximumStateWords = 1U << 22;
+  std::size_t maximumResultWords = 1U << 22;
   std::size_t maximumCutActions = 1U << 17;
 };
 

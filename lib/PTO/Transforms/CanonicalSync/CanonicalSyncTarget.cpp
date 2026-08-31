@@ -174,14 +174,29 @@ void addCommonEvidence(CanonicalSyncTargetCapabilities &capabilities) {
 }
 
 void add2201EventCapabilities(CanonicalSyncTargetCapabilities &capabilities) {
+  capabilities.directEventCompletesSourcePrefix.version = 1;
   switch (capabilities.coreDomain) {
   case CanonicalSyncCoreDomain::AIC:
     capabilities.hardwareEventCompletion = makeAic2201HardwareEvents();
     capabilities.directEventCompletion = makeAic2201ExposedEvents();
+    capabilities.directEventOrderingRequirements =
+        syncCoverOrderingRequirementBit(
+            SyncCoverOrderingRequirement::PipelineCompletionBeforeAccess) |
+        syncCoverOrderingRequirementBit(
+            SyncCoverOrderingRequirement::MemoryOrderBeforeAccess) |
+        syncCoverOrderingRequirementBit(
+            SyncCoverOrderingRequirement::HardwareSpecialOrder);
     return;
   case CanonicalSyncCoreDomain::AIV:
     capabilities.hardwareEventCompletion = makeAiv2201HardwareEvents();
     capabilities.directEventCompletion = capabilities.hardwareEventCompletion;
+    capabilities.directEventOrderingRequirements =
+        syncCoverOrderingRequirementBit(
+            SyncCoverOrderingRequirement::PipelineCompletionBeforeAccess) |
+        syncCoverOrderingRequirementBit(
+            SyncCoverOrderingRequirement::MemoryOrderBeforeAccess) |
+        syncCoverOrderingRequirementBit(
+            SyncCoverOrderingRequirement::HardwareSpecialOrder);
     return;
   case CanonicalSyncCoreDomain::Unresolved:
   case CanonicalSyncCoreDomain::Conflict:
@@ -221,6 +236,11 @@ CanonicalSyncTargetCapabilities makeCoreTargetCapabilities(
                 PipelineType::PIPE_FIX});
   capabilities.legalPipeBarriers =
       capabilities.targetedBarrierDrainsSourcePrefix;
+  capabilities.pipeBarrierOrderingRequirements =
+      syncCoverOrderingRequirementBit(
+          SyncCoverOrderingRequirement::PipelineCompletionBeforeAccess) |
+      syncCoverOrderingRequirementBit(
+          SyncCoverOrderingRequirement::MemoryOrderBeforeAccess);
   // PTO's targeted barrier contract is intra-pipeline. No supported target
   // currently certifies that a naked source-pipe barrier publishes completion
   // to an independently issued operation on another pipe.

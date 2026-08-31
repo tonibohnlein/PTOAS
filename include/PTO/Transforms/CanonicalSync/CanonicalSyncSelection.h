@@ -463,6 +463,14 @@ public:
   CanonicalSyncProblemResult addConflict(CanonicalSyncMechanismId first,
                                          CanonicalSyncMechanismId second);
   CanonicalSyncProblemResult addPattern(CanonicalSyncPatternSpec pattern);
+  /// Request physical-cut singleton grounding. This mode is used only by the
+  /// strict direct catalog; recurrence protocols continue through the
+  /// lifecycle-aware completion-supply engine until they can be represented
+  /// as complete physical cut groups.
+  CanonicalSyncProblemResult enableExactDirectCutGrounding(
+      SyncCoverOrderingRequirementMask eventRequirements,
+      SyncCoverOrderingRequirementMask barrierRequirements,
+      bool eventCompletesSourcePrefix);
   /// Classify and atomically commit one owner scope's exact direct-pair rows.
   /// Joint, singleton, and baseline rows use graph-global demand IDs. The
   /// result index is the number of retained extra-coverage patterns committed
@@ -476,7 +484,16 @@ public:
   /// semantic failure restores the exact mutable catalog prefix.
   CanonicalSyncProblemResult addRepairFrontierBatch(
       std::vector<CanonicalSyncRepairFrontierBatchEntry> entries);
-  CanonicalSyncProblemResult freeze();
+  CanonicalSyncProblemResult
+  freeze(SyncCoverCoverageWorkBudget *workBudget = nullptr);
+
+  /// Reconstruct and evaluate exact physical cuts for the requested worlds.
+  /// Every referenced mechanism must be a token-independent event or targeted
+  /// pipe barrier. Results use graph-global demand IDs.
+  SyncCoverRegionWorldResult computeExactDirectCutWorlds(
+      const std::vector<SyncCoverExactWorld> &worlds,
+      SyncCoverRegionWorldLimits limits = {},
+      SyncCoverCoverageWorkBudget *workBudget = nullptr) const;
 
   /// Copy one immutable precise catalog into a mutable repair extension. The
   /// grounded prefix remains byte-for-byte identical; only newly appended
@@ -641,6 +658,7 @@ public:
   std::uint64_t getCandidateConfigurationSignature() const {
     return candidateConfigurationSignature_;
   }
+  bool usesExactDirectCutGrounding() const { return exactDirectCutGrounding_; }
 
 private:
   struct MutableBatchJournal;
@@ -678,6 +696,10 @@ private:
   buildPatterns(std::vector<CanonicalSyncPattern> &patterns,
                 CanonicalSyncPatternStatistics &statistics,
                 SyncCoverDemandSet &baselineCoverage) const;
+  CanonicalSyncProblemResult
+  buildExactDirectCutPatterns(std::vector<CanonicalSyncPattern> &patterns,
+                              CanonicalSyncPatternStatistics &statistics,
+                              SyncCoverDemandSet &baselineCoverage) const;
   CanonicalSyncProblemResult
   buildIncrementalPatterns(std::vector<CanonicalSyncPattern> &patterns,
                            CanonicalSyncPatternStatistics &statistics,
@@ -726,6 +748,10 @@ private:
   std::uint64_t candidateConfigurationSignature_ = 0;
   std::size_t frozenPrefixMechanismCount_ = 0;
   SyncCoverCoverageWorkBudget *constructionWorkBudget_ = nullptr;
+  bool exactDirectCutGrounding_ = false;
+  SyncCoverOrderingRequirementMask exactDirectEventRequirements_ = 0;
+  SyncCoverOrderingRequirementMask exactDirectBarrierRequirements_ = 0;
+  bool exactDirectEventCompletesSourcePrefix_ = false;
 };
 
 struct CanonicalSyncDirectPairOptions {

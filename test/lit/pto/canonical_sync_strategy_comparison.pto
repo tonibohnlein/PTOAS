@@ -44,10 +44,12 @@
 // RUN:   --emit-pto-ir %s > /dev/null
 // RUN: FileCheck %s --check-prefix=MECHANICAL-ANALYSIS \
 // RUN:   < %t.mechanical-analysis.json
-// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN: not ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --canonical-sync-catalog-mode=strict-direct \
 // RUN:   --canonical-sync-mechanism-families=core \
-// RUN:   --canonical-sync-pattern-mode=direct --emit-pto-ir %s 2>&1 \
+// RUN:   --canonical-sync-pattern-mode=direct-pair \
+// RUN:   --canonical-sync-enable-conflict-core-repair=false \
+// RUN:   --emit-pto-ir %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=INVALID-STRICT
 // RUN: not ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --canonical-sync-catalog-mode=mechanical-direct \
@@ -216,7 +218,7 @@
 // INVALID: selection-strategy must be fixed-cover, action-aware-singleton, or pair-lookahead
 // INVALID-OBJECTIVE: selection-objective must be action-first or serialization-first
 // INVALID-BOUND: maximum-verification-work-units must be positive
-// INVALID-STRICT: strict-direct catalog mode requires mechanism-families=core, and enable-conflict-core-repair=false
+// INVALID-STRICT: strict-direct catalog mode requires mechanism-families=core, pattern-mode=direct, and enable-conflict-core-repair=false
 // INVALID-MECHANICAL: mechanical-direct catalog mode requires mechanism-families=core, pattern-mode=direct, and enable-conflict-core-repair=false
 // INVALID-PHASE-BOUND: maximum-periodic-recurrence-states must be positive
 // MAX-PHASE-BOUND: maximum-periodic-recurrence-states must not exceed 16

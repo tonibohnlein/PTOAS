@@ -977,11 +977,12 @@ struct PTOCanonicalSyncPass
         options.patterns.catalogMode ==
             pto::CanonicalSyncCatalogMode::StrictMinimalDirect &&
         (options.patterns.enabledMechanismFamilies != 0 ||
+         options.patterns.enableDirectPairs ||
          options.patterns.enableConflictCoreRepair);
     if (invalidStrictDirectConfiguration) {
       function.emitError(
           "strict-direct catalog mode requires mechanism-families=core, "
-          "and enable-conflict-core-repair=false");
+          "pattern-mode=direct, and enable-conflict-core-repair=false");
       signalPassFailure();
       return;
     }

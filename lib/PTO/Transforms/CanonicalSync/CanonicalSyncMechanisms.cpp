@@ -124,7 +124,11 @@ getCandidateConfigurationSignature(const CanonicalSyncBuildOptions &options) {
     hashConfigurationValue(hash, static_cast<std::uint64_t>(value));
   };
   add(options.eventIdBudget);
-  add(static_cast<std::size_t>(options.patterns.catalogMode));
+  const CanonicalSyncCatalogMode candidateCatalogMode =
+      options.patterns.catalogMode == CanonicalSyncCatalogMode::Standard
+          ? CanonicalSyncCatalogMode::Standard
+          : CanonicalSyncCatalogMode::StrictMinimalDirect;
+  add(static_cast<std::size_t>(candidateCatalogMode));
   add(options.patterns.enabledMechanismFamilies & preciseFamilies);
   add(options.patterns.enableDirectPairs);
   add(options.patterns.maximumSourcePrefixInspections);
@@ -185,18 +189,17 @@ struct DirectEventRecord {
   CanonicalSyncEventDomainId domain = 0;
 };
 
-LogicalResult
-recordMechanicalDirectDemand(const CanonicalSyncProgram &program,
-                             SyncCoverDemandId demand,
-                             SyncCoverDemandSet *admittedDemands,
-                             SyncCoverCoverageWorkBudget *workBudget) {
+LogicalResult recordDirectOnlyDemand(const CanonicalSyncProgram &program,
+                                     SyncCoverDemandId demand,
+                                     SyncCoverDemandSet *admittedDemands,
+                                     SyncCoverCoverageWorkBudget *workBudget) {
   if (!admittedDemands) {
     return success();
   }
   if (!workBudget || !workBudget->consume() ||
       !admittedDemands->insert(demand)) {
     return program.getFunction().emitError(
-        "canonical sync mechanical-direct admission work limit exceeded");
+        "canonical sync direct-only admission work limit exceeded");
   }
   return success();
 }
@@ -1111,8 +1114,9 @@ LogicalResult addSourceLocalCompletionEvents(
 }
 
 CanonicalSyncMechanismDescriptor
-makeDirectEvent(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
-                CanonicalSyncEventDomainId domain) {
+makeDirectEvent(const SyncCoverGraph &graph, SyncCoverDemandId demandId,
+                CanonicalSyncEventDomainId domain, bool attestDemand) {
+  const SyncCoverDemand &demand = graph.getDemands()[demandId];
   const SyncCoverNode &source = graph.getNodes()[demand.source];
   const SyncCoverNode &target = graph.getNodes()[demand.target];
   CanonicalSyncMechanismDescriptor descriptor;
@@ -1135,6 +1139,9 @@ makeDirectEvent(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
   CanonicalSyncSupplyBinding binding;
   binding.edge = getDemandEdge(demand);
   binding.eventUse = 0;
+  if (attestDemand) {
+    binding.attestedDemand = demandId;
+  }
   descriptor.supplies.push_back(std::move(binding));
   return descriptor;
 }
@@ -2030,7 +2037,8 @@ LogicalResult addLoopBoundarySourcePrefixProtocols(
 CanonicalSyncMechanismDescriptor
 makeBarrier(const SyncCoverGraph &graph,
             const std::vector<std::uint32_t> &allResources,
-            ArrayRef<SyncCoverDemandId> demands, bool broad) {
+            ArrayRef<SyncCoverDemandId> demands, bool broad,
+            bool attestDemands = false) {
   const SyncCoverDemand &first = graph.getDemands()[demands.front()];
   const SyncCoverNode &target = graph.getNodes()[first.target];
   CanonicalSyncMechanismDescriptor descriptor;
@@ -2048,6 +2056,9 @@ makeBarrier(const SyncCoverGraph &graph,
     CanonicalSyncSupplyBinding binding;
     binding.edge = getDemandEdge(graph.getDemands()[demandId]);
     binding.barrierAction = 0;
+    if (attestDemands) {
+      binding.attestedDemand = demandId;
+    }
     descriptor.supplies.push_back(std::move(binding));
   }
   return descriptor;
@@ -4016,7 +4027,7 @@ LogicalResult addExactEvents(
     const SyncCoverDemandSet &baseline,
     const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds,
     std::vector<DirectEventRecord> &directEvents,
-    bool requireTokenIndependentEvents = false,
+    bool requireIndependentEventProtocol = false,
     SyncCoverDemandSet *admittedDemands = nullptr,
     SyncCoverCoverageWorkBudget *admissionWork = nullptr) {
   const SyncCoverGraph &graph = program.getGraph();
@@ -4045,17 +4056,17 @@ LogicalResult addExactEvents(
       if (directEvent) {
         directEvents.push_back({demandId, *added.index, domain->second});
       }
-      return recordMechanicalDirectDemand(program, demandId, admittedDemands,
-                                          admissionWork);
+      return recordDirectOnlyDemand(program, demandId, admittedDemands,
+                                    admissionWork);
     };
 
     const bool repeatedDistanceZeroEvent =
         demand.distance == 0 &&
         (graph.getNearestEnclosingLoop(graph.getNodes()[demand.source].scope) ||
          graph.getNearestEnclosingLoop(graph.getNodes()[demand.target].scope));
-    if (requireTokenIndependentEvents && repeatedDistanceZeroEvent) {
+    if (requireIndependentEventProtocol && repeatedDistanceZeroEvent) {
       return program.getFunction().emitError(
-                 "canonical sync mechanical-direct mode cannot admit a "
+                 "canonical sync direct-only mode cannot admit a "
                  "loop-repeated one-bit event without an independent token "
                  "lifecycle protocol for demand ")
              << demandId;
@@ -4063,7 +4074,8 @@ LogicalResult addExactEvents(
     if (demand.distance == 0 && canUseDistanceZeroEvent(graph, demand) &&
         failed(
             record(problem.internMechanism(
-                       makeDirectEvent(graph, demand, domain->second),
+                       makeDirectEvent(graph, demandId, domain->second,
+                                       requireIndependentEventProtocol),
                        CanonicalSyncMechanismOrigin::DirectDistanceZeroEvent),
                    true))) {
       return failure();
@@ -4071,10 +4083,10 @@ LogicalResult addExactEvents(
     if (demand.distance != 0 && canUseRecurrenceEvent(graph, demand)) {
       CanonicalSyncMechanismDescriptor descriptor =
           makeRecurrenceEvent(graph, demand, domain->second);
-      if (requireTokenIndependentEvents &&
+      if (requireIndependentEventProtocol &&
           descriptor.kind != CanonicalSyncMechanismKind::Protocol) {
         return program.getFunction().emitError(
-                   "canonical sync mechanical-direct mode cannot admit a "
+                   "canonical sync direct-only mode cannot admit a "
                    "loop-repeated event without an independent token "
                    "lifecycle protocol for demand ")
                << demandId;
@@ -4379,7 +4391,8 @@ LogicalResult addDirectTargetedBarriers(
     }
     const std::array<SyncCoverDemandId, 1> directDemand{demandId};
     const CanonicalSyncProblemResult added = problem.internMechanism(
-        makeBarrier(graph, allResources, directDemand, false),
+        makeBarrier(graph, allResources, directDemand, false,
+                    /*attestDemands=*/true),
         CanonicalSyncMechanismOrigin::DirectTargetedBarrier);
     if (added.error == CanonicalSyncProblemError::LimitExceeded) {
       return program.getFunction().emitError(
@@ -4391,120 +4404,23 @@ LogicalResult addDirectTargetedBarriers(
                  "cannot add canonical sync direct targeted barrier, error=")
              << static_cast<unsigned>(added.error);
     }
-    if (failed(recordMechanicalDirectDemand(program, demandId, admittedDemands,
-                                            admissionWork))) {
+    if (failed(recordDirectOnlyDemand(program, demandId, admittedDemands,
+                                      admissionWork))) {
       return failure();
     }
   }
   return success();
 }
 
-/// Add one balanced, target-local fence for every cross-resource row that has
-/// no exact event or recurrence recipe. The source barrier, when required,
-/// drains only the source resource. The adjacent set/wait executes on the
-/// target path and therefore cannot become unbalanced across guards.
-LogicalResult addDirectBalancedTargetFences(
-    const CanonicalSyncProgram &program, CanonicalSyncPatternProblem &problem,
-    const SyncCoverDemandSet &baseline,
-    const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds) {
-  const SyncCoverGraph &graph = program.getGraph();
-  for (SyncCoverDemandId demandId : problem.getDemands()) {
-    if (baseline.contains(demandId)) {
-      continue;
-    }
-    const SyncCoverDemand &demand = graph.getDemands()[demandId];
-    const SyncCoverNode &source = graph.getNodes()[demand.source];
-    const SyncCoverNode &target = graph.getNodes()[demand.target];
-    if (source.resource == target.resource) {
-      continue;
-    }
-    const bool hasExactDirectRecipe = canUsePreciseEvent(graph, demand);
-    if (hasExactDirectRecipe) {
-      continue;
-    }
-    if (!canUseTargetPrefixEvent(program, demand)) {
-      const bool sameMacroOperation =
-          demand.source < program.getNodeBindings().size() &&
-          demand.target < program.getNodeBindings().size() &&
-          program.getNodeBindings()[demand.source].operation ==
-              program.getNodeBindings()[demand.target].operation;
-      return program.getFunction().emitError(
-                 "canonical sync direct catalog has no balanced fence for "
-                 "demand ")
-             << demandId << ", source-resource=" << source.resource
-             << ", target-resource=" << target.resource
-             << ", scope=" << demand.scope << ", distance=" << demand.distance
-             << ", same-macro-operation=" << sameMacroOperation;
-    }
-    const auto domain = domainIds.find({source.resource, target.resource});
-    if (domain == domainIds.end()) {
-      return program.getFunction().emitError(
-                 "canonical sync direct catalog has no event domain for "
-                 "demand ")
-             << demandId;
-    }
-    const std::array<SyncCoverDemandId, 1> directDemand{demandId};
-    CanonicalSyncMechanismDescriptor descriptor =
-        makeTargetPrefixEvent(program, directDemand, domain->second);
-    if (!verifyTargetPrefixEvent(program, directDemand, domain->second,
-                                 descriptor)) {
-      return program.getFunction().emitError(
-                 "cannot verify canonical sync direct balanced fence for "
-                 "demand ")
-             << demandId;
-    }
-    const CanonicalSyncProblemResult added = problem.internMechanism(
-        std::move(descriptor),
-        CanonicalSyncMechanismOrigin::DirectBalancedTargetFenceEvent);
-    if (added.error == CanonicalSyncProblemError::LimitExceeded) {
-      return program.getFunction().emitError(
-          "canonical sync mechanism limit prevents a complete direct "
-          "catalog");
-    }
-    if (!added || !added.index) {
-      return program.getFunction().emitError(
-                 "cannot add canonical sync direct balanced fence, error=")
-             << static_cast<unsigned>(added.error);
-    }
-  }
-  return success();
-}
-
 LogicalResult
-requireCompleteDirectCatalog(const CanonicalSyncProgram &program,
-                             CanonicalSyncPatternProblem &problem) {
-  SyncCoverDemandSet covered;
-  const CanonicalSyncProblemResult preview =
-      problem.previewCoveredDemands(covered);
-  if (!preview) {
-    return program.getFunction().emitError(
-        "cannot preview canonical sync direct catalog coverage");
-  }
-  for (SyncCoverDemandId demandId : problem.getDemands()) {
-    if (covered.contains(demandId)) {
-      continue;
-    }
-    const SyncCoverDemand &demand = program.getGraph().getDemands()[demandId];
-    const SyncCoverNode &source = program.getGraph().getNodes()[demand.source];
-    const SyncCoverNode &target = program.getGraph().getNodes()[demand.target];
-    return program.getFunction().emitError(
-               "canonical sync direct catalog leaves demand uncovered: ")
-           << demandId << ", source-resource=" << source.resource
-           << ", target-resource=" << target.resource
-           << ", scope=" << demand.scope << ", distance=" << demand.distance;
-  }
-  return success();
-}
-
-LogicalResult
-requireCompleteMechanicalCatalog(const CanonicalSyncProgram &program,
+requireCompleteDirectOnlyCatalog(const CanonicalSyncProgram &program,
                                  CanonicalSyncPatternProblem &problem,
                                  const SyncCoverDemandSet &baseline,
                                  const SyncCoverDemandSet &admittedDemands,
                                  SyncCoverCoverageWorkBudget &workBudget) {
   if (!consumeProtocolProduct(workBudget, problem.getDemands().size(), 2)) {
     return program.getFunction().emitError(
-        "canonical sync mechanical-direct completeness work limit exceeded");
+        "canonical sync direct-only completeness work limit exceeded");
   }
   for (SyncCoverDemandId demandId : problem.getDemands()) {
     if (baseline.contains(demandId) || admittedDemands.contains(demandId)) {
@@ -4514,7 +4430,7 @@ requireCompleteMechanicalCatalog(const CanonicalSyncProgram &program,
     const SyncCoverNode &source = program.getGraph().getNodes()[demand.source];
     const SyncCoverNode &target = program.getGraph().getNodes()[demand.target];
     return program.getFunction().emitError(
-               "canonical sync mechanical-direct catalog has no "
+               "canonical sync direct-only catalog has no "
                "independently attested recipe for demand ")
            << demandId << ", source-resource=" << source.resource
            << ", target-resource=" << target.resource
@@ -5426,12 +5342,11 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
       directOnlyCatalog &&
       (familyMask != 0 || options.patterns.enableConflictCoreRepair ||
        kind != CandidateCatalogKind::Precise ||
-       (mechanicalDirect && options.patterns.enableDirectPairs));
+       options.patterns.enableDirectPairs);
   if (invalidStrictConfiguration) {
     program.getFunction().emitError(
         "canonical sync direct-only catalog requires a core family mask, "
-        "disabled repair, precise construction, and mechanical-direct also "
-        "requires direct-only patterns");
+        "disabled repair, precise construction, and direct-only patterns");
     return {nullptr,
             {CanonicalSyncProblemError::InvalidMechanism, std::nullopt}};
   }
@@ -5464,6 +5379,18 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
   if (!configured) {
     return {nullptr, configured};
   }
+  if (directOnlyCatalog) {
+    const CanonicalSyncTargetCapabilities &target =
+        program.getTargetCapabilities();
+    const CanonicalSyncProblemResult exactGrounding =
+        problem->enableExactDirectCutGrounding(
+            target.directEventOrderingRequirements,
+            target.pipeBarrierOrderingRequirements,
+            target.directEventCompletesSourcePrefix.isEnabled());
+    if (!exactGrounding) {
+      return {nullptr, exactGrounding};
+    }
+  }
   const SyncCoverCoverageResult baseline = computeSyncCoverCoverage(
       program.getGraph(), problem->getExpansion(), {}, problem->getDemands());
   if (!baseline) {
@@ -5473,20 +5400,20 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
             {CanonicalSyncProblemError::CoverageFailure, std::nullopt}};
   }
 
-  SyncCoverCoverageWorkBudget mechanicalAdmissionWork(
+  SyncCoverCoverageWorkBudget directAdmissionWork(
       options.selection.maximumWorkUnits);
-  std::optional<SyncCoverDemandSet> mechanicallyAdmittedDemands;
-  if (mechanicalDirect) {
+  std::optional<SyncCoverDemandSet> directlyAdmittedDemands;
+  if (directOnlyCatalog) {
     const std::size_t demandCount = program.getGraph().getDemands().size();
     const std::size_t demandWords =
         demandCount / 64 + (demandCount % 64 != 0 ? 1 : 0);
-    if (!mechanicalAdmissionWork.consume(demandWords)) {
+    if (!directAdmissionWork.consume(demandWords)) {
       program.getFunction().emitError(
-          "canonical sync mechanical-direct admission work limit exceeded");
+          "canonical sync direct-only admission work limit exceeded");
       return {nullptr,
               {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
     }
-    mechanicallyAdmittedDemands.emplace(demandCount);
+    directlyAdmittedDemands.emplace(demandCount);
   }
 
   bool failedBuild = false;
@@ -5502,25 +5429,16 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
                                /*includeBasicOwnership=*/false)) ||
         failed(addDirectTargetedBarriers(
             program, *problem, baseline.covered,
-            mechanicallyAdmittedDemands ? &*mechanicallyAdmittedDemands
-                                        : nullptr,
-            mechanicalDirect ? &mechanicalAdmissionWork : nullptr)) ||
+            directlyAdmittedDemands ? &*directlyAdmittedDemands : nullptr,
+            &directAdmissionWork)) ||
         failed(addExactEvents(
             program, *problem, baseline.covered, domainIds, directEvents,
-            mechanicalDirect,
-            mechanicallyAdmittedDemands ? &*mechanicallyAdmittedDemands
-                                        : nullptr,
-            mechanicalDirect ? &mechanicalAdmissionWork : nullptr)) ||
-        (!mechanicalDirect &&
-         failed(addDirectBalancedTargetFences(program, *problem,
-                                              baseline.covered, domainIds))) ||
-        (mechanicalDirect
-             ? failed(requireCompleteMechanicalCatalog(
-                   program, *problem, baseline.covered,
-                   *mechanicallyAdmittedDemands, mechanicalAdmissionWork))
-             : failed(requireCompleteDirectCatalog(program, *problem))) ||
-        (options.patterns.enableDirectPairs &&
-         failed(addDirectPairPatterns(program, *problem, options.directPairs)));
+            /*requireIndependentEventProtocol=*/true,
+            directlyAdmittedDemands ? &*directlyAdmittedDemands : nullptr,
+            &directAdmissionWork)) ||
+        failed(requireCompleteDirectOnlyCatalog(
+            program, *problem, baseline.covered, *directlyAdmittedDemands,
+            directAdmissionWork));
   } else {
     std::map<EventDomainKey, CanonicalSyncEventDomainId> domainIds;
     std::vector<DirectEventRecord> directEvents;
@@ -5677,7 +5595,7 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
     }
   }
   if (failedBuild) {
-    if (mechanicalDirect && mechanicalAdmissionWork.exhausted) {
+    if (directOnlyCatalog && directAdmissionWork.exhausted) {
       return {nullptr,
               {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
     }
@@ -5702,7 +5620,8 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
         "canonical sync pattern generation reached its bounded proposal "
         "limit; singleton candidates remain available");
   }
-  const CanonicalSyncProblemResult frozen = problem->freeze();
+  const CanonicalSyncProblemResult frozen =
+      problem->freeze(directOnlyCatalog ? &directAdmissionWork : nullptr);
   return {std::move(problem), frozen, {}, {}, {}};
 }
 

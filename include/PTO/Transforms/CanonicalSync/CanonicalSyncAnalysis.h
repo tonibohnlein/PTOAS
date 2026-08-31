@@ -201,10 +201,25 @@ struct CanonicalSyncTargetCapabilities {
   /// programming scenario.
   CanonicalSyncDirectedResourceCapability directEventCompletion;
 
+  /// A Set on a compiler-exposed directed event waits for the previously
+  /// issued reads and writes on its source pipeline.
+  CanonicalSyncBooleanCapability directEventCompletesSourcePrefix;
+
+  /// Ordering properties supplied by every compiler-exposed direct HardEvent
+  /// in this profile. Pair legality and supplied semantics are independent:
+  /// a legal event must never inherit capabilities from the demand that
+  /// proposed it.
+  SyncCoverOrderingRequirementMask directEventOrderingRequirements = 0;
+
   /// Same-pipeline barriers admitted by the target contract. PIPE_ALL is
   /// handled separately as the required tail fence and is never a direct
   /// set-cover candidate.
   CanonicalSyncResourceCapability legalPipeBarriers;
+
+  /// Ordering properties supplied by every admitted targeted PipeBarrier.
+  /// Cache visibility is deliberately absent unless a future target contract
+  /// explicitly documents it.
+  SyncCoverOrderingRequirementMask pipeBarrierOrderingRequirements = 0;
 
   /// Compiler-owned IDs after static-Tensor reservations. The initial
   /// A2/A3/A5 contract admits only IDs 0 through 5.

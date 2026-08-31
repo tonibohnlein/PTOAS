@@ -79,13 +79,16 @@ SyncCoverDirectCut
 makeEventCut(SyncCoverMechanismId mechanism, std::uint32_t sourceResource,
              SyncCoverNodeId setAfter, std::uint32_t targetResource,
              SyncCoverNodeId waitBefore,
-             SyncCoverOrderingRequirementMask requirements = kDirectOrdering) {
-  return {mechanism, SyncCoverDirectCutKind::Event,
+             SyncCoverOrderingRequirementMask requirements = kDirectOrdering,
+             bool sourcePrefixCompletion = true) {
+  return {mechanism,
+          SyncCoverDirectCutKind::Event,
           makeCutPoint(SyncCoverCutPointKind::EventSet, sourceResource,
                        SyncCoverAnchorKind::AfterNode, setAfter),
           makeCutPoint(SyncCoverCutPointKind::EventWait, targetResource,
                        SyncCoverAnchorKind::BeforeNode, waitBefore),
-          requirements};
+          requirements,
+          sourcePrefixCompletion};
 }
 
 SyncCoverDirectCut makeBarrierCut(
@@ -95,8 +98,9 @@ SyncCoverDirectCut makeBarrierCut(
   const SyncCoverCutPoint point =
       makeCutPoint(SyncCoverCutPointKind::PipeBarrier, resource,
                    SyncCoverAnchorKind::BeforeNode, barrierBefore);
-  return {mechanism, SyncCoverDirectCutKind::PipeBarrier, point, point,
-          requirements};
+  return {mechanism,    SyncCoverDirectCutKind::PipeBarrier,
+          point,        point,
+          requirements, true};
 }
 
 bool testFlatEventCutCoversFourCorners() {
@@ -124,6 +128,80 @@ bool testFlatEventCutCoversFourCorners() {
                    result.completionOrigins.size() == 1 &&
                    result.covered.count() == 4,
                "one event cut grounds its complete four-corner rectangle");
+}
+
+bool testEventPrefixRequiresTargetCertificate() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId firstSource = takeIndex(
+      graph.addNode(1, 1, 0, 0), passed, "add uncertified prefix source");
+  const SyncCoverNodeId setSource = takeIndex(graph.addNode(1, 1, 0, 1), passed,
+                                              "add uncertified set source");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(2, 1, 0, 2), passed,
+                                           "add uncertified prefix target");
+  passed &= check(graph.addDemand(makeDemand(firstSource, target)),
+                  "add uncertified prefix demand");
+  passed &= check(graph.addDemand(makeDemand(setSource, target)),
+                  "add exact set-source demand");
+  passed &=
+      check(graph.freezeStructure(), "freeze uncertified event-prefix graph");
+  const SyncCoverFlatWorldResult result = computeSyncCoverFlatExactWorld(
+      graph,
+      {makeEventCut(8, 1, setSource, 2, target, kDirectOrdering,
+                    /*sourcePrefixCompletion=*/false)},
+      {{8}});
+  return passed &&
+         check(static_cast<bool>(result),
+               "evaluate an uncertified event prefix") &&
+         check(!result.covered.contains(0),
+               "an uncertified Set does not cover an earlier issued prefix") &&
+         check(result.covered.contains(1),
+               "an uncertified Set still covers its exact source");
+}
+
+bool testRegionWorldIncludesFixedCompletionSupplies() {
+  bool passed = true;
+  SyncCoverGraph fixedOnly;
+  const SyncCoverNodeId fixedSource = takeIndex(
+      fixedOnly.addNode(1, 1, 0, 0), passed, "add fixed supply source");
+  const SyncCoverNodeId fixedTarget = takeIndex(
+      fixedOnly.addNode(2, 1, 0, 1), passed, "add fixed supply target");
+  SyncCoverEdge fixed =
+      makeEdge(fixedSource, fixedTarget, SyncCoverEdgeKind::CompletionSupply);
+  fixed.suppliedRequirements = kDirectOrdering;
+  passed &=
+      check(fixedOnly.addEdge(std::move(fixed)), "add fixed completion supply");
+  passed &= check(fixedOnly.addDemand(makeDemand(fixedSource, fixedTarget)),
+                  "add fixed-only demand");
+  passed &= check(fixedOnly.freezeStructure(), "freeze fixed-only graph");
+  const SyncCoverRegionWorldResult fixedResult =
+      computeSyncCoverRegionExactWorlds(fixedOnly, {}, {{}});
+  passed &= check(fixedResult && fixedResult.coveredByWorld.size() == 1 &&
+                      fixedResult.coveredByWorld.front().contains(0),
+                  "the empty exact world retains fixed completion coverage");
+
+  SyncCoverGraph composed;
+  const SyncCoverNodeId source = takeIndex(composed.addNode(1, 1, 0, 0), passed,
+                                           "add composed fixed source");
+  const SyncCoverNodeId middle = takeIndex(composed.addNode(2, 1, 0, 1), passed,
+                                           "add composed fixed target");
+  const SyncCoverNodeId target = takeIndex(composed.addNode(3, 1, 0, 2), passed,
+                                           "add composed cut target");
+  SyncCoverEdge first =
+      makeEdge(source, middle, SyncCoverEdgeKind::CompletionSupply);
+  first.suppliedRequirements = kDirectOrdering;
+  passed &=
+      check(composed.addEdge(std::move(first)), "add composed fixed supply");
+  passed &= check(composed.addDemand(makeDemand(source, target)),
+                  "add fixed-plus-cut demand");
+  passed &= check(composed.freezeStructure(), "freeze composed fixed graph");
+  const SyncCoverRegionWorldResult composedResult =
+      computeSyncCoverRegionExactWorlds(
+          composed, {makeEventCut(9, 2, middle, 3, target)}, {{{9}}});
+  return passed &&
+         check(composedResult && composedResult.coveredByWorld.size() == 1 &&
+                   composedResult.coveredByWorld.front().contains(0),
+               "fixed completion composes with a selected direct cut");
 }
 
 bool testFlatBarrierCutCoversFourCorners() {
@@ -195,6 +273,40 @@ bool testFlatWorldQualifiersFailClosed() {
   return passed && check(invalid.error == SyncCoverFlatWorldError::InvalidCut &&
                              invalid.invalidIndex == 0,
                          "a point on the wrong physical resource fails closed");
+}
+
+bool testHardwareSpecialRequiresTargetCapability() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId source = takeIndex(graph.addNode(1, 1, 0, 0), passed,
+                                           "add hardware-special source");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(2, 1, 0, 1), passed,
+                                           "add hardware-special target");
+  SyncCoverDemand demand = makeDemand(source, target);
+  demand.orderingRequirements =
+      syncCoverOrderingRequirementBit(
+          SyncCoverOrderingRequirement::PipelineCompletionBeforeAccess) |
+      syncCoverOrderingRequirementBit(
+          SyncCoverOrderingRequirement::HardwareSpecialOrder);
+  passed &=
+      check(graph.addDemand(std::move(demand)), "add hardware-special demand");
+  passed &= check(graph.freezeStructure(), "freeze hardware-special graph");
+
+  SyncCoverDirectCut pipelineOnly = makeEventCut(1, 1, source, 2, target);
+  pipelineOnly.suppliedRequirements = syncCoverOrderingRequirementBit(
+      SyncCoverOrderingRequirement::PipelineCompletionBeforeAccess);
+  const SyncCoverFlatWorldResult underSpecified =
+      computeSyncCoverFlatExactWorld(graph, {pipelineOnly}, {{1}});
+
+  SyncCoverDirectCut targetAuthorized = makeEventCut(2, 1, source, 2, target);
+  const SyncCoverFlatWorldResult authorized =
+      computeSyncCoverFlatExactWorld(graph, {targetAuthorized}, {{2}});
+  return passed &&
+         check(underSpecified && !underSpecified.coversAll(),
+               "a demand cannot grant its hardware-special capability to a "
+               "pipeline-only cut") &&
+         check(authorized && authorized.coversAll(),
+               "a target-authorized hardware-special cut covers the demand");
 }
 
 bool testFlatWorldIssueOrderCannotCreateCompletion() {
@@ -396,6 +508,25 @@ bool testRegionWorldChoiceMustIntersectionAndSpecialization() {
   oneWorld.maximumWorldsPerBatch = 1;
   const SyncCoverRegionWorldResult bounded = computeSyncCoverRegionExactWorlds(
       graph, cuts, {firstAlternative, bothAlternatives}, oneWorld);
+  SyncCoverRegionWorldLimits oneIncidence;
+  oneIncidence.maximumWorldMechanismIncidences = 1;
+  const SyncCoverRegionWorldResult incidenceBounded =
+      computeSyncCoverRegionExactWorlds(
+          graph, cuts, {firstAlternative, bothAlternatives}, oneIncidence);
+  SyncCoverRegionWorldLimits noResultStorage;
+  noResultStorage.maximumResultWords = 0;
+  const SyncCoverRegionWorldResult resultBounded =
+      computeSyncCoverRegionExactWorlds(graph, cuts, {firstAlternative},
+                                        noResultStorage);
+  SyncCoverCoverageWorkBudget measuredWork;
+  const SyncCoverRegionWorldResult measured = computeSyncCoverRegionExactWorlds(
+      graph, cuts, {firstAlternative, bothAlternatives}, {}, &measuredWork);
+  SyncCoverCoverageWorkBudget exactWork(measuredWork.workUnits);
+  const SyncCoverRegionWorldResult exact = computeSyncCoverRegionExactWorlds(
+      graph, cuts, {firstAlternative, bothAlternatives}, {}, &exactWork);
+  SyncCoverCoverageWorkBudget belowWork(measuredWork.workUnits - 1);
+  const SyncCoverRegionWorldResult below = computeSyncCoverRegionExactWorlds(
+      graph, cuts, {firstAlternative, bothAlternatives}, {}, &belowWork);
   return passed &&
          check(hierarchical && hierarchical.coveredByWorld.size() == 2,
                "evaluate both exact worlds in one region batch") &&
@@ -410,7 +541,172 @@ bool testRegionWorldChoiceMustIntersectionAndSpecialization() {
                    hierarchical.statistics.guardSpecializations != 0,
                "choice intersection retains facts supplied on every path") &&
          check(bounded.error == SyncCoverFlatWorldError::LimitExceeded,
-               "world batches fail before exceeding their configured bound");
+               "world batches fail before exceeding their configured bound") &&
+         check(incidenceBounded.error ==
+                       SyncCoverFlatWorldError::LimitExceeded &&
+                   incidenceBounded.coveredByWorld.empty(),
+               "world incidences fail before result allocation") &&
+         check(resultBounded.error == SyncCoverFlatWorldError::LimitExceeded &&
+                   resultBounded.coveredByWorld.empty(),
+               "result words fail before result allocation") &&
+         check(measured && exact &&
+                   exactWork.workUnits == measuredWork.workUnits,
+               "region worlds accept their exact aggregate work bound") &&
+         check(below.error == SyncCoverFlatWorldError::WorkLimitExceeded &&
+                   belowWork.exhausted,
+               "region worlds reject one below their aggregate work bound");
+}
+
+bool testRegionWorldLargeStateIsFullyBounded() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverRegionId sequence =
+      takeIndex(graph.addRegion(0, SyncCoverRegionKind::Sequence,
+                                SyncCoverRegionCardinality::ExactlyOnce),
+                passed, "add large-state root sequence");
+  std::vector<SyncCoverNodeId> linearNodes;
+  for (std::uint32_t resource = 1; resource <= 3; ++resource) {
+    linearNodes.push_back(addNodeInRegion(graph, resource, resource - 1,
+                                          sequence, passed,
+                                          "add large-state prefix node"));
+  }
+
+  const SyncCoverControlId control =
+      takeIndex(graph.addControl(2), passed, "add large-state control");
+  const SyncCoverRegionId choice = takeIndex(
+      graph.addRegion(sequence, SyncCoverRegionKind::Choice,
+                      SyncCoverRegionCardinality::ExactlyOnce, 0, {}, control),
+      passed, "add large-state choice");
+  passed &=
+      check(graph.setControlRegion(control, choice), "bind large-state choice");
+  for (unsigned alternative = 0; alternative < 2; ++alternative) {
+    SyncCoverGuard guard{{{control, alternative}}};
+    const SyncCoverRegionId alternativeRegion =
+        takeIndex(graph.addRegion(choice, SyncCoverRegionKind::Alternative,
+                                  SyncCoverRegionCardinality::ZeroOrOne, 0,
+                                  guard, control, alternative),
+                  passed, "add large-state alternative");
+    addNodeInRegion(graph, 4 + alternative, 3 + alternative, alternativeRegion,
+                    passed, "add large-state alternative node", guard);
+  }
+  for (std::uint32_t resource = 6; resource <= 8; ++resource) {
+    linearNodes.push_back(addNodeInRegion(graph, resource, resource - 1,
+                                          sequence, passed,
+                                          "add large-state suffix node"));
+  }
+
+  for (std::size_t index = 1; index < linearNodes.size(); ++index) {
+    SyncCoverEdge fixed = makeEdge(linearNodes[index - 1], linearNodes[index],
+                                   SyncCoverEdgeKind::CompletionSupply);
+    fixed.suppliedRequirements = kDirectOrdering;
+    passed &= check(graph.addEdge(std::move(fixed)),
+                    "add large-state fixed completion supply");
+  }
+  for (std::size_t source = 0; source < 3; ++source) {
+    passed &= check(
+        graph.addDemand(makeDemand(linearNodes[source], linearNodes.back())),
+        "add large-state demand");
+  }
+  passed &= check(graph.freezeStructure(), "freeze large-state graph");
+
+  std::vector<SyncCoverDirectCut> cuts;
+  for (std::size_t cut = 0; cut < 5; ++cut) {
+    cuts.push_back(makeBarrierCut(cut + 1,
+                                  graph.getNodes()[linearNodes[cut]].resource,
+                                  linearNodes[cut]));
+  }
+  std::vector<SyncCoverExactWorld> worlds{{{}}};
+  for (SyncCoverMechanismId mechanism = 1; mechanism <= 5; ++mechanism) {
+    worlds.push_back({{mechanism}});
+  }
+  for (SyncCoverMechanismId first = 1; first <= 5; ++first) {
+    for (SyncCoverMechanismId second = first + 1; second <= 5; ++second) {
+      worlds.push_back({{first, second}});
+    }
+  }
+  worlds.push_back({{1, 2, 3}});
+
+  SyncCoverCoverageWorkBudget measuredWork;
+  const SyncCoverRegionWorldResult measured =
+      computeSyncCoverRegionExactWorlds(graph, cuts, worlds, {}, &measuredWork);
+  SyncCoverRegionWorldLimits exactStateLimits;
+  exactStateLimits.maximumStateWords =
+      measured.statistics.maximumLiveStateWords;
+  const SyncCoverRegionWorldResult exactState =
+      computeSyncCoverRegionExactWorlds(graph, cuts, worlds, exactStateLimits);
+  SyncCoverRegionWorldLimits belowStateLimits = exactStateLimits;
+  --belowStateLimits.maximumStateWords;
+  const SyncCoverRegionWorldResult belowState =
+      computeSyncCoverRegionExactWorlds(graph, cuts, worlds, belowStateLimits);
+  SyncCoverCoverageWorkBudget exactWork(measuredWork.workUnits);
+  const SyncCoverRegionWorldResult exactWorkResult =
+      computeSyncCoverRegionExactWorlds(graph, cuts, worlds, {}, &exactWork);
+  SyncCoverCoverageWorkBudget belowWork(measuredWork.workUnits - 1);
+  const SyncCoverRegionWorldResult belowWorkResult =
+      computeSyncCoverRegionExactWorlds(graph, cuts, worlds, {}, &belowWork);
+  return passed &&
+         check(measured && measured.statistics.choiceIntersections != 0 &&
+                   measured.statistics.maximumLiveStateWords > 0,
+               "measure many-world resource, fixed-supply, and choice state") &&
+         check(static_cast<bool>(exactState),
+               "accept the exact base-plus-branch live-state bound") &&
+         check(belowState.error == SyncCoverFlatWorldError::LimitExceeded &&
+                   belowState.coveredByWorld.empty(),
+               "reject one below the peak live-state bound") &&
+         check(exactWorkResult && exactWork.workUnits == measuredWork.workUnits,
+               "accept the exact full state-traversal work bound") &&
+         check(belowWorkResult.error ==
+                       SyncCoverFlatWorldError::WorkLimitExceeded &&
+                   belowWork.exhausted &&
+                   belowWorkResult.coveredByWorld.empty(),
+               "reject one below the full state-traversal work bound");
+}
+
+bool testRegionWorldLongGuardsUseAggregateWorkBudget() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  SyncCoverGuard longGuard;
+  constexpr std::size_t kControls = 96;
+  for (std::size_t control = 0; control < kControls; ++control) {
+    const SyncCoverControlId id =
+        takeIndex(graph.addControl(2), passed, "add long-guard control");
+    longGuard.literals.push_back({id, 0});
+  }
+  const SyncCoverNodeId source = takeIndex(graph.addNode(1, 1, 0, 0, longGuard),
+                                           passed, "add long-guard source");
+  const SyncCoverNodeId target = takeIndex(graph.addNode(2, 1, 0, 1, longGuard),
+                                           passed, "add long-guard target");
+  SyncCoverDemand guardedDemand = makeDemand(source, target);
+  guardedDemand.sourceGuard = longGuard;
+  guardedDemand.targetGuard = longGuard;
+  passed &=
+      check(graph.addDemand(std::move(guardedDemand)), "add long-guard demand");
+  passed &= check(graph.freezeStructure(), "freeze long-guard graph");
+
+  SyncCoverDirectCut cut = makeEventCut(1, 1, source, 2, target);
+  cut.source.guard = longGuard;
+  cut.target.guard = longGuard;
+  const std::vector<SyncCoverDirectCut> cuts{cut};
+  const std::vector<SyncCoverExactWorld> worlds{{{1}}};
+  SyncCoverCoverageWorkBudget measuredWork;
+  const SyncCoverRegionWorldResult measured =
+      computeSyncCoverRegionExactWorlds(graph, cuts, worlds, {}, &measuredWork);
+  SyncCoverCoverageWorkBudget exactWork(measuredWork.workUnits);
+  const SyncCoverRegionWorldResult exact =
+      computeSyncCoverRegionExactWorlds(graph, cuts, worlds, {}, &exactWork);
+  SyncCoverCoverageWorkBudget belowWork(measuredWork.workUnits - 1);
+  const SyncCoverRegionWorldResult below =
+      computeSyncCoverRegionExactWorlds(graph, cuts, worlds, {}, &belowWork);
+  return passed &&
+         check(measured && measured.coveredByWorld.size() == 1 &&
+                   measured.coveredByWorld.front().count() ==
+                       measured.coveredByWorld.front().size(),
+               "ground a long normalized guard without copying or sorting") &&
+         check(exact && exactWork.workUnits == measuredWork.workUnits,
+               "accept long-guard grounding at its exact work bound") &&
+         check(below.error == SyncCoverFlatWorldError::WorkLimitExceeded &&
+                   belowWork.exhausted && below.coveredByWorld.empty(),
+               "reject long-guard grounding one below its aggregate budget");
 }
 
 bool testRegionWorldChoiceDoesNotLeakEventToken() {
@@ -1757,13 +2053,18 @@ bool testMeteredSupplySortingScalesNLogN() {
 int main() {
   bool passed = true;
   passed &= testFlatEventCutCoversFourCorners();
+  passed &= testEventPrefixRequiresTargetCertificate();
   passed &= testFlatBarrierCutCoversFourCorners();
+  passed &= testRegionWorldIncludesFixedCompletionSupplies();
   passed &= testFlatWorldQualifiersFailClosed();
+  passed &= testHardwareSpecialRequiresTargetCapability();
   passed &= testFlatWorldIssueOrderCannotCreateCompletion();
   passed &= testFlatWorldHonorsBoundariesAndRejectsRecurrence();
   passed &= testFlatWorldComposesCompleteEnabledSet();
   passed &= testRegionWorldMatchesFlatExactlyOnce();
   passed &= testRegionWorldChoiceMustIntersectionAndSpecialization();
+  passed &= testRegionWorldLargeStateIsFullyBounded();
+  passed &= testRegionWorldLongGuardsUseAggregateWorkBudget();
   passed &= testRegionWorldChoiceDoesNotLeakEventToken();
   passed &= testRegionWorldOptionalGuardUsesMustSemantics();
   passed &= testOneSupplyCoversSeveralDemands();

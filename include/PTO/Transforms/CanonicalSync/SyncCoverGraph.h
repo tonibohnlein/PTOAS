@@ -239,6 +239,11 @@ struct SyncCoverEdge {
   unsigned distance = 0;
   SyncCoverGuard sourceGuard;
   SyncCoverGuard targetGuard;
+  /// Target-authorized capabilities supplied by a fixed CompletionSupply
+  /// edge. Other edge kinds ignore this field.
+  SyncCoverOrderingRequirementMask suppliedRequirements =
+      syncCoverOrderingRequirementBit(
+          SyncCoverOrderingRequirement::PipelineCompletionBeforeAccess);
 };
 
 struct SyncCoverDemand {
@@ -520,8 +525,8 @@ public:
                                       SyncCoverRegionId region);
   SyncCoverGraphResult
   addRegion(SyncCoverRegionId parent, SyncCoverRegionKind kind,
-            SyncCoverRegionCardinality cardinality,
-            SyncCoverScopeId scope = 0, SyncCoverGuard guard = {},
+            SyncCoverRegionCardinality cardinality, SyncCoverScopeId scope = 0,
+            SyncCoverGuard guard = {},
             std::optional<SyncCoverControlId> control = std::nullopt,
             std::optional<unsigned> alternative = std::nullopt);
   SyncCoverGraphResult addControl(unsigned alternatives,

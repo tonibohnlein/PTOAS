@@ -461,6 +461,8 @@ LogicalResult ProgramBuilder::addIssueNode(SyncCoverNodeId target,
           edge.target = target;
           edge.scope = *scope;
           edge.kind = SyncCoverEdgeKind::CompletionSupply;
+          edge.suppliedRequirements =
+              targetCapabilities_.pipeBarrierOrderingRequirements;
           const bool guardStorageUnavailable =
               !consumePairInspections(boundary.guard->literals.size()) ||
               !consumePairInspections(boundary.guard->literals.size());
