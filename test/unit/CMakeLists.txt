@@ -191,6 +191,17 @@ add_test(NAME pto_sync_cover_coverage_unit
 )
 set_tests_properties(pto_sync_cover_coverage_unit PROPERTIES LABELS "PTO;unit")
 
+add_executable(pto-sync-cover-protocol-unit-test
+  SyncCoverProtocolTest.cpp
+)
+target_link_libraries(pto-sync-cover-protocol-unit-test PRIVATE
+  PTOSyncCoverCore
+)
+add_test(NAME pto_sync_cover_protocol_unit
+  COMMAND pto-sync-cover-protocol-unit-test
+)
+set_tests_properties(pto_sync_cover_protocol_unit PROPERTIES LABELS "PTO;unit")
+
 add_executable(pto-canonical-sync-selection-unit-test
   CanonicalSyncSelectionTest.cpp
 )

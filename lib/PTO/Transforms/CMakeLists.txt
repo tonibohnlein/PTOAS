@@ -32,6 +32,10 @@ add_library(PTOSyncCoverCore OBJECT
   CanonicalSync/SyncCoverGraphQuery.cpp
   CanonicalSync/SyncCoverGraphStorage.cpp
   CanonicalSync/SyncCoverGraphValidation.cpp
+  CanonicalSync/SyncCoverProtocol.cpp
+  CanonicalSync/SyncCoverProtocolAutomaton.cpp
+  CanonicalSync/SyncCoverProtocolCoverage.cpp
+  CanonicalSync/SyncCoverProtocolLifecycle.cpp
   CanonicalSync/SyncCoverStorageLifecycle.cpp
   CanonicalSync/SyncCoverStorageLifecycleScc.cpp
   CanonicalSync/SyncCoverStorageProtocolAutomata.cpp
