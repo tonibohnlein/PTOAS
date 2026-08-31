@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverGraph.h"
 
@@ -12,6 +14,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <sstream>
 #include <utility>
 
 using namespace mlir::pto;
@@ -146,13 +149,13 @@ SyncCoverGraph::setScopeTimeline(SyncCoverScopeId scope,
   return {SyncCoverGraphError::None, scope};
 }
 
-SyncCoverGraphResult
-SyncCoverGraph::addNode(std::uint32_t resource, std::uint64_t weight,
-                        SyncCoverScopeId scope, std::size_t order,
-                        SyncCoverGuard guard,
-                        std::vector<std::uint32_t> completionTargets,
-                        std::optional<SyncCoverNodeId> physicalAnchor,
-                        bool completionSignalCoversIssuedPrefix) {
+SyncCoverGraphResult SyncCoverGraph::addNode(
+    std::uint32_t resource, std::uint64_t weight, SyncCoverScopeId scope,
+    std::size_t order, SyncCoverGuard guard,
+    std::vector<std::uint32_t> completionTargets,
+    std::optional<SyncCoverNodeId> physicalAnchor,
+    bool completionSignalCoversIssuedPrefix, std::size_t physicalOperation,
+    int macroPhase, std::vector<unsigned> completedResults) {
   if (!canMutateStructure()) {
     return {SyncCoverGraphError::StructureFrozen, nodes_.size()};
   }
@@ -186,7 +189,14 @@ SyncCoverGraph::addNode(std::uint32_t resource, std::uint64_t weight,
   completionTargets.erase(
       std::unique(completionTargets.begin(), completionTargets.end()),
       completionTargets.end());
+  std::sort(completedResults.begin(), completedResults.end());
+  completedResults.erase(
+      std::unique(completedResults.begin(), completedResults.end()),
+      completedResults.end());
   const SyncCoverNodeId id = nodes_.size();
+  if (physicalOperation == std::numeric_limits<std::size_t>::max()) {
+    physicalOperation = id;
+  }
   const SyncCoverNodeId anchor = physicalAnchor.value_or(id);
   if (anchor > id || (anchor < id && nodes_[anchor].physicalAnchor != anchor)) {
     return {SyncCoverGraphError::InvalidNode, anchor};
@@ -201,7 +211,10 @@ SyncCoverGraph::addNode(std::uint32_t resource, std::uint64_t weight,
                     {},
                     anchor,
                     id,
-                    completionSignalCoversIssuedPrefix});
+                    completionSignalCoversIssuedPrefix,
+                    physicalOperation,
+                    macroPhase,
+                    std::move(completedResults)});
   return {SyncCoverGraphError::None, id};
 }
 
@@ -312,6 +325,9 @@ SyncCoverGraphResult SyncCoverGraph::addDemand(SyncCoverDemand demand) {
   if (invalidKind) {
     return {SyncCoverGraphError::InvalidDemandKind, demands_.size()};
   }
+  if (!isValidOrderingRequirements(demand.orderingRequirements)) {
+    return {SyncCoverGraphError::InvalidOrderingRequirement, demands_.size()};
+  }
   if (demand.distance != 0 &&
       (demand.scope == 0 || !scopes_[demand.scope].isLoop)) {
     return {SyncCoverGraphError::InvalidDistance, demands_.size()};
@@ -364,6 +380,7 @@ SyncCoverGraphResult SyncCoverGraph::addDemand(SyncCoverDemand demand) {
     return {SyncCoverGraphError::ArithmeticOverflow, existing->second};
   }
   merged.originalDemandCount += demand.originalDemandCount;
+  merged.orderingRequirements |= demand.orderingRequirements;
   merged.provenanceKinds.insert(merged.provenanceKinds.end(),
                                 demand.provenanceKinds.begin(),
                                 demand.provenanceKinds.end());
@@ -385,6 +402,158 @@ SyncCoverGraphResult SyncCoverGraph::addDemand(SyncCoverDemand demand) {
   }
   demands_[existing->second] = std::move(merged);
   return {SyncCoverGraphError::None, existing->second};
+}
+
+std::string SyncCoverGraph::getDeterministicRawDump() const {
+  std::ostringstream output;
+  const auto printGuard = [&](const SyncCoverGuard &guard) {
+    output << '[';
+    for (std::size_t index = 0; index < guard.literals.size(); ++index) {
+      if (index != 0) {
+        output << ',';
+      }
+      output << guard.literals[index].control << ':'
+             << guard.literals[index].alternative;
+    }
+    output << ']';
+  };
+  for (const SyncCoverScope &scope : scopes_) {
+    output << "scope " << scope.id << " parent=" << scope.parent
+           << " must=" << scope.mustExecuteWithinParent
+           << " loop=" << scope.isLoop << " timeline=";
+    if (scope.timeline) {
+      output << '[' << scope.timeline->begin << ',' << scope.timeline->end
+             << ']';
+    } else {
+      output << "none";
+    }
+    output << " guard=";
+    printGuard(scope.guard);
+    output << '\n';
+  }
+  for (const SyncCoverControl &control : controls_) {
+    output << "control " << control.id
+           << " alternatives=" << control.alternatives
+           << " scope=" << control.scope << " phase-relation=";
+    if (control.phaseRelation) {
+      output << "loop:" << control.phaseRelation->loopScope
+             << ",initial:" << control.phaseRelation->initialPhase
+             << ",states:[";
+      for (std::size_t phase = 0;
+           phase < control.phaseRelation->nextPhase.size(); ++phase) {
+        if (phase != 0) {
+          output << ',';
+        }
+        output << phase << ':'
+               << control.phaseRelation->activeAlternative[phase] << "->"
+               << control.phaseRelation->nextPhase[phase];
+      }
+      output << ']';
+    } else {
+      output << "none";
+    }
+    output << " successor-relation=";
+    if (control.successorRelation) {
+      output << "loop:" << control.successorRelation->loopScope
+             << ",alternative:"
+             << control.successorRelation->hasSuccessorAlternative;
+    } else {
+      output << "none";
+    }
+    output << '\n';
+  }
+  for (const SyncCoverNode &node : nodes_) {
+    output << "node " << node.id << " op=" << node.physicalOperation
+           << " phase=" << node.macroPhase << " pipe=" << node.resource
+           << " scope=" << node.scope << " order=" << node.order
+           << " anchor=" << node.physicalAnchor << " exit=" << node.physicalExit
+           << " prefix-signal=" << node.completionSignalCoversIssuedPrefix
+           << " complete-results=";
+    output << '[';
+    for (std::size_t index = 0; index < node.completedResults.size(); ++index) {
+      if (index != 0) {
+        output << ',';
+      }
+      output << node.completedResults[index];
+    }
+    output << "] completion-targets=[";
+    for (std::size_t index = 0; index < node.completionTargets.size();
+         ++index) {
+      if (index != 0) {
+        output << ',';
+      }
+      output << node.completionTargets[index];
+    }
+    output << "] guard=";
+    printGuard(node.guard);
+    output << '\n';
+  }
+  for (std::size_t edgeId = 0; edgeId < edges_.size(); ++edgeId) {
+    const SyncCoverEdge &edge = edges_[edgeId];
+    output << "edge " << edgeId << " source=" << edge.source
+           << " target=" << edge.target
+           << " kind=" << static_cast<unsigned>(edge.kind)
+           << " scope=" << edge.scope << " distance=" << edge.distance
+           << " source-guard=";
+    printGuard(edge.sourceGuard);
+    output << " target-guard=";
+    printGuard(edge.targetGuard);
+    output << '\n';
+  }
+  for (const SyncCoverStorageDomain &domain : storageDomains_) {
+    output << "domain " << domain.id
+           << " role=" << static_cast<unsigned>(domain.role)
+           << " space=" << domain.addressSpace << '\n';
+  }
+  for (const SyncCoverStorageAccess &access : storageAccesses_) {
+    output << "access " << access.id << " node=" << access.node
+           << " domain=" << access.domain << " family=" << access.family
+           << " range=[" << access.extent.begin << ',' << access.extent.end
+           << ") mode=" << static_cast<unsigned>(access.mode)
+           << " path=" << static_cast<unsigned>(access.path)
+           << " exact=" << access.exactPhysical << " ordinal=";
+    if (access.addressOrdinal) {
+      output << *access.addressOrdinal;
+    } else {
+      output << "none";
+    }
+    output << '\n';
+  }
+  for (const SyncCoverStorageWitness &witness : storageWitnesses_) {
+    output << "witness " << witness.id << " source=" << witness.sourceAccess
+           << " target=" << witness.targetAccess << " overlap=["
+           << witness.overlap.begin << ',' << witness.overlap.end << ")\n";
+  }
+  for (SyncCoverDemandId demandId = 0; demandId < demands_.size(); ++demandId) {
+    const SyncCoverDemand &demand = demands_[demandId];
+    output << "demand " << demandId << " source=" << demand.source
+           << " target=" << demand.target << " scope=" << demand.scope
+           << " distance=" << demand.distance << " requirements="
+           << static_cast<unsigned>(demand.orderingRequirements)
+           << " original-count=" << demand.originalDemandCount << " kinds=";
+    output << '[';
+    for (std::size_t index = 0; index < demand.provenanceKinds.size();
+         ++index) {
+      if (index != 0) {
+        output << ',';
+      }
+      output << static_cast<unsigned>(demand.provenanceKinds[index]);
+    }
+    output << "] witnesses=[";
+    for (std::size_t index = 0; index < demand.storageWitnesses.size();
+         ++index) {
+      if (index != 0) {
+        output << ',';
+      }
+      output << demand.storageWitnesses[index];
+    }
+    output << "] source-guard=";
+    printGuard(demand.sourceGuard);
+    output << " target-guard=";
+    printGuard(demand.targetGuard);
+    output << '\n';
+  }
+  return output.str();
 }
 
 SyncCoverGraphResult
@@ -425,20 +594,17 @@ SyncCoverGraphResult SyncCoverGraph::setCrossResourceTargetedBarrierPairs(
             crossResourceTargetedBarrierPairs_.size()};
   }
   std::sort(resourcePairs.begin(), resourcePairs.end());
-  resourcePairs.erase(
-      std::unique(resourcePairs.begin(), resourcePairs.end()),
-      resourcePairs.end());
-  const bool invalid = std::any_of(resourcePairs.begin(), resourcePairs.end(),
-                                   [](const auto &pair) {
-    return pair.first == pair.second;
-  });
+  resourcePairs.erase(std::unique(resourcePairs.begin(), resourcePairs.end()),
+                      resourcePairs.end());
+  const bool invalid =
+      std::any_of(resourcePairs.begin(), resourcePairs.end(),
+                  [](const auto &pair) { return pair.first == pair.second; });
   if (invalid) {
     return {SyncCoverGraphError::InvalidCompletionTargets,
             crossResourceTargetedBarrierPairs_.size()};
   }
   crossResourceTargetedBarrierPairs_ = std::move(resourcePairs);
-  return {SyncCoverGraphError::None,
-          crossResourceTargetedBarrierPairs_.size()};
+  return {SyncCoverGraphError::None, crossResourceTargetedBarrierPairs_.size()};
 }
 
 SyncCoverGraphResult SyncCoverGraph::setTargetCompletionResources(

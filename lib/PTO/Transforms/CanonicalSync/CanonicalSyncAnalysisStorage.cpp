@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "CanonicalSyncAnalysisInternal.h"
 
@@ -71,6 +73,17 @@ bool checkedMultiplySize(std::size_t first, std::size_t second,
   }
   result = first * second;
   return true;
+}
+
+SyncCoverStorageAccessPath getAccessPath(const SyncCoverGraph &graph,
+                                         SyncCoverNodeId node,
+                                         AddressSpace space) {
+  const bool scalarGlobalMemory =
+      space == AddressSpace::GM &&
+      graph.getNodes()[node].resource ==
+          static_cast<std::uint32_t>(PipelineType::PIPE_S);
+  return scalarGlobalMemory ? SyncCoverStorageAccessPath::ScalarDCache
+                            : SyncCoverStorageAccessPath::PhysicalPipeline;
 }
 
 std::size_t logarithmicWorkBound(std::size_t count) {
@@ -283,7 +296,8 @@ LogicalResult ProgramBuilder::materializeNodeAccesses(SyncCoverNodeId node) {
     auto domainPosition = storageDomains_.find(access.space);
     if (domainPosition == storageDomains_.end()) {
       const SyncCoverGraphResult added =
-          graph_.addStorageDomain(getStorageDomainRole(access.space));
+          graph_.addStorageDomain(getStorageDomainRole(access.space),
+                                  static_cast<std::uint32_t>(access.space));
       if (!added) {
         return function_.emitError(
             "cannot construct canonical sync storage domain");
@@ -292,6 +306,8 @@ LogicalResult ProgramBuilder::materializeNodeAccesses(SyncCoverNodeId node) {
           storageDomains_.emplace(access.space, *added.index).first;
     }
     const SyncCoverStorageDomainId domain = domainPosition->second;
+    const SyncCoverStorageAccessPath path =
+        getAccessPath(graph_, node, access.space);
 
     auto familyPosition = storageFamilies_.find(access.root);
     if (familyPosition == storageFamilies_.end()) {
@@ -341,7 +357,7 @@ LogicalResult ProgramBuilder::materializeNodeAccesses(SyncCoverNodeId node) {
       }
       const SyncCoverGraphResult added = graph_.addStorageAccess(
           node, domain, family, {access.addresses[ordinal], ends[ordinal]},
-          access.mode, static_cast<unsigned>(ordinal), exactLocal);
+          access.mode, static_cast<unsigned>(ordinal), exactLocal, path);
       if (!added) {
         return function_.emitError(
             "cannot construct canonical sync storage access");
@@ -363,7 +379,8 @@ ProgramBuilder::addConservativeAccess(ExtractedAccess &access,
   }
   const SyncCoverGraphResult added = graph_.addStorageAccess(
       access.node, domain, family,
-      {0, std::numeric_limits<std::uint64_t>::max()}, access.mode);
+      {0, std::numeric_limits<std::uint64_t>::max()}, access.mode, std::nullopt,
+      false, getAccessPath(graph_, access.node, access.space));
   if (!added) {
     return function_.emitError(
         "cannot construct conservative canonical sync storage access");

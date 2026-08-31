@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverGraph.h"
 
@@ -217,6 +219,9 @@ SyncCoverGraphResult SyncCoverGraph::validateScopesControlsAndNodes() const {
       }
     }
   }
+  std::map<std::size_t, SyncCoverNodeId> firstPhysicalNodes;
+  std::map<std::size_t, std::set<int>> physicalOperationPhases;
+  std::map<std::size_t, std::set<unsigned>> physicalOperationResults;
   for (std::size_t index = 0; index < nodes_.size(); ++index) {
     const SyncCoverNode &node = nodes_[index];
     if (node.id != index || !hasValidScope(node.scope)) {
@@ -251,6 +256,33 @@ SyncCoverGraphResult SyncCoverGraph::validateScopesControlsAndNodes() const {
                            node.completionTargets.end()) !=
             node.completionTargets.end()) {
       return {SyncCoverGraphError::InvalidCompletionTargets, index};
+    }
+    if (node.macroPhase < -1 ||
+        !std::is_sorted(node.completedResults.begin(),
+                        node.completedResults.end()) ||
+        std::adjacent_find(node.completedResults.begin(),
+                           node.completedResults.end()) !=
+            node.completedResults.end()) {
+      return {SyncCoverGraphError::InvalidNode, index};
+    }
+    const auto [firstNode, insertedPhysicalOperation] =
+        firstPhysicalNodes.try_emplace(node.physicalOperation, index);
+    if (!insertedPhysicalOperation &&
+        (node.macroPhase < 0 || nodes_[firstNode->second].macroPhase < 0 ||
+         node.physicalAnchor != nodes_[firstNode->second].physicalAnchor)) {
+      return {SyncCoverGraphError::InvalidNode, index};
+    }
+    if (node.macroPhase >= 0 && !physicalOperationPhases[node.physicalOperation]
+                                     .insert(node.macroPhase)
+                                     .second) {
+      return {SyncCoverGraphError::InvalidNode, index};
+    }
+    for (unsigned result : node.completedResults) {
+      if (!physicalOperationResults[node.physicalOperation]
+               .insert(result)
+               .second) {
+        return {SyncCoverGraphError::InvalidNode, index};
+      }
     }
     if (!std::is_sorted(node.completionDominatedSources.begin(),
                         node.completionDominatedSources.end()) ||
@@ -322,6 +354,9 @@ SyncCoverGraphResult SyncCoverGraph::validateDemands() const {
             [](SyncCoverDemandKind kind) { return !isValidDemandKind(kind); });
     if (invalidKind) {
       return {SyncCoverGraphError::InvalidDemandKind, index};
+    }
+    if (!isValidOrderingRequirements(demand.orderingRequirements)) {
+      return {SyncCoverGraphError::InvalidOrderingRequirement, index};
     }
     if (demand.distance != 0 &&
         (demand.scope == 0 || !scopes_[demand.scope].isLoop)) {
@@ -485,11 +520,11 @@ SyncCoverGraphResult SyncCoverGraph::validateStorage() const {
   }
   for (std::size_t index = 0; index < storageAccesses_.size(); ++index) {
     const SyncCoverStorageAccess &access = storageAccesses_[index];
-    const bool invalidAccess = access.id != index ||
-                               access.node >= nodes_.size() ||
-                               access.domain >= storageDomains_.size() ||
-                               access.extent.begin >= access.extent.end ||
-                               !isValidAccessMode(access.mode);
+    const bool invalidAccess =
+        access.id != index || access.node >= nodes_.size() ||
+        access.domain >= storageDomains_.size() ||
+        access.extent.begin >= access.extent.end ||
+        !isValidAccessMode(access.mode) || !isValidAccessPath(access.path);
     if (invalidAccess) {
       return {SyncCoverGraphError::InvalidStorageAccess, index};
     }
