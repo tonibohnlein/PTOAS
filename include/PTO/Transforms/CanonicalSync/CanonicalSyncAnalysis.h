@@ -51,6 +51,7 @@ struct CanonicalSyncAnalysisOptions {
   bool discoverBasicOwnershipCertificates = true;
   std::size_t maximumNodes = 1U << 16;
   std::size_t maximumScopes = 1U << 14;
+  std::size_t maximumRegions = 1U << 16;
   std::size_t maximumControls = 1U << 14;
   std::size_t maximumStorageAccesses = 1U << 20;
   /// Maximum undirected node-conflict entries retained by the storage index.

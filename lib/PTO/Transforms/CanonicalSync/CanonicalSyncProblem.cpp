@@ -387,6 +387,56 @@ getActionScope(const SyncCoverGraph &graph, const CanonicalSyncAction &action) {
   return std::nullopt;
 }
 
+std::optional<SyncCoverRegionId>
+getActionRegion(const SyncCoverGraph &graph,
+                const CanonicalSyncAction &action) {
+  switch (action.anchor.kind) {
+  case SyncCoverAnchorKind::BeforeNode:
+  case SyncCoverAnchorKind::AfterNode:
+    return action.anchor.node < graph.getNodes().size()
+               ? std::optional<SyncCoverRegionId>(
+                     graph.getNodes()[action.anchor.node].region)
+               : std::nullopt;
+  case SyncCoverAnchorKind::ControlEntry:
+  case SyncCoverAnchorKind::ControlExit:
+    return action.anchor.node < graph.getControls().size() &&
+                   action.anchor.scope ==
+                       graph.getControls()[action.anchor.node].scope
+               ? std::optional<SyncCoverRegionId>(
+                     graph.getControls()[action.anchor.node].region)
+               : std::nullopt;
+  case SyncCoverAnchorKind::ScopeEntry:
+  case SyncCoverAnchorKind::ScopeExit:
+  case SyncCoverAnchorKind::LoopBodyEntry:
+  case SyncCoverAnchorKind::LoopBodyExit:
+  case SyncCoverAnchorKind::TimelinePoint:
+    return action.anchor.scope < graph.getScopes().size()
+               ? std::optional<SyncCoverRegionId>(
+                     graph.getScopes()[action.anchor.scope].region)
+               : std::nullopt;
+  }
+  return std::nullopt;
+}
+
+std::optional<SyncCoverRegionId> getMechanismOwnerRegion(
+    const SyncCoverGraph &graph,
+    const CanonicalSyncMechanismDescriptor &descriptor) {
+  std::optional<SyncCoverRegionId> owner;
+  for (const CanonicalSyncAction &action : descriptor.actions) {
+    const std::optional<SyncCoverRegionId> actionRegion =
+        getActionRegion(graph, action);
+    if (!actionRegion) {
+      return std::nullopt;
+    }
+    owner = owner ? graph.getLowestCommonRegion(*owner, *actionRegion)
+                  : actionRegion;
+    if (!owner) {
+      return std::nullopt;
+    }
+  }
+  return owner;
+}
+
 std::optional<std::size_t> getCostDepth(const SyncCoverGraph &graph,
                                         const CanonicalSyncAction &action,
                                         SyncCoverScopeId scope) {
@@ -2463,6 +2513,11 @@ CanonicalSyncPatternProblem::validateAndCostMechanism(
   if (!graphValid_) {
     return {CanonicalSyncProblemError::InvalidGraph, std::nullopt};
   }
+  const std::optional<SyncCoverRegionId> owner =
+      getMechanismOwnerRegion(graph_, descriptor);
+  if (!owner || descriptor.ownerRegion != *owner) {
+    return {CanonicalSyncProblemError::InvalidMechanism, std::nullopt};
+  }
   if (descriptor.kind == CanonicalSyncMechanismKind::Protocol &&
       !protocolVerified) {
     return {CanonicalSyncProblemError::UnverifiedProtocol, std::nullopt};
@@ -2548,6 +2603,12 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::internMechanismImpl(
   if (static_cast<std::size_t>(origin) >= kCanonicalSyncMechanismOriginCount) {
     return {CanonicalSyncProblemError::InvalidMechanism, std::nullopt};
   }
+  const std::optional<SyncCoverRegionId> owner =
+      getMechanismOwnerRegion(graph_, descriptor);
+  if (!owner) {
+    return {CanonicalSyncProblemError::InvalidMechanism, std::nullopt};
+  }
+  descriptor.ownerRegion = *owner;
   CanonicalSyncMechanismCost cost;
   std::vector<CanonicalSyncEventLifetime> lifetimes;
   CanonicalSyncProblemResult validated = validateAndCostMechanism(

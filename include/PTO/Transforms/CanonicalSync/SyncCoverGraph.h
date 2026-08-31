@@ -30,6 +30,8 @@ class SyncCoverExpandedProgram;
 
 using SyncCoverNodeId = std::size_t;
 using SyncCoverScopeId = std::size_t;
+using SyncCoverRegionId = std::size_t;
+using SyncCoverRegionPortId = std::size_t;
 using SyncCoverControlId = std::size_t;
 using SyncCoverStorageDomainId = std::size_t;
 using SyncCoverStorageAccessId = std::size_t;
@@ -88,6 +90,70 @@ struct SyncCoverGuard {
   std::vector<SyncCoverGuardLiteral> literals;
 };
 
+/// Structural ownership is deliberately separate from legacy analysis
+/// scopes. Scopes retain recurrence and insertion-anchor semantics; regions
+/// define the compositional program tree used by bottom-up synchronization
+/// summaries.
+enum class SyncCoverRegionKind : std::uint8_t {
+  Function,
+  Sequence,
+  Choice,
+  Alternative,
+  Loop,
+  Transparent,
+};
+
+enum class SyncCoverRegionCardinality : std::uint8_t {
+  ExactlyOnce,
+  ZeroOrOne,
+  ZeroOrMore,
+  OneOrMore,
+};
+
+enum class SyncCoverRegionElementKind : std::uint8_t {
+  Node,
+  ChildRegion,
+};
+
+struct SyncCoverRegionElement {
+  SyncCoverRegionElementKind kind = SyncCoverRegionElementKind::Node;
+  std::size_t value = 0;
+};
+
+enum class SyncCoverRegionPortKind : std::uint8_t {
+  Entry,
+  Exit,
+  DemandSource,
+  DemandTarget,
+};
+
+/// A region port is the only supported way for a parent to name an endpoint
+/// owned below one of its immediate children. Entry/exit ports are
+/// resource-qualified; demand ports retain the exact raw-demand endpoint.
+struct SyncCoverRegionPort {
+  SyncCoverRegionPortId id = 0;
+  SyncCoverRegionId region = 0;
+  SyncCoverRegionPortKind kind = SyncCoverRegionPortKind::Entry;
+  std::uint32_t resource = 0;
+  std::optional<SyncCoverNodeId> node;
+  std::optional<SyncCoverDemandId> demand;
+};
+
+struct SyncCoverRegion {
+  SyncCoverRegionId id = 0;
+  SyncCoverRegionId parent = 0;
+  SyncCoverScopeId scope = 0;
+  SyncCoverRegionKind kind = SyncCoverRegionKind::Function;
+  SyncCoverRegionCardinality cardinality =
+      SyncCoverRegionCardinality::ExactlyOnce;
+  std::optional<SyncCoverControlId> control;
+  std::optional<unsigned> alternative;
+  SyncCoverGuard guard;
+  /// Local nodes and immediate children only, in deterministic program order.
+  std::vector<SyncCoverRegionElement> elements;
+  std::vector<SyncCoverRegionPortId> ports;
+};
+
 enum class SyncCoverEdgeKind : std::uint8_t {
   /// Fixed issue order on a resource for which completing the target is an
   /// authoritative certificate that every represented source prefix has also
@@ -143,6 +209,7 @@ struct SyncCoverNode {
   std::uint32_t resource = 0;
   std::uint64_t weight = 1;
   SyncCoverScopeId scope = 0;
+  SyncCoverRegionId region = 0;
   std::size_t order = 0;
   SyncCoverGuard guard;
   std::vector<std::uint32_t> completionTargets;
@@ -178,6 +245,9 @@ struct SyncCoverDemand {
   SyncCoverNodeId source = 0;
   SyncCoverNodeId target = 0;
   SyncCoverScopeId scope = 0;
+  /// Unique structural owner. Distance-zero rows use the endpoint-region LCA;
+  /// recurrences are owned by the loop region named by scope.
+  SyncCoverRegionId ownerRegion = 0;
   unsigned distance = 0;
   SyncCoverGuard sourceGuard;
   SyncCoverGuard targetGuard;
@@ -195,6 +265,9 @@ struct SyncCoverDemand {
 struct SyncCoverScope {
   SyncCoverScopeId id = 0;
   SyncCoverScopeId parent = 0;
+  /// Structural region that owns this scope's control contract. This is the
+  /// loop region for recurrence scopes and the root function otherwise.
+  SyncCoverRegionId region = 0;
   bool mustExecuteWithinParent = false;
   std::optional<SyncCoverTimelineInterval> timeline;
   /// Loop scopes always own an explicit timeline. Positive-distance rows must
@@ -230,6 +303,7 @@ struct SyncCoverControl {
   SyncCoverControlId id = 0;
   unsigned alternatives = 0;
   SyncCoverScopeId scope = 0;
+  SyncCoverRegionId region = 0;
   std::optional<SyncCoverControlPhaseRelation> phaseRelation;
   std::optional<SyncCoverControlSuccessorRelation> successorRelation;
 };
@@ -415,6 +489,8 @@ enum class SyncCoverGraphError : std::uint8_t {
   ZeroDistanceSelfEdge,
   ZeroDistanceSelfDemand,
   ZeroDistanceCycle,
+  InvalidRegion,
+  InvalidRegionPort,
 };
 
 /// A successful mutation contains the inserted object's index. Failed
@@ -438,9 +514,20 @@ public:
   SyncCoverGraphResult
   addScope(SyncCoverScopeId parent = 0, bool mustExecuteWithinParent = false,
            std::optional<SyncCoverTimelineInterval> timeline = std::nullopt,
-           bool isLoop = false, SyncCoverGuard guard = {});
+           bool isLoop = false, SyncCoverGuard guard = {},
+           SyncCoverRegionId region = 0);
+  SyncCoverGraphResult setScopeRegion(SyncCoverScopeId scope,
+                                      SyncCoverRegionId region);
+  SyncCoverGraphResult
+  addRegion(SyncCoverRegionId parent, SyncCoverRegionKind kind,
+            SyncCoverRegionCardinality cardinality,
+            SyncCoverScopeId scope = 0, SyncCoverGuard guard = {},
+            std::optional<SyncCoverControlId> control = std::nullopt,
+            std::optional<unsigned> alternative = std::nullopt);
   SyncCoverGraphResult addControl(unsigned alternatives,
                                   SyncCoverScopeId scope = 0);
+  SyncCoverGraphResult setControlRegion(SyncCoverControlId control,
+                                        SyncCoverRegionId region);
   SyncCoverGraphResult
   setControlPhaseRelation(SyncCoverControlId control,
                           SyncCoverControlPhaseRelation relation);
@@ -456,7 +543,8 @@ public:
       std::optional<SyncCoverNodeId> physicalAnchor = std::nullopt,
       bool completionSignalCoversIssuedPrefix = false,
       std::size_t physicalOperation = std::numeric_limits<std::size_t>::max(),
-      int macroPhase = -1, std::vector<unsigned> completedResults = {});
+      int macroPhase = -1, std::vector<unsigned> completedResults = {},
+      SyncCoverRegionId region = 0);
   SyncCoverGraphResult addEdge(SyncCoverEdge edge);
   SyncCoverGraphResult addDemand(SyncCoverDemand demand);
   SyncCoverGraphResult setResourceRecurrenceCarryKind(std::uint32_t resource,
@@ -512,6 +600,10 @@ public:
   const std::vector<SyncCoverEdge> &getEdges() const { return edges_; }
   const std::vector<SyncCoverDemand> &getDemands() const { return demands_; }
   const std::vector<SyncCoverScope> &getScopes() const { return scopes_; }
+  const std::vector<SyncCoverRegion> &getRegions() const { return regions_; }
+  const std::vector<SyncCoverRegionPort> &getRegionPorts() const {
+    return regionPorts_;
+  }
   const std::vector<SyncCoverControl> &getControls() const { return controls_; }
   const std::vector<SyncCoverStorageDomain> &getStorageDomains() const {
     return storageDomains_;
@@ -543,12 +635,17 @@ public:
 
   bool scopeContains(SyncCoverScopeId ancestor,
                      SyncCoverScopeId descendant) const;
+  bool regionContains(SyncCoverRegionId ancestor,
+                      SyncCoverRegionId descendant) const;
   bool scopeMustExecuteWithin(SyncCoverScopeId ancestor,
                               SyncCoverScopeId descendant) const;
   bool completionDominates(SyncCoverNodeId completionNode,
                            SyncCoverNodeId source) const;
   std::optional<SyncCoverScopeId>
   getLowestCommonScope(SyncCoverScopeId first, SyncCoverScopeId second) const;
+  std::optional<SyncCoverRegionId>
+  getLowestCommonRegion(SyncCoverRegionId first,
+                        SyncCoverRegionId second) const;
   std::optional<std::size_t> getScopeLoopDepth(SyncCoverScopeId scope,
                                                bool includeScope = true) const;
   std::optional<SyncCoverScopeId>
@@ -571,6 +668,7 @@ private:
     return identity_;
   }
   bool hasValidScope(SyncCoverScopeId scope) const;
+  bool hasValidRegion(SyncCoverRegionId region) const;
   bool canMutateStructure() const { return !structureFrozen_; }
   SyncCoverGraphError
   normalizeAndValidateGuard(SyncCoverGuard &guard,
@@ -582,6 +680,7 @@ private:
                                              SyncCoverGuard &sourceGuard,
                                              SyncCoverGuard &targetGuard) const;
   SyncCoverGraphResult validateScopesControlsAndNodes() const;
+  SyncCoverGraphResult validateRegions() const;
   SyncCoverGraphResult validateDemands() const;
   SyncCoverGraphResult validateEdges() const;
   SyncCoverGraphResult validateStorage() const;
@@ -597,6 +696,7 @@ private:
   std::vector<SyncCoverTargetCompletionCertificate>
       targetCompletionCertificates_;
   std::vector<SyncCoverBasicOwnershipCertificate> basicOwnershipCertificates_;
+  std::vector<SyncCoverRegionPort> regionPorts_;
   std::optional<SyncCoverTargetCompletionResources> targetCompletionResources_;
   std::map<std::uint32_t, SyncCoverEdgeKind> resourceRecurrenceCarryKinds_;
   std::vector<std::uint32_t> blockingTargetedBarrierResources_;
@@ -625,14 +725,28 @@ private:
   std::vector<SyncCoverScope> scopes_{
       {0,
        0,
+       0,
        true,
        SyncCoverTimelineInterval{0, std::numeric_limits<std::size_t>::max()},
        false,
+       {}}};
+  std::vector<SyncCoverRegion> regions_{
+      {0,
+       0,
+       0,
+       SyncCoverRegionKind::Function,
+       SyncCoverRegionCardinality::ExactlyOnce,
+       std::nullopt,
+       std::nullopt,
+       {},
+       {},
        {}}};
   std::vector<SyncCoverControl> controls_;
   std::shared_ptr<const std::uint8_t> identity_ =
       std::make_shared<const std::uint8_t>(0);
   bool structureFrozen_ = false;
+  bool regionInterfacesBuilt_ = false;
+  SyncCoverGraphResult rebuildRegionInterfaces();
 };
 
 bool syncCoverStorageModeReads(SyncCoverStorageAccessMode mode);

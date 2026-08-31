@@ -117,6 +117,10 @@ bool SyncCoverGraph::hasValidScope(SyncCoverScopeId scope) const {
   return scope < scopes_.size() && scopes_[scope].id == scope;
 }
 
+bool SyncCoverGraph::hasValidRegion(SyncCoverRegionId region) const {
+  return region < regions_.size() && regions_[region].id == region;
+}
+
 bool SyncCoverGraph::scopeContains(SyncCoverScopeId ancestor,
                                    SyncCoverScopeId descendant) const {
   const bool invalidScope =
@@ -126,6 +130,19 @@ bool SyncCoverGraph::scopeContains(SyncCoverScopeId ancestor,
   }
   while (descendant != ancestor && descendant != 0) {
     descendant = scopes_[descendant].parent;
+  }
+  return descendant == ancestor;
+}
+
+bool SyncCoverGraph::regionContains(SyncCoverRegionId ancestor,
+                                    SyncCoverRegionId descendant) const {
+  const bool invalidRegion =
+      !hasValidRegion(ancestor) || !hasValidRegion(descendant);
+  if (invalidRegion) {
+    return false;
+  }
+  while (descendant != ancestor && descendant != 0) {
+    descendant = regions_[descendant].parent;
   }
   return descendant == ancestor;
 }
@@ -202,6 +219,39 @@ SyncCoverGraph::getLowestCommonScope(SyncCoverScopeId first,
   while (first != second) {
     first = scopes_[first].parent;
     second = scopes_[second].parent;
+  }
+  return first;
+}
+
+std::optional<SyncCoverRegionId>
+SyncCoverGraph::getLowestCommonRegion(SyncCoverRegionId first,
+                                      SyncCoverRegionId second) const {
+  const bool invalidRegion =
+      !hasValidRegion(first) || !hasValidRegion(second);
+  if (invalidRegion) {
+    return std::nullopt;
+  }
+  const auto depth = [&](SyncCoverRegionId region) {
+    std::size_t result = 0;
+    while (region != 0) {
+      ++result;
+      region = regions_[region].parent;
+    }
+    return result;
+  };
+  std::size_t firstDepth = depth(first);
+  std::size_t secondDepth = depth(second);
+  while (firstDepth > secondDepth) {
+    first = regions_[first].parent;
+    --firstDepth;
+  }
+  while (secondDepth > firstDepth) {
+    second = regions_[second].parent;
+    --secondDepth;
+  }
+  while (first != second) {
+    first = regions_[first].parent;
+    second = regions_[second].parent;
   }
   return first;
 }

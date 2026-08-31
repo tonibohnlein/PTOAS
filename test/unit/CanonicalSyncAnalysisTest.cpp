@@ -254,6 +254,8 @@ bool testBuildsOneFrozenGraph() {
   const bool typedRawDump =
       rawDump == graph.getDeterministicRawDump() &&
       rawDump.find("node 0 op=0 phase=-1") != std::string::npos &&
+      rawDump.find("region 1 parent=0 scope=0 kind=1") !=
+          std::string::npos &&
       rawDump.find("access 0 node=0") != std::string::npos &&
       rawDump.find("requirements=1") != std::string::npos;
   FailureOr<CanonicalSyncHazardParityReport> parity =
@@ -261,6 +263,15 @@ bool testBuildsOneFrozenGraph() {
   return check(graph.isStructureFrozen(), "freeze authoritative graph") &&
          check(static_cast<bool>(graph.validate()), "validate adapter graph") &&
          check(graph.getNodes().size() == 2, "extract two scheduled nodes") &&
+         check(graph.getRegions().size() == 2 &&
+                   graph.getRegions()[0].kind ==
+                       SyncCoverRegionKind::Function &&
+                   graph.getRegions()[1].kind ==
+                       SyncCoverRegionKind::Sequence &&
+                   graph.getNodes()[0].region == 1 &&
+                   graph.getNodes()[1].region == 1 &&
+                   graph.getDemands().front().ownerRegion == 1,
+               "build a flat function/sequence ownership tree") &&
          check(program->getNodeBindings().size() == graph.getNodes().size(),
                "keep one minimal node side table") &&
          check(program->getScopeBindings().size() == graph.getScopes().size(),

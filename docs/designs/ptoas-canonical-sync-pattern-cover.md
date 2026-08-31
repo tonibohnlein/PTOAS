@@ -113,10 +113,27 @@ and the previous generated plan byte-for-byte.
 
 ## 2. Completion graph
 
-The graph contains one node per asynchronous operation and an explicit tree of
-function, branch, and loop scopes. Each demand records source, target, owning
-scope, recurrence distance, guards, hazard provenance, and physical-storage
-witnesses.
+The graph contains one node per scheduled asynchronous macro phase. Legacy
+analysis scopes retain insertion-anchor, guard, and recurrence meaning. A
+separate first-class structural tree contains `Function`, `Sequence`, `Choice`,
+`Alternative`, `Loop`, and transparent regions. Every region owns only local
+nodes and immediate child regions in deterministic program order.
+
+Each node has exactly one immediate structural owner. A distance-zero demand
+is owned by the lowest common ancestor of its endpoint regions; a
+positive-distance demand is owned by the structural loop named by its
+recurrence scope. A mechanism owner is derived, never caller supplied, as the
+lowest common ancestor of all concrete action regions.
+
+Nested demand endpoints are exported toward their owner through a port on
+each region along the child-to-owner path. Parents therefore consume their
+immediate children's entry, exit, and endpoint interfaces instead of naming
+arbitrary descendant nodes. The ports are a structural contract only at this
+stage; the must-semantics transfer functions that populate bottom-up
+completion summaries are a separate layer.
+
+Each demand also records source, target, recurrence distance, guards, typed
+ordering requirements, hazard provenance, and physical-storage witnesses.
 
 Equivalent demands are interned by this coverage key:
 
@@ -163,23 +180,15 @@ accumulates every RAW, WAR, and WAW witness before mutating the graph. It sorts,
 deduplicates, and validates the complete provenance once, so many physical
 access batches cannot repeatedly copy and revalidate a growing demand row.
 
-Loop-local DAGs are summarized bottom-up with resource-specific entry and exit
-nodes, an explicit zero-trip transfer, recurrence-carry resources, and copied
-periodic-control phase relations. Each arena contains its locally owned
-operations and only the transfer interfaces of its immediate children; child
-bodies are not copied into parent arenas. The interface retains a distinct port
-for each externally relevant child operation, so early and late operations on
-one resource cannot alias. Port discovery closes over internal operations on
-fixed paths between exposed endpoints, preserving each path's node availability
-and guards. Each summary owns only its local ports and resource sets; parent
-arenas resolve descendant metadata through hierarchical child references and
-charge ports and resource boundaries against the arena node budget before
-materialization. Fixed and selected completion supplies use those
-identity-preserving ports, while only certified issue-order edges connect ports
-to resource entry/exit boundaries. A recurrence protocol exports completion
-only when common validation certifies balanced priming, body lanes, and one
-scope-exit drain per lane. Guarded protocols remain valid locally but do not
-export until phase-qualified export semantics are supported.
+The structural interfaces are intentionally built before the hierarchical
+coverage engine. Until bottom-up must summaries are installed, existing
+recurrence expansion remains the coverage implementation and must not claim
+that a parent consumes a child's semantic completion transfer. The next layer
+will add resource-specific entry/exit transfer, explicit zero-trip behavior,
+recurrence carry, and periodic phase summaries without copying child bodies
+into parent arenas. A recurrence protocol may export completion only after
+common validation certifies balanced priming, body circulation, and one
+scope-exit drain per lane.
 
 ## 3. Certified mechanism catalog
 

@@ -257,6 +257,9 @@ struct CanonicalSyncSupplyBinding {
 /// after selection.
 struct CanonicalSyncMechanismDescriptor {
   CanonicalSyncMechanismKind kind = CanonicalSyncMechanismKind::Event;
+  /// LCA of every concrete action region. This is derived by the problem and
+  /// is never accepted as caller-authored proof.
+  SyncCoverRegionId ownerRegion = 0;
   std::vector<CanonicalSyncSupplyBinding> supplies;
   std::vector<CanonicalSyncEventUse> eventUses;
   std::vector<CanonicalSyncAction> actions;

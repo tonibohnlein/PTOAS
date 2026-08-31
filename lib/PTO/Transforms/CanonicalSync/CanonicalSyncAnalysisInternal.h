@@ -41,6 +41,7 @@ constexpr std::size_t kMaximumSlotCount = 16;
 
 struct RegionContext {
   SyncCoverScopeId scope = 0;
+  SyncCoverRegionId region = 0;
   SyncCoverGuard guard;
 };
 
@@ -138,6 +139,13 @@ private:
   LogicalResult validateInput();
   LogicalResult extract();
   LogicalResult buildScopes();
+  FailureOr<SyncCoverRegionId>
+  addStructuralRegion(Operation *owner, SyncCoverRegionId parent,
+                      SyncCoverRegionKind kind,
+                      SyncCoverRegionCardinality cardinality,
+                      SyncCoverScopeId scope, SyncCoverGuard guard,
+                      std::optional<SyncCoverControlId> control = std::nullopt,
+                      std::optional<unsigned> alternative = std::nullopt);
   LogicalResult addRegion(Region &region, const RegionContext &context,
                           std::size_t timelineEnd);
   std::optional<SyncCoverScopeId>
