@@ -38,6 +38,7 @@ add_library(PTOSyncCoverCore OBJECT
   CanonicalSync/SyncCoverStorageProtocolCuts.cpp
   CanonicalSync/SyncCoverStorageProtocolFrontiers.cpp
   CanonicalSync/SyncCoverStorageProtocolGroups.cpp
+  CanonicalSync/SyncCoverStorageProtocolRectangles.cpp
   CanonicalSync/SyncCoverStorageProtocolSeeds.cpp
   CanonicalSync/SyncCoverStorageCuts.cpp
   CanonicalSync/SyncCoverStorageRectangleGrounding.cpp

@@ -225,6 +225,8 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
       storageProtocolAutomatonIndex;
   std::optional<SyncCoverStorageProtocolFrontierIndex>
       storageProtocolFrontierIndex;
+  std::optional<SyncCoverStorageProtocolRectangleIndex>
+      storageProtocolRectangleIndex;
   std::optional<SyncCoverStorageCutIndex> storageCutIndex;
   std::optional<SyncCoverStorageProtocolCutPlanIndex>
       storageProtocolCutPlanIndex;
@@ -314,6 +316,26 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
               << static_cast<unsigned>(frontierError);
           return failure();
         }
+        if (storageProtocolFrontierIndex->isComplete()) {
+          storageProtocolRectangleIndex =
+              buildSyncCoverStorageProtocolRectangleIndex(
+                  graph_, *storageProtocolAutomatonIndex,
+                  *storageProtocolFrontierIndex,
+                  options_.storageProtocolRectangleLimits);
+          const SyncCoverStorageProtocolRectangleError rectangleError =
+              storageProtocolRectangleIndex->getError();
+          const bool invalidRectangleIndex =
+              rectangleError != SyncCoverStorageProtocolRectangleError::None &&
+              rectangleError !=
+                  SyncCoverStorageProtocolRectangleError::LimitExceeded;
+          if (invalidRectangleIndex) {
+            function_.emitError(
+                "cannot build canonical sync storage protocol-rectangle "
+                "index, error=")
+                << static_cast<unsigned>(rectangleError);
+            return failure();
+          }
+        }
       }
       storageCutIndex = buildSyncCoverStorageCutIndex(
           graph_, *storageLifecycleIndex, options_.storageCutLimits);
@@ -377,10 +399,11 @@ FailureOr<CanonicalSyncProgram> ProgramBuilder::build() {
       std::move(storageSpaces), std::move(storageLifecycleIndex),
       std::move(storageProtocolSeedIndex), std::move(storageProtocolGroupIndex),
       std::move(storageProtocolAutomatonIndex),
-      std::move(storageProtocolFrontierIndex), std::move(storageCutIndex),
-      std::move(storageProtocolCutPlanIndex),
-      std::move(storageRectangleIndex), std::move(targetCapabilities_),
-      ownershipDiscoveryStatistics_, std::move(eventReservations_));
+      std::move(storageProtocolFrontierIndex),
+      std::move(storageProtocolRectangleIndex), std::move(storageCutIndex),
+      std::move(storageProtocolCutPlanIndex), std::move(storageRectangleIndex),
+      std::move(targetCapabilities_), ownershipDiscoveryStatistics_,
+      std::move(eventReservations_));
 }
 
 LogicalResult ProgramBuilder::validateInput() {
@@ -445,24 +468,36 @@ LogicalResult ProgramBuilder::validateInput() {
        options_.storageProtocolAutomatonLimits.maximumLanes > 8 ||
        options_.storageProtocolCutPlanLimits.maximumWorkUnits == 0 ||
        options_.storageProtocolCutPlanLimits.maximumPlans == 0 ||
-       options_.storageProtocolCutPlanLimits
-               .maximumRectangleEdgeIncidences == 0 ||
+       options_.storageProtocolCutPlanLimits.maximumRectangleEdgeIncidences ==
+           0 ||
        options_.storageProtocolCutPlanLimits.maximumTransferInspections == 0 ||
-       options_.storageProtocolCutPlanLimits
-               .maximumReadyRectangleIncidences == 0 ||
+       options_.storageProtocolCutPlanLimits.maximumReadyRectangleIncidences ==
+           0 ||
        options_.storageProtocolFrontierLimits.maximumWorkUnits == 0 ||
        options_.storageProtocolFrontierLimits.maximumPlans == 0 ||
        options_.storageProtocolFrontierLimits.maximumFrontiers == 0 ||
-       options_.storageProtocolFrontierLimits.maximumTransferInspections ==
-           0 ||
+       options_.storageProtocolFrontierLimits.maximumTransferInspections == 0 ||
        options_.storageProtocolFrontierLimits.maximumStatePairInspections ==
            0 ||
-       options_.storageProtocolFrontierLimits
-               .maximumPlanFrontierIncidences == 0 ||
+       options_.storageProtocolFrontierLimits.maximumPlanFrontierIncidences ==
+           0 ||
        options_.storageProtocolFrontierLimits
                .maximumCertificateDemandIncidences == 0 ||
        options_.storageProtocolFrontierLimits
                .maximumCompletionCutFactDemandIncidences == 0 ||
+       options_.storageProtocolRectangleLimits.maximumWorkUnits == 0 ||
+       options_.storageProtocolRectangleLimits.maximumFrontierInspections ==
+           0 ||
+       options_.storageProtocolRectangleLimits.maximumRectangles == 0 ||
+       options_.storageProtocolRectangleLimits.maximumFrontierIncidences == 0 ||
+       options_.storageProtocolRectangleGroundingLimits.maximumWorkUnits == 0 ||
+       options_.storageProtocolRectangleGroundingLimits
+               .maximumAdmittedDemandIncidences == 0 ||
+       options_.storageProtocolRectangleGroundingLimits
+               .maximumBatchRectangles == 0 ||
+       options_.storageProtocolRectangleGroundingLimits
+               .maximumCoverageBatches == 0 ||
+       options_.storageProtocolRectangleGroundingLimits.maximumDetails == 0 ||
        options_.storageCutLimits.maximumWorkUnits == 0 ||
        options_.storageCutLimits.maximumCuts == 0 ||
        options_.storageCutLimits.maximumRectangles == 0 ||

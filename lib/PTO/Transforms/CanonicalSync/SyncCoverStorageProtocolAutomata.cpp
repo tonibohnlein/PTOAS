@@ -276,6 +276,7 @@ mlir::pto::buildSyncCoverStorageProtocolAutomatonIndex(
   if (!graph.isStructureFrozen()) {
     return fail({}, SyncCoverStorageProtocolAutomatonError::InvalidGraph);
   }
+  result.bindToGraph(graph);
   if (!lifecycleIndex.isComplete()) {
     return fail(
         {}, SyncCoverStorageProtocolAutomatonError::IncompleteLifecycleIndex);

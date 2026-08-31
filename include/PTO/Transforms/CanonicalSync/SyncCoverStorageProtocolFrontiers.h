@@ -134,6 +134,10 @@ public:
     return error_ == SyncCoverStorageProtocolFrontierError::None &&
            !statistics_.truncated;
   }
+  bool isForGraph(const SyncCoverGraph &graph) const {
+    return ownerIdentity_ && ownerIdentity_ == graph.getIdentity() &&
+           graph.isStructureFrozen();
+  }
 
 private:
   friend SyncCoverStorageProtocolFrontierIndex
@@ -142,6 +146,11 @@ private:
       const SyncCoverStorageProtocolAutomatonIndex &,
       const SyncCoverStorageProtocolFrontierLimits &);
 
+  void bindToGraph(const SyncCoverGraph &graph) {
+    ownerIdentity_ = graph.getIdentity();
+  }
+
+  std::shared_ptr<const std::uint8_t> ownerIdentity_;
   std::vector<SyncCoverStorageProtocolFrontier> frontiers_;
   std::vector<SyncCoverStorageProtocolFrontierPlan> plans_;
   SyncCoverStorageProtocolFrontierStatistics statistics_;

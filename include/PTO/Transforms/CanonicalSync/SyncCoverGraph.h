@@ -24,6 +24,9 @@ namespace mlir {
 namespace pto {
 
 class SyncCoverExpandedProgram;
+class SyncCoverStorageProtocolAutomatonIndex;
+class SyncCoverStorageProtocolFrontierIndex;
+class SyncCoverStorageProtocolRectangleIndex;
 
 using SyncCoverNodeId = std::size_t;
 using SyncCoverScopeId = std::size_t;
@@ -535,6 +538,9 @@ public:
 
 private:
   friend class SyncCoverExpandedProgram;
+  friend class SyncCoverStorageProtocolAutomatonIndex;
+  friend class SyncCoverStorageProtocolFrontierIndex;
+  friend class SyncCoverStorageProtocolRectangleIndex;
 
   const std::shared_ptr<const std::uint8_t> &getIdentity() const {
     return identity_;

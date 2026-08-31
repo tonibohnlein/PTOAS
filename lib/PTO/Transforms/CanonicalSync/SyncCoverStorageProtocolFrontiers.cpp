@@ -403,6 +403,7 @@ mlir::pto::buildSyncCoverStorageProtocolFrontierIndex(
   if (!graph.isStructureFrozen()) {
     return fail({}, SyncCoverStorageProtocolFrontierError::InvalidGraph);
   }
+  result.bindToGraph(graph);
   if (!lifecycleIndex.isComplete()) {
     return fail(
         {}, SyncCoverStorageProtocolFrontierError::IncompleteLifecycleIndex);
@@ -410,6 +411,9 @@ mlir::pto::buildSyncCoverStorageProtocolFrontierIndex(
   if (!automatonIndex.isComplete()) {
     return fail(
         {}, SyncCoverStorageProtocolFrontierError::IncompleteAutomatonIndex);
+  }
+  if (!automatonIndex.isForGraph(graph)) {
+    return fail({}, SyncCoverStorageProtocolFrontierError::InvalidGraph);
   }
 
   SyncCoverStorageProtocolFrontierStatistics statistics;

@@ -18,6 +18,7 @@
 #include "PTO/Transforms/CanonicalSync/SyncCoverStorageProtocolCuts.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverStorageProtocolFrontiers.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverStorageProtocolGroups.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverStorageProtocolRectangles.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverStorageProtocolSeeds.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverStorageRectangleGrounding.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverStorageRectangles.h"
@@ -66,6 +67,9 @@ struct CanonicalSyncAnalysisOptions {
   SyncCoverStorageProtocolAutomatonLimits storageProtocolAutomatonLimits;
   SyncCoverStorageProtocolCutPlanLimits storageProtocolCutPlanLimits;
   SyncCoverStorageProtocolFrontierLimits storageProtocolFrontierLimits;
+  SyncCoverStorageProtocolRectangleLimits storageProtocolRectangleLimits;
+  SyncCoverStorageProtocolRectangleGroundingLimits
+      storageProtocolRectangleGroundingLimits;
   SyncCoverStorageCutLimits storageCutLimits;
   SyncCoverStorageFactoredRectangleLimits storageRectangleLimits;
   SyncCoverSyntheticRectangleGroundingLimits syntheticRectangleGroundingLimits;
@@ -246,6 +250,8 @@ public:
           storageProtocolAutomatonIndex,
       std::optional<SyncCoverStorageProtocolFrontierIndex>
           storageProtocolFrontierIndex,
+      std::optional<SyncCoverStorageProtocolRectangleIndex>
+          storageProtocolRectangleIndex,
       std::optional<SyncCoverStorageCutIndex> storageCutIndex,
       std::optional<SyncCoverStorageProtocolCutPlanIndex>
           storageProtocolCutPlanIndex,
@@ -264,8 +270,9 @@ public:
         storageProtocolGroupIndex_(std::move(storageProtocolGroupIndex)),
         storageProtocolAutomatonIndex_(
             std::move(storageProtocolAutomatonIndex)),
-        storageProtocolFrontierIndex_(
-            std::move(storageProtocolFrontierIndex)),
+        storageProtocolFrontierIndex_(std::move(storageProtocolFrontierIndex)),
+        storageProtocolRectangleIndex_(
+            std::move(storageProtocolRectangleIndex)),
         storageCutIndex_(std::move(storageCutIndex)),
         storageProtocolCutPlanIndex_(std::move(storageProtocolCutPlanIndex)),
         storageRectangleIndex_(std::move(storageRectangleIndex)),
@@ -308,6 +315,10 @@ public:
   getStorageProtocolFrontierIndex() const {
     return storageProtocolFrontierIndex_;
   }
+  const std::optional<SyncCoverStorageProtocolRectangleIndex> &
+  getStorageProtocolRectangleIndex() const {
+    return storageProtocolRectangleIndex_;
+  }
   const std::optional<SyncCoverStorageCutIndex> &getStorageCutIndex() const {
     return storageCutIndex_;
   }
@@ -344,6 +355,8 @@ private:
       storageProtocolAutomatonIndex_;
   std::optional<SyncCoverStorageProtocolFrontierIndex>
       storageProtocolFrontierIndex_;
+  std::optional<SyncCoverStorageProtocolRectangleIndex>
+      storageProtocolRectangleIndex_;
   std::optional<SyncCoverStorageCutIndex> storageCutIndex_;
   std::optional<SyncCoverStorageProtocolCutPlanIndex>
       storageProtocolCutPlanIndex_;

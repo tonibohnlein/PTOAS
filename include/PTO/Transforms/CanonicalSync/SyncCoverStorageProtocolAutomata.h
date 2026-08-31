@@ -119,6 +119,10 @@ public:
     return error_ == SyncCoverStorageProtocolAutomatonError::None &&
            !statistics_.truncated;
   }
+  bool isForGraph(const SyncCoverGraph &graph) const {
+    return ownerIdentity_ && ownerIdentity_ == graph.getIdentity() &&
+           graph.isStructureFrozen();
+  }
 
 private:
   friend SyncCoverStorageProtocolAutomatonIndex
@@ -128,6 +132,11 @@ private:
       const SyncCoverStorageProtocolGroupIndex &,
       const SyncCoverStorageProtocolAutomatonLimits &);
 
+  void bindToGraph(const SyncCoverGraph &graph) {
+    ownerIdentity_ = graph.getIdentity();
+  }
+
+  std::shared_ptr<const std::uint8_t> ownerIdentity_;
   std::vector<SyncCoverStorageProtocolAutomaton> automata_;
   SyncCoverStorageProtocolAutomatonStatistics statistics_;
   SyncCoverStorageProtocolAutomatonError error_ =
