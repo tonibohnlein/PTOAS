@@ -1973,6 +1973,45 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
         rectangleStatistics.syntheticRectangles;
     report.storageRectangleGuardLiterals = rectangleStatistics.guardLiterals;
     report.storageRectangleTruncated = rectangleStatistics.truncated;
+    const bool canGroundSyntheticStorageRectangles =
+        program.getStorageCutIndex() &&
+        program.getStorageCutIndex()->isComplete() &&
+        program.getStorageRectangleIndex()->isComplete();
+    if (canGroundSyntheticStorageRectangles) {
+      report.storageSyntheticRectangleGroundingEnabled = true;
+      const SyncCoverSyntheticRectangleGrounding grounding =
+          groundSyncCoverSyntheticStorageRectangles(
+              program.getGraph(), problem.getExpansion(),
+              *program.getStorageCutIndex(),
+              *program.getStorageRectangleIndex(),
+              problem.getObligationDemands(),
+              options.analysis.syntheticRectangleGroundingLimits);
+      const SyncCoverSyntheticRectangleGroundingStatistics
+          &groundingStatistics = grounding.getStatistics();
+      report.storageSyntheticRectangleGroundingWorkUnits =
+          groundingStatistics.workUnits;
+      report.storageSyntheticRectangleGroundingEvaluated =
+          groundingStatistics.evaluatedSyntheticRectangles;
+      report.storageSyntheticRectanglesWithCoverage =
+          groundingStatistics.syntheticRectanglesWithCoverage;
+      report.storageSyntheticRectanglesCoveringMultipleRows =
+          groundingStatistics.syntheticRectanglesCoveringMultipleRows;
+      report.storageSyntheticRectangleMaximumCoverageRows =
+          groundingStatistics.maximumCoverageRows;
+      report.storageSyntheticRectangleTotalCoverageRows =
+          groundingStatistics.totalCoverageRows;
+      report.storageSyntheticRectangleGroundingError = grounding.getError();
+      report.storageSyntheticRectangleGroundingDetailsTruncated =
+          groundingStatistics.detailsTruncated;
+      report.storageSyntheticRectangleGroundingTruncated =
+          groundingStatistics.truncated;
+      for (const SyncCoverSyntheticRectangleGroundingDetail &detail :
+           grounding.getDetails()) {
+        report.storageSyntheticRectangleGroundingDetails.push_back(
+            {detail.rectangle, detail.completionCut, detail.acquisitionCut,
+             detail.coverageRows});
+      }
+    }
   }
   report.uniqueDemandRows = problem.getObligationDemands().size();
   report.selectionBasisRows = problem.getDemands().size();

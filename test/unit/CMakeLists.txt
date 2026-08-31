@@ -96,6 +96,18 @@ add_test(NAME pto_sync_cover_storage_rectangles_unit
 set_tests_properties(pto_sync_cover_storage_rectangles_unit
   PROPERTIES LABELS "PTO;unit")
 
+add_executable(pto-sync-cover-storage-rectangle-grounding-unit-test
+  SyncCoverStorageRectangleGroundingTest.cpp
+)
+target_link_libraries(pto-sync-cover-storage-rectangle-grounding-unit-test
+  PRIVATE PTOSyncCoverCore
+)
+add_test(NAME pto_sync_cover_storage_rectangle_grounding_unit
+  COMMAND pto-sync-cover-storage-rectangle-grounding-unit-test
+)
+set_tests_properties(pto_sync_cover_storage_rectangle_grounding_unit
+  PROPERTIES LABELS "PTO;unit")
+
 add_executable(pto-sync-cover-coverage-unit-test
   SyncCoverCoverageTest.cpp
 )

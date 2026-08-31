@@ -183,6 +183,10 @@
 // CORE-REPORT-DAG: "storage_factored_rectangles": {{[1-9][0-9]*}}
 // CORE-REPORT-DAG: "storage_direct_factored_rectangles": {{[1-9][0-9]*}}
 // CORE-REPORT-DAG: "storage_rectangle_truncated": false
+// CORE-REPORT-DAG: "storage_synthetic_rectangle_grounding_enabled": true
+// CORE-REPORT-DAG: "storage_synthetic_rectangle_grounding_evaluated": {{[0-9]+}}
+// CORE-REPORT-DAG: "storage_synthetic_rectangle_grounding_error": 0
+// CORE-REPORT-DAG: "storage_synthetic_rectangle_grounding_truncated": false
 // CORE-REPORT-DAG: "selection_basis_rows":
 // CORE-REPORT-DAG: "singleton_candidates_covering_multiple_rows":
 // CORE-REPORT-DAG: "maximum_singleton_candidate_coverage_rows":

@@ -355,6 +355,20 @@ llvm::json::Array jsonStorageLifecycleTransitions(
   return result;
 }
 
+llvm::json::Array jsonSyntheticStorageRectangleGrounding(
+    ArrayRef<pto::CanonicalSyncSyntheticRectangleGroundingReport> details) {
+  llvm::json::Array result;
+  for (const pto::CanonicalSyncSyntheticRectangleGroundingReport &detail :
+       details) {
+    result.push_back(llvm::json::Object{
+        {"rectangle", jsonInteger(detail.rectangle)},
+        {"completion_cut", jsonInteger(detail.completionCut)},
+        {"acquisition_cut", jsonInteger(detail.acquisitionCut)},
+        {"coverage_rows", jsonInteger(detail.coverageRows)}});
+  }
+  return result;
+}
+
 StringRef gmAliasPolicyName(pto::CanonicalSyncGmAliasPolicy policy) {
   switch (policy) {
   case pto::CanonicalSyncGmAliasPolicy::MayAlias:
@@ -750,6 +764,30 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
       {"storage_rectangle_guard_literals",
        jsonInteger(report.storageRectangleGuardLiterals)},
       {"storage_rectangle_truncated", report.storageRectangleTruncated},
+      {"storage_synthetic_rectangle_grounding_enabled",
+       report.storageSyntheticRectangleGroundingEnabled},
+      {"storage_synthetic_rectangle_grounding_work_units",
+       jsonInteger(report.storageSyntheticRectangleGroundingWorkUnits)},
+      {"storage_synthetic_rectangle_grounding_evaluated",
+       jsonInteger(report.storageSyntheticRectangleGroundingEvaluated)},
+      {"storage_synthetic_rectangles_with_coverage",
+       jsonInteger(report.storageSyntheticRectanglesWithCoverage)},
+      {"storage_synthetic_rectangles_covering_multiple_rows",
+       jsonInteger(report.storageSyntheticRectanglesCoveringMultipleRows)},
+      {"storage_synthetic_rectangle_maximum_coverage_rows",
+       jsonInteger(report.storageSyntheticRectangleMaximumCoverageRows)},
+      {"storage_synthetic_rectangle_total_coverage_rows",
+       jsonInteger(report.storageSyntheticRectangleTotalCoverageRows)},
+      {"storage_synthetic_rectangle_grounding_error",
+       jsonInteger(static_cast<unsigned>(
+           report.storageSyntheticRectangleGroundingError))},
+      {"storage_synthetic_rectangle_grounding_details",
+       jsonSyntheticStorageRectangleGrounding(
+           report.storageSyntheticRectangleGroundingDetails)},
+      {"storage_synthetic_rectangle_grounding_details_truncated",
+       report.storageSyntheticRectangleGroundingDetailsTruncated},
+      {"storage_synthetic_rectangle_grounding_truncated",
+       report.storageSyntheticRectangleGroundingTruncated},
       {"demands", jsonInteger(report.demands)},
       {"unique_demand_keys", jsonInteger(report.uniqueDemandRows)},
       {"selection_basis_rows", jsonInteger(report.selectionBasisRows)},

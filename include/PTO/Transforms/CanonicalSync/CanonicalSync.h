@@ -151,6 +151,13 @@ struct CanonicalSyncStorageLifecycleTransitionReport {
   std::size_t edges = 0;
 };
 
+struct CanonicalSyncSyntheticRectangleGroundingReport {
+  SyncCoverStorageFactoredRectangleId rectangle = 0;
+  SyncCoverStorageCutId completionCut = 0;
+  SyncCoverStorageCutId acquisitionCut = 0;
+  std::size_t coverageRows = 0;
+};
+
 struct CanonicalSyncStrategyReport {
   CanonicalSyncSelectionStrategy strategy =
       CanonicalSyncSelectionStrategy::PairLookahead;
@@ -274,6 +281,20 @@ struct CanonicalSyncComparisonReport {
   std::size_t storageSyntheticFactoredRectangles = 0;
   std::size_t storageRectangleGuardLiterals = 0;
   bool storageRectangleTruncated = false;
+  bool storageSyntheticRectangleGroundingEnabled = false;
+  std::size_t storageSyntheticRectangleGroundingWorkUnits = 0;
+  std::size_t storageSyntheticRectangleGroundingEvaluated = 0;
+  std::size_t storageSyntheticRectanglesWithCoverage = 0;
+  std::size_t storageSyntheticRectanglesCoveringMultipleRows = 0;
+  std::size_t storageSyntheticRectangleMaximumCoverageRows = 0;
+  std::size_t storageSyntheticRectangleTotalCoverageRows = 0;
+  SyncCoverSyntheticRectangleGroundingError
+      storageSyntheticRectangleGroundingError =
+          SyncCoverSyntheticRectangleGroundingError::None;
+  std::vector<CanonicalSyncSyntheticRectangleGroundingReport>
+      storageSyntheticRectangleGroundingDetails;
+  bool storageSyntheticRectangleGroundingDetailsTruncated = false;
+  bool storageSyntheticRectangleGroundingTruncated = false;
   std::size_t demands = 0;
   std::size_t uniqueDemandRows = 0;
   std::size_t selectionBasisRows = 0;

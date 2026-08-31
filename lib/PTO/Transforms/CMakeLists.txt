@@ -35,6 +35,7 @@ add_library(PTOSyncCoverCore OBJECT
   CanonicalSync/SyncCoverStorageLifecycle.cpp
   CanonicalSync/SyncCoverStorageLifecycleScc.cpp
   CanonicalSync/SyncCoverStorageCuts.cpp
+  CanonicalSync/SyncCoverStorageRectangleGrounding.cpp
   CanonicalSync/SyncCoverStorageRectangles.cpp
 )
 target_include_directories(PTOSyncCoverCore PUBLIC

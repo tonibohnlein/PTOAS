@@ -648,7 +648,13 @@ acquisition cuts. It includes synthetic cross-cut pairs that have no direct
 hazard at the exact endpoints, because those are the schedule rectangles that
 may cover several original obligations after semantic grounding. Candidate
 coverage is not guessed or stored by this layer; the ordinary completion
-oracle will ground each compact supply before any later selector integration.
+oracle grounds each synthetic compact supply independently with one shared work
+budget. This synthetic-only report excludes exact direct rectangles, whose
+coverage is already frozen in the direct mechanism problem. The reporting path
+streams those queries and retains only a bounded top list, so it does not
+allocate a rectangle-by-demand matrix. This diagnostic remains
+separate from the candidate catalog until the resulting multi-row covers have
+been reviewed and promoted behind an independent mechanism-family mask.
 
 This keeps direct columns as the correctness basis while allowing event-ID
 scarcity to motivate generic channel synthesis. Ordinary pair columns remain a

@@ -326,7 +326,9 @@ LogicalResult ProgramBuilder::validateInput() {
        options_.storageRectangleLimits.maximumWorkUnits == 0 ||
        options_.storageRectangleLimits.maximumInspections == 0 ||
        options_.storageRectangleLimits.maximumRectangles == 0 ||
-       options_.storageRectangleLimits.maximumGuardLiterals == 0);
+       options_.storageRectangleLimits.maximumGuardLiterals == 0 ||
+       options_.syntheticRectangleGroundingLimits.maximumWorkUnits == 0 ||
+       options_.syntheticRectangleGroundingLimits.maximumDetails == 0);
   if (invalidLimits || invalidLifecycleLimits) {
     return function_.emitError(
         "canonical sync analysis limits must be positive");

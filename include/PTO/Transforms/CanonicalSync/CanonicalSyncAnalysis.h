@@ -14,6 +14,7 @@
 #include "PTO/Transforms/CanonicalSync/SyncCoverGraph.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverStorageCuts.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverStorageLifecycle.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverStorageRectangleGrounding.h"
 #include "PTO/Transforms/CanonicalSync/SyncCoverStorageRectangles.h"
 
 #include "PTO/IR/PTO.h"
@@ -57,6 +58,7 @@ struct CanonicalSyncAnalysisOptions {
   SyncCoverStorageLifecycleLimits storageLifecycleLimits;
   SyncCoverStorageCutLimits storageCutLimits;
   SyncCoverStorageFactoredRectangleLimits storageRectangleLimits;
+  SyncCoverSyntheticRectangleGroundingLimits syntheticRectangleGroundingLimits;
   std::size_t maximumNodes = 1U << 16;
   std::size_t maximumScopes = 1U << 14;
   std::size_t maximumControls = 1U << 14;
