@@ -252,6 +252,81 @@ parent arenas. A recurrence protocol may export completion only after common
 validation certifies balanced priming, body circulation, and one scope-exit
 drain per lane.
 
+### Specification-grounded event protocol core
+
+The replacement graph owns a target-neutral event protocol verifier. Its
+input target contract contains exact directed HardEvent capability facts, the
+compiler-usable ID set, and structured versioned rearm facts. Each rearm fact
+is bound to its resources, anchors, guards, loop scope, width, and iteration
+distance; an evidence number alone has no meaning. A protocol
+cannot infer legality from a source pipe alone, and IDs outside the provider's
+usable set are rejected. The initial A2/A3 contract exposes IDs 0 through 5;
+IDs 6 and 7 are never compiler-owned.
+
+The verifier admits four protocol classes:
+
+- `SingleShot`, outside repeated control;
+- `ProvenNoOverlap`, only with provider-registered cross-iteration evidence;
+- `RoundTrip`, with a ready channel and reverse loop-carry release channel;
+- `RotatingLanes`, with a phase-to-lane mapping over a graph-owned periodic
+  control relation. Callers cannot invent phase transitions or phase guards.
+
+Loop-carry channels imply one entry prime per lane, a wait-before-reuse and
+set-after-release circulation action, and one exit drain per lane. For zero,
+one, and a bounded phase/distance-complete set of trip counts, the verifier
+constructs the dynamic Set/Wait partial order under aggregate action, edge,
+query, reachability, and retained-memory limits. It rejects a wait without a
+paired set, a cyclic protocol, or any second set for one `(HardEvent, lane)`
+unless the preceding consuming wait must happen first. Set and Wait guards
+must be balanced; each cut must execute exactly once per represented protocol
+iteration. A protocol action cannot attach an invented guard to an unguarded
+physical anchor: any phase qualification must be inherent in the graph-owned
+anchor region. Unguarded optional action regions, nested repeated cuts, and
+loop-contained single-shot cuts are rejected. A non-loop single-shot is also
+rejected if either action is nested under optional or repeated cardinality.
+Exit completion is exported only when the full drain establishes a
+nonzero-trip must fact for every lane; the export is one aggregate channel
+fact, not one independently reusable fact per lane. Zero-trip behavior remains
+distinct.
+
+Verified channels ground source-prefix by target-suffix rectangles for
+matching resources, structural must-coexecution, guards, recurrence distance,
+and target-certified ordering requirements. Coverage closes over every
+enabled channel and fixed transition in one bounded world, so coverage that
+requires several protocols is discovered by the whole-world closure rather
+than by unioning per-protocol bitsets. Recurrence distance is interpreted only
+in the demand's owning loop: a positive-distance fixed edge or protocol carry
+from another nested loop cannot be added to that coordinate. Source and target
+guards remain copy-qualified, so alternating endpoint alternatives are not
+collapsed into an impossible same-iteration conjunction. Optional regions,
+Choice alternatives, and zero-trip children contribute only facts that hold on
+every demand-feasible path. A Choice alternative can contribute to a demand
+whose copy-qualified guard proves that exact alternative, while the same path
+remains unavailable to an unspecialized demand. Existing fixed completion
+supplies remain active even in an empty protocol world. Verified loop drains
+are the only protocol facts exported to an enclosing region. Event allocation
+re-verifies the immutable graph and protocol descriptors, canonicalizes
+requests, and assigns distinct IDs deterministically in each directed event
+domain. Reservations are subtracted before allocation, and scarcity is a
+precise `ResourceInfeasible` result.
+
+All catalog verification bounds are aggregate across the complete protocol
+set used by coverage or allocation. This includes dynamic actions, automaton
+edges, rearm queries and indexed lookup work, reachability propagation, lane
+initialization, and retained exit exports. Coverage charges every
+state-by-channel inspection before eligibility tests, so disabled or
+inapplicable rectangles cannot bypass the transition limit. Sorting is
+conservatively precharged at a bounded `O(n log n)` allowance. Exhausting the
+shared work budget at any must-analysis helper is an explicit
+`WorkLimitExceeded` result; it can never be reinterpreted as an uncovered but
+otherwise valid demand.
+
+Exact physical-storage demand edges also feed a bounded, linear-time SCC
+index. An SCC containing a positive-distance edge is a lifecycle proposal,
+not a selectable column: later synthesis must still construct and verify the
+complete ready/release recipe. This keeps generic group discovery separate
+from hardware-semantic grounding.
+
 ## 3. Certified mechanism catalog
 
 A mechanism is the smallest selectable and materializable unit. Version one
