@@ -1294,6 +1294,81 @@ bool testMeteredSupplySortingScalesNLogN() {
                "reject metered supply sorting one unit below its work bound");
 }
 
+bool testMeteredSingletonCoverageBoundsAdversarialMetadata() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop = takeIndex(
+      graph.addScope(0, true, SyncCoverTimelineInterval{0, 1024}, true), passed,
+      "add metered-singleton loop");
+  SyncCoverGuard guard;
+  constexpr std::size_t guardDepth = 8;
+  for (std::size_t index = 0; index < guardDepth; ++index) {
+    const SyncCoverControlId control = takeIndex(
+        graph.addControl(2, loop), passed, "add metered-singleton control");
+    guard.literals.push_back({control, 0});
+  }
+  const SyncCoverNodeId source =
+      takeIndex(graph.addNode(1, 1, loop, 1, guard), passed,
+                "add metered-singleton source");
+  constexpr std::size_t demandCount = 32;
+  std::vector<SyncCoverNodeId> targets;
+  std::vector<SyncCoverDemandId> demands;
+  targets.reserve(demandCount);
+  demands.reserve(demandCount);
+  for (std::size_t index = 0; index < demandCount; ++index) {
+    const SyncCoverNodeId target =
+        takeIndex(graph.addNode(2, 1, loop, index + 2, guard), passed,
+                  "add metered-singleton target");
+    if (!targets.empty()) {
+      passed &= check(
+          graph.addEdge(makeEdge(
+              targets.back(), target,
+              SyncCoverEdgeKind::NonCompletionPreservingIssueOrder, loop)),
+          "add metered-singleton target order");
+    }
+    targets.push_back(target);
+    passed &= check(graph.addDemand(makeDemand(source, target, loop)),
+                    "add metered-singleton demand");
+    demands.push_back(index);
+  }
+  passed &= check(graph.freezeStructure(), "freeze metered-singleton graph");
+  if (!passed) {
+    return false;
+  }
+  constexpr std::size_t mechanismCount = 256;
+  std::vector<SyncCoverCompletionSupply> supplies;
+  supplies.reserve(mechanismCount);
+  for (std::size_t mechanism = 0; mechanism < mechanismCount; ++mechanism) {
+    supplies.push_back({mechanism,
+                        makeEdge(source, targets.front(),
+                                 SyncCoverEdgeKind::CompletionSupply, loop),
+                        demands});
+  }
+  const SyncCoverExpandedProgram expansion(graph, demands);
+  const auto run = [&](SyncCoverCoverageWorkBudget &work) {
+    return computeSyncCoverSingletonCoverage(graph, expansion, mechanismCount,
+                                             supplies, demands, {}, &work);
+  };
+  SyncCoverCoverageWorkBudget measuredWork;
+  const SyncCoverSingletonCoverageResult measured = run(measuredWork);
+  passed &= check(measured && !measured.mechanisms.empty() &&
+                      measured.mechanisms.front().count() == demandCount,
+                  "meter singleton propagation with deep guards and wide "
+                  "demand provenance");
+  if (!passed || measuredWork.workUnits == 0) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget exactWork(measuredWork.workUnits);
+  const SyncCoverSingletonCoverageResult exact = run(exactWork);
+  SyncCoverCoverageWorkBudget belowWork(measuredWork.workUnits - 1);
+  const SyncCoverSingletonCoverageResult below = run(belowWork);
+  return check(exact && exactWork.workUnits == measuredWork.workUnits,
+               "accept metered singleton coverage at its exact bound") &&
+         check(below.error == SyncCoverCoverageError::WorkLimitExceeded &&
+                   belowWork.exhausted,
+               "reject metered singleton coverage one unit below its bound");
+}
+
 } // namespace
 
 int main() {
@@ -1323,5 +1398,6 @@ int main() {
   passed &= testBoundedCoverageMetersWholeQuery();
   passed &= testDeepProjectionReservationFailsEarly();
   passed &= testMeteredSupplySortingScalesNLogN();
+  passed &= testMeteredSingletonCoverageBoundsAdversarialMetadata();
   return passed ? 0 : 1;
 }

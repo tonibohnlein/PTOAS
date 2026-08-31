@@ -793,14 +793,17 @@ private:
 bool supplyIsActive(const SyncCoverGraph &graph, const SyncCoverDemand &demand,
                     const DemandContext &context,
                     const SyncCoverCompletionSupply &description,
-                    const IndexedSupply &indexed, std::size_t &targetNode) {
+                    const IndexedSupply &indexed, std::size_t &targetNode,
+                    SyncCoverCoverageWorkBudget *budget = nullptr) {
   const SyncCoverEdge &supply = description.edge;
   const bool active =
       indexed.targetCopy <= demand.distance &&
-      nodeInstanceAvailable(graph, demand, supply.source, indexed.sourceCopy) &&
-      nodeInstanceAvailable(graph, demand, supply.target, indexed.targetCopy) &&
+      nodeInstanceAvailable(graph, demand, supply.source, indexed.sourceCopy,
+                            budget) &&
+      nodeInstanceAvailable(graph, demand, supply.target, indexed.targetCopy,
+                            budget) &&
       edgeGuardsActive(graph, demand, context, supply, indexed.sourceCopy,
-                       indexed.targetCopy);
+                       indexed.targetCopy, budget);
   if (!active) {
     return false;
   }
@@ -812,13 +815,14 @@ bool virtualNodeAvailable(const SyncCoverGraph &graph,
                           const SyncCoverDemand &demand,
                           const DemandContext &context,
                           const SyncCoverExpandedArena &arena,
-                          std::size_t virtualNode, unsigned copy) {
+                          std::size_t virtualNode, unsigned copy,
+                          SyncCoverCoverageWorkBudget *budget = nullptr) {
   const std::optional<SyncCoverNodeId> operation =
       arena.getOperationForVirtualNode(virtualNode);
   return !operation ||
-         (nodeInstanceAvailable(graph, demand, *operation, copy) &&
+         (nodeInstanceAvailable(graph, demand, *operation, copy, budget) &&
           guardIsImplied(graph, demand, context,
-                         graph.getNodes()[*operation].guard, copy));
+                         graph.getNodes()[*operation].guard, copy, budget));
 }
 
 struct SingletonSeed {
@@ -836,14 +840,21 @@ SingletonSeedCollection collectSingletonSeeds(
     SyncCoverDemandId demandId, const DemandContext &context,
     const SyncCoverExpandedProgram &expansion,
     const SyncCoverExpandedArena &arena, const SupplyIndex &supplyIndex,
-    const std::vector<SyncCoverCompletionSupply> &supplies) {
+    const std::vector<SyncCoverCompletionSupply> &supplies,
+    SyncCoverCoverageWorkBudget *budget = nullptr) {
   SingletonSeedCollection result;
+  if (!chargeProjection(graph, arena, false, budget)) {
+    return result;
+  }
   const std::optional<std::size_t> source =
       expansion.projectEndpoint(graph, arena, demand.source, 0);
   const bool invalidSource =
       !source ||
       arena.getVirtualNodeCount() > std::numeric_limits<std::size_t>::max() / 2;
   if (invalidSource) {
+    return result;
+  }
+  if (!consumeProduct(budget, arena.getVirtualNodeCount(), 3)) {
     return result;
   }
   std::vector<std::uint8_t> seen(arena.getVirtualNodeCount() * 2, 0);
@@ -856,20 +867,27 @@ SingletonSeedCollection collectSingletonSeeds(
   };
   enqueue(getStateIndex(*source, false));
   while (!ready.empty()) {
+    if (!consumeWork(budget)) {
+      return result;
+    }
     const std::size_t state = ready.front();
     ready.pop_front();
     const std::size_t virtualNode = state / 2;
     for (const SyncCoverExpandedEdge &edge :
          arena.getOutgoingEdges(virtualNode)) {
-      const bool active = edge.targetCopy <= demand.distance &&
-                          virtualNodeAvailable(graph, demand, context, arena,
-                                               edge.source, edge.sourceCopy) &&
-                          virtualNodeAvailable(graph, demand, context, arena,
-                                               edge.target, edge.targetCopy) &&
-                          (!edge.graphEdge ||
-                           edgeGuardsActive(graph, demand, context,
-                                            graph.getEdges()[*edge.graphEdge],
-                                            edge.sourceCopy, edge.targetCopy));
+      if (!consumeWork(budget)) {
+        return result;
+      }
+      const bool active =
+          edge.targetCopy <= demand.distance &&
+          virtualNodeAvailable(graph, demand, context, arena, edge.source,
+                               edge.sourceCopy, budget) &&
+          virtualNodeAvailable(graph, demand, context, arena, edge.target,
+                               edge.targetCopy, budget) &&
+          (!edge.graphEdge ||
+           edgeGuardsActive(graph, demand, context,
+                            graph.getEdges()[*edge.graphEdge], edge.sourceCopy,
+                            edge.targetCopy, budget));
       if (active) {
         if (const std::optional<std::size_t> next =
                 transition(edge.kind, edge.target, state)) {
@@ -880,6 +898,9 @@ SingletonSeedCollection collectSingletonSeeds(
 
     visitSupplyOutgoing(
         supplyIndex, virtualNode, [&](const IndexedSupply &indexed) -> bool {
+          if (!consumeWork(budget)) {
+            return false;
+          }
           const SyncCoverCompletionSupply &description =
               supplies[indexed.supply];
           if (description.applicability ==
@@ -888,6 +909,9 @@ SingletonSeedCollection collectSingletonSeeds(
             return true;
           }
           const bool restricted = !description.allowedDemands.empty();
+          if (!consumeWork(budget, description.allowedDemands.size())) {
+            return false;
+          }
           const bool demandAllowed =
               std::binary_search(description.allowedDemands.begin(),
                                  description.allowedDemands.end(), demandId);
@@ -896,20 +920,36 @@ SingletonSeedCollection collectSingletonSeeds(
           }
           std::size_t target = 0;
           if (supplyIsActive(graph, demand, context, description, indexed,
-                             target)) {
+                             target, budget)) {
+            if (!consumeWork(budget)) {
+              return false;
+            }
             result.seeds.push_back({indexed.mechanism, target});
           }
-          return true;
+          return !budget || !budget->exhausted;
         });
+    if (budget && budget->exhausted) {
+      return result;
+    }
+  }
+  if (!chargeProjection(graph, arena, false, budget)) {
+    return result;
   }
   const std::optional<std::size_t> goal =
       expansion.projectEndpoint(graph, arena, demand.target, demand.distance);
   result.baselineCovers = goal && seen[getStateIndex(*goal, true)] != 0;
-  std::sort(result.seeds.begin(), result.seeds.end(),
-            [](const SingletonSeed &left, const SingletonSeed &right) {
-              return std::tie(left.mechanism, left.target) <
-                     std::tie(right.mechanism, right.target);
-            });
+  if (!meteredStableSort(
+          result.seeds,
+          [](const SingletonSeed &left, const SingletonSeed &right) {
+            return std::tie(left.mechanism, left.target) <
+                   std::tie(right.mechanism, right.target);
+          },
+          budget)) {
+    return result;
+  }
+  if (!consumeWork(budget, result.seeds.size())) {
+    return result;
+  }
   result.seeds.erase(
       std::unique(result.seeds.begin(), result.seeds.end(),
                   [](const SingletonSeed &left, const SingletonSeed &right) {
@@ -1112,10 +1152,16 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
     const SyncCoverGraph &graph, const SyncCoverExpandedProgram &expansion,
     std::size_t mechanismCount,
     const std::vector<SyncCoverCompletionSupply> &inputSupplies,
-    SyncCoverCoverageLimits limits) {
+    SyncCoverCoverageLimits limits, SyncCoverCoverageWorkBudget *workBudget) {
+  const std::size_t demandCount = graph.getDemands().size();
+  if (!consumeVectorCopy(workBudget, demandCount)) {
+    SyncCoverSingletonCoverageResult result;
+    result.error = SyncCoverCoverageError::WorkLimitExceeded;
+    return result;
+  }
   return computeSyncCoverSingletonCoverage(graph, expansion, mechanismCount,
                                            inputSupplies, allDemandIds(graph),
-                                           limits);
+                                           limits, workBudget);
 }
 
 SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
@@ -1123,10 +1169,14 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
     std::size_t mechanismCount,
     const std::vector<SyncCoverCompletionSupply> &inputSupplies,
     const std::vector<SyncCoverDemandId> &activeDemands,
-    SyncCoverCoverageLimits limits) {
+    SyncCoverCoverageLimits limits, SyncCoverCoverageWorkBudget *workBudget) {
   SyncCoverSingletonCoverageResult result;
   const bool invalidInputs = !coverageInputsValid(graph, expansion) ||
-                             !demandIdsValid(graph, activeDemands);
+                             !demandIdsValid(graph, activeDemands, workBudget);
+  if (workBudget && workBudget->exhausted) {
+    result.error = SyncCoverCoverageError::WorkLimitExceeded;
+    return result;
+  }
   if (invalidInputs) {
     result.error = SyncCoverCoverageError::InvalidGraph;
     return result;
@@ -1145,6 +1195,13 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
     result.error = SyncCoverCoverageError::LimitExceeded;
     return result;
   }
+  const bool resultWorkUnavailable =
+      !consumeWork(workBudget, resultWords) ||
+      !consumeWork(workBudget, mechanismCount + 1);
+  if (resultWorkUnavailable) {
+    result.error = SyncCoverCoverageError::WorkLimitExceeded;
+    return result;
+  }
   result.baseline = SyncCoverDemandSet(graph.getDemands().size());
   result.mechanisms.reserve(mechanismCount);
   for (std::size_t mechanism = 0; mechanism < mechanismCount; ++mechanism) {
@@ -1154,28 +1211,64 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
       expansion.getError() == SyncCoverExpansionError::BaseLimitExceeded;
   if (baseUnavailable) {
     result.error = SyncCoverCoverageError::ExpansionUnavailable;
+    if (!consumeVectorCopy(workBudget, activeDemands.size())) {
+      result.error = SyncCoverCoverageError::WorkLimitExceeded;
+      return result;
+    }
     for (SyncCoverDemandId demand : activeDemands) {
       result.unavailableDemands.push_back(demand);
     }
     return result;
   }
 
+  const bool supplyWorkUnavailable =
+      !chargeSupplyCopy(inputSupplies, workBudget) ||
+      !consumeVectorCopy(workBudget, inputSupplies.size());
+  if (supplyWorkUnavailable) {
+    result.error = SyncCoverCoverageError::WorkLimitExceeded;
+    return result;
+  }
   std::vector<SyncCoverCompletionSupply> supplies = inputSupplies;
-  if (!canonicalizeSupplies(graph, supplies, mechanismCount)) {
+  if (!canonicalizeSupplies(graph, supplies, mechanismCount, workBudget)) {
+    if (workBudget && workBudget->exhausted) {
+      result.error = SyncCoverCoverageError::WorkLimitExceeded;
+      return result;
+    }
     result.error = SyncCoverCoverageError::InvalidSupply;
     return result;
   }
   std::map<const SyncCoverExpandedArena *, SupplyIndex> supplyIndices;
 
-  for (SyncCoverDemandId demandId :
-       hierarchicalDemandOrder(graph, activeDemands)) {
+  const std::vector<SyncCoverDemandId> orderedDemands =
+      hierarchicalDemandOrder(graph, activeDemands, workBudget);
+  if (workBudget && workBudget->exhausted) {
+    result.error = SyncCoverCoverageError::WorkLimitExceeded;
+    return result;
+  }
+  for (SyncCoverDemandId demandId : orderedDemands) {
+    if (!consumeWork(workBudget)) {
+      result.error = SyncCoverCoverageError::WorkLimitExceeded;
+      return result;
+    }
     const SyncCoverDemand &demand = graph.getDemands()[demandId];
     const SyncCoverExpandedArena *arena = expansion.getArena(demand);
     if (!arena) {
+      if (!consumeWork(workBudget)) {
+        result.error = SyncCoverCoverageError::WorkLimitExceeded;
+        return result;
+      }
       result.unavailableDemands.push_back(demandId);
       continue;
     }
-    const DemandContext context = makeDemandContext(graph, demand);
+    const DemandContext context = makeDemandContext(graph, demand, workBudget);
+    const bool projectionWorkUnavailable =
+        !chargeProjection(graph, *arena, false, workBudget) ||
+        !chargeProjection(graph, *arena, false, workBudget);
+    const bool coverageWorkExhausted = workBudget && workBudget->exhausted;
+    if (coverageWorkExhausted || projectionWorkUnavailable) {
+      result.error = SyncCoverCoverageError::WorkLimitExceeded;
+      return result;
+    }
     const std::optional<std::size_t> source =
         expansion.projectEndpoint(graph, *arena, demand.source, 0);
     const std::optional<std::size_t> goal = expansion.projectEndpoint(
@@ -1185,24 +1278,54 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
       return result;
     }
 
+    const bool indexWorkUnavailable =
+        !consumeWork(workBudget, supplyIndices.size() + 1);
+    if (indexWorkUnavailable) {
+      result.error = SyncCoverCoverageError::WorkLimitExceeded;
+      return result;
+    }
     auto [supplyIndex, inserted] = supplyIndices.try_emplace(arena);
     if (inserted) {
       supplyIndex->second =
-          buildSupplyIndex(graph, expansion, *arena, supplies);
+          buildSupplyIndex(graph, expansion, *arena, supplies, workBudget);
+      if (workBudget && workBudget->exhausted) {
+        result.error = SyncCoverCoverageError::WorkLimitExceeded;
+        return result;
+      }
     }
-    const SingletonSeedCollection seedCollection =
-        collectSingletonSeeds(graph, demand, demandId, context, expansion,
-                              *arena, supplyIndex->second, supplies);
+    const SingletonSeedCollection seedCollection = collectSingletonSeeds(
+        graph, demand, demandId, context, expansion, *arena,
+        supplyIndex->second, supplies, workBudget);
+    if (workBudget && workBudget->exhausted) {
+      result.error = SyncCoverCoverageError::WorkLimitExceeded;
+      return result;
+    }
     if (seedCollection.baselineCovers) {
+      if (!consumeWork(workBudget)) {
+        result.error = SyncCoverCoverageError::WorkLimitExceeded;
+        return result;
+      }
       result.baseline.insert(demandId);
     }
     const std::vector<SingletonSeed> &seeds = seedCollection.seeds;
     std::vector<SyncCoverMechanismId> candidates;
+    if (!consumeVectorCopy(workBudget, seeds.size())) {
+      result.error = SyncCoverCoverageError::WorkLimitExceeded;
+      return result;
+    }
     candidates.reserve(seeds.size());
     for (const SingletonSeed &seed : seeds) {
       candidates.push_back(seed.mechanism);
     }
-    std::sort(candidates.begin(), candidates.end());
+    if (!meteredStableSort(candidates, std::less<SyncCoverMechanismId>{},
+                           workBudget)) {
+      result.error = SyncCoverCoverageError::WorkLimitExceeded;
+      return result;
+    }
+    if (!consumeWork(workBudget, candidates.size())) {
+      result.error = SyncCoverCoverageError::WorkLimitExceeded;
+      return result;
+    }
     candidates.erase(std::unique(candidates.begin(), candidates.end()),
                      candidates.end());
     if (candidates.empty()) {
@@ -1223,10 +1346,23 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
       result.mechanisms.clear();
       return result;
     }
+    const bool workspaceWorkUnavailable =
+        !consumeWork(workBudget, workspaceWords) ||
+        !consumeWork(workBudget, arena->getVirtualNodeCount());
+    if (workspaceWorkUnavailable) {
+      result.error = SyncCoverCoverageError::WorkLimitExceeded;
+      return result;
+    }
 
     SingletonWorkspace workspace(arena->getVirtualNodeCount(),
                                  candidates.size());
     for (const SingletonSeed &seed : seeds) {
+      const bool candidateLookupWorkUnavailable =
+          !consumeWork(workBudget, candidates.size() + 1);
+      if (candidateLookupWorkUnavailable) {
+        result.error = SyncCoverCoverageError::WorkLimitExceeded;
+        return result;
+      }
       const auto mechanism = std::lower_bound(candidates.begin(),
                                               candidates.end(), seed.mechanism);
       workspace.add(seed.target,
@@ -1234,25 +1370,40 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
     }
 
     while (const std::optional<std::size_t> node = workspace.pop()) {
+      if (!consumeWork(workBudget)) {
+        result.error = SyncCoverCoverageError::WorkLimitExceeded;
+        return result;
+      }
       for (const SyncCoverExpandedEdge &edge : arena->getOutgoingEdges(*node)) {
+        if (!consumeWork(workBudget)) {
+          result.error = SyncCoverCoverageError::WorkLimitExceeded;
+          return result;
+        }
         const bool active =
             edge.targetCopy <= demand.distance &&
             virtualNodeAvailable(graph, demand, context, *arena, edge.source,
-                                 edge.sourceCopy) &&
+                                 edge.sourceCopy, workBudget) &&
             virtualNodeAvailable(graph, demand, context, *arena, edge.target,
-                                 edge.targetCopy) &&
+                                 edge.targetCopy, workBudget) &&
             (!edge.graphEdge ||
              edgeGuardsActive(graph, demand, context,
                               graph.getEdges()[*edge.graphEdge],
-                              edge.sourceCopy, edge.targetCopy));
+                              edge.sourceCopy, edge.targetCopy, workBudget));
         if (active) {
+          if (!consumeWork(workBudget, workspace.wordCount())) {
+            result.error = SyncCoverCoverageError::WorkLimitExceeded;
+            return result;
+          }
           workspace.unite(*node, edge.target);
         }
       }
 
-      visitSupplyOutgoing(
+      const bool suppliesVisited = visitSupplyOutgoing(
           supplyIndex->second, *node,
           [&](const IndexedSupply &indexed) -> bool {
+            if (!consumeWork(workBudget)) {
+              return false;
+            }
             const SyncCoverCompletionSupply &description =
                 supplies[indexed.supply];
             if (description.applicability ==
@@ -1261,11 +1412,19 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
               return true;
             }
             const bool restricted = !description.allowedDemands.empty();
+            if (!consumeWork(workBudget, description.allowedDemands.size())) {
+              return false;
+            }
             const bool demandAllowed =
                 std::binary_search(description.allowedDemands.begin(),
                                    description.allowedDemands.end(), demandId);
             if (restricted && !demandAllowed) {
               return true;
+            }
+            const bool candidateLookupWorkUnavailable =
+                !consumeWork(workBudget, candidates.size() + 1);
+            if (candidateLookupWorkUnavailable) {
+              return false;
             }
             const auto mechanism = std::lower_bound(
                 candidates.begin(), candidates.end(), indexed.mechanism);
@@ -1281,14 +1440,25 @@ SyncCoverSingletonCoverageResult mlir::pto::computeSyncCoverSingletonCoverage(
             }
             std::size_t target = 0;
             if (supplyIsActive(graph, demand, context, description, indexed,
-                               target)) {
+                               target, workBudget)) {
+              if (!consumeWork(workBudget, 2)) {
+                return false;
+              }
               workspace.add(target, local);
             }
-            return true;
+            return !workBudget || !workBudget->exhausted;
           });
+      if (!suppliesVisited || (workBudget && workBudget->exhausted)) {
+        result.error = SyncCoverCoverageError::WorkLimitExceeded;
+        return result;
+      }
     }
 
     const std::uint64_t *goalWords = workspace.words(*goal);
+    if (!consumeWork(workBudget, candidates.size())) {
+      result.error = SyncCoverCoverageError::WorkLimitExceeded;
+      return result;
+    }
     for (std::size_t local = 0; local < candidates.size(); ++local) {
       if ((goalWords[local / kBitsPerWord] &
            (std::uint64_t{1} << (local % kBitsPerWord))) != 0) {

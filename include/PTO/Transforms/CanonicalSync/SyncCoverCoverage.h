@@ -174,13 +174,15 @@ SyncCoverSingletonCoverageResult computeSyncCoverSingletonCoverage(
     const SyncCoverGraph &graph, const SyncCoverExpandedProgram &expansion,
     std::size_t mechanismCount,
     const std::vector<SyncCoverCompletionSupply> &supplies,
-    SyncCoverCoverageLimits limits = {});
+    SyncCoverCoverageLimits limits = {},
+    SyncCoverCoverageWorkBudget *workBudget = nullptr);
 SyncCoverSingletonCoverageResult computeSyncCoverSingletonCoverage(
     const SyncCoverGraph &graph, const SyncCoverExpandedProgram &expansion,
     std::size_t mechanismCount,
     const std::vector<SyncCoverCompletionSupply> &supplies,
     const std::vector<SyncCoverDemandId> &activeDemands,
-    SyncCoverCoverageLimits limits = {});
+    SyncCoverCoverageLimits limits = {},
+    SyncCoverCoverageWorkBudget *workBudget = nullptr);
 
 SyncCoverPairCoverageResult computeSyncCoverPairCoverage(
     const SyncCoverGraph &graph, const SyncCoverExpandedProgram &expansion,
