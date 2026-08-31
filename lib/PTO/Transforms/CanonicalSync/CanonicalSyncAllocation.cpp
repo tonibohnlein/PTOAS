@@ -23,20 +23,14 @@ bool sameDomain(const CanonicalMechanism &first,
   return first.source == second.source && first.target == second.target;
 }
 
-bool waitPrecedesSet(const CanonicalMechanism &waiter,
-                     const CanonicalMechanism &setter) {
-  Operation *wait = waiter.waitBefore;
-  Operation *set = setter.setAfter;
-  return wait && set && wait->getBlock() == set->getBlock() &&
-         (wait == set || wait->isBeforeInBlock(set));
-}
-
 bool lifetimesCanOverlap(const CanonicalMechanism &first,
                          const CanonicalMechanism &second) {
-  if (!controlsCanCoexecute(first.guard, second.guard)) {
-    return false;
-  }
-  return !waitPrecedesSet(first, second) && !waitPrecedesSet(second, first);
+  // Scalar program order does not order the execution of different hardware
+  // pipelines. In particular, a lexically earlier wait may not have consumed
+  // its event before the source pipeline reaches a later set. Until a hardware
+  // happens-before proof is available, only mutually exclusive generations may
+  // share a physical event ID.
+  return controlsCanCoexecute(first.guard, second.guard);
 }
 
 bool idAvailable(const CanonicalSyncProgram &program,
@@ -79,8 +73,8 @@ mlir::pto::allocateCanonicalSyncEvents(CanonicalSyncProgram &program) {
       }
     }
     if (!assigned) {
-      Operation *witness = mechanism.waitBefore
-                               ? mechanism.waitBefore
+      Operation *witness = mechanism.targetPoint.operation
+                               ? mechanism.targetPoint.operation
                                : program.getFunction().getOperation();
       witness->emitError("canonical sync exhausted event IDs 0-5 after "
                          "applying hidden macro reservations")

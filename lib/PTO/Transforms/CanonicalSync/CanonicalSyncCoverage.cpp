@@ -21,7 +21,7 @@ namespace {
 struct CompletionFact {
   CanonicalPhaseId phase = kInvalidCanonicalSyncId;
   CanonicalPhysicalResource resource;
-  unsigned availableOrder = 0;
+  CanonicalProgramPoint availableAt;
   SmallVector<CanonicalControlAtom, 2> guard;
 };
 
@@ -38,18 +38,21 @@ combineGuards(ArrayRef<CanonicalControlAtom> first,
   if (!controlsCanCoexecute(first, second)) {
     return {};
   }
-  return intersectControlPaths(first, second);
+  return conjoinCompatibleControlPaths(first, second);
 }
 
 bool addFact(SmallVectorImpl<CompletionFact> &facts, CompletionFact fact) {
   for (CompletionFact &existing : facts) {
     if (existing.phase == fact.phase && existing.resource == fact.resource &&
         existing.guard == fact.guard) {
-      if (fact.availableOrder < existing.availableOrder) {
-        existing.availableOrder = fact.availableOrder;
+      if (existing.availableAt == fact.availableAt ||
+          programPointMustPrecede(existing.availableAt, fact.availableAt)) {
+        return false;
+      }
+      if (programPointMustPrecede(fact.availableAt, existing.availableAt)) {
+        existing.availableAt = fact.availableAt;
         return true;
       }
-      return false;
     }
   }
   facts.push_back(std::move(fact));
@@ -59,15 +62,13 @@ bool addFact(SmallVectorImpl<CompletionFact> &facts, CompletionFact fact) {
 void applyBarrier(const CanonicalSyncProgram &program,
                   const CanonicalMechanism &mechanism,
                   SmallVectorImpl<CompletionFact> &facts) {
-  const unsigned targetOrder =
-      program.getPhase(mechanism.targetCut).sourceOrder;
   for (const CanonicalPhase &phase : program.getPhases()) {
     if (phase.resource != mechanism.source ||
-        phase.sourceOrder >= targetOrder ||
+        !phaseMayPrecedePoint(phase, mechanism.sourcePoint) ||
         !controlsCanCoexecute(phase.controlPath, mechanism.guard)) {
       continue;
     }
-    addFact(facts, {phase.id, mechanism.source, targetOrder,
+    addFact(facts, {phase.id, mechanism.source, mechanism.targetPoint,
                     combineGuards(phase.controlPath, mechanism.guard)});
   }
 }
@@ -75,29 +76,27 @@ void applyBarrier(const CanonicalSyncProgram &program,
 bool applyEvent(const CanonicalSyncProgram &program,
                 const CanonicalMechanism &mechanism,
                 SmallVectorImpl<CompletionFact> &facts) {
-  const unsigned sourceOrder =
-      program.getPhase(mechanism.sourceCut).sourceOrder;
-  const unsigned targetOrder =
-      program.getPhase(mechanism.targetCut).sourceOrder;
   bool changed = false;
   for (const CanonicalPhase &phase : program.getPhases()) {
-    if (phase.resource != mechanism.source || phase.sourceOrder > sourceOrder ||
+    if (phase.resource != mechanism.source ||
+        !phaseMayPrecedePoint(phase, mechanism.sourcePoint) ||
         !controlsCanCoexecute(phase.controlPath, mechanism.guard)) {
       continue;
     }
     changed |=
-        addFact(facts, {phase.id, mechanism.target, targetOrder,
+        addFact(facts, {phase.id, mechanism.target, mechanism.targetPoint,
                         combineGuards(phase.controlPath, mechanism.guard)});
   }
   SmallVector<CompletionFact, 16> snapshot(facts.begin(), facts.end());
   for (const CompletionFact &fact : snapshot) {
     if (fact.resource != mechanism.source ||
-        fact.availableOrder > sourceOrder ||
+        !programPointMustPrecede(fact.availableAt, mechanism.sourcePoint) ||
         !controlsCanCoexecute(fact.guard, mechanism.guard)) {
       continue;
     }
-    changed |= addFact(facts, {fact.phase, mechanism.target, targetOrder,
-                               combineGuards(fact.guard, mechanism.guard)});
+    changed |=
+        addFact(facts, {fact.phase, mechanism.target, mechanism.targetPoint,
+                        combineGuards(fact.guard, mechanism.guard)});
   }
   return changed;
 }
@@ -136,8 +135,11 @@ bool containsKind(const CanonicalSyncProgram &program,
 bool recurrenceCoveredByBarrier(const CanonicalSyncProgram &program,
                                 const CanonicalDemand &demand,
                                 ArrayRef<CanonicalMechanismId> selected) {
-  if (!llvm::is_contained(demand.iterationDistance,
-                          kCanonicalAnyPositiveDistance)) {
+  const bool positive = llvm::any_of(
+      demand.iterationDistance, [](const CanonicalLoopDistance &distance) {
+        return distance.relation == CanonicalIterationRelation::AnyPositive;
+      });
+  if (!positive) {
     return false;
   }
   const CanonicalPhase &source = program.getPhase(demand.source);
@@ -147,8 +149,10 @@ bool recurrenceCoveredByBarrier(const CanonicalSyncProgram &program,
     return mechanism.kind == CanonicalMechanismKind::PipeBarrier &&
            mechanism.source == source.resource &&
            source.resource == target.resource &&
-           mechanism.waitBefore == target.operation &&
-           guardImplies(demand.guard, mechanism.guard);
+           mechanism.targetPoint ==
+               CanonicalProgramPoint{target.operation,
+                                     CanonicalProgramPointPosition::Before} &&
+           guardImplies(demand.targetGuard, mechanism.guard);
   });
 }
 
@@ -178,10 +182,15 @@ bool demandCovered(const CanonicalSyncProgram &program,
   if (recurrenceCoveredByBarrier(program, demand, selected)) {
     return true;
   }
+  if (!controlsCanCoexecute(demand.sourceGuard, demand.targetGuard)) {
+    return false;
+  }
+  const SmallVector<CanonicalControlAtom, 2> executionGuard =
+      conjoinCompatibleControlPaths(demand.sourceGuard, demand.targetGuard);
   return llvm::any_of(facts, [&](const CompletionFact &fact) {
     return fact.phase == demand.source && fact.resource == target.resource &&
-           fact.availableOrder <= target.sourceOrder &&
-           guardImplies(demand.guard, fact.guard);
+           pointMustPrecedePhase(fact.availableAt, target) &&
+           guardImplies(executionGuard, fact.guard);
   });
 }
 

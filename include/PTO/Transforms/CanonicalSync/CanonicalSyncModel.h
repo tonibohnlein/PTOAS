@@ -42,8 +42,6 @@ using CanonicalMechanismId = std::uint32_t;
 
 inline constexpr std::uint32_t kInvalidCanonicalSyncId =
     std::numeric_limits<std::uint32_t>::max();
-inline constexpr int64_t kCanonicalAnyPositiveDistance = -1;
-
 enum class CanonicalCore : std::uint8_t { AIC, AIV };
 enum class CanonicalRegionKind : std::uint8_t {
   Function,
@@ -73,6 +71,12 @@ enum class CanonicalRequirement : std::uint8_t { Completion, Visibility };
 enum class CanonicalVisibilityDirection : std::uint8_t {
   ScalarToNonScalar,
   NonScalarToScalar,
+  Mte3ToMte2Gm,
+};
+enum class CanonicalIterationRelation : std::uint8_t {
+  Same,
+  AnyPositive,
+  Any,
 };
 enum class CanonicalCacheMaintenance : std::uint8_t {
   None,
@@ -86,6 +90,7 @@ enum class CanonicalMechanismKind : std::uint8_t {
   FixedFence,
   TailBarrier,
 };
+enum class CanonicalProgramPointPosition : std::uint8_t { Before, After };
 
 struct CanonicalPhysicalResource {
   CanonicalCore core = CanonicalCore::AIV;
@@ -106,6 +111,25 @@ struct CanonicalControlAtom {
 
   bool operator==(const CanonicalControlAtom &other) const {
     return choice == other.choice && arm == other.arm;
+  }
+};
+
+struct CanonicalLoopDistance {
+  CanonicalRegionId loop = kInvalidCanonicalSyncId;
+  CanonicalIterationRelation relation = CanonicalIterationRelation::Same;
+
+  bool operator==(const CanonicalLoopDistance &other) const {
+    return loop == other.loop && relation == other.relation;
+  }
+};
+
+struct CanonicalProgramPoint {
+  Operation *operation = nullptr;
+  CanonicalProgramPointPosition position =
+      CanonicalProgramPointPosition::Before;
+
+  bool operator==(const CanonicalProgramPoint &other) const {
+    return operation == other.operation && position == other.position;
   }
 };
 
@@ -181,8 +205,9 @@ struct CanonicalDemand {
   CanonicalDemandKind kind = CanonicalDemandKind::Raw;
   CanonicalRequirement requirement = CanonicalRequirement::Completion;
   std::optional<CanonicalVisibilityRequirement> visibility;
-  llvm::SmallVector<int64_t, 2> iterationDistance;
-  llvm::SmallVector<CanonicalControlAtom, 2> guard;
+  llvm::SmallVector<CanonicalLoopDistance, 2> iterationDistance;
+  llvm::SmallVector<CanonicalControlAtom, 2> sourceGuard;
+  llvm::SmallVector<CanonicalControlAtom, 2> targetGuard;
   llvm::SmallVector<CanonicalDemandCause, 1> causes;
 };
 
@@ -191,10 +216,9 @@ struct CanonicalMechanism {
   CanonicalMechanismKind kind = CanonicalMechanismKind::PipeBarrier;
   CanonicalPhysicalResource source;
   CanonicalPhysicalResource target;
-  CanonicalPhaseId sourceCut = kInvalidCanonicalSyncId;
-  CanonicalPhaseId targetCut = kInvalidCanonicalSyncId;
-  Operation *setAfter = nullptr;
-  Operation *waitBefore = nullptr;
+  CanonicalProgramPoint sourcePoint;
+  CanonicalProgramPoint targetPoint;
+  llvm::SmallVector<CanonicalDemandId, 2> origins;
   llvm::SmallVector<Operation *, 2> cacheMaintenance;
   CanonicalRegionId actionRegion = kInvalidCanonicalSyncId;
   llvm::SmallVector<CanonicalControlAtom, 2> guard;
@@ -217,6 +241,8 @@ public:
   CanonicalDemandId appendDemand(CanonicalDemand demand);
   void appendDemandCause(CanonicalDemandId demand, CanonicalDemandCause cause);
   CanonicalMechanismId appendMechanism(CanonicalMechanism mechanism);
+  void appendMechanismOrigin(CanonicalMechanismId mechanism,
+                             CanonicalDemandId demand);
   void setMechanismEventId(CanonicalMechanismId mechanism, unsigned eventId);
   void setDirectMechanism(CanonicalDemandId demand,
                           CanonicalMechanismId mechanism);

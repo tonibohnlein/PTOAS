@@ -50,7 +50,8 @@ LogicalResult collectActions(
         mechanism.kind == CanonicalMechanismKind::TailBarrier) {
       continue;
     }
-    Operation *waitAnchor = mapping.lookupOrNull(mechanism.waitBefore);
+    Operation *waitAnchor =
+        mapping.lookupOrNull(mechanism.targetPoint.operation);
     if (!waitAnchor) {
       return program.getFunction().emitError(
           "canonical sync failed to map a materialization anchor into its "
@@ -60,7 +61,8 @@ LogicalResult collectActions(
       barriers[waitAnchor].push_back(mechanism.id);
       continue;
     }
-    Operation *setAnchor = mapping.lookupOrNull(mechanism.setAfter);
+    Operation *setAnchor =
+        mapping.lookupOrNull(mechanism.sourcePoint.operation);
     if (!setAnchor || !mechanism.eventId) {
       return program.getFunction().emitError(
           "canonical sync event is missing a cloned anchor or allocated ID");

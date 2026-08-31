@@ -254,6 +254,13 @@ LogicalResult VerifierProgramBuilder::collectOperation(Operation *operation) {
     return success();
   }
   if (auto forOperation = dyn_cast<scf::ForOp>(operation)) {
+    for (BlockArgument argument : forOperation.getRegionIterArgs()) {
+      if (areMemoryLikeTypes(argument.getType())) {
+        return forOperation.emitError(
+            "canonical sync verifier rejects memory-like loop-carried values "
+            "without init/yield alias fixed-point analysis");
+      }
+    }
     bindForInputs(forOperation);
     if (failed(collectBlock(forOperation.getRegion().front()))) {
       return failure();

@@ -1,0 +1,148 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// The compare-form gather has two vector phases. Both overlap the physical
+// destination read by tgetval. One V->S event after the macro must cover both
+// RAW demands even though the later phase follows the first originating phase
+// in the flattened phase order.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @macro_event_uses_physical_cut() -> i32
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %src_addr = arith.constant 1024 : i64
+    %shared_addr = arith.constant 0 : i64
+    %cdst_addr = arith.constant 2048 : i64
+    %zero = arith.constant 0 : index
+    %zero_f16 = arith.constant 0.0 : f16
+    %src = pto.alloc_tile addr = %src_addr :
+      !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=32, v_row=1,
+                    v_col=32, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %tmp = pto.alloc_tile addr = %shared_addr :
+      !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=32, v_row=1,
+                    v_col=32, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %dst = pto.alloc_tile addr = %shared_addr :
+      !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1,
+                    v_col=32, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %cdst = pto.alloc_tile addr = %cdst_addr :
+      !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1,
+                    v_col=32, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    pto.tgather ins(%src, %zero_f16, %tmp :
+                    !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=32,
+                      v_row=1, v_col=32, blayout=row_major,
+                      slayout=none_box, fractal=512, pad=0>, f16,
+                    !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=32,
+                      v_row=1, v_col=32, blayout=row_major,
+                      slayout=none_box, fractal=512, pad=0>)
+                outs(%dst, %cdst :
+                     !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
+                       v_row=1, v_col=32, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>,
+                     !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
+                       v_row=1, v_col=32, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+    %value = pto.tgetval ins(%dst, %zero :
+                    !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
+                      v_row=1, v_col=32, blayout=row_major,
+                      slayout=none_box, fractal=512, pad=0>, index)
+                outs : i32
+    return %value : i32
+  }
+
+  func.func @macro_barrier_excludes_macro_phases()
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %src_addr = arith.constant 0 : i64
+    %tmp_addr = arith.constant 1024 : i64
+    %dst_addr = arith.constant 2048 : i64
+    %cdst_addr = arith.constant 3072 : i64
+    %seed_f16_addr = arith.constant 4096 : i64
+    %seed_i32_addr = arith.constant 5120 : i64
+    %zero_f16 = arith.constant 0.0 : f16
+    %src = pto.alloc_tile addr = %src_addr :
+      !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=32, v_row=1,
+                    v_col=32, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %tmp = pto.alloc_tile addr = %tmp_addr :
+      !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=32, v_row=1,
+                    v_col=32, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %dst = pto.alloc_tile addr = %dst_addr :
+      !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1,
+                    v_col=32, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %cdst = pto.alloc_tile addr = %cdst_addr :
+      !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1,
+                    v_col=32, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %seed_f16 = pto.alloc_tile addr = %seed_f16_addr :
+      !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=32, v_row=1,
+                    v_col=32, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %seed_i32 = pto.alloc_tile addr = %seed_i32_addr :
+      !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1,
+                    v_col=32, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    pto.tmov ins(%seed_i32 : !pto.tile_buf<loc=vec, dtype=i32, rows=1,
+                    cols=32, v_row=1, v_col=32, blayout=row_major,
+                    slayout=none_box, fractal=512, pad=0>)
+              outs(%dst : !pto.tile_buf<loc=vec, dtype=i32, rows=1,
+                     cols=32, v_row=1, v_col=32, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    pto.tgather ins(%src, %zero_f16, %tmp :
+                    !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=32,
+                      v_row=1, v_col=32, blayout=row_major,
+                      slayout=none_box, fractal=512, pad=0>, f16,
+                    !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=32,
+                      v_row=1, v_col=32, blayout=row_major,
+                      slayout=none_box, fractal=512, pad=0>)
+                outs(%dst, %cdst :
+                     !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
+                       v_row=1, v_col=32, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>,
+                     !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
+                       v_row=1, v_col=32, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+    pto.tmov ins(%seed_f16 : !pto.tile_buf<loc=vec, dtype=f16, rows=1,
+                    cols=32, v_row=1, v_col=32, blayout=row_major,
+                    slayout=none_box, fractal=512, pad=0>)
+              outs(%src : !pto.tile_buf<loc=vec, dtype=f16, rows=1,
+                     cols=32, v_row=1, v_col=32, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: CANONICAL-SYNC function=macro_event_uses_physical_cut
+// CHECK: p0 op=pto.tgather resource=AIV:PIPE_V
+// CHECK-SAME: macro-phase=0
+// CHECK: p2 op=pto.tgather resource=AIV:PIPE_V
+// CHECK-SAME: macro-phase=2
+// CHECK: d{{[0-9]+}} kind=RAW p0->p4
+// CHECK: d{{[0-9]+}} kind=RAW p2->p4
+// CHECK: kind=event resource=AIV:PIPE_V->AIV:PIPE_S
+// CHECK-SAME: points=after(pto.tgather)->before(pto.tgetval)
+// CHECK-SAME: origins=[d{{[0-9]+}}, d{{[0-9]+}}]
+// CHECK: world=mechanical
+// CHECK: VERIFY ok
+
+// CHECK-LABEL: CANONICAL-SYNC function=macro_barrier_excludes_macro_phases
+// CHECK: d0 kind=WAW p0->p3
+// CHECK: d1 kind=WAR p1->p5
+// CHECK: m0 kind=barrier resource=AIV:PIPE_V->AIV:PIPE_V
+// CHECK-SAME: points=before(pto.tgather)->before(pto.tgather)
+// CHECK-SAME: origins=[d0]
+// CHECK: world=singleton-m0 mechanisms=[m0] covered=[d0]
+// CHECK: VERIFY ok

@@ -82,7 +82,7 @@ bool mlir::pto::canonical_sync_detail::controlsCanCoexecute(
 }
 
 SmallVector<CanonicalControlAtom, 2>
-mlir::pto::canonical_sync_detail::intersectControlPaths(
+mlir::pto::canonical_sync_detail::conjoinCompatibleControlPaths(
     ArrayRef<CanonicalControlAtom> first,
     ArrayRef<CanonicalControlAtom> second) {
   SmallVector<CanonicalControlAtom, 2> result(first.begin(), first.end());

@@ -58,8 +58,10 @@ bool isRepeatedBlock(Block *block) {
 }
 
 bool hasPositiveDistance(const CanonicalDemand &demand) {
-  return llvm::is_contained(demand.iterationDistance,
-                            kCanonicalAnyPositiveDistance);
+  return llvm::any_of(
+      demand.iterationDistance, [](const CanonicalLoopDistance &distance) {
+        return distance.relation == CanonicalIterationRelation::AnyPositive;
+      });
 }
 
 SmallVector<CanonicalControlAtom, 2>
@@ -180,12 +182,12 @@ bool sameMechanism(const CanonicalMechanism &left,
   }
   switch (left.kind) {
   case CanonicalMechanismKind::PipeBarrier:
-    return left.waitBefore == right.waitBefore;
+    return left.targetPoint == right.targetPoint;
   case CanonicalMechanismKind::Event:
-    return left.setAfter == right.setAfter &&
-           left.waitBefore == right.waitBefore;
+    return left.sourcePoint == right.sourcePoint &&
+           left.targetPoint == right.targetPoint;
   case CanonicalMechanismKind::FixedFence:
-    return left.waitBefore == right.waitBefore &&
+    return left.targetPoint == right.targetPoint &&
            left.cacheMaintenance == right.cacheMaintenance;
   case CanonicalMechanismKind::IntrinsicOrder:
   case CanonicalMechanismKind::TailBarrier:
@@ -195,12 +197,15 @@ bool sameMechanism(const CanonicalMechanism &left,
 }
 
 CanonicalMechanismId internMechanism(CanonicalSyncProgram &program,
-                                     CanonicalMechanism mechanism) {
+                                     CanonicalMechanism mechanism,
+                                     CanonicalDemandId origin) {
   for (const CanonicalMechanism &existing : program.getMechanisms()) {
     if (sameMechanism(existing, mechanism)) {
+      program.appendMechanismOrigin(existing.id, origin);
       return existing.id;
     }
   }
+  mechanism.origins.push_back(origin);
   return program.appendMechanism(std::move(mechanism));
 }
 
@@ -234,10 +239,8 @@ FailureOr<CanonicalMechanism> buildEventMechanism(
   mechanism.kind = CanonicalMechanismKind::Event;
   mechanism.source = source;
   mechanism.target = target;
-  mechanism.sourceCut = demand.source;
-  mechanism.targetCut = demand.target;
-  mechanism.setAfter = setAfter;
-  mechanism.waitBefore = waitBefore;
+  mechanism.sourcePoint = {setAfter, CanonicalProgramPointPosition::After};
+  mechanism.targetPoint = {waitBefore, CanonicalProgramPointPosition::Before};
   mechanism.actionRegion =
       findRegionLca(program, sourcePhase.region, targetPhase.region);
   mechanism.guard =
@@ -254,8 +257,6 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
     tail.kind = CanonicalMechanismKind::TailBarrier;
     tail.source = {CanonicalCore::AIV, PIPE::PIPE_ALL};
     tail.target = tail.source;
-    tail.sourceCut = kInvalidCanonicalSyncId;
-    tail.targetCut = kInvalidCanonicalSyncId;
     tail.actionRegion = 0;
     return tail;
   }
@@ -267,6 +268,14 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
     if (!demand.visibility) {
       targetPhase.operation->emitError(
           "canonical sync visibility demand lacks explicit requirements");
+      return failure();
+    }
+    if (demand.visibility->direction ==
+        CanonicalVisibilityDirection::Mte3ToMte2Gm) {
+      targetPhase.operation->emitError(
+          "canonical sync has no device-proven MTE3-to-MTE2 GM visibility "
+          "primitive")
+          << "; demand d" << demand.id << " fails closed";
       return failure();
     }
     Operation *fence = findFixedVisibilityFence(
@@ -294,21 +303,21 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
     mechanism.kind = CanonicalMechanismKind::FixedFence;
     mechanism.source = source;
     mechanism.target = destination;
-    mechanism.sourceCut = demand.source;
-    mechanism.targetCut = demand.target;
-    mechanism.waitBefore = fence;
+    mechanism.sourcePoint = {fence, CanonicalProgramPointPosition::After};
+    mechanism.targetPoint = {fence, CanonicalProgramPointPosition::After};
     mechanism.cacheMaintenance = std::move(*cacheMaintenance);
     mechanism.actionRegion = demand.owner;
-    mechanism.guard = demand.guard;
+    mechanism.guard =
+        commonGuard(sourcePhase.controlPath, targetPhase.controlPath);
     return mechanism;
   }
   if (source == destination) {
     CanonicalMechanism mechanism;
     mechanism.source = source;
     mechanism.target = destination;
-    mechanism.sourceCut = demand.source;
-    mechanism.targetCut = demand.target;
-    mechanism.waitBefore = targetPhase.operation;
+    mechanism.sourcePoint = {targetPhase.operation,
+                             CanonicalProgramPointPosition::Before};
+    mechanism.targetPoint = mechanism.sourcePoint;
     mechanism.actionRegion = targetPhase.region;
     mechanism.guard = targetPhase.controlPath;
     if (target.hasIntrinsicCompletion(source)) {
@@ -371,7 +380,7 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
       return failure();
     }
     const CanonicalMechanismId id =
-        internMechanism(program, std::move(*mechanism));
+        internMechanism(program, std::move(*mechanism), demand.id);
     program.setDirectMechanism(demand.id, id);
   }
   if (program.getDemands().empty()) {
@@ -379,8 +388,6 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
     tail.kind = CanonicalMechanismKind::TailBarrier;
     tail.source = {CanonicalCore::AIV, PIPE::PIPE_ALL};
     tail.target = tail.source;
-    tail.sourceCut = kInvalidCanonicalSyncId;
-    tail.targetCut = kInvalidCanonicalSyncId;
     tail.actionRegion = 0;
     program.appendMechanism(std::move(tail));
   }

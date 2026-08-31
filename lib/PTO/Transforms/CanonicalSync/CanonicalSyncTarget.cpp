@@ -85,13 +85,48 @@ CanonicalSyncTarget mlir::pto::makeNpu2201CanonicalSyncTarget() {
 
 FailureOr<CanonicalSyncTarget>
 CanonicalSyncTarget::resolve(func::FuncOp function) {
+  ModuleOp module = function->getParentOfType<ModuleOp>();
+  if (module) {
+    if (auto attribute =
+            module->getAttrOfType<StringAttr>(kPTOTargetArchAttrName)) {
+      const StringRef name = attribute.getValue();
+      const bool supported = name.equals_insensitive("a2") ||
+                             name.equals_insensitive("a3") ||
+                             name.equals_insensitive("a2a3");
+      const bool knownA5 = name.equals_insensitive("a5");
+      if (!supported && !knownA5) {
+        function.emitError("canonical synchronization rejects unknown target "
+                           "profile '")
+            << name << "'";
+        return failure();
+      }
+    }
+    if (auto attribute = module->getAttrOfType<StringAttr>("pto.device-spec")) {
+      const StringRef name = attribute.getValue();
+      const bool knownA5 =
+          name.starts_with("Ascend950") || name.starts_with("Ascend910_95");
+      const bool supported = name.starts_with("Ascend910") && !knownA5;
+      if (!supported && !knownA5) {
+        function.emitError("canonical synchronization rejects unknown device "
+                           "profile '")
+            << name << "'";
+        return failure();
+      }
+    }
+  }
   const PTOArch architecture = getTargetArch(function.getOperation());
-  if (architecture == PTOArch::A5) {
+  switch (architecture) {
+  case PTOArch::A3:
+    return makeNpu2201CanonicalSyncTarget();
+  case PTOArch::A5:
     function.emitError("canonical synchronization supports only the verified "
                        "A2/A3 NPU 2201 target model; A5 is unsupported");
     return failure();
+  default:
+    function.emitError(
+        "canonical synchronization rejects an unsupported target profile");
+    return failure();
   }
-  return makeNpu2201CanonicalSyncTarget();
 }
 
 bool CanonicalSyncTarget::supportsResource(

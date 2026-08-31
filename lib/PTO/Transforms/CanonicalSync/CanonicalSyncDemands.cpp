@@ -73,13 +73,70 @@ SmallVector<CanonicalRegionId, 2> commonLoops(const CanonicalPhase &source,
   return result;
 }
 
+bool regionIsNestedIn(const CanonicalSyncProgram &program,
+                      CanonicalRegionId region, CanonicalRegionId ancestor) {
+  for (CanonicalRegionId current = region; current != kInvalidCanonicalSyncId;
+       current = program.getRegion(current).parent) {
+    if (current == ancestor) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool controlsCanCoexecuteAtDistance(const CanonicalSyncProgram &program,
+                                    ArrayRef<CanonicalControlAtom> source,
+                                    ArrayRef<CanonicalControlAtom> target,
+                                    CanonicalRegionId carryingLoop) {
+  for (const CanonicalControlAtom &left : source) {
+    for (const CanonicalControlAtom &right : target) {
+      if (left.choice != right.choice || left.arm == right.arm) {
+        continue;
+      }
+      // A choice nested in the carrying loop is re-evaluated in each dynamic
+      // iteration. Opposite arms can therefore supply the two endpoints. A
+      // choice outside the carrying loop remains mutually exclusive.
+      if (!regionIsNestedIn(program, left.choice, carryingLoop)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+SmallVector<CanonicalLoopDistance, 2>
+sameIterationRelation(ArrayRef<CanonicalRegionId> loops) {
+  SmallVector<CanonicalLoopDistance, 2> result;
+  for (CanonicalRegionId loop : loops) {
+    result.push_back({loop, CanonicalIterationRelation::Same});
+  }
+  return result;
+}
+
+SmallVector<CanonicalLoopDistance, 2>
+carriedIterationRelation(ArrayRef<CanonicalRegionId> loops,
+                         size_t carryingIndex) {
+  SmallVector<CanonicalLoopDistance, 2> result;
+  for (auto [index, loop] : llvm::enumerate(loops)) {
+    CanonicalIterationRelation relation = CanonicalIterationRelation::Same;
+    if (index == carryingIndex) {
+      relation = CanonicalIterationRelation::AnyPositive;
+    } else if (index > carryingIndex) {
+      relation = CanonicalIterationRelation::Any;
+    }
+    result.push_back({loop, relation});
+  }
+  return result;
+}
+
 bool sameDemand(const CanonicalDemand &left, const CanonicalDemand &right) {
   return left.source == right.source && left.target == right.target &&
          left.owner == right.owner && left.kind == right.kind &&
          left.requirement == right.requirement &&
          left.visibility == right.visibility &&
          left.iterationDistance == right.iterationDistance &&
-         left.guard == right.guard;
+         left.sourceGuard == right.sourceGuard &&
+         left.targetGuard == right.targetGuard;
 }
 
 CanonicalDemandId appendOrMerge(CanonicalSyncProgram &program,
@@ -273,9 +330,10 @@ LogicalResult deriveSsaDemands(CanonicalSyncProgram &program) {
       demand.owner = findRegionLca(program, source.region, target.region);
       demand.kind = CanonicalDemandKind::SsaCompletion;
       demand.requirement = CanonicalRequirement::Completion;
-      demand.guard =
-          intersectControlPaths(source.controlPath, target.controlPath);
-      demand.iterationDistance.assign(commonLoops(source, target).size(), 0);
+      demand.sourceGuard = source.controlPath;
+      demand.targetGuard = target.controlPath;
+      demand.iterationDistance =
+          sameIterationRelation(commonLoops(source, target));
       CanonicalDemandCause cause;
       cause.provenance = "SSA producer completion";
       appendOrMerge(program, std::move(demand), std::move(cause));
@@ -296,7 +354,12 @@ bool requiresVisibility(const CanonicalSyncProgram &program,
   }
   const PIPE sourcePipe = program.getPhase(source.phase).resource.pipe;
   const PIPE targetPipe = program.getPhase(target.phase).resource.pipe;
-  return (sourcePipe == PIPE::PIPE_S) != (targetPipe == PIPE::PIPE_S);
+  const bool scalarCrossing =
+      (sourcePipe == PIPE::PIPE_S) != (targetPipe == PIPE::PIPE_S);
+  const bool unresolvedMteRoundTrip =
+      sourcePipe == PIPE::PIPE_MTE3 && targetPipe == PIPE::PIPE_MTE2 &&
+      accessWrites(source.mode) && accessReads(target.mode);
+  return scalarCrossing || unresolvedMteRoundTrip;
 }
 
 CanonicalVisibilityRequirement
@@ -305,10 +368,16 @@ buildVisibilityRequirement(const CanonicalSyncProgram &program,
                            const CanonicalAccess &target) {
   const bool scalarSource =
       program.getPhase(source.phase).resource.pipe == PIPE::PIPE_S;
+  const PIPE sourcePipe = program.getPhase(source.phase).resource.pipe;
+  const PIPE targetPipe = program.getPhase(target.phase).resource.pipe;
   CanonicalVisibilityRequirement requirement;
-  requirement.direction = scalarSource
-                              ? CanonicalVisibilityDirection::ScalarToNonScalar
-                              : CanonicalVisibilityDirection::NonScalarToScalar;
+  if (sourcePipe == PIPE::PIPE_MTE3 && targetPipe == PIPE::PIPE_MTE2) {
+    requirement.direction = CanonicalVisibilityDirection::Mte3ToMte2Gm;
+  } else {
+    requirement.direction =
+        scalarSource ? CanonicalVisibilityDirection::ScalarToNonScalar
+                     : CanonicalVisibilityDirection::NonScalarToScalar;
+  }
   requirement.scope = FenceScope::GM;
   if (scalarSource && accessWrites(source.mode)) {
     requirement.cacheMaintenance = CanonicalCacheMaintenance::CleanSource;
@@ -321,7 +390,8 @@ buildVisibilityRequirement(const CanonicalSyncProgram &program,
 void addHazardDemand(CanonicalSyncProgram &program,
                      const CanonicalAccess &source,
                      const CanonicalAccess &target, CanonicalDemandKind hazard,
-                     ArrayRef<int64_t> distance, CanonicalRegionId owner) {
+                     ArrayRef<CanonicalLoopDistance> distance,
+                     CanonicalRegionId owner) {
   CanonicalDemand demand;
   demand.source = source.phase;
   demand.target = target.phase;
@@ -336,9 +406,8 @@ void addHazardDemand(CanonicalSyncProgram &program,
     demand.visibility = buildVisibilityRequirement(program, source, target);
   }
   demand.iterationDistance.assign(distance.begin(), distance.end());
-  demand.guard =
-      intersectControlPaths(program.getPhase(source.phase).controlPath,
-                            program.getPhase(target.phase).controlPath);
+  demand.sourceGuard = program.getPhase(source.phase).controlPath;
+  demand.targetGuard = program.getPhase(target.phase).controlPath;
   CanonicalDemandCause cause;
   cause.sourceAccess = source.id;
   cause.targetAccess = target.id;
@@ -355,9 +424,7 @@ void deriveMemoryDemands(CanonicalSyncProgram &program) {
     for (const CanonicalAccess &target : program.getAccesses()) {
       const CanonicalPhase &targetPhase = program.getPhase(target.phase);
       const bool samePhase = source.phase == target.phase;
-      if (!controlsCanCoexecute(sourcePhase.controlPath,
-                                targetPhase.controlPath) ||
-          !accessesMayAlias(source, target)) {
+      if (!accessesMayAlias(source, target)) {
         continue;
       }
       std::optional<CanonicalDemandKind> hazard =
@@ -367,18 +434,29 @@ void deriveMemoryDemands(CanonicalSyncProgram &program) {
       }
       const SmallVector<CanonicalRegionId, 2> loops =
           commonLoops(sourcePhase, targetPhase);
-      if (!samePhase && sourcePhase.operation != targetPhase.operation &&
+      const bool sameIterationCompatible = controlsCanCoexecute(
+          sourcePhase.controlPath, targetPhase.controlPath);
+      if (sameIterationCompatible && !samePhase &&
+          sourcePhase.operation != targetPhase.operation &&
           sourcePhase.sourceOrder < targetPhase.sourceOrder) {
-        SmallVector<int64_t, 2> zeroDistance(loops.size(), 0);
+        const SmallVector<CanonicalLoopDistance, 2> zeroDistance =
+            sameIterationRelation(loops);
         addHazardDemand(
             program, source, target, *hazard, zeroDistance,
             findRegionLca(program, sourcePhase.region, targetPhase.region));
       }
-      if (!loops.empty()) {
-        SmallVector<int64_t, 2> recurrence(loops.size(), 0);
-        recurrence.back() = kCanonicalAnyPositiveDistance;
+      for (size_t carryingIndex = 0; carryingIndex < loops.size();
+           ++carryingIndex) {
+        const CanonicalRegionId carryingLoop = loops[carryingIndex];
+        if (!controlsCanCoexecuteAtDistance(program, sourcePhase.controlPath,
+                                            targetPhase.controlPath,
+                                            carryingLoop)) {
+          continue;
+        }
+        const SmallVector<CanonicalLoopDistance, 2> recurrence =
+            carriedIterationRelation(loops, carryingIndex);
         addHazardDemand(program, source, target, *hazard, recurrence,
-                        loops.back());
+                        carryingLoop);
       }
     }
   }
@@ -392,7 +470,7 @@ void deriveExitDemands(CanonicalSyncProgram &program) {
     demand.owner = 0;
     demand.kind = CanonicalDemandKind::ExitCompletion;
     demand.requirement = CanonicalRequirement::Completion;
-    demand.guard = phase.controlPath;
+    demand.sourceGuard = phase.controlPath;
     program.appendDemand(std::move(demand));
   }
 }

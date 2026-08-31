@@ -183,6 +183,13 @@ LogicalResult AliasAnalysis::bindAllocation(Operation *operation) {
       fact.unknownRange = fact.intervals[0].size == 0;
       fact.physical = !fact.unknownSpace && fact.space != AddressSpace::GM &&
                       fact.space != AddressSpace::Zero;
+    } else if (!fact.unknownSpace && fact.space != AddressSpace::GM &&
+               fact.space != AddressSpace::Zero) {
+      // Distinct local SSA allocations are not disjoint after physical memory
+      // planning. A dynamic or absent address therefore aliases every range in
+      // its local address space until a physical interval is known.
+      fact.intervals.clear();
+      fact.unknownRange = true;
     }
     facts[alloc.getResult()].push_back(std::move(fact));
     return success();

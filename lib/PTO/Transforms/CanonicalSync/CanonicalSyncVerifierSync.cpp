@@ -232,12 +232,29 @@ void applyCmo(const VerifierProgram &program, CmoCacheInvalidOp operation,
   }
 }
 
-void applyFenceAll(FenceBarrierAllOp operation, VerifierState &state) {
+bool fenceDrainsResource(const VerifierProgram &program,
+                         CanonicalPhysicalResource resource) {
+  auto kind = program.function->getAttrOfType<FunctionKernelKindAttr>(
+      FunctionKernelKindAttr::name);
+  const bool vectorKernel =
+      kind && kind.getKernelKind() == FunctionKernelKind::Vector;
+  if (vectorKernel) {
+    return true;
+  }
+  return resource.pipe == PIPE::PIPE_MTE2 || resource.pipe == PIPE::PIPE_MTE3 ||
+         resource.pipe == PIPE::PIPE_FIX;
+}
+
+void applyFenceAll(const VerifierProgram &program, FenceBarrierAllOp operation,
+                   VerifierState &state) {
   const FenceScope scope = operation.getScope().getScope();
   if (scope != FenceScope::GM && scope != FenceScope::All) {
     return;
   }
   for (VerifierResourceState &resource : state.resources) {
+    if (!fenceDrainsResource(program, resource.resource)) {
+      continue;
+    }
     completeResource(resource, state);
     for (const VerifierEffect &effect : resource.pending) {
       addKey(state.globalKnown, effect.key);
@@ -278,7 +295,7 @@ LogicalResult mlir::pto::canonical_sync_detail::applyVerifierSyncOperation(
     return success();
   }
   if (auto fence = dyn_cast<FenceBarrierAllOp>(operation)) {
-    applyFenceAll(fence, state);
+    applyFenceAll(program, fence, state);
     return success();
   }
   handled = false;

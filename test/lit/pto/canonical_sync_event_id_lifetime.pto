@@ -1,0 +1,76 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A lexical wait does not prove that the target pipeline consumed its event
+// before the source pipeline reaches a later set. Coexecuting generations in
+// one directed event domain therefore receive distinct physical IDs.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --emit-pto-ir --mlir-print-ir-after=pto-canonical-sync %s \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @canonical_sync_event_id_lifetime(
+      %src_a: !pto.partition_tensor_view<16x128xf32>,
+      %src_b: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input_a_addr = arith.constant 0 : i64
+    %output_a_addr = arith.constant 8192 : i64
+    %input_b_addr = arith.constant 16384 : i64
+    %output_b_addr = arith.constant 24576 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %input_a = pto.alloc_tile addr = %input_a_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output_a = pto.alloc_tile addr = %output_a_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input_b = pto.alloc_tile addr = %input_b_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output_b = pto.alloc_tile addr = %output_b_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    pto.tload ins(%src_a : !pto.partition_tensor_view<16x128xf32>)
+              outs(%input_a : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%input_a, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                    rows=16, cols=128, v_row=16, v_col=128,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                    f32)
+              outs(%output_a : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%src_b : !pto.partition_tensor_view<16x128xf32>)
+              outs(%input_b : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%input_b, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                    rows=16, cols=128, v_row=16, v_col=128,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                    f32)
+              outs(%output_b : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @canonical_sync_event_id_lifetime
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// CHECK-NEXT: pto.tmuls
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+// CHECK-NEXT: pto.tmuls

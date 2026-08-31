@@ -93,9 +93,26 @@ bool requiresVisibility(const VerifierEffect &source,
       source.access.unknownSpace || source.access.space == AddressSpace::GM;
   const bool targetMayBeGm =
       target.access.unknownSpace || target.access.space == AddressSpace::GM;
+  const bool scalarCrossing = (source.resource.pipe == PIPE::PIPE_S) !=
+                              (target.resource.pipe == PIPE::PIPE_S);
+  const bool unresolvedMteRoundTrip = source.resource.pipe == PIPE::PIPE_MTE3 &&
+                                      target.resource.pipe == PIPE::PIPE_MTE2 &&
+                                      accessWrites(source.access.mode) &&
+                                      accessReads(target.access.mode);
   return sourceMayBeGm && targetMayBeGm &&
-         ((source.resource.pipe == PIPE::PIPE_S) !=
-          (target.resource.pipe == PIPE::PIPE_S));
+         (scalarCrossing || unresolvedMteRoundTrip);
+}
+
+bool isUnresolvedMte3ToMte2Visibility(const VerifierEffect &source,
+                                      const VerifierEffect &target) {
+  const bool sourceMayBeGm =
+      source.access.unknownSpace || source.access.space == AddressSpace::GM;
+  const bool targetMayBeGm =
+      target.access.unknownSpace || target.access.space == AddressSpace::GM;
+  return sourceMayBeGm && targetMayBeGm &&
+         source.resource.pipe == PIPE::PIPE_MTE3 &&
+         target.resource.pipe == PIPE::PIPE_MTE2 &&
+         accessWrites(source.access.mode) && accessReads(target.access.mode);
 }
 
 bool completionKnown(const CanonicalSyncTarget &target,
@@ -223,9 +240,17 @@ LogicalResult executeLoop(const VerifierProgram &program,
   VerifierState iteration = state;
   SmallVector<VerifierEffectKey, 16> loopKeys;
   collectLoopKeys(program, operation.getRegion(), loopKeys);
-  const unsigned limit = static_cast<unsigned>(loopKeys.size() * 4 + 16);
-  bool converged = false;
-  for (unsigned count = 0; count < limit; ++count) {
+  SmallVector<VerifierState, 8> visited;
+  while (true) {
+    // Every state component is a set drawn from this finite program's effects,
+    // cache actions, resources, and event generations. Recording each distinct
+    // transfer input therefore gives a terminating finite-state fixed-point
+    // iteration without an arbitrary trip-count bound.
+    if (llvm::is_contained(visited, iteration)) {
+      return operation.emitError(
+          "canonical sync verifier loop transfer entered a non-fixed cycle");
+    }
+    visited.push_back(iteration);
     const VerifierState before = iteration;
     if (failed(executeVerifierBlock(
             program, target, operation.getRegion().front(), iteration))) {
@@ -236,14 +261,9 @@ LogicalResult executeLoop(const VerifierProgram &program,
                                  "lifecycle crossing a loop iteration");
     }
     if (iteration == before) {
-      converged = true;
       break;
     }
     iteration.loopCarried.assign(loopKeys.begin(), loopKeys.end());
-  }
-  if (!converged) {
-    return operation.emitError(
-        "canonical sync verifier dataflow did not converge for this loop");
   }
   iteration.loopCarried = entry.loopCarried;
   state = mergeVerifierStates(entry, iteration);
@@ -303,6 +323,11 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyAndIssuePhase(
         const bool nonHazard = !isHazard(source, destination);
         if (unresolvedSameOperation || nonAliasing || nonHazard) {
           continue;
+        }
+        if (isUnresolvedMte3ToMte2Visibility(source, destination)) {
+          return destination.key.operation->emitError(
+              "canonical sync verifier has no device-proven MTE3-to-MTE2 GM "
+              "visibility primitive");
         }
         const bool visibility = requiresVisibility(source, destination);
         const bool missingCompletion =
@@ -393,10 +418,17 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyMaterializedCanonicalSync(
     func::FuncOp function) {
   FailureOr<CanonicalSyncTarget> target =
       CanonicalSyncTarget::resolve(function);
+  if (failed(target)) {
+    return failure();
+  }
+  const bool invalidEvents =
+      failed(verifyConcreteEventGenerations(function, *target));
+  if (invalidEvents) {
+    return failure();
+  }
   FailureOr<std::unique_ptr<VerifierProgram>> program =
       buildVerifierProgram(function);
-  const bool invalidInputs = failed(target) || failed(program);
-  if (invalidInputs) {
+  if (failed(program)) {
     return failure();
   }
   VerifierState state;

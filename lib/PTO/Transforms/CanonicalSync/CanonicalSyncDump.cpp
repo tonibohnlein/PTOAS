@@ -28,6 +28,17 @@ void printGuard(raw_ostream &os, ArrayRef<CanonicalControlAtom> guard) {
   os << ']';
 }
 
+void printPoint(raw_ostream &os, CanonicalProgramPoint point) {
+  os << (point.position == CanonicalProgramPointPosition::Before ? "before("
+                                                                 : "after(");
+  if (point.operation) {
+    os << point.operation->getName();
+  } else {
+    os << '-';
+  }
+  os << ')';
+}
+
 } // namespace
 
 void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
@@ -91,17 +102,23 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
     } else {
       os << 'p' << demand.target;
     }
-    os << " owner=r" << demand.owner << " guard=";
-    printGuard(os, demand.guard);
+    os << " owner=r" << demand.owner << " source-guard=";
+    printGuard(os, demand.sourceGuard);
+    os << " target-guard=";
+    printGuard(os, demand.targetGuard);
     os << " distance=[";
-    llvm::interleaveComma(demand.iterationDistance, os,
-                          [&os](int64_t distance) {
-                            if (distance == kCanonicalAnyPositiveDistance) {
-                              os << "+";
-                            } else {
-                              os << distance;
-                            }
-                          });
+    llvm::interleaveComma(
+        demand.iterationDistance, os,
+        [&os](const CanonicalLoopDistance &distance) {
+          os << 'r' << distance.loop << ':';
+          if (distance.relation == CanonicalIterationRelation::AnyPositive) {
+            os << "+";
+          } else if (distance.relation == CanonicalIterationRelation::Any) {
+            os << '*';
+          } else {
+            os << '0';
+          }
+        });
     os << "] causes=" << demand.causes.size();
     if (demand.visibility) {
       os << " visibility="
@@ -124,10 +141,17 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
     os << "->";
     printResource(os, mechanism.target);
     if (mechanism.kind == CanonicalMechanismKind::TailBarrier) {
-      os << " cuts=exit";
+      os << " points=exit";
     } else {
-      os << " cuts=p" << mechanism.sourceCut << ":p" << mechanism.targetCut;
+      os << " points=";
+      printPoint(os, mechanism.sourcePoint);
+      os << "->";
+      printPoint(os, mechanism.targetPoint);
     }
+    os << " origins=[";
+    llvm::interleaveComma(mechanism.origins, os,
+                          [&os](CanonicalDemandId id) { os << 'd' << id; });
+    os << ']';
     if (mechanism.eventId) {
       os << " event=" << *mechanism.eventId;
     }

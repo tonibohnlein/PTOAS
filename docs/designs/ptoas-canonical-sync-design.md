@@ -107,8 +107,10 @@ read/read pairs do not produce a demand.
 SSA results produced by a physical phase also produce completion demands when
 they reach a later physical consumer, including through pure SSA operations and
 structured `scf.if` or `scf.for` results. Storage handles are alias provenance,
-not asynchronous SSA payloads. Unsupported effectful provenance and loop-carried
-block arguments fail closed instead of silently dropping an SSA dependency.
+not asynchronous SSA payloads. Unsupported effectful provenance fails closed
+instead of silently dropping an SSA dependency. Memory-like loop-carried block
+arguments also fail closed until alias binding is computed as an init/yield
+fixed point.
 
 Overlapping ACC reads on different AIC pipelines do produce an explicit
 hardware ACC read/read demand. This is not a language-level data dependence; it
@@ -116,14 +118,18 @@ represents the documented hardware scheduling restriction and remains visible
 in graph dumps.
 
 GM conflicts between scalar and non-scalar pipelines require visibility, not
-only pipeline completion. Every visibility demand records three independent
-requirements: direction (`scalar-to-nonscalar` or
-`nonscalar-to-scalar`), fence scope, and cache maintenance. Scalar publication
-requires source cache maintenance before a GM fence. A scalar read acquiring a
-non-scalar publication requires a GM fence followed by target cache
-invalidation. Directions that do not read stale scalar cache state record no
-cache-maintenance requirement. An event cannot satisfy visibility by itself;
-missing scope, cache maintenance, or ordering fails closed.
+only pipeline completion. The documented-risk MTE3 GM write to same-address
+MTE2 GM read path is also classified as a distinct visibility direction. No
+device-proven direct primitive for that round trip is currently encoded, so it
+fails closed rather than being satisfied by an ordinary event. Every supported
+visibility demand records three independent requirements: direction
+(`scalar-to-nonscalar` or `nonscalar-to-scalar`), fence scope, and cache
+maintenance. Scalar publication requires source cache maintenance before a GM
+fence. A scalar read acquiring a non-scalar publication requires a GM fence
+followed by target cache invalidation. Directions that do not read stale scalar
+cache state record no cache-maintenance requirement. An event cannot satisfy
+visibility by itself; missing scope, cache maintenance, or ordering fails
+closed.
 
 An addressed single-cache-line CMO covers only an access proved to remain in
 the line containing that exact address. The current graph does not encode GM
@@ -131,13 +137,17 @@ pointer alignment or target cache-line geometry, so it can make that proof only
 for an exact one-byte access. Wider accesses require whole-GM cache maintenance
 until alignment and line intervals become explicit hardware facts.
 
-Loop-carried demands record iteration distance. A zero denotes the current
-iteration, while an explicit positive-distance marker denotes a summarized
-later iteration. A physical phase that accesses the same storage on successive
-iterations produces a self-recurrence demand; it is not removed merely because
-both endpoints have the same static phase ID. Cross-pipeline recurrence events
-are rejected until a proven repeating protocol exists. A same-pipeline barrier
-may remain inside a loop.
+Each demand retains separate source and target guards. Loop-carried demands
+record a relation for every common loop: same iteration, any positive distance,
+or any iteration after an outer loop advances. A recurrence family is emitted
+for every possible carrying loop. Opposite arms of a choice nested inside the
+carrying loop are feasible on different iterations and therefore remain in the
+demand graph. Choices outside the carrying loop remain mutually exclusive. A
+physical phase that accesses the same storage on successive iterations produces
+a self-recurrence demand; it is not removed merely because both endpoints have
+the same static phase ID. Cross-pipeline recurrence events are rejected until a
+proven repeating protocol exists. A same-pipeline barrier may remain inside a
+loop.
 
 Every issued phase also has an exit-completion demand. All returns receive a
 tagged `PIPE_ALL` barrier, including returns in structured control flow.
@@ -153,10 +163,15 @@ Each demand is assigned one direct mechanism:
   fence scope;
 - the mandatory exit barrier.
 
-Equivalent physical cuts are interned. Event sets are placed after the source
-frontier and waits before the target frontier. When an endpoint is nested, the
-pair can be lifted to a common once-only block. Event lifecycles that repeat
-inside a loop are rejected.
+Equivalent physical cuts are interned and retain all originating demand IDs for
+diagnostics. Their semantics come from explicit `before(operation)` and
+`after(operation)` program points, not from the first demand that created the
+cut. Event sets are placed after the source frontier and waits before the target
+frontier. When an endpoint is nested, the pair can be lifted to a common
+once-only block. The lifted set captures every source-resource phase that may
+precede its physical point, including alternative branch arms and all relevant
+phases of a macro. A barrier before a macro does not complete phases inside the
+macro. Event lifecycles that repeat inside a loop are rejected.
 
 Coverage is evaluated as a scoreboard, not as pairwise graph reachability. A
 barrier publishes its completed source prefix. A set captures the source
@@ -172,22 +187,37 @@ correctness.
 ## Event allocation
 
 Logical events are allocated after demands, mechanisms, and coverage are
-fixed. Allocation uses IDs 0 through 5, subtracts event IDs reserved by hidden
-macro protocols for the same directed domain, and allows reuse only when
-lifetimes are ordered or guards are mutually exclusive. Exhaustion is an error;
-it does not fall back to a global barrier.
+fixed. Allocation uses IDs 0 through 5 and subtracts event IDs reserved by
+hidden macro protocols for the same directed domain. Scalar/MLIR order between
+an earlier wait and a later set is not a hardware lifetime proof: the source
+pipeline may re-set the flag before the target pipeline consumes it. Therefore
+the mechanical baseline assigns distinct IDs to all coexecuting generations in
+one directed domain. Only once-only generations in provably mutually exclusive
+control arms may share an ID. Exhaustion is an error; it does not fall back to a
+global barrier.
 
 ## Independent verification and atomic mutation
 
 Materialization first clones the function. The clone receives tagged set/wait
-pairs, targeted barriers, and exit barriers. A separate verifier then extracts
-physical effects again and runs structured dataflow over the resulting IR.
+pairs, targeted barriers, and exit barriers. Before memory dataflow, an event
+generation verifier independently reconstructs each tagged set/wait generation
+from the emitted IR. It checks balance, direction, ID legality, control path,
+once-only lifetime, set-before-wait issue order, macro reservations, and
+same-key generation interference. It rejects any same-key coexecuting pair; the
+lexical position of a wait is never treated as proof that hardware consumed the
+event. A separate verifier then extracts physical effects again and runs
+structured dataflow over the resulting IR.
 
 Its state contains pending effects per physical resource, completion frontiers
 imported by waits and barriers, visibility facts, live event tokens, loop-carried
 effects, and exit completion. It checks hazards from memory effects directly,
 including ACC read/read and loop recurrences; it does not consume the planner's
-demand or coverage lists.
+demand or coverage lists. Loop transfer reaches a fixed point over the finite
+state formed from the function's effects, resources, cache actions, and event
+generations. Seen-state detection replaces an arbitrary iteration limit and
+rejects a non-fixed transfer cycle. Fence effects are kernel-specific: a vector
+kernel's fence drains its resources, while a non-vector kernel fence drains
+only MTE2, MTE3, and FIX as specified by the operation contract.
 
 Extraction ends with a separate function-wide coverage walk. Every modeled
 physical instruction, normalized schedulable operation, explicit sync
@@ -199,6 +229,13 @@ dispatch accidentally overlooks a newly added operation class.
 The original function body is replaced only after both the independent semantic
 verification and the MLIR verifier succeed. Any failure leaves the original IR
 unchanged.
+
+The verifier is independent of planner demand and coverage construction, but
+it intentionally shares normalized scheduling semantics, alias recovery,
+physical-resource resolution, macro descriptions, and the target table. Those
+components are part of the current trust boundary. Host differential checks and
+device microtests are required to find common-mode mistakes in that shared
+front end; verifier acceptance alone is not device evidence.
 
 ## Interface and failure contract
 
@@ -217,5 +254,6 @@ mechanisms, coverage worlds, the mechanical plan, and verification status.
 Canonical synchronization is mutually exclusive with the existing InsertSync,
 buffer-ID, and barrier-all modes. It rejects A5, `pto.tassign`, pre-existing
 intra-core synchronization owned by another mode, the `mte3-to-s-event0` tail
-policy, illegal event directions, unsafe control flow, unsupported visibility,
-and event-ID exhaustion.
+policy, unknown explicit target/device profiles, illegal event directions,
+unsafe control flow, unresolved MTE3-to-MTE2 GM visibility, unsupported
+visibility, and event-ID exhaustion.

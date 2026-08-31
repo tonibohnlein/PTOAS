@@ -65,6 +65,9 @@ struct VerifierProgram {
 FailureOr<std::unique_ptr<VerifierProgram>>
 buildVerifierProgram(func::FuncOp function);
 
+LogicalResult verifyConcreteEventGenerations(func::FuncOp function,
+                                             const CanonicalSyncTarget &target);
+
 struct VerifierResourceState {
   CanonicalPhysicalResource resource;
   llvm::SmallVector<VerifierEffect, 8> pending;

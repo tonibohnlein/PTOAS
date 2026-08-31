@@ -56,11 +56,17 @@ bool accessWrites(CanonicalAccessMode mode);
 bool controlsCanCoexecute(llvm::ArrayRef<CanonicalControlAtom> first,
                           llvm::ArrayRef<CanonicalControlAtom> second);
 llvm::SmallVector<CanonicalControlAtom, 2>
-intersectControlPaths(llvm::ArrayRef<CanonicalControlAtom> first,
-                      llvm::ArrayRef<CanonicalControlAtom> second);
+conjoinCompatibleControlPaths(llvm::ArrayRef<CanonicalControlAtom> first,
+                              llvm::ArrayRef<CanonicalControlAtom> second);
 CanonicalRegionId findRegionLca(const CanonicalSyncProgram &program,
                                 CanonicalRegionId first,
                                 CanonicalRegionId second);
+bool programPointMustPrecede(CanonicalProgramPoint first,
+                             CanonicalProgramPoint second);
+bool phaseMayPrecedePoint(const CanonicalPhase &phase,
+                          CanonicalProgramPoint point);
+bool pointMustPrecedePhase(CanonicalProgramPoint point,
+                           const CanonicalPhase &phase);
 FailureOr<CanonicalPhysicalResource>
 resolvePhysicalResource(func::FuncOp function, Operation *operation, PIPE pipe);
 LogicalResult rejectUnsupportedCanonicalSyncInput(func::FuncOp function);

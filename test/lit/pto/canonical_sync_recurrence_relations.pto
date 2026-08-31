@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @loop_cross_arm_recurrence(
+      %src: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input_addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %input = pto.alloc_tile addr = %input_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %iteration = %zero to %two step %one {
+      %condition = arith.cmpi eq, %iteration, %zero : index
+      scf.if %condition {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                  outs(%input : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                         cols=128, v_row=16, v_col=128, blayout=row_major,
+                         slayout=none_box, fractal=512, pad=0>)
+      } else {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                  outs(%input : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                         cols=128, v_row=16, v_col=128, blayout=row_major,
+                         slayout=none_box, fractal=512, pad=0>)
+      }
+    }
+    return
+  }
+
+  func.func @nested_outer_carried_recurrence(
+      %src: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input_addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %input = pto.alloc_tile addr = %input_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %outer = %zero to %two step %one {
+      scf.for %inner = %zero to %two step %one {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                  outs(%input : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                         cols=128, v_row=16, v_col=128, blayout=row_major,
+                         slayout=none_box, fractal=512, pad=0>)
+      }
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: CANONICAL-SYNC function=loop_cross_arm_recurrence
+// CHECK: kind=WAW p0->p1
+// CHECK-SAME: source-guard=[r{{[0-9]+}}.a0]
+// CHECK-SAME: target-guard=[r{{[0-9]+}}.a1]
+// CHECK-SAME: distance=[r{{[0-9]+}}:+]
+// CHECK: kind=WAW p1->p0
+// CHECK-SAME: source-guard=[r{{[0-9]+}}.a1]
+// CHECK-SAME: target-guard=[r{{[0-9]+}}.a0]
+// CHECK-SAME: distance=[r{{[0-9]+}}:+]
+// CHECK: VERIFY ok
+
+// CHECK-LABEL: CANONICAL-SYNC function=nested_outer_carried_recurrence
+// CHECK: kind=WAW p0->p0
+// CHECK-SAME: distance=[r{{[0-9]+}}:+, r{{[0-9]+}}:*]
+// CHECK: kind=WAW p0->p0
+// CHECK-SAME: distance=[r{{[0-9]+}}:0, r{{[0-9]+}}:+]
+// CHECK: VERIFY ok

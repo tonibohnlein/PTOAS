@@ -74,6 +74,18 @@ CanonicalSyncProgram::appendMechanism(CanonicalMechanism mechanism) {
   return appendRecord(mechanisms, std::move(mechanism), frozen);
 }
 
+void CanonicalSyncProgram::appendMechanismOrigin(CanonicalMechanismId mechanism,
+                                                 CanonicalDemandId demand) {
+  const bool invalidMechanism = mechanism >= mechanisms.size();
+  const bool invalidDemand = demand >= demands.size();
+  if (frozen || invalidMechanism || invalidDemand) {
+    llvm_unreachable("cannot extend an invalid or frozen mechanism");
+  }
+  if (!llvm::is_contained(mechanisms[mechanism].origins, demand)) {
+    mechanisms[mechanism].origins.push_back(demand);
+  }
+}
+
 void CanonicalSyncProgram::setMechanismEventId(CanonicalMechanismId mechanism,
                                                unsigned eventId) {
   if (frozen || mechanism >= mechanisms.size()) {
@@ -146,13 +158,21 @@ LogicalResult CanonicalSyncProgram::freezeGraph() {
                                  : demand.target < phases.size();
     const bool validSource = demand.source < phases.size();
     const bool validOwner = demand.owner < regions.size();
-    const bool validGuard = validControlPath(demand.guard, regions.size());
+    const bool validGuards =
+        validControlPath(demand.sourceGuard, regions.size()) &&
+        validControlPath(demand.targetGuard, regions.size());
+    const bool validDistance = llvm::all_of(
+        demand.iterationDistance,
+        [this](const CanonicalLoopDistance &distance) {
+          return distance.loop < regions.size() &&
+                 regions[distance.loop].kind == CanonicalRegionKind::Loop;
+        });
     const bool validVisibility =
         (demand.requirement == CanonicalRequirement::Visibility) ==
         demand.visibility.has_value();
-    if (!validSource || !validTarget || !validOwner || !validGuard ||
-        !validVisibility) {
-      return fail("demand has an invalid endpoint, owner, or guard");
+    if (!validSource || !validTarget || !validOwner || !validGuards ||
+        !validDistance || !validVisibility) {
+      return fail("demand has an invalid endpoint, owner, guard, or distance");
     }
   }
   graphFrozen = true;
@@ -172,13 +192,17 @@ LogicalResult CanonicalSyncProgram::freeze() {
   };
   for (const CanonicalMechanism &mechanism : mechanisms) {
     const bool tail = mechanism.kind == CanonicalMechanismKind::TailBarrier;
-    const bool validCuts =
-        tail ? mechanism.sourceCut == kInvalidCanonicalSyncId &&
-                   mechanism.targetCut == kInvalidCanonicalSyncId
-             : mechanism.sourceCut < phases.size() &&
-                   mechanism.targetCut < phases.size();
-    if (!validCuts || mechanism.actionRegion >= regions.size()) {
-      return fail("mechanism has an invalid cut or action region");
+    const bool validPoints = tail ? !mechanism.sourcePoint.operation &&
+                                        !mechanism.targetPoint.operation
+                                  : mechanism.sourcePoint.operation &&
+                                        mechanism.targetPoint.operation;
+    const bool validOrigins =
+        llvm::all_of(mechanism.origins, [this](CanonicalDemandId demand) {
+          return demand < demands.size();
+        });
+    if (!validPoints || !validOrigins ||
+        mechanism.actionRegion >= regions.size()) {
+      return fail("mechanism has an invalid action point, origin, or region");
     }
   }
   for (const CanonicalCoverageWorld &world : coverageWorlds) {
@@ -289,6 +313,8 @@ StringRef mlir::pto::stringifyCanonicalVisibilityDirection(
     return "scalar-to-nonscalar";
   case CanonicalVisibilityDirection::NonScalarToScalar:
     return "nonscalar-to-scalar";
+  case CanonicalVisibilityDirection::Mte3ToMte2Gm:
+    return "mte3-to-mte2-gm";
   }
   llvm_unreachable("unknown canonical visibility direction");
 }

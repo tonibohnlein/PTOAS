@@ -1,0 +1,122 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Seven coexecuting S-to-V generations cannot be colored with compiler-owned
+// event IDs 0-5. The pass must fail before mutating the function.
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --emit-pto-ir %s -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @canonical_sync_event_id_exhaustion()
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %scalar_addr = arith.constant 0 : i64
+    %input_addr = arith.constant 4096 : i64
+    %output_addr = arith.constant 12288 : i64
+    %zero = arith.constant 0 : index
+    %scalar = pto.alloc_tile addr = %scalar_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1,
+                    v_col=8, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input = pto.alloc_tile addr = %input_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output = pto.alloc_tile addr = %output_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %value0 = pto.tgetval ins(%scalar, %zero :
+                    !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8,
+                      v_row=1, v_col=8, blayout=row_major,
+                      slayout=none_box, fractal=512, pad=0>, index)
+              outs : f32
+    pto.tmuls ins(%input, %value0 : !pto.tile_buf<loc=vec, dtype=f32,
+                    rows=16, cols=128, v_row=16, v_col=128,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                    f32)
+              outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    %value1 = pto.tgetval ins(%scalar, %zero :
+                    !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8,
+                      v_row=1, v_col=8, blayout=row_major,
+                      slayout=none_box, fractal=512, pad=0>, index)
+              outs : f32
+    pto.tmuls ins(%input, %value1 : !pto.tile_buf<loc=vec, dtype=f32,
+                    rows=16, cols=128, v_row=16, v_col=128,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                    f32)
+              outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    %value2 = pto.tgetval ins(%scalar, %zero :
+                    !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8,
+                      v_row=1, v_col=8, blayout=row_major,
+                      slayout=none_box, fractal=512, pad=0>, index)
+              outs : f32
+    pto.tmuls ins(%input, %value2 : !pto.tile_buf<loc=vec, dtype=f32,
+                    rows=16, cols=128, v_row=16, v_col=128,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                    f32)
+              outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    %value3 = pto.tgetval ins(%scalar, %zero :
+                    !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8,
+                      v_row=1, v_col=8, blayout=row_major,
+                      slayout=none_box, fractal=512, pad=0>, index)
+              outs : f32
+    pto.tmuls ins(%input, %value3 : !pto.tile_buf<loc=vec, dtype=f32,
+                    rows=16, cols=128, v_row=16, v_col=128,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                    f32)
+              outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    %value4 = pto.tgetval ins(%scalar, %zero :
+                    !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8,
+                      v_row=1, v_col=8, blayout=row_major,
+                      slayout=none_box, fractal=512, pad=0>, index)
+              outs : f32
+    pto.tmuls ins(%input, %value4 : !pto.tile_buf<loc=vec, dtype=f32,
+                    rows=16, cols=128, v_row=16, v_col=128,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                    f32)
+              outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    %value5 = pto.tgetval ins(%scalar, %zero :
+                    !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8,
+                      v_row=1, v_col=8, blayout=row_major,
+                      slayout=none_box, fractal=512, pad=0>, index)
+              outs : f32
+    pto.tmuls ins(%input, %value5 : !pto.tile_buf<loc=vec, dtype=f32,
+                    rows=16, cols=128, v_row=16, v_col=128,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                    f32)
+              outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    %value6 = pto.tgetval ins(%scalar, %zero :
+                    !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8,
+                      v_row=1, v_col=8, blayout=row_major,
+                      slayout=none_box, fractal=512, pad=0>, index)
+              outs : f32
+    pto.tmuls ins(%input, %value6 : !pto.tile_buf<loc=vec, dtype=f32,
+                    rows=16, cols=128, v_row=16, v_col=128,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                    f32)
+              outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK: canonical sync exhausted event IDs 0-5
+// CHECK: mechanism m{{[0-9]+}} domain AIV:PIPE_S -> PIPE_V

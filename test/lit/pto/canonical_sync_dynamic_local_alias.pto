@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// Distinct local SSA roots with unproven physical addresses are not disjoint.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-dump --canonical-sync-analysis-only \
+// RUN:   --emit-pto-ir %s -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @dynamic_local_allocations_may_alias(
+      %first_addr: i64, %second_addr: i64,
+      %src: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %output_addr = arith.constant 16384 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %first = pto.alloc_tile addr = %first_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %second = pto.alloc_tile addr = %second_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output = pto.alloc_tile addr = %output_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+              outs(%first : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%second, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                    rows=16, cols=128, v_row=16, v_col=128,
+                    blayout=row_major, slayout=none_box, fractal=512,
+                    pad=0>, f32)
+              outs(%output : !pto.tile_buf<loc=vec, dtype=f32,
+                     rows=16, cols=128, v_row=16, v_col=128,
+                     blayout=row_major, slayout=none_box, fractal=512,
+                     pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: CANONICAL-SYNC function=dynamic_local_allocations_may_alias
+// CHECK: phase=p0 mode=W space=vec range=unknown
+// CHECK: phase=p1 mode=R space=vec range=unknown
+// CHECK: kind=RAW p0->p1
+// CHECK: kind=event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK: VERIFY skipped (analysis-only; IR unchanged)
