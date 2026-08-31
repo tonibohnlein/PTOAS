@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "ptoas.h"
 #include "PTO/IR/PTO.h"
@@ -97,7 +99,7 @@ using namespace pto;
 namespace {
 
 constexpr unsigned kSeenCalleeInlineCapacity = 8;
-constexpr int kDefaultCanonicalSyncEventIdMax = 8;
+constexpr int kDefaultCanonicalSyncEventIdMax = 6;
 constexpr int kDefaultGraphSyncSolverEventIdMax = 8;
 constexpr unsigned kStringRefInlineCapacity = 4;
 constexpr unsigned kEmptyExpressionInlineCapacity = 8;
@@ -540,7 +542,8 @@ static llvm::cl::opt<bool> enableCanonicalSync(
 static llvm::cl::opt<int> canonicalSyncEventIdMax(
     "canonical-sync-event-id-max",
     llvm::cl::desc(
-        "Maximum EVENT_ID slots for canonical synchronization (default 8)"),
+        "Maximum compiler-owned EVENT_ID slots for canonical synchronization "
+        "(default 6; IDs 6 and 7 are reserved)"),
     llvm::cl::init(kDefaultCanonicalSyncEventIdMax));
 
 static llvm::cl::opt<bool> canonicalSyncAssumeDistinctGmArgsNoAlias(

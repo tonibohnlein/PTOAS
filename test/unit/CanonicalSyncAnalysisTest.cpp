@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/CanonicalSync/CanonicalSync.h"
@@ -210,11 +212,12 @@ bool testBuildsOneFrozenGraph() {
   MLIRContext context;
   loadDialects(context);
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
-    module attributes {pto.target_arch = "a5"} {
+    module attributes {pto.target_arch = "a3"} {
       func.func @entry(
           %gm: !pto.partition_tensor_view<16x16xf32>,
           %mid: !pto.tile_buf<vec, 16x16xf32>,
-          %out: !pto.tile_buf<vec, 16x16xf32>) {
+          %out: !pto.tile_buf<vec, 16x16xf32>) attributes {
+          pto.kernel_kind = #pto.kernel_kind<vector>} {
         pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf32>)
                   outs(%mid : !pto.tile_buf<vec, 16x16xf32>)
         pto.tabs ins(%mid : !pto.tile_buf<vec, 16x16xf32>)
@@ -278,10 +281,11 @@ bool testMaterializationRejectsTamperedEventAllocations() {
   MLIRContext context;
   loadDialects(context);
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
-    module attributes {pto.target_arch = "a5"} {
+    module attributes {pto.target_arch = "a3"} {
       func.func @allocation_validation(
           %first: !pto.partition_tensor_view<16x16xf32>,
-          %second: !pto.partition_tensor_view<16x16xf32>) {
+          %second: !pto.partition_tensor_view<16x16xf32>) attributes {
+          pto.kernel_kind = #pto.kernel_kind<vector>} {
         %addr0 = arith.constant 0 : i64
         %addr1024 = arith.constant 1024 : i64
         %one = arith.constant 1.000000e+00 : f32
@@ -426,6 +430,9 @@ bool testMaterializationRejectsTamperedEventAllocations() {
   extraDomain.allocation.domains.push_back(
       extraDomain.allocation.domains.back());
 
+  CanonicalSyncVerifiedPlan reservedId = verified;
+  reservedId.allocation.domains[0].uses.front().ids = {6};
+
   return rejectsPlan(std::move(wrongDomain),
                      "reject an allocation indexed under the wrong domain") &&
          rejectsPlan(std::move(wrongWidth),
@@ -440,6 +447,8 @@ bool testMaterializationRejectsTamperedEventAllocations() {
                      "reject a missing event-allocation domain") &&
          rejectsPlan(std::move(extraDomain),
                      "reject an extraneous event-allocation domain") &&
+         rejectsPlan(std::move(reservedId),
+                     "reject a compiler-reserved event ID") &&
          check(printOperation(function) == irBefore,
                "reject every tampered allocation before mutating IR");
 }
@@ -811,7 +820,8 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
     module attributes {pto.target_arch = "a3"} {
       func.func @reuse(
-          %src: !pto.partition_tensor_view<16x16xf32>, %limit: index) {
+          %src: !pto.partition_tensor_view<16x16xf32>, %limit: index)
+          attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
         %c0 = arith.constant 0 : index
         %c1 = arith.constant 1 : index
         %c2 = arith.constant 2 : index
@@ -1082,15 +1092,23 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
              "build the distance-two recurrence graph for A5")) {
     return false;
   }
-  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> a5Problem =
-      buildCanonicalSyncSingletonProblem(*a5Program, options);
-  const bool a5HasLoopBoundaryPrefix =
-      succeeded(a5Problem) && llvm::any_of((*a5Problem)->getMechanisms(),
-                                           isDistanceTwoLoopBoundaryPrefix);
-  if (!check(succeeded(a5Problem),
-             "build the distance-two recurrence catalog for A5") ||
-      !check(!a5HasLoopBoundaryPrefix,
-             "do not infer the targeted-V loop-boundary protocol on A5")) {
+  bool sawA5IncompleteCatalog = false;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> a5Problem = failure();
+  {
+    ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
+      sawA5IncompleteCatalog |=
+          diagnostic.str().find("required singleton catalog is incomplete") !=
+          std::string::npos;
+      return success();
+    });
+    a5Problem = buildCanonicalSyncSingletonProblem(*a5Program, options);
+  }
+  const bool a5RecurrenceRejected =
+      failed(a5Problem) && sawA5IncompleteCatalog &&
+      a5Program->getTargetCapabilities()
+          .directEventCompletion.resourcePairs.empty();
+  if (!check(a5RecurrenceRejected,
+             "fail closed instead of guessing an A5 recurrence event")) {
     return false;
   }
   (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "a3"));
@@ -1112,8 +1130,8 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
              "reject naked cross-resource distance-two loop-carry drains")) {
     return false;
   }
-  const auto crossResourceDemand = llvm::find_if(
-      graph.getDemands(), [&](const SyncCoverDemand &demand) {
+  const auto crossResourceDemand =
+      llvm::find_if(graph.getDemands(), [&](const SyncCoverDemand &demand) {
         return demand.distance == 2 &&
                graph.getNodes()[demand.source].resource !=
                    graph.getNodes()[demand.target].resource;
@@ -1139,13 +1157,11 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
        CanonicalSyncActionGuardKind::NotFirstIteration,
        crossResourceDemand->scope});
   CanonicalSyncSupplyBinding invalidBinding;
-  invalidBinding.edge = {crossResourceDemand->source,
-                         crossResourceDemand->target,
-                         SyncCoverEdgeKind::CompletionSupply,
-                         crossResourceDemand->scope,
-                         crossResourceDemand->distance,
-                         crossResourceDemand->sourceGuard,
-                         crossResourceDemand->targetGuard};
+  invalidBinding.edge = {
+      crossResourceDemand->source,         crossResourceDemand->target,
+      SyncCoverEdgeKind::CompletionSupply, crossResourceDemand->scope,
+      crossResourceDemand->distance,       crossResourceDemand->sourceGuard,
+      crossResourceDemand->targetGuard};
   invalidBinding.barrierAction = 0;
   invalidBinding.proof = CanonicalSyncSupplyProof::LoopCarryPipeDrain;
   invalidBinding.attestedDemand = crossResourceDemandId;
@@ -1391,7 +1407,7 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
   return true;
 }
 
-bool testA5MatrixLoopBoundaryProtocol() {
+bool testA5MatrixLoopBoundaryProtocolRequiresSourcedEventContract() {
   MLIRContext context;
   loadDialects(context);
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
@@ -1401,7 +1417,8 @@ bool testA5MatrixLoopBoundaryProtocol() {
                               blayout=col_major, slayout=row_major>,
           %rhs: !pto.tile_buf<mat, 32x64xf16,
                               blayout=col_major, slayout=row_major>,
-          %limit: index) {
+          %limit: index) attributes {
+          pto.kernel_kind = #pto.kernel_kind<cube>} {
         %c0 = arith.constant 0 : index
         %c1 = arith.constant 1 : index
         %a0 = arith.constant 0 : i64
@@ -1485,107 +1502,22 @@ bool testA5MatrixLoopBoundaryProtocol() {
   }
   CanonicalSyncBuildOptions options;
   options.enableDemandBasisReduction = false;
-  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem =
-      buildCanonicalSyncSingletonProblem(*program, options);
-  if (!check(succeeded(problem),
-             "build A5 matrix loop-boundary protocol catalog")) {
-    return false;
-  }
   const std::uint32_t matrix = static_cast<std::uint32_t>(PipelineType::PIPE_M);
-  const std::uint32_t mte1 =
-      static_cast<std::uint32_t>(PipelineType::PIPE_MTE1);
-  const auto isMatrixProtocol = [&](const CanonicalSyncMechanism &mechanism) {
-    return mechanism.descriptor.kind == CanonicalSyncMechanismKind::Protocol &&
-           mechanism.descriptor.eventUses.size() == 1 &&
-           mechanism.descriptor.supplies.size() >= 2 &&
-           llvm::all_of(mechanism.descriptor.supplies,
-                        [&](const CanonicalSyncSupplyBinding &binding) {
-                          return binding.edge.distance == 1 &&
-                                 binding.proof ==
-                                     CanonicalSyncSupplyProof::
-                                         LoopBoundarySourcePrefixProtocol &&
-                                 program->getGraph()
-                                         .getNodes()[binding.edge.source]
-                                         .resource == matrix &&
-                                 program->getGraph()
-                                         .getNodes()[binding.edge.target]
-                                         .resource == mte1;
-                        }) &&
-           llvm::any_of(
-               mechanism.descriptor.actions,
-               [&](const CanonicalSyncAction &action) {
-                 return action.kind == CanonicalSyncActionKind::Barrier &&
-                        action.resource == matrix &&
-                        action.anchor.kind == SyncCoverAnchorKind::LoopBodyExit;
-               });
-  };
-  const auto protocol =
-      llvm::find_if((*problem)->getMechanisms(), isMatrixProtocol);
-  if (!check(protocol != (*problem)->getMechanisms().end(),
-             "generate a supported non-V A5 loop-boundary protocol") ||
-      !verifyExactAndOneLessProtocolWork(
-          **problem, protocol->id,
-          "verify a multi-supply loop-boundary protocol at its exact bound",
-          "reject a multi-supply loop-boundary protocol at its one-less "
-          "bound")) {
-    return false;
+  bool sawIncompleteCatalog = false;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem = failure();
+  {
+    ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
+      sawIncompleteCatalog |=
+          diagnostic.str().find("required singleton catalog is incomplete") !=
+          std::string::npos;
+      return success();
+    });
+    problem = buildCanonicalSyncSingletonProblem(*program, options);
   }
-  std::vector<SyncCoverDemandId> demands;
-  for (const CanonicalSyncSupplyBinding &binding :
-       protocol->descriptor.supplies) {
-    demands.push_back(*binding.attestedDemand);
-  }
-  llvm::sort(demands);
-  demands.erase(std::unique(demands.begin(), demands.end()), demands.end());
-  CanonicalSyncPatternProblem isolated(program->getGraph(), demands);
-  for (const CanonicalSyncEventDomain &domain : (*problem)->getDomains()) {
-    if (!isolated.addEventDomain(domain)) {
-      return check(false, "copy A5 protocol event domains");
-    }
-  }
-  const CanonicalSyncProblemResult added = isolated.internVerifiedProtocol(
-      protocol->descriptor,
-      testProtocolVerifier([&](const CanonicalSyncMechanismDescriptor &value) {
-        CanonicalSyncMechanism mechanism;
-        mechanism.descriptor = value;
-        return isMatrixProtocol(mechanism);
-      }));
-  if (!check(added && isolated.freeze(),
-             "freeze the isolated A5 matrix loop-boundary cover")) {
-    return false;
-  }
-  const CanonicalSyncSelection selection =
-      selectCanonicalSyncPatterns(isolated);
-  const CanonicalSyncVerifiedPlan verified =
-      verifyCanonicalSyncSelection(isolated, selection);
-  if (!check(selection &&
-                 selection.mechanisms ==
-                     std::vector<CanonicalSyncMechanismId>{0} &&
-                 verified,
-             "select and freshly verify only the A5 matrix loop-boundary "
-             "protocol") ||
-      !check(
-          succeeded(materializeCanonicalSyncPlan(*program, isolated, verified)),
-          "materialize only the A5 matrix loop-boundary protocol")) {
-    return false;
-  }
-  std::size_t sets = 0;
-  std::size_t waits = 0;
-  std::size_t matrixBarriers = 0;
-  std::size_t generatedPipeAll = 0;
-  function.walk([&](Operation *operation) {
-    const bool generated = operation->hasAttr("pto.canonical_sync");
-    sets += generated && isa<SetFlagOp>(operation);
-    waits += generated && isa<WaitFlagOp>(operation);
-    if (auto barrier = dyn_cast<BarrierOp>(operation);
-        barrier && generated &&
-        !barrier->hasAttr("pto.auto_sync_tail_barrier")) {
-      matrixBarriers += barrier.getPipe().getPipe() == PIPE::PIPE_M;
-      generatedPipeAll += barrier.getPipe().getPipe() == PIPE::PIPE_ALL;
-    }
-  });
-  const bool materializedShape =
-      sets == 2 && waits == 2 && matrixBarriers == 1 && generatedPipeAll == 0;
+  const bool rejectedWithoutA5EventContract =
+      failed(problem) && sawIncompleteCatalog &&
+      program->getTargetCapabilities()
+          .directEventCompletion.resourcePairs.empty();
 
   (*module)->removeAttr("pto.target_arch");
   FailureOr<CanonicalSyncProgram> unsupported =
@@ -1593,8 +1525,9 @@ bool testA5MatrixLoopBoundaryProtocol() {
   const bool unsupportedRejected =
       succeeded(unsupported) &&
       !unsupported->getGraph().supportsBlockingTargetedBarrier(matrix);
-  return check(materializedShape,
-               "emit one A5 M barrier with balanced prime/body/drain flags") &&
+  return check(rejectedWithoutA5EventContract,
+               "reject the A5 protocol catalog without a sourced directed "
+               "event contract") &&
          check(unsupportedRejected,
                "do not authorize the non-V protocol without target barrier "
                "capabilities");
@@ -1662,11 +1595,31 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
     module attributes {pto.target_arch = "a2"} {
       func.func @profile(
           %tile: !pto.tile_buf<vec, 16x16xf32>,
-          %dst: !pto.partition_tensor_view<16x16xf32>) {
+          %dst: !pto.partition_tensor_view<16x16xf32>) attributes {
+          pto.kernel_kind = #pto.kernel_kind<vector>} {
         pto.tabs ins(%tile : !pto.tile_buf<vec, 16x16xf32>)
           outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
         pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf32>)
           outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+        return
+      }
+      func.func @cube_profile() attributes {
+          pto.kernel_kind = #pto.kernel_kind<cube>} {
+        return
+      }
+      func.func @unresolved_profile() {
+        return
+      }
+      func.func @section_profile() {
+        pto.section.cube {
+        }
+        return
+      }
+      func.func @mixed_section_profile() {
+        pto.section.cube {
+        }
+        pto.section.vector {
+        }
         return
       }
     }
@@ -1698,11 +1651,19 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
     const auto carry =
         program->getGraph().getResourceRecurrenceCarryKinds().find(vector);
     const auto vectorNode = llvm::find_if(
-        program->getGraph().getNodes(), [&](const SyncCoverNode &node) {
-          return node.resource == vector;
-        });
+        program->getGraph().getNodes(),
+        [&](const SyncCoverNode &node) { return node.resource == vector; });
     const bool commonContracts =
         capabilities.profile == profile &&
+        capabilities.coreDomain == CanonicalSyncCoreDomain::AIV &&
+        capabilities.syncSpecVersion !=
+            CanonicalSyncTargetSyncSpecVersion::None &&
+        capabilities.evidence.size() == 4 &&
+        capabilities.compilerUsableEventIds ==
+            std::vector<unsigned>({0, 1, 2, 3, 4, 5}) &&
+        capabilities.legalPipeBarriers.supports(pipe(PipelineType::PIPE_V)) ==
+            vectorBarrierDrain &&
+        !capabilities.legalPipeBarriers.supports(pipe(PipelineType::PIPE_S)) &&
         capabilities.sameResourceCompletionOrdering.version == 1 &&
         capabilities.sameResourceCompletionOrdering.supports(
             pipe(PipelineType::PIPE_S)) &&
@@ -1715,10 +1676,15 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
             pipe(PipelineType::PIPE_V)) == vectorBarrierDrain &&
         capabilities.crossResourceTargetedBarrierCompletion.version == 0 &&
         capabilities.crossResourceTargetedBarrierCompletion.resourcePairs
-            .empty();
+            .empty() &&
+        capabilities.directEventCompletion.supports(vector, store) ==
+            (profile != CanonicalSyncTargetProfile::A5V1) &&
+        capabilities.directEventCompletion.resourcePairs.size() ==
+            (profile != CanonicalSyncTargetProfile::A5V1 ? 12 : 0) &&
+        capabilities.hardwareEventCompletion.supports(vector, store) ==
+            (profile != CanonicalSyncTargetProfile::A5V1);
     const bool graphContracts =
-        carry !=
-            program->getGraph().getResourceRecurrenceCarryKinds().end() &&
+        carry != program->getGraph().getResourceRecurrenceCarryKinds().end() &&
         carry->second ==
             (vectorCompletionOrdered
                  ? SyncCoverEdgeKind::CompletionPreservingIssueOrder
@@ -1726,15 +1692,14 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
         vectorNode != program->getGraph().getNodes().end() &&
         vectorNode->completionSignalCoversIssuedPrefix ==
             vectorCompletionOrdered &&
-        llvm::is_contained(vectorNode->completionTargets, store) &&
+        llvm::is_contained(vectorNode->completionTargets, store) ==
+            (profile != CanonicalSyncTargetProfile::A5V1) &&
         program->getGraph().supportsBlockingTargetedBarrier(vector) ==
             vectorBarrierDrain &&
         !program->getGraph().supportsCrossResourceTargetedBarrier(
-            pipe(PipelineType::PIPE_MTE1),
-            pipe(PipelineType::PIPE_MTE2));
+            pipe(PipelineType::PIPE_MTE1), pipe(PipelineType::PIPE_MTE2));
     const bool ownershipContracts =
-        capabilities.mte1L0ReadySetCompletesPrefix.isEnabled() ==
-            a3Ownership &&
+        capabilities.mte1L0ReadySetCompletesPrefix.isEnabled() == a3Ownership &&
         capabilities.mL0AlternativeJoinSetCompletes.isEnabled() ==
             a3Ownership &&
         capabilities.mte1ScopeExitSetCompletesPrefix.isEnabled() ==
@@ -1755,11 +1720,10 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
                          /*vectorCompletionOrdered=*/false,
                          /*vectorBarrierDrain=*/true,
                          /*a3Ownership=*/false) ||
-      !checkKnownProfile(
-          "a2a3", CanonicalSyncTargetProfile::A2A3IntersectionV1,
-          /*vectorCompletionOrdered=*/false,
-          /*vectorBarrierDrain=*/true,
-          /*a3Ownership=*/false) ||
+      !checkKnownProfile("a2a3", CanonicalSyncTargetProfile::A2A3IntersectionV1,
+                         /*vectorCompletionOrdered=*/false,
+                         /*vectorBarrierDrain=*/true,
+                         /*a3Ownership=*/false) ||
       !checkKnownProfile("a3", CanonicalSyncTargetProfile::A3V1,
                          /*vectorCompletionOrdered=*/false,
                          /*vectorBarrierDrain=*/true,
@@ -1768,6 +1732,93 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
                          /*vectorCompletionOrdered=*/true,
                          /*vectorBarrierDrain=*/false,
                          /*a3Ownership=*/false)) {
+    return false;
+  }
+
+  (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "a3"));
+  FailureOr<CanonicalSyncProgram> cube = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("cube_profile"));
+  if (!check(succeeded(cube), "build the A3 AIC event profile")) {
+    return false;
+  }
+  const CanonicalSyncTargetCapabilities &cubeCapabilities =
+      cube->getTargetCapabilities();
+  const CanonicalSyncDirectedResourceCapability &aicHardware =
+      cubeCapabilities.hardwareEventCompletion;
+  const CanonicalSyncDirectedResourceCapability &aicExposed =
+      cubeCapabilities.directEventCompletion;
+  const std::uint32_t matrix = pipe(PipelineType::PIPE_M);
+  const std::uint32_t mte1 = pipe(PipelineType::PIPE_MTE1);
+  const std::uint32_t mte2 = pipe(PipelineType::PIPE_MTE2);
+  const std::uint32_t mte3 = pipe(PipelineType::PIPE_MTE3);
+  const std::uint32_t fix = pipe(PipelineType::PIPE_FIX);
+  const bool aicTableIsExact =
+      cubeCapabilities.coreDomain == CanonicalSyncCoreDomain::AIC &&
+      aicHardware.resourcePairs.size() == 18 &&
+      aicExposed.resourcePairs.size() == 14 &&
+      aicExposed.supports(matrix, mte1) && aicExposed.supports(mte1, matrix) &&
+      aicExposed.supports(mte2, mte3) && aicExposed.supports(mte3, mte2) &&
+      aicExposed.supports(fix, matrix) && aicHardware.supports(mte2, fix) &&
+      aicHardware.supports(mte3, fix) && aicHardware.supports(fix, mte2) &&
+      aicHardware.supports(fix, mte3) && !aicExposed.supports(mte2, fix) &&
+      !aicExposed.supports(mte3, fix) && !aicExposed.supports(fix, mte2) &&
+      !aicExposed.supports(fix, mte3) && !aicHardware.supports(mte3, matrix) &&
+      !aicHardware.supports(pipe(PipelineType::PIPE_S), matrix);
+  if (!check(aicTableIsExact,
+             "separate exposed AIC events from hardware-only pairs")) {
+    return false;
+  }
+
+  FailureOr<CanonicalSyncProgram> section = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("section_profile"));
+  FailureOr<CanonicalSyncProgram> mixedSection = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("mixed_section_profile"));
+  const bool cubeSectionIsAIC =
+      succeeded(section) &&
+      section->getTargetCapabilities().coreDomain ==
+          CanonicalSyncCoreDomain::AIC &&
+      section->getTargetCapabilities()
+              .directEventCompletion.resourcePairs.size() == 14;
+  const bool mixedSectionConflicts =
+      succeeded(mixedSection) &&
+      mixedSection->getTargetCapabilities().coreDomain ==
+          CanonicalSyncCoreDomain::Conflict &&
+      mixedSection->getTargetCapabilities()
+          .directEventCompletion.resourcePairs.empty();
+  if (!check(cubeSectionIsAIC,
+             "resolve an explicit cube section as authoritative AIC") ||
+      !check(mixedSectionConflicts,
+             "reject conflicting explicit section domains")) {
+    return false;
+  }
+
+  FailureOr<CanonicalSyncProgram> unresolved = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("unresolved_profile"));
+  const bool unresolvedHasNoEvents =
+      succeeded(unresolved) &&
+      unresolved->getTargetCapabilities().coreDomain ==
+          CanonicalSyncCoreDomain::Unresolved &&
+      unresolved->getTargetCapabilities()
+          .directEventCompletion.resourcePairs.empty();
+  if (!check(unresolvedHasNoEvents,
+             "refuse event authorization without a kernel kind")) {
+    return false;
+  }
+
+  (*module)->setAttr(
+      FunctionKernelKindAttr::name,
+      FunctionKernelKindAttr::get(&context, FunctionKernelKind::Cube));
+  FailureOr<CanonicalSyncProgram> conflict =
+      buildCanonicalSyncProgram(function);
+  (*module)->removeAttr(FunctionKernelKindAttr::name);
+  const bool conflictHasNoEvents =
+      succeeded(conflict) &&
+      conflict->getTargetCapabilities().coreDomain ==
+          CanonicalSyncCoreDomain::Conflict &&
+      conflict->getTargetCapabilities()
+          .directEventCompletion.resourcePairs.empty();
+  if (!check(conflictHasNoEvents,
+             "refuse event authorization for conflicting kernel kinds")) {
     return false;
   }
 
@@ -1795,9 +1846,8 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
   FailureOr<CanonicalSyncProgram> conflicting =
       buildCanonicalSyncProgram(function);
   const bool conflictIsUnsupported =
-      succeeded(conflicting) &&
-      conflicting->getTargetCapabilities().profile ==
-          CanonicalSyncTargetProfile::Unsupported;
+      succeeded(conflicting) && conflicting->getTargetCapabilities().profile ==
+                                    CanonicalSyncTargetProfile::Unsupported;
   if (!check(conflictIsUnsupported,
              "fail closed on conflicting target declarations")) {
     return false;
@@ -1841,25 +1891,26 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
   const CanonicalSyncTargetCapabilities &capabilities =
       unsupported->getTargetCapabilities();
   const std::uint32_t vector = pipe(PipelineType::PIPE_V);
-  const std::uint32_t store = pipe(PipelineType::PIPE_MTE3);
   const auto vectorNode = llvm::find_if(
-      unsupported->getGraph().getNodes(), [&](const SyncCoverNode &node) {
-        return node.resource == vector;
-      });
-  return check(capabilities.profile ==
-                       CanonicalSyncTargetProfile::Unsupported &&
-                   capabilities.sameResourceCompletionOrdering.version == 0 &&
-                   capabilities.targetedBarrierDrainsSourcePrefix.version ==
-                       0 &&
-                   capabilities.crossResourceTargetedBarrierCompletion
-                           .version == 0 &&
-                   !capabilities.targetCompletionResources &&
-                   !capabilities.mte1L0ReadySetCompletesPrefix.isEnabled() &&
-                   !capabilities.intrinsicMmadAccumulatorOrdering.isEnabled(),
-               "default every unsupported-target capability to false") &&
+      unsupported->getGraph().getNodes(),
+      [&](const SyncCoverNode &node) { return node.resource == vector; });
+  return check(
+             capabilities.profile == CanonicalSyncTargetProfile::Unsupported &&
+                 capabilities.sameResourceCompletionOrdering.version == 0 &&
+                 capabilities.targetedBarrierDrainsSourcePrefix.version == 0 &&
+                 capabilities.hardwareEventCompletion.version == 0 &&
+                 capabilities.directEventCompletion.version == 0 &&
+                 capabilities.legalPipeBarriers.version == 0 &&
+                 capabilities.compilerUsableEventIds.empty() &&
+                 capabilities.crossResourceTargetedBarrierCompletion.version ==
+                     0 &&
+                 !capabilities.targetCompletionResources &&
+                 !capabilities.mte1L0ReadySetCompletesPrefix.isEnabled() &&
+                 !capabilities.intrinsicMmadAccumulatorOrdering.isEnabled(),
+             "default every unsupported-target capability to false") &&
          check(vectorNode != unsupported->getGraph().getNodes().end() &&
                    !vectorNode->completionSignalCoversIssuedPrefix &&
-                   llvm::is_contained(vectorNode->completionTargets, store) &&
+                   vectorNode->completionTargets.empty() &&
                    !unsupported->getGraph().supportsBlockingTargetedBarrier(
                        vector),
                "retain only the exact-operation direct event basis");
@@ -1916,8 +1967,8 @@ bool testMmadIntrinsicRequiresExactAccumulator() {
   if (!validExact) {
     return false;
   }
-  (*exactModule)->setAttr("pto.target_arch",
-                         StringAttr::get(&exactContext, "a2"));
+  (*exactModule)
+      ->setAttr("pto.target_arch", StringAttr::get(&exactContext, "a2"));
   FailureOr<CanonicalSyncProgram> a2Exact = buildCanonicalSyncProgram(
       exactModule->lookupSymbol<func::FuncOp>("exact"));
   const bool a2Built =
@@ -1976,7 +2027,8 @@ bool testA3TargetCompletionCertificatesAreArchitectureQualified() {
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
     module attributes {pto.target_arch = "a3"} {
       func.func @certified(
-          %dst: !pto.partition_tensor_view<32x32xf32>) {
+          %dst: !pto.partition_tensor_view<32x32xf32>) attributes {
+          pto.kernel_kind = #pto.kernel_kind<cube>} {
         %c0 = arith.constant 0 : index
         %a0 = arith.constant 0 : i64
         %a1 = arith.constant 8192 : i64
@@ -2083,87 +2135,22 @@ bool testA3TargetCompletionCertificatesAreArchitectureQualified() {
   }
 
   CanonicalSyncBuildOptions a5Options;
-  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> a5Problem =
-      buildCanonicalSyncSingletonProblem(*a5, a5Options);
-  const std::uint32_t matrixResource =
-      static_cast<std::uint32_t>(PipelineType::PIPE_M);
-  const std::uint32_t fixResource =
-      static_cast<std::uint32_t>(PipelineType::PIPE_FIX);
-  const bool hasBarrierBackedMatrixEvent =
-      succeeded(a5Problem) &&
-      llvm::any_of((*a5Problem)->getMechanisms(), [&](const auto &mechanism) {
-        const auto &descriptor = mechanism.descriptor;
-        const bool hasMatrixToFixSupply = llvm::any_of(
-            descriptor.supplies, [&](const CanonicalSyncSupplyBinding &supply) {
-              return supply.proof ==
-                         CanonicalSyncSupplyProof::TargetLocalFenceAction &&
-                     (*a5Problem)
-                             ->getGraph()
-                             .getNodes()[supply.edge.source]
-                             .resource == matrixResource &&
-                     (*a5Problem)
-                             ->getGraph()
-                             .getNodes()[supply.edge.target]
-                             .resource == fixResource;
-            });
-        return hasMatrixToFixSupply && descriptor.actions.size() == 3 &&
-               descriptor.actions[0].kind == CanonicalSyncActionKind::Barrier &&
-               descriptor.actions[0].resource == matrixResource &&
-               descriptor.actions[1].kind ==
-                   CanonicalSyncActionKind::EventSet &&
-               descriptor.actions[2].kind == CanonicalSyncActionKind::EventWait;
-      });
-  if (!check(hasBarrierBackedMatrixEvent,
-             "build an A5 barrier-backed M-to-FIX event, not a drain-only "
-             "normal candidate") ||
-      !check(succeeded(runCanonicalSync(function, a5Options)),
-             "materialize the A5 barrier-backed target fence")) {
-    return false;
+  bool sawA5IncompleteCatalog = false;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> a5Problem = failure();
+  {
+    ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
+      sawA5IncompleteCatalog |=
+          diagnostic.str().find("required singleton catalog is incomplete") !=
+          std::string::npos;
+      return success();
+    });
+    a5Problem = buildCanonicalSyncSingletonProblem(*a5, a5Options);
   }
-  std::size_t a5MatrixBarriers = 0;
-  std::size_t a5MatrixToFixSets = 0;
-  std::size_t a5MatrixToFixWaits = 0;
-  std::size_t a5BodyPipeAll = 0;
-  Operation *a5MatrixBarrierOp = nullptr;
-  Operation *a5MatrixToFixSetOp = nullptr;
-  Operation *a5MatrixToFixWaitOp = nullptr;
-  function.walk([&](Operation *operation) {
-    const bool generated = operation->hasAttr("pto.canonical_sync");
-    if (auto barrier = dyn_cast<BarrierOp>(operation)) {
-      const bool body =
-          generated && !barrier->hasAttr("pto.auto_sync_tail_barrier");
-      a5MatrixBarriers += body && barrier.getPipe().getPipe() == PIPE::PIPE_M;
-      if (body && barrier.getPipe().getPipe() == PIPE::PIPE_M) {
-        a5MatrixBarrierOp = operation;
-      }
-      a5BodyPipeAll += body && barrier.getPipe().getPipe() == PIPE::PIPE_ALL;
-    }
-    const auto source = operation->getAttrOfType<PipeAttr>("src_pipe");
-    const auto target = operation->getAttrOfType<PipeAttr>("dst_pipe");
-    const bool matrixToFix = generated && source && target &&
-                             source.getPipe() == PIPE::PIPE_M &&
-                             target.getPipe() == PIPE::PIPE_FIX;
-    a5MatrixToFixSets += matrixToFix && isa<SetFlagOp>(operation);
-    a5MatrixToFixWaits += matrixToFix && isa<WaitFlagOp>(operation);
-    if (matrixToFix && isa<SetFlagOp>(operation)) {
-      a5MatrixToFixSetOp = operation;
-    }
-    if (matrixToFix && isa<WaitFlagOp>(operation)) {
-      a5MatrixToFixWaitOp = operation;
-    }
-  });
-  const bool orderedA5Recipe =
-      a5MatrixBarrierOp && a5MatrixToFixSetOp && a5MatrixToFixWaitOp &&
-      a5MatrixBarrierOp->getBlock() == a5MatrixToFixSetOp->getBlock() &&
-      a5MatrixToFixSetOp->getBlock() == a5MatrixToFixWaitOp->getBlock() &&
-      a5MatrixBarrierOp->isBeforeInBlock(a5MatrixToFixSetOp) &&
-      a5MatrixToFixSetOp->isBeforeInBlock(a5MatrixToFixWaitOp);
-  if (!check(a5MatrixBarriers == 1 && a5MatrixToFixSets == 1 &&
-                 a5MatrixToFixWaits == 1 && a5BodyPipeAll == 0,
-             "emit one balanced A5 barrier-backed M-to-FIX event without "
-             "PIPE_ALL") ||
-      !check(orderedA5Recipe,
-             "emit the A5 source barrier, set, and wait in order")) {
+  const bool a5MatrixToFixRejected =
+      failed(a5Problem) && sawA5IncompleteCatalog;
+  if (!check(a5MatrixToFixRejected,
+             "reject unsourced A5 matrix-to-FIX event candidates during "
+             "catalog construction")) {
     return false;
   }
 
@@ -2467,7 +2454,7 @@ bool testRejectsMalformedOwnedSynchronization() {
   MLIRContext context;
   loadDialects(context);
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
-    module attributes {pto.target_arch = "a5"} {
+    module attributes {pto.target_arch = "a3"} {
       func.func @wrong_type() {
         %zero = arith.constant 0 : index
         return
@@ -2491,7 +2478,8 @@ bool testRejectsMalformedOwnedSynchronization() {
       }
       func.func @preserve_previous(
           %input: !pto.partition_tensor_view<16x16xf32>,
-          %output: !pto.partition_tensor_view<16x16xf32>) {
+          %output: !pto.partition_tensor_view<16x16xf32>) attributes {
+          pto.kernel_kind = #pto.kernel_kind<vector>} {
         %addr = arith.constant 0 : i64
         %tile = pto.alloc_tile addr = %addr : !pto.tile_buf<vec, 16x16xf32>
         pto.tload ins(%input : !pto.partition_tensor_view<16x16xf32>)
@@ -2573,7 +2561,8 @@ bool testFixedBarriersSupplyCompletionAndRemainUnowned() {
   MLIRContext context;
   loadDialects(context);
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
-    module attributes {pto.target_arch = "a5"} {
+    module attributes {pto.target_arch = "a3",
+                       pto.kernel_kind = #pto.kernel_kind<vector>} {
       func.func @fixed(
           %src: !pto.partition_tensor_view<16x16xf32>,
           %slot: !pto.tile_buf<vec, 16x16xf32>) {
@@ -2738,11 +2727,10 @@ bool testFixedBarriersSupplyCompletionAndRemainUnowned() {
     const bool baselineComplete =
         precise && precise.problem->getBaselineCoverage().count() ==
                        graph.getDemands().size();
-    const bool credited =
-        check(!graph.getDemands().empty() &&
-                  hasFixedSupply == expectFixedSupply &&
-                  exactTargetedEndpoint && expectedResources,
-              "credit only supported fixed-barrier completion supplies");
+    const bool credited = check(
+        !graph.getDemands().empty() && hasFixedSupply == expectFixedSupply &&
+            exactTargetedEndpoint && expectedResources,
+        "credit only supported fixed-barrier completion supplies");
     const bool covered =
         check(baselineComplete == expectFixedSupply,
               "distinguish fixed coverage from required candidate coverage: " +
@@ -2777,14 +2765,14 @@ bool testFixedBarriersSupplyCompletionAndRemainUnowned() {
                  "insufficient");
   };
 
-  const bool fixedCasesCovered = checkFunction("fixed", false) &&
-                                 checkFunction("fixed_cross", false, false,
-                                               false) &&
-                                 checkFunction("fixed_branch", true) &&
-                                 checkFunction("fixed_before_branch", true) &&
-                                 checkFunction("fixed_after_join", true) &&
-                                 checkFunction("fixed_all", false) &&
-                                 checkFunction("fixed_all_multi", false, true);
+  const bool fixedCasesCovered =
+      checkFunction("fixed", false) &&
+      checkFunction("fixed_cross", false, false, false) &&
+      checkFunction("fixed_branch", true) &&
+      checkFunction("fixed_before_branch", true) &&
+      checkFunction("fixed_after_join", true) &&
+      checkFunction("fixed_all", false) &&
+      checkFunction("fixed_all_multi", false, true);
   if (!fixedCasesCovered) {
     return false;
   }
@@ -3985,18 +3973,17 @@ bool testPhaseAwareRecurrenceDistances() {
                                             sourcePhase, distance)) {
               continue;
             }
-            const RecurrenceKey key{
-                *sourceRole,
-                *targetRole,
-                kind,
-                sourcePhase,
-                space,
-                sourceAccess.extent.begin,
-                sourceAccess.extent.end,
-                targetAccess.extent.begin,
-                targetAccess.extent.end,
-                sourceAccess.mode,
-                targetAccess.mode};
+            const RecurrenceKey key{*sourceRole,
+                                    *targetRole,
+                                    kind,
+                                    sourcePhase,
+                                    space,
+                                    sourceAccess.extent.begin,
+                                    sourceAccess.extent.end,
+                                    targetAccess.extent.begin,
+                                    targetAccess.extent.end,
+                                    sourceAccess.mode,
+                                    targetAccess.mode};
             auto [position, inserted] =
                 result.minimumDistances.insert({key, distance});
             if (inserted || distance < position->second) {
@@ -4785,11 +4772,18 @@ bool testGuardedOwnershipVerificationWorkIsBounded() {
     return false;
   }
 
+  CanonicalSyncTargetCapabilities syntheticCapabilities;
+  syntheticCapabilities.directEventCompletion.version = 1;
+  syntheticCapabilities.directEventCompletion.resourcePairs = {
+      {producerResource, consumerResource},
+      {consumerResource, producerResource},
+  };
+  syntheticCapabilities.compilerUsableEventIds = {0, 1, 2, 3, 4, 5};
   CanonicalSyncProgram program(
       module->lookupSymbol<func::FuncOp>("guarded_ownership_host"),
       std::move(graph), {}, {}, {}, {}, std::move(lifecycle),
       std::move(protocolSeeds), {}, {}, {}, {}, std::move(cuts), {},
-      std::move(rectangles), {}, {}, {});
+      std::move(rectangles), std::move(syntheticCapabilities), {}, {});
   CanonicalSyncBuildOptions options;
   options.enableDemandBasisReduction = false;
   options.patterns.enabledMechanismFamilies = canonicalSyncMechanismFamilyBit(
@@ -4843,7 +4837,8 @@ bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
   MLIRContext context;
   loadDialects(context);
   const std::string ownershipSource = R"mlir(
-    module attributes {pto.target_arch = "a3"} {
+    module attributes {pto.target_arch = "a3",
+                       pto.kernel_kind = #pto.kernel_kind<cube>} {
       func.func @branch_l0(%limit: index, %condition: i1,
           %left_source: !pto.tile_buf<mat, 128x512xf16,
             blayout=col_major, slayout=row_major>,
@@ -5516,7 +5511,8 @@ bool testOwnershipDoesNotHideProducerOverwrite() {
   MLIRContext context;
   loadDialects(context);
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
-    module attributes {pto.target_arch = "a3"} {
+    module attributes {pto.target_arch = "a3",
+                       pto.kernel_kind = #pto.kernel_kind<cube>} {
       func.func @overwrite(
           %limit: index,
           %lhs: !pto.tile_buf<left, 32x32xf16,
@@ -5679,7 +5675,8 @@ bool testGenericRecurrenceWithoutOwnershipDiscovery() {
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
     module attributes {pto.target_arch = "a3"} {
       func.func @generic_recurrence(
-          %input: !pto.partition_tensor_view<16x16xf32>, %limit: index) {
+          %input: !pto.partition_tensor_view<16x16xf32>, %limit: index)
+          attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
         %c0 = arith.constant 0 : index
         %c1 = arith.constant 1 : index
         %addr0 = arith.constant 0 : i64
@@ -5796,7 +5793,8 @@ bool testGuardedEndpointUsesSourceLocalCompletionEvent() {
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
     module attributes {pto.target_arch = "a3"} {
       func.func @uncoverable_guarded_endpoint(
-          %input: !pto.partition_tensor_view<16x16xf32>, %condition: i1) {
+          %input: !pto.partition_tensor_view<16x16xf32>, %condition: i1)
+          attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
         %addr0 = arith.constant 0 : i64
         %one = arith.constant 1.000000e+00 : f32
         %shared = pto.alloc_tile addr = %addr0 :
@@ -5973,7 +5971,8 @@ bool testMinimalDirectCatalogIsCompleteAndNeverFallsBack() {
   MLIRContext context;
   loadDialects(context);
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
-    module attributes {pto.target_arch = "a5"} {
+    module attributes {pto.target_arch = "a3",
+                       pto.kernel_kind = #pto.kernel_kind<vector>} {
       func.func @direct_chain(
           %input: !pto.partition_tensor_view<16x16xf32>,
           %output: !pto.partition_tensor_view<16x16xf32>) {
@@ -6020,8 +6019,7 @@ bool testMinimalDirectCatalogIsCompleteAndNeverFallsBack() {
   }
 
   CanonicalSyncBuildOptions options;
-  options.patterns.catalogMode =
-      CanonicalSyncCatalogMode::StrictMinimalDirect;
+  options.patterns.catalogMode = CanonicalSyncCatalogMode::StrictMinimalDirect;
   options.patterns.enabledMechanismFamilies = 0;
   options.patterns.enableDirectPairs = false;
   options.patterns.enableConflictCoreRepair = false;
@@ -6073,15 +6071,16 @@ bool testMinimalDirectCatalogIsCompleteAndNeverFallsBack() {
           problem.problem->getMechanisms().size() &&
       llvm::all_of(problem.problem->getPatterns(),
                    [](const CanonicalSyncPattern &pattern) {
-                     return pattern.kind == CanonicalSyncPatternKind::Singleton &&
+                     return pattern.kind ==
+                                CanonicalSyncPatternKind::Singleton &&
                             pattern.members.size() == 1;
                    });
-  const bool directOnly = llvm::all_of(
-      problem.problem->getMechanisms(),
-      [&](const CanonicalSyncMechanism &mechanism) {
-        return mechanism.originMask != 0 &&
-               (mechanism.originMask & ~directOrigins) == 0;
-      });
+  const bool directOnly =
+      llvm::all_of(problem.problem->getMechanisms(),
+                   [&](const CanonicalSyncMechanism &mechanism) {
+                     return mechanism.originMask != 0 &&
+                            (mechanism.originMask & ~directOrigins) == 0;
+                   });
   const CanonicalSyncSelection selection =
       selectCanonicalSyncPatterns(*problem.problem, options.selection);
   if (!check(fullDemandUniverse,
@@ -6094,8 +6093,7 @@ bool testMinimalDirectCatalogIsCompleteAndNeverFallsBack() {
     return false;
   }
 
-  func::FuncOp scarcity =
-      module->lookupSymbol<func::FuncOp>("direct_scarcity");
+  func::FuncOp scarcity = module->lookupSymbol<func::FuncOp>("direct_scarcity");
   CanonicalSyncBuildOptions scarcityOptions = options;
   scarcityOptions.eventIdBudget = 1;
   CanonicalSyncComparisonReport scarcityReport;
@@ -6273,7 +6271,8 @@ bool testSourcePrefixGenerationIsBoundedAndTruncating() {
   MLIRContext context;
   loadDialects(context);
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
-    module attributes {pto.target_arch = "a5"} {
+    module attributes {pto.target_arch = "a3",
+                       pto.kernel_kind = #pto.kernel_kind<vector>} {
       func.func @prefix(
           %gm0: !pto.partition_tensor_view<16x16xf32>,
           %gm1: !pto.partition_tensor_view<16x16xf32>,
@@ -6493,7 +6492,8 @@ bool testConflictCoreRepairAvoidsPipeAll() {
   MLIRContext context;
   loadDialects(context);
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
-    module {
+    module attributes {pto.target_arch = "a3",
+                       pto.kernel_kind = #pto.kernel_kind<vector>} {
       func.func @scarcity_frontier(
           %first: !pto.partition_tensor_view<16x16xf32>,
           %second: !pto.partition_tensor_view<16x16xf32>) {
@@ -6744,8 +6744,7 @@ bool testConflictCoreRepairAvoidsPipeAll() {
       changedCoreRepair.repairCriticalDemandsByOwner.at(retainedOwner) ==
           retainedCriticalDemandMap.at(retainedOwner) &&
       changedCoreRepair.repairCriticalDemandsByOwner.count(changedOwner) == 1 &&
-      !changedCoreRepair.repairCriticalDemandsByOwner.at(changedOwner)
-           .empty();
+      !changedCoreRepair.repairCriticalDemandsByOwner.at(changedOwner).empty();
   if (!check(changedCoreRetainsOwners,
              "carry forbidden-owner provenance into a changed repair core")) {
     return false;
@@ -7272,7 +7271,7 @@ int main() {
       testEmptyNestedLoopTimelineIsClamped() && testGmAliasPolicies() &&
       testGmAliasContracts() && testStructuredIssueFrontier() &&
       testDistanceTwoPhysicalSlotRecurrence() &&
-      testA5MatrixLoopBoundaryProtocol() &&
+      testA5MatrixLoopBoundaryProtocolRequiresSourcedEventContract() &&
       testDistanceTwoCrossRootSlotRecurrence() &&
       testTargetCapabilityProfilesAreVersionedAndConservative() &&
       testMmadIntrinsicRequiresExactAccumulator() &&

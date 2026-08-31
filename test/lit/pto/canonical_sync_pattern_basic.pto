@@ -6,37 +6,37 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --emit-pto-ir %s | FileCheck %s
-// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --canonical-sync-pattern-mode=direct --emit-pto-ir %s \
 // RUN:   | FileCheck %s
-// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --canonical-sync-pattern-mode=direct-pair --emit-pto-ir %s \
 // RUN:   | FileCheck %s
-// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --canonical-sync-selection-strategy=fixed-cover --emit-pto-ir %s \
 // RUN:   | FileCheck %s
-// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --canonical-sync-selection-strategy=action-aware-singleton \
 // RUN:   --emit-pto-ir %s | FileCheck %s
-// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --canonical-sync-selection-strategy=pair-lookahead --emit-pto-ir %s \
 // RUN:   | FileCheck %s
-// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --canonical-sync-mechanism-families=core --emit-pto-ir %s \
 // RUN:   | FileCheck %s
-// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN: not ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --canonical-sync-pattern-mode=invalid --emit-pto-ir %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=INVALID
-// RUN: not ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN: not ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --canonical-sync-mechanism-families=unknown --emit-pto-ir %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=INVALID-FAMILY
 
 // INVALID: pattern-mode must be direct or direct-pair
 // INVALID-FAMILY: mechanism-families must be default, all, core, or a nonempty
 
-module {
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
   // CHECK-LABEL: func.func @empty_kernel
   // CHECK: pto.barrier <PIPE_ALL>
   // CHECK-NEXT: return

@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSync.h"
 #include "PTO/Transforms/Passes.h"
@@ -41,7 +43,7 @@ using namespace mlir;
 
 namespace {
 
-constexpr std::int64_t kHardwareEventIdCount = 8;
+constexpr std::int64_t kCompilerUsableEventIdCount = 6;
 
 std::int64_t jsonInteger(std::uint64_t value) {
   constexpr std::uint64_t maximum =
@@ -248,6 +250,48 @@ StringRef targetProfileName(pto::CanonicalSyncTargetProfile profile) {
   return "unknown";
 }
 
+StringRef coreDomainName(pto::CanonicalSyncCoreDomain core) {
+  switch (core) {
+  case pto::CanonicalSyncCoreDomain::Unresolved:
+    return "unresolved";
+  case pto::CanonicalSyncCoreDomain::AIC:
+    return "aic";
+  case pto::CanonicalSyncCoreDomain::AIV:
+    return "aiv";
+  case pto::CanonicalSyncCoreDomain::Conflict:
+    return "conflict";
+  }
+  return "unknown";
+}
+
+StringRef syncSpecVersionName(pto::CanonicalSyncTargetSyncSpecVersion version) {
+  switch (version) {
+  case pto::CanonicalSyncTargetSyncSpecVersion::None:
+    return "none";
+  case pto::CanonicalSyncTargetSyncSpecVersion::Ascend2201V1:
+    return "ascend-2201-v1";
+  case pto::CanonicalSyncTargetSyncSpecVersion::Ascend3510PartialV1:
+    return "ascend-3510-partial-v1";
+  }
+  return "unknown";
+}
+
+StringRef targetEvidenceName(pto::CanonicalSyncTargetEvidence evidence) {
+  switch (evidence) {
+  case pto::CanonicalSyncTargetEvidence::None:
+    return "none";
+  case pto::CanonicalSyncTargetEvidence::AscendIntraCoreSync7008190b:
+    return "ascend-intra-core-sync@7008190b";
+  case pto::CanonicalSyncTargetEvidence::AscendSetWait7008190b:
+    return "ascend-set-wait@7008190b";
+  case pto::CanonicalSyncTargetEvidence::AscendKeyFeatures7008190b:
+    return "ascend-sync-key-features@7008190b";
+  case pto::CanonicalSyncTargetEvidence::AscendPipeBarrier850:
+    return "ascend-pipe-barrier@cann-8.5.0";
+  }
+  return "unknown";
+}
+
 llvm::json::Array jsonUnsignedValues(ArrayRef<std::uint64_t> values) {
   llvm::json::Array result;
   for (std::uint64_t value : values) {
@@ -256,8 +300,8 @@ llvm::json::Array jsonUnsignedValues(ArrayRef<std::uint64_t> values) {
   return result;
 }
 
-llvm::json::Object jsonResourceCapability(
-    const pto::CanonicalSyncResourceCapability &capability) {
+llvm::json::Object
+jsonResourceCapability(const pto::CanonicalSyncResourceCapability &capability) {
   llvm::json::Array resources;
   for (std::uint32_t resource : capability.resources) {
     resources.push_back(jsonInteger(resource));
@@ -270,8 +314,8 @@ llvm::json::Object jsonDirectedResourceCapability(
     const pto::CanonicalSyncDirectedResourceCapability &capability) {
   llvm::json::Array resourcePairs;
   for (const auto &[source, target] : capability.resourcePairs) {
-    resourcePairs.push_back(llvm::json::Object{{"source", jsonInteger(source)},
-                                               {"target", jsonInteger(target)}});
+    resourcePairs.push_back(llvm::json::Object{
+        {"source", jsonInteger(source)}, {"target", jsonInteger(target)}});
   }
   return llvm::json::Object{{"version", jsonInteger(capability.version)},
                             {"resource_pairs", std::move(resourcePairs)}};
@@ -279,13 +323,30 @@ llvm::json::Object jsonDirectedResourceCapability(
 
 llvm::json::Object jsonTargetCapabilities(
     const pto::CanonicalSyncTargetCapabilities &capabilities) {
+  llvm::json::Array evidence;
+  for (pto::CanonicalSyncTargetEvidence entry : capabilities.evidence) {
+    evidence.push_back(targetEvidenceName(entry));
+  }
+  llvm::json::Array compilerUsableEventIds;
+  for (unsigned eventId : capabilities.compilerUsableEventIds) {
+    compilerUsableEventIds.push_back(jsonInteger(eventId));
+  }
   llvm::json::Object result{
       {"profile", targetProfileName(capabilities.profile)},
+      {"core_domain", coreDomainName(capabilities.coreDomain)},
+      {"sync_spec_version", syncSpecVersionName(capabilities.syncSpecVersion)},
+      {"evidence", std::move(evidence)},
+      {"hardware_event_completion",
+       jsonDirectedResourceCapability(capabilities.hardwareEventCompletion)},
+      {"direct_event_completion",
+       jsonDirectedResourceCapability(capabilities.directEventCompletion)},
+      {"legal_pipe_barriers",
+       jsonResourceCapability(capabilities.legalPipeBarriers)},
+      {"compiler_usable_event_ids", std::move(compilerUsableEventIds)},
       {"same_resource_completion_ordering",
        jsonResourceCapability(capabilities.sameResourceCompletionOrdering)},
       {"targeted_barrier_drains_source_prefix",
-       jsonResourceCapability(
-           capabilities.targetedBarrierDrainsSourcePrefix)},
+       jsonResourceCapability(capabilities.targetedBarrierDrainsSourcePrefix)},
       {"cross_resource_targeted_barrier_completion",
        jsonDirectedResourceCapability(
            capabilities.crossResourceTargetedBarrierCompletion)},
@@ -302,8 +363,7 @@ llvm::json::Object jsonTargetCapabilities(
   if (capabilities.targetCompletionResources) {
     result["target_completion_resources"] = llvm::json::Object{
         {"mte1", jsonInteger(capabilities.targetCompletionResources->mte1)},
-        {"matrix",
-         jsonInteger(capabilities.targetCompletionResources->matrix)},
+        {"matrix", jsonInteger(capabilities.targetCompletionResources->matrix)},
         {"fix", jsonInteger(capabilities.targetCompletionResources->fix)}};
   }
   return result;
@@ -1314,9 +1374,9 @@ struct PTOCanonicalSyncPass
     if (shouldSkip(function)) {
       return;
     }
-    if (eventIdNumMax <= 0 || eventIdNumMax > kHardwareEventIdCount) {
+    if (eventIdNumMax <= 0 || eventIdNumMax > kCompilerUsableEventIdCount) {
       function.emitError() << "event-id-num-max must be in [1, "
-                           << kHardwareEventIdCount << ']';
+                           << kCompilerUsableEventIdCount << ']';
       signalPassFailure();
       return;
     }

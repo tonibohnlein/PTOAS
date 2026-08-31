@@ -6,18 +6,18 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --analyze-canonical-sync-strategies \
 // RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
 // RUN:   --canonical-sync-report=%t.json --emit-pto-ir %s \
 // RUN:   > %t.mlir
 // RUN: pto-test-opt %s \
-// RUN:   '-pto-canonical-sync=analysis-only event-id-num-max=8' \
+// RUN:   '-pto-canonical-sync=analysis-only event-id-num-max=6' \
 // RUN:   > /dev/null 2> %t.log
 // RUN: FileCheck %s --check-prefix=UNCHANGED < %t.mlir
 // RUN: FileCheck %s --check-prefix=SUMMARY < %t.log
 // RUN: FileCheck %s --check-prefix=REPORT < %t.json
-// RUN: ptoas --pto-level=level3 --pto-arch=a5 --enable-canonical-sync \
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --canonical-sync-catalog-mode=strict-direct \
 // RUN:   --canonical-sync-mechanism-families=core \
 // RUN:   --canonical-sync-pattern-mode=direct \
@@ -103,11 +103,18 @@
 // REPORT-DAG: "schema": "ptoas.canonical_sync.v1"
 // REPORT-DAG: "function": "comparison"
 // REPORT-DAG: "target_capabilities":
-// REPORT-DAG: "profile": "a5-v1"
+// REPORT-DAG: "profile": "a3-v1"
+// REPORT-DAG: "core_domain": "aiv"
+// REPORT-DAG: "sync_spec_version": "ascend-2201-v1"
+// REPORT-DAG: "evidence":
+// REPORT-DAG: "hardware_event_completion":
+// REPORT-DAG: "direct_event_completion":
+// REPORT-DAG: "legal_pipe_barriers":
+// REPORT-DAG: "compiler_usable_event_ids":
 // REPORT-DAG: "same_resource_completion_ordering":
 // REPORT-DAG: "cross_resource_targeted_barrier_completion":
-// REPORT-DAG: "mte1_l0_ready_set_completes_prefix": 0
-// REPORT-DAG: "intrinsic_mmad_accumulator_ordering": 0
+// REPORT-DAG: "mte1_l0_ready_set_completes_prefix": 1
+// REPORT-DAG: "intrinsic_mmad_accumulator_ordering": 1
 // REPORT-DAG: "selection_objective": "action-first"
 // REPORT-DAG: "enabled_mechanism_families":
 // REPORT-DAG: "direct_pairs_enabled": true
@@ -215,7 +222,8 @@
 // INVALID-CARRY-CANDIDATE: maximum-loop-carry-candidates must be positive
 // INVALID-CARRY-INCIDENCE: maximum-loop-carry-incidences must be positive
 
-module {
+module attributes {pto.target_arch = "a3",
+                   pto.kernel_kind = #pto.kernel_kind<vector>} {
   // UNCHANGED-LABEL: func.func @comparison
   // UNCHANGED: pto.tload
   // UNCHANGED-NEXT: pto.tstore

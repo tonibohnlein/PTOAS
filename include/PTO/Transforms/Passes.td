@@ -52,8 +52,9 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
   let constructor = "mlir::pto::createPTOCanonicalSyncPass()";
 
   let options = [
-    Option<"eventIdNumMax", "event-id-num-max", "int64_t", "8",
-           "Maximum EVENT_ID slots available to canonical synchronization">,
+    Option<"eventIdNumMax", "event-id-num-max", "int64_t", "6",
+           "Maximum compiler-owned EVENT_ID slots available to canonical "
+           "synchronization; static-Tensor IDs 6 and 7 are reserved">,
     Option<"assumeDistinctGmArgsNoAlias",
            "assume-distinct-gm-args-noalias", "bool", "false",
            "Treat distinct GM pointer arguments as non-aliasing">,

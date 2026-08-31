@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSync.h"
 
@@ -389,7 +391,11 @@ std::optional<ConcreteAction> makeConcreteAction(
   if (action.kind == CanonicalSyncActionKind::Barrier) {
     const std::optional<PipelineType> pipe =
         resolveBarrierPipe(action, allResources);
-    if (!pipe) {
+    const bool targetAllowsBarrier =
+        pipe && (*pipe == PipelineType::PIPE_ALL ||
+                 program.getTargetCapabilities().legalPipeBarriers.supports(
+                     static_cast<std::uint32_t>(*pipe)));
+    if (!targetAllowsBarrier) {
       return std::nullopt;
     }
     result.barrier = *pipe;
@@ -412,6 +418,17 @@ std::optional<ConcreteAction> makeConcreteAction(
   const CanonicalSyncEventDomain &domain = problem.getDomains()[use.domain];
   result.source = static_cast<PipelineType>(domain.sourceResource);
   result.target = static_cast<PipelineType>(domain.targetResource);
+  const CanonicalSyncTargetCapabilities &capabilities =
+      program.getTargetCapabilities();
+  const bool targetAllowsEvent = capabilities.directEventCompletion.supports(
+      domain.sourceResource, domain.targetResource);
+  const bool targetAllowsIds =
+      llvm::all_of(allocation->second, [&](unsigned eventId) {
+        return capabilities.isCompilerUsableEventId(eventId);
+      });
+  if (!targetAllowsEvent || !targetAllowsIds) {
+    return std::nullopt;
+  }
   if (action.eventLaneKind == CanonicalSyncEventLaneKind::LoopIterationModulo) {
     if (!action.eventLaneScope ||
         *action.eventLaneScope >= program.getScopeBindings().size() ||
