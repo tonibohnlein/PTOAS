@@ -285,6 +285,238 @@ bool testFlatWorldComposesCompleteEnabledSet() {
                "the exact enabled world closes over both physical cuts");
 }
 
+SyncCoverNodeId addNodeInRegion(SyncCoverGraph &graph, std::uint32_t resource,
+                                std::size_t order, SyncCoverRegionId region,
+                                bool &passed, std::string_view message,
+                                SyncCoverGuard guard = {}) {
+  return takeIndex(graph.addNode(resource, 1, 0, order, std::move(guard), {},
+                                 std::nullopt, false,
+                                 std::numeric_limits<std::size_t>::max(), -1,
+                                 {}, region),
+                   passed, message);
+}
+
+bool testRegionWorldMatchesFlatExactlyOnce() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverRegionId sequence =
+      takeIndex(graph.addRegion(0, SyncCoverRegionKind::Sequence,
+                                SyncCoverRegionCardinality::ExactlyOnce),
+                passed, "add exactly-once root sequence");
+  const SyncCoverRegionId transparent =
+      takeIndex(graph.addRegion(sequence, SyncCoverRegionKind::Transparent,
+                                SyncCoverRegionCardinality::ExactlyOnce),
+                passed, "add exactly-once transparent child");
+  const SyncCoverRegionId nested =
+      takeIndex(graph.addRegion(transparent, SyncCoverRegionKind::Sequence,
+                                SyncCoverRegionCardinality::ExactlyOnce),
+                passed, "add exactly-once nested sequence");
+  const SyncCoverNodeId source =
+      addNodeInRegion(graph, 1, 0, nested, passed, "add nested world source");
+  const SyncCoverNodeId middle =
+      addNodeInRegion(graph, 2, 1, nested, passed, "add nested world middle");
+  const SyncCoverNodeId target =
+      addNodeInRegion(graph, 3, 2, sequence, passed, "add outer world target");
+  passed &= check(graph.addDemand(makeDemand(source, target)),
+                  "add exactly-once world demand");
+  passed &= check(graph.freezeStructure(), "freeze exactly-once world graph");
+  const std::vector<SyncCoverDirectCut> cuts{
+      makeEventCut(10, 1, source, 2, middle),
+      makeEventCut(11, 2, middle, 3, target)};
+  const SyncCoverExactWorld world{{10, 11}};
+  const SyncCoverFlatWorldResult flat =
+      computeSyncCoverFlatExactWorld(graph, cuts, world);
+  const SyncCoverRegionWorldResult hierarchical =
+      computeSyncCoverRegionExactWorlds(graph, cuts, {world});
+  return passed &&
+         check(flat && flat.coversAll(),
+               "flat exactly-once reference covers the demand") &&
+         check(hierarchical && hierarchical.coveredByWorld.size() == 1 &&
+                   hierarchical.coveredByWorld.front() == flat.covered &&
+                   hierarchical.statistics.regionsEvaluated >= 3,
+               "immediate-child summaries equal the flattened reference");
+}
+
+bool testRegionWorldChoiceMustIntersectionAndSpecialization() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverRegionId sequence =
+      takeIndex(graph.addRegion(0, SyncCoverRegionKind::Sequence,
+                                SyncCoverRegionCardinality::ExactlyOnce),
+                passed, "add choice root sequence");
+  const SyncCoverNodeId source =
+      addNodeInRegion(graph, 1, 0, sequence, passed, "add pre-choice source");
+  const SyncCoverControlId control =
+      takeIndex(graph.addControl(2), passed, "add summary choice control");
+  const SyncCoverRegionId choice = takeIndex(
+      graph.addRegion(sequence, SyncCoverRegionKind::Choice,
+                      SyncCoverRegionCardinality::ExactlyOnce, 0, {}, control),
+      passed, "add summary choice region");
+  passed &= check(graph.setControlRegion(control, choice),
+                  "bind summary choice control");
+
+  std::vector<SyncCoverNodeId> alternativeNodes;
+  for (unsigned alternative = 0; alternative < 2; ++alternative) {
+    SyncCoverGuard guard{{{control, alternative}}};
+    const SyncCoverRegionId alternativeRegion =
+        takeIndex(graph.addRegion(choice, SyncCoverRegionKind::Alternative,
+                                  SyncCoverRegionCardinality::ZeroOrOne, 0,
+                                  guard, control, alternative),
+                  passed, "add summary alternative");
+    const SyncCoverRegionId alternativeSequence = takeIndex(
+        graph.addRegion(alternativeRegion, SyncCoverRegionKind::Sequence,
+                        SyncCoverRegionCardinality::ExactlyOnce, 0, guard),
+        passed, "add summary alternative sequence");
+    alternativeNodes.push_back(
+        addNodeInRegion(graph, 1, alternative + 1, alternativeSequence, passed,
+                        "add alternative barrier anchor", guard));
+  }
+  const SyncCoverNodeId target =
+      addNodeInRegion(graph, 1, 3, sequence, passed, "add post-choice target");
+  passed &= check(graph.addDemand(makeDemand(source, target)),
+                  "add unconditional choice demand");
+  SyncCoverDemand specialized = makeDemand(source, target);
+  specialized.sourceGuard.literals.push_back({control, 0});
+  specialized.targetGuard.literals.push_back({control, 0});
+  passed &= check(graph.addDemand(std::move(specialized)),
+                  "add alternative-specialized demand");
+  passed &= check(graph.freezeStructure(), "freeze choice summary graph");
+
+  const std::vector<SyncCoverDirectCut> cuts{
+      makeBarrierCut(20, 1, alternativeNodes[0]),
+      makeBarrierCut(21, 1, alternativeNodes[1])};
+  const SyncCoverExactWorld firstAlternative{{20}};
+  const SyncCoverExactWorld bothAlternatives{{20, 21}};
+  const SyncCoverRegionWorldResult hierarchical =
+      computeSyncCoverRegionExactWorlds(graph, cuts,
+                                        {firstAlternative, bothAlternatives});
+  const SyncCoverFlatWorldResult specializedFlat =
+      computeSyncCoverFlatExactWorld(graph, cuts, firstAlternative);
+  SyncCoverRegionWorldLimits oneWorld;
+  oneWorld.maximumWorldsPerBatch = 1;
+  const SyncCoverRegionWorldResult bounded = computeSyncCoverRegionExactWorlds(
+      graph, cuts, {firstAlternative, bothAlternatives}, oneWorld);
+  return passed &&
+         check(hierarchical && hierarchical.coveredByWorld.size() == 2,
+               "evaluate both exact worlds in one region batch") &&
+         check(specializedFlat &&
+                   hierarchical.coveredByWorld[0] == specializedFlat.covered &&
+                   !hierarchical.coveredByWorld[0].contains(0) &&
+                   hierarchical.coveredByWorld[0].contains(1),
+               "guard specialization equals the flattened exact world") &&
+         check(hierarchical.coveredByWorld[1].contains(0) &&
+                   hierarchical.coveredByWorld[1].contains(1) &&
+                   hierarchical.statistics.choiceIntersections != 0 &&
+                   hierarchical.statistics.guardSpecializations != 0,
+               "choice intersection retains facts supplied on every path") &&
+         check(bounded.error == SyncCoverFlatWorldError::LimitExceeded,
+               "world batches fail before exceeding their configured bound");
+}
+
+bool testRegionWorldChoiceDoesNotLeakEventToken() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverRegionId sequence =
+      takeIndex(graph.addRegion(0, SyncCoverRegionKind::Sequence,
+                                SyncCoverRegionCardinality::ExactlyOnce),
+                passed, "add token-leak root sequence");
+  const SyncCoverNodeId source =
+      addNodeInRegion(graph, 1, 0, sequence, passed, "add token source");
+  const SyncCoverControlId control =
+      takeIndex(graph.addControl(2), passed, "add token choice control");
+  const SyncCoverRegionId choice = takeIndex(
+      graph.addRegion(sequence, SyncCoverRegionKind::Choice,
+                      SyncCoverRegionCardinality::ExactlyOnce, 0, {}, control),
+      passed, "add token choice");
+  passed &= check(graph.setControlRegion(control, choice),
+                  "bind token choice control");
+
+  std::vector<SyncCoverNodeId> alternativeNodes;
+  for (unsigned alternative = 0; alternative < 2; ++alternative) {
+    SyncCoverGuard guard{{{control, alternative}}};
+    const SyncCoverRegionId alternativeRegion =
+        takeIndex(graph.addRegion(choice, SyncCoverRegionKind::Alternative,
+                                  SyncCoverRegionCardinality::ZeroOrOne, 0,
+                                  guard, control, alternative),
+                  passed, "add token alternative");
+    alternativeNodes.push_back(
+        addNodeInRegion(graph, 1, alternative + 1, alternativeRegion, passed,
+                        "add token alternative node", guard));
+  }
+  const SyncCoverNodeId target =
+      addNodeInRegion(graph, 2, 3, sequence, passed, "add token target");
+  passed &= check(graph.addDemand(makeDemand(source, target)),
+                  "add unconditional token demand");
+  SyncCoverDemand specialized = makeDemand(source, target);
+  specialized.sourceGuard.literals.push_back({control, 0});
+  specialized.targetGuard.literals.push_back({control, 0});
+  passed &= check(graph.addDemand(std::move(specialized)),
+                  "add specialized token demand");
+  passed &= check(graph.freezeStructure(), "freeze token choice graph");
+
+  const SyncCoverDirectCut event =
+      makeEventCut(30, 1, alternativeNodes[0], 2, target);
+  const SyncCoverRegionWorldResult result =
+      computeSyncCoverRegionExactWorlds(graph, {event}, {{{30}}});
+  return passed &&
+         check(result && result.coveredByWorld.size() == 1 &&
+                   !result.coveredByWorld[0].contains(0) &&
+                   result.coveredByWorld[0].contains(1),
+               "a branch-local Set token cannot leak through a must join");
+}
+
+bool testRegionWorldOptionalGuardUsesMustSemantics() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverRegionId sequence =
+      takeIndex(graph.addRegion(0, SyncCoverRegionKind::Sequence,
+                                SyncCoverRegionCardinality::ExactlyOnce),
+                passed, "add optional root sequence");
+  const SyncCoverNodeId source =
+      addNodeInRegion(graph, 1, 0, sequence, passed, "add optional source");
+  const SyncCoverControlId control =
+      takeIndex(graph.addControl(2), passed, "add optional guard control");
+  SyncCoverGuard guard{{{control, 0}}};
+  const SyncCoverRegionId optional = takeIndex(
+      graph.addRegion(sequence, SyncCoverRegionKind::Transparent,
+                      SyncCoverRegionCardinality::ZeroOrOne, 0, guard),
+      passed, "add guarded optional region");
+  const SyncCoverNodeId barrier = addNodeInRegion(
+      graph, 1, 1, optional, passed, "add optional barrier", guard);
+  const SyncCoverNodeId target =
+      addNodeInRegion(graph, 1, 2, sequence, passed, "add optional target");
+  passed &= check(graph.addDemand(makeDemand(source, target)),
+                  "add unconditional optional demand");
+  SyncCoverDemand specialized = makeDemand(source, target);
+  specialized.sourceGuard.literals.push_back({control, 0});
+  specialized.targetGuard.literals.push_back({control, 0});
+  passed &= check(graph.addDemand(std::move(specialized)),
+                  "add guarded optional demand");
+  passed &= check(graph.freezeStructure(), "freeze guarded optional graph");
+
+  const SyncCoverDirectCut cut = makeBarrierCut(31, 1, barrier);
+  const SyncCoverExactWorld world{{31}};
+  const SyncCoverFlatWorldResult flat =
+      computeSyncCoverFlatExactWorld(graph, {cut}, world);
+  const SyncCoverRegionWorldResult hierarchical =
+      computeSyncCoverRegionExactWorlds(graph, {cut}, {world});
+  passed &= check(static_cast<bool>(flat),
+                  "evaluate guarded optional flat reference");
+  passed &= check(static_cast<bool>(hierarchical) &&
+                      hierarchical.coveredByWorld.size() == 1,
+                  "evaluate guarded optional hierarchical world");
+  if (!passed) {
+    return false;
+  }
+  passed &= check(!hierarchical.coveredByWorld[0].contains(0),
+                  "optional facts do not cover an unconditional demand");
+  passed &= check(hierarchical.coveredByWorld[0].contains(1),
+                  "optional facts cover a guard-specialized demand");
+  passed &= check(hierarchical.coveredByWorld[0] == flat.covered,
+                  "guarded optional summary matches the flat reference");
+  return passed;
+}
+
 bool testOneSupplyCoversSeveralDemands() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -1605,6 +1837,10 @@ int main() {
   passed &= testFlatWorldIssueOrderCannotCreateCompletion();
   passed &= testFlatWorldHonorsBoundariesAndRejectsRecurrence();
   passed &= testFlatWorldComposesCompleteEnabledSet();
+  passed &= testRegionWorldMatchesFlatExactlyOnce();
+  passed &= testRegionWorldChoiceMustIntersectionAndSpecialization();
+  passed &= testRegionWorldChoiceDoesNotLeakEventToken();
+  passed &= testRegionWorldOptionalGuardUsesMustSemantics();
   passed &= testOneSupplyCoversSeveralDemands();
   passed &= testTwoSuppliesCompose();
   passed &= testDemandQualifiedSupplyDoesNotEscape();

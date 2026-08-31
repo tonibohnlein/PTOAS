@@ -98,6 +98,8 @@ struct SyncCoverCutPoint {
   std::uint32_t resource = 0;
   SyncCoverAnchor anchor;
   SyncCoverGuard guard;
+  /// Deterministic order among physical actions sharing one anchor.
+  std::size_t ordinal = 0;
 };
 
 enum class SyncCoverDirectCutKind : std::uint8_t {
@@ -135,6 +137,8 @@ struct SyncCoverCompletionOrigin {
   SyncCoverGuard sourceGuard;
   SyncCoverGuard targetGuard;
   SyncCoverOrderingRequirementMask suppliedRequirements = 0;
+  std::size_t sourceOrdinal = 0;
+  std::size_t targetOrdinal = 0;
 };
 
 struct SyncCoverFlatWorldLimits {
@@ -166,6 +170,32 @@ struct SyncCoverFlatWorldResult {
     return error == SyncCoverFlatWorldError::None &&
            covered.count() == covered.size();
   }
+  explicit operator bool() const {
+    return error == SyncCoverFlatWorldError::None;
+  }
+};
+
+struct SyncCoverRegionWorldLimits {
+  std::size_t maximumWorldsPerBatch = 256;
+  std::size_t maximumCuts = 1U << 16;
+  std::size_t maximumRegionEvaluations = 1U << 20;
+  std::size_t maximumStateWords = 1U << 22;
+  std::size_t maximumCutActions = 1U << 17;
+};
+
+struct SyncCoverRegionWorldStatistics {
+  std::size_t regionsEvaluated = 0;
+  std::size_t choiceIntersections = 0;
+  std::size_t guardSpecializations = 0;
+  std::size_t maximumLiveStateWords = 0;
+};
+
+struct SyncCoverRegionWorldResult {
+  SyncCoverFlatWorldError error = SyncCoverFlatWorldError::None;
+  std::vector<SyncCoverDemandSet> coveredByWorld;
+  SyncCoverRegionWorldStatistics statistics;
+  std::optional<std::size_t> invalidIndex;
+
   explicit operator bool() const {
     return error == SyncCoverFlatWorldError::None;
   }
@@ -288,6 +318,17 @@ SyncCoverPairCoverageResult computeSyncCoverPairCoverage(
 SyncCoverFlatWorldResult computeSyncCoverFlatExactWorld(
     const SyncCoverGraph &graph, const std::vector<SyncCoverDirectCut> &cuts,
     const SyncCoverExactWorld &world, SyncCoverFlatWorldLimits limits = {},
+    SyncCoverCoverageWorkBudget *workBudget = nullptr);
+
+/// Evaluates a bounded batch of exact worlds through the first-class region
+/// tree. Immediate children return only completion, issued-source, and logical
+/// event state. Choice regions intersect those states across every feasible
+/// alternative unless the demand context proves one alternative. Repeated
+/// regions remain unsupported until the recurrence protocol layer is active.
+SyncCoverRegionWorldResult computeSyncCoverRegionExactWorlds(
+    const SyncCoverGraph &graph, const std::vector<SyncCoverDirectCut> &cuts,
+    const std::vector<SyncCoverExactWorld> &worlds,
+    SyncCoverRegionWorldLimits limits = {},
     SyncCoverCoverageWorkBudget *workBudget = nullptr);
 
 } // namespace pto

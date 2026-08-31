@@ -1717,7 +1717,6 @@ bool flatCutPointValid(const SyncCoverGraph &graph,
       (point.anchor.kind != SyncCoverAnchorKind::BeforeNode &&
        point.anchor.kind != SyncCoverAnchorKind::AfterNode) ||
       point.anchor.node >= graph.getNodes().size() ||
-      graph.getNodes()[point.anchor.node].scope != 0 ||
       graph.getNodes()[point.anchor.node].resource != point.resource;
   if (invalid) {
     return false;
@@ -1780,6 +1779,8 @@ makeFlatCompletionOrigin(const SyncCoverGraph &graph,
   result.sourceGuard = *sourceGuard;
   result.targetGuard = *targetGuard;
   result.suppliedRequirements = cut.suppliedRequirements;
+  result.sourceOrdinal = cut.source.ordinal;
+  result.targetOrdinal = cut.target.ordinal;
   return result;
 }
 
@@ -1857,11 +1858,13 @@ bool originLess(const SyncCoverCompletionOrigin &left,
   return std::tie(left.mechanism, left.kind, left.sourceResource,
                   left.targetResource, left.sourceBoundary, left.targetBoundary,
                   left.sourceGuard.literals, left.targetGuard.literals,
-                  left.suppliedRequirements) <
+                  left.suppliedRequirements, left.sourceOrdinal,
+                  left.targetOrdinal) <
          std::tie(right.mechanism, right.kind, right.sourceResource,
                   right.targetResource, right.sourceBoundary,
                   right.targetBoundary, right.sourceGuard.literals,
-                  right.targetGuard.literals, right.suppliedRequirements);
+                  right.targetGuard.literals, right.suppliedRequirements,
+                  right.sourceOrdinal, right.targetOrdinal);
 }
 
 } // namespace
@@ -2103,6 +2106,546 @@ SyncCoverFlatWorldResult mlir::pto::computeSyncCoverFlatExactWorld(
     }
     if (covered) {
       result.covered.insert(demandId);
+    }
+  }
+  return result;
+}
+
+namespace {
+
+enum class RegionCutActionKind : std::uint8_t {
+  Set,
+  Wait,
+  Barrier,
+};
+
+struct RegionCutAction {
+  RegionCutActionKind kind = RegionCutActionKind::Set;
+  std::size_t cut = 0;
+  std::size_t ordinal = 0;
+};
+
+struct RegionWorldState {
+  std::vector<std::uint16_t> completed;
+  std::vector<std::uint16_t> tokens;
+  bool sourceIssued = false;
+  bool targetCovered = false;
+};
+
+std::uint16_t capabilityClosure(SyncCoverOrderingRequirementMask mask) {
+  std::uint16_t result = 0;
+  for (SyncCoverOrderingRequirementMask subset = mask; subset != 0;
+       subset =
+           static_cast<SyncCoverOrderingRequirementMask>((subset - 1) & mask)) {
+    result |= static_cast<std::uint16_t>(std::uint16_t{1} << subset);
+  }
+  return result;
+}
+
+std::uint16_t
+transferCapabilities(std::uint16_t incoming,
+                     SyncCoverOrderingRequirementMask suppliedRequirements) {
+  std::uint16_t result = 0;
+  for (SyncCoverOrderingRequirementMask mask = 1;
+       mask <= kAllSyncCoverOrderingRequirements; ++mask) {
+    const std::uint16_t bit =
+        static_cast<std::uint16_t>(std::uint16_t{1} << mask);
+    const bool capabilityAbsent = (incoming & bit) == 0;
+    if (capabilityAbsent) {
+      continue;
+    }
+    const SyncCoverOrderingRequirementMask transferred =
+        static_cast<SyncCoverOrderingRequirementMask>(mask &
+                                                      suppliedRequirements);
+    result |= capabilityClosure(transferred);
+  }
+  return result;
+}
+
+bool regionActionLess(const RegionCutAction &left,
+                      const RegionCutAction &right) {
+  return std::tie(left.ordinal, left.kind, left.cut) <
+         std::tie(right.ordinal, right.kind, right.cut);
+}
+
+class RegionWorldEvaluator {
+public:
+  RegionWorldEvaluator(
+      const SyncCoverGraph &graph,
+      const std::vector<SyncCoverCompletionOrigin> &origins,
+      const std::vector<SyncCoverExactWorld> &worlds,
+      const std::vector<std::uint32_t> &resources,
+      const std::vector<std::vector<RegionCutAction>> &beforeActions,
+      const std::vector<std::vector<RegionCutAction>> &afterActions,
+      const SyncCoverDemand &demand, SyncCoverGuard demandCondition,
+      SyncCoverRegionWorldLimits limits,
+      SyncCoverRegionWorldStatistics &statistics,
+      SyncCoverCoverageWorkBudget *workBudget)
+      : graph_(graph), origins_(origins), worlds_(worlds),
+        resources_(resources), beforeActions_(beforeActions),
+        afterActions_(afterActions), demand_(demand),
+        demandCondition_(std::move(demandCondition)), limits_(limits),
+        statistics_(statistics), workBudget_(workBudget) {}
+
+  bool run(std::vector<RegionWorldState> &states) {
+    return evaluateRegion(0, states, demandCondition_, true);
+  }
+
+  SyncCoverFlatWorldError getError() const { return error_; }
+  std::optional<std::size_t> getInvalidIndex() const { return invalidIndex_; }
+
+private:
+  bool charge(std::size_t amount = 1) {
+    if (statistics_.regionsEvaluated > limits_.maximumRegionEvaluations ||
+        !consumeWork(workBudget_, amount)) {
+      error_ = workBudget_ && workBudget_->exhausted
+                   ? SyncCoverFlatWorldError::WorkLimitExceeded
+                   : SyncCoverFlatWorldError::LimitExceeded;
+      return false;
+    }
+    return true;
+  }
+
+  std::optional<std::size_t> resourceIndex(std::uint32_t resource) const {
+    const auto position =
+        std::lower_bound(resources_.begin(), resources_.end(), resource);
+    const bool resourceAbsent =
+        position == resources_.end() || *position != resource;
+    if (resourceAbsent) {
+      return std::nullopt;
+    }
+    return static_cast<std::size_t>(position - resources_.begin());
+  }
+
+  bool worldEnables(std::size_t world, SyncCoverMechanismId mechanism) {
+    if (!charge()) {
+      return false;
+    }
+    return std::binary_search(worlds_[world].enabledMechanisms.begin(),
+                              worlds_[world].enabledMechanisms.end(),
+                              mechanism);
+  }
+
+  bool actionGuardActive(const SyncCoverGuard &pathCondition,
+                         const RegionCutAction &action) const {
+    const SyncCoverCompletionOrigin &origin = origins_[action.cut];
+    const SyncCoverGuard &guard = action.kind == RegionCutActionKind::Wait
+                                      ? origin.targetGuard
+                                      : origin.sourceGuard;
+    return syncCoverGuardImplies(pathCondition, guard);
+  }
+
+  bool applyAction(const RegionCutAction &action,
+                   std::vector<RegionWorldState> &states,
+                   const SyncCoverGuard &pathCondition) {
+    if (!actionGuardActive(pathCondition, action)) {
+      return true;
+    }
+    const SyncCoverCompletionOrigin &origin = origins_[action.cut];
+    const std::optional<std::size_t> sourceResource =
+        resourceIndex(origin.sourceResource);
+    const std::optional<std::size_t> targetResource =
+        resourceIndex(origin.targetResource);
+    const bool invalidResources = !sourceResource || !targetResource;
+    if (invalidResources) {
+      error_ = SyncCoverFlatWorldError::InvalidCut;
+      invalidIndex_ = action.cut;
+      return false;
+    }
+
+    for (std::size_t world = 0; world < states.size(); ++world) {
+      if (!worldEnables(world, origin.mechanism)) {
+        if (error_ != SyncCoverFlatWorldError::None) {
+          return false;
+        }
+        continue;
+      }
+      RegionWorldState &state = states[world];
+      if (action.kind == RegionCutActionKind::Set) {
+        std::uint16_t produced = transferCapabilities(
+            state.completed[*sourceResource], origin.suppliedRequirements);
+        const bool directlyCompletesSource =
+            state.sourceIssued &&
+            graph_.getNodes()[demand_.source].resource == origin.sourceResource;
+        if (directlyCompletesSource) {
+          produced |= capabilityClosure(origin.suppliedRequirements);
+        }
+        state.tokens[action.cut] |= produced;
+      } else if (action.kind == RegionCutActionKind::Wait) {
+        state.completed[*targetResource] |= state.tokens[action.cut];
+        state.tokens[action.cut] = 0;
+      } else {
+        const bool directlyCompletesSource =
+            state.sourceIssued &&
+            graph_.getNodes()[demand_.source].resource == origin.sourceResource;
+        if (directlyCompletesSource) {
+          state.completed[*sourceResource] |=
+              capabilityClosure(origin.suppliedRequirements);
+        }
+      }
+    }
+    return true;
+  }
+
+  bool processActions(const std::vector<RegionCutAction> &actions,
+                      std::vector<RegionWorldState> &states,
+                      const SyncCoverGuard &pathCondition) {
+    for (const RegionCutAction &action : actions) {
+      const bool actionProcessed =
+          charge() && applyAction(action, states, pathCondition);
+      if (!actionProcessed) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool evaluateNode(SyncCoverNodeId node, std::vector<RegionWorldState> &states,
+                    const SyncCoverGuard &pathCondition) {
+    if (!syncCoverGuardImplies(pathCondition, graph_.getNodes()[node].guard)) {
+      return true;
+    }
+    if (!processActions(beforeActions_[node], states, pathCondition)) {
+      return false;
+    }
+    if (node == demand_.target) {
+      const std::optional<std::size_t> targetResource =
+          resourceIndex(graph_.getNodes()[node].resource);
+      if (!targetResource) {
+        error_ = SyncCoverFlatWorldError::InvalidGraph;
+        invalidIndex_ = node;
+        return false;
+      }
+      const std::uint16_t required = static_cast<std::uint16_t>(
+          std::uint16_t{1} << demand_.orderingRequirements);
+      for (RegionWorldState &state : states) {
+        state.targetCovered |=
+            (state.completed[*targetResource] & required) != 0;
+      }
+    }
+    if (node == demand_.source) {
+      for (RegionWorldState &state : states) {
+        state.sourceIssued = true;
+      }
+    }
+    return processActions(afterActions_[node], states, pathCondition);
+  }
+
+  static void intersectStates(std::vector<RegionWorldState> &target,
+                              const std::vector<RegionWorldState> &source) {
+    for (std::size_t world = 0; world < target.size(); ++world) {
+      RegionWorldState &left = target[world];
+      const RegionWorldState &right = source[world];
+      for (std::size_t resource = 0; resource < left.completed.size();
+           ++resource) {
+        left.completed[resource] &= right.completed[resource];
+      }
+      for (std::size_t token = 0; token < left.tokens.size(); ++token) {
+        left.tokens[token] &= right.tokens[token];
+      }
+      left.sourceIssued &= right.sourceIssued;
+      left.targetCovered &= right.targetCovered;
+    }
+  }
+
+  std::optional<SyncCoverGuard>
+  extendCondition(const SyncCoverGuard &condition,
+                  const SyncCoverGuard &extension) const {
+    SyncCoverGuard result = condition;
+    result.literals.insert(result.literals.end(), extension.literals.begin(),
+                           extension.literals.end());
+    return normalizeSyncCoverGuard(result)
+               ? std::optional<SyncCoverGuard>(std::move(result))
+               : std::nullopt;
+  }
+
+  bool evaluateChoice(const SyncCoverRegion &region,
+                      std::vector<RegionWorldState> &states,
+                      const SyncCoverGuard &pathCondition) {
+    std::vector<SyncCoverRegionId> selected;
+    std::vector<SyncCoverRegionId> feasible;
+    for (const SyncCoverRegionElement &element : region.elements) {
+      if (element.kind != SyncCoverRegionElementKind::ChildRegion) {
+        error_ = SyncCoverFlatWorldError::InvalidGraph;
+        invalidIndex_ = region.id;
+        return false;
+      }
+      const SyncCoverRegion &alternative = graph_.getRegions()[element.value];
+      if (alternative.kind != SyncCoverRegionKind::Alternative) {
+        error_ = SyncCoverFlatWorldError::InvalidGraph;
+        invalidIndex_ = alternative.id;
+        return false;
+      }
+      if (syncCoverGuardImplies(pathCondition, alternative.guard)) {
+        selected.push_back(alternative.id);
+      } else if (syncCoverGuardsCompatible(pathCondition, alternative.guard)) {
+        feasible.push_back(alternative.id);
+      }
+    }
+    const bool ambiguousSpecialization = selected.size() > 1;
+    const bool noPath = selected.empty() && feasible.empty();
+    if (ambiguousSpecialization || noPath) {
+      error_ = SyncCoverFlatWorldError::InvalidGraph;
+      invalidIndex_ = region.id;
+      return false;
+    }
+    const std::vector<SyncCoverRegionId> &alternatives =
+        selected.empty() ? feasible : selected;
+    if (!selected.empty()) {
+      ++statistics_.guardSpecializations;
+    }
+
+    std::optional<std::vector<RegionWorldState>> mustState;
+    for (SyncCoverRegionId alternativeId : alternatives) {
+      const SyncCoverRegion &alternative = graph_.getRegions()[alternativeId];
+      const std::optional<SyncCoverGuard> alternativeCondition =
+          extendCondition(pathCondition, alternative.guard);
+      if (!alternativeCondition) {
+        error_ = SyncCoverFlatWorldError::InvalidGraph;
+        invalidIndex_ = alternativeId;
+        return false;
+      }
+      std::vector<RegionWorldState> alternativeState = states;
+      if (!evaluateRegion(alternativeId, alternativeState,
+                          *alternativeCondition, true)) {
+        return false;
+      }
+      if (!mustState) {
+        mustState = std::move(alternativeState);
+      } else {
+        intersectStates(*mustState, alternativeState);
+        ++statistics_.choiceIntersections;
+      }
+    }
+    states = std::move(*mustState);
+    return true;
+  }
+
+  bool evaluateLinear(const SyncCoverRegion &region,
+                      std::vector<RegionWorldState> &states,
+                      const SyncCoverGuard &pathCondition) {
+    for (const SyncCoverRegionElement &element : region.elements) {
+      if (!charge()) {
+        return false;
+      }
+      if (element.kind == SyncCoverRegionElementKind::Node) {
+        if (!evaluateNode(element.value, states, pathCondition)) {
+          return false;
+        }
+      } else if (!evaluateRegion(element.value, states, pathCondition, false)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool evaluateRegion(SyncCoverRegionId regionId,
+                      std::vector<RegionWorldState> &states,
+                      const SyncCoverGuard &pathCondition, bool forced) {
+    ++statistics_.regionsEvaluated;
+    const bool validRegion = charge() && regionId < graph_.getRegions().size();
+    if (!validRegion) {
+      if (error_ == SyncCoverFlatWorldError::None) {
+        error_ = SyncCoverFlatWorldError::InvalidGraph;
+        invalidIndex_ = regionId;
+      }
+      return false;
+    }
+    const SyncCoverRegion &region = graph_.getRegions()[regionId];
+    if (region.kind == SyncCoverRegionKind::Loop ||
+        region.cardinality == SyncCoverRegionCardinality::ZeroOrMore ||
+        region.cardinality == SyncCoverRegionCardinality::OneOrMore) {
+      error_ = SyncCoverFlatWorldError::UnsupportedStructure;
+      invalidIndex_ = regionId;
+      return false;
+    }
+    const bool guardCompatible =
+        syncCoverGuardsCompatible(pathCondition, region.guard);
+    if (!guardCompatible) {
+      return true;
+    }
+    const std::optional<SyncCoverGuard> presentCondition =
+        extendCondition(pathCondition, region.guard);
+    if (!presentCondition) {
+      error_ = SyncCoverFlatWorldError::InvalidGraph;
+      invalidIndex_ = regionId;
+      return false;
+    }
+    if (region.kind == SyncCoverRegionKind::Choice) {
+      return evaluateChoice(region, states, *presentCondition);
+    }
+    const bool guardImplied =
+        syncCoverGuardImplies(pathCondition, region.guard);
+    const bool unguardedOptional =
+        region.cardinality == SyncCoverRegionCardinality::ZeroOrOne &&
+        region.guard.literals.empty();
+    const bool maySkip = !forced && (unguardedOptional || !guardImplied);
+    if (!maySkip) {
+      return evaluateLinear(region, states, *presentCondition);
+    }
+    std::vector<RegionWorldState> present = states;
+    if (!evaluateLinear(region, present, *presentCondition)) {
+      return false;
+    }
+    intersectStates(states, present);
+    ++statistics_.choiceIntersections;
+    return true;
+  }
+
+  const SyncCoverGraph &graph_;
+  const std::vector<SyncCoverCompletionOrigin> &origins_;
+  const std::vector<SyncCoverExactWorld> &worlds_;
+  const std::vector<std::uint32_t> &resources_;
+  const std::vector<std::vector<RegionCutAction>> &beforeActions_;
+  const std::vector<std::vector<RegionCutAction>> &afterActions_;
+  const SyncCoverDemand &demand_;
+  SyncCoverGuard demandCondition_;
+  SyncCoverRegionWorldLimits limits_;
+  SyncCoverRegionWorldStatistics &statistics_;
+  SyncCoverCoverageWorkBudget *workBudget_ = nullptr;
+  SyncCoverFlatWorldError error_ = SyncCoverFlatWorldError::None;
+  std::optional<std::size_t> invalidIndex_;
+};
+
+} // namespace
+
+SyncCoverRegionWorldResult mlir::pto::computeSyncCoverRegionExactWorlds(
+    const SyncCoverGraph &graph, const std::vector<SyncCoverDirectCut> &cuts,
+    const std::vector<SyncCoverExactWorld> &worlds,
+    SyncCoverRegionWorldLimits limits,
+    SyncCoverCoverageWorkBudget *workBudget) {
+  SyncCoverRegionWorldResult result;
+  result.coveredByWorld.assign(worlds.size(),
+                               SyncCoverDemandSet(graph.getDemands().size()));
+  const auto fail = [&](SyncCoverFlatWorldError error,
+                        std::optional<std::size_t> index = std::nullopt) {
+    result.error = error;
+    result.invalidIndex = index;
+    result.coveredByWorld.clear();
+    return result;
+  };
+  const bool invalidGraph = !graph.isStructureFrozen() || !graph.validate();
+  if (invalidGraph) {
+    return fail(SyncCoverFlatWorldError::InvalidGraph);
+  }
+  const bool limitsExceeded = worlds.size() > limits.maximumWorldsPerBatch ||
+                              cuts.size() > limits.maximumCuts;
+  if (limitsExceeded) {
+    return fail(SyncCoverFlatWorldError::LimitExceeded);
+  }
+  const bool unsupportedDemand = std::any_of(
+      graph.getDemands().begin(), graph.getDemands().end(),
+      [](const SyncCoverDemand &demand) { return demand.distance != 0; });
+  if (unsupportedDemand) {
+    return fail(SyncCoverFlatWorldError::UnsupportedStructure);
+  }
+
+  std::vector<SyncCoverCompletionOrigin> origins;
+  origins.reserve(cuts.size());
+  std::vector<SyncCoverMechanismId> describedMechanisms;
+  describedMechanisms.reserve(cuts.size());
+  std::vector<std::vector<RegionCutAction>> beforeActions(
+      graph.getNodes().size());
+  std::vector<std::vector<RegionCutAction>> afterActions(
+      graph.getNodes().size());
+  std::size_t actionCount = 0;
+  const auto addAction = [&](const SyncCoverCutPoint &point,
+                             RegionCutActionKind kind, std::size_t cut) {
+    const bool actionLimitReached = actionCount == limits.maximumCutActions;
+    if (actionLimitReached) {
+      return false;
+    }
+    RegionCutAction action{kind, cut, point.ordinal};
+    std::vector<std::vector<RegionCutAction>> &actions =
+        point.anchor.kind == SyncCoverAnchorKind::BeforeNode ? beforeActions
+                                                             : afterActions;
+    actions[point.anchor.node].push_back(action);
+    ++actionCount;
+    return true;
+  };
+  for (std::size_t cut = 0; cut < cuts.size(); ++cut) {
+    const std::optional<SyncCoverCompletionOrigin> origin =
+        makeFlatCompletionOrigin(graph, cuts[cut]);
+    if (!origin) {
+      return fail(SyncCoverFlatWorldError::InvalidCut, cut);
+    }
+    origins.push_back(*origin);
+    describedMechanisms.push_back(origin->mechanism);
+    const bool event = origin->kind == SyncCoverDirectCutKind::Event;
+    const bool actionsAdded =
+        event ? addAction(cuts[cut].source, RegionCutActionKind::Set, cut) &&
+                    addAction(cuts[cut].target, RegionCutActionKind::Wait, cut)
+              : addAction(cuts[cut].source, RegionCutActionKind::Barrier, cut);
+    if (!actionsAdded) {
+      return fail(SyncCoverFlatWorldError::LimitExceeded, cut);
+    }
+  }
+  for (auto &actions : beforeActions) {
+    std::sort(actions.begin(), actions.end(), regionActionLess);
+  }
+  for (auto &actions : afterActions) {
+    std::sort(actions.begin(), actions.end(), regionActionLess);
+  }
+  std::sort(describedMechanisms.begin(), describedMechanisms.end());
+  describedMechanisms.erase(
+      std::unique(describedMechanisms.begin(), describedMechanisms.end()),
+      describedMechanisms.end());
+  for (std::size_t world = 0; world < worlds.size(); ++world) {
+    const bool invalidWorld =
+        !std::is_sorted(worlds[world].enabledMechanisms.begin(),
+                        worlds[world].enabledMechanisms.end()) ||
+        std::adjacent_find(worlds[world].enabledMechanisms.begin(),
+                           worlds[world].enabledMechanisms.end()) !=
+            worlds[world].enabledMechanisms.end() ||
+        !std::includes(describedMechanisms.begin(), describedMechanisms.end(),
+                       worlds[world].enabledMechanisms.begin(),
+                       worlds[world].enabledMechanisms.end());
+    if (invalidWorld) {
+      return fail(SyncCoverFlatWorldError::InvalidWorld, world);
+    }
+  }
+
+  std::vector<std::uint32_t> resources;
+  resources.reserve(graph.getNodes().size());
+  for (const SyncCoverNode &node : graph.getNodes()) {
+    resources.push_back(node.resource);
+  }
+  std::sort(resources.begin(), resources.end());
+  resources.erase(std::unique(resources.begin(), resources.end()),
+                  resources.end());
+  std::size_t wordsPerWorld = 0;
+  std::size_t liveStateWords = 0;
+  const bool stateLimitExceeded =
+      !checkedSum(resources.size(), cuts.size(), 2, wordsPerWorld) ||
+      !checkedProduct(wordsPerWorld, worlds.size(), liveStateWords) ||
+      liveStateWords > limits.maximumStateWords;
+  if (stateLimitExceeded) {
+    return fail(SyncCoverFlatWorldError::LimitExceeded);
+  }
+  result.statistics.maximumLiveStateWords = liveStateWords;
+
+  for (SyncCoverDemandId demandId = 0; demandId < graph.getDemands().size();
+       ++demandId) {
+    const SyncCoverDemand &demand = graph.getDemands()[demandId];
+    SyncCoverGuard demandCondition;
+    if (!flatDemandCondition(graph, demand, demandCondition)) {
+      return fail(SyncCoverFlatWorldError::InvalidGraph, demandId);
+    }
+    std::vector<RegionWorldState> states(worlds.size());
+    for (RegionWorldState &state : states) {
+      state.completed.assign(resources.size(), 0);
+      state.tokens.assign(cuts.size(), 0);
+    }
+    RegionWorldEvaluator evaluator(
+        graph, origins, worlds, resources, beforeActions, afterActions, demand,
+        std::move(demandCondition), limits, result.statistics, workBudget);
+    if (!evaluator.run(states)) {
+      return fail(evaluator.getError(), evaluator.getInvalidIndex());
+    }
+    for (std::size_t world = 0; world < worlds.size(); ++world) {
+      if (states[world].targetCovered) {
+        result.coveredByWorld[world].insert(demandId);
+      }
     }
   }
   return result;
