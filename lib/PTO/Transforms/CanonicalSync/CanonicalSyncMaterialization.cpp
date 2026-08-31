@@ -2148,12 +2148,16 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
     report.storageProtocolReuseFrontiers = frontierStatistics.reuseFrontiers;
     report.storageProtocolDirectFrontiers =
         frontierStatistics.directFrontiers;
+    report.storageProtocolCompletionCutFactFrontiers =
+        frontierStatistics.completionCutFactFrontiers;
     report.storageProtocolCertificateFrontiers =
         frontierStatistics.certificateFrontiers;
     report.storageProtocolSameResourceRecurrenceReuses =
         frontierStatistics.sameResourceRecurrenceReuses;
     report.storageProtocolFrontierCertificateDemandIncidences =
         frontierStatistics.certificateDemandIncidences;
+    report.storageProtocolFrontierCompletionCutFactDemandIncidences =
+        frontierStatistics.completionCutFactDemandIncidences;
     report.storageProtocolFrontierTransferInspections =
         frontierStatistics.transferInspections;
     report.storageProtocolFrontierStatePairInspections =
@@ -2176,7 +2180,8 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
           {plan.id, plan.automaton, plan.group, plan.owningScope,
            plan.laneCount, plan.frontiers.size(), plan.readyFrontiers,
            plan.reuseFrontiers, plan.directFrontiers,
-           plan.certificateFrontiers, plan.sameResourceRecurrenceReuses});
+           plan.completionCutFactFrontiers, plan.certificateFrontiers,
+           plan.sameResourceRecurrenceReuses});
     }
   }
   if (program.getStorageCutIndex()) {

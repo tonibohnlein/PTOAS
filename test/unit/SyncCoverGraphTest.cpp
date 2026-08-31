@@ -1251,6 +1251,123 @@ bool testTargetCompletionCertificatesAreExactAndImmutable() {
   return passed;
 }
 
+bool testCompletionCutFactsAreTargetNeutralAndImmutable() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  constexpr std::uint32_t kMatrix = 2;
+  constexpr std::uint32_t kFix = 10;
+  const SyncCoverControlId control =
+      takeIndex(graph.addControl(2), passed, "add completion-cut control");
+  const SyncCoverGuard guarded{{{control, 0}}};
+  const SyncCoverScopeId guardedScope =
+      takeIndex(graph.addScope(0, false, std::nullopt, false, guarded), passed,
+                "add completion-cut guarded scope");
+  const SyncCoverNodeId producer =
+      takeIndex(graph.addNode(kMatrix, 1, guardedScope, 0, guarded), passed,
+                "add guarded completion-cut producer");
+  const SyncCoverNodeId consumer =
+      takeIndex(graph.addNode(kFix, 1, 0, 1), passed,
+                "add unguarded completion-cut consumer");
+  const SyncCoverStorageDomainId accumulator = takeIndex(
+      graph.addStorageDomain(SyncCoverStorageDomainRole::Accumulator), passed,
+      "add completion-cut accumulator domain");
+  const SyncCoverStorageDomainId other =
+      takeIndex(graph.addStorageDomain(SyncCoverStorageDomainRole::Other),
+                passed, "add completion-cut unrelated domain");
+  const SyncCoverStorageAccessId write = takeIndex(
+      graph.addStorageAccess(producer, accumulator, 1, {0, 64},
+                             SyncCoverStorageAccessMode::Write, std::nullopt,
+                             true),
+      passed, "add completion-cut exact write");
+  const SyncCoverStorageAccessId read = takeIndex(
+      graph.addStorageAccess(consumer, accumulator, 1, {0, 64},
+                             SyncCoverStorageAccessMode::Read, std::nullopt,
+                             true),
+      passed, "add completion-cut exact read");
+  const SyncCoverStorageWitnessId witness =
+      takeIndex(graph.addStorageWitness(write, read), passed,
+                "add completion-cut exact RAW witness");
+  SyncCoverDemand demand = makeDemand(producer, consumer);
+  demand.provenanceKinds = {SyncCoverDemandKind::MemoryRAW};
+  demand.storageWitnesses = {witness};
+  const SyncCoverDemandId demandId =
+      takeIndex(graph.addDemand(std::move(demand)), passed,
+                "add completion-cut guarded RAW demand");
+  passed &= check(graph.addCompletionCutFact(producer, kMatrix, kFix,
+                                             {accumulator}, {demandId}),
+                  "accept producer completion despite target guard mismatch");
+  const std::size_t factCount = graph.getCompletionCutFacts().size();
+  passed &= check(
+      graph.addCompletionCutFact(consumer, kMatrix, kFix, {accumulator},
+                                 {demandId})
+                  .error == SyncCoverGraphError::InvalidCompletionCutFact &&
+          graph.getCompletionCutFacts().size() == factCount,
+      "reject a completion cut that does not name the physical producer exit");
+  passed &= check(
+      graph.addCompletionCutFact(producer, kMatrix, kFix, {other}, {demandId})
+              .error == SyncCoverGraphError::InvalidCompletionCutFact,
+      "reject a completion cut without the exact witness domain");
+  constexpr std::size_t kManyFacts = 1024;
+  for (std::size_t fact = 1; fact < kManyFacts; ++fact) {
+    passed &= check(graph.addCompletionCutFact(producer, kMatrix, kFix,
+                                               {accumulator}, {demandId}),
+                    "validate only one newly appended completion-cut fact");
+  }
+  passed &= check(graph.getCompletionCutFacts().size() == kManyFacts,
+                  "retain many independently validated completion-cut facts");
+  passed &= check(graph.freezeStructure(), "freeze completion-cut graph") &&
+            check(graph.validate(), "validate target-neutral completion cut");
+  passed &= check(
+      graph.addCompletionCutFact(producer, kMatrix, kFix, {accumulator},
+                                 {demandId})
+              .error == SyncCoverGraphError::StructureFrozen,
+      "reject completion-cut mutation after freeze");
+
+  SyncCoverGraph lateExitGraph;
+  const SyncCoverNodeId macroEntry = takeIndex(
+      lateExitGraph.addNode(kMatrix, 1, 0, 0), passed,
+      "add late-exit macro entry");
+  const SyncCoverNodeId earlyConsumer = takeIndex(
+      lateExitGraph.addNode(kFix, 1, 0, 1), passed,
+      "add consumer before the physical producer exit");
+  const SyncCoverNodeId macroExit = takeIndex(
+      lateExitGraph.addNode(kMatrix, 1, 0, 2, {}, {}, macroEntry), passed,
+      "add late physical producer exit");
+  passed &= check(lateExitGraph.setPhysicalExit(macroEntry, macroExit),
+                  "set the late macro entry exit") &&
+            check(lateExitGraph.setPhysicalExit(macroExit, macroExit),
+                  "set the late macro exit exit");
+  const SyncCoverStorageDomainId lateDomain = takeIndex(
+      lateExitGraph.addStorageDomain(SyncCoverStorageDomainRole::Accumulator),
+      passed, "add late-exit accumulator domain");
+  const SyncCoverStorageAccessId lateWrite = takeIndex(
+      lateExitGraph.addStorageAccess(macroEntry, lateDomain, 2, {0, 64},
+                                     SyncCoverStorageAccessMode::Write,
+                                     std::nullopt, true),
+      passed, "add late-exit exact write");
+  const SyncCoverStorageAccessId earlyRead = takeIndex(
+      lateExitGraph.addStorageAccess(earlyConsumer, lateDomain, 2, {0, 64},
+                                     SyncCoverStorageAccessMode::Read,
+                                     std::nullopt, true),
+      passed, "add early exact read");
+  const SyncCoverStorageWitnessId lateWitness = takeIndex(
+      lateExitGraph.addStorageWitness(lateWrite, earlyRead), passed,
+      "add late-exit RAW witness");
+  SyncCoverDemand lateDemand = makeDemand(macroEntry, earlyConsumer);
+  lateDemand.provenanceKinds = {SyncCoverDemandKind::MemoryRAW};
+  lateDemand.storageWitnesses = {lateWitness};
+  const SyncCoverDemandId lateDemandId = takeIndex(
+      lateExitGraph.addDemand(std::move(lateDemand)), passed,
+      "add late-exit RAW demand");
+  passed &= check(
+      lateExitGraph
+              .addCompletionCutFact(macroExit, kMatrix, kFix, {lateDomain},
+                                    {lateDemandId})
+              .error == SyncCoverGraphError::InvalidCompletionCutFact,
+      "reject a completion cut after its acquisition anchor");
+  return passed;
+}
+
 } // namespace
 
 int main() {
@@ -1272,6 +1389,7 @@ int main() {
   passed &= testControlBoundaryAnchors();
   passed &= testPhysicalMacroEntryAndExitAnchors();
   passed &= testBlockingBarrierPrefixAndLoopBodyAnchor();
+  passed &= testCompletionCutFactsAreTargetNeutralAndImmutable();
   passed &= testTargetCompletionCertificatesAreExactAndImmutable();
   return passed ? 0 : 1;
 }

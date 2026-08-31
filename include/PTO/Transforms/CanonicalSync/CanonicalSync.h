@@ -217,6 +217,7 @@ struct CanonicalSyncStorageProtocolFrontierPlanReport {
   std::size_t readyFrontiers = 0;
   std::size_t reuseFrontiers = 0;
   std::size_t directFrontiers = 0;
+  std::size_t completionCutFactFrontiers = 0;
   std::size_t certificateFrontiers = 0;
   std::size_t sameResourceRecurrenceReuses = 0;
 };
@@ -416,9 +417,11 @@ struct CanonicalSyncComparisonReport {
   std::size_t storageProtocolReadyFrontiers = 0;
   std::size_t storageProtocolReuseFrontiers = 0;
   std::size_t storageProtocolDirectFrontiers = 0;
+  std::size_t storageProtocolCompletionCutFactFrontiers = 0;
   std::size_t storageProtocolCertificateFrontiers = 0;
   std::size_t storageProtocolSameResourceRecurrenceReuses = 0;
   std::size_t storageProtocolFrontierCertificateDemandIncidences = 0;
+  std::size_t storageProtocolFrontierCompletionCutFactDemandIncidences = 0;
   std::size_t storageProtocolFrontierTransferInspections = 0;
   std::size_t storageProtocolFrontierStatePairInspections = 0;
   std::size_t storageProtocolFrontierPlanIncidences = 0;

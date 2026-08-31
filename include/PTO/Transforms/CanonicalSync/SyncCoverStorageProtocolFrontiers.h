@@ -49,6 +49,7 @@ struct SyncCoverStorageProtocolFrontier {
   unsigned distance = 0;
   std::uint32_t sourceResource = 0;
   std::uint32_t targetResource = 0;
+  std::optional<SyncCoverCompletionCutFactId> completionCutFact;
   std::optional<SyncCoverTargetCompletionCertificateId> completionCertificate;
 };
 
@@ -67,6 +68,7 @@ struct SyncCoverStorageProtocolFrontierPlan {
   std::size_t readyFrontiers = 0;
   std::size_t reuseFrontiers = 0;
   std::size_t directFrontiers = 0;
+  std::size_t completionCutFactFrontiers = 0;
   std::size_t certificateFrontiers = 0;
   std::size_t sameResourceRecurrenceReuses = 0;
 };
@@ -79,6 +81,7 @@ struct SyncCoverStorageProtocolFrontierLimits {
   std::size_t maximumStatePairInspections = 1U << 22;
   std::size_t maximumPlanFrontierIncidences = 1U << 21;
   std::size_t maximumCertificateDemandIncidences = 1U << 20;
+  std::size_t maximumCompletionCutFactDemandIncidences = 1U << 20;
 };
 
 struct SyncCoverStorageProtocolFrontierStatistics {
@@ -93,9 +96,11 @@ struct SyncCoverStorageProtocolFrontierStatistics {
   std::size_t readyFrontiers = 0;
   std::size_t reuseFrontiers = 0;
   std::size_t directFrontiers = 0;
+  std::size_t completionCutFactFrontiers = 0;
   std::size_t certificateFrontiers = 0;
   std::size_t sameResourceRecurrenceReuses = 0;
   std::size_t certificateDemandIncidences = 0;
+  std::size_t completionCutFactDemandIncidences = 0;
   std::size_t transferInspections = 0;
   std::size_t statePairInspections = 0;
   std::size_t planFrontierIncidences = 0;

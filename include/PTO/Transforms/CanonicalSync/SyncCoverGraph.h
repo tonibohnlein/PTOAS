@@ -31,6 +31,7 @@ using SyncCoverControlId = std::size_t;
 using SyncCoverStorageDomainId = std::size_t;
 using SyncCoverStorageAccessId = std::size_t;
 using SyncCoverStorageWitnessId = std::size_t;
+using SyncCoverCompletionCutFactId = std::size_t;
 using SyncCoverTargetCompletionCertificateId = std::size_t;
 using SyncCoverBasicOwnershipCertificateId = std::size_t;
 using SyncCoverStorageAccessFamilyId = std::uint64_t;
@@ -240,6 +241,20 @@ struct SyncCoverStorageWitness {
   SyncCoverStorageInterval overlap;
 };
 
+/// Target-neutral producer-completion evidence supplied by the target
+/// capability provider. The fact authorizes only the completion boundary for
+/// the named exact RAW demands. It does not assert that a standalone event is
+/// balanced, nor that its target endpoint executes. Those lifecycle
+/// obligations must be proved separately before materialization.
+struct SyncCoverCompletionCutFact {
+  SyncCoverCompletionCutFactId id = 0;
+  SyncCoverNodeId completionNode = 0;
+  std::uint32_t sourceResource = 0;
+  std::uint32_t targetResource = 0;
+  std::vector<SyncCoverStorageDomainId> storageDomains;
+  std::vector<SyncCoverDemandId> demands;
+};
+
 /// Target-qualified completion facts admitted only after frontend analysis has
 /// proved the corresponding physical-storage lifecycle.  These facts do not
 /// change generic resource completion or issue-order semantics.
@@ -356,6 +371,7 @@ enum class SyncCoverGraphError : std::uint8_t {
   InvalidStorageAccess,
   InvalidStorageWitness,
   InvalidStorageProvenance,
+  InvalidCompletionCutFact,
   InvalidTargetCompletionCertificate,
   InvalidBasicOwnershipCertificate,
   ArithmeticOverflow,
@@ -445,6 +461,11 @@ public:
                    bool exactPhysical = false);
   SyncCoverGraphResult addStorageWitness(SyncCoverStorageAccessId sourceAccess,
                                          SyncCoverStorageAccessId targetAccess);
+  SyncCoverGraphResult addCompletionCutFact(
+      SyncCoverNodeId completionNode, std::uint32_t sourceResource,
+      std::uint32_t targetResource,
+      std::vector<SyncCoverStorageDomainId> storageDomains,
+      std::vector<SyncCoverDemandId> demands);
   SyncCoverGraphResult addTargetCompletionCertificate(
       SyncCoverTargetCompletionKind kind, SyncCoverNodeId completionNode,
       SyncCoverNodeId target, std::uint32_t sourceResource,
@@ -470,6 +491,9 @@ public:
   }
   const std::vector<SyncCoverStorageWitness> &getStorageWitnesses() const {
     return storageWitnesses_;
+  }
+  const std::vector<SyncCoverCompletionCutFact> &getCompletionCutFacts() const {
+    return completionCutFacts_;
   }
   const std::vector<SyncCoverTargetCompletionCertificate> &
   getTargetCompletionCertificates() const {
@@ -530,6 +554,9 @@ private:
   SyncCoverGraphResult validateDemands() const;
   SyncCoverGraphResult validateEdges() const;
   SyncCoverGraphResult validateStorage() const;
+  SyncCoverGraphResult
+  validateCompletionCutFact(SyncCoverCompletionCutFactId fact) const;
+  SyncCoverGraphResult validateCompletionCutFacts() const;
   SyncCoverGraphResult validateTargetCompletionCertificates() const;
   SyncCoverGraphResult validateBasicOwnershipCertificates() const;
 
@@ -539,6 +566,7 @@ private:
   std::vector<SyncCoverStorageDomain> storageDomains_;
   std::vector<SyncCoverStorageAccess> storageAccesses_;
   std::vector<SyncCoverStorageWitness> storageWitnesses_;
+  std::vector<SyncCoverCompletionCutFact> completionCutFacts_;
   std::vector<SyncCoverTargetCompletionCertificate>
       targetCompletionCertificates_;
   std::vector<SyncCoverBasicOwnershipCertificate> basicOwnershipCertificates_;

@@ -239,6 +239,8 @@ LogicalResult ProgramBuilder::addTargetCompletionCertificates(
   std::map<std::pair<SyncCoverNodeId, SyncCoverNodeId>,
            std::vector<CertifiedDemand>>
       accumulatorUses;
+  std::map<SyncCoverNodeId, std::vector<CertifiedDemand>>
+      accumulatorCompletionCuts;
   std::vector<SyncCoverStorageDomainId> l0Domains;
   if (left) {
     l0Domains.push_back(*left);
@@ -265,6 +267,20 @@ LogicalResult ProgramBuilder::addTargetCompletionCertificates(
         source.guard.literals == physicalSource.guard.literals &&
         source.guard.literals == physicalTarget.guard.literals &&
         physicalSource.order < physicalTarget.order;
+    const bool accumulatorBoundaryDemand =
+        accumulatorBoundaryEnabled && accumulator &&
+        source.resource == static_cast<std::uint32_t>(PipelineType::PIPE_M) &&
+        target.resource ==
+            static_cast<std::uint32_t>(PipelineType::PIPE_FIX);
+    if (accumulatorBoundaryDemand &&
+        source.scope == physicalSource.scope &&
+        source.guard.literals == physicalSource.guard.literals &&
+        source.order <= physicalSource.order) {
+      if (const auto domain = exactRawDomain(demand, accumulatorDomains)) {
+        accumulatorCompletionCuts[source.physicalExit].push_back(
+            {demandId, *domain});
+      }
+    }
     if (!oneControlChain) {
       continue;
     }
@@ -278,16 +294,33 @@ LogicalResult ProgramBuilder::addTargetCompletionCertificates(
         mte1Uses[target.physicalAnchor].push_back({demandId, *domain});
       }
     }
-    const bool accumulatorBoundaryDemand =
-        accumulatorBoundaryEnabled && accumulator &&
-        source.resource == static_cast<std::uint32_t>(PipelineType::PIPE_M) &&
-        target.resource ==
-            static_cast<std::uint32_t>(PipelineType::PIPE_FIX);
     if (accumulatorBoundaryDemand) {
       if (const auto domain = exactRawDomain(demand, accumulatorDomains)) {
         accumulatorUses[{source.physicalExit, target.physicalAnchor}]
             .push_back({demandId, *domain});
       }
+    }
+  }
+
+  for (const auto &[completionNode, certifiedDemands] :
+       accumulatorCompletionCuts) {
+    std::vector<SyncCoverDemandId> demands;
+    std::vector<SyncCoverStorageDomainId> domains;
+    demands.reserve(certifiedDemands.size());
+    domains.reserve(certifiedDemands.size());
+    for (const auto &[demandId, domain] : certifiedDemands) {
+      demands.push_back(demandId);
+      domains.push_back(domain);
+    }
+    const SyncCoverGraphResult added = graph_.addCompletionCutFact(
+        completionNode, static_cast<std::uint32_t>(PipelineType::PIPE_M),
+        static_cast<std::uint32_t>(PipelineType::PIPE_FIX), std::move(domains),
+        std::move(demands));
+    if (!added) {
+      return function_.emitError(
+                 "cannot register canonical sync provider completion cut, "
+                 "graph_error=")
+             << static_cast<unsigned>(added.error);
     }
   }
 

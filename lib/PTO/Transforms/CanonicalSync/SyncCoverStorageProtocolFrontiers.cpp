@@ -110,6 +110,66 @@ struct CertificateEntry {
   SyncCoverNodeId target = 0;
 };
 
+struct CompletionCutFactEntry {
+  SyncCoverDemandId demand = 0;
+  std::uint32_t sourceResource = 0;
+  std::uint32_t targetResource = 0;
+  SyncCoverCompletionCutFactId fact = 0;
+  SyncCoverNodeId completionNode = 0;
+};
+
+bool completionCutFactLess(const CompletionCutFactEntry &left,
+                           const CompletionCutFactEntry &right) {
+  return std::tie(left.demand, left.sourceResource, left.targetResource,
+                  left.fact, left.completionNode) <
+         std::tie(right.demand, right.sourceResource, right.targetResource,
+                  right.fact, right.completionNode);
+}
+
+std::optional<std::size_t> lowerBoundCompletionCutFact(
+    const std::vector<CompletionCutFactEntry> &facts,
+    const CompletionCutFactEntry &key, WorkBudget &budget,
+    bool &limitExceeded) {
+  std::size_t begin = 0;
+  std::size_t end = facts.size();
+  while (begin < end) {
+    if (!budget.consume()) {
+      limitExceeded = true;
+      return std::nullopt;
+    }
+    const std::size_t middle = begin + (end - begin) / 2;
+    const CompletionCutFactEntry &entry = facts[middle];
+    const bool before =
+        std::tie(entry.demand, entry.sourceResource, entry.targetResource) <
+        std::tie(key.demand, key.sourceResource, key.targetResource);
+    if (before) {
+      begin = middle + 1;
+    } else {
+      end = middle;
+    }
+  }
+  return begin;
+}
+
+std::optional<bool> containsStorageDomain(
+    const std::vector<SyncCoverStorageDomainId> &domains,
+    SyncCoverStorageDomainId domain, WorkBudget &budget) {
+  std::size_t begin = 0;
+  std::size_t end = domains.size();
+  while (begin < end) {
+    if (!budget.consume()) {
+      return std::nullopt;
+    }
+    const std::size_t middle = begin + (end - begin) / 2;
+    if (domains[middle] < domain) {
+      begin = middle + 1;
+    } else {
+      end = middle;
+    }
+  }
+  return begin < domains.size() && domains[begin] == domain;
+}
+
 bool certificateLess(const CertificateEntry &left,
                      const CertificateEntry &right) {
   return std::tie(left.demand, left.sourceResource, left.targetResource,
@@ -319,6 +379,7 @@ mlir::pto::buildSyncCoverStorageProtocolFrontierIndex(
     statistics.readyFrontiers = 0;
     statistics.reuseFrontiers = 0;
     statistics.directFrontiers = 0;
+    statistics.completionCutFactFrontiers = 0;
     statistics.certificateFrontiers = 0;
     statistics.sameResourceRecurrenceReuses = 0;
     statistics.planFrontierIncidences = 0;
@@ -334,7 +395,8 @@ mlir::pto::buildSyncCoverStorageProtocolFrontierIndex(
       limits.maximumFrontiers == 0 || limits.maximumTransferInspections == 0 ||
       limits.maximumStatePairInspections == 0 ||
       limits.maximumPlanFrontierIncidences == 0 ||
-      limits.maximumCertificateDemandIncidences == 0;
+      limits.maximumCertificateDemandIncidences == 0 ||
+      limits.maximumCompletionCutFactDemandIncidences == 0;
   if (invalidLimit) {
     return fail({}, SyncCoverStorageProtocolFrontierError::InvalidLimit);
   }
@@ -352,6 +414,84 @@ mlir::pto::buildSyncCoverStorageProtocolFrontierIndex(
 
   SyncCoverStorageProtocolFrontierStatistics statistics;
   WorkBudget budget(limits.maximumWorkUnits, statistics.workUnits);
+  std::vector<CompletionCutFactEntry> completionCutFacts;
+  const std::vector<SyncCoverCompletionCutFact> &graphCompletionCutFacts =
+      graph.getCompletionCutFacts();
+  for (std::size_t factPosition = 0;
+       factPosition < graphCompletionCutFacts.size(); ++factPosition) {
+    const SyncCoverCompletionCutFact &fact =
+        graphCompletionCutFacts[factPosition];
+    const bool invalidFact = fact.id != factPosition ||
+                             fact.completionNode >= graph.getNodes().size() ||
+                             fact.sourceResource == fact.targetResource ||
+                             fact.demands.empty();
+    if (invalidFact) {
+      return fail(statistics,
+                  SyncCoverStorageProtocolFrontierError::InvalidGraph);
+    }
+    const bool incidenceLimitReached =
+        statistics.completionCutFactDemandIncidences >
+            limits.maximumCompletionCutFactDemandIncidences ||
+        fact.demands.size() > limits.maximumCompletionCutFactDemandIncidences -
+                                  statistics.completionCutFactDemandIncidences;
+    if (incidenceLimitReached ||
+        fact.demands.size() == std::numeric_limits<std::size_t>::max()) {
+      return fail(
+          statistics,
+          fact.demands.size() == std::numeric_limits<std::size_t>::max()
+              ? SyncCoverStorageProtocolFrontierError::ArithmeticOverflow
+              : SyncCoverStorageProtocolFrontierError::LimitExceeded);
+    }
+    const std::size_t factDemandWork = fact.demands.size() + 1;
+    if (!budget.consume(factDemandWork)) {
+      return fail(statistics,
+                  SyncCoverStorageProtocolFrontierError::LimitExceeded);
+    }
+    SyncCoverDemandId previousDemand = 0;
+    bool havePreviousDemand = false;
+    for (SyncCoverDemandId demandId : fact.demands) {
+      const bool invalidDemandId =
+          demandId >= graph.getDemands().size() ||
+          (havePreviousDemand && demandId <= previousDemand);
+      if (invalidDemandId) {
+        return fail(statistics,
+                    SyncCoverStorageProtocolFrontierError::InvalidGraph);
+      }
+      const SyncCoverDemand &demand = graph.getDemands()[demandId];
+      const bool invalidDemand =
+          demand.source >= graph.getNodes().size() ||
+          demand.target >= graph.getNodes().size() || demand.distance != 0 ||
+          graph.getNodes()[demand.source].resource != fact.sourceResource ||
+          graph.getNodes()[demand.target].resource != fact.targetResource;
+      if (invalidDemand) {
+        return fail(statistics,
+                    SyncCoverStorageProtocolFrontierError::InvalidGraph);
+      }
+      completionCutFacts.push_back({demandId, fact.sourceResource,
+                                    fact.targetResource, fact.id,
+                                    fact.completionNode});
+      previousDemand = demandId;
+      havePreviousDemand = true;
+      ++statistics.completionCutFactDemandIncidences;
+    }
+  }
+  if (!consumeSortWork(budget, completionCutFacts.size())) {
+    return fail(statistics,
+                SyncCoverStorageProtocolFrontierError::LimitExceeded);
+  }
+  std::sort(completionCutFacts.begin(), completionCutFacts.end(),
+            completionCutFactLess);
+  for (std::size_t fact = 1; fact < completionCutFacts.size(); ++fact) {
+    if (!budget.consume()) {
+      return fail(statistics,
+                  SyncCoverStorageProtocolFrontierError::LimitExceeded);
+    }
+    if (!completionCutFactLess(completionCutFacts[fact - 1],
+                               completionCutFacts[fact])) {
+      return fail(statistics,
+                  SyncCoverStorageProtocolFrontierError::InvalidGraph);
+    }
+  }
   std::vector<CertificateEntry> certificates;
   const std::vector<SyncCoverTargetCompletionCertificate> &graphCertificates =
       graph.getTargetCompletionCertificates();
@@ -517,6 +657,7 @@ mlir::pto::buildSyncCoverStorageProtocolFrontierIndex(
       const auto appendFrontier =
           [&](SyncCoverStorageProtocolFrontierKind kind,
               SyncCoverNodeId completionNode, SyncCoverNodeId targetNode,
+              std::optional<SyncCoverCompletionCutFactId> completionCutFact,
               std::optional<SyncCoverTargetCompletionCertificateId> certificate)
           -> bool {
         SyncCoverStorageProtocolFrontier frontier;
@@ -532,6 +673,7 @@ mlir::pto::buildSyncCoverStorageProtocolFrontierIndex(
         frontier.distance = transfer.distance;
         frontier.sourceResource = transfer.sourceResource;
         frontier.targetResource = transfer.targetResource;
+        frontier.completionCutFact = completionCutFact;
         frontier.completionCertificate = certificate;
         return appendPending(std::move(frontier));
       };
@@ -546,7 +688,7 @@ mlir::pto::buildSyncCoverStorageProtocolFrontierIndex(
         if (direct.completionNode) {
           if (!appendFrontier(SyncCoverStorageProtocolFrontierKind::Ready,
                               *direct.completionNode, description->target->node,
-                              std::nullopt)) {
+                              std::nullopt, std::nullopt)) {
             return fail(statistics,
                         SyncCoverStorageProtocolFrontierError::LimitExceeded);
           }
@@ -554,6 +696,60 @@ mlir::pto::buildSyncCoverStorageProtocolFrontierIndex(
           ++plan.directFrontiers;
         } else {
           missingCompletion = true;
+        }
+        const CompletionCutFactEntry lookup{transfer.demand,
+                                            transfer.sourceResource,
+                                            transfer.targetResource, 0, 0};
+        bool factLookupLimitExceeded = false;
+        const std::optional<std::size_t> factPosition =
+            lowerBoundCompletionCutFact(completionCutFacts, lookup, budget,
+                                        factLookupLimitExceeded);
+        if (factLookupLimitExceeded || !factPosition) {
+          return fail(statistics,
+                      SyncCoverStorageProtocolFrontierError::LimitExceeded);
+        }
+        auto fact = completionCutFacts.begin() + *factPosition;
+        for (; fact != completionCutFacts.end() &&
+               fact->demand == transfer.demand &&
+               fact->sourceResource == transfer.sourceResource &&
+               fact->targetResource == transfer.targetResource;
+             ++fact) {
+          if (!budget.consume()) {
+            return fail(statistics,
+                        SyncCoverStorageProtocolFrontierError::LimitExceeded);
+          }
+          if (description->edge->witness >=
+                  graph.getStorageWitnesses().size() ||
+              fact->fact >= graphCompletionCutFacts.size()) {
+            return fail(statistics,
+                        SyncCoverStorageProtocolFrontierError::InvalidGraph);
+          }
+          const SyncCoverStorageWitness &witness =
+              graph.getStorageWitnesses()[description->edge->witness];
+          if (witness.sourceAccess >= graph.getStorageAccesses().size()) {
+            return fail(statistics,
+                        SyncCoverStorageProtocolFrontierError::InvalidGraph);
+          }
+          const SyncCoverStorageDomainId domain =
+              graph.getStorageAccesses()[witness.sourceAccess].domain;
+          const std::optional<bool> admitted = containsStorageDomain(
+              graphCompletionCutFacts[fact->fact].storageDomains, domain,
+              budget);
+          if (!admitted) {
+            return fail(statistics,
+                        SyncCoverStorageProtocolFrontierError::LimitExceeded);
+          }
+          if (!*admitted) {
+            continue;
+          }
+          if (!appendFrontier(SyncCoverStorageProtocolFrontierKind::Ready,
+                              fact->completionNode, description->target->node,
+                              fact->fact, std::nullopt)) {
+            return fail(statistics,
+                        SyncCoverStorageProtocolFrontierError::LimitExceeded);
+          }
+          ++plan.readyFrontiers;
+          ++plan.completionCutFactFrontiers;
         }
       }
       if (recurrenceReuse) {
@@ -567,7 +763,7 @@ mlir::pto::buildSyncCoverStorageProtocolFrontierIndex(
         if (direct.completionNode) {
           if (!appendFrontier(SyncCoverStorageProtocolFrontierKind::Reuse,
                               *direct.completionNode, description->target->node,
-                              std::nullopt)) {
+                              std::nullopt, std::nullopt)) {
             return fail(statistics,
                         SyncCoverStorageProtocolFrontierError::LimitExceeded);
           }
@@ -612,6 +808,7 @@ mlir::pto::buildSyncCoverStorageProtocolFrontierIndex(
       frontier.scope = automaton.owningScope;
       frontier.sourceResource = certificate.sourceResource;
       frontier.targetResource = certificate.targetResource;
+      frontier.completionCutFact = std::nullopt;
       frontier.completionCertificate = certificate.id;
       if (!appendPending(std::move(frontier))) {
         return fail(statistics,
@@ -666,6 +863,8 @@ mlir::pto::buildSyncCoverStorageProtocolFrontierIndex(
         checkedAdd(statistics.reuseFrontiers, plan.reuseFrontiers);
     const bool directCountFits =
         checkedAdd(statistics.directFrontiers, plan.directFrontiers);
+    const bool completionCutFactCountFits = checkedAdd(
+        statistics.completionCutFactFrontiers, plan.completionCutFactFrontiers);
     const bool certificateCountFits =
         checkedAdd(statistics.certificateFrontiers, plan.certificateFrontiers);
     const bool sameResourceCountFits =
@@ -674,8 +873,8 @@ mlir::pto::buildSyncCoverStorageProtocolFrontierIndex(
     const bool incidenceCountFits =
         checkedAdd(statistics.planFrontierIncidences, plan.frontiers.size());
     if (!readyCountFits || !reuseCountFits || !directCountFits ||
-        !certificateCountFits || !sameResourceCountFits ||
-        !incidenceCountFits) {
+        !completionCutFactCountFits || !certificateCountFits ||
+        !sameResourceCountFits || !incidenceCountFits) {
       return fail(statistics,
                   SyncCoverStorageProtocolFrontierError::ArithmeticOverflow);
     }

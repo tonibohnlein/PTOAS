@@ -2037,7 +2037,9 @@ bool testA3TargetCompletionCertificatesAreArchitectureQualified() {
       check(countKind(
                 *a3,
                 SyncCoverTargetCompletionKind::MToFixAccumulatorBoundary) == 1,
-            "certify the exact A3 accumulator-to-FIX boundary");
+            "certify the exact A3 accumulator-to-FIX boundary") &&
+      check(a3->getGraph().getCompletionCutFacts().size() == 1,
+            "publish the A3 accumulator boundary as a target-neutral cut");
   CanonicalSyncAnalysisOptions targetDiscoveryDisabled;
   targetDiscoveryDisabled.discoverTargetCompletionCertificates = false;
   targetDiscoveryDisabled.discoverBasicOwnershipCertificates = false;
@@ -2047,25 +2049,34 @@ bool testA3TargetCompletionCertificatesAreArchitectureQualified() {
       check(succeeded(disabled),
             "build A3 graph with target certificate discovery disabled") &&
       check(disabled->getGraph().getTargetCompletionCertificates().empty(),
-            "skip disabled target completion certificate discovery");
+            "skip disabled target completion certificate discovery") &&
+      check(disabled->getGraph().getCompletionCutFacts().empty(),
+            "skip disabled provider completion-cut discovery");
   (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "a2"));
   FailureOr<CanonicalSyncProgram> a2 = buildCanonicalSyncProgram(function);
   const bool a2Rejected =
       check(succeeded(a2), "build the same graph for A2") &&
       check(a2->getGraph().getTargetCompletionCertificates().empty(),
-            "do not infer A3 target certificates on A2");
+            "do not infer A3 target certificates on A2") &&
+      check(a2->getGraph().getCompletionCutFacts().empty(),
+            "do not infer A3 provider completion cuts on A2");
   (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "a2a3"));
   FailureOr<CanonicalSyncProgram> a2a3 = buildCanonicalSyncProgram(function);
   const bool a2a3Rejected =
       check(succeeded(a2a3), "build the same graph for A2/A3 intersection") &&
-      check(a2a3->getGraph().getTargetCompletionCertificates().empty(),
-            "do not infer A3 target certificates from the A2/A3 intersection");
+      check(
+          a2a3->getGraph().getTargetCompletionCertificates().empty(),
+          "do not infer A3 target certificates from the A2/A3 intersection") &&
+      check(a2a3->getGraph().getCompletionCutFacts().empty(),
+            "do not infer A3 provider cuts from the A2/A3 intersection");
   (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "a5"));
   FailureOr<CanonicalSyncProgram> a5 = buildCanonicalSyncProgram(function);
   const bool a5Rejected =
       check(succeeded(a5), "build the same graph for A5") &&
       check(a5->getGraph().getTargetCompletionCertificates().empty(),
-            "do not infer A3 target certificates on A5");
+            "do not infer A3 target certificates on A5") &&
+      check(a5->getGraph().getCompletionCutFacts().empty(),
+            "do not infer A3 provider completion cuts on A5");
   if (!a3Qualified || !disabledSkipped || !a2Rejected || !a2a3Rejected ||
       !a5Rejected) {
     return false;

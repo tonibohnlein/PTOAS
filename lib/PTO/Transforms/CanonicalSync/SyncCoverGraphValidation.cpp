@@ -92,7 +92,8 @@ bool anchorIsWithinScope(const SyncCoverGraph &graph,
 SyncCoverGraphResult SyncCoverGraph::validate() const {
   for (SyncCoverGraphResult result :
        {validateScopesControlsAndNodes(), validateDemands(), validateEdges(),
-        validateStorage(), validateTargetCompletionCertificates(),
+        validateStorage(), validateCompletionCutFacts(),
+        validateTargetCompletionCertificates(),
         validateBasicOwnershipCertificates()}) {
     if (!result) {
       return result;
@@ -512,6 +513,99 @@ SyncCoverGraphResult SyncCoverGraph::validateStorage() const {
         witness.overlap.begin != expected.begin ||
         witness.overlap.end != expected.end) {
       return {SyncCoverGraphError::InvalidStorageWitness, index};
+    }
+  }
+  return {SyncCoverGraphError::None, std::nullopt};
+}
+
+SyncCoverGraphResult SyncCoverGraph::validateCompletionCutFacts() const {
+  for (std::size_t index = 0; index < completionCutFacts_.size(); ++index) {
+    const SyncCoverGraphResult result = validateCompletionCutFact(index);
+    if (!result) {
+      return result;
+    }
+  }
+  return {SyncCoverGraphError::None, std::nullopt};
+}
+
+SyncCoverGraphResult SyncCoverGraph::validateCompletionCutFact(
+    SyncCoverCompletionCutFactId index) const {
+  if (index >= completionCutFacts_.size()) {
+    return {SyncCoverGraphError::InvalidCompletionCutFact, index};
+  }
+  const SyncCoverCompletionCutFact &fact = completionCutFacts_[index];
+  const bool invalidHeader =
+      fact.id != index || fact.completionNode >= nodes_.size() ||
+      fact.sourceResource == fact.targetResource ||
+      fact.storageDomains.empty() || fact.demands.empty() ||
+      !isSortedUnique(fact.storageDomains) ||
+      std::any_of(fact.storageDomains.begin(), fact.storageDomains.end(),
+                  [&](SyncCoverStorageDomainId domain) {
+                    return domain >= storageDomains_.size();
+                  }) ||
+      !isSortedUnique(fact.demands) ||
+      std::any_of(fact.demands.begin(), fact.demands.end(),
+                  [&](SyncCoverDemandId demand) {
+                    return demand >= demands_.size();
+                  });
+  if (invalidHeader) {
+    return {SyncCoverGraphError::InvalidCompletionCutFact, index};
+  }
+  const SyncCoverNode &completion = nodes_[fact.completionNode];
+  if (completion.resource != fact.sourceResource) {
+    return {SyncCoverGraphError::InvalidCompletionCutFact, index};
+  }
+  for (SyncCoverDemandId demandId : fact.demands) {
+    const SyncCoverDemand &demand = demands_[demandId];
+    const SyncCoverNode &source = nodes_[demand.source];
+    const SyncCoverNode &target = nodes_[demand.target];
+    const SyncCoverNode &physicalSource = nodes_[source.physicalExit];
+    const std::optional<SyncCoverTimelinePosition> completionPosition =
+        resolveSyncCoverAnchor(
+            *this, {SyncCoverAnchorKind::AfterNode, fact.completionNode, 0, 0});
+    const std::optional<SyncCoverTimelinePosition> acquisitionPosition =
+        resolveSyncCoverAnchor(
+            *this, {SyncCoverAnchorKind::BeforeNode, demand.target, 0, 0});
+    const bool invalidDemand =
+        demand.distance != 0 ||
+        std::find(demand.provenanceKinds.begin(),
+                  demand.provenanceKinds.end(), SyncCoverDemandKind::MemoryRAW) ==
+            demand.provenanceKinds.end() ||
+        source.resource != fact.sourceResource ||
+        target.resource != fact.targetResource ||
+        source.physicalExit != fact.completionNode ||
+        source.scope != completion.scope ||
+        physicalSource.scope != completion.scope ||
+        source.guard.literals != completion.guard.literals ||
+        physicalSource.guard.literals != completion.guard.literals ||
+        source.order > physicalSource.order || !completionPosition ||
+        !acquisitionPosition || *completionPosition >= *acquisitionPosition;
+    if (invalidDemand || demand.storageWitnesses.empty()) {
+      return {SyncCoverGraphError::InvalidCompletionCutFact, index};
+    }
+    const bool hasExactRawWitness = std::any_of(
+        demand.storageWitnesses.begin(), demand.storageWitnesses.end(),
+        [&](SyncCoverStorageWitnessId witnessId) {
+          if (witnessId >= storageWitnesses_.size()) {
+            return false;
+          }
+          const SyncCoverStorageWitness &witness = storageWitnesses_[witnessId];
+          const SyncCoverStorageAccess &sourceAccess =
+              storageAccesses_[witness.sourceAccess];
+          const SyncCoverStorageAccess &targetAccess =
+              storageAccesses_[witness.targetAccess];
+          return sourceAccess.node == demand.source &&
+                 targetAccess.node == demand.target &&
+                 sourceAccess.domain == targetAccess.domain &&
+                 std::binary_search(fact.storageDomains.begin(),
+                                    fact.storageDomains.end(),
+                                    sourceAccess.domain) &&
+                 sourceAccess.exactPhysical && targetAccess.exactPhysical &&
+                 syncCoverStorageModeWrites(sourceAccess.mode) &&
+                 syncCoverStorageModeReads(targetAccess.mode);
+        });
+    if (!hasExactRawWitness) {
+      return {SyncCoverGraphError::InvalidCompletionCutFact, index};
     }
   }
   return {SyncCoverGraphError::None, std::nullopt};

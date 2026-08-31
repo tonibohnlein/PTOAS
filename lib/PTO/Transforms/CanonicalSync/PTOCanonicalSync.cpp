@@ -465,6 +465,8 @@ llvm::json::Array jsonStorageProtocolFrontierPlans(
         {"ready_frontiers", jsonInteger(plan.readyFrontiers)},
         {"reuse_frontiers", jsonInteger(plan.reuseFrontiers)},
         {"direct_frontiers", jsonInteger(plan.directFrontiers)},
+        {"completion_cut_fact_frontiers",
+         jsonInteger(plan.completionCutFactFrontiers)},
         {"certificate_frontiers", jsonInteger(plan.certificateFrontiers)},
         {"same_resource_recurrence_reuses",
          jsonInteger(plan.sameResourceRecurrenceReuses)}});
@@ -1015,6 +1017,8 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
        jsonInteger(report.storageProtocolReuseFrontiers)},
       {"storage_protocol_direct_frontiers",
        jsonInteger(report.storageProtocolDirectFrontiers)},
+      {"storage_protocol_completion_cut_fact_frontiers",
+       jsonInteger(report.storageProtocolCompletionCutFactFrontiers)},
       {"storage_protocol_certificate_frontiers",
        jsonInteger(report.storageProtocolCertificateFrontiers)},
       {"storage_protocol_same_resource_recurrence_reuses",
@@ -1022,6 +1026,9 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
       {"storage_protocol_frontier_certificate_demand_incidences",
        jsonInteger(
            report.storageProtocolFrontierCertificateDemandIncidences)},
+      {"storage_protocol_frontier_completion_cut_fact_demand_incidences",
+       jsonInteger(report
+                       .storageProtocolFrontierCompletionCutFactDemandIncidences)},
       {"storage_protocol_frontier_transfer_inspections",
        jsonInteger(report.storageProtocolFrontierTransferInspections)},
       {"storage_protocol_frontier_state_pair_inspections",

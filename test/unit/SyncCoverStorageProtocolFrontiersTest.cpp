@@ -261,6 +261,131 @@ buildCertificateBackedProtocol(unsigned producerCount = 2) {
   return result;
 }
 
+ProtocolFrontierInputs buildCompletionCutFactBackedProtocol() {
+  ProtocolFrontierInputs result;
+  bool passed = true;
+  constexpr unsigned kProtocolCount = 2;
+  const SyncCoverScopeId loop = takeIndex(
+      result.graph.addScope(0, true, SyncCoverTimelineInterval{0, 32}, true),
+      passed, "add completion-cut-fact loop");
+  const SyncCoverControlId control =
+      takeIndex(result.graph.addControl(2, loop), passed,
+                "add completion-cut-fact control");
+  passed &= check(
+      result.graph.setControlPhaseRelation(control, {loop, 0, {1, 0}, {0, 1}}),
+      "set completion-cut-fact phase relation");
+  const SyncCoverGuard producerGuard{{{control, 0}}};
+  const SyncCoverScopeId producerScope = takeIndex(
+      result.graph.addScope(loop, false, SyncCoverTimelineInterval{0, 16},
+                            false, producerGuard),
+      passed, "add completion-cut-fact guarded scope");
+  for (unsigned protocol = 0; protocol < kProtocolCount; ++protocol) {
+    const std::uint32_t producerResource = 1 + 2 * protocol;
+    const std::uint32_t consumerResource = producerResource + 1;
+    const SyncCoverStorageDomainId domain =
+        takeIndex(result.graph.addStorageDomain(), passed,
+                  "add completion-cut-fact domain");
+    const SyncCoverNodeId producer = takeIndex(
+        result.graph.addNode(producerResource, 1, producerScope,
+                             2 + 4 * protocol,
+                             producerGuard),
+        passed, "add completion-cut-fact producer");
+    const SyncCoverNodeId consumer = takeIndex(
+        result.graph.addNode(consumerResource, 1, loop,
+                             4 + 4 * protocol, {},
+                             {producerResource}),
+        passed, "add completion-cut-fact consumer");
+    const SyncCoverStorageAccessId write = takeIndex(
+        result.graph.addStorageAccess(producer, domain, 7 + protocol, {0, 64},
+                                      SyncCoverStorageAccessMode::Write,
+                                      std::nullopt, true),
+        passed, "add completion-cut-fact write");
+    const SyncCoverStorageAccessId read = takeIndex(
+        result.graph.addStorageAccess(consumer, domain, 7 + protocol, {0, 64},
+                                      SyncCoverStorageAccessMode::Read,
+                                      std::nullopt, true),
+        passed, "add completion-cut-fact read");
+    SyncCoverDemandId ready = 0;
+    if (protocol == 0) {
+      const SyncCoverStorageDomainId unauthorizedDomain =
+          takeIndex(result.graph.addStorageDomain(), passed,
+                    "add unauthorized completion-cut-fact domain");
+      const SyncCoverStorageAccessId unauthorizedWrite = takeIndex(
+          result.graph.addStorageAccess(producer, unauthorizedDomain, 17,
+                                        {0, 64},
+                                        SyncCoverStorageAccessMode::Write,
+                                        std::nullopt, true),
+          passed, "add unauthorized completion-cut-fact write");
+      const SyncCoverStorageAccessId unauthorizedRead = takeIndex(
+          result.graph.addStorageAccess(consumer, unauthorizedDomain, 17,
+                                        {0, 64},
+                                        SyncCoverStorageAccessMode::Read,
+                                        std::nullopt, true),
+          passed, "add unauthorized completion-cut-fact read");
+      const SyncCoverStorageWitnessId readyWitness = takeIndex(
+          result.graph.addStorageWitness(write, read), passed,
+          "add authorized completion-cut-fact ready witness");
+      const SyncCoverStorageWitnessId unauthorizedReadyWitness = takeIndex(
+          result.graph.addStorageWitness(unauthorizedWrite, unauthorizedRead),
+          passed, "add unauthorized completion-cut-fact ready witness");
+      SyncCoverDemand readyDemand;
+      readyDemand.source = producer;
+      readyDemand.target = consumer;
+      readyDemand.scope = loop;
+      readyDemand.provenanceKinds = {SyncCoverDemandKind::MemoryRAW};
+      readyDemand.storageWitnesses = {readyWitness,
+                                      unauthorizedReadyWitness};
+      ready = takeIndex(result.graph.addDemand(std::move(readyDemand)), passed,
+                        "add multi-domain ready demand");
+      const SyncCoverStorageWitnessId reuseWitness = takeIndex(
+          result.graph.addStorageWitness(read, write), passed,
+          "add authorized completion-cut-fact reuse witness");
+      const SyncCoverStorageWitnessId unauthorizedReuseWitness = takeIndex(
+          result.graph.addStorageWitness(unauthorizedRead, unauthorizedWrite),
+          passed, "add unauthorized completion-cut-fact reuse witness");
+      SyncCoverDemand reuseDemand;
+      reuseDemand.source = consumer;
+      reuseDemand.target = producer;
+      reuseDemand.scope = loop;
+      reuseDemand.distance = 1;
+      reuseDemand.provenanceKinds = {SyncCoverDemandKind::MemoryWAR};
+      reuseDemand.storageWitnesses = {reuseWitness,
+                                      unauthorizedReuseWitness};
+      passed &= check(result.graph.addDemand(std::move(reuseDemand)),
+                      "add multi-domain reuse demand");
+    } else {
+      ready = addDemandWithId(result.graph, producer, consumer, loop, 0,
+                              SyncCoverDemandKind::MemoryRAW, write, read,
+                              passed);
+      addDemand(result.graph, consumer, producer, loop, 1,
+                SyncCoverDemandKind::MemoryWAR, read, write, passed);
+    }
+    passed &= check(result.graph.addCompletionCutFact(
+                        producer, producerResource, consumerResource, {domain},
+                        {ready}),
+                    "add guarded provider completion-cut fact");
+  }
+  passed &=
+      check(result.graph.freezeStructure(), "freeze completion-cut-fact graph");
+  if (!passed) {
+    return result;
+  }
+  result.lifecycle = buildSyncCoverStorageLifecycleIndex(result.graph);
+  const SyncCoverStorageProtocolSeedIndex seeds =
+      buildSyncCoverStorageProtocolSeedIndex(result.graph, result.lifecycle);
+  const SyncCoverStorageProtocolGroupIndex groups =
+      buildSyncCoverStorageProtocolGroupIndex(result.graph, result.lifecycle,
+                                              seeds);
+  result.automata = buildSyncCoverStorageProtocolAutomatonIndex(
+      result.graph, result.lifecycle, seeds, groups);
+  result.directCuts =
+      buildSyncCoverStorageCutIndex(result.graph, result.lifecycle);
+  result.valid = result.lifecycle.isComplete() && seeds.isComplete() &&
+                 groups.isComplete() && result.automata.isComplete() &&
+                 result.directCuts.isComplete();
+  return result;
+}
+
 bool checkTransactionalLimit(const SyncCoverStorageProtocolFrontierIndex &index,
                              std::string_view message) {
   return check(index.getError() ==
@@ -283,6 +408,10 @@ exactLimits(const SyncCoverStorageProtocolFrontierStatistics &statistics) {
       statistics.certificateDemandIncidences == 0
           ? 1
           : statistics.certificateDemandIncidences;
+  limits.maximumCompletionCutFactDemandIncidences =
+      statistics.completionCutFactDemandIncidences == 0
+          ? 1
+          : statistics.completionCutFactDemandIncidences;
   return limits;
 }
 
@@ -319,6 +448,7 @@ bool testGuardedSiblingFrontiersAndBounds() {
        index.getFrontiers()) {
     passed &=
         check(frontier.transfer.has_value() && frontier.edge.has_value() &&
+                  !frontier.completionCutFact.has_value() &&
                   !frontier.completionCertificate.has_value(),
               "retain exact direct-transfer frontier provenance");
   }
@@ -364,6 +494,58 @@ bool testGuardedSiblingFrontiersAndBounds() {
                                                  inputs.automata, exact),
       "enforce the plan-frontier incidence bound transactionally");
   return passed;
+}
+
+bool testCompletionCutFactFrontierAndBound() {
+  ProtocolFrontierInputs inputs = buildCompletionCutFactBackedProtocol();
+  if (!check(inputs.valid, "build completion-cut-fact protocol inputs")) {
+    return false;
+  }
+  if (!check(inputs.directCuts.getRectangles().empty(),
+             "standalone direct cuts reject the guarded accumulator shape")) {
+    return false;
+  }
+  const SyncCoverStorageProtocolFrontierIndex index =
+      buildSyncCoverStorageProtocolFrontierIndex(inputs.graph, inputs.lifecycle,
+                                                 inputs.automata);
+  const SyncCoverStorageProtocolFrontierStatistics &statistics =
+      index.getStatistics();
+  const auto factFrontier =
+      std::find_if(index.getFrontiers().begin(), index.getFrontiers().end(),
+                   [](const SyncCoverStorageProtocolFrontier &frontier) {
+                     return frontier.completionCutFact.has_value();
+                   });
+  const bool retainedFact =
+      index.isComplete() && index.getPlans().size() == 2 &&
+      statistics.completionCutFactDemandIncidences == 2 &&
+      statistics.completionCutFactFrontiers == 2 &&
+      factFrontier != index.getFrontiers().end() &&
+      factFrontier->transfer.has_value() && factFrontier->edge.has_value() &&
+      !factFrontier->completionCertificate.has_value();
+  if (!check(retainedFact,
+             "retain exact demand-linked provider completion-cut frontier")) {
+    return false;
+  }
+  SyncCoverStorageProtocolFrontierLimits limits = exactLimits(statistics);
+  if (!check(buildSyncCoverStorageProtocolFrontierIndex(
+                 inputs.graph, inputs.lifecycle, inputs.automata, limits)
+                 .isComplete(),
+             "accept completion-cut-fact work at every exact bound")) {
+    return false;
+  }
+  --limits.maximumWorkUnits;
+  if (!checkTransactionalLimit(
+          buildSyncCoverStorageProtocolFrontierIndex(
+              inputs.graph, inputs.lifecycle, inputs.automata, limits),
+          "reject completion-cut-fact work below the exact work bound")) {
+    return false;
+  }
+  limits = exactLimits(statistics);
+  --limits.maximumCompletionCutFactDemandIncidences;
+  return checkTransactionalLimit(
+      buildSyncCoverStorageProtocolFrontierIndex(inputs.graph, inputs.lifecycle,
+                                                 inputs.automata, limits),
+      "enforce the completion-cut-fact incidence bound transactionally");
 }
 
 bool testCertificateFrontierAndBound() {
@@ -517,6 +699,7 @@ bool testMixedIndexesAreRejected() {
 
 int main() {
   return testGuardedSiblingFrontiersAndBounds() &&
+                 testCompletionCutFactFrontierAndBound() &&
                  testCertificateFrontierAndBound() &&
                  testDeepScopeAndLongGuardWorkIsBounded() &&
                  testManyCertificateAlternativesAreBounded() &&

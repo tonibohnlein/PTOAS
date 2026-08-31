@@ -106,6 +106,32 @@ SyncCoverGraph::addStorageWitness(SyncCoverStorageAccessId sourceAccess,
   return {SyncCoverGraphError::None, id};
 }
 
+SyncCoverGraphResult SyncCoverGraph::addCompletionCutFact(
+    SyncCoverNodeId completionNode, std::uint32_t sourceResource,
+    std::uint32_t targetResource,
+    std::vector<SyncCoverStorageDomainId> storageDomains,
+    std::vector<SyncCoverDemandId> demands) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen, completionCutFacts_.size()};
+  }
+  std::sort(storageDomains.begin(), storageDomains.end());
+  storageDomains.erase(
+      std::unique(storageDomains.begin(), storageDomains.end()),
+      storageDomains.end());
+  std::sort(demands.begin(), demands.end());
+  demands.erase(std::unique(demands.begin(), demands.end()), demands.end());
+  const SyncCoverCompletionCutFactId id = completionCutFacts_.size();
+  completionCutFacts_.push_back({id, completionNode, sourceResource,
+                                 targetResource, std::move(storageDomains),
+                                 std::move(demands)});
+  const SyncCoverGraphResult validated = validateCompletionCutFact(id);
+  if (!validated) {
+    completionCutFacts_.pop_back();
+    return {validated.error, id};
+  }
+  return {SyncCoverGraphError::None, id};
+}
+
 SyncCoverGraphResult SyncCoverGraph::addTargetCompletionCertificate(
     SyncCoverTargetCompletionKind kind, SyncCoverNodeId completionNode,
     SyncCoverNodeId target, std::uint32_t sourceResource,

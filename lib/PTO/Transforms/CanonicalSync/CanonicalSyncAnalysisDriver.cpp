@@ -461,6 +461,8 @@ LogicalResult ProgramBuilder::validateInput() {
                .maximumPlanFrontierIncidences == 0 ||
        options_.storageProtocolFrontierLimits
                .maximumCertificateDemandIncidences == 0 ||
+       options_.storageProtocolFrontierLimits
+               .maximumCompletionCutFactDemandIncidences == 0 ||
        options_.storageCutLimits.maximumWorkUnits == 0 ||
        options_.storageCutLimits.maximumCuts == 0 ||
        options_.storageCutLimits.maximumRectangles == 0 ||
