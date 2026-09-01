@@ -73,6 +73,8 @@ constexpr std::size_t
 constexpr std::size_t kMaximumStorageProtocolAutomatonReportEntries = 256;
 constexpr std::size_t kMaximumStorageProtocolCutPlanReportEntries = 256;
 constexpr std::size_t kMaximumStorageProtocolFrontierReportEntries = 256;
+constexpr std::size_t kMaximumDemandProvenanceReportEntries = 4096;
+constexpr std::size_t kMaximumProvenanceReportIncidences = 1U << 18;
 
 using SteadyClock = std::chrono::steady_clock;
 
@@ -87,6 +89,36 @@ void addNanoseconds(std::uint64_t &total, std::uint64_t amount) {
   total = amount > std::numeric_limits<std::uint64_t>::max() - total
               ? std::numeric_limits<std::uint64_t>::max()
               : total + amount;
+}
+
+bool consumeReportIncidence(std::size_t &remaining) {
+  if (remaining == 0) {
+    return false;
+  }
+  --remaining;
+  return true;
+}
+
+void appendCoveredDemandIds(const SyncCoverDemandSet &coverage,
+                            std::size_t &remaining,
+                            std::vector<SyncCoverDemandId> &demands,
+                            bool &truncated) {
+  const auto words = coverage.getWords();
+  for (std::size_t wordIndex = 0; wordIndex < words.size(); ++wordIndex) {
+    std::uint64_t word = words[wordIndex];
+    while (word != 0) {
+      const unsigned bit = static_cast<unsigned>(__builtin_ctzll(word));
+      const SyncCoverDemandId demand = wordIndex * 64 + bit;
+      if (demand < coverage.size()) {
+        if (!consumeReportIncidence(remaining)) {
+          truncated = true;
+          return;
+        }
+        demands.push_back(demand);
+      }
+      word &= word - 1;
+    }
+  }
 }
 
 bool usesDirectOnlyCatalog(const CanonicalSyncBuildOptions &options) {
@@ -2122,17 +2154,19 @@ buildStrategyReport(CanonicalSyncSelectionStrategy strategy,
                                         : outcome.selection.allocation;
   report.preciseSearch = outcome.preciseSearch;
   report.preciseAllocation = outcome.preciseAllocation;
-  std::vector<std::size_t> groundedCoverageRows(problem.getMechanisms().size(),
-                                                0);
+  std::vector<const SyncCoverDemandSet *> groundedCoverage(
+      problem.getMechanisms().size(), nullptr);
   for (const CanonicalSyncPattern &pattern : problem.getPatterns()) {
     if (pattern.kind != CanonicalSyncPatternKind::Singleton ||
         pattern.members.size() != 1 ||
-        pattern.members.front() >= groundedCoverageRows.size()) {
+        pattern.members.front() >= groundedCoverage.size()) {
       continue;
     }
-    groundedCoverageRows[pattern.members.front()] = pattern.coverage.count();
+    groundedCoverage[pattern.members.front()] = &pattern.coverage;
   }
   constexpr std::size_t maximumSelectedMechanismDetails = 4096;
+  std::size_t remainingProvenanceIncidences =
+      kMaximumProvenanceReportIncidences;
   for (CanonicalSyncMechanismId mechanismId : outcome.selection.mechanisms) {
     const CanonicalSyncMechanism &mechanism =
         problem.getMechanisms()[mechanismId];
@@ -2150,7 +2184,9 @@ buildStrategyReport(CanonicalSyncSelectionStrategy strategy,
     detail.kind = descriptor.kind;
     detail.originMask = mechanism.originMask;
     detail.supplies = descriptor.supplies.size();
-    detail.groundedCoverageRows = groundedCoverageRows[mechanismId];
+    if (groundedCoverage[mechanismId] != nullptr) {
+      detail.groundedCoverageRows = groundedCoverage[mechanismId]->count();
+    }
     detail.eventUses = descriptor.eventUses.size();
     detail.actions = descriptor.actions.size();
     const bool hasRecurrenceSupply =
@@ -2226,7 +2262,84 @@ buildStrategyReport(CanonicalSyncSelectionStrategy strategy,
       }
     }
     if (report.selectedMechanisms.size() < maximumSelectedMechanismDetails) {
-      report.selectedMechanisms.push_back(detail);
+      if (groundedCoverage[mechanismId] != nullptr) {
+        appendCoveredDemandIds(*groundedCoverage[mechanismId],
+                               remainingProvenanceIncidences,
+                               detail.groundedCoverageDemands,
+                               detail.groundedCoverageDemandsTruncated);
+        detail.provenanceDetailsTruncated |=
+            detail.groundedCoverageDemandsTruncated;
+      }
+      for (std::size_t eventUseIndex = 0;
+           eventUseIndex < descriptor.eventUses.size(); ++eventUseIndex) {
+        if (!consumeReportIncidence(remainingProvenanceIncidences)) {
+          detail.provenanceDetailsTruncated = true;
+          break;
+        }
+        const CanonicalSyncEventUse &eventUse =
+            descriptor.eventUses[eventUseIndex];
+        detail.eventUseDetails.push_back(
+            {eventUseIndex, eventUse.domain, eventUse.width,
+             eventUse.recurrenceScope, eventUse.lifetimeScope});
+      }
+      for (std::size_t actionIndex = 0; actionIndex < descriptor.actions.size();
+           ++actionIndex) {
+        if (!consumeReportIncidence(remainingProvenanceIncidences)) {
+          detail.provenanceDetailsTruncated = true;
+          break;
+        }
+        const CanonicalSyncAction &action = descriptor.actions[actionIndex];
+        CanonicalSyncActionProvenanceReport actionDetail;
+        actionDetail.action = actionIndex;
+        actionDetail.kind = action.kind;
+        actionDetail.resource = action.resource;
+        actionDetail.anchor = action.anchor;
+        actionDetail.eventUse = action.eventUse;
+        actionDetail.eventLane = action.eventLane;
+        actionDetail.barrierKind = action.barrierKind;
+        actionDetail.guard = action.guard;
+        actionDetail.guardScope = action.guardScope;
+        actionDetail.eventLaneKind = action.eventLaneKind;
+        actionDetail.eventLaneScope = action.eventLaneScope;
+        for (std::uint32_t resource : action.drainedResources) {
+          if (!consumeReportIncidence(remainingProvenanceIncidences)) {
+            detail.provenanceDetailsTruncated = true;
+            break;
+          }
+          actionDetail.drainedResources.push_back(resource);
+        }
+        detail.actionDetails.push_back(std::move(actionDetail));
+      }
+      for (std::size_t supplyIndex = 0;
+           supplyIndex < descriptor.supplies.size(); ++supplyIndex) {
+        if (!consumeReportIncidence(remainingProvenanceIncidences)) {
+          detail.provenanceDetailsTruncated = true;
+          break;
+        }
+        const CanonicalSyncSupplyBinding &supply =
+            descriptor.supplies[supplyIndex];
+        CanonicalSyncSupplyProvenanceReport supplyDetail;
+        supplyDetail.supply = supplyIndex;
+        supplyDetail.edge = supply.edge;
+        supplyDetail.eventUse = supply.eventUse;
+        supplyDetail.barrierAction = supply.barrierAction;
+        supplyDetail.produceAction = supply.produceAction;
+        supplyDetail.consumeAction = supply.consumeAction;
+        supplyDetail.proof = supply.proof;
+        supplyDetail.completionExport = supply.completionExport;
+        supplyDetail.applicability = supply.applicability;
+        supplyDetail.attestedDemand = supply.attestedDemand;
+        for (SyncCoverDemandId demand : supply.allowedDemands) {
+          if (!consumeReportIncidence(remainingProvenanceIncidences)) {
+            supplyDetail.allowedDemandsTruncated = true;
+            detail.provenanceDetailsTruncated = true;
+            break;
+          }
+          supplyDetail.allowedDemands.push_back(demand);
+        }
+        detail.supplyDetails.push_back(std::move(supplyDetail));
+      }
+      report.selectedMechanisms.push_back(std::move(detail));
     } else {
       report.selectedMechanismDetailsTruncated = true;
     }
@@ -2372,8 +2485,8 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
         const std::size_t targetGuardLiterals =
             transition.targetGuard.literals.size();
         const bool guardLiteralOverflow =
-            sourceGuardLiterals > std::numeric_limits<std::size_t>::max() -
-                                      targetGuardLiterals;
+            sourceGuardLiterals >
+            std::numeric_limits<std::size_t>::max() - targetGuardLiterals;
         const std::size_t guardLiterals =
             guardLiteralOverflow ? 0
                                  : sourceGuardLiterals + targetGuardLiterals;
@@ -2391,16 +2504,10 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
           break;
         }
         report.storageLifecycleTransitionDetails.push_back(
-            {component.id,
-             transition.id,
-             transition.kinds,
-             transition.sourceResource,
-             transition.targetResource,
-             transition.scope,
-             transition.distance,
-             transition.sourceGuard,
-             transition.targetGuard,
-             transition.edges.size()});
+            {component.id, transition.id, transition.kinds,
+             transition.sourceResource, transition.targetResource,
+             transition.scope, transition.distance, transition.sourceGuard,
+             transition.targetGuard, transition.edges.size()});
         reportedGuardLiterals += guardLiterals;
       }
       if (report.storageLifecycleDetailsTruncated) {
@@ -2414,8 +2521,7 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
         program.getStorageProtocolSeedIndex()->getStatistics();
     report.storageProtocolSeedWorkUnits = seedStatistics.workUnits;
     report.storageProtocolSeeds = seedStatistics.seeds;
-    report.storageProtocolReadyReleaseSeeds =
-        seedStatistics.readyReleaseSeeds;
+    report.storageProtocolReadyReleaseSeeds = seedStatistics.readyReleaseSeeds;
     report.storageProtocolComponentIncidences =
         seedStatistics.componentIncidences;
     report.storageProtocolSlotIncidences = seedStatistics.slotIncidences;
@@ -2436,15 +2542,9 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
         break;
       }
       report.storageProtocolSeedDetails.push_back(
-          {seed.id,
-           seed.family,
-           seed.owningScope,
-           seed.components.size(),
-           seed.slots.size(),
-           seed.readyReleaseSccs.size(),
-           seed.demands.size(),
-           seed.kinds,
-           seed.maximumDistance});
+          {seed.id, seed.family, seed.owningScope, seed.components.size(),
+           seed.slots.size(), seed.readyReleaseSccs.size(), seed.demands.size(),
+           seed.kinds, seed.maximumDistance});
     }
   }
   if (program.getStorageProtocolGroupIndex()) {
@@ -2477,8 +2577,8 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
             kMaximumStorageProtocolGroupReportBehaviorSignatureEntries);
     report.storageProtocolGroupDetailsTruncated = reportPrefix.truncated;
     report.storageProtocolGroupDetails.reserve(reportPrefix.retainedGroups);
-    for (std::size_t groupIndex = 0;
-         groupIndex < reportPrefix.retainedGroups; ++groupIndex) {
+    for (std::size_t groupIndex = 0; groupIndex < reportPrefix.retainedGroups;
+         ++groupIndex) {
       const SyncCoverStorageProtocolGroup &group = groups[groupIndex];
       report.storageProtocolGroupDetails.push_back(
           {group.id, group.owningScope, group.behavior,
@@ -2570,8 +2670,8 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
     report.storageProtocolCutPlanTruncated = planStatistics.truncated;
     const std::vector<SyncCoverStorageProtocolCutPlan> &plans =
         program.getStorageProtocolCutPlanIndex()->getPlans();
-    const std::size_t retainedPlans = std::min(
-        plans.size(), kMaximumStorageProtocolCutPlanReportEntries);
+    const std::size_t retainedPlans =
+        std::min(plans.size(), kMaximumStorageProtocolCutPlanReportEntries);
     report.storageProtocolCutPlanDetailsTruncated =
         retainedPlans != plans.size();
     report.storageProtocolCutPlanDetails.reserve(retainedPlans);
@@ -2602,8 +2702,7 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
     report.storageProtocolFrontiers = frontierStatistics.frontiers;
     report.storageProtocolReadyFrontiers = frontierStatistics.readyFrontiers;
     report.storageProtocolReuseFrontiers = frontierStatistics.reuseFrontiers;
-    report.storageProtocolDirectFrontiers =
-        frontierStatistics.directFrontiers;
+    report.storageProtocolDirectFrontiers = frontierStatistics.directFrontiers;
     report.storageProtocolCompletionCutFactFrontiers =
         frontierStatistics.completionCutFactFrontiers;
     report.storageProtocolCertificateFrontiers =
@@ -2625,8 +2724,8 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
     report.storageProtocolFrontierTruncated = frontierStatistics.truncated;
     const std::vector<SyncCoverStorageProtocolFrontierPlan> &plans =
         program.getStorageProtocolFrontierIndex()->getPlans();
-    const std::size_t retainedPlans = std::min(
-        plans.size(), kMaximumStorageProtocolFrontierReportEntries);
+    const std::size_t retainedPlans =
+        std::min(plans.size(), kMaximumStorageProtocolFrontierReportEntries);
     report.storageProtocolFrontierDetailsTruncated =
         retainedPlans != plans.size();
     report.storageProtocolFrontierDetails.reserve(retainedPlans);
@@ -2717,8 +2816,7 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
     report.storageRectangles = cutStatistics.rectangles;
     report.storageCutIncidences = cutStatistics.incidences;
     report.storageCutGuardLiterals = cutStatistics.guardLiterals;
-    report.storageMaximumRectangleEdges =
-        cutStatistics.maximumRectangleEdges;
+    report.storageMaximumRectangleEdges = cutStatistics.maximumRectangleEdges;
     report.storageCutTruncated = cutStatistics.truncated;
   }
   if (program.getStorageRectangleIndex()) {
@@ -2778,8 +2876,14 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
   report.selectionBasisRows = problem.getDemands().size();
   report.basisReducedRows = report.uniqueDemandRows - report.selectionBasisRows;
   report.basisReductionTruncated = problem.wasBasisReductionTruncated();
+  std::size_t remainingDemandProvenanceIncidences =
+      kMaximumProvenanceReportIncidences;
   for (SyncCoverDemandId demandId : problem.getObligationDemands()) {
     const SyncCoverDemand &demand = program.getGraph().getDemands()[demandId];
+    const SyncCoverNode &sourceNode =
+        program.getGraph().getNodes()[demand.source];
+    const SyncCoverNode &targetNode =
+        program.getGraph().getNodes()[demand.target];
     if (demand.distance == 0) {
       ++report.zeroDistanceDemandRows;
     } else {
@@ -2787,8 +2891,7 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
       report.maximumRecurrenceDistance =
           std::max(report.maximumRecurrenceDistance, demand.distance);
     }
-    if (program.getGraph().getNodes()[demand.source].resource ==
-        program.getGraph().getNodes()[demand.target].resource) {
+    if (sourceNode.resource == targetNode.resource) {
       ++report.sameResourceDemandRows;
     } else {
       ++report.crossResourceDemandRows;
@@ -2811,6 +2914,44 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
         ++report.hardwareAccRarDemandRows;
         break;
       }
+    }
+    if (report.demandProvenanceDetails.size() <
+            kMaximumDemandProvenanceReportEntries &&
+        consumeReportIncidence(remainingDemandProvenanceIncidences)) {
+      CanonicalSyncDemandProvenanceReport detail;
+      detail.demand = demandId;
+      detail.source = demand.source;
+      detail.target = demand.target;
+      detail.sourcePhysicalOperation = sourceNode.physicalOperation;
+      detail.targetPhysicalOperation = targetNode.physicalOperation;
+      detail.sourceMacroPhase = sourceNode.macroPhase;
+      detail.targetMacroPhase = targetNode.macroPhase;
+      detail.sourceResource = sourceNode.resource;
+      detail.targetResource = targetNode.resource;
+      detail.scope = demand.scope;
+      detail.ownerRegion = demand.ownerRegion;
+      detail.distance = demand.distance;
+      detail.sourceGuard = demand.sourceGuard;
+      detail.targetGuard = demand.targetGuard;
+      detail.orderingRequirements = demand.orderingRequirements;
+      detail.originalDemandCount = demand.originalDemandCount;
+      for (SyncCoverDemandKind kind : demand.provenanceKinds) {
+        if (!consumeReportIncidence(remainingDemandProvenanceIncidences)) {
+          report.demandProvenanceDetailsTruncated = true;
+          break;
+        }
+        detail.provenanceKinds.push_back(kind);
+      }
+      for (SyncCoverStorageWitnessId witness : demand.storageWitnesses) {
+        if (!consumeReportIncidence(remainingDemandProvenanceIncidences)) {
+          report.demandProvenanceDetailsTruncated = true;
+          break;
+        }
+        detail.storageWitnesses.push_back(witness);
+      }
+      report.demandProvenanceDetails.push_back(std::move(detail));
+    } else {
+      report.demandProvenanceDetailsTruncated = true;
     }
     const bool provenanceCountOverflows =
         demand.originalDemandCount >

@@ -163,6 +163,10 @@
 // REPORT-DAG: "selection_basis_rows":
 // REPORT-DAG: "basis_reduced_rows":
 // REPORT-DAG: "basis_reduction_truncated":
+// REPORT-DAG: "demand_provenance_details":
+// REPORT-DAG: "source_physical_operation":
+// REPORT-DAG: "ordering_requirements":
+// REPORT-DAG: "demand_provenance_details_truncated": false
 // REPORT-DAG: "direct_pair_evaluations":
 // REPORT-DAG: "candidate_mechanisms_by_origin":
 // REPORT-DAG: "selected_mechanisms_by_origin":
@@ -237,6 +241,12 @@
 // CORE-REPORT-DAG: "maximum_singleton_candidate_coverage_rows":
 // CORE-REPORT-DAG: "total_singleton_candidate_coverage_rows":
 // CORE-REPORT-DAG: "grounded_coverage_rows":
+// CORE-REPORT-DAG: "grounded_coverage_demands":
+// CORE-REPORT-DAG: "grounded_coverage_demands_truncated": false
+// CORE-REPORT-DAG: "event_use_details":
+// CORE-REPORT-DAG: "action_details":
+// CORE-REPORT-DAG: "supply_details":
+// CORE-REPORT-DAG: "provenance_details_truncated": false
 // CORE-REPORT-DAG: "used_localized_pipe_all": false
 // CORE-REPORT-DAG: "verified": true
 // MECHANICAL-REPORT-DAG: "enabled_mechanism_family_mask": 0

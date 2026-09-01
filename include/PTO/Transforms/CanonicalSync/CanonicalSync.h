@@ -25,6 +25,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -124,6 +125,74 @@ struct CanonicalSyncPatternOptions {
   std::size_t maximumLoopBoundaryProtocolIncidences = 1U << 20;
 };
 
+/// Bounded, stable provenance for one canonical demand row. Node identifiers
+/// are accompanied by physical-operation and macro-phase identities so a
+/// report can be reconciled with the scheduled PTO program without retaining
+/// Operation pointers.
+struct CanonicalSyncDemandProvenanceReport {
+  SyncCoverDemandId demand = 0;
+  SyncCoverNodeId source = 0;
+  SyncCoverNodeId target = 0;
+  std::size_t sourcePhysicalOperation = 0;
+  std::size_t targetPhysicalOperation = 0;
+  int sourceMacroPhase = -1;
+  int targetMacroPhase = -1;
+  std::uint32_t sourceResource = 0;
+  std::uint32_t targetResource = 0;
+  SyncCoverScopeId scope = 0;
+  SyncCoverRegionId ownerRegion = 0;
+  unsigned distance = 0;
+  SyncCoverGuard sourceGuard;
+  SyncCoverGuard targetGuard;
+  std::vector<SyncCoverDemandKind> provenanceKinds;
+  SyncCoverOrderingRequirementMask orderingRequirements = 0;
+  std::vector<SyncCoverStorageWitnessId> storageWitnesses;
+  std::size_t originalDemandCount = 0;
+};
+
+/// Concrete insertion provenance for one selected mechanism action.
+struct CanonicalSyncActionProvenanceReport {
+  std::size_t action = 0;
+  CanonicalSyncActionKind kind = CanonicalSyncActionKind::EventSet;
+  std::uint32_t resource = 0;
+  SyncCoverAnchor anchor;
+  std::optional<std::size_t> eventUse;
+  std::size_t eventLane = 0;
+  std::vector<std::uint32_t> drainedResources;
+  CanonicalSyncBarrierKind barrierKind = CanonicalSyncBarrierKind::Targeted;
+  CanonicalSyncActionGuardKind guard = CanonicalSyncActionGuardKind::None;
+  std::optional<SyncCoverScopeId> guardScope;
+  CanonicalSyncEventLaneKind eventLaneKind = CanonicalSyncEventLaneKind::Static;
+  std::optional<SyncCoverScopeId> eventLaneScope;
+};
+
+struct CanonicalSyncEventUseProvenanceReport {
+  std::size_t eventUse = 0;
+  CanonicalSyncEventDomainId domain = 0;
+  std::size_t width = 0;
+  std::optional<SyncCoverScopeId> recurrenceScope;
+  std::optional<SyncCoverScopeId> lifetimeScope;
+};
+
+/// Certificate provenance for one completion supply. Allowed demand rows are
+/// bounded independently from the descriptor owned by the immutable problem.
+struct CanonicalSyncSupplyProvenanceReport {
+  std::size_t supply = 0;
+  SyncCoverEdge edge;
+  std::optional<std::size_t> eventUse;
+  std::optional<std::size_t> barrierAction;
+  std::optional<std::size_t> produceAction;
+  std::optional<std::size_t> consumeAction;
+  CanonicalSyncSupplyProof proof = CanonicalSyncSupplyProof::DirectAction;
+  CanonicalSyncSupplyExport completionExport =
+      CanonicalSyncSupplyExport::LocalTarget;
+  SyncCoverSupplyApplicability applicability =
+      SyncCoverSupplyApplicability::AllDemands;
+  std::optional<SyncCoverDemandId> attestedDemand;
+  std::vector<SyncCoverDemandId> allowedDemands;
+  bool allowedDemandsTruncated = false;
+};
+
 struct CanonicalSyncSelectedMechanismReport {
   CanonicalSyncMechanismId mechanism = 0;
   CanonicalSyncMechanismKind kind = CanonicalSyncMechanismKind::Event;
@@ -137,6 +206,12 @@ struct CanonicalSyncSelectedMechanismReport {
   std::size_t targetedBarriers = 0;
   std::size_t pipeAllBarriers = 0;
   unsigned maximumRecurrenceDistance = 0;
+  std::vector<SyncCoverDemandId> groundedCoverageDemands;
+  bool groundedCoverageDemandsTruncated = false;
+  std::vector<CanonicalSyncEventUseProvenanceReport> eventUseDetails;
+  std::vector<CanonicalSyncActionProvenanceReport> actionDetails;
+  std::vector<CanonicalSyncSupplyProvenanceReport> supplyDetails;
+  bool provenanceDetailsTruncated = false;
 };
 
 struct CanonicalSyncStorageLifecycleComponentReport {
@@ -558,6 +633,8 @@ struct CanonicalSyncComparisonReport {
   std::size_t warDemandRows = 0;
   std::size_t wawDemandRows = 0;
   std::size_t hardwareAccRarDemandRows = 0;
+  std::vector<CanonicalSyncDemandProvenanceReport> demandProvenanceDetails;
+  bool demandProvenanceDetailsTruncated = false;
   unsigned maximumRecurrenceDistance = 0;
   std::size_t directMechanisms = 0;
   std::size_t singletonCandidatesCoveringMultipleRows = 0;

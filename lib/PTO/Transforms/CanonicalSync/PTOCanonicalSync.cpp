@@ -394,6 +394,182 @@ llvm::json::Array jsonGuard(const pto::SyncCoverGuard &guard) {
   return result;
 }
 
+StringRef demandKindName(pto::SyncCoverDemandKind kind) {
+  switch (kind) {
+  case pto::SyncCoverDemandKind::SSA:
+    return "ssa";
+  case pto::SyncCoverDemandKind::MemoryRAW:
+    return "memory-raw";
+  case pto::SyncCoverDemandKind::MemoryWAR:
+    return "memory-war";
+  case pto::SyncCoverDemandKind::MemoryWAW:
+    return "memory-waw";
+  case pto::SyncCoverDemandKind::HardwareAccRAR:
+    return "hardware-acc-rar";
+  }
+  return "unknown";
+}
+
+llvm::json::Array
+jsonDemandKinds(ArrayRef<pto::SyncCoverDemandKind> provenanceKinds) {
+  llvm::json::Array result;
+  for (pto::SyncCoverDemandKind kind : provenanceKinds) {
+    result.push_back(demandKindName(kind));
+  }
+  return result;
+}
+
+llvm::json::Array jsonDemandIds(ArrayRef<pto::SyncCoverDemandId> demands) {
+  llvm::json::Array result;
+  for (pto::SyncCoverDemandId demand : demands) {
+    result.push_back(jsonInteger(demand));
+  }
+  return result;
+}
+
+llvm::json::Array
+jsonStorageWitnessIds(ArrayRef<pto::SyncCoverStorageWitnessId> witnesses) {
+  llvm::json::Array result;
+  for (pto::SyncCoverStorageWitnessId witness : witnesses) {
+    result.push_back(jsonInteger(witness));
+  }
+  return result;
+}
+
+llvm::json::Array jsonResources(ArrayRef<std::uint32_t> resources) {
+  llvm::json::Array result;
+  for (std::uint32_t resource : resources) {
+    result.push_back(jsonInteger(resource));
+  }
+  return result;
+}
+
+llvm::json::Object jsonAnchor(const pto::SyncCoverAnchor &anchor) {
+  return llvm::json::Object{
+      {"kind", jsonInteger(static_cast<std::uint8_t>(anchor.kind))},
+      {"node", jsonInteger(anchor.node)},
+      {"scope", jsonInteger(anchor.scope)},
+      {"position", jsonInteger(anchor.position)}};
+}
+
+llvm::json::Array jsonDemandProvenance(
+    ArrayRef<pto::CanonicalSyncDemandProvenanceReport> demands) {
+  llvm::json::Array result;
+  for (const pto::CanonicalSyncDemandProvenanceReport &demand : demands) {
+    result.push_back(llvm::json::Object{
+        {"demand", jsonInteger(demand.demand)},
+        {"source", jsonInteger(demand.source)},
+        {"target", jsonInteger(demand.target)},
+        {"source_physical_operation",
+         jsonInteger(demand.sourcePhysicalOperation)},
+        {"target_physical_operation",
+         jsonInteger(demand.targetPhysicalOperation)},
+        {"source_macro_phase", demand.sourceMacroPhase},
+        {"target_macro_phase", demand.targetMacroPhase},
+        {"source_resource", jsonInteger(demand.sourceResource)},
+        {"target_resource", jsonInteger(demand.targetResource)},
+        {"scope", jsonInteger(demand.scope)},
+        {"owner_region", jsonInteger(demand.ownerRegion)},
+        {"distance", jsonInteger(demand.distance)},
+        {"source_guard", jsonGuard(demand.sourceGuard)},
+        {"target_guard", jsonGuard(demand.targetGuard)},
+        {"provenance_kinds", jsonDemandKinds(demand.provenanceKinds)},
+        {"ordering_requirements", jsonInteger(demand.orderingRequirements)},
+        {"storage_witnesses", jsonStorageWitnessIds(demand.storageWitnesses)},
+        {"original_demand_count", jsonInteger(demand.originalDemandCount)}});
+  }
+  return result;
+}
+
+llvm::json::Array jsonEventUseProvenance(
+    ArrayRef<pto::CanonicalSyncEventUseProvenanceReport> eventUses) {
+  llvm::json::Array result;
+  for (const pto::CanonicalSyncEventUseProvenanceReport &eventUse : eventUses) {
+    llvm::json::Object item{{"event_use", jsonInteger(eventUse.eventUse)},
+                            {"domain", jsonInteger(eventUse.domain)},
+                            {"width", jsonInteger(eventUse.width)}};
+    if (eventUse.recurrenceScope) {
+      item["recurrence_scope"] = jsonInteger(*eventUse.recurrenceScope);
+    }
+    if (eventUse.lifetimeScope) {
+      item["lifetime_scope"] = jsonInteger(*eventUse.lifetimeScope);
+    }
+    result.push_back(std::move(item));
+  }
+  return result;
+}
+
+llvm::json::Array jsonActionProvenance(
+    ArrayRef<pto::CanonicalSyncActionProvenanceReport> actions) {
+  llvm::json::Array result;
+  for (const pto::CanonicalSyncActionProvenanceReport &action : actions) {
+    llvm::json::Object item{
+        {"action", jsonInteger(action.action)},
+        {"kind", jsonInteger(static_cast<std::uint8_t>(action.kind))},
+        {"resource", jsonInteger(action.resource)},
+        {"anchor", jsonAnchor(action.anchor)},
+        {"event_lane", jsonInteger(action.eventLane)},
+        {"drained_resources", jsonResources(action.drainedResources)},
+        {"barrier_kind",
+         jsonInteger(static_cast<std::uint8_t>(action.barrierKind))},
+        {"guard", jsonInteger(static_cast<std::uint8_t>(action.guard))},
+        {"event_lane_kind",
+         jsonInteger(static_cast<std::uint8_t>(action.eventLaneKind))}};
+    if (action.eventUse) {
+      item["event_use"] = jsonInteger(*action.eventUse);
+    }
+    if (action.guardScope) {
+      item["guard_scope"] = jsonInteger(*action.guardScope);
+    }
+    if (action.eventLaneScope) {
+      item["event_lane_scope"] = jsonInteger(*action.eventLaneScope);
+    }
+    result.push_back(std::move(item));
+  }
+  return result;
+}
+
+llvm::json::Array jsonSupplyProvenance(
+    ArrayRef<pto::CanonicalSyncSupplyProvenanceReport> supplies) {
+  llvm::json::Array result;
+  for (const pto::CanonicalSyncSupplyProvenanceReport &supply : supplies) {
+    llvm::json::Object item{
+        {"supply", jsonInteger(supply.supply)},
+        {"source", jsonInteger(supply.edge.source)},
+        {"target", jsonInteger(supply.edge.target)},
+        {"scope", jsonInteger(supply.edge.scope)},
+        {"distance", jsonInteger(supply.edge.distance)},
+        {"source_guard", jsonGuard(supply.edge.sourceGuard)},
+        {"target_guard", jsonGuard(supply.edge.targetGuard)},
+        {"supplied_requirements",
+         jsonInteger(supply.edge.suppliedRequirements)},
+        {"proof", jsonInteger(static_cast<std::uint8_t>(supply.proof))},
+        {"completion_export",
+         jsonInteger(static_cast<std::uint8_t>(supply.completionExport))},
+        {"applicability",
+         jsonInteger(static_cast<std::uint8_t>(supply.applicability))},
+        {"allowed_demands", jsonDemandIds(supply.allowedDemands)},
+        {"allowed_demands_truncated", supply.allowedDemandsTruncated}};
+    if (supply.eventUse) {
+      item["event_use"] = jsonInteger(*supply.eventUse);
+    }
+    if (supply.barrierAction) {
+      item["barrier_action"] = jsonInteger(*supply.barrierAction);
+    }
+    if (supply.produceAction) {
+      item["produce_action"] = jsonInteger(*supply.produceAction);
+    }
+    if (supply.consumeAction) {
+      item["consume_action"] = jsonInteger(*supply.consumeAction);
+    }
+    if (supply.attestedDemand) {
+      item["attested_demand"] = jsonInteger(*supply.attestedDemand);
+    }
+    result.push_back(std::move(item));
+  }
+  return result;
+}
+
 llvm::json::Array jsonStorageLifecycleComponents(
     ArrayRef<pto::CanonicalSyncStorageLifecycleComponentReport> components) {
   llvm::json::Array result;
@@ -417,8 +593,7 @@ llvm::json::Array jsonStorageLifecycleComponents(
 }
 
 llvm::json::Array jsonStorageLifecycleTransitions(
-    ArrayRef<pto::CanonicalSyncStorageLifecycleTransitionReport>
-        transitions) {
+    ArrayRef<pto::CanonicalSyncStorageLifecycleTransitionReport> transitions) {
   llvm::json::Array result;
   for (const pto::CanonicalSyncStorageLifecycleTransitionReport &transition :
        transitions) {
@@ -721,8 +896,17 @@ llvm::json::Array jsonSelectedMechanisms(
         {"origins", jsonMechanismOrigins(mechanism.originMask)},
         {"supplies", jsonInteger(mechanism.supplies)},
         {"grounded_coverage_rows", jsonInteger(mechanism.groundedCoverageRows)},
+        {"grounded_coverage_demands",
+         jsonDemandIds(mechanism.groundedCoverageDemands)},
+        {"grounded_coverage_demands_truncated",
+         mechanism.groundedCoverageDemandsTruncated},
         {"event_uses", jsonInteger(mechanism.eventUses)},
+        {"event_use_details",
+         jsonEventUseProvenance(mechanism.eventUseDetails)},
         {"actions", jsonInteger(mechanism.actions)},
+        {"action_details", jsonActionProvenance(mechanism.actionDetails)},
+        {"supply_details", jsonSupplyProvenance(mechanism.supplyDetails)},
+        {"provenance_details_truncated", mechanism.provenanceDetailsTruncated},
         {"event_sets", jsonInteger(mechanism.eventSets)},
         {"event_waits", jsonInteger(mechanism.eventWaits)},
         {"targeted_barriers", jsonInteger(mechanism.targetedBarriers)},
@@ -1275,6 +1459,10 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
       {"waw_demand_keys", jsonInteger(report.wawDemandRows)},
       {"hardware_acc_rar_demand_keys",
        jsonInteger(report.hardwareAccRarDemandRows)},
+      {"demand_provenance_details",
+       jsonDemandProvenance(report.demandProvenanceDetails)},
+      {"demand_provenance_details_truncated",
+       report.demandProvenanceDetailsTruncated},
       {"maximum_recurrence_distance",
        jsonInteger(report.maximumRecurrenceDistance)},
       {"direct_mechanisms", jsonInteger(report.directMechanisms)},

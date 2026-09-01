@@ -5338,12 +5338,14 @@ bool testGuardedOwnershipVerificationWorkIsBounded() {
       canonicalSyncMechanismOriginBit(
           CanonicalSyncMechanismOrigin::BasicOwnershipStableL1Protocol);
   const bool mixedRetainsOwnershipBeforeCutTruncation =
-      mixed && mixed.problem && mixed.problem->wasPatternGenerationTruncated() &&
+      mixed && mixed.problem &&
+      mixed.problem->wasPatternGenerationTruncated() &&
       mixed.problem->getMechanisms().size() ==
           precise.problem->getMechanisms().size() &&
-      llvm::any_of(mixed.problem->getMechanisms(), [&](const auto &candidate) {
-        return (candidate.originMask & ownershipOrigin) != 0;
-      }) &&
+      llvm::any_of(mixed.problem->getMechanisms(),
+                   [&](const auto &candidate) {
+                     return (candidate.originMask & ownershipOrigin) != 0;
+                   }) &&
       llvm::none_of(mixed.problem->getMechanisms(), [&](const auto &candidate) {
         return (candidate.originMask & storageCutOrigin) != 0;
       });
@@ -6371,10 +6373,10 @@ bool testGuardedEndpointUsesSourceLocalCompletionEvent() {
       buildCanonicalSyncPreciseProblem(*program, explicitDefaultOptions);
   if (!check(hasTargetLocalOrigin,
              "classify guarded completeness as a target-local fence") ||
-      !check(explicitDefault && explicitDefault.problem &&
-                 precise.problem->hasSameCandidatePrefix(
-                     *explicitDefault.problem),
-             "make the default catalog identical to its explicit mask")) {
+      !check(
+          explicitDefault && explicitDefault.problem &&
+              precise.problem->hasSameCandidatePrefix(*explicitDefault.problem),
+          "make the default catalog identical to its explicit mask")) {
     return false;
   }
 
@@ -6665,6 +6667,44 @@ bool testMinimalDirectCatalogIsCompleteAndNeverFallsBack() {
                  mechanicalSelection.mechanisms.size(),
              "remove a redundant direct cut through grounded rectangle "
              "coverage")) {
+    return false;
+  }
+
+  CanonicalSyncComparisonReport directReport;
+  CanonicalSyncBuildOptions reportOptions = options;
+  reportOptions.reportCallback =
+      [&](const CanonicalSyncComparisonReport &report) {
+        directReport = report;
+        return success();
+      };
+  if (!check(succeeded(runCanonicalSync(chain, reportOptions)),
+             "materialize the reported strict-direct cover") ||
+      !check(!directReport.demandProvenanceDetailsTruncated &&
+                 directReport.demandProvenanceDetails.size() ==
+                     directReport.uniqueDemandRows &&
+                 llvm::all_of(
+                     directReport.demandProvenanceDetails,
+                     [](const CanonicalSyncDemandProvenanceReport &detail) {
+                       return !detail.provenanceKinds.empty() &&
+                              detail.originalDemandCount != 0;
+                     }),
+             "report every direct demand with physical hazard provenance") ||
+      !check(directReport.strategies.size() == 1 &&
+                 llvm::any_of(
+                     directReport.strategies.front().selectedMechanisms,
+                     [](const CanonicalSyncSelectedMechanismReport &detail) {
+                       return detail.groundedCoverageRows > 1 &&
+                              !detail.groundedCoverageDemandsTruncated &&
+                              detail.groundedCoverageDemands.size() ==
+                                  detail.groundedCoverageRows &&
+                              !detail.provenanceDetailsTruncated &&
+                              detail.eventUseDetails.size() ==
+                                  detail.eventUses &&
+                              detail.actionDetails.size() == detail.actions &&
+                              detail.supplyDetails.size() == detail.supplies;
+                     }),
+             "report a multi-row direct cut with its exact grounded rows, "
+             "actions, event uses, and supplies")) {
     return false;
   }
 

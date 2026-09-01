@@ -1041,3 +1041,15 @@ reconstructed physical actions, event channels and lanes, tail fences,
 whole-plan coverage rows, lifecycle-automaton status, deep verifier count,
 checked-arithmetic failure, localized `PIPE_ALL` use, and a deterministic
 signature over the selected immutable recipes and allocation.
+
+Demand and selected-cut provenance is explicit and bounded. Each reported
+canonical demand names its graph endpoints, physical operation identities,
+macro phases, resources, structural owner, guards, recurrence distance,
+ordering requirement mask, hazard kinds, storage witnesses, and merged raw-row
+count. Each selected mechanism names the exact grounded demand rows and its
+event-use, action-anchor, and completion-supply records, including proof kind,
+attested/allowed demands, and recurrence export. Per-report detail and
+incidence limits set explicit truncation flags; reporting never constructs a
+dense mechanism-by-demand matrix. These records make it possible to compare a
+direct physical cut with every additional demand it covers without consulting
+the selector's internal state.
