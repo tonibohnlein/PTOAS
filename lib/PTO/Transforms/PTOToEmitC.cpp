@@ -199,6 +199,8 @@ static constexpr llvm::StringLiteral kPipePeerDirMaskAttrName =
     "__pto.peer_dir_mask";
 static constexpr llvm::StringLiteral kEmitCScalarOutTypeAttrName =
     "__pto.emitc_scalar_out_type";
+static constexpr llvm::StringLiteral kFrozenFenceVectorExecutionAttrName =
+    "__pto.fence_vector_execution";
 static constexpr llvm::StringLiteral kLastUseAttrName = "pto.last_use";
 static constexpr llvm::StringLiteral kLastUseMarkerPrefix = "PTOAS__LAST_USE__";
 
@@ -5474,13 +5476,14 @@ struct PTOFenceToEmitC : public OpConversionPattern<FenceOp> {
       return rewriter.notifyMatchFailure(op, "unsupported fence scope");
     }
 
-    const std::optional<bool> vectorExecution =
-        resolvePTOExecutionVector(op);
+    auto vectorExecution = op->template getAttrOfType<BoolAttr>(
+        kFrozenFenceVectorExecutionAttrName);
     if (!vectorExecution) {
       return rewriter.notifyMatchFailure(
-          op, "fence has no physical execution context");
+          op, "fence physical execution context was not frozen before "
+              "section lowering");
     }
-    if (*vectorExecution) {
+    if (vectorExecution.getValue()) {
       emitPipeBarrier(rewriter, op.getLoc(), "PIPE_ALL");
     } else {
       emitConservativeGmFencePipeDrains(rewriter, op.getLoc());
@@ -13761,6 +13764,26 @@ struct EmitPTOManualPass
     if (failed(pto::validateStructProvenance(mop)))
       return signalPassFailure();
     pto::annotatePTOEntryFunctions(mop);
+
+    // Freeze the physical execution context while pto.section.* still
+    // encloses each fence. Dialect conversion may inline a section before it
+    // rewrites the nested fence, at which point the enclosing function kind is
+    // no longer a valid substitute for the section override.
+    WalkResult fenceContextResult =
+        mop.walk([&](pto::FenceBarrierAllOp fence) -> WalkResult {
+          const std::optional<bool> vectorExecution =
+              resolvePTOExecutionVector(fence);
+          if (!vectorExecution) {
+            fence.emitOpError("has no physical execution context");
+            return WalkResult::interrupt();
+          }
+          fence->setAttr(kFrozenFenceVectorExecutionAttrName,
+                         BoolAttr::get(ctx, *vectorExecution));
+          return WalkResult::advance();
+        });
+    if (fenceContextResult.wasInterrupted()) {
+      return signalPassFailure();
+    }
 
     // A3 requires explicit FFTS base setup for inter-core sync ops.
     if (targetArch == PTOArch::A3) {
