@@ -143,6 +143,9 @@ void emitTailBarriers(func::FuncOp clone, const CanonicalSyncProgram &program) {
       break;
     }
   }
+  if (tail == kInvalidCanonicalSyncId) {
+    return;
+  }
   OpBuilder builder(clone.getContext());
   clone.walk([&](func::ReturnOp operation) {
     builder.setInsertionPoint(operation);

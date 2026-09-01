@@ -10,6 +10,7 @@
 
 #include "CanonicalSyncInternal.h"
 
+#include "PTO/IR/PTOTypeUtils.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -141,6 +142,25 @@ buildFixedFenceMechanism(const CanonicalFenceEffect &effect) {
   mechanism.actionRegion = effect.region;
   mechanism.guard = effect.guard;
   return mechanism;
+}
+
+FailureOr<CanonicalMechanism>
+buildTailMechanism(const CanonicalSyncProgram &program) {
+  const std::optional<bool> vectorExecution =
+      resolvePTOExecutionVector(program.getFunction());
+  if (!vectorExecution) {
+    program.getFunction().emitError(
+        "canonical sync cannot resolve the physical core for the "
+        "PIPE_ALL epilogue");
+    return failure();
+  }
+  CanonicalMechanism tail;
+  tail.kind = CanonicalMechanismKind::TailBarrier;
+  tail.source = {*vectorExecution ? CanonicalCore::AIV : CanonicalCore::AIC,
+                 PIPE::PIPE_ALL};
+  tail.target = tail.source;
+  tail.actionRegion = 0;
+  return tail;
 }
 
 bool fenceCoversScope(FenceBarrierAllOp fence, FenceScope required) {
@@ -325,11 +345,17 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
                      const CanonicalSyncTarget &target,
                      const CanonicalDemand &demand) {
   if (demand.kind == CanonicalDemandKind::ExitCompletion) {
-    CanonicalMechanism tail;
-    tail.kind = CanonicalMechanismKind::TailBarrier;
-    tail.source = {CanonicalCore::AIV, PIPE::PIPE_ALL};
-    tail.target = tail.source;
-    tail.actionRegion = 0;
+    FailureOr<CanonicalMechanism> tail = buildTailMechanism(program);
+    if (failed(tail)) {
+      return failure();
+    }
+    const CanonicalPhase &source = program.getPhase(demand.source);
+    if (tail->source.core != source.resource.core) {
+      source.operation->emitError(
+          "canonical sync cannot use a function-core PIPE_ALL epilogue to "
+          "complete an opposite-core section phase");
+      return failure();
+    }
     return tail;
   }
   const CanonicalPhase &sourcePhase = program.getPhase(demand.source);
@@ -480,12 +506,13 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
     program.setDirectMechanism(demand.id, id);
   }
   if (program.getDemands().empty()) {
-    CanonicalMechanism tail;
-    tail.kind = CanonicalMechanismKind::TailBarrier;
-    tail.source = {CanonicalCore::AIV, PIPE::PIPE_ALL};
-    tail.target = tail.source;
-    tail.actionRegion = 0;
-    program.appendMechanism(std::move(tail));
+    if (resolvePTOExecutionVector(program.getFunction())) {
+      FailureOr<CanonicalMechanism> tail = buildTailMechanism(program);
+      if (failed(tail)) {
+        return failure();
+      }
+      program.appendMechanism(std::move(*tail));
+    }
   }
   program.mechanismCatalogComplete = true;
   return success();

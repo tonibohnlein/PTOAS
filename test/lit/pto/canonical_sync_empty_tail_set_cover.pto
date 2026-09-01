@@ -13,16 +13,52 @@
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
 // RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --emit-pto-ir %s -o - \
+// RUN:   | FileCheck %s --check-prefix=IR
 
 module {
-  func.func @empty_tail_baseline() {
+  func.func private @empty_helper() {
+    return
+  }
+  func.func @empty_tail_baseline()
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    return
+  }
+  func.func @empty_cube_tail_baseline()
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
     return
   }
 }
 
+// CHECK-LABEL: CANONICAL-SYNC function=empty_helper
+// CHECK: MECHANISMS 0
+// CHECK: PLAN selected=[] events=[]
+// CHECK: VERIFY ok
 // CHECK-LABEL: CANONICAL-SYNC function=empty_tail_baseline
 // CHECK: MECHANISMS 1
 // CHECK: m0 kind=tail
+// CHECK-SAME: resource=AIV:PIPE_ALL->AIV:PIPE_ALL
+// CHECK-SAME: origins=[]
+// CHECK: SET-COVER optimization=singleton baseline=[m0] universe=[] candidates=0
+// CHECK: OPTIMIZATION enabled=yes mode=singleton-greedy greedy=[]
+// CHECK-SAME: proposed=[m0] reverse-deleted=[] weight=0 coverage-verified=yes
+// CHECK: PLAN selected=[m0] events=[]
+// CHECK: VERIFY ok
+
+// IR-LABEL: func.func private @empty_helper()
+// IR-NEXT:    return
+// IR-NEXT:  }
+// IR-LABEL: func.func @empty_tail_baseline()
+// IR:         pto.barrier <PIPE_ALL>
+// IR:         return
+// IR-LABEL: func.func @empty_cube_tail_baseline()
+// IR:         pto.barrier <PIPE_ALL>
+// IR:         return
+// CHECK-LABEL: CANONICAL-SYNC function=empty_cube_tail_baseline
+// CHECK: MECHANISMS 1
+// CHECK: m0 kind=tail
+// CHECK-SAME: resource=AIC:PIPE_ALL->AIC:PIPE_ALL
 // CHECK-SAME: origins=[]
 // CHECK: SET-COVER optimization=singleton baseline=[m0] universe=[] candidates=0
 // CHECK: OPTIMIZATION enabled=yes mode=singleton-greedy greedy=[]

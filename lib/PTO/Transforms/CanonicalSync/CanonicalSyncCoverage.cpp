@@ -530,14 +530,6 @@ summarizeRegion(const CanonicalSyncProgram &program, CanonicalRegionId region,
   return result;
 }
 
-bool containsKind(const CanonicalSyncProgram &program,
-                  ArrayRef<CanonicalMechanismId> selected,
-                  CanonicalMechanismKind kind) {
-  return llvm::any_of(selected, [&](CanonicalMechanismId id) {
-    return program.getMechanism(id).kind == kind;
-  });
-}
-
 bool executionLoopsImpliedByPhase(ArrayRef<CanonicalRegionId> executionLoops,
                                   const CanonicalPhase &phase) {
   return llvm::all_of(executionLoops, [&](CanonicalRegionId loop) {
@@ -597,7 +589,13 @@ bool demandCovered(const CanonicalSyncProgram &program,
                    ArrayRef<CanonicalMechanismId> selected,
                    ArrayRef<CompletionFact> facts) {
   if (demand.kind == CanonicalDemandKind::ExitCompletion) {
-    return containsKind(program, selected, CanonicalMechanismKind::TailBarrier);
+    const CanonicalCore sourceCore =
+        program.getPhase(demand.source).resource.core;
+    return llvm::any_of(selected, [&](CanonicalMechanismId id) {
+      const CanonicalMechanism &mechanism = program.getMechanism(id);
+      return mechanism.kind == CanonicalMechanismKind::TailBarrier &&
+             mechanism.source.core == sourceCore;
+    });
   }
   if (demand.requirement == CanonicalRequirement::Visibility) {
     const CanonicalMechanismId direct =

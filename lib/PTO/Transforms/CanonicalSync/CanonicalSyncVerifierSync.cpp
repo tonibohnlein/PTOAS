@@ -10,6 +10,7 @@
 
 #include "CanonicalSyncVerifier.h"
 
+#include "PTO/IR/PTOTypeUtils.h"
 #include "llvm/ADT/STLExtras.h"
 
 using namespace mlir;
@@ -178,7 +179,19 @@ LogicalResult applyBarrier(const VerifierProgram &program,
                            BarrierOp operation, VerifierState &state) {
   const PIPE pipe = operation.getPipe().getPipe();
   if (pipe == PIPE::PIPE_ALL) {
+    const std::optional<bool> vectorExecution =
+        resolvePTOExecutionVector(operation);
+    if (!vectorExecution) {
+      return operation.emitError(
+          "canonical sync verifier cannot resolve the execution core for "
+          "PIPE_ALL");
+    }
+    const CanonicalCore core =
+        *vectorExecution ? CanonicalCore::AIV : CanonicalCore::AIC;
     for (VerifierResourceState &resource : state.resources) {
+      if (resource.resource.core != core) {
+        continue;
+      }
       completeResource(resource, state);
       for (const VerifierEffect &effect : resource.pending) {
         addKey(state.globalKnown, effect.key);
