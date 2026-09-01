@@ -144,10 +144,15 @@ static bool hasKnownNoOrdinaryMemoryAccess(Operation *op) {
   return isa<MemBarOp, SprclrOp, GetCtrlOp, SetCtrlOp>(op);
 }
 
-/// Logical local-buffer declarations participate in alias and memory-planning
-/// analyses, but do not execute on a device pipe and do not access tile data.
+/// Logical local-buffer declarations and descriptor updates participate in IR
+/// dataflow, but do not issue asynchronous work on a device pipe and do not
+/// access tile payload data. Frontend pipe initialization similarly describes
+/// the communication channel; the later push/pop operations perform the
+/// physical transfers.
 static bool isKnownAdministrativeOperation(Operation *op) {
-  return isa<AllocTileOp, AllocMultiTileOp>(op);
+  return isa<AllocTileOp, AllocMultiTileOp, SetValidShapeOp, GetValidShapeOp,
+             AicInitializePipeOp, AivInitializePipeOp, InitializeL2LPipeOp,
+             InitializeL2G2LPipeOp>(op);
 }
 
 static void collectMemoryAccesses(Operation *op,
