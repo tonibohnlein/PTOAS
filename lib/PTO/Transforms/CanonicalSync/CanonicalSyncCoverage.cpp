@@ -390,7 +390,8 @@ evaluateFlattenedFacts(const CanonicalSyncProgram &program,
       const CanonicalMechanism &mechanism = program.getMechanism(id);
       if (mechanism.kind == CanonicalMechanismKind::Event ||
           mechanism.kind == CanonicalMechanismKind::CrossCoreEvent ||
-          mechanism.kind == CanonicalMechanismKind::RecurringEvent) {
+          (mechanism.kind == CanonicalMechanismKind::RecurringEvent &&
+           !mechanism.boundaryRecurring)) {
         changed |= applyEvent(program, mechanism, facts,
                               mechanismExecutionLoops(program, mechanism));
       } else if (mechanism.kind == CanonicalMechanismKind::FixedFence) {
@@ -509,7 +510,8 @@ summarizeRegion(const CanonicalSyncProgram &program, CanonicalRegionId region,
                              mechanismExecutionLoops(program, mechanism));
     } else if (mechanism.kind == CanonicalMechanismKind::Event ||
                mechanism.kind == CanonicalMechanismKind::CrossCoreEvent ||
-               mechanism.kind == CanonicalMechanismKind::RecurringEvent) {
+               (mechanism.kind == CanonicalMechanismKind::RecurringEvent &&
+                !mechanism.boundaryRecurring)) {
       CanonicalBoundaryTransfer transfer;
       transfer.source = mechanism.source;
       transfer.target = mechanism.target;
@@ -557,6 +559,44 @@ bool recurrenceCoveredByCompletionCut(const CanonicalSyncProgram &program,
     const CanonicalMechanism &mechanism = program.getMechanism(id);
     const SmallVector<CanonicalRegionId, 2> loops =
         mechanismExecutionLoops(program, mechanism);
+    const bool recurringEvent =
+        mechanism.kind == CanonicalMechanismKind::RecurringEvent &&
+        !mechanism.boundaryRecurring &&
+        mechanism.recurrenceLoop == carrying->loop &&
+        mechanism.source == source.resource &&
+        mechanism.target == target.resource;
+    if (recurringEvent) {
+      // The set in iteration i+1 is ordered after every earlier command on
+      // its source pipeline, including commands following the set cut in
+      // iteration i.  Its wait therefore imports the complete preceding
+      // iteration prefix into the target pipeline.  Alternatively, a source
+      // captured by the channel in its own iteration remains complete on the
+      // FIFO-ordered target pipeline for a later target iteration.  These are
+      // the target-side and source-side loop-wrap transfers respectively.
+      const bool sameIterationImport =
+          phaseMayPrecedePoint(source, mechanism.sourcePoint) &&
+          guardImplies(demand.sourceGuard, mechanism.guard);
+      const bool nextIterationImport =
+          guardImplies(demand.targetGuard, mechanism.guard) &&
+          pointMustPrecedePhase(mechanism.targetPoint, target);
+      return executionLoopsImpliedByPhase(loops, source) &&
+             executionLoopsImpliedByPhase(loops, target) &&
+             (sameIterationImport || nextIterationImport);
+    }
+    const bool recurringRelease =
+        mechanism.kind == CanonicalMechanismKind::RecurringEvent &&
+        !mechanism.boundaryRecurring &&
+        mechanism.recurrenceLoop == carrying->loop &&
+        mechanism.target == source.resource &&
+        mechanism.source == target.resource;
+    if (recurringRelease) {
+      // Release ownership is consumed at the loop header and replenished at
+      // the latch, outside any branch-local ready cut.  It therefore orders
+      // every source-pipeline prefix against the next iteration's target
+      // pipeline, including transitions between opposite choice arms.
+      return executionLoopsImpliedByPhase(loops, source) &&
+             executionLoopsImpliedByPhase(loops, target);
+    }
     const bool pipeBarrier =
         mechanism.kind == CanonicalMechanismKind::PipeBarrier &&
         mechanism.source == source.resource &&
@@ -591,7 +631,8 @@ bool recurrenceCoveredByCompletionCut(const CanonicalSyncProgram &program,
 bool demandCovered(const CanonicalSyncProgram &program,
                    const CanonicalDemand &demand,
                    ArrayRef<CanonicalMechanismId> selected,
-                   ArrayRef<CompletionFact> facts) {
+                   ArrayRef<CompletionFact> facts,
+                   const CanonicalSyncTarget &targetModel) {
   if (demand.kind == CanonicalDemandKind::ExitCompletion) {
     const CanonicalMechanismId direct =
         program.getDirectMechanisms()[demand.id];
@@ -611,14 +652,13 @@ bool demandCovered(const CanonicalSyncProgram &program,
   }
   const CanonicalPhase &source = program.getPhase(demand.source);
   const CanonicalPhase &target = program.getPhase(demand.target);
-  if (source.resource == target.resource) {
-    FailureOr<CanonicalSyncTarget> model =
-        CanonicalSyncTarget::resolve(program.getFunction());
-    const bool intrinsicCompletion =
-        succeeded(model) && model->hasIntrinsicCompletion(source.resource);
-    if (intrinsicCompletion) {
-      return true;
-    }
+  const bool intrinsicCompletion =
+      (source.resource.core == target.resource.core &&
+       getVPTOSchedulingSemantics(source.operation).completionIsSynchronous) ||
+      (source.resource == target.resource &&
+       targetModel.hasIntrinsicCompletion(source.resource));
+  if (intrinsicCompletion) {
+    return true;
   }
   if (recurrenceCoveredByCompletionCut(program, demand, selected)) {
     return true;
@@ -650,8 +690,13 @@ coveredDemands(const CanonicalSyncProgram &program,
                ArrayRef<CanonicalMechanismId> selected,
                ArrayRef<CompletionFact> facts) {
   SmallVector<CanonicalDemandId, 16> covered;
+  FailureOr<CanonicalSyncTarget> target =
+      CanonicalSyncTarget::resolve(program.getFunction());
+  if (failed(target)) {
+    return covered;
+  }
   for (const CanonicalDemand &demand : program.getDemands()) {
-    if (demandCovered(program, demand, selected, facts)) {
+    if (demandCovered(program, demand, selected, facts, *target)) {
       covered.push_back(demand.id);
     }
   }
@@ -736,6 +781,8 @@ mlir::pto::canonical_sync_detail::evaluateCanonicalSyncGroup(
               ? "inconclusive"
               : (world.unrolledOracleMatched ? "match" : "mismatch"))
       << ") for demand(s)";
+  FailureOr<CanonicalUnrolledCoverageResult> diagnosticUnrolled =
+      evaluateCanonicalSyncUnrolledOracle(program, world.mechanisms);
   for (CanonicalDemandId demand : world.differentialDisagreements) {
     const CanonicalDemand &record = program.getDemand(demand);
     diagnostic << " d" << demand << '['
@@ -745,6 +792,46 @@ mlir::pto::canonical_sync_detail::evaluateCanonicalSyncGroup(
       diagnostic << "exit";
     } else {
       diagnostic << 'p' << record.target;
+    }
+    diagnostic << ",direct=m" << program.getDirectMechanisms()[demand]
+               << ",summary="
+               << (llvm::is_contained(world.covered, demand) ? "yes" : "no")
+               << ",unrolled="
+               << (succeeded(diagnosticUnrolled) &&
+                           llvm::is_contained(diagnosticUnrolled->covered,
+                                              demand)
+                       ? "yes"
+                       : "no")
+               << ']';
+    if (!world.summaries.empty()) {
+      for (const CompletionFact &fact : world.summaries.back().completions) {
+        if (fact.phase == record.source) {
+          diagnostic << " fact[p" << fact.phase << '@'
+                     << stringifyCanonicalCore(fact.resource.core) << ':'
+                     << stringifyPIPE(fact.resource.pipe) << ']';
+        }
+      }
+    }
+  }
+  for (CanonicalMechanismId mechanismId : world.mechanisms) {
+    const CanonicalMechanism &mechanism = program.getMechanism(mechanismId);
+    diagnostic << " using m" << mechanismId << '['
+               << stringifyCanonicalMechanismKind(mechanism.kind) << ':'
+               << stringifyCanonicalCore(mechanism.source.core) << ':'
+               << stringifyPIPE(mechanism.source.pipe) << "->"
+               << stringifyCanonicalCore(mechanism.target.core) << ':'
+               << stringifyPIPE(mechanism.target.pipe) << ",origins=";
+    for (CanonicalDemandId origin : mechanism.origins) {
+      const CanonicalDemand &originDemand = program.getDemand(origin);
+      diagnostic << 'd' << origin << ":p" << originDemand.source << "->p"
+                 << originDemand.target << ',';
+    }
+    diagnostic << "captures=";
+    for (const CanonicalPhase &phase : program.getPhases()) {
+      if (phase.resource == mechanism.source &&
+          phaseMayPrecedePoint(phase, mechanism.sourcePoint)) {
+        diagnostic << 'p' << phase.id << ',';
+      }
     }
     diagnostic << ']';
   }

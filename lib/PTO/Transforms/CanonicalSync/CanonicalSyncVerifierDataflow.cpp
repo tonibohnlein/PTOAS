@@ -11,6 +11,7 @@
 #include "CanonicalSyncVerifier.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Matchers.h"
 #include "llvm/ADT/STLExtras.h"
 
 using namespace mlir;
@@ -18,6 +19,15 @@ using namespace mlir::pto;
 using namespace mlir::pto::canonical_sync_detail;
 
 namespace {
+
+bool hasStaticallyNonEmptyTripCount(scf::ForOp loop) {
+  const std::optional<int64_t> lower =
+      getConstantIntValue(loop.getLowerBound());
+  const std::optional<int64_t> upper =
+      getConstantIntValue(loop.getUpperBound());
+  const std::optional<int64_t> step = getConstantIntValue(loop.getStep());
+  return lower && upper && step && *step > 0 && *lower < *upper;
+}
 
 VerifierResourceState &getResource(VerifierState &state,
                                    CanonicalPhysicalResource resource) {
@@ -95,7 +105,10 @@ bool requiresVisibility(const VerifierEffect &source,
       target.access.unknownSpace || target.access.space == AddressSpace::GM;
   const bool scalarCrossing = (source.resource.pipe == PIPE::PIPE_S) !=
                               (target.resource.pipe == PIPE::PIPE_S);
-  return sourceMayBeGm && targetMayBeGm && scalarCrossing;
+  const bool pureWar =
+      accessReads(source.access.mode) && !accessWrites(source.access.mode) &&
+      accessWrites(target.access.mode) && !accessReads(target.access.mode);
+  return sourceMayBeGm && targetMayBeGm && scalarCrossing && !pureWar;
 }
 
 bool completionKnown(const CanonicalSyncTarget &target,
@@ -103,8 +116,10 @@ bool completionKnown(const CanonicalSyncTarget &target,
                      const VerifierEffectKey &source,
                      CanonicalPhysicalResource destinationResource,
                      const VerifierState &state) {
-  if (sourceResource == destinationResource &&
-      target.hasIntrinsicCompletion(sourceResource)) {
+  if ((sourceResource.core == destinationResource.core &&
+       getVPTOSchedulingSemantics(source.operation).completionIsSynchronous) ||
+      (sourceResource == destinationResource &&
+       target.hasIntrinsicCompletion(sourceResource))) {
     return true;
   }
   if (containsKey(state.globalKnown, source)) {
@@ -147,7 +162,13 @@ LogicalResult reportHazard(const VerifierEffect &source,
   diagnostic << " from " << stringifyCanonicalCore(source.resource.core) << ':'
              << stringifyPIPE(source.resource.pipe) << " to "
              << stringifyCanonicalCore(target.resource.core) << ':'
-             << stringifyPIPE(target.resource.pipe);
+             << stringifyPIPE(target.resource.pipe) << " at "
+             << target.key.operation->getName() << " after "
+             << source.key.operation->getName();
+  if (auto role = target.key.operation->getAttrOfType<StringAttr>(
+          "pto.canonical_sync.protocol_role")) {
+    diagnostic << " (" << role.getValue() << ')';
+  }
   diagnostic.attachNote(source.key.operation->getLoc())
       << "conflicting source effect is here";
   return failure();
@@ -249,7 +270,9 @@ LogicalResult executeLoop(const VerifierProgram &program,
     iteration.loopCarried.assign(loopKeys.begin(), loopKeys.end());
   }
   iteration.loopCarried = entry.loopCarried;
-  state = mergeVerifierStates(entry, iteration);
+  state = hasStaticallyNonEmptyTripCount(operation)
+              ? std::move(iteration)
+              : mergeVerifierStates(entry, iteration);
   return success();
 }
 

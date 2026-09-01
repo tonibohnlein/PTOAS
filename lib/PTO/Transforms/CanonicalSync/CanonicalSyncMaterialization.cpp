@@ -26,6 +26,7 @@ namespace {
 constexpr StringLiteral kGeneratedAttr = "pto.canonical_sync.generated";
 constexpr StringLiteral kMechanismAttr = "pto.canonical_sync.mechanism";
 constexpr StringLiteral kProtocolRoleAttr = "pto.canonical_sync.protocol_role";
+constexpr StringLiteral kReleaseOwnerAttr = "pto.canonical_sync.release_owner";
 
 struct EventAction {
   CanonicalMechanismId mechanism = kInvalidCanonicalSyncId;
@@ -44,6 +45,7 @@ struct RecurringEventAction {
   Operation *loop = nullptr;
   Operation *sourceAnchor = nullptr;
   Operation *targetAnchor = nullptr;
+  bool boundary = false;
 };
 
 void tagGenerated(Operation *operation, OpBuilder &builder,
@@ -59,11 +61,22 @@ void tagProtocol(Operation *operation, OpBuilder &builder,
   operation->setAttr(kProtocolRoleAttr, builder.getStringAttr(role));
 }
 
+void tagReadyProtocol(Operation *operation, OpBuilder &builder,
+                      CanonicalMechanismId mechanism,
+                      CanonicalMechanismId releaseOwner, StringRef role) {
+  tagProtocol(operation, builder, mechanism, role);
+  operation->setAttr(
+      kReleaseOwnerAttr,
+      builder.getI32IntegerAttr(static_cast<int32_t>(releaseOwner)));
+}
+
 LogicalResult collectActions(
     const CanonicalSyncProgram &program, const IRMapping &mapping,
     DenseMap<Operation *, SmallVector<EventAction, 2>> &sets,
     DenseMap<Operation *, SmallVector<EventAction, 2>> &waits,
     DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>> &barriers,
+    DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>>
+        &visibilityFences,
     SmallVectorImpl<RecurringEventAction> &protocols) {
   const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
   for (CanonicalMechanismId mechanismId : solution.mechanisms) {
@@ -84,6 +97,10 @@ LogicalResult collectActions(
       barriers[waitAnchor].push_back(mechanism.id);
       continue;
     }
+    if (mechanism.kind == CanonicalMechanismKind::VisibilityFence) {
+      visibilityFences[waitAnchor].push_back(mechanism.id);
+      continue;
+    }
     Operation *setAnchor =
         mapping.lookupOrNull(mechanism.sourcePoint.operation);
     const std::optional<unsigned> eventId = mechanism.eventId;
@@ -102,9 +119,10 @@ LogicalResult collectActions(
         return program.getFunction().emitError(
             "canonical sync failed to map a recurring event loop");
       }
-      protocols.push_back(
-          {mechanism.id, mechanism.source.pipe, mechanism.target.pipe, *eventId,
-           *mechanism.releaseEventId, loop, setAnchor, waitAnchor});
+      protocols.push_back({mechanism.id, mechanism.source.pipe,
+                           mechanism.target.pipe, *eventId,
+                           *mechanism.releaseEventId, loop, setAnchor,
+                           waitAnchor, mechanism.boundaryRecurring});
       continue;
     }
     EventAction action{
@@ -136,35 +154,96 @@ void emitRecurringProtocols(func::FuncOp clone,
     return first.mechanism < second.mechanism;
   });
   OpBuilder builder(clone.getContext());
-  for (const RecurringEventAction &protocol : protocols) {
+  for (auto [index, protocol] : llvm::enumerate(protocols)) {
+    const ArrayRef<RecurringEventAction> preceding =
+        ArrayRef<RecurringEventAction>(protocols).take_front(index);
+    const auto precedingOwner =
+        llvm::find_if(preceding, [&](const RecurringEventAction &candidate) {
+          return candidate.loop == protocol.loop &&
+                 candidate.source == protocol.source &&
+                 candidate.target == protocol.target &&
+                 candidate.releaseEventId == protocol.releaseEventId;
+        });
+    const RecurringEventAction &releaseOwner =
+        precedingOwner == preceding.end() ? protocol : *precedingOwner;
+    const bool ownsRelease = releaseOwner.mechanism == protocol.mechanism;
     const Location location = protocol.loop->getLoc();
-    builder.setInsertionPoint(protocol.loop);
-    createProtocolEvent<SetFlagOp>(builder, location, clone, protocol.target,
-                                   protocol.source, protocol.releaseEventId,
-                                   protocol.mechanism, "release-prime-set");
+    auto loop = cast<scf::ForOp>(protocol.loop);
+    if (ownsRelease) {
+      builder.setInsertionPoint(protocol.loop);
+      createProtocolEvent<SetFlagOp>(builder, location, clone, protocol.target,
+                                     protocol.source, protocol.releaseEventId,
+                                     protocol.mechanism, "release-prime-set");
+    }
+    if (protocol.boundary) {
+      builder.setInsertionPoint(protocol.loop);
+      Operation *readyPrime = createProtocolEvent<SetFlagOp>(
+          builder, location, clone, protocol.source, protocol.target,
+          protocol.readyEventId, protocol.mechanism, "ready-prime-set");
+      tagReadyProtocol(readyPrime, builder, protocol.mechanism,
+                       releaseOwner.mechanism, "ready-prime-set");
+    }
 
-    builder.setInsertionPoint(protocol.sourceAnchor);
-    createProtocolEvent<WaitFlagOp>(builder, location, clone, protocol.target,
-                                    protocol.source, protocol.releaseEventId,
-                                    protocol.mechanism, "release-body-wait");
-    builder.setInsertionPointAfter(protocol.sourceAnchor);
-    createProtocolEvent<SetFlagOp>(builder, location, clone, protocol.source,
-                                   protocol.target, protocol.readyEventId,
-                                   protocol.mechanism, "ready-body-set");
+    // The reverse release channel is the loop-carried ownership token.  Its
+    // wait and set live at the loop header/latch so they cover reuse across
+    // different choice arms.  The forward ready pair remains at the precise
+    // branch-local producer/consumer cuts.
+    if (ownsRelease) {
+      builder.setInsertionPointToStart(loop.getBody());
+      createProtocolEvent<WaitFlagOp>(builder, location, clone, protocol.target,
+                                      protocol.source, protocol.releaseEventId,
+                                      protocol.mechanism, "release-body-wait");
+    }
+    if (protocol.boundary) {
+      builder.setInsertionPointToStart(loop.getBody());
+      Operation *readyWait = createProtocolEvent<WaitFlagOp>(
+          builder, location, clone, protocol.source, protocol.target,
+          protocol.readyEventId, protocol.mechanism, "ready-body-wait");
+      tagReadyProtocol(readyWait, builder, protocol.mechanism,
+                       releaseOwner.mechanism, "ready-body-wait");
 
-    builder.setInsertionPoint(protocol.targetAnchor);
-    createProtocolEvent<WaitFlagOp>(builder, location, clone, protocol.source,
-                                    protocol.target, protocol.readyEventId,
-                                    protocol.mechanism, "ready-body-wait");
-    builder.setInsertionPointAfter(protocol.targetAnchor);
-    createProtocolEvent<SetFlagOp>(builder, location, clone, protocol.target,
-                                   protocol.source, protocol.releaseEventId,
-                                   protocol.mechanism, "release-body-set");
+      builder.setInsertionPoint(loop.getBody()->getTerminator());
+      Operation *readySet = createProtocolEvent<SetFlagOp>(
+          builder, location, clone, protocol.source, protocol.target,
+          protocol.readyEventId, protocol.mechanism, "ready-body-set");
+      tagReadyProtocol(readySet, builder, protocol.mechanism,
+                       releaseOwner.mechanism, "ready-body-set");
+    } else {
+      builder.setInsertionPointAfter(protocol.sourceAnchor);
+      Operation *readySet = createProtocolEvent<SetFlagOp>(
+          builder, location, clone, protocol.source, protocol.target,
+          protocol.readyEventId, protocol.mechanism, "ready-body-set");
+      tagReadyProtocol(readySet, builder, protocol.mechanism,
+                       releaseOwner.mechanism, "ready-body-set");
 
-    builder.setInsertionPointAfter(protocol.loop);
-    createProtocolEvent<WaitFlagOp>(builder, location, clone, protocol.target,
-                                    protocol.source, protocol.releaseEventId,
-                                    protocol.mechanism, "release-drain-wait");
+      builder.setInsertionPoint(protocol.targetAnchor);
+      Operation *readyWait = createProtocolEvent<WaitFlagOp>(
+          builder, location, clone, protocol.source, protocol.target,
+          protocol.readyEventId, protocol.mechanism, "ready-body-wait");
+      tagReadyProtocol(readyWait, builder, protocol.mechanism,
+                       releaseOwner.mechanism, "ready-body-wait");
+    }
+    if (ownsRelease) {
+      builder.setInsertionPoint(loop.getBody()->getTerminator());
+      createProtocolEvent<SetFlagOp>(builder, location, clone, protocol.target,
+                                     protocol.source, protocol.releaseEventId,
+                                     protocol.mechanism, "release-body-set");
+    }
+
+    if (ownsRelease) {
+      builder.setInsertionPointAfter(protocol.loop);
+      createProtocolEvent<WaitFlagOp>(builder, location, clone, protocol.target,
+                                      protocol.source, protocol.releaseEventId,
+                                      protocol.mechanism, "release-drain-wait");
+    }
+    if (protocol.boundary) {
+      builder.setInsertionPointAfter(protocol.loop);
+      Operation *readyDrain = createProtocolEvent<WaitFlagOp>(
+          builder, location, clone, protocol.source, protocol.target,
+          protocol.readyEventId, protocol.mechanism, "ready-drain-wait");
+      tagReadyProtocol(readyDrain, builder, protocol.mechanism,
+                       releaseOwner.mechanism, "ready-drain-wait");
+    }
   }
 }
 
@@ -182,6 +261,8 @@ void emitActions(
     DenseMap<Operation *, SmallVector<EventAction, 2>> &sets,
     DenseMap<Operation *, SmallVector<EventAction, 2>> &waits,
     DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>> &barriers,
+    DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>>
+        &visibilityFences,
     const CanonicalSyncProgram &program) {
   OpBuilder builder(clone.getContext());
   for (auto &entry : sets) {
@@ -237,6 +318,34 @@ void emitActions(
           entry.first->getLoc(),
           PipeAttr::get(clone.getContext(), mechanism.source.pipe));
       tagGenerated(operation, builder, mechanismId);
+    }
+  }
+  for (auto &entry : visibilityFences) {
+    llvm::sort(entry.second);
+    builder.setInsertionPoint(entry.first);
+    for (CanonicalMechanismId mechanismId : entry.second) {
+      const CanonicalMechanism &mechanism = program.getMechanism(mechanismId);
+      const CanonicalCacheMaintenance maintenance =
+          *mechanism.generatedCacheMaintenance;
+      const auto emitCmo = [&]() {
+        auto operation = builder.create<CmoCacheInvalidOp>(
+            entry.first->getLoc(), Value(),
+            AddressSpaceAttr::get(clone.getContext(), AddressSpace::GM));
+        tagGenerated(operation, builder, mechanismId);
+      };
+      const auto emitFence = [&]() {
+        auto operation = builder.create<FenceBarrierAllOp>(
+            entry.first->getLoc(),
+            FenceScopeAttr::get(clone.getContext(), FenceScope::GM));
+        tagGenerated(operation, builder, mechanismId);
+      };
+      if (maintenance == CanonicalCacheMaintenance::CleanSource) {
+        emitCmo();
+      }
+      emitFence();
+      if (maintenance == CanonicalCacheMaintenance::InvalidateTarget) {
+        emitCmo();
+      }
     }
   }
 }
@@ -306,12 +415,13 @@ mlir::pto::materializeAndVerifyCanonicalSync(CanonicalSyncProgram &program) {
   DenseMap<Operation *, SmallVector<EventAction, 2>> sets;
   DenseMap<Operation *, SmallVector<EventAction, 2>> waits;
   DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>> barriers;
+  DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>> visibilityFences;
   SmallVector<RecurringEventAction, 2> protocols;
-  if (failed(
-          collectActions(program, mapping, sets, waits, barriers, protocols))) {
+  if (failed(collectActions(program, mapping, sets, waits, barriers,
+                            visibilityFences, protocols))) {
     return failure();
   }
-  emitActions(clone, sets, waits, barriers, program);
+  emitActions(clone, sets, waits, barriers, visibilityFences, program);
   emitRecurringProtocols(clone, protocols);
   if (failed(emitTailBarriers(clone, program, mapping))) {
     return failure();

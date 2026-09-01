@@ -28,6 +28,15 @@ namespace {
 constexpr unsigned kReadBit = 1;
 constexpr unsigned kWriteBit = 2;
 
+bool hasStaticallyNonEmptyTripCount(scf::ForOp loop) {
+  const std::optional<int64_t> lower =
+      getConstantIntValue(loop.getLowerBound());
+  const std::optional<int64_t> upper =
+      getConstantIntValue(loop.getUpperBound());
+  const std::optional<int64_t> step = getConstantIntValue(loop.getStep());
+  return lower && upper && step && *step > 0 && *lower < *upper;
+}
+
 std::optional<PIPE> convertMacroPipe(PipelineType pipe) {
   switch (pipe) {
   case PipelineType::PIPE_S:
@@ -135,6 +144,10 @@ std::optional<PIPE> getNormalizedPipe(Operation *operation) {
 
 bool isCanonicalVisibilityOperation(Operation *operation) {
   return isa<CmoCacheInvalidOp, FenceBarrierAllOp>(operation);
+}
+
+bool isPipeChannelOperation(Operation *operation) {
+  return isa<TAllocOp, TPushOp, TPopOp, TFreeOp>(operation);
 }
 
 LogicalResult
@@ -332,6 +345,29 @@ LogicalResult ProgramBuilder::visitOperation(Operation *operation,
   if (isa<LoadScalarOp, StoreScalarOp>(operation)) {
     return addRegularPhase(operation, sequence, PIPE::PIPE_S);
   }
+  if (isPipeChannelOperation(operation)) {
+    if (!semantics.classificationKnown) {
+      return operation->emitError(
+          "canonical sync requires normalized TPipe channel semantics");
+    }
+    if (semantics.schedulingClass == VPTOSchedulingClass::Schedulable) {
+      std::optional<PIPE> pipe = getNormalizedPipe(operation);
+      if (!pipe) {
+        return operation->emitError(
+            "canonical sync TPipe payload transfer has no concrete pipe");
+      }
+      if (failed(validateNormalizedEffects(operation, semantics))) {
+        return failure();
+      }
+      return addNormalizedPhase(operation, sequence, *pipe, semantics);
+    }
+    if (semantics.schedulingClass == VPTOSchedulingClass::Structural ||
+        semantics.schedulingClass == VPTOSchedulingClass::SchedulingBoundary) {
+      return success();
+    }
+    return operation->emitError(
+        "canonical sync rejects unsupported TPipe channel semantics");
+  }
   if (auto pipeOperation = dyn_cast<OpPipeInterface>(operation)) {
     return addRegularPhase(operation, sequence, pipeOperation.getPipe());
   }
@@ -462,14 +498,19 @@ LogicalResult ProgramBuilder::visitFor(scf::ForOp operation,
   CanonicalRegion loop;
   loop.parent = sequence;
   loop.kind = CanonicalRegionKind::Loop;
-  loop.cardinality = CanonicalCardinality::ZeroOrMore;
+  loop.cardinality = hasStaticallyNonEmptyTripCount(operation)
+                         ? CanonicalCardinality::OneOrMore
+                         : CanonicalCardinality::ZeroOrMore;
   loop.operation = operation;
   loop.depth = program.getRegion(sequence).depth + 1;
   const CanonicalRegionId loopId = program.appendRegion(std::move(loop));
   bindForInputs(operation);
   loopPath.push_back(loopId);
-  const LogicalResult result = buildBlock(operation.getRegion().front(), loopId,
-                                          CanonicalCardinality::ZeroOrMore);
+  const LogicalResult result =
+      buildBlock(operation.getRegion().front(), loopId,
+                 hasStaticallyNonEmptyTripCount(operation)
+                     ? CanonicalCardinality::OneOrMore
+                     : CanonicalCardinality::ZeroOrMore);
   loopPath.pop_back();
   if (succeeded(result)) {
     bindForResults(operation);

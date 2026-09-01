@@ -101,6 +101,86 @@ module attributes {pto.target_arch = "a2a3"} {
       (gm_slot_tensor = %view : !pto.tensor_view<16x16xf32>)
     return
   }
+
+  func.func @normalized_tile_pipe_push(
+      %slots: memref<256xf32, #pto.address_space<gm>>, %local: i32,
+      %tile: !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16,
+                           v_row=16, v_col=16, blayout=col_major,
+                           slayout=row_major, fractal=1024, pad=0>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %pipe = pto.initialize_l2g2l_pipe {
+      dir_mask = 1, slot_size = 1024, slot_num = 2, local_slot_num = 2,
+      flag_base = 0
+    }(%slots : memref<256xf32, #pto.address_space<gm>>, %local : i32)
+      -> !pto.pipe
+    pto.tpush(%tile, %pipe
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16,
+                      v_row=16, v_col=16, blayout=col_major,
+                      slayout=row_major, fractal=1024, pad=0>, !pto.pipe)
+      {split = 0}
+    return
+  }
+
+  func.func @normalized_tile_pipe_pop(
+      %slots: memref<256xf32, #pto.address_space<gm>>, %local: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %pipe = pto.initialize_l2g2l_pipe {
+      dir_mask = 1, slot_size = 1024, slot_num = 2, local_slot_num = 2,
+      flag_base = 0
+    }(%slots : memref<256xf32, #pto.address_space<gm>>, %local : i32)
+      -> !pto.pipe
+    %tile = pto.declare_tile
+      -> !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                       v_row=16, v_col=16, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>
+    pto.tpop(%tile, %pipe
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                      v_row=16, v_col=16, blayout=row_major,
+                      slayout=none_box, fractal=512, pad=0>, !pto.pipe)
+      {split = 0}
+    pto.tfree(%pipe : !pto.pipe) {split = 0}
+    return
+  }
+
+  func.func @normalized_global_pipe_protocol()
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %slots = pto.declare_global -> !pto.tensor_view<16x16xf32>
+    %pipe = "pto.initialize_l2g2l_pipe"(%slots) <{
+      dir_mask = 1 : i8, slot_size = 1024 : i32, slot_num = 2 : i32,
+      flag_base = 0 : i32, operandSegmentSizes = array<i32: 1, 0, 0>
+    }> : (!pto.tensor_view<16x16xf32>) -> !pto.pipe
+    %entry = pto.declare_global -> !pto.tensor_view<16x16xf32>
+    pto.talloc(%entry, %pipe : !pto.tensor_view<16x16xf32>, !pto.pipe)
+      {split = 0}
+    pto.tpush(%entry, %pipe : !pto.tensor_view<16x16xf32>, !pto.pipe)
+      {split = 0}
+    return
+  }
+
+  func.func @normalized_cube_scalar_address(
+      %indices: !pto.ptr<i32>, %source: !pto.ptr<bf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %address = arith.constant 0 : i64
+    %loaded = pto.load_scalar %indices[%c0] : !pto.ptr<i32> -> i32
+    %offset = arith.index_cast %loaded : i32 to index
+    %view = pto.make_tensor_view %source, shape = [%c16, %c16],
+      strides = [%c16, %c1] : !pto.tensor_view<16x16xbf16>
+    %partition = pto.partition_view %view, offsets = [%offset, %c0],
+      sizes = [%c16, %c16] : !pto.tensor_view<16x16xbf16> ->
+      !pto.partition_tensor_view<16x16xbf16>
+    %tile = pto.alloc_tile addr = %address :
+      !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=16, v_row=16,
+                    v_col=16, blayout=col_major, slayout=row_major,
+                    fractal=512, pad=0>
+    pto.tload ins(%partition : !pto.partition_tensor_view<16x16xbf16>)
+              outs(%tile : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                     cols=16, v_row=16, v_col=16, blayout=col_major,
+                     slayout=row_major, fractal=512, pad=0>)
+    return
+  }
 }
 
 // CHECK-LABEL: CANONICAL-SYNC function=normalized_simt_unknown_space
@@ -135,4 +215,25 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK-LABEL: CANONICAL-SYNC function=normalized_aiv_pipe_descriptor
 // CHECK: PHASES 0
 // CHECK: DEMANDS 0
+// CHECK: VERIFY ok
+// CHECK-LABEL: CANONICAL-SYNC function=normalized_tile_pipe_push
+// CHECK: PHASES 1
+// CHECK: p0 op=pto.tpush resource=AIC:PIPE_FIX
+// CHECK: a0 phase=p0 mode=R space=acc
+// CHECK: a1 phase=p0 mode=W space=gm
+// CHECK: VERIFY ok
+// CHECK-LABEL: CANONICAL-SYNC function=normalized_tile_pipe_pop
+// CHECK: PHASES 1
+// CHECK: p0 op=pto.tpop resource=AIV:PIPE_MTE2
+// CHECK: a0 phase=p0 mode=W space=vec
+// CHECK: a1 phase=p0 mode=R space=gm
+// CHECK: VERIFY ok
+// CHECK-LABEL: CANONICAL-SYNC function=normalized_global_pipe_protocol
+// CHECK: PHASES 0
+// CHECK: DEMANDS 0
+// CHECK: VERIFY ok
+// CHECK-LABEL: CANONICAL-SYNC function=normalized_cube_scalar_address
+// CHECK: p0 op=pto.load_scalar resource=AIC:PIPE_S
+// CHECK: p1 op=pto.tload resource=AIC:PIPE_MTE2
+// CHECK: kind=intrinsic resource=AIC:PIPE_S->AIC:PIPE_MTE2
 // CHECK: VERIFY ok

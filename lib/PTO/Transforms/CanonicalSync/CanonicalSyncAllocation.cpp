@@ -32,7 +32,8 @@ bool idAvailable(const CanonicalSyncProgram &program,
                  const CanonicalSetCoverSolution &solution,
                  const CanonicalMechanism &candidate,
                  CanonicalPhysicalResource source,
-                 CanonicalPhysicalResource destination, unsigned eventId) {
+                 CanonicalPhysicalResource destination, unsigned eventId,
+                 bool candidateIsRelease) {
   for (CanonicalMechanismId existingId : solution.mechanisms) {
     const CanonicalMechanism &existing = program.getMechanism(existingId);
     const bool readyCollision = existing.eventId == eventId &&
@@ -42,8 +43,17 @@ bool idAvailable(const CanonicalSyncProgram &program,
         existing.kind == CanonicalMechanismKind::RecurringEvent &&
         existing.releaseEventId == eventId && existing.target == source &&
         existing.source == destination;
-    const bool collision = (readyCollision || releaseCollision) &&
-                           lifetimesCanOverlap(existing, candidate);
+    const bool sharedLoopRelease =
+        candidateIsRelease && releaseCollision &&
+        existing.recurrenceLoop == candidate.recurrenceLoop;
+    // A recurring release generation is primed before the loop and drained
+    // after it.  Those boundary actions are unconditional even when the body
+    // ready/wait pair is branch guarded, so any collision involving a release
+    // lane must interfere unconditionally.
+    const bool collision =
+        (readyCollision &&
+         (candidateIsRelease || lifetimesCanOverlap(existing, candidate))) ||
+        (releaseCollision && !sharedLoopRelease);
     if (collision) {
       return false;
     }
@@ -56,13 +66,14 @@ FailureOr<unsigned> allocateEventId(CanonicalSyncProgram &program,
                                     const CanonicalSetCoverSolution &solution,
                                     const CanonicalMechanism &mechanism,
                                     CanonicalPhysicalResource source,
-                                    CanonicalPhysicalResource destination) {
+                                    CanonicalPhysicalResource destination,
+                                    bool isRelease = false) {
   const SmallVector<unsigned, 6> reserved =
       reservedEventIds(program.getFunction(), source, destination);
   for (unsigned eventId : target.getCompilerEventIds()) {
-    const bool available =
-        !llvm::is_contained(reserved, eventId) &&
-        idAvailable(program, solution, mechanism, source, destination, eventId);
+    const bool available = !llvm::is_contained(reserved, eventId) &&
+                           idAvailable(program, solution, mechanism, source,
+                                       destination, eventId, isRelease);
     if (available) {
       return eventId;
     }
@@ -157,7 +168,8 @@ mlir::pto::allocateCanonicalSyncEvents(CanonicalSyncProgram &program) {
     if (recurring) {
       FailureOr<unsigned> release =
           allocateEventId(program, *target, solution, mechanism,
-                          mechanism.target, mechanism.source);
+                          mechanism.target, mechanism.source,
+                          /*isRelease=*/true);
       if (failed(release)) {
         return failure();
       }

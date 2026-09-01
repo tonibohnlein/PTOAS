@@ -29,6 +29,12 @@ namespace {
 
 constexpr std::size_t kMaxOracleStates = 512;
 constexpr unsigned kOracleLoopUnroll = 2;
+// The structured oracle is a bounded differential test, not the coverage
+// proof.  Avoid starting an enumeration whose straight-line demand checks
+// already exceed this development-oracle budget; the mandatory regional and
+// flattened analyses still have to agree, and the staged physical verifier
+// remains authoritative for the selected plan.
+constexpr std::size_t kMaxOracleStaticChecks = 32768;
 
 struct LoopInstance {
   CanonicalRegionId loop = kInvalidCanonicalSyncId;
@@ -70,6 +76,8 @@ struct OracleState {
 
 struct OracleContext {
   bool exhaustive = true;
+  const CanonicalSyncTarget *target = nullptr;
+  SmallVector<SmallVector<CanonicalDemandId, 8>, 0> demandsByTarget;
 };
 
 using PhaseIndex = DenseMap<Operation *, SmallVector<CanonicalPhaseId, 2>>;
@@ -146,16 +154,16 @@ bool matchesDistance(const CanonicalDemand &demand, const PhaseInstance &source,
 bool completionKnown(const CanonicalSyncProgram &program,
                      const PhaseInstance &source,
                      CanonicalPhysicalResource destination,
+                     const CanonicalSyncTarget &target,
                      const OracleState &state) {
   const CanonicalPhase &sourcePhase = program.getPhase(source.phase);
-  if (sourcePhase.resource == destination) {
-    FailureOr<CanonicalSyncTarget> target =
-        CanonicalSyncTarget::resolve(program.getFunction());
-    const bool intrinsicCompletion =
-        succeeded(target) && target->hasIntrinsicCompletion(destination);
-    if (intrinsicCompletion) {
-      return true;
-    }
+  const bool intrinsicCompletion =
+      getVPTOSchedulingSemantics(sourcePhase.operation)
+          .completionIsSynchronous ||
+      (sourcePhase.resource == destination &&
+       target.hasIntrinsicCompletion(sourcePhase.resource));
+  if (intrinsicCompletion) {
+    return true;
   }
   const ResourceState *resource = getResource(state, destination);
   return llvm::is_contained(state.globalKnown, source) ||
@@ -169,11 +177,35 @@ bool demandUsesDirectMechanism(const CanonicalSyncProgram &program,
   return llvm::is_contained(selected, direct);
 }
 
+bool recurringReleaseCovers(const CanonicalSyncProgram &program,
+                            const CanonicalDemand &demand,
+                            ArrayRef<CanonicalMechanismId> selected) {
+  auto carrying = llvm::find_if(
+      demand.iterationDistance, [](const CanonicalLoopDistance &distance) {
+        return distance.relation == CanonicalIterationRelation::AnyPositive;
+      });
+  if (carrying == demand.iterationDistance.end()) {
+    return false;
+  }
+  const CanonicalPhysicalResource source =
+      program.getPhase(demand.source).resource;
+  const CanonicalPhysicalResource target =
+      program.getPhase(demand.target).resource;
+  return llvm::any_of(selected, [&](CanonicalMechanismId id) {
+    const CanonicalMechanism &mechanism = program.getMechanism(id);
+    return mechanism.kind == CanonicalMechanismKind::RecurringEvent &&
+           !mechanism.boundaryRecurring &&
+           mechanism.recurrenceLoop == carrying->loop &&
+           mechanism.target == source && mechanism.source == target;
+  });
+}
+
 void checkTargetDemands(const CanonicalSyncProgram &program,
                         const PhaseInstance &target,
                         ArrayRef<CanonicalMechanismId> selected,
-                        OracleState &state) {
-  for (const CanonicalDemand &demand : program.getDemands()) {
+                        const OracleContext &context, OracleState &state) {
+  for (CanonicalDemandId demandId : context.demandsByTarget[target.phase]) {
+    const CanonicalDemand &demand = program.getDemand(demandId);
     if (!state.covered[demand.id] || demand.target != target.phase ||
         demand.kind == CanonicalDemandKind::ExitCompletion) {
       continue;
@@ -181,6 +213,9 @@ void checkTargetDemands(const CanonicalSyncProgram &program,
     if (demand.requirement == CanonicalRequirement::Visibility) {
       state.covered[demand.id] =
           demandUsesDirectMechanism(program, demand, selected);
+      continue;
+    }
+    if (recurringReleaseCovers(program, demand, selected)) {
       continue;
     }
     const CanonicalMechanismId direct =
@@ -199,7 +234,8 @@ void checkTargetDemands(const CanonicalSyncProgram &program,
         }
         const CanonicalPhysicalResource destination =
             program.getPhase(target.phase).resource;
-        if (!completionKnown(program, source, destination, state)) {
+        if (!completionKnown(program, source, destination, *context.target,
+                             state)) {
           state.covered[demand.id] = false;
           break;
         }
@@ -267,6 +303,13 @@ void executePoint(const CanonicalSyncProgram &program,
     if (!guardEnabled(state.controlPath, mechanism.guard)) {
       continue;
     }
+    // A boundary handshake transfers completion from the loop latch to the
+    // next loop header.  Until summary transfers carry iteration transforms,
+    // only its explicitly certified recurrence origins may use that effect.
+    if (mechanism.kind == CanonicalMechanismKind::RecurringEvent &&
+        mechanism.boundaryRecurring) {
+      continue;
+    }
     if (mechanism.targetPoint == point &&
         mechanism.kind == CanonicalMechanismKind::PipeBarrier) {
       applyBarrier(mechanism, state);
@@ -304,14 +347,14 @@ CanonicalRegionId findStructuredRegion(const CanonicalSyncProgram &program,
 void executePhases(const CanonicalSyncProgram &program, Operation *operation,
                    const PhaseIndex &phases,
                    ArrayRef<CanonicalMechanismId> selected,
-                   OracleState &state) {
+                   const OracleContext &context, OracleState &state) {
   auto found = phases.find(operation);
   if (found == phases.end()) {
     return;
   }
   for (CanonicalPhaseId phase : found->second) {
     PhaseInstance instance{phase, state.loops};
-    checkTargetDemands(program, instance, selected, state);
+    checkTargetDemands(program, instance, selected, context, state);
     ResourceState &resource =
         getResource(state, program.getPhase(phase).resource);
     if (!llvm::is_contained(resource.issued, instance)) {
@@ -440,7 +483,7 @@ executeOperation(const CanonicalSyncProgram &program, Operation *operation,
     states = std::move(*result);
   } else {
     for (OracleState &state : states) {
-      executePhases(program, operation, phases, selected, state);
+      executePhases(program, operation, phases, selected, context, state);
     }
   }
   for (OracleState &state : states) {
@@ -477,6 +520,15 @@ FailureOr<CanonicalUnrolledCoverageResult>
 mlir::pto::canonical_sync_detail::evaluateCanonicalSyncUnrolledOracle(
     const CanonicalSyncProgram &program,
     ArrayRef<CanonicalMechanismId> selected) {
+  const std::size_t phaseCount =
+      std::max<std::size_t>(program.getPhases().size(), 1);
+  const bool staticBudgetExceeded =
+      program.getDemands().size() > kMaxOracleStaticChecks / phaseCount;
+  if (staticBudgetExceeded) {
+    CanonicalUnrolledCoverageResult result;
+    result.exhaustive = false;
+    return result;
+  }
   PhaseIndex phases;
   for (const CanonicalPhase &phase : program.getPhases()) {
     phases[phase.operation].push_back(phase.id);
@@ -490,6 +542,18 @@ mlir::pto::canonical_sync_detail::evaluateCanonicalSyncUnrolledOracle(
     }
   }
   OracleContext context;
+  FailureOr<CanonicalSyncTarget> target =
+      CanonicalSyncTarget::resolve(program.getFunction());
+  if (failed(target)) {
+    return failure();
+  }
+  context.target = &*target;
+  context.demandsByTarget.resize(program.getPhases().size());
+  for (const CanonicalDemand &demand : program.getDemands()) {
+    if (demand.target < context.demandsByTarget.size()) {
+      context.demandsByTarget[demand.target].push_back(demand.id);
+    }
+  }
   FailureOr<SmallVector<OracleState, 8>> states =
       executeBlock(program, program.getFunction().getBody().front(), phases,
                    selected, ArrayRef<OracleState>(&initial, 1), context);

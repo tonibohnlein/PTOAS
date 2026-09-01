@@ -268,15 +268,20 @@ LogicalResult CanonicalSyncProgram::freeze() {
             ? mechanism.fenceEffect &&
                   *mechanism.fenceEffect < fenceEffects.size()
             : !mechanism.fenceEffect;
+    const bool validGeneratedCacheMaintenance =
+        (mechanism.kind == CanonicalMechanismKind::VisibilityFence) ==
+        mechanism.generatedCacheMaintenance.has_value();
     const bool recurring =
         mechanism.kind == CanonicalMechanismKind::RecurringEvent;
     const bool validRecurrence =
         recurring == mechanism.recurrenceLoop.has_value() &&
+        (!mechanism.boundaryRecurring || recurring) &&
         (!mechanism.recurrenceLoop ||
          (*mechanism.recurrenceLoop < regions.size() &&
           regions[*mechanism.recurrenceLoop].kind ==
               CanonicalRegionKind::Loop));
-    if (!validPoints || !validOrigins || !validFence || !validRecurrence ||
+    if (!validPoints || !validOrigins || !validFence ||
+        !validGeneratedCacheMaintenance || !validRecurrence ||
         mechanism.actionRegion >= regions.size()) {
       return fail("mechanism has an invalid action point, origin, or region");
     }
@@ -345,9 +350,19 @@ LogicalResult CanonicalSyncProgram::freeze() {
         return id >= mechanisms.size();
       });
   const bool invalidUniverse =
-      llvm::any_of(setCoverInstance->universe, [this](CanonicalDemandId id) {
-        return id >= demands.size();
-      });
+      llvm::any_of(
+          setCoverInstance->universe,
+          [this](CanonicalDemandId id) { return id >= demands.size(); }) ||
+      setCoverInstance->universeIncidence.size() != demands.size();
+  llvm::BitVector listedUniverse(demands.size());
+  for (CanonicalDemandId demand : setCoverInstance->universe) {
+    if (demand < demands.size()) {
+      listedUniverse.set(demand);
+    }
+  }
+  const bool inconsistentUniverse =
+      listedUniverse != setCoverInstance->universeIncidence;
+  llvm::BitVector providerCoverage(demands.size());
   bool invalidCandidate = false;
   for (const CanonicalSetCoverCandidate &candidate :
        setCoverInstance->candidates) {
@@ -365,34 +380,42 @@ LogicalResult CanonicalSyncProgram::freeze() {
                                             [this](CanonicalDemandId id) {
                                               return id >= demands.size();
                                             });
+    const bool invalidIncidence = candidate.incidence.size() != demands.size();
+    llvm::BitVector listedIncidence(demands.size());
+    for (CanonicalDemandId demand : candidate.directOrigins) {
+      if (demand < demands.size()) {
+        listedIncidence.set(demand);
+      }
+    }
+    for (CanonicalDemandId demand : candidate.additionalCoverage) {
+      if (demand < demands.size()) {
+        listedIncidence.set(demand);
+      }
+    }
     const bool overlap = llvm::any_of(
         candidate.directOrigins, [&candidate](CanonicalDemandId id) {
           return llvm::is_contained(candidate.additionalCoverage, id);
         });
-    const bool outsideUniverse =
-        llvm::any_of(candidate.directOrigins,
-                     [this](CanonicalDemandId id) {
-                       return !llvm::is_contained(setCoverInstance->universe,
-                                                  id);
-                     }) ||
-        llvm::any_of(
-            candidate.additionalCoverage, [this](CanonicalDemandId id) {
-              return !llvm::is_contained(setCoverInstance->universe, id);
-            });
+    llvm::BitVector outsideUniverseIncidence = listedIncidence;
+    outsideUniverseIncidence.reset(listedUniverse);
+    const bool outsideUniverse = outsideUniverseIncidence.any();
+    const bool inconsistentIncidence =
+        !invalidIncidence && listedIncidence != candidate.incidence;
+    if (!invalidIncidence) {
+      providerCoverage |= candidate.incidence;
+    }
     invalidCandidate |= wrongId || invalidMechanism || invalidDemand ||
-                        overlap || outsideUniverse || candidate.weight == 0;
+                        invalidIncidence || inconsistentIncidence || overlap ||
+                        outsideUniverse || candidate.weight == 0;
   }
-  const bool uncoveredUniverse =
-      llvm::any_of(setCoverInstance->universe, [this](CanonicalDemandId id) {
-        return llvm::none_of(
-            setCoverInstance->candidates,
-            [id](const CanonicalSetCoverCandidate &candidate) {
-              return llvm::is_contained(candidate.directOrigins, id) ||
-                     llvm::is_contained(candidate.additionalCoverage, id);
-            });
-      });
+  llvm::BitVector uncoveredUniverse = setCoverInstance->universeIncidence;
+  const bool compatibleUniverseSizes =
+      uncoveredUniverse.size() == providerCoverage.size();
+  if (compatibleUniverseSizes) {
+    uncoveredUniverse.reset(providerCoverage);
+  }
   if (invalidBaseline || invalidUniverse || invalidCandidate ||
-      uncoveredUniverse) {
+      inconsistentUniverse || uncoveredUniverse.any()) {
     return fail("set-cover instance references an invalid ID or incidence");
   }
   if (!setCoverSolution) {
@@ -422,24 +445,18 @@ LogicalResult CanonicalSyncProgram::freeze() {
                  llvm::is_contained(setCoverInstance->baseline, id) ||
                  llvm::is_contained(setCoverSolution->mechanisms, id);
         });
-    SmallVector<CanonicalDemandId, 8> selectedCoverage;
+    llvm::BitVector selectedCoverage(demands.size());
     for (const CanonicalSetCoverCandidate &candidate :
          setCoverInstance->candidates) {
       if (!llvm::is_contained(setCoverSolution->mechanisms,
                               candidate.mechanisms.front())) {
         continue;
       }
-      selectedCoverage.append(candidate.directOrigins);
-      selectedCoverage.append(candidate.additionalCoverage);
+      selectedCoverage |= candidate.incidence;
     }
-    llvm::sort(selectedCoverage);
-    selectedCoverage.erase(
-        std::unique(selectedCoverage.begin(), selectedCoverage.end()),
-        selectedCoverage.end());
-    const bool incompleteCoverage = llvm::any_of(
-        setCoverInstance->universe, [&selectedCoverage](CanonicalDemandId id) {
-          return !llvm::is_contained(selectedCoverage, id);
-        });
+    llvm::BitVector missingCoverage = setCoverInstance->universeIncidence;
+    missingCoverage.reset(selectedCoverage);
+    const bool incompleteCoverage = missingCoverage.any();
     const std::uint64_t expectedWeight =
         static_cast<std::uint64_t>(llvm::count_if(
             setCoverSolution->mechanisms, [this](CanonicalMechanismId id) {
@@ -604,6 +621,8 @@ mlir::pto::stringifyCanonicalMechanismKind(CanonicalMechanismKind kind) {
     return "cross-core-event";
   case CanonicalMechanismKind::RecurringEvent:
     return "recurring-event";
+  case CanonicalMechanismKind::VisibilityFence:
+    return "visibility-fence";
   case CanonicalMechanismKind::FixedFence:
     return "fixed-fence";
   case CanonicalMechanismKind::TailBarrier:

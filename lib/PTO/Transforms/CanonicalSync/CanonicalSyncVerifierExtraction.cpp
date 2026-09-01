@@ -141,6 +141,10 @@ bool isVerifierSyncOperation(Operation *operation) {
       operation);
 }
 
+bool isVerifierPipeChannelOperation(Operation *operation) {
+  return isa<TAllocOp, TPushOp, TPopOp, TFreeOp>(operation);
+}
+
 LogicalResult
 validateVerifierNormalizedEffects(Operation *operation,
                                   const VPTOSchedulingSemantics &semantics) {
@@ -320,6 +324,32 @@ LogicalResult VerifierProgramBuilder::collectOperation(Operation *operation) {
   }
   if (isa<LoadScalarOp, StoreScalarOp>(operation)) {
     return addPhase(operation, PIPE::PIPE_S, 0, {}, {}, true);
+  }
+  if (isVerifierPipeChannelOperation(operation)) {
+    if (!semantics.classificationKnown) {
+      return operation->emitError(
+          "canonical sync verifier requires normalized TPipe channel "
+          "semantics");
+    }
+    if (semantics.schedulingClass == VPTOSchedulingClass::Schedulable) {
+      std::optional<PIPE> pipe = getVerifierNormalizedPipe(operation);
+      if (!pipe) {
+        return operation->emitError(
+            "canonical sync verifier cannot resolve the TPipe payload pipe");
+      }
+      if (failed(validateVerifierNormalizedEffects(operation, semantics))) {
+        return failure();
+      }
+      return addNormalizedPhase(operation, *pipe, semantics);
+    }
+    if (semantics.schedulingClass == VPTOSchedulingClass::Structural ||
+        semantics.schedulingClass == VPTOSchedulingClass::SchedulingBoundary) {
+      coveredOperations.insert(operation);
+      return success();
+    }
+    return operation->emitError(
+        "canonical sync verifier rejects unsupported TPipe channel "
+        "semantics");
   }
   if (auto pipeOperation = dyn_cast<OpPipeInterface>(operation)) {
     return addPhase(operation, pipeOperation.getPipe(), 0, {}, {}, true);
@@ -792,8 +822,11 @@ LogicalResult VerifierProgramBuilder::indexSsaDependencies() {
           }
           const bool structuralStorageRoot =
               areMemoryLikeTypes(value.getType()) &&
-              isa<AllocTileOp, AllocMultiTileOp>(definition);
-          if (structuralStorageRoot) {
+              isa<AllocTileOp, AllocMultiTileOp, DeclareTileOp,
+                  DeclareGlobalOp>(definition);
+          const bool structuralPipeRoot =
+              isa<InitializeL2LPipeOp, InitializeL2G2LPipeOp>(definition);
+          if (structuralStorageRoot || structuralPipeRoot) {
             continue;
           }
           const bool hasNestedRegions = definition->getNumRegions() != 0;

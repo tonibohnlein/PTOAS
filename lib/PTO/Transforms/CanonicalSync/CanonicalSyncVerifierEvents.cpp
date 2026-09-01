@@ -23,6 +23,7 @@ namespace {
 constexpr StringLiteral kGeneratedAttr = "pto.canonical_sync.generated";
 constexpr StringLiteral kMechanismAttr = "pto.canonical_sync.mechanism";
 constexpr StringLiteral kProtocolRoleAttr = "pto.canonical_sync.protocol_role";
+constexpr StringLiteral kReleaseOwnerAttr = "pto.canonical_sync.release_owner";
 
 struct ConcreteControlArm {
   Operation *choice = nullptr;
@@ -46,10 +47,13 @@ struct ConcreteEventGeneration {
 
 struct ConcreteRecurringProtocol {
   int64_t mechanism = -1;
+  int64_t releaseOwner = -1;
   Operation *releasePrimeSet = nullptr;
   Operation *releaseBodyWait = nullptr;
+  Operation *readyPrimeSet = nullptr;
   Operation *readyBodySet = nullptr;
   Operation *readyBodyWait = nullptr;
+  Operation *readyDrainWait = nullptr;
   Operation *releaseBodySet = nullptr;
   Operation *releaseDrainWait = nullptr;
 };
@@ -89,6 +93,25 @@ bool hasRepeatingAncestor(Operation *operation) {
     parent = parent->getParentOp();
   }
   return false;
+}
+
+bool hasOrderedUnconditionalFftsSetup(func::FuncOp function, Operation *source,
+                                      Operation *target) {
+  Block &entry = function.getBody().front();
+  bool found = false;
+  function.walk([&](SetFFTsOp setup) {
+    Operation *operation = setup.getOperation();
+    const bool unconditional = operation->getBlock() == &entry;
+    const bool precedesEndpoints =
+        programPointMustPrecede(
+            {operation, CanonicalProgramPointPosition::After},
+            {source, CanonicalProgramPointPosition::Before}) &&
+        programPointMustPrecede(
+            {operation, CanonicalProgramPointPosition::After},
+            {target, CanonicalProgramPointPosition::Before});
+    found |= unconditional && precedesEndpoints;
+  });
+  return found;
 }
 
 FailureOr<int64_t> getMechanismId(Operation *operation) {
@@ -143,10 +166,14 @@ LogicalResult collectProtocolOperation(
     slot = &protocol.releasePrimeSet;
   } else if (role == "release-body-wait") {
     slot = &protocol.releaseBodyWait;
+  } else if (role == "ready-prime-set") {
+    slot = &protocol.readyPrimeSet;
   } else if (role == "ready-body-set") {
     slot = &protocol.readyBodySet;
   } else if (role == "ready-body-wait") {
     slot = &protocol.readyBodyWait;
+  } else if (role == "ready-drain-wait") {
+    slot = &protocol.readyDrainWait;
   } else if (role == "release-body-set") {
     slot = &protocol.releaseBodySet;
   } else if (role == "release-drain-wait") {
@@ -160,6 +187,19 @@ LogicalResult collectProtocolOperation(
         "canonical sync event verifier found a duplicate protocol action");
     diagnostic.attachNote((*slot)->getLoc()) << "previous action is here";
     return failure();
+  }
+  if (role.starts_with("ready-")) {
+    auto releaseOwner =
+        operation->getAttrOfType<IntegerAttr>(kReleaseOwnerAttr);
+    const bool invalidReleaseOwner =
+        !releaseOwner || releaseOwner.getInt() < 0 ||
+        (protocol.releaseOwner >= 0 &&
+         protocol.releaseOwner != releaseOwner.getInt());
+    if (invalidReleaseOwner) {
+      return operation->emitError(
+          "canonical sync event verifier found an invalid release owner");
+    }
+    protocol.releaseOwner = releaseOwner.getInt();
   }
   *slot = operation;
   return success();
@@ -262,71 +302,117 @@ makeProtocolGeneration(func::FuncOp function, const CanonicalSyncTarget &target,
 LogicalResult resolveRecurringProtocol(
     func::FuncOp function, const CanonicalSyncTarget &target,
     const ConcreteRecurringProtocol &protocol,
+    const ConcreteRecurringProtocol &releaseProtocol,
+    bool emitReleaseGeneration,
     SmallVectorImpl<ConcreteEventGeneration> &generations) {
-  const bool incomplete = !protocol.releasePrimeSet ||
-                          !protocol.releaseBodyWait || !protocol.readyBodySet ||
-                          !protocol.readyBodyWait || !protocol.releaseBodySet ||
-                          !protocol.releaseDrainWait;
+  const bool boundaryReady = protocol.readyPrimeSet || protocol.readyDrainWait;
+  const bool incomplete =
+      !protocol.readyBodySet || !protocol.readyBodyWait ||
+      !releaseProtocol.releasePrimeSet || !releaseProtocol.releaseBodyWait ||
+      !releaseProtocol.releaseBodySet || !releaseProtocol.releaseDrainWait ||
+      (boundaryReady && (!protocol.readyPrimeSet || !protocol.readyDrainWait));
   if (incomplete) {
-    Operation *witness = protocol.releasePrimeSet ? protocol.releasePrimeSet
-                                                  : function.getOperation();
+    Operation *witness =
+        protocol.readyBodySet
+            ? protocol.readyBodySet
+            : (releaseProtocol.releasePrimeSet ? releaseProtocol.releasePrimeSet
+                                               : function.getOperation());
     return witness->emitError(
         "canonical sync event verifier found an incomplete recurring "
         "protocol");
   }
   const bool mismatchedKeys =
-      !eventActionsMatch(protocol.releasePrimeSet, protocol.releaseBodyWait) ||
-      !eventActionsMatch(protocol.releaseBodySet, protocol.releaseDrainWait) ||
-      !eventActionsMatch(protocol.readyBodySet, protocol.readyBodyWait) ||
-      !setActionsMatch(protocol.releasePrimeSet, protocol.releaseBodySet);
+      !eventActionsMatch(releaseProtocol.releasePrimeSet,
+                         releaseProtocol.releaseBodyWait) ||
+      !eventActionsMatch(releaseProtocol.releaseBodySet,
+                         releaseProtocol.releaseDrainWait) ||
+      !setActionsMatch(releaseProtocol.releasePrimeSet,
+                       releaseProtocol.releaseBodySet) ||
+      (boundaryReady
+           ? (!eventActionsMatch(protocol.readyPrimeSet,
+                                 protocol.readyBodyWait) ||
+              !eventActionsMatch(protocol.readyBodySet,
+                                 protocol.readyDrainWait) ||
+              !setActionsMatch(protocol.readyPrimeSet, protocol.readyBodySet))
+           : !eventActionsMatch(protocol.readyBodySet, protocol.readyBodyWait));
   if (mismatchedKeys) {
-    return protocol.releasePrimeSet->emitError(
+    return releaseProtocol.releasePrimeSet->emitError(
         "canonical sync event verifier found mismatched recurring protocol "
         "keys");
   }
-  auto loop =
-      dyn_cast_or_null<scf::ForOp>(protocol.releaseBodyWait->getParentOp());
-  Block *body = loop ? &loop.getRegion().front() : nullptr;
-  const bool bodyPlacement = body &&
-                             protocol.readyBodySet->getBlock() == body &&
-                             protocol.readyBodyWait->getBlock() == body &&
-                             protocol.releaseBodySet->getBlock() == body;
+  auto loop = releaseProtocol.releaseBodyWait->getParentOfType<scf::ForOp>();
+  Block *body = loop ? loop.getBody() : nullptr;
+  Block *readyBody = protocol.readyBodySet->getBlock();
+  const bool bodyPlacement =
+      loop && body && releaseProtocol.releaseBodyWait->getBlock() == body &&
+      releaseProtocol.releaseBodySet->getBlock() == body && readyBody &&
+      protocol.readyBodyWait->getBlock() == readyBody &&
+      protocol.readyBodySet->getParentOfType<scf::ForOp>() == loop &&
+      protocol.readyBodyWait->getParentOfType<scf::ForOp>() == loop &&
+      releaseProtocol.releaseBodySet->getParentOfType<scf::ForOp>() == loop;
+  const bool readyControlBalanced =
+      bodyPlacement && getControlPath(protocol.readyBodySet) ==
+                           getControlPath(protocol.readyBodyWait);
+  const bool releaseBodyOrder = programPointMustPrecede(
+      {releaseProtocol.releaseBodyWait, CanonicalProgramPointPosition::After},
+      {releaseProtocol.releaseBodySet, CanonicalProgramPointPosition::Before});
   const bool bodyOrder =
-      bodyPlacement &&
-      protocol.releaseBodyWait->isBeforeInBlock(protocol.readyBodySet) &&
-      protocol.readyBodySet->isBeforeInBlock(protocol.readyBodyWait) &&
-      protocol.readyBodyWait->isBeforeInBlock(protocol.releaseBodySet);
-  const bool boundaryPlacement =
-      loop && protocol.releasePrimeSet->getBlock() == loop->getBlock() &&
-      protocol.releaseDrainWait->getBlock() == loop->getBlock() &&
-      protocol.releasePrimeSet->isBeforeInBlock(loop) &&
-      loop->isBeforeInBlock(protocol.releaseDrainWait);
-  if (!bodyOrder || !boundaryPlacement) {
-    return protocol.releasePrimeSet->emitError(
+      readyControlBalanced && releaseBodyOrder &&
+      (boundaryReady
+           ? programPointMustPrecede(
+                 {protocol.readyBodyWait, CanonicalProgramPointPosition::After},
+                 {protocol.readyBodySet, CanonicalProgramPointPosition::Before})
+           : (programPointMustPrecede(
+                  {releaseProtocol.releaseBodyWait,
+                   CanonicalProgramPointPosition::After},
+                  {protocol.readyBodySet,
+                   CanonicalProgramPointPosition::Before}) &&
+              protocol.readyBodySet->isBeforeInBlock(protocol.readyBodyWait) &&
+              programPointMustPrecede(
+                  {protocol.readyBodyWait,
+                   CanonicalProgramPointPosition::After},
+                  {releaseProtocol.releaseBodySet,
+                   CanonicalProgramPointPosition::Before})));
+  const bool releaseBoundaryPlacement =
+      loop && releaseProtocol.releasePrimeSet->getBlock() == loop->getBlock() &&
+      releaseProtocol.releaseDrainWait->getBlock() == loop->getBlock() &&
+      releaseProtocol.releasePrimeSet->isBeforeInBlock(loop) &&
+      loop->isBeforeInBlock(releaseProtocol.releaseDrainWait);
+  const bool readyBoundaryPlacement =
+      !boundaryReady ||
+      (protocol.readyPrimeSet->getBlock() == loop->getBlock() &&
+       protocol.readyDrainWait->getBlock() == loop->getBlock() &&
+       protocol.readyPrimeSet->isBeforeInBlock(loop) &&
+       loop->isBeforeInBlock(protocol.readyDrainWait));
+  if (!bodyOrder || !releaseBoundaryPlacement || !readyBoundaryPlacement) {
+    return releaseProtocol.releasePrimeSet->emitError(
         "canonical sync event verifier found an invalid recurring protocol "
         "placement");
   }
-  FailureOr<ConcreteEventGeneration> ready =
-      makeProtocolGeneration(function, target, protocol.mechanism,
-                             protocol.readyBodySet, protocol.readyBodyWait);
-  FailureOr<ConcreteEventGeneration> release = makeProtocolGeneration(
-      function, target, protocol.mechanism, protocol.releasePrimeSet,
-      protocol.releaseDrainWait);
-  const bool unresolvedGeneration = failed(ready) || failed(release);
+  FailureOr<ConcreteEventGeneration> ready = makeProtocolGeneration(
+      function, target, protocol.mechanism,
+      boundaryReady ? protocol.readyPrimeSet : protocol.readyBodySet,
+      boundaryReady ? protocol.readyDrainWait : protocol.readyBodyWait);
+  FailureOr<ConcreteEventGeneration> releaseGeneration = makeProtocolGeneration(
+      function, target, releaseProtocol.mechanism,
+      releaseProtocol.releasePrimeSet, releaseProtocol.releaseDrainWait);
+  const bool unresolvedGeneration = failed(ready) || failed(releaseGeneration);
   if (unresolvedGeneration) {
     return failure();
   }
-  const bool unbalanced = ready->source != release->target ||
-                          ready->target != release->source ||
-                          getControlPath(protocol.releasePrimeSet) !=
-                              getControlPath(protocol.releaseDrainWait);
+  const bool unbalanced = ready->source != releaseGeneration->target ||
+                          ready->target != releaseGeneration->source ||
+                          getControlPath(releaseProtocol.releasePrimeSet) !=
+                              getControlPath(releaseProtocol.releaseDrainWait);
   if (unbalanced) {
-    return protocol.releasePrimeSet->emitError(
+    return releaseProtocol.releasePrimeSet->emitError(
         "canonical sync event verifier found an unbalanced recurring "
         "protocol");
   }
   generations.push_back(std::move(*ready));
-  generations.push_back(std::move(*release));
+  if (emitReleaseGeneration) {
+    generations.push_back(std::move(*releaseGeneration));
+  }
   return success();
 }
 
@@ -371,11 +457,10 @@ LogicalResult resolveGeneration(func::FuncOp function,
     if (unresolvedResources) {
       return failure();
     }
-    bool hasFftsSetup = false;
-    function.walk([&](SetFFTsOp) { hasFftsSetup = true; });
     const unsigned eventId = static_cast<unsigned>(setIdAttr.getInt());
     const bool unsupported =
-        !hasFftsSetup ||
+        !hasOrderedUnconditionalFftsSetup(function, generation.set,
+                                          generation.wait) ||
         !target.supportsCrossCoreEvent(*source, *destination) ||
         !llvm::is_contained(target.getCompilerCrossCoreEventIds(), eventId);
     if (unsupported) {
@@ -481,9 +566,12 @@ verifyInterference(ArrayRef<ConcreteEventGeneration> generations) {
           controlsAreMutuallyExclusive(first.controlPath, second.controlPath)) {
         continue;
       }
-      InFlightDiagnostic diagnostic = second.set->emitError(
-          "canonical sync event verifier found coexecuting generations sharing "
-          "one physical event key");
+      InFlightDiagnostic diagnostic =
+          second.set->emitError("canonical sync event verifier found "
+                                "coexecuting generations sharing "
+                                "one physical event key; generation m")
+          << second.mechanism << " conflicts with generation m"
+          << first.mechanism;
       diagnostic.attachNote(first.set->getLoc())
           << "conflicting generation m" << first.mechanism << " is here";
       return failure();
@@ -510,8 +598,15 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyConcreteEventGenerations(
     generations.push_back(std::move(entry.second));
   }
   for (const auto &entry : protocols) {
-    if (failed(resolveRecurringProtocol(function, target, entry.second,
-                                        generations))) {
+    const ConcreteRecurringProtocol &protocol = entry.second;
+    auto release = protocols.find(protocol.releaseOwner);
+    if (protocol.releaseOwner < 0 || release == protocols.end()) {
+      return function.emitError(
+          "canonical sync event verifier cannot resolve a release group");
+    }
+    if (failed(resolveRecurringProtocol(
+            function, target, protocol, release->second,
+            protocol.mechanism == protocol.releaseOwner, generations))) {
       return failure();
     }
   }

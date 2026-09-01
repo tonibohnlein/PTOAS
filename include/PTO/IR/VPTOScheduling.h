@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- VPTOScheduling.h - VPTO scheduling semantics -----------*- C++ -*-===//
 //
@@ -90,6 +92,11 @@ struct VPTOMemoryAccess {
 struct VPTOSchedulingSemantics {
   VPTOSchedulingClass schedulingClass = VPTOSchedulingClass::SchedulingBoundary;
   bool classificationKnown = false;
+  /// The operation's physical effect is complete before scalar issue can
+  /// continue. This is stronger than same-pipeline FIFO issue order and can
+  /// satisfy an SSA/completion dependency without a hardware event. It does
+  /// not imply cache visibility for another pipeline.
+  bool completionIsSynchronous = false;
   SmallVector<VPTOSchedulingEffect> effects;
   VPTOMemoryBehavior memoryBehavior = VPTOMemoryBehavior::Unknown;
   SmallVector<VPTOMemoryAccess> memoryAccesses;

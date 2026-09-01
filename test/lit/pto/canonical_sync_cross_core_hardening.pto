@@ -1,0 +1,212 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   %t/scalar_completion.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=SCALAR
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   %t/late_ffts.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=FFTS
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   %t/cross_core_visibility.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=VISIBILITY
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   %t/carried_visibility.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=CARRIED-VISIBILITY
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   %t/carried_visibility_reuse.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=CARRIED-REUSE
+
+// SCALAR: error: canonical sync target forbids the required cross-core event
+// FFTS: error: canonical sync cross-core events require an unconditional pto.set_ffts setup before both endpoints
+// VISIBILITY: error: canonical sync has no proven cross-core GM visibility protocol
+// CARRIED-VISIBILITY: error: canonical sync has no proven loop-carried GM visibility protocol
+// CARRIED-REUSE: error: canonical sync has no proven loop-carried GM visibility protocol
+
+//--- scalar_completion.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @cross_core_scalar_completion(
+      %ffts: !pto.ptr<i64>, %payload: !pto.ptr<ui32, gm>,
+      %sink: !pto.ptr<ui32, gm>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %addr = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %addr : !pto.tile_buf<loc=vec, dtype=ui32, rows=1,
+      cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+      fractal=512, pad=0>
+    %view = pto.make_tensor_view %payload, shape = [%c1, %c32],
+      strides = [%c32, %c1] : !pto.tensor_view<1x32xui32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0],
+      sizes = [%c1, %c32] : !pto.tensor_view<1x32xui32> ->
+      !pto.partition_tensor_view<1x32xui32>
+    pto.set_ffts %ffts : !pto.ptr<i64>
+    pto.section.cube {
+      %loaded = pto.load_scalar %payload[%c0] : !pto.ptr<ui32, gm> -> ui32
+      pto.store_scalar %loaded, %sink[%c0] : !pto.ptr<ui32, gm>, ui32
+    }
+    pto.section.vector {
+      pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=1,
+        cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+        fractal=512, pad=0>)
+        outs(%part : !pto.partition_tensor_view<1x32xui32>)
+    }
+    return
+  }
+}
+
+//--- carried_visibility_reuse.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @carried_visibility_cannot_reuse_completion(
+      %payload: !pto.ptr<ui32, gm>, %scratch: !pto.ptr<ui32, gm>,
+      %trip_count: index, %condition: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %value_i32 = arith.constant 7 : i32
+    %value = builtin.unrealized_conversion_cast %value_i32 : i32 to ui32
+    %payload_addr = arith.constant 0 : i64
+    %scratch_addr = arith.constant 1024 : i64
+    %payload_tile = pto.alloc_tile addr = %payload_addr :
+      !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32, v_row=1, v_col=32,
+        blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scratch_tile = pto.alloc_tile addr = %scratch_addr :
+      !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32, v_row=1, v_col=32,
+        blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %payload_view = pto.make_tensor_view %payload, shape = [%c1, %c32],
+      strides = [%c32, %c1] : !pto.tensor_view<1x32xui32>
+    %payload_part = pto.partition_view %payload_view,
+      offsets = [%c0, %c0], sizes = [%c1, %c32] :
+      !pto.tensor_view<1x32xui32> -> !pto.partition_tensor_view<1x32xui32>
+    %scratch_view = pto.make_tensor_view %scratch, shape = [%c1, %c32],
+      strides = [%c32, %c1] : !pto.tensor_view<1x32xui32>
+    %scratch_part = pto.partition_view %scratch_view,
+      offsets = [%c0, %c0], sizes = [%c1, %c32] :
+      !pto.tensor_view<1x32xui32> -> !pto.partition_tensor_view<1x32xui32>
+    scf.for %iteration = %c0 to %trip_count step %c1 {
+      // This pure WAR is an eligible same-iteration Completion candidate on
+      // AIV:MTE2->S. It must never be reused for the carried Visibility below.
+      pto.tload ins(%scratch_part : !pto.partition_tensor_view<1x32xui32>)
+        outs(%scratch_tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=1,
+          cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+          fractal=512, pad=0>)
+      pto.store_scalar %value, %scratch[%c0] : !pto.ptr<ui32, gm>, ui32
+      scf.if %condition {
+        pto.store_scalar %value, %payload[%c0] : !pto.ptr<ui32, gm>, ui32
+      } else {
+        pto.tload ins(%payload_part : !pto.partition_tensor_view<1x32xui32>)
+          outs(%payload_tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=1,
+            cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+            fractal=512, pad=0>)
+      }
+    }
+    return
+  }
+}
+
+//--- carried_visibility.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @cross_core_carried_visibility(
+      %payload: !pto.ptr<ui32, gm>, %trip_count: index, %condition: i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %value_i32 = arith.constant 7 : i32
+    %value = builtin.unrealized_conversion_cast %value_i32 : i32 to ui32
+    %addr = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %addr : !pto.tile_buf<loc=vec, dtype=ui32,
+      rows=1, cols=32, v_row=1, v_col=32, blayout=row_major,
+      slayout=none_box, fractal=512, pad=0>
+    %view = pto.make_tensor_view %payload, shape = [%c1, %c32],
+      strides = [%c32, %c1] : !pto.tensor_view<1x32xui32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0],
+      sizes = [%c1, %c32] : !pto.tensor_view<1x32xui32> ->
+      !pto.partition_tensor_view<1x32xui32>
+    scf.for %iteration = %c0 to %trip_count step %c1 {
+      scf.if %condition {
+        pto.section.cube {
+          pto.store_scalar %value, %payload[%c0] : !pto.ptr<ui32, gm>, ui32
+        }
+      } else {
+        pto.section.vector {
+          pto.tload ins(%part : !pto.partition_tensor_view<1x32xui32>)
+            outs(%tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32,
+              v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+              fractal=512, pad=0>)
+        }
+      }
+    }
+    return
+  }
+}
+
+//--- late_ffts.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @late_ffts_setup(
+      %ffts: !pto.ptr<i64>, %view: !pto.partition_tensor_view<32x32xf32>) {
+    %acc_addr = arith.constant 0 : i64
+    %vec_addr = arith.constant 0 : i64
+    %acc = pto.alloc_tile addr = %acc_addr :
+      !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32,
+                    v_col=32, blayout=col_major, slayout=row_major,
+                    fractal=1024, pad=0>
+    %vec = pto.alloc_tile addr = %vec_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32,
+                    v_col=32, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    pto.section.cube {
+      pto.tstore ins(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=32,
+        cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major,
+        fractal=1024, pad=0>)
+        outs(%view : !pto.partition_tensor_view<32x32xf32>)
+    }
+    pto.set_ffts %ffts : !pto.ptr<i64>
+    pto.section.vector {
+      pto.tload ins(%view : !pto.partition_tensor_view<32x32xf32>)
+        outs(%vec : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32,
+          v_row=32, v_col=32, blayout=row_major, slayout=none_box,
+          fractal=512, pad=0>)
+    }
+    return
+  }
+}
+
+//--- cross_core_visibility.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @cross_core_scalar_visibility(
+      %payload: !pto.ptr<ui32, gm>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %value_i32 = arith.constant 7 : i32
+    %value = builtin.unrealized_conversion_cast %value_i32 : i32 to ui32
+    %addr = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %addr : !pto.tile_buf<loc=vec, dtype=ui32, rows=1,
+      cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+      fractal=512, pad=0>
+    %view = pto.make_tensor_view %payload, shape = [%c1, %c32],
+      strides = [%c32, %c1] : !pto.tensor_view<1x32xui32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0],
+      sizes = [%c1, %c32] : !pto.tensor_view<1x32xui32> ->
+      !pto.partition_tensor_view<1x32xui32>
+    pto.section.cube {
+      pto.store_scalar %value, %payload[%c0] : !pto.ptr<ui32, gm>, ui32
+    }
+    pto.section.vector {
+      pto.tload ins(%part : !pto.partition_tensor_view<1x32xui32>)
+        outs(%tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32,
+          v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+          fractal=512, pad=0>)
+    }
+    return
+  }
+}

@@ -50,6 +50,93 @@ module attributes {pto.target_arch = "a2a3"} {
     }
     return
   }
+
+  func.func @canonical_sync_loop_event_lifted_choice(
+      %src: !pto.partition_tensor_view<16x128xf32>, %condition: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input_addr = arith.constant 0 : i64
+    %output_addr = arith.constant 8192 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %input = pto.alloc_tile addr = %input_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output = pto.alloc_tile addr = %output_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %iteration = %zero to %two step %one_index {
+      pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                outs(%input : !pto.tile_buf<loc=vec, dtype=f32,
+                       rows=16, cols=128, v_row=16, v_col=128,
+                       blayout=row_major, slayout=none_box,
+                       fractal=512, pad=0>)
+      scf.if %condition {
+        pto.tmuls ins(%input, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                        rows=16, cols=128, v_row=16, v_col=128,
+                        blayout=row_major, slayout=none_box, fractal=512,
+                        pad=0>, f32)
+                  outs(%output : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box, fractal=512,
+                         pad=0>)
+      } else {
+        pto.tmuls ins(%input, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                        rows=16, cols=128, v_row=16, v_col=128,
+                        blayout=row_major, slayout=none_box, fractal=512,
+                        pad=0>, f32)
+                  outs(%output : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box, fractal=512,
+                         pad=0>)
+      }
+    }
+    return
+  }
+
+  // The producer and consumer cannot execute in the same iteration, so their
+  // recurrence has no legal branch-local ready cut.  CanonicalSync uses a
+  // full ready/release handshake across the loop latch and header instead.
+  func.func @canonical_sync_loop_event_boundary_choice(
+      %src: !pto.partition_tensor_view<16x128xf32>, %condition: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input_addr = arith.constant 0 : i64
+    %output_addr = arith.constant 8192 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %input = pto.alloc_tile addr = %input_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output = pto.alloc_tile addr = %output_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %iteration = %zero to %two step %one_index {
+      scf.if %condition {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                  outs(%input : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box,
+                         fractal=512, pad=0>)
+      } else {
+        pto.tmuls ins(%input, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                        rows=16, cols=128, v_row=16, v_col=128,
+                        blayout=row_major, slayout=none_box, fractal=512,
+                        pad=0>, f32)
+                  outs(%output : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box, fractal=512,
+                         pad=0>)
+      }
+    }
+    return
+  }
 }
 
 // CHECK-LABEL: CANONICAL-SYNC function=canonical_sync_loop_event_protocol
@@ -67,4 +154,29 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID{{[0-5]}}>]
 // CHECK: pto.tmuls
 // CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]
+// CHECK-LABEL: CANONICAL-SYNC function=canonical_sync_loop_event_lifted_choice
+// CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK: VERIFY ok
+// CHECK-LABEL: func.func @canonical_sync_loop_event_lifted_choice
+// CHECK: scf.for
+// CHECK: pto.tload
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID{{[0-5]}}>]
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID{{[0-5]}}>]
+// CHECK-NEXT: scf.if
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]
+// CHECK-LABEL: CANONICAL-SYNC function=canonical_sync_loop_event_boundary_choice
+// CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK-SAME: protocol=boundary-handshake
+// CHECK: VERIFY ok
+// CHECK-LABEL: func.func @canonical_sync_loop_event_boundary_choice
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID{{[0-5]}}>]
+// CHECK: scf.for
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID{{[0-5]}}>]
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]
+// CHECK: scf.if
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID{{[0-5]}}>]
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID{{[0-5]}}>]
 // CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]

@@ -362,8 +362,11 @@ LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
     }
     const bool structuralStorageRoot =
         areMemoryLikeTypes(value.getType()) &&
-        isa<AllocTileOp, AllocMultiTileOp>(definition);
-    if (structuralStorageRoot) {
+        isa<AllocTileOp, AllocMultiTileOp, DeclareTileOp, DeclareGlobalOp>(
+            definition);
+    const bool structuralPipeRoot =
+        isa<InitializeL2LPipeOp, InitializeL2G2LPipeOp>(definition);
+    if (structuralStorageRoot || structuralPipeRoot) {
       continue;
     }
     const bool hasNestedRegions = definition->getNumRegions() != 0;
@@ -461,7 +464,14 @@ bool requiresVisibility(const CanonicalSyncProgram &program,
   const PIPE targetPipe = program.getPhase(target.phase).resource.pipe;
   const bool scalarCrossing =
       (sourcePipe == PIPE::PIPE_S) != (targetPipe == PIPE::PIPE_S);
-  return scalarCrossing;
+  // A pure WAR edge needs execution completion but transfers no value through
+  // scalar DCache: the scalar read must finish before the non-scalar write (or
+  // vice versa), which a directed event supplies.  RAW and WAW crossings can
+  // expose or later write back cached data and retain the stronger fence/CMO
+  // requirement.
+  const bool pureWar = accessReads(source.mode) && !accessWrites(source.mode) &&
+                       accessWrites(target.mode) && !accessReads(target.mode);
+  return scalarCrossing && !pureWar;
 }
 
 CanonicalVisibilityRequirement

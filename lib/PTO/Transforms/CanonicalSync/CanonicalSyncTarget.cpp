@@ -43,6 +43,13 @@ CanonicalSyncTarget mlir::pto::makeNpu2201CanonicalSyncTarget() {
     target.resources.push_back(resource(CanonicalCore::AIC, pipe));
     target.barrierResources.push_back(resource(CanonicalCore::AIC, pipe));
   }
+  // NPU 2201 has a scalar unit on each physical core.  The documented AIC
+  // event matrix marks PIPE_S event combinations as unavailable, so model the
+  // resource and its blocking completion semantics without inventing AIC
+  // SetFlag/WaitFlag directions.
+  target.resources.push_back(resource(CanonicalCore::AIC, PIPE::PIPE_S));
+  target.intrinsicCompletion.push_back(
+      resource(CanonicalCore::AIC, PIPE::PIPE_S));
   for (PIPE pipe :
        {PIPE::PIPE_S, PIPE::PIPE_V, PIPE::PIPE_MTE2, PIPE::PIPE_MTE3}) {
     target.resources.push_back(resource(CanonicalCore::AIV, pipe));

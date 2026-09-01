@@ -23,6 +23,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -90,6 +91,7 @@ enum class CanonicalMechanismKind : std::uint8_t {
   Event,
   CrossCoreEvent,
   RecurringEvent,
+  VisibilityFence,
   FixedFence,
   TailBarrier,
 };
@@ -233,10 +235,15 @@ struct CanonicalMechanism {
   CanonicalProgramPoint targetPoint;
   llvm::SmallVector<CanonicalDemandId, 2> origins;
   llvm::SmallVector<Operation *, 2> cacheMaintenance;
+  std::optional<CanonicalCacheMaintenance> generatedCacheMaintenance;
   std::optional<CanonicalFenceEffectId> fenceEffect;
   CanonicalRegionId actionRegion = kInvalidCanonicalSyncId;
   llvm::SmallVector<CanonicalControlAtom, 2> guard;
   std::optional<CanonicalRegionId> recurrenceLoop;
+  /// The forward ready channel is also carried at the loop boundary. This is
+  /// used when source and target are in mutually exclusive control arms and
+  /// no legal same-iteration ready cut exists.
+  bool boundaryRecurring = false;
   std::optional<unsigned> eventId;
   std::optional<unsigned> releaseEventId;
 };
@@ -283,12 +290,14 @@ struct CanonicalSetCoverCandidate {
   llvm::SmallVector<CanonicalMechanismId, 2> mechanisms;
   llvm::SmallVector<CanonicalDemandId, 4> directOrigins;
   llvm::SmallVector<CanonicalDemandId, 4> additionalCoverage;
+  llvm::BitVector incidence;
   std::uint64_t weight = 0;
 };
 
 struct CanonicalSetCoverInstance {
   llvm::SmallVector<CanonicalMechanismId, 4> baseline;
   llvm::SmallVector<CanonicalDemandId, 8> universe;
+  llvm::BitVector universeIncidence;
   llvm::SmallVector<CanonicalSetCoverCandidate, 8> candidates;
 };
 

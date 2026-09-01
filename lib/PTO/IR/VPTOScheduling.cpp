@@ -150,9 +150,76 @@ static bool hasKnownNoOrdinaryMemoryAccess(Operation *op) {
 /// the communication channel; the later push/pop operations perform the
 /// physical transfers.
 static bool isKnownAdministrativeOperation(Operation *op) {
-  return isa<AllocTileOp, AllocMultiTileOp, SetValidShapeOp, GetValidShapeOp,
-             AicInitializePipeOp, AivInitializePipeOp, InitializeL2LPipeOp,
-             InitializeL2G2LPipeOp, SetFFTsOp>(op);
+  return isa<AllocTileOp, AllocMultiTileOp, DeclareTileOp, DeclareGlobalOp,
+             SetValidShapeOp, GetValidShapeOp, AicInitializePipeOp,
+             AivInitializePipeOp, InitializeL2LPipeOp, InitializeL2G2LPipeOp,
+             SetFFTsOp>(op);
+}
+
+static Value getPipeGlobalBuffer(Value pipeHandle) {
+  Operation *definition = pipeHandle ? pipeHandle.getDefiningOp() : nullptr;
+  if (auto pipe = dyn_cast_or_null<InitializeL2G2LPipeOp>(definition)) {
+    return pipe.getGmAddr();
+  }
+  return {};
+}
+
+static void addPipeMemoryAccess(VPTOSchedulingSemantics &semantics,
+                                Value address, bool reads, bool writes,
+                                bool unknown = false) {
+  VPTOMemoryAccess access;
+  access.address = address;
+  access.addressSpace = address ? getAddressSpace(address) : Attribute();
+  access.reads = reads;
+  access.writes = writes;
+  access.unknown = unknown || !address;
+  semantics.memoryAccesses.push_back(access);
+}
+
+/// Normalize PTO's lowered TPipe operations according to the channel contract
+/// implemented by TPUSH/TPOP/TALLOC/TFREE on A2/A3. Tile push/pop contain a
+/// physical GM transfer and therefore remain schedulable phases. Descriptor
+/// operations and GlobalTensor push/pop only bind a FIFO entry or execute the
+/// TPipe-owned ready/release protocol; keep them as scheduling boundaries so
+/// clients neither reorder them nor synthesize a second synchronization
+/// protocol around them.
+static std::optional<VPTOSchedulingSemantics>
+getPipeChannelSemantics(Operation *op) {
+  VPTOSchedulingSemantics semantics;
+  semantics.classificationKnown = true;
+  semantics.memoryBehavior = VPTOMemoryBehavior::None;
+
+  if (isa<TAllocOp, TFreeOp>(op)) {
+    semantics.schedulingClass = VPTOSchedulingClass::SchedulingBoundary;
+    return semantics;
+  }
+
+  Value entry;
+  Value pipeHandle;
+  bool push = false;
+  if (auto operation = dyn_cast<TPushOp>(op)) {
+    entry = operation.getTile();
+    pipeHandle = operation.getPipeHandle();
+    push = true;
+  } else if (auto operation = dyn_cast<TPopOp>(op)) {
+    entry = operation.getTile();
+    pipeHandle = operation.getPipeHandle();
+  } else {
+    return std::nullopt;
+  }
+
+  if (!isa<TileBufType>(entry.getType())) {
+    semantics.schedulingClass = VPTOSchedulingClass::SchedulingBoundary;
+    return semantics;
+  }
+
+  semantics.schedulingClass = VPTOSchedulingClass::Schedulable;
+  semantics.memoryBehavior = VPTOMemoryBehavior::Explicit;
+  addPipeMemoryAccess(semantics, entry, /*reads=*/push, /*writes=*/!push);
+  addPipeMemoryAccess(semantics, getPipeGlobalBuffer(pipeHandle),
+                      /*reads=*/!push, /*writes=*/push,
+                      /*unknown=*/!getPipeGlobalBuffer(pipeHandle));
+  return semantics;
 }
 
 static void collectMemoryAccesses(Operation *op,
@@ -233,6 +300,12 @@ VPTOSchedulingSemantics
 mlir::pto::getDefaultVPTOSchedulingSemantics(Operation *op) {
   VPTOSchedulingSemantics semantics;
   SmallVectorImpl<VPTOSchedulingEffect> &effects = semantics.effects;
+  // These operations lower to an ordinary scalar load/store expression. The
+  // scalar access itself is complete before the scalar control stream can use
+  // its result or issue a dependent command. Tile GetValue/SetValue operations
+  // are deliberately excluded: the hardware documentation requires explicit
+  // PIPE_S events when another asynchronous pipeline consumes their effects.
+  semantics.completionIsSynchronous = isa<LoadScalarOp, StoreScalarOp>(op);
   if (isa<MemBarOp>(op)) {
     effects.push_back(
         {VPTOSchedulingEffectKind::Barrier, "memory-order", Value()});
@@ -306,6 +379,15 @@ VPTOSchedulingSemantics mlir::pto::getVPTOSchedulingSemantics(Operation *op) {
   if (op->hasTrait<OpTrait::IsTerminator>() || op->getNumRegions() != 0) {
     semantics.classificationKnown = true;
     return semantics;
+  }
+
+  if (std::optional<VPTOSchedulingSemantics> pipe =
+          getPipeChannelSemantics(op)) {
+    return *pipe;
+  }
+
+  if (isa<LoadScalarOp, StoreScalarOp>(op)) {
+    return getDefaultVPTOSchedulingSemantics(op);
   }
 
   if (auto scheduling = dyn_cast<VPTOSchedulingOpInterface>(op))

@@ -47,6 +47,7 @@ The target table is explicit rather than inferred from pipe membership.
 
 | Core | Supported event directions |
 | --- | --- |
+| AIC | Scalar `S` completion is intrinsic; it has no AIC event direction |
 | AIC | `M -> {MTE1,MTE2,FIX}` |
 | AIC | `MTE1 -> {M,MTE2,MTE3,FIX}` |
 | AIC | `MTE2 -> {M,MTE1,MTE3,FIX}` |
@@ -56,7 +57,9 @@ The target table is explicit rather than inferred from pipe membership.
 
 AIC pipeline barriers are supported for `M`, `MTE1`, `MTE2`, `MTE3`, and
 `FIX`. AIV pipeline barriers are supported for `V`, `MTE2`, and `MTE3`.
-Sequential `S` work has the target's documented intrinsic completion ordering.
+Each physical core has a scalar unit. Sequential `S` work has the target's
+documented intrinsic completion ordering; this does not create undocumented
+AIC `S` event directions.
 
 References:
 
@@ -147,7 +150,10 @@ fence. A scalar read acquiring a non-scalar publication requires a GM fence
 followed by target cache invalidation. Directions that do not read stale scalar
 cache state record no cache-maintenance requirement. An event cannot satisfy
 visibility by itself; missing scope, cache maintenance, or ordering fails
-closed.
+closed. Generated cache-maintenance/fence sequences are restricted to one
+physical core. Cross-core visibility fails closed until the pass models
+source-core publication, an ordered cross-core transfer, and target-core
+acquisition as one protocol.
 
 An addressed single-cache-line CMO covers only an access proved to remain in
 the line containing that exact address. The current graph does not encode GM
@@ -168,7 +174,10 @@ reuse recurrence can use a lifecycle-complete single-lane protocol when both
 endpoints are direct operations in the same `scf.for` body and both event
 directions are legal. The protocol primes the reverse release event before the
 loop, consumes and restores it around every ready transfer, and drains it after
-the loop. More general nested or guarded recurrence shapes continue to fail
+the loop. When recurrence endpoints occupy mutually exclusive arms of the same
+loop, a conservative boundary protocol primes both ready and release lanes,
+waits for both at the loop header, restores them at the latch, and drains them
+after the loop. Other nested or guarded recurrence shapes continue to fail
 closed. A same-pipeline barrier may remain inside a loop.
 
 Every issued phase also has an exit-completion demand. Function-core work is
@@ -202,6 +211,8 @@ phases of a macro. A barrier before a macro does not complete phases inside the
 macro. Ordinary event lifecycles that repeat inside a loop use the supported
 ready/release protocol or are rejected. Cross-core counters remain once-only;
 guarded, loop-repeated, and positive-distance cross-core demands fail closed.
+Their existing `pto.set_ffts` setup must be unconditional in the function entry
+block and execute before both generated counter endpoints.
 
 An existing GM/all fence is fixed baseline supply, represented once by its
 physical operation rather than once per demand. Its completion role publishes

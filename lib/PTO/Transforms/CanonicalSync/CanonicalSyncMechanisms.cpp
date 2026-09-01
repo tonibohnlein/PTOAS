@@ -59,6 +59,25 @@ bool isRepeatedBlock(Block *block) {
   return false;
 }
 
+bool hasOrderedUnconditionalFftsSetup(func::FuncOp function, Operation *source,
+                                      Operation *target) {
+  Block &entry = function.getBody().front();
+  bool found = false;
+  function.walk([&](SetFFTsOp setup) {
+    Operation *operation = setup.getOperation();
+    const bool unconditional = operation->getBlock() == &entry;
+    const bool precedesEndpoints =
+        programPointMustPrecede(
+            {operation, CanonicalProgramPointPosition::After},
+            {source, CanonicalProgramPointPosition::Before}) &&
+        programPointMustPrecede(
+            {operation, CanonicalProgramPointPosition::After},
+            {target, CanonicalProgramPointPosition::Before});
+    found |= unconditional && precedesEndpoints;
+  });
+  return found;
+}
+
 std::optional<CanonicalRegionId>
 findLoopRegion(const CanonicalSyncProgram &program, scf::ForOp loop) {
   auto found =
@@ -340,7 +359,11 @@ bool sameMechanism(const CanonicalMechanism &left,
   case CanonicalMechanismKind::RecurringEvent:
     return left.sourcePoint == right.sourcePoint &&
            left.targetPoint == right.targetPoint &&
-           left.recurrenceLoop == right.recurrenceLoop;
+           left.recurrenceLoop == right.recurrenceLoop &&
+           left.boundaryRecurring == right.boundaryRecurring;
+  case CanonicalMechanismKind::VisibilityFence:
+    return left.targetPoint == right.targetPoint &&
+           left.generatedCacheMaintenance == right.generatedCacheMaintenance;
   case CanonicalMechanismKind::FixedFence:
     llvm_unreachable("fixed fences are compared by physical effect");
   case CanonicalMechanismKind::IntrinsicOrder:
@@ -377,10 +400,50 @@ FailureOr<CanonicalMechanism> buildEventMechanism(
       findCommonBlock(sourcePhase.operation, targetPhase.operation);
   Operation *setAfter = liftToBlock(sourcePhase.operation, actionBlock);
   Operation *waitBefore = liftToBlock(targetPhase.operation, actionBlock);
-  const bool invalidOrder = !actionBlock || !setAfter || !waitBefore ||
-                            setAfter == waitBefore ||
-                            !setAfter->isBeforeInBlock(waitBefore);
+  const bool unresolvedAnchors = !actionBlock || !setAfter || !waitBefore;
+  const bool invalidOrder =
+      unresolvedAnchors || setAfter == waitBefore ||
+      (setAfter && waitBefore && !setAfter->isBeforeInBlock(waitBefore));
   if (invalidOrder) {
+    auto sourceLoop = sourcePhase.operation->getParentOfType<scf::ForOp>();
+    auto targetLoop = targetPhase.operation->getParentOfType<scf::ForOp>();
+    const std::optional<CanonicalRegionId> loopRegion =
+        sourceLoop && sourceLoop == targetLoop
+            ? findLoopRegion(program, sourceLoop)
+            : std::nullopt;
+    const bool carriedByThisLoop =
+        loopRegion &&
+        llvm::any_of(demand.iterationDistance,
+                     [&](const CanonicalLoopDistance &distance) {
+                       return distance.loop == *loopRegion &&
+                              distance.relation ==
+                                  CanonicalIterationRelation::AnyPositive;
+                     });
+    const bool boundaryProtocol = carriedByThisLoop &&
+                                  !sourceLoop.getBody()->empty() &&
+                                  targetModel.supportsEvent(target, source);
+    if (boundaryProtocol) {
+      // Opposite choice arms cannot host a same-iteration Set/Wait pair. Use
+      // two loop-carried ownership lanes instead: both directions are primed,
+      // waited at the header, set at the latch, and drained after the loop.
+      // This conservatively serializes the two physical pipelines across loop
+      // iterations and establishes source_i -> target_{i+1} without pretending
+      // the mutually exclusive endpoints coexecute.
+      CanonicalMechanism mechanism;
+      mechanism.kind = CanonicalMechanismKind::RecurringEvent;
+      mechanism.source = source;
+      mechanism.target = target;
+      mechanism.sourcePoint = {sourceLoop.getBody()->getTerminator(),
+                               CanonicalProgramPointPosition::Before};
+      mechanism.targetPoint = {&sourceLoop.getBody()->front(),
+                               CanonicalProgramPointPosition::Before};
+      mechanism.actionRegion = *loopRegion;
+      mechanism.guard =
+          commonGuard(sourcePhase.controlPath, targetPhase.controlPath);
+      mechanism.recurrenceLoop = *loopRegion;
+      mechanism.boundaryRecurring = true;
+      return mechanism;
+    }
     targetPhase.operation->emitError("canonical sync cannot place a matched "
                                      "event pair on this structured path")
         << "; demand d" << demand.id << " source p" << demand.source
@@ -388,19 +451,35 @@ FailureOr<CanonicalMechanism> buildEventMechanism(
     return failure();
   }
   if (isRepeatedBlock(actionBlock)) {
-    auto loop = dyn_cast_or_null<scf::ForOp>(actionBlock->getParentOp());
+    auto loop = setAfter->getParentOfType<scf::ForOp>();
+    auto targetLoop = waitBefore->getParentOfType<scf::ForOp>();
     const std::optional<CanonicalRegionId> loopRegion =
-        loop ? findLoopRegion(program, loop) : std::nullopt;
-    const bool directBodyActions =
-        loop && sourcePhase.operation->getBlock() == actionBlock &&
-        targetPhase.operation->getBlock() == actionBlock;
-    if (!loopRegion || !directBodyActions ||
+        loop && loop == targetLoop ? findLoopRegion(program, loop)
+                                   : std::nullopt;
+    // The hardware protocol executes at the lifted physical cuts, not at the
+    // nominal demand endpoints. A target nested in a choice is safe when its
+    // wait is lifted before the choice and its release is placed after the
+    // choice: both actions then execute exactly once per loop iteration.
+    // Both halves may be guarded by the same nested choice.  The documented
+    // ready/release lifecycle remains balanced: the primed release token is
+    // consumed on the first execution of that arm, each execution consumes
+    // its ready token and returns one release token, and the epilogue drains
+    // the final release token.  Requiring a common physical action block keeps
+    // all four body actions under the identical guard.
+    const bool commonGuardedBodyActions =
+        loop && setAfter->getBlock() == actionBlock &&
+        waitBefore->getBlock() == actionBlock && loop->isAncestor(setAfter) &&
+        loop->isAncestor(waitBefore);
+    if (!loopRegion || !commonGuardedBodyActions ||
         !targetModel.supportsEvent(target, source)) {
       targetPhase.operation->emitError(
           "canonical sync cannot construct a single-lane recurring event "
           "protocol on this loop")
-          << "; demand d" << demand.id
-          << " requires direct body anchors and a reverse release event";
+          << "; demand d" << demand.id << " p" << demand.source << " ("
+          << stringifyPIPE(source.pipe) << ") -> p" << demand.target << " ("
+          << stringifyPIPE(target.pipe) << ")"
+          << " requires loop-body physical anchors and a reverse release "
+             "event";
       return failure();
     }
     CanonicalMechanism mechanism;
@@ -446,15 +525,34 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
           "canonical sync visibility demand lacks explicit requirements");
       return failure();
     }
+    if (hasPositiveDistance(demand)) {
+      targetPhase.operation->emitError(
+          "canonical sync has no proven loop-carried GM visibility protocol")
+          << "; demand d" << demand.id;
+      return failure();
+    }
+    if (source.core != destination.core) {
+      targetPhase.operation->emitError(
+          "canonical sync has no proven cross-core GM visibility protocol")
+          << "; demand d" << demand.id
+          << " requires source-core publication, a cross-core completion "
+             "transfer, and target-core acquisition";
+      return failure();
+    }
     Operation *fence = findFixedVisibilityFence(
         sourcePhase.operation, targetPhase.operation, demand.visibility->scope);
     if (!fence) {
-      targetPhase.operation->emitError(
-          "canonical sync cannot satisfy a GM cache-visibility demand with "
-          "SetFlag/WaitFlag")
-          << "; demand d" << demand.id
-          << " requires an existing explicit visibility fence";
-      return failure();
+      CanonicalMechanism mechanism;
+      mechanism.kind = CanonicalMechanismKind::VisibilityFence;
+      mechanism.source = source;
+      mechanism.target = destination;
+      mechanism.sourcePoint = {targetPhase.operation,
+                               CanonicalProgramPointPosition::Before};
+      mechanism.targetPoint = mechanism.sourcePoint;
+      mechanism.actionRegion = targetPhase.region;
+      mechanism.guard = targetPhase.controlPath;
+      mechanism.generatedCacheMaintenance = demand.visibility->cacheMaintenance;
+      return mechanism;
     }
     FailureOr<SmallVector<Operation *, 2>> cacheMaintenance =
         findFixedCacheMaintenance(program, demand, fence);
@@ -480,6 +578,27 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
     mechanism.cacheMaintenance = std::move(*cacheMaintenance);
     return mechanism;
   }
+  // A scalar instruction is complete before the scalar control stream can
+  // issue an operation that consumes its result.  This is a completion fact,
+  // not an AIC PIPE_S event (the documented AIC matrix has no such event
+  // direction).  Scalar/non-scalar memory visibility remains handled by the
+  // stronger visibility branch above.
+  const bool synchronousCompletion =
+      getVPTOSchedulingSemantics(sourcePhase.operation).completionIsSynchronous;
+  if (synchronousCompletion && source.core == destination.core) {
+    CanonicalMechanism mechanism;
+    mechanism.kind = CanonicalMechanismKind::IntrinsicOrder;
+    mechanism.source = source;
+    mechanism.target = destination;
+    mechanism.sourcePoint = {sourcePhase.operation,
+                             CanonicalProgramPointPosition::After};
+    mechanism.targetPoint = {targetPhase.operation,
+                             CanonicalProgramPointPosition::Before};
+    mechanism.actionRegion = demand.owner;
+    mechanism.guard =
+        commonGuard(sourcePhase.controlPath, targetPhase.controlPath);
+    return mechanism;
+  }
   if (source == destination) {
     CanonicalMechanism mechanism;
     mechanism.source = source;
@@ -503,13 +622,12 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
     return mechanism;
   }
   if (source.core != destination.core) {
-    bool hasFftsSetup = false;
-    program.getFunction().walk([&](SetFFTsOp) { hasFftsSetup = true; });
-    const bool missingFftsSetup = !hasFftsSetup;
+    const bool missingFftsSetup = !hasOrderedUnconditionalFftsSetup(
+        program.getFunction(), sourcePhase.operation, targetPhase.operation);
     if (missingFftsSetup) {
       targetPhase.operation->emitError(
-          "canonical sync cross-core events require an existing pto.set_ffts "
-          "base setup")
+          "canonical sync cross-core events require an unconditional "
+          "pto.set_ffts setup before both endpoints")
           << "; demand d" << demand.id;
       return failure();
     }
@@ -572,10 +690,13 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
     return failure();
   }
   if (hasPositiveDistance(demand)) {
-    targetPhase.operation->emitError(
-        "canonical sync rejects cross-pipe loop recurrence events in v1")
-        << "; demand d" << demand.id << " has a positive iteration distance";
-    return failure();
+    // A recurrence-only dependence can use the same documented ready/release
+    // protocol as a same-iteration dependence.  The ready half deliberately
+    // orders source_i before target_i (possibly stronger than the demand), and
+    // the reverse release half orders target_i before source_{i+1}.  This is a
+    // complete single-lane lifecycle with priming and draining, not bare event
+    // reuse across iterations.
+    return buildEventMechanism(program, target, demand, source, destination);
   }
   return buildEventMechanism(program, target, demand, source, destination);
 }
@@ -599,17 +720,60 @@ std::optional<CanonicalRegionId> carryingLoop(const CanonicalDemand &demand) {
 bool recurringMechanismMatches(const CanonicalSyncProgram &program,
                                const CanonicalMechanism &mechanism,
                                const CanonicalDemand &demand) {
-  if (mechanism.kind != CanonicalMechanismKind::RecurringEvent ||
+  if (demand.requirement != CanonicalRequirement::Completion ||
+      mechanism.kind != CanonicalMechanismKind::RecurringEvent ||
       mechanism.origins.empty() ||
       carryingLoop(demand) != mechanism.recurrenceLoop) {
     return false;
   }
-  const CanonicalDemand &forward = program.getDemand(mechanism.origins.front());
-  const bool sameEndpoints =
-      demand.source == forward.source && demand.target == forward.target;
-  const bool reverseEndpoints =
-      demand.source == forward.target && demand.target == forward.source;
-  return sameEndpoints || reverseEndpoints;
+  // A physical channel lifted around structured control can be the direct
+  // mechanism for several branch-local demands.  Recurrence matching must
+  // therefore consider every authenticated origin, not just the first demand
+  // that happened to intern the shared channel.
+  return llvm::any_of(mechanism.origins, [&](CanonicalDemandId origin) {
+    const CanonicalDemand &forward = program.getDemand(origin);
+    if (forward.requirement != CanonicalRequirement::Completion) {
+      return false;
+    }
+    const bool sameEndpoints =
+        demand.source == forward.source && demand.target == forward.target;
+    const bool reverseEndpoints =
+        demand.source == forward.target && demand.target == forward.source;
+    if (sameEndpoints || reverseEndpoints) {
+      return true;
+    }
+
+    // A branch-local forward channel also establishes completion on its
+    // target pipeline.  FIFO issue order on that physical pipeline carries
+    // the fact to a later target in another arm/iteration.  The reverse
+    // release channel supplies the symmetric reuse relation.  Keep one
+    // endpoint exact so this is a direct consequence of the documented
+    // ready/release protocol rather than a general reachability guess.
+    const CanonicalPhysicalResource demandSource =
+        program.getPhase(demand.source).resource;
+    const CanonicalPhysicalResource demandTarget =
+        program.getPhase(demand.target).resource;
+    const CanonicalPhysicalResource forwardSource =
+        program.getPhase(forward.source).resource;
+    const CanonicalPhysicalResource forwardTarget =
+        program.getPhase(forward.target).resource;
+    const bool forwardTargetPipeline =
+        demand.source == forward.source && demandTarget == forwardTarget;
+    const bool reverseTargetPipeline =
+        demandSource == forwardTarget && demandTarget == forwardSource;
+    return forwardTargetPipeline || reverseTargetPipeline;
+  });
+}
+
+bool recurringMechanismHasExactOrigin(const CanonicalSyncProgram &program,
+                                      const CanonicalMechanism &mechanism,
+                                      const CanonicalDemand &demand) {
+  return llvm::any_of(mechanism.origins, [&](CanonicalDemandId origin) {
+    const CanonicalDemand &forward = program.getDemand(origin);
+    return (demand.source == forward.source &&
+            demand.target == forward.target) ||
+           (demand.source == forward.target && demand.target == forward.source);
+  });
 }
 
 std::optional<CanonicalMechanismId>
@@ -626,33 +790,70 @@ findRecurringMechanism(const CanonicalSyncProgram &program,
 
 const CanonicalDemand *
 findRecurringForwardDemand(const CanonicalSyncProgram &program,
-                           const CanonicalDemand &recurrence) {
+                           const CanonicalDemand &recurrence,
+                           ArrayRef<CanonicalDemandId> candidates) {
   const std::optional<CanonicalRegionId> loop = carryingLoop(recurrence);
   if (!loop) {
     return nullptr;
   }
-  auto found = llvm::find_if(
-      program.getDemands(), [&](const CanonicalDemand &candidate) {
-        const bool invalidEndpoint =
-            candidate.source >= program.getPhases().size() ||
-            candidate.target >= program.getPhases().size();
-        if (invalidEndpoint) {
-          return false;
-        }
-        const bool matchingEndpoints =
-            (candidate.source == recurrence.source &&
-             candidate.target == recurrence.target) ||
-            (candidate.source == recurrence.target &&
-             candidate.target == recurrence.source);
-        const bool sameIteration = !hasPositiveDistance(candidate);
-        const CanonicalPhase &source = program.getPhase(candidate.source);
-        const CanonicalPhase &target = program.getPhase(candidate.target);
-        return candidate.requirement == CanonicalRequirement::Completion &&
-               matchingEndpoints && sameIteration &&
-               llvm::is_contained(source.loopPath, *loop) &&
-               llvm::is_contained(target.loopPath, *loop);
-      });
-  return found == program.getDemands().end() ? nullptr : &*found;
+  auto found = llvm::find_if(candidates, [&](CanonicalDemandId candidateId) {
+    const CanonicalDemand &candidate = program.getDemand(candidateId);
+    const bool invalidEndpoint =
+        candidate.source >= program.getPhases().size() ||
+        candidate.target >= program.getPhases().size();
+    if (invalidEndpoint) {
+      return false;
+    }
+    const bool matchingEndpoints = (candidate.source == recurrence.source &&
+                                    candidate.target == recurrence.target) ||
+                                   (candidate.source == recurrence.target &&
+                                    candidate.target == recurrence.source);
+    const CanonicalPhysicalResource recurrenceTarget =
+        program.getPhase(recurrence.target).resource;
+    const CanonicalPhysicalResource recurrenceSource =
+        program.getPhase(recurrence.source).resource;
+    const CanonicalPhysicalResource candidateSource =
+        program.getPhase(candidate.source).resource;
+    const CanonicalPhysicalResource candidateTarget =
+        program.getPhase(candidate.target).resource;
+    const bool matchingForwardPipeline =
+        candidate.source == recurrence.source &&
+        candidateTarget == recurrenceTarget;
+    const bool matchingReleasePipeline = candidateTarget == recurrenceSource &&
+                                         candidateSource == recurrenceTarget;
+    const bool sameIteration = !hasPositiveDistance(candidate);
+    const CanonicalPhase &source = program.getPhase(candidate.source);
+    const CanonicalPhase &target = program.getPhase(candidate.target);
+    return candidate.requirement == CanonicalRequirement::Completion &&
+           (matchingEndpoints || matchingForwardPipeline ||
+            matchingReleasePipeline) &&
+           sameIteration && llvm::is_contained(source.loopPath, *loop) &&
+           llvm::is_contained(target.loopPath, *loop);
+  });
+  return found == candidates.end() ? nullptr : &program.getDemand(*found);
+}
+
+SmallVector<SmallVector<CanonicalDemandId, 8>, 0>
+buildRecurringForwardIndex(const CanonicalSyncProgram &program) {
+  SmallVector<SmallVector<CanonicalDemandId, 8>, 0> byLoop(
+      program.getRegions().size());
+  for (const CanonicalDemand &demand : program.getDemands()) {
+    const bool invalidEndpoint = demand.source >= program.getPhases().size() ||
+                                 demand.target >= program.getPhases().size();
+    if (invalidEndpoint ||
+        demand.requirement != CanonicalRequirement::Completion ||
+        hasPositiveDistance(demand)) {
+      continue;
+    }
+    const CanonicalPhase &source = program.getPhase(demand.source);
+    const CanonicalPhase &target = program.getPhase(demand.target);
+    for (CanonicalRegionId loop : source.loopPath) {
+      if (llvm::is_contained(target.loopPath, loop)) {
+        byLoop[loop].push_back(demand.id);
+      }
+    }
+  }
+  return byLoop;
 }
 
 } // namespace
@@ -686,16 +887,22 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
     mechanism.guard = effect.guard;
     program.appendMechanism(std::move(mechanism));
   }
+  const SmallVector<SmallVector<CanonicalDemandId, 8>, 0>
+      recurringForwardByLoop = buildRecurringForwardIndex(program);
   for (const CanonicalDemand &demand : program.getDemands()) {
     if (demandIsMapped(program, demand.id)) {
       continue;
     }
-    if (hasPositiveDistance(demand)) {
+    if (demand.requirement == CanonicalRequirement::Completion &&
+        hasPositiveDistance(demand)) {
       std::optional<CanonicalMechanismId> recurring =
           findRecurringMechanism(program, demand);
       if (!recurring) {
+        const std::optional<CanonicalRegionId> loop = carryingLoop(demand);
         const CanonicalDemand *forward =
-            findRecurringForwardDemand(program, demand);
+            loop ? findRecurringForwardDemand(program, demand,
+                                              recurringForwardByLoop[*loop])
+                 : nullptr;
         if (forward && !demandIsMapped(program, forward->id)) {
           FailureOr<CanonicalMechanism> forwardMechanism =
               buildDirectMechanism(program, *target, *forward);
@@ -711,7 +918,13 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
         }
       }
       if (recurring) {
-        program.appendMechanismOrigin(*recurring, demand.id);
+        // A recurrence that reaches another phase on the same physical target
+        // pipeline is additional coverage, not another direct origin of the
+        // channel.  Preserve that distinction in the set-cover column.
+        if (recurringMechanismHasExactOrigin(
+                program, program.getMechanism(*recurring), demand)) {
+          program.appendMechanismOrigin(*recurring, demand.id);
+        }
         program.setDirectMechanism(demand.id, *recurring);
         continue;
       }

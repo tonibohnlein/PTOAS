@@ -77,6 +77,12 @@ mlir::pto::canonical_sync_detail::resolvePhysicalResource(func::FuncOp function,
       core = CanonicalCore::AIC;
       break;
     case PIPE::PIPE_S:
+      // Scalar instructions execute on the core selected by the surrounding
+      // physical section (handled above), or by the function kind when there
+      // is no section.  In particular, a scalar load in a cube-only kernel is
+      // emitted inside __DAV_CUBE__ and must not be modeled as AIV work.
+      core = getFunctionCore(function);
+      break;
     case PIPE::PIPE_V:
       core = CanonicalCore::AIV;
       break;
