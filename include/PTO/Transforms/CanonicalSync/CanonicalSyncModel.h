@@ -289,10 +289,19 @@ struct CanonicalSetCoverInstance {
   llvm::SmallVector<CanonicalSetCoverCandidate, 8> candidates;
 };
 
+struct CanonicalSetCoverSolution {
+  llvm::SmallVector<CanonicalSetCoverCandidateId, 8> greedyCandidates;
+  llvm::SmallVector<CanonicalMechanismId, 8> mechanisms;
+  llvm::SmallVector<CanonicalMechanismId, 8> reverseDeleted;
+  std::uint64_t weight = 0;
+  bool coverageVerified = false;
+};
+
 class CanonicalSyncProgram;
 LogicalResult buildCanonicalDirectMechanisms(CanonicalSyncProgram &program);
 LogicalResult evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program);
 LogicalResult buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program);
+LogicalResult solveCanonicalSyncSetCover(CanonicalSyncProgram &program);
 
 class CanonicalSyncProgram {
 public:
@@ -337,6 +346,9 @@ public:
   const std::optional<CanonicalSetCoverInstance> &getSetCoverInstance() const {
     return setCoverInstance;
   }
+  const std::optional<CanonicalSetCoverSolution> &getSetCoverSolution() const {
+    return setCoverSolution;
+  }
 
   const CanonicalRegion &getRegion(CanonicalRegionId id) const;
   const CanonicalPhase &getPhase(CanonicalPhaseId id) const;
@@ -352,9 +364,12 @@ private:
   evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program);
   friend LogicalResult
   buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program);
+  friend LogicalResult
+  solveCanonicalSyncSetCover(CanonicalSyncProgram &program);
 
   void appendCoverageWorld(CanonicalCoverageWorld world);
   void setSetCoverInstance(CanonicalSetCoverInstance instance);
+  void setSetCoverSolution(CanonicalSetCoverSolution solution);
 
   func::FuncOp function;
   llvm::SmallVector<CanonicalRegion> regions;
@@ -366,6 +381,7 @@ private:
   llvm::SmallVector<CanonicalMechanismId> directMechanisms;
   llvm::SmallVector<CanonicalCoverageWorld> coverageWorlds;
   std::optional<CanonicalSetCoverInstance> setCoverInstance;
+  std::optional<CanonicalSetCoverSolution> setCoverSolution;
   bool buildingMechanisms = false;
   bool mechanismCatalogComplete = false;
   bool coverageCatalogComplete = false;

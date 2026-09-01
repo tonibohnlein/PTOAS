@@ -29,6 +29,7 @@ buildCanonicalSyncProgram(func::FuncOp function);
 LogicalResult buildCanonicalDirectMechanisms(CanonicalSyncProgram &program);
 LogicalResult evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program);
 LogicalResult buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program);
+LogicalResult solveCanonicalSyncSetCover(CanonicalSyncProgram &program);
 LogicalResult allocateCanonicalSyncEvents(CanonicalSyncProgram &program);
 LogicalResult materializeAndVerifyCanonicalSync(CanonicalSyncProgram &program);
 LogicalResult runCanonicalSync(func::FuncOp function,

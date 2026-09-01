@@ -25,5 +25,7 @@ module {
 // CHECK: m0 kind=tail
 // CHECK-SAME: origins=[]
 // CHECK: SET-COVER optimization=disabled baseline=[m0] universe=[] candidates=0
+// CHECK: OPTIMIZATION enabled=no mode=diagnostic-weighted-greedy greedy=[]
+// CHECK-SAME: proposed=[m0] reverse-deleted=[] weight=0 coverage-verified=yes
 // CHECK: PLAN mechanical mechanisms=1
 // CHECK: VERIFY ok

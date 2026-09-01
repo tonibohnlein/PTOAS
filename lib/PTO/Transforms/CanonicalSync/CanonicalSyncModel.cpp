@@ -140,10 +140,18 @@ void CanonicalSyncProgram::appendCoverageWorld(CanonicalCoverageWorld world) {
 
 void CanonicalSyncProgram::setSetCoverInstance(
     CanonicalSetCoverInstance instance) {
-  if (frozen || setCoverInstance) {
+  if (frozen || setCoverInstance || setCoverSolution) {
     llvm_unreachable("cannot replace a frozen canonical set-cover instance");
   }
   setCoverInstance = std::move(instance);
+}
+
+void CanonicalSyncProgram::setSetCoverSolution(
+    CanonicalSetCoverSolution solution) {
+  if (frozen || !setCoverInstance || setCoverSolution) {
+    llvm_unreachable("cannot replace a frozen canonical set-cover solution");
+  }
+  setCoverSolution = std::move(solution);
 }
 
 static bool validControlPath(llvm::ArrayRef<CanonicalControlAtom> path,
@@ -370,6 +378,31 @@ LogicalResult CanonicalSyncProgram::freeze() {
   if (invalidBaseline || invalidUniverse || invalidCandidate ||
       uncoveredUniverse) {
     return fail("set-cover instance references an invalid ID or incidence");
+  }
+  if (setCoverSolution) {
+    const bool invalidGreedyCandidate =
+        llvm::any_of(setCoverSolution->greedyCandidates,
+                     [this](CanonicalSetCoverCandidateId id) {
+                       return id >= setCoverInstance->candidates.size();
+                     });
+    const bool invalidMechanism = llvm::any_of(
+        setCoverSolution->mechanisms,
+        [this](CanonicalMechanismId id) { return id >= mechanisms.size(); });
+    const bool missingBaseline = llvm::any_of(
+        setCoverInstance->baseline, [this](CanonicalMechanismId id) {
+          return !llvm::is_contained(setCoverSolution->mechanisms, id);
+        });
+    const bool invalidDeletion = llvm::any_of(
+        setCoverSolution->reverseDeleted, [this](CanonicalMechanismId id) {
+          return id >= mechanisms.size() ||
+                 llvm::is_contained(setCoverInstance->baseline, id) ||
+                 llvm::is_contained(setCoverSolution->mechanisms, id);
+        });
+    if (invalidGreedyCandidate || invalidMechanism || missingBaseline ||
+        invalidDeletion || !setCoverSolution->coverageVerified) {
+      return fail("set-cover solution references an invalid ID or lacks a "
+                  "checked coverage proof");
+    }
   }
   const bool wrongDirectCount = directMechanisms.size() != demands.size();
   if (wrongDirectCount ||

@@ -15,6 +15,7 @@
 
 #include "CanonicalSyncInternal.h"
 
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
@@ -71,6 +72,101 @@ bool sameGroup(const CanonicalSetCoverCandidate &candidate,
 bool sameMechanisms(const CanonicalCoverageWorld &world,
                     ArrayRef<CanonicalMechanismId> mechanisms) {
   return ArrayRef<CanonicalMechanismId>(world.mechanisms) == mechanisms;
+}
+
+SmallVector<CanonicalDemandId, 8>
+candidateCoverage(const CanonicalSetCoverCandidate &candidate) {
+  SmallVector<CanonicalDemandId, 8> coverage(candidate.directOrigins.begin(),
+                                             candidate.directOrigins.end());
+  coverage.append(candidate.additionalCoverage);
+  canonicalize(coverage);
+  return coverage;
+}
+
+bool coversEveryDemand(const CanonicalSyncProgram &program,
+                       const CanonicalCoverageWorld &world) {
+  return llvm::all_of(program.getDemands(), [&](const CanonicalDemand &demand) {
+    return llvm::is_contained(world.covered, demand.id);
+  });
+}
+
+struct GreedyChoice {
+  const CanonicalSetCoverCandidate *candidate = nullptr;
+  SmallVector<CanonicalMechanismId, 4> newMechanisms;
+  std::uint64_t gain = 0;
+  std::uint64_t marginalWeight = 0;
+};
+
+bool isBetterChoice(const GreedyChoice &candidate, const GreedyChoice &best) {
+  if (!best.candidate) {
+    return true;
+  }
+  if (candidate.marginalWeight == 0 || best.marginalWeight == 0) {
+    if (candidate.marginalWeight != best.marginalWeight) {
+      return candidate.marginalWeight == 0;
+    }
+  } else {
+    llvm::APInt candidateRatio(128, candidate.gain);
+    candidateRatio *= llvm::APInt(128, best.marginalWeight);
+    llvm::APInt bestRatio(128, best.gain);
+    bestRatio *= llvm::APInt(128, candidate.marginalWeight);
+    if (candidateRatio != bestRatio) {
+      return candidateRatio.ugt(bestRatio);
+    }
+  }
+  if (candidate.marginalWeight != best.marginalWeight) {
+    return candidate.marginalWeight < best.marginalWeight;
+  }
+  if (candidate.gain != best.gain) {
+    return candidate.gain > best.gain;
+  }
+  const bool differentMechanismCount =
+      candidate.newMechanisms.size() != best.newMechanisms.size();
+  if (differentMechanismCount) {
+    return candidate.newMechanisms.size() < best.newMechanisms.size();
+  }
+  return candidate.candidate->id < best.candidate->id;
+}
+
+LogicalResult computeMarginalWeight(CanonicalSyncProgram &program,
+                                    const CanonicalSetCoverCandidate &candidate,
+                                    ArrayRef<CanonicalMechanismId> selected,
+                                    GreedyChoice &choice) {
+  for (CanonicalMechanismId mechanism : candidate.mechanisms) {
+    if (llvm::is_contained(selected, mechanism)) {
+      continue;
+    }
+    const std::uint64_t weight =
+        mechanismWeight(program.getMechanism(mechanism));
+    if (weight >
+        std::numeric_limits<std::uint64_t>::max() - choice.marginalWeight) {
+      return program.getFunction().emitError(
+          "canonical sync set-cover marginal weight overflowed uint64_t");
+    }
+    choice.marginalWeight += weight;
+    choice.newMechanisms.push_back(mechanism);
+  }
+  canonicalize(choice.newMechanisms);
+  return success();
+}
+
+FailureOr<std::uint64_t>
+computeGroupWeight(const CanonicalSyncProgram &program,
+                   ArrayRef<CanonicalMechanismId> mechanisms) {
+  std::uint64_t result = 0;
+  for (CanonicalMechanismId mechanism : mechanisms) {
+    const std::uint64_t weight =
+        mechanismWeight(program.getMechanism(mechanism));
+    const bool weightOverflow =
+        weight > std::numeric_limits<std::uint64_t>::max() - result;
+    if (weightOverflow) {
+      program.getFunction().emitError(
+          "canonical sync set-cover solution weight overflowed uint64_t");
+      return failure();
+    }
+    result += weight;
+  }
+  return result;
 }
 
 const CanonicalCoverageWorld *
@@ -258,5 +354,107 @@ mlir::pto::buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program) {
     }
   }
   program.setSetCoverInstance(std::move(instance));
+  return success();
+}
+
+LogicalResult
+mlir::pto::solveCanonicalSyncSetCover(CanonicalSyncProgram &program) {
+  const bool invalidState =
+      !program.isGraphFrozen() || program.isFrozen() ||
+      !program.getSetCoverInstance() || program.getSetCoverSolution() ||
+      !program.mechanismCatalogComplete || !program.coverageCatalogComplete;
+  if (invalidState) {
+    return program.getFunction().emitError(
+        "canonical sync set-cover solving requires one complete mutable "
+        "instance");
+  }
+
+  const CanonicalSetCoverInstance &instance = *program.getSetCoverInstance();
+  CanonicalSetCoverSolution solution;
+  SmallVector<CanonicalDemandId, 8> covered;
+  SmallVector<CanonicalMechanismId, 8> selected(instance.baseline.begin(),
+                                                instance.baseline.end());
+  SmallVector<CanonicalMechanismId, 8> additionOrder;
+
+  while (llvm::any_of(instance.universe, [&](CanonicalDemandId demand) {
+    return !llvm::is_contained(covered, demand);
+  })) {
+    GreedyChoice best;
+    for (const CanonicalSetCoverCandidate &candidate : instance.candidates) {
+      if (llvm::is_contained(solution.greedyCandidates, candidate.id)) {
+        continue;
+      }
+      const SmallVector<CanonicalDemandId, 8> incidence =
+          candidateCoverage(candidate);
+      GreedyChoice choice;
+      choice.candidate = &candidate;
+      choice.gain = static_cast<std::uint64_t>(
+          llvm::count_if(incidence, [&](CanonicalDemandId demand) {
+            return !llvm::is_contained(covered, demand);
+          }));
+      if (choice.gain == 0) {
+        continue;
+      }
+      if (failed(computeMarginalWeight(program, candidate, selected, choice))) {
+        return failure();
+      }
+      if (isBetterChoice(choice, best)) {
+        best = std::move(choice);
+      }
+    }
+    if (!best.candidate) {
+      return program.getFunction().emitError(
+          "canonical sync weighted set-cover solver cannot cover its "
+          "universe");
+    }
+
+    solution.greedyCandidates.push_back(best.candidate->id);
+    additionOrder.append(best.newMechanisms);
+    selected.append(best.newMechanisms);
+    canonicalize(selected);
+    const SmallVector<CanonicalDemandId, 8> incidence =
+        candidateCoverage(*best.candidate);
+    covered.append(incidence);
+    canonicalize(covered);
+  }
+
+  for (CanonicalMechanismId mechanism : llvm::reverse(additionOrder)) {
+    SmallVector<CanonicalMechanismId, 8> trial;
+    llvm::copy_if(
+        selected, std::back_inserter(trial),
+        [mechanism](CanonicalMechanismId id) { return id != mechanism; });
+    std::string name = "set-cover-reverse-m";
+    name += std::to_string(mechanism);
+    FailureOr<CanonicalCoverageWorld> evaluated =
+        canonical_sync_detail::evaluateCanonicalSyncGroup(program, name, trial);
+    if (failed(evaluated)) {
+      return failure();
+    }
+    if (coversEveryDemand(program, *evaluated)) {
+      selected = std::move(trial);
+      solution.reverseDeleted.push_back(mechanism);
+    }
+  }
+
+  canonicalize(selected);
+  FailureOr<CanonicalCoverageWorld> proposal =
+      canonical_sync_detail::evaluateCanonicalSyncGroup(
+          program, "set-cover-proposal", selected);
+  if (failed(proposal)) {
+    return failure();
+  }
+  if (!coversEveryDemand(program, *proposal)) {
+    return program.getFunction().emitError(
+        "canonical sync weighted set-cover proposal does not cover every "
+        "demand");
+  }
+  FailureOr<std::uint64_t> weight = computeGroupWeight(program, selected);
+  if (failed(weight)) {
+    return failure();
+  }
+  solution.mechanisms = std::move(selected);
+  solution.weight = *weight;
+  solution.coverageVerified = true;
+  program.setSetCoverSolution(std::move(solution));
   return success();
 }

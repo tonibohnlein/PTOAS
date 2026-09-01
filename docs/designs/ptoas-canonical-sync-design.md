@@ -238,9 +238,21 @@ signature prevents mandatory diagnostics from retaining a quadratic number of
 full summary/oracle worlds. These worlds remain diagnostic: they neither select
 mechanisms nor change the mechanical plan.
 
-The initial materialized plan keeps every direct mechanism. Coverage worlds are
-diagnostic input for a later selection policy; they do not redefine
-correctness.
+When diagnostics are requested, the pass builds a weighted set-cover instance
+from the checked concrete singleton and choice-group worlds. Each column stores
+the mechanisms in the concrete group, their direct origins, and only coverage
+in addition to those origins. A deterministic weighted greedy heuristic chooses
+columns by marginal demand coverage per marginal mechanism cost, then reverse
+deletion re-evaluates the concrete selected group after removing each added
+mechanism. Baseline mechanisms have zero selection cost, a targeted pipe barrier
+has weight one, and one complete set/wait event pair has weight two. The final
+proposal is accepted for reporting only after the regional, flat, and (when
+exhaustive) bounded coverage calculations agree and every demand is covered.
+This is a coverage proof, not a physical-plan proof: the proposal is not
+allocated or materialized yet.
+
+The initial materialized plan still keeps every direct mechanism. The diagnostic
+proposal does not redefine correctness or affect emitted synchronization.
 
 ## Event allocation
 

@@ -244,5 +244,22 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
       os << "]\n";
     }
   }
+  if (program.getSetCoverSolution()) {
+    const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
+    os << "OPTIMIZATION enabled=no mode=diagnostic-weighted-greedy"
+       << " greedy=[";
+    llvm::interleaveComma(
+        solution.greedyCandidates, os,
+        [&os](CanonicalSetCoverCandidateId id) { os << 'c' << id; });
+    os << "] proposed=[";
+    llvm::interleaveComma(solution.mechanisms, os,
+                          [&os](CanonicalMechanismId id) { os << 'm' << id; });
+    os << "] reverse-deleted=[";
+    llvm::interleaveComma(solution.reverseDeleted, os,
+                          [&os](CanonicalMechanismId id) { os << 'm' << id; });
+    os << "] weight=" << solution.weight
+       << " coverage-verified=" << (solution.coverageVerified ? "yes" : "no")
+       << '\n';
+  }
   os << "PLAN mechanical mechanisms=" << program.getMechanisms().size() << '\n';
 }
