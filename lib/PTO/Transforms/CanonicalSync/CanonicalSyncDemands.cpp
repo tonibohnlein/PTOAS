@@ -252,9 +252,9 @@ LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
         continue;
       }
       if (loop && areMemoryLikeTypes(value.getType())) {
-        if (current.fromMemoryLoopBackedge) {
-          continue;
-        }
+        // Follow mutually carried handles with the backedge label intact. The
+        // discovered (value, label) pair bounds cycles, while stopping here
+        // could hide a physical result that arrives after several iterations.
         const unsigned argumentNumber = argument.getArgNumber();
         if (argumentNumber == 0) {
           return loop.emitError(

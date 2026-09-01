@@ -741,9 +741,8 @@ LogicalResult VerifierProgramBuilder::indexSsaDependencies() {
               continue;
             }
             if (loop && areMemoryLikeTypes(value.getType())) {
-              if (current.fromMemoryLoopBackedge) {
-                continue;
-              }
+              // Follow mutually carried handles with the backedge label
+              // intact. The discovered (value, label) pair bounds cycles.
               const unsigned argumentNumber = argument.getArgNumber();
               if (argumentNumber == 0) {
                 return loop.emitError(

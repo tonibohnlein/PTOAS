@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 \
+// RUN:   --enable-canonical-sync --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @loop_carried_physical_storage_chain(
+      %value: !pto.vreg<64xf32>, %first: !pto.ptr<f32, ub>,
+      %second: !pto.ptr<f32, ub>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c3 = arith.constant 3 : index
+    %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %result:2 = scf.for %iv = %c0 to %c3 step %c1
+        iter_args(%ptr0 = %first, %ptr1 = %second)
+        -> (!pto.ptr<f32, ub>, !pto.ptr<f32, ub>) {
+      pto.vsts %value, %ptr0[%c0], %mask {dist = "NORM_B32"}
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %next = pto.vsts %value, %ptr1[%c0], %mask {dist = "NORM_B32"}
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+            -> !pto.ptr<f32, ub>
+      scf.yield %ptr1, %next : !pto.ptr<f32, ub>, !pto.ptr<f32, ub>
+    }
+    return
+  }
+}
+
+// CHECK: error: canonical sync rejects a loop-carried physical storage result until recurrence-aware SSA completion is implemented
