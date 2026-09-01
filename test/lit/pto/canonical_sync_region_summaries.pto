@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// Two arm-local events establish the same MTE2-to-V boundary transfer. The
+// choice summary must retain the guarded transfers and form an unconditional
+// must-transfer that names both mechanisms.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @choice_must_summary(
+      %condition: i1, %src: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input0_addr = arith.constant 0 : i64
+    %output0_addr = arith.constant 8192 : i64
+    %input1_addr = arith.constant 16384 : i64
+    %output1_addr = arith.constant 24576 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %input0 = pto.alloc_tile addr = %input0_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output0 = pto.alloc_tile addr = %output0_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input1 = pto.alloc_tile addr = %input1_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output1 = pto.alloc_tile addr = %output1_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.if %condition {
+      pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                outs(%input0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+      pto.tmuls ins(%input0, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%output0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+    } else {
+      pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                outs(%input1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+      pto.tmuls ins(%input1, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%output1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: CANONICAL-SYNC function=choice_must_summary
+// CHECK: m0 kind=event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK: m1 kind=event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK: world=mechanical
+// CHECK-SAME: oracle=match
+// CHECK: SUMMARIES world=mechanical
+// CHECK: summary=r{{[0-9]+}} kind=choice
+// CHECK: transfer=AIV:PIPE_MTE2->AIV:PIPE_V guard=[] mechanisms=[m0, m1]
+// CHECK: VERIFY ok

@@ -78,6 +78,8 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: kind=loop
 // CHECK: distance=[r{{[0-9]+}}:+]
 // CHECK: kind=barrier resource=AIV:PIPE_V->AIV:PIPE_V
+// CHECK: world=mechanical
+// CHECK-SAME: oracle=match
 // CHECK: VERIFY ok
 // CHECK-LABEL: scf.for
 // CHECK-NEXT: pto.barrier <PIPE_V>
@@ -88,6 +90,8 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: kind={{RAW|WAR|WAW}} p0->p0
 // CHECK-SAME: distance=[r{{[0-9]+}}:+]
 // CHECK: kind=barrier resource=AIV:PIPE_V->AIV:PIPE_V
+// CHECK: world=mechanical
+// CHECK-SAME: oracle=match
 // CHECK: VERIFY ok
 // CHECK-LABEL: func.func @canonical_sync_loop_self_recurrence
 // CHECK: scf.for

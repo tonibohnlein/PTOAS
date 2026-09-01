@@ -206,13 +206,58 @@ LogicalResult CanonicalSyncProgram::freeze() {
     }
   }
   for (const CanonicalCoverageWorld &world : coverageWorlds) {
-    if (llvm::any_of(world.mechanisms,
-                     [this](CanonicalMechanismId id) {
-                       return id >= mechanisms.size();
-                     }) ||
-        llvm::any_of(world.covered, [this](CanonicalDemandId id) {
-          return id >= demands.size();
-        })) {
+    const bool invalidMechanism =
+        llvm::any_of(world.mechanisms, [this](CanonicalMechanismId id) {
+          return id >= mechanisms.size();
+        });
+    const bool invalidDemand = llvm::any_of(world.covered,
+                                            [this](CanonicalDemandId id) {
+                                              return id >= demands.size();
+                                            }) ||
+                               llvm::any_of(world.differentialDisagreements,
+                                            [this](CanonicalDemandId id) {
+                                              return id >= demands.size();
+                                            });
+    const bool invalidSummary = llvm::any_of(
+        world.summaries, [this](const CanonicalRegionSummary &summary) {
+          const bool invalidRegion = summary.region >= regions.size();
+          const bool invalidChild =
+              llvm::any_of(summary.children, [this](CanonicalRegionId id) {
+                return id >= regions.size();
+              });
+          if (invalidRegion || invalidChild) {
+            return true;
+          }
+          const bool invalidCompletion = llvm::any_of(
+              summary.completions,
+              [this](const CanonicalCompletionTransfer &completion) {
+                return completion.phase >= phases.size() ||
+                       llvm::any_of(completion.requiredLoops,
+                                    [this](CanonicalRegionId id) {
+                                      return id >= regions.size() ||
+                                             regions[id].kind !=
+                                                 CanonicalRegionKind::Loop;
+                                    });
+              });
+          const bool invalidTransfer = llvm::any_of(
+              summary.transfers,
+              [this](const CanonicalBoundaryTransfer &transfer) {
+                return llvm::any_of(transfer.requiredLoops,
+                                    [this](CanonicalRegionId id) {
+                                      return id >= regions.size() ||
+                                             regions[id].kind !=
+                                                 CanonicalRegionKind::Loop;
+                                    }) ||
+                       llvm::any_of(transfer.mechanisms,
+                                    [this](CanonicalMechanismId id) {
+                                      return id >= mechanisms.size();
+                                    });
+              });
+          return invalidCompletion || invalidTransfer;
+        });
+    if (invalidMechanism || invalidDemand || invalidSummary ||
+        !world.differentialDisagreements.empty() ||
+        !world.flattenedOracleMatched || !world.unrolledOracleMatched) {
       return fail("coverage world references an invalid ID");
     }
   }

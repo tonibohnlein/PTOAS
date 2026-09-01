@@ -165,7 +165,42 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
     os << "] covered=[";
     llvm::interleaveComma(world.covered, os,
                           [&os](CanonicalDemandId id) { os << 'd' << id; });
-    os << "]\n";
+    os << "] summaries=" << world.summaries.size() << " oracle="
+       << (world.flattenedOracleMatched && world.unrolledOracleMatched
+               ? "match"
+               : "mismatch")
+       << '\n';
+  }
+  auto mechanical = llvm::find_if(program.getCoverageWorlds(),
+                                  [](const CanonicalCoverageWorld &world) {
+                                    return world.name == "mechanical";
+                                  });
+  if (mechanical != program.getCoverageWorlds().end()) {
+    os << "SUMMARIES world=mechanical\n";
+    for (const CanonicalRegionSummary &summary : mechanical->summaries) {
+      const CanonicalRegion &region = program.getRegion(summary.region);
+      os << "  summary=r" << summary.region
+         << " kind=" << stringifyCanonicalRegionKind(region.kind)
+         << " children=" << summary.children.size()
+         << " completions=" << summary.completions.size()
+         << " transfers=" << summary.transfers.size() << '\n';
+      for (const CanonicalBoundaryTransfer &transfer : summary.transfers) {
+        os << "    transfer=";
+        printResource(os, transfer.source);
+        os << "->";
+        printResource(os, transfer.target);
+        os << " guard=";
+        printGuard(os, transfer.guard);
+        os << " mechanisms=[";
+        llvm::interleaveComma(
+            transfer.mechanisms, os,
+            [&os](CanonicalMechanismId id) { os << 'm' << id; });
+        os << "] required-loops=[";
+        llvm::interleaveComma(transfer.requiredLoops, os,
+                              [&os](CanonicalRegionId id) { os << 'r' << id; });
+        os << "]\n";
+      }
+    }
   }
   os << "PLAN mechanical mechanisms=" << program.getMechanisms().size() << '\n';
 }

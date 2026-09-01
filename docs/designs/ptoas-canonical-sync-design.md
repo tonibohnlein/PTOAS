@@ -19,6 +19,13 @@ The immutable demand graph answers the first two questions. Target semantics,
 coverage evaluation, event allocation, and the independent verifier answer the
 remaining questions without changing the graph.
 
+The mechanical baseline through `7418323a8` passed its A3 device gate on eight
+Ascend 910B2 cards: 164,000 launches completed without mismatch, timeout,
+runtime error, sentinel violation, or divergent repetition. A2 was not tested
+because the available toolchain and cards expose only the combined A2/A3 target
+class. Bottom-up summaries and every later optimization remain outside that
+device verdict until separately gated.
+
 ## Hardware basis
 
 The A2/A3 target table follows the NPU 2201 synchronization documentation:
@@ -183,9 +190,21 @@ macro. Event lifecycles that repeat inside a loop are rejected.
 Coverage is evaluated as a scoreboard, not as pairwise graph reachability. A
 barrier publishes its completed source prefix. A set captures the source
 prefix and completion facts already imported onto the source resource. Its
-wait transfers those facts to the target. Fixed-point evaluation therefore
-records singleton coverage as well as coverage that exists only when a group
-of mechanisms is present.
+wait transfers those facts to the target.
+
+Regions are summarized bottom-up. Sequences compose child boundary transfers;
+choices retain guarded correlations and form a must-transfer only when both
+arms establish the same resource transfer; loops tag facts and transfers that
+require at least one iteration, preserving the zero-trip path. Parents consume
+these child summaries rather than rescanning logical demand endpoints.
+
+Each coverage world is checked against two non-summary implementations: the
+flat fixed-point scoreboard and a bounded structured interpreter that
+enumerates both choice arms and zero, one, and two loop iterations. The bounded
+interpreter is a differential oracle, not a proof for arbitrary trip counts. A
+disagreement with either oracle is a compiler error and prevents mutation.
+Fixed-point evaluation therefore records singleton coverage as well as
+coverage that exists only when a group of mechanisms is present.
 
 The initial materialized plan keeps every direct mechanism. Coverage worlds are
 diagnostic input for a later selection policy; they do not redefine

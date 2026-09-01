@@ -82,6 +82,10 @@ LogicalResult
 buildCanonicalStructureAndAccesses(CanonicalSyncProgram &program,
                                    const CanonicalSyncTarget &target);
 LogicalResult deriveCanonicalDemands(CanonicalSyncProgram &program);
+FailureOr<llvm::SmallVector<CanonicalDemandId, 16>>
+evaluateCanonicalSyncUnrolledOracle(
+    const CanonicalSyncProgram &program,
+    llvm::ArrayRef<CanonicalMechanismId> selected);
 LogicalResult verifyMaterializedCanonicalSync(func::FuncOp function);
 
 } // namespace canonical_sync_detail

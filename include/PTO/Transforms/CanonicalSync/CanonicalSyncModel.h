@@ -225,10 +225,39 @@ struct CanonicalMechanism {
   std::optional<unsigned> eventId;
 };
 
+struct CanonicalCompletionTransfer {
+  CanonicalPhaseId phase = kInvalidCanonicalSyncId;
+  CanonicalPhysicalResource resource;
+  CanonicalProgramPoint availableAt;
+  llvm::SmallVector<CanonicalControlAtom, 2> guard;
+  llvm::SmallVector<CanonicalRegionId, 2> requiredLoops;
+};
+
+struct CanonicalBoundaryTransfer {
+  CanonicalPhysicalResource source;
+  CanonicalPhysicalResource target;
+  CanonicalProgramPoint sourcePoint;
+  CanonicalProgramPoint targetPoint;
+  llvm::SmallVector<CanonicalControlAtom, 2> guard;
+  llvm::SmallVector<CanonicalRegionId, 2> requiredLoops;
+  llvm::SmallVector<CanonicalMechanismId, 2> mechanisms;
+};
+
+struct CanonicalRegionSummary {
+  CanonicalRegionId region = kInvalidCanonicalSyncId;
+  llvm::SmallVector<CanonicalRegionId, 0> children;
+  llvm::SmallVector<CanonicalCompletionTransfer, 0> completions;
+  llvm::SmallVector<CanonicalBoundaryTransfer, 0> transfers;
+};
+
 struct CanonicalCoverageWorld {
   std::string name;
   llvm::SmallVector<CanonicalMechanismId, 8> mechanisms;
   llvm::SmallVector<CanonicalDemandId, 8> covered;
+  llvm::SmallVector<CanonicalRegionSummary, 0> summaries;
+  llvm::SmallVector<CanonicalDemandId, 8> differentialDisagreements;
+  bool flattenedOracleMatched = false;
+  bool unrolledOracleMatched = false;
 };
 
 class CanonicalSyncProgram {
