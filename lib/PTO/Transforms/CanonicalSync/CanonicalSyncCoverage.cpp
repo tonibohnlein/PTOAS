@@ -570,23 +570,46 @@ sharedOppositeChoice(const CanonicalMechanism &first,
   return std::nullopt;
 }
 
+struct ChoiceGroupSignature {
+  CanonicalRegionId choice = kInvalidCanonicalSyncId;
+  CanonicalPhysicalResource source;
+  CanonicalPhysicalResource target;
+  SmallVector<CanonicalControlAtom, 2> residualGuard;
+
+  bool operator==(const ChoiceGroupSignature &other) const {
+    return choice == other.choice && source == other.source &&
+           target == other.target && residualGuard == other.residualGuard;
+  }
+};
+
 SmallVector<SmallVector<CanonicalMechanismId, 2>, 4>
 discoverChoiceGroups(const CanonicalSyncProgram &program,
                      ArrayRef<CanonicalMechanismId> baseline) {
   SmallVector<SmallVector<CanonicalMechanismId, 2>, 4> groups;
+  SmallVector<ChoiceGroupSignature, 4> signatures;
   for (const CanonicalMechanism &first : program.getMechanisms()) {
     if (llvm::is_contained(baseline, first.id)) {
       continue;
     }
     for (const CanonicalMechanism &second :
          program.getMechanisms().drop_front(first.id + 1U)) {
+      const std::optional<CanonicalRegionId> choice =
+          sharedOppositeChoice(first, second);
       const bool incompatible = llvm::is_contained(baseline, second.id) ||
                                 first.source != second.source ||
-                                first.target != second.target ||
-                                !sharedOppositeChoice(first, second);
+                                first.target != second.target || !choice;
       if (incompatible) {
         continue;
       }
+      ChoiceGroupSignature signature;
+      signature.choice = *choice;
+      signature.source = first.source;
+      signature.target = first.target;
+      signature.residualGuard = withoutChoice(first.guard, *choice);
+      if (llvm::is_contained(signatures, signature)) {
+        continue;
+      }
+      signatures.push_back(std::move(signature));
       groups.push_back({first.id, second.id});
     }
   }

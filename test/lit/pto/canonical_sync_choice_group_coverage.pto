@@ -23,8 +23,10 @@ module attributes {pto.target_arch = "a2a3"} {
     %input_addr = arith.constant 0 : i64
     %shared_addr = arith.constant 8192 : i64
     %then_addr = arith.constant 16384 : i64
-    %else_addr = arith.constant 24576 : i64
-    %output_addr = arith.constant 32768 : i64
+    %then_second_addr = arith.constant 24576 : i64
+    %else_addr = arith.constant 32768 : i64
+    %else_second_addr = arith.constant 40960 : i64
+    %output_addr = arith.constant 49152 : i64
     %one = arith.constant 1.000000e+00 : f32
     %input = pto.alloc_tile addr = %input_addr :
       !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
@@ -38,7 +40,15 @@ module attributes {pto.target_arch = "a2a3"} {
       !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
                     v_col=128, blayout=row_major, slayout=none_box,
                     fractal=512, pad=0>
+    %then_second = pto.alloc_tile addr = %then_second_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
     %else_output = pto.alloc_tile addr = %else_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %else_second = pto.alloc_tile addr = %else_second_addr :
       !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
                     v_col=128, blayout=row_major, slayout=none_box,
                     fractal=512, pad=0>
@@ -61,12 +71,28 @@ module attributes {pto.target_arch = "a2a3"} {
                        rows=16, cols=128, v_row=16, v_col=128,
                        blayout=row_major, slayout=none_box, fractal=512,
                        pad=0>)
+      pto.tmuls ins(%shared, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%then_second : !pto.tile_buf<loc=vec, dtype=f32,
+                       rows=16, cols=128, v_row=16, v_col=128,
+                       blayout=row_major, slayout=none_box, fractal=512,
+                       pad=0>)
     } else {
       pto.tmuls ins(%shared, %one : !pto.tile_buf<loc=vec, dtype=f32,
                       rows=16, cols=128, v_row=16, v_col=128,
                       blayout=row_major, slayout=none_box, fractal=512,
                       pad=0>, f32)
                 outs(%else_output : !pto.tile_buf<loc=vec, dtype=f32,
+                       rows=16, cols=128, v_row=16, v_col=128,
+                       blayout=row_major, slayout=none_box, fractal=512,
+                       pad=0>)
+      pto.tmuls ins(%shared, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%else_second : !pto.tile_buf<loc=vec, dtype=f32,
                        rows=16, cols=128, v_row=16, v_col=128,
                        blayout=row_major, slayout=none_box, fractal=512,
                        pad=0>)
@@ -85,9 +111,10 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: m0 kind=barrier resource=AIV:PIPE_V->AIV:PIPE_V
 // CHECK: m1 kind=barrier resource=AIV:PIPE_V->AIV:PIPE_V
 // CHECK: m2 kind=barrier resource=AIV:PIPE_V->AIV:PIPE_V
-// CHECK: world=choice-group-m0-m1 mechanisms=[m0, m1]
-// CHECK-SAME: covered=[d0, d1, d2]
+// CHECK: world=choice-group-m0-m2 mechanisms=[m0, m2]
+// CHECK-SAME: covered=[d0, d1, d2, d3, d4]
 // CHECK-SAME: oracle=match
+// CHECK-NOT: world=choice-group
 // CHECK: world=mechanical
 // CHECK-SAME: oracle=match
 // CHECK: VERIFY ok
