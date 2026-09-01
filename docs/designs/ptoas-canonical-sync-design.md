@@ -4,15 +4,14 @@
 
 Canonical synchronization is an opt-in A2/A3 synchronization mode. Its first
 implementation establishes a hardware-grounded dependency and demand model and
-then emits a mechanical direct solution. It deliberately does not choose a
-smaller subset of mechanisms yet.
+then selects a covering subset of direct hardware mechanisms.
 
 The design separates five questions:
 
 1. Which dynamic memory effects can conflict?
 2. Which completion or visibility order does the conflict require?
 3. Which direct hardware mechanism can satisfy that demand?
-4. Which other demands are implied by one mechanism or a group of mechanisms?
+4. Which other demands are implied by one direct mechanism?
 5. Does the final staged IR satisfy an independently reconstructed model?
 
 The immutable demand graph answers the first two questions. Target semantics,
@@ -221,50 +220,31 @@ inconclusive; reaching the diagnostic bound never rejects an otherwise valid
 program. A disagreement with the flat scoreboard or with an exhaustive
 bounded run is a compiler error and prevents mutation.
 
-Coverage is a direct function of a concrete selected-mechanism group. A world
-records that group and the demands it covers; region facts and transfers do not
-carry symbolic AND/OR mechanism formulas. Later group exploration can evaluate
-another concrete world and record only the demands it covers in addition to
-the mechanisms' originating demands. This keeps group coverage and weighted
-set-cover construction separate from the dependency graph.
+Coverage is computed once for each unique direct physical mechanism. A
+singleton world contains fixed baseline supply plus that mechanism. Its
+bottom-up regional result must agree with the flat scoreboard and, when
+exhaustive, the bounded structured interpreter. The resulting demand set is a
+static column in the set-cover instance; later solving never invokes a coverage
+oracle again.
 
-As an initial non-singleton differential check, one stable representative pair
-is evaluated for each choice, physical resource relation, residual guard, and
-canonical loop-execution requirement. Pairs with unequal loop requirements do
-not form a choice group. The complementary arm mechanisms form a concrete
-`choice-group` world, and matching arm-local completion facts form a
-must-completion at the choice exit. Deduplicating by this semantic join
-signature prevents mandatory diagnostics from retaining a quadratic number of
-full summary/oracle worlds. These worlds remain diagnostic: they neither select
-mechanisms nor change the mechanical plan.
-
-When diagnostics are requested, the pass builds a weighted set-cover instance
-from the checked concrete singleton and choice-group worlds. Each column stores
-the mechanisms in the concrete group, their direct origins, and only coverage
-in addition to those origins. A deterministic weighted greedy heuristic chooses
-columns by marginal demand coverage per marginal mechanism cost, then reverse
-deletion re-evaluates the concrete selected group after removing each added
-mechanism. Baseline mechanisms have zero selection cost, a targeted pipe barrier
-has weight one, and one complete set/wait event pair has weight two. The final
-proposal is accepted for reporting only after the regional, flat, and (when
-exhaustive) bounded coverage calculations agree and every demand is covered.
-This is a coverage proof, not a physical-plan proof: the proposal is not
-allocated or materialized yet.
-
-The initial materialized plan still keeps every direct mechanism. The diagnostic
-proposal does not redefine correctness or affect emitted synchronization.
+Intrinsic order, existing fixed fences, and the required return drain are
+baseline supply. Every remaining singleton barrier or complete set/wait pair
+has weight one. Deterministic greedy selection chooses the column with the
+largest uncovered demand set, then reverse deletion removes a selected column
+when the union of the remaining cached columns still covers the universe. The
+selected mechanisms are the materialized plan. Non-singleton mechanism groups
+and symbolic AND/OR coverage formulas are outside this implementation.
 
 ## Event allocation
 
-Logical events are allocated after demands, mechanisms, and coverage are
-fixed. Allocation uses IDs 0 through 5 and subtracts event IDs reserved by
-hidden macro protocols for the same directed domain. Scalar/MLIR order between
-an earlier wait and a later set is not a hardware lifetime proof: the source
-pipeline may re-set the flag before the target pipeline consumes it. Therefore
-the mechanical baseline assigns distinct IDs to all coexecuting generations in
-one directed domain. Only once-only generations in provably mutually exclusive
-control arms may share an ID. Exhaustion is an error; it does not fall back to a
-global barrier.
+Logical events are allocated only for selected mechanisms. Allocation uses IDs
+0 through 5 and subtracts event IDs reserved by hidden macro protocols for the
+same directed domain. Scalar/MLIR order between an earlier wait and a later set
+is not a hardware lifetime proof: the source pipeline may re-set the flag before
+the target pipeline consumes it. Therefore all coexecuting generations in one
+directed domain receive distinct IDs. Only once-only generations in provably
+mutually exclusive control arms may share an ID. Deterministic first-fit failure
+is an error; it does not trigger event reuse or a global-barrier fallback.
 
 ## Independent verification and atomic mutation
 
@@ -319,7 +299,8 @@ The compiler interface is:
 
 Analysis-only mode implies a dump and does not mutate the function. Dumps have
 stable sections for target semantics, regions, phases, accesses, demands,
-mechanisms, coverage worlds, the mechanical plan, and verification status.
+mechanisms, singleton coverage worlds, the selected plan, and verification
+status.
 
 Canonical synchronization is mutually exclusive with the existing InsertSync,
 buffer-ID, and barrier-all modes. It rejects A5, `pto.tassign`, pre-existing

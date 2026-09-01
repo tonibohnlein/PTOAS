@@ -653,79 +653,6 @@ coveredDemands(const CanonicalSyncProgram &program,
   return covered;
 }
 
-std::optional<CanonicalRegionId>
-sharedOppositeChoice(const CanonicalMechanism &first,
-                     const CanonicalMechanism &second) {
-  for (const CanonicalControlAtom &firstAtom : first.guard) {
-    auto secondAtom =
-        llvm::find_if(second.guard, [&](const CanonicalControlAtom &atom) {
-          return atom.choice == firstAtom.choice && atom.arm != firstAtom.arm;
-        });
-    const bool incompatible = secondAtom == second.guard.end() ||
-                              withoutChoice(first.guard, firstAtom.choice) !=
-                                  withoutChoice(second.guard, firstAtom.choice);
-    if (incompatible) {
-      continue;
-    }
-    return firstAtom.choice;
-  }
-  return std::nullopt;
-}
-
-struct ChoiceGroupSignature {
-  CanonicalRegionId choice = kInvalidCanonicalSyncId;
-  CanonicalPhysicalResource source;
-  CanonicalPhysicalResource target;
-  SmallVector<CanonicalControlAtom, 2> residualGuard;
-  SmallVector<CanonicalRegionId, 2> requiredLoops;
-
-  bool operator==(const ChoiceGroupSignature &other) const {
-    return choice == other.choice && source == other.source &&
-           target == other.target && residualGuard == other.residualGuard &&
-           requiredLoops == other.requiredLoops;
-  }
-};
-
-SmallVector<SmallVector<CanonicalMechanismId, 2>, 4>
-discoverChoiceGroups(const CanonicalSyncProgram &program,
-                     ArrayRef<CanonicalMechanismId> baseline) {
-  SmallVector<SmallVector<CanonicalMechanismId, 2>, 4> groups;
-  SmallVector<ChoiceGroupSignature, 4> signatures;
-  for (const CanonicalMechanism &first : program.getMechanisms()) {
-    if (llvm::is_contained(baseline, first.id)) {
-      continue;
-    }
-    const SmallVector<CanonicalRegionId, 2> firstLoops =
-        mechanismExecutionLoops(program, first);
-    for (const CanonicalMechanism &second :
-         program.getMechanisms().drop_front(first.id + 1U)) {
-      const std::optional<CanonicalRegionId> choice =
-          sharedOppositeChoice(first, second);
-      const SmallVector<CanonicalRegionId, 2> secondLoops =
-          mechanismExecutionLoops(program, second);
-      const bool incompatible = llvm::is_contained(baseline, second.id) ||
-                                first.source != second.source ||
-                                first.target != second.target || !choice ||
-                                firstLoops != secondLoops;
-      if (incompatible) {
-        continue;
-      }
-      ChoiceGroupSignature signature;
-      signature.choice = *choice;
-      signature.source = first.source;
-      signature.target = first.target;
-      signature.residualGuard = withoutChoice(first.guard, *choice);
-      signature.requiredLoops = firstLoops;
-      if (llvm::is_contained(signatures, signature)) {
-        continue;
-      }
-      signatures.push_back(std::move(signature));
-      groups.push_back({first.id, second.id});
-    }
-  }
-  return groups;
-}
-
 CanonicalCoverageWorld evaluateWorld(const CanonicalSyncProgram &program,
                                      StringRef name,
                                      ArrayRef<CanonicalMechanismId> selected) {
@@ -830,23 +757,19 @@ mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
         "canonical sync coverage requires an unsealed mechanism catalog");
   }
   const auto appendGroup = [&program](StringRef name,
-                                      ArrayRef<CanonicalMechanismId> selected,
-                                      bool setCoverCandidate = false) {
+                                      ArrayRef<CanonicalMechanismId> selected) {
     FailureOr<CanonicalCoverageWorld> world =
         canonical_sync_detail::evaluateCanonicalSyncGroup(program, name,
                                                           selected);
     if (failed(world)) {
       return failure();
     }
-    world->setCoverCandidate = setCoverCandidate;
     program.appendCoverageWorld(std::move(*world));
     return success();
   };
 
   SmallVector<CanonicalMechanismId, 8> baseline;
-  SmallVector<CanonicalMechanismId, 16> all;
   for (const CanonicalMechanism &mechanism : program.getMechanisms()) {
-    all.push_back(mechanism.id);
     if (mechanism.kind == CanonicalMechanismKind::IntrinsicOrder ||
         mechanism.kind == CanonicalMechanismKind::FixedFence ||
         mechanism.kind == CanonicalMechanismKind::TailBarrier) {
@@ -868,38 +791,6 @@ mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
     }
   }
 
-  for (const SmallVector<CanonicalMechanismId, 2> &group :
-       discoverChoiceGroups(program, baseline)) {
-    SmallVector<CanonicalMechanismId, 8> selected = baseline;
-    selected.append(group);
-    const std::string name =
-        (Twine("choice-group-m") + Twine(group[0]) + "-m" + Twine(group[1]))
-            .str();
-    if (failed(appendGroup(name, selected, true))) {
-      return failure();
-    }
-  }
-
-  FailureOr<CanonicalCoverageWorld> final =
-      canonical_sync_detail::evaluateCanonicalSyncGroup(program, "mechanical",
-                                                        all);
-  if (failed(final)) {
-    return failure();
-  }
-  const bool incomplete = final->covered.size() != program.getDemands().size();
-  if (incomplete) {
-    for (const CanonicalDemand &demand : program.getDemands()) {
-      if (!llvm::is_contained(final->covered, demand.id)) {
-        program.getFunction().emitError(
-            "canonical sync mechanical plan does not cover demand d")
-            << demand.id << " (" << stringifyCanonicalDemandKind(demand.kind)
-            << ')';
-        break;
-      }
-    }
-    return failure();
-  }
-  program.appendCoverageWorld(std::move(*final));
   program.coverageCatalogComplete = true;
   return success();
 }

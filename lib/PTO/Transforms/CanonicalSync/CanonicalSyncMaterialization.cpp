@@ -44,7 +44,9 @@ LogicalResult collectActions(
     DenseMap<Operation *, SmallVector<EventAction, 2>> &sets,
     DenseMap<Operation *, SmallVector<EventAction, 2>> &waits,
     DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>> &barriers) {
-  for (const CanonicalMechanism &mechanism : program.getMechanisms()) {
+  const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
+  for (CanonicalMechanismId mechanismId : solution.mechanisms) {
+    const CanonicalMechanism &mechanism = program.getMechanism(mechanismId);
     if (mechanism.kind == CanonicalMechanismKind::IntrinsicOrder ||
         mechanism.kind == CanonicalMechanismKind::FixedFence ||
         mechanism.kind == CanonicalMechanismKind::TailBarrier) {
@@ -63,12 +65,13 @@ LogicalResult collectActions(
     }
     Operation *setAnchor =
         mapping.lookupOrNull(mechanism.sourcePoint.operation);
-    if (!setAnchor || !mechanism.eventId) {
+    const std::optional<unsigned> eventId = mechanism.eventId;
+    if (!setAnchor || !eventId) {
       return program.getFunction().emitError(
           "canonical sync event is missing a cloned anchor or allocated ID");
     }
     EventAction action{mechanism.id, mechanism.source.pipe,
-                       mechanism.target.pipe, *mechanism.eventId};
+                       mechanism.target.pipe, *eventId};
     sets[setAnchor].push_back(action);
     waits[waitAnchor].push_back(action);
   }
@@ -132,7 +135,9 @@ void emitActions(
 
 void emitTailBarriers(func::FuncOp clone, const CanonicalSyncProgram &program) {
   CanonicalMechanismId tail = kInvalidCanonicalSyncId;
-  for (const CanonicalMechanism &mechanism : program.getMechanisms()) {
+  const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
+  for (CanonicalMechanismId mechanismId : solution.mechanisms) {
+    const CanonicalMechanism &mechanism = program.getMechanism(mechanismId);
     if (mechanism.kind == CanonicalMechanismKind::TailBarrier) {
       tail = mechanism.id;
       break;
@@ -154,7 +159,8 @@ void emitTailBarriers(func::FuncOp clone, const CanonicalSyncProgram &program) {
 
 LogicalResult
 mlir::pto::materializeAndVerifyCanonicalSync(CanonicalSyncProgram &program) {
-  if (!program.isFrozen()) {
+  const bool planReady = program.isFrozen() && program.getSetCoverSolution();
+  if (!planReady) {
     return program.getFunction().emitError(
         "canonical sync materialization requires a frozen verified plan");
   }

@@ -87,7 +87,7 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: kind=fixed-fence fence=f0
 // CHECK: world=baseline
 // CHECK-SAME: oracle=match
-// CHECK: SET-COVER optimization=disabled
+// CHECK: SET-COVER optimization=singleton
 // CHECK-SAME: universe=[]
 // CHECK-LABEL: CANONICAL-SYNC function=fixed_fence_closes_cross_pipe_recurrence
 // CHECK: d{{[0-9]+}} kind=RAW {{.*}} distance=[r{{[0-9]+}}:+]
@@ -95,5 +95,5 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: m[[RECURRENCE_FENCE]] kind=fixed-fence fence=f0
 // CHECK: world=baseline
 // CHECK-SAME: oracle=match
-// CHECK: SET-COVER optimization=disabled
+// CHECK: SET-COVER optimization=singleton
 // CHECK-SAME: universe=[]

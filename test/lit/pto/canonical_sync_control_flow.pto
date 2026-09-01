@@ -51,8 +51,9 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: kind=RAW p0->p1
 // CHECK: guard=[r{{[0-9]+}}.a0]
 // CHECK: kind=event resource=AIV:PIPE_MTE2->AIV:PIPE_V
-// CHECK: world=mechanical
+// CHECK: world=singleton-m0 mechanisms=[m0, m1]
 // CHECK-SAME: oracle=match
+// CHECK: PLAN selected=[m0, m1] events=[m0=e0]
 // CHECK: VERIFY ok
 // CHECK-LABEL: func.func @canonical_sync_control_flow
 // CHECK: scf.if

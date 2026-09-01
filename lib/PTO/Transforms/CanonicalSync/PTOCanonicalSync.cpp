@@ -80,8 +80,7 @@ LogicalResult runCanonicalSync(func::FuncOp function,
   if (failed(buildCanonicalSyncSetCoverInstance(**program))) {
     return failure();
   }
-  const bool solveDiagnosticCover = options.dump || options.analysisOnly;
-  if (solveDiagnosticCover && failed(solveCanonicalSyncSetCover(**program))) {
+  if (failed(solveCanonicalSyncSetCover(**program))) {
     return failure();
   }
   if (failed(allocateCanonicalSyncEvents(**program))) {

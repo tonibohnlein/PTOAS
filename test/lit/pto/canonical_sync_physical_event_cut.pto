@@ -60,8 +60,9 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: m0 kind=event resource=AIV:PIPE_MTE2->AIV:PIPE_V
 // CHECK-SAME: points=after(scf.if)->before(pto.tmuls)
 // CHECK-SAME: origins=[d0, d1]
-// CHECK: world=mechanical mechanisms=[m0, m1] covered=[d0, d1, d2, d3, d4]
+// CHECK: world=singleton-m0 mechanisms=[m0, m1] covered=[d0, d1, d2, d3, d4]
 // CHECK-SAME: oracle=match
+// CHECK: PLAN selected=[m0, m1] events=[m0=e0]
 // CHECK: VERIFY ok
 // CHECK-LABEL: func.func @two_arm_producers_one_physical_cut
 // CHECK: scf.if

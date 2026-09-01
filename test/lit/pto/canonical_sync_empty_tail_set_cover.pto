@@ -24,8 +24,8 @@ module {
 // CHECK: MECHANISMS 1
 // CHECK: m0 kind=tail
 // CHECK-SAME: origins=[]
-// CHECK: SET-COVER optimization=disabled baseline=[m0] universe=[] candidates=0
-// CHECK: OPTIMIZATION enabled=no mode=diagnostic-weighted-greedy greedy=[]
+// CHECK: SET-COVER optimization=singleton baseline=[m0] universe=[] candidates=0
+// CHECK: OPTIMIZATION enabled=yes mode=singleton-greedy greedy=[]
 // CHECK-SAME: proposed=[m0] reverse-deleted=[] weight=0 coverage-verified=yes
-// CHECK: PLAN mechanical mechanisms=1
+// CHECK: PLAN selected=[m0] events=[]
 // CHECK: VERIFY ok

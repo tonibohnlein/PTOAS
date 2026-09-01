@@ -44,10 +44,10 @@ def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
 def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
   let summary = "Plan synchronization from a hardware dependency graph";
   let description = [{
-    Builds an immutable structured dependency and demand graph, assigns one
-    direct hardware mechanism to each demand, evaluates group coverage, and
-    verifies the staged result with an independent dataflow model before
-    changing the function.
+    Builds an immutable structured dependency and demand graph, evaluates the
+    coverage of each unique direct hardware mechanism once, selects a covering
+    subset with a deterministic greedy heuristic, and verifies the staged
+    result with an independent dataflow model before changing the function.
   }];
 
   let constructor = "mlir::pto::createPTOCanonicalSyncPass()";

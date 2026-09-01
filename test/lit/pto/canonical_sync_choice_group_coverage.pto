@@ -8,19 +8,16 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-// A shared producer precedes a choice. The first then-arm barrier is nested in
-// a loop, so it cannot join the else-arm barrier. The next then-arm barrier has
-// matching loop requirements and must become the stable representative.
-// Selecting that pair, but not the producer's direct post-choice barrier, must
-// cover the post-choice demand through a choice must-completion. The summary,
-// flat scoreboard, and exhaustive unrolled oracle must agree for the concrete
-// two-mechanism group.
+// Each direct barrier is analyzed as a singleton. The barrier motivated by d2
+// also covers d3, so greedy selection omits d3's direct barrier. No group world
+// is created, and materialization emits only the four selected PIPE_V cuts.
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
-// RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   --canonical-sync-dump --emit-pto-ir \
+// RUN:   --mlir-print-ir-after=pto-canonical-sync %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
 
 module attributes {pto.target_arch = "a2a3"} {
-  func.func @choice_group_covers_post_choice(%condition: i1)
+  func.func @singleton_cover_omits_redundant_barrier(%condition: i1)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %input_addr = arith.constant 0 : i64
     %shared_addr = arith.constant 8192 : i64
@@ -114,24 +111,24 @@ module attributes {pto.target_arch = "a2a3"} {
   }
 }
 
-// CHECK-LABEL: CANONICAL-SYNC function=choice_group_covers_post_choice
+// CHECK-LABEL: CANONICAL-SYNC function=singleton_cover_omits_redundant_barrier
 // CHECK: m0 kind=barrier resource=AIV:PIPE_V->AIV:PIPE_V
 // CHECK: m1 kind=barrier resource=AIV:PIPE_V->AIV:PIPE_V
 // CHECK: m2 kind=barrier resource=AIV:PIPE_V->AIV:PIPE_V
-// CHECK: world=choice-group-m1-m2 mechanisms=[m1, m2, m5]
-// CHECK-SAME: covered=[d1, d2, d3, d4, d6, d7, d8, d9, d10, d11]
+// CHECK: world=singleton-m2 mechanisms=[m2, m5]
+// CHECK-SAME: covered=[d2, d3, d6, d7, d8, d9, d10, d11]
 // CHECK-SAME: oracle=match
 // CHECK-NOT: world=choice-group
-// CHECK: world=mechanical
-// CHECK-SAME: oracle=match
-// CHECK: SET-COVER optimization=disabled baseline=[m5]
+// CHECK: SET-COVER optimization=singleton baseline=[m5]
 // CHECK-SAME: universe=[d0, d1, d2, d3, d4, d5]
-// CHECK: candidate=c5 mechanisms=[m1, m2] weight=2
-// CHECK-SAME: direct-origins=[d1, d2]
-// CHECK-SAME: additional=[d3, d4]
-// CHECK: OPTIMIZATION enabled=no mode=diagnostic-weighted-greedy
-// CHECK-SAME: greedy=[c0, c2, c5]
-// CHECK-SAME: proposed=[m0, m1, m2, m5]
-// CHECK-SAME: reverse-deleted=[] weight=3 coverage-verified=yes
-// CHECK: PLAN mechanical mechanisms=6
+// CHECK: candidate=c2 mechanisms=[m2] weight=1
+// CHECK-SAME: direct-origins=[d2]
+// CHECK-SAME: additional=[d3]
+// CHECK: OPTIMIZATION enabled=yes mode=singleton-greedy
+// CHECK-SAME: greedy=[c0, c2, c1, c4]
+// CHECK-SAME: proposed=[m0, m1, m2, m4, m5]
+// CHECK-SAME: reverse-deleted=[] weight=4 coverage-verified=yes
+// CHECK: PLAN selected=[m0, m1, m2, m4, m5] events=[]
 // CHECK: VERIFY ok
+// CHECK-COUNT-4: pto.barrier <PIPE_V>
+// CHECK: pto.barrier <PIPE_ALL>

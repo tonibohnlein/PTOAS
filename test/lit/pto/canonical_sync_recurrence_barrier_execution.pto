@@ -84,7 +84,7 @@ module attributes {pto.target_arch = "a2a3"} {
     return
   }
 
-  func.func @inconclusive_oracle_keeps_zero_trip_rule(%inner_upper: index)
+  func.func @zero_trip_rule_survives_large_state_space(%inner_upper: index)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %outer_addr = arith.constant 0 : i64
     %inner_addr = arith.constant 8192 : i64
@@ -145,9 +145,9 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: candidate=c0 mechanisms=[m0] weight=1
 // CHECK: VERIFY ok
 
-// CHECK-LABEL: CANONICAL-SYNC function=inconclusive_oracle_keeps_zero_trip_rule
+// CHECK-LABEL: CANONICAL-SYNC function=zero_trip_rule_survives_large_state_space
 // CHECK: world=singleton-m1
-// CHECK-SAME: oracle=flat-match/unrolled-inconclusive
+// CHECK-SAME: oracle=match
 // CHECK: candidate=c1 mechanisms=[m1] weight=1
 // CHECK-SAME: additional=[]
 // CHECK: VERIFY ok

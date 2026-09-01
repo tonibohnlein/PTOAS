@@ -337,10 +337,8 @@ LogicalResult CanonicalSyncProgram::freeze() {
         candidate.id >= setCoverInstance->candidates.size() ||
         &candidate != &setCoverInstance->candidates[candidate.id];
     const bool invalidMechanism =
-        candidate.mechanisms.empty() ||
-        llvm::any_of(candidate.mechanisms, [this](CanonicalMechanismId id) {
-          return id >= mechanisms.size();
-        });
+        candidate.mechanisms.size() != 1U ||
+        candidate.mechanisms.front() >= mechanisms.size();
     const bool invalidDemand = llvm::any_of(candidate.directOrigins,
                                             [this](CanonicalDemandId id) {
                                               return id >= demands.size();
@@ -379,7 +377,10 @@ LogicalResult CanonicalSyncProgram::freeze() {
       uncoveredUniverse) {
     return fail("set-cover instance references an invalid ID or incidence");
   }
-  if (setCoverSolution) {
+  if (!setCoverSolution) {
+    return fail("set-cover solution is missing");
+  }
+  {
     const bool invalidGreedyCandidate =
         llvm::any_of(setCoverSolution->greedyCandidates,
                      [this](CanonicalSetCoverCandidateId id) {
@@ -388,6 +389,11 @@ LogicalResult CanonicalSyncProgram::freeze() {
     const bool invalidMechanism = llvm::any_of(
         setCoverSolution->mechanisms,
         [this](CanonicalMechanismId id) { return id >= mechanisms.size(); });
+    const bool invalidOrder =
+        !llvm::is_sorted(setCoverSolution->mechanisms) ||
+        std::adjacent_find(setCoverSolution->mechanisms.begin(),
+                           setCoverSolution->mechanisms.end()) !=
+            setCoverSolution->mechanisms.end();
     const bool missingBaseline = llvm::any_of(
         setCoverInstance->baseline, [this](CanonicalMechanismId id) {
           return !llvm::is_contained(setCoverSolution->mechanisms, id);
@@ -398,10 +404,48 @@ LogicalResult CanonicalSyncProgram::freeze() {
                  llvm::is_contained(setCoverInstance->baseline, id) ||
                  llvm::is_contained(setCoverSolution->mechanisms, id);
         });
-    if (invalidGreedyCandidate || invalidMechanism || missingBaseline ||
-        invalidDeletion || !setCoverSolution->coverageVerified) {
+    SmallVector<CanonicalDemandId, 8> selectedCoverage;
+    for (const CanonicalSetCoverCandidate &candidate :
+         setCoverInstance->candidates) {
+      if (!llvm::is_contained(setCoverSolution->mechanisms,
+                              candidate.mechanisms.front())) {
+        continue;
+      }
+      selectedCoverage.append(candidate.directOrigins);
+      selectedCoverage.append(candidate.additionalCoverage);
+    }
+    llvm::sort(selectedCoverage);
+    selectedCoverage.erase(
+        std::unique(selectedCoverage.begin(), selectedCoverage.end()),
+        selectedCoverage.end());
+    const bool incompleteCoverage = llvm::any_of(
+        setCoverInstance->universe, [&selectedCoverage](CanonicalDemandId id) {
+          return !llvm::is_contained(selectedCoverage, id);
+        });
+    const std::uint64_t expectedWeight =
+        static_cast<std::uint64_t>(llvm::count_if(
+            setCoverSolution->mechanisms, [this](CanonicalMechanismId id) {
+              return !llvm::is_contained(setCoverInstance->baseline, id);
+            }));
+    bool invalidEventAssignment = false;
+    for (const CanonicalMechanism &mechanism : mechanisms) {
+      const bool selected =
+          llvm::is_contained(setCoverSolution->mechanisms, mechanism.id);
+      const bool mustHaveEvent =
+          selected && mechanism.kind == CanonicalMechanismKind::Event;
+      const bool assignmentMatches =
+          mechanism.eventId.has_value() == mustHaveEvent;
+      if (!assignmentMatches) {
+        invalidEventAssignment = true;
+        break;
+      }
+    }
+    if (invalidGreedyCandidate || invalidMechanism || invalidOrder ||
+        missingBaseline || invalidDeletion || incompleteCoverage ||
+        setCoverSolution->weight != expectedWeight || invalidEventAssignment ||
+        !setCoverSolution->coverageVerified) {
       return fail("set-cover solution references an invalid ID or lacks a "
-                  "checked coverage proof");
+                  "checked coverage proof or event allocation");
     }
   }
   const bool wrongDirectCount = directMechanisms.size() != demands.size();

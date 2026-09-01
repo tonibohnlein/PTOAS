@@ -170,9 +170,6 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
     llvm::interleaveComma(mechanism.origins, os,
                           [&os](CanonicalDemandId id) { os << 'd' << id; });
     os << ']';
-    if (mechanism.eventId) {
-      os << " event=" << *mechanism.eventId;
-    }
     os << '\n';
   }
   os << "COVERAGE " << program.getCoverageWorlds().size() << '\n';
@@ -194,36 +191,9 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
     }
     os << '\n';
   }
-  auto mechanical = llvm::find_if(program.getCoverageWorlds(),
-                                  [](const CanonicalCoverageWorld &world) {
-                                    return world.name == "mechanical";
-                                  });
-  if (mechanical != program.getCoverageWorlds().end()) {
-    os << "SUMMARIES world=mechanical\n";
-    for (const CanonicalRegionSummary &summary : mechanical->summaries) {
-      const CanonicalRegion &region = program.getRegion(summary.region);
-      os << "  summary=r" << summary.region
-         << " kind=" << stringifyCanonicalRegionKind(region.kind)
-         << " children=" << summary.children.size()
-         << " completions=" << summary.completions.size()
-         << " transfers=" << summary.transfers.size() << '\n';
-      for (const CanonicalBoundaryTransfer &transfer : summary.transfers) {
-        os << "    transfer=";
-        printResource(os, transfer.source);
-        os << "->";
-        printResource(os, transfer.target);
-        os << " guard=";
-        printGuard(os, transfer.guard);
-        os << " required-loops=[";
-        llvm::interleaveComma(transfer.requiredLoops, os,
-                              [&os](CanonicalRegionId id) { os << 'r' << id; });
-        os << "]\n";
-      }
-    }
-  }
   if (program.getSetCoverInstance()) {
     const CanonicalSetCoverInstance &instance = *program.getSetCoverInstance();
-    os << "SET-COVER optimization=disabled baseline=[";
+    os << "SET-COVER optimization=singleton baseline=[";
     llvm::interleaveComma(instance.baseline, os,
                           [&os](CanonicalMechanismId id) { os << 'm' << id; });
     os << "] universe=[";
@@ -246,7 +216,7 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
   }
   if (program.getSetCoverSolution()) {
     const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
-    os << "OPTIMIZATION enabled=no mode=diagnostic-weighted-greedy"
+    os << "OPTIMIZATION enabled=yes mode=singleton-greedy"
        << " greedy=[";
     llvm::interleaveComma(
         solution.greedyCandidates, os,
@@ -260,6 +230,22 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
     os << "] weight=" << solution.weight
        << " coverage-verified=" << (solution.coverageVerified ? "yes" : "no")
        << '\n';
+    os << "PLAN selected=[";
+    llvm::interleaveComma(solution.mechanisms, os,
+                          [&os](CanonicalMechanismId id) { os << 'm' << id; });
+    os << "] events=[";
+    bool firstEvent = true;
+    for (CanonicalMechanismId id : solution.mechanisms) {
+      const std::optional<unsigned> eventId = program.getMechanism(id).eventId;
+      if (!eventId) {
+        continue;
+      }
+      if (!firstEvent) {
+        os << ", ";
+      }
+      firstEvent = false;
+      os << 'm' << id << "=e" << *eventId;
+    }
+    os << "]\n";
   }
-  os << "PLAN mechanical mechanisms=" << program.getMechanisms().size() << '\n';
 }

@@ -34,8 +34,10 @@ bool lifetimesCanOverlap(const CanonicalMechanism &first,
 }
 
 bool idAvailable(const CanonicalSyncProgram &program,
+                 const CanonicalSetCoverSolution &solution,
                  const CanonicalMechanism &candidate, unsigned eventId) {
-  for (const CanonicalMechanism &existing : program.getMechanisms()) {
+  for (CanonicalMechanismId existingId : solution.mechanisms) {
+    const CanonicalMechanism &existing = program.getMechanism(existingId);
     if (existing.id >= candidate.id ||
         existing.kind != CanonicalMechanismKind::Event ||
         existing.eventId != eventId || !sameDomain(existing, candidate)) {
@@ -52,12 +54,18 @@ bool idAvailable(const CanonicalSyncProgram &program,
 
 LogicalResult
 mlir::pto::allocateCanonicalSyncEvents(CanonicalSyncProgram &program) {
+  if (!program.getSetCoverSolution()) {
+    return program.getFunction().emitError(
+        "canonical sync event allocation requires a selected cover");
+  }
   FailureOr<CanonicalSyncTarget> target =
       CanonicalSyncTarget::resolve(program.getFunction());
   if (failed(target)) {
     return failure();
   }
-  for (const CanonicalMechanism &mechanism : program.getMechanisms()) {
+  const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
+  for (CanonicalMechanismId mechanismId : solution.mechanisms) {
+    const CanonicalMechanism &mechanism = program.getMechanism(mechanismId);
     if (mechanism.kind != CanonicalMechanismKind::Event) {
       continue;
     }
@@ -65,8 +73,9 @@ mlir::pto::allocateCanonicalSyncEvents(CanonicalSyncProgram &program) {
         program.getFunction(), mechanism.source, mechanism.target);
     std::optional<unsigned> assigned;
     for (unsigned eventId : target->getCompilerEventIds()) {
-      const bool eventAvailable = !llvm::is_contained(reserved, eventId) &&
-                                  idAvailable(program, mechanism, eventId);
+      const bool eventAvailable =
+          !llvm::is_contained(reserved, eventId) &&
+          idAvailable(program, solution, mechanism, eventId);
       if (eventAvailable) {
         assigned = eventId;
         break;

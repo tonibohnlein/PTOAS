@@ -135,7 +135,8 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: kind=event resource=AIV:PIPE_V->AIV:PIPE_S
 // CHECK-SAME: points=after(pto.tgather)->before(pto.tgetval)
 // CHECK-SAME: origins=[d{{[0-9]+}}, d{{[0-9]+}}]
-// CHECK: world=mechanical
+// CHECK: world=singleton-m0
+// CHECK-SAME: covered=[d0, d1, d2, d3, d4, d5, d6, d7]
 // CHECK: VERIFY ok
 
 // CHECK-LABEL: CANONICAL-SYNC function=macro_barrier_excludes_macro_phases
