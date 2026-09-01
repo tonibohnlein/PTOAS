@@ -10,6 +10,7 @@
 
 #include "CanonicalSyncInternal.h"
 
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Verifier.h"
@@ -24,12 +25,24 @@ namespace {
 
 constexpr StringLiteral kGeneratedAttr = "pto.canonical_sync.generated";
 constexpr StringLiteral kMechanismAttr = "pto.canonical_sync.mechanism";
+constexpr StringLiteral kProtocolRoleAttr = "pto.canonical_sync.protocol_role";
 
 struct EventAction {
   CanonicalMechanismId mechanism = kInvalidCanonicalSyncId;
   PIPE source = PIPE::PIPE_UNASSIGNED;
   PIPE target = PIPE::PIPE_UNASSIGNED;
   unsigned eventId = 0;
+};
+
+struct RecurringEventAction {
+  CanonicalMechanismId mechanism = kInvalidCanonicalSyncId;
+  PIPE source = PIPE::PIPE_UNASSIGNED;
+  PIPE target = PIPE::PIPE_UNASSIGNED;
+  unsigned readyEventId = 0;
+  unsigned releaseEventId = 0;
+  Operation *loop = nullptr;
+  Operation *sourceAnchor = nullptr;
+  Operation *targetAnchor = nullptr;
 };
 
 void tagGenerated(Operation *operation, OpBuilder &builder,
@@ -39,11 +52,18 @@ void tagGenerated(Operation *operation, OpBuilder &builder,
                                          static_cast<int32_t>(mechanism)));
 }
 
+void tagProtocol(Operation *operation, OpBuilder &builder,
+                 CanonicalMechanismId mechanism, StringRef role) {
+  tagGenerated(operation, builder, mechanism);
+  operation->setAttr(kProtocolRoleAttr, builder.getStringAttr(role));
+}
+
 LogicalResult collectActions(
     const CanonicalSyncProgram &program, const IRMapping &mapping,
     DenseMap<Operation *, SmallVector<EventAction, 2>> &sets,
     DenseMap<Operation *, SmallVector<EventAction, 2>> &waits,
-    DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>> &barriers) {
+    DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>> &barriers,
+    SmallVectorImpl<RecurringEventAction> &protocols) {
   const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
   for (CanonicalMechanismId mechanismId : solution.mechanisms) {
     const CanonicalMechanism &mechanism = program.getMechanism(mechanismId);
@@ -70,12 +90,80 @@ LogicalResult collectActions(
       return program.getFunction().emitError(
           "canonical sync event is missing a cloned anchor or allocated ID");
     }
+    if (mechanism.kind == CanonicalMechanismKind::RecurringEvent) {
+      if (!mechanism.recurrenceLoop || !mechanism.releaseEventId) {
+        return program.getFunction().emitError(
+            "canonical sync recurring event lacks a loop or release ID");
+      }
+      Operation *loop = mapping.lookupOrNull(
+          program.getRegion(*mechanism.recurrenceLoop).operation);
+      if (!loop || !isa<scf::ForOp>(loop)) {
+        return program.getFunction().emitError(
+            "canonical sync failed to map a recurring event loop");
+      }
+      protocols.push_back(
+          {mechanism.id, mechanism.source.pipe, mechanism.target.pipe, *eventId,
+           *mechanism.releaseEventId, loop, setAnchor, waitAnchor});
+      continue;
+    }
     EventAction action{mechanism.id, mechanism.source.pipe,
                        mechanism.target.pipe, *eventId};
     sets[setAnchor].push_back(action);
     waits[waitAnchor].push_back(action);
   }
   return success();
+}
+
+template <typename OpTy>
+Operation *createProtocolEvent(OpBuilder &builder, Location location,
+                               func::FuncOp clone, PIPE source, PIPE target,
+                               unsigned eventId, CanonicalMechanismId mechanism,
+                               StringRef role) {
+  auto operation = builder.create<OpTy>(
+      location, PipeAttr::get(clone.getContext(), source),
+      PipeAttr::get(clone.getContext(), target),
+      EventAttr::get(clone.getContext(), static_cast<EVENT>(eventId)));
+  tagProtocol(operation, builder, mechanism, role);
+  return operation.getOperation();
+}
+
+void emitRecurringProtocols(func::FuncOp clone,
+                            SmallVectorImpl<RecurringEventAction> &protocols) {
+  llvm::sort(protocols, [](const RecurringEventAction &first,
+                           const RecurringEventAction &second) {
+    return first.mechanism < second.mechanism;
+  });
+  OpBuilder builder(clone.getContext());
+  for (const RecurringEventAction &protocol : protocols) {
+    const Location location = protocol.loop->getLoc();
+    builder.setInsertionPoint(protocol.loop);
+    createProtocolEvent<SetFlagOp>(builder, location, clone, protocol.target,
+                                   protocol.source, protocol.releaseEventId,
+                                   protocol.mechanism, "release-prime-set");
+
+    builder.setInsertionPoint(protocol.sourceAnchor);
+    createProtocolEvent<WaitFlagOp>(builder, location, clone, protocol.target,
+                                    protocol.source, protocol.releaseEventId,
+                                    protocol.mechanism, "release-body-wait");
+    builder.setInsertionPointAfter(protocol.sourceAnchor);
+    createProtocolEvent<SetFlagOp>(builder, location, clone, protocol.source,
+                                   protocol.target, protocol.readyEventId,
+                                   protocol.mechanism, "ready-body-set");
+
+    builder.setInsertionPoint(protocol.targetAnchor);
+    createProtocolEvent<WaitFlagOp>(builder, location, clone, protocol.source,
+                                    protocol.target, protocol.readyEventId,
+                                    protocol.mechanism, "ready-body-wait");
+    builder.setInsertionPointAfter(protocol.targetAnchor);
+    createProtocolEvent<SetFlagOp>(builder, location, clone, protocol.target,
+                                   protocol.source, protocol.releaseEventId,
+                                   protocol.mechanism, "release-body-set");
+
+    builder.setInsertionPointAfter(protocol.loop);
+    createProtocolEvent<WaitFlagOp>(builder, location, clone, protocol.target,
+                                    protocol.source, protocol.releaseEventId,
+                                    protocol.mechanism, "release-drain-wait");
+  }
 }
 
 void sortActions(SmallVectorImpl<EventAction> &actions) {
@@ -174,10 +262,13 @@ mlir::pto::materializeAndVerifyCanonicalSync(CanonicalSyncProgram &program) {
   DenseMap<Operation *, SmallVector<EventAction, 2>> sets;
   DenseMap<Operation *, SmallVector<EventAction, 2>> waits;
   DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>> barriers;
-  if (failed(collectActions(program, mapping, sets, waits, barriers))) {
+  SmallVector<RecurringEventAction, 2> protocols;
+  if (failed(
+          collectActions(program, mapping, sets, waits, barriers, protocols))) {
     return failure();
   }
   emitActions(clone, sets, waits, barriers, program);
+  emitRecurringProtocols(clone, protocols);
   emitTailBarriers(clone, program);
   if (failed(verifyMaterializedCanonicalSync(clone))) {
     function.emitError("canonical sync rejected its staged materialization; "

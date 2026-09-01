@@ -183,6 +183,14 @@ void checkTargetDemands(const CanonicalSyncProgram &program,
           demandUsesDirectMechanism(program, demand, selected);
       continue;
     }
+    const CanonicalMechanismId direct =
+        program.getDirectMechanisms()[demand.id];
+    const bool recurringSelected = llvm::is_contained(selected, direct) &&
+                                   program.getMechanism(direct).kind ==
+                                       CanonicalMechanismKind::RecurringEvent;
+    if (recurringSelected) {
+      continue;
+    }
     for (const ResourceState &resource : state.resources) {
       for (const PhaseInstance &source : resource.issued) {
         if (source.phase != demand.source ||
@@ -268,11 +276,13 @@ void executePoint(const CanonicalSyncProgram &program,
       applyFixedFence(program, mechanism, state);
     }
     if (mechanism.sourcePoint == point &&
-        mechanism.kind == CanonicalMechanismKind::Event) {
+        (mechanism.kind == CanonicalMechanismKind::Event ||
+         mechanism.kind == CanonicalMechanismKind::RecurringEvent)) {
       applyEventSet(mechanism, state);
     }
     if (mechanism.targetPoint == point &&
-        mechanism.kind == CanonicalMechanismKind::Event) {
+        (mechanism.kind == CanonicalMechanismKind::Event ||
+         mechanism.kind == CanonicalMechanismKind::RecurringEvent)) {
       applyEventWait(mechanism, state);
     }
   }

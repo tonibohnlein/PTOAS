@@ -22,6 +22,7 @@ namespace {
 
 constexpr StringLiteral kGeneratedAttr = "pto.canonical_sync.generated";
 constexpr StringLiteral kMechanismAttr = "pto.canonical_sync.mechanism";
+constexpr StringLiteral kProtocolRoleAttr = "pto.canonical_sync.protocol_role";
 
 struct ConcreteControlArm {
   Operation *choice = nullptr;
@@ -40,6 +41,16 @@ struct ConcreteEventGeneration {
   CanonicalPhysicalResource target;
   unsigned eventId = 0;
   SmallVector<ConcreteControlArm, 2> controlPath;
+};
+
+struct ConcreteRecurringProtocol {
+  int64_t mechanism = -1;
+  Operation *releasePrimeSet = nullptr;
+  Operation *releaseBodyWait = nullptr;
+  Operation *readyBodySet = nullptr;
+  Operation *readyBodyWait = nullptr;
+  Operation *releaseBodySet = nullptr;
+  Operation *releaseDrainWait = nullptr;
 };
 
 SmallVector<ConcreteControlArm, 2> getControlPath(Operation *operation) {
@@ -117,10 +128,54 @@ collectEventOperation(Operation *operation, bool isSet,
   return success();
 }
 
+LogicalResult collectProtocolOperation(
+    Operation *operation, StringRef role,
+    DenseMap<int64_t, ConcreteRecurringProtocol> &protocols) {
+  FailureOr<int64_t> mechanism = getMechanismId(operation);
+  if (failed(mechanism)) {
+    return failure();
+  }
+  ConcreteRecurringProtocol &protocol = protocols[*mechanism];
+  protocol.mechanism = *mechanism;
+  Operation **slot = nullptr;
+  if (role == "release-prime-set") {
+    slot = &protocol.releasePrimeSet;
+  } else if (role == "release-body-wait") {
+    slot = &protocol.releaseBodyWait;
+  } else if (role == "ready-body-set") {
+    slot = &protocol.readyBodySet;
+  } else if (role == "ready-body-wait") {
+    slot = &protocol.readyBodyWait;
+  } else if (role == "release-body-set") {
+    slot = &protocol.releaseBodySet;
+  } else if (role == "release-drain-wait") {
+    slot = &protocol.releaseDrainWait;
+  } else {
+    return operation->emitError(
+        "canonical sync event verifier found an unknown protocol role");
+  }
+  if (*slot) {
+    InFlightDiagnostic diagnostic = operation->emitError(
+        "canonical sync event verifier found a duplicate protocol action");
+    diagnostic.attachNote((*slot)->getLoc()) << "previous action is here";
+    return failure();
+  }
+  *slot = operation;
+  return success();
+}
+
 LogicalResult
 collectGenerations(func::FuncOp function,
-                   DenseMap<int64_t, ConcreteEventGeneration> &generations) {
+                   DenseMap<int64_t, ConcreteEventGeneration> &generations,
+                   DenseMap<int64_t, ConcreteRecurringProtocol> &protocols) {
   WalkResult result = function.walk([&](Operation *operation) -> WalkResult {
+    auto role = operation->getAttrOfType<StringAttr>(kProtocolRoleAttr);
+    if (role && isa<SetFlagOp, WaitFlagOp>(operation)) {
+      return failed(collectProtocolOperation(operation, role.getValue(),
+                                             protocols))
+                 ? WalkResult::interrupt()
+                 : WalkResult::advance();
+    }
     if (isa<SetFlagOp>(operation)) {
       return failed(collectEventOperation(operation, true, generations))
                  ? WalkResult::interrupt()
@@ -134,6 +189,144 @@ collectGenerations(func::FuncOp function,
     return WalkResult::advance();
   });
   return result.wasInterrupted() ? failure() : success();
+}
+
+bool eventActionsMatch(Operation *setOperation, Operation *waitOperation) {
+  auto set = dyn_cast_or_null<SetFlagOp>(setOperation);
+  auto wait = dyn_cast_or_null<WaitFlagOp>(waitOperation);
+  return set && wait && set.getSrcPipe() == wait.getSrcPipe() &&
+         set.getDstPipe() == wait.getDstPipe() &&
+         set.getEventId() == wait.getEventId();
+}
+
+bool setActionsMatch(Operation *firstOperation, Operation *secondOperation) {
+  auto first = dyn_cast_or_null<SetFlagOp>(firstOperation);
+  auto second = dyn_cast_or_null<SetFlagOp>(secondOperation);
+  return first && second && first.getSrcPipe() == second.getSrcPipe() &&
+         first.getDstPipe() == second.getDstPipe() &&
+         first.getEventId() == second.getEventId();
+}
+
+LogicalResult
+validateEventKey(func::FuncOp function, const CanonicalSyncTarget &target,
+                 Operation *operation, CanonicalPhysicalResource source,
+                 CanonicalPhysicalResource destination, unsigned eventId) {
+  const bool unsupported =
+      !target.supportsEvent(source, destination) ||
+      !llvm::is_contained(target.getCompilerEventIds(), eventId);
+  if (unsupported) {
+    return operation->emitError(
+        "canonical sync event verifier found an unsupported event key");
+  }
+  const SmallVector<unsigned, 6> reserved =
+      reservedEventIds(function, source, destination);
+  if (llvm::is_contained(reserved, eventId)) {
+    return operation->emitError(
+        "canonical sync event verifier found a macro-reserved event ID");
+  }
+  return success();
+}
+
+FailureOr<ConcreteEventGeneration>
+makeProtocolGeneration(func::FuncOp function, const CanonicalSyncTarget &target,
+                       int64_t mechanism, Operation *setOperation,
+                       Operation *waitOperation) {
+  auto set = cast<SetFlagOp>(setOperation);
+  const PIPE sourcePipe = set.getSrcPipe().getPipe();
+  const PIPE targetPipe = set.getDstPipe().getPipe();
+  FailureOr<CanonicalPhysicalResource> source =
+      resolvePhysicalResource(function, setOperation, sourcePipe);
+  FailureOr<CanonicalPhysicalResource> destination =
+      resolvePhysicalResource(function, setOperation, targetPipe);
+  const bool unresolved = failed(source) || failed(destination);
+  if (unresolved) {
+    return failure();
+  }
+  const unsigned eventId = static_cast<unsigned>(set.getEventId().getEvent());
+  if (failed(validateEventKey(function, target, setOperation, *source,
+                              *destination, eventId))) {
+    return failure();
+  }
+  ConcreteEventGeneration result;
+  result.mechanism = mechanism;
+  result.set = setOperation;
+  result.wait = waitOperation;
+  result.source = *source;
+  result.target = *destination;
+  result.eventId = eventId;
+  result.controlPath = getControlPath(setOperation);
+  return result;
+}
+
+LogicalResult resolveRecurringProtocol(
+    func::FuncOp function, const CanonicalSyncTarget &target,
+    const ConcreteRecurringProtocol &protocol,
+    SmallVectorImpl<ConcreteEventGeneration> &generations) {
+  const bool incomplete = !protocol.releasePrimeSet ||
+                          !protocol.releaseBodyWait || !protocol.readyBodySet ||
+                          !protocol.readyBodyWait || !protocol.releaseBodySet ||
+                          !protocol.releaseDrainWait;
+  if (incomplete) {
+    Operation *witness = protocol.releasePrimeSet ? protocol.releasePrimeSet
+                                                  : function.getOperation();
+    return witness->emitError(
+        "canonical sync event verifier found an incomplete recurring "
+        "protocol");
+  }
+  const bool mismatchedKeys =
+      !eventActionsMatch(protocol.releasePrimeSet, protocol.releaseBodyWait) ||
+      !eventActionsMatch(protocol.releaseBodySet, protocol.releaseDrainWait) ||
+      !eventActionsMatch(protocol.readyBodySet, protocol.readyBodyWait) ||
+      !setActionsMatch(protocol.releasePrimeSet, protocol.releaseBodySet);
+  if (mismatchedKeys) {
+    return protocol.releasePrimeSet->emitError(
+        "canonical sync event verifier found mismatched recurring protocol "
+        "keys");
+  }
+  auto loop =
+      dyn_cast_or_null<scf::ForOp>(protocol.releaseBodyWait->getParentOp());
+  Block *body = loop ? &loop.getRegion().front() : nullptr;
+  const bool bodyPlacement = body &&
+                             protocol.readyBodySet->getBlock() == body &&
+                             protocol.readyBodyWait->getBlock() == body &&
+                             protocol.releaseBodySet->getBlock() == body;
+  const bool bodyOrder =
+      bodyPlacement &&
+      protocol.releaseBodyWait->isBeforeInBlock(protocol.readyBodySet) &&
+      protocol.readyBodySet->isBeforeInBlock(protocol.readyBodyWait) &&
+      protocol.readyBodyWait->isBeforeInBlock(protocol.releaseBodySet);
+  const bool boundaryPlacement =
+      loop && protocol.releasePrimeSet->getBlock() == loop->getBlock() &&
+      protocol.releaseDrainWait->getBlock() == loop->getBlock() &&
+      protocol.releasePrimeSet->isBeforeInBlock(loop) &&
+      loop->isBeforeInBlock(protocol.releaseDrainWait);
+  if (!bodyOrder || !boundaryPlacement) {
+    return protocol.releasePrimeSet->emitError(
+        "canonical sync event verifier found an invalid recurring protocol "
+        "placement");
+  }
+  FailureOr<ConcreteEventGeneration> ready =
+      makeProtocolGeneration(function, target, protocol.mechanism,
+                             protocol.readyBodySet, protocol.readyBodyWait);
+  FailureOr<ConcreteEventGeneration> release = makeProtocolGeneration(
+      function, target, protocol.mechanism, protocol.releasePrimeSet,
+      protocol.releaseDrainWait);
+  const bool unresolvedGeneration = failed(ready) || failed(release);
+  if (unresolvedGeneration) {
+    return failure();
+  }
+  const bool unbalanced = ready->source != release->target ||
+                          ready->target != release->source ||
+                          getControlPath(protocol.releasePrimeSet) !=
+                              getControlPath(protocol.releaseDrainWait);
+  if (unbalanced) {
+    return protocol.releasePrimeSet->emitError(
+        "canonical sync event verifier found an unbalanced recurring "
+        "protocol");
+  }
+  generations.push_back(std::move(*ready));
+  generations.push_back(std::move(*release));
+  return success();
 }
 
 LogicalResult resolveGeneration(func::FuncOp function,
@@ -189,21 +382,8 @@ LogicalResult resolveGeneration(func::FuncOp function,
     return generation.set->emitError("canonical sync event verifier rejects a "
                                      "generation repeated by a loop");
   }
-  const bool unsupportedDirection =
-      !target.supportsEvent(generation.source, generation.target);
-  const bool outsideCompilerPool =
-      !llvm::is_contained(target.getCompilerEventIds(), generation.eventId);
-  if (unsupportedDirection || outsideCompilerPool) {
-    return generation.set->emitError(
-        "canonical sync event verifier found an unsupported event key");
-  }
-  const SmallVector<unsigned, 6> reserved =
-      reservedEventIds(function, generation.source, generation.target);
-  if (llvm::is_contained(reserved, generation.eventId)) {
-    return generation.set->emitError(
-        "canonical sync event verifier found a macro-reserved event ID");
-  }
-  return success();
+  return validateEventKey(function, target, generation.set, generation.source,
+                          generation.target, generation.eventId);
 }
 
 LogicalResult
@@ -236,7 +416,8 @@ verifyInterference(ArrayRef<ConcreteEventGeneration> generations) {
 LogicalResult mlir::pto::canonical_sync_detail::verifyConcreteEventGenerations(
     func::FuncOp function, const CanonicalSyncTarget &target) {
   DenseMap<int64_t, ConcreteEventGeneration> byMechanism;
-  if (failed(collectGenerations(function, byMechanism))) {
+  DenseMap<int64_t, ConcreteRecurringProtocol> protocols;
+  if (failed(collectGenerations(function, byMechanism, protocols))) {
     return failure();
   }
   SmallVector<ConcreteEventGeneration, 8> generations;
@@ -246,6 +427,12 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyConcreteEventGenerations(
       return failure();
     }
     generations.push_back(std::move(entry.second));
+  }
+  for (const auto &entry : protocols) {
+    if (failed(resolveRecurringProtocol(function, target, entry.second,
+                                        generations))) {
+      return failure();
+    }
   }
   llvm::sort(generations, [](const ConcreteEventGeneration &left,
                              const ConcreteEventGeneration &right) {

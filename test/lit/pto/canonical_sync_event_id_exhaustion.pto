@@ -118,5 +118,5 @@ module attributes {pto.target_arch = "a2a3"} {
   }
 }
 
-// CHECK: canonical sync exhausted event IDs 0-5
+// CHECK: canonical sync exhausted compiler event IDs after applying hidden macro reservations
 // CHECK: mechanism m{{[0-9]+}} domain AIV:PIPE_S -> PIPE_V

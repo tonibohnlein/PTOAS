@@ -116,6 +116,14 @@ void CanonicalSyncProgram::setMechanismEventId(CanonicalMechanismId mechanism,
   mechanisms[mechanism].eventId = eventId;
 }
 
+void CanonicalSyncProgram::setMechanismReleaseEventId(
+    CanonicalMechanismId mechanism, unsigned eventId) {
+  if (frozen || mechanism >= mechanisms.size()) {
+    llvm_unreachable("cannot allocate an invalid or frozen mechanism");
+  }
+  mechanisms[mechanism].releaseEventId = eventId;
+}
+
 void CanonicalSyncProgram::setDirectMechanism(CanonicalDemandId demand,
                                               CanonicalMechanismId mechanism) {
   const bool invalidDemand = demand >= demands.size();
@@ -258,7 +266,15 @@ LogicalResult CanonicalSyncProgram::freeze() {
             ? mechanism.fenceEffect &&
                   *mechanism.fenceEffect < fenceEffects.size()
             : !mechanism.fenceEffect;
-    if (!validPoints || !validOrigins || !validFence ||
+    const bool recurring =
+        mechanism.kind == CanonicalMechanismKind::RecurringEvent;
+    const bool validRecurrence =
+        recurring == mechanism.recurrenceLoop.has_value() &&
+        (!mechanism.recurrenceLoop ||
+         (*mechanism.recurrenceLoop < regions.size() &&
+          regions[*mechanism.recurrenceLoop].kind ==
+              CanonicalRegionKind::Loop));
+    if (!validPoints || !validOrigins || !validFence || !validRecurrence ||
         mechanism.actionRegion >= regions.size()) {
       return fail("mechanism has an invalid action point, origin, or region");
     }
@@ -432,9 +448,14 @@ LogicalResult CanonicalSyncProgram::freeze() {
       const bool selected =
           llvm::is_contained(setCoverSolution->mechanisms, mechanism.id);
       const bool mustHaveEvent =
-          selected && mechanism.kind == CanonicalMechanismKind::Event;
+          selected &&
+          (mechanism.kind == CanonicalMechanismKind::Event ||
+           mechanism.kind == CanonicalMechanismKind::RecurringEvent);
       const bool assignmentMatches =
-          mechanism.eventId.has_value() == mustHaveEvent;
+          mechanism.eventId.has_value() == mustHaveEvent &&
+          mechanism.releaseEventId.has_value() ==
+              (selected &&
+               mechanism.kind == CanonicalMechanismKind::RecurringEvent);
       if (!assignmentMatches) {
         invalidEventAssignment = true;
         break;
@@ -578,6 +599,8 @@ mlir::pto::stringifyCanonicalMechanismKind(CanonicalMechanismKind kind) {
     return "barrier";
   case CanonicalMechanismKind::Event:
     return "event";
+  case CanonicalMechanismKind::RecurringEvent:
+    return "recurring-event";
   case CanonicalMechanismKind::FixedFence:
     return "fixed-fence";
   case CanonicalMechanismKind::TailBarrier:

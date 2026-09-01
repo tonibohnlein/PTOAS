@@ -162,9 +162,13 @@ carrying loop are feasible on different iterations and therefore remain in the
 demand graph. Choices outside the carrying loop remain mutually exclusive. A
 physical phase that accesses the same storage on successive iterations produces
 a self-recurrence demand; it is not removed merely because both endpoints have
-the same static phase ID. Cross-pipeline recurrence events are rejected until a
-proven repeating protocol exists. A same-pipeline barrier may remain inside a
-loop.
+the same static phase ID. A cross-pipeline forward dependence and its reverse
+reuse recurrence can use a lifecycle-complete single-lane protocol when both
+endpoints are direct operations in the same `scf.for` body and both event
+directions are legal. The protocol primes the reverse release event before the
+loop, consumes and restores it around every ready transfer, and drains it after
+the loop. More general nested or guarded recurrence shapes continue to fail
+closed. A same-pipeline barrier may remain inside a loop.
 
 Every issued phase also has an exit-completion demand. All returns receive a
 tagged `PIPE_ALL` barrier, including returns in structured control flow.
@@ -176,6 +180,8 @@ Each demand is assigned one direct mechanism:
 - documented intrinsic ordering;
 - a targeted same-pipeline barrier;
 - a legal directed set/wait event;
+- a single-lane ready/release recurrence protocol with explicit priming and
+  draining;
 - an existing visibility sequence with the required cache maintenance and
   fence scope;
 - the mandatory exit barrier.
@@ -253,9 +259,11 @@ pairs, targeted barriers, and exit barriers. Before memory dataflow, an event
 generation verifier independently reconstructs each tagged set/wait generation
 from the emitted IR. It checks balance, direction, ID legality, control path,
 once-only lifetime, set-before-wait issue order, macro reservations, and
-same-key generation interference. It rejects any same-key coexecuting pair; the
-lexical position of a wait is never treated as proof that hardware consumed the
-event. A separate verifier then extracts physical effects again and runs
+same-key generation interference. For a recurring mechanism it independently
+requires the six prime/body/drain roles, reverse ready/release directions, and
+their loop-boundary and body order. It rejects any same-key coexecuting pair;
+the lexical position of a wait is never treated as proof that hardware consumed
+the event. A separate verifier then extracts physical effects again and runs
 structured dataflow over the resulting IR.
 
 Its state contains pending effects per physical resource, completion frontiers

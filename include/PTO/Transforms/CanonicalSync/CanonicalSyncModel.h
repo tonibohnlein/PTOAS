@@ -89,6 +89,7 @@ enum class CanonicalMechanismKind : std::uint8_t {
   IntrinsicOrder,
   PipeBarrier,
   Event,
+  RecurringEvent,
   FixedFence,
   TailBarrier,
 };
@@ -235,7 +236,9 @@ struct CanonicalMechanism {
   std::optional<CanonicalFenceEffectId> fenceEffect;
   CanonicalRegionId actionRegion = kInvalidCanonicalSyncId;
   llvm::SmallVector<CanonicalControlAtom, 2> guard;
+  std::optional<CanonicalRegionId> recurrenceLoop;
   std::optional<unsigned> eventId;
+  std::optional<unsigned> releaseEventId;
 };
 
 struct CanonicalCompletionTransfer {
@@ -319,6 +322,8 @@ public:
   void appendMechanismCacheMaintenance(CanonicalMechanismId mechanism,
                                        llvm::ArrayRef<Operation *> actions);
   void setMechanismEventId(CanonicalMechanismId mechanism, unsigned eventId);
+  void setMechanismReleaseEventId(CanonicalMechanismId mechanism,
+                                  unsigned eventId);
   void setDirectMechanism(CanonicalDemandId demand,
                           CanonicalMechanismId mechanism);
 

@@ -70,6 +70,11 @@ bool tokenEqual(const VerifierToken &first, const VerifierToken &second) {
              });
 }
 
+bool tokenKeyEqual(const VerifierToken &first, const VerifierToken &second) {
+  return first.source == second.source && first.target == second.target &&
+         first.eventId == second.eventId;
+}
+
 bool cacheActionEqual(const VerifierCacheAction &first,
                       const VerifierCacheAction &second) {
   return first.operation == second.operation && first.allGm == second.allGm &&
@@ -210,10 +215,13 @@ VerifierState mlir::pto::canonical_sync_detail::mergeVerifierStates(
     }
   }
   for (const VerifierToken &token : first.tokens) {
-    if (llvm::any_of(second.tokens, [&](const VerifierToken &other) {
-          return tokenEqual(token, other);
-        })) {
-      result.tokens.push_back(token);
+    auto other = llvm::find_if(second.tokens, [&](const VerifierToken &value) {
+      return tokenKeyEqual(token, value);
+    });
+    if (other != second.tokens.end()) {
+      VerifierToken merged = token;
+      merged.payload = intersectKeys(token.payload, other->payload);
+      result.tokens.push_back(std::move(merged));
     }
   }
   result.globalKnown = intersectKeys(first.globalKnown, second.globalKnown);

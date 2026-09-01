@@ -6,14 +6,17 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// V1 fails closed until a repeating cross-pipeline event protocol, including
-// its iteration lanes and priming/draining behavior, is separately proven.
-// RUN: not ptoas --pto-arch=a3 --pto-level=level3 \
-// RUN:   --enable-canonical-sync --emit-pto-ir %s -o /dev/null 2>&1 \
+// A loop-local MTE2-to-V dependency and its reverse buffer-reuse recurrence
+// use one complete single-lane ready/release protocol. The reverse event is
+// primed before the loop and drained after it, so neither event can be reset
+// before its preceding wait consumes it.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 \
+// RUN:   --enable-canonical-sync --canonical-sync-dump --emit-pto-ir \
+// RUN:   --mlir-print-ir-after=pto-canonical-sync %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
 
 module attributes {pto.target_arch = "a2a3"} {
-  func.func @canonical_sync_loop_event_rejected(
+  func.func @canonical_sync_loop_event_protocol(
       %src: !pto.partition_tensor_view<16x128xf32>)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %input_addr = arith.constant 0 : i64
@@ -49,4 +52,19 @@ module attributes {pto.target_arch = "a2a3"} {
   }
 }
 
-// CHECK: canonical sync rejects an event whose set/wait lifecycle repeats inside a loop
+// CHECK-LABEL: CANONICAL-SYNC function=canonical_sync_loop_event_protocol
+// CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK-SAME: recurrence-loop=r
+// CHECK: PLAN selected=[
+// CHECK-SAME: events=[{{.*}}/release-e
+// CHECK: VERIFY ok
+// CHECK-LABEL: func.func @canonical_sync_loop_event_protocol
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]
+// CHECK: scf.for
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]
+// CHECK: pto.tload
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID{{[0-5]}}>]
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID{{[0-5]}}>]
+// CHECK: pto.tmuls
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]

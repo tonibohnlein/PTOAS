@@ -59,6 +59,18 @@ bool isRepeatedBlock(Block *block) {
   return false;
 }
 
+std::optional<CanonicalRegionId>
+findLoopRegion(const CanonicalSyncProgram &program, scf::ForOp loop) {
+  auto found =
+      llvm::find_if(program.getRegions(), [&](const CanonicalRegion &region) {
+        return region.kind == CanonicalRegionKind::Loop &&
+               region.operation == loop.getOperation();
+      });
+  return found == program.getRegions().end()
+             ? std::nullopt
+             : std::optional<CanonicalRegionId>(found->id);
+}
+
 bool hasPositiveDistance(const CanonicalDemand &demand) {
   return llvm::any_of(
       demand.iterationDistance, [](const CanonicalLoopDistance &distance) {
@@ -277,6 +289,10 @@ bool sameMechanism(const CanonicalMechanism &left,
   case CanonicalMechanismKind::Event:
     return left.sourcePoint == right.sourcePoint &&
            left.targetPoint == right.targetPoint;
+  case CanonicalMechanismKind::RecurringEvent:
+    return left.sourcePoint == right.sourcePoint &&
+           left.targetPoint == right.targetPoint &&
+           left.recurrenceLoop == right.recurrenceLoop;
   case CanonicalMechanismKind::FixedFence:
     llvm_unreachable("fixed fences are compared by physical effect");
   case CanonicalMechanismKind::IntrinsicOrder:
@@ -302,8 +318,9 @@ CanonicalMechanismId internMechanism(CanonicalSyncProgram &program,
 }
 
 FailureOr<CanonicalMechanism> buildEventMechanism(
-    const CanonicalSyncProgram &program, const CanonicalDemand &demand,
-    CanonicalPhysicalResource source, CanonicalPhysicalResource target) {
+    const CanonicalSyncProgram &program, const CanonicalSyncTarget &targetModel,
+    const CanonicalDemand &demand, CanonicalPhysicalResource source,
+    CanonicalPhysicalResource target) {
   const CanonicalPhase &sourcePhase = program.getPhase(demand.source);
   const CanonicalPhase &targetPhase = program.getPhase(demand.target);
   Block *actionBlock =
@@ -321,11 +338,32 @@ FailureOr<CanonicalMechanism> buildEventMechanism(
     return failure();
   }
   if (isRepeatedBlock(actionBlock)) {
-    targetPhase.operation->emitError("canonical sync rejects an event whose "
-                                     "set/wait lifecycle repeats inside a loop")
-        << "; demand d" << demand.id
-        << " requires a separately proven recurrence protocol";
-    return failure();
+    auto loop = dyn_cast_or_null<scf::ForOp>(actionBlock->getParentOp());
+    const std::optional<CanonicalRegionId> loopRegion =
+        loop ? findLoopRegion(program, loop) : std::nullopt;
+    const bool directBodyActions =
+        loop && sourcePhase.operation->getBlock() == actionBlock &&
+        targetPhase.operation->getBlock() == actionBlock;
+    if (!loopRegion || !directBodyActions ||
+        !targetModel.supportsEvent(target, source)) {
+      targetPhase.operation->emitError(
+          "canonical sync cannot construct a single-lane recurring event "
+          "protocol on this loop")
+          << "; demand d" << demand.id
+          << " requires direct body anchors and a reverse release event";
+      return failure();
+    }
+    CanonicalMechanism mechanism;
+    mechanism.kind = CanonicalMechanismKind::RecurringEvent;
+    mechanism.source = source;
+    mechanism.target = target;
+    mechanism.sourcePoint = {setAfter, CanonicalProgramPointPosition::After};
+    mechanism.targetPoint = {waitBefore, CanonicalProgramPointPosition::Before};
+    mechanism.actionRegion = *loopRegion;
+    mechanism.guard =
+        commonGuard(sourcePhase.controlPath, targetPhase.controlPath);
+    mechanism.recurrenceLoop = *loopRegion;
+    return mechanism;
   }
   CanonicalMechanism mechanism;
   mechanism.kind = CanonicalMechanismKind::Event;
@@ -461,7 +499,82 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
         << "; demand d" << demand.id << " has a positive iteration distance";
     return failure();
   }
-  return buildEventMechanism(program, demand, source, destination);
+  return buildEventMechanism(program, target, demand, source, destination);
+}
+
+bool demandIsMapped(const CanonicalSyncProgram &program,
+                    CanonicalDemandId demand) {
+  return program.getDirectMechanisms().size() == program.getDemands().size() &&
+         program.getDirectMechanisms()[demand] != kInvalidCanonicalSyncId;
+}
+
+std::optional<CanonicalRegionId> carryingLoop(const CanonicalDemand &demand) {
+  auto found = llvm::find_if(
+      demand.iterationDistance, [](const CanonicalLoopDistance &distance) {
+        return distance.relation == CanonicalIterationRelation::AnyPositive;
+      });
+  return found == demand.iterationDistance.end()
+             ? std::nullopt
+             : std::optional<CanonicalRegionId>(found->loop);
+}
+
+bool recurringMechanismMatches(const CanonicalSyncProgram &program,
+                               const CanonicalMechanism &mechanism,
+                               const CanonicalDemand &demand) {
+  if (mechanism.kind != CanonicalMechanismKind::RecurringEvent ||
+      mechanism.origins.empty() ||
+      carryingLoop(demand) != mechanism.recurrenceLoop) {
+    return false;
+  }
+  const CanonicalDemand &forward = program.getDemand(mechanism.origins.front());
+  const bool sameEndpoints =
+      demand.source == forward.source && demand.target == forward.target;
+  const bool reverseEndpoints =
+      demand.source == forward.target && demand.target == forward.source;
+  return sameEndpoints || reverseEndpoints;
+}
+
+std::optional<CanonicalMechanismId>
+findRecurringMechanism(const CanonicalSyncProgram &program,
+                       const CanonicalDemand &demand) {
+  auto found = llvm::find_if(
+      program.getMechanisms(), [&](const CanonicalMechanism &mechanism) {
+        return recurringMechanismMatches(program, mechanism, demand);
+      });
+  return found == program.getMechanisms().end()
+             ? std::nullopt
+             : std::optional<CanonicalMechanismId>(found->id);
+}
+
+const CanonicalDemand *
+findRecurringForwardDemand(const CanonicalSyncProgram &program,
+                           const CanonicalDemand &recurrence) {
+  const std::optional<CanonicalRegionId> loop = carryingLoop(recurrence);
+  if (!loop) {
+    return nullptr;
+  }
+  auto found = llvm::find_if(
+      program.getDemands(), [&](const CanonicalDemand &candidate) {
+        const bool invalidEndpoint =
+            candidate.source >= program.getPhases().size() ||
+            candidate.target >= program.getPhases().size();
+        if (invalidEndpoint) {
+          return false;
+        }
+        const bool matchingEndpoints =
+            (candidate.source == recurrence.source &&
+             candidate.target == recurrence.target) ||
+            (candidate.source == recurrence.target &&
+             candidate.target == recurrence.source);
+        const bool sameIteration = !hasPositiveDistance(candidate);
+        const CanonicalPhase &source = program.getPhase(candidate.source);
+        const CanonicalPhase &target = program.getPhase(candidate.target);
+        return candidate.requirement == CanonicalRequirement::Completion &&
+               matchingEndpoints && sameIteration &&
+               llvm::is_contained(source.loopPath, *loop) &&
+               llvm::is_contained(target.loopPath, *loop);
+      });
+  return found == program.getDemands().end() ? nullptr : &*found;
 }
 
 } // namespace
@@ -496,6 +609,35 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
     program.appendMechanism(std::move(mechanism));
   }
   for (const CanonicalDemand &demand : program.getDemands()) {
+    if (demandIsMapped(program, demand.id)) {
+      continue;
+    }
+    if (hasPositiveDistance(demand)) {
+      std::optional<CanonicalMechanismId> recurring =
+          findRecurringMechanism(program, demand);
+      if (!recurring) {
+        const CanonicalDemand *forward =
+            findRecurringForwardDemand(program, demand);
+        if (forward && !demandIsMapped(program, forward->id)) {
+          FailureOr<CanonicalMechanism> forwardMechanism =
+              buildDirectMechanism(program, *target, *forward);
+          const bool recurringConstructed =
+              succeeded(forwardMechanism) &&
+              forwardMechanism->kind == CanonicalMechanismKind::RecurringEvent;
+          if (recurringConstructed) {
+            const CanonicalMechanismId forwardId = internMechanism(
+                program, std::move(*forwardMechanism), forward->id);
+            program.setDirectMechanism(forward->id, forwardId);
+            recurring = forwardId;
+          }
+        }
+      }
+      if (recurring) {
+        program.appendMechanismOrigin(*recurring, demand.id);
+        program.setDirectMechanism(demand.id, *recurring);
+        continue;
+      }
+    }
     FailureOr<CanonicalMechanism> mechanism =
         buildDirectMechanism(program, *target, demand);
     if (failed(mechanism)) {

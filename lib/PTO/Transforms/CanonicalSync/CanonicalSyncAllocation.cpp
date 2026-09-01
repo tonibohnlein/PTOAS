@@ -18,11 +18,6 @@ using namespace mlir::pto::canonical_sync_detail;
 
 namespace {
 
-bool sameDomain(const CanonicalMechanism &first,
-                const CanonicalMechanism &second) {
-  return first.source == second.source && first.target == second.target;
-}
-
 bool lifetimesCanOverlap(const CanonicalMechanism &first,
                          const CanonicalMechanism &second) {
   // Scalar program order does not order the execution of different hardware
@@ -35,19 +30,53 @@ bool lifetimesCanOverlap(const CanonicalMechanism &first,
 
 bool idAvailable(const CanonicalSyncProgram &program,
                  const CanonicalSetCoverSolution &solution,
-                 const CanonicalMechanism &candidate, unsigned eventId) {
+                 const CanonicalMechanism &candidate,
+                 CanonicalPhysicalResource source,
+                 CanonicalPhysicalResource destination, unsigned eventId) {
   for (CanonicalMechanismId existingId : solution.mechanisms) {
     const CanonicalMechanism &existing = program.getMechanism(existingId);
-    if (existing.id >= candidate.id ||
-        existing.kind != CanonicalMechanismKind::Event ||
-        existing.eventId != eventId || !sameDomain(existing, candidate)) {
-      continue;
-    }
-    if (lifetimesCanOverlap(existing, candidate)) {
+    const bool readyCollision = existing.eventId == eventId &&
+                                existing.source == source &&
+                                existing.target == destination;
+    const bool releaseCollision =
+        existing.kind == CanonicalMechanismKind::RecurringEvent &&
+        existing.releaseEventId == eventId && existing.target == source &&
+        existing.source == destination;
+    const bool collision = (readyCollision || releaseCollision) &&
+                           lifetimesCanOverlap(existing, candidate);
+    if (collision) {
       return false;
     }
   }
   return true;
+}
+
+FailureOr<unsigned> allocateEventId(CanonicalSyncProgram &program,
+                                    const CanonicalSyncTarget &target,
+                                    const CanonicalSetCoverSolution &solution,
+                                    const CanonicalMechanism &mechanism,
+                                    CanonicalPhysicalResource source,
+                                    CanonicalPhysicalResource destination) {
+  const SmallVector<unsigned, 6> reserved =
+      reservedEventIds(program.getFunction(), source, destination);
+  for (unsigned eventId : target.getCompilerEventIds()) {
+    const bool available =
+        !llvm::is_contained(reserved, eventId) &&
+        idAvailable(program, solution, mechanism, source, destination, eventId);
+    if (available) {
+      return eventId;
+    }
+  }
+  Operation *witness = mechanism.targetPoint.operation
+                           ? mechanism.targetPoint.operation
+                           : program.getFunction().getOperation();
+  witness->emitError("canonical sync exhausted compiler event IDs after "
+                     "applying hidden macro reservations")
+      << "; mechanism m" << mechanism.id << " domain "
+      << stringifyCanonicalCore(source.core) << ':'
+      << stringifyPIPE(source.pipe) << " -> "
+      << stringifyPIPE(destination.pipe);
+  return failure();
 }
 
 } // namespace
@@ -66,34 +95,28 @@ mlir::pto::allocateCanonicalSyncEvents(CanonicalSyncProgram &program) {
   const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
   for (CanonicalMechanismId mechanismId : solution.mechanisms) {
     const CanonicalMechanism &mechanism = program.getMechanism(mechanismId);
-    if (mechanism.kind != CanonicalMechanismKind::Event) {
+    const bool event = mechanism.kind == CanonicalMechanismKind::Event;
+    const bool recurring =
+        mechanism.kind == CanonicalMechanismKind::RecurringEvent;
+    if (!event && !recurring) {
       continue;
     }
-    const SmallVector<unsigned, 6> reserved = reservedEventIds(
-        program.getFunction(), mechanism.source, mechanism.target);
-    std::optional<unsigned> assigned;
-    for (unsigned eventId : target->getCompilerEventIds()) {
-      const bool eventAvailable =
-          !llvm::is_contained(reserved, eventId) &&
-          idAvailable(program, solution, mechanism, eventId);
-      if (eventAvailable) {
-        assigned = eventId;
-        break;
-      }
-    }
-    if (!assigned) {
-      Operation *witness = mechanism.targetPoint.operation
-                               ? mechanism.targetPoint.operation
-                               : program.getFunction().getOperation();
-      witness->emitError("canonical sync exhausted event IDs 0-5 after "
-                         "applying hidden macro reservations")
-          << "; mechanism m" << mechanism.id << " domain "
-          << stringifyCanonicalCore(mechanism.source.core) << ':'
-          << stringifyPIPE(mechanism.source.pipe) << " -> "
-          << stringifyPIPE(mechanism.target.pipe);
+    FailureOr<unsigned> ready =
+        allocateEventId(program, *target, solution, mechanism, mechanism.source,
+                        mechanism.target);
+    if (failed(ready)) {
       return failure();
     }
-    program.setMechanismEventId(mechanism.id, *assigned);
+    program.setMechanismEventId(mechanism.id, *ready);
+    if (recurring) {
+      FailureOr<unsigned> release =
+          allocateEventId(program, *target, solution, mechanism,
+                          mechanism.target, mechanism.source);
+      if (failed(release)) {
+        return failure();
+      }
+      program.setMechanismReleaseEventId(mechanism.id, *release);
+    }
   }
   return success();
 }

@@ -170,6 +170,9 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
     llvm::interleaveComma(mechanism.origins, os,
                           [&os](CanonicalDemandId id) { os << 'd' << id; });
     os << ']';
+    if (mechanism.recurrenceLoop) {
+      os << " recurrence-loop=r" << *mechanism.recurrenceLoop;
+    }
     os << '\n';
   }
   os << "COVERAGE " << program.getCoverageWorlds().size() << '\n';
@@ -245,6 +248,9 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
       }
       firstEvent = false;
       os << 'm' << id << "=e" << *eventId;
+      if (program.getMechanism(id).releaseEventId) {
+        os << "/release-e" << *program.getMechanism(id).releaseEventId;
+      }
     }
     os << "]\n";
   }

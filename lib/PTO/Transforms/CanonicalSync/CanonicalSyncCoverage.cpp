@@ -388,7 +388,8 @@ evaluateFlattenedFacts(const CanonicalSyncProgram &program,
     changed = joinFlattenedChoiceFacts(program, facts);
     for (CanonicalMechanismId id : selected) {
       const CanonicalMechanism &mechanism = program.getMechanism(id);
-      if (mechanism.kind == CanonicalMechanismKind::Event) {
+      if (mechanism.kind == CanonicalMechanismKind::Event ||
+          mechanism.kind == CanonicalMechanismKind::RecurringEvent) {
         changed |= applyEvent(program, mechanism, facts,
                               mechanismExecutionLoops(program, mechanism));
       } else if (mechanism.kind == CanonicalMechanismKind::FixedFence) {
@@ -505,7 +506,8 @@ summarizeRegion(const CanonicalSyncProgram &program, CanonicalRegionId region,
     } else if (mechanism.kind == CanonicalMechanismKind::FixedFence) {
       addFixedFenceTransfers(program, mechanism, result.transfers,
                              mechanismExecutionLoops(program, mechanism));
-    } else if (mechanism.kind == CanonicalMechanismKind::Event) {
+    } else if (mechanism.kind == CanonicalMechanismKind::Event ||
+               mechanism.kind == CanonicalMechanismKind::RecurringEvent) {
       CanonicalBoundaryTransfer transfer;
       transfer.source = mechanism.source;
       transfer.target = mechanism.target;
@@ -601,6 +603,13 @@ bool demandCovered(const CanonicalSyncProgram &program,
     const CanonicalMechanismId direct =
         program.getDirectMechanisms()[demand.id];
     return llvm::is_contained(selected, direct);
+  }
+  const CanonicalMechanismId direct = program.getDirectMechanisms()[demand.id];
+  const bool recurringSelected = llvm::is_contained(selected, direct) &&
+                                 program.getMechanism(direct).kind ==
+                                     CanonicalMechanismKind::RecurringEvent;
+  if (recurringSelected) {
+    return true;
   }
   const CanonicalPhase &source = program.getPhase(demand.source);
   const CanonicalPhase &target = program.getPhase(demand.target);

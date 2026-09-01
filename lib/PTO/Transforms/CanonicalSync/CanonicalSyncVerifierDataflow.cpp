@@ -176,8 +176,8 @@ bool containsEffect(ArrayRef<VerifierEffect> effects,
       effects, [&](const VerifierEffect &effect) { return effect.key == key; });
 }
 
-bool tokensEqual(ArrayRef<VerifierToken> first,
-                 ArrayRef<VerifierToken> second) {
+bool tokenKeysEqual(ArrayRef<VerifierToken> first,
+                    ArrayRef<VerifierToken> second) {
   const bool differentSizes = first.size() != second.size();
   if (differentSizes) {
     return false;
@@ -185,7 +185,7 @@ bool tokensEqual(ArrayRef<VerifierToken> first,
   return llvm::all_of(first, [&](const VerifierToken &token) {
     return llvm::any_of(second, [&](const VerifierToken &other) {
       return token.source == other.source && token.target == other.target &&
-             token.eventId == other.eventId && token.payload == other.payload;
+             token.eventId == other.eventId;
     });
   });
 }
@@ -225,7 +225,7 @@ LogicalResult executeIf(const VerifierProgram &program,
           program, target, operation.getElseRegion().front(), elseState))) {
     return failure();
   }
-  if (!tokensEqual(thenState.tokens, elseState.tokens)) {
+  if (!tokenKeysEqual(thenState.tokens, elseState.tokens)) {
     return operation.emitError("canonical sync verifier found an event "
                                "lifecycle crossing incompatible branches");
   }
@@ -256,7 +256,7 @@ LogicalResult executeLoop(const VerifierProgram &program,
             program, target, operation.getRegion().front(), iteration))) {
       return failure();
     }
-    if (!tokensEqual(before.tokens, iteration.tokens)) {
+    if (!tokenKeysEqual(before.tokens, iteration.tokens)) {
       return operation.emitError("canonical sync verifier found an event "
                                  "lifecycle crossing a loop iteration");
     }
