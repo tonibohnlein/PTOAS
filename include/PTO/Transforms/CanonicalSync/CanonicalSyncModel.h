@@ -278,6 +278,8 @@ struct CanonicalSetCoverInstance {
 };
 
 class CanonicalSyncProgram;
+LogicalResult buildCanonicalDirectMechanisms(CanonicalSyncProgram &program);
+LogicalResult evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program);
 LogicalResult buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program);
 
 class CanonicalSyncProgram {
@@ -295,7 +297,6 @@ public:
   void setMechanismEventId(CanonicalMechanismId mechanism, unsigned eventId);
   void setDirectMechanism(CanonicalDemandId demand,
                           CanonicalMechanismId mechanism);
-  void appendCoverageWorld(CanonicalCoverageWorld world);
 
   LogicalResult freezeGraph();
   LogicalResult freeze();
@@ -327,8 +328,13 @@ public:
 
 private:
   friend LogicalResult
+  buildCanonicalDirectMechanisms(CanonicalSyncProgram &program);
+  friend LogicalResult
+  evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program);
+  friend LogicalResult
   buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program);
 
+  void appendCoverageWorld(CanonicalCoverageWorld world);
   void setSetCoverInstance(CanonicalSetCoverInstance instance);
 
   func::FuncOp function;
@@ -340,6 +346,9 @@ private:
   llvm::SmallVector<CanonicalMechanismId> directMechanisms;
   llvm::SmallVector<CanonicalCoverageWorld> coverageWorlds;
   std::optional<CanonicalSetCoverInstance> setCoverInstance;
+  bool buildingMechanisms = false;
+  bool mechanismCatalogComplete = false;
+  bool coverageCatalogComplete = false;
   bool graphFrozen = false;
   bool frozen = false;
 };

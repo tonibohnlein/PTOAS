@@ -12,6 +12,7 @@
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -364,7 +365,9 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
 LogicalResult
 mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
   const bool invalidState = !program.isGraphFrozen() || program.isFrozen() ||
-                            program.getSetCoverInstance().has_value();
+                            program.getSetCoverInstance().has_value() ||
+                            program.buildingMechanisms ||
+                            program.mechanismCatalogComplete;
   if (invalidState) {
     return program.getFunction().emitError(
         "canonical sync direct mechanisms require a frozen demand graph");
@@ -374,6 +377,9 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
   if (failed(target)) {
     return failure();
   }
+  program.buildingMechanisms = true;
+  const auto finishBuilding = llvm::make_scope_exit(
+      [&program]() { program.buildingMechanisms = false; });
   for (const CanonicalDemand &demand : program.getDemands()) {
     FailureOr<CanonicalMechanism> mechanism =
         buildDirectMechanism(program, *target, demand);
@@ -392,5 +398,6 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
     tail.actionRegion = 0;
     program.appendMechanism(std::move(tail));
   }
+  program.mechanismCatalogComplete = true;
   return success();
 }

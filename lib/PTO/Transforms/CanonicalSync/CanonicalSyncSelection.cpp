@@ -166,7 +166,9 @@ LogicalResult appendCandidate(CanonicalSyncProgram &program,
 LogicalResult
 mlir::pto::buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program) {
   const bool invalidState = !program.isGraphFrozen() || program.isFrozen() ||
-                            program.getSetCoverInstance().has_value();
+                            program.getSetCoverInstance().has_value() ||
+                            !program.mechanismCatalogComplete ||
+                            !program.coverageCatalogComplete;
   if (invalidState) {
     return program.getFunction().emitError(
         "canonical sync set-cover construction requires one mutable plan");

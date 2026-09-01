@@ -72,14 +72,17 @@ void CanonicalSyncProgram::appendDemandCause(CanonicalDemandId demand,
 CanonicalMechanismId
 CanonicalSyncProgram::appendMechanism(CanonicalMechanism mechanism) {
   return appendRecord(mechanisms, std::move(mechanism),
-                      frozen || setCoverInstance.has_value());
+                      frozen || !buildingMechanisms ||
+                          mechanismCatalogComplete ||
+                          setCoverInstance.has_value());
 }
 
 void CanonicalSyncProgram::appendMechanismOrigin(CanonicalMechanismId mechanism,
                                                  CanonicalDemandId demand) {
   const bool invalidMechanism = mechanism >= mechanisms.size();
   const bool invalidDemand = demand >= demands.size();
-  if (frozen || setCoverInstance || invalidMechanism || invalidDemand) {
+  if (frozen || !buildingMechanisms || mechanismCatalogComplete ||
+      setCoverInstance || invalidMechanism || invalidDemand) {
     llvm_unreachable("cannot extend an invalid or frozen mechanism");
   }
   if (!llvm::is_contained(mechanisms[mechanism].origins, demand)) {
@@ -99,7 +102,8 @@ void CanonicalSyncProgram::setDirectMechanism(CanonicalDemandId demand,
                                               CanonicalMechanismId mechanism) {
   const bool invalidDemand = demand >= demands.size();
   const bool invalidMechanism = mechanism >= mechanisms.size();
-  if (frozen || setCoverInstance || invalidDemand || invalidMechanism) {
+  if (frozen || !buildingMechanisms || mechanismCatalogComplete ||
+      setCoverInstance || invalidDemand || invalidMechanism) {
     llvm_unreachable("cannot map an invalid or frozen direct mechanism");
   }
   if (directMechanisms.empty()) {
@@ -109,7 +113,8 @@ void CanonicalSyncProgram::setDirectMechanism(CanonicalDemandId demand,
 }
 
 void CanonicalSyncProgram::appendCoverageWorld(CanonicalCoverageWorld world) {
-  if (frozen || setCoverInstance) {
+  if (frozen || !mechanismCatalogComplete || coverageCatalogComplete ||
+      setCoverInstance) {
     llvm_unreachable("cannot append to a frozen sync model");
   }
   coverageWorlds.push_back(std::move(world));
@@ -268,6 +273,10 @@ LogicalResult CanonicalSyncProgram::freeze() {
   }
   if (!setCoverInstance) {
     return fail("set-cover instance is missing");
+  }
+  if (buildingMechanisms || !mechanismCatalogComplete ||
+      !coverageCatalogComplete) {
+    return fail("mechanism or coverage catalog is incomplete");
   }
   const bool invalidBaseline =
       llvm::any_of(setCoverInstance->baseline, [this](CanonicalMechanismId id) {

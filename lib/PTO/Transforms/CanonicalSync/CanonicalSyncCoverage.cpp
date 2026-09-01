@@ -720,7 +720,9 @@ mlir::pto::canonical_sync_detail::evaluateCanonicalSyncGroup(
 LogicalResult
 mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
   const bool invalidState = !program.isGraphFrozen() || program.isFrozen() ||
-                            program.getSetCoverInstance().has_value();
+                            program.getSetCoverInstance().has_value() ||
+                            !program.mechanismCatalogComplete ||
+                            program.coverageCatalogComplete;
   if (invalidState) {
     return program.getFunction().emitError(
         "canonical sync coverage requires an unsealed mechanism catalog");
@@ -796,5 +798,6 @@ mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
     return failure();
   }
   program.appendCoverageWorld(std::move(*final));
+  program.coverageCatalogComplete = true;
   return success();
 }
