@@ -642,6 +642,11 @@ void emitGuardedActions(IRRewriter &rewriter, func::FuncOp function,
         location, arith::CmpIPredicate::sge, guardLoop.getLowerBound(),
         guardLoop.getUpperBound());
     break;
+  case CanonicalSyncActionGuardKind::FirstIteration:
+    condition = rewriter.create<arith::CmpIOp>(
+        location, arith::CmpIPredicate::eq, guardLoop.getInductionVar(),
+        guardLoop.getLowerBound());
+    break;
   case CanonicalSyncActionGuardKind::NotFirstIteration:
     condition = rewriter.create<arith::CmpIOp>(
         location, arith::CmpIPredicate::ne, guardLoop.getInductionVar(),

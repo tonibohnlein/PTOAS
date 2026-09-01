@@ -5937,14 +5937,15 @@ bool testGuardedEndpointUsesSourceLocalCompletionEvent() {
                    });
   CanonicalSyncBuildOptions explicitAllOptions = options;
   explicitAllOptions.patterns.enabledMechanismFamilies =
-      kAllCanonicalSyncMechanismFamilies;
+      kProductionCanonicalSyncMechanismFamilies;
   CanonicalSyncProblemBuildResult explicitAll =
       buildCanonicalSyncPreciseProblem(*program, explicitAllOptions);
   if (!check(hasTargetLocalOrigin,
              "classify guarded completeness as a target-local fence") ||
       !check(explicitAll && explicitAll.problem &&
                  precise.problem->hasSameCandidatePrefix(*explicitAll.problem),
-             "make the default catalog identical to an explicit ALL mask")) {
+             "make the default catalog identical to the explicit production "
+             "family mask")) {
     return false;
   }
 

@@ -42,6 +42,7 @@ enum class CanonicalSyncMechanismFamily : std::uint8_t {
   SourcePrefixDrain,
   LoopCarryDrain,
   LoopBoundaryProtocol,
+  GenericLifecycle,
   L0OperandOwnership,
   BasicOwnership,
   BoundaryOwnership,
@@ -71,6 +72,14 @@ constexpr CanonicalSyncMechanismFamilyMask kAllCanonicalSyncMechanismFamilies =
      << kCanonicalSyncMechanismFamilyCount) -
     1;
 
+/// Generic lifecycle synthesis remains explicitly opt-in until Commit 11's
+/// independent materialized-plan verifier is in the production path.
+constexpr CanonicalSyncMechanismFamilyMask
+    kProductionCanonicalSyncMechanismFamilies =
+        kAllCanonicalSyncMechanismFamilies &
+        ~canonicalSyncMechanismFamilyBit(
+            CanonicalSyncMechanismFamily::GenericLifecycle);
+
 constexpr bool
 canonicalSyncMechanismFamilyEnabled(CanonicalSyncMechanismFamilyMask mask,
                                     CanonicalSyncMechanismFamily family) {
@@ -92,7 +101,7 @@ enum class CanonicalSyncCatalogMode : std::uint8_t {
 struct CanonicalSyncPatternOptions {
   CanonicalSyncCatalogMode catalogMode = CanonicalSyncCatalogMode::Standard;
   CanonicalSyncMechanismFamilyMask enabledMechanismFamilies =
-      kAllCanonicalSyncMechanismFamilies;
+      kProductionCanonicalSyncMechanismFamilies;
   bool enableDirectPairs = true;
   bool enableConflictCoreRepair = true;
   /// Optional same-round acceleration. Tests may disable it to exercise the
@@ -190,7 +199,7 @@ struct CanonicalSyncComparisonReport {
       CanonicalSyncSelectionObjective::ActionFirst;
   CanonicalSyncCatalogMode catalogMode = CanonicalSyncCatalogMode::Standard;
   CanonicalSyncMechanismFamilyMask enabledMechanismFamilies =
-      kAllCanonicalSyncMechanismFamilies;
+      kProductionCanonicalSyncMechanismFamilies;
   bool directPairsEnabled = true;
   bool conflictCoreRepairEnabled = true;
   CanonicalSyncGmAliasPolicy gmAliasPolicy =

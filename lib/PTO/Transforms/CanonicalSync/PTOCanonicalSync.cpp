@@ -87,6 +87,8 @@ StringRef mechanismFamilyName(pto::CanonicalSyncMechanismFamily family) {
     return "loop-carry-drain";
   case Family::LoopBoundaryProtocol:
     return "loop-boundary-protocol";
+  case Family::GenericLifecycle:
+    return "generic-lifecycle";
   case Family::L0OperandOwnership:
     return "l0-operand-ownership";
   case Family::BasicOwnership:
@@ -112,7 +114,8 @@ StringRef mechanismFamilyName(pto::CanonicalSyncMechanismFamily family) {
 bool configureMechanismFamilies(StringRef value,
                                 pto::CanonicalSyncPatternOptions &options) {
   if (value == "all") {
-    options.enabledMechanismFamilies = pto::kAllCanonicalSyncMechanismFamilies;
+    options.enabledMechanismFamilies =
+        pto::kProductionCanonicalSyncMechanismFamilies;
     return true;
   }
   if (value == "core") {
@@ -417,6 +420,8 @@ StringRef mechanismOriginName(pto::CanonicalSyncMechanismOrigin origin) {
     return "loop-carry-pipe-drain";
   case Origin::LoopBoundarySourcePrefixProtocol:
     return "loop-boundary-source-prefix-protocol";
+  case Origin::GenericLifecycleProtocol:
+    return "generic-lifecycle-protocol";
   case Origin::BasicOwnershipL0OperandProtocol:
     return "basic-ownership-l0-operand-protocol";
   case Origin::BasicOwnershipStableL1Protocol:

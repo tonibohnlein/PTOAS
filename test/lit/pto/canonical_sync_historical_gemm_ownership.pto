@@ -30,6 +30,13 @@
 // RUN:   -o %t.direct.pto
 // RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
 // RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
+// RUN:   --canonical-sync-pattern-mode=direct \
+// RUN:   --canonical-sync-mechanism-families=generic-lifecycle \
+// RUN:   --canonical-sync-enable-conflict-core-repair=false \
+// RUN:   --canonical-sync-comparison-report=%t.generic.json %s \
+// RUN:   -o %t.generic.pto
+// RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
+// RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
 // RUN:   --canonical-sync-pattern-mode=direct-pair \
 // RUN:   --canonical-sync-mechanism-families=basic-ownership \
 // RUN:   --canonical-sync-enable-conflict-core-repair=false \
@@ -46,8 +53,12 @@
 // RUN: FileCheck %s --check-prefix=SETS < %t.direct.pto
 // RUN: FileCheck %s --check-prefix=WAITS < %t.direct.pto
 // RUN: FileCheck %s --check-prefix=BARRIERS < %t.direct.pto
+// RUN: FileCheck %s --check-prefix=GENERIC-SETS < %t.generic.pto
+// RUN: FileCheck %s --check-prefix=GENERIC-WAITS < %t.generic.pto
+// RUN: FileCheck %s --check-prefix=GENERIC-BARRIERS < %t.generic.pto
 // RUN: FileCheck %s --check-prefix=DIRECT-REPORT < %t.direct.json
 // RUN: FileCheck %s --check-prefix=PAIR-REPORT < %t.pair.json
+// RUN: FileCheck %s --check-prefix=GENERIC-REPORT < %t.generic.json
 // RUN: FileCheck %s --check-prefix=COMPOSITE-SETS < %t.composite.pto
 // RUN: FileCheck %s --check-prefix=COMPOSITE-WAITS < %t.composite.pto
 // RUN: FileCheck %s --check-prefix=COMPOSITE-BARRIERS < %t.composite.pto
@@ -230,6 +241,15 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // BARRIERS-COUNT-1: pto.barrier <PIPE_ALL>
 // BARRIERS-NOT: pto.barrier
 
+// GENERIC-SETS-COUNT-53: pto.set_flag
+// GENERIC-SETS-NOT: pto.set_flag
+// GENERIC-WAITS-COUNT-53: pto.wait_flag
+// GENERIC-WAITS-NOT: pto.wait_flag
+// GENERIC-BARRIERS-NOT: pto.pipe_barrier
+// GENERIC-BARRIERS-COUNT-1: pto.barrier <PIPE_FIX>
+// GENERIC-BARRIERS-COUNT-1: pto.barrier <PIPE_ALL>
+// GENERIC-BARRIERS-NOT: pto.barrier
+
 // D-FAIL: canonical sync direct-only mode cannot admit a loop-repeated one-bit event without an independent token lifecycle protocol
 
 // DIRECT-REPORT: "candidate_mechanisms_by_origin":
@@ -264,6 +284,16 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // PAIR-REPORT: "emitted_event_sets": 53
 // PAIR-REPORT: "emitted_event_waits": 53
 // PAIR-REPORT: "verified": true
+
+// GENERIC-REPORT: "candidate_mechanisms_by_origin":
+// GENERIC-REPORT: "generic-lifecycle-protocol": 2
+// GENERIC-REPORT: "emitted_event_sets": 53
+// GENERIC-REPORT: "emitted_event_waits": 53
+// GENERIC-REPORT: "emitted_pipe_all_barriers": 0
+// GENERIC-REPORT: "emitted_targeted_barriers": 1
+// GENERIC-REPORT: "selected_mechanisms_by_origin":
+// GENERIC-REPORT: "generic-lifecycle-protocol": 2
+// GENERIC-REPORT: "verified": true
 
 // COMPOSITE-SETS-COUNT-54: pto.set_flag
 // COMPOSITE-SETS-NOT: pto.set_flag

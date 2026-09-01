@@ -9,6 +9,7 @@
 // for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSync.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverProtocol.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 
 #include "llvm/ADT/BitVector.h"
@@ -111,6 +112,8 @@ getCandidateConfigurationSignature(const CanonicalSyncBuildOptions &options) {
           CanonicalSyncMechanismFamily::LoopCarryDrain) |
       canonicalSyncMechanismFamilyBit(
           CanonicalSyncMechanismFamily::LoopBoundaryProtocol) |
+      canonicalSyncMechanismFamilyBit(
+          CanonicalSyncMechanismFamily::GenericLifecycle) |
       canonicalSyncMechanismFamilyBit(
           CanonicalSyncMechanismFamily::L0OperandOwnership) |
       canonicalSyncMechanismFamilyBit(
@@ -3405,6 +3408,186 @@ CanonicalSyncProblemResult internOwnershipProtocol(
       origin);
 }
 
+SyncCoverProtocolTargetContract makeProtocolTargetContract(
+    const CanonicalSyncTargetCapabilities &capabilities) {
+  SyncCoverProtocolTargetContract result;
+  result.compilerUsableEventIds = capabilities.compilerUsableEventIds;
+  result.directEventCompletesSourcePrefix =
+      capabilities.directEventCompletesSourcePrefix.isEnabled();
+  for (const auto &[source, target] :
+       capabilities.directEventCompletion.resourcePairs) {
+    result.eventCapabilities.push_back(
+        {source, target, capabilities.directEventOrderingRequirements});
+  }
+  std::sort(result.eventCapabilities.begin(), result.eventCapabilities.end());
+  return result;
+}
+
+std::optional<CanonicalSyncMechanismDescriptor> makeGenericLifecycleDescriptor(
+    const SyncCoverGraph &graph, const SyncCoverLifecycleProposal &proposal,
+    const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds) {
+  CanonicalSyncMechanismDescriptor descriptor;
+  descriptor.kind = CanonicalSyncMechanismKind::Protocol;
+  for (const SyncCoverEventProtocol &protocol : proposal.protocols) {
+    if (!protocol.loop) {
+      return std::nullopt;
+    }
+    for (const SyncCoverEventChannel &channel : protocol.channels) {
+      const auto domain =
+          domainIds.find({channel.set.resource, channel.wait.resource});
+      if (domain == domainIds.end()) {
+        return std::nullopt;
+      }
+      const std::size_t eventUse = descriptor.eventUses.size();
+      CanonicalSyncEventUse use;
+      use.domain = domain->second;
+      use.width = channel.width;
+      use.recurrenceScope = protocol.loop->scope;
+      use.lifetimeScope = protocol.lifetimeScope;
+      descriptor.eventUses.push_back(std::move(use));
+      if (!channel.actions.empty()) {
+        for (const SyncCoverProtocolAction &action : channel.actions) {
+          CanonicalSyncActionGuardKind guard =
+              CanonicalSyncActionGuardKind::None;
+          switch (action.guard) {
+          case SyncCoverProtocolActionGuard::Always:
+            break;
+          case SyncCoverProtocolActionGuard::LoopNonEmpty:
+            guard = CanonicalSyncActionGuardKind::LoopNonEmpty;
+            break;
+          case SyncCoverProtocolActionGuard::LoopEmpty:
+            guard = CanonicalSyncActionGuardKind::LoopEmpty;
+            break;
+          case SyncCoverProtocolActionGuard::FirstIteration:
+            guard = CanonicalSyncActionGuardKind::FirstIteration;
+            break;
+          case SyncCoverProtocolActionGuard::NotFirstIteration:
+            guard = CanonicalSyncActionGuardKind::NotFirstIteration;
+            break;
+          case SyncCoverProtocolActionGuard::HasSuccessor:
+            guard = CanonicalSyncActionGuardKind::HasSuccessor;
+            break;
+          }
+          descriptor.actions.push_back(makeOwnershipAction(
+              action.kind == SyncCoverProtocolActionKind::Set
+                  ? CanonicalSyncActionKind::EventSet
+                  : CanonicalSyncActionKind::EventWait,
+              action.point.resource, action.point.anchor, eventUse, action.lane,
+              guard,
+              guard == CanonicalSyncActionGuardKind::None
+                  ? std::nullopt
+                  : std::optional<SyncCoverScopeId>(protocol.loop->scope)));
+        }
+        continue;
+      }
+      if (channel.flow == SyncCoverEventChannelFlow::LoopCarry) {
+        for (std::size_t lane = 0; lane < channel.width; ++lane) {
+          descriptor.actions.push_back(makeOwnershipAction(
+              CanonicalSyncActionKind::EventSet, channel.set.resource,
+              {SyncCoverAnchorKind::ScopeEntry, 0, protocol.loop->scope, 0},
+              eventUse, lane));
+        }
+      }
+      if (channel.transfers.empty()) {
+        return std::nullopt;
+      }
+      for (const SyncCoverEventTransfer &transfer : channel.transfers) {
+        if (channel.flow == SyncCoverEventChannelFlow::LoopCarry) {
+          descriptor.actions.push_back(makeOwnershipAction(
+              CanonicalSyncActionKind::EventWait, transfer.wait.resource,
+              transfer.wait.anchor, eventUse, transfer.waitLane));
+        }
+        descriptor.actions.push_back(makeOwnershipAction(
+            CanonicalSyncActionKind::EventSet, transfer.set.resource,
+            transfer.set.anchor, eventUse, transfer.setLane));
+        if (channel.flow != SyncCoverEventChannelFlow::LoopCarry) {
+          descriptor.actions.push_back(makeOwnershipAction(
+              CanonicalSyncActionKind::EventWait, transfer.wait.resource,
+              transfer.wait.anchor, eventUse, transfer.waitLane));
+        }
+      }
+      if (channel.flow == SyncCoverEventChannelFlow::LoopCarry) {
+        for (std::size_t lane = 0; lane < channel.width; ++lane) {
+          descriptor.actions.push_back(makeOwnershipAction(
+              CanonicalSyncActionKind::EventWait, channel.wait.resource,
+              {SyncCoverAnchorKind::ScopeExit, 0, protocol.loop->scope, 0},
+              eventUse, lane));
+        }
+      }
+    }
+  }
+  for (SyncCoverDemandId demand = 0; demand < graph.getDemands().size();
+       ++demand) {
+    if (!proposal.exactCoverage.contains(demand)) {
+      continue;
+    }
+    CanonicalSyncSupplyBinding binding;
+    binding.edge = getDemandEdge(graph.getDemands()[demand]);
+    binding.proof = CanonicalSyncSupplyProof::VerifiedGenericLifecycleComposite;
+    binding.allowedDemands = {demand};
+    descriptor.supplies.push_back(std::move(binding));
+  }
+  if (descriptor.eventUses.empty() || descriptor.actions.empty() ||
+      descriptor.supplies.empty()) {
+    return std::nullopt;
+  }
+  return descriptor;
+}
+
+CanonicalSyncProblemResult internGenericLifecycleProtocol(
+    CanonicalSyncPatternProblem &problem, const SyncCoverGraph &graph,
+    const SyncCoverProtocolTargetContract &target,
+    const SyncCoverLifecycleProposal &proposal,
+    const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds) {
+  std::optional<CanonicalSyncMechanismDescriptor> descriptor =
+      makeGenericLifecycleDescriptor(graph, proposal, domainIds);
+  if (!descriptor) {
+    return {CanonicalSyncProblemError::None, std::nullopt};
+  }
+  const SyncCoverLifecycleProposal frozenProposal = proposal;
+  const SyncCoverProtocolTargetContract frozenTarget = target;
+  const auto frozenDomains = domainIds;
+  return problem.internVerifiedProtocol(
+      std::move(*descriptor),
+      [&graph, frozenProposal, frozenTarget,
+       frozenDomains](const CanonicalSyncMechanismDescriptor &actual,
+                      SyncCoverCoverageWorkBudget &work) {
+        // Synthesis admitted this immutable proposal only after token-automaton
+        // verification and exact-world grounding.  Re-running that graph-wide
+        // proof every time the set-cover problem inspects the same mechanism
+        // is quadratic in selection rounds.  Bind the selectable descriptor to
+        // the frozen certified recipe here. The family remains opt-in until
+        // Commit 11 independently rebuilds and verifies the complete
+        // materialized plan before mutation.
+        (void)frozenTarget;
+        const std::optional<CanonicalSyncMechanismDescriptor> expected =
+            makeGenericLifecycleDescriptor(graph, frozenProposal,
+                                           frozenDomains);
+        const bool valid = expected && !frozenProposal.exactCoverage.empty() &&
+                           ownershipDescriptorEqual(actual, *expected, work);
+        return protocolVerificationResult(work, valid);
+      },
+      CanonicalSyncMechanismOrigin::GenericLifecycleProtocol);
+}
+
+LogicalResult addGenericLifecycleProtocols(
+    const CanonicalSyncProgram &program, CanonicalSyncPatternProblem &problem,
+    const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds,
+    ArrayRef<SyncCoverLifecycleProposal> proposals) {
+  const SyncCoverProtocolTargetContract target =
+      makeProtocolTargetContract(program.getTargetCapabilities());
+  for (const SyncCoverLifecycleProposal &proposal : proposals) {
+    const CanonicalSyncProblemResult added = internGenericLifecycleProtocol(
+        problem, program.getGraph(), target, proposal, domainIds);
+    if (!added && added.error != CanonicalSyncProblemError::None) {
+      return program.getFunction().emitError(
+                 "cannot add generic canonical sync lifecycle proposal ")
+             << proposal.id << ", error=" << static_cast<unsigned>(added.error);
+    }
+  }
+  return success();
+}
+
 struct HierarchicalOwnershipRecipeInfo {
   SyncCoverScopeId outerScope = 0;
   std::optional<SyncCoverScopeId> initialPathScope;
@@ -3867,12 +4050,12 @@ LogicalResult addOwnershipProtocols(
   return success();
 }
 
-LogicalResult
-addEventDomains(const CanonicalSyncProgram &program, unsigned budget,
-                CanonicalSyncPatternProblem &problem,
-                const SyncCoverDemandSet &baseline,
-                std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds,
-                bool includeBasicOwnership) {
+LogicalResult addEventDomains(
+    const CanonicalSyncProgram &program, unsigned budget,
+    CanonicalSyncPatternProblem &problem, const SyncCoverDemandSet &baseline,
+    std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds,
+    bool includeBasicOwnership,
+    ArrayRef<SyncCoverLifecycleProposal> genericLifecycleProposals = {}) {
   const SyncCoverGraph &graph = program.getGraph();
   const CanonicalSyncDirectedResourceCapability &directEvents =
       program.getTargetCapabilities().directEventCompletion;
@@ -3905,6 +4088,16 @@ addEventDomains(const CanonicalSyncProgram &program, unsigned budget,
       }
       if (directEvents.supports(release.first, release.second)) {
         keys.insert(release);
+      }
+    }
+  }
+  for (const SyncCoverLifecycleProposal &proposal : genericLifecycleProposals) {
+    for (const SyncCoverEventProtocol &protocol : proposal.protocols) {
+      for (const SyncCoverEventChannel &channel : protocol.channels) {
+        const EventDomainKey key{channel.set.resource, channel.wait.resource};
+        if (directEvents.supports(key.first, key.second)) {
+          keys.insert(key);
+        }
       }
     }
   }
@@ -5444,6 +5637,27 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
     std::vector<DirectEventRecord> directEvents;
     std::vector<SyncCoverDemandId> sameResourceObligations;
     std::vector<SyncCoverDemandId> uncoveredBasisDemands;
+    std::vector<SyncCoverLifecycleProposal> genericLifecycleProposals;
+    if (familyEnabled(CanonicalSyncMechanismFamily::GenericLifecycle)) {
+      SyncCoverCoverageWorkBudget lifecycleWork(
+          options.selection.maximumWorkUnits);
+      const SyncCoverProtocolTargetContract protocolTarget =
+          makeProtocolTargetContract(program.getTargetCapabilities());
+      SyncCoverLifecycleSynthesisResult synthesized =
+          synthesizeSyncCoverLifecycleCertificates(
+              program.getGraph(), protocolTarget, {}, &lifecycleWork);
+      if (!synthesized) {
+        program.getFunction().emitError(
+            "canonical sync generic lifecycle synthesis failed, error=")
+            << static_cast<unsigned>(synthesized.error)
+            << ", work-units=" << lifecycleWork.workUnits << ", invalid-index="
+            << synthesized.invalidIndex.value_or(
+                   std::numeric_limits<std::size_t>::max());
+        return {nullptr,
+                {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+      }
+      genericLifecycleProposals = std::move(synthesized.proposals);
+    }
     for (SyncCoverDemandId demandId : problem->getDemands()) {
       if (!baseline.covered.contains(demandId)) {
         uncoveredBasisDemands.push_back(demandId);
@@ -5476,9 +5690,13 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
                 familyEnabled(
                     CanonicalSyncMechanismFamily::BoundaryOwnership) ||
                 familyEnabled(
-                    CanonicalSyncMechanismFamily::HierarchicalOwnership))) ||
+                    CanonicalSyncMechanismFamily::HierarchicalOwnership),
+            genericLifecycleProposals)) ||
         failed(addExactEvents(program, *problem, baseline.covered, domainIds,
                               directEvents)) ||
+        (familyEnabled(CanonicalSyncMechanismFamily::GenericLifecycle) &&
+         failed(addGenericLifecycleProtocols(program, *problem, domainIds,
+                                             genericLifecycleProposals))) ||
         ((familyEnabled(CanonicalSyncMechanismFamily::L0OperandOwnership) ||
           familyEnabled(CanonicalSyncMechanismFamily::BasicOwnership) ||
           familyEnabled(CanonicalSyncMechanismFamily::BoundaryOwnership) ||
@@ -5562,6 +5780,11 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
           << ", target-resource="
           << program.getGraph().getNodes()[first.target].resource
           << ", scope=" << first.scope << ", distance=" << first.distance
+          << ", source-node=" << first.source
+          << ", target-node=" << first.target
+          << ", source-guard=" << first.sourceGuard.literals.size()
+          << ", target-guard=" << first.targetGuard.literals.size()
+          << ", witnesses=" << first.storageWitnesses.size()
           << ", ownership-l0=" << ownershipCounts[0]
           << ", ownership-l1=" << ownershipCounts[1]
           << ", ownership-acc=" << ownershipCounts[2]

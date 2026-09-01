@@ -679,6 +679,9 @@ Relevant driver options are:
 `direct` disables optional pair construction. `direct-pair` is the default.
 `core` disables every derived family but remains orthogonal to pair generation
 and repair, so both `core + direct` and `core + direct-pair` are expressible.
+`all` denotes the production family set. The experimental `generic-lifecycle`
+family remains explicitly opt-in until independent materialized-plan
+verification is enabled for it.
 
 `strict-direct` is the minimal correctness catalog. It requires
 `mechanism-families=core`, `pattern-mode=direct`, and
@@ -752,6 +755,7 @@ source-local-drain
 source-prefix-drain
 loop-carry-drain
 loop-boundary-protocol
+generic-lifecycle
 l0-operand-ownership
 basic-ownership
 boundary-ownership
@@ -761,6 +765,32 @@ repair-source-prefix-drain
 repair-target-local-drain
 repair-frontier
 ```
+
+`generic-lifecycle` derives balanced ready/release protocols solely from the
+frozen physical graph. Every admitted slot must have exact physical accesses,
+a forward completion demand, and an explicit reverse reuse demand at the exact
+distance implied by the authoritative phase cycle in the same loop. Phase
+alternatives and nested-loop boundaries come from graph-owned control and
+region contracts; operation names and the legacy GEMM ownership recognizer are
+not consulted. The family is bounded and fails closed on ambiguous phase
+controls or incomplete lifecycles.
+
+Generic lifecycle coverage includes an exact storage-reuse certificate for
+same-lane WAR and WAW rows. The certificate is admitted only after the token
+automaton proves the matching ready/release channel topology, every physical
+access and storage witness names the certified lane, and every release lane is
+drained at the lifecycle boundary. A first-iteration release Set is placed at
+the child-loop acquire cut only when the preceding ready Wait establishes the
+cross-channel rearm path; this primes the initial invocation without widening
+the physical recipe to a parent-boundary drain.
+
+The historical GEMM generic-lifecycle test therefore reconstructs the accepted
+ownership plan with 53 Sets, 53 Waits, one targeted `PIPE_FIX` barrier, and zero
+body `PIPE_ALL`. The generic generator uses only storage SCCs, graph-owned
+phases, target capabilities, and verified physical cuts; it does not consult
+operation names or the legacy GEMM ownership recognizer. The connector
+proposal accelerator still refuses to reinterpret a child-loop displacement
+as a parent-loop coordinate without an exact witnessed completion export.
 
 The ownership discovery bounds apply to recognizer work and to every retained
 certificate dimension in the shared census. Hitting any bound truncates

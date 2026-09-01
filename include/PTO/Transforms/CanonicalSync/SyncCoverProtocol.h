@@ -61,6 +61,9 @@ struct SyncCoverProtocolTargetContract {
   /// into cache visibility or a hardware-special ordering certificate.
   std::vector<EventCapability> eventCapabilities;
   std::vector<unsigned> compilerUsableEventIds;
+  /// A legal directed event widens to the issued source-pipeline prefix only
+  /// when the versioned target contract explicitly authorizes that effect.
+  bool directEventCompletesSourcePrefix = false;
   /// Exact provider-owned Wait-to-Set facts. An evidence number alone never
   /// certifies a different resource, guard, anchor, scope, width, or distance.
   std::vector<RearmFact> certifiedRearmFacts;
@@ -75,6 +78,10 @@ enum class SyncCoverEventProtocolKind : std::uint8_t {
   ProvenNoOverlap,
   RoundTrip,
   RotatingLanes,
+  /// A target-typed collection of lifecycle channels derived from one storage
+  /// SCC.  Its legality is established by the token automaton rather than by a
+  /// fixed two-channel recipe shape.
+  LifecycleNetwork,
 };
 
 /// SameIteration pairs one body Set with one body Wait in the same dynamic
@@ -98,6 +105,83 @@ struct SyncCoverProtocolLoopSchedule {
   std::vector<std::size_t> laneByPhase;
 };
 
+/// One balanced body transfer on a logical event channel.  A channel may
+/// contain several transfers when one physical lane pool is reused at
+/// multiple ordered cuts in the same iteration.  Empty activePhases means
+/// every reachable phase.  Explicit lane numbers are used by storage
+/// lifecycle protocols; legacy direct protocols leave transfers empty and
+/// continue to select their lane from the loop schedule.
+struct SyncCoverEventTransfer {
+  std::size_t id = 0;
+  SyncCoverCutPoint set;
+  SyncCoverCutPoint wait;
+  std::size_t setLane = 0;
+  std::size_t waitLane = 0;
+  std::vector<std::size_t> activePhases;
+};
+
+enum class SyncCoverProtocolActionKind : std::uint8_t { Set, Wait };
+
+enum class SyncCoverProtocolActionSegment : std::uint8_t {
+  Entry,
+  Body,
+  Exit,
+};
+
+enum class SyncCoverProtocolActionGuard : std::uint8_t {
+  Always,
+  LoopNonEmpty,
+  LoopEmpty,
+  /// Execute at a body cut only when the current induction value is the loop
+  /// lower bound. Zero-trip paths execute no such action.
+  FirstIteration,
+  NotFirstIteration,
+  HasSuccessor,
+};
+
+/// One explicit action in a lifecycle channel.  Explicit recipes are used for
+/// schedules whose token circulation cannot be described by the legacy
+/// prime-all/body/drain-all channel shape.  The temporal guard is checked by
+/// the protocol automaton and is not treated as an arbitrary graph predicate.
+struct SyncCoverProtocolAction {
+  std::size_t id = 0;
+  SyncCoverProtocolActionKind kind = SyncCoverProtocolActionKind::Set;
+  SyncCoverProtocolActionSegment segment = SyncCoverProtocolActionSegment::Body;
+  SyncCoverCutPoint point;
+  std::size_t lane = 0;
+  SyncCoverProtocolActionGuard guard = SyncCoverProtocolActionGuard::Always;
+  std::vector<std::size_t> activePhases;
+};
+
+enum class SyncCoverProtocolSupplyKind : std::uint8_t {
+  /// The named Set token is consumed directly by the named Wait at the
+  /// declared loop displacement.
+  TokenPair,
+  /// A locally verified token pair establishes a completion fact that is
+  /// retained through the child-loop exit and consumed in the enclosing
+  /// lifetime-loop coordinate. The protocol automaton must witness the exact
+  /// named Set as the physical mate of the exact named Wait at the declared
+  /// invocation displacement.
+  CompletionExport,
+};
+
+/// One completion rectangle backed by two actions in the same channel.
+/// `distance` is the exact dynamic iteration displacement from the Set to the
+/// consuming Wait.  The verifier rejects references that do not name a legal,
+/// dynamically balanced Set/Wait token pair.
+struct SyncCoverProtocolSupply {
+  std::size_t setAction = 0;
+  std::size_t waitAction = 0;
+  unsigned distance = 0;
+  /// Loop whose dynamic iterations the distance counts. Empty means the
+  /// protocol's principal loop. Hierarchical protocols name their enclosing
+  /// lifetime loop explicitly so an inner carry is never reinterpreted as a
+  /// parent-loop transfer. A zero-distance CompletionExport summarizes a
+  /// relation wholly contained in one invocation of the child loop.
+  std::optional<SyncCoverScopeId> distanceScope;
+  SyncCoverProtocolSupplyKind kind = SyncCoverProtocolSupplyKind::TokenPair;
+};
+
 struct SyncCoverEventChannel {
   SyncCoverProtocolChannelId id = 0;
   SyncCoverEventChannelFlow flow = SyncCoverEventChannelFlow::SingleShot;
@@ -112,6 +196,15 @@ struct SyncCoverEventChannel {
   /// controls both body actions.
   std::vector<std::size_t> activePhases;
   bool exportsCompletionAtExit = false;
+  /// When nonempty, these transfers are the complete body recipe for this
+  /// channel.  The legacy set/wait fields retain the canonical resource pair
+  /// and the first transfer for stable hashing and compatibility.
+  std::vector<SyncCoverEventTransfer> transfers;
+  /// Explicit token recipe and its certified completion rectangles.  These
+  /// vectors are either both empty or both nonempty, and are mutually
+  /// exclusive with `transfers`.
+  std::vector<SyncCoverProtocolAction> actions;
+  std::vector<SyncCoverProtocolSupply> supplies;
 };
 
 /// An externally certified order can rearm a one-way channel. It is not
@@ -130,6 +223,12 @@ struct SyncCoverEventProtocol {
   std::optional<SyncCoverProtocolLoopSchedule> loop;
   std::vector<SyncCoverEventChannel> channels;
   std::vector<SyncCoverProtocolRearmProof> rearmProofs;
+  /// Optional enclosing loop that owns event allocation, priming, and
+  /// draining.  When it differs from `loop->scope`, the inner schedule is a
+  /// repeatable invocation transformer: outer entry/exit actions execute once
+  /// while inner entry/body/exit actions execute for every outer iteration.
+  std::optional<SyncCoverScopeId> lifetimeScope;
+  bool lifetimeMayExecuteZeroTimes = true;
 };
 
 struct SyncCoverProtocolLimits {
@@ -156,6 +255,7 @@ struct SyncCoverProtocolLimits {
   std::size_t maximumPhaseIncidences = 1U << 18;
   std::size_t maximumReachablePhases = 1U << 12;
   std::size_t maximumTripCounts = 1U << 12;
+  std::size_t maximumInvocationSequences = 1U << 12;
   std::size_t maximumDynamicActions = 1U << 14;
   std::size_t maximumTotalDynamicActions = 1U << 20;
   std::size_t maximumLaneInitializationWork = 1U << 20;
@@ -164,6 +264,7 @@ struct SyncCoverProtocolLimits {
   std::size_t maximumRearmProofLaneIncidences = 1U << 16;
   std::size_t maximumRearmLookupWork = 1U << 20;
   std::size_t maximumRearmQueries = 1U << 18;
+  std::size_t maximumCompletionExportQueries = 1U << 18;
   std::size_t maximumReachabilityWords = 1U << 22;
   std::size_t maximumReachabilityWork = 1U << 24;
   std::size_t maximumCoverageStates = 1U << 22;
@@ -173,6 +274,18 @@ struct SyncCoverProtocolLimits {
   std::size_t maximumLifecycleSccs = 1U << 12;
   std::size_t maximumLifecycleVertices = 1U << 16;
   std::size_t maximumLifecycleEdges = 1U << 18;
+  std::size_t maximumLifecycleAccessIncidences = 1U << 20;
+  std::size_t maximumLifecycleProposals = 1U << 12;
+  std::size_t maximumLifecycleProtocols = 1U << 14;
+  std::size_t maximumLifecycleLanes = 1U << 16;
+  std::size_t maximumLifecycleSlots = 1U << 16;
+  std::size_t maximumLifecyclePaths = 1U << 16;
+  std::size_t maximumLifecycleTransfers = 1U << 18;
+  std::size_t maximumLifecycleNodeReferences = 1U << 20;
+  std::size_t maximumLifecycleConnectorIncidences = 1U << 20;
+  std::size_t maximumLifecycleConnectorGuardIncidences = 1U << 20;
+  std::size_t maximumLifecycleGroupIncidences = 1U << 20;
+  std::size_t maximumLifecycleCatalogPayloadIncidences = 1U << 22;
   std::size_t maximumStorageWitnessIncidences = 1U << 20;
   std::size_t maximumLifecycleDomainIncidences = 1U << 20;
   std::size_t maximumReservations = 1U << 14;
@@ -206,6 +319,7 @@ struct SyncCoverProtocolStatistics {
   std::size_t maximumDynamicActions = 0;
   std::size_t automatonEdges = 0;
   std::size_t rearmQueries = 0;
+  std::size_t completionExportQueries = 0;
   std::size_t rearmProofLaneIncidences = 0;
   std::size_t rearmLookupWork = 0;
   std::size_t totalDynamicActions = 0;
@@ -218,6 +332,13 @@ struct SyncCoverProtocolVerificationResult {
   SyncCoverProtocolError error = SyncCoverProtocolError::None;
   SyncCoverProtocolStatistics statistics;
   std::vector<SyncCoverProtocolExitExport> exitExports;
+  /// One bit per declared channel supply. The token automaton records the bit
+  /// only after observing the exact named Set consumed by the exact named
+  /// Wait at the declared local-iteration or lifetime-invocation distance.
+  /// The matrix is retained on InvalidTokenLifecycle so bounded synthesis can
+  /// discard unproved optional completion exports without weakening the
+  /// verifier's fail-closed result.
+  std::vector<std::vector<bool>> supplyWitnesses;
   std::optional<std::size_t> invalidIndex;
 
   explicit operator bool() const {
@@ -250,20 +371,63 @@ SyncCoverProtocolCoverageResult computeSyncCoverProtocolExactWorlds(
     SyncCoverProtocolLimits limits = {},
     SyncCoverCoverageWorkBudget *workBudget = nullptr);
 
+/// Exact-world grounding restricted to a caller-supplied subset of demand
+/// rows. The result bitsets retain the full graph demand width and contain no
+/// facts for unqueried rows. This is used after a direct union is already
+/// known, so optional group closure pays graph-search work only for possible
+/// additional coverage.
+SyncCoverProtocolCoverageResult computeSyncCoverProtocolExactWorldsForDemands(
+    const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
+    const std::vector<SyncCoverEventProtocol> &protocols,
+    const std::vector<SyncCoverExactWorld> &worlds,
+    const SyncCoverDemandSet &queriedDemands,
+    SyncCoverProtocolLimits limits = {},
+    SyncCoverCoverageWorkBudget *workBudget = nullptr);
+
+/// Conservatively grounds only completion rectangles supplied directly by
+/// each enabled protocol.  Unlike `computeSyncCoverProtocolExactWorlds`, this
+/// routine does not search for additional transitive composition.  It is used
+/// while preparing the bounded singleton lifecycle catalog; group composition
+/// is added separately through typed connector proposals.
+SyncCoverProtocolCoverageResult computeSyncCoverProtocolDirectWorlds(
+    const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
+    const std::vector<SyncCoverEventProtocol> &protocols,
+    const std::vector<SyncCoverExactWorld> &worlds,
+    SyncCoverProtocolLimits limits = {},
+    SyncCoverCoverageWorkBudget *workBudget = nullptr);
+
+/// Computes a bounded transitive closure of already certified direct demand
+/// relations. Connector paths retain their full guard condition; a demand is
+/// proposed only when the union of reaching path conditions covers every
+/// feasible alternative not fixed by the demand itself. This is an optional
+/// proposal accelerator, not correctness proof. Every retained group must be
+/// re-evaluated by computeSyncCoverProtocolExactWorlds.
+SyncCoverProtocolCoverageResult computeSyncCoverProtocolConnectorClosure(
+    const SyncCoverGraph &graph, const SyncCoverDemandSet &directCoverage,
+    SyncCoverProtocolLimits limits = {},
+    SyncCoverCoverageWorkBudget *workBudget = nullptr);
+
 /// A generic storage-lifecycle SCC. It is a proposal/certificate input, not a
 /// selectable mechanism: later synthesis must still build and verify a full
 /// physical event recipe.
 struct SyncCoverLifecycleScc {
   SyncCoverScopeId loopScope = 0;
+  /// Exact physical pipeline resources in this strongly connected ownership
+  /// component.  Schedule synthesis must not infer ownership from resources
+  /// outside this set, even when they access an adjacent storage interval.
+  std::vector<std::uint32_t> resources;
   std::vector<SyncCoverNodeId> nodes;
   std::vector<SyncCoverDemandId> demands;
   std::vector<SyncCoverStorageDomainId> storageDomains;
+  std::vector<SyncCoverStorageAccessId> storageAccesses;
+  std::vector<SyncCoverStorageWitnessId> storageWitnesses;
   unsigned maximumDistance = 0;
 };
 
 struct SyncCoverLifecycleSccResult {
   SyncCoverProtocolError error = SyncCoverProtocolError::None;
   std::vector<SyncCoverLifecycleScc> components;
+  std::size_t lifecycleAccessIncidences = 0;
   std::optional<std::size_t> invalidIndex;
 
   explicit operator bool() const {
@@ -273,6 +437,51 @@ struct SyncCoverLifecycleSccResult {
 
 SyncCoverLifecycleSccResult discoverSyncCoverLifecycleSccs(
     const SyncCoverGraph &graph, SyncCoverProtocolLimits limits = {},
+    SyncCoverCoverageWorkBudget *workBudget = nullptr);
+
+struct SyncCoverLifecycleSlot {
+  SyncCoverStorageDomainId domain = 0;
+  SyncCoverStorageInterval extent;
+  std::vector<SyncCoverStorageAccessId> accesses;
+};
+
+/// One immutable, target-verified proposal derived from a storage-lifecycle
+/// SCC. Protocols are independently token-safe physical recipes. Direct
+/// rectangle grounding is composed only through a bounded, guard-aware
+/// connector closure, and exactCoverage is never caller-authored proof.
+struct SyncCoverLifecycleProposal {
+  std::size_t id = 0;
+  std::size_t lifecycleScc = 0;
+  std::vector<SyncCoverEventProtocol> protocols;
+  std::vector<SyncCoverLifecycleSlot> slots;
+  std::vector<SyncCoverDemandId> seedDemands;
+  SyncCoverDemandSet exactCoverage;
+  std::size_t singletonUnionCoverageRows = 0;
+  std::size_t extraCoverageRows = 0;
+};
+
+/// Storage-derived lifecycle groups reconstructed exclusively from the frozen
+/// physical graph and one versioned target contract.  No operation name,
+/// legacy ownership certificate, or GEMM-specific recognizer participates in
+/// discovery or admission.
+struct SyncCoverLifecycleSynthesisResult {
+  SyncCoverProtocolError error = SyncCoverProtocolError::None;
+  std::vector<SyncCoverLifecycleProposal> proposals;
+  std::size_t inspectedDemands = 0;
+  std::size_t inspectedAccesses = 0;
+  std::size_t lifecycleAccessIncidences = 0;
+  std::size_t lifecycleConnectorIncidences = 0;
+  std::size_t candidateResourcePairs = 0;
+  std::optional<std::size_t> invalidIndex;
+
+  explicit operator bool() const {
+    return error == SyncCoverProtocolError::None;
+  }
+};
+
+SyncCoverLifecycleSynthesisResult synthesizeSyncCoverLifecycleCertificates(
+    const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
+    SyncCoverProtocolLimits limits = {},
     SyncCoverCoverageWorkBudget *workBudget = nullptr);
 
 struct SyncCoverProtocolEventReservation {
