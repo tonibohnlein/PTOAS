@@ -32,6 +32,36 @@ module attributes {pto.target_arch = "a2a3"} {
     pto.store %sum, %source[%c0] : memref<4xi32>, i32
     return
   }
+
+  func.func @normalized_generic_view_alias(
+      %source: memref<4xi32, #pto.address_space<vec>>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %view = memref.subview %source[1] [2] [1]
+        : memref<4xi32, #pto.address_space<vec>> to
+          memref<2xi32, strided<[1], offset: 1>, #pto.address_space<vec>>
+    %value = pto.load %source[%c1]
+        : memref<4xi32, #pto.address_space<vec>> -> i32
+    pto.store %value, %view[%c0]
+        : memref<2xi32, strided<[1], offset: 1>, #pto.address_space<vec>>, i32
+    return
+  }
+
+  func.func @normalized_wrapped_postupdate(
+      %value: !pto.vreg<64xf32>, %dst: !pto.ptr<f32, ub>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %next = pto.vsts %value, %dst[%c0], %mask {dist = "NORM_B32"}
+        : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          -> !pto.ptr<f32, ub>
+    %wrapped = pto.addptr %next, %c0
+        : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+    pto.vsts %value, %wrapped[%c0], %mask {dist = "NORM_B32"}
+        : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    return
+  }
 }
 
 // CHECK-LABEL: CANONICAL-SYNC function=normalized_simt_unknown_space
@@ -46,4 +76,12 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: a0 phase=p0 mode=R space=unknown{{.*}}ordered=yes
 // CHECK: a1 phase=p1 mode=R space=unknown{{.*}}ordered=no
 // CHECK: kind=ORDERED p0->p1
+// CHECK: VERIFY ok
+// CHECK-LABEL: CANONICAL-SYNC function=normalized_generic_view_alias
+// CHECK: a0 phase=p0 mode=R space=vec range=[4,8)
+// CHECK: a1 phase=p1 mode=W space=vec range=unknown
+// CHECK: kind=WAR p0->p1
+// CHECK: VERIFY ok
+// CHECK-LABEL: CANONICAL-SYNC function=normalized_wrapped_postupdate
+// CHECK: kind=SSA
 // CHECK: VERIFY ok

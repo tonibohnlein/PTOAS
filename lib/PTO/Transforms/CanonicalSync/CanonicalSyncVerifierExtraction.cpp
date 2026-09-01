@@ -699,15 +699,32 @@ LogicalResult VerifierProgramBuilder::indexSsaDependencies() {
       }
       SmallVector<VerifierEffectKey, 8> seenCompletions;
       for (Value seed : operands) {
-        SmallVector<Value, 16> worklist{seed};
-        llvm::DenseSet<Value> discovered;
+        struct TraceValue {
+          Value value;
+          bool fromMemoryLoopBackedge = false;
+        };
+        SmallVector<TraceValue, 16> worklist{{seed, false}};
+        SmallVector<TraceValue, 16> discovered;
         while (!worklist.empty()) {
-          Value value = worklist.pop_back_val();
-          if (!value || !discovered.insert(value).second) {
+          const TraceValue current = worklist.pop_back_val();
+          Value value = current.value;
+          const bool alreadyDiscovered =
+              llvm::any_of(discovered, [&](const TraceValue &item) {
+                return item.value == value &&
+                       item.fromMemoryLoopBackedge ==
+                           current.fromMemoryLoopBackedge;
+              });
+          if (!value || alreadyDiscovered) {
             continue;
           }
+          discovered.push_back(current);
           if (auto completion = completions.find(value);
               completion != completions.end()) {
+            if (current.fromMemoryLoopBackedge) {
+              return result->function.emitError(
+                  "canonical sync verifier rejects a loop-carried physical "
+                  "storage result without recurrence-aware SSA completion");
+            }
             if (!llvm::is_contained(seenCompletions, completion->second.key)) {
               seenCompletions.push_back(completion->second.key);
               phase.ssaSources.push_back(completion->second);
@@ -723,6 +740,31 @@ LogicalResult VerifierProgramBuilder::indexSsaDependencies() {
             if (loop && argument == loop.getInductionVar()) {
               continue;
             }
+            if (loop && areMemoryLikeTypes(value.getType())) {
+              if (current.fromMemoryLoopBackedge) {
+                continue;
+              }
+              const unsigned argumentNumber = argument.getArgNumber();
+              if (argumentNumber == 0) {
+                return loop.emitError(
+                    "canonical sync verifier found an invalid memory-like "
+                    "induction value");
+              }
+              const unsigned iterationIndex = argumentNumber - 1;
+              auto yield =
+                  dyn_cast<scf::YieldOp>(loop.getBody()->getTerminator());
+              const bool validBackedge =
+                  iterationIndex < loop.getInitArgs().size() && yield &&
+                  iterationIndex < yield.getNumOperands();
+              if (!validBackedge) {
+                return loop.emitError(
+                    "canonical sync verifier cannot trace a memory-like "
+                    "loop argument");
+              }
+              worklist.push_back({loop.getInitArgs()[iterationIndex], false});
+              worklist.push_back({yield.getOperand(iterationIndex), true});
+              continue;
+            }
             return result->function.emitError(
                 "canonical sync verifier cannot trace this SSA block argument");
           }
@@ -732,9 +774,14 @@ LogicalResult VerifierProgramBuilder::indexSsaDependencies() {
           }
           if (auto resultValue = dyn_cast<OpResult>(value)) {
             if (isa<scf::IfOp, scf::ForOp>(definition)) {
+              SmallVector<Value, 4> predecessors;
               if (failed(enqueueStructuredResult(resultValue, definition,
-                                                 worklist))) {
+                                                 predecessors))) {
                 return failure();
+              }
+              for (Value predecessor : predecessors) {
+                worklist.push_back(
+                    {predecessor, current.fromMemoryLoopBackedge});
               }
               continue;
             }
@@ -743,7 +790,10 @@ LogicalResult VerifierProgramBuilder::indexSsaDependencies() {
             return definition->emitError("canonical sync verifier found an SSA "
                                          "result without a completion phase");
           }
-          if (areMemoryLikeTypes(value.getType())) {
+          const bool structuralStorageRoot =
+              areMemoryLikeTypes(value.getType()) &&
+              isa<AllocTileOp, AllocMultiTileOp>(definition);
+          if (structuralStorageRoot) {
             continue;
           }
           const bool hasNestedRegions = definition->getNumRegions() != 0;
@@ -751,8 +801,9 @@ LogicalResult VerifierProgramBuilder::indexSsaDependencies() {
             return definition->emitError("canonical sync verifier cannot trace "
                                          "this effectful SSA operation");
           }
-          worklist.append(definition->operand_begin(),
-                          definition->operand_end());
+          for (Value operand : definition->getOperands()) {
+            worklist.push_back({operand, current.fromMemoryLoopBackedge});
+          }
         }
       }
     }

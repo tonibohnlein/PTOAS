@@ -114,6 +114,11 @@ yielded backedge facts. The binding is iterated to a fixed point, so a selected
 or ping-ponged handle cannot lose a possible alias merely because it traveled
 through an `scf.for` argument.
 
+A memory-like result produced by a physical phase retains its SSA-completion
+dependency through pure storage wrappers. If such a physical storage result is
+carried on a loop backedge, the pass fails closed until recurrence-aware SSA
+completion is modeled; it is not treated as ordinary alias-only provenance.
+
 Overlapping ACC reads on different AIC pipelines do produce an explicit
 hardware ACC read/read demand. This is not a language-level data dependence; it
 represents the documented hardware scheduling restriction and remains visible

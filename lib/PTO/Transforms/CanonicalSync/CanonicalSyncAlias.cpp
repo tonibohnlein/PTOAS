@@ -180,6 +180,9 @@ ArrayRef<AliasFact> AliasAnalysis::lookup(Value value) const {
 }
 
 SmallVector<AliasFact, 2> AliasAnalysis::describe(Value value) const {
+  if (!value) {
+    return {};
+  }
   ArrayRef<AliasFact> known = lookup(value);
   if (!known.empty()) {
     return SmallVector<AliasFact, 2>(known.begin(), known.end());
@@ -194,7 +197,7 @@ SmallVector<AliasFact, 2> AliasAnalysis::describe(Value value) const {
       return {};
     }
   }
-  if (value && areMemoryLikeTypes(value.getType())) {
+  if (areMemoryLikeTypes(value.getType())) {
     return {makeRootFact(value)};
   }
   return {};
@@ -438,6 +441,21 @@ LogicalResult AliasAnalysis::observe(Operation *operation) {
   } else if (auto select = dyn_cast<arith::SelectOp>(operation)) {
     bindAlias(select.getResult(), select.getTrueValue());
     bindAlias(select.getResult(), select.getFalseValue());
+  } else if (auto view = dyn_cast<ViewLikeOpInterface>(operation)) {
+    SmallVector<AliasFact, 2> aliases = describe(view.getViewSource());
+    // Generic view interfaces do not expose one common byte-offset contract.
+    // Preserve the source root and address space, but widen the viewed range
+    // until a dialect-specific transfer above proves a more precise mapping.
+    for (AliasFact &fact : aliases) {
+      fact.intervals.clear();
+      fact.unknownRange = true;
+      fact.slotExpression = Value();
+    }
+    for (Value result : operation->getResults()) {
+      if (areMemoryLikeTypes(result.getType())) {
+        bind(result, aliases);
+      }
+    }
   }
   return success();
 }

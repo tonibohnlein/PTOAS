@@ -14,7 +14,6 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 
@@ -215,15 +214,31 @@ LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
                                 const PhaseMap &operationPhases,
                                 const CompletionMap &completions,
                                 llvm::SetVector<CanonicalPhaseId> &producers) {
-  SmallVector<Value, 16> worklist{seed};
-  llvm::DenseSet<Value> discovered;
+  struct TraceValue {
+    Value value;
+    bool fromMemoryLoopBackedge = false;
+  };
+  SmallVector<TraceValue, 16> worklist{{seed, false}};
+  SmallVector<TraceValue, 16> discovered;
   while (!worklist.empty()) {
-    Value value = worklist.pop_back_val();
-    if (!value || !discovered.insert(value).second) {
+    const TraceValue current = worklist.pop_back_val();
+    Value value = current.value;
+    const bool alreadyDiscovered =
+        llvm::any_of(discovered, [&](const TraceValue &item) {
+          return item.value == value &&
+                 item.fromMemoryLoopBackedge == current.fromMemoryLoopBackedge;
+        });
+    if (!value || alreadyDiscovered) {
       continue;
     }
+    discovered.push_back(current);
     if (auto completion = completions.find(value);
         completion != completions.end()) {
+      if (current.fromMemoryLoopBackedge) {
+        return function.emitError(
+            "canonical sync rejects a loop-carried physical storage result "
+            "until recurrence-aware SSA completion is implemented");
+      }
       producers.insert(completion->second);
       continue;
     }
@@ -236,23 +251,27 @@ LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
       if (loop && argument == loop.getInductionVar()) {
         continue;
       }
-      if (loop) {
-        const unsigned argumentNumber = argument.getArgNumber();
-        if (argumentNumber > 0) {
-          const unsigned iterationIndex = argumentNumber - 1;
-          auto yield = dyn_cast<scf::YieldOp>(loop.getBody()->getTerminator());
-          const bool validBackedge =
-              iterationIndex < loop.getInitArgs().size() && yield &&
-              iterationIndex < yield.getNumOperands();
-          if (validBackedge) {
-            // The region iter-argument is the least fixed point of the init
-            // and backedge values. Trace both; the discovered set makes a
-            // self-yielding loop finite.
-            worklist.push_back(loop.getInitArgs()[iterationIndex]);
-            worklist.push_back(yield.getOperand(iterationIndex));
-            continue;
-          }
+      if (loop && areMemoryLikeTypes(value.getType())) {
+        if (current.fromMemoryLoopBackedge) {
+          continue;
         }
+        const unsigned argumentNumber = argument.getArgNumber();
+        if (argumentNumber == 0) {
+          return loop.emitError(
+              "canonical sync found an invalid memory-like induction value");
+        }
+        const unsigned iterationIndex = argumentNumber - 1;
+        auto yield = dyn_cast<scf::YieldOp>(loop.getBody()->getTerminator());
+        const bool validBackedge = iterationIndex < loop.getInitArgs().size() &&
+                                   yield &&
+                                   iterationIndex < yield.getNumOperands();
+        if (!validBackedge) {
+          return loop.emitError(
+              "canonical sync cannot trace a memory-like loop argument");
+        }
+        worklist.push_back({loop.getInitArgs()[iterationIndex], false});
+        worklist.push_back({yield.getOperand(iterationIndex), true});
+        continue;
       }
       return function.emitError(
           "canonical sync cannot trace SSA through this block argument");
@@ -263,14 +282,22 @@ LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
     }
     if (auto result = dyn_cast<OpResult>(value)) {
       if (auto conditional = dyn_cast<scf::IfOp>(definition)) {
-        if (failed(enqueueIfResult(result, conditional, worklist))) {
+        SmallVector<Value, 4> predecessors;
+        if (failed(enqueueIfResult(result, conditional, predecessors))) {
           return failure();
+        }
+        for (Value predecessor : predecessors) {
+          worklist.push_back({predecessor, current.fromMemoryLoopBackedge});
         }
         continue;
       }
       if (auto loop = dyn_cast<scf::ForOp>(definition)) {
-        if (failed(enqueueForResult(result, loop, worklist))) {
+        SmallVector<Value, 2> predecessors;
+        if (failed(enqueueForResult(result, loop, predecessors))) {
           return failure();
+        }
+        for (Value predecessor : predecessors) {
+          worklist.push_back({predecessor, current.fromMemoryLoopBackedge});
         }
         continue;
       }
@@ -279,7 +306,10 @@ LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
       return definition->emitError(
           "canonical sync has no completion phase for this SSA result");
     }
-    if (areMemoryLikeTypes(value.getType())) {
+    const bool structuralStorageRoot =
+        areMemoryLikeTypes(value.getType()) &&
+        isa<AllocTileOp, AllocMultiTileOp>(definition);
+    if (structuralStorageRoot) {
       continue;
     }
     const bool hasNestedRegions = definition->getNumRegions() != 0;
@@ -287,7 +317,9 @@ LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
       return definition->emitError(
           "canonical sync cannot trace SSA through this effectful operation");
     }
-    worklist.append(definition->operand_begin(), definition->operand_end());
+    for (Value operand : definition->getOperands()) {
+      worklist.push_back({operand, current.fromMemoryLoopBackedge});
+    }
   }
   return success();
 }

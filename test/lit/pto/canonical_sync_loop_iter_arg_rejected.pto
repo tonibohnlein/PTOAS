@@ -9,7 +9,7 @@
 // for the full text of the License.
 
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 \
-// RUN:   --enable-canonical-sync --canonical-sync-analysis-only \
+// RUN:   --enable-canonical-sync --canonical-sync-dump \
 // RUN:   --emit-pto-ir %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
 
@@ -80,9 +80,9 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK-LABEL: CANONICAL-SYNC function=memory_loop_iter_arg_fixed_point
 // CHECK: distance=[
 // CHECK-SAME: +
-// CHECK: VERIFY skipped (analysis-only; IR unchanged)
+// CHECK: VERIFY ok
 
 // CHECK-LABEL: CANONICAL-SYNC function=memory_loop_iter_arg_init_yield_union
 // CHECK: kind=RAW p0->p1
 // CHECK: kind=event resource=AIV:PIPE_MTE2->AIV:PIPE_V
-// CHECK: VERIFY skipped (analysis-only; IR unchanged)
+// CHECK: VERIFY ok
