@@ -16,6 +16,8 @@
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/DenseMap.h"
 
+#include <cstddef>
+
 namespace mlir {
 namespace pto {
 namespace canonical_sync_detail {
@@ -34,6 +36,7 @@ class AliasAnalysis {
 public:
   explicit AliasAnalysis(func::FuncOp function);
 
+  LogicalResult solve();
   LogicalResult observe(Operation *operation);
   llvm::ArrayRef<AliasFact> lookup(Value value) const;
   llvm::SmallVector<AliasFact, 2> describe(Value value) const;
@@ -42,9 +45,11 @@ public:
 private:
   func::FuncOp function;
   llvm::DenseMap<Value, llvm::SmallVector<AliasFact, 2>> facts;
+  std::size_t revision = 0;
 
   void initializeArguments();
   void bindAlias(Value result, Value source);
+  void bindLoopCarried(Value value, llvm::ArrayRef<AliasFact> aliases);
   LogicalResult bindAllocation(Operation *operation);
 };
 

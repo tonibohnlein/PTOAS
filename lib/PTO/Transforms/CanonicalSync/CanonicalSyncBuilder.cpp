@@ -235,6 +235,9 @@ LogicalResult ProgramBuilder::build() {
     return function.emitError(
         "canonical sync v1 requires a structured single-block function body");
   }
+  if (failed(aliases.solve())) {
+    return failure();
+  }
   CanonicalRegion root;
   root.kind = CanonicalRegionKind::Function;
   root.cardinality = CanonicalCardinality::ExactlyOnce;
@@ -422,13 +425,6 @@ void ProgramBuilder::bindIfResults(scf::IfOp operation) {
 
 LogicalResult ProgramBuilder::visitFor(scf::ForOp operation,
                                        CanonicalRegionId sequence) {
-  for (BlockArgument argument : operation.getRegionIterArgs()) {
-    if (areMemoryLikeTypes(argument.getType())) {
-      return operation.emitError(
-          "canonical sync rejects memory-like loop-carried values until "
-          "init/yield alias fixed-point analysis is implemented");
-    }
-  }
   CanonicalRegion loop;
   loop.parent = sequence;
   loop.kind = CanonicalRegionKind::Loop;

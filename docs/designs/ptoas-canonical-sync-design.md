@@ -109,8 +109,10 @@ they reach a later physical consumer, including through pure SSA operations and
 structured `scf.if` or `scf.for` results. Storage handles are alias provenance,
 not asynchronous SSA payloads. Unsupported effectful provenance fails closed
 instead of silently dropping an SSA dependency. Memory-like loop-carried block
-arguments also fail closed until alias binding is computed as an init/yield
-fixed point.
+arguments and results are bound to the union of their initialization and
+yielded backedge facts. The binding is iterated to a fixed point, so a selected
+or ping-ponged handle cannot lose a possible alias merely because it traveled
+through an `scf.for` argument.
 
 Overlapping ACC reads on different AIC pipelines do produce an explicit
 hardware ACC read/read demand. This is not a language-level data dependence; it

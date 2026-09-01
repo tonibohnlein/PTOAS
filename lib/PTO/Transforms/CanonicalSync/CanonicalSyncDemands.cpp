@@ -236,6 +236,24 @@ LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
       if (loop && argument == loop.getInductionVar()) {
         continue;
       }
+      if (loop) {
+        const unsigned argumentNumber = argument.getArgNumber();
+        if (argumentNumber > 0) {
+          const unsigned iterationIndex = argumentNumber - 1;
+          auto yield = dyn_cast<scf::YieldOp>(loop.getBody()->getTerminator());
+          const bool validBackedge =
+              iterationIndex < loop.getInitArgs().size() && yield &&
+              iterationIndex < yield.getNumOperands();
+          if (validBackedge) {
+            // The region iter-argument is the least fixed point of the init
+            // and backedge values. Trace both; the discovered set makes a
+            // self-yielding loop finite.
+            worklist.push_back(loop.getInitArgs()[iterationIndex]);
+            worklist.push_back(yield.getOperand(iterationIndex));
+            continue;
+          }
+        }
+      }
       return function.emitError(
           "canonical sync cannot trace SSA through this block argument");
     }

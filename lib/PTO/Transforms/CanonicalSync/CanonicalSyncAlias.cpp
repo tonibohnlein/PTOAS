@@ -13,6 +13,7 @@
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 
@@ -127,6 +128,31 @@ void offsetFacts(SmallVectorImpl<AliasFact> &facts, std::uint64_t offset) {
   }
 }
 
+bool intervalsEqual(ArrayRef<CanonicalByteInterval> first,
+                    ArrayRef<CanonicalByteInterval> second) {
+  return first.size() == second.size() &&
+         llvm::equal(first, second,
+                     [](const CanonicalByteInterval &left,
+                        const CanonicalByteInterval &right) {
+                       return left.begin == right.begin &&
+                              left.size == right.size;
+                     });
+}
+
+bool factsEqual(const AliasFact &first, const AliasFact &second) {
+  return first.root == second.root && first.space == second.space &&
+         first.unknownSpace == second.unknownSpace &&
+         intervalsEqual(first.intervals, second.intervals) &&
+         first.physical == second.physical &&
+         first.unknownRange == second.unknownRange &&
+         first.slotExpression == second.slotExpression;
+}
+
+bool sameAliasFamily(const AliasFact &first, const AliasFact &second) {
+  return first.root == second.root && first.space == second.space &&
+         first.unknownSpace == second.unknownSpace;
+}
+
 } // namespace
 
 bool mlir::pto::canonical_sync_detail::areMemoryLikeTypes(Type type) {
@@ -141,7 +167,8 @@ AliasAnalysis::AliasAnalysis(func::FuncOp function) : function(function) {
 void AliasAnalysis::initializeArguments() {
   for (Value argument : function.getArguments()) {
     if (areMemoryLikeTypes(argument.getType())) {
-      facts[argument].push_back(makeRootFact(argument));
+      const AliasFact fact = makeRootFact(argument);
+      bind(argument, {fact});
     }
   }
 }
@@ -157,6 +184,16 @@ SmallVector<AliasFact, 2> AliasAnalysis::describe(Value value) const {
   if (!known.empty()) {
     return SmallVector<AliasFact, 2>(known.begin(), known.end());
   }
+  if (auto argument = dyn_cast<BlockArgument>(value)) {
+    Operation *parent = argument.getOwner()->getParentOp();
+    if (isa_and_nonnull<scf::ForOp>(parent)) {
+      // A loop-carried handle is defined by its init/yield equation. Do not
+      // permanently seed it with a synthetic block-argument root while that
+      // equation is still being solved; dependent views are revisited on the
+      // next fixed-point iteration after real roots become available.
+      return {};
+    }
+  }
   if (value && areMemoryLikeTypes(value.getType())) {
     return {makeRootFact(value)};
   }
@@ -165,12 +202,116 @@ SmallVector<AliasFact, 2> AliasAnalysis::describe(Value value) const {
 
 void AliasAnalysis::bind(Value value, ArrayRef<AliasFact> aliases) {
   auto &destination = facts[value];
-  destination.append(aliases.begin(), aliases.end());
+  for (const AliasFact &alias : aliases) {
+    if (!llvm::any_of(destination, [&](const AliasFact &existing) {
+          return factsEqual(existing, alias);
+        })) {
+      destination.push_back(alias);
+      ++revision;
+    }
+  }
+}
+
+void AliasAnalysis::bindLoopCarried(Value value, ArrayRef<AliasFact> aliases) {
+  auto &destination = facts[value];
+  for (const AliasFact &alias : aliases) {
+    if (llvm::any_of(destination, [&](const AliasFact &existing) {
+          return factsEqual(existing, alias);
+        })) {
+      continue;
+    }
+    auto family = llvm::find_if(destination, [&](const AliasFact &existing) {
+      return sameAliasFamily(existing, alias);
+    });
+    if (family == destination.end()) {
+      destination.push_back(alias);
+      ++revision;
+      continue;
+    }
+    const bool needsWidening = !family->unknownRange ||
+                               !family->intervals.empty() ||
+                               family->slotExpression;
+    if (needsWidening) {
+      family->intervals.clear();
+      family->unknownRange = true;
+      family->slotExpression = Value();
+      family->physical = family->physical && alias.physical;
+      ++revision;
+    }
+  }
 }
 
 void AliasAnalysis::bindAlias(Value result, Value source) {
   SmallVector<AliasFact, 2> aliases = describe(source);
   bind(result, aliases);
+}
+
+LogicalResult AliasAnalysis::solve() {
+  WalkResult initialized =
+      function.walk<WalkOrder::PreOrder>([&](Operation *operation) {
+        return failed(observe(operation)) ? WalkResult::interrupt()
+                                          : WalkResult::advance();
+      });
+  if (initialized.wasInterrupted()) {
+    return failure();
+  }
+  std::size_t previousRevision = 0;
+  do {
+    previousRevision = revision;
+    function.walk([&](scf::ForOp loop) {
+      for (auto [argument, initial] :
+           llvm::zip(loop.getRegionIterArgs(), loop.getInitArgs())) {
+        if (areMemoryLikeTypes(argument.getType())) {
+          bindLoopCarried(argument, describe(initial));
+        }
+      }
+    });
+    WalkResult walked = function.walk<WalkOrder::PostOrder>(
+        [&](Operation *operation) -> WalkResult {
+          if (failed(observe(operation))) {
+            return WalkResult::interrupt();
+          }
+          if (auto conditional = dyn_cast<scf::IfOp>(operation)) {
+            for (auto [index, result] :
+                 llvm::enumerate(conditional.getResults())) {
+              SmallVector<AliasFact, 4> joined;
+              for (Region *region : {&conditional.getThenRegion(),
+                                     &conditional.getElseRegion()}) {
+                if (region->empty()) {
+                  continue;
+                }
+                auto yield =
+                    dyn_cast<scf::YieldOp>(region->front().getTerminator());
+                if (yield && index < yield.getNumOperands()) {
+                  const SmallVector<AliasFact, 2> aliases =
+                      describe(yield.getOperand(index));
+                  joined.append(aliases.begin(), aliases.end());
+                }
+              }
+              bind(result, joined);
+            }
+          }
+          if (auto loop = dyn_cast<scf::ForOp>(operation)) {
+            auto yield =
+                dyn_cast<scf::YieldOp>(loop.getBody()->getTerminator());
+            for (auto [index, argument] :
+                 llvm::enumerate(loop.getRegionIterArgs())) {
+              if (!areMemoryLikeTypes(argument.getType())) {
+                continue;
+              }
+              if (yield && index < yield.getNumOperands()) {
+                bindLoopCarried(argument, describe(yield.getOperand(index)));
+              }
+              bindLoopCarried(loop.getResult(index), describe(argument));
+            }
+          }
+          return WalkResult::advance();
+        });
+    if (walked.wasInterrupted()) {
+      return failure();
+    }
+  } while (revision != previousRevision);
+  return success();
 }
 
 LogicalResult AliasAnalysis::bindAllocation(Operation *operation) {
@@ -191,7 +332,7 @@ LogicalResult AliasAnalysis::bindAllocation(Operation *operation) {
       fact.intervals.clear();
       fact.unknownRange = true;
     }
-    facts[alloc.getResult()].push_back(std::move(fact));
+    bind(alloc.getResult(), {fact});
     return success();
   }
   auto multi = dyn_cast<AllocMultiTileOp>(operation);
@@ -228,7 +369,7 @@ LogicalResult AliasAnalysis::bindAllocation(Operation *operation) {
     fact.physical = true;
   }
   fact.unknownRange = fact.intervals.empty() || slotBytes == 0;
-  facts[multi.getResult()].push_back(std::move(fact));
+  bind(multi.getResult(), {fact});
   return success();
 }
 
@@ -288,7 +429,7 @@ LogicalResult AliasAnalysis::observe(Operation *operation) {
       AliasFact fact = makeRootFact(intToPtr.getResult());
       fact.intervals.clear();
       fact.unknownRange = true;
-      facts[intToPtr.getResult()].push_back(std::move(fact));
+      bind(intToPtr.getResult(), {fact});
     }
   } else if (auto reshape = dyn_cast<TReshapeOp>(operation)) {
     bindAlias(reshape.getResult(), reshape.getSrc());
