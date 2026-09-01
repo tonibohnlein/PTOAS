@@ -14,6 +14,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 
@@ -138,17 +139,70 @@ bool sameDemand(const CanonicalDemand &left, const CanonicalDemand &right) {
          left.targetGuard == right.targetGuard;
 }
 
-CanonicalDemandId appendOrMerge(CanonicalSyncProgram &program,
-                                CanonicalDemand demand,
-                                CanonicalDemandCause cause) {
-  for (const CanonicalDemand &existing : program.getDemands()) {
-    if (sameDemand(existing, demand)) {
-      program.appendDemandCause(existing.id, std::move(cause));
-      return existing.id;
+std::uint64_t hashDemand(const CanonicalDemand &demand) {
+  llvm::hash_code hash =
+      llvm::hash_combine(demand.source, demand.target, demand.owner,
+                         static_cast<unsigned>(demand.kind),
+                         static_cast<unsigned>(demand.requirement));
+  if (demand.visibility) {
+    hash = llvm::hash_combine(
+        hash, static_cast<unsigned>(demand.visibility->direction),
+        static_cast<unsigned>(demand.visibility->scope),
+        static_cast<unsigned>(demand.visibility->cacheMaintenance));
+  } else {
+    hash = llvm::hash_combine(hash, 0U);
+  }
+  for (const CanonicalLoopDistance &distance : demand.iterationDistance) {
+    hash = llvm::hash_combine(hash, distance.loop,
+                              static_cast<unsigned>(distance.relation));
+  }
+  for (const CanonicalControlAtom &atom : demand.sourceGuard) {
+    hash = llvm::hash_combine(hash, atom.choice, atom.arm);
+  }
+  hash = llvm::hash_combine(hash, demand.sourceGuard.size());
+  for (const CanonicalControlAtom &atom : demand.targetGuard) {
+    hash = llvm::hash_combine(hash, atom.choice, atom.arm);
+  }
+  hash = llvm::hash_combine(hash, demand.targetGuard.size());
+  return static_cast<std::uint64_t>(static_cast<std::size_t>(hash));
+}
+
+class DemandIndex {
+public:
+  std::optional<CanonicalDemandId>
+  find(const CanonicalSyncProgram &program,
+       const CanonicalDemand &candidate) const {
+    auto found = buckets.find(hashDemand(candidate));
+    if (found == buckets.end()) {
+      return std::nullopt;
     }
+    for (CanonicalDemandId id : found->second) {
+      if (sameDemand(program.getDemand(id), candidate)) {
+        return id;
+      }
+    }
+    return std::nullopt;
+  }
+
+  void insert(const CanonicalSyncProgram &program, CanonicalDemandId id) {
+    buckets[hashDemand(program.getDemand(id))].push_back(id);
+  }
+
+private:
+  llvm::DenseMap<std::uint64_t, SmallVector<CanonicalDemandId, 1>> buckets;
+};
+
+CanonicalDemandId appendOrMerge(CanonicalSyncProgram &program,
+                                DemandIndex &index, CanonicalDemand demand,
+                                CanonicalDemandCause cause) {
+  if (std::optional<CanonicalDemandId> existing = index.find(program, demand)) {
+    program.appendDemandCause(*existing, std::move(cause));
+    return *existing;
   }
   demand.causes.push_back(std::move(cause));
-  return program.appendDemand(std::move(demand));
+  CanonicalDemandId id = program.appendDemand(std::move(demand));
+  index.insert(program, id);
+  return id;
 }
 
 using PhaseMap = llvm::DenseMap<Operation *, SmallVector<CanonicalPhaseId, 2>>;
@@ -349,7 +403,8 @@ getPhaseSsaOperands(const CanonicalPhase &phase) {
                                found->useValues.end());
 }
 
-LogicalResult deriveSsaDemands(CanonicalSyncProgram &program) {
+LogicalResult deriveSsaDemands(CanonicalSyncProgram &program,
+                               DemandIndex &index) {
   PhaseMap operationPhases;
   CompletionMap completions;
   if (failed(indexSsaCompletionPhases(program, operationPhases, completions))) {
@@ -386,7 +441,7 @@ LogicalResult deriveSsaDemands(CanonicalSyncProgram &program) {
           sameIterationRelation(commonLoops(source, target));
       CanonicalDemandCause cause;
       cause.provenance = "SSA producer completion";
-      appendOrMerge(program, std::move(demand), std::move(cause));
+      appendOrMerge(program, index, std::move(demand), std::move(cause));
     }
   }
   return success();
@@ -437,7 +492,7 @@ buildVisibilityRequirement(const CanonicalSyncProgram &program,
   return requirement;
 }
 
-void addHazardDemand(CanonicalSyncProgram &program,
+void addHazardDemand(CanonicalSyncProgram &program, DemandIndex &index,
                      const CanonicalAccess &source,
                      const CanonicalAccess &target, CanonicalDemandKind hazard,
                      ArrayRef<CanonicalLoopDistance> distance,
@@ -465,10 +520,10 @@ void addHazardDemand(CanonicalSyncProgram &program,
       (stringifyCanonicalDemandKind(hazard) + Twine(" overlap between a") +
        Twine(source.id) + Twine(" and a") + Twine(target.id))
           .str();
-  appendOrMerge(program, std::move(demand), std::move(cause));
+  appendOrMerge(program, index, std::move(demand), std::move(cause));
 }
 
-void deriveMemoryDemands(CanonicalSyncProgram &program) {
+void deriveMemoryDemands(CanonicalSyncProgram &program, DemandIndex &index) {
   for (const CanonicalAccess &source : program.getAccesses()) {
     const CanonicalPhase &sourcePhase = program.getPhase(source.phase);
     for (const CanonicalAccess &target : program.getAccesses()) {
@@ -492,7 +547,7 @@ void deriveMemoryDemands(CanonicalSyncProgram &program) {
         const SmallVector<CanonicalLoopDistance, 2> zeroDistance =
             sameIterationRelation(loops);
         addHazardDemand(
-            program, source, target, *hazard, zeroDistance,
+            program, index, source, target, *hazard, zeroDistance,
             findRegionLca(program, sourcePhase.region, targetPhase.region));
       }
       for (size_t carryingIndex = 0; carryingIndex < loops.size();
@@ -505,7 +560,7 @@ void deriveMemoryDemands(CanonicalSyncProgram &program) {
         }
         const SmallVector<CanonicalLoopDistance, 2> recurrence =
             carriedIterationRelation(loops, carryingIndex);
-        addHazardDemand(program, source, target, *hazard, recurrence,
+        addHazardDemand(program, index, source, target, *hazard, recurrence,
                         carryingLoop);
       }
     }
@@ -529,10 +584,11 @@ void deriveExitDemands(CanonicalSyncProgram &program) {
 
 LogicalResult mlir::pto::canonical_sync_detail::deriveCanonicalDemands(
     CanonicalSyncProgram &program) {
-  if (failed(deriveSsaDemands(program))) {
+  DemandIndex index;
+  if (failed(deriveSsaDemands(program, index))) {
     return failure();
   }
-  deriveMemoryDemands(program);
+  deriveMemoryDemands(program, index);
   deriveExitDemands(program);
   return success();
 }
