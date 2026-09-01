@@ -1,0 +1,153 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// A barrier in an optional nested loop cannot close a recurrence carried by an
+// outer loop when the protected endpoint executes outside the nested loop. The
+// rule must remain conservative even when the bounded oracle is inconclusive.
+// A barrier whose endpoint is itself nested remains a valid recurrence cut.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @nested_zero_trip_barrier_not_recurrence_cover(
+      %inner_upper: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %outer_addr = arith.constant 0 : i64
+    %inner_addr = arith.constant 8192 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %outer_buffer = pto.alloc_tile addr = %outer_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %inner_buffer = pto.alloc_tile addr = %inner_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %outer = %zero to %two step %one_index {
+      pto.tmuls ins(%outer_buffer, %one :
+                      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128,
+                        v_row=16, v_col=128, blayout=row_major,
+                        slayout=none_box, fractal=512, pad=0>, f32)
+                outs(%outer_buffer :
+                       !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128,
+                         v_row=16, v_col=128, blayout=row_major,
+                         slayout=none_box, fractal=512, pad=0>)
+      scf.for %inner = %zero to %inner_upper step %one_index {
+        pto.tmuls ins(%inner_buffer, %one :
+                        !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128,
+                          v_row=16, v_col=128, blayout=row_major,
+                          slayout=none_box, fractal=512, pad=0>, f32)
+                  outs(%inner_buffer :
+                         !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128,
+                           v_row=16, v_col=128, blayout=row_major,
+                           slayout=none_box, fractal=512, pad=0>)
+      }
+    }
+    return
+  }
+
+  func.func @nested_endpoint_barrier_covers_outer_recurrence(
+      %inner_upper: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %buffer_addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %buffer = pto.alloc_tile addr = %buffer_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %outer = %zero to %two step %one_index {
+      scf.for %inner = %zero to %inner_upper step %one_index {
+        pto.tmuls ins(%buffer, %one :
+                        !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128,
+                          v_row=16, v_col=128, blayout=row_major,
+                          slayout=none_box, fractal=512, pad=0>, f32)
+                  outs(%buffer :
+                         !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128,
+                           v_row=16, v_col=128, blayout=row_major,
+                           slayout=none_box, fractal=512, pad=0>)
+      }
+    }
+    return
+  }
+
+  func.func @inconclusive_oracle_keeps_zero_trip_rule(%inner_upper: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %outer_addr = arith.constant 0 : i64
+    %inner_addr = arith.constant 8192 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %outer_buffer = pto.alloc_tile addr = %outer_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %inner_buffer = pto.alloc_tile addr = %inner_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %i0 = %zero to %two step %one_index {
+    }
+    scf.for %i1 = %zero to %two step %one_index {
+    }
+    scf.for %i2 = %zero to %two step %one_index {
+    }
+    scf.for %i3 = %zero to %two step %one_index {
+    }
+    scf.for %i4 = %zero to %two step %one_index {
+    }
+    scf.for %i5 = %zero to %two step %one_index {
+    }
+    scf.for %outer = %zero to %two step %one_index {
+      pto.tmuls ins(%outer_buffer, %one :
+                      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128,
+                        v_row=16, v_col=128, blayout=row_major,
+                        slayout=none_box, fractal=512, pad=0>, f32)
+                outs(%outer_buffer :
+                       !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128,
+                         v_row=16, v_col=128, blayout=row_major,
+                         slayout=none_box, fractal=512, pad=0>)
+      scf.for %inner = %zero to %inner_upper step %one_index {
+        pto.tmuls ins(%inner_buffer, %one :
+                        !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128,
+                          v_row=16, v_col=128, blayout=row_major,
+                          slayout=none_box, fractal=512, pad=0>, f32)
+                  outs(%inner_buffer :
+                         !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128,
+                           v_row=16, v_col=128, blayout=row_major,
+                           slayout=none_box, fractal=512, pad=0>)
+      }
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: CANONICAL-SYNC function=nested_zero_trip_barrier_not_recurrence_cover
+// CHECK: candidate=c1 mechanisms=[m1] weight=1
+// CHECK-SAME: additional=[]
+// CHECK: VERIFY ok
+
+// CHECK-LABEL: CANONICAL-SYNC function=nested_endpoint_barrier_covers_outer_recurrence
+// CHECK: candidate=c0 mechanisms=[m0] weight=1
+// CHECK: VERIFY ok
+
+// CHECK-LABEL: CANONICAL-SYNC function=inconclusive_oracle_keeps_zero_trip_rule
+// CHECK: world=singleton-m1
+// CHECK-SAME: oracle=flat-match/unrolled-inconclusive
+// CHECK: candidate=c1 mechanisms=[m1] weight=1
+// CHECK-SAME: additional=[]
+// CHECK: VERIFY ok

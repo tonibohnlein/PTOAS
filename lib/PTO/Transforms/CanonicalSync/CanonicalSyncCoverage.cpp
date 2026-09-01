@@ -453,6 +453,13 @@ bool containsKind(const CanonicalSyncProgram &program,
   });
 }
 
+bool executionLoopsImpliedByPhase(ArrayRef<CanonicalRegionId> executionLoops,
+                                  const CanonicalPhase &phase) {
+  return llvm::all_of(executionLoops, [&](CanonicalRegionId loop) {
+    return llvm::is_contained(phase.loopPath, loop);
+  });
+}
+
 bool recurrenceCoveredByBarrier(const CanonicalSyncProgram &program,
                                 const CanonicalDemand &demand,
                                 ArrayRef<CanonicalMechanismId> selected) {
@@ -479,11 +486,15 @@ bool recurrenceCoveredByBarrier(const CanonicalSyncProgram &program,
     }
     // A repeated barrier can close the loop wrap by completing the source
     // later in iteration i, or by draining iteration i before the target in
-    // iteration i+1. Either cut orders the carried dependence.
+    // iteration i+1. A cut nested in another loop is usable only when that
+    // loop also contains the protected endpoint; otherwise the nested loop
+    // may execute zero times while the endpoint still executes.
     const bool completesAfterSource =
+        executionLoopsImpliedByPhase(loops, source) &&
         phaseMayPrecedePoint(source, mechanism.targetPoint) &&
         guardImplies(demand.sourceGuard, mechanism.guard);
     const bool completesBeforeTarget =
+        executionLoopsImpliedByPhase(loops, target) &&
         pointMustPrecedePhase(mechanism.targetPoint, target) &&
         guardImplies(demand.targetGuard, mechanism.guard);
     return completesAfterSource || completesBeforeTarget;
