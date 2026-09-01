@@ -630,8 +630,8 @@ static llvm::cl::opt<std::string> canonicalSyncMechanismFamilies(
 
 static llvm::cl::opt<std::string> canonicalSyncCatalogMode(
     "canonical-sync-catalog-mode",
-    llvm::cl::desc(
-        "Canonical synchronization catalog policy: standard or strict-direct"),
+    llvm::cl::desc("Canonical synchronization catalog policy: standard, "
+                   "strict-direct, or mechanical-direct"),
     llvm::cl::init("standard"));
 
 static llvm::cl::opt<bool> canonicalSyncEnableConflictCoreRepair(

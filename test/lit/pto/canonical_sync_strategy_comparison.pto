@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+// RUN: ptoas --help | FileCheck %s --check-prefix=CLI-HELP
 // RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --analyze-canonical-sync-strategies \
 // RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
@@ -203,6 +204,8 @@
 // REPORT-DAG: "strategy": "fixed-cover"
 // REPORT-DAG: "strategy": "action-aware-singleton"
 // REPORT-DAG: "strategy": "pair-lookahead"
+// CLI-HELP: --canonical-sync-catalog-mode=<string>
+// CLI-HELP-SAME: mechanical-direct
 // CORE-REPORT-DAG: "enabled_mechanism_family_mask": 0
 // CORE-REPORT-DAG: "catalog_mode": "strict-direct"
 // CORE-REPORT-DAG: "direct_pairs_enabled": false
