@@ -174,6 +174,8 @@
 // REPORT-DAG: "loop_carry_candidates":
 // REPORT-DAG: "loop_carry_incidences":
 // REPORT-DAG: "loop_carry_generation_truncated":
+// REPORT-DAG: "generic_lifecycle_generation_truncated": false
+// REPORT-DAG: "generic_lifecycle_synthesis_work_units":
 // REPORT-DAG: "backstop_deletion_trials":
 // REPORT-DAG: "backstop_deletion_truncated":
 // REPORT-DAG: "backstop_deletion_work_units":
@@ -182,6 +184,14 @@
 // REPORT-DAG: "repair_trials":
 // REPORT-DAG: "repair_work_units":
 // REPORT-DAG: "verification_work_units":
+// REPORT-DAG: "materialized_plan_verified": true
+// REPORT-DAG: "whole_plan_world_verified": true
+// REPORT-DAG: "lifecycle_automata_verified": true
+// REPORT-DAG: "materialized_verified_coverage_rows":
+// REPORT-DAG: "materialized_actions":
+// REPORT-DAG: "materialized_event_channels":
+// REPORT-DAG: "materialized_event_lanes":
+// REPORT-DAG: "materialized_deep_protocol_verifiers_run":
 // REPORT-DAG: "emitted_source_prefix_pipe_drain_barriers":
 // REPORT-DAG: "predicted_sync_instructions":
 // REPORT-DAG: "plan_signature": "0x

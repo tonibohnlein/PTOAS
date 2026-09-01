@@ -246,6 +246,7 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // GENERIC-WAITS-COUNT-53: pto.wait_flag
 // GENERIC-WAITS-NOT: pto.wait_flag
 // GENERIC-BARRIERS-NOT: pto.pipe_barrier
+// GENERIC-BARRIERS-COUNT-7: pto.barrier <PIPE_MTE2>
 // GENERIC-BARRIERS-COUNT-1: pto.barrier <PIPE_FIX>
 // GENERIC-BARRIERS-COUNT-1: pto.barrier <PIPE_ALL>
 // GENERIC-BARRIERS-NOT: pto.barrier
@@ -287,13 +288,23 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 
 // GENERIC-REPORT: "candidate_mechanisms_by_origin":
 // GENERIC-REPORT: "generic-lifecycle-protocol": 2
+// GENERIC-REPORT: "generic_lifecycle_generation_truncated": false
 // GENERIC-REPORT: "emitted_event_sets": 53
 // GENERIC-REPORT: "emitted_event_waits": 53
 // GENERIC-REPORT: "emitted_pipe_all_barriers": 0
-// GENERIC-REPORT: "emitted_targeted_barriers": 1
+// GENERIC-REPORT: "emitted_targeted_barriers": 8
+// GENERIC-REPORT: "lifecycle_automata_verified": true
+// GENERIC-REPORT: "materialized_actions": 114
+// GENERIC-REPORT: "materialized_deep_protocol_verifiers_run": 1
+// GENERIC-REPORT: "materialized_event_channels": 8
+// GENERIC-REPORT: "materialized_event_lanes": 14
+// GENERIC-REPORT: "materialized_lifecycle_protocol_mechanisms": 2
+// GENERIC-REPORT: "materialized_plan_verified": true
+// GENERIC-REPORT: "materialized_verified_coverage_rows": 2171
 // GENERIC-REPORT: "selected_mechanisms_by_origin":
 // GENERIC-REPORT: "generic-lifecycle-protocol": 2
 // GENERIC-REPORT: "verified": true
+// GENERIC-REPORT: "whole_plan_world_verified": true
 
 // COMPOSITE-SETS-COUNT-54: pto.set_flag
 // COMPOSITE-SETS-NOT: pto.set_flag

@@ -1057,6 +1057,147 @@ bool testNestedLoopDistancesAreScopeTyped() {
       check(mismatchedVerification.error ==
                 SyncCoverProtocolError::InvalidTokenLifecycle,
             "a parent completion export cannot borrow a different local Wait");
+
+  SyncCoverEventProtocol exitDrainExport;
+  exitDrainExport.mechanism = 21;
+  exitDrainExport.kind = SyncCoverEventProtocolKind::LifecycleNetwork;
+  exitDrainExport.loop =
+      SyncCoverProtocolLoopSchedule{fixture.loop, true, std::nullopt, {0}};
+  exitDrainExport.lifetimeScope = outer;
+  SyncCoverEventChannel reset;
+  reset.id = 0;
+  reset.flow = SyncCoverEventChannelFlow::SameIteration;
+  reset.width = 1;
+  reset.distance = 0;
+  reset.suppliedRequirements = kCompletion;
+  reset.actions = {
+      {0,
+       SyncCoverProtocolActionKind::Set,
+       SyncCoverProtocolActionSegment::Entry,
+       {SyncCoverCutPointKind::EventSet,
+        1,
+        {SyncCoverAnchorKind::ScopeEntry, 0, fixture.loop, 0}},
+       0,
+       SyncCoverProtocolActionGuard::LoopNonEmpty,
+       {}},
+      {1,
+       SyncCoverProtocolActionKind::Wait,
+       SyncCoverProtocolActionSegment::Entry,
+       {SyncCoverCutPointKind::EventWait,
+        2,
+        {SyncCoverAnchorKind::ScopeEntry, 0, fixture.loop, 0}},
+       0,
+       SyncCoverProtocolActionGuard::LoopNonEmpty,
+       {}},
+  };
+  reset.set = reset.actions[0].point;
+  reset.wait = reset.actions[1].point;
+  reset.supplies = {
+      {0, 1, 0, std::nullopt, SyncCoverProtocolSupplyKind::TokenPair}};
+  SyncCoverEventChannel ready;
+  ready.id = 1;
+  ready.flow = SyncCoverEventChannelFlow::SameIteration;
+  ready.width = 1;
+  ready.distance = 0;
+  ready.suppliedRequirements = kCompletion;
+  ready.actions = {
+      {0,
+       SyncCoverProtocolActionKind::Set,
+       SyncCoverProtocolActionSegment::Body,
+       point(SyncCoverCutPointKind::EventSet, 1, SyncCoverAnchorKind::AfterNode,
+             fixture.producer),
+       0,
+       SyncCoverProtocolActionGuard::Always,
+       {}},
+      {1,
+       SyncCoverProtocolActionKind::Wait,
+       SyncCoverProtocolActionSegment::Body,
+       point(SyncCoverCutPointKind::EventWait, 2,
+             SyncCoverAnchorKind::BeforeNode, fixture.consumer),
+       0,
+       SyncCoverProtocolActionGuard::Always,
+       {}},
+  };
+  ready.set = ready.actions[0].point;
+  ready.wait = ready.actions[1].point;
+  ready.supplies = {
+      {0, 1, 0, std::nullopt, SyncCoverProtocolSupplyKind::TokenPair}};
+  SyncCoverEventChannel release;
+  release.id = 2;
+  release.flow = SyncCoverEventChannelFlow::LoopCarry;
+  release.width = 1;
+  release.distance = 1;
+  release.suppliedRequirements = kCompletion;
+  release.actions = {
+      {0,
+       SyncCoverProtocolActionKind::Set,
+       SyncCoverProtocolActionSegment::Entry,
+       {SyncCoverCutPointKind::EventSet,
+        2,
+        {SyncCoverAnchorKind::ScopeEntry, 0, fixture.loop, 0},
+        {},
+        1},
+       0,
+       SyncCoverProtocolActionGuard::LoopNonEmpty,
+       {}},
+      {1,
+       SyncCoverProtocolActionKind::Wait,
+       SyncCoverProtocolActionSegment::Body,
+       point(SyncCoverCutPointKind::EventWait, 1,
+             SyncCoverAnchorKind::BeforeNode, fixture.producer),
+       0,
+       SyncCoverProtocolActionGuard::Always,
+       {}},
+      {2,
+       SyncCoverProtocolActionKind::Set,
+       SyncCoverProtocolActionSegment::Body,
+       point(SyncCoverCutPointKind::EventSet, 2, SyncCoverAnchorKind::AfterNode,
+             fixture.consumer),
+       0,
+       SyncCoverProtocolActionGuard::Always,
+       {}},
+      {3,
+       SyncCoverProtocolActionKind::Wait,
+       SyncCoverProtocolActionSegment::Exit,
+       {SyncCoverCutPointKind::EventWait,
+        1,
+        {SyncCoverAnchorKind::ScopeExit, 0, fixture.loop, 0}},
+       0,
+       SyncCoverProtocolActionGuard::LoopNonEmpty,
+       {}},
+  };
+  release.set = release.actions[2].point;
+  release.wait = release.actions[1].point;
+  release.supplies = {
+      {0, 1, 0, std::nullopt, SyncCoverProtocolSupplyKind::TokenPair},
+      {2, 1, 1, std::nullopt, SyncCoverProtocolSupplyKind::TokenPair},
+      {2, 3, 0, outer, SyncCoverProtocolSupplyKind::CompletionExport}};
+  exitDrainExport.channels = {std::move(reset), std::move(ready),
+                              std::move(release)};
+  const SyncCoverProtocolVerificationResult exitDrainVerification =
+      verifySyncCoverEventProtocol(fixture.graph, target(), exitDrainExport);
+  const SyncCoverProtocolCoverageResult exitDrainCoverage =
+      computeSyncCoverProtocolExactWorlds(fixture.graph, target(),
+                                          {exitDrainExport}, {{{21}}});
+  passed &= check(
+      static_cast<bool>(exitDrainVerification),
+      "accept a locally paired physical exit-drain export, error=" +
+          std::to_string(static_cast<unsigned>(exitDrainVerification.error)));
+  passed &=
+      check(static_cast<bool>(exitDrainCoverage),
+            "construct exact worlds for a physical exit-drain export, "
+            "error=" +
+                std::to_string(static_cast<unsigned>(exitDrainCoverage.error)));
+  if (exitDrainCoverage) {
+    passed &= check(exitDrainCoverage.coveredByWorld.front().contains(0),
+                    "a final release Set exported through its physical exit "
+                    "drain orders the next parent invocation");
+  }
+  exitDrainExport.channels[2].supplies.back().distance = 1;
+  passed &= check(
+      verifySyncCoverEventProtocol(fixture.graph, target(), exitDrainExport)
+              .error == SyncCoverProtocolError::InvalidProtocol,
+      "an exit-drain completion export cannot claim a later invocation");
   const SyncCoverProtocolCoverageResult coverage =
       computeSyncCoverProtocolExactWorlds(fixture.graph, target(),
                                           {roundTrip(fixture)}, {{{7}}});
@@ -2111,24 +2252,21 @@ bool testThreePhaseLifecycleSynthesis() {
                       synthesis.proposals.front().exactCoverage.count() == 6,
                   "three-phase synthesis preserves exact phase distances");
   SyncCoverCoverageWorkBudget phaseLifecycleMeasurement;
-  passed &= check(
-      static_cast<bool>(synthesizeSyncCoverLifecycleCertificates(
-          graph, target(), {}, &phaseLifecycleMeasurement)),
-      "multi-path lifecycle synthesis reports complete work");
+  passed &= check(static_cast<bool>(synthesizeSyncCoverLifecycleCertificates(
+                      graph, target(), {}, &phaseLifecycleMeasurement)),
+                  "multi-path lifecycle synthesis reports complete work");
   SyncCoverCoverageWorkBudget exactPhaseLifecycleBudget(
       phaseLifecycleMeasurement.workUnits);
-  passed &= check(
-      static_cast<bool>(synthesizeSyncCoverLifecycleCertificates(
-          graph, target(), {}, &exactPhaseLifecycleBudget)),
-      "exact multi-path lifecycle work budget succeeds");
+  passed &= check(static_cast<bool>(synthesizeSyncCoverLifecycleCertificates(
+                      graph, target(), {}, &exactPhaseLifecycleBudget)),
+                  "exact multi-path lifecycle work budget succeeds");
   if (phaseLifecycleMeasurement.workUnits != 0) {
     SyncCoverCoverageWorkBudget shortPhaseLifecycleBudget(
         phaseLifecycleMeasurement.workUnits - 1);
-    passed &= check(
-        synthesizeSyncCoverLifecycleCertificates(
-            graph, target(), {}, &shortPhaseLifecycleBudget)
-                .error == SyncCoverProtocolError::WorkLimitExceeded,
-        "one-less multi-path lifecycle work budget fails closed");
+    passed &= check(synthesizeSyncCoverLifecycleCertificates(
+                        graph, target(), {}, &shortPhaseLifecycleBudget)
+                            .error == SyncCoverProtocolError::WorkLimitExceeded,
+                    "one-less multi-path lifecycle work budget fails closed");
   }
   return passed;
 }

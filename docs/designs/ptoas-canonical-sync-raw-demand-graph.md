@@ -97,3 +97,13 @@ typed achieved-order effects, and determine which raw rows those effects
 cover. Token allocation happens after logical cut selection. Final
 verification reconstructs the achieved relation from materialized actions and
 checks the immutable raw rows independently of candidate coverage bitsets.
+Lifecycle families additionally rerun their bounded SCC synthesis and token
+automata once for the complete selected family in one exact protocol world.
+The report records the work consumed by this synthesis separately from final
+verification, so optional catalog truncation remains distinguishable from a
+materialized-plan verification limit.
+The physical allocation is checked to contain every selected event lane
+exactly once, to use no reserved ID, and to share no ID between logical event
+uses. Concrete anchors, directed events, compiler-owned IDs, barriers, event
+channels, and tail fences are staged and counted before an atomic replacement
+token is issued.

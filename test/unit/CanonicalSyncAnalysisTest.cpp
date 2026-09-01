@@ -324,6 +324,247 @@ bool testBuildsOneFrozenGraph() {
                "keep unplanned arguments conservative");
 }
 
+bool testOptionalLifecycleSynthesisTruncatesToDirectCatalog() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @lifecycle_truncation(
+          %gm: !pto.partition_tensor_view<16x16xf32>) {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %c2 = arith.constant 2 : index
+        %addr = arith.constant 0 : i64
+        %tile = pto.alloc_tile addr = %addr : !pto.tile_buf<vec, 16x16xf32>
+        scf.for %iv = %c0 to %c2 step %c1 {
+          pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf32>)
+                    outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+          pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf32>)
+                    outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+        }
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module), "parse lifecycle-truncation fixture")) {
+    return false;
+  }
+  func::FuncOp function =
+      module->lookupSymbol<func::FuncOp>("lifecycle_truncation");
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(function);
+  if (!check(succeeded(program), "build lifecycle-truncation graph")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions options;
+  options.enableDemandBasisReduction = false;
+  const CanonicalSyncMechanismFamilyMask genericLifecycle =
+      canonicalSyncMechanismFamilyBit(
+          CanonicalSyncMechanismFamily::GenericLifecycle);
+  options.patterns.enabledMechanismFamilies = genericLifecycle;
+  options.patterns.enableDirectPairs = false;
+  options.maximumLifecycleSynthesisWorkUnits = 1;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem =
+      buildCanonicalSyncSingletonProblem(*program, options);
+  const bool truncationReported =
+      check(succeeded(problem),
+            "retain a direct catalog after optional lifecycle truncation") &&
+      check((*problem)
+                ->getPatternStatistics()
+                .genericLifecycleGenerationTruncated,
+            "report optional lifecycle synthesis truncation") &&
+      check((*problem)
+                    ->getPatternStatistics()
+                    .genericLifecycleSynthesisWorkUnits > 0,
+            "report bounded lifecycle synthesis work");
+  if (!truncationReported) {
+    return false;
+  }
+
+  CanonicalSyncBuildOptions firstSignature = options;
+  firstSignature.maximumLifecycleSynthesisWorkUnits = 1U << 20;
+  CanonicalSyncBuildOptions secondSignature = firstSignature;
+  ++secondSignature.maximumLifecycleSynthesisWorkUnits;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> firstProblem =
+      buildCanonicalSyncSingletonProblem(*program, firstSignature);
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> secondProblem =
+      buildCanonicalSyncSingletonProblem(*program, secondSignature);
+  const bool signatureBound =
+      check((kProductionCanonicalSyncMechanismFamilies & genericLifecycle) == 0,
+            "keep generic lifecycle synthesis opt-in") &&
+      check(succeeded(firstProblem) && succeeded(secondProblem),
+            "build lifecycle catalogs with distinct synthesis bounds") &&
+      check(!(*firstProblem)->hasSameCandidatePrefix(**secondProblem),
+            "bind the lifecycle synthesis bound into catalog identity");
+  return signatureBound;
+}
+
+bool testGenericLifecycleMaterializationIsBoundedAndBalanced() {
+  MLIRContext context;
+  loadDialects(context);
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
+    module attributes {pto.target_arch = "a3"} {
+      func.func @generic_lifecycle(
+          %gm: !pto.partition_tensor_view<16x16xf32>) attributes {
+          pto.kernel_kind = #pto.kernel_kind<vector>} {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %c4 = arith.constant 4 : index
+        %addr = arith.constant 0 : i64
+        %one = arith.constant 1.000000e+00 : f32
+        %tile = pto.alloc_tile addr = %addr : !pto.tile_buf<vec, 16x16xf32>
+        %condition = arith.cmpi slt, %c0, %c4 : index
+        scf.if %condition {
+          scf.if %condition {
+            scf.if %condition {
+              scf.if %condition {
+                scf.for %iv = %c0 to %c4 step %c1 {
+                  pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf32>)
+                            outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+                  pto.tmuls ins(%tile, %one :
+                               !pto.tile_buf<vec, 16x16xf32>, f32)
+                             outs(%tile : !pto.tile_buf<vec, 16x16xf32>)
+                }
+              }
+            }
+          }
+        }
+        return
+      }
+    }
+  )mlir",
+                                                             &context);
+  if (!check(static_cast<bool>(module), "parse generic-lifecycle fixture")) {
+    return false;
+  }
+  func::FuncOp function =
+      module->lookupSymbol<func::FuncOp>("generic_lifecycle");
+  FailureOr<CanonicalSyncProgram> program = buildCanonicalSyncProgram(function);
+  if (!check(succeeded(program), "build generic-lifecycle graph")) {
+    return false;
+  }
+  const bool hasDeeplyGuardedDemand =
+      llvm::any_of(program->getGraph().getDemands(), [](const auto &demand) {
+        return demand.sourceGuard.literals.size() >= 4 &&
+               demand.targetGuard.literals.size() >= 4;
+      });
+  if (!check(hasDeeplyGuardedDemand,
+             "retain deeply guarded lifecycle demand rows")) {
+    return false;
+  }
+  CanonicalSyncBuildOptions options;
+  options.enableDemandBasisReduction = false;
+  options.patterns.enabledMechanismFamilies = canonicalSyncMechanismFamilyBit(
+      CanonicalSyncMechanismFamily::GenericLifecycle);
+  options.patterns.enableDirectPairs = false;
+  FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> problem =
+      buildCanonicalSyncSingletonProblem(*program, options);
+  if (!check(succeeded(problem), "build generic-lifecycle catalog")) {
+    return false;
+  }
+
+  const CanonicalSyncMechanismOriginMask lifecycleOrigin =
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::GenericLifecycleProtocol);
+  const auto lifecycle =
+      llvm::find_if((*problem)->getMechanisms(), [&](const auto &mechanism) {
+        return (mechanism.originMask & lifecycleOrigin) != 0;
+      });
+  if (!check(lifecycle != (*problem)->getMechanisms().end(),
+             "synthesize a selectable generic lifecycle protocol") ||
+      !check(lifecycle->descriptor.supplies.size() > 1,
+             "exercise bounded staging with multiple lifecycle supplies")) {
+    return false;
+  }
+  CanonicalSyncGreedyOptions lifecycleOnly;
+  lifecycleOnly.strategy = CanonicalSyncSelectionStrategy::ActionAwareSingleton;
+  for (const CanonicalSyncMechanism &mechanism : (*problem)->getMechanisms()) {
+    if (mechanism.id != lifecycle->id) {
+      lifecycleOnly.forbiddenMechanisms.push_back(mechanism.id);
+    }
+  }
+  const CanonicalSyncSelection selection =
+      selectCanonicalSyncPatterns(**problem, lifecycleOnly);
+  const CanonicalSyncVerifiedPlan semantic =
+      verifyCanonicalSyncSelection(**problem, selection);
+  SyncCoverCoverageWorkBudget measuredWork;
+  const CanonicalSyncMaterializedPlanVerification measured =
+      verifyCanonicalSyncMaterializedPlan(*program, **problem, semantic,
+                                          &measuredWork);
+  if (!check(selection &&
+                 selection.mechanisms ==
+                     std::vector<CanonicalSyncMechanismId>{lifecycle->id},
+             "select only the generic lifecycle protocol") ||
+      !check(measured && measured.lifecycleProtocolMechanisms == 1 &&
+                 measured.deepProtocolVerifiersRun == 1 &&
+                 measured.lifecycleAutomataVerified,
+             "deeply verify the selected lifecycle automaton") ||
+      !check(measuredWork.workUnits != 0,
+             "measure lifecycle materialization verification work")) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget exactWork(measuredWork.workUnits);
+  const CanonicalSyncMaterializedPlanVerification exact =
+      verifyCanonicalSyncMaterializedPlan(*program, **problem, semantic,
+                                          &exactWork);
+  SyncCoverCoverageWorkBudget oneLessWork(measuredWork.workUnits - 1);
+  const CanonicalSyncMaterializedPlanVerification oneLess =
+      verifyCanonicalSyncMaterializedPlan(*program, **problem, semantic,
+                                          &oneLessWork);
+  if (!check(exact && exactWork.workUnits == measuredWork.workUnits,
+             "verify lifecycle materialization at its exact work bound") ||
+      !check(!oneLess && oneLessWork.exhausted &&
+                 oneLess.plan.error ==
+                     CanonicalSyncSelectionError::WorkLimitExceeded,
+             "reject lifecycle materialization at one less work unit") ||
+      !check(succeeded(materializeCanonicalSyncPlan(*program, **problem,
+                                                    measured.plan)),
+             "materialize the deeply verified lifecycle protocol")) {
+    return false;
+  }
+
+  scf::ForOp loop;
+  function.walk([&](scf::ForOp candidate) { loop = candidate; });
+  std::size_t primeSets = 0;
+  std::size_t bodySets = 0;
+  std::size_t bodyWaits = 0;
+  std::size_t drainWaits = 0;
+  bool guardedPrime = false;
+  bool guardedDrain = false;
+  function.walk([&](Operation *operation) {
+    if (!loop || !operation->hasAttr("pto.canonical_sync")) {
+      return;
+    }
+    scf::IfOp boundaryGuard = operation->getParentOfType<scf::IfOp>();
+    Operation *boundary =
+        boundaryGuard && boundaryGuard->getBlock() == loop->getBlock()
+            ? boundaryGuard.getOperation()
+            : operation;
+    const bool topLevel = boundary->getBlock() == loop->getBlock();
+    const bool inBody = operation->getBlock() == loop.getBody();
+    if (isa<SetFlagOp>(operation)) {
+      const bool prime = topLevel && boundary->isBeforeInBlock(loop);
+      primeSets += prime;
+      guardedPrime = guardedPrime || (prime && boundaryGuard);
+      bodySets += inBody;
+    }
+    if (isa<WaitFlagOp>(operation)) {
+      bodyWaits += inBody;
+      const bool drain = topLevel && loop->isBeforeInBlock(boundary);
+      drainWaits += drain;
+      guardedDrain = guardedDrain || (drain && boundaryGuard);
+    }
+  });
+  return check(primeSets == 1 && bodySets == 2 && bodyWaits == 2 &&
+                   drainWaits == 1 && guardedPrime && guardedDrain,
+               "materialize a balanced prime/body/drain lifecycle whose "
+               "zero-trip path suppresses both boundary actions: prime=" +
+                   std::to_string(primeSets) +
+                   ", body-sets=" + std::to_string(bodySets) +
+                   ", body-waits=" + std::to_string(bodyWaits) +
+                   ", drains=" + std::to_string(drainWaits));
+}
+
 bool testMaterializationRejectsTamperedEventAllocations() {
   MLIRContext context;
   loadDialects(context);
@@ -371,6 +612,7 @@ bool testMaterializationRejectsTamperedEventAllocations() {
   options.eventIdBudget = 4;
   options.patterns.enabledMechanismFamilies = 0;
   options.patterns.enableDirectPairs = false;
+
   FailureOr<std::unique_ptr<CanonicalSyncPatternProblem>> directProblem =
       buildCanonicalSyncSingletonProblem(*program, options);
   if (!check(succeeded(directProblem),
@@ -419,9 +661,12 @@ bool testMaterializationRejectsTamperedEventAllocations() {
   }
   const CanonicalSyncSelection selection =
       selectCanonicalSyncPatterns(isolated);
-  const CanonicalSyncVerifiedPlan verified =
+  const CanonicalSyncVerifiedPlan semanticPlan =
       verifyCanonicalSyncSelection(isolated, selection);
-  const bool verifiedShape = selection && verified &&
+  const CanonicalSyncMaterializedPlanVerification physicalPlan =
+      verifyCanonicalSyncMaterializedPlan(*program, isolated, semanticPlan);
+  const CanonicalSyncVerifiedPlan &verified = physicalPlan.plan;
+  const bool verifiedShape = selection && physicalPlan &&
                              verified.mechanisms.size() == 2 &&
                              verified.allocation.domains.size() == 2 &&
                              verified.allocation.domains[0].domain == 0 &&
@@ -430,6 +675,49 @@ bool testMaterializationRejectsTamperedEventAllocations() {
                              verified.allocation.domains[1].uses.empty();
   if (!check(verifiedShape,
              "freshly verify the allocation-validation reference plan")) {
+    return false;
+  }
+
+  FailureOr<CanonicalSyncProgram> mismatchedProgram =
+      buildCanonicalSyncProgram(function);
+  const CanonicalSyncMaterializedPlanVerification mismatchedGraphPlan =
+      succeeded(mismatchedProgram)
+          ? verifyCanonicalSyncMaterializedPlan(*mismatchedProgram, isolated,
+                                                semanticPlan)
+          : CanonicalSyncMaterializedPlanVerification{};
+  if (!check(succeeded(mismatchedProgram),
+             "build an independent allocation-validation graph") ||
+      !check(!mismatchedGraphPlan &&
+                 mismatchedGraphPlan.plan.error ==
+                     CanonicalSyncSelectionError::FinalValidationFailed,
+             "reject physical verification against a different graph")) {
+    return false;
+  }
+
+  SyncCoverCoverageWorkBudget measuredVerification;
+  const CanonicalSyncMaterializedPlanVerification measuredPlan =
+      verifyCanonicalSyncMaterializedPlan(*program, isolated, semanticPlan,
+                                          &measuredVerification);
+  if (!check(measuredPlan && measuredVerification.workUnits != 0,
+             "measure bounded physical-plan verification work")) {
+    return false;
+  }
+  SyncCoverCoverageWorkBudget exactVerification(measuredVerification.workUnits);
+  const CanonicalSyncMaterializedPlanVerification exactPlan =
+      verifyCanonicalSyncMaterializedPlan(*program, isolated, semanticPlan,
+                                          &exactVerification);
+  SyncCoverCoverageWorkBudget oneLessVerification(
+      measuredVerification.workUnits - 1);
+  const CanonicalSyncMaterializedPlanVerification oneLessPlan =
+      verifyCanonicalSyncMaterializedPlan(*program, isolated, semanticPlan,
+                                          &oneLessVerification);
+  if (!check(exactPlan &&
+                 exactVerification.workUnits == measuredVerification.workUnits,
+             "admit exact bounded physical-plan verification work") ||
+      !check(!oneLessPlan && oneLessVerification.exhausted &&
+                 oneLessPlan.plan.error ==
+                     CanonicalSyncSelectionError::WorkLimitExceeded,
+             "reject one-less bounded physical-plan verification work")) {
     return false;
   }
 
@@ -480,24 +768,82 @@ bool testMaterializationRejectsTamperedEventAllocations() {
   CanonicalSyncVerifiedPlan reservedId = verified;
   reservedId.allocation.domains[0].uses.front().ids = {6};
 
-  return rejectsPlan(std::move(wrongDomain),
-                     "reject an allocation indexed under the wrong domain") &&
-         rejectsPlan(std::move(wrongWidth),
-                     "reject an allocation with the wrong event width") &&
-         rejectsPlan(std::move(reusedId),
-                     "reject physical event-ID reuse within one domain") &&
-         rejectsPlan(std::move(missingUse),
-                     "reject a missing selected event allocation") &&
-         rejectsPlan(std::move(extraUse),
-                     "reject an extraneous selected event allocation") &&
-         rejectsPlan(std::move(missingDomain),
-                     "reject a missing event-allocation domain") &&
-         rejectsPlan(std::move(extraDomain),
-                     "reject an extraneous event-allocation domain") &&
-         rejectsPlan(std::move(reservedId),
-                     "reject a compiler-reserved event ID") &&
+  CanonicalSyncVerifiedPlan removedMechanism = verified;
+  removedMechanism.mechanisms.pop_back();
+  removedMechanism.allocation =
+      allocateCanonicalSyncEvents(isolated, removedMechanism.mechanisms);
+
+  const bool rejectedTampering =
+      rejectsPlan(semanticPlan,
+                  "reject a semantic-only plan without a physical token") &&
+      rejectsPlan(std::move(wrongDomain),
+                  "reject an allocation indexed under the wrong domain") &&
+      rejectsPlan(std::move(wrongWidth),
+                  "reject an allocation with the wrong event width") &&
+      rejectsPlan(std::move(reusedId),
+                  "reject physical event-ID reuse within one domain") &&
+      rejectsPlan(std::move(missingUse),
+                  "reject a missing selected event allocation") &&
+      rejectsPlan(std::move(extraUse),
+                  "reject an extraneous selected event allocation") &&
+      rejectsPlan(std::move(missingDomain),
+                  "reject a missing event-allocation domain") &&
+      rejectsPlan(std::move(extraDomain),
+                  "reject an extraneous event-allocation domain") &&
+      rejectsPlan(std::move(reservedId),
+                  "reject a compiler-reserved event ID") &&
+      rejectsPlan(std::move(removedMechanism),
+                  "reject a mechanism set changed after token issuance") &&
+      check(printOperation(function) == irBefore,
+            "reject every tampered allocation before mutating IR");
+  if (!rejectedTampering) {
+    return false;
+  }
+
+  func::ReturnOp returnOp =
+      *function.getBody().front().getOps<func::ReturnOp>().begin();
+  OpBuilder builder(returnOp);
+  arith::ConstantIndexOp injected =
+      builder.create<arith::ConstantIndexOp>(returnOp.getLoc(), 7);
+  const std::string mutatedIr = printOperation(function);
+  const bool rejectedOperationMutation =
+      rejectsPlan(verified,
+                  "reject a physically verified plan after IR mutation") &&
+      check(printOperation(function) == mutatedIr,
+            "reject a stale materialization token before further IR "
+            "mutation");
+  injected.erase();
+  if (!rejectedOperationMutation ||
+      !check(printOperation(function) == irBefore,
+             "restore the allocation-validation fixture after IR mutation")) {
+    return false;
+  }
+
+  SmallVector<Block *> injectedBlocks;
+  constexpr std::size_t extraEmptyBlocks = 64;
+  injectedBlocks.reserve(extraEmptyBlocks);
+  for (std::size_t index = 0; index < extraEmptyBlocks; ++index) {
+    Block *block = new Block();
+    function.getBody().push_back(block);
+    injectedBlocks.push_back(block);
+  }
+  const bool rejectedIntraOperationMutation = rejectsPlan(
+      verified,
+      "reject a stale token after bounded intra-operation block growth");
+  for (Block *block : injectedBlocks) {
+    block->erase();
+  }
+  if (!rejectedIntraOperationMutation ||
+      !check(printOperation(function) == irBefore,
+             "restore the fixture after intra-operation block growth")) {
+    return false;
+  }
+
+  program->getGraph() = std::move(mismatchedProgram->getGraph());
+  return rejectsPlan(verified,
+                     "reject a stale token after in-place graph replacement") &&
          check(printOperation(function) == irBefore,
-               "reject every tampered allocation before mutating IR");
+               "reject graph replacement before mutating IR");
 }
 
 bool testMacroBindingsAndHiddenReservations() {
@@ -1245,18 +1591,22 @@ bool testDistanceTwoPhysicalSlotRecurrence() {
   }
   const CanonicalSyncSelection selection =
       selectCanonicalSyncPatterns(isolatedProtocolProblem);
-  const CanonicalSyncVerifiedPlan verified =
+  const CanonicalSyncVerifiedPlan semanticPlan =
       verifyCanonicalSyncSelection(isolatedProtocolProblem, selection);
+  const CanonicalSyncMaterializedPlanVerification physicalPlan =
+      verifyCanonicalSyncMaterializedPlan(*program, isolatedProtocolProblem,
+                                          semanticPlan);
+  const CanonicalSyncVerifiedPlan &verified = physicalPlan.plan;
   const bool selectedLoopBoundaryProtocol =
       selection &&
       selection.mechanisms == std::vector<CanonicalSyncMechanismId>{0};
   const bool recurrenceSelected =
-      check(selectedLoopBoundaryProtocol && verified,
+      check(selectedLoopBoundaryProtocol && physicalPlan,
             "select and freshly verify only the distance-two loop-boundary "
             "recurrence protocol");
   const bool recurrenceMaterialized =
-      check(verified && succeeded(materializeCanonicalSyncPlan(
-                            *program, isolatedProtocolProblem, verified)),
+      check(physicalPlan && succeeded(materializeCanonicalSyncPlan(
+                                *program, isolatedProtocolProblem, verified)),
             "materialize the selected distance-two loop-boundary protocol");
   if (!recurrenceSelected || !recurrenceMaterialized) {
     return false;
@@ -7440,6 +7790,8 @@ bool testConflictCoreRepairAvoidsPipeAll() {
 int main() {
   const bool passed =
       testBuildsOneFrozenGraph() &&
+      testOptionalLifecycleSynthesisTruncatesToDirectCatalog() &&
+      testGenericLifecycleMaterializationIsBoundedAndBalanced() &&
       testMaterializationRejectsTamperedEventAllocations() &&
       testMacroBindingsAndHiddenReservations() &&
       testEmptyNestedLoopTimelineIsClamped() && testGmAliasPolicies() &&

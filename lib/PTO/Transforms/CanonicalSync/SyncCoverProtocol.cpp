@@ -1171,6 +1171,13 @@ SyncCoverProtocolError mlir::pto::sync_cover_protocol_detail::resolveProtocol(
             supply.waitAction >= channel.actions.size();
         const bool completionExport =
             supply.kind == SyncCoverProtocolSupplyKind::CompletionExport;
+        const bool completionExportWait =
+            !invalidActionReferences &&
+            (channel.actions[supply.waitAction].segment ==
+                 SyncCoverProtocolActionSegment::Body ||
+             (channel.actions[supply.waitAction].segment ==
+                  SyncCoverProtocolActionSegment::Exit &&
+              supply.distance == 0));
         const bool invalidCompletionExport =
             completionExport &&
             (!protocol.loop || !protocol.lifetimeScope ||
@@ -1181,8 +1188,7 @@ SyncCoverProtocolError mlir::pto::sync_cover_protocol_detail::resolveProtocol(
                   SyncCoverProtocolActionSegment::Body &&
               channel.actions[supply.setAction].segment !=
                   SyncCoverProtocolActionSegment::Entry) ||
-             channel.actions[supply.waitAction].segment !=
-                 SyncCoverProtocolActionSegment::Body);
+             !completionExportWait);
         const bool invalidSupply = invalidActionReferences ||
                                    channel.actions[supply.setAction].kind !=
                                        SyncCoverProtocolActionKind::Set ||

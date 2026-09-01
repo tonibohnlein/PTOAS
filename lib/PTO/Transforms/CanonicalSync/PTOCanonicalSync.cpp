@@ -576,6 +576,9 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
         {"precise_error",
          jsonInteger(static_cast<std::uint8_t>(strategy.preciseError))},
         {"verified", strategy.verified},
+        {"materialized_plan_verified", strategy.materializedPlanVerified},
+        {"whole_plan_world_verified", strategy.wholePlanWorldVerified},
+        {"lifecycle_automata_verified", strategy.lifecycleAutomataVerified},
         {"used_localized_pipe_all", strategy.usedLocalizedPipeAll},
         {"repair_frontier_truncated", strategy.repairFrontierTruncated},
         {"repair_budget_exhausted", strategy.repairBudgetExhausted},
@@ -648,6 +651,25 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
         {"arithmetic_overflow", strategy.search.arithmeticOverflow},
         {"verification_work_units",
          jsonInteger(strategy.verificationWorkUnits)},
+        {"materialized_verified_coverage_rows",
+         jsonInteger(strategy.materializedVerifiedCoverageRows)},
+        {"materialized_actions", jsonInteger(strategy.materializedActions)},
+        {"materialized_event_actions",
+         jsonInteger(strategy.materializedEventActions)},
+        {"materialized_barrier_actions",
+         jsonInteger(strategy.materializedBarrierActions)},
+        {"materialized_event_channels",
+         jsonInteger(strategy.materializedEventChannels)},
+        {"materialized_event_lanes",
+         jsonInteger(strategy.materializedEventLanes)},
+        {"materialized_tail_fences",
+         jsonInteger(strategy.materializedTailFences)},
+        {"materialized_protocol_mechanisms",
+         jsonInteger(strategy.materializedProtocolMechanisms)},
+        {"materialized_lifecycle_protocol_mechanisms",
+         jsonInteger(strategy.materializedLifecycleProtocolMechanisms)},
+        {"materialized_deep_protocol_verifiers_run",
+         jsonInteger(strategy.materializedDeepProtocolVerifiersRun)},
         {"selection_time_ns", jsonInteger(strategy.selectionNanoseconds)},
         {"repair_time_ns", jsonInteger(strategy.repairNanoseconds)},
         {"verification_time_ns", jsonInteger(strategy.verificationNanoseconds)},
@@ -754,6 +776,10 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
        jsonInteger(report.loopBoundaryProtocolIncidences)},
       {"loop_boundary_protocol_generation_truncated",
        report.loopBoundaryProtocolGenerationTruncated},
+      {"generic_lifecycle_generation_truncated",
+       report.genericLifecycleGenerationTruncated},
+      {"generic_lifecycle_synthesis_work_units",
+       jsonInteger(report.genericLifecycleSynthesisWorkUnits)},
       {"preparation_time_ns", jsonInteger(report.preparationNanoseconds)},
       {"strategies", std::move(strategies)}};
 }
@@ -781,6 +807,9 @@ LogicalResult emitReport(func::FuncOp function, StringRef path,
     function.emitRemark()
         << "canonical sync strategy=" << strategyName(strategy.strategy)
         << ", verified=" << strategy.verified
+        << ", materialized-plan-verified=" << strategy.materializedPlanVerified
+        << ", lifecycle-automata-verified="
+        << strategy.lifecycleAutomataVerified
         << ", error=" << static_cast<unsigned>(strategy.error)
         << ", mechanisms=" << strategy.cost.mechanismCount
         << ", events=" << strategy.selectedEvents
@@ -905,6 +934,8 @@ struct PTOCanonicalSyncPass
          "maximum-basic-ownership-access-incidences"},
         {maximumPairEvaluationsPerScope, "maximum-pair-evaluations-per-scope"},
         {maximumSelectionWorkUnits, "maximum-selection-work-units"},
+        {maximumLifecycleSynthesisWorkUnits,
+         "maximum-lifecycle-synthesis-work-units"},
         {maximumRepairRounds, "maximum-repair-rounds"},
         {maximumRepairTrials, "maximum-repair-trials"},
         {maximumRepairWorkUnits, "maximum-repair-work-units"},
@@ -1020,6 +1051,8 @@ struct PTOCanonicalSyncPass
         static_cast<std::size_t>(maximumPairEvaluationsPerScope);
     options.selection.maximumWorkUnits =
         static_cast<std::size_t>(maximumSelectionWorkUnits);
+    options.maximumLifecycleSynthesisWorkUnits =
+        static_cast<std::size_t>(maximumLifecycleSynthesisWorkUnits);
     options.maximumRepairRounds = static_cast<std::size_t>(maximumRepairRounds);
     options.maximumRepairTrials = static_cast<std::size_t>(maximumRepairTrials);
     options.maximumRepairWorkUnits =

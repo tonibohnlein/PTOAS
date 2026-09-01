@@ -664,6 +664,13 @@ static llvm::cl::opt<std::int64_t> canonicalSyncMaximumSelectionWorkUnits(
         "Maximum accounted operations in canonical synchronization selection"),
     llvm::cl::init(1U << 27));
 
+static llvm::cl::opt<std::int64_t>
+    canonicalSyncMaximumLifecycleSynthesisWorkUnits(
+        "canonical-sync-maximum-lifecycle-synthesis-work-units",
+        llvm::cl::desc("Maximum accounted operations in canonical "
+                       "synchronization generic lifecycle synthesis"),
+        llvm::cl::init(1U << 29));
+
 static llvm::cl::opt<std::int64_t> canonicalSyncMaximumRepairRounds(
     "canonical-sync-maximum-repair-rounds",
     llvm::cl::desc("Maximum canonical synchronization event-pressure repair "
@@ -712,7 +719,7 @@ static llvm::cl::opt<std::int64_t> canonicalSyncMaximumVerificationWorkUnits(
     "canonical-sync-maximum-verification-work-units",
     llvm::cl::desc("Maximum accounted operations in canonical synchronization "
                    "fresh verification"),
-    llvm::cl::init(1U << 27));
+    llvm::cl::init(1U << 30));
 
 static llvm::cl::opt<bool> canonicalSyncEnableDemandBasisReduction(
     "canonical-sync-enable-demand-basis-reduction",
@@ -4108,6 +4115,8 @@ int mlir::pto::compilePTOASModule(OwningOpRef<ModuleOp> &module,
     options.maximumPairEvaluationsPerScope =
         canonicalSyncMaximumPairEvaluationsPerScope;
     options.maximumSelectionWorkUnits = canonicalSyncMaximumSelectionWorkUnits;
+    options.maximumLifecycleSynthesisWorkUnits =
+        canonicalSyncMaximumLifecycleSynthesisWorkUnits;
     options.maximumRepairRounds = canonicalSyncMaximumRepairRounds;
     options.maximumRepairTrials = canonicalSyncMaximumRepairTrials;
     options.maximumRepairWorkUnits = canonicalSyncMaximumRepairWorkUnits;

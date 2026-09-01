@@ -618,10 +618,27 @@ than repeatedly scanning the complete demand set. There is no opaque callback
 behind a generic graph-linear estimate.
 
 Physical verification then resolves every anchor, guard loop, event lane,
-allocated ID, and barrier resource before any rewrite. This staging step also
-runs in analysis-only mode, so a comparison cannot report a semantically valid
-but physically unmaterializable plan. A failed verification leaves both user IR
-and a previous pass-owned plan unchanged.
+allocated ID, and barrier resource before any rewrite. It reruns selection and
+allocation from the exact selected mechanism set and issues an opaque
+capability bound to the program, frozen problem, selected mechanisms, and
+allocation. Materialization accepts only that capability and rechecks its
+complete binding, so copying or modifying a verified plan cannot retain
+permission to mutate IR. This staging step also runs in analysis-only mode, so
+a comparison cannot report a semantically valid but physically
+unmaterializable plan. A failed verification leaves both user IR and a previous
+pass-owned plan unchanged.
+
+Generic lifecycle protocols have a second, graph-wide verifier registered on
+their origin family. It reruns bounded SCC discovery and protocol synthesis
+once for the complete selected family, renumbers all selected protocols into
+one exact world, reruns their token automata and structured must-semantics, and
+then matches every selected physical descriptor against the freshly derived
+recipe. The allocator is independently checked to give every selected event
+lane a unique, non-reserved physical ID; consequently the family automata and
+token-independent direct cuts form a disjoint product rather than aliasing one
+hardware event state. The full selected mechanism set is then rechecked for
+joint coverage before physical action reconstruction. Only this combined
+boundary sets the whole-plan-world bit and issues the materialization token.
 
 ## 8. CLI
 
@@ -651,6 +668,7 @@ Relevant driver options are:
 --canonical-sync-maximum-basic-ownership-access-incidences=1048576
 --canonical-sync-maximum-pair-evaluations-per-scope=4096
 --canonical-sync-maximum-selection-work-units=134217728
+--canonical-sync-maximum-lifecycle-synthesis-work-units=536870912
 --canonical-sync-maximum-repair-rounds=8
 --canonical-sync-maximum-repair-trials=256
 --canonical-sync-maximum-repair-work-units=268435456
@@ -658,7 +676,7 @@ Relevant driver options are:
 --canonical-sync-maximum-repair-frontier-proposals=4096
 --canonical-sync-maximum-backstop-deletion-trials=4096
 --canonical-sync-maximum-backstop-deletion-work-units=134217728
---canonical-sync-maximum-verification-work-units=134217728
+--canonical-sync-maximum-verification-work-units=1073741824
 --canonical-sync-enable-demand-basis-reduction
 --canonical-sync-maximum-demand-basis-group-edges=262144
 --canonical-sync-maximum-demand-basis-reachability-words=1048576
@@ -679,9 +697,11 @@ Relevant driver options are:
 `direct` disables optional pair construction. `direct-pair` is the default.
 `core` disables every derived family but remains orthogonal to pair generation
 and repair, so both `core + direct` and `core + direct-pair` are expressible.
-`all` denotes the production family set. The experimental `generic-lifecycle`
-family remains explicitly opt-in until independent materialized-plan
-verification is enabled for it.
+`all` denotes the production family set. It intentionally excludes the
+experimental `generic-lifecycle` family, which must be named explicitly in a
+family expression. Generic lifecycle recipes cross the materialization
+boundary only after the deep family verifier has rebuilt their SCC
+certificates, token automata, exact worlds, and concrete staged actions.
 
 `strict-direct` is the minimal correctness catalog. It requires
 `mechanism-families=core`, `pattern-mode=direct`, and
@@ -857,13 +877,16 @@ It reports the resolved target profile, every capability version and resource
 set, graph nodes and edges, original demand provenance and unique coverage
 rows, complete obligation and selection-basis sizes, reduced-row and truncation
 status, preparation time, direct mechanisms, bounded source-prefix
-construction, ownership certificate counts and truncation, enabled mechanism
-families, candidate and selected mechanism origins, pair
+construction, generic-lifecycle generation/truncation and synthesis work,
+ownership certificate counts and truncation, enabled mechanism families,
+candidate and selected mechanism origins, pair
 proposals/evaluations, and retained synergistic pairs. Each strategy
 reports selection/cleanup work, selected events and barriers (including each
 targeted-barrier recipe separately), predicted synchronization instructions,
 all structural cost components, event-domain pressure and live mechanisms,
 assigned physical IDs, bounded repair/backstop status,
 selection/repair/verification times, fresh-verification work and result,
+reconstructed physical actions, event channels and lanes, tail fences,
+whole-plan coverage rows, lifecycle-automaton status, deep verifier count,
 checked-arithmetic failure, localized `PIPE_ALL` use, and a deterministic
 signature over the selected immutable recipes and allocation.
