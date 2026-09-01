@@ -242,22 +242,18 @@ LogicalResult CanonicalSyncProgram::freeze() {
           const bool invalidTransfer = llvm::any_of(
               summary.transfers,
               [this](const CanonicalBoundaryTransfer &transfer) {
-                return llvm::any_of(transfer.requiredLoops,
-                                    [this](CanonicalRegionId id) {
-                                      return id >= regions.size() ||
-                                             regions[id].kind !=
-                                                 CanonicalRegionKind::Loop;
-                                    }) ||
-                       llvm::any_of(transfer.mechanisms,
-                                    [this](CanonicalMechanismId id) {
-                                      return id >= mechanisms.size();
-                                    });
+                return llvm::any_of(
+                    transfer.requiredLoops, [this](CanonicalRegionId id) {
+                      return id >= regions.size() ||
+                             regions[id].kind != CanonicalRegionKind::Loop;
+                    });
               });
           return invalidCompletion || invalidTransfer;
         });
     if (invalidMechanism || invalidDemand || invalidSummary ||
         !world.differentialDisagreements.empty() ||
-        !world.flattenedOracleMatched || !world.unrolledOracleMatched) {
+        !world.flattenedOracleMatched || !world.unrolledOracleAvailable ||
+        (world.unrolledOracleExhaustive && !world.unrolledOracleMatched)) {
       return fail("coverage world references an invalid ID");
     }
   }

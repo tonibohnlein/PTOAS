@@ -82,8 +82,12 @@ LogicalResult
 buildCanonicalStructureAndAccesses(CanonicalSyncProgram &program,
                                    const CanonicalSyncTarget &target);
 LogicalResult deriveCanonicalDemands(CanonicalSyncProgram &program);
-FailureOr<llvm::SmallVector<CanonicalDemandId, 16>>
-evaluateCanonicalSyncUnrolledOracle(
+struct CanonicalUnrolledCoverageResult {
+  llvm::SmallVector<CanonicalDemandId, 16> covered;
+  bool exhaustive = true;
+};
+
+FailureOr<CanonicalUnrolledCoverageResult> evaluateCanonicalSyncUnrolledOracle(
     const CanonicalSyncProgram &program,
     llvm::ArrayRef<CanonicalMechanismId> selected);
 LogicalResult verifyMaterializedCanonicalSync(func::FuncOp function);

@@ -10,7 +10,8 @@
 
 // Two arm-local events establish the same MTE2-to-V boundary transfer. The
 // choice summary must retain the guarded transfers and form an unconditional
-// must-transfer that names both mechanisms.
+// must-transfer. The selected coverage world, rather than symbolic formulas on
+// transfers, records which mechanisms made the transfer available.
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
 // RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
@@ -76,5 +77,5 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK-SAME: oracle=match
 // CHECK: SUMMARIES world=mechanical
 // CHECK: summary=r{{[0-9]+}} kind=choice
-// CHECK: transfer=AIV:PIPE_MTE2->AIV:PIPE_V guard=[] mechanisms=[m0, m1]
+// CHECK: transfer=AIV:PIPE_MTE2->AIV:PIPE_V guard=[] required-loops=[]
 // CHECK: VERIFY ok

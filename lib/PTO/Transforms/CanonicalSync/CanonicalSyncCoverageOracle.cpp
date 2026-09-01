@@ -11,8 +11,9 @@
 // This bounded oracle deliberately does not consume region summaries. It
 // enumerates structured choices and zero, one, and two loop iterations, then
 // executes the concrete mechanism program points. The bound is a differential
-// testing aid, not a proof for arbitrary loop counts; materialized verification
-// remains the final correctness gate.
+// testing aid, not a proof for arbitrary loop counts. Reaching the state cap
+// marks the result inconclusive instead of rejecting an otherwise valid
+// program; materialized verification remains the final correctness gate.
 
 #include "CanonicalSyncInternal.h"
 
@@ -64,6 +65,10 @@ struct OracleState {
   SmallVector<CanonicalControlAtom, 2> controlPath;
   SmallVector<LoopInstance, 2> loops;
   SmallVector<bool, 16> covered;
+};
+
+struct OracleContext {
+  bool exhaustive = true;
 };
 
 using PhaseIndex = DenseMap<Operation *, SmallVector<CanonicalPhaseId, 2>>;
@@ -285,12 +290,12 @@ void executePhases(const CanonicalSyncProgram &program, Operation *operation,
 FailureOr<SmallVector<OracleState, 8>>
 executeBlock(const CanonicalSyncProgram &program, Block &block,
              const PhaseIndex &phases, ArrayRef<CanonicalMechanismId> selected,
-             ArrayRef<OracleState> inputs);
+             ArrayRef<OracleState> inputs, OracleContext &context);
 
 FailureOr<SmallVector<OracleState, 8>>
 executeChoice(const CanonicalSyncProgram &program, scf::IfOp choice,
               const PhaseIndex &phases, ArrayRef<CanonicalMechanismId> selected,
-              ArrayRef<OracleState> inputs) {
+              ArrayRef<OracleState> inputs, OracleContext &context) {
   SmallVector<OracleState, 8> result;
   const CanonicalRegionId choiceId =
       findStructuredRegion(program, choice, CanonicalRegionKind::Choice);
@@ -301,8 +306,9 @@ executeChoice(const CanonicalSyncProgram &program, scf::IfOp choice,
     }
     SmallVector<OracleState, 8> armOutputs;
     if (arm == 0) {
-      FailureOr<SmallVector<OracleState, 8>> executed = executeBlock(
-          program, choice.getThenRegion().front(), phases, selected, armInputs);
+      FailureOr<SmallVector<OracleState, 8>> executed =
+          executeBlock(program, choice.getThenRegion().front(), phases,
+                       selected, armInputs, context);
       if (failed(executed)) {
         return failure();
       }
@@ -310,8 +316,9 @@ executeChoice(const CanonicalSyncProgram &program, scf::IfOp choice,
     } else if (choice.getElseRegion().empty()) {
       armOutputs = std::move(armInputs);
     } else {
-      FailureOr<SmallVector<OracleState, 8>> executed = executeBlock(
-          program, choice.getElseRegion().front(), phases, selected, armInputs);
+      FailureOr<SmallVector<OracleState, 8>> executed =
+          executeBlock(program, choice.getElseRegion().front(), phases,
+                       selected, armInputs, context);
       if (failed(executed)) {
         return failure();
       }
@@ -328,7 +335,7 @@ executeChoice(const CanonicalSyncProgram &program, scf::IfOp choice,
 FailureOr<SmallVector<OracleState, 8>>
 executeLoop(const CanonicalSyncProgram &program, scf::ForOp loop,
             const PhaseIndex &phases, ArrayRef<CanonicalMechanismId> selected,
-            ArrayRef<OracleState> inputs) {
+            ArrayRef<OracleState> inputs, OracleContext &context) {
   SmallVector<OracleState, 8> result;
   const CanonicalRegionId loopId =
       findStructuredRegion(program, loop, CanonicalRegionKind::Loop);
@@ -338,8 +345,9 @@ executeLoop(const CanonicalSyncProgram &program, scf::ForOp loop,
       for (OracleState &state : current) {
         state.loops.push_back({loopId, iteration});
       }
-      FailureOr<SmallVector<OracleState, 8>> body = executeBlock(
-          program, loop.getRegion().front(), phases, selected, current);
+      FailureOr<SmallVector<OracleState, 8>> body =
+          executeBlock(program, loop.getRegion().front(), phases, selected,
+                       current, context);
       if (failed(body)) {
         return failure();
       }
@@ -352,8 +360,8 @@ executeLoop(const CanonicalSyncProgram &program, scf::ForOp loop,
                   std::make_move_iterator(current.end()));
     const bool stateCapExceeded = result.size() > kMaxOracleStates;
     if (stateCapExceeded) {
-      return loop.emitError(
-          "canonical sync unrolled coverage oracle exceeded its state cap");
+      context.exhaustive = false;
+      result.resize(kMaxOracleStates);
     }
   }
   return result;
@@ -363,7 +371,7 @@ FailureOr<SmallVector<OracleState, 8>>
 executeOperation(const CanonicalSyncProgram &program, Operation *operation,
                  const PhaseIndex &phases,
                  ArrayRef<CanonicalMechanismId> selected,
-                 ArrayRef<OracleState> inputs) {
+                 ArrayRef<OracleState> inputs, OracleContext &context) {
   SmallVector<OracleState, 8> states(inputs.begin(), inputs.end());
   for (OracleState &state : states) {
     executePoint(program, {operation, CanonicalProgramPointPosition::Before},
@@ -371,28 +379,28 @@ executeOperation(const CanonicalSyncProgram &program, Operation *operation,
   }
   if (auto choice = dyn_cast<scf::IfOp>(operation)) {
     FailureOr<SmallVector<OracleState, 8>> result =
-        executeChoice(program, choice, phases, selected, states);
+        executeChoice(program, choice, phases, selected, states, context);
     if (failed(result)) {
       return failure();
     }
     states = std::move(*result);
   } else if (auto loop = dyn_cast<scf::ForOp>(operation)) {
     FailureOr<SmallVector<OracleState, 8>> result =
-        executeLoop(program, loop, phases, selected, states);
+        executeLoop(program, loop, phases, selected, states, context);
     if (failed(result)) {
       return failure();
     }
     states = std::move(*result);
   } else if (auto section = dyn_cast<SectionCubeOp>(operation)) {
     FailureOr<SmallVector<OracleState, 8>> result = executeBlock(
-        program, section.getBody().front(), phases, selected, states);
+        program, section.getBody().front(), phases, selected, states, context);
     if (failed(result)) {
       return failure();
     }
     states = std::move(*result);
   } else if (auto section = dyn_cast<SectionVectorOp>(operation)) {
     FailureOr<SmallVector<OracleState, 8>> result = executeBlock(
-        program, section.getBody().front(), phases, selected, states);
+        program, section.getBody().front(), phases, selected, states, context);
     if (failed(result)) {
       return failure();
     }
@@ -412,19 +420,19 @@ executeOperation(const CanonicalSyncProgram &program, Operation *operation,
 FailureOr<SmallVector<OracleState, 8>>
 executeBlock(const CanonicalSyncProgram &program, Block &block,
              const PhaseIndex &phases, ArrayRef<CanonicalMechanismId> selected,
-             ArrayRef<OracleState> inputs) {
+             ArrayRef<OracleState> inputs, OracleContext &context) {
   SmallVector<OracleState, 8> states(inputs.begin(), inputs.end());
   for (Operation &operation : block) {
-    FailureOr<SmallVector<OracleState, 8>> result =
-        executeOperation(program, &operation, phases, selected, states);
+    FailureOr<SmallVector<OracleState, 8>> result = executeOperation(
+        program, &operation, phases, selected, states, context);
     if (failed(result)) {
       return failure();
     }
     states = std::move(*result);
     const bool stateCapExceeded = states.size() > kMaxOracleStates;
     if (stateCapExceeded) {
-      return operation.emitError(
-          "canonical sync unrolled coverage oracle exceeded its state cap");
+      context.exhaustive = false;
+      states.resize(kMaxOracleStates);
     }
   }
   return states;
@@ -432,7 +440,7 @@ executeBlock(const CanonicalSyncProgram &program, Block &block,
 
 } // namespace
 
-FailureOr<SmallVector<CanonicalDemandId, 16>>
+FailureOr<CanonicalUnrolledCoverageResult>
 mlir::pto::canonical_sync_detail::evaluateCanonicalSyncUnrolledOracle(
     const CanonicalSyncProgram &program,
     ArrayRef<CanonicalMechanismId> selected) {
@@ -450,21 +458,23 @@ mlir::pto::canonical_sync_detail::evaluateCanonicalSyncUnrolledOracle(
       initial.covered[demand.id] = tail;
     }
   }
+  OracleContext context;
   FailureOr<SmallVector<OracleState, 8>> states =
       executeBlock(program, program.getFunction().getBody().front(), phases,
-                   selected, ArrayRef<OracleState>(&initial, 1));
+                   selected, ArrayRef<OracleState>(&initial, 1), context);
   if (failed(states)) {
     return failure();
   }
-  SmallVector<CanonicalDemandId, 16> covered;
+  CanonicalUnrolledCoverageResult result;
+  result.exhaustive = context.exhaustive;
   for (const CanonicalDemand &demand : program.getDemands()) {
     const bool coveredOnEveryPath =
         llvm::all_of(*states, [&](const OracleState &state) {
           return state.covered[demand.id];
         });
     if (coveredOnEveryPath) {
-      covered.push_back(demand.id);
+      result.covered.push_back(demand.id);
     }
   }
-  return covered;
+  return result;
 }

@@ -240,7 +240,6 @@ struct CanonicalBoundaryTransfer {
   CanonicalProgramPoint targetPoint;
   llvm::SmallVector<CanonicalControlAtom, 2> guard;
   llvm::SmallVector<CanonicalRegionId, 2> requiredLoops;
-  llvm::SmallVector<CanonicalMechanismId, 2> mechanisms;
 };
 
 struct CanonicalRegionSummary {
@@ -257,6 +256,8 @@ struct CanonicalCoverageWorld {
   llvm::SmallVector<CanonicalRegionSummary, 0> summaries;
   llvm::SmallVector<CanonicalDemandId, 8> differentialDisagreements;
   bool flattenedOracleMatched = false;
+  bool unrolledOracleAvailable = false;
+  bool unrolledOracleExhaustive = false;
   bool unrolledOracleMatched = false;
 };
 

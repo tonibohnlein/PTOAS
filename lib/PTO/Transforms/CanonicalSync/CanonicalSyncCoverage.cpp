@@ -45,7 +45,13 @@ void appendUnique(SmallVectorImpl<T> &destination, const Range &source) {
   }
 }
 
+void canonicalizeLoops(SmallVectorImpl<CanonicalRegionId> &loops) {
+  llvm::sort(loops);
+  loops.erase(std::unique(loops.begin(), loops.end()), loops.end());
+}
+
 bool addFact(SmallVectorImpl<CompletionFact> &facts, CompletionFact fact) {
+  canonicalizeLoops(fact.requiredLoops);
   for (CompletionFact &existing : facts) {
     const bool sameKey = existing.phase == fact.phase &&
                          existing.resource == fact.resource &&
@@ -78,6 +84,7 @@ mechanismExecutionLoops(const CanonicalSyncProgram &program,
       result.push_back(region);
     }
   }
+  canonicalizeLoops(result);
   return result;
 }
 
@@ -131,31 +138,6 @@ bool applyEvent(const CanonicalSyncProgram &program,
   return changed;
 }
 
-SmallVector<CompletionFact, 32>
-evaluateFlattenedFacts(const CanonicalSyncProgram &program,
-                       ArrayRef<CanonicalMechanismId> selected) {
-  SmallVector<CompletionFact, 32> facts;
-  for (CanonicalMechanismId id : selected) {
-    const CanonicalMechanism &mechanism = program.getMechanism(id);
-    if (mechanism.kind == CanonicalMechanismKind::PipeBarrier) {
-      applyBarrier(program, mechanism, facts,
-                   mechanismExecutionLoops(program, mechanism));
-    }
-  }
-  bool changed = true;
-  while (changed) {
-    changed = false;
-    for (CanonicalMechanismId id : selected) {
-      const CanonicalMechanism &mechanism = program.getMechanism(id);
-      if (mechanism.kind == CanonicalMechanismKind::Event) {
-        changed |= applyEvent(program, mechanism, facts,
-                              mechanismExecutionLoops(program, mechanism));
-      }
-    }
-  }
-  return facts;
-}
-
 bool sameBoundaryTransfer(const CanonicalBoundaryTransfer &first,
                           const CanonicalBoundaryTransfer &second) {
   return first.source == second.source && first.target == second.target &&
@@ -167,6 +149,7 @@ bool sameBoundaryTransfer(const CanonicalBoundaryTransfer &first,
 
 bool addBoundaryTransfer(SmallVectorImpl<CanonicalBoundaryTransfer> &transfers,
                          CanonicalBoundaryTransfer transfer) {
+  canonicalizeLoops(transfer.requiredLoops);
   auto existing =
       llvm::find_if(transfers, [&](CanonicalBoundaryTransfer &item) {
         return sameBoundaryTransfer(item, transfer);
@@ -175,9 +158,7 @@ bool addBoundaryTransfer(SmallVectorImpl<CanonicalBoundaryTransfer> &transfers,
     transfers.push_back(std::move(transfer));
     return true;
   }
-  const std::size_t previousSize = existing->mechanisms.size();
-  appendUnique(existing->mechanisms, transfer.mechanisms);
-  return existing->mechanisms.size() != previousSize;
+  return false;
 }
 
 SmallVector<CanonicalControlAtom, 2>
@@ -188,6 +169,52 @@ withoutChoice(ArrayRef<CanonicalControlAtom> guard, CanonicalRegionId choice) {
                   return atom.choice != choice;
                 });
   return result;
+}
+
+std::optional<unsigned> guardArm(ArrayRef<CanonicalControlAtom> guard,
+                                 CanonicalRegionId choice) {
+  auto atom = llvm::find_if(guard, [choice](const CanonicalControlAtom &item) {
+    return item.choice == choice;
+  });
+  return atom == guard.end() ? std::nullopt
+                             : std::optional<unsigned>(atom->arm);
+}
+
+bool joinFlattenedChoiceFacts(const CanonicalSyncProgram &program,
+                              SmallVectorImpl<CompletionFact> &facts) {
+  const SmallVector<CompletionFact, 32> snapshot(facts.begin(), facts.end());
+  bool changed = false;
+  for (const CanonicalRegion &choice : program.getRegions()) {
+    if (choice.kind != CanonicalRegionKind::Choice || !choice.operation) {
+      continue;
+    }
+    const CanonicalProgramPoint afterChoice{
+        choice.operation, CanonicalProgramPointPosition::After};
+    for (const CompletionFact &first : snapshot) {
+      const bool firstIsUnavailable =
+          guardArm(first.guard, choice.id) != 0U ||
+          !programPointMustPrecede(first.availableAt, afterChoice);
+      if (firstIsUnavailable) {
+        continue;
+      }
+      const SmallVector<CanonicalControlAtom, 2> commonGuard =
+          withoutChoice(first.guard, choice.id);
+      for (const CompletionFact &second : snapshot) {
+        const bool secondIsUnavailable =
+            guardArm(second.guard, choice.id) != 1U ||
+            first.phase != second.phase || first.resource != second.resource ||
+            first.requiredLoops != second.requiredLoops ||
+            commonGuard != withoutChoice(second.guard, choice.id) ||
+            !programPointMustPrecede(second.availableAt, afterChoice);
+        if (secondIsUnavailable) {
+          continue;
+        }
+        changed |= addFact(facts, {first.phase, first.resource, afterChoice,
+                                   commonGuard, first.requiredLoops});
+      }
+    }
+  }
+  return changed;
 }
 
 void joinChoiceTransfers(
@@ -226,10 +253,33 @@ void joinChoiceTransfers(
                           CanonicalProgramPointPosition::After};
     joined.guard = firstGuard;
     joined.requiredLoops = first.requiredLoops;
-    joined.mechanisms = first.mechanisms;
-    appendUnique(joined.mechanisms, second->mechanisms);
     addBoundaryTransfer(transfers, std::move(joined));
   }
+}
+
+SmallVector<CompletionFact, 32>
+evaluateFlattenedFacts(const CanonicalSyncProgram &program,
+                       ArrayRef<CanonicalMechanismId> selected) {
+  SmallVector<CompletionFact, 32> facts;
+  for (CanonicalMechanismId id : selected) {
+    const CanonicalMechanism &mechanism = program.getMechanism(id);
+    if (mechanism.kind == CanonicalMechanismKind::PipeBarrier) {
+      applyBarrier(program, mechanism, facts,
+                   mechanismExecutionLoops(program, mechanism));
+    }
+  }
+  bool changed = true;
+  while (changed) {
+    changed = joinFlattenedChoiceFacts(program, facts);
+    for (CanonicalMechanismId id : selected) {
+      const CanonicalMechanism &mechanism = program.getMechanism(id);
+      if (mechanism.kind == CanonicalMechanismKind::Event) {
+        changed |= applyEvent(program, mechanism, facts,
+                              mechanismExecutionLoops(program, mechanism));
+      }
+    }
+  }
+  return facts;
 }
 
 bool composeBoundaryTransfers(
@@ -252,8 +302,6 @@ bool composeBoundaryTransfers(
       composed.guard = combineGuards(first.guard, second.guard);
       composed.requiredLoops = first.requiredLoops;
       appendUnique(composed.requiredLoops, second.requiredLoops);
-      composed.mechanisms = first.mechanisms;
-      appendUnique(composed.mechanisms, second.mechanisms);
       changed |= addBoundaryTransfer(transfers, std::move(composed));
     }
   }
@@ -342,7 +390,6 @@ summarizeRegion(const CanonicalSyncProgram &program, CanonicalRegionId region,
       transfer.targetPoint = mechanism.targetPoint;
       transfer.guard = mechanism.guard;
       transfer.requiredLoops = mechanismExecutionLoops(program, mechanism);
-      transfer.mechanisms.push_back(id);
       addBoundaryTransfer(result.transfers, std::move(transfer));
     }
   }
@@ -489,16 +536,22 @@ CanonicalCoverageWorld evaluateWorld(const CanonicalSyncProgram &program,
       coveredDemands(program, world.mechanisms, flattenedFacts);
   world.flattenedOracleMatched = summarized == flattened;
 
-  FailureOr<SmallVector<CanonicalDemandId, 16>> unrolled =
+  FailureOr<CanonicalUnrolledCoverageResult> unrolled =
       evaluateCanonicalSyncUnrolledOracle(program, world.mechanisms);
-  world.unrolledOracleMatched = succeeded(unrolled) && summarized == *unrolled;
-  if (!world.flattenedOracleMatched || !world.unrolledOracleMatched) {
+  world.unrolledOracleAvailable = succeeded(unrolled);
+  world.unrolledOracleExhaustive = succeeded(unrolled) && unrolled->exhaustive;
+  world.unrolledOracleMatched =
+      world.unrolledOracleExhaustive && summarized == unrolled->covered;
+  if (!world.flattenedOracleMatched ||
+      (world.unrolledOracleExhaustive && !world.unrolledOracleMatched)) {
     for (const CanonicalDemand &demand : program.getDemands()) {
       const bool summaryCovers = llvm::is_contained(summarized, demand.id);
       const bool flatCovers = llvm::is_contained(flattened, demand.id);
       const bool unrolledCovers =
-          succeeded(unrolled) && llvm::is_contained(*unrolled, demand.id);
-      if (summaryCovers != flatCovers || summaryCovers != unrolledCovers) {
+          world.unrolledOracleExhaustive &&
+          llvm::is_contained(unrolled->covered, demand.id);
+      if (summaryCovers != flatCovers ||
+          (world.unrolledOracleExhaustive && summaryCovers != unrolledCovers)) {
         world.differentialDisagreements.push_back(demand.id);
       }
     }
@@ -511,7 +564,10 @@ CanonicalCoverageWorld evaluateWorld(const CanonicalSyncProgram &program,
 LogicalResult
 mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
   const auto appendChecked = [&program](CanonicalCoverageWorld world) {
-    if (!world.flattenedOracleMatched || !world.unrolledOracleMatched) {
+    const bool unrolledMismatch =
+        world.unrolledOracleExhaustive && !world.unrolledOracleMatched;
+    if (!world.flattenedOracleMatched || !world.unrolledOracleAvailable ||
+        unrolledMismatch) {
       InFlightDiagnostic diagnostic =
           program.getFunction().emitError(
               "canonical sync region summary disagrees with its differential "
@@ -519,7 +575,9 @@ mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
           << world.name
           << "' (flat=" << (world.flattenedOracleMatched ? "match" : "mismatch")
           << ", unrolled="
-          << (world.unrolledOracleMatched ? "match" : "mismatch")
+          << (!world.unrolledOracleExhaustive
+                  ? "inconclusive"
+                  : (world.unrolledOracleMatched ? "match" : "mismatch"))
           << ") for demand(s)";
       for (CanonicalDemandId demand : world.differentialDisagreements) {
         const CanonicalDemand &record = program.getDemand(demand);

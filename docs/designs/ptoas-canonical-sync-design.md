@@ -201,10 +201,18 @@ these child summaries rather than rescanning logical demand endpoints.
 Each coverage world is checked against two non-summary implementations: the
 flat fixed-point scoreboard and a bounded structured interpreter that
 enumerates both choice arms and zero, one, and two loop iterations. The bounded
-interpreter is a differential oracle, not a proof for arbitrary trip counts. A
-disagreement with either oracle is a compiler error and prevents mutation.
-Fixed-point evaluation therefore records singleton coverage as well as
-coverage that exists only when a group of mechanisms is present.
+interpreter is a differential oracle, not a proof for arbitrary trip counts.
+If its finite state cap is reached, that comparison is recorded as
+inconclusive; reaching the diagnostic bound never rejects an otherwise valid
+program. A disagreement with the flat scoreboard or with an exhaustive
+bounded run is a compiler error and prevents mutation.
+
+Coverage is a direct function of a concrete selected-mechanism group. A world
+records that group and the demands it covers; region facts and transfers do not
+carry symbolic AND/OR mechanism formulas. Later group exploration can evaluate
+another concrete world and record only the demands it covers in addition to
+the mechanisms' originating demands. This keeps group coverage and weighted
+set-cover construction separate from the dependency graph.
 
 The initial materialized plan keeps every direct mechanism. Coverage worlds are
 diagnostic input for a later selection policy; they do not redefine
