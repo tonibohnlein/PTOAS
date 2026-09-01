@@ -15,6 +15,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/PatternMatch.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -33,6 +34,31 @@
 
 using namespace mlir;
 using namespace mlir::pto;
+
+namespace mlir::pto {
+
+class CanonicalSyncMaterializationToken {
+public:
+  CanonicalSyncMaterializationToken(
+      const CanonicalSyncProgram *program,
+      const CanonicalSyncPatternProblem *problem,
+      std::vector<CanonicalSyncMechanismId> mechanisms,
+      CanonicalSyncResourceAllocation allocation,
+      OperationFingerPrint irFingerprint, std::size_t irFingerprintWork)
+      : program_(program), problem_(problem),
+        mechanisms_(std::move(mechanisms)), allocation_(std::move(allocation)),
+        irFingerprint_(std::move(irFingerprint)),
+        irFingerprintWork_(irFingerprintWork) {}
+
+  const CanonicalSyncProgram *program_ = nullptr;
+  const CanonicalSyncPatternProblem *problem_ = nullptr;
+  std::vector<CanonicalSyncMechanismId> mechanisms_;
+  CanonicalSyncResourceAllocation allocation_;
+  OperationFingerPrint irFingerprint_;
+  std::size_t irFingerprintWork_ = 0;
+};
+
+} // namespace mlir::pto
 
 namespace {
 
@@ -97,9 +123,149 @@ bool checkedWorkProduct(std::size_t first, std::size_t second,
   return valid;
 }
 
+std::size_t orderedLookupWork(std::size_t size) {
+  std::size_t work = 1;
+  for (std::size_t remaining = size; remaining > 1;
+       remaining = (remaining + 1) / 2) {
+    ++work;
+  }
+  return work;
+}
+
+bool accumulateOperationFingerprintWork(
+    Operation *operation, std::size_t &total,
+    std::optional<std::size_t> maximum = std::nullopt) {
+  const auto accumulate = [&](std::size_t amount) {
+    return checkedWorkSum(total, amount, total) &&
+           (!maximum || total <= *maximum);
+  };
+  if (!accumulate(5) || !accumulate(operation->getNumOperands()) ||
+      !accumulate(operation->getNumResults()) ||
+      !accumulate(operation->getNumSuccessors())) {
+    return false;
+  }
+  for (Region &region : operation->getRegions()) {
+    if (!accumulate(1)) {
+      return false;
+    }
+    for (Block &block : region) {
+      if (!accumulate(1) || !accumulate(block.getNumArguments())) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+std::optional<std::size_t>
+measureOperationFingerprintWork(func::FuncOp function,
+                                std::optional<std::size_t> maximum = {}) {
+  std::size_t total = 0;
+  const WalkResult walked = function.walk([&](Operation *operation) {
+    if (!accumulateOperationFingerprintWork(operation, total, maximum)) {
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  if (walked.wasInterrupted()) {
+    return std::nullopt;
+  }
+  return total;
+}
+
+std::optional<std::size_t>
+allocationIdentityWork(const CanonicalSyncResourceAllocation &allocation) {
+  std::size_t work = 1;
+  if (!checkedWorkSum(work, allocation.domains.size(), work)) {
+    return std::nullopt;
+  }
+  for (const CanonicalSyncDomainAllocation &domain : allocation.domains) {
+    const bool domainWorkOverflow =
+        !checkedWorkSum(work, domain.liveMechanisms.size(), work) ||
+        !checkedWorkSum(work, domain.uses.size(), work);
+    if (domainWorkOverflow) {
+      return std::nullopt;
+    }
+    for (const CanonicalSyncEventAllocation &use : domain.uses) {
+      if (!checkedWorkSum(work, use.ids.size(), work)) {
+        return std::nullopt;
+      }
+    }
+  }
+  return work;
+}
+
+bool sameResourceAllocation(const CanonicalSyncResourceAllocation &first,
+                            const CanonicalSyncResourceAllocation &second) {
+  if (first.valid != second.valid || first.feasible != second.feasible ||
+      first.domains.size() != second.domains.size()) {
+    return false;
+  }
+  for (std::size_t domainIndex = 0; domainIndex < first.domains.size();
+       ++domainIndex) {
+    const CanonicalSyncDomainAllocation &left = first.domains[domainIndex];
+    const CanonicalSyncDomainAllocation &right = second.domains[domainIndex];
+    if (left.domain != right.domain || left.required != right.required ||
+        left.available != right.available ||
+        left.maximumPressurePoint != right.maximumPressurePoint ||
+        left.liveMechanisms != right.liveMechanisms ||
+        left.uses.size() != right.uses.size()) {
+      return false;
+    }
+    for (std::size_t useIndex = 0; useIndex < left.uses.size(); ++useIndex) {
+      const CanonicalSyncEventAllocation &leftUse = left.uses[useIndex];
+      const CanonicalSyncEventAllocation &rightUse = right.uses[useIndex];
+      if (leftUse.mechanism != rightUse.mechanism ||
+          leftUse.eventUse != rightUse.eventUse ||
+          leftUse.ids != rightUse.ids) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+std::optional<bool>
+meteredSameResourceAllocation(const CanonicalSyncResourceAllocation &first,
+                              const CanonicalSyncResourceAllocation &second,
+                              SyncCoverCoverageWorkBudget &work) {
+  const std::optional<std::size_t> reservation = allocationIdentityWork(first);
+  if (!reservation || !work.consume(*reservation)) {
+    return std::nullopt;
+  }
+  return sameResourceAllocation(first, second);
+}
+
+std::optional<bool> meteredSamePlanIdentity(
+    const std::vector<CanonicalSyncMechanismId> &firstMechanisms,
+    const CanonicalSyncResourceAllocation &firstAllocation,
+    const std::vector<CanonicalSyncMechanismId> &secondMechanisms,
+    const CanonicalSyncResourceAllocation &secondAllocation,
+    SyncCoverCoverageWorkBudget &work) {
+  const std::optional<std::size_t> allocationWork =
+      allocationIdentityWork(firstAllocation);
+  std::size_t mechanismWork = 0;
+  std::size_t totalWork = 0;
+  const bool reservationAvailable =
+      allocationWork &&
+      checkedWorkSum(firstMechanisms.size(), 1, mechanismWork) &&
+      checkedWorkSum(mechanismWork, *allocationWork, totalWork) &&
+      work.consume(totalWork);
+  if (!reservationAvailable) {
+    return std::nullopt;
+  }
+  return firstMechanisms == secondMechanisms &&
+         sameResourceAllocation(firstAllocation, secondAllocation);
+}
+
 using AllocationKey = std::pair<CanonicalSyncMechanismId, std::size_t>;
 
 struct ConcreteAction {
+  std::optional<CanonicalSyncMechanismId> mechanism;
+  std::optional<std::size_t> actionIndex;
+  std::optional<std::size_t> eventUse;
+  std::size_t eventLane = 0;
+  SyncCoverAnchor abstractAnchor;
   CanonicalSyncActionKind kind = CanonicalSyncActionKind::Barrier;
   Operation *anchor = nullptr;
   bool before = true;
@@ -119,6 +285,79 @@ struct ActionGroup {
   bool before = true;
   std::vector<ConcreteAction> actions;
 };
+
+bool verifyIndependentPhysicalEventIds(
+    const CanonicalSyncPatternProblem &problem,
+    const CanonicalSyncVerifiedPlan &plan, SyncCoverCoverageWorkBudget &work) {
+  const bool invalidAllocationShape =
+      plan.allocation.domains.size() != problem.getDomains().size() ||
+      !work.consume(problem.getDomains().size());
+  if (invalidAllocationShape) {
+    return false;
+  }
+  std::vector<std::vector<AllocationKey>> expected(problem.getDomains().size());
+  for (CanonicalSyncMechanismId mechanismId : plan.mechanisms) {
+    const bool invalidMechanism =
+        mechanismId >= problem.getMechanisms().size() || !work.consume();
+    if (invalidMechanism) {
+      return false;
+    }
+    const CanonicalSyncMechanismDescriptor &descriptor =
+        problem.getMechanisms()[mechanismId].descriptor;
+    for (std::size_t use = 0; use < descriptor.eventUses.size(); ++use) {
+      if (!work.consume()) {
+        return false;
+      }
+      const CanonicalSyncEventDomainId domain =
+          descriptor.eventUses[use].domain;
+      if (domain >= expected.size()) {
+        return false;
+      }
+      expected[domain].emplace_back(mechanismId, use);
+    }
+  }
+  for (std::size_t domainIndex = 0; domainIndex < expected.size();
+       ++domainIndex) {
+    const CanonicalSyncEventDomain &domain = problem.getDomains()[domainIndex];
+    const CanonicalSyncDomainAllocation &allocation =
+        plan.allocation.domains[domainIndex];
+    if (allocation.domain != domain.id || domain.id != domainIndex ||
+        allocation.uses.size() != expected[domainIndex].size() ||
+        !work.consume(domain.budget + allocation.uses.size())) {
+      return false;
+    }
+    std::vector<std::uint8_t> used(domain.budget, 0);
+    for (std::size_t useIndex = 0; useIndex < allocation.uses.size();
+         ++useIndex) {
+      const CanonicalSyncEventAllocation &event = allocation.uses[useIndex];
+      const AllocationKey expectedKey = expected[domainIndex][useIndex];
+      if (AllocationKey{event.mechanism, event.eventUse} != expectedKey ||
+          event.mechanism >= problem.getMechanisms().size()) {
+        return false;
+      }
+      const CanonicalSyncMechanismDescriptor &descriptor =
+          problem.getMechanisms()[event.mechanism].descriptor;
+      const bool invalidEventUse =
+          event.eventUse >= descriptor.eventUses.size() ||
+          event.ids.size() != descriptor.eventUses[event.eventUse].width;
+      if (invalidEventUse) {
+        return false;
+      }
+      for (unsigned id : event.ids) {
+        const bool invalidEventId =
+            !work.consume(domain.reservedIds.size() + 1) || id >= used.size() ||
+            used[id] != 0 ||
+            std::binary_search(domain.reservedIds.begin(),
+                               domain.reservedIds.end(), id);
+        if (invalidEventId) {
+          return false;
+        }
+        used[id] = 1;
+      }
+    }
+  }
+  return true;
+}
 
 bool isPhysicalEventPipe(PipelineType pipe) {
   switch (pipe) {
@@ -375,7 +614,8 @@ indexAllocations(const CanonicalSyncPatternProblem &problem,
 std::optional<ConcreteAction> makeConcreteAction(
     const CanonicalSyncProgram &program,
     const CanonicalSyncPatternProblem &problem,
-    const CanonicalSyncMechanism &mechanism, const CanonicalSyncAction &action,
+    const CanonicalSyncMechanism &mechanism, std::size_t actionIndex,
+    const CanonicalSyncAction &action,
     const std::map<AllocationKey, std::vector<unsigned>> &allocations,
     const std::vector<std::uint32_t> &allResources) {
   const auto physicalAnchor = resolvePhysicalAnchor(program, action.anchor);
@@ -384,6 +624,11 @@ std::optional<ConcreteAction> makeConcreteAction(
     return std::nullopt;
   }
   ConcreteAction result;
+  result.mechanism = mechanism.id;
+  result.actionIndex = actionIndex;
+  result.eventUse = action.eventUse;
+  result.eventLane = action.eventLane;
+  result.abstractAnchor = action.anchor;
   result.kind = action.kind;
   result.anchor = physicalAnchor->first;
   result.before = physicalAnchor->second ||
@@ -510,9 +755,13 @@ stageActions(const CanonicalSyncProgram &program,
         return std::nullopt;
       }
     }
-    for (const CanonicalSyncAction &action : mechanism.descriptor.actions) {
-      const auto concrete = makeConcreteAction(
-          program, problem, mechanism, action, *allocations, allResources);
+    for (std::size_t actionIndex = 0;
+         actionIndex < mechanism.descriptor.actions.size(); ++actionIndex) {
+      const CanonicalSyncAction &action =
+          mechanism.descriptor.actions[actionIndex];
+      const auto concrete =
+          makeConcreteAction(program, problem, mechanism, actionIndex, action,
+                             *allocations, allResources);
       if (!concrete) {
         return std::nullopt;
       }
@@ -1595,14 +1844,29 @@ std::uint64_t computePlanSignature(const CanonicalSyncPatternProblem &problem,
 bool consumeStagingVerificationWork(const CanonicalSyncProgram &program,
                                     const CanonicalSyncPatternProblem &problem,
                                     const CanonicalSyncVerifiedPlan &plan,
-                                    SyncCoverCoverageWorkBudget &work) {
-  const bool setupWorkUnavailable =
+                                    SyncCoverCoverageWorkBudget &work,
+                                    std::size_t &irFingerprintWork) {
+  std::size_t actionCount = 0;
+  std::size_t eventUseCount = 0;
+  std::size_t supplyCount = 0;
+  std::size_t moduloLaneCopies = 0;
+  std::size_t emittedOperationCount = 0;
+  std::size_t allocationUseCount = 0;
+  std::size_t allocationIdCount = 0;
+  std::size_t domainBudget = 0;
+  const auto accumulate = [](std::size_t amount, std::size_t &total) {
+    return checkedWorkSum(total, amount, total);
+  };
+  const bool initialWorkUnavailable =
       !work.consume(plan.mechanisms.size()) ||
       !work.consume(plan.allocation.domains.size());
-  if (setupWorkUnavailable) {
+  if (initialWorkUnavailable) {
     return false;
   }
   for (CanonicalSyncMechanismId mechanism : plan.mechanisms) {
+    if (mechanism >= problem.getMechanisms().size()) {
+      return false;
+    }
     const CanonicalSyncMechanismDescriptor &descriptor =
         problem.getMechanisms()[mechanism].descriptor;
     const bool descriptorWorkUnavailable =
@@ -1612,6 +1876,45 @@ bool consumeStagingVerificationWork(const CanonicalSyncProgram &program,
     if (descriptorWorkUnavailable) {
       return false;
     }
+    const bool descriptorCountUnavailable =
+        !accumulate(descriptor.actions.size(), actionCount) ||
+        !accumulate(descriptor.eventUses.size(), eventUseCount) ||
+        !accumulate(descriptor.supplies.size(), supplyCount);
+    if (descriptorCountUnavailable) {
+      return false;
+    }
+    for (const CanonicalSyncAction &action : descriptor.actions) {
+      std::size_t physicalOperations = 1;
+      if (action.eventLaneKind !=
+          CanonicalSyncEventLaneKind::LoopIterationModulo) {
+        if (action.guard != CanonicalSyncActionGuardKind::None &&
+            !accumulate(4, physicalOperations)) {
+          return false;
+        }
+      } else {
+        const bool invalidModuloAction =
+            !action.eventUse || *action.eventUse >= descriptor.eventUses.size();
+        if (invalidModuloAction) {
+          return false;
+        }
+        const std::size_t width = descriptor.eventUses[*action.eventUse].width;
+        std::size_t dynamicSelectionOperations = 0;
+        const bool dynamicCountUnavailable =
+            width == 0 ||
+            !checkedWorkProduct(width, 4, dynamicSelectionOperations) ||
+            !checkedWorkSum(dynamicSelectionOperations, 2,
+                            physicalOperations) ||
+            !accumulate(width, moduloLaneCopies) ||
+            (action.guard != CanonicalSyncActionGuardKind::None &&
+             !accumulate(4, physicalOperations));
+        if (dynamicCountUnavailable) {
+          return false;
+        }
+      }
+      if (!accumulate(physicalOperations, emittedOperationCount)) {
+        return false;
+      }
+    }
   }
   for (const CanonicalSyncDomainAllocation &domain : plan.allocation.domains) {
     const bool domainWorkUnavailable =
@@ -1620,23 +1923,107 @@ bool consumeStagingVerificationWork(const CanonicalSyncProgram &program,
     if (domainWorkUnavailable) {
       return false;
     }
+    if (!accumulate(domain.uses.size(), allocationUseCount)) {
+      return false;
+    }
     for (const CanonicalSyncEventAllocation &use : domain.uses) {
-      if (!work.consume(use.ids.size())) {
+      const bool allocationIdsUnavailable =
+          !work.consume(use.ids.size()) ||
+          !accumulate(use.ids.size(), allocationIdCount);
+      if (allocationIdsUnavailable) {
         return false;
       }
     }
   }
-  std::size_t returns = 0;
-  program.getFunction().walk([&](func::ReturnOp) {
-    if (returns != std::numeric_limits<std::size_t>::max()) {
-      ++returns;
+  for (const CanonicalSyncEventDomain &domain : problem.getDomains()) {
+    if (!accumulate(domain.budget, domainBudget)) {
+      return false;
     }
+  }
+
+  std::size_t operationCount = 0;
+  std::size_t returnCount = 0;
+  const WalkResult walked = program.getFunction().walk([&](Operation *op) {
+    const bool operationWorkUnavailable =
+        !work.consume() ||
+        operationCount == std::numeric_limits<std::size_t>::max() ||
+        !accumulateOperationFingerprintWork(op, irFingerprintWork);
+    if (operationWorkUnavailable) {
+      return WalkResult::interrupt();
+    }
+    ++operationCount;
+    if (isa<func::ReturnOp>(op)) {
+      if (returnCount == std::numeric_limits<std::size_t>::max()) {
+        return WalkResult::interrupt();
+      }
+      ++returnCount;
+    }
+    return WalkResult::advance();
   });
-  return work.consume(returns);
+  if (walked.wasInterrupted()) {
+    return false;
+  }
+
+  std::size_t groupCount = 0;
+  std::size_t stagedActionCount = 0;
+  const bool actionCountsUnavailable =
+      !checkedWorkSum(actionCount, returnCount, groupCount) ||
+      !checkedWorkSum(actionCount, returnCount, stagedActionCount) ||
+      !accumulate(returnCount, emittedOperationCount);
+  if (actionCountsUnavailable) {
+    return false;
+  }
+  const std::size_t groupLookup = orderedLookupWork(groupCount + 1);
+  const std::size_t allocationLookup =
+      orderedLookupWork(allocationUseCount + 1);
+  const std::size_t selectedLookup =
+      orderedLookupWork(plan.mechanisms.size() + 1);
+  const std::size_t resourceSort =
+      orderedLookupWork(program.getGraph().getNodes().size() + 1);
+
+  std::size_t perActionWork = 0;
+  std::size_t stageWork = 0;
+  std::size_t allocationWork = 0;
+  std::size_t resourceWork = 0;
+  std::size_t ownedRootWork = 0;
+  const bool stagingBoundAvailable =
+      checkedWorkSum(operationCount, groupLookup + 8, perActionWork) &&
+      checkedWorkProduct(actionCount, perActionWork, stageWork) &&
+      checkedWorkProduct(allocationUseCount,
+                         selectedLookup + allocationLookup + 6,
+                         allocationWork) &&
+      accumulate(allocationIdCount, allocationWork) &&
+      accumulate(domainBudget, allocationWork) &&
+      checkedWorkProduct(program.getGraph().getNodes().size(), resourceSort + 1,
+                         resourceWork) &&
+      checkedWorkProduct(operationCount, operationCount, ownedRootWork) &&
+      accumulate(operationCount, stageWork) &&
+      accumulate(resourceWork, stageWork) &&
+      accumulate(allocationWork, stageWork) &&
+      accumulate(supplyCount, stageWork) &&
+      accumulate(stagedActionCount, stageWork) &&
+      accumulate(moduloLaneCopies, stageWork);
+  if (!stagingBoundAvailable) {
+    return false;
+  }
+
+  // Staging runs once to create the immutable token and once immediately
+  // before mutation. Reserve both traversals, plus the owned-root scan and
+  // concrete emission work, before either large temporary is allocated.
+  std::size_t reservedWork = 0;
+  std::size_t fingerprintReservation = 0;
+  return checkedWorkProduct(stageWork, 2, reservedWork) &&
+         checkedWorkProduct(irFingerprintWork, 2, fingerprintReservation) &&
+         accumulate(fingerprintReservation, reservedWork) &&
+         accumulate(ownedRootWork, reservedWork) &&
+         accumulate(operationCount, reservedWork) &&
+         accumulate(emittedOperationCount, reservedWork) &&
+         work.consume(reservedWork);
 }
 
 struct FreshVerificationResult {
   CanonicalSyncVerifiedPlan plan;
+  CanonicalSyncMaterializedPlanVerification materialized;
   std::size_t workUnits = 0;
   std::uint64_t nanoseconds = 0;
 
@@ -1649,6 +2036,13 @@ struct FreshVerificationResult {
   }
 };
 
+CanonicalSyncMaterializedPlanVerification
+verifyFreshCanonicalSyncMaterializedPlan(
+    const CanonicalSyncProgram &program,
+    const CanonicalSyncPatternProblem &problem,
+    const CanonicalSyncVerifiedPlan &plan,
+    SyncCoverCoverageWorkBudget *workBudget);
+
 FreshVerificationResult
 freshlyVerifySelection(const CanonicalSyncProgram &program,
                        const CanonicalSyncPatternProblem &problem,
@@ -1658,12 +2052,10 @@ freshlyVerifySelection(const CanonicalSyncProgram &program,
   SyncCoverCoverageWorkBudget work(maximumWorkUnits);
   FreshVerificationResult result;
   result.plan = verifyCanonicalSyncSelection(problem, selection, &work);
-  if (result.plan &&
-      (!consumeStagingVerificationWork(program, problem, result.plan, work) ||
-       !stageActions(program, problem, result.plan))) {
-    result.plan.error =
-        work.exhausted ? CanonicalSyncSelectionError::WorkLimitExceeded
-                       : CanonicalSyncSelectionError::FinalValidationFailed;
+  if (result.plan) {
+    result.materialized = verifyFreshCanonicalSyncMaterializedPlan(
+        program, problem, result.plan, &work);
+    result.plan = result.materialized.plan;
   }
   result.workUnits = work.workUnits;
   result.nanoseconds = elapsedNanoseconds(verificationStart);
@@ -1683,6 +2075,12 @@ buildStrategyReport(CanonicalSyncSelectionStrategy strategy,
   report.preciseError = outcome.preciseError;
   report.verificationError = verification.plan.error;
   report.verified = static_cast<bool>(verification.plan);
+  report.materializedPlanVerified =
+      verification.materialized.plan.materializationToken != nullptr;
+  report.wholePlanWorldVerified =
+      verification.materialized.wholePlanWorldVerified;
+  report.lifecycleAutomataVerified =
+      verification.materialized.lifecycleAutomataVerified;
   report.usedLocalizedPipeAll = usedLocalizedPipeAll;
   report.repairFrontierTruncated = outcome.repairFrontierTruncated;
   report.repairBudgetExhausted = outcome.repairBudgetExhausted;
@@ -1699,6 +2097,25 @@ buildStrategyReport(CanonicalSyncSelectionStrategy strategy,
   report.repairNanoseconds = outcome.repairNanoseconds;
   report.verificationNanoseconds = verification.nanoseconds;
   report.verificationWorkUnits = verification.workUnits;
+  report.materializedVerifiedCoverageRows =
+      verification.materialized.verifiedCoverageRows;
+  report.materializedActions = verification.materialized.reconstructedActions;
+  report.materializedEventActions =
+      verification.materialized.reconstructedEventActions;
+  report.materializedBarrierActions =
+      verification.materialized.reconstructedBarrierActions;
+  report.materializedEventChannels =
+      verification.materialized.reconstructedEventChannels;
+  report.materializedEventLanes =
+      verification.materialized.reconstructedEventLanes;
+  report.materializedTailFences =
+      verification.materialized.reconstructedTailFences;
+  report.materializedProtocolMechanisms =
+      verification.materialized.protocolMechanisms;
+  report.materializedLifecycleProtocolMechanisms =
+      verification.materialized.lifecycleProtocolMechanisms;
+  report.materializedDeepProtocolVerifiersRun =
+      verification.materialized.deepProtocolVerifiersRun;
   report.cost = outcome.selection.cost;
   report.search = outcome.selection.statistics;
   report.allocation = verification.plan ? verification.plan.allocation
@@ -2453,6 +2870,10 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
       statistics.loopBoundaryProtocolIncidences;
   report.loopBoundaryProtocolGenerationTruncated =
       statistics.loopBoundaryProtocolGenerationTruncated;
+  report.genericLifecycleGenerationTruncated =
+      statistics.genericLifecycleGenerationTruncated;
+  report.genericLifecycleSynthesisWorkUnits =
+      statistics.genericLifecycleSynthesisWorkUnits;
   report.preparationNanoseconds = preparationNanoseconds;
   return report;
 }
@@ -2597,6 +3018,256 @@ SelectionOutcome takeFallbackSelection(PipeAllFallbackOutcome fallback,
 
 } // namespace
 
+namespace {
+
+CanonicalSyncMaterializedPlanVerification
+verifyFreshCanonicalSyncMaterializedPlan(
+    const CanonicalSyncProgram &program,
+    const CanonicalSyncPatternProblem &problem,
+    const CanonicalSyncVerifiedPlan &plan,
+    SyncCoverCoverageWorkBudget *workBudget) {
+  CanonicalSyncMaterializedPlanVerification result;
+  result.plan.error = plan.error;
+  if (!plan || !plan.allocation.valid || !plan.allocation.feasible ||
+      &problem.getGraph() != &program.getGraph() ||
+      !problem.getExpansion().isForGraph(program.getGraph())) {
+    result.plan.error = CanonicalSyncSelectionError::FinalValidationFailed;
+    return result;
+  }
+
+  SyncCoverCoverageWorkBudget localWork;
+  SyncCoverCoverageWorkBudget &work = workBudget ? *workBudget : localWork;
+  std::size_t irFingerprintWork = 0;
+  if (!consumeStagingVerificationWork(program, problem, plan, work,
+                                      irFingerprintWork)) {
+    result.plan.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+    return result;
+  }
+  result.plan = plan;
+  result.plan.materializationToken.reset();
+  if (!verifyIndependentPhysicalEventIds(problem, result.plan, work)) {
+    result.plan.error =
+        work.exhausted ? CanonicalSyncSelectionError::WorkLimitExceeded
+                       : CanonicalSyncSelectionError::FinalValidationFailed;
+    return result;
+  }
+  CanonicalSyncMechanismOriginMask deepVerifiedOrigins = 0;
+  const CanonicalSyncProblemResult protocolVerification =
+      problem.verifyMaterializedPlanMechanisms(plan.mechanisms, &work,
+                                               &result.deepProtocolVerifiersRun,
+                                               &deepVerifiedOrigins);
+  if (!protocolVerification) {
+    result.plan.error =
+        work.exhausted || protocolVerification.error ==
+                              CanonicalSyncProblemError::LimitExceeded
+            ? CanonicalSyncSelectionError::WorkLimitExceeded
+            : CanonicalSyncSelectionError::FinalValidationFailed;
+    return result;
+  }
+
+  const auto groups = stageActions(program, problem, plan);
+  if (!groups) {
+    result.plan.error = CanonicalSyncSelectionError::FinalValidationFailed;
+    return result;
+  }
+
+  struct EventActionCounts {
+    std::size_t sets = 0;
+    std::size_t waits = 0;
+  };
+  std::map<AllocationKey, EventActionCounts> eventActions;
+  std::size_t expectedActions = 0;
+  std::size_t expectedEventChannels = 0;
+  std::size_t expectedEventLanes = 0;
+  std::size_t expectedTailFences = 0;
+  program.getFunction().walk([&](func::ReturnOp) { ++expectedTailFences; });
+  const CanonicalSyncMechanismOriginMask lifecycleOrigin =
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::GenericLifecycleProtocol);
+  for (CanonicalSyncMechanismId mechanismId : plan.mechanisms) {
+    if (mechanismId >= problem.getMechanisms().size()) {
+      result.plan.error = CanonicalSyncSelectionError::FinalValidationFailed;
+      return result;
+    }
+    const CanonicalSyncMechanism &mechanism =
+        problem.getMechanisms()[mechanismId];
+    if (mechanism.descriptor.kind == CanonicalSyncMechanismKind::Protocol) {
+      ++result.protocolMechanisms;
+    }
+    const bool isLifecycleProtocol =
+        (mechanism.originMask & lifecycleOrigin) != 0;
+    if (isLifecycleProtocol) {
+      ++result.lifecycleProtocolMechanisms;
+    }
+    const bool actionCountOverflows =
+        mechanism.descriptor.actions.size() >
+        std::numeric_limits<std::size_t>::max() - expectedActions;
+    const bool eventChannelCountOverflows =
+        mechanism.descriptor.eventUses.size() >
+        std::numeric_limits<std::size_t>::max() - expectedEventChannels;
+    if (actionCountOverflows || eventChannelCountOverflows) {
+      result.plan.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+      return result;
+    }
+    expectedActions += mechanism.descriptor.actions.size();
+    expectedEventChannels += mechanism.descriptor.eventUses.size();
+    for (const CanonicalSyncEventUse &use : mechanism.descriptor.eventUses) {
+      if (use.width >
+          std::numeric_limits<std::size_t>::max() - expectedEventLanes) {
+        result.plan.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+        return result;
+      }
+      expectedEventLanes += use.width;
+    }
+  }
+
+  for (const ActionGroup &group : *groups) {
+    for (const ConcreteAction &action : group.actions) {
+      if (!work.consume()) {
+        result.plan.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+        return result;
+      }
+      if (action.tailFence) {
+        const bool validTail =
+            !action.mechanism && !action.actionIndex && !action.eventUse &&
+            action.kind == CanonicalSyncActionKind::Barrier && action.before &&
+            action.barrier == PipelineType::PIPE_ALL;
+        if (!validTail) {
+          result.plan.error =
+              CanonicalSyncSelectionError::FinalValidationFailed;
+          return result;
+        }
+        ++result.reconstructedTailFences;
+        continue;
+      }
+      if (!action.mechanism || !action.actionIndex ||
+          *action.mechanism >= problem.getMechanisms().size()) {
+        result.plan.error = CanonicalSyncSelectionError::FinalValidationFailed;
+        return result;
+      }
+      const CanonicalSyncMechanismDescriptor &descriptor =
+          problem.getMechanisms()[*action.mechanism].descriptor;
+      if (*action.actionIndex >= descriptor.actions.size()) {
+        result.plan.error = CanonicalSyncSelectionError::FinalValidationFailed;
+        return result;
+      }
+      const CanonicalSyncAction &abstract =
+          descriptor.actions[*action.actionIndex];
+      const bool sameAction =
+          abstract.kind == action.kind &&
+          std::tie(abstract.anchor.kind, abstract.anchor.node,
+                   abstract.anchor.scope, abstract.anchor.position) ==
+              std::tie(action.abstractAnchor.kind, action.abstractAnchor.node,
+                       action.abstractAnchor.scope,
+                       action.abstractAnchor.position) &&
+          abstract.eventUse == action.eventUse &&
+          abstract.eventLane == action.eventLane;
+      if (!sameAction) {
+        result.plan.error = CanonicalSyncSelectionError::FinalValidationFailed;
+        return result;
+      }
+      ++result.reconstructedActions;
+      if (action.kind == CanonicalSyncActionKind::Barrier) {
+        ++result.reconstructedBarrierActions;
+        continue;
+      }
+      if (!action.eventUse) {
+        result.plan.error = CanonicalSyncSelectionError::FinalValidationFailed;
+        return result;
+      }
+      EventActionCounts &counts =
+          eventActions[{*action.mechanism, *action.eventUse}];
+      if (action.kind == CanonicalSyncActionKind::EventSet) {
+        ++counts.sets;
+      } else if (action.kind == CanonicalSyncActionKind::EventWait) {
+        ++counts.waits;
+      } else {
+        result.plan.error = CanonicalSyncSelectionError::FinalValidationFailed;
+        return result;
+      }
+      ++result.reconstructedEventActions;
+    }
+  }
+  const bool everyEventChannelBalanced =
+      llvm::all_of(eventActions, [](const auto &entry) {
+        return entry.second.sets != 0 && entry.second.waits != 0;
+      });
+  const bool reconstructedExactly =
+      result.reconstructedActions == expectedActions &&
+      eventActions.size() == expectedEventChannels &&
+      result.reconstructedTailFences == expectedTailFences &&
+      result.reconstructedEventActions + result.reconstructedBarrierActions ==
+          result.reconstructedActions &&
+      everyEventChannelBalanced;
+  if (!reconstructedExactly) {
+    result.plan.error = CanonicalSyncSelectionError::FinalValidationFailed;
+    return result;
+  }
+
+  result.reconstructedEventChannels = expectedEventChannels;
+  result.reconstructedEventLanes = expectedEventLanes;
+  result.verifiedCoverageRows = problem.getObligationDemands().size();
+  // The semantic selection proof, exact allocation, deep protocol-family
+  // world, and reconstructed physical actions are now bound together.  Only
+  // this boundary may publish whole-plan physical-world verification.
+  result.plan.wholePlanWorldVerified = true;
+  result.wholePlanWorldVerified = true;
+  result.actionsReconstructed = true;
+  result.lifecycleAutomataVerified =
+      result.lifecycleProtocolMechanisms == 0 ||
+      (deepVerifiedOrigins & lifecycleOrigin) != 0;
+  if (!result.lifecycleAutomataVerified) {
+    result.plan.error = CanonicalSyncSelectionError::FinalValidationFailed;
+    return result;
+  }
+  result.plan.materializationToken =
+      std::make_shared<const CanonicalSyncMaterializationToken>(
+          &program, &problem, result.plan.mechanisms, result.plan.allocation,
+          OperationFingerPrint(program.getFunction()), irFingerprintWork);
+  return result;
+}
+
+} // namespace
+
+CanonicalSyncMaterializedPlanVerification
+mlir::pto::verifyCanonicalSyncMaterializedPlan(
+    const CanonicalSyncProgram &program,
+    const CanonicalSyncPatternProblem &problem,
+    const CanonicalSyncVerifiedPlan &plan,
+    SyncCoverCoverageWorkBudget *workBudget) {
+  CanonicalSyncMaterializedPlanVerification result;
+  result.plan.error = CanonicalSyncSelectionError::FinalValidationFailed;
+  if (!plan || !plan.allocation.valid || !plan.allocation.feasible) {
+    return result;
+  }
+  SyncCoverCoverageWorkBudget localWork;
+  SyncCoverCoverageWorkBudget &work = workBudget ? *workBudget : localWork;
+  if (!work.consume(plan.mechanisms.size())) {
+    result.plan.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+    return result;
+  }
+  CanonicalSyncSelection selection;
+  selection.mechanisms = plan.mechanisms;
+  CanonicalSyncVerifiedPlan fresh =
+      verifyCanonicalSyncSelection(problem, selection, &work);
+  if (!fresh) {
+    result.plan = std::move(fresh);
+    return result;
+  }
+  const std::optional<bool> allocationMatches =
+      meteredSameResourceAllocation(fresh.allocation, plan.allocation, work);
+  if (!allocationMatches) {
+    result.plan.error = CanonicalSyncSelectionError::WorkLimitExceeded;
+    return result;
+  }
+  if (!*allocationMatches) {
+    result.plan.error = CanonicalSyncSelectionError::FinalValidationFailed;
+    return result;
+  }
+  return verifyFreshCanonicalSyncMaterializedPlan(program, problem, fresh,
+                                                  &work);
+}
+
 bool mlir::pto::prepareCanonicalSyncRepairTrial(
     CanonicalSyncGreedyOptions &trialOptions,
     ArrayRef<CanonicalSyncMechanismId> allRepairMechanisms,
@@ -2711,7 +3382,29 @@ LogicalResult mlir::pto::materializeCanonicalSyncPlan(
     const CanonicalSyncProgram &program,
     const CanonicalSyncPatternProblem &problem,
     const CanonicalSyncVerifiedPlan &plan) {
-  if (!plan || !plan.allocation.valid || !plan.allocation.feasible) {
+  const std::shared_ptr<const CanonicalSyncMaterializationToken> token =
+      plan.materializationToken;
+  SyncCoverCoverageWorkBudget identityWork;
+  const std::optional<bool> identityMatches =
+      token ? meteredSamePlanIdentity(token->mechanisms_, token->allocation_,
+                                      plan.mechanisms, plan.allocation,
+                                      identityWork)
+            : std::optional<bool>(false);
+  const std::optional<std::size_t> currentFingerprintWork =
+      token ? measureOperationFingerprintWork(program.getFunction(),
+                                              token->irFingerprintWork_)
+            : std::nullopt;
+  const bool irMatches =
+      token && currentFingerprintWork &&
+      *currentFingerprintWork == token->irFingerprintWork_ &&
+      token->irFingerprint_ == OperationFingerPrint(program.getFunction());
+  const bool tokenMatches =
+      token && token->program_ == &program && token->problem_ == &problem &&
+      &problem.getGraph() == &program.getGraph() &&
+      problem.getExpansion().isForGraph(program.getGraph()) &&
+      identityMatches && *identityMatches && irMatches;
+  if (!plan || !tokenMatches || !plan.allocation.valid ||
+      !plan.allocation.feasible) {
     return program.getFunction().emitError(
         "cannot materialize an unverified canonical sync plan");
   }

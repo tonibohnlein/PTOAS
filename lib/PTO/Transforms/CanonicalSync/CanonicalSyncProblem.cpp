@@ -2258,6 +2258,7 @@ struct CanonicalSyncPatternProblem::MutableBatchJournal {
 
   std::size_t mechanismCount = 0;
   std::size_t protocolVerifierCount = 0;
+  std::size_t materializedPlanVerifierCount = 0;
   std::size_t patternSpecCount = 0;
   std::size_t singletonCoverageCount = 0;
   std::size_t actionCount = 0;
@@ -2340,6 +2341,7 @@ CanonicalSyncPatternProblem::CanonicalSyncPatternProblem(
       domains_(preciseProblem.domains_),
       mechanisms_(preciseProblem.mechanisms_),
       protocolVerifiers_(preciseProblem.protocolVerifiers_),
+      materializedPlanVerifiers_(preciseProblem.materializedPlanVerifiers_),
       patternGenerationTruncated_(preciseProblem.patternGenerationTruncated_),
       patterns_(preciseProblem.patterns_),
       patternStatistics_(preciseProblem.patternStatistics_),
@@ -2396,6 +2398,7 @@ CanonicalSyncPatternProblem::cloneMutableRepairPrefix(
       consumeCopies(activeDemands_.size()) && consumeCopies(domains_.size()) &&
       consumeCopies(mechanisms_.size()) &&
       consumeCopies(protocolVerifiers_.size()) &&
+      consumeCopies(materializedPlanVerifiers_.size()) &&
       consumeCopies(patterns_.size()) &&
       consumeCopies(repairEventSeeds_.size()) &&
       consumeCopies(baselineCoverage_.getWords().size(), 3);
@@ -2775,6 +2778,87 @@ CanonicalSyncPatternProblem::verifyMechanismDescriptor(
   return {};
 }
 
+CanonicalSyncProblemResult
+CanonicalSyncPatternProblem::verifyMaterializedPlanMechanisms(
+    const std::vector<CanonicalSyncMechanismId> &mechanisms,
+    SyncCoverCoverageWorkBudget *workBudget, std::size_t *verifiersRun,
+    CanonicalSyncMechanismOriginMask *verifiedOrigins) const {
+  if (verifiersRun) {
+    *verifiersRun = 0;
+  }
+  if (verifiedOrigins) {
+    *verifiedOrigins = 0;
+  }
+  SyncCoverCoverageWorkBudget localWork;
+  SyncCoverCoverageWorkBudget &work = workBudget ? *workBudget : localWork;
+  std::size_t normalizationWork = 0;
+  const bool normalizationWorkUnavailable =
+      !checkedMultiply(mechanisms.size(), 2, normalizationWork) ||
+      !work.consume(normalizationWork);
+  if (normalizationWorkUnavailable) {
+    return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
+  }
+  const bool normalized =
+      frozen_ && std::is_sorted(mechanisms.begin(), mechanisms.end()) &&
+      std::adjacent_find(mechanisms.begin(), mechanisms.end()) ==
+          mechanisms.end();
+  if (!normalized) {
+    return {CanonicalSyncProblemError::InvalidMechanism, std::nullopt};
+  }
+  for (CanonicalSyncMechanismId mechanism : mechanisms) {
+    if (mechanism >= mechanisms_.size()) {
+      return {CanonicalSyncProblemError::InvalidMechanism, mechanism};
+    }
+  }
+  for (std::size_t verifierIndex = 0;
+       verifierIndex < materializedPlanVerifiers_.size(); ++verifierIndex) {
+    const MaterializedPlanVerifierEntry &entry =
+        materializedPlanVerifiers_[verifierIndex];
+    if (entry.origins == 0 || !entry.verifier) {
+      return {CanonicalSyncProblemError::UnverifiedProtocol, verifierIndex};
+    }
+    std::vector<CanonicalSyncMaterializedMechanismView> selected;
+    CanonicalSyncMechanismOriginMask selectedOrigins = 0;
+    if (!work.consume(mechanisms.size())) {
+      return {CanonicalSyncProblemError::LimitExceeded, verifierIndex};
+    }
+    selected.reserve(mechanisms.size());
+    for (CanonicalSyncMechanismId mechanism : mechanisms) {
+      if (!work.consume()) {
+        return {CanonicalSyncProblemError::LimitExceeded, verifierIndex};
+      }
+      const CanonicalSyncMechanism &candidate = mechanisms_[mechanism];
+      const bool selectedForVerifier =
+          (candidate.originMask & entry.origins) != 0;
+      if (!selectedForVerifier) {
+        continue;
+      }
+      selected.push_back(
+          {mechanism, candidate.originMask, &candidate.descriptor});
+      selectedOrigins |= candidate.originMask & entry.origins;
+    }
+    if (selected.empty()) {
+      continue;
+    }
+    const CanonicalSyncProblemError verified =
+        (*entry.verifier)(selected, work);
+    if (work.exhausted ||
+        verified == CanonicalSyncProblemError::LimitExceeded) {
+      return {CanonicalSyncProblemError::LimitExceeded, verifierIndex};
+    }
+    if (verified != CanonicalSyncProblemError::None) {
+      return {CanonicalSyncProblemError::UnverifiedProtocol, verifierIndex};
+    }
+    if (verifiersRun) {
+      ++*verifiersRun;
+    }
+    if (verifiedOrigins) {
+      *verifiedOrigins |= selectedOrigins;
+    }
+  }
+  return {};
+}
+
 std::uint64_t CanonicalSyncPatternProblem::getMechanismSignature(
     CanonicalSyncMechanismId mechanism) const {
   return mechanism < mechanisms_.size()
@@ -2869,6 +2953,33 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::internVerifiedProtocol(
     CanonicalSyncMechanismOrigin origin) {
   return internMechanismImpl(std::move(descriptor), true, std::move(verifier),
                              origin);
+}
+
+CanonicalSyncProblemResult
+CanonicalSyncPatternProblem::addMaterializedPlanVerifier(
+    CanonicalSyncMechanismOriginMask origins,
+    CanonicalSyncMaterializedPlanVerifier verifier) {
+  if (frozen_) {
+    return {CanonicalSyncProblemError::Frozen, std::nullopt};
+  }
+  const CanonicalSyncMechanismOriginMask validOrigins =
+      (CanonicalSyncMechanismOriginMask{1}
+       << kCanonicalSyncMechanismOriginCount) -
+      1;
+  const bool invalidOrigins = origins == 0 || (origins & ~validOrigins) != 0;
+  const bool verifierCapacityExceeded =
+      materializedPlanVerifiers_.size() >= kCanonicalSyncMechanismOriginCount;
+  if (invalidOrigins || !verifier || verifierCapacityExceeded) {
+    return {CanonicalSyncProblemError::InvalidMechanism, std::nullopt};
+  }
+  if (constructionWorkBudget_ && !constructionWorkBudget_->consume()) {
+    return {CanonicalSyncProblemError::LimitExceeded, std::nullopt};
+  }
+  materializedPlanVerifiers_.push_back(
+      {origins, std::make_shared<const CanonicalSyncMaterializedPlanVerifier>(
+                    std::move(verifier))});
+  return {CanonicalSyncProblemError::None,
+          materializedPlanVerifiers_.size() - 1};
 }
 
 CanonicalSyncProblemResult CanonicalSyncPatternProblem::internMechanismImpl(
@@ -3410,6 +3521,7 @@ void CanonicalSyncPatternProblem::rollbackMutableBatch(
   patternSpecs_.resize(journal.patternSpecCount);
   constructionSingletonCoverage_.resize(journal.singletonCoverageCount);
   protocolVerifiers_.resize(journal.protocolVerifierCount);
+  materializedPlanVerifiers_.resize(journal.materializedPlanVerifierCount);
   mechanisms_.resize(journal.mechanismCount);
   actionCount_ = journal.actionCount;
   eventUseCount_ = journal.eventUseCount;
@@ -3533,6 +3645,7 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::addRepairFrontierBatch(
   MutableBatchJournal journal;
   journal.mechanismCount = mechanisms_.size();
   journal.protocolVerifierCount = protocolVerifiers_.size();
+  journal.materializedPlanVerifierCount = materializedPlanVerifiers_.size();
   journal.patternSpecCount = patternSpecs_.size();
   journal.singletonCoverageCount = constructionSingletonCoverage_.size();
   journal.actionCount = actionCount_;
@@ -3987,6 +4100,10 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns(
       patternStatistics_.loopBoundaryProtocolIncidences;
   const bool loopBoundaryProtocolGenerationTruncated =
       patternStatistics_.loopBoundaryProtocolGenerationTruncated;
+  const bool genericLifecycleGenerationTruncated =
+      patternStatistics_.genericLifecycleGenerationTruncated;
+  const std::size_t genericLifecycleSynthesisWorkUnits =
+      patternStatistics_.genericLifecycleSynthesisWorkUnits;
   patternStatistics = {};
   patternStatistics.directPairProposals = directPairProposals;
   patternStatistics.directPairEvaluations = directPairEvaluations;
@@ -4012,6 +4129,10 @@ CanonicalSyncProblemResult CanonicalSyncPatternProblem::buildPatterns(
       loopBoundaryProtocolIncidences;
   patternStatistics.loopBoundaryProtocolGenerationTruncated =
       loopBoundaryProtocolGenerationTruncated;
+  patternStatistics.genericLifecycleGenerationTruncated =
+      genericLifecycleGenerationTruncated;
+  patternStatistics.genericLifecycleSynthesisWorkUnits =
+      genericLifecycleSynthesisWorkUnits;
   patterns.clear();
   patterns.reserve(mechanisms_.size() + patternSpecs_.size());
   for (const CanonicalSyncMechanism &mechanism : mechanisms_) {

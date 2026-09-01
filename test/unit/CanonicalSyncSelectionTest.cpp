@@ -2999,6 +2999,98 @@ bool testVerifiedProtocolTrustBoundary() {
   return passed;
 }
 
+bool testMaterializedProtocolVerificationIsOriginSpecific() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 31}, true),
+                passed, "add materialized-verifier loop");
+  const SyncCoverNodeId basicSource =
+      takeIndex(graph.addNode(1, 1, loop, 1, {}, {2}), passed,
+                "add basic materialized-verifier source");
+  const SyncCoverNodeId basicTarget =
+      takeIndex(graph.addNode(2, 1, loop, 2), passed,
+                "add basic materialized-verifier target");
+  const SyncCoverNodeId lifecycleSource =
+      takeIndex(graph.addNode(1, 1, loop, 3, {}, {2}), passed,
+                "add lifecycle materialized-verifier source");
+  const SyncCoverNodeId lifecycleTarget =
+      takeIndex(graph.addNode(2, 1, loop, 4), passed,
+                "add lifecycle materialized-verifier target");
+  passed &= check(graph.addDemand(demand(basicSource, basicTarget, loop, 1)),
+                  "add basic materialized-verifier demand");
+  passed &=
+      check(graph.addDemand(demand(lifecycleSource, lifecycleTarget, loop, 1)),
+            "add lifecycle materialized-verifier demand");
+  passed &=
+      check(graph.freezeStructure(), "freeze materialized-verifier graph");
+  if (!passed) {
+    return false;
+  }
+
+  CanonicalSyncPatternProblem problem(graph, allDemands(graph));
+  passed &= check(problem.addEventDomain({0, 1, 2, 4, {}}),
+                  "add materialized-verifier event domain");
+  const CanonicalSyncProtocolVerifier verifier = testProtocolVerifier(
+      [](const CanonicalSyncMechanismDescriptor &candidate) {
+        return candidate.kind == CanonicalSyncMechanismKind::Protocol;
+      });
+  const CanonicalSyncProblemResult basic = problem.internVerifiedProtocol(
+      protocol(0, 1, 2, basicSource, basicTarget, loop, 1, 1), verifier,
+      CanonicalSyncMechanismOrigin::BasicOwnershipStableL1Protocol);
+  const CanonicalSyncProblemResult lifecycle = problem.internVerifiedProtocol(
+      protocol(0, 1, 2, lifecycleSource, lifecycleTarget, loop, 1, 1), verifier,
+      CanonicalSyncMechanismOrigin::GenericLifecycleProtocol);
+  const CanonicalSyncMechanismOriginMask basicOrigin =
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::BasicOwnershipStableL1Protocol);
+  const CanonicalSyncMechanismOriginMask lifecycleOrigin =
+      canonicalSyncMechanismOriginBit(
+          CanonicalSyncMechanismOrigin::GenericLifecycleProtocol);
+  passed &= check(basic && basic.index && lifecycle && lifecycle.index,
+                  "admit two independently originated protocols");
+  passed &= check(
+      problem.addMaterializedPlanVerifier(
+          basicOrigin,
+          [basicOrigin](
+              const std::vector<CanonicalSyncMaterializedMechanismView> &views,
+              SyncCoverCoverageWorkBudget &work) {
+            if (!work.consume(views.size())) {
+              return CanonicalSyncProblemError::LimitExceeded;
+            }
+            const bool exactOrigin =
+                !views.empty() &&
+                std::all_of(views.begin(), views.end(),
+                            [basicOrigin](const auto &view) {
+                              return view.descriptor != nullptr &&
+                                     (view.originMask & basicOrigin) != 0;
+                            });
+            return exactOrigin ? CanonicalSyncProblemError::None
+                               : CanonicalSyncProblemError::UnverifiedProtocol;
+          }),
+      "register only the basic protocol's deep verifier");
+  passed &= check(problem.freeze(), "freeze materialized-verifier problem");
+  if (!passed) {
+    return false;
+  }
+
+  std::vector<CanonicalSyncMechanismId> selected = {*basic.index,
+                                                    *lifecycle.index};
+  std::sort(selected.begin(), selected.end());
+  std::size_t verifiersRun = 0;
+  CanonicalSyncMechanismOriginMask verifiedOrigins = 0;
+  const CanonicalSyncProblemResult verified =
+      problem.verifyMaterializedPlanMechanisms(selected, nullptr, &verifiersRun,
+                                               &verifiedOrigins);
+  return check(verified && verifiersRun == 1,
+               "run the one applicable materialized protocol verifier") &&
+         check((verifiedOrigins & basicOrigin) != 0,
+               "record the origin actually covered by the deep verifier") &&
+         check((verifiedOrigins & lifecycleOrigin) == 0,
+               "do not certify generic lifecycle through an unrelated deep "
+               "verifier");
+}
+
 bool testProtocolVerifierStorageSharesOpaqueCapture() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -5138,6 +5230,7 @@ int main() {
       testOptionalPipelineFallback() && testReservationsAndFinalValidation() &&
       testAllocatorWidthsReuseAndConflicts() &&
       testVerifiedProtocolTrustBoundary() &&
+      testMaterializedProtocolVerificationIsOriginSpecific() &&
       testProtocolVerifierStorageSharesOpaqueCapture() &&
       testRepairFrontierBatchRollsBackPartialCommit() &&
       testRepairFrontierBatchRollsBackFreshCaches() &&

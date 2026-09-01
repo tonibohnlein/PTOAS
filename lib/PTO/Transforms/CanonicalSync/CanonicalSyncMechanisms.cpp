@@ -145,6 +145,7 @@ getCandidateConfigurationSignature(const CanonicalSyncBuildOptions &options) {
   add(options.patterns.maximumLoopBoundaryProtocolInspections);
   add(options.patterns.maximumLoopBoundaryProtocolCandidates);
   add(options.patterns.maximumLoopBoundaryProtocolIncidences);
+  add(options.maximumLifecycleSynthesisWorkUnits);
   add(options.directPairs.maximumEvaluationsPerScope);
   add(options.directPairs.maximumConnectorIndexEntries);
   add(options.directPairs.maximumConnectorInspections);
@@ -2120,6 +2121,95 @@ bool ownershipBindingEqual(const CanonicalSyncSupplyBinding &left,
                       right.applicability);
 }
 
+bool ownershipBindingLess(const CanonicalSyncSupplyBinding &left,
+                          const CanonicalSyncSupplyBinding &right) {
+  const auto edgeKey = [](const SyncCoverEdge &edge) {
+    return std::tie(edge.source, edge.target, edge.scope, edge.distance,
+                    edge.kind, edge.suppliedRequirements,
+                    edge.sourceGuard.literals, edge.targetGuard.literals);
+  };
+  if (edgeKey(left.edge) != edgeKey(right.edge)) {
+    return edgeKey(left.edge) < edgeKey(right.edge);
+  }
+  return std::tie(left.allowedDemands, left.attestedDemand, left.applicability,
+                  left.eventUse, left.barrierAction, left.produceAction,
+                  left.consumeAction, left.proof, left.completionExport) <
+         std::tie(right.allowedDemands, right.attestedDemand,
+                  right.applicability, right.eventUse, right.barrierAction,
+                  right.produceAction, right.consumeAction, right.proof,
+                  right.completionExport);
+}
+
+bool consumeOwnershipBindingComparisonWork(
+    const CanonicalSyncSupplyBinding &left,
+    const CanonicalSyncSupplyBinding &right,
+    SyncCoverCoverageWorkBudget &work) {
+  std::size_t comparisonWork = 1;
+  const bool workOverflows =
+      !checkedProtocolAdd(comparisonWork, left.edge.sourceGuard.literals.size(),
+                          work) ||
+      !checkedProtocolAdd(comparisonWork, left.edge.targetGuard.literals.size(),
+                          work) ||
+      !checkedProtocolAdd(comparisonWork, left.allowedDemands.size(), work) ||
+      !checkedProtocolAdd(comparisonWork,
+                          right.edge.sourceGuard.literals.size(), work) ||
+      !checkedProtocolAdd(comparisonWork,
+                          right.edge.targetGuard.literals.size(), work) ||
+      !checkedProtocolAdd(comparisonWork, right.allowedDemands.size(), work);
+  return !workOverflows && work.consume(comparisonWork);
+}
+
+bool stableSortOwnershipBindingPointers(
+    std::vector<const CanonicalSyncSupplyBinding *> &bindings,
+    SyncCoverCoverageWorkBudget &work) {
+  if (bindings.size() < 2) {
+    return true;
+  }
+  if (!work.consume(bindings.size())) {
+    return false;
+  }
+  std::vector<const CanonicalSyncSupplyBinding *> scratch(bindings.size());
+  for (std::size_t width = 1; width < bindings.size();) {
+    if (!work.consume(bindings.size())) {
+      return false;
+    }
+    for (std::size_t begin = 0; begin < bindings.size();) {
+      const std::size_t middle =
+          begin + std::min(width, bindings.size() - begin);
+      const std::size_t end =
+          middle + std::min(width, bindings.size() - middle);
+      std::size_t left = begin;
+      std::size_t right = middle;
+      std::size_t output = begin;
+      while (left < middle && right < end) {
+        if (!consumeOwnershipBindingComparisonWork(*bindings[left],
+                                                   *bindings[right], work)) {
+          return false;
+        }
+        if (ownershipBindingLess(*bindings[right], *bindings[left])) {
+          scratch[output++] = bindings[right++];
+        } else {
+          scratch[output++] = bindings[left++];
+        }
+      }
+      while (left < middle) {
+        scratch[output++] = bindings[left++];
+      }
+      while (right < end) {
+        scratch[output++] = bindings[right++];
+      }
+      begin = end;
+    }
+    bindings.swap(scratch);
+    const std::size_t remainingWidth = bindings.size() - width;
+    if (width >= remainingWidth) {
+      break;
+    }
+    width *= 2;
+  }
+  return true;
+}
+
 bool ownershipDescriptorEqual(const CanonicalSyncMechanismDescriptor &left,
                               const CanonicalSyncMechanismDescriptor &right,
                               SyncCoverCoverageWorkBudget &work) {
@@ -2156,39 +2246,36 @@ bool ownershipDescriptorEqual(const CanonicalSyncMechanismDescriptor &left,
       return false;
     }
   }
-  std::vector<bool> matched(right.supplies.size(), false);
+  // The public fresh-verification boundary accepts a descriptor by value and
+  // invokes the persistent protocol verifier before common admission
+  // canonicalization. Normalize lightweight pointers on both sides, then
+  // compare the exact bindings linearly. This avoids both a deep descriptor
+  // copy and quadratic matching.
+  if (!work.consume(left.supplies.size()) ||
+      !work.consume(right.supplies.size())) {
+    return false;
+  }
+  std::vector<const CanonicalSyncSupplyBinding *> normalizedLeft;
+  std::vector<const CanonicalSyncSupplyBinding *> normalizedRight;
+  normalizedLeft.reserve(left.supplies.size());
+  normalizedRight.reserve(right.supplies.size());
   for (const CanonicalSyncSupplyBinding &binding : left.supplies) {
-    std::optional<std::size_t> found;
-    for (std::size_t index = 0; index < right.supplies.size(); ++index) {
-      const CanonicalSyncSupplyBinding &candidate = right.supplies[index];
-      std::size_t comparisonWork = 1;
-      const bool workOverflows =
-          !checkedProtocolAdd(comparisonWork,
-                              binding.edge.sourceGuard.literals.size(), work) ||
-          !checkedProtocolAdd(comparisonWork,
-                              binding.edge.targetGuard.literals.size(), work) ||
-          !checkedProtocolAdd(comparisonWork, binding.allowedDemands.size(),
-                              work) ||
-          !checkedProtocolAdd(comparisonWork,
-                              candidate.edge.sourceGuard.literals.size(),
-                              work) ||
-          !checkedProtocolAdd(comparisonWork,
-                              candidate.edge.targetGuard.literals.size(),
-                              work) ||
-          !checkedProtocolAdd(comparisonWork, candidate.allowedDemands.size(),
-                              work);
-      if (workOverflows || !work.consume(comparisonWork)) {
-        return false;
-      }
-      if (!matched[index] && ownershipBindingEqual(binding, candidate)) {
-        found = index;
-        break;
-      }
-    }
-    if (!found) {
+    normalizedLeft.push_back(&binding);
+  }
+  for (const CanonicalSyncSupplyBinding &binding : right.supplies) {
+    normalizedRight.push_back(&binding);
+  }
+  if (!stableSortOwnershipBindingPointers(normalizedLeft, work) ||
+      !stableSortOwnershipBindingPointers(normalizedRight, work)) {
+    return false;
+  }
+  for (std::size_t index = 0; index < left.supplies.size(); ++index) {
+    const CanonicalSyncSupplyBinding &binding = *normalizedLeft[index];
+    const CanonicalSyncSupplyBinding &candidate = *normalizedRight[index];
+    if (!consumeOwnershipBindingComparisonWork(binding, candidate, work) ||
+        !ownershipBindingEqual(binding, candidate)) {
       return false;
     }
-    matched[*found] = true;
   }
   return true;
 }
@@ -3425,6 +3512,126 @@ SyncCoverProtocolTargetContract makeProtocolTargetContract(
   return result;
 }
 
+bool accumulateGenericProtocolPayload(const SyncCoverEventProtocol &protocol,
+                                      std::size_t &payload,
+                                      SyncCoverCoverageWorkBudget &work) {
+  if (!checkedProtocolAdd(payload, 1, work) ||
+      !checkedProtocolAdd(payload, protocol.rearmProofs.size(), work)) {
+    return false;
+  }
+  if (protocol.loop &&
+      !checkedProtocolAdd(payload, protocol.loop->laneByPhase.size(), work)) {
+    return false;
+  }
+  for (const SyncCoverEventChannel &channel : protocol.channels) {
+    if (!checkedProtocolAdd(payload, 1, work) ||
+        !checkedProtocolAdd(payload, channel.activePhases.size(), work) ||
+        !checkedProtocolAdd(payload, channel.transfers.size(), work) ||
+        !checkedProtocolAdd(payload, channel.actions.size(), work) ||
+        !checkedProtocolAdd(payload, channel.supplies.size(), work) ||
+        !checkedProtocolAdd(payload, channel.set.guard.literals.size(), work) ||
+        !checkedProtocolAdd(payload, channel.wait.guard.literals.size(),
+                            work)) {
+      return false;
+    }
+    for (const SyncCoverEventTransfer &transfer : channel.transfers) {
+      if (!checkedProtocolAdd(payload, transfer.activePhases.size(), work) ||
+          !checkedProtocolAdd(payload, transfer.set.guard.literals.size(),
+                              work) ||
+          !checkedProtocolAdd(payload, transfer.wait.guard.literals.size(),
+                              work)) {
+        return false;
+      }
+    }
+    for (const SyncCoverProtocolAction &action : channel.actions) {
+      if (!checkedProtocolAdd(payload, action.activePhases.size(), work) ||
+          !checkedProtocolAdd(payload, action.point.guard.literals.size(),
+                              work)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool reserveGenericDescriptorFactoryWork(
+    const SyncCoverGraph &graph, const SyncCoverLifecycleProposal &proposal,
+    const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds,
+    SyncCoverCoverageWorkBudget &work) {
+  std::size_t total = graph.getDemands().size();
+  std::size_t domainLookupWork = 0;
+  if (!checkedOrderedLookupWork(domainIds.size() + 1, domainLookupWork)) {
+    work.exhausted = true;
+    return false;
+  }
+  for (const SyncCoverEventProtocol &protocol : proposal.protocols) {
+    if (!accumulateGenericProtocolPayload(protocol, total, work)) {
+      return false;
+    }
+    for (const SyncCoverEventChannel &channel : protocol.channels) {
+      std::size_t actionCount = channel.actions.size();
+      if (channel.actions.empty()) {
+        const std::size_t carryLanes =
+            channel.flow == SyncCoverEventChannelFlow::LoopCarry ? channel.width
+                                                                 : 0;
+        const bool actionCountUnavailable =
+            !checkedProtocolAdd(actionCount, carryLanes, work) ||
+            !checkedProtocolAdd(actionCount, carryLanes, work) ||
+            !checkedProtocolAdd(actionCount, channel.transfers.size(), work) ||
+            !checkedProtocolAdd(actionCount, channel.transfers.size(), work);
+        if (actionCountUnavailable) {
+          return false;
+        }
+      }
+      if (!checkedProtocolAdd(total, domainLookupWork, work) ||
+          !checkedProtocolAdd(total, actionCount, work)) {
+        return false;
+      }
+    }
+  }
+  // One scan constructs the exact supply list and the resulting bindings own
+  // one demand ID each. Covered bindings also copy both endpoint guards into
+  // their completion-supply edge. Charge every guard literal before descriptor
+  // allocation.
+  if (!checkedProtocolAdd(total, graph.getDemands().size(), work)) {
+    return false;
+  }
+  for (SyncCoverDemandId demand = 0; demand < graph.getDemands().size();
+       ++demand) {
+    if (!proposal.exactCoverage.contains(demand)) {
+      continue;
+    }
+    const SyncCoverDemand &covered = graph.getDemands()[demand];
+    if (!checkedProtocolAdd(total, covered.sourceGuard.literals.size(), work) ||
+        !checkedProtocolAdd(total, covered.targetGuard.literals.size(), work)) {
+      return false;
+    }
+  }
+  return work.consume(total);
+}
+
+bool reserveGenericProtocolCopyWork(
+    ArrayRef<SyncCoverLifecycleProposal> proposals,
+    ArrayRef<
+        std::pair<const CanonicalSyncMaterializedMechanismView *, std::size_t>>
+        selected,
+    SyncCoverCoverageWorkBudget &work) {
+  std::size_t payload = 0;
+  for (const auto &[mechanism, proposalId] : selected) {
+    (void)mechanism;
+    if (proposalId >= proposals.size()) {
+      return false;
+    }
+    for (const SyncCoverEventProtocol &protocol :
+         proposals[proposalId].protocols) {
+      if (!accumulateGenericProtocolPayload(protocol, payload, work)) {
+        return false;
+      }
+    }
+  }
+  return work.consume(payload);
+}
+
 std::optional<CanonicalSyncMechanismDescriptor> makeGenericLifecycleDescriptor(
     const SyncCoverGraph &graph, const SyncCoverLifecycleProposal &proposal,
     const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds) {
@@ -3558,10 +3765,14 @@ CanonicalSyncProblemResult internGenericLifecycleProtocol(
         // verification and exact-world grounding.  Re-running that graph-wide
         // proof every time the set-cover problem inspects the same mechanism
         // is quadratic in selection rounds.  Bind the selectable descriptor to
-        // the frozen certified recipe here. The family remains opt-in until
-        // Commit 11 independently rebuilds and verifies the complete
-        // materialized plan before mutation.
+        // the frozen certified recipe here. The experimental family remains
+        // opt-in and independently rebuilds the complete selected lifecycle
+        // world at the materialization boundary.
         (void)frozenTarget;
+        if (!reserveGenericDescriptorFactoryWork(graph, frozenProposal,
+                                                 frozenDomains, work)) {
+          return CanonicalSyncProblemError::LimitExceeded;
+        }
         const std::optional<CanonicalSyncMechanismDescriptor> expected =
             makeGenericLifecycleDescriptor(graph, frozenProposal,
                                            frozenDomains);
@@ -3578,6 +3789,8 @@ LogicalResult addGenericLifecycleProtocols(
     ArrayRef<SyncCoverLifecycleProposal> proposals) {
   const SyncCoverProtocolTargetContract target =
       makeProtocolTargetContract(program.getTargetCapabilities());
+  std::vector<std::pair<CanonicalSyncMechanismId, std::size_t>>
+      proposalByMechanism;
   for (const SyncCoverLifecycleProposal &proposal : proposals) {
     const CanonicalSyncProblemResult added = internGenericLifecycleProtocol(
         problem, program.getGraph(), target, proposal, domainIds);
@@ -3586,6 +3799,165 @@ LogicalResult addGenericLifecycleProtocols(
                  "cannot add generic canonical sync lifecycle proposal ")
              << proposal.id << ", error=" << static_cast<unsigned>(added.error);
     }
+    if (added.index) {
+      proposalByMechanism.emplace_back(*added.index, proposal.id);
+    }
+  }
+  if (proposalByMechanism.empty()) {
+    return success();
+  }
+  std::sort(proposalByMechanism.begin(), proposalByMechanism.end());
+  proposalByMechanism.erase(
+      std::unique(proposalByMechanism.begin(), proposalByMechanism.end(),
+                  [](const auto &left, const auto &right) {
+                    return left.first == right.first;
+                  }),
+      proposalByMechanism.end());
+  const SyncCoverGraph &graph = program.getGraph();
+  const auto frozenDomains = domainIds;
+  const CanonicalSyncProblemResult verifier =
+      problem.addMaterializedPlanVerifier(
+          canonicalSyncMechanismOriginBit(
+              CanonicalSyncMechanismOrigin::GenericLifecycleProtocol),
+          [&graph, target, frozenDomains, proposalByMechanism](
+              const std::vector<CanonicalSyncMaterializedMechanismView>
+                  &selected,
+              SyncCoverCoverageWorkBudget &work) {
+            const SyncCoverLifecycleSynthesisResult fresh =
+                synthesizeSyncCoverLifecycleCertificates(graph, target, {},
+                                                         &work);
+            if (!fresh) {
+              return fresh.error == SyncCoverProtocolError::WorkLimitExceeded ||
+                             fresh.error ==
+                                 SyncCoverProtocolError::LimitExceeded
+                         ? CanonicalSyncProblemError::LimitExceeded
+                         : CanonicalSyncProblemError::UnverifiedProtocol;
+            }
+            if (!work.consume(selected.size())) {
+              return CanonicalSyncProblemError::LimitExceeded;
+            }
+            std::vector<std::pair<
+                const CanonicalSyncMaterializedMechanismView *, std::size_t>>
+                selectedProposals;
+            selectedProposals.reserve(selected.size());
+            for (const CanonicalSyncMaterializedMechanismView &mechanism :
+                 selected) {
+              std::size_t lookupWork = 0;
+              const bool lookupWorkAvailable =
+                  checkedOrderedLookupWork(proposalByMechanism.size(),
+                                           lookupWork) &&
+                  checkedProtocolAdd(lookupWork, 1, work) &&
+                  work.consume(lookupWork);
+              if (!mechanism.descriptor || !lookupWorkAvailable) {
+                return CanonicalSyncProblemError::LimitExceeded;
+              }
+              const auto mapped = std::lower_bound(
+                  proposalByMechanism.begin(), proposalByMechanism.end(),
+                  mechanism.mechanism,
+                  [](const auto &entry, CanonicalSyncMechanismId id) {
+                    return entry.first < id;
+                  });
+              const bool proposalUnavailable =
+                  mapped == proposalByMechanism.end() ||
+                  mapped->first != mechanism.mechanism ||
+                  mapped->second >= fresh.proposals.size();
+              if (proposalUnavailable) {
+                return CanonicalSyncProblemError::UnverifiedProtocol;
+              }
+              const SyncCoverLifecycleProposal &proposal =
+                  fresh.proposals[mapped->second];
+              if (proposal.id != mapped->second ||
+                  proposal.exactCoverage.empty()) {
+                return CanonicalSyncProblemError::UnverifiedProtocol;
+              }
+              if (!reserveGenericDescriptorFactoryWork(graph, proposal,
+                                                       frozenDomains, work)) {
+                return CanonicalSyncProblemError::LimitExceeded;
+              }
+              const std::optional<CanonicalSyncMechanismDescriptor> expected =
+                  makeGenericLifecycleDescriptor(graph, proposal,
+                                                 frozenDomains);
+              if (!expected || !ownershipDescriptorEqual(*mechanism.descriptor,
+                                                         *expected, work)) {
+                return work.exhausted
+                           ? CanonicalSyncProblemError::LimitExceeded
+                           : CanonicalSyncProblemError::UnverifiedProtocol;
+              }
+              selectedProposals.emplace_back(&mechanism, mapped->second);
+            }
+
+            // Rebuild one exact world containing every selected lifecycle
+            // protocol. This reruns all token automata and structured
+            // must-semantics together, rather than accepting the union of
+            // admission-time singleton bitsets.
+            std::size_t protocolCount = 0;
+            for (const auto &[mechanism, proposalId] : selectedProposals) {
+              (void)mechanism;
+              if (!checkedProtocolAdd(
+                      protocolCount,
+                      fresh.proposals[proposalId].protocols.size(), work)) {
+                return CanonicalSyncProblemError::LimitExceeded;
+              }
+            }
+            if (protocolCount == 0 || !work.consume(protocolCount) ||
+                !reserveGenericProtocolCopyWork(fresh.proposals,
+                                                selectedProposals, work)) {
+              return CanonicalSyncProblemError::LimitExceeded;
+            }
+            std::vector<SyncCoverEventProtocol> protocols;
+            protocols.reserve(protocolCount);
+            SyncCoverExactWorld world;
+            world.enabledMechanisms.reserve(protocolCount);
+            for (const auto &[mechanism, proposalId] : selectedProposals) {
+              (void)mechanism;
+              for (const SyncCoverEventProtocol &source :
+                   fresh.proposals[proposalId].protocols) {
+                SyncCoverEventProtocol protocol = source;
+                protocol.mechanism = protocols.size();
+                world.enabledMechanisms.push_back(protocol.mechanism);
+                protocols.push_back(std::move(protocol));
+              }
+            }
+            const SyncCoverProtocolCoverageResult combined =
+                computeSyncCoverProtocolExactWorlds(graph, target, protocols,
+                                                    {world}, {}, &work);
+            if (!combined) {
+              return combined.error ==
+                                 SyncCoverProtocolError::WorkLimitExceeded ||
+                             combined.error ==
+                                 SyncCoverProtocolError::LimitExceeded
+                         ? CanonicalSyncProblemError::LimitExceeded
+                         : CanonicalSyncProblemError::UnverifiedProtocol;
+            }
+            const bool invalidCombinedWorldCount =
+                combined.coveredByWorld.size() != 1;
+            if (invalidCombinedWorldCount) {
+              return CanonicalSyncProblemError::UnverifiedProtocol;
+            }
+            const SyncCoverDemandSet &combinedCoverage =
+                combined.coveredByWorld.front();
+            for (const auto &[mechanism, proposalId] : selectedProposals) {
+              (void)proposalId;
+              for (const CanonicalSyncSupplyBinding &binding :
+                   mechanism->descriptor->supplies) {
+                for (SyncCoverDemandId demand : binding.allowedDemands) {
+                  const bool demandUncovered =
+                      !work.consume() || !combinedCoverage.contains(demand);
+                  if (demandUncovered) {
+                    return work.exhausted
+                               ? CanonicalSyncProblemError::LimitExceeded
+                               : CanonicalSyncProblemError::UnverifiedProtocol;
+                  }
+                }
+              }
+            }
+            return CanonicalSyncProblemError::None;
+          });
+  if (!verifier) {
+    return program.getFunction().emitError(
+               "cannot register generic canonical sync materialized-plan "
+               "verifier, error=")
+           << static_cast<unsigned>(verifier.error);
   }
   return success();
 }
@@ -5713,32 +6085,50 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
     std::vector<SyncCoverLifecycleProposal> genericLifecycleProposals;
     if (familyEnabled(CanonicalSyncMechanismFamily::GenericLifecycle)) {
       SyncCoverCoverageWorkBudget lifecycleWork(
-          options.selection.maximumWorkUnits);
+          options.maximumLifecycleSynthesisWorkUnits);
       const SyncCoverProtocolTargetContract protocolTarget =
           makeProtocolTargetContract(program.getTargetCapabilities());
+      SyncCoverLifecycleSynthesisResult synthesized;
       if (!program.getStorageLifecycleIndex() ||
           !program.getStorageLifecycleIndex()->isComplete()) {
-        program.getFunction().emitError(
-            "canonical sync generic lifecycle requires a complete "
-            "target-neutral storage lifecycle index");
-        return {nullptr,
-                {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+        synthesized.error = SyncCoverProtocolError::LimitExceeded;
+      } else if (!lifecycleWork.consume()) {
+        synthesized.error = SyncCoverProtocolError::WorkLimitExceeded;
+      } else {
+        synthesized = synthesizeSyncCoverLifecycleCertificates(
+            program.getGraph(), protocolTarget,
+            *program.getStorageLifecycleIndex(), {}, &lifecycleWork);
       }
-      SyncCoverLifecycleSynthesisResult synthesized =
-          synthesizeSyncCoverLifecycleCertificates(
-              program.getGraph(), protocolTarget,
-              *program.getStorageLifecycleIndex(), {}, &lifecycleWork);
+      const CanonicalSyncProblemResult recordedWork =
+          problem->recordGenericLifecycleSynthesisWorkUnits(
+              lifecycleWork.workUnits);
+      if (!recordedWork) {
+        return {nullptr, recordedWork};
+      }
       if (!synthesized) {
-        program.getFunction().emitError(
-            "canonical sync generic lifecycle synthesis failed, error=")
-            << static_cast<unsigned>(synthesized.error)
-            << ", work-units=" << lifecycleWork.workUnits << ", invalid-index="
-            << synthesized.invalidIndex.value_or(
-                   std::numeric_limits<std::size_t>::max());
-        return {nullptr,
-                {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+        const bool boundedTruncation =
+            synthesized.error == SyncCoverProtocolError::LimitExceeded ||
+            synthesized.error == SyncCoverProtocolError::WorkLimitExceeded;
+        if (boundedTruncation) {
+          const CanonicalSyncProblemResult recorded =
+              problem->markGenericLifecycleGenerationTruncated();
+          if (!recorded) {
+            return {nullptr, recorded};
+          }
+        } else {
+          program.getFunction().emitError(
+              "canonical sync generic lifecycle synthesis failed, error=")
+              << static_cast<unsigned>(synthesized.error)
+              << ", work-units=" << lifecycleWork.workUnits
+              << ", invalid-index="
+              << synthesized.invalidIndex.value_or(
+                     std::numeric_limits<std::size_t>::max());
+          return {nullptr,
+                  {CanonicalSyncProblemError::CoverageFailure, std::nullopt}};
+        }
+      } else {
+        genericLifecycleProposals = std::move(synthesized.proposals);
       }
-      genericLifecycleProposals = std::move(synthesized.proposals);
     }
     for (SyncCoverDemandId demandId : problem->getDemands()) {
       if (!baseline.covered.contains(demandId)) {

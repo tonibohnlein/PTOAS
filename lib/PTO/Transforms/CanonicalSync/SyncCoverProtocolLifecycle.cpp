@@ -1088,9 +1088,8 @@ slotPresence(const SyncCoverGraph &graph, SyncCoverScopeId path,
     if (!*contained) {
       continue;
     }
-    if (!consumeWork(workBudget,
-                     lookupWork(facts.produced.size() + 1) +
-                         lookupWork(facts.consumed.size() + 1))) {
+    if (!consumeWork(workBudget, lookupWork(facts.produced.size() + 1) +
+                                     lookupWork(facts.consumed.size() + 1))) {
       return std::nullopt;
     }
     if (std::binary_search(facts.produced.begin(), facts.produced.end(),
@@ -1225,11 +1224,10 @@ bool hasMatchingReleaseDemands(const SyncCoverGraph &graph,
       bool found = false;
       for (SyncCoverDemandId demandId = 0; demandId < graph.getDemands().size();
            ++demandId) {
-        if (!consumeWork(
-                workBudget,
-                1 + lookupWork(component.demands.size() + 1) +
-                    lookupWork(sourceConsumers.size() + 1) +
-                    lookupWork(targetProducers.size() + 1))) {
+        if (!consumeWork(workBudget,
+                         1 + lookupWork(component.demands.size() + 1) +
+                             lookupWork(sourceConsumers.size() + 1) +
+                             lookupWork(targetProducers.size() + 1))) {
           return false;
         }
         if (!std::binary_search(component.demands.begin(),
@@ -1375,8 +1373,7 @@ std::optional<DerivedLifecycleCertificate> buildStableLifecycleCertificate(
                                         });
         if (found != nodes.end()) {
           for (const LifecycleSlotKey &slot : found->produced) {
-            if (!consumeWork(workBudget,
-                             lookupWork(stableSlots.size() + 1))) {
+            if (!consumeWork(workBudget, lookupWork(stableSlots.size() + 1))) {
               return false;
             }
             if (stableSlots.count(slot) != 0) {
@@ -1395,8 +1392,7 @@ std::optional<DerivedLifecycleCertificate> buildStableLifecycleCertificate(
                                         });
         if (found != nodes.end()) {
           for (const LifecycleSlotKey &slot : found->consumed) {
-            if (!consumeWork(workBudget,
-                             lookupWork(stableSlots.size() + 1))) {
+            if (!consumeWork(workBudget, lookupWork(stableSlots.size() + 1))) {
               return false;
             }
             if (stableSlots.count(slot) != 0) {
@@ -1444,8 +1440,7 @@ std::optional<DerivedLifecycleCertificate> buildStableLifecycleCertificate(
       if (!*contained) {
         continue;
       }
-      const std::size_t stableLookupWork =
-          lookupWork(stableSlots.size() + 1);
+      const std::size_t stableLookupWork = lookupWork(stableSlots.size() + 1);
       if ((facts.produced.size() != 0 &&
            stableLookupWork > std::numeric_limits<std::size_t>::max() /
                                   facts.produced.size()) ||
@@ -1454,10 +1449,8 @@ std::optional<DerivedLifecycleCertificate> buildStableLifecycleCertificate(
                                   facts.consumed.size())) {
         return std::nullopt;
       }
-      const std::size_t producedWork =
-          facts.produced.size() * stableLookupWork;
-      const std::size_t consumedWork =
-          facts.consumed.size() * stableLookupWork;
+      const std::size_t producedWork = facts.produced.size() * stableLookupWork;
+      const std::size_t consumedWork = facts.consumed.size() * stableLookupWork;
       if (consumedWork >
               std::numeric_limits<std::size_t>::max() - producedWork ||
           !consumeWork(workBudget, producedWork + consumedWork)) {
@@ -1581,9 +1574,8 @@ std::optional<DerivedLifecycleCertificate> buildAlternatingLifecycleCertificate(
   }
   std::map<unsigned, std::size_t> pathByAlternative;
   for (SyncCoverScopeId pathScope : paths) {
-    if (!consumeWork(
-            workBudget,
-            graph.getScopes()[pathScope].guard.literals.size())) {
+    if (!consumeWork(workBudget,
+                     graph.getScopes()[pathScope].guard.literals.size())) {
       return std::nullopt;
     }
     const auto phaseLiteral =
@@ -1618,8 +1610,7 @@ std::optional<DerivedLifecycleCertificate> buildAlternatingLifecycleCertificate(
         continue;
       }
       for (const LifecycleSlotKey &slot : facts.produced) {
-        if (!consumeWork(workBudget,
-                         lookupWork(alternatingSlots.size() + 1))) {
+        if (!consumeWork(workBudget, lookupWork(alternatingSlots.size() + 1))) {
           return std::nullopt;
         }
         if (alternatingSlots.count(slot) != 0) {
@@ -1628,8 +1619,7 @@ std::optional<DerivedLifecycleCertificate> buildAlternatingLifecycleCertificate(
         }
       }
       for (const LifecycleSlotKey &slot : facts.consumed) {
-        if (!consumeWork(workBudget,
-                         lookupWork(alternatingSlots.size() + 1))) {
+        if (!consumeWork(workBudget, lookupWork(alternatingSlots.size() + 1))) {
           return std::nullopt;
         }
         if (alternatingSlots.count(slot) != 0) {
@@ -1742,8 +1732,7 @@ std::optional<DerivedLifecycleCertificate> buildAlternatingLifecycleCertificate(
           visitedPaths.end()) {
     return std::nullopt;
   }
-  if (!consumeWork(workBudget,
-                   lookupWork(pathByAlternative.size() + 1))) {
+  if (!consumeWork(workBudget, lookupWork(pathByAlternative.size() + 1))) {
     return std::nullopt;
   }
   const auto initialPath = pathByAlternative.find(
@@ -1834,8 +1823,7 @@ DerivedLifecycleSchedules deriveLifecycleSchedules(
       return result;
     }
     ++result.inspectedDemands;
-    if (!consumeWork(workBudget,
-                     lookupWork(component.demands.size() + 1))) {
+    if (!consumeWork(workBudget, lookupWork(component.demands.size() + 1))) {
       result.error = SyncCoverProtocolError::WorkLimitExceeded;
       return result;
     }
@@ -3180,11 +3168,11 @@ std::optional<SyncCoverEventProtocol> makeAlternatingLifecycleProtocol(
           certificate.paths[pathIndex].uses.front();
       if (use.lane == certificate.initialReadyLane) {
         // The entry Set is a physical source-prefix cut for initial producers
-        // outside the inner schedule. Its relation to the first matching
-        // inner Wait is expressed in the owning lifetime-loop coordinate and
-        // is re-derived from the action anchors by exact-world coverage.
+        // outside the inner schedule. It orders those producers with the
+        // first matching inner Wait in the same owning-loop invocation. The
+        // release channel supplies the positive-distance return edge.
         ready.supplies.push_back(
-            {initialReadySet, readyWaits[pathIndex], 1, *lifetimeScope,
+            {initialReadySet, readyWaits[pathIndex], 0, *lifetimeScope,
              SyncCoverProtocolSupplyKind::CompletionExport});
       }
     }
@@ -3281,12 +3269,22 @@ std::optional<SyncCoverEventProtocol> makeAlternatingLifecycleProtocol(
       }
     }
   }
+  std::vector<std::size_t> releaseExitWaits(release.width);
+  for (std::size_t lane = 0; lane < release.width; ++lane) {
+    releaseExitWaits[lane] = appendLifecycleAction(
+        release, SyncCoverProtocolActionKind::Wait,
+        SyncCoverProtocolActionSegment::Exit,
+        lifecyclePoint(
+            SyncCoverCutPointKind::EventWait, certificate.producerResource,
+            {SyncCoverAnchorKind::ScopeExit, 0, certificate.loopScope, 0}),
+        lane, SyncCoverProtocolActionGuard::LoopNonEmpty);
+  }
   if (lifetimeScope) {
-    // The child phase schedule restarts at every enclosing-loop invocation.
-    // Reify every exact release transition that can cross that invocation
-    // boundary.  Coverage still checks that the concrete target is in the
-    // Wait suffix; the demand list supplies only the child-loop completion
-    // summary for the source side.
+    // The final child iteration has no body successor and therefore no body
+    // release Wait. Its per-lane exit drain consumes the last release token
+    // and blocks the producer pipe before the enclosing-loop reuse. Bind the
+    // parent completion summary to that physical drain, not to a body Wait
+    // guarded by HasSuccessor.
     for (std::size_t sourceIndex = 0; sourceIndex < certificate.paths.size();
          ++sourceIndex) {
       const DerivedLifecycleUse &source =
@@ -3312,20 +3310,15 @@ std::optional<SyncCoverEventProtocol> makeAlternatingLifecycleProtocol(
         if (!*parentWitness) {
           continue;
         }
+        if (source.lane >= releaseExitWaits.size()) {
+          return std::nullopt;
+        }
         release.supplies.push_back(
-            {releaseSets[sourceIndex], releaseWaits[targetIndex], 1,
+            {releaseSets[sourceIndex], releaseExitWaits[source.lane], 0,
              *lifetimeScope, SyncCoverProtocolSupplyKind::CompletionExport});
+        break;
       }
     }
-  }
-  for (std::size_t lane = 0; lane < release.width; ++lane) {
-    appendLifecycleAction(release, SyncCoverProtocolActionKind::Wait,
-                          SyncCoverProtocolActionSegment::Exit,
-                          lifecyclePoint(SyncCoverCutPointKind::EventWait,
-                                         certificate.producerResource,
-                                         {SyncCoverAnchorKind::ScopeExit, 0,
-                                          certificate.loopScope, 0}),
-                          lane, SyncCoverProtocolActionGuard::LoopNonEmpty);
   }
   if (ready.supplies.empty() || release.supplies.empty()) {
     return std::nullopt;
@@ -4375,10 +4368,17 @@ SyncCoverLifecycleSynthesisResult synthesizeLifecycleCertificatesFromSccs(
           certifyLifecycleStorageReuse(graph, target, certificate, *protocol,
                                        workBudget);
       if (!storageReuse) {
-        return fail(workBudget && workBudget->exhausted
-                        ? SyncCoverProtocolError::WorkLimitExceeded
-                        : SyncCoverProtocolError::InvalidProtocol,
-                    componentIndex);
+        if (workBudget && workBudget->exhausted) {
+          return fail(SyncCoverProtocolError::WorkLimitExceeded,
+                      componentIndex);
+        }
+        // Lifecycle SCC discovery deliberately over-approximates proposal
+        // opportunities.  A derived schedule that cannot be certified against
+        // the exact storage lanes is simply not an admissible candidate; it is
+        // not evidence that the immutable graph or target contract is invalid.
+        // Keep candidate discovery conservative and let the ordinary direct
+        // mechanisms cover the component instead of rejecting the function.
+        continue;
       }
       certifiedStorageReuse.unite(*storageReuse);
       proposal.protocols.push_back(*protocol);
@@ -4444,6 +4444,7 @@ SyncCoverLifecycleSynthesisResult synthesizeLifecycleCertificatesFromSccs(
     }
     SyncCoverDemandSet residualQueries =
         connectorCoverage.coveredByWorld.front();
+    residualQueries.unite(certifiedStorageReuse);
     residualQueries.subtract(singletonUnion);
     proposal.exactCoverage = singletonUnion;
     if (!residualQueries.empty()) {
@@ -4461,7 +4462,6 @@ SyncCoverLifecycleSynthesisResult synthesizeLifecycleCertificatesFromSccs(
       }
       proposal.exactCoverage.unite(exactCoverage.coveredByWorld.front());
     }
-    proposal.exactCoverage.unite(certifiedStorageReuse);
     SyncCoverDemandSet extra = proposal.exactCoverage;
     extra.subtract(singletonUnion);
     proposal.extraCoverageRows = extra.count();

@@ -379,6 +379,8 @@ struct CanonicalSyncPatternStatistics {
   std::size_t loopBoundaryProtocolCandidates = 0;
   std::size_t loopBoundaryProtocolIncidences = 0;
   bool loopBoundaryProtocolGenerationTruncated = false;
+  std::size_t genericLifecycleSynthesisWorkUnits = 0;
+  bool genericLifecycleGenerationTruncated = false;
 
   const CanonicalSyncPatternKindStatistics &
   get(CanonicalSyncPatternKind kind) const {
@@ -414,6 +416,23 @@ struct CanonicalSyncProblemResult {
 /// it and may return only None, UnverifiedProtocol, or LimitExceeded.
 using CanonicalSyncProtocolVerifier = std::function<CanonicalSyncProblemError(
     const CanonicalSyncMechanismDescriptor &, SyncCoverCoverageWorkBudget &)>;
+
+/// Immutable view passed to a whole-plan protocol verifier. The descriptor is
+/// owned by the frozen problem and remains valid for the duration of the call.
+struct CanonicalSyncMaterializedMechanismView {
+  CanonicalSyncMechanismId mechanism = 0;
+  CanonicalSyncMechanismOriginMask originMask = 0;
+  const CanonicalSyncMechanismDescriptor *descriptor = nullptr;
+};
+
+/// Deep verifier for a family of selected physical protocols. Unlike an
+/// admission verifier, this callback runs only at the final materialization
+/// boundary and may rebuild graph-wide certificates and token automata once
+/// for the complete selected family.
+using CanonicalSyncMaterializedPlanVerifier =
+    std::function<CanonicalSyncProblemError(
+        const std::vector<CanonicalSyncMaterializedMechanismView> &,
+        SyncCoverCoverageWorkBudget &)>;
 
 class CanonicalSyncPatternProblem {
 public:
@@ -469,6 +488,9 @@ public:
                          CanonicalSyncProtocolVerifier verifier,
                          CanonicalSyncMechanismOrigin origin =
                              CanonicalSyncMechanismOrigin::Unclassified);
+  CanonicalSyncProblemResult
+  addMaterializedPlanVerifier(CanonicalSyncMechanismOriginMask origins,
+                              CanonicalSyncMaterializedPlanVerifier verifier);
   CanonicalSyncProblemResult addConflict(CanonicalSyncMechanismId first,
                                          CanonicalSyncMechanismId second);
   CanonicalSyncProblemResult addPattern(CanonicalSyncPatternSpec pattern);
@@ -634,6 +656,27 @@ public:
     patternStatistics_.loopBoundaryProtocolGenerationTruncated |= truncated;
     return {};
   }
+  CanonicalSyncProblemResult markGenericLifecycleGenerationTruncated() {
+    if (frozen_) {
+      return {CanonicalSyncProblemError::Frozen, std::nullopt};
+    }
+    patternStatistics_.genericLifecycleGenerationTruncated = true;
+    return {};
+  }
+  CanonicalSyncProblemResult
+  recordGenericLifecycleSynthesisWorkUnits(std::size_t workUnits) {
+    if (frozen_) {
+      return {CanonicalSyncProblemError::Frozen, std::nullopt};
+    }
+    const bool overflow =
+        workUnits > std::numeric_limits<std::size_t>::max() -
+                        patternStatistics_.genericLifecycleSynthesisWorkUnits;
+    if (overflow) {
+      return {CanonicalSyncProblemError::ArithmeticOverflow, std::nullopt};
+    }
+    patternStatistics_.genericLifecycleSynthesisWorkUnits += workUnits;
+    return {};
+  }
   bool hasSameCandidatePrefix(const CanonicalSyncPatternProblem &other) const;
   /// Revalidate one immutable mechanism and its derived lifetime/cost data.
   /// Protocols rerun the common balanced-action and supply-export contract.
@@ -647,6 +690,14 @@ public:
       CanonicalSyncMechanismId mechanism,
       CanonicalSyncMechanismDescriptor descriptor,
       SyncCoverCoverageWorkBudget *workBudget = nullptr) const;
+  /// Run graph-wide protocol-family verification once for the complete
+  /// selected mechanism set. Candidate coverage and admission-time callbacks
+  /// are not accepted as proof at this boundary.
+  CanonicalSyncProblemResult verifyMaterializedPlanMechanisms(
+      const std::vector<CanonicalSyncMechanismId> &mechanisms,
+      SyncCoverCoverageWorkBudget *workBudget = nullptr,
+      std::size_t *verifiersRun = nullptr,
+      CanonicalSyncMechanismOriginMask *verifiedOrigins = nullptr) const;
   std::uint64_t getMechanismSignature(CanonicalSyncMechanismId mechanism) const;
   /// Preview the union of baseline, singleton, and retained optional-pattern
   /// coverage without freezing the catalog. Used to ground completeness
@@ -739,6 +790,11 @@ private:
   /// number of mechanisms rather than opaque verifier-capture sizes.
   std::vector<std::shared_ptr<const CanonicalSyncProtocolVerifier>>
       protocolVerifiers_;
+  struct MaterializedPlanVerifierEntry {
+    CanonicalSyncMechanismOriginMask origins = 0;
+    std::shared_ptr<const CanonicalSyncMaterializedPlanVerifier> verifier;
+  };
+  std::vector<MaterializedPlanVerifierEntry> materializedPlanVerifiers_;
   std::vector<PendingPattern> patternSpecs_;
   std::optional<SyncCoverDemandSet> constructionBaselineCoverage_;
   std::vector<std::optional<SyncCoverDemandSet>> constructionSingletonCoverage_;
@@ -941,8 +997,13 @@ private:
   std::optional<RankKey> bestPressure_;
 };
 
+/// Opaque immutable capability created only after the exact selected mechanism
+/// set, allocation, graph, physical actions, and deep protocol proofs have been
+/// bound together. Its definition is private to materialization.
+class CanonicalSyncMaterializationToken;
+
 /// The only result future materialization may consume. Finalization recomputes
-/// coverage from the frozen pattern table and exact event allocation from the
+/// coverage from the frozen problem and exact event allocation from the
 /// selected atomic mechanisms; it does not trust the solver's mutable coverage
 /// state.
 struct CanonicalSyncVerifiedPlan {
@@ -950,6 +1011,11 @@ struct CanonicalSyncVerifiedPlan {
   std::vector<CanonicalSyncMechanismId> mechanisms;
   CanonicalSyncResourceAllocation allocation;
   std::optional<SyncCoverDemandId> firstUncoveredDemand;
+  /// Set only after fresh whole-selected-world semantic verification, exact
+  /// allocation validation, combined protocol verification, and physical
+  /// action reconstruction. Semantic selection alone never sets this bit.
+  bool wholePlanWorldVerified = false;
+  std::shared_ptr<const CanonicalSyncMaterializationToken> materializationToken;
 
   explicit operator bool() const {
     return error == CanonicalSyncSelectionError::None;

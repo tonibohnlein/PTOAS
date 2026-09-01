@@ -244,6 +244,32 @@ struct CanonicalSyncSyntheticRectangleGroundingReport {
   std::size_t coverageRows = 0;
 };
 
+/// Evidence produced by the independent final physical-plan verifier. The
+/// verifier consumes a semantically verified selected world, reconstructs its
+/// staged actions without mutating IR, and publishes a plan token that alone
+/// may cross the materialization boundary.
+struct CanonicalSyncMaterializedPlanVerification {
+  CanonicalSyncVerifiedPlan plan;
+  bool wholePlanWorldVerified = false;
+  bool actionsReconstructed = false;
+  bool lifecycleAutomataVerified = false;
+  std::size_t verifiedCoverageRows = 0;
+  std::size_t reconstructedActions = 0;
+  std::size_t reconstructedEventActions = 0;
+  std::size_t reconstructedBarrierActions = 0;
+  std::size_t reconstructedEventChannels = 0;
+  std::size_t reconstructedEventLanes = 0;
+  std::size_t reconstructedTailFences = 0;
+  std::size_t protocolMechanisms = 0;
+  std::size_t lifecycleProtocolMechanisms = 0;
+  std::size_t deepProtocolVerifiersRun = 0;
+
+  explicit operator bool() const {
+    return plan && plan.materializationToken && wholePlanWorldVerified &&
+           actionsReconstructed && lifecycleAutomataVerified;
+  }
+};
+
 struct CanonicalSyncStrategyReport {
   CanonicalSyncSelectionStrategy strategy =
       CanonicalSyncSelectionStrategy::PairLookahead;
@@ -254,6 +280,9 @@ struct CanonicalSyncStrategyReport {
   /// localized backstop is materialized.
   CanonicalSyncSelectionError preciseError = CanonicalSyncSelectionError::None;
   bool verified = false;
+  bool materializedPlanVerified = false;
+  bool wholePlanWorldVerified = false;
+  bool lifecycleAutomataVerified = false;
   bool usedLocalizedPipeAll = false;
   bool repairFrontierTruncated = false;
   bool repairBudgetExhausted = false;
@@ -290,6 +319,16 @@ struct CanonicalSyncStrategyReport {
   std::size_t emittedPipeAllBarriers = 0;
   std::size_t predictedSyncInstructions = 0;
   std::size_t verificationWorkUnits = 0;
+  std::size_t materializedVerifiedCoverageRows = 0;
+  std::size_t materializedActions = 0;
+  std::size_t materializedEventActions = 0;
+  std::size_t materializedBarrierActions = 0;
+  std::size_t materializedEventChannels = 0;
+  std::size_t materializedEventLanes = 0;
+  std::size_t materializedTailFences = 0;
+  std::size_t materializedProtocolMechanisms = 0;
+  std::size_t materializedLifecycleProtocolMechanisms = 0;
+  std::size_t materializedDeepProtocolVerifiersRun = 0;
   std::uint64_t selectionNanoseconds = 0;
   std::uint64_t repairNanoseconds = 0;
   std::uint64_t verificationNanoseconds = 0;
@@ -542,6 +581,8 @@ struct CanonicalSyncComparisonReport {
   std::size_t loopBoundaryProtocolCandidates = 0;
   std::size_t loopBoundaryProtocolIncidences = 0;
   bool loopBoundaryProtocolGenerationTruncated = false;
+  std::size_t genericLifecycleSynthesisWorkUnits = 0;
+  bool genericLifecycleGenerationTruncated = false;
   std::uint64_t preparationNanoseconds = 0;
   std::vector<CanonicalSyncStrategyReport> strategies;
 };
@@ -554,12 +595,13 @@ struct CanonicalSyncBuildOptions {
   CanonicalSyncPatternProblem::Limits problemLimits;
   SyncCoverExpansionLimits expansionLimits;
   CanonicalSyncGreedyOptions selection;
+  std::size_t maximumLifecycleSynthesisWorkUnits = 1U << 29;
   std::size_t maximumRepairRounds = 8;
   std::size_t maximumRepairTrials = 256;
   std::size_t maximumRepairWorkUnits = 1U << 28;
   std::size_t maximumBackstopDeletionTrials = 4096;
   std::size_t maximumBackstopDeletionWorkUnits = 1U << 27;
-  std::size_t maximumVerificationWorkUnits = 1U << 27;
+  std::size_t maximumVerificationWorkUnits = 1U << 30;
   bool enableDemandBasisReduction = true;
   std::size_t maximumDemandBasisGroupEdges = 1U << 18;
   std::size_t maximumDemandBasisReachabilityWords = 1U << 20;
@@ -647,6 +689,15 @@ LogicalResult
 materializeCanonicalSyncPlan(const CanonicalSyncProgram &program,
                              const CanonicalSyncPatternProblem &problem,
                              const CanonicalSyncVerifiedPlan &plan);
+
+/// Reconstruct and independently validate the complete selected physical plan
+/// without mutating IR. The returned plan is the only plan admitted by
+/// materializeCanonicalSyncPlan.
+CanonicalSyncMaterializedPlanVerification verifyCanonicalSyncMaterializedPlan(
+    const CanonicalSyncProgram &program,
+    const CanonicalSyncPatternProblem &problem,
+    const CanonicalSyncVerifiedPlan &plan,
+    SyncCoverCoverageWorkBudget *workBudget = nullptr);
 
 /// Run analysis, bounded-pattern selection, bitset-based finalization, and
 /// materialization while all referenced graph storage remains alive.
