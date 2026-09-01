@@ -71,14 +71,15 @@ void CanonicalSyncProgram::appendDemandCause(CanonicalDemandId demand,
 
 CanonicalMechanismId
 CanonicalSyncProgram::appendMechanism(CanonicalMechanism mechanism) {
-  return appendRecord(mechanisms, std::move(mechanism), frozen);
+  return appendRecord(mechanisms, std::move(mechanism),
+                      frozen || setCoverInstance.has_value());
 }
 
 void CanonicalSyncProgram::appendMechanismOrigin(CanonicalMechanismId mechanism,
                                                  CanonicalDemandId demand) {
   const bool invalidMechanism = mechanism >= mechanisms.size();
   const bool invalidDemand = demand >= demands.size();
-  if (frozen || invalidMechanism || invalidDemand) {
+  if (frozen || setCoverInstance || invalidMechanism || invalidDemand) {
     llvm_unreachable("cannot extend an invalid or frozen mechanism");
   }
   if (!llvm::is_contained(mechanisms[mechanism].origins, demand)) {
@@ -98,7 +99,7 @@ void CanonicalSyncProgram::setDirectMechanism(CanonicalDemandId demand,
                                               CanonicalMechanismId mechanism) {
   const bool invalidDemand = demand >= demands.size();
   const bool invalidMechanism = mechanism >= mechanisms.size();
-  if (frozen || invalidDemand || invalidMechanism) {
+  if (frozen || setCoverInstance || invalidDemand || invalidMechanism) {
     llvm_unreachable("cannot map an invalid or frozen direct mechanism");
   }
   if (directMechanisms.empty()) {
@@ -108,7 +109,7 @@ void CanonicalSyncProgram::setDirectMechanism(CanonicalDemandId demand,
 }
 
 void CanonicalSyncProgram::appendCoverageWorld(CanonicalCoverageWorld world) {
-  if (frozen) {
+  if (frozen || setCoverInstance) {
     llvm_unreachable("cannot append to a frozen sync model");
   }
   coverageWorlds.push_back(std::move(world));

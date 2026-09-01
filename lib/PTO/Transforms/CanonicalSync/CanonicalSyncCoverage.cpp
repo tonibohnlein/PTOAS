@@ -719,6 +719,12 @@ mlir::pto::canonical_sync_detail::evaluateCanonicalSyncGroup(
 
 LogicalResult
 mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
+  const bool invalidState = !program.isGraphFrozen() || program.isFrozen() ||
+                            program.getSetCoverInstance().has_value();
+  if (invalidState) {
+    return program.getFunction().emitError(
+        "canonical sync coverage requires an unsealed mechanism catalog");
+  }
   const auto appendGroup = [&program](StringRef name,
                                       ArrayRef<CanonicalMechanismId> selected,
                                       bool setCoverCandidate = false) {
@@ -738,7 +744,8 @@ mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
   for (const CanonicalMechanism &mechanism : program.getMechanisms()) {
     all.push_back(mechanism.id);
     if (mechanism.kind == CanonicalMechanismKind::IntrinsicOrder ||
-        mechanism.kind == CanonicalMechanismKind::FixedFence) {
+        mechanism.kind == CanonicalMechanismKind::FixedFence ||
+        mechanism.kind == CanonicalMechanismKind::TailBarrier) {
       baseline.push_back(mechanism.id);
     }
   }

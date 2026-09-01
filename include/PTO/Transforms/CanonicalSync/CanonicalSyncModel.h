@@ -277,6 +277,9 @@ struct CanonicalSetCoverInstance {
   llvm::SmallVector<CanonicalSetCoverCandidate, 8> candidates;
 };
 
+class CanonicalSyncProgram;
+LogicalResult buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program);
+
 class CanonicalSyncProgram {
 public:
   explicit CanonicalSyncProgram(func::FuncOp function) : function(function) {}
@@ -293,7 +296,6 @@ public:
   void setDirectMechanism(CanonicalDemandId demand,
                           CanonicalMechanismId mechanism);
   void appendCoverageWorld(CanonicalCoverageWorld world);
-  void setSetCoverInstance(CanonicalSetCoverInstance instance);
 
   LogicalResult freezeGraph();
   LogicalResult freeze();
@@ -324,6 +326,11 @@ public:
   const CanonicalMechanism &getMechanism(CanonicalMechanismId id) const;
 
 private:
+  friend LogicalResult
+  buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program);
+
+  void setSetCoverInstance(CanonicalSetCoverInstance instance);
+
   func::FuncOp function;
   llvm::SmallVector<CanonicalRegion> regions;
   llvm::SmallVector<CanonicalPhase> phases;

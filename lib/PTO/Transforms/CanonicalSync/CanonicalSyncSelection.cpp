@@ -30,16 +30,17 @@ namespace {
 
 bool isBaselineMechanism(const CanonicalMechanism &mechanism) {
   return mechanism.kind == CanonicalMechanismKind::IntrinsicOrder ||
-         mechanism.kind == CanonicalMechanismKind::FixedFence;
+         mechanism.kind == CanonicalMechanismKind::FixedFence ||
+         mechanism.kind == CanonicalMechanismKind::TailBarrier;
 }
 
 std::uint64_t mechanismWeight(const CanonicalMechanism &mechanism) {
   switch (mechanism.kind) {
   case CanonicalMechanismKind::IntrinsicOrder:
   case CanonicalMechanismKind::FixedFence:
+  case CanonicalMechanismKind::TailBarrier:
     return 0;
   case CanonicalMechanismKind::PipeBarrier:
-  case CanonicalMechanismKind::TailBarrier:
     return 1;
   case CanonicalMechanismKind::Event:
     return 2;
@@ -67,10 +68,26 @@ bool sameGroup(const CanonicalSetCoverCandidate &candidate,
   return ArrayRef<CanonicalMechanismId>(candidate.mechanisms) == mechanisms;
 }
 
+bool sameMechanisms(const CanonicalCoverageWorld &world,
+                    ArrayRef<CanonicalMechanismId> mechanisms) {
+  return ArrayRef<CanonicalMechanismId>(world.mechanisms) == mechanisms;
+}
+
+const CanonicalCoverageWorld *
+findCachedWorld(const CanonicalSyncProgram &program,
+                ArrayRef<CanonicalMechanismId> mechanisms) {
+  auto found = llvm::find_if(program.getCoverageWorlds(),
+                             [mechanisms](const CanonicalCoverageWorld &world) {
+                               return sameMechanisms(world, mechanisms);
+                             });
+  return found == program.getCoverageWorlds().end() ? nullptr : &*found;
+}
+
 LogicalResult appendCandidate(CanonicalSyncProgram &program,
                               CanonicalSetCoverInstance &instance,
                               ArrayRef<CanonicalDemandId> baselineCovered,
-                              SmallVector<CanonicalMechanismId, 8> group) {
+                              SmallVector<CanonicalMechanismId, 8> group,
+                              const CanonicalCoverageWorld &evaluated) {
   canonicalize(group);
   const bool containsBaseline =
       llvm::any_of(group, [&](CanonicalMechanismId id) {
@@ -88,12 +105,10 @@ LogicalResult appendCandidate(CanonicalSyncProgram &program,
   SmallVector<CanonicalMechanismId, 8> selected(instance.baseline.begin(),
                                                 instance.baseline.end());
   selected.append(group);
-  const std::string name =
-      (Twine("set-cover-group-c") + Twine(instance.candidates.size())).str();
-  FailureOr<CanonicalCoverageWorld> evaluated =
-      evaluateCanonicalSyncGroup(program, name, selected);
-  if (failed(evaluated)) {
-    return failure();
+  canonicalize(selected);
+  if (!sameMechanisms(evaluated, selected)) {
+    return program.getFunction().emitError(
+        "canonical sync cached coverage world has the wrong mechanism group");
   }
 
   CanonicalSetCoverCandidate candidate;
@@ -126,7 +141,7 @@ LogicalResult appendCandidate(CanonicalSyncProgram &program,
   canonicalize(candidate.directOrigins);
 
   SmallVector<CanonicalDemandId, 8> groupCoverage =
-      subtract<CanonicalDemandId>(evaluated->covered, baselineCovered);
+      subtract<CanonicalDemandId>(evaluated.covered, baselineCovered);
   if (llvm::any_of(candidate.directOrigins, [&](CanonicalDemandId origin) {
         return !llvm::is_contained(groupCoverage, origin);
       })) {
@@ -163,10 +178,15 @@ mlir::pto::buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program) {
       instance.baseline.push_back(mechanism.id);
     }
   }
-  FailureOr<CanonicalCoverageWorld> baseline = evaluateCanonicalSyncGroup(
-      program, "set-cover-baseline", instance.baseline);
-  if (failed(baseline)) {
-    return failure();
+  canonicalize(instance.baseline);
+  const CanonicalCoverageWorld *baseline =
+      findCachedWorld(program, instance.baseline);
+  const bool directMechanismsComplete =
+      program.getDirectMechanisms().size() == program.getDemands().size();
+  if (!baseline || !directMechanismsComplete) {
+    return program.getFunction().emitError(
+        "canonical sync set-cover construction requires checked coverage and "
+        "a complete direct-mechanism catalog");
   }
   for (const CanonicalDemand &demand : program.getDemands()) {
     if (!llvm::is_contained(baseline->covered, demand.id)) {
@@ -179,8 +199,18 @@ mlir::pto::buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program) {
       continue;
     }
     SmallVector<CanonicalMechanismId, 8> singleton{mechanism.id};
+    SmallVector<CanonicalMechanismId, 8> selected(instance.baseline.begin(),
+                                                  instance.baseline.end());
+    selected.push_back(mechanism.id);
+    canonicalize(selected);
+    const CanonicalCoverageWorld *cached = findCachedWorld(program, selected);
+    if (!cached) {
+      return program.getFunction().emitError(
+          "canonical sync set-cover construction is missing a checked "
+          "singleton world");
+    }
     if (failed(appendCandidate(program, instance, baseline->covered,
-                               std::move(singleton)))) {
+                               std::move(singleton), *cached))) {
       return failure();
     }
   }
@@ -193,10 +223,23 @@ mlir::pto::buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program) {
     const bool groupFailed =
         group.size() > 1U &&
         failed(appendCandidate(program, instance, baseline->covered,
-                               std::move(group)));
+                               std::move(group), world));
     if (groupFailed) {
       return failure();
     }
+  }
+
+  SmallVector<CanonicalMechanismId, 8> all;
+  for (const CanonicalMechanism &mechanism : program.getMechanisms()) {
+    all.push_back(mechanism.id);
+  }
+  const CanonicalCoverageWorld *mechanical = findCachedWorld(program, all);
+  const bool mechanicalComplete =
+      mechanical && mechanical->covered.size() == program.getDemands().size();
+  if (!mechanicalComplete) {
+    return program.getFunction().emitError(
+        "canonical sync set-cover construction requires a complete mechanical "
+        "coverage world");
   }
 
   for (CanonicalDemandId demand : instance.universe) {

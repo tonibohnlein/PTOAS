@@ -363,7 +363,8 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
 
 LogicalResult
 mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
-  const bool invalidState = !program.isGraphFrozen() || program.isFrozen();
+  const bool invalidState = !program.isGraphFrozen() || program.isFrozen() ||
+                            program.getSetCoverInstance().has_value();
   if (invalidState) {
     return program.getFunction().emitError(
         "canonical sync direct mechanisms require a frozen demand graph");
