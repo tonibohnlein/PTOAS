@@ -257,6 +257,42 @@ void joinChoiceTransfers(
   }
 }
 
+void joinChoiceCompletions(const CanonicalRegion &choice,
+                           ArrayRef<CanonicalRegionSummary> children,
+                           SmallVectorImpl<CompletionFact> &completions,
+                           const CanonicalSyncProgram &program) {
+  const CanonicalRegionSummary *arms[2] = {nullptr, nullptr};
+  for (const CanonicalRegionSummary &child : children) {
+    const unsigned arm = program.getRegion(child.region).arm;
+    if (arm < 2U) {
+      arms[arm] = &child;
+    }
+  }
+  if (!arms[0] || !arms[1]) {
+    return;
+  }
+  const CanonicalProgramPoint afterChoice{choice.operation,
+                                          CanonicalProgramPointPosition::After};
+  for (const CompletionFact &first : arms[0]->completions) {
+    const SmallVector<CanonicalControlAtom, 2> commonGuard =
+        withoutChoice(first.guard, choice.id);
+    for (const CompletionFact &second : arms[1]->completions) {
+      const bool sameCompletion =
+          first.phase == second.phase && first.resource == second.resource &&
+          first.requiredLoops == second.requiredLoops &&
+          commonGuard == withoutChoice(second.guard, choice.id);
+      const bool bothAvailable =
+          programPointMustPrecede(first.availableAt, afterChoice) &&
+          programPointMustPrecede(second.availableAt, afterChoice);
+      if (!sameCompletion || !bothAvailable) {
+        continue;
+      }
+      addFact(completions, {first.phase, first.resource, afterChoice,
+                            commonGuard, first.requiredLoops});
+    }
+  }
+}
+
 SmallVector<CompletionFact, 32>
 evaluateFlattenedFacts(const CanonicalSyncProgram &program,
                        ArrayRef<CanonicalMechanismId> selected) {
@@ -371,6 +407,8 @@ summarizeRegion(const CanonicalSyncProgram &program, CanonicalRegionId region,
     }
   }
   if (program.getRegion(region).kind == CanonicalRegionKind::Choice) {
+    joinChoiceCompletions(program.getRegion(region), childSummaries,
+                          result.completions, program);
     joinChoiceTransfers(program, program.getRegion(region), childSummaries,
                         result.transfers);
   }
@@ -513,6 +551,48 @@ coveredDemands(const CanonicalSyncProgram &program,
   return covered;
 }
 
+std::optional<CanonicalRegionId>
+sharedOppositeChoice(const CanonicalMechanism &first,
+                     const CanonicalMechanism &second) {
+  for (const CanonicalControlAtom &firstAtom : first.guard) {
+    auto secondAtom =
+        llvm::find_if(second.guard, [&](const CanonicalControlAtom &atom) {
+          return atom.choice == firstAtom.choice && atom.arm != firstAtom.arm;
+        });
+    const bool incompatible = secondAtom == second.guard.end() ||
+                              withoutChoice(first.guard, firstAtom.choice) !=
+                                  withoutChoice(second.guard, firstAtom.choice);
+    if (incompatible) {
+      continue;
+    }
+    return firstAtom.choice;
+  }
+  return std::nullopt;
+}
+
+SmallVector<SmallVector<CanonicalMechanismId, 2>, 4>
+discoverChoiceGroups(const CanonicalSyncProgram &program,
+                     ArrayRef<CanonicalMechanismId> baseline) {
+  SmallVector<SmallVector<CanonicalMechanismId, 2>, 4> groups;
+  for (const CanonicalMechanism &first : program.getMechanisms()) {
+    if (llvm::is_contained(baseline, first.id)) {
+      continue;
+    }
+    for (const CanonicalMechanism &second :
+         program.getMechanisms().drop_front(first.id + 1U)) {
+      const bool incompatible = llvm::is_contained(baseline, second.id) ||
+                                first.source != second.source ||
+                                first.target != second.target ||
+                                !sharedOppositeChoice(first, second);
+      if (incompatible) {
+        continue;
+      }
+      groups.push_back({first.id, second.id});
+    }
+  }
+  return groups;
+}
+
 CanonicalCoverageWorld evaluateWorld(const CanonicalSyncProgram &program,
                                      StringRef name,
                                      ArrayRef<CanonicalMechanismId> selected) {
@@ -618,6 +698,18 @@ mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
     if (failed(appendChecked(evaluateWorld(
             program, (Twine("singleton-m") + Twine(mechanism.id)).str(),
             singleton)))) {
+      return failure();
+    }
+  }
+
+  for (const SmallVector<CanonicalMechanismId, 2> &group :
+       discoverChoiceGroups(program, baseline)) {
+    SmallVector<CanonicalMechanismId, 8> selected = baseline;
+    selected.append(group);
+    const std::string name =
+        (Twine("choice-group-m") + Twine(group[0]) + "-m" + Twine(group[1]))
+            .str();
+    if (failed(appendChecked(evaluateWorld(program, name, selected)))) {
       return failure();
     }
   }

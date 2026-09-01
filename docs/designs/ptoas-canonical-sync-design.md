@@ -214,6 +214,12 @@ another concrete world and record only the demands it covers in addition to
 the mechanisms' originating demands. This keeps group coverage and weighted
 set-cover construction separate from the dependency graph.
 
+As an initial non-singleton differential check, complementary mechanisms in
+the two arms of one choice that publish the same physical resource relation are
+evaluated together in a concrete `choice-group` world. Matching arm-local
+completion facts form a must-completion at the choice exit. These worlds remain
+diagnostic: they neither select mechanisms nor change the mechanical plan.
+
 The initial materialized plan keeps every direct mechanism. Coverage worlds are
 diagnostic input for a later selection policy; they do not redefine
 correctness.

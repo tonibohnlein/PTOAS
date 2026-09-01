@@ -1,0 +1,93 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// A shared producer precedes a choice. Each arm has its own same-pipe barrier.
+// Selecting the two arm barriers, but not the producer's direct post-choice
+// barrier, must cover the post-choice demand through a choice must-completion.
+// The summary, flat scoreboard, and exhaustive unrolled oracle must agree for
+// that concrete two-mechanism group.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @choice_group_covers_post_choice(%condition: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input_addr = arith.constant 0 : i64
+    %shared_addr = arith.constant 8192 : i64
+    %then_addr = arith.constant 16384 : i64
+    %else_addr = arith.constant 24576 : i64
+    %output_addr = arith.constant 32768 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %input = pto.alloc_tile addr = %input_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %shared = pto.alloc_tile addr = %shared_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %then_output = pto.alloc_tile addr = %then_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %else_output = pto.alloc_tile addr = %else_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output = pto.alloc_tile addr = %output_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    pto.tmuls ins(%input, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                    cols=128, v_row=16, v_col=128, blayout=row_major,
+                    slayout=none_box, fractal=512, pad=0>, f32)
+              outs(%shared : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    scf.if %condition {
+      pto.tmuls ins(%shared, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%then_output : !pto.tile_buf<loc=vec, dtype=f32,
+                       rows=16, cols=128, v_row=16, v_col=128,
+                       blayout=row_major, slayout=none_box, fractal=512,
+                       pad=0>)
+    } else {
+      pto.tmuls ins(%shared, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%else_output : !pto.tile_buf<loc=vec, dtype=f32,
+                       rows=16, cols=128, v_row=16, v_col=128,
+                       blayout=row_major, slayout=none_box, fractal=512,
+                       pad=0>)
+    }
+    pto.tmuls ins(%shared, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                    cols=128, v_row=16, v_col=128, blayout=row_major,
+                    slayout=none_box, fractal=512, pad=0>, f32)
+              outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: CANONICAL-SYNC function=choice_group_covers_post_choice
+// CHECK: m0 kind=barrier resource=AIV:PIPE_V->AIV:PIPE_V
+// CHECK: m1 kind=barrier resource=AIV:PIPE_V->AIV:PIPE_V
+// CHECK: m2 kind=barrier resource=AIV:PIPE_V->AIV:PIPE_V
+// CHECK: world=choice-group-m0-m1 mechanisms=[m0, m1]
+// CHECK-SAME: covered=[d0, d1, d2]
+// CHECK-SAME: oracle=match
+// CHECK: world=mechanical
+// CHECK-SAME: oracle=match
+// CHECK: VERIFY ok
