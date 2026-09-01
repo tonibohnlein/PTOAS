@@ -82,6 +82,7 @@ CanonicalSyncTarget mlir::pto::makeNpu2201CanonicalSyncTarget() {
     }
   }
   target.compilerEventIds = {0, 1, 2, 3, 4, 5};
+  target.compilerCrossCoreEventIds = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
   return target;
 }
 
@@ -150,6 +151,13 @@ bool CanonicalSyncTarget::supportsEvent(
     CanonicalPhysicalResource source, CanonicalPhysicalResource target) const {
   return source.core == target.core &&
          llvm::is_contained(eventPairs, std::make_pair(source, target));
+}
+
+bool CanonicalSyncTarget::supportsCrossCoreEvent(
+    CanonicalPhysicalResource source, CanonicalPhysicalResource target) const {
+  return source.core != target.core && source.pipe != PIPE::PIPE_S &&
+         target.pipe != PIPE::PIPE_S && supportsResource(source) &&
+         supportsResource(target);
 }
 
 FailureOr<SmallVector<CanonicalPhysicalResource, 8>>

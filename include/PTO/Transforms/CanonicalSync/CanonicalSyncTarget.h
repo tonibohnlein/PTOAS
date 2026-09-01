@@ -32,10 +32,15 @@ public:
   bool supportsPipeBarrier(CanonicalPhysicalResource resource) const;
   bool supportsEvent(CanonicalPhysicalResource source,
                      CanonicalPhysicalResource target) const;
+  bool supportsCrossCoreEvent(CanonicalPhysicalResource source,
+                              CanonicalPhysicalResource target) const;
   FailureOr<llvm::SmallVector<CanonicalPhysicalResource, 8>>
   getFenceDrainedResources(Operation *fence) const;
   llvm::ArrayRef<unsigned> getCompilerEventIds() const {
     return compilerEventIds;
+  }
+  llvm::ArrayRef<unsigned> getCompilerCrossCoreEventIds() const {
+    return compilerCrossCoreEventIds;
   }
   llvm::StringRef getName() const { return name; }
 
@@ -48,6 +53,7 @@ private:
       std::pair<CanonicalPhysicalResource, CanonicalPhysicalResource>, 24>
       eventPairs;
   llvm::SmallVector<unsigned, 6> compilerEventIds;
+  llvm::SmallVector<unsigned, 11> compilerCrossCoreEventIds;
 
   friend CanonicalSyncTarget makeNpu2201CanonicalSyncTarget();
 };

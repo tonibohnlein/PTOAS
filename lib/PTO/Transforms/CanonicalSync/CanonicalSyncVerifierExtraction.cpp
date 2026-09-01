@@ -137,7 +137,8 @@ std::optional<PIPE> getVerifierNormalizedPipe(Operation *operation) {
 }
 
 bool isVerifierSyncOperation(Operation *operation) {
-  return isa<SetFlagOp, WaitFlagOp, BarrierOp>(operation);
+  return isa<SetFlagOp, WaitFlagOp, SyncSetOp, SyncWaitOp, BarrierOp>(
+      operation);
 }
 
 LogicalResult

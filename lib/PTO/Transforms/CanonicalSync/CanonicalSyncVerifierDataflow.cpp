@@ -95,24 +95,7 @@ bool requiresVisibility(const VerifierEffect &source,
       target.access.unknownSpace || target.access.space == AddressSpace::GM;
   const bool scalarCrossing = (source.resource.pipe == PIPE::PIPE_S) !=
                               (target.resource.pipe == PIPE::PIPE_S);
-  const bool unresolvedMteRoundTrip = source.resource.pipe == PIPE::PIPE_MTE3 &&
-                                      target.resource.pipe == PIPE::PIPE_MTE2 &&
-                                      accessWrites(source.access.mode) &&
-                                      accessReads(target.access.mode);
-  return sourceMayBeGm && targetMayBeGm &&
-         (scalarCrossing || unresolvedMteRoundTrip);
-}
-
-bool isUnresolvedMte3ToMte2Visibility(const VerifierEffect &source,
-                                      const VerifierEffect &target) {
-  const bool sourceMayBeGm =
-      source.access.unknownSpace || source.access.space == AddressSpace::GM;
-  const bool targetMayBeGm =
-      target.access.unknownSpace || target.access.space == AddressSpace::GM;
-  return sourceMayBeGm && targetMayBeGm &&
-         source.resource.pipe == PIPE::PIPE_MTE3 &&
-         target.resource.pipe == PIPE::PIPE_MTE2 &&
-         accessWrites(source.access.mode) && accessReads(target.access.mode);
+  return sourceMayBeGm && targetMayBeGm && scalarCrossing;
 }
 
 bool completionKnown(const CanonicalSyncTarget &target,
@@ -323,11 +306,6 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyAndIssuePhase(
         const bool nonHazard = !isHazard(source, destination);
         if (unresolvedSameOperation || nonAliasing || nonHazard) {
           continue;
-        }
-        if (isUnresolvedMte3ToMte2Visibility(source, destination)) {
-          return destination.key.operation->emitError(
-              "canonical sync verifier has no device-proven MTE3-to-MTE2 GM "
-              "visibility primitive");
         }
         const bool visibility = requiresVisibility(source, destination);
         const bool missingCompletion =

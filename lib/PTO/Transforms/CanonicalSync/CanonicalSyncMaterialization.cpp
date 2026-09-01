@@ -32,6 +32,7 @@ struct EventAction {
   PIPE source = PIPE::PIPE_UNASSIGNED;
   PIPE target = PIPE::PIPE_UNASSIGNED;
   unsigned eventId = 0;
+  bool crossCore = false;
 };
 
 struct RecurringEventAction {
@@ -106,8 +107,9 @@ LogicalResult collectActions(
            *mechanism.releaseEventId, loop, setAnchor, waitAnchor});
       continue;
     }
-    EventAction action{mechanism.id, mechanism.source.pipe,
-                       mechanism.target.pipe, *eventId};
+    EventAction action{
+        mechanism.id, mechanism.source.pipe, mechanism.target.pipe, *eventId,
+        mechanism.kind == CanonicalMechanismKind::CrossCoreEvent};
     sets[setAnchor].push_back(action);
     waits[waitAnchor].push_back(action);
   }
@@ -168,10 +170,10 @@ void emitRecurringProtocols(func::FuncOp clone,
 
 void sortActions(SmallVectorImpl<EventAction> &actions) {
   llvm::sort(actions, [](const EventAction &first, const EventAction &second) {
-    return std::tie(first.source, first.target, first.eventId,
-                    first.mechanism) < std::tie(second.source, second.target,
-                                                second.eventId,
-                                                second.mechanism);
+    return std::tie(first.source, first.target, first.eventId, first.crossCore,
+                    first.mechanism) <
+           std::tie(second.source, second.target, second.eventId,
+                    second.crossCore, second.mechanism);
   });
 }
 
@@ -186,6 +188,15 @@ void emitActions(
     sortActions(entry.second);
     builder.setInsertionPointAfter(entry.first);
     for (const EventAction &action : entry.second) {
+      if (action.crossCore) {
+        auto operation = builder.create<SyncSetOp>(
+            entry.first->getLoc(),
+            PipeAttr::get(clone.getContext(), action.source),
+            builder.getI32IntegerAttr(action.eventId),
+            builder.getI32IntegerAttr(2), Value());
+        tagGenerated(operation, builder, action.mechanism);
+        continue;
+      }
       auto operation = builder.create<SetFlagOp>(
           entry.first->getLoc(),
           PipeAttr::get(clone.getContext(), action.source),
@@ -199,6 +210,15 @@ void emitActions(
     sortActions(entry.second);
     builder.setInsertionPoint(entry.first);
     for (const EventAction &action : entry.second) {
+      if (action.crossCore) {
+        auto operation = builder.create<SyncWaitOp>(
+            entry.first->getLoc(),
+            PipeAttr::get(clone.getContext(), action.target),
+            builder.getI32IntegerAttr(action.eventId),
+            builder.getI32IntegerAttr(2), Value());
+        tagGenerated(operation, builder, action.mechanism);
+        continue;
+      }
       auto operation = builder.create<WaitFlagOp>(
           entry.first->getLoc(),
           PipeAttr::get(clone.getContext(), action.source),
@@ -221,29 +241,53 @@ void emitActions(
   }
 }
 
-void emitTailBarriers(func::FuncOp clone, const CanonicalSyncProgram &program) {
-  CanonicalMechanismId tail = kInvalidCanonicalSyncId;
+void tagTailBarrier(BarrierOp barrier, OpBuilder &builder,
+                    CanonicalMechanismId mechanism) {
+  tagGenerated(barrier, builder, mechanism);
+  barrier->setAttr("pto.auto_sync_tail_barrier", builder.getUnitAttr());
+  barrier->setAttr("pto.auto_sync_tail_hint",
+                   builder.getStringAttr("barrier-all"));
+}
+
+LogicalResult emitTailBarriers(func::FuncOp clone,
+                               const CanonicalSyncProgram &program,
+                               const IRMapping &mapping) {
+  CanonicalMechanismId functionTail = kInvalidCanonicalSyncId;
   const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
+  OpBuilder builder(clone.getContext());
   for (CanonicalMechanismId mechanismId : solution.mechanisms) {
     const CanonicalMechanism &mechanism = program.getMechanism(mechanismId);
-    if (mechanism.kind == CanonicalMechanismKind::TailBarrier) {
-      tail = mechanism.id;
-      break;
+    if (mechanism.kind != CanonicalMechanismKind::TailBarrier) {
+      continue;
     }
+    if (!mechanism.targetPoint.operation) {
+      functionTail = mechanism.id;
+      continue;
+    }
+    Operation *anchor = mapping.lookupOrNull(mechanism.targetPoint.operation);
+    if (!anchor || mechanism.targetPoint.position !=
+                       CanonicalProgramPointPosition::After) {
+      return clone.emitError(
+          "canonical sync failed to map a section tail barrier anchor");
+    }
+    builder.setInsertionPointToEnd(anchor->getBlock());
+    auto barrier = builder.create<BarrierOp>(
+        anchor->getLoc(), PipeAttr::get(clone.getContext(), PIPE::PIPE_ALL));
+    // The auto_sync_tail attribute is a code-generation request to coalesce a
+    // barrier into the function return helper. A section-local drain must stay
+    // at its physical section boundary instead.
+    tagGenerated(barrier, builder, mechanism.id);
   }
-  if (tail == kInvalidCanonicalSyncId) {
-    return;
+  if (functionTail == kInvalidCanonicalSyncId) {
+    return success();
   }
-  OpBuilder builder(clone.getContext());
   clone.walk([&](func::ReturnOp operation) {
     builder.setInsertionPoint(operation);
     auto barrier = builder.create<BarrierOp>(
         operation.getLoc(), PipeAttr::get(clone.getContext(), PIPE::PIPE_ALL));
-    tagGenerated(barrier, builder, tail);
-    barrier->setAttr("pto.auto_sync_tail_barrier", builder.getUnitAttr());
-    barrier->setAttr("pto.auto_sync_tail_hint",
-                     builder.getStringAttr("barrier-all"));
+    tagTailBarrier(barrier, builder, functionTail);
   });
+  return success();
 }
 
 } // namespace
@@ -269,7 +313,9 @@ mlir::pto::materializeAndVerifyCanonicalSync(CanonicalSyncProgram &program) {
   }
   emitActions(clone, sets, waits, barriers, program);
   emitRecurringProtocols(clone, protocols);
-  emitTailBarriers(clone, program);
+  if (failed(emitTailBarriers(clone, program, mapping))) {
+    return failure();
+  }
   if (failed(verifyMaterializedCanonicalSync(clone))) {
     function.emitError("canonical sync rejected its staged materialization; "
                        "original IR is unchanged");

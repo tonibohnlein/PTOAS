@@ -461,10 +461,7 @@ bool requiresVisibility(const CanonicalSyncProgram &program,
   const PIPE targetPipe = program.getPhase(target.phase).resource.pipe;
   const bool scalarCrossing =
       (sourcePipe == PIPE::PIPE_S) != (targetPipe == PIPE::PIPE_S);
-  const bool unresolvedMteRoundTrip =
-      sourcePipe == PIPE::PIPE_MTE3 && targetPipe == PIPE::PIPE_MTE2 &&
-      accessWrites(source.mode) && accessReads(target.mode);
-  return scalarCrossing || unresolvedMteRoundTrip;
+  return scalarCrossing;
 }
 
 CanonicalVisibilityRequirement
@@ -473,16 +470,10 @@ buildVisibilityRequirement(const CanonicalSyncProgram &program,
                            const CanonicalAccess &target) {
   const bool scalarSource =
       program.getPhase(source.phase).resource.pipe == PIPE::PIPE_S;
-  const PIPE sourcePipe = program.getPhase(source.phase).resource.pipe;
-  const PIPE targetPipe = program.getPhase(target.phase).resource.pipe;
   CanonicalVisibilityRequirement requirement;
-  if (sourcePipe == PIPE::PIPE_MTE3 && targetPipe == PIPE::PIPE_MTE2) {
-    requirement.direction = CanonicalVisibilityDirection::Mte3ToMte2Gm;
-  } else {
-    requirement.direction =
-        scalarSource ? CanonicalVisibilityDirection::ScalarToNonScalar
-                     : CanonicalVisibilityDirection::NonScalarToScalar;
-  }
+  requirement.direction = scalarSource
+                              ? CanonicalVisibilityDirection::ScalarToNonScalar
+                              : CanonicalVisibilityDirection::NonScalarToScalar;
   requirement.scope = FenceScope::GM;
   if (scalarSource && accessWrites(source.mode)) {
     requirement.cacheMaintenance = CanonicalCacheMaintenance::CleanSource;

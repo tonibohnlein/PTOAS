@@ -277,11 +277,13 @@ void executePoint(const CanonicalSyncProgram &program,
     }
     if (mechanism.sourcePoint == point &&
         (mechanism.kind == CanonicalMechanismKind::Event ||
+         mechanism.kind == CanonicalMechanismKind::CrossCoreEvent ||
          mechanism.kind == CanonicalMechanismKind::RecurringEvent)) {
       applyEventSet(mechanism, state);
     }
     if (mechanism.targetPoint == point &&
         (mechanism.kind == CanonicalMechanismKind::Event ||
+         mechanism.kind == CanonicalMechanismKind::CrossCoreEvent ||
          mechanism.kind == CanonicalMechanismKind::RecurringEvent)) {
       applyEventWait(mechanism, state);
     }
@@ -481,12 +483,10 @@ mlir::pto::canonical_sync_detail::evaluateCanonicalSyncUnrolledOracle(
   }
   OracleState initial;
   initial.covered.resize(program.getDemands().size(), true);
-  const bool tail = llvm::any_of(selected, [&](CanonicalMechanismId id) {
-    return program.getMechanism(id).kind == CanonicalMechanismKind::TailBarrier;
-  });
   for (const CanonicalDemand &demand : program.getDemands()) {
     if (demand.kind == CanonicalDemandKind::ExitCompletion) {
-      initial.covered[demand.id] = tail;
+      initial.covered[demand.id] =
+          demandUsesDirectMechanism(program, demand, selected);
     }
   }
   OracleContext context;

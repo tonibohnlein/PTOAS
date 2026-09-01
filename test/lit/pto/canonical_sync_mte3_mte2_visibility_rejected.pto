@@ -8,14 +8,15 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-// A same-address GM store/load round trip requires a separately established
-// visibility primitive. An ordinary MTE3->MTE2 event is not sufficient.
-// RUN: not ptoas --pto-arch=a3 --pto-level=level3 \
-// RUN:   --enable-canonical-sync --emit-pto-ir %s -o /dev/null 2>&1 \
+// MTE3 and MTE2 bypass scalar DCache. The documented MTE3_MTE2 event orders
+// the completed GM store before the later same-address GM load.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 \
+// RUN:   --enable-canonical-sync --canonical-sync-dump --emit-pto-ir \
+// RUN:   --mlir-print-ir-after=pto-canonical-sync %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
 
 module attributes {pto.target_arch = "a2a3"} {
-  func.func @mte3_to_mte2_gm_visibility_is_unresolved(
+  func.func @mte3_to_mte2_gm_uses_completion_event(
       %gm: !pto.partition_tensor_view<16x128xf32>)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %first_addr = arith.constant 0 : i64
@@ -40,4 +41,15 @@ module attributes {pto.target_arch = "a2a3"} {
   }
 }
 
-// CHECK: error: canonical sync has no device-proven MTE3-to-MTE2 GM visibility primitive; demand d{{[0-9]+}} fails closed
+// CHECK-LABEL: CANONICAL-SYNC function=mte3_to_mte2_gm_uses_completion_event
+// CHECK: kind=RAW
+// CHECK-NOT: visibility=
+// CHECK: kind=event resource=AIV:PIPE_MTE3->AIV:PIPE_MTE2
+// CHECK: PLAN selected=[
+// CHECK-SAME: events=[{{.*}}=e{{[0-5]}}
+// CHECK: VERIFY ok
+// CHECK-LABEL: func.func @mte3_to_mte2_gm_uses_completion_event
+// CHECK: pto.tstore
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]
+// CHECK-NEXT: pto.tload

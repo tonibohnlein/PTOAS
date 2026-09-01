@@ -152,7 +152,7 @@ static bool hasKnownNoOrdinaryMemoryAccess(Operation *op) {
 static bool isKnownAdministrativeOperation(Operation *op) {
   return isa<AllocTileOp, AllocMultiTileOp, SetValidShapeOp, GetValidShapeOp,
              AicInitializePipeOp, AivInitializePipeOp, InitializeL2LPipeOp,
-             InitializeL2G2LPipeOp>(op);
+             InitializeL2G2LPipeOp, SetFFTsOp>(op);
 }
 
 static void collectMemoryAccesses(Operation *op,

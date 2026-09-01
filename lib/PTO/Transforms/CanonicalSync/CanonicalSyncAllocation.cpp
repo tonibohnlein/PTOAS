@@ -79,6 +79,41 @@ FailureOr<unsigned> allocateEventId(CanonicalSyncProgram &program,
   return failure();
 }
 
+bool crossCoreIdAvailable(const CanonicalSyncProgram &program,
+                          const CanonicalSetCoverSolution &solution,
+                          const CanonicalMechanism &candidate,
+                          unsigned eventId) {
+  return llvm::none_of(
+      solution.mechanisms, [&](CanonicalMechanismId existingId) {
+        const CanonicalMechanism &existing = program.getMechanism(existingId);
+        return existing.kind == CanonicalMechanismKind::CrossCoreEvent &&
+               existing.eventId == eventId &&
+               lifetimesCanOverlap(existing, candidate);
+      });
+}
+
+FailureOr<unsigned>
+allocateCrossCoreEventId(CanonicalSyncProgram &program,
+                         const CanonicalSyncTarget &target,
+                         const CanonicalSetCoverSolution &solution,
+                         const CanonicalMechanism &mechanism) {
+  for (unsigned eventId : target.getCompilerCrossCoreEventIds()) {
+    if (crossCoreIdAvailable(program, solution, mechanism, eventId)) {
+      return eventId;
+    }
+  }
+  Operation *witness = mechanism.targetPoint.operation
+                           ? mechanism.targetPoint.operation
+                           : program.getFunction().getOperation();
+  witness->emitError("canonical sync exhausted cross-core counter IDs")
+      << "; mechanism m" << mechanism.id << " domain "
+      << stringifyCanonicalCore(mechanism.source.core) << ':'
+      << stringifyPIPE(mechanism.source.pipe) << " -> "
+      << stringifyCanonicalCore(mechanism.target.core) << ':'
+      << stringifyPIPE(mechanism.target.pipe);
+  return failure();
+}
+
 } // namespace
 
 LogicalResult
@@ -96,9 +131,20 @@ mlir::pto::allocateCanonicalSyncEvents(CanonicalSyncProgram &program) {
   for (CanonicalMechanismId mechanismId : solution.mechanisms) {
     const CanonicalMechanism &mechanism = program.getMechanism(mechanismId);
     const bool event = mechanism.kind == CanonicalMechanismKind::Event;
+    const bool crossCore =
+        mechanism.kind == CanonicalMechanismKind::CrossCoreEvent;
     const bool recurring =
         mechanism.kind == CanonicalMechanismKind::RecurringEvent;
-    if (!event && !recurring) {
+    if (!event && !crossCore && !recurring) {
+      continue;
+    }
+    if (crossCore) {
+      FailureOr<unsigned> eventId =
+          allocateCrossCoreEventId(program, *target, solution, mechanism);
+      if (failed(eventId)) {
+        return failure();
+      }
+      program.setMechanismEventId(mechanism.id, *eventId);
       continue;
     }
     FailureOr<unsigned> ready =

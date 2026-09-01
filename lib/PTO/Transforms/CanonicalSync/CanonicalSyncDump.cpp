@@ -158,7 +158,8 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
       os << "->";
       printResource(os, mechanism.target);
     }
-    if (mechanism.kind == CanonicalMechanismKind::TailBarrier) {
+    if (mechanism.kind == CanonicalMechanismKind::TailBarrier &&
+        !mechanism.sourcePoint.operation) {
       os << " points=exit";
     } else {
       os << " points=";

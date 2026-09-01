@@ -103,10 +103,11 @@ mlir::pto::canonical_sync_detail::rejectUnsupportedCanonicalSyncInput(
   bool invalid = false;
   function.walk([&](Operation *operation) {
     if (isa<RecordEventOp, WaitEventOp, BarrierSyncOp, SetFlagOp, WaitFlagOp,
-            SetFlagDynOp, WaitFlagDynOp, BarrierOp, GetBufOp, GetBufDynOp,
-            RlsBufOp, RlsBufDynOp>(operation)) {
+            SetFlagDynOp, WaitFlagDynOp, SyncSetOp, SyncWaitOp, SetCrossBlockOp,
+            WaitCrossBlockOp, SetIntraBlockOp, WaitIntraBlockOp, BarrierOp,
+            GetBufOp, GetBufDynOp, RlsBufOp, RlsBufDynOp>(operation)) {
       operation->emitError(
-          "canonical sync requires ownership of intra-core synchronization; "
+          "canonical sync requires ownership of physical synchronization; "
           "remove the pre-existing synchronization operation or select a "
           "different sync mode");
       invalid = true;

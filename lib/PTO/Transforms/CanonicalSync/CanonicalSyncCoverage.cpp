@@ -389,6 +389,7 @@ evaluateFlattenedFacts(const CanonicalSyncProgram &program,
     for (CanonicalMechanismId id : selected) {
       const CanonicalMechanism &mechanism = program.getMechanism(id);
       if (mechanism.kind == CanonicalMechanismKind::Event ||
+          mechanism.kind == CanonicalMechanismKind::CrossCoreEvent ||
           mechanism.kind == CanonicalMechanismKind::RecurringEvent) {
         changed |= applyEvent(program, mechanism, facts,
                               mechanismExecutionLoops(program, mechanism));
@@ -507,6 +508,7 @@ summarizeRegion(const CanonicalSyncProgram &program, CanonicalRegionId region,
       addFixedFenceTransfers(program, mechanism, result.transfers,
                              mechanismExecutionLoops(program, mechanism));
     } else if (mechanism.kind == CanonicalMechanismKind::Event ||
+               mechanism.kind == CanonicalMechanismKind::CrossCoreEvent ||
                mechanism.kind == CanonicalMechanismKind::RecurringEvent) {
       CanonicalBoundaryTransfer transfer;
       transfer.source = mechanism.source;
@@ -591,13 +593,9 @@ bool demandCovered(const CanonicalSyncProgram &program,
                    ArrayRef<CanonicalMechanismId> selected,
                    ArrayRef<CompletionFact> facts) {
   if (demand.kind == CanonicalDemandKind::ExitCompletion) {
-    const CanonicalCore sourceCore =
-        program.getPhase(demand.source).resource.core;
-    return llvm::any_of(selected, [&](CanonicalMechanismId id) {
-      const CanonicalMechanism &mechanism = program.getMechanism(id);
-      return mechanism.kind == CanonicalMechanismKind::TailBarrier &&
-             mechanism.source.core == sourceCore;
-    });
+    const CanonicalMechanismId direct =
+        program.getDirectMechanisms()[demand.id];
+    return llvm::is_contained(selected, direct);
   }
   if (demand.requirement == CanonicalRequirement::Visibility) {
     const CanonicalMechanismId direct =

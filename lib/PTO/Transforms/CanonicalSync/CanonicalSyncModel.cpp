@@ -253,10 +253,12 @@ LogicalResult CanonicalSyncProgram::freeze() {
   };
   for (const CanonicalMechanism &mechanism : mechanisms) {
     const bool tail = mechanism.kind == CanonicalMechanismKind::TailBarrier;
-    const bool validPoints = tail ? !mechanism.sourcePoint.operation &&
-                                        !mechanism.targetPoint.operation
-                                  : mechanism.sourcePoint.operation &&
-                                        mechanism.targetPoint.operation;
+    const bool hasBothPoints =
+        mechanism.sourcePoint.operation && mechanism.targetPoint.operation;
+    const bool hasNeitherPoint =
+        !mechanism.sourcePoint.operation && !mechanism.targetPoint.operation;
+    const bool validPoints =
+        tail ? hasBothPoints || hasNeitherPoint : hasBothPoints;
     const bool validOrigins =
         llvm::all_of(mechanism.origins, [this](CanonicalDemandId demand) {
           return demand < demands.size();
@@ -450,6 +452,7 @@ LogicalResult CanonicalSyncProgram::freeze() {
       const bool mustHaveEvent =
           selected &&
           (mechanism.kind == CanonicalMechanismKind::Event ||
+           mechanism.kind == CanonicalMechanismKind::CrossCoreEvent ||
            mechanism.kind == CanonicalMechanismKind::RecurringEvent);
       const bool assignmentMatches =
           mechanism.eventId.has_value() == mustHaveEvent &&
@@ -571,8 +574,6 @@ StringRef mlir::pto::stringifyCanonicalVisibilityDirection(
     return "scalar-to-nonscalar";
   case CanonicalVisibilityDirection::NonScalarToScalar:
     return "nonscalar-to-scalar";
-  case CanonicalVisibilityDirection::Mte3ToMte2Gm:
-    return "mte3-to-mte2-gm";
   }
   llvm_unreachable("unknown canonical visibility direction");
 }
@@ -599,6 +600,8 @@ mlir::pto::stringifyCanonicalMechanismKind(CanonicalMechanismKind kind) {
     return "barrier";
   case CanonicalMechanismKind::Event:
     return "event";
+  case CanonicalMechanismKind::CrossCoreEvent:
+    return "cross-core-event";
   case CanonicalMechanismKind::RecurringEvent:
     return "recurring-event";
   case CanonicalMechanismKind::FixedFence:

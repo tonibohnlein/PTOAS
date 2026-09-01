@@ -64,6 +64,8 @@ References:
 - [Pipeline barrier semantics](https://asc.gitcode.com/api/SIMD-API/basic_api/sync_control/intra_core_sync/PipeBarrier_ISASI.html)
 - [AIC and AIV event combinations](https://asc.gitcode.com/api/SIMD-API/basic_api/sync_control/intra_core_sync/intra_core_sync_overview.html)
 - [Static-tensor event-ID restrictions](https://asc.gitcode.com/guide/programming_guide/programming_model/ai_core_simd_programming/cpp_tensor_programming/static_tensor_programming.html)
+- [A2/A3 cross-core set semantics](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/850alpha002/API/ascendcopapi/atlasascendc_api_07_0273.html)
+- [A2/A3 cross-core wait semantics](https://www.hiascend.com/document/detail/en/canncommercial/850/API/ascendcopapi/atlasascendc_api_07_0274.html)
 
 ## Immutable correctness model
 
@@ -135,11 +137,10 @@ represents the documented hardware scheduling restriction and remains visible
 in graph dumps.
 
 GM conflicts between scalar and non-scalar pipelines require visibility, not
-only pipeline completion. The documented-risk MTE3 GM write to same-address
-MTE2 GM read path is also classified as a distinct visibility direction. No
-device-proven direct primitive for that round trip is currently encoded, so it
-fails closed rather than being satisfied by an ordinary event. Every supported
-visibility demand records three independent requirements: direction
+only pipeline completion. MTE3 and MTE2 bypass the scalar data cache; the
+documented `MTE3_MTE2` SetFlag/WaitFlag relation orders a same-core GM store/load
+round trip as a completion demand. Every visibility demand records three
+independent requirements: direction
 (`scalar-to-nonscalar` or `nonscalar-to-scalar`), fence scope, and cache
 maintenance. Scalar publication requires source cache maintenance before a GM
 fence. A scalar read acquiring a non-scalar publication requires a GM fence
@@ -170,8 +171,10 @@ loop, consumes and restores it around every ready transfer, and drains it after
 the loop. More general nested or guarded recurrence shapes continue to fail
 closed. A same-pipeline barrier may remain inside a loop.
 
-Every issued phase also has an exit-completion demand. All returns receive a
-tagged `PIPE_ALL` barrier, including returns in structured control flow.
+Every issued phase also has an exit-completion demand. Function-core work is
+drained by a tagged `PIPE_ALL` before return. Work in an explicit cube or vector
+section is drained by a `PIPE_ALL` at the end of that physical section, so the
+barrier executes on the core that issued the work.
 
 ## Direct mechanisms and coverage
 
@@ -180,6 +183,8 @@ Each demand is assigned one direct mechanism:
 - documented intrinsic ordering;
 - a targeted same-pipeline barrier;
 - a legal directed set/wait event;
+- a once-only mode-2 FFTS counter transfer between ordered cube and vector
+  sections when the function already provides `pto.set_ffts` setup;
 - a single-lane ready/release recurrence protocol with explicit priming and
   draining;
 - an existing visibility sequence with the required cache maintenance and
@@ -194,7 +199,9 @@ frontier. When an endpoint is nested, the pair can be lifted to a common
 once-only block. The lifted set captures every source-resource phase that may
 precede its physical point, including alternative branch arms and all relevant
 phases of a macro. A barrier before a macro does not complete phases inside the
-macro. Event lifecycles that repeat inside a loop are rejected.
+macro. Ordinary event lifecycles that repeat inside a loop use the supported
+ready/release protocol or are rejected. Cross-core counters remain once-only;
+guarded, loop-repeated, and positive-distance cross-core demands fail closed.
 
 An existing GM/all fence is fixed baseline supply, represented once by its
 physical operation rather than once per demand. Its completion role publishes
@@ -251,11 +258,15 @@ the target pipeline consumes it. Therefore all coexecuting generations in one
 directed domain receive distinct IDs. Only once-only generations in provably
 mutually exclusive control arms may share an ID. Deterministic first-fit failure
 is an error; it does not trigger event reuse or a global-barrier fallback.
+Cross-core mode-2 FFTS counters use their documented ID range 0 through 10.
+Coexecuting cross-core generations conservatively receive distinct numeric
+counter IDs, independent of their pipe direction, and exhaustion is an error.
 
 ## Independent verification and atomic mutation
 
 Materialization first clones the function. The clone receives tagged set/wait
-pairs, targeted barriers, and exit barriers. Before memory dataflow, an event
+pairs, mode-2 cross-core set/wait pairs, targeted barriers, and exit barriers.
+Before memory dataflow, an event
 generation verifier independently reconstructs each tagged set/wait generation
 from the emitted IR. It checks balance, direction, ID legality, control path,
 once-only lifetime, set-before-wait issue order, macro reservations, and
@@ -314,5 +325,4 @@ Canonical synchronization is mutually exclusive with the existing InsertSync,
 buffer-ID, and barrier-all modes. It rejects A5, `pto.tassign`, pre-existing
 intra-core synchronization owned by another mode, the `mte3-to-s-event0` tail
 policy, unknown explicit target/device profiles, illegal event directions,
-unsafe control flow, unresolved MTE3-to-MTE2 GM visibility, unsupported
-visibility, and event-ID exhaustion.
+unsafe control flow, unsupported visibility, and event-ID exhaustion.

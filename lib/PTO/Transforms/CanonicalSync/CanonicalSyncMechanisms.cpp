@@ -156,8 +156,47 @@ buildFixedFenceMechanism(const CanonicalFenceEffect &effect) {
   return mechanism;
 }
 
+Operation *findEnclosingPhysicalSection(Operation *operation) {
+  Operation *parent = operation ? operation->getParentOp() : nullptr;
+  while (parent) {
+    if (isa<SectionCubeOp, SectionVectorOp>(parent)) {
+      return parent;
+    }
+    parent = parent->getParentOp();
+  }
+  return nullptr;
+}
+
 FailureOr<CanonicalMechanism>
-buildTailMechanism(const CanonicalSyncProgram &program) {
+buildTailMechanism(const CanonicalSyncProgram &program,
+                   const CanonicalPhase &sourcePhase) {
+  if (Operation *section =
+          findEnclosingPhysicalSection(sourcePhase.operation)) {
+    auto sectionRegion =
+        llvm::find_if(program.getRegions(), [&](const CanonicalRegion &region) {
+          return region.kind == CanonicalRegionKind::Transparent &&
+                 region.operation == section;
+        });
+    if (sectionRegion == program.getRegions().end()) {
+      return section->emitError(
+          "canonical sync cannot resolve a physical section region");
+    }
+    CanonicalMechanism tail;
+    tail.kind = CanonicalMechanismKind::TailBarrier;
+    tail.source = {sourcePhase.resource.core, PIPE::PIPE_ALL};
+    tail.target = tail.source;
+    Operation *last = &section->getRegion(0).front().back();
+    tail.sourcePoint = {last, CanonicalProgramPointPosition::After};
+    tail.targetPoint = tail.sourcePoint;
+    tail.actionRegion = sectionRegion->id;
+    for (const CanonicalControlAtom &atom : sourcePhase.controlPath) {
+      Operation *choice = program.getRegion(atom.choice).operation;
+      if (!section->isProperAncestor(choice)) {
+        tail.guard.push_back(atom);
+      }
+    }
+    return tail;
+  }
   const std::optional<bool> vectorExecution =
       resolvePTOExecutionVector(program.getFunction());
   if (!vectorExecution) {
@@ -170,6 +209,12 @@ buildTailMechanism(const CanonicalSyncProgram &program) {
   tail.kind = CanonicalMechanismKind::TailBarrier;
   tail.source = {*vectorExecution ? CanonicalCore::AIV : CanonicalCore::AIC,
                  PIPE::PIPE_ALL};
+  if (tail.source.core != sourcePhase.resource.core) {
+    sourcePhase.operation->emitError(
+        "canonical sync cannot place a PIPE_ALL exit barrier for this "
+        "physical core");
+    return failure();
+  }
   tail.target = tail.source;
   tail.actionRegion = 0;
   return tail;
@@ -289,6 +334,9 @@ bool sameMechanism(const CanonicalMechanism &left,
   case CanonicalMechanismKind::Event:
     return left.sourcePoint == right.sourcePoint &&
            left.targetPoint == right.targetPoint;
+  case CanonicalMechanismKind::CrossCoreEvent:
+    return left.sourcePoint == right.sourcePoint &&
+           left.targetPoint == right.targetPoint;
   case CanonicalMechanismKind::RecurringEvent:
     return left.sourcePoint == right.sourcePoint &&
            left.targetPoint == right.targetPoint &&
@@ -296,8 +344,10 @@ bool sameMechanism(const CanonicalMechanism &left,
   case CanonicalMechanismKind::FixedFence:
     llvm_unreachable("fixed fences are compared by physical effect");
   case CanonicalMechanismKind::IntrinsicOrder:
-  case CanonicalMechanismKind::TailBarrier:
     return true;
+  case CanonicalMechanismKind::TailBarrier:
+    return left.sourcePoint == right.sourcePoint &&
+           left.targetPoint == right.targetPoint;
   }
   llvm_unreachable("unknown canonical mechanism kind");
 }
@@ -383,18 +433,8 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
                      const CanonicalSyncTarget &target,
                      const CanonicalDemand &demand) {
   if (demand.kind == CanonicalDemandKind::ExitCompletion) {
-    FailureOr<CanonicalMechanism> tail = buildTailMechanism(program);
-    if (failed(tail)) {
-      return failure();
-    }
     const CanonicalPhase &source = program.getPhase(demand.source);
-    if (tail->source.core != source.resource.core) {
-      source.operation->emitError(
-          "canonical sync cannot use a function-core PIPE_ALL epilogue to "
-          "complete an opposite-core section phase");
-      return failure();
-    }
-    return tail;
+    return buildTailMechanism(program, source);
   }
   const CanonicalPhase &sourcePhase = program.getPhase(demand.source);
   const CanonicalPhase &targetPhase = program.getPhase(demand.target);
@@ -404,14 +444,6 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
     if (!demand.visibility) {
       targetPhase.operation->emitError(
           "canonical sync visibility demand lacks explicit requirements");
-      return failure();
-    }
-    if (demand.visibility->direction ==
-        CanonicalVisibilityDirection::Mte3ToMte2Gm) {
-      targetPhase.operation->emitError(
-          "canonical sync has no device-proven MTE3-to-MTE2 GM visibility "
-          "primitive")
-          << "; demand d" << demand.id << " fails closed";
       return failure();
     }
     Operation *fence = findFixedVisibilityFence(
@@ -471,13 +503,59 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
     return mechanism;
   }
   if (source.core != destination.core) {
-    targetPhase.operation->emitError(
-        "canonical sync cannot satisfy a cross-core memory demand with an "
-        "intra-core event")
-        << "; demand d" << demand.id << " crosses "
-        << stringifyCanonicalCore(source.core) << " to "
-        << stringifyCanonicalCore(destination.core);
-    return failure();
+    bool hasFftsSetup = false;
+    program.getFunction().walk([&](SetFFTsOp) { hasFftsSetup = true; });
+    const bool missingFftsSetup = !hasFftsSetup;
+    if (missingFftsSetup) {
+      targetPhase.operation->emitError(
+          "canonical sync cross-core events require an existing pto.set_ffts "
+          "base setup")
+          << "; demand d" << demand.id;
+      return failure();
+    }
+    if (hasPositiveDistance(demand)) {
+      targetPhase.operation->emitError(
+          "canonical sync has no repeating cross-core counter protocol")
+          << "; demand d" << demand.id;
+      return failure();
+    }
+    const bool repeated = isRepeatedBlock(sourcePhase.operation->getBlock()) ||
+                          isRepeatedBlock(targetPhase.operation->getBlock());
+    if (repeated) {
+      targetPhase.operation->emitError(
+          "canonical sync has no repeating cross-core counter protocol")
+          << "; demand d" << demand.id;
+      return failure();
+    }
+    if (sourcePhase.controlPath != targetPhase.controlPath) {
+      targetPhase.operation->emitError(
+          "canonical sync cannot balance a guarded cross-core event")
+          << "; demand d" << demand.id
+          << " requires identical source and target control paths";
+      return failure();
+    }
+    if (!target.supportsCrossCoreEvent(source, destination)) {
+      targetPhase.operation->emitError(
+          "canonical sync target forbids the required cross-core event")
+          << "; demand d" << demand.id << " crosses "
+          << stringifyCanonicalCore(source.core) << ':'
+          << stringifyPIPE(source.pipe) << " to "
+          << stringifyCanonicalCore(destination.core) << ':'
+          << stringifyPIPE(destination.pipe);
+      return failure();
+    }
+    CanonicalMechanism mechanism;
+    mechanism.kind = CanonicalMechanismKind::CrossCoreEvent;
+    mechanism.source = source;
+    mechanism.target = destination;
+    mechanism.sourcePoint = {sourcePhase.operation,
+                             CanonicalProgramPointPosition::After};
+    mechanism.targetPoint = {targetPhase.operation,
+                             CanonicalProgramPointPosition::Before};
+    mechanism.actionRegion = demand.owner;
+    mechanism.guard =
+        commonGuard(sourcePhase.controlPath, targetPhase.controlPath);
+    return mechanism;
   }
   if (hasPositiveDistance(demand)) {
     if (const CanonicalFenceEffect *effect =
@@ -649,11 +727,14 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
   }
   if (program.getDemands().empty()) {
     if (resolvePTOExecutionVector(program.getFunction())) {
-      FailureOr<CanonicalMechanism> tail = buildTailMechanism(program);
-      if (failed(tail)) {
-        return failure();
-      }
-      program.appendMechanism(std::move(*tail));
+      CanonicalMechanism tail;
+      tail.kind = CanonicalMechanismKind::TailBarrier;
+      const bool vector = *resolvePTOExecutionVector(program.getFunction());
+      tail.source = {vector ? CanonicalCore::AIV : CanonicalCore::AIC,
+                     PIPE::PIPE_ALL};
+      tail.target = tail.source;
+      tail.actionRegion = 0;
+      program.appendMechanism(std::move(tail));
     }
   }
   program.mechanismCatalogComplete = true;
