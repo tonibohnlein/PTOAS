@@ -820,11 +820,14 @@ the physical recipe to a parent-boundary drain.
 The historical GEMM generic-lifecycle test reconstructs a verified plan with
 53 Sets, 53 Waits, seven targeted `PIPE_MTE2` barriers, one targeted
 `PIPE_FIX` barrier, and zero body `PIPE_ALL`. The generic generator uses only
-storage SCCs, graph-owned phases, target capabilities, and verified physical
-cuts; it does not consult operation names or the legacy GEMM ownership
-recognizer. The connector proposal accelerator still refuses to reinterpret a
-child-loop displacement as a parent-loop coordinate without an exact witnessed
-completion export.
+exact storage witnesses, scoped resource SCCs, graph-owned phases, target
+capabilities, and verified physical cuts; it does not consult operation names
+or the legacy GEMM ownership recognizer. This independently verified recipe
+path remains separate from the newer target-neutral storage-lifecycle index:
+the index-derived overload is analysis-only until it is shown to generate an
+equivalent proposal set. The connector proposal accelerator still refuses to
+reinterpret a child-loop displacement as a parent-loop coordinate without an
+exact witnessed completion export.
 
 The ownership discovery bounds apply to recognizer work and to every retained
 certificate dimension in the shared census. Hitting any bound truncates

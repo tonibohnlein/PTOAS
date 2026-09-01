@@ -486,10 +486,10 @@ SyncCoverLifecycleSynthesisResult synthesizeSyncCoverLifecycleCertificates(
     SyncCoverProtocolLimits limits = {},
     SyncCoverCoverageWorkBudget *workBudget = nullptr);
 
-/// Synthesize from the already-built target-neutral exact-storage lifecycle
-/// index. Production catalog construction uses this overload so lifecycle SCC
-/// discovery has one owner; the graph-only overload remains a focused protocol
-/// test seam.
+/// Alternative synthesis entry point for the target-neutral exact-storage
+/// lifecycle index. It remains an analysis/test seam until its proposal set is
+/// proven equivalent to the independently verified graph-owned recipe
+/// synthesis used by the opt-in catalog.
 SyncCoverLifecycleSynthesisResult synthesizeSyncCoverLifecycleCertificates(
     const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
     const SyncCoverStorageLifecycleIndex &lifecycleIndex,

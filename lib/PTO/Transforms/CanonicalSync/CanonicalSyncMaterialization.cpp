@@ -3597,9 +3597,6 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
       analysisOptions.discoverStorageLifecycleComponents ||
       canonicalSyncMechanismFamilyEnabled(
           options.patterns.enabledMechanismFamilies,
-          CanonicalSyncMechanismFamily::GenericLifecycle) ||
-      canonicalSyncMechanismFamilyEnabled(
-          options.patterns.enabledMechanismFamilies,
           CanonicalSyncMechanismFamily::StorageCutEvent);
   analysisOptions.discoverTargetCompletionCertificates =
       analysisOptions.discoverTargetCompletionCertificates &&

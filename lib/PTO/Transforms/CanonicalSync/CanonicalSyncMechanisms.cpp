@@ -6088,17 +6088,9 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
           options.maximumLifecycleSynthesisWorkUnits);
       const SyncCoverProtocolTargetContract protocolTarget =
           makeProtocolTargetContract(program.getTargetCapabilities());
-      SyncCoverLifecycleSynthesisResult synthesized;
-      if (!program.getStorageLifecycleIndex() ||
-          !program.getStorageLifecycleIndex()->isComplete()) {
-        synthesized.error = SyncCoverProtocolError::LimitExceeded;
-      } else if (!lifecycleWork.consume()) {
-        synthesized.error = SyncCoverProtocolError::WorkLimitExceeded;
-      } else {
-        synthesized = synthesizeSyncCoverLifecycleCertificates(
-            program.getGraph(), protocolTarget,
-            *program.getStorageLifecycleIndex(), {}, &lifecycleWork);
-      }
+      SyncCoverLifecycleSynthesisResult synthesized =
+          synthesizeSyncCoverLifecycleCertificates(
+              program.getGraph(), protocolTarget, {}, &lifecycleWork);
       const CanonicalSyncProblemResult recordedWork =
           problem->recordGenericLifecycleSynthesisWorkUnits(
               lifecycleWork.workUnits);
