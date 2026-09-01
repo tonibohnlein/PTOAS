@@ -204,6 +204,8 @@ private:
   LogicalResult visitFor(scf::ForOp operation, CanonicalRegionId sequence);
   LogicalResult visitSection(Operation *operation, Region &body,
                              CanonicalRegionId sequence);
+  LogicalResult addFenceEffect(FenceBarrierAllOp operation,
+                               CanonicalRegionId sequence);
   LogicalResult addRegularPhase(Operation *operation,
                                 CanonicalRegionId sequence, PIPE pipe);
   LogicalResult addNormalizedPhase(Operation *operation,
@@ -295,6 +297,9 @@ LogicalResult ProgramBuilder::visitOperation(Operation *operation,
         "canonical sync v1 does not support this region-bearing operation");
   }
   const bool isTerminator = operation->hasTrait<OpTrait::IsTerminator>();
+  if (auto fence = dyn_cast<FenceBarrierAllOp>(operation)) {
+    return addFenceEffect(fence, sequence);
+  }
   const bool isVisibility = isCanonicalVisibilityOperation(operation);
   if (isTerminator || isVisibility) {
     return success();
@@ -357,6 +362,35 @@ LogicalResult ProgramBuilder::visitOperation(Operation *operation,
         "canonical sync rejects an unclassified physical or effectful "
         "operation; provide normalized VPTOSchedulingSemantics");
   }
+  return success();
+}
+
+LogicalResult ProgramBuilder::addFenceEffect(FenceBarrierAllOp operation,
+                                             CanonicalRegionId sequence) {
+  const FenceScope scope = operation.getScope().getScope();
+  if (scope != FenceScope::GM && scope != FenceScope::All) {
+    return operation.emitError(
+        "canonical sync rejects an unsupported physical fence scope");
+  }
+  CanonicalFenceEffect effect;
+  effect.operation = operation;
+  effect.region = sequence;
+  effect.scope = scope;
+  effect.guard = controlPath;
+  effect.loopPath = loopPath;
+  FailureOr<SmallVector<CanonicalPhysicalResource, 8>> drained =
+      target.getFenceDrainedResources(operation);
+  if (failed(drained)) {
+    return operation.emitError(
+        "canonical sync cannot resolve the physical execution context for "
+        "fence");
+  }
+  effect.drainedResources = std::move(*drained);
+  if (effect.drainedResources.empty()) {
+    return operation.emitError(
+        "canonical sync target has no physical completion effect for fence");
+  }
+  program.appendFenceEffect(std::move(effect));
   return success();
 }
 

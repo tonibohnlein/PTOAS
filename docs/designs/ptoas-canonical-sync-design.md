@@ -21,10 +21,13 @@ remaining questions without changing the graph.
 
 The mechanical baseline through `7418323a8` passed its A3 device gate on eight
 Ascend 910B2 cards: 164,000 launches completed without mismatch, timeout,
-runtime error, sentinel violation, or divergent repetition. A2 was not tested
-because the available toolchain and cards expose only the combined A2/A3 target
-class. Bottom-up summaries and every later optimization remain outside that
-device verdict until separately gated.
+runtime error, sentinel violation, or divergent repetition. The loop-alias and
+region-summary delta through `ed58734ed` then passed 96,000 candidate launches
+without changing the materialized PTO, generated C++, or device binary for
+cases accepted by both revisions. A2 was not tested because the available
+toolchain and cards expose only the combined A2/A3 target class. Selection and
+every later optimization remain outside those device verdicts until separately
+gated.
 
 ## Hardware basis
 
@@ -70,6 +73,7 @@ The graph has stable IDs and separate record classes for:
 - structured regions and their cardinality;
 - physical execution phases;
 - memory accesses and byte intervals;
+- existing physical fence effects and their target-defined drained resources;
 - synchronization demands and their witnesses.
 
 Regions preserve functions, sequences, choices, loops, and physical sections.
@@ -186,6 +190,16 @@ once-only block. The lifted set captures every source-resource phase that may
 precede its physical point, including alternative branch arms and all relevant
 phases of a macro. A barrier before a macro does not complete phases inside the
 macro. Event lifecycles that repeat inside a loop are rejected.
+
+An existing GM/all fence is fixed baseline supply, represented once by its
+physical operation rather than once per demand. Its completion role publishes
+the prefixes of the queues drained by the target contract: all resources for a
+vector kernel, and MTE2, MTE3, and FIX for a non-vector kernel. Its visibility
+role remains separate and still requires the demand's scope, direction, and CMO
+protocol. This models a `PIPE_ALL` that is already part of an explicit vector
+fence; it does not introduce a selectable internal `PIPE_ALL` fallback.
+An enclosing vector or cube physical section determines the fence's execution
+core before the containing function kind, matching EmitC lowering.
 
 Coverage is evaluated as a scoreboard, not as pairwise graph reachability. A
 barrier publishes its completed source prefix. A set captures the source

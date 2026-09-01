@@ -32,6 +32,8 @@ public:
   bool supportsPipeBarrier(CanonicalPhysicalResource resource) const;
   bool supportsEvent(CanonicalPhysicalResource source,
                      CanonicalPhysicalResource target) const;
+  FailureOr<llvm::SmallVector<CanonicalPhysicalResource, 8>>
+  getFenceDrainedResources(Operation *fence) const;
   llvm::ArrayRef<unsigned> getCompilerEventIds() const {
     return compilerEventIds;
   }

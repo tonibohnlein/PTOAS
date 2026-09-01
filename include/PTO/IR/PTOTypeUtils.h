@@ -14,6 +14,8 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/Support/LLVM.h"
 
+#include <optional>
+
 namespace mlir::pto {
 
 namespace detail {
@@ -46,6 +48,7 @@ bool isPTOBF16x2Type(Type t);
 bool isPTOFloat4PackedType(Type t);
 bool isPTOPackedLdgStgVectorType(Type t);
 bool isPTOLowPrecisionType(Type t);
+std::optional<bool> resolvePTOExecutionVector(Operation *operation);
 
 unsigned getPTOStorageElemBitWidth(Type t);
 unsigned getPTOStorageElemByteSize(Type t);

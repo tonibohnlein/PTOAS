@@ -105,6 +105,59 @@ void applyBarrier(const CanonicalSyncProgram &program,
   }
 }
 
+bool applyFixedFence(const CanonicalSyncProgram &program,
+                     const CanonicalMechanism &mechanism,
+                     SmallVectorImpl<CompletionFact> &facts,
+                     ArrayRef<CanonicalRegionId> requiredLoops = {}) {
+  const CanonicalFenceEffect &effect =
+      program.getFenceEffect(*mechanism.fenceEffect);
+  SmallVector<CanonicalPhysicalResource, 8> destinations;
+  for (const CanonicalPhase &phase : program.getPhases()) {
+    if (!llvm::is_contained(destinations, phase.resource)) {
+      destinations.push_back(phase.resource);
+    }
+  }
+  bool changed = false;
+  const auto publish = [&](CanonicalPhaseId phase,
+                           ArrayRef<CanonicalControlAtom> guard,
+                           ArrayRef<CanonicalRegionId> loops) {
+    for (CanonicalPhysicalResource destination : destinations) {
+      changed |= addFact(
+          facts,
+          {phase, destination, mechanism.targetPoint,
+           SmallVector<CanonicalControlAtom, 2>(guard.begin(), guard.end()),
+           SmallVector<CanonicalRegionId, 2>(loops.begin(), loops.end())});
+    }
+  };
+  for (const CanonicalPhase &phase : program.getPhases()) {
+    const bool drained =
+        llvm::is_contained(effect.drainedResources, phase.resource);
+    const bool precedes = phaseMayPrecedePoint(phase, mechanism.sourcePoint);
+    const bool compatible =
+        controlsCanCoexecute(phase.controlPath, mechanism.guard);
+    if (!drained || !precedes || !compatible) {
+      continue;
+    }
+    publish(phase.id, combineGuards(phase.controlPath, mechanism.guard),
+            requiredLoops);
+  }
+  const SmallVector<CompletionFact, 16> snapshot(facts.begin(), facts.end());
+  for (const CompletionFact &fact : snapshot) {
+    const bool drained =
+        llvm::is_contained(effect.drainedResources, fact.resource);
+    const bool precedes =
+        programPointMustPrecede(fact.availableAt, mechanism.sourcePoint);
+    const bool compatible = controlsCanCoexecute(fact.guard, mechanism.guard);
+    if (!drained || !precedes || !compatible) {
+      continue;
+    }
+    SmallVector<CanonicalRegionId, 2> loops = fact.requiredLoops;
+    appendUnique(loops, requiredLoops);
+    publish(fact.phase, combineGuards(fact.guard, mechanism.guard), loops);
+  }
+  return changed;
+}
+
 bool applyEvent(const CanonicalSyncProgram &program,
                 const CanonicalMechanism &mechanism,
                 SmallVectorImpl<CompletionFact> &facts,
@@ -159,6 +212,32 @@ bool addBoundaryTransfer(SmallVectorImpl<CanonicalBoundaryTransfer> &transfers,
     return true;
   }
   return false;
+}
+
+void addFixedFenceTransfers(
+    const CanonicalSyncProgram &program, const CanonicalMechanism &mechanism,
+    SmallVectorImpl<CanonicalBoundaryTransfer> &transfers,
+    ArrayRef<CanonicalRegionId> requiredLoops = {}) {
+  const CanonicalFenceEffect &effect =
+      program.getFenceEffect(*mechanism.fenceEffect);
+  SmallVector<CanonicalPhysicalResource, 8> destinations;
+  for (const CanonicalPhase &phase : program.getPhases()) {
+    if (!llvm::is_contained(destinations, phase.resource)) {
+      destinations.push_back(phase.resource);
+    }
+  }
+  for (CanonicalPhysicalResource source : effect.drainedResources) {
+    for (CanonicalPhysicalResource target : destinations) {
+      CanonicalBoundaryTransfer transfer;
+      transfer.source = source;
+      transfer.target = target;
+      transfer.sourcePoint = mechanism.sourcePoint;
+      transfer.targetPoint = mechanism.targetPoint;
+      transfer.guard = mechanism.guard;
+      transfer.requiredLoops.assign(requiredLoops.begin(), requiredLoops.end());
+      addBoundaryTransfer(transfers, std::move(transfer));
+    }
+  }
 }
 
 SmallVector<CanonicalControlAtom, 2>
@@ -312,6 +391,9 @@ evaluateFlattenedFacts(const CanonicalSyncProgram &program,
       if (mechanism.kind == CanonicalMechanismKind::Event) {
         changed |= applyEvent(program, mechanism, facts,
                               mechanismExecutionLoops(program, mechanism));
+      } else if (mechanism.kind == CanonicalMechanismKind::FixedFence) {
+        changed |= applyFixedFence(program, mechanism, facts,
+                                   mechanismExecutionLoops(program, mechanism));
       }
     }
   }
@@ -420,6 +502,9 @@ summarizeRegion(const CanonicalSyncProgram &program, CanonicalRegionId region,
     if (mechanism.kind == CanonicalMechanismKind::PipeBarrier) {
       applyBarrier(program, mechanism, result.completions,
                    mechanismExecutionLoops(program, mechanism));
+    } else if (mechanism.kind == CanonicalMechanismKind::FixedFence) {
+      addFixedFenceTransfers(program, mechanism, result.transfers,
+                             mechanismExecutionLoops(program, mechanism));
     } else if (mechanism.kind == CanonicalMechanismKind::Event) {
       CanonicalBoundaryTransfer transfer;
       transfer.source = mechanism.source;
@@ -460,9 +545,9 @@ bool executionLoopsImpliedByPhase(ArrayRef<CanonicalRegionId> executionLoops,
   });
 }
 
-bool recurrenceCoveredByBarrier(const CanonicalSyncProgram &program,
-                                const CanonicalDemand &demand,
-                                ArrayRef<CanonicalMechanismId> selected) {
+bool recurrenceCoveredByCompletionCut(const CanonicalSyncProgram &program,
+                                      const CanonicalDemand &demand,
+                                      ArrayRef<CanonicalMechanismId> selected) {
   const auto carrying = llvm::find_if(
       demand.iterationDistance, [](const CanonicalLoopDistance &distance) {
         return distance.relation == CanonicalIterationRelation::AnyPositive;
@@ -476,19 +561,25 @@ bool recurrenceCoveredByBarrier(const CanonicalSyncProgram &program,
     const CanonicalMechanism &mechanism = program.getMechanism(id);
     const SmallVector<CanonicalRegionId, 2> loops =
         mechanismExecutionLoops(program, mechanism);
-    const bool relevant =
+    const bool pipeBarrier =
         mechanism.kind == CanonicalMechanismKind::PipeBarrier &&
         mechanism.source == source.resource &&
-        source.resource == target.resource &&
-        llvm::is_contained(loops, carrying->loop);
+        source.resource == target.resource;
+    const bool fixedFence =
+        mechanism.kind == CanonicalMechanismKind::FixedFence &&
+        llvm::is_contained(
+            program.getFenceEffect(*mechanism.fenceEffect).drainedResources,
+            source.resource);
+    const bool relevant = (pipeBarrier || fixedFence) &&
+                          llvm::is_contained(loops, carrying->loop);
     if (!relevant) {
       return false;
     }
-    // A repeated barrier can close the loop wrap by completing the source
-    // later in iteration i, or by draining iteration i before the target in
-    // iteration i+1. A cut nested in another loop is usable only when that
-    // loop also contains the protected endpoint; otherwise the nested loop
-    // may execute zero times while the endpoint still executes.
+    // A repeated completion cut can close the loop wrap by completing the
+    // source later in iteration i, or by draining iteration i before the
+    // target in iteration i+1. A cut nested in another loop is usable only
+    // when that loop also contains the protected endpoint; otherwise the
+    // nested loop may execute zero times while the endpoint still executes.
     const bool completesAfterSource =
         executionLoopsImpliedByPhase(loops, source) &&
         phaseMayPrecedePoint(source, mechanism.targetPoint) &&
@@ -524,7 +615,7 @@ bool demandCovered(const CanonicalSyncProgram &program,
       return true;
     }
   }
-  if (recurrenceCoveredByBarrier(program, demand, selected)) {
+  if (recurrenceCoveredByCompletionCut(program, demand, selected)) {
     return true;
   }
   const bool positive = llvm::any_of(

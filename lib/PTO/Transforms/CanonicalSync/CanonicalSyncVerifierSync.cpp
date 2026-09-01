@@ -232,30 +232,29 @@ void applyCmo(const VerifierProgram &program, CmoCacheInvalidOp operation,
   }
 }
 
-bool fenceDrainsResource(const VerifierProgram &program,
-                         CanonicalPhysicalResource resource) {
-  auto kind = program.function->getAttrOfType<FunctionKernelKindAttr>(
-      FunctionKernelKindAttr::name);
-  const bool vectorKernel =
-      kind && kind.getKernelKind() == FunctionKernelKind::Vector;
-  if (vectorKernel) {
-    return true;
-  }
-  return resource.pipe == PIPE::PIPE_MTE2 || resource.pipe == PIPE::PIPE_MTE3 ||
-         resource.pipe == PIPE::PIPE_FIX;
-}
-
-void applyFenceAll(const VerifierProgram &program, FenceBarrierAllOp operation,
-                   VerifierState &state) {
+LogicalResult applyFenceAll(const VerifierProgram &program,
+                            const CanonicalSyncTarget &target,
+                            FenceBarrierAllOp operation, VerifierState &state) {
   const FenceScope scope = operation.getScope().getScope();
   if (scope != FenceScope::GM && scope != FenceScope::All) {
-    return;
+    return operation.emitError(
+        "canonical sync verifier rejects an unsupported physical fence scope");
+  }
+  FailureOr<SmallVector<CanonicalPhysicalResource, 8>> drained =
+      target.getFenceDrainedResources(operation);
+  if (failed(drained)) {
+    return operation.emitError(
+        "canonical sync verifier cannot resolve the physical execution "
+        "context for fence");
   }
   for (VerifierResourceState &resource : state.resources) {
-    if (!fenceDrainsResource(program, resource.resource)) {
+    if (!llvm::is_contained(*drained, resource.resource)) {
       continue;
     }
     completeResource(resource, state);
+    for (const VerifierEffectKey &key : resource.known) {
+      addKey(state.globalKnown, key);
+    }
     for (const VerifierEffect &effect : resource.pending) {
       addKey(state.globalKnown, effect.key);
       const bool scalarWrite = resource.resource.pipe == PIPE::PIPE_S &&
@@ -273,6 +272,7 @@ void applyFenceAll(const VerifierProgram &program, FenceBarrierAllOp operation,
   // acquire data that only becomes globally visible at this fence. Require a
   // fresh target-side invalidation after the fence.
   state.cacheInvalidations.clear();
+  return success();
 }
 
 } // namespace
@@ -295,8 +295,7 @@ LogicalResult mlir::pto::canonical_sync_detail::applyVerifierSyncOperation(
     return success();
   }
   if (auto fence = dyn_cast<FenceBarrierAllOp>(operation)) {
-    applyFenceAll(program, fence, state);
-    return success();
+    return applyFenceAll(program, target, fence, state);
   }
   handled = false;
   return success();

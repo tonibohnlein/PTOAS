@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// The fence is a single physical baseline effect even when several visibility
+// demands use it. Origins and CMO actions are diagnostics on that one effect.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-analysis-only --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @one_fence_serves_multiple_demands(
+      %payload0: !pto.ptr<ui32, gm>, %payload1: !pto.ptr<ui32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %tile0_addr = arith.constant 0 : i64
+    %tile1_addr = arith.constant 128 : i64
+    %value_i32 = arith.constant 7 : i32
+    %value = builtin.unrealized_conversion_cast %value_i32 : i32 to ui32
+    %tile0 = pto.alloc_tile addr = %tile0_addr :
+      !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32, v_row=1,
+                    v_col=32, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %tile1 = pto.alloc_tile addr = %tile1_addr :
+      !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32, v_row=1,
+                    v_col=32, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %view0 = pto.make_tensor_view %payload0, shape = [%c1, %c32],
+      strides = [%c32, %c1] : !pto.tensor_view<1x32xui32>
+    %part0 = pto.partition_view %view0, offsets = [%c0, %c0],
+      sizes = [%c1, %c32] : !pto.tensor_view<1x32xui32> ->
+      !pto.partition_tensor_view<1x32xui32>
+    %view1 = pto.make_tensor_view %payload1, shape = [%c1, %c32],
+      strides = [%c32, %c1] : !pto.tensor_view<1x32xui32>
+    %part1 = pto.partition_view %view1, offsets = [%c0, %c0],
+      sizes = [%c1, %c32] : !pto.tensor_view<1x32xui32> ->
+      !pto.partition_tensor_view<1x32xui32>
+    pto.store_scalar %value, %payload0[%c0] : !pto.ptr<ui32, gm>, ui32
+    pto.store_scalar %value, %payload1[%c0] : !pto.ptr<ui32, gm>, ui32
+    pto.cmo.cacheinvalid all #pto.address_space<gm>
+    pto.fence.barrier_all #pto.fence_scope<gm>
+    pto.tload ins(%part0 : !pto.partition_tensor_view<1x32xui32>)
+      outs(%tile0 : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32,
+        v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512,
+        pad=0>)
+    pto.tload ins(%part1 : !pto.partition_tensor_view<1x32xui32>)
+      outs(%tile1 : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32,
+        v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512,
+        pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: CANONICAL-SYNC function=one_fence_serves_multiple_demands
+// CHECK: FENCE-EFFECTS 1
+// CHECK: MECHANISMS
+// CHECK-COUNT-1: kind=fixed-fence fence=f0
+// CHECK-SAME: origins=[d{{[0-9]+}}, d{{[0-9]+}}
+// CHECK: SET-COVER optimization=disabled
+// CHECK-SAME: universe=[]

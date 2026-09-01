@@ -5421,20 +5421,6 @@ static void emitConservativeGmFencePipeDrains(
   emitPipeBarrier(rewriter, loc, "PIPE_FIX");
 }
 
-static bool isInVectorKernel(Operation *op) {
-  for (Operation *parent = op->getParentOp(); parent;
-       parent = parent->getParentOp()) {
-    if (isa<pto::SectionVectorOp>(parent))
-      return true;
-
-    auto kernelKindAttr = parent->getAttrOfType<FunctionKernelKindAttr>(
-        FunctionKernelKindAttr::name);
-    if (kernelKindAttr)
-      return kernelKindAttr.getKernelKind() == FunctionKernelKind::Vector;
-  }
-  return false;
-}
-
 struct PTOBarrierToEmitC : public OpConversionPattern<pto::BarrierOp> {
   using OpConversionPattern<pto::BarrierOp>::OpConversionPattern;
 
@@ -5488,7 +5474,13 @@ struct PTOFenceToEmitC : public OpConversionPattern<FenceOp> {
       return rewriter.notifyMatchFailure(op, "unsupported fence scope");
     }
 
-    if (isInVectorKernel(op)) {
+    const std::optional<bool> vectorExecution =
+        resolvePTOExecutionVector(op);
+    if (!vectorExecution) {
+      return rewriter.notifyMatchFailure(
+          op, "fence has no physical execution context");
+    }
+    if (*vectorExecution) {
       emitPipeBarrier(rewriter, op.getLoc(), "PIPE_ALL");
     } else {
       emitConservativeGmFencePipeDrains(rewriter, op.getLoc());

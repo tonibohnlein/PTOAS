@@ -41,5 +41,4 @@ module attributes {pto.target_arch = "a2a3"} {
   }
 }
 
-// CHECK: error: canonical sync cannot satisfy a GM cache-visibility demand
-// CHECK-SAME: requires an existing explicit visibility fence
+// CHECK: error: canonical sync rejects an unsupported physical fence scope

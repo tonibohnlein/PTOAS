@@ -42,6 +42,25 @@ bool mlir::pto::isPTOHiFloat8x2Type(Type t) { return isa<HiF8x2Type>(t); }
 
 bool mlir::pto::isPTOBF16x2Type(Type t) { return isa<BF16x2Type>(t); }
 
+std::optional<bool>
+mlir::pto::resolvePTOExecutionVector(Operation *operation) {
+  for (Operation *parent = operation; parent;
+       parent = parent->getParentOp()) {
+    if (isa<SectionVectorOp>(parent)) {
+      return true;
+    }
+    if (isa<SectionCubeOp>(parent)) {
+      return false;
+    }
+    auto kind = parent->getAttrOfType<FunctionKernelKindAttr>(
+        FunctionKernelKindAttr::name);
+    if (kind) {
+      return kind.getKernelKind() == FunctionKernelKind::Vector;
+    }
+  }
+  return std::nullopt;
+}
+
 bool mlir::pto::isPTOFloat4PackedType(Type t) {
   return isa<F4E1M2x2Type, F4E2M1x2Type>(t);
 }

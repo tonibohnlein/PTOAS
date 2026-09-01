@@ -57,6 +57,11 @@ CanonicalAccessId CanonicalSyncProgram::appendAccess(CanonicalAccess access) {
   return appendRecord(accesses, std::move(access), graphFrozen);
 }
 
+CanonicalFenceEffectId
+CanonicalSyncProgram::appendFenceEffect(CanonicalFenceEffect effect) {
+  return appendRecord(fenceEffects, std::move(effect), graphFrozen);
+}
+
 CanonicalDemandId CanonicalSyncProgram::appendDemand(CanonicalDemand demand) {
   return appendRecord(demands, std::move(demand), graphFrozen);
 }
@@ -87,6 +92,19 @@ void CanonicalSyncProgram::appendMechanismOrigin(CanonicalMechanismId mechanism,
   }
   if (!llvm::is_contained(mechanisms[mechanism].origins, demand)) {
     mechanisms[mechanism].origins.push_back(demand);
+  }
+}
+
+void CanonicalSyncProgram::appendMechanismCacheMaintenance(
+    CanonicalMechanismId mechanism, ArrayRef<Operation *> actions) {
+  if (frozen || !buildingMechanisms || mechanismCatalogComplete ||
+      setCoverInstance || mechanism >= mechanisms.size()) {
+    llvm_unreachable("cannot extend an invalid or frozen mechanism");
+  }
+  for (Operation *action : actions) {
+    if (!llvm::is_contained(mechanisms[mechanism].cacheMaintenance, action)) {
+      mechanisms[mechanism].cacheMaintenance.push_back(action);
+    }
   }
 }
 
@@ -166,6 +184,19 @@ LogicalResult CanonicalSyncProgram::freezeGraph() {
       }
     }
   }
+  for (const CanonicalFenceEffect &effect : fenceEffects) {
+    const bool invalidRegion = effect.region >= regions.size();
+    const bool invalidGuard = !validControlPath(effect.guard, regions.size());
+    const bool invalidLoop =
+        llvm::any_of(effect.loopPath, [this](CanonicalRegionId id) {
+          return id >= regions.size() ||
+                 regions[id].kind != CanonicalRegionKind::Loop;
+        });
+    if (!effect.operation || invalidRegion || invalidGuard || invalidLoop ||
+        effect.drainedResources.empty()) {
+      return fail("fence effect has an invalid operation, region, or scope");
+    }
+  }
   for (const CanonicalDemand &demand : demands) {
     const bool validTarget = demand.kind == CanonicalDemandKind::ExitCompletion
                                  ? demand.target == kInvalidCanonicalSyncId
@@ -214,7 +245,12 @@ LogicalResult CanonicalSyncProgram::freeze() {
         llvm::all_of(mechanism.origins, [this](CanonicalDemandId demand) {
           return demand < demands.size();
         });
-    if (!validPoints || !validOrigins ||
+    const bool validFence =
+        mechanism.kind == CanonicalMechanismKind::FixedFence
+            ? mechanism.fenceEffect &&
+                  *mechanism.fenceEffect < fenceEffects.size()
+            : !mechanism.fenceEffect;
+    if (!validPoints || !validOrigins || !validFence ||
         mechanism.actionRegion >= regions.size()) {
       return fail("mechanism has an invalid action point, origin, or region");
     }
@@ -359,6 +395,11 @@ CanonicalSyncProgram::getPhase(CanonicalPhaseId id) const {
 const CanonicalAccess &
 CanonicalSyncProgram::getAccess(CanonicalAccessId id) const {
   return accesses[id];
+}
+
+const CanonicalFenceEffect &
+CanonicalSyncProgram::getFenceEffect(CanonicalFenceEffectId id) const {
+  return fenceEffects[id];
 }
 
 const CanonicalDemand &

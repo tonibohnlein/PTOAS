@@ -92,6 +92,20 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
        << " physical=" << (access.physical ? "yes" : "no")
        << " provenance=" << access.provenance << '\n';
   }
+  os << "FENCE-EFFECTS " << program.getFenceEffects().size() << '\n';
+  for (const CanonicalFenceEffect &effect : program.getFenceEffects()) {
+    os << "  f" << effect.id << " scope=" << stringifyFenceScope(effect.scope)
+       << " point=";
+    printPoint(os, {effect.operation, CanonicalProgramPointPosition::After});
+    os << " drains=[";
+    llvm::interleaveComma(effect.drainedResources, os,
+                          [&os](CanonicalPhysicalResource resource) {
+                            printResource(os, resource);
+                          });
+    os << "] guard=";
+    printGuard(os, effect.guard);
+    os << '\n';
+  }
   os << "DEMANDS " << program.getDemands().size() << '\n';
   for (const CanonicalDemand &demand : program.getDemands()) {
     os << "  d" << demand.id
@@ -135,11 +149,15 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
   os << "MECHANISMS " << program.getMechanisms().size() << '\n';
   for (const CanonicalMechanism &mechanism : program.getMechanisms()) {
     os << "  m" << mechanism.id
-       << " kind=" << stringifyCanonicalMechanismKind(mechanism.kind)
-       << " resource=";
-    printResource(os, mechanism.source);
-    os << "->";
-    printResource(os, mechanism.target);
+       << " kind=" << stringifyCanonicalMechanismKind(mechanism.kind) << ' ';
+    if (mechanism.kind == CanonicalMechanismKind::FixedFence) {
+      os << "fence=f" << *mechanism.fenceEffect;
+    } else {
+      os << "resource=";
+      printResource(os, mechanism.source);
+      os << "->";
+      printResource(os, mechanism.target);
+    }
     if (mechanism.kind == CanonicalMechanismKind::TailBarrier) {
       os << " points=exit";
     } else {

@@ -10,6 +10,8 @@
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncTarget.h"
 
+#include "PTO/IR/PTOTypeUtils.h"
+
 #include "llvm/ADT/STLExtras.h"
 
 using namespace mlir;
@@ -148,4 +150,27 @@ bool CanonicalSyncTarget::supportsEvent(
     CanonicalPhysicalResource source, CanonicalPhysicalResource target) const {
   return source.core == target.core &&
          llvm::is_contained(eventPairs, std::make_pair(source, target));
+}
+
+FailureOr<SmallVector<CanonicalPhysicalResource, 8>>
+CanonicalSyncTarget::getFenceDrainedResources(Operation *fence) const {
+  const std::optional<bool> vectorKernel = resolvePTOExecutionVector(fence);
+  if (!vectorKernel) {
+    return failure();
+  }
+  const CanonicalCore executionCore =
+      *vectorKernel ? CanonicalCore::AIV : CanonicalCore::AIC;
+  SmallVector<CanonicalPhysicalResource, 8> drained;
+  for (CanonicalPhysicalResource resource : resources) {
+    if (resource.core != executionCore) {
+      continue;
+    }
+    const bool supportedPipe =
+        *vectorKernel || resource.pipe == PIPE::PIPE_MTE2 ||
+        resource.pipe == PIPE::PIPE_MTE3 || resource.pipe == PIPE::PIPE_FIX;
+    if (supportedPipe) {
+      drained.push_back(resource);
+    }
+  }
+  return drained;
 }

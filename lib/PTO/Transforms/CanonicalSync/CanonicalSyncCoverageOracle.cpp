@@ -61,6 +61,7 @@ struct EventPayload {
 
 struct OracleState {
   SmallVector<ResourceState, 8> resources;
+  SmallVector<PhaseInstance, 16> globalKnown;
   SmallVector<EventPayload, 8> events;
   SmallVector<CanonicalControlAtom, 2> controlPath;
   SmallVector<LoopInstance, 2> loops;
@@ -157,7 +158,8 @@ bool completionKnown(const CanonicalSyncProgram &program,
     }
   }
   const ResourceState *resource = getResource(state, destination);
-  return resource && llvm::is_contained(resource->known, source);
+  return llvm::is_contained(state.globalKnown, source) ||
+         (resource && llvm::is_contained(resource->known, source));
 }
 
 bool demandUsesDirectMechanism(const CanonicalSyncProgram &program,
@@ -211,6 +213,21 @@ void applyBarrier(const CanonicalMechanism &mechanism, OracleState &state) {
   appendUnique(getResource(state, mechanism.target).known, completed);
 }
 
+void applyFixedFence(const CanonicalSyncProgram &program,
+                     const CanonicalMechanism &mechanism, OracleState &state) {
+  const CanonicalFenceEffect &effect =
+      program.getFenceEffect(*mechanism.fenceEffect);
+  SmallVector<PhaseInstance, 16> completed;
+  for (const ResourceState &resource : state.resources) {
+    if (!llvm::is_contained(effect.drainedResources, resource.resource)) {
+      continue;
+    }
+    appendUnique(completed, resource.issued);
+    appendUnique(completed, resource.known);
+  }
+  appendUnique(state.globalKnown, completed);
+}
+
 void applyEventSet(const CanonicalMechanism &mechanism, OracleState &state) {
   EventPayload payload;
   payload.mechanism = mechanism.id;
@@ -245,6 +262,10 @@ void executePoint(const CanonicalSyncProgram &program,
     if (mechanism.targetPoint == point &&
         mechanism.kind == CanonicalMechanismKind::PipeBarrier) {
       applyBarrier(mechanism, state);
+    }
+    if (mechanism.targetPoint == point &&
+        mechanism.kind == CanonicalMechanismKind::FixedFence) {
+      applyFixedFence(program, mechanism, state);
     }
     if (mechanism.sourcePoint == point &&
         mechanism.kind == CanonicalMechanismKind::Event) {

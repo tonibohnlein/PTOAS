@@ -77,6 +77,72 @@ commonGuard(ArrayRef<CanonicalControlAtom> first,
   return result;
 }
 
+bool guardImplies(ArrayRef<CanonicalControlAtom> execution,
+                  ArrayRef<CanonicalControlAtom> required) {
+  return llvm::all_of(required, [execution](const CanonicalControlAtom &atom) {
+    return llvm::is_contained(execution, atom);
+  });
+}
+
+bool executionLoopsImpliedByPhase(ArrayRef<CanonicalRegionId> executionLoops,
+                                  const CanonicalPhase &phase) {
+  return llvm::all_of(executionLoops, [&](CanonicalRegionId loop) {
+    return llvm::is_contained(phase.loopPath, loop);
+  });
+}
+
+const CanonicalFenceEffect *
+findFixedRecurrenceFence(const CanonicalSyncProgram &program,
+                         const CanonicalDemand &demand) {
+  const CanonicalPhase &source = program.getPhase(demand.source);
+  const CanonicalPhase &target = program.getPhase(demand.target);
+  if (source.resource.core != target.resource.core) {
+    return nullptr;
+  }
+  const auto carrying = llvm::find_if(
+      demand.iterationDistance, [](const CanonicalLoopDistance &distance) {
+        return distance.relation == CanonicalIterationRelation::AnyPositive;
+      });
+  if (carrying == demand.iterationDistance.end()) {
+    return nullptr;
+  }
+  for (const CanonicalFenceEffect &effect : program.getFenceEffects()) {
+    if (!llvm::is_contained(effect.drainedResources, source.resource)) {
+      continue;
+    }
+    const CanonicalProgramPoint point{effect.operation,
+                                      CanonicalProgramPointPosition::After};
+    if (!llvm::is_contained(effect.loopPath, carrying->loop)) {
+      continue;
+    }
+    const bool completesAfterSource =
+        executionLoopsImpliedByPhase(effect.loopPath, source) &&
+        phaseMayPrecedePoint(source, point) &&
+        guardImplies(demand.sourceGuard, effect.guard);
+    const bool completesBeforeTarget =
+        executionLoopsImpliedByPhase(effect.loopPath, target) &&
+        pointMustPrecedePhase(point, target) &&
+        guardImplies(demand.targetGuard, effect.guard);
+    if (completesAfterSource || completesBeforeTarget) {
+      return &effect;
+    }
+  }
+  return nullptr;
+}
+
+CanonicalMechanism
+buildFixedFenceMechanism(const CanonicalFenceEffect &effect) {
+  CanonicalMechanism mechanism;
+  mechanism.kind = CanonicalMechanismKind::FixedFence;
+  mechanism.fenceEffect = effect.id;
+  mechanism.sourcePoint = {effect.operation,
+                           CanonicalProgramPointPosition::After};
+  mechanism.targetPoint = mechanism.sourcePoint;
+  mechanism.actionRegion = effect.region;
+  mechanism.guard = effect.guard;
+  return mechanism;
+}
+
 bool fenceCoversScope(FenceBarrierAllOp fence, FenceScope required) {
   const FenceScope actual = fence.getScope().getScope();
   return actual == FenceScope::All || actual == required;
@@ -175,6 +241,10 @@ findFixedCacheMaintenance(const CanonicalSyncProgram &program,
 
 bool sameMechanism(const CanonicalMechanism &left,
                    const CanonicalMechanism &right) {
+  if (left.kind == CanonicalMechanismKind::FixedFence ||
+      right.kind == CanonicalMechanismKind::FixedFence) {
+    return left.kind == right.kind && left.fenceEffect == right.fenceEffect;
+  }
   const bool sameSource = left.source == right.source;
   const bool sameTarget = left.target == right.target;
   if (left.kind != right.kind || !sameSource || !sameTarget ||
@@ -188,8 +258,7 @@ bool sameMechanism(const CanonicalMechanism &left,
     return left.sourcePoint == right.sourcePoint &&
            left.targetPoint == right.targetPoint;
   case CanonicalMechanismKind::FixedFence:
-    return left.targetPoint == right.targetPoint &&
-           left.cacheMaintenance == right.cacheMaintenance;
+    llvm_unreachable("fixed fences are compared by physical effect");
   case CanonicalMechanismKind::IntrinsicOrder:
   case CanonicalMechanismKind::TailBarrier:
     return true;
@@ -203,6 +272,8 @@ CanonicalMechanismId internMechanism(CanonicalSyncProgram &program,
   for (const CanonicalMechanism &existing : program.getMechanisms()) {
     if (sameMechanism(existing, mechanism)) {
       program.appendMechanismOrigin(existing.id, origin);
+      program.appendMechanismCacheMaintenance(existing.id,
+                                              mechanism.cacheMaintenance);
       return existing.id;
     }
   }
@@ -300,16 +371,17 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
                  demand.visibility->cacheMaintenance);
       return failure();
     }
-    CanonicalMechanism mechanism;
-    mechanism.kind = CanonicalMechanismKind::FixedFence;
-    mechanism.source = source;
-    mechanism.target = destination;
-    mechanism.sourcePoint = {fence, CanonicalProgramPointPosition::After};
-    mechanism.targetPoint = {fence, CanonicalProgramPointPosition::After};
+    auto effect = llvm::find_if(program.getFenceEffects(),
+                                [fence](const CanonicalFenceEffect &item) {
+                                  return item.operation == fence;
+                                });
+    if (effect == program.getFenceEffects().end()) {
+      targetPhase.operation->emitError(
+          "canonical sync visibility fence lacks a physical graph effect");
+      return failure();
+    }
+    CanonicalMechanism mechanism = buildFixedFenceMechanism(*effect);
     mechanism.cacheMaintenance = std::move(*cacheMaintenance);
-    mechanism.actionRegion = demand.owner;
-    mechanism.guard =
-        commonGuard(sourcePhase.controlPath, targetPhase.controlPath);
     return mechanism;
   }
   if (source == destination) {
@@ -342,6 +414,12 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
         << stringifyCanonicalCore(source.core) << " to "
         << stringifyCanonicalCore(destination.core);
     return failure();
+  }
+  if (hasPositiveDistance(demand)) {
+    if (const CanonicalFenceEffect *effect =
+            findFixedRecurrenceFence(program, demand)) {
+      return buildFixedFenceMechanism(*effect);
+    }
   }
   if (!target.supportsEvent(source, destination)) {
     targetPhase.operation->emitError(
@@ -380,6 +458,17 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
   program.buildingMechanisms = true;
   const auto finishBuilding = llvm::make_scope_exit(
       [&program]() { program.buildingMechanisms = false; });
+  for (const CanonicalFenceEffect &effect : program.getFenceEffects()) {
+    CanonicalMechanism mechanism;
+    mechanism.kind = CanonicalMechanismKind::FixedFence;
+    mechanism.fenceEffect = effect.id;
+    mechanism.sourcePoint = {effect.operation,
+                             CanonicalProgramPointPosition::After};
+    mechanism.targetPoint = mechanism.sourcePoint;
+    mechanism.actionRegion = effect.region;
+    mechanism.guard = effect.guard;
+    program.appendMechanism(std::move(mechanism));
+  }
   for (const CanonicalDemand &demand : program.getDemands()) {
     FailureOr<CanonicalMechanism> mechanism =
         buildDirectMechanism(program, *target, demand);

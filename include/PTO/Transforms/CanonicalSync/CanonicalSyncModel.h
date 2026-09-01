@@ -37,6 +37,7 @@ namespace pto {
 using CanonicalRegionId = std::uint32_t;
 using CanonicalPhaseId = std::uint32_t;
 using CanonicalAccessId = std::uint32_t;
+using CanonicalFenceEffectId = std::uint32_t;
 using CanonicalDemandId = std::uint32_t;
 using CanonicalMechanismId = std::uint32_t;
 using CanonicalSetCoverCandidateId = std::uint32_t;
@@ -180,6 +181,16 @@ struct CanonicalAccess {
   std::string provenance;
 };
 
+struct CanonicalFenceEffect {
+  CanonicalFenceEffectId id = kInvalidCanonicalSyncId;
+  Operation *operation = nullptr;
+  CanonicalRegionId region = kInvalidCanonicalSyncId;
+  FenceScope scope = FenceScope::GM;
+  llvm::SmallVector<CanonicalPhysicalResource, 8> drainedResources;
+  llvm::SmallVector<CanonicalControlAtom, 2> guard;
+  llvm::SmallVector<CanonicalRegionId, 2> loopPath;
+};
+
 struct CanonicalVisibilityRequirement {
   CanonicalVisibilityDirection direction =
       CanonicalVisibilityDirection::ScalarToNonScalar;
@@ -221,6 +232,7 @@ struct CanonicalMechanism {
   CanonicalProgramPoint targetPoint;
   llvm::SmallVector<CanonicalDemandId, 2> origins;
   llvm::SmallVector<Operation *, 2> cacheMaintenance;
+  std::optional<CanonicalFenceEffectId> fenceEffect;
   CanonicalRegionId actionRegion = kInvalidCanonicalSyncId;
   llvm::SmallVector<CanonicalControlAtom, 2> guard;
   std::optional<unsigned> eventId;
@@ -289,11 +301,14 @@ public:
   CanonicalRegionId appendRegion(CanonicalRegion region);
   CanonicalPhaseId appendPhase(CanonicalPhase phase);
   CanonicalAccessId appendAccess(CanonicalAccess access);
+  CanonicalFenceEffectId appendFenceEffect(CanonicalFenceEffect effect);
   CanonicalDemandId appendDemand(CanonicalDemand demand);
   void appendDemandCause(CanonicalDemandId demand, CanonicalDemandCause cause);
   CanonicalMechanismId appendMechanism(CanonicalMechanism mechanism);
   void appendMechanismOrigin(CanonicalMechanismId mechanism,
                              CanonicalDemandId demand);
+  void appendMechanismCacheMaintenance(CanonicalMechanismId mechanism,
+                                       llvm::ArrayRef<Operation *> actions);
   void setMechanismEventId(CanonicalMechanismId mechanism, unsigned eventId);
   void setDirectMechanism(CanonicalDemandId demand,
                           CanonicalMechanismId mechanism);
@@ -306,6 +321,9 @@ public:
   llvm::ArrayRef<CanonicalRegion> getRegions() const { return regions; }
   llvm::ArrayRef<CanonicalPhase> getPhases() const { return phases; }
   llvm::ArrayRef<CanonicalAccess> getAccesses() const { return accesses; }
+  llvm::ArrayRef<CanonicalFenceEffect> getFenceEffects() const {
+    return fenceEffects;
+  }
   llvm::ArrayRef<CanonicalDemand> getDemands() const { return demands; }
   llvm::ArrayRef<CanonicalMechanism> getMechanisms() const {
     return mechanisms;
@@ -323,6 +341,7 @@ public:
   const CanonicalRegion &getRegion(CanonicalRegionId id) const;
   const CanonicalPhase &getPhase(CanonicalPhaseId id) const;
   const CanonicalAccess &getAccess(CanonicalAccessId id) const;
+  const CanonicalFenceEffect &getFenceEffect(CanonicalFenceEffectId id) const;
   const CanonicalDemand &getDemand(CanonicalDemandId id) const;
   const CanonicalMechanism &getMechanism(CanonicalMechanismId id) const;
 
@@ -341,6 +360,7 @@ private:
   llvm::SmallVector<CanonicalRegion> regions;
   llvm::SmallVector<CanonicalPhase> phases;
   llvm::SmallVector<CanonicalAccess> accesses;
+  llvm::SmallVector<CanonicalFenceEffect> fenceEffects;
   llvm::SmallVector<CanonicalDemand> demands;
   llvm::SmallVector<CanonicalMechanism> mechanisms;
   llvm::SmallVector<CanonicalMechanismId> directMechanisms;
