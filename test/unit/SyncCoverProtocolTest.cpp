@@ -9,6 +9,7 @@
 // for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverProtocol.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverStorageLifecycle.h"
 
 #include <algorithm>
 #include <iostream>
@@ -41,7 +42,8 @@ std::size_t takeIndex(const SyncCoverGraphResult &result, bool &passed,
 }
 
 SyncCoverProtocolTargetContract target() {
-  return {{{1, 2, kCompletion}, {2, 1, kCompletion}}, {0, 1, 2, 3, 4, 5}, {}};
+  return {
+      {{1, 2, kCompletion}, {2, 1, kCompletion}}, {0, 1, 2, 3, 4, 5}, true, {}};
 }
 
 SyncCoverCutPoint point(SyncCoverCutPointKind kind, std::uint32_t resource,
@@ -224,7 +226,7 @@ bool testSingleShotAndTargetContract() {
           SyncCoverProtocolError::InvalidTargetContract,
       "event ID 6 is rejected by the compiler-owned contract");
   SyncCoverProtocolTargetContract wrongPair{
-      {{2, 1, kCompletion}}, {0, 1, 2, 3, 4, 5}, {}};
+      {{2, 1, kCompletion}}, {0, 1, 2, 3, 4, 5}, true, {}};
   passed &= check(
       verifySyncCoverEventProtocol(fixture.graph, wrongPair, protocol).error ==
           SyncCoverProtocolError::InvalidProtocol,
@@ -370,6 +372,61 @@ bool testRoundTripAndRotatingLifecycle() {
   return passed;
 }
 
+bool testFirstIterationActionGuard() {
+  bool passed = true;
+  ProtocolGraph fixture = makeProtocolGraph(true, passed);
+  passed &=
+      check(fixture.graph.freezeStructure(), "freeze first-iteration graph");
+
+  SyncCoverEventProtocol protocol;
+  protocol.mechanism = 10;
+  protocol.kind = SyncCoverEventProtocolKind::LifecycleNetwork;
+  protocol.loop = roundTrip(fixture).loop;
+  SyncCoverEventChannel channel = readyChannel(fixture);
+  channel.actions = {
+      {0,
+       SyncCoverProtocolActionKind::Set,
+       SyncCoverProtocolActionSegment::Body,
+       channel.set,
+       0,
+       SyncCoverProtocolActionGuard::FirstIteration,
+       {}},
+      {1,
+       SyncCoverProtocolActionKind::Wait,
+       SyncCoverProtocolActionSegment::Body,
+       channel.wait,
+       0,
+       SyncCoverProtocolActionGuard::FirstIteration,
+       {}},
+  };
+  channel.supplies = {
+      {0, 1, 0, std::nullopt, SyncCoverProtocolSupplyKind::TokenPair}};
+  SyncCoverEventChannel companion = channel;
+  companion.id = 1;
+  protocol.channels = {channel, std::move(companion)};
+  const SyncCoverProtocolVerificationResult firstIteration =
+      verifySyncCoverEventProtocol(fixture.graph, target(), protocol);
+  passed &= check(static_cast<bool>(firstIteration),
+                  "a balanced first-iteration body token is accepted");
+
+  SyncCoverEventProtocol entryGuard = protocol;
+  entryGuard.channels[0].actions[0].segment =
+      SyncCoverProtocolActionSegment::Entry;
+  passed &= check(
+      verifySyncCoverEventProtocol(fixture.graph, target(), entryGuard).error ==
+          SyncCoverProtocolError::InvalidProtocol,
+      "a first-iteration guard cannot be attached to an entry action");
+
+  SyncCoverEventProtocol exitGuard = protocol;
+  exitGuard.channels[0].actions[1].segment =
+      SyncCoverProtocolActionSegment::Exit;
+  passed &= check(
+      verifySyncCoverEventProtocol(fixture.graph, target(), exitGuard).error ==
+          SyncCoverProtocolError::InvalidProtocol,
+      "a first-iteration guard cannot be attached to an exit action");
+  return passed;
+}
+
 bool testGuardAndPhaseQualification() {
   bool passed = true;
   ProtocolGraph fixture = makeProtocolGraph(true, passed);
@@ -472,6 +529,52 @@ bool testDirectProtocolRectangles() {
   return passed;
 }
 
+bool testSourcePrefixContract() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId prefix =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add prefix source");
+  const SyncCoverNodeId setSource =
+      takeIndex(graph.addNode(1, 1, 0, 1), passed, "add event-cut source");
+  const SyncCoverNodeId targetNode =
+      takeIndex(graph.addNode(2, 1, 0, 2), passed, "add prefix target");
+  passed &= check(
+      graph.addEdge({prefix, setSource,
+                     SyncCoverEdgeKind::NonCompletionPreservingIssueOrder}),
+      "add source-pipeline issue order");
+  passed &=
+      check(graph.addDemand({prefix, targetNode}), "add source-prefix demand");
+  passed &= check(graph.freezeStructure(), "freeze source-prefix graph");
+
+  SyncCoverEventProtocol protocol;
+  protocol.mechanism = 8;
+  protocol.kind = SyncCoverEventProtocolKind::SingleShot;
+  protocol.channels = {{
+      0,
+      SyncCoverEventChannelFlow::SingleShot,
+      point(SyncCoverCutPointKind::EventSet, 1, SyncCoverAnchorKind::AfterNode,
+            setSource),
+      point(SyncCoverCutPointKind::EventWait, 2,
+            SyncCoverAnchorKind::BeforeNode, targetNode),
+      1,
+      0,
+      kCompletion,
+      {},
+      false,
+  }};
+  const SyncCoverProtocolCoverageResult documented =
+      computeSyncCoverProtocolExactWorlds(graph, target(), {protocol}, {{{8}}});
+  passed &= check(documented && documented.coveredByWorld.front().contains(0),
+                  "a documented Set cut completes its issued source prefix");
+  SyncCoverProtocolTargetContract noPrefix = target();
+  noPrefix.directEventCompletesSourcePrefix = false;
+  const SyncCoverProtocolCoverageResult disabled =
+      computeSyncCoverProtocolExactWorlds(graph, noPrefix, {protocol}, {{{8}}});
+  return passed &&
+         check(disabled && !disabled.coveredByWorld.front().contains(0),
+               "source-prefix coverage requires an explicit target contract");
+}
+
 bool testWholeWorldCompositionAndExitExport() {
   bool passed = true;
   SyncCoverGraph graph;
@@ -526,6 +629,20 @@ bool testWholeWorldCompositionAndExitExport() {
                       !composed.coveredByWorld[1].contains(0) &&
                       composed.coveredByWorld[2].contains(0),
                   "whole-world closure composes two protocol cuts");
+  SyncCoverDemandSet queried(graph.getDemands().size());
+  queried.insert(0);
+  const SyncCoverProtocolCoverageResult restricted =
+      computeSyncCoverProtocolExactWorldsForDemands(
+          graph, composedTarget, {first, second}, {{{10, 11}}}, queried);
+  passed &= check(restricted && restricted.coveredByWorld.front().contains(0),
+                  "restricted exact grounding confirms a proposed row");
+  SyncCoverDemandSet noQueries(graph.getDemands().size());
+  const SyncCoverProtocolCoverageResult emptyRestricted =
+      computeSyncCoverProtocolExactWorldsForDemands(
+          graph, composedTarget, {first, second}, {{{10, 11}}}, noQueries);
+  passed &=
+      check(emptyRestricted && emptyRestricted.coveredByWorld.front().empty(),
+            "restricted exact grounding invents no unqueried coverage");
   SyncCoverCoverageWorkBudget worldMeasurement;
   passed &= check(static_cast<bool>(computeSyncCoverProtocolExactWorlds(
                       graph, composedTarget, {first, second},
@@ -831,12 +948,251 @@ bool testNestedLoopDistancesAreScopeTyped() {
   passed &= check(fixture.graph.addDemand(outerCarry),
                   "add outer recurrence over inner endpoints");
   passed &= check(fixture.graph.freezeStructure(), "freeze nested graph");
+  SyncCoverEventProtocol orphanExport;
+  orphanExport.mechanism = 19;
+  orphanExport.kind = SyncCoverEventProtocolKind::LifecycleNetwork;
+  orphanExport.loop =
+      SyncCoverProtocolLoopSchedule{fixture.loop, true, std::nullopt, {0}};
+  orphanExport.lifetimeScope = outer;
+  SyncCoverEventChannel orphanChannel;
+  orphanChannel.id = 0;
+  orphanChannel.flow = SyncCoverEventChannelFlow::LoopCarry;
+  orphanChannel.set = point(SyncCoverCutPointKind::EventSet, 1,
+                            SyncCoverAnchorKind::AfterNode, fixture.producer);
+  orphanChannel.wait = point(SyncCoverCutPointKind::EventWait, 2,
+                             SyncCoverAnchorKind::BeforeNode, fixture.consumer);
+  orphanChannel.width = 1;
+  orphanChannel.distance = 1;
+  orphanChannel.suppliedRequirements = kCompletion;
+  orphanChannel.actions = {
+      {0,
+       SyncCoverProtocolActionKind::Set,
+       SyncCoverProtocolActionSegment::Body,
+       orphanChannel.set,
+       0,
+       SyncCoverProtocolActionGuard::Always,
+       {}},
+      {1,
+       SyncCoverProtocolActionKind::Wait,
+       SyncCoverProtocolActionSegment::Body,
+       orphanChannel.wait,
+       0,
+       SyncCoverProtocolActionGuard::Always,
+       {}},
+  };
+  orphanChannel.supplies = {
+      {0, 1, 1, outer, SyncCoverProtocolSupplyKind::CompletionExport}};
+  SyncCoverEventChannel localChannel = orphanChannel;
+  localChannel.id = 1;
+  localChannel.supplies = {
+      {0, 1, 0, std::nullopt, SyncCoverProtocolSupplyKind::TokenPair}};
+  orphanExport.channels = {std::move(orphanChannel), std::move(localChannel)};
+  const SyncCoverProtocolVerificationResult orphanVerification =
+      verifySyncCoverEventProtocol(fixture.graph, target(), orphanExport);
+  passed &= check(
+      orphanVerification.error == SyncCoverProtocolError::InvalidTokenLifecycle,
+      "a parent completion export requires a witnessed local token pair");
+
+  SyncCoverEventProtocol mismatchedExport;
+  mismatchedExport.mechanism = 20;
+  mismatchedExport.kind = SyncCoverEventProtocolKind::LifecycleNetwork;
+  mismatchedExport.loop =
+      SyncCoverProtocolLoopSchedule{fixture.loop, true, std::nullopt, {0}};
+  mismatchedExport.lifetimeScope = outer;
+  SyncCoverEventChannel mismatchedChannel;
+  mismatchedChannel.id = 0;
+  mismatchedChannel.flow = SyncCoverEventChannelFlow::SameIteration;
+  mismatchedChannel.set =
+      point(SyncCoverCutPointKind::EventSet, 1, SyncCoverAnchorKind::AfterNode,
+            fixture.producer);
+  mismatchedChannel.wait =
+      point(SyncCoverCutPointKind::EventWait, 2,
+            SyncCoverAnchorKind::BeforeNode, fixture.consumer);
+  mismatchedChannel.width = 2;
+  mismatchedChannel.distance = 0;
+  mismatchedChannel.suppliedRequirements = kCompletion;
+  mismatchedChannel.actions = {
+      {0,
+       SyncCoverProtocolActionKind::Set,
+       SyncCoverProtocolActionSegment::Body,
+       mismatchedChannel.set,
+       0,
+       SyncCoverProtocolActionGuard::Always,
+       {}},
+      {1,
+       SyncCoverProtocolActionKind::Wait,
+       SyncCoverProtocolActionSegment::Body,
+       mismatchedChannel.wait,
+       0,
+       SyncCoverProtocolActionGuard::Always,
+       {}},
+      {2,
+       SyncCoverProtocolActionKind::Set,
+       SyncCoverProtocolActionSegment::Body,
+       mismatchedChannel.set,
+       1,
+       SyncCoverProtocolActionGuard::Always,
+       {}},
+      {3,
+       SyncCoverProtocolActionKind::Wait,
+       SyncCoverProtocolActionSegment::Body,
+       mismatchedChannel.wait,
+       1,
+       SyncCoverProtocolActionGuard::Always,
+       {}},
+  };
+  mismatchedChannel.supplies = {
+      {0, 1, 0, std::nullopt, SyncCoverProtocolSupplyKind::TokenPair},
+      {2, 3, 0, std::nullopt, SyncCoverProtocolSupplyKind::TokenPair},
+      {0, 3, 1, outer, SyncCoverProtocolSupplyKind::CompletionExport}};
+  SyncCoverEventChannel companionChannel = mismatchedChannel;
+  companionChannel.id = 1;
+  companionChannel.supplies = {
+      {0, 1, 0, std::nullopt, SyncCoverProtocolSupplyKind::TokenPair},
+      {2, 3, 0, std::nullopt, SyncCoverProtocolSupplyKind::TokenPair}};
+  mismatchedExport.channels = {std::move(mismatchedChannel),
+                               std::move(companionChannel)};
+  const SyncCoverProtocolVerificationResult mismatchedVerification =
+      verifySyncCoverEventProtocol(fixture.graph, target(), mismatchedExport);
+  passed &=
+      check(mismatchedVerification.error ==
+                SyncCoverProtocolError::InvalidTokenLifecycle,
+            "a parent completion export cannot borrow a different local Wait");
   const SyncCoverProtocolCoverageResult coverage =
       computeSyncCoverProtocolExactWorlds(fixture.graph, target(),
                                           {roundTrip(fixture)}, {{{7}}});
   return passed &&
          check(coverage && !coverage.coveredByWorld.front().contains(0),
                "an inner-loop carry cannot satisfy an outer-loop distance");
+}
+
+bool testGuardCompleteConnectorClosure() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverRegionId root =
+      takeIndex(graph.addRegion(0, SyncCoverRegionKind::Sequence,
+                                SyncCoverRegionCardinality::ExactlyOnce),
+                passed, "add connector root");
+  const SyncCoverNodeId source = takeIndex(
+      graph.addNode(1, 1, 0, 0, {}, {}, std::nullopt, false,
+                    std::numeric_limits<std::size_t>::max(), -1, {}, root),
+      passed, "add connector source");
+  const SyncCoverControlId control =
+      takeIndex(graph.addControl(2, 0), passed, "add connector control");
+  const SyncCoverRegionId choice = takeIndex(
+      graph.addRegion(root, SyncCoverRegionKind::Choice,
+                      SyncCoverRegionCardinality::ExactlyOnce, 0, {}, control),
+      passed, "add connector choice");
+  passed &=
+      check(graph.setControlRegion(control, choice), "bind connector choice");
+  std::vector<SyncCoverNodeId> middles;
+  for (unsigned alternative = 0; alternative < 2; ++alternative) {
+    SyncCoverGuard guard{{{control, alternative}}};
+    const SyncCoverScopeId scope =
+        takeIndex(graph.addScope(0, false, std::nullopt, false, guard, choice),
+                  passed, "add connector alternative scope");
+    const SyncCoverRegionId alternativeRegion =
+        takeIndex(graph.addRegion(choice, SyncCoverRegionKind::Alternative,
+                                  SyncCoverRegionCardinality::ZeroOrOne, scope,
+                                  guard, control, alternative),
+                  passed, "add connector alternative");
+    passed &= check(graph.setScopeRegion(scope, alternativeRegion),
+                    "bind connector alternative");
+    const SyncCoverRegionId sequence = takeIndex(
+        graph.addRegion(alternativeRegion, SyncCoverRegionKind::Sequence,
+                        SyncCoverRegionCardinality::ExactlyOnce, scope, guard),
+        passed, "add connector alternative sequence");
+    middles.push_back(takeIndex(
+        graph.addNode(2, 1, scope, alternative + 1, guard, {}, std::nullopt,
+                      false, std::numeric_limits<std::size_t>::max(), -1, {},
+                      sequence),
+        passed, "add connector middle"));
+  }
+  const SyncCoverNodeId sink = takeIndex(
+      graph.addNode(1, 1, 0, 3, {}, {}, std::nullopt, false,
+                    std::numeric_limits<std::size_t>::max(), -1, {}, root),
+      passed, "add connector sink");
+  const SyncCoverStorageDomainId domain =
+      takeIndex(graph.addStorageDomain(SyncCoverStorageDomainRole::Other, 3),
+                passed, "add connector storage domain");
+  const SyncCoverStorageAccessId sourceAccess = takeIndex(
+      graph.addStorageAccess(source, domain, 1, {0, 64},
+                             SyncCoverStorageAccessMode::Write, 0, true,
+                             SyncCoverStorageAccessPath::PhysicalPipeline),
+      passed, "add connector source access");
+  std::vector<SyncCoverStorageAccessId> middleAccesses;
+  for (SyncCoverNodeId middle : middles) {
+    middleAccesses.push_back(takeIndex(
+        graph.addStorageAccess(middle, domain, 1, {0, 64},
+                               SyncCoverStorageAccessMode::ReadWrite, 0, true,
+                               SyncCoverStorageAccessPath::PhysicalPipeline),
+        passed, "add connector middle access"));
+  }
+  const SyncCoverStorageAccessId sinkAccess =
+      takeIndex(graph.addStorageAccess(
+                    sink, domain, 1, {0, 64}, SyncCoverStorageAccessMode::Read,
+                    0, true, SyncCoverStorageAccessPath::PhysicalPipeline),
+                passed, "add connector sink access");
+  for (unsigned alternative = 0; alternative < 2; ++alternative) {
+    const SyncCoverStorageWitnessId first = takeIndex(
+        graph.addStorageWitness(sourceAccess, middleAccesses[alternative]),
+        passed, "add connector first witness");
+    const SyncCoverStorageWitnessId second = takeIndex(
+        graph.addStorageWitness(middleAccesses[alternative], sinkAccess),
+        passed, "add connector second witness");
+    SyncCoverDemand toMiddle;
+    toMiddle.source = source;
+    toMiddle.target = middles[alternative];
+    toMiddle.targetGuard.literals = {{control, alternative}};
+    toMiddle.provenanceKinds = {SyncCoverDemandKind::MemoryRAW};
+    toMiddle.storageWitnesses = {first};
+    passed &= check(graph.addDemand(toMiddle),
+                    "add connector source-to-alternative demand");
+    SyncCoverDemand fromMiddle;
+    fromMiddle.source = middles[alternative];
+    fromMiddle.target = sink;
+    fromMiddle.sourceGuard.literals = {{control, alternative}};
+    fromMiddle.provenanceKinds = {SyncCoverDemandKind::MemoryRAW};
+    fromMiddle.storageWitnesses = {second};
+    passed &= check(graph.addDemand(fromMiddle),
+                    "add connector alternative-to-sink demand");
+  }
+  const SyncCoverStorageWitnessId goalWitness =
+      takeIndex(graph.addStorageWitness(sourceAccess, sinkAccess), passed,
+                "add connector goal witness");
+  SyncCoverDemand goal;
+  goal.source = source;
+  goal.target = sink;
+  goal.provenanceKinds = {SyncCoverDemandKind::MemoryRAW};
+  goal.storageWitnesses = {goalWitness};
+  passed &= check(graph.addDemand(goal), "add connector goal demand");
+  passed &= check(graph.freezeStructure(), "freeze connector graph");
+
+  SyncCoverDemandSet bothAlternatives(graph.getDemands().size());
+  for (SyncCoverDemandId demand = 0; demand < 4; ++demand) {
+    bothAlternatives.insert(demand);
+  }
+  const SyncCoverProtocolCoverageResult complete =
+      computeSyncCoverProtocolConnectorClosure(graph, bothAlternatives);
+  passed &= check(complete && complete.coveredByWorld.front().contains(4),
+                  "connector closure requires and accepts all alternatives");
+  SyncCoverProtocolLimits shortAlternativeCatalog;
+  shortAlternativeCatalog.maximumPhaseIncidences = 1;
+  const SyncCoverProtocolCoverageResult bounded =
+      computeSyncCoverProtocolConnectorClosure(graph, bothAlternatives,
+                                               shortAlternativeCatalog);
+  passed &= check(bounded && !bounded.coveredByWorld.front().contains(4),
+                  "connector alternatives are bounded before allocation");
+
+  SyncCoverDemandSet missingAlternative(graph.getDemands().size());
+  missingAlternative.insert(0);
+  missingAlternative.insert(1);
+  missingAlternative.insert(2);
+  const SyncCoverProtocolCoverageResult incomplete =
+      computeSyncCoverProtocolConnectorClosure(graph, missingAlternative);
+  return passed &&
+         check(incomplete && !incomplete.coveredByWorld.front().contains(4),
+               "connector closure rejects an existential branch path");
 }
 
 bool testAuthoritativePhaseAndCardinality() {
@@ -1369,26 +1725,733 @@ bool testLifecycleSccDiscovery() {
   passed &= check(result && result.components.size() == 1 &&
                       result.components.front().demands.size() == 2 &&
                       result.components.front().maximumDistance == 1 &&
+                      result.components.front().resources ==
+                          std::vector<std::uint32_t>{1, 2} &&
                       result.components.front().storageDomains ==
                           std::vector<SyncCoverStorageDomainId>{domain},
                   "RAW plus loop-carried WAR forms one exact-slot SCC");
+
+  const SyncCoverLifecycleSynthesisResult synthesized =
+      synthesizeSyncCoverLifecycleCertificates(fixture.graph, target());
+  passed &= check(
+      synthesized && synthesized.proposals.size() == 1 &&
+          synthesized.proposals.front().lifecycleScc == 0 &&
+          synthesized.proposals.front().protocols.size() == 1 &&
+          synthesized.proposals.front().protocols.front().channels.size() ==
+              2 &&
+          synthesized.proposals.front().slots.size() == 1 &&
+          synthesized.proposals.front().exactCoverage.count() == 2,
+      "an exact ready/release cycle synthesizes one verified proposal");
+  const SyncCoverStorageLifecycleIndex lifecycleIndex =
+      buildSyncCoverStorageLifecycleIndex(fixture.graph);
+  const SyncCoverLifecycleSynthesisResult synthesizedFromIndex =
+      synthesizeSyncCoverLifecycleCertificates(fixture.graph, target(),
+                                               lifecycleIndex);
+  passed &= check(
+      lifecycleIndex.isComplete() && synthesizedFromIndex &&
+          synthesizedFromIndex.proposals.size() == 1 &&
+          synthesizedFromIndex.proposals.front().exactCoverage ==
+              synthesized.proposals.front().exactCoverage,
+      "the target-neutral lifecycle index owns production SCC discovery");
+
+  SyncCoverCoverageWorkBudget synthesisMeasurement;
+  const SyncCoverLifecycleSynthesisResult measuredSynthesis =
+      synthesizeSyncCoverLifecycleCertificates(fixture.graph, target(), {},
+                                               &synthesisMeasurement);
+  passed &= check(static_cast<bool>(measuredSynthesis),
+                  "lifecycle synthesis reports its complete work");
+  SyncCoverCoverageWorkBudget exactSynthesisBudget(
+      synthesisMeasurement.workUnits);
+  passed &= check(static_cast<bool>(synthesizeSyncCoverLifecycleCertificates(
+                      fixture.graph, target(), {}, &exactSynthesisBudget)),
+                  "an exact lifecycle synthesis work budget succeeds");
+  if (synthesisMeasurement.workUnits != 0) {
+    SyncCoverCoverageWorkBudget shortSynthesisBudget(
+        synthesisMeasurement.workUnits - 1);
+    passed &= check(synthesizeSyncCoverLifecycleCertificates(
+                        fixture.graph, target(), {}, &shortSynthesisBudget)
+                            .error == SyncCoverProtocolError::WorkLimitExceeded,
+                    "a one-less lifecycle synthesis work budget fails closed");
+  }
+
+  SyncCoverProtocolLimits exactLimits;
+  exactLimits.maximumLifecycleAccessIncidences =
+      synthesized.lifecycleAccessIncidences;
+  passed &= check(static_cast<bool>(synthesizeSyncCoverLifecycleCertificates(
+                      fixture.graph, target(), exactLimits)),
+                  "the exact lifecycle access-incidence limit succeeds");
+  if (synthesized.lifecycleAccessIncidences != 0) {
+    SyncCoverProtocolLimits shortLimits = exactLimits;
+    --shortLimits.maximumLifecycleAccessIncidences;
+    passed &= check(synthesizeSyncCoverLifecycleCertificates(
+                        fixture.graph, target(), shortLimits)
+                            .error == SyncCoverProtocolError::LimitExceeded,
+                    "a one-less lifecycle access-incidence limit fails closed");
+  }
+
+  ProtocolGraph incomplete = makeProtocolGraph(true, passed);
+  const SyncCoverStorageDomainId incompleteDomain = takeIndex(
+      incomplete.graph.addStorageDomain(SyncCoverStorageDomainRole::Other, 4),
+      passed, "add incomplete lifecycle domain");
+  const SyncCoverStorageAccessId incompleteWrite =
+      takeIndex(incomplete.graph.addStorageAccess(
+                    incomplete.producer, incompleteDomain, 2, {0, 64},
+                    SyncCoverStorageAccessMode::Write, 0, true,
+                    SyncCoverStorageAccessPath::PhysicalPipeline),
+                passed, "add incomplete lifecycle write");
+  const SyncCoverStorageAccessId incompleteRead =
+      takeIndex(incomplete.graph.addStorageAccess(
+                    incomplete.consumer, incompleteDomain, 2, {0, 64},
+                    SyncCoverStorageAccessMode::Read, 0, true,
+                    SyncCoverStorageAccessPath::PhysicalPipeline),
+                passed, "add incomplete lifecycle read");
+  const SyncCoverStorageWitnessId incompleteReadyWitness = takeIndex(
+      incomplete.graph.addStorageWitness(incompleteWrite, incompleteRead),
+      passed, "add incomplete ready witness");
+  SyncCoverDemand incompleteReady;
+  incompleteReady.source = incomplete.producer;
+  incompleteReady.target = incomplete.consumer;
+  incompleteReady.scope = incomplete.loop;
+  incompleteReady.provenanceKinds = {SyncCoverDemandKind::MemoryRAW};
+  incompleteReady.storageWitnesses = {incompleteReadyWitness};
+  passed &= check(incomplete.graph.addDemand(incompleteReady),
+                  "add incomplete lifecycle RAW");
+  passed &= check(incomplete.graph.freezeStructure(),
+                  "freeze incomplete lifecycle graph");
+  const SyncCoverLifecycleSynthesisResult incompleteSynthesis =
+      synthesizeSyncCoverLifecycleCertificates(incomplete.graph, target());
+  passed &= check(incompleteSynthesis && incompleteSynthesis.proposals.empty(),
+                  "a ready edge without a reverse release demand does not "
+                  "form a selectable protocol");
+  return passed;
+}
+
+bool testLifecycleStorageReuseRequiresPrefixContract() {
+  bool passed = true;
+  ProtocolGraph fixture = makeProtocolGraph(true, passed);
+  const SyncCoverNodeId laterProducer = takeIndex(
+      fixture.graph.addNode(1, 1, fixture.loop, 2, {}, {}, std::nullopt, false,
+                            std::numeric_limits<std::size_t>::max(), -1, {},
+                            fixture.body),
+      passed, "add grouped lifecycle producer");
+  const SyncCoverNodeId laterConsumer = takeIndex(
+      fixture.graph.addNode(2, 1, fixture.loop, 3, {}, {}, std::nullopt, false,
+                            std::numeric_limits<std::size_t>::max(), -1, {},
+                            fixture.body),
+      passed, "add grouped lifecycle consumer");
+  passed &= check(fixture.graph.addEdge(
+                      {fixture.producer, laterProducer,
+                       SyncCoverEdgeKind::NonCompletionPreservingIssueOrder}),
+                  "order grouped lifecycle producers");
+  passed &= check(fixture.graph.addEdge(
+                      {fixture.consumer, laterConsumer,
+                       SyncCoverEdgeKind::NonCompletionPreservingIssueOrder}),
+                  "order grouped lifecycle consumers");
+  const SyncCoverStorageDomainId domain = takeIndex(
+      fixture.graph.addStorageDomain(SyncCoverStorageDomainRole::Other, 23),
+      passed, "add grouped lifecycle domain");
+  const auto addAccess = [&](SyncCoverNodeId node,
+                             SyncCoverStorageAccessMode mode,
+                             std::string_view message) {
+    return takeIndex(fixture.graph.addStorageAccess(
+                         node, domain, 23, {0, 64}, mode, 0, true,
+                         SyncCoverStorageAccessPath::PhysicalPipeline),
+                     passed, message);
+  };
+  const SyncCoverStorageAccessId firstWrite =
+      addAccess(fixture.producer, SyncCoverStorageAccessMode::Write,
+                "add first grouped write");
+  const SyncCoverStorageAccessId secondWrite =
+      addAccess(laterProducer, SyncCoverStorageAccessMode::Write,
+                "add second grouped write");
+  const SyncCoverStorageAccessId firstRead =
+      addAccess(fixture.consumer, SyncCoverStorageAccessMode::Read,
+                "add first grouped read");
+  const SyncCoverStorageAccessId secondRead =
+      addAccess(laterConsumer, SyncCoverStorageAccessMode::Read,
+                "add second grouped read");
+  const auto addDemand = [&](SyncCoverNodeId source,
+                             SyncCoverStorageAccessId sourceAccess,
+                             SyncCoverNodeId targetNode,
+                             SyncCoverStorageAccessId targetAccess,
+                             SyncCoverDemandKind kind, unsigned distance,
+                             std::string_view message) {
+    const SyncCoverStorageWitnessId witness =
+        takeIndex(fixture.graph.addStorageWitness(sourceAccess, targetAccess),
+                  passed, message);
+    SyncCoverDemand demand;
+    demand.source = source;
+    demand.target = targetNode;
+    demand.scope = fixture.loop;
+    demand.distance = distance;
+    demand.provenanceKinds = {kind};
+    demand.storageWitnesses = {witness};
+    passed &= check(fixture.graph.addDemand(std::move(demand)), message);
+  };
+  addDemand(fixture.producer, firstWrite, fixture.consumer, firstRead,
+            SyncCoverDemandKind::MemoryRAW, 0, "add first grouped RAW");
+  addDemand(laterProducer, secondWrite, laterConsumer, secondRead,
+            SyncCoverDemandKind::MemoryRAW, 0, "add second grouped RAW");
+  addDemand(fixture.consumer, firstRead, fixture.producer, firstWrite,
+            SyncCoverDemandKind::MemoryWAR, 1, "add first grouped WAR");
+  addDemand(laterConsumer, secondRead, laterProducer, secondWrite,
+            SyncCoverDemandKind::MemoryWAR, 1, "add second grouped WAR");
+  addDemand(laterProducer, secondWrite, fixture.producer, firstWrite,
+            SyncCoverDemandKind::MemoryWAW, 1, "add grouped WAW");
+  passed &=
+      check(fixture.graph.freezeStructure(), "freeze grouped lifecycle graph");
+
+  const SyncCoverLifecycleSynthesisResult documented =
+      synthesizeSyncCoverLifecycleCertificates(fixture.graph, target());
+  if (!check(documented && documented.proposals.size() == 1,
+             "grouped lifecycle synthesis succeeds with prefix completion")) {
+    return false;
+  }
+  SyncCoverProtocolTargetContract noPrefix = target();
+  noPrefix.directEventCompletesSourcePrefix = false;
+  const SyncCoverLifecycleSynthesisResult disabled =
+      synthesizeSyncCoverLifecycleCertificates(fixture.graph, noPrefix);
+  if (!check(disabled && disabled.proposals.size() == 1,
+             "grouped lifecycle synthesis remains valid without widening")) {
+    return false;
+  }
+  const SyncCoverDemandSet &documentedCoverage =
+      documented.proposals.front().exactCoverage;
+  const SyncCoverDemandSet &disabledCoverage =
+      disabled.proposals.front().exactCoverage;
+  return passed &&
+         check(documentedCoverage.count() > disabledCoverage.count() &&
+                   !disabledCoverage.contains(4),
+               "grouped WAW reuse requires source-prefix completion");
+}
+
+bool testThreePhaseLifecycleSynthesis() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverRegionId root =
+      takeIndex(graph.addRegion(0, SyncCoverRegionKind::Sequence,
+                                SyncCoverRegionCardinality::ExactlyOnce),
+                passed, "add three-phase root");
+  const SyncCoverNodeId initial = takeIndex(
+      graph.addNode(1, 1, 0, 0, {}, {}, std::nullopt, false,
+                    std::numeric_limits<std::size_t>::max(), -1, {}, root),
+      passed, "add three-phase initial producer");
+  const SyncCoverScopeId loop =
+      takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{10, 100},
+                               true, {}, root),
+                passed, "add three-phase loop");
+  const SyncCoverRegionId loopRegion =
+      takeIndex(graph.addRegion(root, SyncCoverRegionKind::Loop,
+                                SyncCoverRegionCardinality::ZeroOrMore, loop),
+                passed, "add three-phase loop region");
+  passed &= check(graph.setScopeRegion(loop, loopRegion),
+                  "bind three-phase loop region");
+  const SyncCoverRegionId body =
+      takeIndex(graph.addRegion(loopRegion, SyncCoverRegionKind::Sequence,
+                                SyncCoverRegionCardinality::ExactlyOnce, loop),
+                passed, "add three-phase loop body");
+  const SyncCoverControlId phase =
+      takeIndex(graph.addControl(3, loop), passed, "add three-phase control");
+  const SyncCoverRegionId choice = takeIndex(
+      graph.addRegion(body, SyncCoverRegionKind::Choice,
+                      SyncCoverRegionCardinality::ExactlyOnce, loop, {}, phase),
+      passed, "add three-phase choice");
+  passed &=
+      check(graph.setControlRegion(phase, choice), "bind three-phase choice");
+  passed &= check(
+      graph.setControlPhaseRelation(phase, {loop, 0, {1, 2, 0}, {0, 1, 2}}),
+      "bind three-phase cycle");
+
+  std::vector<SyncCoverNodeId> consumers;
+  std::vector<SyncCoverNodeId> producers;
+  for (unsigned alternative = 0; alternative < 3; ++alternative) {
+    SyncCoverGuard phaseGuard{{{phase, alternative}}};
+    const SyncCoverScopeId path = takeIndex(
+        graph.addScope(loop, true, std::nullopt, false, phaseGuard, choice),
+        passed, "add three-phase path");
+    const SyncCoverRegionId alternativeRegion =
+        takeIndex(graph.addRegion(choice, SyncCoverRegionKind::Alternative,
+                                  SyncCoverRegionCardinality::ZeroOrOne, path,
+                                  phaseGuard, phase, alternative),
+                  passed, "add three-phase alternative");
+    passed &= check(graph.setScopeRegion(path, alternativeRegion),
+                    "bind three-phase alternative");
+    const SyncCoverRegionId sequence = takeIndex(
+        graph.addRegion(alternativeRegion, SyncCoverRegionKind::Sequence,
+                        SyncCoverRegionCardinality::ExactlyOnce, path,
+                        phaseGuard),
+        passed, "add three-phase sequence");
+    consumers.push_back(takeIndex(
+        graph.addNode(
+            2, 1, path, 20 + alternative * 10, phaseGuard, {}, std::nullopt,
+            false, std::numeric_limits<std::size_t>::max(), -1, {}, sequence),
+        passed, "add three-phase consumer"));
+
+    const SyncCoverControlId successor = takeIndex(
+        graph.addControl(2, path), passed, "add three-phase successor");
+    passed &= check(graph.setControlSuccessorRelation(successor, {loop, 0}),
+                    "bind three-phase successor");
+    const SyncCoverRegionId successorChoice =
+        takeIndex(graph.addRegion(sequence, SyncCoverRegionKind::Choice,
+                                  SyncCoverRegionCardinality::ExactlyOnce, path,
+                                  phaseGuard, successor),
+                  passed, "add three-phase successor choice");
+    passed &= check(graph.setControlRegion(successor, successorChoice),
+                    "bind three-phase successor choice");
+    SyncCoverGuard producerGuard = phaseGuard;
+    producerGuard.literals.push_back({successor, 0});
+    const SyncCoverScopeId prefetch =
+        takeIndex(graph.addScope(path, true, std::nullopt, false, producerGuard,
+                                 successorChoice),
+                  passed, "add three-phase prefetch scope");
+    const SyncCoverRegionId prefetchRegion = takeIndex(
+        graph.addRegion(successorChoice, SyncCoverRegionKind::Alternative,
+                        SyncCoverRegionCardinality::ZeroOrOne, prefetch,
+                        producerGuard, successor, 0),
+        passed, "add three-phase prefetch region");
+    passed &= check(graph.setScopeRegion(prefetch, prefetchRegion),
+                    "bind three-phase prefetch region");
+    producers.push_back(
+        takeIndex(graph.addNode(1, 1, prefetch, 21 + alternative * 10,
+                                producerGuard, {}, std::nullopt, false,
+                                std::numeric_limits<std::size_t>::max(), -1, {},
+                                prefetchRegion),
+                  passed, "add three-phase producer"));
+    SyncCoverGuard terminalGuard = phaseGuard;
+    terminalGuard.literals.push_back({successor, 1});
+    const SyncCoverScopeId terminal =
+        takeIndex(graph.addScope(path, true, std::nullopt, false, terminalGuard,
+                                 successorChoice),
+                  passed, "add three-phase terminal scope");
+    const SyncCoverRegionId terminalRegion = takeIndex(
+        graph.addRegion(successorChoice, SyncCoverRegionKind::Alternative,
+                        SyncCoverRegionCardinality::ZeroOrOne, terminal,
+                        terminalGuard, successor, 1),
+        passed, "add three-phase terminal region");
+    passed &= check(graph.setScopeRegion(terminal, terminalRegion),
+                    "bind three-phase terminal region");
+  }
+
+  std::vector<SyncCoverStorageDomainId> domains;
+  for (unsigned lane = 0; lane < 3; ++lane) {
+    domains.push_back(takeIndex(
+        graph.addStorageDomain(SyncCoverStorageDomainRole::L1Tile, lane + 1),
+        passed, "add three-phase storage lane"));
+  }
+  const SyncCoverStorageAccessId initialAccess = takeIndex(
+      graph.addStorageAccess(initial, domains[0], 1, {0, 64},
+                             SyncCoverStorageAccessMode::Write, 0, true,
+                             SyncCoverStorageAccessPath::PhysicalPipeline),
+      passed, "add three-phase initial write");
+  std::vector<SyncCoverStorageAccessId> reads;
+  std::vector<SyncCoverStorageAccessId> writes;
+  for (unsigned phaseIndex = 0; phaseIndex < 3; ++phaseIndex) {
+    reads.push_back(takeIndex(
+        graph.addStorageAccess(consumers[phaseIndex], domains[phaseIndex],
+                               phaseIndex + 1, {0, 64},
+                               SyncCoverStorageAccessMode::Read, 0, true,
+                               SyncCoverStorageAccessPath::PhysicalPipeline),
+        passed, "add three-phase read"));
+    const unsigned producedLane = (phaseIndex + 1) % 3;
+    writes.push_back(takeIndex(
+        graph.addStorageAccess(producers[phaseIndex], domains[producedLane],
+                               producedLane + 1, {0, 64},
+                               SyncCoverStorageAccessMode::Write, 0, true,
+                               SyncCoverStorageAccessPath::PhysicalPipeline),
+        passed, "add three-phase write"));
+  }
+
+  const auto addDemand = [&](SyncCoverNodeId source,
+                             SyncCoverStorageAccessId sourceAccess,
+                             SyncCoverNodeId targetNode,
+                             SyncCoverStorageAccessId targetAccess,
+                             SyncCoverDemandKind kind, unsigned distance,
+                             std::string_view message) {
+    const SyncCoverStorageWitnessId witness = takeIndex(
+        graph.addStorageWitness(sourceAccess, targetAccess), passed, message);
+    SyncCoverDemand demand;
+    demand.source = source;
+    demand.target = targetNode;
+    demand.scope = loop;
+    demand.distance = distance;
+    demand.sourceGuard = graph.getNodes()[source].guard;
+    demand.targetGuard = graph.getNodes()[targetNode].guard;
+    demand.provenanceKinds = {kind};
+    demand.storageWitnesses = {witness};
+    passed &= check(graph.addDemand(std::move(demand)), message);
+  };
+  (void)initialAccess;
+  for (unsigned phaseIndex = 0; phaseIndex < 3; ++phaseIndex) {
+    const unsigned producedLane = (phaseIndex + 1) % 3;
+    addDemand(producers[phaseIndex], writes[phaseIndex],
+              consumers[producedLane], reads[producedLane],
+              SyncCoverDemandKind::MemoryRAW, 1,
+              "add three-phase ready recurrence");
+    const unsigned producerPhase = (phaseIndex + 2) % 3;
+    addDemand(consumers[phaseIndex], reads[phaseIndex],
+              producers[producerPhase], writes[producerPhase],
+              SyncCoverDemandKind::MemoryWAR, 2,
+              "add three-phase release recurrence");
+  }
+  passed &= check(graph.freezeStructure(), "freeze three-phase lifecycle");
+
+  const SyncCoverLifecycleSccResult components =
+      discoverSyncCoverLifecycleSccs(graph);
+  passed &= check(components && components.components.size() == 1 &&
+                      components.components.front().demands.size() == 6 &&
+                      components.components.front().maximumDistance == 2,
+                  "positive-distance RAW and distance-two WAR form one SCC");
+  const SyncCoverLifecycleSynthesisResult synthesis =
+      synthesizeSyncCoverLifecycleCertificates(graph, target());
+  if (!check(synthesis && synthesis.proposals.size() == 1 &&
+                 synthesis.proposals.front().protocols.size() == 1,
+             "three-phase SCC synthesizes one generic protocol")) {
+    return false;
+  }
+  const SyncCoverEventProtocol &protocol =
+      synthesis.proposals.front().protocols.front();
+  const bool exactReleaseDistances =
+      protocol.channels.size() == 2 && protocol.channels[1].width == 3 &&
+      std::all_of(protocol.channels[1].supplies.begin(),
+                  protocol.channels[1].supplies.end(),
+                  [](const SyncCoverProtocolSupply &supply) {
+                    return supply.kind ==
+                               SyncCoverProtocolSupplyKind::TokenPair &&
+                           supply.distance == 2;
+                  });
+  passed &= check(exactReleaseDistances &&
+                      synthesis.proposals.front().exactCoverage.count() == 6,
+                  "three-phase synthesis preserves exact phase distances");
+  SyncCoverCoverageWorkBudget phaseLifecycleMeasurement;
+  passed &= check(
+      static_cast<bool>(synthesizeSyncCoverLifecycleCertificates(
+          graph, target(), {}, &phaseLifecycleMeasurement)),
+      "multi-path lifecycle synthesis reports complete work");
+  SyncCoverCoverageWorkBudget exactPhaseLifecycleBudget(
+      phaseLifecycleMeasurement.workUnits);
+  passed &= check(
+      static_cast<bool>(synthesizeSyncCoverLifecycleCertificates(
+          graph, target(), {}, &exactPhaseLifecycleBudget)),
+      "exact multi-path lifecycle work budget succeeds");
+  if (phaseLifecycleMeasurement.workUnits != 0) {
+    SyncCoverCoverageWorkBudget shortPhaseLifecycleBudget(
+        phaseLifecycleMeasurement.workUnits - 1);
+    passed &= check(
+        synthesizeSyncCoverLifecycleCertificates(
+            graph, target(), {}, &shortPhaseLifecycleBudget)
+                .error == SyncCoverProtocolError::WorkLimitExceeded,
+        "one-less multi-path lifecycle work budget fails closed");
+  }
+  return passed;
+}
+
+bool testThreeResourceLifecycleSynthesis() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverRegionId root =
+      takeIndex(graph.addRegion(0, SyncCoverRegionKind::Sequence,
+                                SyncCoverRegionCardinality::ExactlyOnce),
+                passed, "add three-resource root");
+  const SyncCoverScopeId loop = takeIndex(
+      graph.addScope(0, true, SyncCoverTimelineInterval{0, 16}, true, {}, root),
+      passed, "add three-resource loop");
+  const SyncCoverRegionId loopRegion =
+      takeIndex(graph.addRegion(root, SyncCoverRegionKind::Loop,
+                                SyncCoverRegionCardinality::OneOrMore, loop),
+                passed, "add three-resource loop region");
+  passed &= check(graph.setScopeRegion(loop, loopRegion),
+                  "bind three-resource loop region");
+  const SyncCoverRegionId body =
+      takeIndex(graph.addRegion(loopRegion, SyncCoverRegionKind::Sequence,
+                                SyncCoverRegionCardinality::ExactlyOnce, loop),
+                passed, "add three-resource body");
+  const SyncCoverNodeId first = takeIndex(
+      graph.addNode(1, 1, loop, 1, {}, {}, std::nullopt, false,
+                    std::numeric_limits<std::size_t>::max(), -1, {}, body),
+      passed, "add lifecycle resource A");
+  const SyncCoverNodeId second = takeIndex(
+      graph.addNode(2, 1, loop, 2, {}, {}, std::nullopt, false,
+                    std::numeric_limits<std::size_t>::max(), -1, {}, body),
+      passed, "add lifecycle resource B");
+  const SyncCoverNodeId third = takeIndex(
+      graph.addNode(3, 1, loop, 3, {}, {}, std::nullopt, false,
+                    std::numeric_limits<std::size_t>::max(), -1, {}, body),
+      passed, "add lifecycle resource C");
+  const SyncCoverStorageDomainId domain =
+      takeIndex(graph.addStorageDomain(SyncCoverStorageDomainRole::Other, 17),
+                passed, "add three-resource storage");
+  const SyncCoverStorageAccessId firstAccess = takeIndex(
+      graph.addStorageAccess(first, domain, 17, {0, 64},
+                             SyncCoverStorageAccessMode::ReadWrite, 0, true,
+                             SyncCoverStorageAccessPath::PhysicalPipeline),
+      passed, "add lifecycle A access");
+  const SyncCoverStorageAccessId secondAccess = takeIndex(
+      graph.addStorageAccess(second, domain, 17, {0, 64},
+                             SyncCoverStorageAccessMode::ReadWrite, 0, true,
+                             SyncCoverStorageAccessPath::PhysicalPipeline),
+      passed, "add lifecycle B access");
+  const SyncCoverStorageAccessId thirdAccess = takeIndex(
+      graph.addStorageAccess(third, domain, 17, {0, 64},
+                             SyncCoverStorageAccessMode::Read, 0, true,
+                             SyncCoverStorageAccessPath::PhysicalPipeline),
+      passed, "add lifecycle C access");
+  const auto addDemand = [&](SyncCoverNodeId source,
+                             SyncCoverStorageAccessId sourceAccess,
+                             SyncCoverNodeId targetNode,
+                             SyncCoverStorageAccessId targetAccess,
+                             SyncCoverDemandKind kind, unsigned distance,
+                             std::string_view message) {
+    const SyncCoverStorageWitnessId witness = takeIndex(
+        graph.addStorageWitness(sourceAccess, targetAccess), passed, message);
+    SyncCoverDemand demand;
+    demand.source = source;
+    demand.target = targetNode;
+    demand.scope = loop;
+    demand.distance = distance;
+    demand.provenanceKinds = {kind};
+    demand.storageWitnesses = {witness};
+    passed &= check(graph.addDemand(std::move(demand)), message);
+  };
+  addDemand(first, firstAccess, second, secondAccess,
+            SyncCoverDemandKind::MemoryRAW, 0, "add A-to-B ready edge");
+  addDemand(second, secondAccess, third, thirdAccess,
+            SyncCoverDemandKind::MemoryRAW, 0, "add B-to-C ready edge");
+  addDemand(third, thirdAccess, first, firstAccess,
+            SyncCoverDemandKind::MemoryWAR, 1, "add C-to-A release edge");
+  const auto addBackingSlot = [&](std::uint64_t addressSpace,
+                                  bool completeCycle) {
+    const SyncCoverStorageDomainId extraDomain = takeIndex(
+        graph.addStorageDomain(SyncCoverStorageDomainRole::Other, addressSpace),
+        passed, "add mixed-SCC storage");
+    const SyncCoverStorageAccessId extraFirst = takeIndex(
+        graph.addStorageAccess(first, extraDomain, addressSpace, {0, 64},
+                               SyncCoverStorageAccessMode::ReadWrite, 0, true,
+                               SyncCoverStorageAccessPath::PhysicalPipeline),
+        passed, "add mixed-SCC A access");
+    const SyncCoverStorageAccessId extraSecond = takeIndex(
+        graph.addStorageAccess(second, extraDomain, addressSpace, {0, 64},
+                               SyncCoverStorageAccessMode::ReadWrite, 0, true,
+                               SyncCoverStorageAccessPath::PhysicalPipeline),
+        passed, "add mixed-SCC B access");
+    addDemand(first, extraFirst, second, extraSecond,
+              SyncCoverDemandKind::MemoryRAW, 0, "add mixed-SCC A-to-B edge");
+    if (completeCycle) {
+      const SyncCoverStorageAccessId extraThird = takeIndex(
+          graph.addStorageAccess(third, extraDomain, addressSpace, {0, 64},
+                                 SyncCoverStorageAccessMode::Read, 0, true,
+                                 SyncCoverStorageAccessPath::PhysicalPipeline),
+          passed, "add mixed-SCC C access");
+      addDemand(second, extraSecond, third, extraThird,
+                SyncCoverDemandKind::MemoryRAW, 0, "add mixed-SCC B-to-C edge");
+      addDemand(third, extraThird, first, extraFirst,
+                SyncCoverDemandKind::MemoryWAR, 1, "add mixed-SCC C-to-A edge");
+    }
+    return extraDomain;
+  };
+  const SyncCoverStorageDomainId secondCycleDomain = addBackingSlot(18, true);
+  for (std::uint64_t addressSpace = 19; addressSpace < 27; ++addressSpace) {
+    (void)addBackingSlot(addressSpace, false);
+  }
+  passed &= check(graph.freezeStructure(), "freeze three-resource lifecycle");
+
+  SyncCoverProtocolTargetContract cycleTarget;
+  cycleTarget.eventCapabilities = {
+      {1, 2, kCompletion}, {2, 3, kCompletion}, {3, 1, kCompletion}};
+  cycleTarget.compilerUsableEventIds = {0, 1, 2, 3, 4, 5};
+  const SyncCoverLifecycleSynthesisResult synthesis =
+      synthesizeSyncCoverLifecycleCertificates(graph, cycleTarget);
+  if (!check(synthesis && synthesis.proposals.size() == 1 &&
+                 synthesis.proposals.front().protocols.size() == 2,
+             "two eligible slots synthesize two bounded SCC networks")) {
+    return false;
+  }
+  const SyncCoverEventProtocol &protocol =
+      synthesis.proposals.front().protocols.front();
+  std::vector<SyncCoverStorageDomainId> retainedDomains;
+  for (const SyncCoverLifecycleSlot &slot : synthesis.proposals.front().slots) {
+    retainedDomains.push_back(slot.domain);
+  }
+  std::sort(retainedDomains.begin(), retainedDomains.end());
+  passed &= check(
+      protocol.channels.size() == 3 &&
+          retainedDomains ==
+              std::vector<SyncCoverStorageDomainId>{domain, secondCycleDomain},
+      "whole-SCC provenance retains only protocol-backing slots");
+  SyncCoverProtocolLimits shortChannels;
+  shortChannels.maximumChannels = 2;
+  const SyncCoverLifecycleSynthesisResult channelBounded =
+      synthesizeSyncCoverLifecycleCertificates(graph, cycleTarget,
+                                               shortChannels);
+  passed &= check(channelBounded && channelBounded.proposals.empty(),
+                  "whole-SCC channels are bounded before materialization");
+  SyncCoverProtocolLimits shortActions;
+  shortActions.maximumDynamicActions = 7;
+  const SyncCoverLifecycleSynthesisResult actionBounded =
+      synthesizeSyncCoverLifecycleCertificates(graph, cycleTarget,
+                                               shortActions);
+  passed &= check(actionBounded && actionBounded.proposals.empty(),
+                  "whole-SCC actions are bounded before materialization");
+  SyncCoverProtocolLimits exactAggregateActions;
+  exactAggregateActions.maximumTotalDynamicActions = 136;
+  const SyncCoverLifecycleSynthesisResult exactAggregate =
+      synthesizeSyncCoverLifecycleCertificates(graph, cycleTarget,
+                                               exactAggregateActions);
+  passed &= check(exactAggregate && exactAggregate.proposals.size() == 1 &&
+                      exactAggregate.proposals.front().protocols.size() == 2,
+                  "exact aggregate whole-SCC action limit succeeds");
+  --exactAggregateActions.maximumTotalDynamicActions;
+  const SyncCoverLifecycleSynthesisResult shortAggregate =
+      synthesizeSyncCoverLifecycleCertificates(graph, cycleTarget,
+                                               exactAggregateActions);
+  passed &= check(shortAggregate.error == SyncCoverProtocolError::LimitExceeded,
+                  "one-less aggregate action limit fails closed");
+  SyncCoverCoverageWorkBudget mixedMeasurement;
+  const SyncCoverLifecycleSynthesisResult measuredMixed =
+      synthesizeSyncCoverLifecycleCertificates(graph, cycleTarget, {},
+                                               &mixedMeasurement);
+  passed &= check(static_cast<bool>(measuredMixed),
+                  "mixed-SCC provenance reports complete work");
+  SyncCoverCoverageWorkBudget exactMixedBudget(mixedMeasurement.workUnits);
+  passed &= check(static_cast<bool>(synthesizeSyncCoverLifecycleCertificates(
+                      graph, cycleTarget, {}, &exactMixedBudget)),
+                  "exact mixed-SCC work budget succeeds");
+  SyncCoverCoverageWorkBudget shortMixedBudget(mixedMeasurement.workUnits - 1);
+  return passed &&
+         check(synthesizeSyncCoverLifecycleCertificates(graph, cycleTarget, {},
+                                                        &shortMixedBudget)
+                       .error == SyncCoverProtocolError::WorkLimitExceeded,
+               "one-less mixed-SCC work budget fails closed");
+}
+
+bool testMultipleLifecycleProposalAccessLimit() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverRegionId root =
+      takeIndex(graph.addRegion(0, SyncCoverRegionKind::Sequence,
+                                SyncCoverRegionCardinality::ExactlyOnce),
+                passed, "add multi-proposal root");
+  const auto addLifecycle = [&](std::uint32_t producerResource,
+                                std::uint32_t consumerResource,
+                                std::uint64_t storageKey,
+                                SyncCoverTimelinePosition base) {
+    const SyncCoverScopeId loop = takeIndex(
+        graph.addScope(0, true,
+                       SyncCoverTimelineInterval{base * 2, base * 2 + 8}, true,
+                       {}, root),
+        passed, "add multi-proposal loop");
+    const SyncCoverRegionId loopRegion =
+        takeIndex(graph.addRegion(root, SyncCoverRegionKind::Loop,
+                                  SyncCoverRegionCardinality::OneOrMore, loop),
+                  passed, "add multi-proposal loop region");
+    passed &= check(graph.setScopeRegion(loop, loopRegion),
+                    "bind multi-proposal loop region");
+    const SyncCoverRegionId body = takeIndex(
+        graph.addRegion(loopRegion, SyncCoverRegionKind::Sequence,
+                        SyncCoverRegionCardinality::ExactlyOnce, loop),
+        passed, "add multi-proposal body");
+    const SyncCoverNodeId producer = takeIndex(
+        graph.addNode(producerResource, 1, loop, base + 1, {}, {}, std::nullopt,
+                      false, std::numeric_limits<std::size_t>::max(), -1, {},
+                      body),
+        passed, "add multi-proposal producer");
+    const SyncCoverNodeId consumer = takeIndex(
+        graph.addNode(consumerResource, 1, loop, base + 2, {}, {}, std::nullopt,
+                      false, std::numeric_limits<std::size_t>::max(), -1, {},
+                      body),
+        passed, "add multi-proposal consumer");
+    const SyncCoverStorageDomainId domain = takeIndex(
+        graph.addStorageDomain(SyncCoverStorageDomainRole::Other, storageKey),
+        passed, "add multi-proposal domain");
+    const SyncCoverStorageAccessId write = takeIndex(
+        graph.addStorageAccess(producer, domain, storageKey, {0, 64},
+                               SyncCoverStorageAccessMode::Write, 0, true,
+                               SyncCoverStorageAccessPath::PhysicalPipeline),
+        passed, "add multi-proposal write");
+    const SyncCoverStorageAccessId read = takeIndex(
+        graph.addStorageAccess(consumer, domain, storageKey, {0, 64},
+                               SyncCoverStorageAccessMode::Read, 0, true,
+                               SyncCoverStorageAccessPath::PhysicalPipeline),
+        passed, "add multi-proposal read");
+    const auto addDemand = [&](SyncCoverNodeId source,
+                               SyncCoverStorageAccessId sourceAccess,
+                               SyncCoverNodeId targetNode,
+                               SyncCoverStorageAccessId targetAccess,
+                               SyncCoverDemandKind kind, unsigned distance,
+                               std::string_view message) {
+      const SyncCoverStorageWitnessId witness = takeIndex(
+          graph.addStorageWitness(sourceAccess, targetAccess), passed, message);
+      SyncCoverDemand demand;
+      demand.source = source;
+      demand.target = targetNode;
+      demand.scope = loop;
+      demand.distance = distance;
+      demand.provenanceKinds = {kind};
+      demand.storageWitnesses = {witness};
+      passed &= check(graph.addDemand(std::move(demand)), message);
+    };
+    addDemand(producer, write, consumer, read, SyncCoverDemandKind::MemoryRAW,
+              0, "add multi-proposal RAW");
+    addDemand(consumer, read, producer, write, SyncCoverDemandKind::MemoryWAR,
+              1, "add multi-proposal WAR");
+  };
+  addLifecycle(1, 2, 31, 0);
+  addLifecycle(3, 4, 32, 8);
+  passed &= check(graph.freezeStructure(), "freeze multi-proposal graph");
+  SyncCoverProtocolTargetContract multiTarget;
+  multiTarget.eventCapabilities = {{1, 2, kCompletion},
+                                   {2, 1, kCompletion},
+                                   {3, 4, kCompletion},
+                                   {4, 3, kCompletion}};
+  multiTarget.compilerUsableEventIds = {0, 1, 2, 3, 4, 5};
+  multiTarget.directEventCompletesSourcePrefix = true;
+  const SyncCoverLifecycleSynthesisResult synthesis =
+      synthesizeSyncCoverLifecycleCertificates(graph, multiTarget);
+  if (!check(synthesis && synthesis.proposals.size() == 2,
+             "two disjoint lifecycle SCCs retain two proposals")) {
+    return false;
+  }
+  SyncCoverProtocolLimits oneComponent;
+  oneComponent.maximumLifecycleSccs = 1;
+  const SyncCoverLifecycleSccResult transactional =
+      discoverSyncCoverLifecycleSccs(graph, oneComponent);
+  passed &=
+      check(transactional.error == SyncCoverProtocolError::LimitExceeded &&
+                transactional.components.empty(),
+            "failed SCC discovery publishes no partial components");
+  SyncCoverProtocolLimits exact;
+  exact.maximumLifecycleAccessIncidences = synthesis.lifecycleAccessIncidences;
+  passed &= check(static_cast<bool>(synthesizeSyncCoverLifecycleCertificates(
+                      graph, multiTarget, exact)),
+                  "exact aggregate multi-proposal access limit succeeds");
+  if (synthesis.lifecycleAccessIncidences != 0) {
+    --exact.maximumLifecycleAccessIncidences;
+    passed &= check(
+        synthesizeSyncCoverLifecycleCertificates(graph, multiTarget, exact)
+                .error == SyncCoverProtocolError::LimitExceeded,
+        "one-less aggregate multi-proposal access limit fails");
+  }
   return passed;
 }
 
 } // namespace
 
 int main() {
-  const bool passed = testSingleShotAndTargetContract() &&
-                      testRoundTripAndRotatingLifecycle() &&
-                      testGuardAndPhaseQualification() &&
-                      testDirectProtocolRectangles() &&
-                      testWholeWorldCompositionAndExitExport() &&
-                      testStructuredMustAndFixedSupplyCoverage() &&
-                      testNestedLoopDistancesAreScopeTyped() &&
-                      testAuthoritativePhaseAndCardinality() &&
-                      testSingleShotRequiresExactNonLoopCardinality() &&
-                      testAllocationScarcity() && testProtocolBounds() &&
-                      testDeepHierarchyAndLongPhaseCatalogWorkBounds() &&
-                      testLifecycleSccDiscovery();
+  const bool passed =
+      testSingleShotAndTargetContract() &&
+      testRoundTripAndRotatingLifecycle() && testFirstIterationActionGuard() &&
+      testGuardAndPhaseQualification() && testDirectProtocolRectangles() &&
+      testSourcePrefixContract() && testWholeWorldCompositionAndExitExport() &&
+      testStructuredMustAndFixedSupplyCoverage() &&
+      testNestedLoopDistancesAreScopeTyped() &&
+      testGuardCompleteConnectorClosure() &&
+      testAuthoritativePhaseAndCardinality() &&
+      testSingleShotRequiresExactNonLoopCardinality() &&
+      testAllocationScarcity() && testProtocolBounds() &&
+      testDeepHierarchyAndLongPhaseCatalogWorkBounds() &&
+      testLifecycleSccDiscovery() &&
+      testLifecycleStorageReuseRequiresPrefixContract() &&
+      testThreePhaseLifecycleSynthesis() &&
+      testThreeResourceLifecycleSynthesis() &&
+      testMultipleLifecycleProposalAccessLimit();
   return passed ? 0 : 1;
 }

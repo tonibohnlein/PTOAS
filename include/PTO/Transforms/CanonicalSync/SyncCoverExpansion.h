@@ -146,6 +146,9 @@ public:
   std::optional<SyncCoverNodeId>
   getOperationForVirtualNode(std::size_t virtualNode) const;
   std::optional<unsigned> getCopyForVirtualNode(std::size_t virtualNode) const;
+  std::optional<std::uint32_t>
+  getResourceForVirtualNode(const SyncCoverGraph &graph,
+                            std::size_t virtualNode) const;
   std::optional<std::size_t> getLoopBoundary(SyncCoverScopeId scope,
                                              std::uint32_t resource,
                                              SyncCoverLoopBoundaryKind kind,

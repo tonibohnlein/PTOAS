@@ -72,6 +72,7 @@ enum class CanonicalSyncMechanismOrigin : std::uint8_t {
   SourcePrefixPipeDrain,
   LoopCarryPipeDrain,
   LoopBoundarySourcePrefixProtocol,
+  GenericLifecycleProtocol,
   BasicOwnershipL0OperandProtocol,
   BasicOwnershipStableL1Protocol,
   BasicOwnershipAlternatingL1Protocol,
@@ -115,6 +116,7 @@ enum class CanonicalSyncActionGuardKind : std::uint8_t {
   None,
   LoopNonEmpty,
   LoopEmpty,
+  FirstIteration,
   NotFirstIteration,
   HasSuccessor,
 };
@@ -227,6 +229,12 @@ enum class CanonicalSyncSupplyProof : std::uint8_t {
   /// path. It owns no single action; it is admitted only by the same exact
   /// descriptor verifier and remains restricted to named demand rows.
   VerifiedBasicOwnershipComposite,
+  /// Action-backed transfer admitted only after the target-typed lifecycle
+  /// protocol and its exact world have been independently verified.
+  VerifiedGenericLifecycleProtocol,
+  /// An actionless transitive consequence of a complete verified lifecycle
+  /// proposal.  The binding is always restricted to one exact demand row.
+  VerifiedGenericLifecycleComposite,
   VerifiedProtocol,
 };
 

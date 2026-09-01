@@ -42,6 +42,7 @@ enum class CanonicalSyncMechanismFamily : std::uint8_t {
   SourcePrefixDrain,
   LoopCarryDrain,
   LoopBoundaryProtocol,
+  GenericLifecycle,
   L0OperandOwnership,
   BasicOwnership,
   BoundaryOwnership,
@@ -73,10 +74,13 @@ constexpr CanonicalSyncMechanismFamilyMask kAllCanonicalSyncMechanismFamilies =
     1;
 
 /// Production-default derived families. Newly synthesized storage-cut events
-/// remain opt-in until their emitted plans pass the device correctness gate.
+/// and generic lifecycle protocols remain opt-in until their emitted plans
+/// pass the device correctness gate.
 constexpr CanonicalSyncMechanismFamilyMask
     kDefaultCanonicalSyncMechanismFamilies =
         kAllCanonicalSyncMechanismFamilies &
+        ~canonicalSyncMechanismFamilyBit(
+            CanonicalSyncMechanismFamily::GenericLifecycle) &
         ~canonicalSyncMechanismFamilyBit(
             CanonicalSyncMechanismFamily::StorageCutEvent);
 

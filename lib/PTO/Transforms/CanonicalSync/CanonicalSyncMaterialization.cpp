@@ -654,6 +654,11 @@ void emitGuardedActions(IRRewriter &rewriter, func::FuncOp function,
         location, arith::CmpIPredicate::sge, guardLoop.getLowerBound(),
         guardLoop.getUpperBound());
     break;
+  case CanonicalSyncActionGuardKind::FirstIteration:
+    condition = rewriter.create<arith::CmpIOp>(
+        location, arith::CmpIPredicate::eq, guardLoop.getInductionVar(),
+        guardLoop.getLowerBound());
+    break;
   case CanonicalSyncActionGuardKind::NotFirstIteration:
     condition = rewriter.create<arith::CmpIOp>(
         location, arith::CmpIPredicate::ne, guardLoop.getInductionVar(),
@@ -2756,6 +2761,9 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
   CanonicalSyncAnalysisOptions analysisOptions = options.analysis;
   analysisOptions.discoverStorageLifecycleComponents =
       analysisOptions.discoverStorageLifecycleComponents ||
+      canonicalSyncMechanismFamilyEnabled(
+          options.patterns.enabledMechanismFamilies,
+          CanonicalSyncMechanismFamily::GenericLifecycle) ||
       canonicalSyncMechanismFamilyEnabled(
           options.patterns.enabledMechanismFamilies,
           CanonicalSyncMechanismFamily::StorageCutEvent);

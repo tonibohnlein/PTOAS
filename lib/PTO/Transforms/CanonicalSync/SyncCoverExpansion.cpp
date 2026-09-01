@@ -169,6 +169,49 @@ SyncCoverExpandedArena::getCopyForVirtualNode(std::size_t virtualNode) const {
                                carryResources_.size());
 }
 
+std::optional<std::uint32_t> SyncCoverExpandedArena::getResourceForVirtualNode(
+    const SyncCoverGraph &graph, std::size_t virtualNode) const {
+  if (virtualNode >= virtualNodeCount_) {
+    return std::nullopt;
+  }
+  if (const std::optional<SyncCoverNodeId> operation =
+          getOperationForVirtualNode(virtualNode)) {
+    return *operation < graph.getNodes().size()
+               ? std::optional<std::uint32_t>(
+                     graph.getNodes()[*operation].resource)
+               : std::nullopt;
+  }
+  if (virtualNode < operationVirtualNodeCount_) {
+    return std::nullopt;
+  }
+  const std::size_t summaryOffset = virtualNode - operationVirtualNodeCount_;
+  if (summaryOffset < loopSummaryVirtualNodeCount_) {
+    const std::size_t nodesPerCopy = loopSummaryResources_.size() * 2;
+    return nodesPerCopy == 0
+               ? std::nullopt
+               : std::optional<std::uint32_t>(
+                     loopSummaryResources_[(summaryOffset % nodesPerCopy) / 2]
+                         .second);
+  }
+  const std::size_t portOffset = summaryOffset - loopSummaryVirtualNodeCount_;
+  if (portOffset < loopPortVirtualNodeCount_) {
+    if (loopSummaryPorts_.empty()) {
+      return std::nullopt;
+    }
+    const SyncCoverNodeId operation =
+        loopSummaryPorts_[portOffset % loopSummaryPorts_.size()].second;
+    return operation < graph.getNodes().size()
+               ? std::optional<std::uint32_t>(
+                     graph.getNodes()[operation].resource)
+               : std::nullopt;
+  }
+  const std::size_t carryOffset = portOffset - loopPortVirtualNodeCount_;
+  return carryResources_.empty()
+             ? std::nullopt
+             : std::optional<std::uint32_t>(
+                   carryResources_[carryOffset % carryResources_.size()]);
+}
+
 std::optional<std::size_t> SyncCoverExpandedArena::getLoopBoundary(
     SyncCoverScopeId scope, std::uint32_t resource,
     SyncCoverLoopBoundaryKind kind, unsigned copy) const {

@@ -1092,15 +1092,26 @@ validateSupplyDeclarations(const SyncCoverGraph &graph,
     const bool basicOwnershipComposite =
         binding.proof ==
         CanonicalSyncSupplyProof::VerifiedBasicOwnershipComposite;
+    const bool genericLifecycleAction =
+        binding.proof ==
+        CanonicalSyncSupplyProof::VerifiedGenericLifecycleProtocol;
+    const bool genericLifecycleComposite =
+        binding.proof ==
+        CanonicalSyncSupplyProof::VerifiedGenericLifecycleComposite;
     const bool targetLocal = targetPrefix || targetPipeDrain || loopCarryDrain;
     const bool restrictedLocal = targetCertificate || sourceLocalCompletion ||
                                  loopBoundaryPrefix || targetLocal ||
                                  sourceLocalDrain || sourcePrefixDrain;
     const bool verified =
         binding.proof == CanonicalSyncSupplyProof::VerifiedProtocol ||
-        loopBoundaryPrefix || basicOwnershipAction || basicOwnershipComposite;
+        loopBoundaryPrefix || basicOwnershipAction || basicOwnershipComposite ||
+        genericLifecycleAction || genericLifecycleComposite;
     const bool validBasicOwnershipQualifier =
         (!basicOwnershipAction && !basicOwnershipComposite) ||
+        (!binding.allowedDemands.empty() && !binding.attestedDemand &&
+         binding.applicability == SyncCoverSupplyApplicability::AllDemands);
+    const bool validGenericLifecycleQualifier =
+        (!genericLifecycleAction && !genericLifecycleComposite) ||
         (!binding.allowedDemands.empty() && !binding.attestedDemand &&
          binding.applicability == SyncCoverSupplyApplicability::AllDemands);
     const bool validTargetLocalQualifier =
@@ -1164,7 +1175,7 @@ validateSupplyDeclarations(const SyncCoverGraph &graph,
          binding.applicability == SyncCoverSupplyApplicability::AllDemands);
     const bool validOwner =
         protocol
-            ? basicOwnershipComposite
+            ? (basicOwnershipComposite || genericLifecycleComposite)
                   ? verified && !binding.eventUse && !binding.barrierAction &&
                         !binding.produceAction && !binding.consumeAction
                   : verified && binding.eventUse && !binding.barrierAction &&
@@ -1183,7 +1194,8 @@ validateSupplyDeclarations(const SyncCoverGraph &graph,
         !validTargetCertificateQualifier ||
         !validSourceLocalCompletionQualifier || !validLoopCarryQualifier ||
         !validLoopBoundaryPrefixQualifier || !validSourceLocalQualifier ||
-        !validBasicOwnershipQualifier || !validOrdinaryQualifier || !validOwner;
+        !validBasicOwnershipQualifier || !validGenericLifecycleQualifier ||
+        !validOrdinaryQualifier || !validOwner;
     if (invalid) {
       return CanonicalSyncProblemError::InvalidMechanism;
     }
@@ -1294,6 +1306,8 @@ validateActions(const SyncCoverGraph &graph,
                      action.guard == CanonicalSyncActionGuardKind::LoopEmpty) &&
                     scopeBoundary) ||
                    ((action.guard ==
+                         CanonicalSyncActionGuardKind::FirstIteration ||
+                     action.guard ==
                          CanonicalSyncActionGuardKind::NotFirstIteration ||
                      action.guard ==
                          CanonicalSyncActionGuardKind::HasSuccessor) &&
@@ -1615,6 +1629,9 @@ validateSupplyBindings(const SyncCoverGraph &graph,
     const bool basicOwnershipComposite =
         binding.proof ==
         CanonicalSyncSupplyProof::VerifiedBasicOwnershipComposite;
+    const bool genericLifecycleComposite =
+        binding.proof ==
+        CanonicalSyncSupplyProof::VerifiedGenericLifecycleComposite;
     const bool namesExactDemand =
         binding.attestedDemand &&
         *binding.attestedDemand < graph.getDemands().size() &&
@@ -1627,7 +1644,7 @@ validateSupplyBindings(const SyncCoverGraph &graph,
                       graph.getDemands()[*binding.attestedDemand].distance,
                       graph.getDemands()[*binding.attestedDemand].sourceGuard,
                       graph.getDemands()[*binding.attestedDemand].targetGuard});
-    if (basicOwnershipComposite) {
+    if (basicOwnershipComposite || genericLifecycleComposite) {
       const bool exactRestrictedEdge =
           binding.allowedDemands.size() == 1 &&
           edgeEqual(
@@ -2066,6 +2083,15 @@ validateSupplyBindings(const SyncCoverGraph &graph,
     }
   }
   bool invalidSupplyCount = false;
+  const bool exactLifecycleComposite =
+      descriptor.kind == CanonicalSyncMechanismKind::Protocol &&
+      !descriptor.supplies.empty() &&
+      std::all_of(
+          descriptor.supplies.begin(), descriptor.supplies.end(),
+          [](const CanonicalSyncSupplyBinding &binding) {
+            return binding.proof ==
+                   CanonicalSyncSupplyProof::VerifiedGenericLifecycleComposite;
+          });
   for (std::size_t use = 0; use < supplyCounts.size(); ++use) {
     const bool groupedExactEvent =
         descriptor.kind == CanonicalSyncMechanismKind::Event &&
@@ -2082,7 +2108,8 @@ validateSupplyBindings(const SyncCoverGraph &graph,
                          CanonicalSyncSupplyProof::SourceLocalCompletionAction;
             });
     invalidSupplyCount =
-        invalidSupplyCount || supplyCounts[use] == 0 ||
+        invalidSupplyCount ||
+        (supplyCounts[use] == 0 && !exactLifecycleComposite) ||
         (descriptor.kind == CanonicalSyncMechanismKind::Event &&
          supplyCounts[use] != 1 && !groupedExactEvent);
   }

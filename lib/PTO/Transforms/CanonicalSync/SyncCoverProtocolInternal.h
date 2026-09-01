@@ -17,12 +17,24 @@ namespace mlir {
 namespace pto {
 namespace sync_cover_protocol_detail {
 
-struct ResolvedChannel {
-  const SyncCoverEventChannel *description = nullptr;
+struct ResolvedTransfer {
+  SyncCoverEventTransfer description;
   SyncCoverTimelinePosition setPosition = 0;
   SyncCoverTimelinePosition waitPosition = 0;
   SyncCoverGuard setGuard;
   SyncCoverGuard waitGuard;
+};
+
+struct ResolvedAction {
+  SyncCoverProtocolAction description;
+  SyncCoverTimelinePosition position = 0;
+  SyncCoverGuard guard;
+};
+
+struct ResolvedChannel {
+  const SyncCoverEventChannel *description = nullptr;
+  std::vector<ResolvedTransfer> transfers;
+  std::vector<ResolvedAction> actions;
 };
 
 struct ResolvedProtocol {
@@ -64,7 +76,8 @@ SyncCoverProtocolVerificationResult verifyProtocolAssumingValidGraph(
 SyncCoverProtocolError verifyResolvedProtocolAutomaton(
     const SyncCoverEventProtocol &protocol, const ResolvedProtocol &resolved,
     SyncCoverProtocolLimits limits, SyncCoverProtocolStatistics &statistics,
-    SyncCoverCoverageWorkBudget *workBudget);
+    SyncCoverCoverageWorkBudget *workBudget,
+    std::vector<std::vector<bool>> *supplyWitnesses = nullptr);
 
 std::optional<SyncCoverGuard>
 effectivePointGuard(const SyncCoverGraph &graph, const SyncCoverCutPoint &point,
