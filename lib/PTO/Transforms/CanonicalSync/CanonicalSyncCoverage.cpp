@@ -672,39 +672,64 @@ CanonicalCoverageWorld evaluateWorld(const CanonicalSyncProgram &program,
 
 } // namespace
 
+FailureOr<CanonicalCoverageWorld>
+mlir::pto::canonical_sync_detail::evaluateCanonicalSyncGroup(
+    const CanonicalSyncProgram &program, StringRef name,
+    ArrayRef<CanonicalMechanismId> selected) {
+  if (llvm::any_of(selected, [&program](CanonicalMechanismId id) {
+        return id >= program.getMechanisms().size();
+      })) {
+    program.getFunction().emitError(
+        "canonical sync coverage group references an invalid mechanism");
+    return failure();
+  }
+  CanonicalCoverageWorld world = evaluateWorld(program, name, selected);
+  const bool unrolledMismatch =
+      world.unrolledOracleExhaustive && !world.unrolledOracleMatched;
+  if (world.flattenedOracleMatched && world.unrolledOracleAvailable &&
+      !unrolledMismatch) {
+    return world;
+  }
+
+  InFlightDiagnostic diagnostic =
+      program.getFunction().emitError(
+          "canonical sync region summary disagrees with its differential "
+          "coverage oracle in world '")
+      << world.name
+      << "' (flat=" << (world.flattenedOracleMatched ? "match" : "mismatch")
+      << ", unrolled="
+      << (!world.unrolledOracleExhaustive
+              ? "inconclusive"
+              : (world.unrolledOracleMatched ? "match" : "mismatch"))
+      << ") for demand(s)";
+  for (CanonicalDemandId demand : world.differentialDisagreements) {
+    const CanonicalDemand &record = program.getDemand(demand);
+    diagnostic << " d" << demand << '['
+               << stringifyCanonicalDemandKind(record.kind) << ":p"
+               << record.source << "->";
+    if (record.target == kInvalidCanonicalSyncId) {
+      diagnostic << "exit";
+    } else {
+      diagnostic << 'p' << record.target;
+    }
+    diagnostic << ']';
+  }
+  return failure();
+}
+
 LogicalResult
 mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
-  const auto appendChecked = [&program](CanonicalCoverageWorld world) {
-    const bool unrolledMismatch =
-        world.unrolledOracleExhaustive && !world.unrolledOracleMatched;
-    if (!world.flattenedOracleMatched || !world.unrolledOracleAvailable ||
-        unrolledMismatch) {
-      InFlightDiagnostic diagnostic =
-          program.getFunction().emitError(
-              "canonical sync region summary disagrees with its differential "
-              "coverage oracle in world '")
-          << world.name
-          << "' (flat=" << (world.flattenedOracleMatched ? "match" : "mismatch")
-          << ", unrolled="
-          << (!world.unrolledOracleExhaustive
-                  ? "inconclusive"
-                  : (world.unrolledOracleMatched ? "match" : "mismatch"))
-          << ") for demand(s)";
-      for (CanonicalDemandId demand : world.differentialDisagreements) {
-        const CanonicalDemand &record = program.getDemand(demand);
-        diagnostic << " d" << demand << '['
-                   << stringifyCanonicalDemandKind(record.kind) << ":p"
-                   << record.source << "->";
-        if (record.target == kInvalidCanonicalSyncId) {
-          diagnostic << "exit";
-        } else {
-          diagnostic << 'p' << record.target;
-        }
-        diagnostic << ']';
-      }
+  const auto appendGroup = [&program](StringRef name,
+                                      ArrayRef<CanonicalMechanismId> selected,
+                                      bool setCoverCandidate = false) {
+    FailureOr<CanonicalCoverageWorld> world =
+        canonical_sync_detail::evaluateCanonicalSyncGroup(program, name,
+                                                          selected);
+    if (failed(world)) {
       return failure();
     }
-    program.appendCoverageWorld(std::move(world));
+    world->setCoverCandidate = setCoverCandidate;
+    program.appendCoverageWorld(std::move(*world));
     return success();
   };
 
@@ -717,7 +742,7 @@ mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
       baseline.push_back(mechanism.id);
     }
   }
-  if (failed(appendChecked(evaluateWorld(program, "baseline", baseline)))) {
+  if (failed(appendGroup("baseline", baseline))) {
     return failure();
   }
   for (const CanonicalMechanism &mechanism : program.getMechanisms()) {
@@ -726,9 +751,8 @@ mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
     }
     SmallVector<CanonicalMechanismId, 8> singleton = baseline;
     singleton.push_back(mechanism.id);
-    if (failed(appendChecked(evaluateWorld(
-            program, (Twine("singleton-m") + Twine(mechanism.id)).str(),
-            singleton)))) {
+    const std::string name = (Twine("singleton-m") + Twine(mechanism.id)).str();
+    if (failed(appendGroup(name, singleton))) {
       return failure();
     }
   }
@@ -740,16 +764,21 @@ mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
     const std::string name =
         (Twine("choice-group-m") + Twine(group[0]) + "-m" + Twine(group[1]))
             .str();
-    if (failed(appendChecked(evaluateWorld(program, name, selected)))) {
+    if (failed(appendGroup(name, selected, true))) {
       return failure();
     }
   }
 
-  CanonicalCoverageWorld final = evaluateWorld(program, "mechanical", all);
-  const bool incomplete = final.covered.size() != program.getDemands().size();
+  FailureOr<CanonicalCoverageWorld> final =
+      canonical_sync_detail::evaluateCanonicalSyncGroup(program, "mechanical",
+                                                        all);
+  if (failed(final)) {
+    return failure();
+  }
+  const bool incomplete = final->covered.size() != program.getDemands().size();
   if (incomplete) {
     for (const CanonicalDemand &demand : program.getDemands()) {
-      if (!llvm::is_contained(final.covered, demand.id)) {
+      if (!llvm::is_contained(final->covered, demand.id)) {
         program.getFunction().emitError(
             "canonical sync mechanical plan does not cover demand d")
             << demand.id << " (" << stringifyCanonicalDemandKind(demand.kind)
@@ -759,5 +788,6 @@ mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
     }
     return failure();
   }
-  return appendChecked(std::move(final));
+  program.appendCoverageWorld(std::move(*final));
+  return success();
 }

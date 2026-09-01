@@ -39,6 +39,7 @@ using CanonicalPhaseId = std::uint32_t;
 using CanonicalAccessId = std::uint32_t;
 using CanonicalDemandId = std::uint32_t;
 using CanonicalMechanismId = std::uint32_t;
+using CanonicalSetCoverCandidateId = std::uint32_t;
 
 inline constexpr std::uint32_t kInvalidCanonicalSyncId =
     std::numeric_limits<std::uint32_t>::max();
@@ -259,6 +260,21 @@ struct CanonicalCoverageWorld {
   bool unrolledOracleAvailable = false;
   bool unrolledOracleExhaustive = false;
   bool unrolledOracleMatched = false;
+  bool setCoverCandidate = false;
+};
+
+struct CanonicalSetCoverCandidate {
+  CanonicalSetCoverCandidateId id = kInvalidCanonicalSyncId;
+  llvm::SmallVector<CanonicalMechanismId, 2> mechanisms;
+  llvm::SmallVector<CanonicalDemandId, 4> directOrigins;
+  llvm::SmallVector<CanonicalDemandId, 4> additionalCoverage;
+  std::uint64_t weight = 0;
+};
+
+struct CanonicalSetCoverInstance {
+  llvm::SmallVector<CanonicalMechanismId, 4> baseline;
+  llvm::SmallVector<CanonicalDemandId, 8> universe;
+  llvm::SmallVector<CanonicalSetCoverCandidate, 8> candidates;
 };
 
 class CanonicalSyncProgram {
@@ -277,6 +293,7 @@ public:
   void setDirectMechanism(CanonicalDemandId demand,
                           CanonicalMechanismId mechanism);
   void appendCoverageWorld(CanonicalCoverageWorld world);
+  void setSetCoverInstance(CanonicalSetCoverInstance instance);
 
   LogicalResult freezeGraph();
   LogicalResult freeze();
@@ -296,6 +313,9 @@ public:
   llvm::ArrayRef<CanonicalMechanismId> getDirectMechanisms() const {
     return directMechanisms;
   }
+  const std::optional<CanonicalSetCoverInstance> &getSetCoverInstance() const {
+    return setCoverInstance;
+  }
 
   const CanonicalRegion &getRegion(CanonicalRegionId id) const;
   const CanonicalPhase &getPhase(CanonicalPhaseId id) const;
@@ -312,6 +332,7 @@ private:
   llvm::SmallVector<CanonicalMechanism> mechanisms;
   llvm::SmallVector<CanonicalMechanismId> directMechanisms;
   llvm::SmallVector<CanonicalCoverageWorld> coverageWorlds;
+  std::optional<CanonicalSetCoverInstance> setCoverInstance;
   bool graphFrozen = false;
   bool frozen = false;
 };

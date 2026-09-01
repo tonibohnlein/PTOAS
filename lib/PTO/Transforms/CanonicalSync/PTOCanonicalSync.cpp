@@ -77,6 +77,9 @@ LogicalResult runCanonicalSync(func::FuncOp function,
   if (failed(evaluateCanonicalSyncCoverage(**program))) {
     return failure();
   }
+  if (failed(buildCanonicalSyncSetCoverInstance(**program))) {
+    return failure();
+  }
   if (failed(allocateCanonicalSyncEvents(**program))) {
     return failure();
   }

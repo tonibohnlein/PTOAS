@@ -114,6 +114,14 @@ void CanonicalSyncProgram::appendCoverageWorld(CanonicalCoverageWorld world) {
   coverageWorlds.push_back(std::move(world));
 }
 
+void CanonicalSyncProgram::setSetCoverInstance(
+    CanonicalSetCoverInstance instance) {
+  if (frozen || setCoverInstance) {
+    llvm_unreachable("cannot replace a frozen canonical set-cover instance");
+  }
+  setCoverInstance = std::move(instance);
+}
+
 static bool validControlPath(llvm::ArrayRef<CanonicalControlAtom> path,
                              size_t regionCount) {
   return llvm::all_of(path, [regionCount](const CanonicalControlAtom &atom) {
@@ -256,6 +264,66 @@ LogicalResult CanonicalSyncProgram::freeze() {
         (world.unrolledOracleExhaustive && !world.unrolledOracleMatched)) {
       return fail("coverage world references an invalid ID");
     }
+  }
+  if (!setCoverInstance) {
+    return fail("set-cover instance is missing");
+  }
+  const bool invalidBaseline =
+      llvm::any_of(setCoverInstance->baseline, [this](CanonicalMechanismId id) {
+        return id >= mechanisms.size();
+      });
+  const bool invalidUniverse =
+      llvm::any_of(setCoverInstance->universe, [this](CanonicalDemandId id) {
+        return id >= demands.size();
+      });
+  bool invalidCandidate = false;
+  for (const CanonicalSetCoverCandidate &candidate :
+       setCoverInstance->candidates) {
+    const bool wrongId =
+        candidate.id >= setCoverInstance->candidates.size() ||
+        &candidate != &setCoverInstance->candidates[candidate.id];
+    const bool invalidMechanism =
+        candidate.mechanisms.empty() ||
+        llvm::any_of(candidate.mechanisms, [this](CanonicalMechanismId id) {
+          return id >= mechanisms.size();
+        });
+    const bool invalidDemand = llvm::any_of(candidate.directOrigins,
+                                            [this](CanonicalDemandId id) {
+                                              return id >= demands.size();
+                                            }) ||
+                               llvm::any_of(candidate.additionalCoverage,
+                                            [this](CanonicalDemandId id) {
+                                              return id >= demands.size();
+                                            });
+    const bool overlap = llvm::any_of(
+        candidate.directOrigins, [&candidate](CanonicalDemandId id) {
+          return llvm::is_contained(candidate.additionalCoverage, id);
+        });
+    const bool outsideUniverse =
+        llvm::any_of(candidate.directOrigins,
+                     [this](CanonicalDemandId id) {
+                       return !llvm::is_contained(setCoverInstance->universe,
+                                                  id);
+                     }) ||
+        llvm::any_of(
+            candidate.additionalCoverage, [this](CanonicalDemandId id) {
+              return !llvm::is_contained(setCoverInstance->universe, id);
+            });
+    invalidCandidate |= wrongId || invalidMechanism || invalidDemand ||
+                        overlap || outsideUniverse || candidate.weight == 0;
+  }
+  const bool uncoveredUniverse =
+      llvm::any_of(setCoverInstance->universe, [this](CanonicalDemandId id) {
+        return llvm::none_of(
+            setCoverInstance->candidates,
+            [id](const CanonicalSetCoverCandidate &candidate) {
+              return llvm::is_contained(candidate.directOrigins, id) ||
+                     llvm::is_contained(candidate.additionalCoverage, id);
+            });
+      });
+  if (invalidBaseline || invalidUniverse || invalidCandidate ||
+      uncoveredUniverse) {
+    return fail("set-cover instance references an invalid ID or incidence");
   }
   const bool wrongDirectCount = directMechanisms.size() != demands.size();
   if (wrongDirectCount ||

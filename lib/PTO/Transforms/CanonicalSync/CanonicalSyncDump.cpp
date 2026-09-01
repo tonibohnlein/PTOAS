@@ -203,5 +203,28 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
       }
     }
   }
+  if (program.getSetCoverInstance()) {
+    const CanonicalSetCoverInstance &instance = *program.getSetCoverInstance();
+    os << "SET-COVER optimization=disabled baseline=[";
+    llvm::interleaveComma(instance.baseline, os,
+                          [&os](CanonicalMechanismId id) { os << 'm' << id; });
+    os << "] universe=[";
+    llvm::interleaveComma(instance.universe, os,
+                          [&os](CanonicalDemandId id) { os << 'd' << id; });
+    os << "] candidates=" << instance.candidates.size() << '\n';
+    for (const CanonicalSetCoverCandidate &candidate : instance.candidates) {
+      os << "  candidate=c" << candidate.id << " mechanisms=[";
+      llvm::interleaveComma(
+          candidate.mechanisms, os,
+          [&os](CanonicalMechanismId id) { os << 'm' << id; });
+      os << "] weight=" << candidate.weight << " direct-origins=[";
+      llvm::interleaveComma(candidate.directOrigins, os,
+                            [&os](CanonicalDemandId id) { os << 'd' << id; });
+      os << "] additional=[";
+      llvm::interleaveComma(candidate.additionalCoverage, os,
+                            [&os](CanonicalDemandId id) { os << 'd' << id; });
+      os << "]\n";
+    }
+  }
   os << "PLAN mechanical mechanisms=" << program.getMechanisms().size() << '\n';
 }

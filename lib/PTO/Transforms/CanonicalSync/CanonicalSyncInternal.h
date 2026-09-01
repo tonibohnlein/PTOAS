@@ -90,6 +90,10 @@ struct CanonicalUnrolledCoverageResult {
 FailureOr<CanonicalUnrolledCoverageResult> evaluateCanonicalSyncUnrolledOracle(
     const CanonicalSyncProgram &program,
     llvm::ArrayRef<CanonicalMechanismId> selected);
+FailureOr<CanonicalCoverageWorld>
+evaluateCanonicalSyncGroup(const CanonicalSyncProgram &program,
+                           llvm::StringRef name,
+                           llvm::ArrayRef<CanonicalMechanismId> selected);
 LogicalResult verifyMaterializedCanonicalSync(func::FuncOp function);
 
 } // namespace canonical_sync_detail

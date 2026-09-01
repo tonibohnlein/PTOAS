@@ -28,6 +28,7 @@ FailureOr<std::unique_ptr<CanonicalSyncProgram>>
 buildCanonicalSyncProgram(func::FuncOp function);
 LogicalResult buildCanonicalDirectMechanisms(CanonicalSyncProgram &program);
 LogicalResult evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program);
+LogicalResult buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program);
 LogicalResult allocateCanonicalSyncEvents(CanonicalSyncProgram &program);
 LogicalResult materializeAndVerifyCanonicalSync(CanonicalSyncProgram &program);
 LogicalResult runCanonicalSync(func::FuncOp function,
