@@ -116,6 +116,15 @@ getCompatibleKinds(const SyncCoverDemand &demand,
       }
       break;
     }
+    case SyncCoverDemandKind::HardwareAccRAR: {
+      const bool compatible =
+          modeReads(source.mode) && modeReads(target.mode);
+      if (compatible) {
+        result |= syncCoverStorageLifecycleEdgeKindBit(
+            SyncCoverStorageLifecycleEdgeKind::Exclusion);
+      }
+      break;
+    }
     }
   }
   return result;

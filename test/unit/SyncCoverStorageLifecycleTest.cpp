@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <iostream>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -369,6 +370,54 @@ bool testWitnesslessDemandWorkIsBounded() {
   return passed;
 }
 
+bool testAccumulatorReadReadIsAnExclusion() {
+  bool passed = true;
+  SyncCoverGraph graph;
+  const SyncCoverNodeId first =
+      takeIndex(graph.addNode(1, 1, 0, 0), passed, "add first ACC reader");
+  const SyncCoverNodeId second =
+      takeIndex(graph.addNode(2, 1, 0, 1), passed, "add second ACC reader");
+  const SyncCoverStorageDomainId domain =
+      takeIndex(graph.addStorageDomain(), passed, "add ACC storage domain");
+  constexpr SyncCoverStorageAccessFamilyId family = 29;
+  const SyncCoverStorageAccessId firstAccess = takeIndex(
+      graph.addStorageAccess(first, domain, family, {0, 64},
+                             SyncCoverStorageAccessMode::Read, std::nullopt,
+                             true),
+      passed, "add first ACC read");
+  const SyncCoverStorageAccessId secondAccess = takeIndex(
+      graph.addStorageAccess(second, domain, family, {0, 64},
+                             SyncCoverStorageAccessMode::Read, std::nullopt,
+                             true),
+      passed, "add second ACC read");
+  const SyncCoverStorageWitnessId witness =
+      takeIndex(graph.addStorageWitness(firstAccess, secondAccess), passed,
+                "add ACC read/read witness");
+  SyncCoverDemand demand = makeMemoryDemand(
+      first, second, SyncCoverDemandKind::HardwareAccRAR, witness);
+  demand.orderingRequirements =
+      syncCoverOrderingRequirementBit(
+          SyncCoverOrderingRequirement::PipelineCompletionBeforeAccess) |
+      syncCoverOrderingRequirementBit(
+          SyncCoverOrderingRequirement::HardwareSpecialOrder);
+  passed &= check(graph.addDemand(std::move(demand)),
+                  "add ACC read/read hardware demand");
+  passed &= check(graph.freezeStructure(), "freeze ACC read/read graph");
+  if (!passed) {
+    return false;
+  }
+
+  const SyncCoverStorageLifecycleIndex index =
+      buildSyncCoverStorageLifecycleIndex(graph);
+  const auto exclusionBit = syncCoverStorageLifecycleEdgeKindBit(
+      SyncCoverStorageLifecycleEdgeKind::Exclusion);
+  return check(index.isComplete() && index.getComponents().size() == 1 &&
+                   index.getComponents().front().edges.size() == 1 &&
+                   index.getComponents().front().edges.front().kinds ==
+                       exclusionBit,
+               "classify the hardware read/read hazard as exclusion");
+}
+
 bool testRequiresFrozenGraph() {
   SyncCoverGraph graph;
   return check(buildSyncCoverStorageLifecycleIndex(graph).getError() ==
@@ -382,6 +431,7 @@ int main() {
   bool passed = true;
   passed &= testExactLifecycleIndex();
   passed &= testWitnesslessDemandWorkIsBounded();
+  passed &= testAccumulatorReadReadIsAnExclusion();
   passed &= testRequiresFrozenGraph();
   return passed ? 0 : 1;
 }
