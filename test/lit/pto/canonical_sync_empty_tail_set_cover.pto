@@ -8,8 +8,8 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-// A phase-free kernel still needs the mandatory return drain. It belongs to
-// the nonselectable baseline, not to the optimization universe.
+// The configured policy gives a phase-free typed kernel a return drain. It
+// belongs to the nonselectable baseline, not to the optimization universe.
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
 // RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s

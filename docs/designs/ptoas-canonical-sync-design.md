@@ -118,12 +118,11 @@ unclassified. The generated wrapper defines the admitted adapter as synchronous
 scalar code, and the graph retains conservative read/write GM effects for every
 pointer operand. Other opaque calls remain unclassified and fail closed.
 
-Before the residual demand graph is frozen, immutable supply is integrated:
-intrinsic completion, existing proven fence effects, and mandatory section or
-function exit drains remove the obligations they already satisfy. They remain
-physical graph effects, but are not selectable demands. The residual graph is
-then frozen before mechanisms are generated. Later stages cannot remove or
-rewrite a demand.
+Construction first derives all obligations, including exit completion.
+Intrinsic completion, existing proven fence effects, and the configured exit
+drains are then evaluated as fixed supply. Covered obligations are removed,
+and the compacted residual demand graph is frozen before candidate construction.
+Later stages cannot remove or rewrite a residual demand.
 
 ### Alias and physical-storage rules
 
@@ -243,10 +242,57 @@ protocol, so endpoints may be nested at different depths inside it. Shapes
 whose endpoints are not both descendants of that carrying loop continue to
 fail closed. A same-pipeline barrier may remain inside a loop.
 
-Every issued phase also has an exit-completion demand. Function-core work is
-drained by a tagged `PIPE_ALL` before return. Work in an explicit cube or vector
-section is drained by a `PIPE_ALL` at the end of that physical section, so the
-barrier executes on the core that issued the work.
+Demand construction initially gives every issued phase an exit-completion
+obligation. The fixed baseline removes those obligations before the residual
+graph is frozen. Function-core work is drained by a tagged `PIPE_ALL` before
+return. Work in an explicit cube or vector section containing an issued phase
+is drained by a `PIPE_ALL` at the end of that physical section, so the barrier
+executes on the core that issued the work.
+
+### Exit-drain policy audit
+
+`PipeBarrier<PIPE_ALL>` has documented hardware drain semantics. The public
+NPU 2201 material reviewed for this pass does not establish a universal rule
+that every PTO function or every physical section must end with such a drain.
+The placement rule is therefore a PTOAS auto-synchronization policy, not a
+hardware fact inferred by the dependency graph.
+
+- **Function return:** emit one tagged `PIPE_ALL` before each return when the
+  function core is resolvable. This is retained for compatibility with
+  production `InsertSync`, whose normal path requests `InsertLastPipeAll` and
+  whose sync code generator materializes a tagged `pto.barrier`. `PTOToEmitC`
+  then removes that marker and emits `ptoas_auto_sync_tail(kBarrierAll)`
+  immediately before the lowered return. It is an established PTOAS lowering
+  convention, but its precise runtime or kernel-ABI requirement is not yet
+  pinned in this design.
+- **Cube/vector section exit:** emit a CanonicalSync-owned `PIPE_ALL` at the end
+  of every physical section containing issued work, on the section's core.
+  Empty physical sections receive no section-local tail because tail synthesis
+  is phase-driven. This is a conservative CanonicalSync policy. Section lowering
+  either guards the body for its physical core or splits Cube and Vector
+  streams; placing the drain inside the section prevents an enclosing
+  function-core barrier from being credited on the wrong core. Production
+  `InsertSync` does not independently establish that every section boundary
+  needs a drain.
+- **Empty function:** emit a function drain when kernel kind resolves even
+  though no phase issued work. This is policy uniformity only; there is no work
+  to complete, so it is a candidate for later removal if the ABI does not
+  require an unconditional tail operation.
+
+Both function and section drains are fixed supply. They are never ordinary
+set-cover columns and must be reported separately from solver-selected barriers
+and events. In particular, section drains can explain a higher raw barrier
+count than `InsertSync`; that difference is a policy cost, not a failure of the
+covering heuristic.
+
+The audit outcome is to retain both policies while the pass is being device
+qualified, but not to call the section rule hardware-mandatory. Before
+weakening it, the compiler must establish the function-completion ABI, verify
+whether section splitting already supplies a per-core completion boundary, and
+device-test mixed Cube/Vector functions with zero, one, and repeated sections.
+A successful audit may replace per-section drains with a last-issued-section
+or split-function-tail rule. Any such change must update exit-demand coverage
+and the independent verifier together.
 
 ## Direct mechanisms and coverage
 
@@ -260,7 +306,7 @@ Each demand is assigned one direct mechanism:
 - a carrying-loop-latch DCache/fence visibility protocol;
 - an existing visibility sequence with the required cache maintenance and
   fence scope;
-- the mandatory exit barrier.
+- the configured fixed exit barrier.
 
 Equivalent physical cuts are interned and retain all originating demand IDs for
 diagnostics. Their semantics come from explicit `before(operation)` and
@@ -316,7 +362,7 @@ exhaustive, the bounded structured interpreter. The resulting demand set is a
 static column in the set-cover instance; later solving never invokes a coverage
 oracle again.
 
-Intrinsic order, existing fixed fences, and required exit drains are fixed
+Intrinsic order, existing fixed fences, and configured exit drains are fixed
 graph supply. Every remaining singleton barrier or complete set/wait pair has
 weight one. Candidate incidence is stored sparsely in both directions. A
 deterministic lazy max-heap chooses the column with the largest uncovered
