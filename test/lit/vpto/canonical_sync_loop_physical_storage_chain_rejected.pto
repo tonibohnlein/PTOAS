@@ -35,4 +35,4 @@ module attributes {pto.target_arch = "a2a3"} {
   }
 }
 
-// CHECK: error: canonical sync rejects a loop-carried physical storage result until recurrence-aware SSA completion is implemented
+// CHECK: error: canonical sync rejects a loop-carried physical SSA result until recurrence-aware SSA completion is implemented

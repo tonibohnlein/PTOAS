@@ -543,9 +543,10 @@ bool executionLoopsImpliedByPhase(ArrayRef<CanonicalRegionId> executionLoops,
   });
 }
 
-bool recurrenceCoveredByCompletionCut(const CanonicalSyncProgram &program,
-                                      const CanonicalDemand &demand,
-                                      ArrayRef<CanonicalMechanismId> selected) {
+bool recurrenceCoveredByCompletionCut(
+    const CanonicalSyncProgram &program, const CanonicalDemand &demand,
+    ArrayRef<CanonicalMechanismId> selectedCompletionCuts,
+    ArrayRef<SmallVector<CanonicalRegionId, 2>> selectedExecutionLoops) {
   const auto carrying = llvm::find_if(
       demand.iterationDistance, [](const CanonicalLoopDistance &distance) {
         return distance.relation == CanonicalIterationRelation::AnyPositive;
@@ -555,10 +556,10 @@ bool recurrenceCoveredByCompletionCut(const CanonicalSyncProgram &program,
   }
   const CanonicalPhase &source = program.getPhase(demand.source);
   const CanonicalPhase &target = program.getPhase(demand.target);
-  return llvm::any_of(selected, [&](CanonicalMechanismId id) {
+  for (std::size_t index = 0; index < selectedCompletionCuts.size(); ++index) {
+    const CanonicalMechanismId id = selectedCompletionCuts[index];
+    const ArrayRef<CanonicalRegionId> loops = selectedExecutionLoops[index];
     const CanonicalMechanism &mechanism = program.getMechanism(id);
-    const SmallVector<CanonicalRegionId, 2> loops =
-        mechanismExecutionLoops(program, mechanism);
     const bool recurringEvent =
         mechanism.kind == CanonicalMechanismKind::RecurringEvent &&
         !mechanism.boundaryRecurring &&
@@ -579,9 +580,14 @@ bool recurrenceCoveredByCompletionCut(const CanonicalSyncProgram &program,
       const bool nextIterationImport =
           guardImplies(demand.targetGuard, mechanism.guard) &&
           pointMustPrecedePhase(mechanism.targetPoint, target);
-      return executionLoopsImpliedByPhase(loops, source) &&
-             executionLoopsImpliedByPhase(loops, target) &&
-             (sameIterationImport || nextIterationImport);
+      const bool loopTransferApplies =
+          executionLoopsImpliedByPhase(loops, source) &&
+          executionLoopsImpliedByPhase(loops, target) &&
+          (sameIterationImport || nextIterationImport);
+      if (loopTransferApplies) {
+        return true;
+      }
+      continue;
     }
     const bool recurringRelease =
         mechanism.kind == CanonicalMechanismKind::RecurringEvent &&
@@ -594,8 +600,12 @@ bool recurrenceCoveredByCompletionCut(const CanonicalSyncProgram &program,
       // the latch, outside any branch-local ready cut.  It therefore orders
       // every source-pipeline prefix against the next iteration's target
       // pipeline, including transitions between opposite choice arms.
-      return executionLoopsImpliedByPhase(loops, source) &&
-             executionLoopsImpliedByPhase(loops, target);
+      const bool releaseApplies = executionLoopsImpliedByPhase(loops, source) &&
+                                  executionLoopsImpliedByPhase(loops, target);
+      if (releaseApplies) {
+        return true;
+      }
+      continue;
     }
     const bool pipeBarrier =
         mechanism.kind == CanonicalMechanismKind::PipeBarrier &&
@@ -609,7 +619,7 @@ bool recurrenceCoveredByCompletionCut(const CanonicalSyncProgram &program,
     const bool relevant = (pipeBarrier || fixedFence) &&
                           llvm::is_contained(loops, carrying->loop);
     if (!relevant) {
-      return false;
+      continue;
     }
     // A repeated completion cut can close the loop wrap by completing the
     // source later in iteration i, or by draining iteration i before the
@@ -624,29 +634,35 @@ bool recurrenceCoveredByCompletionCut(const CanonicalSyncProgram &program,
         executionLoopsImpliedByPhase(loops, target) &&
         pointMustPrecedePhase(mechanism.targetPoint, target) &&
         guardImplies(demand.targetGuard, mechanism.guard);
-    return completesAfterSource || completesBeforeTarget;
-  });
+    if (completesAfterSource || completesBeforeTarget) {
+      return true;
+    }
+  }
+  return false;
 }
 
-bool demandCovered(const CanonicalSyncProgram &program,
-                   const CanonicalDemand &demand,
-                   ArrayRef<CanonicalMechanismId> selected,
-                   ArrayRef<CompletionFact> facts,
-                   const CanonicalSyncTarget &targetModel) {
+bool demandCovered(
+    const CanonicalSyncProgram &program, const CanonicalDemand &demand,
+    ArrayRef<uint8_t> selectedMask,
+    ArrayRef<const CompletionFact *> sourceFacts,
+    const CanonicalSyncTarget &targetModel,
+    ArrayRef<uint8_t> synchronousCompletion,
+    ArrayRef<CanonicalMechanismId> selectedCompletionCuts,
+    ArrayRef<SmallVector<CanonicalRegionId, 2>> selectedExecutionLoops) {
   if (demand.kind == CanonicalDemandKind::ExitCompletion) {
     const CanonicalMechanismId direct =
         program.getDirectMechanisms()[demand.id];
-    return llvm::is_contained(selected, direct);
+    return selectedMask[direct] != 0;
   }
   if (demand.requirement == CanonicalRequirement::Visibility) {
     const CanonicalMechanismId direct =
         program.getDirectMechanisms()[demand.id];
-    return llvm::is_contained(selected, direct);
+    return selectedMask[direct] != 0;
   }
   const CanonicalMechanismId direct = program.getDirectMechanisms()[demand.id];
-  const bool recurringSelected = llvm::is_contained(selected, direct) &&
-                                 program.getMechanism(direct).kind ==
-                                     CanonicalMechanismKind::RecurringEvent;
+  const bool recurringSelected =
+      selectedMask[direct] != 0 && program.getMechanism(direct).kind ==
+                                       CanonicalMechanismKind::RecurringEvent;
   if (recurringSelected) {
     return true;
   }
@@ -654,13 +670,14 @@ bool demandCovered(const CanonicalSyncProgram &program,
   const CanonicalPhase &target = program.getPhase(demand.target);
   const bool intrinsicCompletion =
       (source.resource.core == target.resource.core &&
-       getVPTOSchedulingSemantics(source.operation).completionIsSynchronous) ||
+       synchronousCompletion[source.id] != 0) ||
       (source.resource == target.resource &&
        targetModel.hasIntrinsicCompletion(source.resource));
   if (intrinsicCompletion) {
     return true;
   }
-  if (recurrenceCoveredByCompletionCut(program, demand, selected)) {
+  if (recurrenceCoveredByCompletionCut(program, demand, selectedCompletionCuts,
+                                       selectedExecutionLoops)) {
     return true;
   }
   const bool positive = llvm::any_of(
@@ -673,15 +690,15 @@ bool demandCovered(const CanonicalSyncProgram &program,
   }
   const SmallVector<CanonicalControlAtom, 2> executionGuard =
       conjoinCompatibleControlPaths(demand.sourceGuard, demand.targetGuard);
-  return llvm::any_of(facts, [&](const CompletionFact &fact) {
+  return llvm::any_of(sourceFacts, [&](const CompletionFact *fact) {
     const bool requiredExecution =
-        llvm::all_of(fact.requiredLoops, [&](CanonicalRegionId loop) {
+        llvm::all_of(fact->requiredLoops, [&](CanonicalRegionId loop) {
           return llvm::is_contained(source.loopPath, loop) ||
                  llvm::is_contained(target.loopPath, loop);
         });
-    return fact.phase == demand.source && fact.resource == target.resource &&
-           pointMustPrecedePhase(fact.availableAt, target) &&
-           guardImplies(executionGuard, fact.guard) && requiredExecution;
+    return fact->resource == target.resource &&
+           pointMustPrecedePhase(fact->availableAt, target) &&
+           guardImplies(executionGuard, fact->guard) && requiredExecution;
   });
 }
 
@@ -695,8 +712,40 @@ coveredDemands(const CanonicalSyncProgram &program,
   if (failed(target)) {
     return covered;
   }
+  SmallVector<uint8_t, 16> synchronousCompletion(program.getPhases().size(), 0);
+  SmallVector<SmallVector<const CompletionFact *, 4>, 0> factsByPhase(
+      program.getPhases().size());
+  for (const CompletionFact &fact : facts) {
+    factsByPhase[fact.phase].push_back(&fact);
+  }
+  SmallVector<uint8_t, 16> selectedMask(program.getMechanisms().size(), 0);
+  SmallVector<CanonicalMechanismId, 8> selectedCompletionCuts;
+  SmallVector<SmallVector<CanonicalRegionId, 2>, 8> selectedExecutionLoops;
+  for (CanonicalMechanismId id : selected) {
+    selectedMask[id] = 1;
+    const CanonicalMechanism &mechanism = program.getMechanism(id);
+    const bool completionCut =
+        mechanism.kind == CanonicalMechanismKind::PipeBarrier ||
+        mechanism.kind == CanonicalMechanismKind::FixedFence ||
+        mechanism.kind == CanonicalMechanismKind::RecurringEvent;
+    if (completionCut) {
+      selectedCompletionCuts.push_back(id);
+      selectedExecutionLoops.push_back(
+          mechanismExecutionLoops(program, mechanism));
+    }
+  }
+  for (const CanonicalPhase &phase : program.getPhases()) {
+    synchronousCompletion[phase.id] =
+        getVPTOSchedulingSemantics(phase.operation).completionIsSynchronous;
+  }
   for (const CanonicalDemand &demand : program.getDemands()) {
-    if (demandCovered(program, demand, selected, facts, *target)) {
+    const ArrayRef<const CompletionFact *> sourceFacts =
+        demand.source < factsByPhase.size()
+            ? ArrayRef<const CompletionFact *>(factsByPhase[demand.source])
+            : ArrayRef<const CompletionFact *>();
+    if (demandCovered(program, demand, selectedMask, sourceFacts, *target,
+                      synchronousCompletion, selectedCompletionCuts,
+                      selectedExecutionLoops)) {
       covered.push_back(demand.id);
     }
   }
@@ -730,8 +779,15 @@ CanonicalCoverageWorld evaluateWorld(const CanonicalSyncProgram &program,
       evaluateCanonicalSyncUnrolledOracle(program, world.mechanisms);
   world.unrolledOracleAvailable = succeeded(unrolled);
   world.unrolledOracleExhaustive = succeeded(unrolled) && unrolled->exhaustive;
+  // The bounded interpreter is a safety oracle, not a completeness
+  // requirement for the compact hierarchical summary. Reject only when the
+  // summary claims coverage which an exhaustive unrolling disproves. A
+  // conservative summary may omit extra coverage seen by the interpreter.
   world.unrolledOracleMatched =
-      world.unrolledOracleExhaustive && summarized == unrolled->covered;
+      world.unrolledOracleExhaustive &&
+      llvm::all_of(summarized, [&](CanonicalDemandId demand) {
+        return llvm::is_contained(unrolled->covered, demand);
+      });
   if (!world.flattenedOracleMatched ||
       (world.unrolledOracleExhaustive && !world.unrolledOracleMatched)) {
     for (const CanonicalDemand &demand : program.getDemands()) {
@@ -740,8 +796,9 @@ CanonicalCoverageWorld evaluateWorld(const CanonicalSyncProgram &program,
       const bool unrolledCovers =
           world.unrolledOracleExhaustive &&
           llvm::is_contained(unrolled->covered, demand.id);
-      if (summaryCovers != flatCovers ||
-          (world.unrolledOracleExhaustive && summaryCovers != unrolledCovers)) {
+      const bool unsafeUnrolledOverclaim =
+          world.unrolledOracleExhaustive && summaryCovers && !unrolledCovers;
+      if (summaryCovers != flatCovers || unsafeUnrolledOverclaim) {
         world.differentialDisagreements.push_back(demand.id);
       }
     }

@@ -54,7 +54,8 @@ void addPendingKeys(const VerifierResourceState &resource,
 
 bool cacheActionsEqual(const VerifierCacheAction &first,
                        const VerifierCacheAction &second) {
-  return first.operation == second.operation && first.allGm == second.allGm &&
+  return first.operation == second.operation && first.core == second.core &&
+         first.allGm == second.allGm &&
          first.access.value == second.access.value &&
          first.access.aliasRoot == second.access.aliasRoot;
 }
@@ -377,13 +378,14 @@ void applyCmo(const VerifierProgram &program, CmoCacheInvalidOp operation,
       state.cacheInvalidations.push_back(action);
     }
     for (const VerifierResourceState &resource : state.resources) {
-      if (resource.resource.pipe != PIPE::PIPE_S) {
+      if (resource.resource.core != action.core ||
+          resource.resource.pipe != PIPE::PIPE_S) {
         continue;
       }
       for (const VerifierEffect &effect : resource.pending) {
         const bool writes = accessWrites(effect.access.mode);
-        const bool cacheCovered =
-            verifierCacheActionCovers(action, effect.access);
+        const bool cacheCovered = verifierCacheActionCovers(
+            action, resource.resource.core, effect.access);
         if (writes && cacheCovered) {
           addKey(state.cacheMaintained, effect.key);
         }

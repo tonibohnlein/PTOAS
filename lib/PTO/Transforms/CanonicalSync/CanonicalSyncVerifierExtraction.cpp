@@ -116,7 +116,13 @@ getVerifierScalarAccessRange(Operation *operation, Value address) {
   return std::make_pair(byteOffset, static_cast<int64_t>(elementBytes));
 }
 
-std::optional<PIPE> getVerifierNormalizedPipe(Operation *operation) {
+std::optional<PIPE>
+getVerifierNormalizedPipe(Operation *operation,
+                          const VPTOSchedulingSemantics &semantics) {
+  if (semantics.executionPipe && *semantics.executionPipe != PIPE::PIPE_ALL &&
+      *semantics.executionPipe != PIPE::PIPE_UNASSIGNED) {
+    return semantics.executionPipe;
+  }
   if (auto pipeOperation = dyn_cast<OpPipeInterface>(operation)) {
     const PIPE pipe = pipeOperation.getPipe();
     if (pipe != PIPE::PIPE_ALL && pipe != PIPE::PIPE_UNASSIGNED) {
@@ -209,7 +215,7 @@ private:
                          bool useInterface);
   LogicalResult addNormalizedPhase(Operation *operation, PIPE pipe,
                                    const VPTOSchedulingSemantics &semantics);
-  void addCacheActions(CmoCacheInvalidOp operation);
+  LogicalResult addCacheActions(CmoCacheInvalidOp operation);
   LogicalResult verifyExtractionCoverage();
   LogicalResult indexSsaDependencies();
   void bindIfResults(scf::IfOp operation);
@@ -279,7 +285,9 @@ LogicalResult VerifierProgramBuilder::collectOperation(Operation *operation) {
     return success();
   }
   if (auto cmo = dyn_cast<CmoCacheInvalidOp>(operation)) {
-    addCacheActions(cmo);
+    if (failed(addCacheActions(cmo))) {
+      return failure();
+    }
     coveredOperations.insert(operation);
     return success();
   }
@@ -311,7 +319,7 @@ LogicalResult VerifierProgramBuilder::collectOperation(Operation *operation) {
           "canonical sync verifier rejects a raw physical operation without "
           "schedulable normalized VPTOSchedulingSemantics");
     }
-    std::optional<PIPE> pipe = getVerifierNormalizedPipe(operation);
+    std::optional<PIPE> pipe = getVerifierNormalizedPipe(operation, semantics);
     if (!pipe) {
       return operation->emitError(
           "canonical sync verifier cannot resolve a concrete physical pipe "
@@ -332,7 +340,8 @@ LogicalResult VerifierProgramBuilder::collectOperation(Operation *operation) {
           "semantics");
     }
     if (semantics.schedulingClass == VPTOSchedulingClass::Schedulable) {
-      std::optional<PIPE> pipe = getVerifierNormalizedPipe(operation);
+      std::optional<PIPE> pipe =
+          getVerifierNormalizedPipe(operation, semantics);
       if (!pipe) {
         return operation->emitError(
             "canonical sync verifier cannot resolve the TPipe payload pipe");
@@ -358,7 +367,7 @@ LogicalResult VerifierProgramBuilder::collectOperation(Operation *operation) {
                                   MteOpInterface, SimtOpInterface>(operation);
   if (semantics.classificationKnown &&
       semantics.schedulingClass == VPTOSchedulingClass::Schedulable) {
-    std::optional<PIPE> pipe = getVerifierNormalizedPipe(operation);
+    std::optional<PIPE> pipe = getVerifierNormalizedPipe(operation, semantics);
     if (!pipe) {
       return operation->emitError(
           "canonical sync verifier cannot resolve a concrete physical pipe "
@@ -555,20 +564,31 @@ LogicalResult VerifierProgramBuilder::addNormalizedPhase(
   return success();
 }
 
-void VerifierProgramBuilder::addCacheActions(CmoCacheInvalidOp operation) {
+LogicalResult
+VerifierProgramBuilder::addCacheActions(CmoCacheInvalidOp operation) {
   const AddressSpace space = operation.getSpace().getAddressSpace();
   if (space != AddressSpace::GM && space != AddressSpace::Zero) {
-    return;
+    return success();
   }
+  const std::optional<bool> vectorExecution =
+      resolvePTOExecutionVector(operation);
+  if (!vectorExecution) {
+    return operation.emitError(
+        "canonical sync verifier cannot resolve the physical core for cache "
+        "maintenance");
+  }
+  const CanonicalCore core =
+      *vectorExecution ? CanonicalCore::AIV : CanonicalCore::AIC;
   Value address = operation.getAddr();
   if (!address) {
     VerifierCacheAction action;
     action.operation = operation;
+    action.core = core;
     action.allGm = true;
     action.access.space = AddressSpace::GM;
     action.access.unknownRange = true;
     result->cacheActions[operation].push_back(std::move(action));
-    return;
+    return success();
   }
   SmallVector<AliasFact, 2> facts = aliases.describe(address);
   if (facts.empty()) {
@@ -577,6 +597,7 @@ void VerifierProgramBuilder::addCacheActions(CmoCacheInvalidOp operation) {
   for (const AliasFact &fact : facts) {
     VerifierCacheAction action;
     action.operation = operation;
+    action.core = core;
     action.access.space = AddressSpace::GM;
     action.access.value = address;
     action.access.aliasRoot = fact.root;
@@ -584,6 +605,7 @@ void VerifierProgramBuilder::addCacheActions(CmoCacheInvalidOp operation) {
     action.access.unknownRange = fact.unknownRange;
     result->cacheActions[operation].push_back(std::move(action));
   }
+  return success();
 }
 
 LogicalResult VerifierProgramBuilder::verifyExtractionCoverage() {
@@ -732,7 +754,7 @@ LogicalResult VerifierProgramBuilder::indexSsaDependencies() {
       for (Value seed : operands) {
         struct TraceValue {
           Value value;
-          bool fromMemoryLoopBackedge = false;
+          bool fromLoopBackedge = false;
         };
         SmallVector<TraceValue, 16> worklist{{seed, false}};
         SmallVector<TraceValue, 16> discovered;
@@ -742,8 +764,7 @@ LogicalResult VerifierProgramBuilder::indexSsaDependencies() {
           const bool alreadyDiscovered =
               llvm::any_of(discovered, [&](const TraceValue &item) {
                 return item.value == value &&
-                       item.fromMemoryLoopBackedge ==
-                           current.fromMemoryLoopBackedge;
+                       item.fromLoopBackedge == current.fromLoopBackedge;
               });
           if (!value || alreadyDiscovered) {
             continue;
@@ -751,10 +772,13 @@ LogicalResult VerifierProgramBuilder::indexSsaDependencies() {
           discovered.push_back(current);
           if (auto completion = completions.find(value);
               completion != completions.end()) {
-            if (current.fromMemoryLoopBackedge) {
+            const bool synchronous =
+                getVPTOSchedulingSemantics(completion->second.key.operation)
+                    .completionIsSynchronous;
+            if (current.fromLoopBackedge && !synchronous) {
               return result->function.emitError(
                   "canonical sync verifier rejects a loop-carried physical "
-                  "storage result without recurrence-aware SSA completion");
+                  "SSA result without recurrence-aware SSA completion");
             }
             if (!llvm::is_contained(seenCompletions, completion->second.key)) {
               seenCompletions.push_back(completion->second.key);
@@ -771,14 +795,16 @@ LogicalResult VerifierProgramBuilder::indexSsaDependencies() {
             if (loop && argument == loop.getInductionVar()) {
               continue;
             }
-            if (loop && areMemoryLikeTypes(value.getType())) {
-              // Follow mutually carried handles with the backedge label
-              // intact. The discovered (value, label) pair bounds cycles.
+            if (loop) {
+              // Scalar/index iter arguments are structured address SSA just
+              // like memory-like handles. Follow both incoming values while
+              // retaining the backedge label; reaching a physical producer
+              // through that edge still fails closed above.
               const unsigned argumentNumber = argument.getArgNumber();
               if (argumentNumber == 0) {
                 return loop.emitError(
-                    "canonical sync verifier found an invalid memory-like "
-                    "induction value");
+                    "canonical sync verifier found an invalid induction "
+                    "value while tracing SSA completion");
               }
               const unsigned iterationIndex = argumentNumber - 1;
               auto yield =
@@ -788,8 +814,8 @@ LogicalResult VerifierProgramBuilder::indexSsaDependencies() {
                   iterationIndex < yield.getNumOperands();
               if (!validBackedge) {
                 return loop.emitError(
-                    "canonical sync verifier cannot trace a memory-like "
-                    "loop argument");
+                    "canonical sync verifier cannot trace an scf.for loop "
+                    "argument");
               }
               worklist.push_back({loop.getInitArgs()[iterationIndex], false});
               worklist.push_back({yield.getOperand(iterationIndex), true});
@@ -810,8 +836,7 @@ LogicalResult VerifierProgramBuilder::indexSsaDependencies() {
                 return failure();
               }
               for (Value predecessor : predecessors) {
-                worklist.push_back(
-                    {predecessor, current.fromMemoryLoopBackedge});
+                worklist.push_back({predecessor, current.fromLoopBackedge});
               }
               continue;
             }
@@ -835,7 +860,7 @@ LogicalResult VerifierProgramBuilder::indexSsaDependencies() {
                                          "this effectful SSA operation");
           }
           for (Value operand : definition->getOperands()) {
-            worklist.push_back({operand, current.fromMemoryLoopBackedge});
+            worklist.push_back({operand, current.fromLoopBackedge});
           }
         }
       }

@@ -77,7 +77,8 @@ bool tokenKeyEqual(const VerifierToken &first, const VerifierToken &second) {
 
 bool cacheActionEqual(const VerifierCacheAction &first,
                       const VerifierCacheAction &second) {
-  return first.operation == second.operation && first.allGm == second.allGm &&
+  return first.operation == second.operation && first.core == second.core &&
+         first.allGm == second.allGm &&
          first.access.value == second.access.value &&
          first.access.aliasRoot == second.access.aliasRoot;
 }
@@ -104,10 +105,50 @@ intersectKeys(ArrayRef<VerifierEffectKey> first,
   return result;
 }
 
+bool stateContainsKey(const VerifierState &state,
+                      const VerifierEffectKey &key) {
+  return llvm::any_of(state.resources,
+                      [&](const VerifierResourceState &resource) {
+                        return containsEffect(resource.pending, key) ||
+                               containsKey(resource.pendingCompletions, key);
+                      });
+}
+
+SmallVector<VerifierEffectKey, 16> mergeConditionalKeys(
+    ArrayRef<VerifierEffectKey> firstKeys, const VerifierState &first,
+    ArrayRef<VerifierEffectKey> secondKeys, const VerifierState &second) {
+  SmallVector<VerifierEffectKey, 16> candidates(firstKeys.begin(),
+                                                firstKeys.end());
+  appendUnion<VerifierEffectKey>(
+      candidates, secondKeys,
+      [](const VerifierEffectKey &left, const VerifierEffectKey &right) {
+        return left == right;
+      });
+
+  SmallVector<VerifierEffectKey, 16> result;
+  for (const VerifierEffectKey &key : candidates) {
+    const bool presentInFirst = stateContainsKey(first, key);
+    const bool presentInSecond = stateContainsKey(second, key);
+    const bool completeWherePresent =
+        (!presentInFirst || containsKey(firstKeys, key)) &&
+        (!presentInSecond || containsKey(secondKeys, key));
+    const bool retain =
+        (presentInFirst || presentInSecond) && completeWherePresent;
+    if (retain) {
+      result.push_back(key);
+    }
+  }
+  return result;
+}
+
 } // namespace
 
 bool mlir::pto::canonical_sync_detail::verifierCacheActionCovers(
-    const VerifierCacheAction &action, const CanonicalAccess &access) {
+    const VerifierCacheAction &action, CanonicalCore core,
+    const CanonicalAccess &access) {
+  if (action.core != core) {
+    return false;
+  }
   if (action.allGm) {
     return access.unknownSpace || access.space == AddressSpace::GM;
   }
@@ -205,14 +246,24 @@ VerifierState mlir::pto::canonical_sync_detail::mergeVerifierStates(
         findResource(first, destination.resource);
     const VerifierResourceState *right =
         findResource(second, destination.resource);
-    if (left && right) {
-      SmallVector<VerifierEffectKey, 16> known =
-          intersectKeys(left->known, right->known);
-      SmallVector<VerifierEffectKey, 16> visible =
-          intersectKeys(left->visible, right->visible);
-      destination.known.assign(known.begin(), known.end());
-      destination.visible.assign(visible.begin(), visible.end());
-    }
+    const ArrayRef<VerifierEffectKey> leftKnown =
+        left ? ArrayRef<VerifierEffectKey>(left->known)
+             : ArrayRef<VerifierEffectKey>();
+    const ArrayRef<VerifierEffectKey> rightKnown =
+        right ? ArrayRef<VerifierEffectKey>(right->known)
+              : ArrayRef<VerifierEffectKey>();
+    const ArrayRef<VerifierEffectKey> leftVisible =
+        left ? ArrayRef<VerifierEffectKey>(left->visible)
+             : ArrayRef<VerifierEffectKey>();
+    const ArrayRef<VerifierEffectKey> rightVisible =
+        right ? ArrayRef<VerifierEffectKey>(right->visible)
+              : ArrayRef<VerifierEffectKey>();
+    SmallVector<VerifierEffectKey, 16> known =
+        mergeConditionalKeys(leftKnown, first, rightKnown, second);
+    SmallVector<VerifierEffectKey, 16> visible =
+        mergeConditionalKeys(leftVisible, first, rightVisible, second);
+    destination.known.assign(known.begin(), known.end());
+    destination.visible.assign(visible.begin(), visible.end());
   }
   for (const VerifierToken &token : first.tokens) {
     auto other = llvm::find_if(second.tokens, [&](const VerifierToken &value) {
@@ -224,11 +275,12 @@ VerifierState mlir::pto::canonical_sync_detail::mergeVerifierStates(
       result.tokens.push_back(std::move(merged));
     }
   }
-  result.globalKnown = intersectKeys(first.globalKnown, second.globalKnown);
-  result.globalVisible =
-      intersectKeys(first.globalVisible, second.globalVisible);
-  result.cacheMaintained =
-      intersectKeys(first.cacheMaintained, second.cacheMaintained);
+  result.globalKnown = mergeConditionalKeys(first.globalKnown, first,
+                                            second.globalKnown, second);
+  result.globalVisible = mergeConditionalKeys(first.globalVisible, first,
+                                              second.globalVisible, second);
+  result.cacheMaintained = mergeConditionalKeys(first.cacheMaintained, first,
+                                                second.cacheMaintained, second);
   for (const VerifierCacheAction &action : first.cacheInvalidations) {
     if (llvm::any_of(second.cacheInvalidations,
                      [&](const VerifierCacheAction &other) {
@@ -237,7 +289,8 @@ VerifierState mlir::pto::canonical_sync_detail::mergeVerifierStates(
       result.cacheInvalidations.push_back(action);
     }
   }
-  result.exitComplete = intersectKeys(first.exitComplete, second.exitComplete);
+  result.exitComplete = mergeConditionalKeys(first.exitComplete, first,
+                                             second.exitComplete, second);
   result.loopCarried = first.loopCarried;
   appendUnion<VerifierEffectKey>(
       result.loopCarried, second.loopCarried,

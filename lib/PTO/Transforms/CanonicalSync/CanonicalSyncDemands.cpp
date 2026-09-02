@@ -270,7 +270,7 @@ LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
                                 llvm::SetVector<CanonicalPhaseId> &producers) {
   struct TraceValue {
     Value value;
-    bool fromMemoryLoopBackedge = false;
+    bool fromLoopBackedge = false;
   };
   SmallVector<TraceValue, 16> worklist{{seed, false}};
   SmallVector<TraceValue, 16> discovered;
@@ -280,7 +280,7 @@ LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
     const bool alreadyDiscovered =
         llvm::any_of(discovered, [&](const TraceValue &item) {
           return item.value == value &&
-                 item.fromMemoryLoopBackedge == current.fromMemoryLoopBackedge;
+                 item.fromLoopBackedge == current.fromLoopBackedge;
         });
     if (!value || alreadyDiscovered) {
       continue;
@@ -288,9 +288,11 @@ LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
     discovered.push_back(current);
     if (auto completion = completions.find(value);
         completion != completions.end()) {
-      if (current.fromMemoryLoopBackedge) {
+      const bool synchronous = getVPTOSchedulingSemantics(value.getDefiningOp())
+                                   .completionIsSynchronous;
+      if (current.fromLoopBackedge && !synchronous) {
         return function.emitError(
-            "canonical sync rejects a loop-carried physical storage result "
+            "canonical sync rejects a loop-carried physical SSA result "
             "until recurrence-aware SSA completion is implemented");
       }
       producers.insert(completion->second);
@@ -305,14 +307,17 @@ LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
       if (loop && argument == loop.getInductionVar()) {
         continue;
       }
-      if (loop && areMemoryLikeTypes(value.getType())) {
-        // Follow mutually carried handles with the backedge label intact. The
-        // discovered (value, label) pair bounds cycles, while stopping here
-        // could hide a physical result that arrives after several iterations.
+      if (loop) {
+        // Scalar/index iter arguments are ordinary structured SSA and occur in
+        // address calculations throughout generated PyPTO kernels. Follow
+        // both the initialization and yielded value rather than treating the
+        // block argument as an opaque producer. Keep the backedge label for
+        // every type: if the chain reaches a physical producer, recurrence-
+        // aware SSA completion is still required and we fail closed above.
         const unsigned argumentNumber = argument.getArgNumber();
         if (argumentNumber == 0) {
-          return loop.emitError(
-              "canonical sync found an invalid memory-like induction value");
+          return loop.emitError("canonical sync found an invalid induction "
+                                "value while tracing SSA completion");
         }
         const unsigned iterationIndex = argumentNumber - 1;
         auto yield = dyn_cast<scf::YieldOp>(loop.getBody()->getTerminator());
@@ -321,7 +326,7 @@ LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
                                    iterationIndex < yield.getNumOperands();
         if (!validBackedge) {
           return loop.emitError(
-              "canonical sync cannot trace a memory-like loop argument");
+              "canonical sync cannot trace an scf.for loop argument");
         }
         worklist.push_back({loop.getInitArgs()[iterationIndex], false});
         worklist.push_back({yield.getOperand(iterationIndex), true});
@@ -341,7 +346,7 @@ LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
           return failure();
         }
         for (Value predecessor : predecessors) {
-          worklist.push_back({predecessor, current.fromMemoryLoopBackedge});
+          worklist.push_back({predecessor, current.fromLoopBackedge});
         }
         continue;
       }
@@ -351,7 +356,7 @@ LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
           return failure();
         }
         for (Value predecessor : predecessors) {
-          worklist.push_back({predecessor, current.fromMemoryLoopBackedge});
+          worklist.push_back({predecessor, current.fromLoopBackedge});
         }
         continue;
       }
@@ -375,7 +380,7 @@ LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
           "canonical sync cannot trace SSA through this effectful operation");
     }
     for (Value operand : definition->getOperands()) {
-      worklist.push_back({operand, current.fromMemoryLoopBackedge});
+      worklist.push_back({operand, current.fromLoopBackedge});
     }
   }
   return success();

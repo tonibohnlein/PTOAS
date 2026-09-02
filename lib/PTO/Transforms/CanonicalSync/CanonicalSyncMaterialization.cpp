@@ -323,28 +323,33 @@ void emitActions(
   for (auto &entry : visibilityFences) {
     llvm::sort(entry.second);
     builder.setInsertionPoint(entry.first);
+    // All visibility mechanisms at one physical cut share the same GM fence.
+    // Source-side cleans must precede publication, and target-side
+    // invalidations must follow it. Emitting each mechanism as an independent
+    // CMO/fence pair can put a later fence after an acquire invalidation and
+    // thereby invalidate that acquire protocol.
     for (CanonicalMechanismId mechanismId : entry.second) {
       const CanonicalMechanism &mechanism = program.getMechanism(mechanismId);
-      const CanonicalCacheMaintenance maintenance =
-          *mechanism.generatedCacheMaintenance;
-      const auto emitCmo = [&]() {
+      if (*mechanism.generatedCacheMaintenance ==
+          CanonicalCacheMaintenance::CleanSource) {
         auto operation = builder.create<CmoCacheInvalidOp>(
             entry.first->getLoc(), Value(),
             AddressSpaceAttr::get(clone.getContext(), AddressSpace::GM));
         tagGenerated(operation, builder, mechanismId);
-      };
-      const auto emitFence = [&]() {
-        auto operation = builder.create<FenceBarrierAllOp>(
-            entry.first->getLoc(),
-            FenceScopeAttr::get(clone.getContext(), FenceScope::GM));
-        tagGenerated(operation, builder, mechanismId);
-      };
-      if (maintenance == CanonicalCacheMaintenance::CleanSource) {
-        emitCmo();
       }
-      emitFence();
-      if (maintenance == CanonicalCacheMaintenance::InvalidateTarget) {
-        emitCmo();
+    }
+    auto fence = builder.create<FenceBarrierAllOp>(
+        entry.first->getLoc(),
+        FenceScopeAttr::get(clone.getContext(), FenceScope::GM));
+    tagGenerated(fence, builder, entry.second.front());
+    for (CanonicalMechanismId mechanismId : entry.second) {
+      const CanonicalMechanism &mechanism = program.getMechanism(mechanismId);
+      if (*mechanism.generatedCacheMaintenance ==
+          CanonicalCacheMaintenance::InvalidateTarget) {
+        auto operation = builder.create<CmoCacheInvalidOp>(
+            entry.first->getLoc(), Value(),
+            AddressSpaceAttr::get(clone.getContext(), AddressSpace::GM));
+        tagGenerated(operation, builder, mechanismId);
       }
     }
   }
@@ -410,8 +415,20 @@ mlir::pto::materializeAndVerifyCanonicalSync(CanonicalSyncProgram &program) {
   }
   func::FuncOp function = program.getFunction();
   IRMapping mapping;
-  OwningOpRef<Operation *> clonedOperation(function->clone(mapping));
-  func::FuncOp clone = cast<func::FuncOp>(*clonedOperation);
+  // Verify the candidate inside a scratch symbol table. A detached function
+  // cannot resolve the private external declarations that define exact
+  // normalized runtime-adapter contracts, which would make the independent
+  // verifier reject a contract already validated on the original IR.
+  OwningOpRef<ModuleOp> stagingModule = ModuleOp::create(function.getLoc());
+  func::FuncOp clone = cast<func::FuncOp>(function->clone(mapping));
+  stagingModule->push_back(clone);
+  if (ModuleOp sourceModule = function->getParentOfType<ModuleOp>()) {
+    for (func::FuncOp declaration : sourceModule.getOps<func::FuncOp>()) {
+      if (declaration != function && declaration.isDeclaration()) {
+        stagingModule->push_back(cast<func::FuncOp>(declaration->clone()));
+      }
+    }
+  }
   DenseMap<Operation *, SmallVector<EventAction, 2>> sets;
   DenseMap<Operation *, SmallVector<EventAction, 2>> waits;
   DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>> barriers;

@@ -66,6 +66,13 @@ buildCanonicalSyncProgram(func::FuncOp function) {
 
 LogicalResult runCanonicalSync(func::FuncOp function,
                                const CanonicalSyncOptions &options) {
+  // External declarations contain no scheduled physical work.  The function
+  // pass is still invoked for them when a generated module contains private
+  // runtime adapters, so leave them unchanged instead of asking the
+  // structured-program builder to manufacture a body.
+  if (function.isDeclaration()) {
+    return success();
+  }
   FailureOr<std::unique_ptr<CanonicalSyncProgram>> program =
       buildCanonicalSyncProgram(function);
   if (failed(program)) {

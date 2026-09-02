@@ -36,6 +36,62 @@ constexpr unsigned kOracleLoopUnroll = 2;
 // remains authoritative for the selected plan.
 constexpr std::size_t kMaxOracleStaticChecks = 32768;
 
+std::size_t cappedAdd(std::size_t first, std::size_t second) {
+  if (first > kMaxOracleStates || second > kMaxOracleStates - first) {
+    return kMaxOracleStates + 1;
+  }
+  return first + second;
+}
+
+std::size_t cappedMultiply(std::size_t first, std::size_t second) {
+  if (first == 0 || second == 0) {
+    return 0;
+  }
+  if (first > kMaxOracleStates || second > kMaxOracleStates / first) {
+    return kMaxOracleStates + 1;
+  }
+  return first * second;
+}
+
+std::size_t estimateBlockStates(Block &block);
+
+std::size_t estimateOperationStates(Operation *operation) {
+  if (auto choice = dyn_cast<scf::IfOp>(operation)) {
+    const std::size_t thenStates =
+        estimateBlockStates(choice.getThenRegion().front());
+    const std::size_t elseStates =
+        choice.getElseRegion().empty()
+            ? 1
+            : estimateBlockStates(choice.getElseRegion().front());
+    return cappedAdd(thenStates, elseStates);
+  }
+  if (auto loop = dyn_cast<scf::ForOp>(operation)) {
+    const std::size_t bodyStates =
+        estimateBlockStates(loop.getRegion().front());
+    // The oracle explicitly enumerates zero, one, and two iterations.
+    return cappedAdd(cappedAdd(1, bodyStates),
+                     cappedMultiply(bodyStates, bodyStates));
+  }
+  if (auto section = dyn_cast<SectionCubeOp>(operation)) {
+    return estimateBlockStates(section.getBody().front());
+  }
+  if (auto section = dyn_cast<SectionVectorOp>(operation)) {
+    return estimateBlockStates(section.getBody().front());
+  }
+  return 1;
+}
+
+std::size_t estimateBlockStates(Block &block) {
+  std::size_t states = 1;
+  for (Operation &operation : block) {
+    states = cappedMultiply(states, estimateOperationStates(&operation));
+    if (states > kMaxOracleStates) {
+      return states;
+    }
+  }
+  return states;
+}
+
 struct LoopInstance {
   CanonicalRegionId loop = kInvalidCanonicalSyncId;
   unsigned iteration = 0;
@@ -524,7 +580,10 @@ mlir::pto::canonical_sync_detail::evaluateCanonicalSyncUnrolledOracle(
       std::max<std::size_t>(program.getPhases().size(), 1);
   const bool staticBudgetExceeded =
       program.getDemands().size() > kMaxOracleStaticChecks / phaseCount;
-  if (staticBudgetExceeded) {
+  const bool stateBudgetExceeded =
+      estimateBlockStates(program.getFunction().getBody().front()) >
+      kMaxOracleStates;
+  if (staticBudgetExceeded || stateBudgetExceeded) {
     CanonicalUnrolledCoverageResult result;
     result.exhaustive = false;
     return result;

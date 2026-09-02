@@ -72,6 +72,58 @@ module attributes {pto.target_arch = "a2a3"} {
     }
     return
   }
+
+  // The inner barrier completes the guarded producer whenever that producer
+  // exists.  A zero-trip execution contributes neither the producer nor its
+  // completion, so the verifier must preserve that correlation at loop exit.
+  func.func @canonical_sync_loop_conditional_completion(%upper: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %first_addr = arith.constant 0 : i64
+    %second_addr = arith.constant 8192 : i64
+    %third_addr = arith.constant 16384 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %first = pto.alloc_tile addr = %first_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %second = pto.alloc_tile addr = %second_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %third = pto.alloc_tile addr = %third_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %iteration = %zero to %upper step %one_index {
+      pto.tmuls ins(%first, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%second : !pto.tile_buf<loc=vec, dtype=f32,
+                       rows=16, cols=128, v_row=16, v_col=128,
+                       blayout=row_major, slayout=none_box, fractal=512,
+                       pad=0>)
+      pto.tmuls ins(%second, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%third : !pto.tile_buf<loc=vec, dtype=f32,
+                       rows=16, cols=128, v_row=16, v_col=128,
+                       blayout=row_major, slayout=none_box, fractal=512,
+                       pad=0>)
+    }
+    pto.tmuls ins(%second, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                    rows=16, cols=128, v_row=16, v_col=128,
+                    blayout=row_major, slayout=none_box, fractal=512,
+                    pad=0>, f32)
+              outs(%first : !pto.tile_buf<loc=vec, dtype=f32,
+                     rows=16, cols=128, v_row=16, v_col=128,
+                     blayout=row_major, slayout=none_box, fractal=512,
+                     pad=0>)
+    return
+  }
 }
 
 // CHECK-LABEL: CANONICAL-SYNC function=canonical_sync_loop_barrier
@@ -97,3 +149,10 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: scf.for
 // CHECK-NEXT: pto.barrier <PIPE_V>
 // CHECK-NEXT: pto.tmuls
+// CHECK-LABEL: CANONICAL-SYNC function=canonical_sync_loop_conditional_completion
+// CHECK: PLAN selected=
+// CHECK: VERIFY ok
+// CHECK-LABEL: func.func @canonical_sync_loop_conditional_completion
+// CHECK: scf.for
+// CHECK: pto.barrier <PIPE_V>
+// CHECK: pto.tmuls

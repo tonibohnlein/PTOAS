@@ -13,8 +13,10 @@
 #include "PTO/IR/VPTOScheduling.h"
 #include "PTO/IR/PTO.h"
 
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -188,6 +190,7 @@ getPipeChannelSemantics(Operation *op) {
   VPTOSchedulingSemantics semantics;
   semantics.classificationKnown = true;
   semantics.memoryBehavior = VPTOMemoryBehavior::None;
+  semantics.executionPipe = getExecutionPipe(op);
 
   if (isa<TAllocOp, TFreeOp>(op)) {
     semantics.schedulingClass = VPTOSchedulingClass::SchedulingBoundary;
@@ -219,6 +222,103 @@ getPipeChannelSemantics(Operation *op) {
   addPipeMemoryAccess(semantics, getPipeGlobalBuffer(pipeHandle),
                       /*reads=*/!push, /*writes=*/push,
                       /*unknown=*/!getPipeGlobalBuffer(pipeHandle));
+  return semantics;
+}
+
+/// PyPTO's deferred-completion adapter is emitted as a private declaration in
+/// PTO IR and supplied by the generated device wrapper.  Its wrapper contract
+/// performs synchronous scalar accesses to the deferred-task slab and counter
+/// metadata, including the required cache maintenance before it returns.  It
+/// is therefore a scalar phase with conservative read/write GM effects, not an
+/// arbitrary opaque call and not an asynchronous device pipeline operation.
+static std::optional<VPTOSchedulingSemantics>
+getKnownRuntimeAdapterSemantics(Operation *op) {
+  auto call = dyn_cast<func::CallOp>(op);
+  const bool namedAdapter =
+      call && call.getCallee() == "pypto_register_counter_completion";
+  if (!namedAdapter) {
+    return std::nullopt;
+  }
+  func::FuncOp callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
+      call.getOperation(), call.getCalleeAttr());
+  const bool exactDeclaration =
+      callee && callee.isDeclaration() && callee.isPrivate();
+  if (!exactDeclaration) {
+    return std::nullopt;
+  }
+  const FunctionType type = callee.getFunctionType();
+  const bool exactArity = type.getNumInputs() == 4 && type.getResults().empty();
+  if (!exactArity) {
+    return std::nullopt;
+  }
+  const auto rawPointer = dyn_cast<pto::PtrType>(type.getInput(0));
+  const auto counterPointer = dyn_cast<pto::PtrType>(type.getInput(1));
+  const bool exactPointerAbi =
+      rawPointer && counterPointer &&
+      rawPointer.getElementType().isSignlessInteger(64) &&
+      counterPointer.getElementType().isSignlessInteger(32) &&
+      rawPointer.getMemorySpace().getAddressSpace() == AddressSpace::GM &&
+      counterPointer.getMemorySpace().getAddressSpace() == AddressSpace::GM;
+  const bool exactScalarAbi = type.getInput(2).isSignlessInteger(64) &&
+                              type.getInput(3).isSignlessInteger(64);
+  if (!exactPointerAbi || !exactScalarAbi) {
+    return std::nullopt;
+  }
+  VPTOSchedulingSemantics semantics;
+  semantics.schedulingClass = VPTOSchedulingClass::Schedulable;
+  semantics.classificationKnown = true;
+  semantics.executionPipe = PIPE::PIPE_S;
+  semantics.completionIsSynchronous = true;
+  semantics.memoryBehavior = VPTOMemoryBehavior::Explicit;
+  for (Value operand : call.getOperands()) {
+    if (!isMemoryAddress(operand)) {
+      continue;
+    }
+    addPipeMemoryAccess(semantics, operand, /*reads=*/true,
+                        /*writes=*/true);
+  }
+  return semantics;
+}
+
+/// PTO's communication signal operations lower to the synchronous scalar
+/// TNOTIFY/TWAIT/TTEST APIs.  Their signal operand is always GM i32 storage;
+/// the scalar value/comparison operands are ordinary SSA values, not memory
+/// effects.  Model the signal explicitly so the scheduling graph neither
+/// drops the access nor turns the scalar operands into unknown memory.  TWAIT
+/// is conservatively read/write because the dialect effect contract permits
+/// the implementation to update its signal while polling.
+static std::optional<VPTOSchedulingSemantics>
+getCommunicationSignalSemantics(Operation *op) {
+  Value signal;
+  bool reads = false;
+  bool writes = false;
+  if (auto notify = dyn_cast<TNotifyOp>(op)) {
+    signal = notify.getSignal();
+    writes = true;
+  } else if (auto wait = dyn_cast<TWaitOp>(op)) {
+    signal = wait.getSignal();
+    reads = true;
+    writes = true;
+  } else if (auto test = dyn_cast<TTestOp>(op)) {
+    signal = test.getSignal();
+    reads = true;
+  } else {
+    return std::nullopt;
+  }
+
+  VPTOSchedulingSemantics semantics;
+  semantics.schedulingClass = VPTOSchedulingClass::Schedulable;
+  semantics.classificationKnown = true;
+  semantics.executionPipe = PIPE::PIPE_S;
+  semantics.completionIsSynchronous = true;
+  semantics.memoryBehavior = VPTOMemoryBehavior::Explicit;
+  VPTOMemoryAccess access;
+  access.address = signal;
+  access.addressSpace =
+      AddressSpaceAttr::get(op->getContext(), AddressSpace::GM);
+  access.reads = reads;
+  access.writes = writes;
+  semantics.memoryAccesses.push_back(access);
   return semantics;
 }
 
@@ -299,6 +399,7 @@ static void collectMemoryAccesses(Operation *op,
 VPTOSchedulingSemantics
 mlir::pto::getDefaultVPTOSchedulingSemantics(Operation *op) {
   VPTOSchedulingSemantics semantics;
+  semantics.executionPipe = getExecutionPipe(op);
   SmallVectorImpl<VPTOSchedulingEffect> &effects = semantics.effects;
   // These operations lower to an ordinary scalar load/store expression. The
   // scalar access itself is complete before the scalar control stream can use
@@ -306,6 +407,9 @@ mlir::pto::getDefaultVPTOSchedulingSemantics(Operation *op) {
   // are deliberately excluded: the hardware documentation requires explicit
   // PIPE_S events when another asynchronous pipeline consumes their effects.
   semantics.completionIsSynchronous = isa<LoadScalarOp, StoreScalarOp>(op);
+  if (semantics.completionIsSynchronous) {
+    semantics.executionPipe = PIPE::PIPE_S;
+  }
   if (isa<MemBarOp>(op)) {
     effects.push_back(
         {VPTOSchedulingEffectKind::Barrier, "memory-order", Value()});
@@ -384,6 +488,16 @@ VPTOSchedulingSemantics mlir::pto::getVPTOSchedulingSemantics(Operation *op) {
   if (std::optional<VPTOSchedulingSemantics> pipe =
           getPipeChannelSemantics(op)) {
     return *pipe;
+  }
+
+  if (std::optional<VPTOSchedulingSemantics> adapter =
+          getKnownRuntimeAdapterSemantics(op)) {
+    return *adapter;
+  }
+
+  if (std::optional<VPTOSchedulingSemantics> signal =
+          getCommunicationSignalSemantics(op)) {
+    return *signal;
   }
 
   if (isa<LoadScalarOp, StoreScalarOp>(op)) {

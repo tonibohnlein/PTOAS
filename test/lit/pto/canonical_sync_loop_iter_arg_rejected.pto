@@ -75,6 +75,33 @@ module attributes {pto.target_arch = "a2a3"} {
     }
     return
   }
+
+  // Scalar/index iter arguments are structured address SSA. They are traced
+  // through init and yield values; only a physical producer reached through a
+  // backedge remains unsupported.
+  func.func @scalar_loop_iter_arg_address(%gm: !pto.ptr<f32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %eight = arith.constant 8 : index
+    %view = pto.make_tensor_view %gm, shape = [%two, %eight],
+      strides = [%eight, %one] {layout = #pto.layout<nd>} :
+      !pto.tensor_view<?x?xf32>
+    %tile = pto.alloc_tile addr = %addr : !pto.tile_buf<vec, 1x8xf32>
+    %result = scf.for %iteration = %zero to %two step %one
+        iter_args(%row = %zero) -> (index) {
+      %slice = pto.partition_view %view, offsets = [%row, %zero],
+        sizes = [%one, %eight] : !pto.tensor_view<?x?xf32> ->
+        !pto.partition_tensor_view<1x8xf32>
+      pto.tload ins(%slice : !pto.partition_tensor_view<1x8xf32>)
+                outs(%tile : !pto.tile_buf<vec, 1x8xf32>)
+      %next = arith.addi %row, %one : index
+      scf.yield %next : index
+    }
+    return
+  }
 }
 
 // CHECK-LABEL: CANONICAL-SYNC function=memory_loop_iter_arg_fixed_point
@@ -85,4 +112,8 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK-LABEL: CANONICAL-SYNC function=memory_loop_iter_arg_init_yield_union
 // CHECK: kind=RAW p0->p1
 // CHECK: kind=event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK: VERIFY ok
+
+// CHECK-LABEL: CANONICAL-SYNC function=scalar_loop_iter_arg_address
+// CHECK: p0 op=pto.tload resource=AIV:PIPE_MTE2
 // CHECK: VERIFY ok

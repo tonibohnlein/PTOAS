@@ -50,6 +50,7 @@ struct VerifierPhase {
 
 struct VerifierCacheAction {
   Operation *operation = nullptr;
+  CanonicalCore core = CanonicalCore::AIV;
   bool allGm = false;
   CanonicalAccess access;
 };
@@ -95,6 +96,7 @@ struct VerifierState {
 };
 
 bool verifierCacheActionCovers(const VerifierCacheAction &action,
+                               CanonicalCore core,
                                const CanonicalAccess &access);
 
 bool operator==(const VerifierState &first, const VerifierState &second);

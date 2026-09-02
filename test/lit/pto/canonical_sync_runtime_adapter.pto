@@ -1,0 +1,126 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// PyPTO supplies this private adapter in the generated device wrapper. Its
+// documented wrapper contract is a synchronous scalar access to the deferred
+// completion slab and counter metadata, so CanonicalSync retains conservative
+// GM read/write effects instead of rejecting or dropping the call.
+// RUN: split-file %s %t
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-dump --emit-pto-ir %t/accepted.pto \
+// RUN:   -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   %t/definition.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=REJECT
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   %t/public.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=REJECT
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   %t/wrong_abi.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=REJECT
+
+// REJECT: error: canonical sync rejects an unclassified physical or effectful operation
+
+//--- accepted.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @runtime_adapter(%raw: !pto.ptr<i64>, %counter: !pto.ptr<i32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    func.call @pypto_register_counter_completion(
+        %raw, %counter, %zero, %zero) :
+        (!pto.ptr<i64>, !pto.ptr<i32>, i64, i64) -> ()
+    return
+  }
+
+  // These are synchronous scalar communication APIs. The signal is an
+  // explicit GM access; the comparison/value operands are not memory.
+  func.func @communication_signals(%signal_ptr: !pto.ptr<i32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %one = arith.constant 1 : i32
+    %view = pto.make_tensor_view %signal_ptr, shape = [%c1],
+      strides = [%c1] : !pto.tensor_view<1xi32>
+    %signal = pto.partition_view %view, offsets = [%c0], sizes = [%c1]
+      : !pto.tensor_view<1xi32> -> !pto.partition_tensor_view<1xi32>
+    pto.comm.tnotify(%signal, %one : !pto.partition_tensor_view<1xi32>, i32)
+      {notifyOp = #pto<notify_op set>}
+    %ready = pto.comm.ttest(%signal, %one
+      : !pto.partition_tensor_view<1xi32>, i32) {cmp = #pto<wait_cmp ge>} -> i1
+    pto.comm.twait(%signal, %one : !pto.partition_tensor_view<1xi32>, i32)
+      {cmp = #pto<wait_cmp ge>}
+    return
+  }
+
+  func.func private @pypto_register_counter_completion(
+      !pto.ptr<i64>, !pto.ptr<i32>, i64, i64)
+}
+
+// CHECK-LABEL: CANONICAL-SYNC function=runtime_adapter
+// CHECK: p0 op=func.call resource=AIV:PIPE_S
+// CHECK: a0 phase=p0 mode=RW space=gm range=unknown
+// CHECK: a1 phase=p0 mode=RW space=gm range=unknown
+// CHECK: VERIFY ok
+
+// CHECK-LABEL: CANONICAL-SYNC function=communication_signals
+// CHECK: op=pto.comm.tnotify resource=AIV:PIPE_S
+// CHECK: op=pto.comm.ttest resource=AIV:PIPE_S
+// CHECK: op=pto.comm.twait resource=AIV:PIPE_S
+// CHECK: mode=W space=gm
+// CHECK: mode=R space=gm
+// CHECK: mode=RW space=gm
+// CHECK: VERIFY ok
+
+//--- definition.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @same_name_definition(%raw: !pto.ptr<i64>,
+      %counter: !pto.ptr<i32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    func.call @pypto_register_counter_completion(
+        %raw, %counter, %zero, %zero) :
+        (!pto.ptr<i64>, !pto.ptr<i32>, i64, i64) -> ()
+    return
+  }
+  func.func private @pypto_register_counter_completion(
+      %raw: !pto.ptr<i64>, %counter: !pto.ptr<i32>, %first: i64,
+      %second: i64) {
+    return
+  }
+}
+
+//--- public.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @public_declaration(%raw: !pto.ptr<i64>,
+      %counter: !pto.ptr<i32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    func.call @pypto_register_counter_completion(
+        %raw, %counter, %zero, %zero) :
+        (!pto.ptr<i64>, !pto.ptr<i32>, i64, i64) -> ()
+    return
+  }
+  func.func nested @pypto_register_counter_completion(
+      !pto.ptr<i64>, !pto.ptr<i32>, i64, i64)
+}
+
+//--- wrong_abi.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @wrong_adapter_abi(%raw: !pto.ptr<f32>,
+      %counter: !pto.ptr<i32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    func.call @pypto_register_counter_completion(
+        %raw, %counter, %zero, %zero) :
+        (!pto.ptr<f32>, !pto.ptr<i32>, i64, i64) -> ()
+    return
+  }
+  func.func private @pypto_register_counter_completion(
+      !pto.ptr<f32>, !pto.ptr<i32>, i64, i64)
+}

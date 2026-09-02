@@ -137,10 +137,97 @@ module attributes {pto.target_arch = "a2a3"} {
     }
     return
   }
+
+  // The carrying loop, rather than the endpoints' immediate loops, owns the
+  // boundary handshake.  The producer may therefore be nested more deeply
+  // than the next-outer-iteration consumer without losing the recurrence.
+  func.func @canonical_sync_loop_event_nested_boundary(
+      %src: !pto.partition_tensor_view<16x128xf32>, %condition: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input_addr = arith.constant 0 : i64
+    %output_addr = arith.constant 8192 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %input = pto.alloc_tile addr = %input_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output = pto.alloc_tile addr = %output_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %outer = %zero to %two step %one_index {
+      scf.if %condition {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                  outs(%input : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box, fractal=512,
+                         pad=0>)
+      } else {
+        scf.for %inner = %zero to %one_index step %one_index {
+          pto.tmuls ins(%input, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                          rows=16, cols=128, v_row=16, v_col=128,
+                          blayout=row_major, slayout=none_box, fractal=512,
+                          pad=0>, f32)
+                    outs(%input : !pto.tile_buf<loc=vec, dtype=f32,
+                           rows=16, cols=128, v_row=16, v_col=128,
+                           blayout=row_major, slayout=none_box, fractal=512,
+                           pad=0>)
+        }
+      }
+    }
+    return
+  }
+
+  // A scalar store in one iteration publishes to a later MTE2 load at the
+  // carrying-loop latch.  The protocol is DCache clean followed by the GM
+  // fence; an event alone is not a visibility mechanism.
+  func.func @canonical_sync_loop_visibility_boundary(
+      %gm: !pto.ptr<f32>, %gm2: !pto.ptr<f32>, %condition: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %eight = arith.constant 8 : index
+    %two = arith.constant 2 : index
+    %view = pto.make_tensor_view %gm, shape = [%one, %eight],
+      strides = [%eight, %one] {layout = #pto.layout<nd>} :
+      !pto.tensor_view<?x?xf32>
+    %slice = pto.partition_view %view, offsets = [%zero, %zero],
+      sizes = [%one, %eight] : !pto.tensor_view<?x?xf32> ->
+      !pto.partition_tensor_view<1x8xf32>
+    %view2 = pto.make_tensor_view %gm2, shape = [%one, %eight],
+      strides = [%eight, %one] {layout = #pto.layout<nd>} :
+      !pto.tensor_view<?x?xf32>
+    %slice2 = pto.partition_view %view2, offsets = [%zero, %zero],
+      sizes = [%one, %eight] : !pto.tensor_view<?x?xf32> ->
+      !pto.partition_tensor_view<1x8xf32>
+    %tile = pto.alloc_tile addr = %addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    scf.for %iteration = %zero to %two step %one {
+      scf.if %condition {
+        pto.tload ins(%slice : !pto.partition_tensor_view<1x8xf32>)
+                  outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1,
+                         cols=8, v_row=1, v_col=8, blayout=row_major,
+                         slayout=none_box, fractal=512, pad=0>)
+        pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1,
+                         cols=8, v_row=1, v_col=8, blayout=row_major,
+                         slayout=none_box, fractal=512, pad=0>)
+                   outs(%slice2 : !pto.partition_tensor_view<1x8xf32>)
+      } else {
+        %loaded = pto.load_scalar %gm2[%zero] : !pto.ptr<f32> -> f32
+        pto.store_scalar %loaded, %gm[%zero] : !pto.ptr<f32>, f32
+      }
+    }
+    return
+  }
 }
 
 // CHECK-LABEL: CANONICAL-SYNC function=canonical_sync_loop_event_protocol
-// CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK: kind=recurring-event resource=AIV:PIPE_{{(MTE2->AIV:PIPE_V|V->AIV:PIPE_MTE2)}}
 // CHECK-SAME: recurrence-loop=r
 // CHECK: PLAN selected=[
 // CHECK-SAME: events=[{{.*}}/release-e
@@ -180,3 +267,27 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]
 // CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID{{[0-5]}}>]
 // CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]
+// CHECK-LABEL: CANONICAL-SYNC function=canonical_sync_loop_event_nested_boundary
+// CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK-SAME: protocol=boundary-handshake
+// CHECK: VERIFY ok
+// CHECK-LABEL: func.func @canonical_sync_loop_event_nested_boundary
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID{{[0-5]}}>]
+// CHECK: scf.for
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID{{[0-5]}}>]
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]
+// CHECK: pto.tload
+// CHECK: scf.for
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID{{[0-5]}}>]
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID{{[0-5]}}>]
+// CHECK-LABEL: CANONICAL-SYNC function=canonical_sync_loop_visibility_boundary
+// CHECK: kind=visibility-fence resource=AIV:PIPE_S->AIV:PIPE_MTE2
+// CHECK-SAME: points=before(scf.yield)->before(scf.yield)
+// CHECK: VERIFY ok
+// CHECK-LABEL: func.func @canonical_sync_loop_visibility_boundary
+// CHECK: scf.for
+// CHECK: pto.cmo.cacheinvalid
+// CHECK-NEXT: pto.cmo.cacheinvalid
+// CHECK-NEXT: pto.fence.barrier_all
+// CHECK-NEXT: pto.cmo.cacheinvalid

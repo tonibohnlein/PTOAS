@@ -29,6 +29,8 @@
 
 namespace mlir::pto {
 
+enum class PIPE : std::uint32_t;
+
 enum class VPTOSchedulingClass {
   Schedulable,
   Structural,
@@ -92,6 +94,10 @@ struct VPTOMemoryAccess {
 struct VPTOSchedulingSemantics {
   VPTOSchedulingClass schedulingClass = VPTOSchedulingClass::SchedulingBoundary;
   bool classificationKnown = false;
+  /// Concrete hardware issue pipe when the normalized record is schedulable.
+  /// Interface-based PTO operations normally provide this through their op
+  /// family; explicitly normalized runtime adapters use this field directly.
+  std::optional<PIPE> executionPipe;
   /// The operation's physical effect is complete before scalar issue can
   /// continue. This is stronger than same-pipeline FIFO issue order and can
   /// satisfy an SSA/completion dependency without a hardware event. It does

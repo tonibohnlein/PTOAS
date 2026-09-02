@@ -93,6 +93,15 @@ allocations are explicitly classified as structural operations: they establish
 alias roots but do not execute on a device pipeline. Pure structural IR may be
 ignored only when purity is independently established.
 
+The normalized record also carries the concrete issue pipe when an operation
+does not expose one through a PTO op interface. PyPTO's deferred-completion
+runtime adapter is the only such external call currently admitted. Recognition
+requires the exact private external declaration and exact wrapper ABI; a
+same-named definition, non-private declaration, or different signature remains
+unclassified. The generated wrapper defines the admitted adapter as synchronous
+scalar code, and the graph retains conservative read/write GM effects for every
+pointer operand. Other opaque calls remain unclassified and fail closed.
+
 The graph is frozen before mechanisms are generated. Later stages cannot remove
 or rewrite a demand.
 
@@ -155,6 +164,17 @@ physical core. Cross-core visibility fails closed until the pass models
 source-core publication, an ordered cross-core transfer, and target-core
 acquisition as one protocol.
 
+For a same-core loop-carried visibility demand, the carrying-loop latch is a
+conservative physical publication cut. It executes after every possible source
+in iteration `i` and before scalar issue reaches iteration `i+1`. The generated
+sequence performs direction-specific DCache clean/invalidate around the GM
+fence, and the target model must prove that the fence drains the non-scalar
+source pipe. This is a repeated DCCI plus data-barrier protocol; no event is
+credited with cache visibility. The physical latch must resolve to the same
+AIC/AIV core as both endpoints because each core has an independent DataCache.
+Verifier cache-maintenance facts are therefore core-qualified as well as
+address-qualified.
+
 An addressed single-cache-line CMO covers only an access proved to remain in
 the line containing that exact address. The current graph does not encode GM
 pointer alignment or target cache-line geometry, so it can make that proof only
@@ -177,8 +197,10 @@ loop, consumes and restores it around every ready transfer, and drains it after
 the loop. When recurrence endpoints occupy mutually exclusive arms of the same
 loop, a conservative boundary protocol primes both ready and release lanes,
 waits for both at the loop header, restores them at the latch, and drains them
-after the loop. Other nested or guarded recurrence shapes continue to fail
-closed. A same-pipeline barrier may remain inside a loop.
+after the loop. The demand's explicit carrying loop owns this boundary
+protocol, so endpoints may be nested at different depths inside it. Shapes
+whose endpoints are not both descendants of that carrying loop continue to
+fail closed. A same-pipeline barrier may remain inside a loop.
 
 Every issued phase also has an exit-completion demand. Function-core work is
 drained by a tagged `PIPE_ALL` before return. Work in an explicit cube or vector
@@ -196,6 +218,7 @@ Each demand is assigned one direct mechanism:
   sections when the function already provides `pto.set_ffts` setup;
 - a single-lane ready/release recurrence protocol with explicit priming and
   draining;
+- a carrying-loop-latch DCache/fence visibility protocol;
 - an existing visibility sequence with the required cache maintenance and
   fence scope;
 - the mandatory exit barrier.

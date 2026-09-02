@@ -21,15 +21,26 @@
 // RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
 // RUN:   %t/carried_visibility.pto -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=CARRIED-VISIBILITY
-// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-dump --emit-pto-ir \
+// RUN:   --mlir-print-ir-after=pto-canonical-sync \
 // RUN:   %t/carried_visibility_reuse.pto -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=CARRIED-REUSE
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   %t/wrong_core_latch.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=WRONG-LATCH
 
 // SCALAR: error: canonical sync target forbids the required cross-core event
 // FFTS: error: canonical sync cross-core events require an unconditional pto.set_ffts setup before both endpoints
 // VISIBILITY: error: canonical sync has no proven cross-core GM visibility protocol
-// CARRIED-VISIBILITY: error: canonical sync has no proven loop-carried GM visibility protocol
-// CARRIED-REUSE: error: canonical sync has no proven loop-carried GM visibility protocol
+// CARRIED-VISIBILITY: error: canonical sync has no proven cross-core GM visibility protocol
+// CARRIED-REUSE-LABEL: CANONICAL-SYNC function=carried_visibility_cannot_reuse_completion
+// CARRIED-REUSE: kind=visibility-fence resource=AIV:PIPE_S->AIV:PIPE_MTE2
+// CARRIED-REUSE: VERIFY ok
+// CARRIED-REUSE-LABEL: func.func @carried_visibility_cannot_reuse_completion
+// CARRIED-REUSE: pto.cmo.cacheinvalid
+// CARRIED-REUSE-NEXT: pto.fence.barrier_all
+// WRONG-LATCH: error: canonical sync has no proven loop-carried GM visibility protocol at a matching physical-core latch
 
 //--- scalar_completion.pto
 module attributes {pto.target_arch = "a2a3"} {
@@ -58,6 +69,42 @@ module attributes {pto.target_arch = "a2a3"} {
         cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box,
         fractal=512, pad=0>)
         outs(%part : !pto.partition_tensor_view<1x32xui32>)
+    }
+    return
+  }
+}
+
+//--- wrong_core_latch.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @reject_visibility_latch_on_other_core(
+      %payload: !pto.ptr<f32, gm>, %trip_count: index, %condition: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %addr = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %addr : !pto.tile_buf<loc=mat, dtype=f32,
+      rows=16, cols=16, v_row=16, v_col=16, blayout=col_major,
+      slayout=row_major, fractal=512, pad=0>
+    %view = pto.make_tensor_view %payload, shape = [%c16, %c16],
+      strides = [%c16, %c1] : !pto.tensor_view<16x16xf32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0],
+      sizes = [%c16, %c16] : !pto.tensor_view<16x16xf32> ->
+      !pto.partition_tensor_view<16x16xf32>
+    scf.for %iteration = %c0 to %trip_count step %c1 {
+      scf.if %condition {
+        pto.section.cube {
+          pto.store_scalar %one, %payload[%c0] : !pto.ptr<f32, gm>, f32
+        }
+      } else {
+        pto.section.cube {
+          pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>)
+            outs(%tile : !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16,
+              v_row=16, v_col=16, blayout=col_major, slayout=row_major,
+              fractal=512, pad=0>)
+        }
+      }
     }
     return
   }

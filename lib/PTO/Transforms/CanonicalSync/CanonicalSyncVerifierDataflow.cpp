@@ -146,11 +146,12 @@ bool visibilityKnown(const VerifierEffect &source,
   }
   const bool scalarRead = destination.resource.pipe == PIPE::PIPE_S &&
                           accessReads(destination.access.mode);
-  return !scalarRead ||
-         llvm::any_of(
-             state.cacheInvalidations, [&](const VerifierCacheAction &action) {
-               return verifierCacheActionCovers(action, destination.access);
-             });
+  return !scalarRead || llvm::any_of(state.cacheInvalidations,
+                                     [&](const VerifierCacheAction &action) {
+                                       return verifierCacheActionCovers(
+                                           action, destination.resource.core,
+                                           destination.access);
+                                     });
 }
 
 LogicalResult reportHazard(const VerifierEffect &source,
@@ -350,7 +351,8 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyAndIssuePhase(
     if (accessWrites(effect.access.mode)) {
       llvm::erase_if(state.cacheInvalidations,
                      [&](const VerifierCacheAction &action) {
-                       return verifierCacheActionCovers(action, effect.access);
+                       return verifierCacheActionCovers(
+                           action, phase.resource.core, effect.access);
                      });
     }
     if (!containsEffect(resource.pending, effect.key)) {

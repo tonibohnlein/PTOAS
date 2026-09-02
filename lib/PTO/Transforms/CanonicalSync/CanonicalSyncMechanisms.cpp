@@ -97,6 +97,16 @@ bool hasPositiveDistance(const CanonicalDemand &demand) {
       });
 }
 
+std::optional<CanonicalRegionId> carryingLoop(const CanonicalDemand &demand) {
+  auto found = llvm::find_if(
+      demand.iterationDistance, [](const CanonicalLoopDistance &distance) {
+        return distance.relation == CanonicalIterationRelation::AnyPositive;
+      });
+  return found == demand.iterationDistance.end()
+             ? std::nullopt
+             : std::optional<CanonicalRegionId>(found->loop);
+}
+
 SmallVector<CanonicalControlAtom, 2>
 commonGuard(ArrayRef<CanonicalControlAtom> first,
             ArrayRef<CanonicalControlAtom> second) {
@@ -405,22 +415,17 @@ FailureOr<CanonicalMechanism> buildEventMechanism(
       unresolvedAnchors || setAfter == waitBefore ||
       (setAfter && waitBefore && !setAfter->isBeforeInBlock(waitBefore));
   if (invalidOrder) {
-    auto sourceLoop = sourcePhase.operation->getParentOfType<scf::ForOp>();
-    auto targetLoop = targetPhase.operation->getParentOfType<scf::ForOp>();
-    const std::optional<CanonicalRegionId> loopRegion =
-        sourceLoop && sourceLoop == targetLoop
-            ? findLoopRegion(program, sourceLoop)
-            : std::nullopt;
-    const bool carriedByThisLoop =
-        loopRegion &&
-        llvm::any_of(demand.iterationDistance,
-                     [&](const CanonicalLoopDistance &distance) {
-                       return distance.loop == *loopRegion &&
-                              distance.relation ==
-                                  CanonicalIterationRelation::AnyPositive;
-                     });
-    const bool boundaryProtocol = carriedByThisLoop &&
-                                  !sourceLoop.getBody()->empty() &&
+    const std::optional<CanonicalRegionId> loopRegion = carryingLoop(demand);
+    scf::ForOp carryingFor;
+    if (loopRegion) {
+      carryingFor = dyn_cast_or_null<scf::ForOp>(
+          program.getRegion(*loopRegion).operation);
+    }
+    const bool containsEndpoints =
+        carryingFor && carryingFor->isAncestor(sourcePhase.operation) &&
+        carryingFor->isAncestor(targetPhase.operation);
+    const bool boundaryProtocol = containsEndpoints &&
+                                  !carryingFor.getBody()->empty() &&
                                   targetModel.supportsEvent(target, source);
     if (boundaryProtocol) {
       // Opposite choice arms cannot host a same-iteration Set/Wait pair. Use
@@ -433,9 +438,9 @@ FailureOr<CanonicalMechanism> buildEventMechanism(
       mechanism.kind = CanonicalMechanismKind::RecurringEvent;
       mechanism.source = source;
       mechanism.target = target;
-      mechanism.sourcePoint = {sourceLoop.getBody()->getTerminator(),
+      mechanism.sourcePoint = {carryingFor.getBody()->getTerminator(),
                                CanonicalProgramPointPosition::Before};
-      mechanism.targetPoint = {&sourceLoop.getBody()->front(),
+      mechanism.targetPoint = {&carryingFor.getBody()->front(),
                                CanonicalProgramPointPosition::Before};
       mechanism.actionRegion = *loopRegion;
       mechanism.guard =
@@ -525,12 +530,6 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
           "canonical sync visibility demand lacks explicit requirements");
       return failure();
     }
-    if (hasPositiveDistance(demand)) {
-      targetPhase.operation->emitError(
-          "canonical sync has no proven loop-carried GM visibility protocol")
-          << "; demand d" << demand.id;
-      return failure();
-    }
     if (source.core != destination.core) {
       targetPhase.operation->emitError(
           "canonical sync has no proven cross-core GM visibility protocol")
@@ -538,6 +537,66 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
           << " requires source-core publication, a cross-core completion "
              "transfer, and target-core acquisition";
       return failure();
+    }
+    if (hasPositiveDistance(demand)) {
+      const std::optional<CanonicalRegionId> loopRegion = carryingLoop(demand);
+      scf::ForOp carryingFor;
+      if (loopRegion) {
+        carryingFor = dyn_cast_or_null<scf::ForOp>(
+            program.getRegion(*loopRegion).operation);
+      }
+      const bool containsEndpoints =
+          carryingFor && carryingFor->isAncestor(sourcePhase.operation) &&
+          carryingFor->isAncestor(targetPhase.operation);
+      if (!containsEndpoints) {
+        targetPhase.operation->emitError(
+            "canonical sync has no proven loop-carried GM visibility "
+            "protocol at a matching physical-core latch")
+            << "; demand d" << demand.id;
+        return failure();
+      }
+      Operation *latch = carryingFor.getBody()->getTerminator();
+      FailureOr<CanonicalPhysicalResource> latchScalar =
+          resolvePhysicalResource(program.getFunction(), latch, PIPE::PIPE_S);
+      if (failed(latchScalar)) {
+        return failure();
+      }
+      const bool matchingCore = latchScalar->core == source.core &&
+                                latchScalar->core == destination.core;
+      FailureOr<SmallVector<CanonicalPhysicalResource, 8>> drained =
+          target.getFenceDrainedResources(latch);
+      const bool sourceCompletesAtFence =
+          succeeded(drained) &&
+          (getVPTOSchedulingSemantics(sourcePhase.operation)
+               .completionIsSynchronous ||
+           llvm::is_contained(*drained, source));
+      if (!matchingCore || !sourceCompletesAtFence) {
+        targetPhase.operation->emitError(
+            "canonical sync has no proven loop-carried GM visibility "
+            "protocol at a matching physical-core latch")
+            << "; demand d" << demand.id;
+        return failure();
+      }
+
+      // The carrying-loop latch executes after every possible source in
+      // iteration i and before scalar issue reaches iteration i+1.  At that
+      // physical cut, the target-defined GM fence drains the documented
+      // source pipes (or follows an already synchronous scalar store), while
+      // the direction-specific DCache operation publishes dirty scalar data
+      // or invalidates a stale scalar copy.  This is the documented
+      // DCCI+DSB ordering protocol repeated once per carrying-loop iteration;
+      // a bare SetFlag/WaitFlag is deliberately not credited with visibility.
+      CanonicalMechanism mechanism;
+      mechanism.kind = CanonicalMechanismKind::VisibilityFence;
+      mechanism.source = source;
+      mechanism.target = destination;
+      mechanism.sourcePoint = {latch, CanonicalProgramPointPosition::Before};
+      mechanism.targetPoint = mechanism.sourcePoint;
+      mechanism.actionRegion = *loopRegion;
+      mechanism.guard =
+          commonGuard(sourcePhase.controlPath, targetPhase.controlPath);
+      mechanism.generatedCacheMaintenance = demand.visibility->cacheMaintenance;
+      return mechanism;
     }
     Operation *fence = findFixedVisibilityFence(
         sourcePhase.operation, targetPhase.operation, demand.visibility->scope);
@@ -705,16 +764,6 @@ bool demandIsMapped(const CanonicalSyncProgram &program,
                     CanonicalDemandId demand) {
   return program.getDirectMechanisms().size() == program.getDemands().size() &&
          program.getDirectMechanisms()[demand] != kInvalidCanonicalSyncId;
-}
-
-std::optional<CanonicalRegionId> carryingLoop(const CanonicalDemand &demand) {
-  auto found = llvm::find_if(
-      demand.iterationDistance, [](const CanonicalLoopDistance &distance) {
-        return distance.relation == CanonicalIterationRelation::AnyPositive;
-      });
-  return found == demand.iterationDistance.end()
-             ? std::nullopt
-             : std::optional<CanonicalRegionId>(found->loop);
 }
 
 bool recurringMechanismMatches(const CanonicalSyncProgram &program,

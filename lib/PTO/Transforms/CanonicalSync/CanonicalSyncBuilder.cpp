@@ -122,7 +122,13 @@ getScalarAccessRange(Operation *operation, Value address) {
   return std::make_pair(byteOffset, static_cast<int64_t>(elementBytes));
 }
 
-std::optional<PIPE> getNormalizedPipe(Operation *operation) {
+std::optional<PIPE>
+getNormalizedPipe(Operation *operation,
+                  const VPTOSchedulingSemantics &semantics) {
+  if (semantics.executionPipe && *semantics.executionPipe != PIPE::PIPE_ALL &&
+      *semantics.executionPipe != PIPE::PIPE_UNASSIGNED) {
+    return semantics.executionPipe;
+  }
   if (auto pipeOperation = dyn_cast<OpPipeInterface>(operation)) {
     const PIPE pipe = pipeOperation.getPipe();
     if (pipe != PIPE::PIPE_ALL && pipe != PIPE::PIPE_UNASSIGNED) {
@@ -331,7 +337,7 @@ LogicalResult ProgramBuilder::visitOperation(Operation *operation,
           "canonical sync rejects a raw physical operation without "
           "schedulable normalized VPTOSchedulingSemantics");
     }
-    std::optional<PIPE> pipe = getNormalizedPipe(operation);
+    std::optional<PIPE> pipe = getNormalizedPipe(operation, semantics);
     if (!pipe) {
       return operation->emitError(
           "canonical sync normalized scheduling semantics do not identify a "
@@ -351,7 +357,7 @@ LogicalResult ProgramBuilder::visitOperation(Operation *operation,
           "canonical sync requires normalized TPipe channel semantics");
     }
     if (semantics.schedulingClass == VPTOSchedulingClass::Schedulable) {
-      std::optional<PIPE> pipe = getNormalizedPipe(operation);
+      std::optional<PIPE> pipe = getNormalizedPipe(operation, semantics);
       if (!pipe) {
         return operation->emitError(
             "canonical sync TPipe payload transfer has no concrete pipe");
@@ -375,7 +381,7 @@ LogicalResult ProgramBuilder::visitOperation(Operation *operation,
                                   MteOpInterface, SimtOpInterface>(operation);
   if (semantics.classificationKnown &&
       semantics.schedulingClass == VPTOSchedulingClass::Schedulable) {
-    std::optional<PIPE> pipe = getNormalizedPipe(operation);
+    std::optional<PIPE> pipe = getNormalizedPipe(operation, semantics);
     if (!pipe) {
       return operation->emitError(
           "canonical sync normalized scheduling semantics do not identify a "
