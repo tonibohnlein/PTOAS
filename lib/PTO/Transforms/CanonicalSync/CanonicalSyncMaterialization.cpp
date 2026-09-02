@@ -48,6 +48,7 @@ struct RecurringEventAction {
   Operation *sourceAnchor = nullptr;
   Operation *targetAnchor = nullptr;
   bool boundary = false;
+  bool guarded = false;
   std::optional<unsigned> releasePool;
 };
 
@@ -157,7 +158,7 @@ LogicalResult collectActions(
         protocols.push_back({group.members.front(), group.source.pipe,
                              group.target.pipe, group.eventId,
                              *group.releaseEventId, loop, setAnchor, waitAnchor,
-                             false,
+                             false, false,
                              findReleasePool(*group.recurrenceLoop,
                                              group.target, group.source)});
         continue;
@@ -245,6 +246,7 @@ LogicalResult collectActions(
                            mechanism.target.pipe, *eventId,
                            *mechanism.releaseEventId, loop, setAnchor,
                            waitAnchor, mechanism.boundaryRecurring,
+                           mechanism.guardedRecurring,
                            findReleasePool(*mechanism.recurrenceLoop,
                                            mechanism.target,
                                            mechanism.source)});
@@ -305,6 +307,7 @@ void emitRecurringProtocols(func::FuncOp clone,
           return candidate.loop == protocol.loop &&
                  candidate.source == protocol.source &&
                  candidate.target == protocol.target &&
+                 candidate.guarded == protocol.guarded &&
                  candidate.releaseEventId == protocol.releaseEventId;
         });
     const RecurringEventAction &releaseOwner =
@@ -328,12 +331,16 @@ void emitRecurringProtocols(func::FuncOp clone,
                        releaseOwner.mechanism, "ready-prime-set");
     }
 
-    // The reverse release channel is the loop-carried ownership token.  Its
-    // wait and set live at the loop header/latch so they cover reuse across
-    // different choice arms.  The forward ready pair remains at the precise
-    // branch-local producer/consumer cuts.
+    // The reverse release channel is the loop-carried ownership token. An
+    // unconditional handoff circulates it at the loop header/latch. A guarded
+    // handoff keeps both reverse actions inside the same control arm as the
+    // precise ready pair, so a skipped iteration cannot reset the token.
     if (ownsRelease) {
-      builder.setInsertionPointToStart(loop.getBody());
+      if (protocol.guarded) {
+        builder.setInsertionPoint(protocol.sourceAnchor);
+      } else {
+        builder.setInsertionPointToStart(loop.getBody());
+      }
       Operation *releaseWait = createProtocolEvent<WaitFlagOp>(
           builder, location, clone, protocol.target, protocol.source,
           protocol.releaseEventId, protocol.mechanism, "release-body-wait");
@@ -371,7 +378,11 @@ void emitRecurringProtocols(func::FuncOp clone,
                        releaseOwner.mechanism, "ready-body-wait");
     }
     if (ownsRelease) {
-      builder.setInsertionPoint(loop.getBody()->getTerminator());
+      if (protocol.guarded) {
+        builder.setInsertionPointAfter(protocol.targetAnchor);
+      } else {
+        builder.setInsertionPoint(loop.getBody()->getTerminator());
+      }
       Operation *releaseSet = createProtocolEvent<SetFlagOp>(
           builder, location, clone, protocol.target, protocol.source,
           protocol.releaseEventId, protocol.mechanism, "release-body-set");

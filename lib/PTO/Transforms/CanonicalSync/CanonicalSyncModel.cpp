@@ -383,9 +383,30 @@ LogicalResult CanonicalSyncProgram::freeze() {
          mechanism.origins.size() >= 2);
     const bool recurring =
         mechanism.kind == CanonicalMechanismKind::RecurringEvent;
+    Operation *recurrenceOperation =
+        mechanism.recurrenceLoop && *mechanism.recurrenceLoop < regions.size()
+            ? regions[*mechanism.recurrenceLoop].operation
+            : nullptr;
+    Block *recurrenceBody =
+        recurrenceOperation && recurrenceOperation->getNumRegions() == 1 &&
+                !recurrenceOperation->getRegion(0).empty()
+            ? &recurrenceOperation->getRegion(0).front()
+            : nullptr;
+    const bool validGuardedPlacement =
+        !mechanism.guardedRecurring ||
+        (recurrenceBody && mechanism.sourcePoint.operation &&
+         mechanism.targetPoint.operation &&
+         mechanism.sourcePoint.operation->getBlock() ==
+             mechanism.targetPoint.operation->getBlock() &&
+         mechanism.sourcePoint.operation->getBlock() != recurrenceBody &&
+         recurrenceOperation->isAncestor(mechanism.sourcePoint.operation) &&
+         recurrenceOperation->isAncestor(mechanism.targetPoint.operation));
     const bool validRecurrence =
         recurring == mechanism.recurrenceLoop.has_value() &&
         (!mechanism.boundaryRecurring || recurring) &&
+        (!mechanism.guardedRecurring ||
+         (recurring && !mechanism.boundaryRecurring)) &&
+        validGuardedPlacement &&
         (!mechanism.recurrenceLoop ||
          (*mechanism.recurrenceLoop < regions.size() &&
           regions[*mechanism.recurrenceLoop].kind ==

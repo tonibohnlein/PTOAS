@@ -214,12 +214,15 @@ can be lifted over the complete outer lifecycle. Boundary handshakes are also
 excluded from release-pool scarcity repair because their two independently
 primed directions do not use the pool's forward-handoff chain.
 
-For a non-boundary recurring protocol, the forward ready Set/Wait must execute
-at the unconditional recurrence-loop body level. A handoff confined to one
-choice arm cannot close the unconditional reverse release cycle on iterations
-that skip that arm, so it remains fail-closed. A loop wholly nested in a choice
-is still supported because each dynamic execution of that loop executes its
-body handoff.
+For a non-boundary recurring protocol, the four steady-state actions either
+execute at the unconditional recurrence-loop body level or remain together in
+one nested concrete action block. The guarded form consumes the release token,
+performs the ready handoff, and restores the release token only when its arm
+executes. An iteration that skips the arm leaves the token live and unchanged.
+The guarded form remains outside a repeating outer loop and is excluded from
+release pooling because neither case has a proven complete outer lifecycle.
+A loop wholly nested in a choice remains supported because each dynamic
+execution of that loop executes its body handoff.
 
 The allocator treats the complete pool as one globally live reverse generation
 and may reuse a forward ready key only across different pool member loops. The
@@ -230,11 +233,13 @@ does not accept lexical drain-before-prime ordering as a proof.
 
 The focused seven-protocol regression is
 `canonical_sync_recurring_release_pool_scarcity.pto`. The qproj corpus family
-that motivated this work contains a forward handoff confined to a conditional
-loop arm. It remains fail-closed: the unconditional release-pool proof does not
-apply when an iteration can skip the forward handoff. Supporting that family
-requires a guarded ownership protocol or a recurrence-expanded buffer-family
-proof, not an unconditional pool.
+that motivated this work contains forward handoffs confined to conditional
+loop arms. The guarded single-lane protocol recovers the subset whose source
+and target share one concrete arm; a host admission ablation recovered 19 of
+the 60 admissions lost by the unconditional-body hardening. The remaining 41
+still fail closed because they need a different recurrence shape, exceed the
+event pool after admission, or fail independent memory verification. This is
+host evidence only; the guarded protocol still requires focused device stress.
 
 No internal `PIPE_ALL` fallback is enabled or proposed as an ordinary cover
 column. A compile-total broad fallback would require a separate explicit policy

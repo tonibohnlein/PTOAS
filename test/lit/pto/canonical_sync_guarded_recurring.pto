@@ -8,16 +8,16 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-// The ready handoff executes only on even iterations, while an ordinary
-// release cycle would execute at every loop header and latch.  On a skipped
-// arm there is no cross-pipeline proof that the old release token was consumed
-// before it is reset, so the recurring protocol must remain fail-closed.
-// RUN: not ptoas --pto-arch=a3 --pto-level=level3 \
-// RUN:   --enable-canonical-sync --emit-pto-ir %s -o /dev/null 2>&1 \
-// RUN:   | FileCheck %s
+// A conditional ready/release handoff keeps all four body actions in the same
+// repeated control arm. A skipped iteration issues no reset; the release token
+// remains live until the next guarded handoff or the loop drain.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-dump --emit-pto-ir %s -o %t 2> %t.log
+// RUN: FileCheck %s --check-prefix=PLAN < %t.log
+// RUN: FileCheck %s --check-prefix=IR < %t
 
 module attributes {pto.target_arch = "a2a3"} {
-  func.func @conditional_recurring_rejected(
+  func.func @guarded_recurring(
       %src: !pto.partition_tensor_view<16x128xf32>)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %input_addr = arith.constant 0 : i64
@@ -50,13 +50,33 @@ module attributes {pto.target_arch = "a2a3"} {
                         pad=0>, f32)
                   outs(%output : !pto.tile_buf<loc=vec, dtype=f32,
                          rows=16, cols=128, v_row=16, v_col=128,
-                         blayout=row_major, slayout=none_box, fractal=512,
-                         pad=0>)
+                         blayout=row_major, slayout=none_box,
+                         fractal=512, pad=0>)
       }
     }
     return
   }
 }
 
-// CHECK: error: canonical sync cannot construct a single-lane recurring event
-// CHECK-SAME: requires loop-body physical anchors and a reverse release event
+// PLAN-LABEL: CANONICAL-SYNC function=guarded_recurring
+// PLAN: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// PLAN-SAME: protocol=guarded-handshake
+// PLAN: VERIFY ok
+
+// IR-LABEL: func.func @guarded_recurring
+// IR: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, {{.*}}]
+// IR-SAME: protocol_role = "release-prime-set"
+// IR: scf.for
+// IR: scf.if
+// IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, {{.*}}]
+// IR-SAME: protocol_role = "release-body-wait"
+// IR-NEXT: pto.tload
+// IR-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, {{.*}}]
+// IR-SAME: protocol_role = "ready-body-set"
+// IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, {{.*}}]
+// IR-SAME: protocol_role = "ready-body-wait"
+// IR-NEXT: pto.tmuls
+// IR-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, {{.*}}]
+// IR-SAME: protocol_role = "release-body-set"
+// IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, {{.*}}]
+// IR-SAME: protocol_role = "release-drain-wait"

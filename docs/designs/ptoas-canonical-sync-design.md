@@ -231,11 +231,16 @@ physical phase that accesses the same storage on successive iterations produces
 a self-recurrence demand; it is not removed merely because both endpoints have
 the same static phase ID. A cross-pipeline forward dependence and its reverse
 reuse recurrence can use a lifecycle-complete single-lane protocol when both
-endpoints are direct operations in the same `scf.for` body and both event
-directions are legal. The protocol primes the reverse release event before the
-loop, consumes and restores it around every ready transfer, and drains it after
-the loop. When recurrence endpoints occupy mutually exclusive arms of the same
-loop, a conservative boundary protocol primes both ready and release lanes,
+endpoints are direct operations in one concrete action block beneath the same
+`scf.for` and both event directions are legal. The protocol primes the reverse
+release event before the loop, consumes and restores it around every ready
+transfer, and drains it after the loop. When that action block is the loop body,
+the handoff executes unconditionally. When it is a nested choice arm, all four
+steady-state actions remain in that arm: a skipped iteration neither consumes
+nor resets the live release token. The latter guarded protocol is not admitted
+inside another repeating loop and does not participate in release pooling.
+When recurrence endpoints occupy mutually exclusive arms of the same loop, a
+conservative boundary protocol primes both ready and release lanes,
 waits for both at the loop header, restores them at the latch, and drains them
 after the loop. The demand's explicit carrying loop owns this boundary
 protocol, so endpoints may be nested at different depths inside it. Shapes
@@ -302,7 +307,8 @@ Each demand is assigned one direct mechanism:
 - a targeted same-pipeline barrier;
 - a legal directed set/wait event;
 - a single-lane ready/release recurrence protocol with explicit priming and
-  draining;
+  draining, either unconditional or wholly contained in one guarded action
+  block;
 - a carrying-loop-latch DCache/fence visibility protocol;
 - an existing visibility sequence with the required cache maintenance and
   fence scope;
@@ -470,7 +476,9 @@ from the emitted IR. It checks balance, direction, ID legality, control path,
 once-only lifetime, set-before-wait issue order, macro reservations, and
 same-key generation interference. For a recurring mechanism it independently
 requires the six prime/body/drain roles, reverse ready/release directions, and
-their loop-boundary and body order. It rejects any same-key coexecuting pair
+their loop-boundary and body order. The four body actions must either execute
+unconditionally in the recurrence body or share the same nested concrete
+control path. It rejects any same-key coexecuting pair
 unless the generations are mutually exclusive or it reconstructs the complete
 reverse-release proof for sequential non-boundary ready lanes described above;
 the lexical position of a ready wait on the target pipeline is never treated as

@@ -309,6 +309,10 @@ struct CanonicalMechanism {
   /// used when source and target are in mutually exclusive control arms and
   /// no legal same-iteration ready cut exists.
   bool boundaryRecurring = false;
+  /// The ready and reverse-release body actions execute under the same
+  /// repeated control guard. Skipped iterations leave the primed release token
+  /// untouched instead of resetting it at the loop header and latch.
+  bool guardedRecurring = false;
   std::optional<unsigned> eventId;
   std::optional<unsigned> releaseEventId;
 };

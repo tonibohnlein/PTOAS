@@ -42,6 +42,7 @@ struct AllocationUnit {
   unsigned eventId = 0;
   SmallVector<unsigned, 2> releaseGroups;
   bool boundaryRecurring = false;
+  bool guardedRecurring = false;
 };
 
 bool recurringReadyReuseIsOrdered(const CanonicalSyncProgram &program,
@@ -169,12 +170,17 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
                      mechanism.recurrenceLoop,
                      0});
     units.back().boundaryRecurring = mechanism.boundaryRecurring;
-    auto release = llvm::find_if(units, [&](const AllocationUnit &unit) {
-      return unit.kind == AllocationUnitKind::RecurringRelease &&
-             unit.source == mechanism.target &&
-             unit.target == mechanism.source &&
-             unit.recurrenceLoop == mechanism.recurrenceLoop;
-    });
+    units.back().guardedRecurring = mechanism.guardedRecurring;
+    auto release =
+        mechanism.guardedRecurring
+            ? units.end()
+            : llvm::find_if(units, [&](const AllocationUnit &unit) {
+                return unit.kind == AllocationUnitKind::RecurringRelease &&
+                       !unit.guardedRecurring &&
+                       unit.source == mechanism.target &&
+                       unit.target == mechanism.source &&
+                       unit.recurrenceLoop == mechanism.recurrenceLoop;
+              });
     if (release == units.end()) {
       units.push_back({AllocationUnitKind::RecurringRelease,
                        {mechanism.id},
@@ -186,6 +192,7 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
                        mechanism.recurrenceLoop,
                        0});
       units.back().boundaryRecurring = mechanism.boundaryRecurring;
+      units.back().guardedRecurring = mechanism.guardedRecurring;
     } else {
       release->mechanisms.push_back(mechanism.id);
       release->boundaryRecurring |= mechanism.boundaryRecurring;
@@ -355,7 +362,7 @@ bool appendCoalescedFallback(
     const bool supportedKind =
         mechanism.kind == CanonicalMechanismKind::Event ||
         (mechanism.kind == CanonicalMechanismKind::RecurringEvent &&
-         !mechanism.boundaryRecurring);
+         !mechanism.boundaryRecurring && !mechanism.guardedRecurring);
     const bool recurringHasRelease =
         mechanism.kind != CanonicalMechanismKind::RecurringEvent ||
         target.supportsEvent(failure.target, failure.source);
@@ -532,6 +539,7 @@ bool appendRecurringReleasePool(
     if (unit.kind != AllocationUnitKind::RecurringRelease ||
         unit.source != source || unit.target != target ||
         !unit.recurrenceLoop || unit.boundaryRecurring ||
+        unit.guardedRecurring ||
         (nestedOnly && !regionHasLoopAncestor(program, *unit.recurrenceLoop))) {
       continue;
     }

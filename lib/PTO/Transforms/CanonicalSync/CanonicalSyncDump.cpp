@@ -181,6 +181,8 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
       os << " recurrence-loop=r" << *mechanism.recurrenceLoop;
       if (mechanism.boundaryRecurring) {
         os << " protocol=boundary-handshake";
+      } else if (mechanism.guardedRecurring) {
+        os << " protocol=guarded-handshake";
       }
     }
     os << '\n';

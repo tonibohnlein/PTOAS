@@ -93,18 +93,6 @@ void appendUnion(SmallVectorImpl<T> &result, ArrayRef<T> values, Equal equal) {
   }
 }
 
-SmallVector<VerifierEffectKey, 16>
-intersectKeys(ArrayRef<VerifierEffectKey> first,
-              ArrayRef<VerifierEffectKey> second) {
-  SmallVector<VerifierEffectKey, 16> result;
-  for (const VerifierEffectKey &key : first) {
-    if (containsKey(second, key)) {
-      result.push_back(key);
-    }
-  }
-  return result;
-}
-
 bool stateContainsKey(const VerifierState &state,
                       const VerifierEffectKey &key) {
   return llvm::any_of(state.resources,
@@ -271,7 +259,13 @@ VerifierState mlir::pto::canonical_sync_detail::mergeVerifierStates(
     });
     if (other != second.tokens.end()) {
       VerifierToken merged = token;
-      merged.payload = intersectKeys(token.payload, other->payload);
+      // A branch-local effect is vacuously complete on a path where that
+      // effect did not execute. Preserve it in a surviving token exactly when
+      // it is in the token payload on every path where the effect is present.
+      // This is the token analogue of the conditional must-merge used for
+      // ordinary completion facts above.
+      merged.payload = mergeConditionalKeys(token.payload, first,
+                                            other->payload, second);
       result.tokens.push_back(std::move(merged));
     }
   }

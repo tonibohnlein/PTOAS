@@ -518,7 +518,8 @@ LogicalResult resolveRecurringProtocol(
   auto loop = releaseProtocol.releaseBodyWait->getParentOfType<scf::ForOp>();
   Block *body = loop ? loop.getBody() : nullptr;
   Block *readyBody = protocol.readyBodySet->getBlock();
-  const bool bodyPlacement =
+  Block *releaseBody = releaseProtocol.releaseBodyWait->getBlock();
+  const bool unconditionalBodyPlacement =
       loop && body && releaseProtocol.releaseBodyWait->getBlock() == body &&
       releaseProtocol.releaseBodySet->getBlock() == body &&
       readyBody == body &&
@@ -526,6 +527,19 @@ LogicalResult resolveRecurringProtocol(
       protocol.readyBodySet->getParentOfType<scf::ForOp>() == loop &&
       protocol.readyBodyWait->getParentOfType<scf::ForOp>() == loop &&
       releaseProtocol.releaseBodySet->getParentOfType<scf::ForOp>() == loop;
+  const bool guardedBodyPlacement =
+      loop && body && releaseBody != body && readyBody == releaseBody &&
+      releaseProtocol.releaseBodySet->getBlock() == releaseBody &&
+      protocol.readyBodyWait->getBlock() == readyBody &&
+      protocol.readyBodySet->getParentOfType<scf::ForOp>() == loop &&
+      protocol.readyBodyWait->getParentOfType<scf::ForOp>() == loop &&
+      releaseProtocol.releaseBodySet->getParentOfType<scf::ForOp>() == loop &&
+      getControlPath(releaseProtocol.releaseBodyWait) ==
+          getControlPath(protocol.readyBodySet) &&
+      getControlPath(protocol.readyBodyWait) ==
+          getControlPath(releaseProtocol.releaseBodySet);
+  const bool bodyPlacement =
+      unconditionalBodyPlacement || guardedBodyPlacement;
   const bool readyControlBalanced =
       bodyPlacement && getControlPath(protocol.readyBodySet) ==
                            getControlPath(protocol.readyBodyWait);

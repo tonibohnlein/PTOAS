@@ -369,7 +369,8 @@ bool sameMechanism(const CanonicalMechanism &left,
     return left.sourcePoint == right.sourcePoint &&
            left.targetPoint == right.targetPoint &&
            left.recurrenceLoop == right.recurrenceLoop &&
-           left.boundaryRecurring == right.boundaryRecurring;
+           left.boundaryRecurring == right.boundaryRecurring &&
+           left.guardedRecurring == right.guardedRecurring;
   case CanonicalMechanismKind::VisibilityFence:
     return left.targetPoint == right.targetPoint &&
            left.generatedCacheMaintenance == right.generatedCacheMaintenance;
@@ -420,7 +421,7 @@ std::size_t hashMechanism(const CanonicalMechanism &mechanism) {
         mechanism.targetPoint.operation,
         static_cast<unsigned>(mechanism.targetPoint.position),
         mechanism.recurrenceLoop.value_or(kInvalidCanonicalSyncId),
-        mechanism.boundaryRecurring);
+        mechanism.boundaryRecurring, mechanism.guardedRecurring);
     break;
   case CanonicalMechanismKind::VisibilityFence:
     hash = llvm::hash_combine(
@@ -636,24 +637,32 @@ FailureOr<CanonicalMechanism> buildEventMechanism(
     const std::optional<CanonicalRegionId> loopRegion =
         loop && loop == targetLoop ? findLoopRegion(program, loop)
                                    : std::nullopt;
-    // The reverse release token is consumed and returned once on every loop
-    // iteration. The forward ready handoff must therefore also execute on
-    // every iteration. A lifted wait before a nested choice remains legal
-    // because both physical anchors then live directly in the loop body; a
-    // pair confined to one choice arm does not.
+    // An unconditional ready handoff uses one reverse release cycle at the
+    // loop header and latch. A handoff confined to one repeated control arm is
+    // also legal when its release wait and set remain in that same arm:
+    // skipped iterations issue neither action and leave the primed token live.
     const bool unconditionalBodyActions =
         loop && setAfter->getBlock() == loop.getBody() &&
         waitBefore->getBlock() == loop.getBody();
-    if (!loopRegion || !unconditionalBodyActions ||
-        !targetModel.supportsEvent(target, source)) {
+    const bool guardedBodyActions =
+        loop && setAfter->getBlock() == actionBlock &&
+        waitBefore->getBlock() == actionBlock && loop->isAncestor(setAfter) &&
+        loop->isAncestor(waitBefore);
+    const bool nestedGuardedLifecycle =
+        loopRegion && guardedBodyActions && !unconditionalBodyActions &&
+        hasEnclosingLoop(program, *loopRegion);
+    const bool invalidRecurringLifecycle =
+        !loopRegion || (!unconditionalBodyActions && !guardedBodyActions) ||
+        nestedGuardedLifecycle || !targetModel.supportsEvent(target, source);
+    if (invalidRecurringLifecycle) {
       targetPhase.operation->emitError(
           "canonical sync cannot construct a single-lane recurring event "
           "protocol on this loop")
           << "; demand d" << demand.id << " p" << demand.source << " ("
           << stringifyPIPE(source.pipe) << ") -> p" << demand.target << " ("
           << stringifyPIPE(target.pipe) << ")"
-          << " requires loop-body physical anchors and a reverse release "
-             "event";
+          << " requires balanced physical anchors and a reverse release "
+             "event within one lifecycle";
       return failure();
     }
     CanonicalMechanism mechanism;
@@ -666,6 +675,7 @@ FailureOr<CanonicalMechanism> buildEventMechanism(
     mechanism.guard =
         commonGuard(sourcePhase.controlPath, targetPhase.controlPath);
     mechanism.recurrenceLoop = *loopRegion;
+    mechanism.guardedRecurring = !unconditionalBodyActions;
     return mechanism;
   }
   CanonicalMechanism mechanism;
