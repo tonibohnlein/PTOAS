@@ -87,6 +87,9 @@ struct CanonicalSyncStatistics {
   std::uint64_t sharedEventFrontiers = 0;
   std::uint64_t sharedEventFrontierMembers = 0;
   std::uint64_t selectedSharedEventFrontiers = 0;
+  std::uint64_t multiDemandPipeBarrierCandidates = 0;
+  std::uint64_t multiDemandPipeBarrierCoveredDemands = 0;
+  std::uint64_t selectedMultiDemandPipeBarriers = 0;
   std::uint64_t coverageWorlds = 0;
   std::uint64_t coverUniverse = 0;
   std::uint64_t coverCandidates = 0;

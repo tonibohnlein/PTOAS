@@ -333,6 +333,14 @@ one ordinary physical event mechanism, not a bundle or an AND/OR cover column.
 Recurring mechanisms are deliberately excluded; their prime, circulation,
 release, and drain lifecycle remains a separate protocol problem.
 
+Same-pipeline barriers need no analogous synthesized candidate in a linear
+block. Every same-pipeline demand already creates a barrier immediately before
+its target, which is the right endpoint used by the exact greedy solution to
+the corresponding interval-stabbing problem. Singleton coverage determines
+which other demand intervals that physical barrier hits. Statistics report
+multi-demand barrier candidates and selections explicitly so this existing
+sharing can be measured independently from new event-frontier synthesis.
+
 An existing GM/all fence is fixed baseline supply, represented once by its
 physical operation rather than once per demand. Its completion role publishes
 the prefixes of the queues drained by the target contract: all resources for a

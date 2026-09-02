@@ -1,0 +1,83 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// Two overlapping MTE2 WAW intervals are stabbed by the direct barrier at the
+// earliest target. No additional synthesized barrier candidate is necessary.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-dump --emit-pto-ir %s -o %t 2> %t.log
+// RUN: FileCheck %s --check-prefix=PLAN < %t.log
+// RUN: FileCheck %s --check-prefix=IR < %t
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-stats --canonical-sync-analysis-only \
+// RUN:   --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=STATS
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @shared_pipe_barrier(
+      %src0: !pto.partition_tensor_view<16x128xf32>,
+      %src1: !pto.partition_tensor_view<16x128xf32>,
+      %src2: !pto.partition_tensor_view<16x128xf32>,
+      %src3: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %first_addr = arith.constant 0 : i64
+    %second_addr = arith.constant 8192 : i64
+    %first = pto.alloc_tile addr = %first_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %second = pto.alloc_tile addr = %second_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    pto.tload ins(%src0 : !pto.partition_tensor_view<16x128xf32>)
+              outs(%first : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%src1 : !pto.partition_tensor_view<16x128xf32>)
+              outs(%second : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%src2 : !pto.partition_tensor_view<16x128xf32>)
+              outs(%first : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%src3 : !pto.partition_tensor_view<16x128xf32>)
+              outs(%second : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// PLAN-LABEL: CANONICAL-SYNC function=shared_pipe_barrier
+// PLAN: d0 kind=WAW p0->p2
+// PLAN: d1 kind=WAW p1->p3
+// PLAN: m[[BARRIER:[0-9]+]] kind=barrier resource=AIV:PIPE_MTE2->AIV:PIPE_MTE2
+// PLAN-SAME: points=before(pto.tload)->before(pto.tload) origins=[d0]
+// PLAN: world=singleton-m[[BARRIER]] mechanisms=[m[[BARRIER]],
+// PLAN-SAME: covered=[d0, d1]
+// PLAN: candidate=c0 mechanisms=[m[[BARRIER]]] weight=1 direct-origins=[d0] additional=[d1]
+// PLAN: PLAN selected=[m[[BARRIER]],
+// PLAN: VERIFY ok
+
+// IR-LABEL: func.func @shared_pipe_barrier
+// IR: pto.tload
+// IR-NEXT: pto.tload
+// IR-NEXT: pto.barrier <PIPE_MTE2>
+// IR-NEXT: pto.tload
+// IR-NEXT: pto.tload
+
+// STATS: VERIFY skipped (analysis-only; IR unchanged)
+// STATS-NEXT: {"counts":{
+// STATS-SAME: "multi_demand_pipe_barrier_candidates":1
+// STATS-SAME: "multi_demand_pipe_barrier_covered_demands":2
+// STATS-SAME: "selected_multi_demand_pipe_barriers":1
+// STATS-SAME: "function":"shared_pipe_barrier"
+// STATS-SAME: "status":"ok"

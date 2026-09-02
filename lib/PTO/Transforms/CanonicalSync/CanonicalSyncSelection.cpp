@@ -180,6 +180,14 @@ mlir::pto::buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program) {
       }
       if (CanonicalSyncStatistics *statistics = program.getStatistics()) {
         statistics->sparseIncidenceEntries += candidate.coveredDemands.size();
+        const bool sharedPipeBarrier =
+            mechanism.kind == CanonicalMechanismKind::PipeBarrier &&
+            candidate.coveredDemands.size() > 1;
+        if (sharedPipeBarrier) {
+          ++statistics->multiDemandPipeBarrierCandidates;
+          statistics->multiDemandPipeBarrierCoveredDemands +=
+              candidate.coveredDemands.size();
+        }
       }
     }
   }
@@ -251,8 +259,7 @@ mlir::pto::solveCanonicalSyncSetCover(CanonicalSyncProgram &program) {
       if (entry.gain != gains[entry.candidate]) {
         continue;
       }
-      best = entry.gain == 0U ? nullptr
-                              : &instance.candidates[entry.candidate];
+      best = entry.gain == 0U ? nullptr : &instance.candidates[entry.candidate];
       break;
     }
     if (!best) {
@@ -319,6 +326,16 @@ mlir::pto::solveCanonicalSyncSetCover(CanonicalSyncProgram &program) {
       llvm::count_if(solution.mechanisms, [&](CanonicalMechanismId id) {
         return !llvm::is_contained(instance.baseline, id);
       }));
+  if (CanonicalSyncStatistics *statistics = program.getStatistics()) {
+    statistics->selectedMultiDemandPipeBarriers =
+        llvm::count_if(solution.mechanisms, [&](CanonicalMechanismId id) {
+          const CanonicalSetCoverCandidate *candidate =
+              candidateByMechanism[id];
+          return program.getMechanism(id).kind ==
+                     CanonicalMechanismKind::PipeBarrier &&
+                 candidate && candidate->coveredDemands.size() > 1;
+        });
+  }
   solution.coverageVerified = true;
   program.setSetCoverSolution(std::move(solution));
   return success();

@@ -62,6 +62,13 @@ void printCanonicalSyncStatistics(const CanonicalSyncStatistics &statistics,
       static_cast<std::int64_t>(statistics.sharedEventFrontierMembers);
   counts["selected_shared_event_frontiers"] =
       static_cast<std::int64_t>(statistics.selectedSharedEventFrontiers);
+  counts["multi_demand_pipe_barrier_candidates"] =
+      static_cast<std::int64_t>(statistics.multiDemandPipeBarrierCandidates);
+  counts["multi_demand_pipe_barrier_covered_demands"] =
+      static_cast<std::int64_t>(
+          statistics.multiDemandPipeBarrierCoveredDemands);
+  counts["selected_multi_demand_pipe_barriers"] =
+      static_cast<std::int64_t>(statistics.selectedMultiDemandPipeBarriers);
   counts["coverage_worlds"] =
       static_cast<std::int64_t>(statistics.coverageWorlds);
   counts["cover_universe"] =

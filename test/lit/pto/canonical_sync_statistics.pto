@@ -39,6 +39,9 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK-SAME: "max_verifier_loop_states":0
 // CHECK-SAME: "mechanism_intern_key_tests":
 // CHECK-SAME: "mechanism_prefix_phase_tests":0
+// CHECK-SAME: "multi_demand_pipe_barrier_candidates":0
+// CHECK-SAME: "multi_demand_pipe_barrier_covered_demands":0
+// CHECK-SAME: "selected_multi_demand_pipe_barriers":0
 // CHECK-SAME: "selected_shared_event_frontiers":0
 // CHECK-SAME: "shared_event_frontier_members":0
 // CHECK-SAME: "shared_event_frontiers":0
