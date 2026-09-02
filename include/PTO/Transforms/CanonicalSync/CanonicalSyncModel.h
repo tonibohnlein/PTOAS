@@ -301,10 +301,33 @@ struct CanonicalSetCoverInstance {
   llvm::SmallVector<CanonicalSetCoverCandidate, 8> candidates;
 };
 
+/// A physical event group used only after ordinary allocation exhausts a
+/// directed domain. Coalesced groups widen compatible cuts; serialized groups
+/// use a forward ready and reverse release handshake. The members keep the
+/// logical coverage established by their singleton mechanisms.
+enum class CanonicalScarcityEventKind : std::uint8_t {
+  Coalesced,
+  Serialized,
+};
+
+struct CanonicalScarcityEventGroup {
+  CanonicalScarcityEventKind kind = CanonicalScarcityEventKind::Coalesced;
+  llvm::SmallVector<CanonicalMechanismId, 4> members;
+  CanonicalPhysicalResource source;
+  CanonicalPhysicalResource target;
+  CanonicalProgramPoint sourcePoint;
+  CanonicalProgramPoint targetPoint;
+  llvm::SmallVector<CanonicalControlAtom, 2> guard;
+  std::optional<CanonicalRegionId> recurrenceLoop;
+  unsigned eventId = 0;
+  std::optional<unsigned> releaseEventId;
+};
+
 struct CanonicalSetCoverSolution {
   llvm::SmallVector<CanonicalSetCoverCandidateId, 8> greedyCandidates;
   llvm::SmallVector<CanonicalMechanismId, 8> mechanisms;
   llvm::SmallVector<CanonicalMechanismId, 8> reverseDeleted;
+  llvm::SmallVector<CanonicalScarcityEventGroup, 2> scarcityEventGroups;
   std::uint64_t weight = 0;
   bool coverageVerified = false;
 };
@@ -333,6 +356,8 @@ public:
   void setMechanismEventId(CanonicalMechanismId mechanism, unsigned eventId);
   void setMechanismReleaseEventId(CanonicalMechanismId mechanism,
                                   unsigned eventId);
+  void setScarcityEventGroups(
+      llvm::SmallVector<CanonicalScarcityEventGroup, 2> groups);
   void setDirectMechanism(CanonicalDemandId demand,
                           CanonicalMechanismId mechanism);
 

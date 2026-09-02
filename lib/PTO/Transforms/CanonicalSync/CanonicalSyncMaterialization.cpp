@@ -27,6 +27,8 @@ constexpr StringLiteral kGeneratedAttr = "pto.canonical_sync.generated";
 constexpr StringLiteral kMechanismAttr = "pto.canonical_sync.mechanism";
 constexpr StringLiteral kProtocolRoleAttr = "pto.canonical_sync.protocol_role";
 constexpr StringLiteral kReleaseOwnerAttr = "pto.canonical_sync.release_owner";
+constexpr StringLiteral kProtocolIndexAttr =
+    "pto.canonical_sync.protocol_index";
 
 struct EventAction {
   CanonicalMechanismId mechanism = kInvalidCanonicalSyncId;
@@ -46,6 +48,16 @@ struct RecurringEventAction {
   Operation *sourceAnchor = nullptr;
   Operation *targetAnchor = nullptr;
   bool boundary = false;
+};
+
+struct SerializedEventAction {
+  CanonicalMechanismId owner = kInvalidCanonicalSyncId;
+  PIPE source = PIPE::PIPE_UNASSIGNED;
+  PIPE target = PIPE::PIPE_UNASSIGNED;
+  unsigned readyEventId = 0;
+  unsigned releaseEventId = 0;
+  SmallVector<Operation *, 4> sourceAnchors;
+  SmallVector<Operation *, 4> targetAnchors;
 };
 
 void tagGenerated(Operation *operation, OpBuilder &builder,
@@ -70,6 +82,14 @@ void tagReadyProtocol(Operation *operation, OpBuilder &builder,
       builder.getI32IntegerAttr(static_cast<int32_t>(releaseOwner)));
 }
 
+void tagSerializedProtocol(Operation *operation, OpBuilder &builder,
+                           CanonicalMechanismId owner, StringRef role,
+                           unsigned index) {
+  tagProtocol(operation, builder, owner, role);
+  operation->setAttr(kProtocolIndexAttr,
+                     builder.getI32IntegerAttr(static_cast<int32_t>(index)));
+}
+
 LogicalResult collectActions(
     const CanonicalSyncProgram &program, const IRMapping &mapping,
     DenseMap<Operation *, SmallVector<EventAction, 2>> &sets,
@@ -77,13 +97,76 @@ LogicalResult collectActions(
     DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>> &barriers,
     DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>>
         &visibilityFences,
-    SmallVectorImpl<RecurringEventAction> &protocols) {
+    SmallVectorImpl<RecurringEventAction> &protocols,
+    SmallVectorImpl<SerializedEventAction> &serializedProtocols) {
   const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
+  SmallVector<CanonicalMechanismId, 8> scarcityMembers;
+  for (const CanonicalScarcityEventGroup &group :
+       solution.scarcityEventGroups) {
+    for (CanonicalMechanismId member : group.members) {
+      scarcityMembers.push_back(member);
+    }
+    if (group.kind == CanonicalScarcityEventKind::Coalesced) {
+      Operation *setAnchor = mapping.lookupOrNull(group.sourcePoint.operation);
+      Operation *waitAnchor = mapping.lookupOrNull(group.targetPoint.operation);
+      if (!setAnchor || !waitAnchor) {
+        return program.getFunction().emitError(
+            "canonical sync failed to map a coalesced event anchor");
+      }
+      if (group.recurrenceLoop) {
+        Operation *loop = mapping.lookupOrNull(
+            program.getRegion(*group.recurrenceLoop).operation);
+        const bool validRecurringGroup =
+            loop && isa<scf::ForOp>(loop) && group.releaseEventId.has_value();
+        if (!validRecurringGroup) {
+          return program.getFunction().emitError(
+              "canonical sync failed to map a coalesced recurring event");
+        }
+        protocols.push_back({group.members.front(), group.source.pipe,
+                             group.target.pipe, group.eventId,
+                             *group.releaseEventId, loop, setAnchor, waitAnchor,
+                             false});
+        continue;
+      }
+      EventAction action{group.members.front(), group.source.pipe,
+                         group.target.pipe, group.eventId, false};
+      sets[setAnchor].push_back(action);
+      waits[waitAnchor].push_back(action);
+      continue;
+    }
+    if (!group.releaseEventId) {
+      return program.getFunction().emitError(
+          "canonical sync serialized event lacks a release ID");
+    }
+    SerializedEventAction action;
+    action.owner = group.members.front();
+    action.source = group.source.pipe;
+    action.target = group.target.pipe;
+    action.readyEventId = group.eventId;
+    action.releaseEventId = *group.releaseEventId;
+    for (CanonicalMechanismId member : group.members) {
+      const CanonicalMechanism &mechanism = program.getMechanism(member);
+      Operation *sourceAnchor =
+          mapping.lookupOrNull(mechanism.sourcePoint.operation);
+      Operation *targetAnchor =
+          mapping.lookupOrNull(mechanism.targetPoint.operation);
+      if (!sourceAnchor || !targetAnchor) {
+        return program.getFunction().emitError(
+            "canonical sync failed to map a serialized event anchor");
+      }
+      action.sourceAnchors.push_back(sourceAnchor);
+      action.targetAnchors.push_back(targetAnchor);
+    }
+    serializedProtocols.push_back(std::move(action));
+  }
   for (CanonicalMechanismId mechanismId : solution.mechanisms) {
     const CanonicalMechanism &mechanism = program.getMechanism(mechanismId);
     if (mechanism.kind == CanonicalMechanismKind::IntrinsicOrder ||
         mechanism.kind == CanonicalMechanismKind::FixedFence ||
         mechanism.kind == CanonicalMechanismKind::TailBarrier) {
+      continue;
+    }
+    if (llvm::is_contained(scarcityMembers, mechanism.id)) {
       continue;
     }
     Operation *waitAnchor =
@@ -243,6 +326,58 @@ void emitRecurringProtocols(func::FuncOp clone,
           protocol.readyEventId, protocol.mechanism, "ready-drain-wait");
       tagReadyProtocol(readyDrain, builder, protocol.mechanism,
                        releaseOwner.mechanism, "ready-drain-wait");
+    }
+  }
+}
+
+void emitSerializedProtocols(func::FuncOp clone,
+                             ArrayRef<SerializedEventAction> protocols) {
+  OpBuilder builder(clone.getContext());
+  for (const SerializedEventAction &protocol : protocols) {
+    const Location location = protocol.sourceAnchors.front()->getLoc();
+    builder.setInsertionPoint(protocol.sourceAnchors.front());
+    Operation *prime = createProtocolEvent<SetFlagOp>(
+        builder, location, clone, protocol.target, protocol.source,
+        protocol.releaseEventId, protocol.owner, "serial-release-prime-set");
+    tagSerializedProtocol(prime, builder, protocol.owner,
+                          "serial-release-prime-set", 0);
+
+    for (auto [index, sourceAnchor] : llvm::enumerate(protocol.sourceAnchors)) {
+      Operation *targetAnchor = protocol.targetAnchors[index];
+      builder.setInsertionPoint(sourceAnchor);
+      Operation *releaseWait = createProtocolEvent<WaitFlagOp>(
+          builder, sourceAnchor->getLoc(), clone, protocol.target,
+          protocol.source, protocol.releaseEventId, protocol.owner,
+          "serial-release-wait");
+      tagSerializedProtocol(releaseWait, builder, protocol.owner,
+                            "serial-release-wait", index);
+
+      builder.setInsertionPointAfter(sourceAnchor);
+      Operation *readySet = createProtocolEvent<SetFlagOp>(
+          builder, sourceAnchor->getLoc(), clone, protocol.source,
+          protocol.target, protocol.readyEventId, protocol.owner,
+          "serial-ready-set");
+      tagSerializedProtocol(readySet, builder, protocol.owner,
+                            "serial-ready-set", index);
+
+      builder.setInsertionPoint(targetAnchor);
+      Operation *readyWait = createProtocolEvent<WaitFlagOp>(
+          builder, targetAnchor->getLoc(), clone, protocol.source,
+          protocol.target, protocol.readyEventId, protocol.owner,
+          "serial-ready-wait");
+      tagSerializedProtocol(readyWait, builder, protocol.owner,
+                            "serial-ready-wait", index);
+
+      if (index + 1 == protocol.sourceAnchors.size()) {
+        continue;
+      }
+      builder.setInsertionPointAfter(targetAnchor);
+      Operation *releaseSet = createProtocolEvent<SetFlagOp>(
+          builder, targetAnchor->getLoc(), clone, protocol.target,
+          protocol.source, protocol.releaseEventId, protocol.owner,
+          "serial-release-set");
+      tagSerializedProtocol(releaseSet, builder, protocol.owner,
+                            "serial-release-set", index);
     }
   }
 }
@@ -434,12 +569,15 @@ mlir::pto::materializeAndVerifyCanonicalSync(CanonicalSyncProgram &program) {
   DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>> barriers;
   DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>> visibilityFences;
   SmallVector<RecurringEventAction, 2> protocols;
+  SmallVector<SerializedEventAction, 2> serializedProtocols;
   if (failed(collectActions(program, mapping, sets, waits, barriers,
-                            visibilityFences, protocols))) {
+                            visibilityFences, protocols,
+                            serializedProtocols))) {
     return failure();
   }
   emitActions(clone, sets, waits, barriers, visibilityFences, program);
   emitRecurringProtocols(clone, protocols);
+  emitSerializedProtocols(clone, serializedProtocols);
   if (failed(emitTailBarriers(clone, program, mapping))) {
     return failure();
   }

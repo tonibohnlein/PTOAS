@@ -6,10 +6,18 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Seven coexecuting S-to-V generations cannot be colored with compiler-owned
-// event IDs 0-5. The pass must fail before mutating the function.
-// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
-// RUN:   --emit-pto-ir %s -o /dev/null 2>&1 | FileCheck %s
+// Seven coexecuting S-to-V generations exceed the compiler-owned event pool.
+// Their physical cuts form a strict alternating sequence, so the scarcity
+// fallback serializes them with one forward ready key and one reverse release
+// key. The numeric ID may be equal because the directed event keys differ.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --emit-pto-ir %s -o %t
+// RUN: FileCheck %s --check-prefix=PRIME < %t
+// RUN: FileCheck %s --check-prefix=RELEASE-WAIT < %t
+// RUN: FileCheck %s --check-prefix=READY-SET < %t
+// RUN: FileCheck %s --check-prefix=READY-WAIT < %t
+// RUN: FileCheck %s --check-prefix=RELEASE-SET < %t
+// RUN: FileCheck %s --check-prefix=IDS < %t
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @canonical_sync_event_id_exhaustion()
@@ -118,5 +126,16 @@ module attributes {pto.target_arch = "a2a3"} {
   }
 }
 
-// CHECK: canonical sync exhausted compiler event IDs after applying hidden macro reservations
-// CHECK: mechanism m{{[0-9]+}} domain AIV:PIPE_S -> PIPE_V
+// PRIME-COUNT-1: pto.set_flag[<PIPE_V>, <PIPE_S>, <EVENT_ID0>]
+// PRIME-SAME: protocol_role = "serial-release-prime-set"
+// RELEASE-WAIT-COUNT-7: pto.wait_flag[<PIPE_V>, <PIPE_S>, <EVENT_ID0>] {{.*}}protocol_role = "serial-release-wait"
+// READY-SET-COUNT-7: pto.set_flag[<PIPE_S>, <PIPE_V>, <EVENT_ID0>] {{.*}}protocol_role = "serial-ready-set"
+// READY-WAIT-COUNT-7: pto.wait_flag[<PIPE_S>, <PIPE_V>, <EVENT_ID0>] {{.*}}protocol_role = "serial-ready-wait"
+// RELEASE-SET-COUNT-6: pto.set_flag[<PIPE_V>, <PIPE_S>, <EVENT_ID0>] {{.*}}protocol_role = "serial-release-set"
+// IDS-NOT: EVENT_ID1
+// IDS-NOT: EVENT_ID2
+// IDS-NOT: EVENT_ID3
+// IDS-NOT: EVENT_ID4
+// IDS-NOT: EVENT_ID5
+// IDS-NOT: EVENT_ID6
+// IDS-NOT: EVENT_ID7

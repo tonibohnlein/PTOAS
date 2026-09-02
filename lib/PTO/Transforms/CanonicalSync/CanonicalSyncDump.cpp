@@ -256,6 +256,21 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
         os << "/release-e" << *program.getMechanism(id).releaseEventId;
       }
     }
+    os << "] scarcity=[";
+    llvm::interleaveComma(
+        solution.scarcityEventGroups, os,
+        [&os](const CanonicalScarcityEventGroup &group) {
+          os << (group.kind == CanonicalScarcityEventKind::Coalesced
+                     ? "coalesced{"
+                     : "serialized{");
+          llvm::interleaveComma(
+              group.members, os,
+              [&os](CanonicalMechanismId id) { os << 'm' << id; });
+          os << "}:e" << group.eventId;
+          if (group.releaseEventId) {
+            os << "/release-e" << *group.releaseEventId;
+          }
+        });
     os << "]\n";
   }
 }

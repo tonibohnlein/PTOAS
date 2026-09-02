@@ -14,6 +14,8 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 
+#include <optional>
+
 using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::canonical_sync_detail;
@@ -24,6 +26,8 @@ constexpr StringLiteral kGeneratedAttr = "pto.canonical_sync.generated";
 constexpr StringLiteral kMechanismAttr = "pto.canonical_sync.mechanism";
 constexpr StringLiteral kProtocolRoleAttr = "pto.canonical_sync.protocol_role";
 constexpr StringLiteral kReleaseOwnerAttr = "pto.canonical_sync.release_owner";
+constexpr StringLiteral kProtocolIndexAttr =
+    "pto.canonical_sync.protocol_index";
 
 struct ConcreteControlArm {
   Operation *choice = nullptr;
@@ -56,6 +60,19 @@ struct ConcreteRecurringProtocol {
   Operation *readyDrainWait = nullptr;
   Operation *releaseBodySet = nullptr;
   Operation *releaseDrainWait = nullptr;
+};
+
+struct ConcreteSerializedStep {
+  Operation *releaseWait = nullptr;
+  Operation *readySet = nullptr;
+  Operation *readyWait = nullptr;
+  Operation *releaseSet = nullptr;
+};
+
+struct ConcreteSerializedProtocol {
+  int64_t mechanism = -1;
+  Operation *releasePrimeSet = nullptr;
+  DenseMap<unsigned, ConcreteSerializedStep> steps;
 };
 
 SmallVector<ConcreteControlArm, 2> getControlPath(Operation *operation) {
@@ -205,17 +222,67 @@ LogicalResult collectProtocolOperation(
   return success();
 }
 
-LogicalResult
-collectGenerations(func::FuncOp function,
-                   DenseMap<int64_t, ConcreteEventGeneration> &generations,
-                   DenseMap<int64_t, ConcreteRecurringProtocol> &protocols) {
+LogicalResult collectSerializedProtocolOperation(
+    Operation *operation, StringRef role,
+    DenseMap<int64_t, ConcreteSerializedProtocol> &protocols) {
+  FailureOr<int64_t> mechanism = getMechanismId(operation);
+  auto index = operation->getAttrOfType<IntegerAttr>(kProtocolIndexAttr);
+  const bool validIndex = succeeded(mechanism) && index && index.getInt() >= 0;
+  if (!validIndex) {
+    return operation->emitError(
+        "canonical sync event verifier found an invalid serialized protocol "
+        "index");
+  }
+  ConcreteSerializedProtocol &protocol = protocols[*mechanism];
+  protocol.mechanism = *mechanism;
+  Operation **slot = nullptr;
+  if (role == "serial-release-prime-set") {
+    slot = &protocol.releasePrimeSet;
+  } else {
+    ConcreteSerializedStep &step =
+        protocol.steps[static_cast<unsigned>(index.getInt())];
+    if (role == "serial-release-wait") {
+      slot = &step.releaseWait;
+    } else if (role == "serial-ready-set") {
+      slot = &step.readySet;
+    } else if (role == "serial-ready-wait") {
+      slot = &step.readyWait;
+    } else if (role == "serial-release-set") {
+      slot = &step.releaseSet;
+    }
+  }
+  if (!slot) {
+    return operation->emitError(
+        "canonical sync event verifier found an unknown serialized protocol "
+        "role");
+  }
+  if (*slot) {
+    InFlightDiagnostic diagnostic = operation->emitError(
+        "canonical sync event verifier found a duplicate serialized "
+        "protocol action");
+    diagnostic.attachNote((*slot)->getLoc()) << "previous action is here";
+    return failure();
+  }
+  *slot = operation;
+  return success();
+}
+
+LogicalResult collectGenerations(
+    func::FuncOp function,
+    DenseMap<int64_t, ConcreteEventGeneration> &generations,
+    DenseMap<int64_t, ConcreteRecurringProtocol> &protocols,
+    DenseMap<int64_t, ConcreteSerializedProtocol> &serializedProtocols) {
   WalkResult result = function.walk([&](Operation *operation) -> WalkResult {
     auto role = operation->getAttrOfType<StringAttr>(kProtocolRoleAttr);
     if (role && isa<SetFlagOp, WaitFlagOp>(operation)) {
-      return failed(collectProtocolOperation(operation, role.getValue(),
-                                             protocols))
-                 ? WalkResult::interrupt()
-                 : WalkResult::advance();
+      const bool serialized = role.getValue().starts_with("serial-");
+      const LogicalResult collected =
+          serialized
+              ? collectSerializedProtocolOperation(operation, role.getValue(),
+                                                   serializedProtocols)
+              : collectProtocolOperation(operation, role.getValue(), protocols);
+      return failed(collected) ? WalkResult::interrupt()
+                               : WalkResult::advance();
     }
     if (isa<SetFlagOp, SyncSetOp>(operation)) {
       return failed(collectEventOperation(operation, true, generations))
@@ -272,31 +339,57 @@ FailureOr<ConcreteEventGeneration>
 makeProtocolGeneration(func::FuncOp function, const CanonicalSyncTarget &target,
                        int64_t mechanism, Operation *setOperation,
                        Operation *waitOperation) {
-  auto set = cast<SetFlagOp>(setOperation);
+  auto set = dyn_cast_or_null<SetFlagOp>(setOperation);
+  auto wait = dyn_cast_or_null<WaitFlagOp>(waitOperation);
+  if (!set || !wait || !eventActionsMatch(setOperation, waitOperation)) {
+    Operation *witness = waitOperation ? waitOperation : setOperation;
+    witness->emitError(
+        "canonical sync event verifier found mismatched protocol endpoints");
+    return failure();
+  }
   const PIPE sourcePipe = set.getSrcPipe().getPipe();
   const PIPE targetPipe = set.getDstPipe().getPipe();
-  FailureOr<CanonicalPhysicalResource> source =
+  FailureOr<CanonicalPhysicalResource> setSource =
       resolvePhysicalResource(function, setOperation, sourcePipe);
-  FailureOr<CanonicalPhysicalResource> destination =
+  FailureOr<CanonicalPhysicalResource> setTarget =
       resolvePhysicalResource(function, setOperation, targetPipe);
-  const bool unresolved = failed(source) || failed(destination);
+  FailureOr<CanonicalPhysicalResource> waitSource =
+      resolvePhysicalResource(function, waitOperation, sourcePipe);
+  FailureOr<CanonicalPhysicalResource> waitTarget =
+      resolvePhysicalResource(function, waitOperation, targetPipe);
+  const bool unresolved = failed(setSource) || failed(setTarget) ||
+                          failed(waitSource) || failed(waitTarget);
   if (unresolved) {
     return failure();
   }
+  const bool mismatchedContext =
+      *setSource != *waitSource || *setTarget != *waitTarget;
+  if (mismatchedContext) {
+    waitOperation->emitError(
+        "canonical sync event verifier found context-mismatched protocol "
+        "endpoints");
+    return failure();
+  }
   const unsigned eventId = static_cast<unsigned>(set.getEventId().getEvent());
-  if (failed(validateEventKey(function, target, setOperation, *source,
-                              *destination, eventId))) {
+  if (failed(validateEventKey(function, target, setOperation, *setSource,
+                              *setTarget, eventId))) {
     return failure();
   }
   ConcreteEventGeneration result;
   result.mechanism = mechanism;
   result.set = setOperation;
   result.wait = waitOperation;
-  result.source = *source;
-  result.target = *destination;
+  result.source = *setSource;
+  result.target = *setTarget;
   result.eventId = eventId;
   result.controlPath = getControlPath(setOperation);
   return result;
+}
+
+bool eventGenerationKeysMatch(const ConcreteEventGeneration &first,
+                              const ConcreteEventGeneration &second) {
+  return first.source == second.source && first.target == second.target &&
+         first.eventId == second.eventId && first.crossCore == second.crossCore;
 }
 
 LogicalResult resolveRecurringProtocol(
@@ -413,6 +506,160 @@ LogicalResult resolveRecurringProtocol(
   if (emitReleaseGeneration) {
     generations.push_back(std::move(*releaseGeneration));
   }
+  return success();
+}
+
+bool protocolActionPrecedes(Operation *first, Operation *second) {
+  return first && second &&
+         programPointMustPrecede(
+             {first, CanonicalProgramPointPosition::After},
+             {second, CanonicalProgramPointPosition::Before});
+}
+
+LogicalResult resolveSerializedProtocol(
+    func::FuncOp function, const CanonicalSyncTarget &target,
+    const ConcreteSerializedProtocol &protocol,
+    SmallVectorImpl<ConcreteEventGeneration> &generations) {
+  const bool complete = protocol.releasePrimeSet && protocol.steps.size() >= 2;
+  if (!complete) {
+    Operation *witness = protocol.releasePrimeSet ? protocol.releasePrimeSet
+                                                  : function.getOperation();
+    return witness->emitError(
+        "canonical sync event verifier found an incomplete serialized "
+        "ready/release protocol");
+  }
+  const unsigned count = static_cast<unsigned>(protocol.steps.size());
+  SmallVector<const ConcreteSerializedStep *, 8> steps;
+  steps.reserve(count);
+  for (unsigned index = 0; index < count; ++index) {
+    auto found = protocol.steps.find(index);
+    if (found == protocol.steps.end()) {
+      return protocol.releasePrimeSet->emitError(
+          "canonical sync event verifier found a non-contiguous serialized "
+          "protocol");
+    }
+    steps.push_back(&found->second);
+  }
+
+  const ConcreteSerializedStep &first = *steps.front();
+  if (!first.releaseWait || !first.readySet || !first.readyWait ||
+      !eventActionsMatch(protocol.releasePrimeSet, first.releaseWait)) {
+    return protocol.releasePrimeSet->emitError(
+        "canonical sync event verifier found mismatched serialized protocol "
+        "keys");
+  }
+  const SmallVector<ConcreteControlArm, 2> control =
+      getControlPath(protocol.releasePrimeSet);
+  Operation *previousReleaseSet = protocol.releasePrimeSet;
+  std::optional<ConcreteEventGeneration> readyKey;
+  std::optional<ConcreteEventGeneration> releaseKey;
+  for (auto [index, stepPointer] : llvm::enumerate(steps)) {
+    const ConcreteSerializedStep &step = *stepPointer;
+    const bool last = index + 1 == steps.size();
+    const bool incomplete = !step.releaseWait || !step.readySet ||
+                            !step.readyWait || (!last && !step.releaseSet) ||
+                            (last && step.releaseSet);
+    const bool mismatched =
+        incomplete ||
+        !eventActionsMatch(previousReleaseSet, step.releaseWait) ||
+        !eventActionsMatch(step.readySet, step.readyWait) ||
+        !setActionsMatch(protocol.releasePrimeSet, previousReleaseSet) ||
+        (!last && !setActionsMatch(protocol.releasePrimeSet, step.releaseSet));
+    if (mismatched) {
+      return step.releaseWait
+                 ? step.releaseWait->emitError(
+                       "canonical sync event verifier found mismatched "
+                       "serialized protocol keys")
+                 : protocol.releasePrimeSet->emitError(
+                       "canonical sync event verifier found an incomplete "
+                       "serialized protocol step");
+    }
+    const bool repeated =
+        hasRepeatingAncestor(step.releaseWait) ||
+        hasRepeatingAncestor(step.readySet) ||
+        hasRepeatingAncestor(step.readyWait) ||
+        (step.releaseSet && hasRepeatingAncestor(step.releaseSet));
+    const bool balancedControl =
+        getControlPath(step.releaseWait) == control &&
+        getControlPath(step.readySet) == control &&
+        getControlPath(step.readyWait) == control &&
+        (!step.releaseSet || getControlPath(step.releaseSet) == control);
+    const bool releaseArrives =
+        protocolActionPrecedes(previousReleaseSet, step.releaseWait);
+    const bool releaseBeforeReady =
+        protocolActionPrecedes(step.releaseWait, step.readySet);
+    const bool readyPairOrdered =
+        protocolActionPrecedes(step.readySet, step.readyWait);
+    const bool releaseReturned =
+        last || (protocolActionPrecedes(step.readyWait, step.releaseSet) &&
+                 protocolActionPrecedes(step.releaseSet,
+                                        steps[index + 1]->releaseWait));
+    const bool ordered = releaseArrives && releaseBeforeReady &&
+                         readyPairOrdered && releaseReturned;
+    if (repeated) {
+      return step.releaseWait->emitError(
+          "canonical sync event verifier found a loop-repeated serialized "
+          "ready/release placement");
+    }
+    if (!balancedControl) {
+      return step.releaseWait->emitError(
+          "canonical sync event verifier found a control-unbalanced "
+          "serialized ready/release placement");
+    }
+    if (!ordered) {
+      return step.releaseWait->emitError(
+                 "canonical sync event verifier found a misordered "
+                 "serialized ready/release placement at step ")
+             << index << " (release-arrives=" << releaseArrives
+             << ", release-before-ready=" << releaseBeforeReady
+             << ", ready-pair=" << readyPairOrdered
+             << ", release-returned=" << releaseReturned << ')';
+    }
+    FailureOr<ConcreteEventGeneration> stepReady = makeProtocolGeneration(
+        function, target, protocol.mechanism, step.readySet, step.readyWait);
+    FailureOr<ConcreteEventGeneration> stepRelease =
+        makeProtocolGeneration(function, target, protocol.mechanism,
+                               previousReleaseSet, step.releaseWait);
+    const bool validStep = succeeded(stepReady) && succeeded(stepRelease);
+    if (!validStep) {
+      return failure();
+    }
+    const bool readyMatches =
+        !readyKey || eventGenerationKeysMatch(*readyKey, *stepReady);
+    const bool releaseMatches =
+        !releaseKey || eventGenerationKeysMatch(*releaseKey, *stepRelease);
+    if (!readyMatches || !releaseMatches) {
+      return step.releaseWait->emitError(
+          "canonical sync event verifier found inconsistent physical keys "
+          "across a serialized ready/release protocol");
+    }
+    readyKey = std::move(*stepReady);
+    releaseKey = std::move(*stepRelease);
+    if (!last) {
+      previousReleaseSet = step.releaseSet;
+    }
+  }
+
+  FailureOr<ConcreteEventGeneration> ready =
+      makeProtocolGeneration(function, target, protocol.mechanism,
+                             first.readySet, steps.back()->readyWait);
+  FailureOr<ConcreteEventGeneration> release = makeProtocolGeneration(
+      function, target, protocol.mechanism, protocol.releasePrimeSet,
+      steps.back()->releaseWait);
+  const bool generated = succeeded(ready) && succeeded(release);
+  if (!generated) {
+    return failure();
+  }
+  const bool unbalanced = ready->source != release->target ||
+                          ready->target != release->source ||
+                          ready->controlPath != release->controlPath;
+  if (unbalanced) {
+    return protocol.releasePrimeSet->emitError(
+        "canonical sync event verifier found an unbalanced serialized "
+        "ready/release protocol");
+  }
+  generations.push_back(std::move(*ready));
+  generations.push_back(std::move(*release));
   return success();
 }
 
@@ -533,7 +780,7 @@ LogicalResult resolveGeneration(func::FuncOp function,
   const bool differentBlocks =
       generation.set->getBlock() != generation.wait->getBlock();
   const bool setDoesNotPrecedeWait =
-      !generation.set->isBeforeInBlock(generation.wait);
+      differentBlocks || !generation.set->isBeforeInBlock(generation.wait);
   if (differentBlocks || setDoesNotPrecedeWait) {
     return generation.wait->emitError("canonical sync event verifier cannot "
                                       "prove set-before-wait issue order");
@@ -586,7 +833,9 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyConcreteEventGenerations(
     func::FuncOp function, const CanonicalSyncTarget &target) {
   DenseMap<int64_t, ConcreteEventGeneration> byMechanism;
   DenseMap<int64_t, ConcreteRecurringProtocol> protocols;
-  if (failed(collectGenerations(function, byMechanism, protocols))) {
+  DenseMap<int64_t, ConcreteSerializedProtocol> serializedProtocols;
+  if (failed(collectGenerations(function, byMechanism, protocols,
+                                serializedProtocols))) {
     return failure();
   }
   SmallVector<ConcreteEventGeneration, 8> generations;
@@ -607,6 +856,12 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyConcreteEventGenerations(
     if (failed(resolveRecurringProtocol(
             function, target, protocol, release->second,
             protocol.mechanism == protocol.releaseOwner, generations))) {
+      return failure();
+    }
+  }
+  for (const auto &entry : serializedProtocols) {
+    if (failed(resolveSerializedProtocol(function, target, entry.second,
+                                         generations))) {
       return failure();
     }
   }

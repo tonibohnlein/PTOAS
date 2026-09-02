@@ -290,8 +290,32 @@ same directed domain. Scalar/MLIR order between an earlier wait and a later set
 is not a hardware lifetime proof: the source pipeline may re-set the flag before
 the target pipeline consumes it. Therefore all coexecuting generations in one
 directed domain receive distinct IDs. Only once-only generations in provably
-mutually exclusive control arms may share an ID. Deterministic first-fit failure
-is an error; it does not trigger event reuse or a global-barrier fallback.
+mutually exclusive control arms may share an ID.
+
+When selected generations exhaust a directed domain, the allocator first tries
+to coalesce compatible cuts. Members must have the same direction, control
+guard, physical block, and recurrence owner. One set is placed at the latest
+member source cut and one wait at the earliest member target cut, and the two
+combined cuts must remain ordered. This captures every member source prefix and
+guards every member target suffix. For a recurring group, the combined ready
+pair retains the existing primed and drained loop release protocol.
+
+If coalescing is insufficient, an ordinary strict alternating sequence in one
+physical block and under one identical control guard may be serialized with a
+forward ready event and a reverse release event. The reverse direction must be
+legal in the target table. A release token is primed before the first source;
+each source consumes the preceding release before setting ready, and each
+target consumes ready before returning the release for the next source. This
+creates a hardware happens-before proof from every wait consumption to the
+next set of the same key. It is not lexical event reuse. The independent event
+verifier reconstructs the complete chain, checks every role, direction, ID,
+guard, once-only placement, and alternating order, and represents both keys as
+occupied across the whole chain when checking interference.
+
+Both repairs may reduce overlap, so they are used only after ordinary
+allocation fails. Neither adds an internal `PIPE_ALL` barrier. Unsupported
+reverse directions, incompatible cuts, and remaining scarcity still fail
+closed.
 Cross-core mode-2 FFTS counters use their documented ID range 0 through 10.
 Coexecuting cross-core generations conservatively receive distinct numeric
 counter IDs, independent of their pipe direction, and exhaustion is an error.

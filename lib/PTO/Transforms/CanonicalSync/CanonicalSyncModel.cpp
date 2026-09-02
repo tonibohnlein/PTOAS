@@ -10,6 +10,8 @@
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncModel.h"
 
+#include "CanonicalSyncInternal.h"
+
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -122,6 +124,15 @@ void CanonicalSyncProgram::setMechanismReleaseEventId(
     llvm_unreachable("cannot allocate an invalid or frozen mechanism");
   }
   mechanisms[mechanism].releaseEventId = eventId;
+}
+
+void CanonicalSyncProgram::setScarcityEventGroups(
+    SmallVector<CanonicalScarcityEventGroup, 2> groups) {
+  if (frozen || !setCoverSolution ||
+      !setCoverSolution->scarcityEventGroups.empty()) {
+    llvm_unreachable("cannot replace a frozen event-scarcity plan");
+  }
+  setCoverSolution->scarcityEventGroups = std::move(groups);
 }
 
 void CanonicalSyncProgram::setDirectMechanism(CanonicalDemandId demand,
@@ -462,20 +473,74 @@ LogicalResult CanonicalSyncProgram::freeze() {
             setCoverSolution->mechanisms, [this](CanonicalMechanismId id) {
               return !llvm::is_contained(setCoverInstance->baseline, id);
             }));
+    llvm::BitVector scarcityMembers(mechanisms.size());
+    bool invalidScarcityGroup = false;
+    for (const CanonicalScarcityEventGroup &group :
+         setCoverSolution->scarcityEventGroups) {
+      const bool invalidSize = group.members.size() < 2;
+      for (CanonicalMechanismId id : group.members) {
+        const bool invalidMember =
+            id >= mechanisms.size() || scarcityMembers.test(id) ||
+            !llvm::is_contained(setCoverSolution->mechanisms, id) ||
+            (id < mechanisms.size() &&
+             mechanisms[id].kind != CanonicalMechanismKind::Event &&
+             mechanisms[id].kind != CanonicalMechanismKind::RecurringEvent);
+        invalidScarcityGroup |= invalidMember;
+        if (id < mechanisms.size()) {
+          scarcityMembers.set(id);
+          const CanonicalMechanism &member = mechanisms[id];
+          if (group.kind == CanonicalScarcityEventKind::Serialized) {
+            invalidScarcityGroup |=
+                member.kind != CanonicalMechanismKind::Event;
+          } else {
+            invalidScarcityGroup |=
+                member.recurrenceLoop != group.recurrenceLoop ||
+                !canonical_sync_detail::programPointMustPrecede(
+                    member.sourcePoint, group.sourcePoint) ||
+                !canonical_sync_detail::programPointMustPrecede(
+                    group.targetPoint, member.targetPoint);
+          }
+        }
+      }
+      const bool hasRepresentative =
+          !group.members.empty() && group.members.front() < mechanisms.size();
+      if (hasRepresentative) {
+        const CanonicalMechanism &representative =
+            mechanisms[group.members.front()];
+        invalidScarcityGroup |= group.source != representative.source ||
+                                group.target != representative.target ||
+                                group.guard != representative.guard;
+      }
+      const bool releaseRequired =
+          group.kind == CanonicalScarcityEventKind::Serialized ||
+          group.recurrenceLoop.has_value();
+      invalidScarcityGroup |=
+          invalidSize || group.releaseEventId.has_value() != releaseRequired;
+      invalidScarcityGroup |=
+          group.kind == CanonicalScarcityEventKind::Serialized
+              ? (group.sourcePoint.operation || group.targetPoint.operation ||
+                 group.recurrenceLoop.has_value())
+              : (!group.sourcePoint.operation || !group.targetPoint.operation ||
+                 !canonical_sync_detail::programPointMustPrecede(
+                     group.sourcePoint, group.targetPoint));
+    }
     bool invalidEventAssignment = false;
     for (const CanonicalMechanism &mechanism : mechanisms) {
       const bool selected =
           llvm::is_contained(setCoverSolution->mechanisms, mechanism.id);
       const bool mustHaveEvent =
           selected &&
-          (mechanism.kind == CanonicalMechanismKind::Event ||
+          ((mechanism.kind == CanonicalMechanismKind::Event &&
+            !scarcityMembers.test(mechanism.id)) ||
            mechanism.kind == CanonicalMechanismKind::CrossCoreEvent ||
-           mechanism.kind == CanonicalMechanismKind::RecurringEvent);
+           (mechanism.kind == CanonicalMechanismKind::RecurringEvent &&
+            !scarcityMembers.test(mechanism.id)));
       const bool assignmentMatches =
           mechanism.eventId.has_value() == mustHaveEvent &&
           mechanism.releaseEventId.has_value() ==
               (selected &&
-               mechanism.kind == CanonicalMechanismKind::RecurringEvent);
+               mechanism.kind == CanonicalMechanismKind::RecurringEvent &&
+               !scarcityMembers.test(mechanism.id));
       if (!assignmentMatches) {
         invalidEventAssignment = true;
         break;
@@ -483,8 +548,8 @@ LogicalResult CanonicalSyncProgram::freeze() {
     }
     if (invalidGreedyCandidate || invalidMechanism || invalidOrder ||
         missingBaseline || invalidDeletion || incompleteCoverage ||
-        setCoverSolution->weight != expectedWeight || invalidEventAssignment ||
-        !setCoverSolution->coverageVerified) {
+        setCoverSolution->weight != expectedWeight || invalidScarcityGroup ||
+        invalidEventAssignment || !setCoverSolution->coverageVerified) {
       return fail("set-cover solution references an invalid ID or lacks a "
                   "checked coverage proof or event allocation");
     }
