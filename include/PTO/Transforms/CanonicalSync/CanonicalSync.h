@@ -172,6 +172,7 @@ struct CanonicalSyncEventUseProvenanceReport {
   std::size_t width = 0;
   std::optional<SyncCoverScopeId> recurrenceScope;
   std::optional<SyncCoverScopeId> lifetimeScope;
+  bool quiescentAtLifetimeBoundaries = false;
 };
 
 /// Certificate provenance for one completion supply. Allowed demand rows are
@@ -325,6 +326,12 @@ struct CanonicalSyncSyntheticRectangleGroundingReport {
 /// may cross the materialization boundary.
 struct CanonicalSyncMaterializedPlanVerification {
   CanonicalSyncVerifiedPlan plan;
+  /// Last completed finalization boundary. Zero is the initial plan-shape
+  /// check; subsequent values cover staging reservation, physical event IDs,
+  /// deep protocols, action staging, reconstruction, and lifecycle closure.
+  std::uint8_t completedStage = 0;
+  CanonicalSyncProblemError deepProtocolError = CanonicalSyncProblemError::None;
+  std::optional<std::size_t> deepProtocolFailureIndex;
   bool wholePlanWorldVerified = false;
   bool actionsReconstructed = false;
   bool lifecycleAutomataVerified = false;
@@ -642,6 +649,8 @@ struct CanonicalSyncComparisonReport {
   std::size_t totalSingletonCandidateCoverageRows = 0;
   std::array<std::size_t, kCanonicalSyncMechanismOriginCount>
       candidateMechanismsByOrigin{};
+  bool candidateMechanismDetailsTruncated = false;
+  std::vector<CanonicalSyncSelectedMechanismReport> candidateMechanisms;
   std::size_t directPairProposals = 0;
   std::size_t directPairEvaluations = 0;
   std::size_t synergisticPairs = 0;

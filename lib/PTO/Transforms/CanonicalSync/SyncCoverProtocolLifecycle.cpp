@@ -11,11 +11,13 @@
 #include "SyncCoverProtocolInternal.h"
 
 #include "PTO/Transforms/CanonicalSync/SyncCoverStorageLifecycle.h"
+#include "PTO/Transforms/CanonicalSync/SyncCoverStorageProtocolGroups.h"
 
 #include <algorithm>
 #include <iterator>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <tuple>
@@ -656,6 +658,47 @@ struct LifecyclePairFacts {
   std::set<LifecycleSlotKey> slots;
 };
 
+struct CrossChildRoundTripKey {
+  LifecyclePairKey pair;
+  LifecycleSlotKey slot;
+  SyncCoverNodeId producer = 0;
+  SyncCoverNodeId consumer = 0;
+
+  bool operator<(const CrossChildRoundTripKey &other) const {
+    return std::tie(pair.loop, pair.producer, pair.consumer, slot.domain,
+                    slot.extent.begin, slot.extent.end, producer, consumer) <
+           std::tie(other.pair.loop, other.pair.producer, other.pair.consumer,
+                    other.slot.domain, other.slot.extent.begin,
+                    other.slot.extent.end, other.producer, other.consumer);
+  }
+};
+
+struct ExactRoundTripCutKey {
+  LifecyclePairKey pair;
+  SyncCoverAnchor writeAcquire;
+  SyncCoverAnchor ready;
+  SyncCoverAnchor readAcquire;
+  SyncCoverAnchor release;
+
+  bool operator<(const ExactRoundTripCutKey &other) const {
+    return std::tie(pair.loop, pair.producer, pair.consumer, writeAcquire.kind,
+                    writeAcquire.node, writeAcquire.scope,
+                    writeAcquire.position, ready.kind, ready.node, ready.scope,
+                    ready.position, readAcquire.kind, readAcquire.node,
+                    readAcquire.scope, readAcquire.position, release.kind,
+                    release.node, release.scope, release.position) <
+           std::tie(other.pair.loop, other.pair.producer, other.pair.consumer,
+                    other.writeAcquire.kind, other.writeAcquire.node,
+                    other.writeAcquire.scope, other.writeAcquire.position,
+                    other.ready.kind, other.ready.node, other.ready.scope,
+                    other.ready.position, other.readAcquire.kind,
+                    other.readAcquire.node, other.readAcquire.scope,
+                    other.readAcquire.position, other.release.kind,
+                    other.release.node, other.release.scope,
+                    other.release.position);
+  }
+};
+
 struct LifecycleNodeFacts {
   SyncCoverNodeId node = 0;
   LifecycleSlotBundle produced;
@@ -892,18 +935,29 @@ lowestCommonRegion(const SyncCoverGraph &graph,
 
 std::optional<std::pair<SyncCoverAnchor, SyncCoverAnchor>> groupAnchors(
     const SyncCoverGraph &graph, const std::vector<SyncCoverNodeId> &nodes,
-    SyncCoverScopeId lifecycleLoop, SyncCoverCoverageWorkBudget *workBudget) {
+    SyncCoverScopeId lifecycleLoop, SyncCoverCoverageWorkBudget *workBudget,
+    bool preservePeriodicAlternatives = false) {
   const std::optional<SyncCoverRegionId> common =
       lowestCommonRegion(graph, nodes, workBudget);
   if (!common) {
     return std::nullopt;
   }
   const SyncCoverRegion &region = graph.getRegions()[*common];
-  if (region.kind == SyncCoverRegionKind::Loop && region.scope != 0) {
-    return std::make_pair(
-        SyncCoverAnchor{SyncCoverAnchorKind::ScopeEntry, 0, region.scope, 0},
-        SyncCoverAnchor{SyncCoverAnchorKind::ScopeExit, 0, region.scope, 0});
-  }
+  const SyncCoverRegionId lifecycleRegion =
+      lifecycleLoop < graph.getScopes().size()
+          ? graph.getScopes()[lifecycleLoop].region
+          : 0;
+  const auto isLifecycleControl = [&](SyncCoverControlId control) {
+    if (!preservePeriodicAlternatives ||
+        control >= graph.getControls().size()) {
+      return false;
+    }
+    const SyncCoverControl &candidate = graph.getControls()[control];
+    return (candidate.phaseRelation &&
+            candidate.phaseRelation->loopScope == lifecycleLoop) ||
+           (candidate.successorRelation &&
+            candidate.successorRelation->loopScope == lifecycleLoop);
+  };
   SyncCoverScopeId commonScope = graph.getNodes()[nodes.front()].scope;
   for (SyncCoverNodeId node : nodes) {
     if (!consumeWork(workBudget)) {
@@ -916,10 +970,25 @@ std::optional<std::pair<SyncCoverAnchor, SyncCoverAnchor>> groupAnchors(
     }
     commonScope = *lowest;
   }
-  const std::optional<SyncCoverScopeId> nestedLoop =
+  std::optional<SyncCoverScopeId> nestedLoop =
       graph.getNearestEnclosingLoop(commonScope);
+  while (nestedLoop && *nestedLoop != lifecycleLoop) {
+    if (!consumeWork(workBudget)) {
+      return std::nullopt;
+    }
+    const SyncCoverScopeId parent = graph.getScopes()[*nestedLoop].parent;
+    const std::optional<SyncCoverScopeId> outerLoop =
+        graph.getNearestEnclosingLoop(parent);
+    if (!outerLoop || *outerLoop == lifecycleLoop) {
+      break;
+    }
+    if (*outerLoop == *nestedLoop) {
+      return std::nullopt;
+    }
+    nestedLoop = outerLoop;
+  }
   std::optional<bool> containsNested = false;
-  if (nodes.size() > 1 && nestedLoop && *nestedLoop != lifecycleLoop) {
+  if (nestedLoop && *nestedLoop != lifecycleLoop) {
     containsNested =
         scopeContainsWithWork(graph, lifecycleLoop, *nestedLoop, workBudget);
     if (!containsNested) {
@@ -927,33 +996,150 @@ std::optional<std::pair<SyncCoverAnchor, SyncCoverAnchor>> groupAnchors(
     }
   }
   if (containsNested.value_or(false)) {
+    // A nested loop boundary is an exact scalar cut even for a zero-trip
+    // loop, but not when the entire loop belongs to one optional branch.
+    // Lift such a boundary to the enclosing choice so the protocol action is
+    // issued once on every lifecycle-loop iteration, independently of which
+    // alternative executes.
+    const SyncCoverRegionId nestedRegion =
+        graph.getScopes()[*nestedLoop].region;
+    for (SyncCoverRegionId ancestor = nestedRegion;
+         ancestor != 0 && ancestor != lifecycleRegion;
+         ancestor = graph.getRegions()[ancestor].parent) {
+      if (!consumeWork(workBudget)) {
+        return std::nullopt;
+      }
+      const SyncCoverRegion &candidate = graph.getRegions()[ancestor];
+      if (candidate.kind != SyncCoverRegionKind::Alternative ||
+          candidate.parent >= graph.getRegions().size()) {
+        continue;
+      }
+      const SyncCoverRegion &choice = graph.getRegions()[candidate.parent];
+      if (choice.kind == SyncCoverRegionKind::Choice && choice.control) {
+        if (isLifecycleControl(*choice.control)) {
+          continue;
+        }
+        return std::make_pair(SyncCoverAnchor{SyncCoverAnchorKind::ControlEntry,
+                                              *choice.control, choice.scope, 0},
+                              SyncCoverAnchor{SyncCoverAnchorKind::ControlExit,
+                                              *choice.control, choice.scope,
+                                              0});
+      }
+    }
     return std::make_pair(
         SyncCoverAnchor{SyncCoverAnchorKind::ScopeEntry, 0, *nestedLoop, 0},
         SyncCoverAnchor{SyncCoverAnchorKind::ScopeExit, 0, *nestedLoop, 0});
   }
+  for (SyncCoverRegionId ancestor = *common;
+       ancestor != 0 && ancestor != lifecycleRegion;
+       ancestor = graph.getRegions()[ancestor].parent) {
+    if (!consumeWork(workBudget)) {
+      return std::nullopt;
+    }
+    const SyncCoverRegion &candidate = graph.getRegions()[ancestor];
+    if (candidate.kind != SyncCoverRegionKind::Alternative ||
+        candidate.parent >= graph.getRegions().size()) {
+      continue;
+    }
+    const SyncCoverRegion &choice = graph.getRegions()[candidate.parent];
+    if (choice.kind == SyncCoverRegionKind::Choice && choice.control) {
+      if (isLifecycleControl(*choice.control)) {
+        continue;
+      }
+      return std::make_pair(SyncCoverAnchor{SyncCoverAnchorKind::ControlEntry,
+                                            *choice.control, choice.scope, 0},
+                            SyncCoverAnchor{SyncCoverAnchorKind::ControlExit,
+                                            *choice.control, choice.scope, 0});
+    }
+  }
+  if (region.kind == SyncCoverRegionKind::Loop && region.scope != 0 &&
+      region.scope != lifecycleLoop) {
+    return std::make_pair(
+        SyncCoverAnchor{SyncCoverAnchorKind::ScopeEntry, 0, region.scope, 0},
+        SyncCoverAnchor{SyncCoverAnchorKind::ScopeExit, 0, region.scope, 0});
+  }
   if (nodes.size() > 1 && region.kind == SyncCoverRegionKind::Sequence &&
       region.parent < graph.getRegions().size()) {
     const SyncCoverRegion &parent = graph.getRegions()[region.parent];
-    if (parent.kind == SyncCoverRegionKind::Loop && parent.scope != 0) {
+    if (parent.kind == SyncCoverRegionKind::Loop && parent.scope != 0 &&
+        parent.scope != lifecycleLoop) {
       return std::make_pair(
           SyncCoverAnchor{SyncCoverAnchorKind::ScopeEntry, 0, parent.scope, 0},
           SyncCoverAnchor{SyncCoverAnchorKind::ScopeExit, 0, parent.scope, 0});
     }
   }
+  if (region.kind == SyncCoverRegionKind::Alternative &&
+      region.parent < graph.getRegions().size()) {
+    const SyncCoverRegion &choice = graph.getRegions()[region.parent];
+    if (choice.kind == SyncCoverRegionKind::Choice && choice.control) {
+      if (isLifecycleControl(*choice.control)) {
+        // Periodic alternatives are part of the lifecycle automaton.  Keep
+        // both endpoints inside the same alternative so the phase guard can
+        // balance the transaction; lifting either endpoint to the enclosing
+        // choice would move a ready Set after its guarded Wait.
+      } else {
+        // A demand endpoint in one optional branch cannot own a one-sided event
+        // action. Lift the acquire/release cuts to the opaque choice boundary
+        // so both actions execute once regardless of the selected alternative.
+        return std::make_pair(SyncCoverAnchor{SyncCoverAnchorKind::ControlEntry,
+                                              *choice.control, choice.scope, 0},
+                              SyncCoverAnchor{SyncCoverAnchorKind::ControlExit,
+                                              *choice.control, choice.scope,
+                                              0});
+      }
+    }
+  }
   if (region.kind == SyncCoverRegionKind::Choice && region.control) {
-    return std::make_pair(SyncCoverAnchor{SyncCoverAnchorKind::ControlEntry,
-                                          *region.control, region.scope, 0},
-                          SyncCoverAnchor{SyncCoverAnchorKind::ControlExit,
-                                          *region.control, region.scope, 0});
+    if (!isLifecycleControl(*region.control)) {
+      return std::make_pair(SyncCoverAnchor{SyncCoverAnchorKind::ControlEntry,
+                                            *region.control, region.scope, 0},
+                            SyncCoverAnchor{SyncCoverAnchorKind::ControlExit,
+                                            *region.control, region.scope, 0});
+    }
   }
   const auto byOrder = [&](SyncCoverNodeId left, SyncCoverNodeId right) {
     return graph.getNodes()[left].order < graph.getNodes()[right].order;
   };
   const auto first = std::min_element(nodes.begin(), nodes.end(), byOrder);
   const auto last = std::max_element(nodes.begin(), nodes.end(), byOrder);
-  return std::make_pair(
-      SyncCoverAnchor{SyncCoverAnchorKind::BeforeNode, *first, 0, 0},
-      SyncCoverAnchor{SyncCoverAnchorKind::AfterNode, *last, 0, 0});
+  const auto liftGuardedBoundary = [&](SyncCoverNodeId node,
+                                       bool entry) -> SyncCoverAnchor {
+    SyncCoverAnchor best{entry ? SyncCoverAnchorKind::BeforeNode
+                               : SyncCoverAnchorKind::AfterNode,
+                         node, 0, 0};
+    std::optional<SyncCoverTimelinePosition> bestPosition =
+        resolveSyncCoverAnchor(graph, best);
+    for (const SyncCoverGuardLiteral &literal :
+         graph.getNodes()[node].guard.literals) {
+      if (!consumeWork(workBudget) ||
+          literal.control >= graph.getControls().size()) {
+        return best;
+      }
+      const SyncCoverControl &control = graph.getControls()[literal.control];
+      const bool loopPhase = control.phaseRelation &&
+                             control.phaseRelation->loopScope == lifecycleLoop;
+      const bool successor =
+          control.successorRelation &&
+          control.successorRelation->loopScope == lifecycleLoop;
+      if (loopPhase || successor) {
+        continue;
+      }
+      SyncCoverAnchor candidate{entry ? SyncCoverAnchorKind::ControlEntry
+                                      : SyncCoverAnchorKind::ControlExit,
+                                literal.control, control.scope, 0};
+      const std::optional<SyncCoverTimelinePosition> position =
+          resolveSyncCoverAnchor(graph, candidate);
+      if (!position || (bestPosition && (entry ? *position > *bestPosition
+                                               : *position < *bestPosition))) {
+        continue;
+      }
+      best = candidate;
+      bestPosition = position;
+    }
+    return best;
+  };
+  return std::make_pair(liftGuardedBoundary(*first, true),
+                        liftGuardedBoundary(*last, false));
 }
 
 std::vector<LifecycleNodeFacts> collectLifecycleNodes(
@@ -1281,6 +1467,194 @@ bool hasMatchingReleaseDemands(const SyncCoverGraph &graph,
   return true;
 }
 
+std::optional<DerivedLifecycleCertificate>
+buildCrossChildRoundTripCertificate(const SyncCoverGraph &graph,
+                                    const SyncCoverLifecycleScc &component,
+                                    const CrossChildRoundTripKey &key,
+                                    SyncCoverCoverageWorkBudget *workBudget) {
+  if (key.pair.loop == 0 || key.pair.loop >= graph.getScopes().size() ||
+      key.producer >= graph.getNodes().size() ||
+      key.consumer >= graph.getNodes().size()) {
+    return std::nullopt;
+  }
+  const std::vector<SyncCoverNodeId> producers{key.producer};
+  const std::vector<SyncCoverNodeId> consumers{key.consumer};
+  const SyncCoverNode &producer = graph.getNodes()[key.producer];
+  const SyncCoverNode &consumer = graph.getNodes()[key.consumer];
+  const std::optional<SyncCoverScopeId> producerLoop =
+      graph.getNearestEnclosingLoop(producer.scope, true);
+  const std::optional<SyncCoverScopeId> consumerLoop =
+      graph.getNearestEnclosingLoop(consumer.scope, true);
+  const bool oneInvocationGuardedTransfer =
+      producerLoop && consumerLoop && *producerLoop == key.pair.loop &&
+      *consumerLoop == key.pair.loop &&
+      producer.guard.literals == consumer.guard.literals;
+  const std::optional<std::pair<SyncCoverAnchor, SyncCoverAnchor>>
+      producerAnchors =
+          oneInvocationGuardedTransfer
+              ? std::optional<std::pair<SyncCoverAnchor, SyncCoverAnchor>>(
+                    std::make_pair(
+                        SyncCoverAnchor{SyncCoverAnchorKind::BeforeNode,
+                                        key.producer, 0, 0},
+                        SyncCoverAnchor{SyncCoverAnchorKind::AfterNode,
+                                        key.producer, 0, 0}))
+              : groupAnchors(graph, producers, key.pair.loop, workBudget);
+  const std::optional<std::pair<SyncCoverAnchor, SyncCoverAnchor>>
+      consumerAnchors =
+          oneInvocationGuardedTransfer
+              ? std::optional<std::pair<SyncCoverAnchor, SyncCoverAnchor>>(
+                    std::make_pair(
+                        SyncCoverAnchor{SyncCoverAnchorKind::BeforeNode,
+                                        key.consumer, 0, 0},
+                        SyncCoverAnchor{SyncCoverAnchorKind::AfterNode,
+                                        key.consumer, 0, 0}))
+              : groupAnchors(graph, consumers, key.pair.loop, workBudget);
+  if (!producerAnchors || !consumerAnchors) {
+    return std::nullopt;
+  }
+  const std::optional<SyncCoverTimelinePosition> readyPosition =
+      resolveSyncCoverAnchor(graph, producerAnchors->second);
+  const std::optional<SyncCoverTimelinePosition> acquirePosition =
+      resolveSyncCoverAnchor(graph, consumerAnchors->first);
+  if (!readyPosition || !acquirePosition ||
+      *readyPosition >= *acquirePosition) {
+    return std::nullopt;
+  }
+
+  DerivedLifecycleCertificate certificate;
+  certificate.loopScope = key.pair.loop;
+  certificate.producerResource = key.pair.producer;
+  certificate.consumerResource = key.pair.consumer;
+  certificate.lanes.push_back({0, {{key.slot.domain, key.slot.extent, {}}}});
+  DerivedLifecyclePath path;
+  path.scope = key.pair.loop;
+  path.uses.push_back({0, 0, producers, consumers, producerAnchors->first,
+                       producerAnchors->second, consumerAnchors->first,
+                       consumerAnchors->second});
+  certificate.paths.push_back(std::move(path));
+  return populateLifecycleSlotAccesses(graph, component, certificate,
+                                       workBudget)
+             ? std::optional<DerivedLifecycleCertificate>(
+                   std::move(certificate))
+             : std::nullopt;
+}
+
+std::optional<DerivedLifecycleCertificate>
+buildBalancedDirectCertificate(const SyncCoverGraph &graph,
+                               SyncCoverDemandId demandId,
+                               SyncCoverCoverageWorkBudget *workBudget) {
+  if (demandId >= graph.getDemands().size()) {
+    return std::nullopt;
+  }
+  const SyncCoverDemand &demand = graph.getDemands()[demandId];
+  if (demand.source >= graph.getNodes().size() ||
+      demand.target >= graph.getNodes().size()) {
+    return std::nullopt;
+  }
+  const SyncCoverNode &source = graph.getNodes()[demand.source];
+  const SyncCoverNode &target = graph.getNodes()[demand.target];
+  if (source.resource == target.resource) {
+    return std::nullopt;
+  }
+  std::optional<SyncCoverScopeId> loop =
+      demand.distance != 0 && demand.scope < graph.getScopes().size() &&
+              graph.getScopes()[demand.scope].isLoop
+          ? std::optional<SyncCoverScopeId>(demand.scope)
+          : nearestSharedLifecycleLoop(graph, source.scope, target.scope,
+                                       workBudget);
+  if (!loop) {
+    return std::nullopt;
+  }
+  const std::optional<SyncCoverScopeId> sourceLoop =
+      graph.getNearestEnclosingLoop(source.scope, true);
+  const std::optional<SyncCoverScopeId> targetLoop =
+      graph.getNearestEnclosingLoop(target.scope, true);
+  if (demand.distance == 0 && source.guard.literals != target.guard.literals) {
+    if (syncCoverGuardImplies(target.guard, source.guard) && targetLoop) {
+      loop = targetLoop;
+    } else if (syncCoverGuardImplies(source.guard, target.guard) &&
+               sourceLoop) {
+      loop = sourceLoop;
+    }
+  }
+  if (!loop) {
+    return std::nullopt;
+  }
+  const bool oneInvocationGuardedTransfer =
+      sourceLoop && targetLoop && *sourceLoop == *loop &&
+      *targetLoop == *loop && source.guard.literals == target.guard.literals;
+  std::optional<std::pair<SyncCoverAnchor, SyncCoverAnchor>> sourceAnchors =
+      oneInvocationGuardedTransfer
+          ? std::optional<std::pair<SyncCoverAnchor, SyncCoverAnchor>>(
+                std::make_pair(SyncCoverAnchor{SyncCoverAnchorKind::BeforeNode,
+                                               source.id, 0, 0},
+                               SyncCoverAnchor{SyncCoverAnchorKind::AfterNode,
+                                               source.id, 0, 0}))
+          : groupAnchors(graph, {source.id}, *loop, workBudget);
+  std::optional<std::pair<SyncCoverAnchor, SyncCoverAnchor>> targetAnchors =
+      oneInvocationGuardedTransfer
+          ? std::optional<std::pair<SyncCoverAnchor, SyncCoverAnchor>>(
+                std::make_pair(SyncCoverAnchor{SyncCoverAnchorKind::BeforeNode,
+                                               target.id, 0, 0},
+                               SyncCoverAnchor{SyncCoverAnchorKind::AfterNode,
+                                               target.id, 0, 0}))
+          : groupAnchors(graph, {target.id}, *loop, workBudget);
+  if (!sourceAnchors || !targetAnchors) {
+    return std::nullopt;
+  }
+
+  if (source.guard.literals != target.guard.literals) {
+    const SyncCoverAnchor beforeSource{SyncCoverAnchorKind::BeforeNode,
+                                       source.id, 0, 0};
+    const SyncCoverAnchor afterSource{SyncCoverAnchorKind::AfterNode, source.id,
+                                      0, 0};
+    const SyncCoverAnchor beforeTarget{SyncCoverAnchorKind::BeforeNode,
+                                       target.id, 0, 0};
+    const SyncCoverAnchor afterTarget{SyncCoverAnchorKind::AfterNode, target.id,
+                                      0, 0};
+    if (syncCoverGuardImplies(target.guard, source.guard)) {
+      // The target is the narrower occurrence. Issue the source-prefix Set
+      // only when that target executes, and circulate the release token
+      // between consecutive executions of the same guarded transaction.
+      sourceAnchors = std::make_pair(beforeTarget, beforeTarget);
+      targetAnchors = std::make_pair(beforeTarget, afterTarget);
+    } else if (syncCoverGuardImplies(source.guard, target.guard)) {
+      // The source is the narrower occurrence. Consume the ready token on the
+      // target pipe immediately after the guarded source; physical target-pipe
+      // issue order then carries that completion fact to the later target.
+      sourceAnchors = std::make_pair(beforeSource, afterSource);
+      targetAnchors = std::make_pair(afterSource, afterSource);
+    } else {
+      return std::nullopt;
+    }
+  }
+  const std::optional<SyncCoverTimelinePosition> setPosition =
+      resolveSyncCoverAnchor(graph, sourceAnchors->second);
+  const std::optional<SyncCoverTimelinePosition> waitPosition =
+      resolveSyncCoverAnchor(graph, targetAnchors->first);
+  if (!setPosition || !waitPosition || *setPosition > *waitPosition) {
+    return std::nullopt;
+  }
+
+  DerivedLifecycleCertificate certificate;
+  certificate.loopScope = *loop;
+  certificate.producerResource = source.resource;
+  certificate.consumerResource = target.resource;
+  certificate.lanes.push_back({0, {}});
+  DerivedLifecyclePath path;
+  path.scope = *loop;
+  path.uses.push_back({0,
+                       0,
+                       {source.id},
+                       {target.id},
+                       sourceAnchors->first,
+                       sourceAnchors->second,
+                       targetAnchors->first,
+                       targetAnchors->second});
+  certificate.paths.push_back(std::move(path));
+  return certificate;
+}
+
 SyncCoverProtocolError
 checkLifecycleCertificateBounds(const DerivedLifecycleCertificate &certificate,
                                 SyncCoverProtocolLimits limits,
@@ -1418,9 +1792,11 @@ std::optional<DerivedLifecycleCertificate> buildStableLifecycleCertificate(
         lane = laneByBundle.emplace(produced, laneByBundle.size()).first;
       }
       const auto producerAnchors =
-          groupAnchors(graph, producers, key.loop, workBudget);
+          groupAnchors(graph, producers, key.loop, workBudget,
+                       /*preservePeriodicAlternatives=*/true);
       const auto consumerAnchors =
-          groupAnchors(graph, consumers, key.loop, workBudget);
+          groupAnchors(graph, consumers, key.loop, workBudget,
+                       /*preservePeriodicAlternatives=*/true);
       if (!producerAnchors || !consumerAnchors) {
         return false;
       }
@@ -1492,6 +1868,83 @@ std::optional<DerivedLifecycleCertificate> buildStableLifecycleCertificate(
     certificate.lanes[lane].id = lane;
     for (const LifecycleSlotKey &slot : bundle) {
       certificate.lanes[lane].slots.push_back({slot.domain, slot.extent, {}});
+    }
+  }
+  // Exact bundle equality is too weak for ownership lanes: two observed
+  // bundles such as {A, B} and {A} still share one physical token because an
+  // access to A cannot belong to two independently circulating lanes. Merge
+  // the connected components induced by shared exact slots before assigning
+  // protocol lane identities.
+  std::vector<std::size_t> laneParent(certificate.lanes.size());
+  for (std::size_t lane = 0; lane < laneParent.size(); ++lane) {
+    laneParent[lane] = lane;
+  }
+  const auto findLane = [&](std::size_t lane) {
+    while (laneParent[lane] != lane) {
+      lane = laneParent[lane];
+    }
+    return lane;
+  };
+  std::map<LifecycleSlotKey, std::size_t> slotOwner;
+  for (const DerivedLifecycleLane &lane : certificate.lanes) {
+    for (const DerivedLifecycleSlot &slot : lane.slots) {
+      if (!consumeWork(workBudget, lookupWork(slotOwner.size() + 1))) {
+        return std::nullopt;
+      }
+      const LifecycleSlotKey key{slot.domain, slot.extent};
+      const auto existing = slotOwner.find(key);
+      if (existing == slotOwner.end()) {
+        slotOwner.emplace(key, lane.id);
+        continue;
+      }
+      const std::size_t left = findLane(existing->second);
+      const std::size_t right = findLane(lane.id);
+      if (left != right) {
+        laneParent[right] = left;
+      }
+    }
+  }
+  std::map<std::size_t, std::size_t> compactLane;
+  std::vector<DerivedLifecycleLane> mergedLanes;
+  std::vector<std::size_t> laneRemap(certificate.lanes.size());
+  for (const DerivedLifecycleLane &lane : certificate.lanes) {
+    const std::size_t root = findLane(lane.id);
+    auto inserted = compactLane.emplace(root, compactLane.size());
+    const std::size_t merged = inserted.first->second;
+    if (inserted.second) {
+      mergedLanes.push_back({merged, {}});
+    }
+    laneRemap[lane.id] = merged;
+    mergedLanes[merged].slots.insert(mergedLanes[merged].slots.end(),
+                                     lane.slots.begin(), lane.slots.end());
+  }
+  for (DerivedLifecycleLane &lane : mergedLanes) {
+    const std::optional<std::size_t> sortWork =
+        comparisonWork(lane.slots.size());
+    if (!sortWork || !consumeWork(workBudget, *sortWork)) {
+      return std::nullopt;
+    }
+    std::sort(
+        lane.slots.begin(), lane.slots.end(),
+        [](const DerivedLifecycleSlot &left,
+           const DerivedLifecycleSlot &right) {
+          return std::tie(left.domain, left.extent.begin, left.extent.end) <
+                 std::tie(right.domain, right.extent.begin, right.extent.end);
+        });
+    lane.slots.erase(std::unique(lane.slots.begin(), lane.slots.end(),
+                                 [](const DerivedLifecycleSlot &left,
+                                    const DerivedLifecycleSlot &right) {
+                                   return left.domain == right.domain &&
+                                          intervalEqual(left.extent,
+                                                        right.extent);
+                                 }),
+                     lane.slots.end());
+  }
+  certificate.lanes = std::move(mergedLanes);
+  for (DerivedLifecyclePath &path : certificate.paths) {
+    for (DerivedLifecycleUse &use : path.uses) {
+      use.lane = laneRemap[use.lane];
+      use.producerLane = laneRemap[use.producerLane];
     }
   }
   for (const DerivedLifecyclePath &path : certificate.paths) {
@@ -1653,7 +2106,8 @@ std::optional<DerivedLifecycleCertificate> buildAlternatingLifecycleCertificate(
       return std::nullopt;
     }
     const auto producerAnchors =
-        groupAnchors(graph, producerNodes, key.loop, workBudget);
+        groupAnchors(graph, producerNodes, key.loop, workBudget,
+                     /*preservePeriodicAlternatives=*/true);
     if (!producerAnchors) {
       return std::nullopt;
     }
@@ -1773,7 +2227,8 @@ std::optional<DerivedLifecycleCertificate> buildAlternatingLifecycleCertificate(
     return std::nullopt;
   }
   const auto initialAnchors =
-      groupAnchors(graph, certificate.initialProducers, key.loop, workBudget);
+      groupAnchors(graph, certificate.initialProducers, key.loop, workBudget,
+                   /*preservePeriodicAlternatives=*/true);
   if (!initialAnchors) {
     return std::nullopt;
   }
@@ -1815,7 +2270,94 @@ DerivedLifecycleSchedules deriveLifecycleSchedules(
   }
   std::map<LifecyclePairKey, LifecyclePairFacts> pairs;
   std::map<LifecyclePairKey, std::set<LifecycleSlotKey>> releaseSlots;
+  std::map<CrossChildRoundTripKey, LifecycleEdge> crossChildReady;
+  std::map<CrossChildRoundTripKey, LifecycleEdge> crossChildRelease;
   std::size_t proposalSlotIncidences = 0;
+  // The storage-lifecycle index groups ordinary components by frontend access
+  // family.  Exact physical planning can nevertheless place accesses from two
+  // families on the same interval.  Hardware ownership follows that physical
+  // interval, so discover a direct/reverse round trip across the complete
+  // graph and assign it to this component's owning loop.
+  for (SyncCoverDemandId demandId = 0; demandId < graph.getDemands().size();
+       ++demandId) {
+    if (!consumeWork(workBudget)) {
+      result.error = SyncCoverProtocolError::WorkLimitExceeded;
+      return result;
+    }
+    if (!std::binary_search(component.demands.begin(), component.demands.end(),
+                            demandId)) {
+      continue;
+    }
+    const SyncCoverDemand &demand = graph.getDemands()[demandId];
+    if (demand.distance > 1) {
+      continue;
+    }
+    for (SyncCoverStorageWitnessId witnessId : demand.storageWitnesses) {
+      if (!consumeWork(workBudget) ||
+          witnessId >= graph.getStorageWitnesses().size()) {
+        result.error = SyncCoverProtocolError::WorkLimitExceeded;
+        return result;
+      }
+      const SyncCoverStorageWitness &witness =
+          graph.getStorageWitnesses()[witnessId];
+      if (witness.sourceAccess >= graph.getStorageAccesses().size() ||
+          witness.targetAccess >= graph.getStorageAccesses().size()) {
+        result.error = SyncCoverProtocolError::InvalidGraph;
+        return result;
+      }
+      const SyncCoverStorageAccess &source =
+          graph.getStorageAccesses()[witness.sourceAccess];
+      const SyncCoverStorageAccess &target =
+          graph.getStorageAccesses()[witness.targetAccess];
+      const SyncCoverNode &sourceNode = graph.getNodes()[source.node];
+      const SyncCoverNode &targetNode = graph.getNodes()[target.node];
+      const bool exactCrossResource =
+          source.exactPhysical && target.exactPhysical &&
+          source.domain == target.domain &&
+          intervalEqual(source.extent, target.extent) &&
+          sourceNode.resource != targetNode.resource;
+      if (!exactCrossResource) {
+        continue;
+      }
+      std::optional<SyncCoverScopeId> loop;
+      if (demand.distance == 0) {
+        loop = nearestCommonLoop(graph, sourceNode.scope, targetNode.scope,
+                                 workBudget);
+      } else {
+        loop = demand.scope;
+      }
+      if (workBudget && workBudget->exhausted) {
+        result.error = SyncCoverProtocolError::WorkLimitExceeded;
+        return result;
+      }
+      if (!loop || *loop != component.loopScope) {
+        continue;
+      }
+      const CrossChildRoundTripKey roundTrip{
+          demand.distance == 0 ? LifecyclePairKey{*loop, sourceNode.resource,
+                                                  targetNode.resource}
+                               : LifecyclePairKey{*loop, targetNode.resource,
+                                                  sourceNode.resource},
+          {source.domain, source.extent},
+          demand.distance == 0 ? source.node : target.node,
+          demand.distance == 0 ? target.node : source.node};
+      auto &index = demand.distance == 0 ? crossChildReady : crossChildRelease;
+      if (!consumeWork(workBudget, lookupWork(index.size() + 1))) {
+        result.error = SyncCoverProtocolError::WorkLimitExceeded;
+        return result;
+      }
+      index.try_emplace(roundTrip,
+                        LifecycleEdge{demandId, source.node, target.node,
+                                      sourceNode.resource, targetNode.resource,
+                                      source.domain, witness.sourceAccess,
+                                      witness.targetAccess, witnessId,
+                                      demand.distance});
+      if (index.size() > limits.maximumLifecycleEdges) {
+        result.error = SyncCoverProtocolError::LimitExceeded;
+        return result;
+      }
+    }
+  }
   for (SyncCoverDemandId demandId = 0; demandId < graph.getDemands().size();
        ++demandId) {
     if (!consumeWork(workBudget)) {
@@ -1930,6 +2472,118 @@ DerivedLifecycleSchedules deriveLifecycleSchedules(
   if (pairs.size() > limits.maximumLifecycleSccs) {
     result.error = SyncCoverProtocolError::LimitExceeded;
     return result;
+  }
+
+  std::map<ExactRoundTripCutKey, std::size_t> groupedRoundTrips;
+  std::vector<DerivedLifecycleCertificate> roundTripCertificates;
+  for (const auto &entry : crossChildReady) {
+    const CrossChildRoundTripKey &key = entry.first;
+    if (!consumeWork(workBudget, lookupWork(crossChildRelease.size() + 1))) {
+      result.error = SyncCoverProtocolError::WorkLimitExceeded;
+      return result;
+    }
+    if (crossChildRelease.find(key) == crossChildRelease.end()) {
+      continue;
+    }
+    std::optional<DerivedLifecycleCertificate> certificate =
+        buildCrossChildRoundTripCertificate(graph, component, key, workBudget);
+    if (workBudget && workBudget->exhausted) {
+      result.error = SyncCoverProtocolError::WorkLimitExceeded;
+      return result;
+    }
+    if (!certificate) {
+      continue;
+    }
+    const DerivedLifecycleUse &use = certificate->paths.front().uses.front();
+    const ExactRoundTripCutKey cutKey{key.pair, use.writeAcquireAnchor,
+                                      use.readyAnchor, use.readAcquireAnchor,
+                                      use.releaseAnchor};
+    if (!consumeWork(workBudget, lookupWork(groupedRoundTrips.size() + 1))) {
+      result.error = SyncCoverProtocolError::WorkLimitExceeded;
+      return result;
+    }
+    const auto insertion =
+        groupedRoundTrips.emplace(cutKey, roundTripCertificates.size());
+    if (insertion.second) {
+      roundTripCertificates.push_back(std::move(*certificate));
+      continue;
+    }
+    DerivedLifecycleCertificate &grouped =
+        roundTripCertificates[insertion.first->second];
+    DerivedLifecycleUse &groupedUse = grouped.paths.front().uses.front();
+    const DerivedLifecycleUse &candidateUse =
+        certificate->paths.front().uses.front();
+    if (!consumeWork(workBudget, candidateUse.producers.size() +
+                                     candidateUse.consumers.size())) {
+      result.error = SyncCoverProtocolError::WorkLimitExceeded;
+      return result;
+    }
+    groupedUse.producers.insert(groupedUse.producers.end(),
+                                candidateUse.producers.begin(),
+                                candidateUse.producers.end());
+    groupedUse.consumers.insert(groupedUse.consumers.end(),
+                                candidateUse.consumers.begin(),
+                                candidateUse.consumers.end());
+    for (const DerivedLifecycleSlot &slot : certificate->lanes.front().slots) {
+      auto existing =
+          std::find_if(grouped.lanes.front().slots.begin(),
+                       grouped.lanes.front().slots.end(),
+                       [&](const DerivedLifecycleSlot &candidate) {
+                         return candidate.domain == slot.domain &&
+                                intervalEqual(candidate.extent, slot.extent);
+                       });
+      if (!consumeWork(workBudget, grouped.lanes.front().slots.size() + 1)) {
+        result.error = SyncCoverProtocolError::WorkLimitExceeded;
+        return result;
+      }
+      if (existing == grouped.lanes.front().slots.end()) {
+        grouped.lanes.front().slots.push_back(slot);
+      } else {
+        existing->accesses.insert(existing->accesses.end(),
+                                  slot.accesses.begin(), slot.accesses.end());
+      }
+    }
+  }
+  for (DerivedLifecycleCertificate &certificate : roundTripCertificates) {
+    DerivedLifecycleUse &use = certificate.paths.front().uses.front();
+    const auto normalizeNodeIds = [&](std::vector<SyncCoverNodeId> &nodes) {
+      const std::optional<std::size_t> work = comparisonWork(nodes.size());
+      if (!work || !consumeWork(workBudget, *work)) {
+        return false;
+      }
+      std::sort(nodes.begin(), nodes.end());
+      nodes.erase(std::unique(nodes.begin(), nodes.end()), nodes.end());
+      return true;
+    };
+    if (!normalizeNodeIds(use.producers) || !normalizeNodeIds(use.consumers)) {
+      result.error = SyncCoverProtocolError::WorkLimitExceeded;
+      return result;
+    }
+    for (DerivedLifecycleSlot &slot : certificate.lanes.front().slots) {
+      const std::optional<std::size_t> work =
+          comparisonWork(slot.accesses.size());
+      if (!work || !consumeWork(workBudget, *work)) {
+        result.error = SyncCoverProtocolError::WorkLimitExceeded;
+        return result;
+      }
+      std::sort(slot.accesses.begin(), slot.accesses.end());
+      slot.accesses.erase(
+          std::unique(slot.accesses.begin(), slot.accesses.end()),
+          slot.accesses.end());
+    }
+    const SyncCoverProtocolError bounds =
+        checkLifecycleCertificateBounds(certificate, limits, workBudget);
+    if (bounds != SyncCoverProtocolError::None) {
+      result.error = bounds;
+      return result;
+    }
+    if (result.certificates.size() == limits.maximumLifecycleSccs) {
+      result.error = SyncCoverProtocolError::LimitExceeded;
+      result.certificates.clear();
+      return result;
+    }
+    certificate.id = result.certificates.size();
+    result.certificates.push_back(std::move(certificate));
   }
 
   std::size_t accessIncidences = 0;
@@ -2133,6 +2787,126 @@ SyncCoverCutPoint lifecyclePoint(SyncCoverCutPointKind kind,
   return {kind, resource, anchor, {}, 0};
 }
 
+std::optional<std::vector<std::size_t>>
+protocolPhysicalKey(const SyncCoverEventProtocol &protocol,
+                    SyncCoverProtocolLimits limits,
+                    SyncCoverCoverageWorkBudget *workBudget) {
+  std::vector<std::size_t> key;
+  const auto append = [&](std::size_t value) {
+    if (key.size() == limits.maximumLifecycleCatalogPayloadIncidences) {
+      return false;
+    }
+    key.push_back(value);
+    return true;
+  };
+  const auto appendOptional = [&](std::optional<std::size_t> value) {
+    return append(value.has_value()) && (!value || append(*value));
+  };
+  const auto appendValues = [&](const std::vector<std::size_t> &values) {
+    if (!append(values.size())) {
+      return false;
+    }
+    for (std::size_t value : values) {
+      if (!append(value)) {
+        return false;
+      }
+    }
+    return true;
+  };
+  const auto appendAnchor = [&](const SyncCoverAnchor &anchor) {
+    return append(static_cast<std::size_t>(anchor.kind)) &&
+           append(anchor.node) && append(anchor.scope) &&
+           append(anchor.position);
+  };
+  const auto appendGuard = [&](const SyncCoverGuard &guard) {
+    if (!append(guard.literals.size())) {
+      return false;
+    }
+    for (const SyncCoverGuardLiteral &literal : guard.literals) {
+      if (!append(literal.control) || !append(literal.alternative)) {
+        return false;
+      }
+    }
+    return true;
+  };
+  const auto appendPoint = [&](const SyncCoverCutPoint &point) {
+    return append(static_cast<std::size_t>(point.kind)) &&
+           append(point.resource) && appendAnchor(point.anchor) &&
+           appendGuard(point.guard) && append(point.ordinal);
+  };
+
+  if (!append(static_cast<std::size_t>(protocol.kind)) ||
+      !append(protocol.loop.has_value())) {
+    return std::nullopt;
+  }
+  if (protocol.loop && (!append(protocol.loop->scope) ||
+                        !append(protocol.loop->mayExecuteZeroTimes) ||
+                        !appendOptional(protocol.loop->phaseControl) ||
+                        !appendValues(protocol.loop->laneByPhase))) {
+    return std::nullopt;
+  }
+  if (!appendOptional(protocol.lifetimeScope) ||
+      !append(protocol.lifetimeMayExecuteZeroTimes) ||
+      !append(protocol.channels.size())) {
+    return std::nullopt;
+  }
+  for (const SyncCoverEventChannel &channel : protocol.channels) {
+    if (!append(channel.id) ||
+        !append(static_cast<std::size_t>(channel.flow)) ||
+        !appendPoint(channel.set) || !appendPoint(channel.wait) ||
+        !append(channel.width) || !append(channel.distance) ||
+        !append(channel.suppliedRequirements) ||
+        !appendValues(channel.activePhases) ||
+        !append(channel.exportsCompletionAtExit) ||
+        !append(channel.transfers.size())) {
+      return std::nullopt;
+    }
+    for (const SyncCoverEventTransfer &transfer : channel.transfers) {
+      if (!append(transfer.id) || !appendPoint(transfer.set) ||
+          !appendPoint(transfer.wait) || !append(transfer.setLane) ||
+          !append(transfer.waitLane) || !appendValues(transfer.activePhases)) {
+        return std::nullopt;
+      }
+    }
+    if (!append(channel.actions.size())) {
+      return std::nullopt;
+    }
+    for (const SyncCoverProtocolAction &action : channel.actions) {
+      if (!append(action.id) ||
+          !append(static_cast<std::size_t>(action.kind)) ||
+          !append(static_cast<std::size_t>(action.segment)) ||
+          !appendPoint(action.point) || !append(action.lane) ||
+          !append(static_cast<std::size_t>(action.guard)) ||
+          !appendValues(action.activePhases)) {
+        return std::nullopt;
+      }
+    }
+    if (!append(channel.supplies.size())) {
+      return std::nullopt;
+    }
+    for (const SyncCoverProtocolSupply &supply : channel.supplies) {
+      if (!append(supply.setAction) || !append(supply.waitAction) ||
+          !append(supply.distance) || !appendOptional(supply.distanceScope) ||
+          !append(static_cast<std::size_t>(supply.kind))) {
+        return std::nullopt;
+      }
+    }
+  }
+  if (!append(protocol.rearmProofs.size())) {
+    return std::nullopt;
+  }
+  for (const SyncCoverProtocolRearmProof &proof : protocol.rearmProofs) {
+    if (!append(proof.fromWaitChannel) || !append(proof.toSetChannel) ||
+        !append(proof.iterationDistance) || !append(proof.evidence)) {
+      return std::nullopt;
+    }
+  }
+  if (!consumeWork(workBudget, key.size())) {
+    return std::nullopt;
+  }
+  return key;
+}
+
 std::optional<std::vector<std::size_t>> activePhasesForTransfer(
     const SyncCoverGraph &graph, const SyncCoverProtocolLoopSchedule &schedule,
     const SyncCoverCutPoint &set, const SyncCoverCutPoint &wait,
@@ -2144,10 +2918,16 @@ std::optional<std::vector<std::size_t>> activePhasesForTransfer(
   if (!setGuard || !waitGuard || (workBudget && workBudget->exhausted)) {
     return std::nullopt;
   }
+  // A conditional lifecycle transfer is admissible only as one balanced
+  // transaction: both ends execute under the same structured-control guard.
+  // Omitting the whole transaction then leaves the one-bit event state
+  // unchanged.  The protocol verifier explores the resulting guard worlds.
+  if (setGuard->literals != waitGuard->literals) {
+    return std::nullopt;
+  }
   const SyncCoverGuard &loopGuard = graph.getScopes()[schedule.scope].guard;
   if (!schedule.phaseControl) {
-    if (!syncCoverGuardImplies(loopGuard, *setGuard) ||
-        !syncCoverGuardImplies(loopGuard, *waitGuard)) {
+    if (!syncCoverGuardsCompatible(loopGuard, *setGuard)) {
       return std::nullopt;
     }
     return std::vector<std::size_t>{};
@@ -2169,8 +2949,7 @@ std::optional<std::vector<std::size_t>> activePhasesForTransfer(
     if (!normalizeSyncCoverGuard(condition)) {
       return std::nullopt;
     }
-    if (syncCoverGuardImplies(condition, *setGuard) &&
-        syncCoverGuardImplies(condition, *waitGuard)) {
+    if (syncCoverGuardsCompatible(condition, *setGuard)) {
       active.push_back(phase);
     }
   }
@@ -2184,6 +2963,38 @@ std::optional<std::vector<std::size_t>> activePhasesForPoint(
     const SyncCoverGraph &graph, const SyncCoverProtocolLoopSchedule &schedule,
     const SyncCoverCutPoint &point, SyncCoverCoverageWorkBudget *workBudget) {
   return activePhasesForTransfer(graph, schedule, point, point, workBudget);
+}
+
+std::optional<SyncCoverProtocolActionGuard> temporalGuardForPoint(
+    const SyncCoverGraph &graph, const SyncCoverProtocolLoopSchedule &schedule,
+    const SyncCoverCutPoint &point, SyncCoverCoverageWorkBudget *workBudget) {
+  const std::optional<SyncCoverGuard> guard =
+      effectivePointGuard(graph, point, workBudget);
+  if (!guard) {
+    return std::nullopt;
+  }
+  SyncCoverProtocolActionGuard temporal = SyncCoverProtocolActionGuard::Always;
+  for (const SyncCoverGuardLiteral &literal : guard->literals) {
+    if (!consumeWork(workBudget) ||
+        literal.control >= graph.getControls().size()) {
+      return std::nullopt;
+    }
+    const auto &relation =
+        graph.getControls()[literal.control].firstIterationRelation;
+    if (!relation || relation->loopScope != schedule.scope) {
+      continue;
+    }
+    const SyncCoverProtocolActionGuard candidate =
+        literal.alternative == relation->firstIterationAlternative
+            ? SyncCoverProtocolActionGuard::FirstIteration
+            : SyncCoverProtocolActionGuard::NotFirstIteration;
+    if (temporal != SyncCoverProtocolActionGuard::Always &&
+        temporal != candidate) {
+      return std::nullopt;
+    }
+    temporal = candidate;
+  }
+  return temporal;
 }
 
 std::size_t appendLifecycleAction(SyncCoverEventChannel &channel,
@@ -2254,6 +3065,227 @@ lifecycleEventRequirements(const SyncCoverProtocolTargetContract &target,
     return std::nullopt;
   }
   return capability->suppliedRequirements;
+}
+
+/// Construct the conservative direct basis for a distance-one recurrence.
+/// The ready token is consumed at the next loop-entry cut and the reverse
+/// acknowledgement prevents the source from setting the one-bit ready event
+/// again before that consume has completed.  Both cuts are unconditional
+/// within the loop invocation, so a guarded or zero-trip nested target cannot
+/// unbalance the hardware token state.
+std::optional<SyncCoverEventProtocol> makeDirectRecurrenceRoundTripProtocol(
+    const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
+    SyncCoverDemandId demandId, SyncCoverMechanismId mechanism,
+    SyncCoverCoverageWorkBudget *workBudget) {
+  if (demandId >= graph.getDemands().size()) {
+    return std::nullopt;
+  }
+  const SyncCoverDemand &demand = graph.getDemands()[demandId];
+  if (demand.distance != 1 || demand.scope == 0 ||
+      demand.scope >= graph.getScopes().size() ||
+      !graph.getScopes()[demand.scope].isLoop ||
+      demand.source >= graph.getNodes().size() ||
+      demand.target >= graph.getNodes().size()) {
+    return std::nullopt;
+  }
+  const SyncCoverNode &source = graph.getNodes()[demand.source];
+  const SyncCoverNode &destination = graph.getNodes()[demand.target];
+  if (source.resource == destination.resource) {
+    return std::nullopt;
+  }
+  const std::optional<SyncCoverOrderingRequirementMask> readyRequirements =
+      lifecycleEventRequirements(target, source.resource, destination.resource);
+  const std::optional<SyncCoverOrderingRequirementMask> releaseRequirements =
+      lifecycleEventRequirements(target, destination.resource, source.resource);
+  if (!readyRequirements || !releaseRequirements ||
+      (*readyRequirements & demand.orderingRequirements) !=
+          demand.orderingRequirements) {
+    return std::nullopt;
+  }
+  const SyncCoverRegionId loopRegion = graph.getScopes()[demand.scope].region;
+  if (loopRegion >= graph.getRegions().size()) {
+    return std::nullopt;
+  }
+
+  SyncCoverEventProtocol protocol;
+  protocol.mechanism = mechanism;
+  protocol.kind = SyncCoverEventProtocolKind::LifecycleNetwork;
+  protocol.loop = SyncCoverProtocolLoopSchedule{
+      demand.scope,
+      graph.getRegions()[loopRegion].cardinality ==
+          SyncCoverRegionCardinality::ZeroOrMore,
+      std::nullopt,
+      {0}};
+
+  const SyncCoverAnchor entry{SyncCoverAnchorKind::ScopeEntry, 0, demand.scope,
+                              0};
+  const SyncCoverAnchor exit{SyncCoverAnchorKind::ScopeExit, 0, demand.scope,
+                             0};
+  const std::optional<std::pair<SyncCoverAnchor, SyncCoverAnchor>>
+      sourceAnchors =
+          groupAnchors(graph, {source.id}, demand.scope, workBudget);
+  const std::optional<std::pair<SyncCoverAnchor, SyncCoverAnchor>>
+      targetAnchors =
+          groupAnchors(graph, {destination.id}, demand.scope, workBudget);
+  if (!sourceAnchors || !targetAnchors) {
+    return std::nullopt;
+  }
+  // The ready Wait and its acknowledgement must execute before both the
+  // protected target and this iteration's source-side ready Set.  A loop may
+  // contain no scheduled operation outside an opaque choice, so use the
+  // graph-owned entry cuts of both endpoint groups rather than requiring an
+  // unconditional node. groupAnchors lifts guarded endpoints to the enclosing
+  // ControlEntry, which executes exactly once for every loop iteration.
+  const std::optional<SyncCoverTimelinePosition> sourceEntry =
+      resolveSyncCoverAnchor(graph, sourceAnchors->first);
+  const std::optional<SyncCoverTimelinePosition> targetEntry =
+      resolveSyncCoverAnchor(graph, targetAnchors->first);
+  if (!sourceEntry || !targetEntry) {
+    return std::nullopt;
+  }
+  const SyncCoverAnchor bodyEntry = *sourceEntry <= *targetEntry
+                                        ? sourceAnchors->first
+                                        : targetAnchors->first;
+  const SyncCoverAnchor sourceCompletion = sourceAnchors->second;
+
+  SyncCoverEventChannel ready;
+  ready.id = 0;
+  ready.flow = SyncCoverEventChannelFlow::LoopCarry;
+  ready.width = 1;
+  ready.distance = 1;
+  ready.suppliedRequirements = *readyRequirements;
+  appendLifecycleAction(
+      ready, SyncCoverProtocolActionKind::Set,
+      SyncCoverProtocolActionSegment::Entry,
+      lifecyclePoint(SyncCoverCutPointKind::EventSet, source.resource, entry),
+      0, SyncCoverProtocolActionGuard::LoopNonEmpty);
+  const std::size_t readyWait =
+      appendLifecycleAction(ready, SyncCoverProtocolActionKind::Wait,
+                            SyncCoverProtocolActionSegment::Body,
+                            lifecyclePoint(SyncCoverCutPointKind::EventWait,
+                                           destination.resource, bodyEntry),
+                            0, SyncCoverProtocolActionGuard::Always);
+  const std::size_t readySet =
+      appendLifecycleAction(ready, SyncCoverProtocolActionKind::Set,
+                            SyncCoverProtocolActionSegment::Body,
+                            lifecyclePoint(SyncCoverCutPointKind::EventSet,
+                                           source.resource, sourceCompletion),
+                            0, SyncCoverProtocolActionGuard::Always);
+  appendLifecycleAction(ready, SyncCoverProtocolActionKind::Wait,
+                        SyncCoverProtocolActionSegment::Exit,
+                        lifecyclePoint(SyncCoverCutPointKind::EventWait,
+                                       destination.resource, exit),
+                        0, SyncCoverProtocolActionGuard::LoopNonEmpty);
+  ready.supplies.push_back({readySet, readyWait, 1});
+  ready.set = ready.actions[readySet].point;
+  ready.wait = ready.actions[readyWait].point;
+
+  SyncCoverEventChannel release;
+  release.id = 1;
+  release.flow = SyncCoverEventChannelFlow::SameIteration;
+  release.width = 1;
+  release.distance = 0;
+  release.suppliedRequirements = *releaseRequirements;
+  SyncCoverCutPoint releaseSetPoint = lifecyclePoint(
+      SyncCoverCutPointKind::EventSet, destination.resource, bodyEntry);
+  SyncCoverCutPoint releaseWaitPoint = lifecyclePoint(
+      SyncCoverCutPointKind::EventWait, source.resource, bodyEntry);
+  // The acknowledgement is issued after the ready Wait at the same lifted
+  // body-entry boundary.  Its source-side Wait likewise follows any ready
+  // priming Set at a coincident loop-entry boundary.  These explicit
+  // ordinals are part of the token rearm proof; treating all four actions as
+  // ordinal zero leaves the two same-pipeline orderings unspecified.
+  releaseSetPoint.ordinal = 1;
+  releaseWaitPoint.ordinal = 1;
+  const std::size_t releaseSet = appendLifecycleAction(
+      release, SyncCoverProtocolActionKind::Set,
+      SyncCoverProtocolActionSegment::Body, std::move(releaseSetPoint), 0,
+      SyncCoverProtocolActionGuard::Always);
+  const std::size_t releaseWait = appendLifecycleAction(
+      release, SyncCoverProtocolActionKind::Wait,
+      SyncCoverProtocolActionSegment::Body, std::move(releaseWaitPoint), 0,
+      SyncCoverProtocolActionGuard::Always);
+  release.supplies.push_back({releaseSet, releaseWait, 0});
+  release.set = release.actions[releaseSet].point;
+  release.wait = release.actions[releaseWait].point;
+
+  protocol.channels = {std::move(ready), std::move(release)};
+  return protocol;
+}
+
+std::optional<SyncCoverEventProtocol> makeStructuralDirectProtocol(
+    const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
+    SyncCoverDemandId demandId, SyncCoverMechanismId mechanism,
+    SyncCoverCoverageWorkBudget *workBudget) {
+  if (demandId >= graph.getDemands().size()) {
+    return std::nullopt;
+  }
+  const SyncCoverDemand &demand = graph.getDemands()[demandId];
+  if (demand.distance != 0 || demand.source >= graph.getNodes().size() ||
+      demand.target >= graph.getNodes().size()) {
+    return std::nullopt;
+  }
+  const SyncCoverNode &source = graph.getNodes()[demand.source];
+  const SyncCoverNode &destination = graph.getNodes()[demand.target];
+  if (source.resource == destination.resource ||
+      source.guard.literals != destination.guard.literals) {
+    return std::nullopt;
+  }
+  const std::optional<SyncCoverOrderingRequirementMask> requirements =
+      lifecycleEventRequirements(target, source.resource, destination.resource);
+  if (!requirements || (*requirements & demand.orderingRequirements) !=
+                           demand.orderingRequirements) {
+    return std::nullopt;
+  }
+  const std::optional<SyncCoverScopeId> sourceLoop =
+      graph.getNearestEnclosingLoop(source.scope, true);
+  const std::optional<SyncCoverScopeId> targetLoop =
+      graph.getNearestEnclosingLoop(destination.scope, true);
+
+  SyncCoverAnchor setAnchor;
+  SyncCoverAnchor waitAnchor;
+  if (targetLoop && !sourceLoop && source.scope != destination.scope &&
+      graph.scopeContains(source.scope, destination.scope) &&
+      graph.scopeContains(source.scope, *targetLoop)) {
+    setAnchor = {SyncCoverAnchorKind::AfterNode, source.id, 0, 0};
+    waitAnchor = {SyncCoverAnchorKind::ScopeEntry, 0, *targetLoop, 0};
+  } else if (sourceLoop && !targetLoop && source.scope != destination.scope &&
+             graph.scopeContains(destination.scope, source.scope) &&
+             graph.scopeContains(destination.scope, *sourceLoop)) {
+    setAnchor = {SyncCoverAnchorKind::ScopeExit, 0, *sourceLoop, 0};
+    waitAnchor = {SyncCoverAnchorKind::BeforeNode, destination.id, 0, 0};
+  } else if (sourceLoop && targetLoop && *sourceLoop != *targetLoop) {
+    const std::optional<SyncCoverScopeId> sharedLoop =
+        nearestSharedLifecycleLoop(graph, source.scope, destination.scope,
+                                   workBudget);
+    if (sharedLoop || (workBudget && workBudget->exhausted)) {
+      return std::nullopt;
+    }
+    setAnchor = {SyncCoverAnchorKind::ScopeExit, 0, *sourceLoop, 0};
+    waitAnchor = {SyncCoverAnchorKind::ScopeEntry, 0, *targetLoop, 0};
+  } else {
+    return std::nullopt;
+  }
+  if (source.order >= destination.order) {
+    return std::nullopt;
+  }
+
+  SyncCoverEventProtocol protocol;
+  protocol.mechanism = mechanism;
+  protocol.kind = SyncCoverEventProtocolKind::SingleShot;
+
+  SyncCoverEventChannel channel;
+  channel.id = 0;
+  channel.flow = SyncCoverEventChannelFlow::SingleShot;
+  channel.width = 1;
+  channel.suppliedRequirements = *requirements;
+  channel.set = lifecyclePoint(SyncCoverCutPointKind::EventSet, source.resource,
+                               setAnchor);
+  channel.wait = lifecyclePoint(SyncCoverCutPointKind::EventWait,
+                                destination.resource, waitAnchor);
+  channel.transfers.push_back({0, channel.set, channel.wait, 0, 0, {}});
+  protocol.channels.push_back(std::move(channel));
+  return protocol;
 }
 
 struct SccCycleEdge {
@@ -3341,15 +4373,19 @@ std::optional<SyncCoverEventProtocol> makeLifecycleProtocol(
     const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
     const DerivedLifecycleCertificate &certificate,
     SyncCoverMechanismId mechanism, SyncCoverCoverageWorkBudget *workBudget) {
+  const auto rejectProtocol = [](const char *reason) {
+    (void)reason;
+    return std::optional<SyncCoverEventProtocol>{};
+  };
   if (certificate.loopScope == 0 ||
       certificate.loopScope >= graph.getScopes().size() ||
       certificate.lanes.empty() || certificate.paths.empty()) {
-    return std::nullopt;
+    return rejectProtocol("header");
   }
   const SyncCoverRegionId loopRegion =
       graph.getScopes()[certificate.loopScope].region;
   if (loopRegion >= graph.getRegions().size()) {
-    return std::nullopt;
+    return rejectProtocol("loop-region");
   }
   SyncCoverProtocolLoopSchedule schedule;
   schedule.scope = certificate.loopScope;
@@ -3360,7 +4396,7 @@ std::optional<SyncCoverEventProtocol> makeLifecycleProtocol(
     const LoopPhaseControlQuery phaseQuery =
         findLoopPhaseControl(graph, certificate.loopScope, workBudget);
     if (phaseQuery.workUnavailable || phaseQuery.ambiguous) {
-      return std::nullopt;
+      return rejectProtocol("phase-query");
     }
     schedule.phaseControl = phaseQuery.control;
   }
@@ -3368,7 +4404,7 @@ std::optional<SyncCoverEventProtocol> makeLifecycleProtocol(
     const SyncCoverControl &control =
         graph.getControls()[*schedule.phaseControl];
     if (!control.phaseRelation) {
-      return std::nullopt;
+      return rejectProtocol("phase-relation");
     }
     schedule.laneByPhase.assign(control.phaseRelation->nextPhase.size(), 0);
   } else {
@@ -3377,14 +4413,22 @@ std::optional<SyncCoverEventProtocol> makeLifecycleProtocol(
 
   SyncCoverEventProtocol protocol;
   if (certificate.alternating) {
-    return makeAlternatingLifecycleProtocol(
-        graph, target, certificate, mechanism, std::move(schedule), workBudget);
+    std::optional<SyncCoverEventProtocol> alternating =
+        makeAlternatingLifecycleProtocol(graph, target, certificate, mechanism,
+                                         std::move(schedule), workBudget);
+    return alternating ? std::move(alternating)
+                       : rejectProtocol("alternating-construction");
   }
   protocol.mechanism = mechanism;
   protocol.kind = SyncCoverEventProtocolKind::LifecycleNetwork;
   protocol.loop = schedule;
+  const bool ownsStorageLifecycle = std::any_of(
+      certificate.lanes.begin(), certificate.lanes.end(),
+      [](const DerivedLifecycleLane &lane) { return !lane.slots.empty(); });
   const std::optional<SyncCoverScopeId> lifetimeScope =
-      findRoundTripLifetimeScope(graph, certificate, schedule, workBudget);
+      ownsStorageLifecycle
+          ? findRoundTripLifetimeScope(graph, certificate, schedule, workBudget)
+          : std::nullopt;
   if (workBudget && workBudget->exhausted) {
     return std::nullopt;
   }
@@ -3404,7 +4448,7 @@ std::optional<SyncCoverEventProtocol> makeLifecycleProtocol(
       lifecycleEventRequirements(target, certificate.consumerResource,
                                  certificate.producerResource);
   if (!readyRequirements || !releaseRequirements) {
-    return std::nullopt;
+    return rejectProtocol("event-requirements");
   }
   ready.suppliedRequirements = *readyRequirements;
   SyncCoverEventChannel release;
@@ -3435,6 +4479,8 @@ std::optional<SyncCoverEventProtocol> makeLifecycleProtocol(
     SyncCoverTimelinePosition setPosition = 0;
     SyncCoverTimelinePosition waitPosition = 0;
     std::vector<std::size_t> activePhases;
+    SyncCoverProtocolActionGuard temporalGuard =
+        SyncCoverProtocolActionGuard::Always;
   };
   struct ReadyUse {
     std::size_t path = 0;
@@ -3467,17 +4513,26 @@ std::optional<SyncCoverEventProtocol> makeLifecycleProtocol(
           activePhasesForTransfer(graph, schedule, readyTransfer.set,
                                   readyTransfer.wait, workBudget);
       if (!readyPhases) {
-        return std::nullopt;
+        return rejectProtocol("ready-phases");
+      }
+      const std::optional<SyncCoverProtocolActionGuard> readyTemporalGuard =
+          temporalGuardForPoint(graph, schedule, readyTransfer.set, workBudget);
+      const std::optional<SyncCoverProtocolActionGuard> readyWaitTemporalGuard =
+          temporalGuardForPoint(graph, schedule, readyTransfer.wait,
+                                workBudget);
+      if (!readyTemporalGuard || !readyWaitTemporalGuard ||
+          *readyTemporalGuard != *readyWaitTemporalGuard) {
+        return rejectProtocol("ready-temporal-guard");
       }
       readyTransfer.activePhases = *readyPhases;
       const std::size_t readySetAction = appendLifecycleAction(
           ready, SyncCoverProtocolActionKind::Set,
           SyncCoverProtocolActionSegment::Body, readyTransfer.set, use.lane,
-          SyncCoverProtocolActionGuard::Always, *readyPhases);
+          *readyTemporalGuard, *readyPhases);
       const std::size_t readyWaitAction = appendLifecycleAction(
           ready, SyncCoverProtocolActionKind::Wait,
           SyncCoverProtocolActionSegment::Body, readyTransfer.wait, use.lane,
-          SyncCoverProtocolActionGuard::Always, *readyPhases);
+          *readyTemporalGuard, *readyPhases);
       ready.supplies.push_back({readySetAction, readyWaitAction, 0});
       readyUses.push_back({pathIndex, readySetAction, readyWaitAction, use.lane,
                            use.producers});
@@ -3495,7 +4550,17 @@ std::optional<SyncCoverEventProtocol> makeLifecycleProtocol(
           activePhasesForTransfer(graph, schedule, releaseTransfer.set,
                                   releaseTransfer.wait, workBudget);
       if (!releasePhases) {
-        return std::nullopt;
+        return rejectProtocol("release-phases");
+      }
+      const std::optional<SyncCoverProtocolActionGuard> releaseTemporalGuard =
+          temporalGuardForPoint(graph, schedule, releaseTransfer.set,
+                                workBudget);
+      const std::optional<SyncCoverProtocolActionGuard>
+          releaseWaitTemporalGuard = temporalGuardForPoint(
+              graph, schedule, releaseTransfer.wait, workBudget);
+      if (!releaseTemporalGuard || !releaseWaitTemporalGuard ||
+          *releaseTemporalGuard != *releaseWaitTemporalGuard) {
+        return rejectProtocol("release-temporal-guard");
       }
       releaseTransfer.activePhases = *releasePhases;
       const std::optional<SyncCoverTimelinePosition> setPosition =
@@ -3503,20 +4568,19 @@ std::optional<SyncCoverEventProtocol> makeLifecycleProtocol(
       const std::optional<SyncCoverTimelinePosition> waitPosition =
           resolveSyncCoverAnchor(graph, releaseTransfer.wait.anchor);
       if (!setPosition || !waitPosition) {
-        return std::nullopt;
+        return rejectProtocol("release-positions");
       }
       const std::size_t waitAction = appendLifecycleAction(
           release, SyncCoverProtocolActionKind::Wait,
           SyncCoverProtocolActionSegment::Body, releaseTransfer.wait,
-          use.producerLane, SyncCoverProtocolActionGuard::Always,
-          *releasePhases);
+          use.producerLane, *releaseTemporalGuard, *releasePhases);
       const std::size_t setAction = appendLifecycleAction(
           release, SyncCoverProtocolActionKind::Set,
           SyncCoverProtocolActionSegment::Body, releaseTransfer.set, use.lane,
-          SyncCoverProtocolActionGuard::Always, *releasePhases);
+          *releaseTemporalGuard, *releasePhases);
       releaseUses.push_back({pathIndex, setAction, waitAction, use.lane,
                              use.producerLane, *setPosition, *waitPosition,
-                             *releasePhases});
+                             *releasePhases, *releaseTemporalGuard});
     }
   }
   if (lifetimeScope) {
@@ -3543,8 +4607,9 @@ std::optional<SyncCoverEventProtocol> makeLifecycleProtocol(
       }
     }
   }
+  std::vector<std::size_t> releaseExitWaits(release.width);
   for (std::size_t lane = 0; lane < release.width; ++lane) {
-    appendLifecycleAction(
+    releaseExitWaits[lane] = appendLifecycleAction(
         release, SyncCoverProtocolActionKind::Wait,
         SyncCoverProtocolActionSegment::Exit,
         lifecyclePoint(SyncCoverCutPointKind::EventWait,
@@ -3555,24 +4620,60 @@ std::optional<SyncCoverEventProtocol> makeLifecycleProtocol(
         lifetimeScope ? SyncCoverProtocolActionGuard::Always
                       : SyncCoverProtocolActionGuard::LoopNonEmpty);
   }
-  const auto pathFollows = [&](const ReleaseUse &source,
-                               const ReleaseUse &target) {
+  const auto pathDistance =
+      [&](const ReleaseUse &source,
+          const ReleaseUse &target) -> std::optional<unsigned> {
     if (!schedule.phaseControl) {
-      return source.path == target.path;
+      return source.path == target.path ? std::optional<unsigned>(1)
+                                        : std::nullopt;
     }
     const SyncCoverControlPhaseRelation &relation =
         *graph.getControls()[*schedule.phaseControl].phaseRelation;
-    for (std::size_t phase : source.activePhases) {
-      if (phase < relation.nextPhase.size() &&
-          std::binary_search(target.activePhases.begin(),
-                             target.activePhases.end(),
-                             relation.nextPhase[phase])) {
-        return true;
-      }
+    if (source.activePhases.empty() || target.activePhases.empty()) {
+      return std::nullopt;
     }
-    return false;
+    std::optional<unsigned> uniformDistance;
+    for (std::size_t sourcePhase : source.activePhases) {
+      if (sourcePhase >= relation.nextPhase.size()) {
+        return std::nullopt;
+      }
+      std::size_t phase = sourcePhase;
+      std::optional<unsigned> nextDistance;
+      for (unsigned distance = 1; distance <= relation.nextPhase.size();
+           ++distance) {
+        if (!consumeWork(workBudget) || phase >= relation.nextPhase.size()) {
+          return std::nullopt;
+        }
+        phase = relation.nextPhase[phase];
+        if (phase >= relation.nextPhase.size()) {
+          return std::nullopt;
+        }
+        if (std::binary_search(target.activePhases.begin(),
+                               target.activePhases.end(), phase)) {
+          nextDistance = distance;
+          break;
+        }
+      }
+      if (!nextDistance ||
+          (uniformDistance && *uniformDistance != *nextDistance)) {
+        return std::nullopt;
+      }
+      uniformDistance = nextDistance;
+    }
+    return uniformDistance;
   };
   for (const ReleaseUse &source : releaseUses) {
+    if (source.temporalGuard == SyncCoverProtocolActionGuard::FirstIteration) {
+      if (source.lane >= releaseExitWaits.size()) {
+        return rejectProtocol("release-exit-lane");
+      }
+      // This guarded occurrence executes at most once in the loop. Its body
+      // Set is consumed by the explicit loop-exit drain; there is no later
+      // body Wait to which a positive recurrence distance could be assigned.
+      release.supplies.push_back(
+          {source.setAction, releaseExitWaits[source.lane], 0});
+      continue;
+    }
     const ReleaseUse *best = nullptr;
     unsigned bestDistance = 0;
     for (const ReleaseUse &target : releaseUses) {
@@ -3581,11 +4682,13 @@ std::optional<SyncCoverEventProtocol> makeLifecycleProtocol(
       }
       const bool sameIteration = source.path == target.path &&
                                  source.setPosition < target.waitPosition;
-      const bool nextIteration = !sameIteration && pathFollows(source, target);
-      if (!sameIteration && !nextIteration) {
+      const std::optional<unsigned> nextDistance =
+          sameIteration ? std::optional<unsigned>(0)
+                        : pathDistance(source, target);
+      if (!nextDistance) {
         continue;
       }
-      const unsigned distance = sameIteration ? 0U : 1U;
+      const unsigned distance = *nextDistance;
       if (!best || std::make_tuple(distance, target.waitPosition) <
                        std::make_tuple(bestDistance, best->waitPosition)) {
         best = &target;
@@ -3593,8 +4696,9 @@ std::optional<SyncCoverEventProtocol> makeLifecycleProtocol(
       }
     }
     if (!best) {
-      return std::nullopt;
+      return rejectProtocol("release-successor");
     }
+    release.distance = std::max(release.distance, bestDistance);
     release.supplies.push_back(
         {source.setAction, best->waitAction, bestDistance});
   }
@@ -3634,7 +4738,7 @@ std::optional<SyncCoverEventProtocol> makeLifecycleProtocol(
     const std::optional<std::size_t> initialPath =
         findInitialLifecyclePath(graph, certificate, schedule);
     if (!initialPath) {
-      return std::nullopt;
+      return rejectProtocol("initial-path");
     }
     for (std::size_t sourcePath = 0; sourcePath < certificate.paths.size();
          ++sourcePath) {
@@ -3680,7 +4784,7 @@ std::optional<SyncCoverEventProtocol> makeLifecycleProtocol(
   }
   if (ready.actions.empty() || ready.supplies.empty() ||
       release.actions.empty() || release.supplies.empty()) {
-    return std::nullopt;
+    return rejectProtocol("empty-recipe");
   }
   if (lifetimeScope) {
     if (!appendParentInvocationCompletionExports(ready, *lifetimeScope,
@@ -3694,7 +4798,35 @@ std::optional<SyncCoverEventProtocol> makeLifecycleProtocol(
   ready.wait = ready.actions[readyUses.front().waitAction].point;
   release.set = release.actions[releaseUses.front().setAction].point;
   release.wait = release.actions[releaseUses.front().waitAction].point;
-  protocol.channels = {std::move(ready), std::move(release)};
+  const auto sameAnchor = [](const SyncCoverAnchor &left,
+                             const SyncCoverAnchor &right) {
+    return std::tie(left.kind, left.node, left.scope, left.position) ==
+           std::tie(right.kind, right.node, right.scope, right.position);
+  };
+  bool releaseMustPrecedeReady = false;
+  bool readyMustPrecedeRelease = false;
+  for (const ReleaseUse &releaseUse : releaseUses) {
+    for (const ReadyUse &readyUse : readyUses) {
+      releaseMustPrecedeReady |=
+          sameAnchor(release.actions[releaseUse.waitAction].point.anchor,
+                     ready.actions[readyUse.setAction].point.anchor);
+      readyMustPrecedeRelease |=
+          sameAnchor(ready.actions[readyUse.waitAction].point.anchor,
+                     release.actions[releaseUse.setAction].point.anchor);
+    }
+  }
+  if (releaseMustPrecedeReady && readyMustPrecedeRelease) {
+    return rejectProtocol("coincident-action-cycle");
+  }
+  if (releaseMustPrecedeReady) {
+    release.id = 0;
+    ready.id = 1;
+    protocol.channels = {std::move(release), std::move(ready)};
+  } else {
+    ready.id = 0;
+    release.id = 1;
+    protocol.channels = {std::move(ready), std::move(release)};
+  }
   return protocol;
 }
 
@@ -3831,7 +4963,8 @@ getLifecycleCatalogFootprint(const SyncCoverLifecycleProposal &proposal) {
 SyncCoverProtocolError verifyAndPruneLifecycleCompletionExports(
     const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
     SyncCoverEventProtocol &protocol, SyncCoverProtocolLimits limits,
-    SyncCoverCoverageWorkBudget *workBudget) {
+    SyncCoverCoverageWorkBudget *workBudget,
+    std::optional<std::size_t> *invalidIndex = nullptr) {
   SyncCoverProtocolVerificationResult verified =
       verifySyncCoverEventProtocol(graph, target, protocol, limits, workBudget);
   if (verified) {
@@ -3839,6 +4972,9 @@ SyncCoverProtocolError verifyAndPruneLifecycleCompletionExports(
   }
   if (verified.error != SyncCoverProtocolError::InvalidTokenLifecycle ||
       verified.supplyWitnesses.size() != protocol.channels.size()) {
+    if (invalidIndex) {
+      *invalidIndex = verified.invalidIndex;
+    }
     return verified.error;
   }
   for (std::size_t channelIndex = 0; channelIndex < protocol.channels.size();
@@ -3846,6 +4982,9 @@ SyncCoverProtocolError verifyAndPruneLifecycleCompletionExports(
     SyncCoverEventChannel &channel = protocol.channels[channelIndex];
     if (verified.supplyWitnesses[channelIndex].size() !=
         channel.supplies.size()) {
+      if (invalidIndex) {
+        *invalidIndex = channelIndex;
+      }
       return SyncCoverProtocolError::InvalidTokenLifecycle;
     }
     std::vector<SyncCoverProtocolSupply> retained;
@@ -3862,6 +5001,9 @@ SyncCoverProtocolError verifyAndPruneLifecycleCompletionExports(
   }
   verified =
       verifySyncCoverEventProtocol(graph, target, protocol, limits, workBudget);
+  if (!verified && invalidIndex) {
+    *invalidIndex = verified.invalidIndex;
+  }
   return verified.error;
 }
 
@@ -3872,6 +5014,10 @@ certifyLifecycleStorageReuse(const SyncCoverGraph &graph,
                              const SyncCoverEventProtocol &protocol,
                              SyncCoverCoverageWorkBudget *workBudget) {
   SyncCoverDemandSet covered(graph.getDemands().size());
+  const auto rejectStorage = [&](const char *reason) {
+    (void)reason;
+    return std::optional<SyncCoverDemandSet>{};
+  };
   if (!target.directEventCompletesSourcePrefix) {
     return covered;
   }
@@ -3883,13 +5029,13 @@ certifyLifecycleStorageReuse(const SyncCoverGraph &graph,
       graph.getNodes().size());
   for (const DerivedLifecycleLane &lane : certificate.lanes) {
     if (lane.id >= producers.size()) {
-      return std::nullopt;
+      return rejectStorage("lane-id");
     }
     for (const DerivedLifecycleSlot &slot : lane.slots) {
       for (SyncCoverStorageAccessId access : slot.accesses) {
         if (!consumeWork(workBudget) || access >= accessLane.size() ||
             (accessLane[access] && *accessLane[access] != lane.id)) {
-          return std::nullopt;
+          return rejectStorage("access-lane");
         }
         accessLane[access] = lane.id;
       }
@@ -3899,7 +5045,7 @@ certifyLifecycleStorageReuse(const SyncCoverGraph &graph,
   for (const DerivedLifecyclePath &path : certificate.paths) {
     for (const DerivedLifecycleUse &use : path.uses) {
       if (use.producerLane >= producers.size()) {
-        return std::nullopt;
+        return rejectStorage("producer-lane");
       }
       if (!consumeWork(workBudget, use.producers.size())) {
         return std::nullopt;
@@ -3909,13 +5055,13 @@ certifyLifecycleStorageReuse(const SyncCoverGraph &graph,
                                          use.producers.end());
       if (use.lane >= consumers.size() ||
           !consumeWork(workBudget, use.consumers.size())) {
-        return std::nullopt;
+        return rejectStorage("consumer-lane");
       }
       consumers[use.lane].insert(consumers[use.lane].end(),
                                  use.consumers.begin(), use.consumers.end());
       for (SyncCoverNodeId producer : use.producers) {
         if (producer >= producerRegions.size()) {
-          return std::nullopt;
+          return rejectStorage("producer-node");
         }
         producerRegions[producer].push_back(nextProducerRegion);
       }
@@ -3924,14 +5070,14 @@ certifyLifecycleStorageReuse(const SyncCoverGraph &graph,
   }
   if (certificate.initialReadyLane >= producers.size() ||
       !consumeWork(workBudget, certificate.initialProducers.size())) {
-    return std::nullopt;
+    return rejectStorage("initial-ready-lane");
   }
   producers[certificate.initialReadyLane].insert(
       producers[certificate.initialReadyLane].end(),
       certificate.initialProducers.begin(), certificate.initialProducers.end());
   for (SyncCoverNodeId producer : certificate.initialProducers) {
     if (producer >= producerRegions.size()) {
-      return std::nullopt;
+      return rejectStorage("initial-producer-node");
     }
     producerRegions[producer].push_back(nextProducerRegion);
   }
@@ -3991,14 +5137,14 @@ certifyLifecycleStorageReuse(const SyncCoverGraph &graph,
     if (channel.set.resource == certificate.producerResource &&
         channel.wait.resource == certificate.consumerResource) {
       if (readyChannel) {
-        return std::nullopt;
+        return rejectStorage("duplicate-ready-channel");
       }
       readyChannel = &channel;
     }
     if (channel.set.resource == certificate.consumerResource &&
         channel.wait.resource == certificate.producerResource) {
       if (releaseChannel) {
-        return std::nullopt;
+        return rejectStorage("duplicate-release-channel");
       }
       releaseChannel = &channel;
     }
@@ -4101,7 +5247,7 @@ certifyLifecycleStorageReuse(const SyncCoverGraph &graph,
       }
       const std::size_t lane = *accessLane[witness.sourceAccess];
       if (lane >= producers.size() || lane >= consumers.size()) {
-        return std::nullopt;
+        return rejectStorage("witness-lane");
       }
       const SyncCoverStorageAccess &source =
           graph.getStorageAccesses()[witness.sourceAccess];
@@ -4140,10 +5286,11 @@ certifyLifecycleStorageReuse(const SyncCoverGraph &graph,
 
 namespace {
 
-SyncCoverLifecycleSccResult importStorageLifecycleSccs(
-    const SyncCoverGraph &graph,
-    const SyncCoverStorageLifecycleIndex &lifecycleIndex,
-    SyncCoverProtocolLimits limits, SyncCoverCoverageWorkBudget *workBudget) {
+SyncCoverLifecycleSccResult
+importStorageLifecycleSccs(const SyncCoverGraph &graph,
+                           const SyncCoverStorageLifecycleIndex &lifecycleIndex,
+                           SyncCoverProtocolLimits limits,
+                           SyncCoverCoverageWorkBudget *workBudget) {
   SyncCoverLifecycleSccResult result;
   if (!graph.isStructureFrozen() || !graph.validate() ||
       !lifecycleIndex.isComplete()) {
@@ -4175,12 +5322,11 @@ SyncCoverLifecycleSccResult importStorageLifecycleSccs(
       result.invalidIndex = component.id;
       return result;
     }
-    const bool hasClosedLifecycle =
-        std::any_of(component.sccs.begin(), component.sccs.end(),
-                    [&](const SyncCoverStorageLifecycleScc &scc) {
-                      return scc.cyclic &&
-                             (scc.kinds & readyRelease) == readyRelease;
-                    });
+    const bool hasClosedLifecycle = std::any_of(
+        component.sccs.begin(), component.sccs.end(),
+        [&](const SyncCoverStorageLifecycleScc &scc) {
+          return scc.cyclic && (scc.kinds & readyRelease) == readyRelease;
+        });
     if (!hasClosedLifecycle) {
       continue;
     }
@@ -4264,6 +5410,143 @@ SyncCoverLifecycleSccResult importStorageLifecycleSccs(
   return result;
 }
 
+SyncCoverLifecycleSccResult importStorageLifecycleGroups(
+    const SyncCoverGraph &graph,
+    const SyncCoverStorageLifecycleIndex &lifecycleIndex,
+    const SyncCoverStorageProtocolSeedIndex &seedIndex,
+    const SyncCoverStorageProtocolGroupIndex &groupIndex,
+    SyncCoverProtocolLimits limits, SyncCoverCoverageWorkBudget *workBudget) {
+  SyncCoverLifecycleSccResult result;
+  if (!graph.isStructureFrozen() || !graph.validate() ||
+      !lifecycleIndex.isComplete() || !seedIndex.isComplete() ||
+      !groupIndex.isComplete()) {
+    result.error = graph.isStructureFrozen() && graph.validate()
+                       ? SyncCoverProtocolError::LimitExceeded
+                       : SyncCoverProtocolError::InvalidGraph;
+    return result;
+  }
+
+  const std::vector<SyncCoverStorageLifecycleComponent> &components =
+      lifecycleIndex.getComponents();
+  const std::vector<SyncCoverStorageProtocolSeed> &seeds = seedIndex.getSeeds();
+  const auto normalizeIds = [&](auto &values) {
+    const std::optional<std::size_t> sortWork = comparisonWork(values.size());
+    if (!sortWork || !consumeWork(workBudget, *sortWork)) {
+      return false;
+    }
+    std::sort(values.begin(), values.end());
+    values.erase(std::unique(values.begin(), values.end()), values.end());
+    return true;
+  };
+
+  for (const SyncCoverStorageProtocolGroup &group : groupIndex.getGroups()) {
+    if (!consumeWork(workBudget, group.seeds.size() + 1)) {
+      result.error = SyncCoverProtocolError::WorkLimitExceeded;
+      result.invalidIndex = group.id;
+      return result;
+    }
+    if (group.owningScope >= graph.getScopes().size() ||
+        !graph.getScopes()[group.owningScope].isLoop || group.demands.empty()) {
+      result.error = SyncCoverProtocolError::InvalidGraph;
+      result.invalidIndex = group.id;
+      return result;
+    }
+    if (result.components.size() == limits.maximumLifecycleSccs) {
+      result.error = SyncCoverProtocolError::LimitExceeded;
+      result.invalidIndex = group.id;
+      return result;
+    }
+
+    std::set<SyncCoverStorageLifecycleComponentId> componentIds;
+    for (SyncCoverStorageProtocolSeedId seedId : group.seeds) {
+      if (seedId >= seeds.size() || seeds[seedId].id != seedId ||
+          !consumeWork(workBudget, seeds[seedId].components.size() +
+                                       lookupWork(componentIds.size() + 1))) {
+        result.error = workBudget && workBudget->exhausted
+                           ? SyncCoverProtocolError::WorkLimitExceeded
+                           : SyncCoverProtocolError::InvalidGraph;
+        result.invalidIndex = group.id;
+        return result;
+      }
+      componentIds.insert(seeds[seedId].components.begin(),
+                          seeds[seedId].components.end());
+    }
+
+    SyncCoverLifecycleScc imported;
+    imported.loopScope = group.owningScope;
+    imported.demands = group.demands;
+    imported.maximumDistance = group.maximumDistance;
+    for (SyncCoverStorageLifecycleComponentId componentId : componentIds) {
+      if (componentId >= components.size() ||
+          components[componentId].id != componentId) {
+        result.error = SyncCoverProtocolError::InvalidGraph;
+        result.invalidIndex = group.id;
+        return result;
+      }
+      const SyncCoverStorageLifecycleComponent &component =
+          components[componentId];
+      for (const SyncCoverStorageLifecycleEpoch &epoch : component.epochs) {
+        if (!consumeWork(workBudget, 3)) {
+          result.error = SyncCoverProtocolError::WorkLimitExceeded;
+          result.invalidIndex = group.id;
+          return result;
+        }
+        imported.resources.push_back(epoch.resource);
+        imported.nodes.push_back(epoch.node);
+        imported.storageAccesses.push_back(epoch.access);
+      }
+      for (const SyncCoverStorageLifecycleSlot &slot : component.slots) {
+        if (!consumeWork(workBudget, slot.accesses.size() + 1)) {
+          result.error = SyncCoverProtocolError::WorkLimitExceeded;
+          result.invalidIndex = group.id;
+          return result;
+        }
+        imported.storageDomains.push_back(slot.domain);
+        imported.storageAccesses.insert(imported.storageAccesses.end(),
+                                        slot.accesses.begin(),
+                                        slot.accesses.end());
+      }
+      for (const SyncCoverStorageLifecycleEdge &edge : component.edges) {
+        if (!consumeWork(workBudget, 2)) {
+          result.error = SyncCoverProtocolError::WorkLimitExceeded;
+          result.invalidIndex = group.id;
+          return result;
+        }
+        imported.storageWitnesses.push_back(edge.witness);
+        imported.maximumDistance =
+            std::max(imported.maximumDistance, edge.distance);
+      }
+    }
+    if (!normalizeIds(imported.resources) || !normalizeIds(imported.nodes) ||
+        !normalizeIds(imported.demands) ||
+        !normalizeIds(imported.storageDomains) ||
+        !normalizeIds(imported.storageAccesses) ||
+        !normalizeIds(imported.storageWitnesses)) {
+      result.error = SyncCoverProtocolError::WorkLimitExceeded;
+      result.invalidIndex = group.id;
+      return result;
+    }
+    if (imported.nodes.size() > limits.maximumLifecycleVertices ||
+        imported.demands.size() > limits.maximumLifecycleEdges ||
+        imported.storageDomains.size() >
+            limits.maximumLifecycleDomainIncidences ||
+        imported.storageAccesses.size() >
+            limits.maximumLifecycleAccessIncidences ||
+        imported.storageWitnesses.size() >
+            limits.maximumStorageWitnessIncidences ||
+        !checkedAccumulateSize(result.lifecycleAccessIncidences,
+                               imported.storageAccesses.size()) ||
+        result.lifecycleAccessIncidences >
+            limits.maximumLifecycleAccessIncidences) {
+      result.error = SyncCoverProtocolError::LimitExceeded;
+      result.invalidIndex = group.id;
+      return result;
+    }
+    result.components.push_back(std::move(imported));
+  }
+  return result;
+}
+
 SyncCoverLifecycleSynthesisResult synthesizeLifecycleCertificatesFromSccs(
     const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
     const SyncCoverLifecycleSccResult &components,
@@ -4312,6 +5595,7 @@ SyncCoverLifecycleSynthesisResult synthesizeLifecycleCertificatesFromSccs(
     return SyncCoverProtocolError::None;
   };
   result.lifecycleAccessIncidences = components.lifecycleAccessIncidences;
+  result.lifecycleSccs = components.components.size();
   for (std::size_t componentIndex = 0;
        componentIndex < components.components.size(); ++componentIndex) {
     if (!consumeWork(workBudget)) {
@@ -4321,8 +5605,15 @@ SyncCoverLifecycleSynthesisResult synthesizeLifecycleCertificatesFromSccs(
     proposal.id = result.proposals.size();
     proposal.lifecycleScc = componentIndex;
     proposal.seedDemands = components.components[componentIndex].demands;
+    const std::size_t certificatesBefore = result.derivedLifecycleCertificates;
+    const std::size_t constructionRejectsBefore =
+        result.rejectedLifecycleConstructions;
+    const std::size_t verificationRejectsBefore =
+        result.rejectedLifecycleVerifications;
+    const std::size_t storageRejectsBefore =
+        result.rejectedLifecycleStorageCertificates;
     std::map<LifecycleSlotKey, std::size_t> proposalSlotIndex;
-    SyncCoverDemandSet certifiedStorageReuse(graph.getDemands().size());
+    std::vector<SyncCoverDemandSet> certifiedStorageReuseByProtocol;
     DerivedLifecycleSchedules schedules = deriveLifecycleSchedules(
         graph, components.components[componentIndex], limits, workBudget);
     if (schedules.error != SyncCoverProtocolError::None) {
@@ -4342,6 +5633,10 @@ SyncCoverLifecycleSynthesisResult synthesizeLifecycleCertificatesFromSccs(
         limits.maximumLifecycleAccessIncidences) {
       return fail(SyncCoverProtocolError::LimitExceeded, componentIndex);
     }
+    if (!checkedAccumulateSize(result.derivedLifecycleCertificates,
+                               schedules.certificates.size())) {
+      return fail(SyncCoverProtocolError::LimitExceeded, componentIndex);
+    }
     for (const DerivedLifecycleCertificate &certificate :
          schedules.certificates) {
       if (proposal.protocols.size() == limits.maximumLifecycleProtocols) {
@@ -4353,15 +5648,24 @@ SyncCoverLifecycleSynthesisResult synthesizeLifecycleCertificatesFromSccs(
         return fail(SyncCoverProtocolError::WorkLimitExceeded, componentIndex);
       }
       if (!protocol) {
+        ++result.rejectedLifecycleConstructions;
         continue;
       }
+      std::optional<std::size_t> verificationRejectionIndex;
       const SyncCoverProtocolError protocolError =
           verifyAndPruneLifecycleCompletionExports(graph, target, *protocol,
-                                                   limits, workBudget);
+                                                   limits, workBudget,
+                                                   &verificationRejectionIndex);
       if (protocolError == SyncCoverProtocolError::WorkLimitExceeded) {
         return fail(protocolError, componentIndex);
       }
       if (protocolError != SyncCoverProtocolError::None) {
+        if (!result.firstLifecycleVerificationRejection) {
+          result.firstLifecycleVerificationRejection = protocolError;
+          result.firstLifecycleVerificationRejectionIndex =
+              verificationRejectionIndex;
+        }
+        ++result.rejectedLifecycleVerifications;
         continue;
       }
       const std::optional<SyncCoverDemandSet> storageReuse =
@@ -4378,9 +5682,10 @@ SyncCoverLifecycleSynthesisResult synthesizeLifecycleCertificatesFromSccs(
         // not evidence that the immutable graph or target contract is invalid.
         // Keep candidate discovery conservative and let the ordinary direct
         // mechanisms cover the component instead of rejecting the function.
+        ++result.rejectedLifecycleStorageCertificates;
         continue;
       }
-      certifiedStorageReuse.unite(*storageReuse);
+      certifiedStorageReuseByProtocol.push_back(*storageReuse);
       proposal.protocols.push_back(*protocol);
       for (const DerivedLifecycleLane &lane : certificate.lanes) {
         for (const DerivedLifecycleSlot &slot : lane.slots) {
@@ -4406,6 +5711,7 @@ SyncCoverLifecycleSynthesisResult synthesizeLifecycleCertificatesFromSccs(
       SyncCoverEventProtocol &protocol = cycle.protocol;
       protocol.mechanism = proposal.protocols.size();
       proposal.protocols.push_back(std::move(protocol));
+      certifiedStorageReuseByProtocol.emplace_back(graph.getDemands().size());
       const SyncCoverProtocolError slotError = addProposalSlot(
           proposal, proposalSlotIndex, cycle.slot, limits, workBudget);
       if (slotError != SyncCoverProtocolError::None) {
@@ -4413,40 +5719,107 @@ SyncCoverLifecycleSynthesisResult synthesizeLifecycleCertificatesFromSccs(
       }
     }
     if (proposal.protocols.empty()) {
+      ++result.lifecycleSccsWithoutProtocols;
+      if (!components.components[componentIndex].demands.empty()) {
+        const SyncCoverDemandId first =
+            components.components[componentIndex].demands.front();
+        if (!result.firstUnproposedLifecycleDemand ||
+            first < *result.firstUnproposedLifecycleDemand) {
+          result.firstUnproposedLifecycleDemand = first;
+          result.firstUnproposedLifecycleCertificates =
+              result.derivedLifecycleCertificates - certificatesBefore;
+          result.firstUnproposedLifecycleConstructionRejects =
+              result.rejectedLifecycleConstructions - constructionRejectsBefore;
+          result.firstUnproposedLifecycleVerificationRejects =
+              result.rejectedLifecycleVerifications - verificationRejectsBefore;
+          result.firstUnproposedLifecycleStorageRejects =
+              result.rejectedLifecycleStorageCertificates -
+              storageRejectsBefore;
+        }
+      }
       continue;
     }
+    if (certifiedStorageReuseByProtocol.size() != proposal.protocols.size()) {
+      return fail(SyncCoverProtocolError::InvalidProtocol, componentIndex);
+    }
+    std::map<std::vector<std::size_t>, std::size_t> physicalProtocols;
+    std::vector<SyncCoverEventProtocol> uniqueProtocols;
+    std::vector<SyncCoverDemandSet> uniqueStorageReuse;
+    uniqueProtocols.reserve(proposal.protocols.size());
+    uniqueStorageReuse.reserve(certifiedStorageReuseByProtocol.size());
+    for (std::size_t protocolIndex = 0;
+         protocolIndex < proposal.protocols.size(); ++protocolIndex) {
+      std::optional<std::vector<std::size_t>> physicalKey = protocolPhysicalKey(
+          proposal.protocols[protocolIndex], limits, workBudget);
+      if (!physicalKey) {
+        return fail(workBudget && workBudget->exhausted
+                        ? SyncCoverProtocolError::WorkLimitExceeded
+                        : SyncCoverProtocolError::LimitExceeded,
+                    componentIndex);
+      }
+      const std::size_t lookup = lookupWork(physicalProtocols.size() + 1);
+      if ((!physicalKey->empty() &&
+           lookup >
+               std::numeric_limits<std::size_t>::max() / physicalKey->size()) ||
+          !consumeWork(workBudget, lookup * physicalKey->size())) {
+        return fail(SyncCoverProtocolError::WorkLimitExceeded, componentIndex);
+      }
+      const auto duplicate = physicalProtocols.find(*physicalKey);
+      if (duplicate != physicalProtocols.end()) {
+        if (!consumeWork(workBudget,
+                         certifiedStorageReuseByProtocol[protocolIndex]
+                             .getWords()
+                             .size())) {
+          return fail(SyncCoverProtocolError::WorkLimitExceeded,
+                      componentIndex);
+        }
+        uniqueStorageReuse[duplicate->second].unite(
+            certifiedStorageReuseByProtocol[protocolIndex]);
+        continue;
+      }
+      const std::size_t retained = uniqueProtocols.size();
+      physicalProtocols.emplace(std::move(*physicalKey), retained);
+      proposal.protocols[protocolIndex].mechanism = retained;
+      uniqueProtocols.push_back(std::move(proposal.protocols[protocolIndex]));
+      uniqueStorageReuse.push_back(
+          std::move(certifiedStorageReuseByProtocol[protocolIndex]));
+    }
+    proposal.protocols = std::move(uniqueProtocols);
+    certifiedStorageReuseByProtocol = std::move(uniqueStorageReuse);
     SyncCoverExactWorld proposalWorld;
     proposalWorld.enabledMechanisms.reserve(proposal.protocols.size());
     for (const SyncCoverEventProtocol &protocol : proposal.protocols) {
       proposalWorld.enabledMechanisms.push_back(protocol.mechanism);
     }
-    const SyncCoverProtocolCoverageResult singletonCoverage =
+    const SyncCoverProtocolCoverageResult directCoverage =
         computeSyncCoverProtocolDirectWorlds(graph, target, proposal.protocols,
                                              {proposalWorld}, limits,
                                              workBudget);
-    if (!singletonCoverage) {
-      return fail(singletonCoverage.error, singletonCoverage.invalidIndex);
+    if (!directCoverage) {
+      return fail(directCoverage.error, directCoverage.invalidIndex);
     }
     const std::size_t demandWords =
-        singletonCoverage.coveredByWorld.front().getWords().size();
+        directCoverage.coveredByWorld.front().getWords().size();
     if (demandWords > std::numeric_limits<std::size_t>::max() / 12 ||
         !consumeWork(workBudget, demandWords * 12)) {
       return fail(SyncCoverProtocolError::WorkLimitExceeded, componentIndex);
     }
-    SyncCoverDemandSet singletonUnion =
-        singletonCoverage.coveredByWorld.front();
-    proposal.singletonUnionCoverageRows = singletonUnion.count();
+    SyncCoverDemandSet directUnion = directCoverage.coveredByWorld.front();
+    proposal.singletonUnionCoverageRows = directUnion.count();
     const SyncCoverProtocolCoverageResult connectorCoverage =
-        computeSyncCoverProtocolConnectorClosure(graph, singletonUnion, limits,
+        computeSyncCoverProtocolConnectorClosure(graph, directUnion, limits,
                                                  workBudget);
     if (!connectorCoverage) {
       return fail(connectorCoverage.error, connectorCoverage.invalidIndex);
     }
     SyncCoverDemandSet residualQueries =
         connectorCoverage.coveredByWorld.front();
-    residualQueries.unite(certifiedStorageReuse);
-    residualQueries.subtract(singletonUnion);
-    proposal.exactCoverage = singletonUnion;
+    for (const SyncCoverDemandSet &certified :
+         certifiedStorageReuseByProtocol) {
+      residualQueries.unite(certified);
+    }
+    residualQueries.subtract(directUnion);
+    proposal.exactCoverage = directUnion;
     if (!residualQueries.empty()) {
       const SyncCoverProtocolCoverageResult exactCoverage =
           computeSyncCoverProtocolExactWorldsForDemands(
@@ -4462,10 +5835,28 @@ SyncCoverLifecycleSynthesisResult synthesizeLifecycleCertificatesFromSccs(
       }
       proposal.exactCoverage.unite(exactCoverage.coveredByWorld.front());
     }
+    // Storage reuse is proven independently from ordinary graph reachability:
+    // every witness must name one exact physical lane, both ready/release
+    // channels must supply the required hardware ordering, the relevant
+    // producer/consumer occurrences must belong to that lane, and every
+    // release lane must be drained.  Parent-loop WAW obligations may cross a
+    // nested lifecycle whose compact arena intentionally does not flatten the
+    // child protocol into the parent graph.  Preserve those certified rows in
+    // the immutable column instead of treating them only as reachability
+    // queries; the event-token automaton and materialized-plan verifier still
+    // validate the complete physical recipe.
+    for (const SyncCoverDemandSet &certified :
+         certifiedStorageReuseByProtocol) {
+      if (!consumeWork(workBudget, certified.getWords().size())) {
+        return fail(SyncCoverProtocolError::WorkLimitExceeded, componentIndex);
+      }
+      proposal.exactCoverage.unite(certified);
+    }
     SyncCoverDemandSet extra = proposal.exactCoverage;
-    extra.subtract(singletonUnion);
+    extra.subtract(directUnion);
     proposal.extraCoverageRows = extra.count();
     if (proposal.exactCoverage.empty()) {
+      ++result.lifecycleSccsWithoutCoverage;
       continue;
     }
     if (result.proposals.size() == limits.maximumLifecycleProposals) {
@@ -4834,6 +6225,675 @@ SyncCoverLifecycleSynthesisResult synthesizeLifecycleCertificatesFromSccs(
 } // namespace
 
 SyncCoverLifecycleSynthesisResult
+mlir::pto::synthesizeSyncCoverBalancedDirectProtocols(
+    const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
+    SyncCoverProtocolLimits limits, SyncCoverCoverageWorkBudget *workBudget,
+    bool enableCutFusion) {
+  SyncCoverLifecycleSynthesisResult result;
+  if (!graphFitsProtocolLimits(graph, limits) || !graph.isStructureFrozen() ||
+      !graph.validate()) {
+    result.error = graphFitsProtocolLimits(graph, limits)
+                       ? SyncCoverProtocolError::InvalidGraph
+                       : SyncCoverProtocolError::LimitExceeded;
+    return result;
+  }
+  LifecycleCatalogFootprint retainedCatalog;
+  std::map<std::vector<std::size_t>, std::size_t> retainedProtocolKeys;
+  std::vector<std::vector<std::size_t>> retainedProtocolPhysicalKeys;
+  const auto fail = [&](SyncCoverProtocolError error,
+                        std::optional<std::size_t> index) {
+    result.error = error;
+    result.invalidIndex = index;
+    result.proposals.clear();
+    return false;
+  };
+  const auto retainVerifiedProtocol = [&](SyncCoverEventProtocol protocol,
+                                          std::vector<SyncCoverDemandId>
+                                              seedDemands,
+                                          std::size_t diagnosticIndex) {
+    std::optional<std::vector<std::size_t>> physicalKey =
+        protocolPhysicalKey(protocol, limits, workBudget);
+    if (!physicalKey) {
+      return fail(workBudget && workBudget->exhausted
+                      ? SyncCoverProtocolError::WorkLimitExceeded
+                      : SyncCoverProtocolError::LimitExceeded,
+                  diagnosticIndex);
+    }
+    const std::size_t lookup = lookupWork(retainedProtocolKeys.size() + 1);
+    if ((!physicalKey->empty() &&
+         lookup >
+             std::numeric_limits<std::size_t>::max() / physicalKey->size()) ||
+        !consumeWork(workBudget, lookup * physicalKey->size())) {
+      return fail(SyncCoverProtocolError::WorkLimitExceeded, diagnosticIndex);
+    }
+    const auto retained = retainedProtocolKeys.find(*physicalKey);
+    if (retained != retainedProtocolKeys.end()) {
+      if (retained->second >= result.proposals.size()) {
+        return fail(SyncCoverProtocolError::InvalidProtocol, diagnosticIndex);
+      }
+      for (SyncCoverDemandId seed : seedDemands) {
+        if (!result.proposals[retained->second].exactCoverage.contains(seed)) {
+          ++result.lifecycleSccsWithoutCoverage;
+        }
+      }
+      return true;
+    }
+
+    std::optional<std::size_t> invalidIndex;
+    const SyncCoverProtocolError verification =
+        verifyAndPruneLifecycleCompletionExports(
+            graph, target, protocol, limits, workBudget, &invalidIndex);
+    if (verification == SyncCoverProtocolError::WorkLimitExceeded) {
+      return fail(verification, diagnosticIndex);
+    }
+    if (verification != SyncCoverProtocolError::None) {
+      ++result.rejectedLifecycleVerifications;
+      if (!result.firstLifecycleVerificationRejection) {
+        result.firstLifecycleVerificationRejection = verification;
+        result.firstLifecycleVerificationRejectionIndex = invalidIndex;
+      }
+      return true;
+    }
+
+    SyncCoverLifecycleProposal proposal;
+    proposal.id = result.proposals.size();
+    proposal.lifecycleScc = graph.getDemands().size() + diagnosticIndex;
+    // This is a fused multi-cut optimization derived from the singleton
+    // direct basis below.  Keep it out of the resource-fallback basis even
+    // though all of its parents are direct mechanisms.
+    proposal.directBasis = false;
+    proposal.seedDemands = std::move(seedDemands);
+    proposal.protocols.push_back(std::move(protocol));
+    const SyncCoverExactWorld world{{0}};
+    const SyncCoverProtocolCoverageResult direct =
+        computeSyncCoverProtocolDirectWorlds(graph, target, proposal.protocols,
+                                             {world}, limits, workBudget);
+    if (!direct) {
+      return fail(direct.error, direct.invalidIndex);
+    }
+    proposal.singletonUnionCoverageRows = direct.coveredByWorld.front().count();
+    proposal.exactCoverage = direct.coveredByWorld.front();
+    const SyncCoverProtocolCoverageResult connector =
+        computeSyncCoverProtocolConnectorClosure(graph, proposal.exactCoverage,
+                                                 limits, workBudget);
+    if (!connector) {
+      return fail(connector.error, connector.invalidIndex);
+    }
+    SyncCoverDemandSet residualQueries = connector.coveredByWorld.front();
+    residualQueries.subtract(proposal.exactCoverage);
+    if (!residualQueries.empty()) {
+      const SyncCoverProtocolCoverageResult exact =
+          computeSyncCoverProtocolExactWorldsForDemands(
+              graph, target, proposal.protocols, {world}, residualQueries,
+              limits, workBudget);
+      if (!exact) {
+        return fail(exact.error, exact.invalidIndex);
+      }
+      proposal.exactCoverage.unite(exact.coveredByWorld.front());
+    }
+    for (SyncCoverDemandId seed : proposal.seedDemands) {
+      if (!proposal.exactCoverage.contains(seed)) {
+        ++result.lifecycleSccsWithoutCoverage;
+        return true;
+      }
+    }
+    SyncCoverDemandSet extra = proposal.exactCoverage;
+    extra.subtract(direct.coveredByWorld.front());
+    proposal.extraCoverageRows = extra.count();
+    if (result.proposals.size() == limits.maximumLifecycleProposals) {
+      return fail(SyncCoverProtocolError::LimitExceeded, diagnosticIndex);
+    }
+    const std::optional<LifecycleCatalogFootprint> footprint =
+        getLifecycleCatalogFootprint(proposal);
+    if (!footprint) {
+      return fail(SyncCoverProtocolError::LimitExceeded, diagnosticIndex);
+    }
+    LifecycleCatalogFootprint next = retainedCatalog;
+    const bool fits =
+        checkedAccumulateSize(next.protocols, footprint->protocols) &&
+        checkedAccumulateSize(next.lanes, footprint->lanes) &&
+        checkedAccumulateSize(next.slots, footprint->slots) &&
+        checkedAccumulateSize(next.transfers, footprint->transfers) &&
+        checkedAccumulateSize(next.nodeReferences, footprint->nodeReferences) &&
+        checkedAccumulateSize(next.accessIncidences,
+                              footprint->accessIncidences) &&
+        checkedAccumulateSize(next.payloadIncidences,
+                              footprint->payloadIncidences) &&
+        next.protocols <= limits.maximumLifecycleProtocols &&
+        next.lanes <= limits.maximumLifecycleLanes &&
+        next.slots <= limits.maximumLifecycleSlots &&
+        next.transfers <= limits.maximumLifecycleTransfers &&
+        next.nodeReferences <= limits.maximumLifecycleNodeReferences &&
+        next.accessIncidences <= limits.maximumLifecycleAccessIncidences &&
+        next.payloadIncidences <=
+            limits.maximumLifecycleCatalogPayloadIncidences;
+    if (!fits) {
+      return fail(SyncCoverProtocolError::LimitExceeded, diagnosticIndex);
+    }
+    if (!consumeWork(workBudget, footprint->payloadIncidences)) {
+      return fail(SyncCoverProtocolError::WorkLimitExceeded, diagnosticIndex);
+    }
+    retainedCatalog = next;
+    retainedProtocolKeys.emplace(std::move(*physicalKey),
+                                 result.proposals.size());
+    result.proposals.push_back(std::move(proposal));
+    return true;
+  };
+  std::map<
+      LifecyclePairKey,
+      std::vector<std::pair<SyncCoverDemandId, DerivedLifecycleCertificate>>>
+      groupedCertificates;
+  for (SyncCoverDemandId demandId = 0; demandId < graph.getDemands().size();
+       ++demandId) {
+    if (!consumeWork(workBudget)) {
+      result.error = SyncCoverProtocolError::WorkLimitExceeded;
+      result.invalidIndex = demandId;
+      result.proposals.clear();
+      return result;
+    }
+    std::optional<SyncCoverEventProtocol> protocol =
+        makeDirectRecurrenceRoundTripProtocol(graph, target, demandId, 0,
+                                              workBudget);
+    if (!protocol) {
+      protocol =
+          makeStructuralDirectProtocol(graph, target, demandId, 0, workBudget);
+    }
+    std::optional<DerivedLifecycleCertificate> certificate;
+    if (!protocol) {
+      certificate = buildBalancedDirectCertificate(graph, demandId, workBudget);
+    }
+    if (workBudget && workBudget->exhausted) {
+      result.error = SyncCoverProtocolError::WorkLimitExceeded;
+      result.invalidIndex = demandId;
+      result.proposals.clear();
+      return result;
+    }
+    if (!protocol && !certificate) {
+      continue;
+    }
+    ++result.derivedLifecycleCertificates;
+    if (certificate) {
+      groupedCertificates[{certificate->loopScope,
+                           certificate->producerResource,
+                           certificate->consumerResource}]
+          .emplace_back(demandId, *certificate);
+      const SyncCoverProtocolError bounds =
+          checkLifecycleCertificateBounds(*certificate, limits, workBudget);
+      if (bounds != SyncCoverProtocolError::None) {
+        result.error = bounds;
+        result.invalidIndex = demandId;
+        result.proposals.clear();
+        return result;
+      }
+      protocol =
+          makeLifecycleProtocol(graph, target, *certificate, 0, workBudget);
+    }
+    if (workBudget && workBudget->exhausted) {
+      result.error = SyncCoverProtocolError::WorkLimitExceeded;
+      result.invalidIndex = demandId;
+      result.proposals.clear();
+      return result;
+    }
+    if (!protocol) {
+      ++result.rejectedLifecycleConstructions;
+      continue;
+    }
+
+    // Canonicalize the unverified physical recipe before running the graph
+    // automaton or grounding its rectangles. Construction and verification
+    // are deterministic functions of this complete recipe and the frozen
+    // graph, so an identical key must produce the same verified protocol and
+    // exact coverage. This prevents access-witness and phase-expanded demand
+    // rows from repeatedly paying the full protocol-analysis cost.
+    std::optional<std::vector<std::size_t>> physicalKey =
+        protocolPhysicalKey(*protocol, limits, workBudget);
+    if (!physicalKey) {
+      result.error = workBudget && workBudget->exhausted
+                         ? SyncCoverProtocolError::WorkLimitExceeded
+                         : SyncCoverProtocolError::LimitExceeded;
+      result.invalidIndex = demandId;
+      result.proposals.clear();
+      return result;
+    }
+    const std::size_t lookup = lookupWork(retainedProtocolKeys.size() + 1);
+    if ((!physicalKey->empty() &&
+         lookup >
+             std::numeric_limits<std::size_t>::max() / physicalKey->size()) ||
+        !consumeWork(workBudget, lookup * physicalKey->size())) {
+      result.error = SyncCoverProtocolError::WorkLimitExceeded;
+      result.invalidIndex = demandId;
+      result.proposals.clear();
+      return result;
+    }
+    const auto retained = retainedProtocolKeys.find(*physicalKey);
+    if (retained != retainedProtocolKeys.end()) {
+      if (retained->second >= result.proposals.size()) {
+        result.error = SyncCoverProtocolError::InvalidProtocol;
+        result.invalidIndex = demandId;
+        result.proposals.clear();
+        return result;
+      }
+      result.proposals[retained->second].seedDemands.push_back(demandId);
+      continue;
+    }
+
+    std::optional<std::size_t> invalidIndex;
+    const SyncCoverProtocolError verification =
+        verifyAndPruneLifecycleCompletionExports(
+            graph, target, *protocol, limits, workBudget, &invalidIndex);
+    if (verification == SyncCoverProtocolError::WorkLimitExceeded) {
+      result.error = verification;
+      result.invalidIndex = demandId;
+      result.proposals.clear();
+      return result;
+    }
+    if (verification != SyncCoverProtocolError::None) {
+      ++result.rejectedLifecycleVerifications;
+      if (!result.firstLifecycleVerificationRejection) {
+        result.firstLifecycleVerificationRejection = verification;
+        result.firstLifecycleVerificationRejectionIndex = invalidIndex;
+      }
+      continue;
+    }
+    protocol->mechanism = 0;
+
+    SyncCoverLifecycleProposal proposal;
+    proposal.id = result.proposals.size();
+    proposal.lifecycleScc = graph.getDemands().size() + demandId;
+    proposal.directBasis = true;
+    proposal.seedDemands = {demandId};
+    proposal.protocols.push_back(std::move(*protocol));
+    if (result.proposals.size() == limits.maximumLifecycleProposals) {
+      result.error = SyncCoverProtocolError::LimitExceeded;
+      result.invalidIndex = demandId;
+      result.proposals.clear();
+      return result;
+    }
+    retainedProtocolPhysicalKeys.push_back(*physicalKey);
+    retainedProtocolKeys.emplace(std::move(*physicalKey),
+                                 result.proposals.size());
+    result.proposals.push_back(std::move(proposal));
+  }
+
+  // Ground independent direct protocols in bounded multi-world batches.  A
+  // world still enables exactly one physical recipe, so this is semantically
+  // identical to one call per proposal.  Sharing target validation, graph
+  // indices, recurrence expansion, and protocol preparation avoids repeating
+  // graph-wide setup for every demand-derived candidate.
+  std::vector<SyncCoverDemandSet> directCoverage;
+  directCoverage.reserve(result.proposals.size());
+  for (std::size_t index = 0; index < result.proposals.size(); ++index) {
+    directCoverage.emplace_back(graph.getDemands().size());
+  }
+  for (std::size_t begin = 0; begin < result.proposals.size();) {
+    const std::size_t count =
+        std::min(limits.maximumWorlds, result.proposals.size() - begin);
+    if (count == 0) {
+      result.error = SyncCoverProtocolError::LimitExceeded;
+      result.proposals.clear();
+      return result;
+    }
+    std::vector<SyncCoverEventProtocol> protocols;
+    std::vector<SyncCoverExactWorld> worlds;
+    protocols.reserve(count);
+    worlds.reserve(count);
+    for (std::size_t offset = 0; offset < count; ++offset) {
+      const SyncCoverLifecycleProposal &proposal =
+          result.proposals[begin + offset];
+      if (proposal.protocols.size() != 1) {
+        result.error = SyncCoverProtocolError::InvalidProtocol;
+        result.invalidIndex = begin + offset;
+        result.proposals.clear();
+        return result;
+      }
+      protocols.push_back(proposal.protocols.front());
+      protocols.back().mechanism = offset;
+      worlds.push_back({{offset}});
+    }
+    const SyncCoverProtocolCoverageResult direct =
+        computeSyncCoverProtocolDirectWorlds(graph, target, protocols, worlds,
+                                             limits, workBudget);
+    if (!direct || direct.coveredByWorld.size() != count) {
+      result.error =
+          direct ? SyncCoverProtocolError::InvalidProtocol : direct.error;
+      result.invalidIndex = direct.invalidIndex;
+      result.proposals.clear();
+      return result;
+    }
+    for (std::size_t offset = 0; offset < count; ++offset) {
+      directCoverage[begin + offset] = direct.coveredByWorld[offset];
+    }
+    begin += count;
+  }
+
+  std::vector<SyncCoverLifecycleProposal> groundedProposals;
+  std::vector<std::vector<std::size_t>> groundedPhysicalKeys;
+  groundedProposals.reserve(result.proposals.size());
+  groundedPhysicalKeys.reserve(result.proposals.size());
+  retainedCatalog = {};
+  for (std::size_t proposalIndex = 0; proposalIndex < result.proposals.size();
+       ++proposalIndex) {
+    SyncCoverLifecycleProposal proposal =
+        std::move(result.proposals[proposalIndex]);
+    proposal.singletonUnionCoverageRows = directCoverage[proposalIndex].count();
+    proposal.exactCoverage = directCoverage[proposalIndex];
+    if (enableCutFusion) {
+      const SyncCoverProtocolCoverageResult connector =
+          computeSyncCoverProtocolConnectorClosure(
+              graph, proposal.exactCoverage, limits, workBudget);
+      if (!connector) {
+        result.error = connector.error;
+        result.invalidIndex = connector.invalidIndex;
+        result.proposals.clear();
+        return result;
+      }
+      SyncCoverDemandSet residualQueries = connector.coveredByWorld.front();
+      residualQueries.subtract(proposal.exactCoverage);
+      if (!residualQueries.empty()) {
+        const SyncCoverExactWorld world{{0}};
+        const SyncCoverProtocolCoverageResult exact =
+            computeSyncCoverProtocolExactWorldsForDemands(
+                graph, target, proposal.protocols, {world}, residualQueries,
+                limits, workBudget);
+        if (!exact) {
+          result.error = exact.error;
+          result.invalidIndex = exact.invalidIndex;
+          result.proposals.clear();
+          return result;
+        }
+        proposal.exactCoverage.unite(exact.coveredByWorld.front());
+      }
+    }
+    SyncCoverDemandSet missingSeeds(graph.getDemands().size());
+    for (SyncCoverDemandId seed : proposal.seedDemands) {
+      if (!proposal.exactCoverage.contains(seed)) {
+        missingSeeds.insert(seed);
+      }
+    }
+    if (!missingSeeds.empty()) {
+      const SyncCoverExactWorld world{{0}};
+      const SyncCoverProtocolCoverageResult exact =
+          computeSyncCoverProtocolExactWorldsForDemands(
+              graph, target, proposal.protocols, {world}, missingSeeds, limits,
+              workBudget);
+      if (!exact) {
+        result.error = exact.error;
+        result.invalidIndex = exact.invalidIndex;
+        result.proposals.clear();
+        return result;
+      }
+      proposal.exactCoverage.unite(exact.coveredByWorld.front());
+    }
+    std::size_t coveredSeeds = 0;
+    for (SyncCoverDemandId seed : proposal.seedDemands) {
+      if (proposal.exactCoverage.contains(seed)) {
+        ++coveredSeeds;
+      } else {
+        ++result.lifecycleSccsWithoutCoverage;
+      }
+    }
+    if (coveredSeeds == 0) {
+      continue;
+    }
+    SyncCoverDemandSet extra = proposal.exactCoverage;
+    extra.subtract(directCoverage[proposalIndex]);
+    proposal.extraCoverageRows = extra.count();
+    const std::optional<LifecycleCatalogFootprint> footprint =
+        getLifecycleCatalogFootprint(proposal);
+    if (!footprint) {
+      result.error = SyncCoverProtocolError::LimitExceeded;
+      result.invalidIndex = proposalIndex;
+      result.proposals.clear();
+      return result;
+    }
+    LifecycleCatalogFootprint next = retainedCatalog;
+    const bool fits =
+        checkedAccumulateSize(next.protocols, footprint->protocols) &&
+        checkedAccumulateSize(next.lanes, footprint->lanes) &&
+        checkedAccumulateSize(next.slots, footprint->slots) &&
+        checkedAccumulateSize(next.transfers, footprint->transfers) &&
+        checkedAccumulateSize(next.nodeReferences, footprint->nodeReferences) &&
+        checkedAccumulateSize(next.accessIncidences,
+                              footprint->accessIncidences) &&
+        checkedAccumulateSize(next.payloadIncidences,
+                              footprint->payloadIncidences) &&
+        next.protocols <= limits.maximumLifecycleProtocols &&
+        next.lanes <= limits.maximumLifecycleLanes &&
+        next.slots <= limits.maximumLifecycleSlots &&
+        next.transfers <= limits.maximumLifecycleTransfers &&
+        next.nodeReferences <= limits.maximumLifecycleNodeReferences &&
+        next.accessIncidences <= limits.maximumLifecycleAccessIncidences &&
+        next.payloadIncidences <=
+            limits.maximumLifecycleCatalogPayloadIncidences;
+    if (!fits || !consumeWork(workBudget, footprint->payloadIncidences)) {
+      result.error = workBudget && workBudget->exhausted
+                         ? SyncCoverProtocolError::WorkLimitExceeded
+                         : SyncCoverProtocolError::LimitExceeded;
+      result.invalidIndex = proposalIndex;
+      result.proposals.clear();
+      return result;
+    }
+    retainedCatalog = next;
+    proposal.id = groundedProposals.size();
+    groundedPhysicalKeys.push_back(
+        std::move(retainedProtocolPhysicalKeys[proposalIndex]));
+    groundedProposals.push_back(std::move(proposal));
+  }
+  result.proposals = std::move(groundedProposals);
+  retainedProtocolKeys.clear();
+  for (std::size_t index = 0; index < groundedPhysicalKeys.size(); ++index) {
+    retainedProtocolKeys.emplace(std::move(groundedPhysicalKeys[index]), index);
+  }
+  if (!enableCutFusion) {
+    return result;
+  }
+  // Direct obligations in one loop and directed resource pair may describe
+  // several non-overlapping cuts of the same physical ready/release channel.
+  // Fuse the complete group into one candidate recipe and let the token
+  // automaton reject any ordering, phase, guard, or rearm conflict. This is a
+  // generic cut grouping: singleton direct protocols remain the completeness
+  // basis, while an admitted fused protocol consumes only one event use per
+  // direction and can cover all of its seed demands.
+  for (const auto &[key, entries] : groupedCertificates) {
+    if (entries.size() < 2) {
+      continue;
+    }
+    if (!consumeWork(workBudget, entries.size())) {
+      fail(SyncCoverProtocolError::WorkLimitExceeded, entries.front().first);
+      return result;
+    }
+    DerivedLifecycleCertificate grouped = entries.front().second;
+    grouped.paths.clear();
+    DerivedLifecyclePath path;
+    path.scope = key.loop;
+    for (const auto &[demandId, certificate] : entries) {
+      if (certificate.lanes.size() != 1 || certificate.paths.size() != 1 ||
+          certificate.paths.front().scope != key.loop ||
+          certificate.loopScope != key.loop ||
+          certificate.producerResource != key.producer ||
+          certificate.consumerResource != key.consumer) {
+        path.uses.clear();
+        break;
+      }
+      (void)demandId;
+      path.uses.insert(path.uses.end(), certificate.paths.front().uses.begin(),
+                       certificate.paths.front().uses.end());
+    }
+    if (path.uses.size() < 2) {
+      continue;
+    }
+    const std::optional<std::size_t> sortWork =
+        comparisonWork(path.uses.size());
+    if (!sortWork || !consumeWork(workBudget, *sortWork)) {
+      fail(SyncCoverProtocolError::WorkLimitExceeded, entries.front().first);
+      return result;
+    }
+    const auto anchorKey = [](const SyncCoverAnchor &anchor) {
+      return std::tie(anchor.kind, anchor.node, anchor.scope, anchor.position);
+    };
+    const auto samePhysicalUse = [&](const DerivedLifecycleUse &left,
+                                     const DerivedLifecycleUse &right) {
+      return left.lane == right.lane &&
+             left.producerLane == right.producerLane &&
+             anchorKey(left.writeAcquireAnchor) ==
+                 anchorKey(right.writeAcquireAnchor) &&
+             anchorKey(left.readyAnchor) == anchorKey(right.readyAnchor) &&
+             anchorKey(left.readAcquireAnchor) ==
+                 anchorKey(right.readAcquireAnchor) &&
+             anchorKey(left.releaseAnchor) == anchorKey(right.releaseAnchor);
+    };
+    std::sort(
+        path.uses.begin(), path.uses.end(),
+        [&](const DerivedLifecycleUse &left, const DerivedLifecycleUse &right) {
+          return std::tie(
+                     left.lane, left.producerLane, left.writeAcquireAnchor.kind,
+                     left.writeAcquireAnchor.node,
+                     left.writeAcquireAnchor.scope,
+                     left.writeAcquireAnchor.position, left.readyAnchor.kind,
+                     left.readyAnchor.node, left.readyAnchor.scope,
+                     left.readyAnchor.position, left.readAcquireAnchor.kind,
+                     left.readAcquireAnchor.node, left.readAcquireAnchor.scope,
+                     left.readAcquireAnchor.position, left.releaseAnchor.kind,
+                     left.releaseAnchor.node, left.releaseAnchor.scope,
+                     left.releaseAnchor.position, left.producers,
+                     left.consumers) <
+                 std::tie(
+                     right.lane, right.producerLane,
+                     right.writeAcquireAnchor.kind,
+                     right.writeAcquireAnchor.node,
+                     right.writeAcquireAnchor.scope,
+                     right.writeAcquireAnchor.position, right.readyAnchor.kind,
+                     right.readyAnchor.node, right.readyAnchor.scope,
+                     right.readyAnchor.position, right.readAcquireAnchor.kind,
+                     right.readAcquireAnchor.node,
+                     right.readAcquireAnchor.scope,
+                     right.readAcquireAnchor.position, right.releaseAnchor.kind,
+                     right.releaseAnchor.node, right.releaseAnchor.scope,
+                     right.releaseAnchor.position, right.producers,
+                     right.consumers);
+        });
+    std::vector<DerivedLifecycleUse> uniqueUses;
+    uniqueUses.reserve(path.uses.size());
+    for (DerivedLifecycleUse &use : path.uses) {
+      if (!uniqueUses.empty() && samePhysicalUse(uniqueUses.back(), use)) {
+        DerivedLifecycleUse &retained = uniqueUses.back();
+        if (!consumeWork(workBudget,
+                         use.producers.size() + use.consumers.size())) {
+          fail(SyncCoverProtocolError::WorkLimitExceeded,
+               entries.front().first);
+          return result;
+        }
+        retained.producers.insert(retained.producers.end(),
+                                  use.producers.begin(), use.producers.end());
+        retained.consumers.insert(retained.consumers.end(),
+                                  use.consumers.begin(), use.consumers.end());
+        continue;
+      }
+      uniqueUses.push_back(std::move(use));
+    }
+    for (DerivedLifecycleUse &use : uniqueUses) {
+      const auto normalizeNodes = [&](std::vector<SyncCoverNodeId> &nodes) {
+        const std::optional<std::size_t> work = comparisonWork(nodes.size());
+        if (!work || !consumeWork(workBudget, *work)) {
+          return false;
+        }
+        std::sort(nodes.begin(), nodes.end());
+        nodes.erase(std::unique(nodes.begin(), nodes.end()), nodes.end());
+        return true;
+      };
+      if (!normalizeNodes(use.producers) || !normalizeNodes(use.consumers)) {
+        fail(SyncCoverProtocolError::WorkLimitExceeded, entries.front().first);
+        return result;
+      }
+    }
+    if (uniqueUses.size() < 2) {
+      continue;
+    }
+    std::vector<std::vector<SyncCoverDemandId>> seedsByUse(uniqueUses.size());
+    for (const auto &[demandId, certificate] : entries) {
+      for (const DerivedLifecycleUse &use : certificate.paths.front().uses) {
+        const auto found =
+            std::find_if(uniqueUses.begin(), uniqueUses.end(),
+                         [&](const DerivedLifecycleUse &candidate) {
+                           return samePhysicalUse(candidate, use);
+                         });
+        if (!consumeWork(workBudget, uniqueUses.size()) ||
+            found == uniqueUses.end()) {
+          fail(workBudget && workBudget->exhausted
+                   ? SyncCoverProtocolError::WorkLimitExceeded
+                   : SyncCoverProtocolError::InvalidProtocol,
+               demandId);
+          return result;
+        }
+        seedsByUse[std::distance(uniqueUses.begin(), found)].push_back(
+            demandId);
+      }
+    }
+    for (std::vector<SyncCoverDemandId> &useSeeds : seedsByUse) {
+      const std::optional<std::size_t> work = comparisonWork(useSeeds.size());
+      if (!work || !consumeWork(workBudget, *work)) {
+        fail(SyncCoverProtocolError::WorkLimitExceeded, entries.front().first);
+        return result;
+      }
+      std::sort(useSeeds.begin(), useSeeds.end());
+      useSeeds.erase(std::unique(useSeeds.begin(), useSeeds.end()),
+                     useSeeds.end());
+    }
+
+    const auto tryUseGroup = [&](const auto &useIndices) {
+      DerivedLifecycleCertificate candidate = grouped;
+      candidate.paths.clear();
+      DerivedLifecyclePath candidatePath;
+      candidatePath.scope = key.loop;
+      std::vector<SyncCoverDemandId> candidateSeeds;
+      for (std::size_t useIndex : useIndices) {
+        if (useIndex >= uniqueUses.size() ||
+            !consumeWork(workBudget, seedsByUse[useIndex].size() + 1)) {
+          return fail(workBudget && workBudget->exhausted
+                          ? SyncCoverProtocolError::WorkLimitExceeded
+                          : SyncCoverProtocolError::InvalidProtocol,
+                      entries.front().first);
+        }
+        candidatePath.uses.push_back(uniqueUses[useIndex]);
+        candidateSeeds.insert(candidateSeeds.end(),
+                              seedsByUse[useIndex].begin(),
+                              seedsByUse[useIndex].end());
+      }
+      candidate.paths.push_back(std::move(candidatePath));
+      const SyncCoverProtocolError bounds =
+          checkLifecycleCertificateBounds(candidate, limits, workBudget);
+      if (bounds != SyncCoverProtocolError::None) {
+        return fail(bounds, entries.front().first);
+      }
+      ++result.derivedLifecycleCertificates;
+      std::optional<SyncCoverEventProtocol> protocol =
+          makeLifecycleProtocol(graph, target, candidate, 0, workBudget);
+      if (workBudget && workBudget->exhausted) {
+        return fail(SyncCoverProtocolError::WorkLimitExceeded,
+                    entries.front().first);
+      }
+      if (!protocol) {
+        ++result.rejectedLifecycleConstructions;
+        return true;
+      }
+      return retainVerifiedProtocol(std::move(*protocol),
+                                    std::move(candidateSeeds),
+                                    entries.front().first);
+    };
+
+    // The maximal cut group is the only bounded synthesis trial here. Smaller
+    // compatible subsets belong in an indexed frontier generator; enumerating
+    // all pairs makes direct-catalog construction quadratic on large kernels.
+    std::vector<std::size_t> maximalGroup(uniqueUses.size());
+    std::iota(maximalGroup.begin(), maximalGroup.end(), 0);
+    if (!tryUseGroup(maximalGroup)) {
+      return result;
+    }
+  }
+  return result;
+}
+
+SyncCoverLifecycleSynthesisResult
 mlir::pto::synthesizeSyncCoverLifecycleCertificates(
     const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
     SyncCoverProtocolLimits limits, SyncCoverCoverageWorkBudget *workBudget) {
@@ -4849,13 +6909,215 @@ mlir::pto::synthesizeSyncCoverLifecycleCertificates(
                                                  limits, workBudget);
 }
 
+namespace {
+
+std::optional<std::vector<std::size_t>>
+proposalPhysicalKey(const SyncCoverLifecycleProposal &proposal,
+                    SyncCoverProtocolLimits limits,
+                    SyncCoverCoverageWorkBudget *workBudget) {
+  std::vector<std::size_t> key;
+  key.push_back(proposal.protocols.size());
+  for (const SyncCoverEventProtocol &protocol : proposal.protocols) {
+    std::optional<std::vector<std::size_t>> protocolKey =
+        protocolPhysicalKey(protocol, limits, workBudget);
+    if (!protocolKey ||
+        !consumeWork(workBudget, protocolKey->size() + std::size_t{1})) {
+      return std::nullopt;
+    }
+    key.push_back(protocolKey->size());
+    key.insert(key.end(), protocolKey->begin(), protocolKey->end());
+  }
+  return key;
+}
+
+bool lifecycleSlotEqual(const SyncCoverLifecycleSlot &left,
+                        const SyncCoverLifecycleSlot &right) {
+  return left.domain == right.domain &&
+         left.extent.begin == right.extent.begin &&
+         left.extent.end == right.extent.end && left.accesses == right.accesses;
+}
+
+std::optional<bool>
+lifecycleProposalEqual(const SyncCoverLifecycleProposal &left,
+                       const std::vector<std::size_t> &leftKey,
+                       const SyncCoverLifecycleProposal &right,
+                       const std::vector<std::size_t> &rightKey,
+                       SyncCoverCoverageWorkBudget *workBudget) {
+  std::size_t work = 0;
+  const std::size_t fixedIncidences[] = {
+      leftKey.size(),
+      rightKey.size(),
+      left.seedDemands.size(),
+      right.seedDemands.size(),
+      left.slots.size(),
+      right.slots.size(),
+      left.exactCoverage.getWords().size(),
+      right.exactCoverage.getWords().size(),
+  };
+  for (std::size_t incidences : fixedIncidences) {
+    if (!checkedAccumulateSize(work, incidences)) {
+      return std::nullopt;
+    }
+  }
+  for (const SyncCoverLifecycleSlot &slot : left.slots) {
+    if (!checkedAccumulateSize(work, slot.accesses.size())) {
+      return std::nullopt;
+    }
+  }
+  for (const SyncCoverLifecycleSlot &slot : right.slots) {
+    if (!checkedAccumulateSize(work, slot.accesses.size())) {
+      return std::nullopt;
+    }
+  }
+  if (!consumeWork(workBudget, work)) {
+    return std::nullopt;
+  }
+  return leftKey == rightKey && left.directBasis == right.directBasis &&
+         left.seedDemands == right.seedDemands &&
+         left.exactCoverage == right.exactCoverage &&
+         left.singletonUnionCoverageRows == right.singletonUnionCoverageRows &&
+         left.extraCoverageRows == right.extraCoverageRows &&
+         left.slots.size() == right.slots.size() &&
+         std::equal(left.slots.begin(), left.slots.end(), right.slots.begin(),
+                    lifecycleSlotEqual);
+}
+
+} // namespace
+
+SyncCoverProtocolError mlir::pto::verifySyncCoverLifecycleProposalsFresh(
+    const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
+    const SyncCoverStorageLifecycleIndex *lifecycleIndex,
+    const SyncCoverStorageProtocolSeedIndex *seedIndex,
+    const SyncCoverStorageProtocolGroupIndex *groupIndex,
+    const std::vector<SyncCoverLifecycleProposal> &frozenProposals,
+    const std::vector<std::size_t> &selectedProposalIndices,
+    SyncCoverProtocolLimits limits, SyncCoverCoverageWorkBudget *workBudget,
+    bool enableDirectCutFusion) {
+  if (!graph.isStructureFrozen() || !graph.validate() ||
+      selectedProposalIndices.empty()) {
+    return SyncCoverProtocolError::InvalidGraph;
+  }
+  SyncCoverLifecycleSynthesisResult grouped;
+  if (lifecycleIndex && seedIndex && groupIndex &&
+      lifecycleIndex->isComplete() && seedIndex->isComplete() &&
+      groupIndex->isComplete()) {
+    grouped = synthesizeSyncCoverLifecycleCertificates(
+        graph, target, *lifecycleIndex, *seedIndex, *groupIndex, limits,
+        workBudget);
+  } else if (lifecycleIndex && lifecycleIndex->isComplete()) {
+    grouped = synthesizeSyncCoverLifecycleCertificates(
+        graph, target, *lifecycleIndex, limits, workBudget);
+  } else {
+    grouped = synthesizeSyncCoverLifecycleCertificates(graph, target, limits,
+                                                       workBudget);
+  }
+  if (!grouped) {
+    return grouped.error;
+  }
+  SyncCoverLifecycleSynthesisResult direct =
+      synthesizeSyncCoverBalancedDirectProtocols(graph, target, limits,
+                                                 workBudget,
+                                                 enableDirectCutFusion);
+  if (!direct) {
+    return direct.error;
+  }
+
+  std::vector<const SyncCoverLifecycleProposal *> rebuilt;
+  rebuilt.reserve(grouped.proposals.size() + direct.proposals.size());
+  for (const SyncCoverLifecycleProposal &proposal : grouped.proposals) {
+    rebuilt.push_back(&proposal);
+  }
+  for (const SyncCoverLifecycleProposal &proposal : direct.proposals) {
+    rebuilt.push_back(&proposal);
+  }
+  if (!consumeWork(workBudget,
+                   rebuilt.size() + selectedProposalIndices.size())) {
+    return SyncCoverProtocolError::WorkLimitExceeded;
+  }
+  std::vector<std::optional<std::vector<std::size_t>>> rebuiltKeys;
+  rebuiltKeys.reserve(rebuilt.size());
+  for (const SyncCoverLifecycleProposal *proposal : rebuilt) {
+    rebuiltKeys.push_back(proposalPhysicalKey(*proposal, limits, workBudget));
+    if (!rebuiltKeys.back()) {
+      return workBudget && workBudget->exhausted
+                 ? SyncCoverProtocolError::WorkLimitExceeded
+                 : SyncCoverProtocolError::LimitExceeded;
+    }
+  }
+  std::vector<bool> used(rebuilt.size());
+  for (std::size_t frozenIndex : selectedProposalIndices) {
+    if (!consumeWork(workBudget) || frozenIndex >= frozenProposals.size()) {
+      return workBudget && workBudget->exhausted
+                 ? SyncCoverProtocolError::WorkLimitExceeded
+                 : SyncCoverProtocolError::InvalidProtocol;
+    }
+    const SyncCoverLifecycleProposal &frozen = frozenProposals[frozenIndex];
+    std::optional<std::vector<std::size_t>> frozenKey =
+        proposalPhysicalKey(frozen, limits, workBudget);
+    if (!frozenKey) {
+      return workBudget && workBudget->exhausted
+                 ? SyncCoverProtocolError::WorkLimitExceeded
+                 : SyncCoverProtocolError::LimitExceeded;
+    }
+    bool matched = false;
+    for (std::size_t rebuiltIndex = 0; rebuiltIndex < rebuilt.size();
+         ++rebuiltIndex) {
+      if (!consumeWork(workBudget) || used[rebuiltIndex]) {
+        if (workBudget && workBudget->exhausted) {
+          return SyncCoverProtocolError::WorkLimitExceeded;
+        }
+        continue;
+      }
+      const std::optional<bool> same =
+          lifecycleProposalEqual(frozen, *frozenKey, *rebuilt[rebuiltIndex],
+                                 *rebuiltKeys[rebuiltIndex], workBudget);
+      if (!same) {
+        return workBudget && workBudget->exhausted
+                   ? SyncCoverProtocolError::WorkLimitExceeded
+                   : SyncCoverProtocolError::LimitExceeded;
+      }
+      if (*same) {
+        used[rebuiltIndex] = true;
+        matched = true;
+        break;
+      }
+      if (workBudget && workBudget->exhausted) {
+        return SyncCoverProtocolError::WorkLimitExceeded;
+      }
+    }
+    if (!matched) {
+      return SyncCoverProtocolError::InvalidProtocol;
+    }
+  }
+  return SyncCoverProtocolError::None;
+}
+
+SyncCoverLifecycleSynthesisResult
+mlir::pto::synthesizeSyncCoverLifecycleCertificates(
+    const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
+    const SyncCoverStorageLifecycleIndex &lifecycleIndex,
+    const SyncCoverStorageProtocolSeedIndex &seedIndex,
+    const SyncCoverStorageProtocolGroupIndex &groupIndex,
+    SyncCoverProtocolLimits limits, SyncCoverCoverageWorkBudget *workBudget) {
+  const SyncCoverLifecycleSccResult components = importStorageLifecycleGroups(
+      graph, lifecycleIndex, seedIndex, groupIndex, limits, workBudget);
+  if (!components) {
+    SyncCoverLifecycleSynthesisResult result;
+    result.error = components.error;
+    result.invalidIndex = components.invalidIndex;
+    return result;
+  }
+  return synthesizeLifecycleCertificatesFromSccs(graph, target, components,
+                                                 limits, workBudget);
+}
+
 SyncCoverLifecycleSynthesisResult
 mlir::pto::synthesizeSyncCoverLifecycleCertificates(
     const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
     const SyncCoverStorageLifecycleIndex &lifecycleIndex,
     SyncCoverProtocolLimits limits, SyncCoverCoverageWorkBudget *workBudget) {
-  const SyncCoverLifecycleSccResult components = importStorageLifecycleSccs(
-      graph, lifecycleIndex, limits, workBudget);
+  const SyncCoverLifecycleSccResult components =
+      importStorageLifecycleSccs(graph, lifecycleIndex, limits, workBudget);
   if (!components) {
     SyncCoverLifecycleSynthesisResult result;
     result.error = components.error;

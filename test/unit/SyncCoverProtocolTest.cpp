@@ -1888,12 +1888,12 @@ bool testLifecycleSccDiscovery() {
   const SyncCoverLifecycleSynthesisResult synthesizedFromIndex =
       synthesizeSyncCoverLifecycleCertificates(fixture.graph, target(),
                                                lifecycleIndex);
-  passed &= check(
-      lifecycleIndex.isComplete() && synthesizedFromIndex &&
-          synthesizedFromIndex.proposals.size() == 1 &&
-          synthesizedFromIndex.proposals.front().exactCoverage ==
-              synthesized.proposals.front().exactCoverage,
-      "the target-neutral lifecycle index owns production SCC discovery");
+  passed &=
+      check(lifecycleIndex.isComplete() && synthesizedFromIndex &&
+                synthesizedFromIndex.proposals.size() == 1 &&
+                synthesizedFromIndex.proposals.front().exactCoverage ==
+                    synthesized.proposals.front().exactCoverage,
+            "the target-neutral lifecycle index owns production SCC discovery");
 
   SyncCoverCoverageWorkBudget synthesisMeasurement;
   const SyncCoverLifecycleSynthesisResult measuredSynthesis =
@@ -2047,6 +2047,31 @@ bool testLifecycleStorageReuseRequiresPrefixContract() {
   if (!check(documented && documented.proposals.size() == 1,
              "grouped lifecycle synthesis succeeds with prefix completion")) {
     return false;
+  }
+  const std::vector<std::size_t> selected{0};
+  SyncCoverCoverageWorkBudget freshMeasurement;
+  passed &= check(verifySyncCoverLifecycleProposalsFresh(
+                      fixture.graph, target(), nullptr, nullptr, nullptr,
+                      documented.proposals, selected, {},
+                      &freshMeasurement) == SyncCoverProtocolError::None,
+                  "fresh lifecycle verification reproduces the frozen "
+                  "storage certificate");
+  std::vector<SyncCoverLifecycleProposal> corrupted = documented.proposals;
+  corrupted.front().exactCoverage =
+      SyncCoverDemandSet(fixture.graph.getDemands().size());
+  passed &=
+      check(verifySyncCoverLifecycleProposalsFresh(
+                fixture.graph, target(), nullptr, nullptr, nullptr, corrupted,
+                selected) == SyncCoverProtocolError::InvalidProtocol,
+            "fresh lifecycle verification rejects changed coverage");
+  if (freshMeasurement.workUnits != 0) {
+    SyncCoverCoverageWorkBudget shortFresh(freshMeasurement.workUnits - 1);
+    passed &= check(verifySyncCoverLifecycleProposalsFresh(
+                        fixture.graph, target(), nullptr, nullptr, nullptr,
+                        documented.proposals, selected, {}, &shortFresh) ==
+                        SyncCoverProtocolError::WorkLimitExceeded,
+                    "fresh lifecycle verification fails closed at one-less "
+                    "work unit");
   }
   SyncCoverProtocolTargetContract noPrefix = target();
   noPrefix.directEventCompletesSourcePrefix = false;
@@ -2399,8 +2424,8 @@ bool testThreeResourceLifecycleSynthesis() {
   const SyncCoverLifecycleSynthesisResult synthesis =
       synthesizeSyncCoverLifecycleCertificates(graph, cycleTarget);
   if (!check(synthesis && synthesis.proposals.size() == 1 &&
-                 synthesis.proposals.front().protocols.size() == 2,
-             "two eligible slots synthesize two bounded SCC networks")) {
+                 synthesis.proposals.front().protocols.size() == 1,
+             "two eligible slots share one identical physical SCC network")) {
     return false;
   }
   const SyncCoverEventProtocol &protocol =
@@ -2430,19 +2455,19 @@ bool testThreeResourceLifecycleSynthesis() {
   passed &= check(actionBounded && actionBounded.proposals.empty(),
                   "whole-SCC actions are bounded before materialization");
   SyncCoverProtocolLimits exactAggregateActions;
-  exactAggregateActions.maximumTotalDynamicActions = 136;
+  exactAggregateActions.maximumTotalDynamicActions = 68;
   const SyncCoverLifecycleSynthesisResult exactAggregate =
       synthesizeSyncCoverLifecycleCertificates(graph, cycleTarget,
                                                exactAggregateActions);
   passed &= check(exactAggregate && exactAggregate.proposals.size() == 1 &&
-                      exactAggregate.proposals.front().protocols.size() == 2,
-                  "exact aggregate whole-SCC action limit succeeds");
+                      exactAggregate.proposals.front().protocols.size() == 1,
+                  "deduplicated whole-SCC action limit succeeds exactly");
   --exactAggregateActions.maximumTotalDynamicActions;
   const SyncCoverLifecycleSynthesisResult shortAggregate =
       synthesizeSyncCoverLifecycleCertificates(graph, cycleTarget,
                                                exactAggregateActions);
-  passed &= check(shortAggregate.error == SyncCoverProtocolError::LimitExceeded,
-                  "one-less aggregate action limit fails closed");
+  passed &= check(shortAggregate && shortAggregate.proposals.empty(),
+                  "one-less deduplicated action limit rejects the candidate");
   SyncCoverCoverageWorkBudget mixedMeasurement;
   const SyncCoverLifecycleSynthesisResult measuredMixed =
       synthesizeSyncCoverLifecycleCertificates(graph, cycleTarget, {},

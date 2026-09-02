@@ -2677,6 +2677,15 @@ bool testAllocatorWidthsReuseAndConflicts() {
   const SyncCoverScopeId loop =
       takeIndex(graph.addScope(0, true, SyncCoverTimelineInterval{0, 31}, true),
                 passed, "add allocator loop");
+  const SyncCoverScopeId firstQuiescentLoop = takeIndex(
+      graph.addScope(0, true, SyncCoverTimelineInterval{32, 39}, true), passed,
+      "add first quiescent allocator loop");
+  const SyncCoverScopeId touchingQuiescentLoop = takeIndex(
+      graph.addScope(0, true, SyncCoverTimelineInterval{39, 47}, true), passed,
+      "add touching quiescent allocator loop");
+  const SyncCoverScopeId disjointQuiescentLoop = takeIndex(
+      graph.addScope(0, true, SyncCoverTimelineInterval{48, 55}, true), passed,
+      "add disjoint quiescent allocator loop");
   std::vector<SyncCoverNodeId> sources;
   std::vector<SyncCoverNodeId> targets;
   for (std::size_t index = 0; index < 3; ++index) {
@@ -2688,6 +2697,21 @@ bool testAllocatorWidthsReuseAndConflicts() {
         check(graph.addDemand(demand(sources.back(), targets.back(), loop)),
               "add allocator demand");
   }
+  const auto addQuiescentNodes = [&](SyncCoverScopeId scope, std::size_t order,
+                                     std::string_view label) {
+    const SyncCoverNodeId source =
+        takeIndex(graph.addNode(1, 1, scope, order, {}, {2}), passed, label);
+    const SyncCoverNodeId target =
+        takeIndex(graph.addNode(2, 1, scope, order + 1), passed, label);
+    passed &= check(graph.addDemand(demand(source, target, scope, 1)), label);
+    return std::pair{source, target};
+  };
+  const auto firstQuiescent =
+      addQuiescentNodes(firstQuiescentLoop, 16, "add first quiescent use");
+  const auto touchingQuiescent = addQuiescentNodes(
+      touchingQuiescentLoop, 20, "add touching quiescent use");
+  const auto disjointQuiescent = addQuiescentNodes(
+      disjointQuiescentLoop, 24, "add disjoint quiescent use");
   passed &= check(graph.freezeStructure(), "freeze allocator graph");
   CanonicalSyncPatternProblem problem(graph, allDemands(graph));
   passed &=
@@ -2737,6 +2761,60 @@ bool testAllocatorWidthsReuseAndConflicts() {
       widened.valid && widened.feasible && widened.domains[0].required == 2 &&
           widened.domains[0].uses[0].ids == std::vector<unsigned>{0, 1},
       "weighted interval receives distinct lanes");
+
+  const auto addQuiescentProtocol = [&](const auto &nodes,
+                                        SyncCoverScopeId scope,
+                                        std::string_view label) {
+    CanonicalSyncMechanismDescriptor descriptor =
+        protocol(0, 1, 2, nodes.first, nodes.second, scope, 1, 1);
+    descriptor.eventUses.front().quiescentAtLifetimeBoundaries = true;
+    return takeIndex(
+        problem.internVerifiedProtocol(
+            std::move(descriptor),
+            testProtocolVerifier([](const CanonicalSyncMechanismDescriptor
+                                        &candidate) {
+              return candidate.kind == CanonicalSyncMechanismKind::Protocol &&
+                     candidate.eventUses.size() == 1 &&
+                     candidate.eventUses.front().quiescentAtLifetimeBoundaries;
+            })),
+        passed, label);
+  };
+  const CanonicalSyncMechanismId firstQuiescentMechanism = addQuiescentProtocol(
+      firstQuiescent, firstQuiescentLoop, "add first quiescent protocol");
+  const CanonicalSyncMechanismId touchingQuiescentMechanism =
+      addQuiescentProtocol(touchingQuiescent, touchingQuiescentLoop,
+                           "add touching quiescent protocol");
+  const CanonicalSyncMechanismId disjointQuiescentMechanism =
+      addQuiescentProtocol(disjointQuiescent, disjointQuiescentLoop,
+                           "add disjoint quiescent protocol");
+  const CanonicalSyncResourceAllocation disjointReuse =
+      allocateCanonicalSyncEvents(
+          problem, {firstQuiescentMechanism, disjointQuiescentMechanism});
+  passed &= check(
+      disjointReuse.valid && disjointReuse.feasible &&
+          disjointReuse.domains[0].required == 1 &&
+          disjointReuse.domains[0].uses.size() == 2 &&
+          disjointReuse.domains[0].uses[0].ids == std::vector<unsigned>{0} &&
+          disjointReuse.domains[0].uses[1].ids == std::vector<unsigned>{0},
+      "quiescent protocols reuse one ID across disjoint lifetimes");
+  const CanonicalSyncResourceAllocation touchingReuse =
+      allocateCanonicalSyncEvents(
+          problem, {firstQuiescentMechanism, touchingQuiescentMechanism});
+  passed &=
+      check(touchingReuse.valid && touchingReuse.feasible &&
+                touchingReuse.domains[0].required == 2 &&
+                touchingReuse.domains[0].uses.size() == 2 &&
+                touchingReuse.domains[0].uses[0].ids !=
+                    touchingReuse.domains[0].uses[1].ids,
+            "inclusive quiescent lifetimes cannot reuse at a shared endpoint");
+
+  CanonicalSyncMechanismDescriptor invalidQuiescentEvent =
+      event(0, 1, 2, sources[0], targets[0]);
+  invalidQuiescentEvent.eventUses.front().quiescentAtLifetimeBoundaries = true;
+  passed &=
+      check(problem.internMechanism(std::move(invalidQuiescentEvent)).error ==
+                CanonicalSyncProblemError::InvalidMechanism,
+            "ordinary events cannot claim quiescent lifecycle certification");
   passed &= check(problem.addConflict(first, second), "add allocator conflict");
   const CanonicalSyncResourceAllocation conflicting =
       allocateCanonicalSyncEvents(problem, {first, second});

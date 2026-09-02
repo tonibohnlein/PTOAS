@@ -269,10 +269,8 @@ LogicalResult ProgramBuilder::addTargetCompletionCertificates(
     const bool accumulatorBoundaryDemand =
         accumulatorBoundaryEnabled && accumulator &&
         source.resource == static_cast<std::uint32_t>(PipelineType::PIPE_M) &&
-        target.resource ==
-            static_cast<std::uint32_t>(PipelineType::PIPE_FIX);
-    if (accumulatorBoundaryDemand &&
-        source.scope == physicalSource.scope &&
+        target.resource == static_cast<std::uint32_t>(PipelineType::PIPE_FIX);
+    if (accumulatorBoundaryDemand && source.scope == physicalSource.scope &&
         source.guard.literals == physicalSource.guard.literals &&
         source.order <= physicalSource.order) {
       if (const auto domain = exactRawDomain(demand, accumulatorDomains)) {
@@ -1775,6 +1773,15 @@ ProgramBuilder::addDemand(SyncCoverNodeId source, SyncCoverNodeId target,
                           std::vector<SyncCoverDemandKind> kinds,
                           std::vector<SyncCoverStorageWitnessId> witnesses,
                           std::size_t originalDemandCount) {
+  // Structured branch construction can contain syntactic products such as
+  // `(iv % 2 != 0) && (iv == lowerBound)`.  The control builder records both
+  // the periodic phase relation and the exact first-iteration relation.  Such
+  // a product is dynamically impossible when the initial phase is even, so it
+  // is not a hardware ordering obligation and must not enter the cover basis.
+  if (!graph_.isGuardReachable(graph_.getNodes()[source].guard) ||
+      !graph_.isGuardReachable(graph_.getNodes()[target].guard)) {
+    return success();
+  }
   if (distance == 0) {
     const std::optional<SyncCoverScopeId> common = graph_.getLowestCommonScope(
         graph_.getNodes()[source].scope, graph_.getNodes()[target].scope);

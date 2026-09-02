@@ -119,8 +119,8 @@ SyncCoverGraphResult SyncCoverGraph::validate() const {
   for (SyncCoverGraphResult result :
        {validateScopesControlsAndNodes(), validateRegions(), validateDemands(),
         validateEdges(), validateStorage(), validateCompletionCutFacts(),
-         validateTargetCompletionCertificates(),
-         validateBasicOwnershipCertificates()}) {
+        validateTargetCompletionCertificates(),
+        validateBasicOwnershipCertificates()}) {
     if (!result) {
       return result;
     }
@@ -241,6 +241,18 @@ SyncCoverGraphResult SyncCoverGraph::validateScopesControlsAndNodes() const {
           !scopes_[relation.loopScope].isLoop ||
           getNearestEnclosingLoop(control.scope) != relation.loopScope ||
           relation.hasSuccessorAlternative >= control.alternatives;
+      if (invalidRelation) {
+        return {SyncCoverGraphError::InvalidControl, index};
+      }
+    }
+    if (control.firstIterationRelation) {
+      const SyncCoverControlFirstIterationRelation &relation =
+          *control.firstIterationRelation;
+      const bool invalidRelation =
+          relation.loopScope == 0 || !hasValidScope(relation.loopScope) ||
+          !scopes_[relation.loopScope].isLoop ||
+          getNearestEnclosingLoop(control.scope) != relation.loopScope ||
+          relation.firstIterationAlternative >= control.alternatives;
       if (invalidRelation) {
         return {SyncCoverGraphError::InvalidControl, index};
       }
@@ -783,10 +795,9 @@ SyncCoverGraphResult SyncCoverGraph::validateCompletionCutFact(
                     return domain >= storageDomains_.size();
                   }) ||
       !isSortedUnique(fact.demands) ||
-      std::any_of(fact.demands.begin(), fact.demands.end(),
-                  [&](SyncCoverDemandId demand) {
-                    return demand >= demands_.size();
-                  });
+      std::any_of(
+          fact.demands.begin(), fact.demands.end(),
+          [&](SyncCoverDemandId demand) { return demand >= demands_.size(); });
   if (invalidHeader) {
     return {SyncCoverGraphError::InvalidCompletionCutFact, index};
   }
@@ -807,8 +818,8 @@ SyncCoverGraphResult SyncCoverGraph::validateCompletionCutFact(
             *this, {SyncCoverAnchorKind::BeforeNode, demand.target, 0, 0});
     const bool invalidDemand =
         demand.distance != 0 ||
-        std::find(demand.provenanceKinds.begin(),
-                  demand.provenanceKinds.end(), SyncCoverDemandKind::MemoryRAW) ==
+        std::find(demand.provenanceKinds.begin(), demand.provenanceKinds.end(),
+                  SyncCoverDemandKind::MemoryRAW) ==
             demand.provenanceKinds.end() ||
         source.resource != fact.sourceResource ||
         target.resource != fact.targetResource ||

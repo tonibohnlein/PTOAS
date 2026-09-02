@@ -308,6 +308,14 @@ struct SyncCoverControlSuccessorRelation {
   unsigned hasSuccessorAlternative = 0;
 };
 
+/// Authoritative structured-control fact for `iv == lower_bound` (or its
+/// negation). The named alternative executes only on the first dynamic loop
+/// iteration; every other alternative executes only on later iterations.
+struct SyncCoverControlFirstIterationRelation {
+  SyncCoverScopeId loopScope = 0;
+  unsigned firstIterationAlternative = 0;
+};
+
 struct SyncCoverControl {
   SyncCoverControlId id = 0;
   unsigned alternatives = 0;
@@ -315,6 +323,7 @@ struct SyncCoverControl {
   SyncCoverRegionId region = 0;
   std::optional<SyncCoverControlPhaseRelation> phaseRelation;
   std::optional<SyncCoverControlSuccessorRelation> successorRelation;
+  std::optional<SyncCoverControlFirstIterationRelation> firstIterationRelation;
 };
 
 enum class SyncCoverStorageAccessMode : std::uint8_t {
@@ -558,6 +567,9 @@ public:
   SyncCoverGraphResult
   setControlSuccessorRelation(SyncCoverControlId control,
                               SyncCoverControlSuccessorRelation relation);
+  SyncCoverGraphResult setControlFirstIterationRelation(
+      SyncCoverControlId control,
+      SyncCoverControlFirstIterationRelation relation);
   SyncCoverGraphResult setScopeTimeline(SyncCoverScopeId scope,
                                         SyncCoverTimelineInterval timeline);
   SyncCoverGraphResult addNode(
@@ -608,11 +620,12 @@ public:
       SyncCoverStorageAccessPath path = SyncCoverStorageAccessPath::Unknown);
   SyncCoverGraphResult addStorageWitness(SyncCoverStorageAccessId sourceAccess,
                                          SyncCoverStorageAccessId targetAccess);
-  SyncCoverGraphResult addCompletionCutFact(
-      SyncCoverNodeId completionNode, std::uint32_t sourceResource,
-      std::uint32_t targetResource,
-      std::vector<SyncCoverStorageDomainId> storageDomains,
-      std::vector<SyncCoverDemandId> demands);
+  SyncCoverGraphResult
+  addCompletionCutFact(SyncCoverNodeId completionNode,
+                       std::uint32_t sourceResource,
+                       std::uint32_t targetResource,
+                       std::vector<SyncCoverStorageDomainId> storageDomains,
+                       std::vector<SyncCoverDemandId> demands);
   SyncCoverGraphResult addTargetCompletionCertificate(
       SyncCoverTargetCompletionKind kind, SyncCoverNodeId completionNode,
       SyncCoverNodeId target, std::uint32_t sourceResource,
@@ -685,6 +698,12 @@ public:
                           bool includeScope = true) const;
   std::optional<SyncCoverScopeId>
   getOwningTimelineScope(SyncCoverScopeId scope) const;
+  /// Returns false when graph-owned control relations prove that no dynamic
+  /// execution can satisfy every literal in the guard. In particular, the
+  /// first loop iteration has the authoritative initial phase of every
+  /// periodic control in that loop; syntactic branch products that contradict
+  /// that phase are unreachable and must not become synchronization demands.
+  bool isGuardReachable(const SyncCoverGuard &guard) const;
   bool isStructureFrozen() const { return structureFrozen_; }
 
   /// Stable, line-oriented serialization for raw-graph review and parity

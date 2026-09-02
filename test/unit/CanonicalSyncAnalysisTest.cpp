@@ -4672,23 +4672,11 @@ bool testFirstIterationRecurrenceSuppression() {
     return buildCanonicalSyncProgram(module->lookupSymbol<func::FuncOp>(name));
   };
   FailureOr<CanonicalSyncProgram> first = build("first");
-  bool sawLoopVaryingControl = false;
-  FailureOr<CanonicalSyncProgram> nearMiss = failure();
-  {
-    ScopedDiagnosticHandler handler(&context, [&](Diagnostic &diagnostic) {
-      sawLoopVaryingControl |=
-          diagnostic.str().find("cannot model this loop-varying control") !=
-          std::string::npos;
-      return success();
-    });
-    nearMiss = build("near_miss");
-  }
+  FailureOr<CanonicalSyncProgram> nearMiss = build("near_miss");
   FailureOr<CanonicalSyncProgram> nested = build("nested");
   const bool builtPrograms =
-      check(succeeded(first) && failed(nearMiss) && sawLoopVaryingControl &&
-                succeeded(nested),
-            "accept exact first-iteration controls and reject an unmodeled "
-            "loop-varying control");
+      check(succeeded(first) && succeeded(nearMiss) && succeeded(nested),
+            "accept exact first-iteration and opaque per-iteration controls");
   if (!builtPrograms) {
     return false;
   }
@@ -4711,6 +4699,7 @@ bool testFirstIterationRecurrenceSuppression() {
         });
   };
   const std::optional<SyncCoverNodeId> firstTarget = guardedTarget(*first);
+  const std::optional<SyncCoverNodeId> nearTarget = guardedTarget(*nearMiss);
   const std::optional<SyncCoverNodeId> nestedTarget = guardedTarget(*nested);
   std::optional<SyncCoverScopeId> outerScope;
   for (const SyncCoverScope &scope : nested->getGraph().getScopes()) {
@@ -4723,16 +4712,20 @@ bool testFirstIterationRecurrenceSuppression() {
   }
   return check(firstTarget && !recurrenceTo(*first, *firstTarget, std::nullopt),
                "remove recurrence into a first-iteration-only target") &&
+         check(nearTarget && recurrenceTo(*nearMiss, *nearTarget, std::nullopt),
+               "retain conservative recurrence into an opaque iteration "
+               "target") &&
          check(nestedTarget && outerScope &&
                    recurrenceTo(*nested, *nestedTarget, outerScope),
                "retain enclosing-loop recurrence for an inner first iteration");
 }
 
-bool testUnmodeledLoopVaryingControlsFailClosed() {
+bool testOpaqueLoopVaryingControlsUseConservativeCuts() {
   MLIRContext context;
   loadDialects(context);
   OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(R"mlir(
-    module attributes {pto.target_arch = "a3"} {
+    module attributes {pto.target_arch = "a3",
+                       pto.kernel_kind = #pto.kernel_kind<vector>} {
       func.func @gap_two(
           %limit: index, %src: !pto.partition_tensor_view<16x16xf32>,
           %slot: !pto.tile_buf<vec, 16x16xf32>) {
@@ -4887,6 +4880,9 @@ bool testUnmodeledLoopVaryingControlsFailClosed() {
       build("nested_outer_varying_unrolled");
   FailureOr<CanonicalSyncProgram> nestedTripUnrolled =
       build("nested_varying_trip_count_unrolled");
+  FailureOr<CanonicalSyncProgram> gapTwoProgram = build("gap_two");
+  FailureOr<CanonicalSyncProgram> shiftedProgram = build("shifted_modulo");
+  FailureOr<CanonicalSyncProgram> nestedProgram = build("nested_outer_varying");
   const bool unrolledBuilt =
       succeeded(gapTwoUnrolled) && succeeded(shiftedUnrolled) &&
       succeeded(nestedUnrolled) && succeeded(nestedTripUnrolled);
@@ -4938,16 +4934,36 @@ bool testUnmodeledLoopVaryingControlsFailClosed() {
       mappedHazardGaps(*shiftedUnrolled, {2, 5}) == gapThree &&
       mappedHazardGaps(*nestedUnrolled, {0, 2}) == gapTwo &&
       mappedHazardGaps(*nestedTripUnrolled, {0, 2}) == gapTwo;
+  CanonicalSyncBuildOptions directOptions;
+  directOptions.patterns.catalogMode =
+      CanonicalSyncCatalogMode::StrictMinimalDirect;
+  directOptions.patterns.enabledMechanismFamilies = 0;
+  directOptions.patterns.enableDirectPairs = false;
+  directOptions.patterns.enableConflictCoreRepair = false;
+  directOptions.selection.strategy =
+      CanonicalSyncSelectionStrategy::ActionAwareSingleton;
+  const auto verifiesDirectly = [&](CanonicalSyncProgram &program) {
+    CanonicalSyncProblemBuildResult problem =
+        buildCanonicalSyncPreciseProblem(program, directOptions);
+    if (!problem || !problem.problem) {
+      return false;
+    }
+    const CanonicalSyncSelection selection =
+        selectCanonicalSyncPatterns(*problem.problem, directOptions.selection);
+    return selection &&
+           verifyCanonicalSyncSelection(*problem.problem, selection);
+  };
   return check(unrollsExposeOmittedGaps,
                "expose the real successor gaps in explicit unrolls") &&
-         check(rejectsWith("gap_two", "cannot model this loop-varying control"),
-               "reject a transient direct induction guard") &&
-         check(rejectsWith("shifted_modulo",
-                           "cannot model this loop-varying control"),
-               "reject a transformed periodic guard") &&
-         check(rejectsWith("nested_outer_varying",
-                           "cannot model this loop-varying control"),
-               "reject a nested guard that varies with an outer induction") &&
+         check(succeeded(gapTwoProgram) && succeeded(shiftedProgram) &&
+                   succeeded(nestedProgram),
+               "represent loop-varying choices as opaque per-iteration "
+               "regions") &&
+         check(verifiesDirectly(*gapTwoProgram) &&
+                   verifiesDirectly(*shiftedProgram) &&
+                   verifiesDirectly(*nestedProgram),
+               "cover opaque-region recurrence with unconditional direct "
+               "loop cuts") &&
          check(rejectsWith("nested_varying_trip_count",
                            "scf.for upper bound that varies with an enclosing "
                            "loop"),
@@ -5465,6 +5481,40 @@ bool testBasicL0OwnershipSharesExhaustiveBranchBoundaries() {
           SyncCoverAnchorKind::ControlExit;
   if (!check(exactCertificate,
              "certify one wait and release at the exhaustive branch cut")) {
+    return false;
+  }
+
+  std::string splitProducerSource = ownershipSource;
+  const std::size_t splitProducerName = splitProducerSource.find("@branch_l0");
+  const std::size_t firstLeftProducer =
+      splitProducerSource.find("          pto.textract ins(%left_source");
+  const std::size_t followingRightProducer = splitProducerSource.find(
+      "          pto.textract ins(%right_source", firstLeftProducer);
+  if (!check(splitProducerName != std::string::npos &&
+                 firstLeftProducer != std::string::npos &&
+                 followingRightProducer != std::string::npos,
+             "locate split-producer ownership fixture")) {
+    return false;
+  }
+  splitProducerSource.insert(
+      followingRightProducer,
+      splitProducerSource.substr(firstLeftProducer,
+                                 followingRightProducer - firstLeftProducer));
+  splitProducerSource.replace(splitProducerName,
+                              std::string("@branch_l0").size(),
+                              "@split_producer_l0");
+  OwningOpRef<ModuleOp> splitProducerModule =
+      parseSourceString<ModuleOp>(splitProducerSource, &context);
+  if (!check(static_cast<bool>(splitProducerModule),
+             "parse split-producer ownership fixture")) {
+    return false;
+  }
+  FailureOr<CanonicalSyncProgram> splitProducerProgram =
+      buildCanonicalSyncProgram(
+          splitProducerModule->lookupSymbol<func::FuncOp>("split_producer_l0"));
+  if (!check(succeeded(splitProducerProgram),
+             "reject split ownership anchors without dereferencing a null "
+             "common producer")) {
     return false;
   }
 
@@ -6404,21 +6454,38 @@ bool testGuardedEndpointUsesSourceLocalCompletionEvent() {
         CanonicalSyncCatalogMode::MechanicalDirect;
     mechanical = buildCanonicalSyncPreciseProblem(*program, mechanicalOptions);
   }
-  const CanonicalSyncMechanismOriginMask sourceLocalOrigin =
+  const CanonicalSyncMechanismOriginMask directTargetFenceOrigin =
       canonicalSyncMechanismOriginBit(
-          CanonicalSyncMechanismOrigin::SourceLocalCompletionEvent);
-  const bool hasSourceLocalFallback =
+          CanonicalSyncMechanismOrigin::DirectBalancedTargetFenceEvent);
+  const bool hasDirectTargetFenceFallback =
       withoutTargetLocal && withoutTargetLocal.problem &&
       llvm::any_of(withoutTargetLocal.problem->getMechanisms(),
                    [&](const CanonicalSyncMechanism &mechanism) {
-                     return (mechanism.originMask & sourceLocalOrigin) != 0;
+                     return (mechanism.originMask &
+                             directTargetFenceOrigin) != 0;
                    });
-  if (!check(hasSourceLocalFallback,
-             "fall back to a balanced source-local completion event") ||
-      !check(!core && !core.problem,
-             "fail strict-direct when no exact direct cut exists") ||
-      !check(!mechanical && !mechanical.problem,
-             "fail mechanical-direct when no exact direct cut exists")) {
+  const auto hasVerifiedDirectTargetFence =
+      [&](const CanonicalSyncProblemBuildResult &built) {
+        if (!built || !built.problem ||
+            !llvm::any_of(built.problem->getMechanisms(),
+                          [&](const CanonicalSyncMechanism &mechanism) {
+                            return (mechanism.originMask &
+                                    directTargetFenceOrigin) != 0;
+                          })) {
+          return false;
+        }
+        const CanonicalSyncSelection selection =
+            selectCanonicalSyncPatterns(*built.problem);
+        return selection &&
+               verifyCanonicalSyncSelection(*built.problem, selection);
+      };
+  if (!check(hasDirectTargetFenceFallback,
+             "retain the direct target-boundary correctness atom when the "
+             "optional target-local family is disabled") ||
+      !check(hasVerifiedDirectTargetFence(core),
+             "admit a verified strict-direct balanced target fence") ||
+      !check(hasVerifiedDirectTargetFence(mechanical),
+             "admit a verified mechanical-direct balanced target fence")) {
     return false;
   }
   CanonicalSyncComparisonReport report;
@@ -6722,10 +6789,26 @@ bool testMinimalDirectCatalogIsCompleteAndNeverFallsBack() {
     mechanicalLoopProblem =
         buildCanonicalSyncPreciseProblem(*loopProgram, mechanicalOptions);
   }
-  if (!check(!strictLoopProblem && !strictLoopProblem.problem &&
-                 !mechanicalLoopProblem && !mechanicalLoopProblem.problem,
-             "reject the same token-unsafe loop catalog in both direct-only "
-             "modes")) {
+  CanonicalSyncSelection strictLoopSelection;
+  CanonicalSyncSelection mechanicalLoopSelection;
+  if (strictLoopProblem && strictLoopProblem.problem) {
+    strictLoopSelection = selectCanonicalSyncPatterns(
+        *strictLoopProblem.problem, options.selection);
+  }
+  if (mechanicalLoopProblem && mechanicalLoopProblem.problem) {
+    mechanicalLoopSelection = selectAllCanonicalSyncSingletonMechanisms(
+        *mechanicalLoopProblem.problem,
+        mechanicalOptions.selection.maximumWorkUnits);
+  }
+  if (!check(strictLoopProblem && strictLoopProblem.problem &&
+                 mechanicalLoopProblem && mechanicalLoopProblem.problem &&
+                 strictLoopSelection && mechanicalLoopSelection &&
+                 verifyCanonicalSyncSelection(*strictLoopProblem.problem,
+                                              strictLoopSelection) &&
+                 verifyCanonicalSyncSelection(*mechanicalLoopProblem.problem,
+                                              mechanicalLoopSelection),
+             "admit a repeated direct event only through a verified "
+             "round-trip token lifecycle")) {
     return false;
   }
 
@@ -7933,7 +8016,7 @@ int main() {
       testStructuralLimitsFailClosed() && testPeriodicBranchEvidence() &&
       testPhaseAwareRecurrenceDistances() &&
       testFirstIterationRecurrenceSuppression() &&
-      testUnmodeledLoopVaryingControlsFailClosed() &&
+      testOpaqueLoopVaryingControlsUseConservativeCuts() &&
       testUnsupportedBlockArgumentProvenanceFailsClosed() &&
       testSsaProvenanceTraversalIsBoundedAndIterative() &&
       testGuardedOwnershipVerificationWorkIsBounded() &&

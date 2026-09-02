@@ -628,9 +628,19 @@ prepareProtocolChannel(const SyncCoverGraph &graph,
           supply.kind == SyncCoverProtocolSupplyKind::CompletionExport;
       rectangle.setAction = &set;
       rectangle.waitAction = &wait;
+      // SetFlag completes the physical source-pipeline prefix, not merely
+      // nodes inside the protocol's principal loop. A body Set may therefore
+      // transfer completion from work issued before a child-loop invocation
+      // into a guarded child cut. Symmetrically, a body Wait can establish
+      // completion for the later physical target-pipeline suffix. Exact
+      // grounding still checks guards, dynamic action execution, resources,
+      // timeline order, and forbids implicit parent recurrence distances.
       rectangle.externalSource =
-          set.segment == SyncCoverProtocolActionSegment::Entry;
-      rectangle.externalTarget = supply.distanceScope.has_value();
+          set.segment == SyncCoverProtocolActionSegment::Entry ||
+          set.segment == SyncCoverProtocolActionSegment::Body;
+      rectangle.externalTarget =
+          supply.distanceScope.has_value() ||
+          wait.segment == SyncCoverProtocolActionSegment::Body;
       const std::size_t initialPhase =
           protocol.loop && protocol.loop->phaseControl
               ? graph.getControls()[*protocol.loop->phaseControl]
@@ -663,9 +673,19 @@ prepareProtocolChannel(const SyncCoverGraph &graph,
     const unsigned distance =
         channel.flow == SyncCoverEventChannelFlow::LoopCarry ? channel.distance
                                                              : 0;
-    prepared.rectangles.push_back({nextActivationId++, std::move(transfer),
-                                   distance, std::nullopt, false, false, false,
-                                   false, nullptr, nullptr});
+    const bool externalSource =
+        !protocol.loop &&
+        transfer.set.anchor.kind == SyncCoverAnchorKind::ScopeExit &&
+        transfer.set.anchor.scope < graph.getScopes().size() &&
+        graph.getScopes()[transfer.set.anchor.scope].isLoop;
+    const bool externalTarget =
+        !protocol.loop &&
+        transfer.wait.anchor.kind == SyncCoverAnchorKind::ScopeEntry &&
+        transfer.wait.anchor.scope < graph.getScopes().size() &&
+        graph.getScopes()[transfer.wait.anchor.scope].isLoop;
+    prepared.rectangles.push_back(
+        {nextActivationId++, std::move(transfer), distance, std::nullopt,
+         externalSource, externalTarget, false, false, nullptr, nullptr});
   }
   return prepared;
 }
@@ -990,6 +1010,13 @@ static SyncCoverProtocolCoverageResult computeProtocolWorlds(
           const std::size_t protocolIndex = prepared.protocolIndex;
           const SyncCoverEventProtocol &protocol = protocols[protocolIndex];
           const SyncCoverEventChannel &channel = *prepared.channel;
+          const bool structuralSingleShot =
+              !protocol.loop &&
+              std::any_of(
+                  prepared.rectangles.begin(), prepared.rectangles.end(),
+                  [](const PreparedProtocolRectangle &rectangle) {
+                    return rectangle.externalSource || rectangle.externalTarget;
+                  });
           const bool localProtocol =
               protocol.loop
                   ? (demand.distance == 0
@@ -1001,8 +1028,9 @@ static SyncCoverProtocolCoverageResult computeProtocolWorlds(
                                    graph.getNodes()[demand.target].scope,
                                    workBudget)
                          : demand.scope == protocol.loop->scope)
-                  : demand.distance == 0 && !demandSourceLoop &&
-                        !demandTargetLoop;
+                  : demand.distance == 0 &&
+                        ((!demandSourceLoop && !demandTargetLoop) ||
+                         structuralSingleShot);
           const bool nestedExport =
               protocol.loop && protocol.loop->scope != demand.scope &&
               scopeContains(graph, demand.scope, protocol.loop->scope,
@@ -1078,8 +1106,9 @@ static SyncCoverProtocolCoverageResult computeProtocolWorlds(
                   rectangle.waitAction,
                   protocol.loop && demandTargetLoop == protocol.loop->scope,
                   rectangle.loopSummary,
-                  rectangle.externalTarget && rectangle.distanceScope &&
-                      *rectangle.distanceScope == demand.scope,
+                  rectangle.externalTarget &&
+                      (!rectangle.distanceScope ||
+                       *rectangle.distanceScope == demand.scope),
                   nullptr, workBudget);
               rectangleCovers = sourcePrefix && targetSuffix;
               if (workBudget && workBudget->exhausted) {

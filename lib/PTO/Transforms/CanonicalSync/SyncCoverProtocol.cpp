@@ -148,6 +148,95 @@ bool guardsLess(const SyncCoverGuard &left, const SyncCoverGuard &right) {
   return left.literals < right.literals;
 }
 
+SyncCoverProtocolError
+buildBodyGuardWorlds(const SyncCoverGraph &graph,
+                     const SyncCoverEventProtocol &protocol,
+                     ResolvedProtocol &resolved, SyncCoverProtocolLimits limits,
+                     SyncCoverCoverageWorkBudget *workBudget) {
+  resolved.bodyGuardWorlds = {SyncCoverGuard{}};
+  if (!protocol.loop) {
+    return SyncCoverProtocolError::None;
+  }
+  for (const ResolvedChannel &channel : resolved.channels) {
+    for (const ResolvedAction &action : channel.actions) {
+      if (action.description.segment != SyncCoverProtocolActionSegment::Body) {
+        continue;
+      }
+      SyncCoverGuard residual = action.guard;
+      residual.literals.erase(
+          std::remove_if(
+              residual.literals.begin(), residual.literals.end(),
+              [&](const SyncCoverGuardLiteral &literal) {
+                const bool fixedByLoop = std::binary_search(
+                    resolved.loopGuard.literals.begin(),
+                    resolved.loopGuard.literals.end(), literal);
+                const SyncCoverControl &control =
+                    graph.getControls()[literal.control];
+                const bool fixedByFirstIteration =
+                    control.firstIterationRelation &&
+                    control.firstIterationRelation->loopScope ==
+                        protocol.loop->scope &&
+                    ((action.description.guard ==
+                          SyncCoverProtocolActionGuard::FirstIteration &&
+                      literal.alternative == control.firstIterationRelation
+                                                 ->firstIterationAlternative) ||
+                     (action.description.guard ==
+                          SyncCoverProtocolActionGuard::NotFirstIteration &&
+                      literal.alternative != control.firstIterationRelation
+                                                 ->firstIterationAlternative));
+                return fixedByLoop ||
+                       (protocol.loop->phaseControl &&
+                        literal.control == *protocol.loop->phaseControl) ||
+                       fixedByFirstIteration;
+              }),
+          residual.literals.end());
+      if (residual.literals.empty()) {
+        continue;
+      }
+      // Periodic schedules already have an authoritative state transition.
+      // Mixing an unrelated data-dependent guard into that transition needs a
+      // product automaton and remains fail-closed for now.
+      if (protocol.loop->phaseControl) {
+        return SyncCoverProtocolError::InvalidProtocol;
+      }
+      const std::size_t existingWorlds = resolved.bodyGuardWorlds.size();
+      for (std::size_t worldIndex = 0; worldIndex < existingWorlds;
+           ++worldIndex) {
+        const SyncCoverGuard &world = resolved.bodyGuardWorlds[worldIndex];
+        if (!consumeWork(workBudget, world.literals.size() +
+                                         residual.literals.size() + 1)) {
+          return SyncCoverProtocolError::WorkLimitExceeded;
+        }
+        if (!syncCoverGuardsCompatible(world, residual)) {
+          continue;
+        }
+        SyncCoverGuard combined = world;
+        combined.literals.insert(combined.literals.end(),
+                                 residual.literals.begin(),
+                                 residual.literals.end());
+        if (!normalizeGuard(combined, workBudget)) {
+          return workBudget && workBudget->exhausted
+                     ? SyncCoverProtocolError::WorkLimitExceeded
+                     : SyncCoverProtocolError::InvalidProtocol;
+        }
+        const bool duplicate = std::any_of(resolved.bodyGuardWorlds.begin(),
+                                           resolved.bodyGuardWorlds.end(),
+                                           [&](const SyncCoverGuard &item) {
+                                             return guardsEqual(item, combined);
+                                           });
+        if (duplicate) {
+          continue;
+        }
+        if (resolved.bodyGuardWorlds.size() == limits.maximumWorlds) {
+          return SyncCoverProtocolError::LimitExceeded;
+        }
+        resolved.bodyGuardWorlds.push_back(std::move(combined));
+      }
+    }
+  }
+  return SyncCoverProtocolError::None;
+}
+
 bool validTargetContract(const SyncCoverProtocolTargetContract &target) {
   const bool invalidCapabilities =
       target.eventCapabilities.empty() ||
@@ -232,8 +321,13 @@ bool validPoint(const SyncCoverGraph &graph, const SyncCoverCutPoint &point,
       point.anchor.kind == SyncCoverAnchorKind::ControlEntry ||
       point.anchor.kind == SyncCoverAnchorKind::ControlExit;
   const bool validAnchor =
-      (nodeAnchor && point.anchor.node < graph.getNodes().size() &&
-       graph.getNodes()[point.anchor.node].resource == point.resource) ||
+      // SetFlag/WaitFlag are scalar-issued commands for their named physical
+      // pipelines. Their program anchor need not itself be an operation on
+      // that pipeline: a source-prefix Set can be issued at a later target
+      // cut, and a target Wait can be issued immediately after a guarded
+      // source. Exact grounding separately checks resource, guard, and
+      // timeline semantics.
+      (nodeAnchor && point.anchor.node < graph.getNodes().size()) ||
       (scopeBoundary && point.anchor.scope < graph.getScopes().size()) ||
       (controlBoundary && point.anchor.node < graph.getControls().size() &&
        point.anchor.scope == graph.getControls()[point.anchor.node].scope);
@@ -282,6 +376,20 @@ bool pointHasExactProtocolCardinality(const SyncCoverGraph &graph,
           : occurrenceScope;
   const std::optional<SyncCoverScopeId> nearestLoop =
       nearestEnclosingLoop(graph, loopQueryScope, workBudget);
+  const auto regionOutsideLoopBoundary = [&](SyncCoverRegionId region) {
+    if (!scopeBoundary || !graph.getScopes()[occurrenceScope].isLoop) {
+      return region;
+    }
+    while (region != 0) {
+      const SyncCoverRegion &description = graph.getRegions()[region];
+      if (description.kind == SyncCoverRegionKind::Loop &&
+          description.scope == occurrenceScope) {
+        return description.parent;
+      }
+      region = description.parent;
+    }
+    return region;
+  };
   if (!loopScope) {
     if (nearestLoop) {
       return false;
@@ -289,10 +397,7 @@ bool pointHasExactProtocolCardinality(const SyncCoverGraph &graph,
     SyncCoverRegionId region = nodeAnchor
                                    ? graph.getNodes()[point.anchor.node].region
                                    : graph.getScopes()[occurrenceScope].region;
-    if (scopeBoundary && region < graph.getRegions().size() &&
-        graph.getRegions()[region].kind == SyncCoverRegionKind::Loop) {
-      region = graph.getRegions()[region].parent;
-    }
+    region = regionOutsideLoopBoundary(region);
     while (region != 0) {
       if (!consumeWork(workBudget)) {
         return false;
@@ -312,10 +417,7 @@ bool pointHasExactProtocolCardinality(const SyncCoverGraph &graph,
   SyncCoverRegionId region = nodeAnchor
                                  ? graph.getNodes()[point.anchor.node].region
                                  : graph.getScopes()[occurrenceScope].region;
-  if (scopeBoundary && region < graph.getRegions().size() &&
-      graph.getRegions()[region].kind == SyncCoverRegionKind::Loop) {
-    region = graph.getRegions()[region].parent;
-  }
+  region = regionOutsideLoopBoundary(region);
   const SyncCoverRegionId loopRegion = graph.getScopes()[*loopScope].region;
   while (region != loopRegion) {
     if (!consumeWork(workBudget)) {
@@ -389,12 +491,33 @@ actionPhaseGuard(const SyncCoverGraph &graph,
     }
     successorLiteral = index;
   }
-  if (!successorLiteral ||
-      (action.guard != SyncCoverProtocolActionGuard::HasSuccessor &&
-       action.guard != SyncCoverProtocolActionGuard::Always)) {
-    return guard;
+  if (successorLiteral &&
+      (action.guard == SyncCoverProtocolActionGuard::HasSuccessor ||
+       action.guard == SyncCoverProtocolActionGuard::Always)) {
+    guard->literals.erase(guard->literals.begin() + *successorLiteral);
   }
-  guard->literals.erase(guard->literals.begin() + *successorLiteral);
+  guard->literals.erase(
+      std::remove_if(
+          guard->literals.begin(), guard->literals.end(),
+          [&](const SyncCoverGuardLiteral &literal) {
+            const SyncCoverControl &control =
+                graph.getControls()[literal.control];
+            if (!control.firstIterationRelation ||
+                control.firstIterationRelation->loopScope !=
+                    protocol.loop->scope) {
+              return false;
+            }
+            const bool first =
+                literal.alternative ==
+                control.firstIterationRelation->firstIterationAlternative;
+            return (first &&
+                    action.guard ==
+                        SyncCoverProtocolActionGuard::FirstIteration) ||
+                   (!first &&
+                    action.guard ==
+                        SyncCoverProtocolActionGuard::NotFirstIteration);
+          }),
+      guard->literals.end());
   return guard;
 }
 
@@ -412,6 +535,19 @@ bool actionPointHasValidSegment(const SyncCoverGraph &graph,
     return false;
   }
   if (action.segment == SyncCoverProtocolActionSegment::Body) {
+    const bool loopScopeBoundary =
+        (action.point.anchor.kind == SyncCoverAnchorKind::ScopeEntry ||
+         action.point.anchor.kind == SyncCoverAnchorKind::ScopeExit) &&
+        action.point.anchor.scope < graph.getScopes().size() &&
+        graph.getScopes()[action.point.anchor.scope].isLoop;
+    if (loopScopeBoundary) {
+      const std::optional<SyncCoverScopeId> parentLoop = nearestEnclosingLoop(
+          graph, graph.getScopes()[action.point.anchor.scope].parent,
+          workBudget);
+      if (parentLoop && *parentLoop == protocol.loop->scope) {
+        return true;
+      }
+    }
     return pointHasExactProtocolCardinality(graph, action.point,
                                             protocol.loop->scope, workBudget);
   }
@@ -536,6 +672,7 @@ SyncCoverProtocolError resolveLoop(const SyncCoverGraph &graph,
     }
     resolved.reachablePhases = {0};
     resolved.nextPhase = {0};
+    resolved.loopGuard = {};
     resolved.guardByPhase = {SyncCoverGuard{}};
     return SyncCoverProtocolError::None;
   }
@@ -563,6 +700,7 @@ SyncCoverProtocolError resolveLoop(const SyncCoverGraph &graph,
   if (invalidHeader) {
     return SyncCoverProtocolError::InvalidProtocol;
   }
+  resolved.loopGuard = graph.getScopes()[loop.scope].guard;
   if (!loop.phaseControl) {
     const bool invalidUnconditionalSchedule = loop.laneByPhase.size() != 1;
     if (invalidUnconditionalSchedule) {
@@ -1124,13 +1262,14 @@ SyncCoverProtocolError mlir::pto::sync_cover_protocol_detail::resolveProtocol(
                          ? SyncCoverProtocolError::WorkLimitExceeded
                          : SyncCoverProtocolError::InvalidProtocol;
             }
-            const bool executes =
-                guardImplies(phaseCondition, *guard, workBudget);
-            if (workBudget && workBudget->exhausted) {
+            if (!consumeWork(workBudget, phaseCondition.literals.size() +
+                                             guard->literals.size())) {
               invalidIndex = index;
               return SyncCoverProtocolError::WorkLimitExceeded;
             }
-            if (executes != phaseIsActive(action, phase)) {
+            const bool mayExecute =
+                syncCoverGuardsCompatible(phaseCondition, *guard);
+            if (mayExecute != phaseIsActive(action, phase)) {
               invalidIndex = index;
               return SyncCoverProtocolError::InvalidProtocol;
             }
@@ -1337,6 +1476,25 @@ SyncCoverProtocolError mlir::pto::sync_cover_protocol_detail::resolveProtocol(
     resolved.channels.push_back(std::move(resolvedChannel));
     maximumSpan = std::max<std::size_t>(
         maximumSpan, std::max<std::size_t>(channel.width, channel.distance));
+  }
+
+  const SyncCoverProtocolError guardWorldError =
+      buildBodyGuardWorlds(graph, protocol, resolved, limits, workBudget);
+  if (guardWorldError != SyncCoverProtocolError::None) {
+    return guardWorldError;
+  }
+  if (resolved.bodyGuardWorlds.size() > 1 && maximumSpan > 1) {
+    // The bounded checker below proves arbitrary adjacent guard-world
+    // transitions. Wider-distance guarded channels require a correspondingly
+    // wider product construction and remain fail-closed.
+    return SyncCoverProtocolError::InvalidProtocol;
+  }
+  if (resolved.bodyGuardWorlds.size() > 1 && protocol.lifetimeScope &&
+      *protocol.lifetimeScope != protocol.loop->scope) {
+    // Guard choices inside a repeatable child invocation need a product with
+    // the enclosing invocation sequence. Keep that hierarchy fail-closed
+    // until the product is represented explicitly.
+    return SyncCoverProtocolError::InvalidProtocol;
   }
 
   std::size_t doubledPeriod = 0;

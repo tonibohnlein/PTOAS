@@ -2229,9 +2229,11 @@ bool ownershipDescriptorEqual(const CanonicalSyncMechanismDescriptor &left,
     const CanonicalSyncEventUse &leftUse = left.eventUses[index];
     const CanonicalSyncEventUse &rightUse = right.eventUses[index];
     if (std::tie(leftUse.domain, leftUse.width, leftUse.recurrenceScope,
-                 leftUse.lifetimeScope) !=
+                 leftUse.lifetimeScope,
+                 leftUse.quiescentAtLifetimeBoundaries) !=
         std::tie(rightUse.domain, rightUse.width, rightUse.recurrenceScope,
-                 rightUse.lifetimeScope)) {
+                 rightUse.lifetimeScope,
+                 rightUse.quiescentAtLifetimeBoundaries)) {
       return false;
     }
   }
@@ -3610,37 +3612,20 @@ bool reserveGenericDescriptorFactoryWork(
   return work.consume(total);
 }
 
-bool reserveGenericProtocolCopyWork(
-    ArrayRef<SyncCoverLifecycleProposal> proposals,
-    ArrayRef<
-        std::pair<const CanonicalSyncMaterializedMechanismView *, std::size_t>>
-        selected,
-    SyncCoverCoverageWorkBudget &work) {
-  std::size_t payload = 0;
-  for (const auto &[mechanism, proposalId] : selected) {
-    (void)mechanism;
-    if (proposalId >= proposals.size()) {
-      return false;
-    }
-    for (const SyncCoverEventProtocol &protocol :
-         proposals[proposalId].protocols) {
-      if (!accumulateGenericProtocolPayload(protocol, payload, work)) {
-        return false;
-      }
-    }
-  }
-  return work.consume(payload);
-}
-
 std::optional<CanonicalSyncMechanismDescriptor> makeGenericLifecycleDescriptor(
     const SyncCoverGraph &graph, const SyncCoverLifecycleProposal &proposal,
     const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds) {
   CanonicalSyncMechanismDescriptor descriptor;
   descriptor.kind = CanonicalSyncMechanismKind::Protocol;
   for (const SyncCoverEventProtocol &protocol : proposal.protocols) {
-    if (!protocol.loop) {
-      return std::nullopt;
-    }
+    const bool quiescentRoundTrip =
+        protocol.kind == SyncCoverEventProtocolKind::LifecycleNetwork &&
+        protocol.loop && protocol.channels.size() == 2 &&
+        !protocol.channels[0].actions.empty() &&
+        !protocol.channels[1].actions.empty() &&
+        protocol.channels[0].set.resource ==
+            protocol.channels[1].wait.resource &&
+        protocol.channels[0].wait.resource == protocol.channels[1].set.resource;
     for (const SyncCoverEventChannel &channel : protocol.channels) {
       const auto domain =
           domainIds.find({channel.set.resource, channel.wait.resource});
@@ -3651,8 +3636,11 @@ std::optional<CanonicalSyncMechanismDescriptor> makeGenericLifecycleDescriptor(
       CanonicalSyncEventUse use;
       use.domain = domain->second;
       use.width = channel.width;
-      use.recurrenceScope = protocol.loop->scope;
+      use.recurrenceScope =
+          protocol.loop ? std::optional<SyncCoverScopeId>(protocol.loop->scope)
+                        : std::nullopt;
       use.lifetimeScope = protocol.lifetimeScope;
+      use.quiescentAtLifetimeBoundaries = quiescentRoundTrip;
       descriptor.eventUses.push_back(std::move(use));
       if (!channel.actions.empty()) {
         for (const SyncCoverProtocolAction &action : channel.actions) {
@@ -3683,13 +3671,17 @@ std::optional<CanonicalSyncMechanismDescriptor> makeGenericLifecycleDescriptor(
                   : CanonicalSyncActionKind::EventWait,
               action.point.resource, action.point.anchor, eventUse, action.lane,
               guard,
-              guard == CanonicalSyncActionGuardKind::None
-                  ? std::nullopt
-                  : std::optional<SyncCoverScopeId>(protocol.loop->scope)));
+              guard == CanonicalSyncActionGuardKind::None ? std::nullopt
+              : protocol.loop
+                  ? std::optional<SyncCoverScopeId>(protocol.loop->scope)
+                  : std::nullopt));
         }
         continue;
       }
       if (channel.flow == SyncCoverEventChannelFlow::LoopCarry) {
+        if (!protocol.loop) {
+          return std::nullopt;
+        }
         for (std::size_t lane = 0; lane < channel.width; ++lane) {
           descriptor.actions.push_back(makeOwnershipAction(
               CanonicalSyncActionKind::EventSet, channel.set.resource,
@@ -3716,6 +3708,9 @@ std::optional<CanonicalSyncMechanismDescriptor> makeGenericLifecycleDescriptor(
         }
       }
       if (channel.flow == SyncCoverEventChannelFlow::LoopCarry) {
+        if (!protocol.loop) {
+          return std::nullopt;
+        }
         for (std::size_t lane = 0; lane < channel.width; ++lane) {
           descriptor.actions.push_back(makeOwnershipAction(
               CanonicalSyncActionKind::EventWait, channel.wait.resource,
@@ -3751,7 +3746,7 @@ CanonicalSyncProblemResult internGenericLifecycleProtocol(
   std::optional<CanonicalSyncMechanismDescriptor> descriptor =
       makeGenericLifecycleDescriptor(graph, proposal, domainIds);
   if (!descriptor) {
-    return {CanonicalSyncProblemError::None, std::nullopt};
+    return {CanonicalSyncProblemError::InvalidMechanism, proposal.id};
   }
   const SyncCoverLifecycleProposal frozenProposal = proposal;
   const SyncCoverProtocolTargetContract frozenTarget = target;
@@ -3780,18 +3775,23 @@ CanonicalSyncProblemResult internGenericLifecycleProtocol(
                            ownershipDescriptorEqual(actual, *expected, work);
         return protocolVerificationResult(work, valid);
       },
-      CanonicalSyncMechanismOrigin::GenericLifecycleProtocol);
+      proposal.directBasis
+          ? CanonicalSyncMechanismOrigin::DirectLifecycleProtocol
+          : CanonicalSyncMechanismOrigin::GenericLifecycleProtocol);
 }
 
 LogicalResult addGenericLifecycleProtocols(
     const CanonicalSyncProgram &program, CanonicalSyncPatternProblem &problem,
     const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds,
-    ArrayRef<SyncCoverLifecycleProposal> proposals) {
+    ArrayRef<SyncCoverLifecycleProposal> proposals,
+    bool enableDirectCutFusion = true) {
   const SyncCoverProtocolTargetContract target =
       makeProtocolTargetContract(program.getTargetCapabilities());
   std::vector<std::pair<CanonicalSyncMechanismId, std::size_t>>
       proposalByMechanism;
-  for (const SyncCoverLifecycleProposal &proposal : proposals) {
+  for (std::size_t proposalIndex = 0; proposalIndex < proposals.size();
+       ++proposalIndex) {
+    const SyncCoverLifecycleProposal &proposal = proposals[proposalIndex];
     const CanonicalSyncProblemResult added = internGenericLifecycleProtocol(
         problem, program.getGraph(), target, proposal, domainIds);
     if (!added && added.error != CanonicalSyncProblemError::None) {
@@ -3800,7 +3800,7 @@ LogicalResult addGenericLifecycleProtocols(
              << proposal.id << ", error=" << static_cast<unsigned>(added.error);
     }
     if (added.index) {
-      proposalByMechanism.emplace_back(*added.index, proposal.id);
+      proposalByMechanism.emplace_back(*added.index, proposalIndex);
     }
   }
   if (proposalByMechanism.empty()) {
@@ -3814,25 +3814,33 @@ LogicalResult addGenericLifecycleProtocols(
                   }),
       proposalByMechanism.end());
   const SyncCoverGraph &graph = program.getGraph();
+  func::FuncOp function = program.getFunction();
+  const SyncCoverStorageLifecycleIndex *lifecycleIndex =
+      program.getStorageLifecycleIndex() ? &*program.getStorageLifecycleIndex()
+                                         : nullptr;
+  const SyncCoverStorageProtocolSeedIndex *seedIndex =
+      program.getStorageProtocolSeedIndex()
+          ? &*program.getStorageProtocolSeedIndex()
+          : nullptr;
+  const SyncCoverStorageProtocolGroupIndex *groupIndex =
+      program.getStorageProtocolGroupIndex()
+          ? &*program.getStorageProtocolGroupIndex()
+          : nullptr;
   const auto frozenDomains = domainIds;
+  const std::vector<SyncCoverLifecycleProposal> frozenProposals(
+      proposals.begin(), proposals.end());
   const CanonicalSyncProblemResult verifier =
       problem.addMaterializedPlanVerifier(
           canonicalSyncMechanismOriginBit(
-              CanonicalSyncMechanismOrigin::GenericLifecycleProtocol),
-          [&graph, target, frozenDomains, proposalByMechanism](
+              CanonicalSyncMechanismOrigin::GenericLifecycleProtocol) |
+              canonicalSyncMechanismOriginBit(
+                  CanonicalSyncMechanismOrigin::DirectLifecycleProtocol),
+          [&graph, function, target, lifecycleIndex, seedIndex, groupIndex,
+           frozenDomains, frozenProposals, proposalByMechanism,
+           enableDirectCutFusion](
               const std::vector<CanonicalSyncMaterializedMechanismView>
                   &selected,
-              SyncCoverCoverageWorkBudget &work) {
-            const SyncCoverLifecycleSynthesisResult fresh =
-                synthesizeSyncCoverLifecycleCertificates(graph, target, {},
-                                                         &work);
-            if (!fresh) {
-              return fresh.error == SyncCoverProtocolError::WorkLimitExceeded ||
-                             fresh.error ==
-                                 SyncCoverProtocolError::LimitExceeded
-                         ? CanonicalSyncProblemError::LimitExceeded
-                         : CanonicalSyncProblemError::UnverifiedProtocol;
-            }
+              SyncCoverCoverageWorkBudget &work) mutable {
             if (!work.consume(selected.size())) {
               return CanonicalSyncProblemError::LimitExceeded;
             }
@@ -3860,15 +3868,22 @@ LogicalResult addGenericLifecycleProtocols(
               const bool proposalUnavailable =
                   mapped == proposalByMechanism.end() ||
                   mapped->first != mechanism.mechanism ||
-                  mapped->second >= fresh.proposals.size();
+                  mapped->second >= frozenProposals.size();
               if (proposalUnavailable) {
-                return CanonicalSyncProblemError::UnverifiedProtocol;
+                function.emitWarning()
+                    << "canonical sync selected lifecycle mechanism "
+                    << mechanism.mechanism
+                    << " has no frozen proposal at materialization";
+                return CanonicalSyncProblemError::InvalidMechanism;
               }
               const SyncCoverLifecycleProposal &proposal =
-                  fresh.proposals[mapped->second];
-              if (proposal.id != mapped->second ||
-                  proposal.exactCoverage.empty()) {
-                return CanonicalSyncProblemError::UnverifiedProtocol;
+                  frozenProposals[mapped->second];
+              if (proposal.exactCoverage.empty()) {
+                function.emitWarning()
+                    << "canonical sync selected lifecycle proposal "
+                    << proposal.id
+                    << " has empty certified coverage at materialization";
+                return CanonicalSyncProblemError::UncoverableDemand;
               }
               if (!reserveGenericDescriptorFactoryWork(graph, proposal,
                                                        frozenDomains, work)) {
@@ -3879,79 +3894,36 @@ LogicalResult addGenericLifecycleProtocols(
                                                  frozenDomains);
               if (!expected || !ownershipDescriptorEqual(*mechanism.descriptor,
                                                          *expected, work)) {
+                if (!work.exhausted) {
+                  function.emitWarning()
+                      << "canonical sync selected lifecycle mechanism "
+                      << mechanism.mechanism
+                      << " no longer matches frozen proposal " << proposal.id;
+                }
                 return work.exhausted
                            ? CanonicalSyncProblemError::LimitExceeded
-                           : CanonicalSyncProblemError::UnverifiedProtocol;
+                           : CanonicalSyncProblemError::InvalidMechanism;
               }
               selectedProposals.emplace_back(&mechanism, mapped->second);
             }
-
-            // Rebuild one exact world containing every selected lifecycle
-            // protocol. This reruns all token automata and structured
-            // must-semantics together, rather than accepting the union of
-            // admission-time singleton bitsets.
-            std::size_t protocolCount = 0;
-            for (const auto &[mechanism, proposalId] : selectedProposals) {
+            std::vector<std::size_t> selectedProposalIndices;
+            selectedProposalIndices.reserve(selectedProposals.size());
+            for (const auto &[mechanism, proposalIndex] : selectedProposals) {
               (void)mechanism;
-              if (!checkedProtocolAdd(
-                      protocolCount,
-                      fresh.proposals[proposalId].protocols.size(), work)) {
-                return CanonicalSyncProblemError::LimitExceeded;
-              }
+              selectedProposalIndices.push_back(proposalIndex);
             }
-            if (protocolCount == 0 || !work.consume(protocolCount) ||
-                !reserveGenericProtocolCopyWork(fresh.proposals,
-                                                selectedProposals, work)) {
-              return CanonicalSyncProblemError::LimitExceeded;
+            const SyncCoverProtocolError fresh =
+                verifySyncCoverLifecycleProposalsFresh(
+                    graph, target, lifecycleIndex, seedIndex, groupIndex,
+                    frozenProposals, selectedProposalIndices, {}, &work,
+                    enableDirectCutFusion);
+            if (fresh == SyncCoverProtocolError::None) {
+              return CanonicalSyncProblemError::None;
             }
-            std::vector<SyncCoverEventProtocol> protocols;
-            protocols.reserve(protocolCount);
-            SyncCoverExactWorld world;
-            world.enabledMechanisms.reserve(protocolCount);
-            for (const auto &[mechanism, proposalId] : selectedProposals) {
-              (void)mechanism;
-              for (const SyncCoverEventProtocol &source :
-                   fresh.proposals[proposalId].protocols) {
-                SyncCoverEventProtocol protocol = source;
-                protocol.mechanism = protocols.size();
-                world.enabledMechanisms.push_back(protocol.mechanism);
-                protocols.push_back(std::move(protocol));
-              }
-            }
-            const SyncCoverProtocolCoverageResult combined =
-                computeSyncCoverProtocolExactWorlds(graph, target, protocols,
-                                                    {world}, {}, &work);
-            if (!combined) {
-              return combined.error ==
-                                 SyncCoverProtocolError::WorkLimitExceeded ||
-                             combined.error ==
-                                 SyncCoverProtocolError::LimitExceeded
-                         ? CanonicalSyncProblemError::LimitExceeded
-                         : CanonicalSyncProblemError::UnverifiedProtocol;
-            }
-            const bool invalidCombinedWorldCount =
-                combined.coveredByWorld.size() != 1;
-            if (invalidCombinedWorldCount) {
-              return CanonicalSyncProblemError::UnverifiedProtocol;
-            }
-            const SyncCoverDemandSet &combinedCoverage =
-                combined.coveredByWorld.front();
-            for (const auto &[mechanism, proposalId] : selectedProposals) {
-              (void)proposalId;
-              for (const CanonicalSyncSupplyBinding &binding :
-                   mechanism->descriptor->supplies) {
-                for (SyncCoverDemandId demand : binding.allowedDemands) {
-                  const bool demandUncovered =
-                      !work.consume() || !combinedCoverage.contains(demand);
-                  if (demandUncovered) {
-                    return work.exhausted
-                               ? CanonicalSyncProblemError::LimitExceeded
-                               : CanonicalSyncProblemError::UnverifiedProtocol;
-                  }
-                }
-              }
-            }
-            return CanonicalSyncProblemError::None;
+            return fresh == SyncCoverProtocolError::WorkLimitExceeded ||
+                           fresh == SyncCoverProtocolError::LimitExceeded
+                       ? CanonicalSyncProblemError::LimitExceeded
+                       : CanonicalSyncProblemError::UnverifiedProtocol;
           });
   if (!verifier) {
     return program.getFunction().emitError(
@@ -4627,12 +4599,18 @@ LogicalResult addStorageCutEvents(
     CanonicalSyncMechanismDescriptor descriptor;
     descriptor.kind = CanonicalSyncMechanismKind::Event;
     descriptor.eventUses.push_back({domain->second, 1, std::nullopt});
-    descriptor.actions.push_back(
-        {CanonicalSyncActionKind::EventSet, completion.resource,
-         completion.anchor, 0, 0, {}});
-    descriptor.actions.push_back(
-        {CanonicalSyncActionKind::EventWait, acquisition.resource,
-         acquisition.anchor, 0, 0, {}});
+    descriptor.actions.push_back({CanonicalSyncActionKind::EventSet,
+                                  completion.resource,
+                                  completion.anchor,
+                                  0,
+                                  0,
+                                  {}});
+    descriptor.actions.push_back({CanonicalSyncActionKind::EventWait,
+                                  acquisition.resource,
+                                  acquisition.anchor,
+                                  0,
+                                  0,
+                                  {}});
     CanonicalSyncSupplyBinding binding;
     binding.edge = {completion.anchor.node,
                     acquisition.anchor.node,
@@ -4702,12 +4680,12 @@ LogicalResult addExactEvents(
         demand.distance == 0 &&
         (graph.getNearestEnclosingLoop(graph.getNodes()[demand.source].scope) ||
          graph.getNearestEnclosingLoop(graph.getNodes()[demand.target].scope));
-    if (requireIndependentEventProtocol && repeatedDistanceZeroEvent) {
-      return program.getFunction().emitError(
-                 "canonical sync direct-only mode cannot admit a "
-                 "loop-repeated one-bit event without an independent token "
-                 "lifecycle protocol for demand ")
-             << demandId;
+    if (repeatedDistanceZeroEvent) {
+      // A lexical Set/Wait pair is not a reusable one-bit token protocol: the
+      // source pipe can reach Set(i + 1) before the target consumes Wait(i).
+      // Repeated direct demands are represented only by independently verified
+      // balanced-direct protocols.
+      continue;
     }
     if (demand.distance == 0 && canUseDistanceZeroEvent(graph, demand) &&
         failed(
@@ -4719,15 +4697,22 @@ LogicalResult addExactEvents(
       return failure();
     }
     if (demand.distance != 0 && canUseRecurrenceEvent(graph, demand)) {
+      if (requireIndependentEventProtocol) {
+        // The balanced-direct synthesis above owns every repeated one-bit
+        // recipe in direct-only mode. A standalone primed/body/drained
+        // one-way recurrence has no return ordering from its final target
+        // Wait to a later source Set and is therefore not an independent
+        // hardware-token lifecycle.
+        continue;
+      }
       CanonicalSyncMechanismDescriptor descriptor =
           makeRecurrenceEvent(graph, demand, domain->second);
-      if (requireIndependentEventProtocol &&
-          descriptor.kind != CanonicalSyncMechanismKind::Protocol) {
-        return program.getFunction().emitError(
-                   "canonical sync direct-only mode cannot admit a "
-                   "loop-repeated event without an independent token "
-                   "lifecycle protocol for demand ")
-               << demandId;
+      if (descriptor.kind != CanonicalSyncMechanismKind::Protocol) {
+        // Forward lexical recurrences require a same-iteration balanced direct
+        // cut to keep the one-bit notification rearmed. Synthesis admits that
+        // stronger cut only when exact-world grounding proves the original
+        // positive-distance demand.
+        continue;
       }
       CanonicalSyncProblemResult added;
       if (descriptor.kind == CanonicalSyncMechanismKind::Protocol) {
@@ -4959,6 +4944,85 @@ LogicalResult addTargetLocalFenceEvents(
   return success();
 }
 
+/// Add one balanced target-local cut for each distinct physical boundary
+/// needed by otherwise-unadmitted direct demands whose target executes at
+/// most once per function invocation.  Demands with the same event domain and
+/// target boundary describe the same hardware cut, so one descriptor attests
+/// all of them instead of allocating duplicate live event tokens.  The Set is
+/// issued at the target boundary and therefore completes the issued
+/// source-pipeline prefix; the adjacent Wait gates the target pipeline.  This
+/// keeps both event actions on exactly the target's control path, including
+/// when the nominal source is guarded.  Repeated targets are deliberately
+/// excluded: a lexical Set/Wait pair does not by itself prove that Wait(i)
+/// consumes the one-bit event before Set(i + 1).
+LogicalResult addDirectBalancedTargetFenceEvents(
+    const CanonicalSyncProgram &program, CanonicalSyncPatternProblem &problem,
+    const SyncCoverDemandSet &baseline,
+    const std::map<EventDomainKey, CanonicalSyncEventDomainId> &domainIds,
+    SyncCoverDemandSet &admittedDemands,
+    SyncCoverCoverageWorkBudget &admissionWork) {
+  const SyncCoverGraph &graph = program.getGraph();
+  using DirectTargetFenceKey =
+      std::pair<CanonicalSyncEventDomainId, SyncCoverNodeId>;
+  std::map<DirectTargetFenceKey, std::vector<SyncCoverDemandId>> groups;
+  for (SyncCoverDemandId demandId : problem.getDemands()) {
+    if (baseline.contains(demandId) || admittedDemands.contains(demandId)) {
+      continue;
+    }
+    if (!admissionWork.consume()) {
+      return program.getFunction().emitError(
+          "canonical sync direct-only admission work limit exceeded");
+    }
+    const SyncCoverDemand &demand = graph.getDemands()[demandId];
+    const SyncCoverNode &source = graph.getNodes()[demand.source];
+    const SyncCoverNode &target = graph.getNodes()[demand.target];
+    if (demand.distance != 0 ||
+        graph.getNearestEnclosingLoop(target.scope).has_value() ||
+        !canUseTargetPrefixEvent(program, demand)) {
+      continue;
+    }
+    const auto domain = domainIds.find({source.resource, target.resource});
+    if (domain == domainIds.end()) {
+      continue;
+    }
+    groups[{domain->second, target.physicalAnchor}].push_back(demandId);
+  }
+
+  for (const auto &[key, directDemands] : groups) {
+    if (!admissionWork.consume(directDemands.size())) {
+      return program.getFunction().emitError(
+          "canonical sync direct-only admission work limit exceeded");
+    }
+    CanonicalSyncMechanismDescriptor descriptor =
+        makeTargetPrefixEvent(program, directDemands, key.first);
+    if (!verifyTargetPrefixEvent(program, directDemands, key.first,
+                                 descriptor)) {
+      return program.getFunction().emitError(
+          "cannot verify canonical sync balanced direct target-fence group");
+    }
+    const CanonicalSyncProblemResult added = problem.internMechanism(
+        std::move(descriptor),
+        CanonicalSyncMechanismOrigin::DirectBalancedTargetFenceEvent);
+    if (added.error == CanonicalSyncProblemError::LimitExceeded) {
+      return program.getFunction().emitError(
+          "canonical sync mechanism limit prevents a complete direct "
+          "catalog");
+    }
+    if (!added || !added.index) {
+      return program.getFunction().emitError(
+                 "cannot add canonical sync balanced target fence, error=")
+             << static_cast<unsigned>(added.error);
+    }
+    for (SyncCoverDemandId demandId : directDemands) {
+      if (failed(recordDirectOnlyDemand(program, demandId, &admittedDemands,
+                                        &admissionWork))) {
+        return failure();
+      }
+    }
+  }
+  return success();
+}
+
 LogicalResult addTargetedBarriers(const CanonicalSyncProgram &program,
                                   CanonicalSyncPatternProblem &problem,
                                   const SyncCoverDemandSet &baseline) {
@@ -5000,9 +5064,11 @@ LogicalResult addTargetedBarriers(const CanonicalSyncProgram &program,
   return success();
 }
 
-/// Add the correctness basis for same-resource rows without pre-grouping rows
-/// into a synthesized cut. Grounding may still prove that one such direct
-/// barrier covers additional rows.
+/// Add the correctness basis for same-resource rows.  Demand rows that place
+/// the same targeted barrier at the same physical operation describe one
+/// hardware cut, not independent synchronization actions.  Canonicalize that
+/// cut while retaining every originating row as an attested demand; common
+/// grounding may still prove that the cut covers additional, unattested rows.
 LogicalResult addDirectTargetedBarriers(
     const CanonicalSyncProgram &program, CanonicalSyncPatternProblem &problem,
     const SyncCoverDemandSet &baseline,
@@ -5010,6 +5076,8 @@ LogicalResult addDirectTargetedBarriers(
     SyncCoverCoverageWorkBudget *admissionWork = nullptr) {
   const SyncCoverGraph &graph = program.getGraph();
   const std::vector<std::uint32_t> allResources = getIssueResources(graph);
+  using DirectBarrierKey = std::pair<SyncCoverNodeId, std::uint32_t>;
+  std::map<DirectBarrierKey, std::vector<SyncCoverDemandId>> groups;
   for (SyncCoverDemandId demandId : problem.getDemands()) {
     if (baseline.contains(demandId)) {
       continue;
@@ -5027,9 +5095,13 @@ LogicalResult addDirectTargetedBarriers(
                  "barrier for demand ")
              << demandId;
     }
-    const std::array<SyncCoverDemandId, 1> directDemand{demandId};
+    groups[{target.physicalAnchor, target.resource}].push_back(demandId);
+  }
+
+  for (const auto &[key, directDemands] : groups) {
+    (void)key;
     const CanonicalSyncProblemResult added = problem.internMechanism(
-        makeBarrier(graph, allResources, directDemand, false,
+        makeBarrier(graph, allResources, directDemands, false,
                     /*attestDemands=*/true),
         CanonicalSyncMechanismOrigin::DirectTargetedBarrier);
     if (added.error == CanonicalSyncProblemError::LimitExceeded) {
@@ -5042,20 +5114,22 @@ LogicalResult addDirectTargetedBarriers(
                  "cannot add canonical sync direct targeted barrier, error=")
              << static_cast<unsigned>(added.error);
     }
-    if (failed(recordDirectOnlyDemand(program, demandId, admittedDemands,
-                                      admissionWork))) {
-      return failure();
+    for (SyncCoverDemandId demandId : directDemands) {
+      if (failed(recordDirectOnlyDemand(program, demandId, admittedDemands,
+                                        admissionWork))) {
+        return failure();
+      }
     }
   }
   return success();
 }
 
-LogicalResult
-requireCompleteDirectOnlyCatalog(const CanonicalSyncProgram &program,
-                                 CanonicalSyncPatternProblem &problem,
-                                 const SyncCoverDemandSet &baseline,
-                                 const SyncCoverDemandSet &admittedDemands,
-                                 SyncCoverCoverageWorkBudget &workBudget) {
+LogicalResult requireCompleteDirectOnlyCatalog(
+    const CanonicalSyncProgram &program, CanonicalSyncPatternProblem &problem,
+    const SyncCoverDemandSet &baseline,
+    const SyncCoverDemandSet &admittedDemands,
+    SyncCoverCoverageWorkBudget &workBudget,
+    const SyncCoverLifecycleSynthesisResult *lifecycleDiagnostics = nullptr) {
   if (!consumeProtocolProduct(workBudget, problem.getDemands().size(), 2)) {
     return program.getFunction().emitError(
         "canonical sync direct-only completeness work limit exceeded");
@@ -5067,12 +5141,62 @@ requireCompleteDirectOnlyCatalog(const CanonicalSyncProgram &program,
     const SyncCoverDemand &demand = program.getGraph().getDemands()[demandId];
     const SyncCoverNode &source = program.getGraph().getNodes()[demand.source];
     const SyncCoverNode &target = program.getGraph().getNodes()[demand.target];
+    const auto &bindings = program.getNodeBindings();
+    const StringRef sourceOperation =
+        demand.source < bindings.size() && bindings[demand.source].operation
+            ? bindings[demand.source].operation->getName().getStringRef()
+            : StringRef("unknown");
+    const StringRef targetOperation =
+        demand.target < bindings.size() && bindings[demand.target].operation
+            ? bindings[demand.target].operation->getName().getStringRef()
+            : StringRef("unknown");
     return program.getFunction().emitError(
                "canonical sync direct-only catalog has no "
                "independently attested recipe for demand ")
-           << demandId << ", source-resource=" << source.resource
+           << demandId << ", source-node=" << source.id
+           << ", target-node=" << target.id
+           << ", source-operation=" << source.physicalOperation
+           << ", target-operation=" << target.physicalOperation
+           << ", source-op-name=" << sourceOperation
+           << ", target-op-name=" << targetOperation
+           << ", source-resource=" << source.resource
            << ", target-resource=" << target.resource
-           << ", scope=" << demand.scope << ", distance=" << demand.distance;
+           << ", scope=" << demand.scope << ", distance=" << demand.distance
+           << ", source-scope=" << source.scope
+           << ", target-scope=" << target.scope
+           << ", source-order=" << source.order
+           << ", target-order=" << target.order
+           << ", ordering-requirements=" << demand.orderingRequirements
+           << ", source-guard-literals=" << source.guard.literals.size()
+           << ", target-guard-literals=" << target.guard.literals.size()
+           << ", lifecycle-proposals="
+           << (lifecycleDiagnostics ? lifecycleDiagnostics->proposals.size()
+                                    : 0)
+           << ", lifecycle-construction-rejects="
+           << (lifecycleDiagnostics
+                   ? lifecycleDiagnostics->rejectedLifecycleConstructions
+                   : 0)
+           << ", lifecycle-verification-rejects="
+           << (lifecycleDiagnostics
+                   ? lifecycleDiagnostics->rejectedLifecycleVerifications
+                   : 0)
+           << ", lifecycle-first-verification-error="
+           << static_cast<unsigned>(
+                  lifecycleDiagnostics
+                      ? lifecycleDiagnostics
+                            ->firstLifecycleVerificationRejection.value_or(
+                                SyncCoverProtocolError::None)
+                      : SyncCoverProtocolError::None)
+           << ", lifecycle-first-verification-index="
+           << (lifecycleDiagnostics
+                   ? lifecycleDiagnostics
+                         ->firstLifecycleVerificationRejectionIndex.value_or(
+                             std::numeric_limits<std::size_t>::max())
+                   : std::numeric_limits<std::size_t>::max())
+           << ", lifecycle-seed-coverage-rejects="
+           << (lifecycleDiagnostics
+                   ? lifecycleDiagnostics->lifecycleSccsWithoutCoverage
+                   : 0);
   }
   return success();
 }
@@ -6061,10 +6185,62 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
   } else if (minimalDirectCatalog) {
     std::map<EventDomainKey, CanonicalSyncEventDomainId> domainIds;
     std::vector<DirectEventRecord> directEvents;
+    SyncCoverCoverageWorkBudget lifecycleWork(
+        options.maximumLifecycleSynthesisWorkUnits);
+    const SyncCoverProtocolLimits lifecycleLimits;
+    const SyncCoverProtocolTargetContract protocolTarget =
+        makeProtocolTargetContract(program.getTargetCapabilities());
+    SyncCoverLifecycleSynthesisResult balancedDirect =
+        synthesizeSyncCoverBalancedDirectProtocols(
+            program.getGraph(), protocolTarget, lifecycleLimits, &lifecycleWork,
+            /*enableCutFusion=*/false);
+    if (!balancedDirect) {
+      program.getFunction().emitError(
+          "canonical sync cannot construct the balanced direct-event basis, "
+          "error=")
+          << static_cast<unsigned>(balancedDirect.error) << ", invalid-index="
+          << balancedDirect.invalidIndex.value_or(
+                 std::numeric_limits<std::size_t>::max());
+      return {nullptr,
+              {CanonicalSyncProblemError::CoverageFailure, std::nullopt}};
+    }
+    if (balancedDirect.rejectedLifecycleConstructions != 0 ||
+        balancedDirect.rejectedLifecycleVerifications != 0 ||
+        balancedDirect.lifecycleSccsWithoutCoverage != 0) {
+      program.getFunction().emitWarning()
+          << "canonical sync balanced-direct diagnostics: proposals="
+          << balancedDirect.proposals.size()
+          << ", certificates=" << balancedDirect.derivedLifecycleCertificates
+          << ", construction-rejects="
+          << balancedDirect.rejectedLifecycleConstructions
+          << ", verification-rejects="
+          << balancedDirect.rejectedLifecycleVerifications
+          << ", coverage-rejects="
+          << balancedDirect.lifecycleSccsWithoutCoverage
+          << ", first-verification-error="
+          << static_cast<unsigned>(
+                 balancedDirect.firstLifecycleVerificationRejection.value_or(
+                     SyncCoverProtocolError::None))
+          << ", first-verification-index="
+          << balancedDirect.firstLifecycleVerificationRejectionIndex.value_or(
+                 std::numeric_limits<std::size_t>::max());
+    }
+    for (const SyncCoverLifecycleProposal &proposal :
+         balancedDirect.proposals) {
+      if (!directAdmissionWork.consume(
+              proposal.exactCoverage.getWords().size())) {
+        program.getFunction().emitError(
+            "canonical sync direct-only admission work limit exceeded");
+        return {nullptr,
+                {CanonicalSyncProblemError::LimitExceeded, std::nullopt}};
+      }
+      directlyAdmittedDemands->unite(proposal.exactCoverage);
+    }
     failedBuild =
         failed(addEventDomains(program, options.eventIdBudget, *problem,
                                baseline.covered, domainIds,
-                               /*includeBasicOwnership=*/false)) ||
+                               /*includeBasicOwnership=*/false,
+                               balancedDirect.proposals)) ||
         failed(addDirectTargetedBarriers(
             program, *problem, baseline.covered,
             directlyAdmittedDemands ? &*directlyAdmittedDemands : nullptr,
@@ -6074,23 +6250,122 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
             /*requireIndependentEventProtocol=*/true,
             directlyAdmittedDemands ? &*directlyAdmittedDemands : nullptr,
             &directAdmissionWork)) ||
+        failed(addGenericLifecycleProtocols(program, *problem, domainIds,
+                                            balancedDirect.proposals,
+                                            /*enableDirectCutFusion=*/false)) ||
+        failed(addDirectBalancedTargetFenceEvents(
+            program, *problem, baseline.covered, domainIds,
+            *directlyAdmittedDemands, directAdmissionWork)) ||
         failed(requireCompleteDirectOnlyCatalog(
             program, *problem, baseline.covered, *directlyAdmittedDemands,
-            directAdmissionWork));
+            directAdmissionWork, &balancedDirect));
   } else {
     std::map<EventDomainKey, CanonicalSyncEventDomainId> domainIds;
     std::vector<DirectEventRecord> directEvents;
     std::vector<SyncCoverDemandId> sameResourceObligations;
     std::vector<SyncCoverDemandId> uncoveredBasisDemands;
     std::vector<SyncCoverLifecycleProposal> genericLifecycleProposals;
+    SyncCoverDemandSet balancedTargetFenceDemands(
+        program.getGraph().getDemands().size());
+    std::size_t genericLifecycleSccCount = 0;
+    std::size_t derivedLifecycleCertificateCount = 0;
+    std::size_t rejectedLifecycleConstructionCount = 0;
+    std::size_t rejectedLifecycleVerificationCount = 0;
+    std::size_t rejectedLifecycleStorageCertificateCount = 0;
+    std::optional<SyncCoverProtocolError> firstLifecycleVerificationRejection;
+    std::optional<std::size_t> firstLifecycleVerificationRejectionIndex;
+    std::size_t lifecycleSccsWithoutProtocols = 0;
+    std::optional<SyncCoverDemandId> firstUnproposedLifecycleDemand;
+    std::size_t firstUnproposedLifecycleCertificates = 0;
+    std::size_t firstUnproposedLifecycleConstructionRejects = 0;
+    std::size_t firstUnproposedLifecycleVerificationRejects = 0;
+    std::size_t firstUnproposedLifecycleStorageRejects = 0;
+    std::size_t lifecycleSccsWithoutCoverage = 0;
     if (familyEnabled(CanonicalSyncMechanismFamily::GenericLifecycle)) {
       SyncCoverCoverageWorkBudget lifecycleWork(
           options.maximumLifecycleSynthesisWorkUnits);
+      const SyncCoverProtocolLimits lifecycleLimits;
       const SyncCoverProtocolTargetContract protocolTarget =
           makeProtocolTargetContract(program.getTargetCapabilities());
-      SyncCoverLifecycleSynthesisResult synthesized =
-          synthesizeSyncCoverLifecycleCertificates(
-              program.getGraph(), protocolTarget, {}, &lifecycleWork);
+      SyncCoverLifecycleSynthesisResult synthesized;
+      const std::optional<SyncCoverStorageLifecycleIndex> &lifecycleIndex =
+          program.getStorageLifecycleIndex();
+      const std::optional<SyncCoverStorageProtocolSeedIndex> &seedIndex =
+          program.getStorageProtocolSeedIndex();
+      const std::optional<SyncCoverStorageProtocolGroupIndex> &groupIndex =
+          program.getStorageProtocolGroupIndex();
+      if (lifecycleIndex && lifecycleIndex->isComplete() && seedIndex &&
+          seedIndex->isComplete() && groupIndex && groupIndex->isComplete()) {
+        synthesized = synthesizeSyncCoverLifecycleCertificates(
+            program.getGraph(), protocolTarget, *lifecycleIndex, *seedIndex,
+            *groupIndex, lifecycleLimits, &lifecycleWork);
+      } else if (lifecycleIndex && lifecycleIndex->isComplete()) {
+        synthesized = synthesizeSyncCoverLifecycleCertificates(
+            program.getGraph(), protocolTarget, *lifecycleIndex,
+            lifecycleLimits, &lifecycleWork);
+      } else {
+        synthesized = synthesizeSyncCoverLifecycleCertificates(
+            program.getGraph(), protocolTarget, lifecycleLimits,
+            &lifecycleWork);
+      }
+      if (synthesized) {
+        SyncCoverLifecycleSynthesisResult balancedDirect =
+            synthesizeSyncCoverBalancedDirectProtocols(
+                program.getGraph(), protocolTarget, lifecycleLimits,
+                &lifecycleWork);
+        if (!balancedDirect) {
+          synthesized = std::move(balancedDirect);
+        } else {
+          const auto addStatistic = [](std::size_t &destination,
+                                       std::size_t amount) {
+            if (amount >
+                std::numeric_limits<std::size_t>::max() - destination) {
+              return false;
+            }
+            destination += amount;
+            return true;
+          };
+          // Grouped lifecycle columns are optional cover improvements.  Keep
+          // the complete verified direct basis as alternative columns even
+          // when a grouped column covers the same rows.  Event allocation is
+          // a post-selection constraint; removing a dominated direct column
+          // here can leave conflict-core repair with no six-ID-feasible
+          // replacement for an otherwise attractive wide lifecycle group.
+          const bool fits =
+              balancedDirect.proposals.size() <=
+                  lifecycleLimits.maximumLifecycleProposals -
+                      std::min(synthesized.proposals.size(),
+                               lifecycleLimits.maximumLifecycleProposals) &&
+              addStatistic(synthesized.derivedLifecycleCertificates,
+                           balancedDirect.derivedLifecycleCertificates) &&
+              addStatistic(synthesized.rejectedLifecycleConstructions,
+                           balancedDirect.rejectedLifecycleConstructions) &&
+              addStatistic(synthesized.rejectedLifecycleVerifications,
+                           balancedDirect.rejectedLifecycleVerifications) &&
+              addStatistic(synthesized.lifecycleSccsWithoutCoverage,
+                           balancedDirect.lifecycleSccsWithoutCoverage);
+          if (!fits) {
+            synthesized.error = SyncCoverProtocolError::LimitExceeded;
+            synthesized.proposals.clear();
+          } else {
+            if (!synthesized.firstLifecycleVerificationRejection &&
+                balancedDirect.firstLifecycleVerificationRejection) {
+              synthesized.firstLifecycleVerificationRejection =
+                  balancedDirect.firstLifecycleVerificationRejection;
+              synthesized.firstLifecycleVerificationRejectionIndex =
+                  balancedDirect.firstLifecycleVerificationRejectionIndex;
+            }
+            synthesized.proposals.insert(
+                synthesized.proposals.end(),
+                std::make_move_iterator(balancedDirect.proposals.begin()),
+                std::make_move_iterator(balancedDirect.proposals.end()));
+            for (std::size_t index = 0; index < synthesized.proposals.size();
+                 ++index) {
+              synthesized.proposals[index].id = index;
+            }
+          }
+        }
+      }
       const CanonicalSyncProblemResult recordedWork =
           problem->recordGenericLifecycleSynthesisWorkUnits(
               lifecycleWork.workUnits);
@@ -6119,6 +6394,32 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
                   {CanonicalSyncProblemError::CoverageFailure, std::nullopt}};
         }
       } else {
+        genericLifecycleSccCount = synthesized.lifecycleSccs;
+        derivedLifecycleCertificateCount =
+            synthesized.derivedLifecycleCertificates;
+        rejectedLifecycleConstructionCount =
+            synthesized.rejectedLifecycleConstructions;
+        rejectedLifecycleVerificationCount =
+            synthesized.rejectedLifecycleVerifications;
+        rejectedLifecycleStorageCertificateCount =
+            synthesized.rejectedLifecycleStorageCertificates;
+        firstLifecycleVerificationRejection =
+            synthesized.firstLifecycleVerificationRejection;
+        firstLifecycleVerificationRejectionIndex =
+            synthesized.firstLifecycleVerificationRejectionIndex;
+        lifecycleSccsWithoutProtocols =
+            synthesized.lifecycleSccsWithoutProtocols;
+        firstUnproposedLifecycleDemand =
+            synthesized.firstUnproposedLifecycleDemand;
+        firstUnproposedLifecycleCertificates =
+            synthesized.firstUnproposedLifecycleCertificates;
+        firstUnproposedLifecycleConstructionRejects =
+            synthesized.firstUnproposedLifecycleConstructionRejects;
+        firstUnproposedLifecycleVerificationRejects =
+            synthesized.firstUnproposedLifecycleVerificationRejects;
+        firstUnproposedLifecycleStorageRejects =
+            synthesized.firstUnproposedLifecycleStorageRejects;
+        lifecycleSccsWithoutCoverage = synthesized.lifecycleSccsWithoutCoverage;
         genericLifecycleProposals = std::move(synthesized.proposals);
       }
     }
@@ -6158,6 +6459,14 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
             genericLifecycleProposals)) ||
         failed(addExactEvents(program, *problem, baseline.covered, domainIds,
                               directEvents)) ||
+        // A target-boundary Set/Wait cut is part of the direct correctness
+        // basis when the nominal source is guarded but the target executes at
+        // most once per invocation.  This atom must not disappear merely
+        // because a derived lifecycle family is enabled: generic protocols
+        // are optional replacements, not the completeness basis.
+        failed(addDirectBalancedTargetFenceEvents(
+            program, *problem, baseline.covered, domainIds,
+            balancedTargetFenceDemands, directAdmissionWork)) ||
         (familyEnabled(CanonicalSyncMechanismFamily::GenericLifecycle) &&
          failed(addGenericLifecycleProtocols(program, *problem, domainIds,
                                              genericLifecycleProposals))) ||
@@ -6226,6 +6535,40 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
       const SyncCoverDemand &first =
           program.getGraph().getDemands()[singletonResidual.front()];
       std::array<std::size_t, 4> ownershipCounts{};
+      std::size_t genericLifecycleProtocolCount = 0;
+      std::size_t genericLifecycleProposalsCoveringFirst = 0;
+      std::size_t positiveDistanceDemands = 0;
+      std::size_t reversePositiveDistanceDemands = 0;
+      for (const SyncCoverLifecycleProposal &proposal :
+           genericLifecycleProposals) {
+        genericLifecycleProposalsCoveringFirst +=
+            proposal.exactCoverage.contains(singletonResidual.front());
+        if (proposal.protocols.size() >
+            std::numeric_limits<std::size_t>::max() -
+                genericLifecycleProtocolCount) {
+          genericLifecycleProtocolCount =
+              std::numeric_limits<std::size_t>::max();
+          break;
+        }
+        genericLifecycleProtocolCount += proposal.protocols.size();
+      }
+      const std::uint32_t firstSourceResource =
+          program.getGraph().getNodes()[first.source].resource;
+      const std::uint32_t firstTargetResource =
+          program.getGraph().getNodes()[first.target].resource;
+      for (const SyncCoverDemand &demand : program.getGraph().getDemands()) {
+        if (demand.distance == 0) {
+          continue;
+        }
+        ++positiveDistanceDemands;
+        const SyncCoverNode &source =
+            program.getGraph().getNodes()[demand.source];
+        const SyncCoverNode &target =
+            program.getGraph().getNodes()[demand.target];
+        reversePositiveDistanceDemands +=
+            source.resource == firstTargetResource &&
+            target.resource == firstSourceResource;
+      }
       for (const SyncCoverBasicOwnershipCertificate &certificate :
            program.getGraph().getBasicOwnershipCertificates()) {
         const std::size_t index =
@@ -6252,7 +6595,45 @@ buildCandidateCatalog(const CanonicalSyncProgram &program,
           << ", ownership-l0=" << ownershipCounts[0]
           << ", ownership-l1=" << ownershipCounts[1]
           << ", ownership-acc=" << ownershipCounts[2]
-          << ", ownership-alternating=" << ownershipCounts[3];
+          << ", ownership-alternating=" << ownershipCounts[3]
+          << ", generic-lifecycle-proposals="
+          << genericLifecycleProposals.size()
+          << ", generic-lifecycle-proposals-covering-first="
+          << genericLifecycleProposalsCoveringFirst
+          << ", generic-lifecycle-sccs=" << genericLifecycleSccCount
+          << ", generic-lifecycle-certificates="
+          << derivedLifecycleCertificateCount
+          << ", generic-lifecycle-construction-rejects="
+          << rejectedLifecycleConstructionCount
+          << ", generic-lifecycle-verification-rejects="
+          << rejectedLifecycleVerificationCount
+          << ", generic-lifecycle-first-verification-rejection="
+          << static_cast<unsigned>(firstLifecycleVerificationRejection.value_or(
+                 SyncCoverProtocolError::None))
+          << ", generic-lifecycle-first-verification-rejection-index="
+          << firstLifecycleVerificationRejectionIndex.value_or(
+                 std::numeric_limits<std::size_t>::max())
+          << ", generic-lifecycle-sccs-without-protocols="
+          << lifecycleSccsWithoutProtocols
+          << ", generic-lifecycle-first-unproposed-demand="
+          << firstUnproposedLifecycleDemand.value_or(
+                 std::numeric_limits<std::size_t>::max())
+          << ", generic-lifecycle-first-unproposed-certificates="
+          << firstUnproposedLifecycleCertificates
+          << ", generic-lifecycle-first-unproposed-construction-rejects="
+          << firstUnproposedLifecycleConstructionRejects
+          << ", generic-lifecycle-first-unproposed-verification-rejects="
+          << firstUnproposedLifecycleVerificationRejects
+          << ", generic-lifecycle-first-unproposed-storage-rejects="
+          << firstUnproposedLifecycleStorageRejects
+          << ", generic-lifecycle-sccs-without-coverage="
+          << lifecycleSccsWithoutCoverage
+          << ", generic-lifecycle-storage-rejects="
+          << rejectedLifecycleStorageCertificateCount
+          << ", generic-lifecycle-protocols=" << genericLifecycleProtocolCount
+          << ", positive-distance-demands=" << positiveDistanceDemands
+          << ", reverse-positive-distance-demands="
+          << reversePositiveDistanceDemands;
       failedBuild = true;
     }
     if (!failedBuild &&

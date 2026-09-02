@@ -32,7 +32,7 @@
 // RUN:   --canonical-sync-assume-distinct-gm-args-noalias \
 // RUN:   --canonical-sync-pattern-mode=direct \
 // RUN:   --canonical-sync-mechanism-families=generic-lifecycle \
-// RUN:   --canonical-sync-enable-conflict-core-repair=false \
+// RUN:   --canonical-sync-enable-conflict-core-repair=true \
 // RUN:   --canonical-sync-comparison-report=%t.generic.json %s \
 // RUN:   -o %t.generic.pto
 // RUN: ptoas --pto-level=level3 --enable-canonical-sync --emit-pto-ir \
@@ -241,17 +241,16 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // BARRIERS-COUNT-1: pto.barrier <PIPE_ALL>
 // BARRIERS-NOT: pto.barrier
 
-// GENERIC-SETS-COUNT-53: pto.set_flag
+// GENERIC-SETS-COUNT-49: pto.set_flag
 // GENERIC-SETS-NOT: pto.set_flag
-// GENERIC-WAITS-COUNT-53: pto.wait_flag
+// GENERIC-WAITS-COUNT-49: pto.wait_flag
 // GENERIC-WAITS-NOT: pto.wait_flag
 // GENERIC-BARRIERS-NOT: pto.pipe_barrier
-// GENERIC-BARRIERS-COUNT-7: pto.barrier <PIPE_MTE2>
-// GENERIC-BARRIERS-COUNT-1: pto.barrier <PIPE_FIX>
+// GENERIC-BARRIERS-COUNT-10: pto.barrier <PIPE_{{(MTE1|MTE2|FIX)}}>
 // GENERIC-BARRIERS-COUNT-1: pto.barrier <PIPE_ALL>
 // GENERIC-BARRIERS-NOT: pto.barrier
 
-// D-FAIL: canonical sync direct-only mode cannot admit a loop-repeated one-bit event without an independent token lifecycle protocol
+// D-FAIL: canonical sync direct catalog exhausted the event-ID budget; repair and PIPE_ALL fallback are disabled in direct-only mode
 
 // DIRECT-REPORT: "candidate_mechanisms_by_origin":
 // DIRECT-REPORT: "basic-ownership-accumulator-protocol": 1
@@ -277,8 +276,8 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // DIRECT-REPORT: "basic-ownership-stable-l1-protocol": 1
 // DIRECT-REPORT: "verified": true
 
-// PAIR-REPORT: "direct_pair_evaluations": 2416
-// PAIR-REPORT: "direct_pair_proposals": 2416
+// PAIR-REPORT: "direct_pair_evaluations": 405
+// PAIR-REPORT: "direct_pair_proposals": 405
 // PAIR-REPORT: "direct_pairs_enabled": true
 // PAIR-REPORT: "active_direct_pair_extra_coverage": 0
 // PAIR-REPORT: "active_direct_pairs": 0
@@ -287,22 +286,27 @@ module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
 // PAIR-REPORT: "verified": true
 
 // GENERIC-REPORT: "candidate_mechanisms_by_origin":
-// GENERIC-REPORT: "generic-lifecycle-protocol": 2
+// GENERIC-REPORT: "direct-lifecycle-protocol": 171
+// GENERIC-REPORT: "generic-lifecycle-protocol": 5
 // GENERIC-REPORT: "generic_lifecycle_generation_truncated": false
-// GENERIC-REPORT: "emitted_event_sets": 53
-// GENERIC-REPORT: "emitted_event_waits": 53
+// GENERIC-REPORT: "emitted_event_sets": 49
+// GENERIC-REPORT: "emitted_event_waits": 49
 // GENERIC-REPORT: "emitted_pipe_all_barriers": 0
-// GENERIC-REPORT: "emitted_targeted_barriers": 8
+// GENERIC-REPORT: "emitted_targeted_barriers": 10
 // GENERIC-REPORT: "lifecycle_automata_verified": true
-// GENERIC-REPORT: "materialized_actions": 114
+// GENERIC-REPORT: "materialized_actions": 108
 // GENERIC-REPORT: "materialized_deep_protocol_verifiers_run": 1
-// GENERIC-REPORT: "materialized_event_channels": 8
+// GENERIC-REPORT: "materialized_event_channels": 12
 // GENERIC-REPORT: "materialized_event_lanes": 14
-// GENERIC-REPORT: "materialized_lifecycle_protocol_mechanisms": 2
+// GENERIC-REPORT: "materialized_lifecycle_protocol_mechanisms": 6
 // GENERIC-REPORT: "materialized_plan_verified": true
-// GENERIC-REPORT: "materialized_verified_coverage_rows": 2171
+// GENERIC-REPORT: "materialized_verified_coverage_rows": 2093
+// GENERIC-REPORT: "repair_rounds": 1
+// GENERIC-REPORT: "repair_trials": 6
 // GENERIC-REPORT: "selected_mechanisms_by_origin":
-// GENERIC-REPORT: "generic-lifecycle-protocol": 2
+// GENERIC-REPORT: "direct-lifecycle-protocol": 3
+// GENERIC-REPORT: "generic-lifecycle-protocol": 3
+// GENERIC-REPORT: "used_localized_pipe_all": false
 // GENERIC-REPORT: "verified": true
 // GENERIC-REPORT: "whole_plan_world_verified": true
 

@@ -96,6 +96,44 @@ bool mlir::pto::syncCoverGuardsCompatible(const SyncCoverGuard &first,
   return true;
 }
 
+bool SyncCoverGraph::isGuardReachable(const SyncCoverGuard &input) const {
+  SyncCoverGuard guard = input;
+  if (!normalizeSyncCoverGuard(guard)) {
+    return false;
+  }
+  for (const SyncCoverGuardLiteral &literal : guard.literals) {
+    if (literal.control >= controls_.size() ||
+        literal.alternative >= controls_[literal.control].alternatives) {
+      return false;
+    }
+  }
+
+  for (const SyncCoverGuardLiteral &literal : guard.literals) {
+    const SyncCoverControl &firstControl = controls_[literal.control];
+    if (!firstControl.firstIterationRelation ||
+        literal.alternative !=
+            firstControl.firstIterationRelation->firstIterationAlternative) {
+      continue;
+    }
+    const SyncCoverScopeId loopScope =
+        firstControl.firstIterationRelation->loopScope;
+    for (const SyncCoverGuardLiteral &phaseLiteral : guard.literals) {
+      const SyncCoverControl &phaseControl = controls_[phaseLiteral.control];
+      if (!phaseControl.phaseRelation ||
+          phaseControl.phaseRelation->loopScope != loopScope) {
+        continue;
+      }
+      const SyncCoverControlPhaseRelation &phase = *phaseControl.phaseRelation;
+      if (phase.initialPhase >= phase.activeAlternative.size() ||
+          phaseLiteral.alternative !=
+              phase.activeAlternative[phase.initialPhase]) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 bool mlir::pto::syncCoverEndpointsCoExecute(const SyncCoverGraph &graph,
                                             const SyncCoverEdge &edge) {
   const bool invalidEndpoint = edge.source >= graph.getNodes().size() ||
@@ -226,8 +264,7 @@ SyncCoverGraph::getLowestCommonScope(SyncCoverScopeId first,
 std::optional<SyncCoverRegionId>
 SyncCoverGraph::getLowestCommonRegion(SyncCoverRegionId first,
                                       SyncCoverRegionId second) const {
-  const bool invalidRegion =
-      !hasValidRegion(first) || !hasValidRegion(second);
+  const bool invalidRegion = !hasValidRegion(first) || !hasValidRegion(second);
   if (invalidRegion) {
     return std::nullopt;
   }
@@ -420,7 +457,6 @@ mlir::pto::resolveSyncCoverAnchor(const SyncCoverGraph &graph,
     }
     std::optional<SyncCoverTimelinePosition> entry;
     std::optional<SyncCoverTimelinePosition> exit;
-    std::vector<bool> alternatives(control.alternatives, false);
     for (const SyncCoverNode &node : nodes) {
       const auto literal =
           std::find_if(node.guard.literals.begin(), node.guard.literals.end(),
@@ -428,7 +464,7 @@ mlir::pto::resolveSyncCoverAnchor(const SyncCoverGraph &graph,
                          return candidate.control == control.id;
                        });
       const bool invalidLiteral = literal == node.guard.literals.end() ||
-                                  literal->alternative >= alternatives.size();
+                                  literal->alternative >= control.alternatives;
       if (invalidLiteral) {
         continue;
       }
@@ -437,16 +473,15 @@ mlir::pto::resolveSyncCoverAnchor(const SyncCoverGraph &graph,
       if (!interval) {
         return std::nullopt;
       }
-      alternatives[literal->alternative] = true;
       entry = entry ? std::min(*entry, interval->begin) : interval->begin;
       exit = exit ? std::max(*exit, interval->end) : interval->end;
     }
-    const bool complete =
-        std::all_of(alternatives.begin(), alternatives.end(),
-                    [](bool represented) { return represented; });
-    return complete ? (anchor.kind == SyncCoverAnchorKind::ControlEntry ? entry
-                                                                        : exit)
-                    : std::nullopt;
+    // Empty alternatives contain no scheduled pipeline operation, but the
+    // enclosing structured operation still provides a physical before/after
+    // insertion boundary. The represented alternatives therefore suffice to
+    // define the graph timeline extent; requiring a node in every alternative
+    // incorrectly made opaque choice cuts unavailable for an empty `else`.
+    return anchor.kind == SyncCoverAnchorKind::ControlEntry ? entry : exit;
   }
   case SyncCoverAnchorKind::ScopeEntry:
   case SyncCoverAnchorKind::ScopeExit: {

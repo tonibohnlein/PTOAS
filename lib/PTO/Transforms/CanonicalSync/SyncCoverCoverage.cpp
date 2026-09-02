@@ -1793,11 +1793,15 @@ bool flatCutPointValid(const SyncCoverGraph &graph,
       !flatPointGuardValid(graph, point.guard, workBudget) ||
       (point.anchor.kind != SyncCoverAnchorKind::BeforeNode &&
        point.anchor.kind != SyncCoverAnchorKind::AfterNode) ||
-      point.anchor.node >= graph.getNodes().size() ||
-      graph.getNodes()[point.anchor.node].resource != point.resource;
+      point.anchor.node >= graph.getNodes().size();
   if (invalid) {
     return false;
   }
+  // SetFlag/WaitFlag are scalar-issued commands for the physical pipeline
+  // named by the cut point.  Their program anchor is only an insertion
+  // boundary and need not be an operation on that pipeline.  In particular,
+  // a balanced target-local cut issues a source-pipeline Set immediately
+  // before an operation on the target pipeline.
   return resolveSyncCoverAnchor(graph, point.anchor).has_value();
 }
 

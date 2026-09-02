@@ -90,6 +90,8 @@ enum class CanonicalSyncMechanismOrigin : std::uint8_t {
   /// Appended to preserve the numeric origin-mask encoding of schema v1.
   DirectBalancedTargetFenceEvent,
   StorageCutEvent,
+  /// Appended to preserve the numeric origin-mask encoding of schema v1.
+  DirectLifecycleProtocol,
   Count,
 };
 
@@ -150,6 +152,11 @@ struct CanonicalSyncEventUse {
   /// Optional wider resource lifetime for a verified hierarchical protocol.
   /// Supply edges retain their own recurrence scopes inside this loop.
   std::optional<SyncCoverScopeId> lifetimeScope;
+  /// The deep token automaton proved that this event use belongs to a
+  /// two-way lifecycle protocol whose entry/body/exit recipe consumes every
+  /// signal and is quiescent at both lifetime boundaries. Only such uses may
+  /// share a physical ID with another non-overlapping certified lifetime.
+  bool quiescentAtLifetimeBoundaries = false;
 };
 
 struct CanonicalSyncAction {
@@ -1010,6 +1017,7 @@ struct CanonicalSyncVerifiedPlan {
   CanonicalSyncSelectionError error = CanonicalSyncSelectionError::None;
   std::vector<CanonicalSyncMechanismId> mechanisms;
   CanonicalSyncResourceAllocation allocation;
+  std::optional<CanonicalSyncMechanismId> firstInvalidMechanism;
   std::optional<SyncCoverDemandId> firstUncoveredDemand;
   /// Set only after fresh whole-selected-world semantic verification, exact
   /// allocation validation, combined protocol verification, and physical

@@ -210,6 +210,7 @@ bool isLifetimeExit(const SyncCoverEventProtocol &protocol,
 SyncCoverProtocolError
 buildActions(const SyncCoverEventProtocol &protocol,
              const ResolvedProtocol &resolved, std::size_t tripCount,
+             const std::vector<SyncCoverGuard> *bodyWorldSequence,
              std::size_t invocationSequence, std::size_t lifetimeExitSequence,
              bool includeInvocation, bool includeLifetimeEntry,
              bool includeLifetimeExit, SyncCoverProtocolLimits limits,
@@ -289,6 +290,31 @@ buildActions(const SyncCoverEventProtocol &protocol,
   std::size_t phase = resolved.initialPhase;
   for (std::size_t iteration = 0; includeInvocation && iteration < tripCount;
        ++iteration) {
+    const SyncCoverGuard emptyWorld;
+    const SyncCoverGuard *world = &emptyWorld;
+    if (bodyWorldSequence && !bodyWorldSequence->empty()) {
+      if (bodyWorldSequence->size() == 1) {
+        world = &bodyWorldSequence->front();
+      } else if (iteration < bodyWorldSequence->size()) {
+        world = &(*bodyWorldSequence)[iteration];
+      } else {
+        return SyncCoverProtocolError::InvalidProtocol;
+      }
+    }
+    SyncCoverGuard iterationGuard = resolved.loopGuard;
+    iterationGuard.literals.insert(
+        iterationGuard.literals.end(),
+        resolved.guardByPhase[phase].literals.begin(),
+        resolved.guardByPhase[phase].literals.end());
+    iterationGuard.literals.insert(iterationGuard.literals.end(),
+                                   world->literals.begin(),
+                                   world->literals.end());
+    if (!consumeWork(workBudget, iterationGuard.literals.size()) ||
+        !normalizeSyncCoverGuard(iterationGuard)) {
+      return workBudget && workBudget->exhausted
+                 ? SyncCoverProtocolError::WorkLimitExceeded
+                 : SyncCoverProtocolError::InvalidProtocol;
+    }
     for (const ResolvedChannel &resolvedChannel : resolved.channels) {
       const SyncCoverEventChannel &channel = *resolvedChannel.description;
       if (!resolvedChannel.actions.empty()) {
@@ -296,6 +322,7 @@ buildActions(const SyncCoverEventProtocol &protocol,
           const SyncCoverProtocolAction &action = resolvedAction.description;
           if (action.segment != SyncCoverProtocolActionSegment::Body ||
               !phaseIsActive(action, phase) ||
+              !syncCoverGuardImplies(iterationGuard, resolvedAction.guard) ||
               !temporalGuardIsActive(action.guard, iteration, tripCount)) {
             continue;
           }
@@ -552,6 +579,14 @@ SyncCoverProtocolError recordSupplyWitnesses(
                                  supply.distance == 0 &&
                                  set.segment == ActionSegment::Entry &&
                                  set.sequence == 0 && wait.sequence == 1;
+          // A first-iteration-only body Set has no later body occurrence to
+          // consume it. Its exact physical mate is the invocation-exit drain;
+          // this is a zero-distance completion rectangle within the same
+          // invocation, independent of the tested trip count.
+          displacementMatches |= supply.distance == 0 &&
+                                 set.segment == ActionSegment::Body &&
+                                 wait.segment == ActionSegment::Exit &&
+                                 wait.sequence == set.sequence;
         }
         if (displacementMatches) {
           witnesses[channel.id][supplyIndex] = true;
@@ -928,11 +963,12 @@ SyncCoverProtocolError verifyTripCount(
     const SyncCoverEventProtocol &protocol, const ResolvedProtocol &resolved,
     std::size_t tripCount, SyncCoverProtocolLimits limits,
     SyncCoverProtocolStatistics &statistics, SupplyWitnesses &supplyWitnesses,
-    SyncCoverCoverageWorkBudget *workBudget) {
+    SyncCoverCoverageWorkBudget *workBudget,
+    const std::vector<SyncCoverGuard> *bodyWorldSequence = nullptr) {
   DynamicProtocol dynamic;
   SyncCoverProtocolError error =
-      buildActions(protocol, resolved, tripCount, 0, 1, true, true, true,
-                   limits, dynamic, statistics, workBudget);
+      buildActions(protocol, resolved, tripCount, bodyWorldSequence, 0, 1, true,
+                   true, true, limits, dynamic, statistics, workBudget);
   if (error != SyncCoverProtocolError::None) {
     return error;
   }
@@ -949,8 +985,8 @@ SyncCoverProtocolError verifyInvocationSequence(
   const std::size_t exitSequence = tripCounts.size() + 1;
   if (tripCounts.empty()) {
     const SyncCoverProtocolError error =
-        buildActions(protocol, resolved, 0, 1, exitSequence, false, true, true,
-                     limits, dynamic, statistics, workBudget);
+        buildActions(protocol, resolved, 0, nullptr, 1, exitSequence, false,
+                     true, true, limits, dynamic, statistics, workBudget);
     if (error != SyncCoverProtocolError::None) {
       return error;
     }
@@ -958,7 +994,7 @@ SyncCoverProtocolError verifyInvocationSequence(
     for (std::size_t invocation = 0; invocation < tripCounts.size();
          ++invocation) {
       const SyncCoverProtocolError error =
-          buildActions(protocol, resolved, tripCounts[invocation],
+          buildActions(protocol, resolved, tripCounts[invocation], nullptr,
                        invocation + 1, exitSequence, true, invocation == 0,
                        invocation + 1 == tripCounts.size(), limits, dynamic,
                        statistics, workBudget);
@@ -1052,6 +1088,53 @@ mlir::pto::sync_cover_protocol_detail::verifyResolvedProtocolAutomaton(
         error = verifyInvocationSequence(protocol, resolved, {first, second},
                                          limits, statistics, supplyWitnesses,
                                          workBudget);
+        if (error != SyncCoverProtocolError::None) {
+          return error;
+        }
+        ++statistics.tripCountsChecked;
+      }
+    }
+    return finish();
+  }
+
+  if (resolved.bodyGuardWorlds.size() > 1) {
+    std::size_t pairCount = 0;
+    if (!checkedProduct(resolved.bodyGuardWorlds.size(),
+                        resolved.bodyGuardWorlds.size(), pairCount) ||
+        pairCount > limits.maximumInvocationSequences ||
+        !consumeWork(workBudget, pairCount)) {
+      return workBudget && workBudget->exhausted
+                 ? SyncCoverProtocolError::WorkLimitExceeded
+                 : SyncCoverProtocolError::LimitExceeded;
+    }
+    if (protocol.loop->mayExecuteZeroTimes) {
+      SyncCoverProtocolError error =
+          verifyTripCount(protocol, resolved, 0, limits, statistics,
+                          supplyWitnesses, workBudget);
+      if (error != SyncCoverProtocolError::None) {
+        return error;
+      }
+      ++statistics.tripCountsChecked;
+    }
+    for (const SyncCoverGuard &world : resolved.bodyGuardWorlds) {
+      const std::vector<SyncCoverGuard> homogeneous{world};
+      for (std::size_t tripCount = 1; tripCount <= resolved.verificationHorizon;
+           ++tripCount) {
+        SyncCoverProtocolError error =
+            verifyTripCount(protocol, resolved, tripCount, limits, statistics,
+                            supplyWitnesses, workBudget, &homogeneous);
+        if (error != SyncCoverProtocolError::None) {
+          return error;
+        }
+        ++statistics.tripCountsChecked;
+      }
+    }
+    for (const SyncCoverGuard &first : resolved.bodyGuardWorlds) {
+      for (const SyncCoverGuard &second : resolved.bodyGuardWorlds) {
+        const std::vector<SyncCoverGuard> transition{first, second};
+        SyncCoverProtocolError error =
+            verifyTripCount(protocol, resolved, 2, limits, statistics,
+                            supplyWitnesses, workBudget, &transition);
         if (error != SyncCoverProtocolError::None) {
           return error;
         }

@@ -206,6 +206,25 @@ SyncCoverGraphResult SyncCoverGraph::setControlSuccessorRelation(
   return {SyncCoverGraphError::None, control};
 }
 
+SyncCoverGraphResult SyncCoverGraph::setControlFirstIterationRelation(
+    SyncCoverControlId control,
+    SyncCoverControlFirstIterationRelation relation) {
+  if (!canMutateStructure()) {
+    return {SyncCoverGraphError::StructureFrozen, control};
+  }
+  const bool invalidRelation =
+      control >= controls_.size() || relation.loopScope == 0 ||
+      !hasValidScope(relation.loopScope) ||
+      !scopes_[relation.loopScope].isLoop ||
+      getNearestEnclosingLoop(controls_[control].scope) != relation.loopScope ||
+      relation.firstIterationAlternative >= controls_[control].alternatives;
+  if (invalidRelation) {
+    return {SyncCoverGraphError::InvalidControl, control};
+  }
+  controls_[control].firstIterationRelation = relation;
+  return {SyncCoverGraphError::None, control};
+}
+
 SyncCoverGraphResult
 SyncCoverGraph::setScopeTimeline(SyncCoverScopeId scope,
                                  SyncCoverTimelineInterval timeline) {
@@ -624,6 +643,14 @@ std::string SyncCoverGraph::getDeterministicRawDump() const {
       output << "loop:" << control.successorRelation->loopScope
              << ",alternative:"
              << control.successorRelation->hasSuccessorAlternative;
+    } else {
+      output << "none";
+    }
+    output << " first-iteration-relation=";
+    if (control.firstIterationRelation) {
+      output << "loop:" << control.firstIterationRelation->loopScope
+             << ",alternative:"
+             << control.firstIterationRelation->firstIterationAlternative;
     } else {
       output << "none";
     }

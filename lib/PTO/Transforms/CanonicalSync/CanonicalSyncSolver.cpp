@@ -1733,6 +1733,9 @@ CanonicalSyncVerifiedPlan mlir::pto::verifyCanonicalSyncSelection(
       result.error = CanonicalSyncSelectionError::WorkLimitExceeded;
       return result;
     }
+    if (!verified && !result.firstInvalidMechanism) {
+      result.firstInvalidMechanism = mechanism;
+    }
     invalid = invalid || invalidMechanism || !verified;
   }
   if (invalid) {
@@ -1744,6 +1747,7 @@ CanonicalSyncVerifiedPlan mlir::pto::verifyCanonicalSyncSelection(
          problem.getMechanisms()[mechanism].conflicts) {
       if (std::binary_search(selection.mechanisms.begin(),
                              selection.mechanisms.end(), conflict)) {
+        result.firstInvalidMechanism = mechanism;
         result.error = CanonicalSyncSelectionError::FinalValidationFailed;
         return result;
       }

@@ -288,9 +288,9 @@ bool descriptorEqual(const CanonicalSyncMechanismDescriptor &left,
     const CanonicalSyncEventUse &second = right.eventUses[index];
     const bool different =
         std::tie(first.domain, first.width, first.recurrenceScope,
-                 first.lifetimeScope) != std::tie(second.domain, second.width,
-                                                  second.recurrenceScope,
-                                                  second.lifetimeScope);
+                 first.lifetimeScope, first.quiescentAtLifetimeBoundaries) !=
+        std::tie(second.domain, second.width, second.recurrenceScope,
+                 second.lifetimeScope, second.quiescentAtLifetimeBoundaries);
     if (different) {
       return false;
     }
@@ -334,6 +334,7 @@ descriptorHash(const CanonicalSyncMechanismDescriptor &descriptor) {
                         std::numeric_limits<std::size_t>::max()));
     hashValue(hash, use.lifetimeScope.value_or(
                         std::numeric_limits<std::size_t>::max()));
+    hashValue(hash, use.quiescentAtLifetimeBoundaries);
   }
   for (const CanonicalSyncAction &action : descriptor.actions) {
     hashValue(hash, static_cast<std::uint8_t>(action.kind));
@@ -1245,6 +1246,9 @@ CanonicalSyncProblemError validateEventUseDeclarations(
          use.width != 1) ||
         !validLoopScope(use.recurrenceScope) ||
         !validLoopScope(use.lifetimeScope) ||
+        (use.quiescentAtLifetimeBoundaries &&
+         (descriptor.kind != CanonicalSyncMechanismKind::Protocol ||
+          !use.recurrenceScope)) ||
         (use.lifetimeScope &&
          (!use.recurrenceScope ||
           !graph.scopeContains(*use.lifetimeScope, *use.recurrenceScope)));
@@ -1288,6 +1292,11 @@ validateActions(const SyncCoverGraph &graph,
         (action.anchor.kind == SyncCoverAnchorKind::BeforeNode ||
          action.anchor.kind == SyncCoverAnchorKind::AfterNode) &&
         graph.scopeContains(*action.guardScope, *scope);
+    const bool controlBoundary =
+        action.guardScope &&
+        (action.anchor.kind == SyncCoverAnchorKind::ControlEntry ||
+         action.anchor.kind == SyncCoverAnchorKind::ControlExit) &&
+        graph.scopeContains(*action.guardScope, *scope);
     const bool nestedScopeBoundary =
         action.guardScope && *scope != *action.guardScope &&
         (action.anchor.kind == SyncCoverAnchorKind::ScopeEntry ||
@@ -1311,7 +1320,8 @@ validateActions(const SyncCoverGraph &graph,
                          CanonicalSyncActionGuardKind::NotFirstIteration ||
                      action.guard ==
                          CanonicalSyncActionGuardKind::HasSuccessor) &&
-                    (nodeBoundary || nestedScopeBoundary || loopBodyEntry)));
+                    (nodeBoundary || controlBoundary || nestedScopeBoundary ||
+                     loopBodyEntry)));
     if (!depth || !validGuard) {
       return CanonicalSyncProblemError::InvalidMechanism;
     }
@@ -2184,35 +2194,61 @@ makeExactDirectCut(const SyncCoverGraph &graph,
   if (descriptor.kind == CanonicalSyncMechanismKind::Event) {
     cut.suppliedRequirements = eventRequirements;
     cut.sourcePrefixCompletion = eventCompletesSourcePrefix;
+    const bool targetLocalFence =
+        !descriptor.supplies.empty() &&
+        std::all_of(descriptor.supplies.begin(), descriptor.supplies.end(),
+                    [](const CanonicalSyncSupplyBinding &binding) {
+                      return binding.proof == CanonicalSyncSupplyProof::
+                                                  TargetLocalFenceAction;
+                    });
     if (descriptor.eventUses.size() != 1 ||
         descriptor.eventUses.front().width != 1 ||
         descriptor.eventUses.front().recurrenceScope ||
         descriptor.eventUses.front().lifetimeScope ||
-        descriptor.actions.size() != 2) {
+        (descriptor.actions.size() != 2 &&
+         !(targetLocalFence && descriptor.actions.size() == 3))) {
       return std::nullopt;
     }
     const CanonicalSyncAction *set = nullptr;
     const CanonicalSyncAction *wait = nullptr;
+    const CanonicalSyncAction *prefixBarrier = nullptr;
     std::size_t setOrdinal = 0;
     std::size_t waitOrdinal = 0;
     for (std::size_t ordinal = 0; ordinal < descriptor.actions.size();
          ++ordinal) {
       const CanonicalSyncAction &action = descriptor.actions[ordinal];
-      if (!actionIsFlat(action) || action.eventUse != 0 ||
-          action.eventLane != 0 || !action.drainedResources.empty()) {
+      if (!actionIsFlat(action) || action.eventLane != 0) {
         return std::nullopt;
       }
-      if (action.kind == CanonicalSyncActionKind::EventSet && !set) {
+      if (action.kind == CanonicalSyncActionKind::Barrier &&
+          targetLocalFence && !prefixBarrier && !action.eventUse &&
+          action.barrierKind == CanonicalSyncBarrierKind::Targeted &&
+          action.drainedResources ==
+              std::vector<std::uint32_t>{action.resource}) {
+        prefixBarrier = &action;
+      } else if (action.kind == CanonicalSyncActionKind::EventSet && !set &&
+                 action.eventUse == 0 && action.drainedResources.empty()) {
         set = &action;
         setOrdinal = ordinal;
-      } else if (action.kind == CanonicalSyncActionKind::EventWait && !wait) {
+      } else if (action.kind == CanonicalSyncActionKind::EventWait && !wait &&
+                 action.eventUse == 0 && action.drainedResources.empty()) {
         wait = &action;
         waitOrdinal = ordinal;
       } else {
         return std::nullopt;
       }
     }
-    if (!set || !wait) {
+    if (!set || !wait ||
+        (descriptor.actions.size() == 3 && !prefixBarrier)) {
+      return std::nullopt;
+    }
+    const bool correctPrefixBarrier =
+        !prefixBarrier ||
+        (prefixBarrier->resource == set->resource &&
+         prefixBarrier->anchor.kind == SyncCoverAnchorKind::BeforeNode &&
+         prefixBarrier->anchor.kind == set->anchor.kind &&
+         prefixBarrier->anchor.node == set->anchor.node);
+    if (!correctPrefixBarrier) {
       return std::nullopt;
     }
     cut.kind = SyncCoverDirectCutKind::Event;
@@ -2847,7 +2883,7 @@ CanonicalSyncPatternProblem::verifyMaterializedPlanMechanisms(
       return {CanonicalSyncProblemError::LimitExceeded, verifierIndex};
     }
     if (verified != CanonicalSyncProblemError::None) {
-      return {CanonicalSyncProblemError::UnverifiedProtocol, verifierIndex};
+      return {verified, verifierIndex};
     }
     if (verifiersRun) {
       ++*verifiersRun;

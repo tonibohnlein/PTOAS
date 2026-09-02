@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "CanonicalSyncAnalysisInternal.h"
 
@@ -64,9 +66,8 @@ FailureOr<SyncCoverRegionId> ProgramBuilder::addStructuralRegion(
     owner->emitError("canonical sync region limit exceeded");
     return failure();
   }
-  const SyncCoverGraphResult region =
-      graph_.addRegion(parent, kind, cardinality, scope, std::move(guard),
-                       control, alternative);
+  const SyncCoverGraphResult region = graph_.addRegion(
+      parent, kind, cardinality, scope, std::move(guard), control, alternative);
   if (!region) {
     owner->emitError("cannot construct canonical sync structural region");
     return failure();
@@ -113,8 +114,7 @@ LogicalResult ProgramBuilder::addRegion(Region &region,
       }
       FailureOr<SyncCoverRegionId> bodySequence = addStructuralRegion(
           loop.getOperation(), *loopRegion, SyncCoverRegionKind::Sequence,
-          SyncCoverRegionCardinality::ExactlyOnce, *scope.index,
-          context.guard);
+          SyncCoverRegionCardinality::ExactlyOnce, *scope.index, context.guard);
       if (failed(bodySequence)) {
         return failure();
       }
@@ -153,9 +153,8 @@ LogicalResult ProgramBuilder::addRegion(Region &region,
       }
       FailureOr<SyncCoverRegionId> choice = addStructuralRegion(
           conditional.getOperation(), context.region,
-          SyncCoverRegionKind::Choice,
-          SyncCoverRegionCardinality::ExactlyOnce, context.scope,
-          context.guard, *control.index);
+          SyncCoverRegionKind::Choice, SyncCoverRegionCardinality::ExactlyOnce,
+          context.scope, context.guard, *control.index);
       if (failed(choice)) {
         return failure();
       }
@@ -188,11 +187,10 @@ LogicalResult ProgramBuilder::addRegion(Region &region,
               "cannot bind canonical sync alternative structural region");
         }
         FailureOr<SyncCoverRegionId> alternativeSequence =
-            addStructuralRegion(
-                conditional.getOperation(), *alternativeOwner,
-                SyncCoverRegionKind::Sequence,
-                SyncCoverRegionCardinality::ExactlyOnce, *scope.index,
-                alternativeGuard);
+            addStructuralRegion(conditional.getOperation(), *alternativeOwner,
+                                SyncCoverRegionKind::Sequence,
+                                SyncCoverRegionCardinality::ExactlyOnce,
+                                *scope.index, alternativeGuard);
         if (failed(alternativeSequence)) {
           return failure();
         }
@@ -258,25 +256,39 @@ ProgramBuilder::addPeriodicControlEvidence(scf::IfOp conditional,
                                           inductionLowerBounds))) {
     return failure();
   }
-  const auto isFirstIterationControl = [&]() {
+  const auto findFirstIterationAlternative = [&]() -> std::optional<unsigned> {
     if (!comparison ||
         (comparison.getPredicate() != arith::CmpIPredicate::eq &&
          comparison.getPredicate() != arith::CmpIPredicate::ne)) {
-      return false;
+      return std::nullopt;
     }
     if (!consumePairInspections(2)) {
-      return false;
+      return std::nullopt;
     }
     const auto lhs = inductionLowerBounds.find(comparison.getLhs());
     const auto rhs = inductionLowerBounds.find(comparison.getRhs());
-    return (lhs != inductionLowerBounds.end() &&
-            lhs->second == comparison.getRhs()) ||
-           (rhs != inductionLowerBounds.end() &&
-            rhs->second == comparison.getLhs());
+    const bool comparesLowerBound = (lhs != inductionLowerBounds.end() &&
+                                     lhs->second == comparison.getRhs()) ||
+                                    (rhs != inductionLowerBounds.end() &&
+                                     rhs->second == comparison.getLhs());
+    if (!comparesLowerBound) {
+      return std::nullopt;
+    }
+    return comparison.getPredicate() == arith::CmpIPredicate::eq ? 0U : 1U;
   };
+  const std::optional<unsigned> firstIterationAlternative =
+      findFirstIterationAlternative();
+  if (firstIterationAlternative) {
+    if (!graph_.setControlFirstIterationRelation(
+            control, {*loopScope, *firstIterationAlternative})) {
+      return conditional.emitError(
+          "cannot register canonical sync first-iteration control relation");
+    }
+    return success();
+  }
   const auto rejectUnmodeledLoopVaryingControl = [&]() -> LogicalResult {
     const SyncCoverControl &registeredControl = graph_.getControls()[control];
-    if (registeredControl.successorRelation || isFirstIterationControl()) {
+    if (registeredControl.successorRelation) {
       return success();
     }
     llvm::DenseSet<Value> discovered;
@@ -287,8 +299,12 @@ ProgramBuilder::addPeriodicControlEvidence(scf::IfOp conditional,
       return failure();
     }
     if (reachesLoopInduction) {
-      return conditional.emitError(
-          "canonical sync cannot model this loop-varying control");
+      // Keep the alternatives opaque and occurrence-local. Direct repeated
+      // protocols are lifted to unconditional ControlEntry/ControlExit cuts,
+      // so completion is circulated on every loop iteration even when this
+      // optional region is skipped. No fixed active-occurrence gap is assumed
+      // here; phase and successor relations remain absent deliberately.
+      return success();
     }
     return success();
   };
@@ -422,8 +438,8 @@ ProgramBuilder::addSuccessorControlEvidence(scf::IfOp conditional,
 LogicalResult ProgramBuilder::validateControlDataflow() {
   auto rejectUnsupportedControlValue =
       [&](Operation *owner, Value value, StringRef role,
-          const llvm::DenseMap<Value, Value> *trackedLoopInductions =
-              nullptr) -> LogicalResult {
+          const llvm::DenseMap<Value, Value> *trackedLoopInductions = nullptr,
+          bool allowOpaqueLoopVariation = false) -> LogicalResult {
     llvm::SetVector<SyncCoverNodeId> producers;
     llvm::DenseSet<Value> discovered;
     bool reachesLoopInduction = false;
@@ -435,7 +451,7 @@ LogicalResult ProgramBuilder::validateControlDataflow() {
       return owner->emitError("canonical sync cannot model asynchronous ")
              << role << " produced by a scheduled pipe operation";
     }
-    if (reachesLoopInduction) {
+    if (reachesLoopInduction && !allowOpaqueLoopVariation) {
       return owner->emitError("canonical sync cannot model an ")
              << role << " that varies with an enclosing loop";
     }
@@ -448,7 +464,8 @@ LogicalResult ProgramBuilder::validateControlDataflow() {
     }
     if (auto conditional = dyn_cast<scf::IfOp>(operation)) {
       if (failed(rejectUnsupportedControlValue(
-              operation, conditional.getCondition(), "scf.if condition"))) {
+              operation, conditional.getCondition(), "scf.if condition",
+              nullptr, /*allowOpaqueLoopVariation=*/true))) {
         return WalkResult::interrupt();
       }
     }

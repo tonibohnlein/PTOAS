@@ -42,7 +42,13 @@ struct ResolvedProtocol {
   std::vector<std::size_t> reachablePhases;
   std::size_t initialPhase = 0;
   std::vector<std::size_t> nextPhase;
+  SyncCoverGuard loopGuard;
   std::vector<SyncCoverGuard> guardByPhase;
+  /// Bounded graph-guard worlds under which optional body transactions may
+  /// execute.  The empty world represents an iteration in which none of the
+  /// optional guarded regions executes.  These worlds are independent of the
+  /// authoritative periodic phase relation above.
+  std::vector<SyncCoverGuard> bodyGuardWorlds;
   std::size_t phasePreperiod = 0;
   std::size_t phasePeriod = 0;
   std::size_t verificationHorizon = 1;

@@ -6,9 +6,10 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Both objectives must reject cross-resource pipe-drain repairs when the target
-// does not certify their completion contract. The safe localized PIPE_ALL
-// backstop is therefore objective-independent for this pressure-heavy kernel.
+// Both objectives must reject the resource-infeasible optimized catalog and
+// retry the complete strict-direct basis before considering repair-frontier or
+// PIPE_ALL mechanisms. The resulting objective-specific direct plans must be
+// freshly verified and remain free of body PIPE_ALL barriers.
 
 // RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --emit-pto-ir \
@@ -28,23 +29,33 @@
 // RUN: FileCheck %s --check-prefix=SERIALIZATION < %t.serialization.json
 
 // ACTION: "selection_objective": "action-first"
-// ACTION: "emitted_pipe_all_barriers": 31
+// ACTION: "emitted_event_sets": 55
+// ACTION: "emitted_event_waits": 55
+// ACTION: "emitted_pipe_all_barriers": 0
+// ACTION: "emitted_targeted_barriers": 22
 // ACTION: "error": 0
-// ACTION: "plan_signature": "0x186537040b52337b"
 // ACTION: "precise_error": 4
-// ACTION: "predicted_sync_instructions": 32
-// ACTION: "repair_rounds": 2
-// ACTION: "serialization_breadth": 4196
-// ACTION: "used_localized_pipe_all": true
+// ACTION: "repair_rounds": 1
+// ACTION: "repair_trials": 1
+// ACTION: "selected_mechanisms_by_origin": {
+// ACTION: "direct-lifecycle-protocol": 21
+// ACTION: "direct-targeted-barrier": 22
+// ACTION: "localized-pipe-all": 0
+// ACTION: "used_localized_pipe_all": false
 // ACTION: "verified": true
 
 // SERIALIZATION: "selection_objective": "serialization-first"
-// SERIALIZATION: "emitted_pipe_all_barriers": 31
+// SERIALIZATION: "emitted_event_sets": 55
+// SERIALIZATION: "emitted_event_waits": 55
+// SERIALIZATION: "emitted_pipe_all_barriers": 0
+// SERIALIZATION: "emitted_targeted_barriers": 22
 // SERIALIZATION: "error": 0
-// SERIALIZATION: "plan_signature": "0x186537040b52337b"
 // SERIALIZATION: "precise_error": 4
-// SERIALIZATION: "predicted_sync_instructions": 32
-// SERIALIZATION: "repair_rounds": 3
-// SERIALIZATION: "serialization_breadth": 4196
-// SERIALIZATION: "used_localized_pipe_all": true
+// SERIALIZATION: "repair_rounds": 1
+// SERIALIZATION: "repair_trials": 1
+// SERIALIZATION: "selected_mechanisms_by_origin": {
+// SERIALIZATION: "direct-lifecycle-protocol": 21
+// SERIALIZATION: "direct-targeted-barrier": 22
+// SERIALIZATION: "localized-pipe-all": 0
+// SERIALIZATION: "used_localized_pipe_all": false
 // SERIALIZATION: "verified": true

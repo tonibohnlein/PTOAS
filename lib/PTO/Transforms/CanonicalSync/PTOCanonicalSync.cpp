@@ -494,6 +494,8 @@ llvm::json::Array jsonEventUseProvenance(
     if (eventUse.lifetimeScope) {
       item["lifetime_scope"] = jsonInteger(*eventUse.lifetimeScope);
     }
+    item["quiescent_at_lifetime_boundaries"] =
+        eventUse.quiescentAtLifetimeBoundaries;
     result.push_back(std::move(item));
   }
   return result;
@@ -783,6 +785,8 @@ StringRef mechanismOriginName(pto::CanonicalSyncMechanismOrigin origin) {
     return "direct-balanced-target-fence-event";
   case Origin::StorageCutEvent:
     return "storage-cut-event";
+  case Origin::DirectLifecycleProtocol:
+    return "direct-lifecycle-protocol";
   case Origin::CompletionFrontierEvent:
     return "completion-frontier-event";
   case Origin::TargetCompletionCertificateEvent:
@@ -1474,6 +1478,10 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
        jsonInteger(report.totalSingletonCandidateCoverageRows)},
       {"candidate_mechanisms_by_origin",
        jsonMechanismOriginCounts(report.candidateMechanismsByOrigin)},
+      {"candidate_mechanism_details_truncated",
+       report.candidateMechanismDetailsTruncated},
+      {"candidate_mechanisms",
+       jsonSelectedMechanisms(report.candidateMechanisms)},
       {"direct_pair_proposals", jsonInteger(report.directPairProposals)},
       {"direct_pair_evaluations", jsonInteger(report.directPairEvaluations)},
       {"synergistic_pairs", jsonInteger(report.synergisticPairs)},

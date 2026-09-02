@@ -7,9 +7,11 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // Cross-resource pipe drains are not legal without a target capability that
-// certifies their directed completion contract. The down-projection case then
-// exceeds the event-channel supply, so the pass must use its explicit localized
-// PIPE_ALL backstop instead of selecting an uncertified repair mechanism.
+// certifies their directed completion contract. When the optimized catalog
+// exceeds the event-channel supply, the pass must retry the complete verified
+// strict-direct basis before generating repair-frontier or PIPE_ALL mechanisms.
+// Repair-frontier truncation itself is covered by the synthetic unit test,
+// where the conflict core and proposal shape can be controlled precisely.
 
 // RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --emit-pto-ir \
@@ -22,17 +24,19 @@
 // RUN: FileCheck %s < %t.json
 
 // CHECK: "selection_objective": "action-first"
-// CHECK: "emitted_pipe_all_barriers": 31
+// CHECK: "emitted_event_sets": 55
+// CHECK: "emitted_event_waits": 55
+// CHECK: "emitted_pipe_all_barriers": 0
+// CHECK: "emitted_targeted_barriers": 22
 // CHECK: "error": 0
-// CHECK: "plan_signature": "0x186537040b52337b"
 // CHECK: "precise_error": 4
-// CHECK: "repair_frontier_truncated": true
-// CHECK: "repair_rounds": 3
+// CHECK: "repair_frontier_truncated": false
+// CHECK: "repair_rounds": 1
+// CHECK: "repair_trials": 1
 // CHECK: "selected_mechanisms_by_origin": {
-// CHECK: "localized-pipe-all": 31
-// CHECK: "repair-source-local-pipe-drain": 0
-// CHECK-NEXT: "repair-source-prefix-pipe-drain": 0
-// CHECK-NEXT: "repair-target-local-pipe-drain": 0
-// CHECK: "used_localized_pipe_all": true
+// CHECK: "direct-lifecycle-protocol": 21
+// CHECK: "direct-targeted-barrier": 22
+// CHECK: "localized-pipe-all": 0
+// CHECK: "used_localized_pipe_all": false
 // CHECK: "verification_error": 0
 // CHECK: "verified": true

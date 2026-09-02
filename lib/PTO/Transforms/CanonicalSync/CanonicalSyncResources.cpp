@@ -1,15 +1,19 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 #include "PTO/Transforms/CanonicalSync/CanonicalSyncSelection.h"
 
 #include <algorithm>
 #include <limits>
+#include <map>
+#include <set>
 #include <tuple>
 
 using namespace mlir::pto;
@@ -20,6 +24,14 @@ struct IntervalUse {
   CanonicalSyncMechanismId mechanism = 0;
   std::size_t eventUse = 0;
   CanonicalSyncEventLifetime lifetime;
+  std::size_t width = 1;
+  bool quiescentAtLifetimeBoundaries = false;
+};
+
+struct SweepEvent {
+  SyncCoverTimelinePosition position = 0;
+  bool start = false;
+  CanonicalSyncMechanismId mechanism = 0;
   std::size_t width = 1;
 };
 
@@ -156,34 +168,100 @@ bool measureDomainPressure(
     std::optional<SyncCoverTimelinePosition> &maximumPoint,
     std::vector<CanonicalSyncMechanismId> &liveMechanisms,
     SyncCoverCoverageWorkBudget *budget) {
-  // An event ID is a persistent hardware channel, not a lexical register.
-  // A wait consumes the current signal on the destination pipe, but a later
-  // source-pipe set may execute before that consumption unless an explicit
-  // return protocol orders the two pipelines.  A descriptor's event use is
-  // the smallest unit for which such a lifecycle is verified.  Consequently,
-  // distinct event uses must not share an ID merely because their set/wait
-  // anchors occupy disjoint positions in the linearized IR.
+  // An ordinary event use owns its hardware channel for the whole plan: a
+  // lexically later source Set can overtake an earlier target Wait. A deep
+  // lifecycle certificate is different. Its two-way prime/body/drain
+  // automaton proves that every token is consumed at the lifetime exit, so
+  // two such uses may share only when their inclusive lifetimes do not
+  // overlap.
   required = 0;
   liveMechanisms.clear();
+  std::map<CanonicalSyncMechanismId, std::size_t> persistentLive;
+  std::vector<SweepEvent> events;
   for (const IntervalUse &interval : intervals) {
     if (!consumeWork(budget, 2)) {
       return false;
     }
-    if (interval.width > std::numeric_limits<std::size_t>::max() - required) {
+    if (interval.quiescentAtLifetimeBoundaries) {
+      events.push_back(
+          {interval.lifetime.begin, true, interval.mechanism, interval.width});
+      events.push_back(
+          {interval.lifetime.end, false, interval.mechanism, interval.width});
+      continue;
+    }
+    if (interval.width > std::numeric_limits<std::size_t>::max() - required ||
+        interval.width > std::numeric_limits<std::size_t>::max() -
+                             persistentLive[interval.mechanism]) {
       return false;
     }
     required += interval.width;
-    liveMechanisms.push_back(interval.mechanism);
+    persistentLive[interval.mechanism] += interval.width;
     if (!maximumPoint || interval.lifetime.begin < *maximumPoint) {
       maximumPoint = interval.lifetime.begin;
     }
   }
-  if (!meteredStableSort(liveMechanisms, std::less<>(), budget)) {
+  std::map<CanonicalSyncMechanismId, std::size_t> live = persistentLive;
+  const auto retainLive = [&]() {
+    liveMechanisms.clear();
+    for (const auto &[mechanism, count] : live) {
+      if (count != 0) {
+        liveMechanisms.push_back(mechanism);
+      }
+    }
+  };
+  retainLive();
+  if (!meteredStableSort(
+          events,
+          [](const SweepEvent &left, const SweepEvent &right) {
+            // Inclusive lifetimes overlap at a shared endpoint, so starts are
+            // applied before pressure is measured and ends are removed after.
+            return std::tie(left.position, left.start, left.mechanism) <
+                   std::tie(right.position, right.start, right.mechanism);
+          },
+          budget)) {
     return false;
   }
-  liveMechanisms.erase(
-      std::unique(liveMechanisms.begin(), liveMechanisms.end()),
-      liveMechanisms.end());
+  std::size_t current = required;
+  for (std::size_t begin = 0; begin < events.size();) {
+    std::size_t end = begin;
+    while (end < events.size() &&
+           events[end].position == events[begin].position) {
+      ++end;
+    }
+    for (std::size_t index = begin; index < end; ++index) {
+      const SweepEvent &event = events[index];
+      if (!event.start) {
+        continue;
+      }
+      if (!consumeWork(budget) ||
+          event.width > std::numeric_limits<std::size_t>::max() - current ||
+          event.width >
+              std::numeric_limits<std::size_t>::max() - live[event.mechanism]) {
+        return false;
+      }
+      current += event.width;
+      live[event.mechanism] += event.width;
+    }
+    if (current > required) {
+      required = current;
+      maximumPoint = events[begin].position;
+      retainLive();
+    }
+    for (std::size_t index = begin; index < end; ++index) {
+      const SweepEvent &event = events[index];
+      if (event.start) {
+        continue;
+      }
+      auto found = live.find(event.mechanism);
+      if (!consumeWork(budget) || event.width > current ||
+          found == live.end() || event.width > found->second) {
+        return false;
+      }
+      current -= event.width;
+      found->second -= event.width;
+    }
+    begin = end;
+  }
   return true;
 }
 
@@ -213,27 +291,86 @@ allocateDomain(const CanonicalSyncEventDomain &domain,
   if (allocationWorkspaceUnavailable) {
     return std::nullopt;
   }
-  std::vector<CanonicalSyncEventAllocation> allocations(intervals.size());
+  std::vector<CanonicalSyncEventAllocation> allocations;
+  allocations.reserve(intervals.size());
+  const auto takeFresh = [&]() -> std::optional<unsigned> {
+    while (nextFresh < domain.budget &&
+           meteredBinarySearch(domain.reservedIds, nextFresh, budget)) {
+      ++nextFresh;
+    }
+    if ((budget && budget->exhausted) || nextFresh >= domain.budget) {
+      return std::nullopt;
+    }
+    return nextFresh++;
+  };
+  struct ActiveId {
+    SyncCoverTimelinePosition end = 0;
+    unsigned id = 0;
+  };
+  std::vector<ActiveId> active;
+  std::set<unsigned> reusable;
 
-  for (std::size_t interval = 0; interval < intervals.size(); ++interval) {
-    allocations[interval].mechanism = intervals[interval].mechanism;
-    allocations[interval].eventUse = intervals[interval].eventUse;
-    for (std::size_t lane = 0; lane < intervals[interval].width; ++lane) {
+  // Persistent uses can never share, even with certified lifetimes.
+  for (const IntervalUse &interval : intervals) {
+    if (interval.quiescentAtLifetimeBoundaries) {
+      continue;
+    }
+    CanonicalSyncEventAllocation allocation;
+    allocation.mechanism = interval.mechanism;
+    allocation.eventUse = interval.eventUse;
+    for (std::size_t lane = 0; lane < interval.width; ++lane) {
       if (!consumeWork(budget)) {
         return std::nullopt;
       }
-      while (nextFresh < domain.budget &&
-             meteredBinarySearch(domain.reservedIds, nextFresh, budget)) {
-        ++nextFresh;
-      }
-      if (budget && budget->exhausted) {
+      const std::optional<unsigned> id = takeFresh();
+      if (!id) {
         return std::nullopt;
       }
-      if (nextFresh >= domain.budget) {
-        return std::nullopt;
-      }
-      allocations[interval].ids.push_back(nextFresh++);
+      allocation.ids.push_back(*id);
     }
+    allocations.push_back(std::move(allocation));
+  }
+
+  for (const IntervalUse &interval : intervals) {
+    if (!interval.quiescentAtLifetimeBoundaries) {
+      continue;
+    }
+    std::vector<ActiveId> retained;
+    retained.reserve(active.size());
+    for (const ActiveId &entry : active) {
+      if (!consumeWork(budget)) {
+        return std::nullopt;
+      }
+      if (entry.end < interval.lifetime.begin) {
+        reusable.insert(entry.id);
+      } else {
+        retained.push_back(entry);
+      }
+    }
+    active.swap(retained);
+    CanonicalSyncEventAllocation allocation;
+    allocation.mechanism = interval.mechanism;
+    allocation.eventUse = interval.eventUse;
+    for (std::size_t lane = 0; lane < interval.width; ++lane) {
+      if (!consumeWork(budget)) {
+        return std::nullopt;
+      }
+      unsigned id = 0;
+      if (!reusable.empty()) {
+        const auto first = reusable.begin();
+        id = *first;
+        reusable.erase(first);
+      } else {
+        const std::optional<unsigned> fresh = takeFresh();
+        if (!fresh) {
+          return std::nullopt;
+        }
+        id = *fresh;
+      }
+      allocation.ids.push_back(id);
+      active.push_back({interval.lifetime.end, id});
+    }
+    allocations.push_back(std::move(allocation));
   }
   if (!meteredStableSort(
           allocations,
@@ -294,7 +431,8 @@ CanonicalSyncResourceAllocation mlir::pto::allocateCanonicalSyncEvents(
         return result;
       }
       intervals[eventUse.domain].push_back(
-          {mechanismId, use, lifetime, eventUse.width});
+          {mechanismId, use, lifetime, eventUse.width,
+           eventUse.quiescentAtLifetimeBoundaries});
     }
   }
 

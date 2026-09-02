@@ -26,6 +26,8 @@ namespace mlir {
 namespace pto {
 
 class SyncCoverStorageLifecycleIndex;
+class SyncCoverStorageProtocolGroupIndex;
+class SyncCoverStorageProtocolSeedIndex;
 
 using SyncCoverProtocolChannelId = std::size_t;
 
@@ -454,6 +456,11 @@ struct SyncCoverLifecycleSlot {
 struct SyncCoverLifecycleProposal {
   std::size_t id = 0;
   std::size_t lifecycleScc = 0;
+  /// True only for the independently verified per-demand correctness basis.
+  /// Grouped lifecycle proposals are optional cover improvements and leave
+  /// this false so event-scarcity repair can deterministically fall back to
+  /// the complete direct catalog.
+  bool directBasis = false;
   std::vector<SyncCoverEventProtocol> protocols;
   std::vector<SyncCoverLifecycleSlot> slots;
   std::vector<SyncCoverDemandId> seedDemands;
@@ -469,6 +476,20 @@ struct SyncCoverLifecycleProposal {
 struct SyncCoverLifecycleSynthesisResult {
   SyncCoverProtocolError error = SyncCoverProtocolError::None;
   std::vector<SyncCoverLifecycleProposal> proposals;
+  std::size_t lifecycleSccs = 0;
+  std::size_t derivedLifecycleCertificates = 0;
+  std::size_t rejectedLifecycleConstructions = 0;
+  std::size_t rejectedLifecycleVerifications = 0;
+  std::size_t rejectedLifecycleStorageCertificates = 0;
+  std::optional<SyncCoverProtocolError> firstLifecycleVerificationRejection;
+  std::optional<std::size_t> firstLifecycleVerificationRejectionIndex;
+  std::size_t lifecycleSccsWithoutProtocols = 0;
+  std::optional<SyncCoverDemandId> firstUnproposedLifecycleDemand;
+  std::size_t firstUnproposedLifecycleCertificates = 0;
+  std::size_t firstUnproposedLifecycleConstructionRejects = 0;
+  std::size_t firstUnproposedLifecycleVerificationRejects = 0;
+  std::size_t firstUnproposedLifecycleStorageRejects = 0;
+  std::size_t lifecycleSccsWithoutCoverage = 0;
   std::size_t inspectedDemands = 0;
   std::size_t inspectedAccesses = 0;
   std::size_t lifecycleAccessIncidences = 0;
@@ -486,6 +507,17 @@ SyncCoverLifecycleSynthesisResult synthesizeSyncCoverLifecycleCertificates(
     SyncCoverProtocolLimits limits = {},
     SyncCoverCoverageWorkBudget *workBudget = nullptr);
 
+/// Constructs the conservative direct-event basis for demands repeated by a
+/// loop. Each returned column is one exact forward cut plus an independently
+/// verified reverse acknowledgement channel. The acknowledgement primes the
+/// token at loop entry, prevents Set(i + 1) from overtaking Wait(i), and drains
+/// the final token at loop exit. No storage-lifecycle recognizer participates.
+SyncCoverLifecycleSynthesisResult synthesizeSyncCoverBalancedDirectProtocols(
+    const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
+    SyncCoverProtocolLimits limits = {},
+    SyncCoverCoverageWorkBudget *workBudget = nullptr,
+    bool enableCutFusion = true);
+
 /// Alternative synthesis entry point for the target-neutral exact-storage
 /// lifecycle index. It remains an analysis/test seam until its proposal set is
 /// proven equivalent to the independently verified graph-owned recipe
@@ -493,6 +525,34 @@ SyncCoverLifecycleSynthesisResult synthesizeSyncCoverLifecycleCertificates(
 SyncCoverLifecycleSynthesisResult synthesizeSyncCoverLifecycleCertificates(
     const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
     const SyncCoverStorageLifecycleIndex &lifecycleIndex,
+    SyncCoverProtocolLimits limits = {},
+    SyncCoverCoverageWorkBudget *workBudget = nullptr);
+
+/// Rebuilds the graph-derived grouped and balanced-direct lifecycle catalogs
+/// and verifies that every selected frozen proposal is reproduced exactly.
+/// This is the materialization-boundary proof for storage-certified coverage:
+/// it reruns target legality, token automata, exact graph grounding, and exact
+/// physical-lane reuse certification instead of trusting admission bitsets.
+SyncCoverProtocolError verifySyncCoverLifecycleProposalsFresh(
+    const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
+    const SyncCoverStorageLifecycleIndex *lifecycleIndex,
+    const SyncCoverStorageProtocolSeedIndex *seedIndex,
+    const SyncCoverStorageProtocolGroupIndex *groupIndex,
+    const std::vector<SyncCoverLifecycleProposal> &frozenProposals,
+    const std::vector<std::size_t> &selectedProposalIndices,
+    SyncCoverProtocolLimits limits = {},
+    SyncCoverCoverageWorkBudget *workBudget = nullptr,
+    bool enableDirectCutFusion = true);
+
+/// Alternative synthesis entry point for protocol groups proven by the
+/// target-neutral storage-lifecycle analysis. Each group is imported as one
+/// lifecycle SCC so disjoint exact-storage seeds with the same directed
+/// ready/release behavior can be verified as one shared physical recipe.
+SyncCoverLifecycleSynthesisResult synthesizeSyncCoverLifecycleCertificates(
+    const SyncCoverGraph &graph, const SyncCoverProtocolTargetContract &target,
+    const SyncCoverStorageLifecycleIndex &lifecycleIndex,
+    const SyncCoverStorageProtocolSeedIndex &seedIndex,
+    const SyncCoverStorageProtocolGroupIndex &groupIndex,
     SyncCoverProtocolLimits limits = {},
     SyncCoverCoverageWorkBudget *workBudget = nullptr);
 
