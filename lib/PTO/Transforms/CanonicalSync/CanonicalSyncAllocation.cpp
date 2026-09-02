@@ -39,7 +39,12 @@ struct AllocationUnit {
   std::optional<CanonicalRegionId> recurrenceLoop;
   unsigned eventId = 0;
   SmallVector<unsigned, 2> releaseGroups;
+  bool boundaryRecurring = false;
 };
+
+bool recurringReadyReuseIsOrdered(const CanonicalSyncProgram &program,
+                                  const AllocationUnit &first,
+                                  const AllocationUnit &second);
 
 struct AllocationFailure {
   CanonicalPhysicalResource source;
@@ -52,12 +57,15 @@ bool isUnconditionalLifecycle(const AllocationUnit &unit) {
   return unit.kind == AllocationUnitKind::RecurringRelease;
 }
 
-bool unitsInterfere(const AllocationUnit &first, const AllocationUnit &second) {
+bool unitsInterfere(const CanonicalSyncProgram &program,
+                    const AllocationUnit &first, const AllocationUnit &second) {
   return isUnconditionalLifecycle(first) || isUnconditionalLifecycle(second) ||
-         controlsCanCoexecute(first.guard, second.guard);
+         (!recurringReadyReuseIsOrdered(program, first, second) &&
+          controlsCanCoexecute(first.guard, second.guard));
 }
 
-bool idAvailable(const AllocationUnit &candidate, unsigned eventId,
+bool idAvailable(const CanonicalSyncProgram &program,
+                 const AllocationUnit &candidate, unsigned eventId,
                  ArrayRef<AllocationUnit> assigned) {
   for (const AllocationUnit &existing : assigned) {
     const bool sameCrossCoreKey =
@@ -70,7 +78,7 @@ bool idAvailable(const AllocationUnit &candidate, unsigned eventId,
         candidate.source == existing.source &&
         candidate.target == existing.target && existing.eventId == eventId;
     const bool collides = (sameCrossCoreKey || sameIntraCoreKey) &&
-                          unitsInterfere(candidate, existing);
+                          unitsInterfere(program, candidate, existing);
     if (collides) {
       return false;
     }
@@ -130,6 +138,7 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
                      mechanism.guard,
                      mechanism.recurrenceLoop,
                      0});
+    units.back().boundaryRecurring = mechanism.boundaryRecurring;
     auto release = llvm::find_if(units, [&](const AllocationUnit &unit) {
       return unit.kind == AllocationUnitKind::RecurringRelease &&
              unit.source == mechanism.target &&
@@ -150,14 +159,19 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
     }
   }
   for (auto [index, group] : llvm::enumerate(groups)) {
+    const bool boundaryRecurring =
+        llvm::any_of(group.members, [&](CanonicalMechanismId mechanism) {
+          return program.getMechanism(mechanism).boundaryRecurring;
+        });
     units.push_back({AllocationUnitKind::SerializedReady,
                      {},
                      static_cast<unsigned>(index),
                      group.source,
                      group.target,
                      group.guard,
-                     std::nullopt,
+                     group.recurrenceLoop,
                      0});
+    units.back().boundaryRecurring = boundaryRecurring;
     if (group.kind == CanonicalScarcityEventKind::Serialized) {
       units.push_back({AllocationUnitKind::SerializedRelease,
                        {},
@@ -211,7 +225,7 @@ bool allocateUnits(const CanonicalSyncProgram &program,
     }
     const auto available = llvm::find_if(ids, [&](unsigned eventId) {
       return !llvm::is_contained(reserved, eventId) &&
-             idAvailable(unit, eventId, assigned);
+             idAvailable(program, unit, eventId, assigned);
     });
     if (available == ids.end()) {
       failure.source = unit.source;
@@ -427,6 +441,74 @@ bool appendSerializedFallback(
   return true;
 }
 
+Block *findCommonBlock(Operation *first, Operation *second) {
+  SmallVector<Block *, 8> firstBlocks;
+  for (Operation *current = first; current; current = current->getParentOp()) {
+    if (current->getBlock()) {
+      firstBlocks.push_back(current->getBlock());
+    }
+  }
+  for (Operation *current = second; current; current = current->getParentOp()) {
+    Block *block = current->getBlock();
+    if (block && llvm::is_contained(firstBlocks, block)) {
+      return block;
+    }
+  }
+  return nullptr;
+}
+
+Operation *liftToBlock(Operation *operation, Block *block) {
+  while (operation) {
+    Block *currentBlock = operation->getBlock();
+    if (currentBlock == block) {
+      return operation;
+    }
+    operation = operation->getParentOp();
+  }
+  return nullptr;
+}
+
+bool onceOnlyLoopPrecedes(const CanonicalSyncProgram &program,
+                          CanonicalRegionId previousLoop,
+                          CanonicalRegionId nextLoop) {
+  Operation *previous = program.getRegion(previousLoop).operation;
+  Operation *next = program.getRegion(nextLoop).operation;
+  Block *block = findCommonBlock(previous, next);
+  // A previous release drain can certify ready-lane reuse only across a
+  // once-only outer issue frontier. Repeating outer frontiers would require a
+  // separate lifecycle proof.
+  if (!block || !isa<func::FuncOp>(block->getParentOp())) {
+    return false;
+  }
+  Operation *previousAnchor = liftToBlock(previous, block);
+  Operation *nextAnchor = liftToBlock(next, block);
+  if (!previousAnchor || !nextAnchor || previousAnchor == nextAnchor ||
+      !previousAnchor->isBeforeInBlock(nextAnchor)) {
+    return false;
+  }
+  return true;
+}
+
+bool recurringReadyReuseIsOrdered(const CanonicalSyncProgram &program,
+                                  const AllocationUnit &first,
+                                  const AllocationUnit &second) {
+  const auto isEligible = [](const AllocationUnit &unit) {
+    const bool readyKind = unit.kind == AllocationUnitKind::Ready ||
+                           unit.kind == AllocationUnitKind::SerializedReady;
+    return readyKind && unit.recurrenceLoop && !unit.boundaryRecurring;
+  };
+  const bool eligible = isEligible(first) && isEligible(second) &&
+                        first.source == second.source &&
+                        first.target == second.target;
+  if (!eligible) {
+    return false;
+  }
+  return onceOnlyLoopPrecedes(program, *first.recurrenceLoop,
+                              *second.recurrenceLoop) ||
+         onceOnlyLoopPrecedes(program, *second.recurrenceLoop,
+                              *first.recurrenceLoop);
+}
+
 void commitAllocation(CanonicalSyncProgram &program,
                       ArrayRef<AllocationUnit> units,
                       SmallVector<CanonicalScarcityEventGroup, 2> groups) {
@@ -464,8 +546,9 @@ emitAllocationFailure(const CanonicalSyncProgram &program,
         "canonical sync exhausted cross-core counter IDs");
   }
   witness->emitError("canonical sync exhausted compiler event IDs after "
-                     "hidden macro reservations, cut coalescing, and "
-                     "serialized ready/release fallback")
+                     "hidden macro reservations, cut coalescing, serialized "
+                     "ready/release fallback, and certified recurring-ready "
+                     "reuse")
       << "; domain " << stringifyCanonicalCore(allocationFailure.source.core)
       << ':' << stringifyPIPE(allocationFailure.source.pipe) << " -> "
       << stringifyPIPE(allocationFailure.target.pipe);

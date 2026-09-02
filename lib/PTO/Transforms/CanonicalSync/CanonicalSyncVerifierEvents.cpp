@@ -46,6 +46,11 @@ struct ConcreteEventGeneration {
   CanonicalPhysicalResource target;
   unsigned eventId = 0;
   bool crossCore = false;
+  bool recurringReady = false;
+  bool recurringRelease = false;
+  bool boundaryReady = false;
+  int64_t releaseOwner = -1;
+  Operation *recurrenceLoop = nullptr;
   SmallVector<ConcreteControlArm, 2> controlPath;
 };
 
@@ -502,8 +507,13 @@ LogicalResult resolveRecurringProtocol(
         "canonical sync event verifier found an unbalanced recurring "
         "protocol");
   }
+  ready->recurringReady = true;
+  ready->boundaryReady = boundaryReady;
+  ready->releaseOwner = protocol.releaseOwner;
+  ready->recurrenceLoop = loop.getOperation();
   generations.push_back(std::move(*ready));
   if (emitReleaseGeneration) {
+    releaseGeneration->recurringRelease = true;
     generations.push_back(std::move(*releaseGeneration));
   }
   return success();
@@ -795,6 +805,73 @@ LogicalResult resolveGeneration(func::FuncOp function,
                           generation.target, generation.eventId);
 }
 
+bool concreteOnceOnlyLoopPrecedes(Operation *previousLoop,
+                                  Operation *nextLoop) {
+  const bool validLoops = isa_and_nonnull<scf::ForOp>(previousLoop) &&
+                          isa_and_nonnull<scf::ForOp>(nextLoop);
+  if (!validLoops) {
+    return false;
+  }
+  SmallVector<Block *, 8> previousBlocks;
+  for (Operation *current = previousLoop; current;
+       current = current->getParentOp()) {
+    if (current->getBlock()) {
+      previousBlocks.push_back(current->getBlock());
+    }
+  }
+  Block *commonBlock = nullptr;
+  for (Operation *current = nextLoop; current;
+       current = current->getParentOp()) {
+    Block *block = current->getBlock();
+    if (block && llvm::is_contained(previousBlocks, block)) {
+      commonBlock = block;
+      break;
+    }
+  }
+  if (!commonBlock || !isa<func::FuncOp>(commonBlock->getParentOp())) {
+    return false;
+  }
+  const auto liftToBlock = [](Operation *operation, Block *block) {
+    while (operation) {
+      Block *currentBlock = operation->getBlock();
+      if (currentBlock == block) {
+        return operation;
+      }
+      operation = operation->getParentOp();
+    }
+    return static_cast<Operation *>(nullptr);
+  };
+  Operation *previousAnchor = liftToBlock(previousLoop, commonBlock);
+  Operation *nextAnchor = liftToBlock(nextLoop, commonBlock);
+  return previousAnchor && nextAnchor && previousAnchor != nextAnchor &&
+         previousAnchor->isBeforeInBlock(nextAnchor);
+}
+
+bool recurringReadyReuseIsCertified(
+    const ConcreteEventGeneration &first, const ConcreteEventGeneration &second,
+    ArrayRef<ConcreteEventGeneration> generations) {
+  if (!first.recurringReady || !second.recurringReady || first.boundaryReady ||
+      second.boundaryReady) {
+    return false;
+  }
+  const auto ordered = [&](const ConcreteEventGeneration &previous,
+                           const ConcreteEventGeneration &next) {
+    auto release = llvm::find_if(
+        generations, [&](const ConcreteEventGeneration &candidate) {
+          return candidate.recurringRelease &&
+                 candidate.mechanism == previous.releaseOwner;
+        });
+    const bool hasReverseRelease = release != generations.end() &&
+                                   release->source == previous.target &&
+                                   release->target == previous.source;
+    return hasReverseRelease &&
+           concreteOnceOnlyLoopPrecedes(previous.recurrenceLoop,
+                                        next.recurrenceLoop) &&
+           protocolActionPrecedes(release->wait, next.set);
+  };
+  return ordered(first, second) || ordered(second, first);
+}
+
 LogicalResult
 verifyInterference(ArrayRef<ConcreteEventGeneration> generations) {
   for (size_t firstIndex = 0; firstIndex < generations.size(); ++firstIndex) {
@@ -811,6 +888,9 @@ verifyInterference(ArrayRef<ConcreteEventGeneration> generations) {
       const bool sameKey = sameCrossCoreKey || sameIntraCoreKey;
       if (!sameKey ||
           controlsAreMutuallyExclusive(first.controlPath, second.controlPath)) {
+        continue;
+      }
+      if (recurringReadyReuseIsCertified(first, second, generations)) {
         continue;
       }
       InFlightDiagnostic diagnostic =

@@ -290,7 +290,40 @@ same directed domain. Scalar/MLIR order between an earlier wait and a later set
 is not a hardware lifetime proof: the source pipeline may re-set the flag before
 the target pipeline consumes it. Therefore all coexecuting generations in one
 directed domain receive distinct IDs. Only once-only generations in provably
-mutually exclusive control arms may share an ID.
+mutually exclusive control arms may share an ID, with one narrowly certified
+exception for recurring ready lanes described below.
+
+Two non-boundary ready lanes from sequential top-level loop lifetimes may
+share an ID when both already have the complete reverse ready/release protocol.
+For an earlier loop with source pipeline `P` and target pipeline `Q`, the
+protocol establishes:
+
+```text
+ReadyWait_earlier(Q)
+  -> ReleaseSet_earlier(Q)
+  -> ReleaseDrainWait_earlier(P)
+  -> ReadySet_later(P)
+```
+
+The first edge is target-pipeline issue order, the second is the documented
+reverse SetFlag/WaitFlag transfer, and the last edge is source-pipeline issue
+order between two distinct top-level loop frontiers. Consequently the earlier
+ready wait has consumed the ready event before the later ready set can execute.
+This proof is derived from the documented SetFlag/WaitFlag semantics; it is not
+a separately documented hardware protocol. It does not use the lexical
+position of `ReadyWait_earlier(Q)` as an ordering proof for
+`ReadySet_later(P)`.
+
+Boundary ready protocols are excluded because their zero-trip behavior does
+not provide the same lifecycle certificate. Frontiers whose common ordering
+block repeats are also excluded; a recurrence loop may be nested only when its
+complete loop lifetime lies beneath a distinct, once-only function-level
+anchor. The allocator proves that sequential relation from the immutable
+program model. After
+materialization, the event verifier independently reconstructs both recurring
+protocols from tagged operations, finds the earlier reverse release drain, and
+requires that concrete drain wait to precede the later ready set. If either
+proof is absent, the ready generations interfere and require distinct IDs.
 
 When selected generations exhaust a directed domain, the allocator first tries
 to coalesce compatible cuts. Members must have the same direction, control
@@ -330,10 +363,13 @@ from the emitted IR. It checks balance, direction, ID legality, control path,
 once-only lifetime, set-before-wait issue order, macro reservations, and
 same-key generation interference. For a recurring mechanism it independently
 requires the six prime/body/drain roles, reverse ready/release directions, and
-their loop-boundary and body order. It rejects any same-key coexecuting pair;
-the lexical position of a wait is never treated as proof that hardware consumed
-the event. A separate verifier then extracts physical effects again and runs
-structured dataflow over the resulting IR.
+their loop-boundary and body order. It rejects any same-key coexecuting pair
+unless the generations are mutually exclusive or it reconstructs the complete
+reverse-release proof for sequential non-boundary ready lanes described above;
+the lexical position of a ready wait on the target pipeline is never treated as
+proof that hardware consumed the event before a later source set. A separate
+verifier then extracts physical effects again and runs structured dataflow over
+the resulting IR.
 
 Its state contains pending effects per physical resource, completion frontiers
 imported by waits and barriers, visibility facts, live event tokens, loop-carried

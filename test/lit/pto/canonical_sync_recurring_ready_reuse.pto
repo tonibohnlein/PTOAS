@@ -1,0 +1,230 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Two sequential non-boundary recurring protocols may share their forward
+// ready lane.  The first protocol's reverse release drain executes on MTE2
+// before the second loop's ready set, proving that the first ready wait on V
+// has consumed the shared event.  Boundary protocols remain distinct because
+// their zero-trip lifecycle does not provide that certificate.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @sequential_ready_lanes_share(
+      %src0: !pto.partition_tensor_view<16x128xf32>,
+      %src1: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input0_addr = arith.constant 0 : i64
+    %output0_addr = arith.constant 8192 : i64
+    %input1_addr = arith.constant 16384 : i64
+    %output1_addr = arith.constant 24576 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %input0 = pto.alloc_tile addr = %input0_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output0 = pto.alloc_tile addr = %output0_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input1 = pto.alloc_tile addr = %input1_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output1 = pto.alloc_tile addr = %output1_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %iteration = %zero to %two step %one_index {
+      pto.tload ins(%src0 : !pto.partition_tensor_view<16x128xf32>)
+                outs(%input0 : !pto.tile_buf<loc=vec, dtype=f32,
+                       rows=16, cols=128, v_row=16, v_col=128,
+                       blayout=row_major, slayout=none_box,
+                       fractal=512, pad=0>)
+      pto.tmuls ins(%input0, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%output0 : !pto.tile_buf<loc=vec, dtype=f32,
+                       rows=16, cols=128, v_row=16, v_col=128,
+                       blayout=row_major, slayout=none_box, fractal=512,
+                       pad=0>)
+    }
+    scf.for %iteration = %zero to %two step %one_index {
+      pto.tload ins(%src1 : !pto.partition_tensor_view<16x128xf32>)
+                outs(%input1 : !pto.tile_buf<loc=vec, dtype=f32,
+                       rows=16, cols=128, v_row=16, v_col=128,
+                       blayout=row_major, slayout=none_box,
+                       fractal=512, pad=0>)
+      pto.tmuls ins(%input1, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%output1 : !pto.tile_buf<loc=vec, dtype=f32,
+                       rows=16, cols=128, v_row=16, v_col=128,
+                       blayout=row_major, slayout=none_box, fractal=512,
+                       pad=0>)
+    }
+    return
+  }
+
+  func.func @sequential_boundary_ready_lanes_do_not_share(
+      %src0: !pto.partition_tensor_view<16x128xf32>,
+      %src1: !pto.partition_tensor_view<16x128xf32>, %condition: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input0_addr = arith.constant 0 : i64
+    %output0_addr = arith.constant 8192 : i64
+    %input1_addr = arith.constant 16384 : i64
+    %output1_addr = arith.constant 24576 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %input0 = pto.alloc_tile addr = %input0_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output0 = pto.alloc_tile addr = %output0_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input1 = pto.alloc_tile addr = %input1_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output1 = pto.alloc_tile addr = %output1_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %iteration = %zero to %two step %one_index {
+      scf.if %condition {
+        pto.tload ins(%src0 : !pto.partition_tensor_view<16x128xf32>)
+                  outs(%input0 : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box,
+                         fractal=512, pad=0>)
+      } else {
+        pto.tmuls ins(%input0, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                        rows=16, cols=128, v_row=16, v_col=128,
+                        blayout=row_major, slayout=none_box, fractal=512,
+                        pad=0>, f32)
+                  outs(%output0 : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box, fractal=512,
+                         pad=0>)
+      }
+    }
+    scf.for %iteration = %zero to %two step %one_index {
+      scf.if %condition {
+        pto.tload ins(%src1 : !pto.partition_tensor_view<16x128xf32>)
+                  outs(%input1 : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box,
+                         fractal=512, pad=0>)
+      } else {
+        pto.tmuls ins(%input1, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                        rows=16, cols=128, v_row=16, v_col=128,
+                        blayout=row_major, slayout=none_box, fractal=512,
+                        pad=0>, f32)
+                  outs(%output1 : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box, fractal=512,
+                         pad=0>)
+      }
+    }
+    return
+  }
+
+  func.func @repeating_outer_frontier_does_not_share(
+      %src0: !pto.partition_tensor_view<16x128xf32>,
+      %src1: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input0_addr = arith.constant 0 : i64
+    %output0_addr = arith.constant 8192 : i64
+    %input1_addr = arith.constant 16384 : i64
+    %output1_addr = arith.constant 24576 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %input0 = pto.alloc_tile addr = %input0_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output0 = pto.alloc_tile addr = %output0_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input1 = pto.alloc_tile addr = %input1_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output1 = pto.alloc_tile addr = %output1_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %outer = %zero to %two step %one_index {
+      scf.for %inner0 = %zero to %two step %one_index {
+        pto.tload ins(%src0 : !pto.partition_tensor_view<16x128xf32>)
+                  outs(%input0 : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box,
+                         fractal=512, pad=0>)
+        pto.tmuls ins(%input0, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                        rows=16, cols=128, v_row=16, v_col=128,
+                        blayout=row_major, slayout=none_box, fractal=512,
+                        pad=0>, f32)
+                  outs(%output0 : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box, fractal=512,
+                         pad=0>)
+      }
+      scf.for %inner1 = %zero to %two step %one_index {
+        pto.tload ins(%src1 : !pto.partition_tensor_view<16x128xf32>)
+                  outs(%input1 : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box,
+                         fractal=512, pad=0>)
+        pto.tmuls ins(%input1, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                        rows=16, cols=128, v_row=16, v_col=128,
+                        blayout=row_major, slayout=none_box, fractal=512,
+                        pad=0>, f32)
+                  outs(%output1 : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box, fractal=512,
+                         pad=0>)
+      }
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: CANONICAL-SYNC function=sequential_ready_lanes_share
+// CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK: PLAN selected=[
+// CHECK-SAME: events=[{{.*}}=e0/release-e0, {{.*}}=e0/release-e1]
+// CHECK: VERIFY ok
+// CHECK-LABEL: CANONICAL-SYNC function=sequential_boundary_ready_lanes_do_not_share
+// CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK-SAME: protocol=boundary-handshake
+// CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK-SAME: protocol=boundary-handshake
+// CHECK: PLAN selected=[
+// CHECK-SAME: events=[{{.*}}=e0/release-e0, {{.*}}=e1/release-e1]
+// CHECK: VERIFY ok
+// CHECK-LABEL: CANONICAL-SYNC function=repeating_outer_frontier_does_not_share
+// CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK: PLAN selected=[
+// CHECK-SAME: events=[m1=e0/release-e0, m2=e1/release-e1, m5=e2/release-e2]
+// CHECK: VERIFY ok
