@@ -63,6 +63,7 @@ extern llvm::cl::opt<bool> enableCanonicalSync;
 extern llvm::cl::opt<bool> canonicalSyncAnalysisOnly;
 extern llvm::cl::opt<bool> canonicalSyncDump;
 extern llvm::cl::opt<bool> canonicalSyncStatistics;
+extern llvm::cl::opt<bool> canonicalSyncDisableSharedEventFrontiers;
 extern llvm::cl::opt<std::string> canonicalSyncGmAliasPolicy;
 extern llvm::cl::opt<bool> enableBufidSync;
 extern llvm::cl::opt<bool> enableBufidSyncDebug;

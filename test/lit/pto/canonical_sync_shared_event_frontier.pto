@@ -15,6 +15,10 @@
 // RUN:   --canonical-sync-dump --emit-pto-ir %s -o %t 2> %t.log
 // RUN: FileCheck %s --check-prefix=PLAN < %t.log
 // RUN: FileCheck %s --check-prefix=IR < %t
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-disable-shared-event-frontiers \
+// RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2> %t.off.log
+// RUN: FileCheck %s --check-prefix=NOFRONTIER < %t.off.log
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @shared_event_frontier(
@@ -133,6 +137,13 @@ module attributes {pto.target_arch = "a2a3"} {
 // PLAN: PLAN selected=[
 // PLAN-SAME: events=[m{{[0-9]+}}=e0, m{{[0-9]+}}=e1]
 // PLAN: VERIFY ok
+
+// NOFRONTIER-LABEL: CANONICAL-SYNC function=shared_event_frontier
+// NOFRONTIER-NOT: synthesis=shared-event-frontier
+// NOFRONTIER: PLAN selected=[
+// NOFRONTIER-SAME: events=[m{{[0-9]+}}=e0, m{{[0-9]+}}=e1]
+// NOFRONTIER: VERIFY ok
+// NOFRONTIER-LABEL: CANONICAL-SYNC function=disjoint_event_windows
 
 // IR-LABEL: func.func @shared_event_frontier
 // IR: pto.tload

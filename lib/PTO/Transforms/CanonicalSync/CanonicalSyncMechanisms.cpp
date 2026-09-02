@@ -1219,7 +1219,8 @@ LogicalResult mlir::pto::canonical_sync_detail::integrateCanonicalFixedBaseline(
 }
 
 LogicalResult
-mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
+mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program,
+                                          bool enableSharedEventFrontiers) {
   const bool invalidState = !program.isGraphFrozen() || program.isFrozen() ||
                             program.getSetCoverInstance().has_value() ||
                             program.buildingMechanisms ||
@@ -1316,7 +1317,9 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
     recordRecurring(id);
     program.setDirectMechanism(demand.id, id);
   }
-  appendSharedEventFrontierCandidates(program, interner);
+  if (enableSharedEventFrontiers) {
+    appendSharedEventFrontierCandidates(program, interner);
+  }
   for (const CanonicalPhase &phase : program.getPhases()) {
     FailureOr<CanonicalMechanism> tail = buildTailMechanism(program, phase);
     if (failed(tail)) {

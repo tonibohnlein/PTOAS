@@ -338,6 +338,10 @@ event windows and the concrete set point must precede the wait point. This is
 one ordinary physical event mechanism, not a bundle or an AND/OR cover column.
 Recurring mechanisms are deliberately excluded; their prime, circulation,
 release, and drain lifecycle remains a separate protocol problem.
+The default-on proposal family can be disabled with
+`--canonical-sync-disable-shared-event-frontiers` for optimizer ablation. The
+disabled arm still builds and verifies every direct mechanism; it changes only
+the presence of these synthesized candidates.
 
 Same-pipeline barriers need no analogous synthesized candidate in a linear
 block. Every same-pipeline demand already creates a barrier immediately before
@@ -346,6 +350,8 @@ the corresponding interval-stabbing problem. Singleton coverage determines
 which other demand intervals that physical barrier hits. Statistics report
 multi-demand barrier candidates and selections explicitly so this existing
 sharing can be measured independently from new event-frontier synthesis.
+Statistics separately report all unique barrier candidates, selected barriers,
+multi-demand barrier candidates, and selected multi-demand barriers.
 
 An existing GM/all fence is fixed baseline supply, represented once by its
 physical operation rather than once per demand. Its completion role publishes

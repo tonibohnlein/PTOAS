@@ -358,3 +358,34 @@ explain a 162-times coverage spread, which is why the follow-up patch adds
 inner-loop coverage and bounded-oracle counters before changing more
 algorithms. The current work after `0ec958f1e` is not covered by that device
 verdict.
+
+## Host frontier ablation after the guarded-lifecycle repair
+
+A matched ON/OFF run used one compiler binary and the frozen 394-row corpus.
+The OFF arm disabled only synthesized non-recurring shared event frontiers;
+direct mechanisms, demand semantics, selection, allocation, materialization,
+and both independent verifiers were unchanged.
+
+Both arms admitted 199 rows and failed closed on 195. With frontier synthesis
+enabled, 577 candidates were proposed and 84 were selected across 50
+successfully verified functions. Selected logical mechanisms fell from 3,462
+to 3,345, a reduction of 117 (3.38%) without changing admission.
+
+The extra candidates increased coverage work from 10,383 to 10,960 singleton
+worlds (5.56%), sparse incidence entries from 1,463,135 to 1,583,100 (8.20%),
+and indexed boundary-phase tests from 1,937,469 to 2,138,996 (10.40%). These
+deterministic work counters are the appropriate compile-cost evidence; the
+single sequential timing sweep was not randomized and is not a stable timing
+claim.
+
+The same run measured the existing exact same-pipe interval behavior. Of
+2,732 unique direct barrier candidates, selection retained 1,763 and avoided
+969 (35.47%). Of the selected barriers, 1,685 covered multiple demands across
+141 verified functions. This confirms that target-adjacent direct barriers
+already provide useful interval-frontier sharing; adding a duplicate barrier
+candidate family is not justified.
+
+These are host planning results, not device-performance evidence. The next
+device task should compare the default and frontier-disabled arms on the same
+launchable kernels and report dynamic execution time separately from static
+mechanism counts.

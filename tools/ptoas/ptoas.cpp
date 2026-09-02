@@ -235,6 +235,12 @@ llvm::cl::opt<bool> canonicalSyncStatistics(
         "Print one CanonicalSync JSON statistics record per function"),
     llvm::cl::init(false));
 
+llvm::cl::opt<bool> canonicalSyncDisableSharedEventFrontiers(
+    "canonical-sync-disable-shared-event-frontiers",
+    llvm::cl::desc(
+        "Disable synthesized shared event frontiers for optimizer ablation"),
+    llvm::cl::init(false));
+
 llvm::cl::opt<std::string> canonicalSyncGmAliasPolicy(
     "canonical-sync-gm-alias-policy",
     llvm::cl::desc("GM alias policy for CanonicalSync: conservative or "

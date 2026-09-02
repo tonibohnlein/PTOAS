@@ -23,6 +23,7 @@ struct CanonicalSyncOptions {
   bool analysisOnly = false;
   bool dump = false;
   bool statistics = false;
+  bool enableSharedEventFrontiers = true;
   CanonicalGmAliasPolicy gmAliasPolicy = CanonicalGmAliasPolicy::Conservative;
 };
 
@@ -33,7 +34,8 @@ FailureOr<std::unique_ptr<CanonicalSyncProgram>> buildCanonicalSyncProgram(
     func::FuncOp function,
     CanonicalGmAliasPolicy gmAliasPolicy = CanonicalGmAliasPolicy::Conservative,
     CanonicalSyncStatistics *statistics = nullptr);
-LogicalResult buildCanonicalDirectMechanisms(CanonicalSyncProgram &program);
+LogicalResult buildCanonicalDirectMechanisms(
+    CanonicalSyncProgram &program, bool enableSharedEventFrontiers = true);
 LogicalResult evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program);
 LogicalResult buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program);
 LogicalResult solveCanonicalSyncSetCover(CanonicalSyncProgram &program);

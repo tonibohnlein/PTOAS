@@ -680,12 +680,15 @@ struct SerialAutoSyncPass
                      bool canonicalAnalysisOnly = false,
                      bool canonicalDump = false,
                      bool canonicalStatistics = false,
+                     bool canonicalEnableSharedEventFrontiers = true,
                      pto::CanonicalGmAliasPolicy canonicalGmAliasPolicy =
                          pto::CanonicalGmAliasPolicy::Conservative)
       : mode(mode), enableBufidDebug(enableBufidDebug),
         canonicalAnalysisOnly(canonicalAnalysisOnly),
         canonicalDump(canonicalDump),
         canonicalStatistics(canonicalStatistics),
+        canonicalEnableSharedEventFrontiers(
+            canonicalEnableSharedEventFrontiers),
         canonicalGmAliasPolicy(canonicalGmAliasPolicy) {}
 
   void runOnOperation() override {
@@ -699,6 +702,8 @@ struct SerialAutoSyncPass
       options.analysisOnly = canonicalAnalysisOnly;
       options.dump = canonicalDump;
       options.statistics = canonicalStatistics;
+      options.enableSharedEventFrontiers =
+          canonicalEnableSharedEventFrontiers;
       options.gmAliasPolicy = canonicalGmAliasPolicy;
       functionPM.addPass(pto::createPTOCanonicalSyncPass(options));
       break;
@@ -729,6 +734,7 @@ private:
   bool canonicalAnalysisOnly;
   bool canonicalDump;
   bool canonicalStatistics;
+  bool canonicalEnableSharedEventFrontiers;
   pto::CanonicalGmAliasPolicy canonicalGmAliasPolicy;
 };
 } // namespace
@@ -1089,7 +1095,7 @@ static LogicalResult validateCompileBackendFlags(PTOBackend backend,
   }
   const bool canonicalConfiguration =
       canonicalSyncAnalysisOnly || canonicalSyncDump ||
-      canonicalSyncStatistics ||
+      canonicalSyncStatistics || canonicalSyncDisableSharedEventFrontiers ||
       *canonicalAliasPolicy != pto::CanonicalGmAliasPolicy::Conservative;
   if (canonicalConfiguration && !enableCanonicalSync) {
     llvm::errs() << "Error: canonical sync diagnostic/policy flags require "
@@ -1430,13 +1436,16 @@ static void appendAutoSyncPasses(PassManager &pm) {
     options.analysisOnly = canonicalSyncAnalysisOnly;
     options.dump = canonicalSyncDump || canonicalSyncAnalysisOnly;
     options.statistics = canonicalSyncStatistics;
+    options.enableSharedEventFrontiers =
+        !canonicalSyncDisableSharedEventFrontiers;
     options.gmAliasPolicy =
         pto::parseCanonicalGmAliasPolicy(canonicalSyncGmAliasPolicy)
             .value_or(pto::CanonicalGmAliasPolicy::Conservative);
     if (emitMlirIR) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::Canonical, false, options.analysisOnly,
-          options.dump, options.statistics, options.gmAliasPolicy));
+          options.dump, options.statistics, options.enableSharedEventFrontiers,
+          options.gmAliasPolicy));
     } else {
       pm.addNestedPass<func::FuncOp>(pto::createPTOCanonicalSyncPass(options));
     }

@@ -59,6 +59,9 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
            "Print the canonical graph, demands, mechanisms, and coverage">,
     Option<"statistics", "statistics", "bool", "false",
            "Print one JSON statistics record per function">,
+    Option<"enableSharedEventFrontiers", "enable-shared-event-frontiers",
+           "bool", "true",
+           "Enable synthesized non-recurring shared event frontiers">,
     Option<"gmAliasPolicy", "gm-alias-policy", "std::string",
            "\"conservative\"",
            "GM alias policy: conservative or distinct-roots-unsafe">

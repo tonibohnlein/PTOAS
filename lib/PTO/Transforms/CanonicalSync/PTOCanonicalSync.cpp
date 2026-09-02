@@ -56,6 +56,8 @@ void printCanonicalSyncStatistics(const CanonicalSyncStatistics &statistics,
   counts["fixed_covered_demands"] =
       static_cast<std::int64_t>(statistics.fixedCoveredDemands);
   counts["mechanisms"] = static_cast<std::int64_t>(statistics.mechanisms);
+  counts["pipe_barrier_candidates"] =
+      static_cast<std::int64_t>(statistics.pipeBarrierCandidates);
   counts["shared_event_frontiers"] =
       static_cast<std::int64_t>(statistics.sharedEventFrontiers);
   counts["shared_event_frontier_members"] =
@@ -69,6 +71,8 @@ void printCanonicalSyncStatistics(const CanonicalSyncStatistics &statistics,
           statistics.multiDemandPipeBarrierCoveredDemands);
   counts["selected_multi_demand_pipe_barriers"] =
       static_cast<std::int64_t>(statistics.selectedMultiDemandPipeBarriers);
+  counts["selected_pipe_barriers"] =
+      static_cast<std::int64_t>(statistics.selectedPipeBarriers);
   counts["coverage_worlds"] =
       static_cast<std::int64_t>(statistics.coverageWorlds);
   counts["cover_universe"] =
@@ -158,6 +162,7 @@ struct PTOCanonicalSyncPass
     analysisOnly = options.analysisOnly;
     dump = options.dump || options.analysisOnly;
     statistics = options.statistics;
+    enableSharedEventFrontiers = options.enableSharedEventFrontiers;
     gmAliasPolicy =
         stringifyCanonicalGmAliasPolicy(options.gmAliasPolicy).str();
   }
@@ -167,6 +172,7 @@ struct PTOCanonicalSyncPass
     options.analysisOnly = analysisOnly;
     options.dump = dump || analysisOnly;
     options.statistics = statistics;
+    options.enableSharedEventFrontiers = enableSharedEventFrontiers;
     const std::optional<CanonicalGmAliasPolicy> parsedPolicy =
         parseCanonicalGmAliasPolicy(gmAliasPolicy);
     if (!parsedPolicy) {
@@ -273,11 +279,18 @@ LogicalResult runCanonicalSync(func::FuncOp function,
   }
   failureStage = "mechanisms";
   if (failed(timed(statistics.mechanismsUs, [&]() {
-        return buildCanonicalDirectMechanisms(**program);
+        return buildCanonicalDirectMechanisms(
+            **program, options.enableSharedEventFrontiers);
       }))) {
     return failure();
   }
   statistics.mechanisms = (*program)->getMechanisms().size();
+  statistics.pipeBarrierCandidates =
+      llvm::count_if((*program)->getMechanisms(),
+                     [&](const CanonicalMechanism &mechanism) {
+                       return mechanism.kind ==
+                              CanonicalMechanismKind::PipeBarrier;
+                     });
   failureStage = "coverage";
   if (failed(timed(statistics.coverageUs, [&]() {
         return evaluateCanonicalSyncCoverage(**program);
@@ -306,6 +319,11 @@ LogicalResult runCanonicalSync(func::FuncOp function,
         llvm::count_if(solution->mechanisms, [&](CanonicalMechanismId id) {
           return (*program)->getMechanism(id).synthesis ==
                  CanonicalMechanismSynthesis::SharedEventFrontier;
+        });
+    statistics.selectedPipeBarriers =
+        llvm::count_if(solution->mechanisms, [&](CanonicalMechanismId id) {
+          return (*program)->getMechanism(id).kind ==
+                 CanonicalMechanismKind::PipeBarrier;
         });
   }
   failureStage = "allocation";

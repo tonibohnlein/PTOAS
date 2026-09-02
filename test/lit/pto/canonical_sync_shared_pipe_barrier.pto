@@ -78,6 +78,8 @@ module attributes {pto.target_arch = "a2a3"} {
 // STATS-NEXT: {"counts":{
 // STATS-SAME: "multi_demand_pipe_barrier_candidates":1
 // STATS-SAME: "multi_demand_pipe_barrier_covered_demands":2
+// STATS-SAME: "pipe_barrier_candidates":2
 // STATS-SAME: "selected_multi_demand_pipe_barriers":1
+// STATS-SAME: "selected_pipe_barriers":1
 // STATS-SAME: "function":"shared_pipe_barrier"
 // STATS-SAME: "status":"ok"

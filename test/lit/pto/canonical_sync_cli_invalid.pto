@@ -13,6 +13,9 @@
 // RUN: not ptoas --pto-arch=a3 --canonical-sync-stats %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=STATS-DEPENDENT
 // RUN: not ptoas --pto-arch=a3 \
+// RUN:   --canonical-sync-disable-shared-event-frontiers %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=FRONTIER-DEPENDENT
+// RUN: not ptoas --pto-arch=a3 \
 // RUN:   --canonical-sync-gm-alias-policy=distinct-roots-unsafe %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=POLICY-DEPENDENT
 // RUN: not ptoas --pto-arch=a3 --enable-canonical-sync \
@@ -30,6 +33,7 @@ module {
 // A5: --enable-canonical-sync requires --pto-arch=a2 or a3
 // DEPENDENT: canonical sync diagnostic/policy flags require --enable-canonical-sync
 // STATS-DEPENDENT: canonical sync diagnostic/policy flags require --enable-canonical-sync
+// FRONTIER-DEPENDENT: canonical sync diagnostic/policy flags require --enable-canonical-sync
 // POLICY-DEPENDENT: canonical sync diagnostic/policy flags require --enable-canonical-sync
 // POLICY-INVALID: unsupported --canonical-sync-gm-alias-policy='guess'
 // EXCLUSIVE: --enable-insert-sync, --enable-canonical-sync
