@@ -19,15 +19,23 @@
 namespace mlir {
 namespace pto {
 
+enum class CanonicalStructuralCoverMode : std::uint8_t { None, Level };
+
 struct CanonicalSyncOptions {
   bool analysisOnly = false;
   bool dump = false;
   CanonicalGmAliasPolicy gmAliasPolicy =
       CanonicalGmAliasPolicy::Conservative;
+  CanonicalStructuralCoverMode structuralCoverMode =
+      CanonicalStructuralCoverMode::None;
 };
 
 std::optional<CanonicalGmAliasPolicy>
 parseCanonicalGmAliasPolicy(llvm::StringRef value);
+std::optional<CanonicalStructuralCoverMode>
+parseCanonicalStructuralCoverMode(llvm::StringRef value);
+llvm::StringRef
+stringifyCanonicalStructuralCoverMode(CanonicalStructuralCoverMode mode);
 
 FailureOr<std::unique_ptr<CanonicalSyncProgram>>
 buildCanonicalSyncProgram(
@@ -35,6 +43,9 @@ buildCanonicalSyncProgram(
     CanonicalGmAliasPolicy gmAliasPolicy =
         CanonicalGmAliasPolicy::Conservative);
 LogicalResult buildCanonicalDirectMechanisms(CanonicalSyncProgram &program);
+LogicalResult
+proposeCanonicalSyncStructuralGroups(CanonicalSyncProgram &program,
+                                     bool enabled);
 LogicalResult evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program);
 LogicalResult buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program);
 LogicalResult solveCanonicalSyncSetCover(CanonicalSyncProgram &program);

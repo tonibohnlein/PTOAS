@@ -31,6 +31,9 @@ struct PTOCanonicalSyncPass
     dump = options.dump || options.analysisOnly;
     gmAliasPolicy =
         stringifyCanonicalGmAliasPolicy(options.gmAliasPolicy).str();
+    structuralCoverMode =
+        stringifyCanonicalStructuralCoverMode(options.structuralCoverMode)
+            .str();
   }
 
   void runOnOperation() override {
@@ -45,6 +48,14 @@ struct PTOCanonicalSyncPass
       return signalPassFailure();
     }
     options.gmAliasPolicy = *parsedPolicy;
+    const std::optional<CanonicalStructuralCoverMode> parsedStructuralMode =
+        parseCanonicalStructuralCoverMode(structuralCoverMode);
+    if (!parsedStructuralMode) {
+      getOperation().emitError("unknown canonical sync structural cover mode '")
+          << structuralCoverMode << "'";
+      return signalPassFailure();
+    }
+    options.structuralCoverMode = *parsedStructuralMode;
     if (failed(runCanonicalSync(getOperation(), options))) {
       signalPassFailure();
     }
@@ -64,6 +75,28 @@ parseCanonicalGmAliasPolicy(StringRef value) {
   return std::nullopt;
 }
 
+std::optional<CanonicalStructuralCoverMode>
+parseCanonicalStructuralCoverMode(StringRef value) {
+  if (value == "none") {
+    return CanonicalStructuralCoverMode::None;
+  }
+  if (value == "level") {
+    return CanonicalStructuralCoverMode::Level;
+  }
+  return std::nullopt;
+}
+
+StringRef
+stringifyCanonicalStructuralCoverMode(CanonicalStructuralCoverMode mode) {
+  switch (mode) {
+  case CanonicalStructuralCoverMode::None:
+    return "none";
+  case CanonicalStructuralCoverMode::Level:
+    return "level";
+  }
+  llvm_unreachable("unknown canonical structural cover mode");
+}
+
 FailureOr<std::unique_ptr<CanonicalSyncProgram>>
 buildCanonicalSyncProgram(func::FuncOp function,
                           CanonicalGmAliasPolicy gmAliasPolicy) {
@@ -76,8 +109,8 @@ buildCanonicalSyncProgram(func::FuncOp function,
           function))) {
     return failure();
   }
-  auto program = std::make_unique<CanonicalSyncProgram>(function,
-                                                        gmAliasPolicy);
+  auto program =
+      std::make_unique<CanonicalSyncProgram>(function, gmAliasPolicy);
   if (failed(canonical_sync_detail::buildCanonicalStructureAndAccesses(
           *program, *target)) ||
       failed(
@@ -103,6 +136,11 @@ LogicalResult runCanonicalSync(func::FuncOp function,
     return failure();
   }
   if (failed(buildCanonicalDirectMechanisms(**program))) {
+    return failure();
+  }
+  if (failed(proposeCanonicalSyncStructuralGroups(
+          **program, options.structuralCoverMode ==
+                         CanonicalStructuralCoverMode::Level))) {
     return failure();
   }
   if (failed(evaluateCanonicalSyncCoverage(**program))) {

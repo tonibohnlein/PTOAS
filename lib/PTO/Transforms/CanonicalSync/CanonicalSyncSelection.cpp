@@ -8,9 +8,10 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-// Each selectable column is one direct physical synchronization mechanism.
-// Its coverage is computed once, before solving. Greedy selection and reverse
-// deletion consume only those cached incidence sets.
+// Selectable columns are singleton direct mechanisms or bounded groups of
+// those same mechanisms. Every incidence set is grounded before solving.
+// Group columns are conjunctions: their coverage becomes active only when all
+// member mechanisms are selected.
 
 #include "CanonicalSyncInternal.h"
 
@@ -61,11 +62,60 @@ bool coversUniverse(const BitVector &covered, const BitVector &universe) {
   return true;
 }
 
-LogicalResult appendCandidate(CanonicalSyncProgram &program,
-                              CanonicalSetCoverInstance &instance,
-                              const BitVector &baselineCovered,
-                              const CanonicalMechanism &mechanism,
-                              const CanonicalCoverageWorld &world) {
+bool candidateIsActive(const CanonicalSetCoverCandidate &candidate,
+                       const BitVector &selectedMechanisms) {
+  return llvm::all_of(candidate.mechanisms, [&](CanonicalMechanismId id) {
+    return selectedMechanisms.test(id);
+  });
+}
+
+BitVector activeCoverage(const CanonicalSetCoverInstance &instance,
+                         const BitVector &selectedMechanisms,
+                         std::size_t demandCount) {
+  BitVector covered(demandCount);
+  for (const CanonicalSetCoverCandidate &candidate : instance.candidates) {
+    if (candidateIsActive(candidate, selectedMechanisms)) {
+      covered |= candidate.incidence;
+    }
+  }
+  return covered;
+}
+
+unsigned missingMechanismCount(const CanonicalSetCoverCandidate &candidate,
+                               const BitVector &selectedMechanisms) {
+  return llvm::count_if(candidate.mechanisms,
+                        [&](CanonicalMechanismId mechanism) {
+                          return !selectedMechanisms.test(mechanism);
+                        });
+}
+
+bool betterMove(unsigned gain, unsigned cost,
+                const CanonicalSetCoverCandidate &candidate, unsigned bestGain,
+                unsigned bestCost, const CanonicalSetCoverCandidate *best) {
+  if (!best) {
+    return true;
+  }
+  const std::uint64_t lhs = static_cast<std::uint64_t>(gain) * bestCost;
+  const std::uint64_t rhs = static_cast<std::uint64_t>(bestGain) * cost;
+  if (lhs != rhs) {
+    return lhs > rhs;
+  }
+  if (gain != bestGain) {
+    return gain > bestGain;
+  }
+  if (cost != bestCost) {
+    return cost < bestCost;
+  }
+  return candidate.id < best->id;
+}
+
+LogicalResult appendCandidate(
+    CanonicalSyncProgram &program, CanonicalSetCoverInstance &instance,
+    const BitVector &baselineCovered, ArrayRef<CanonicalMechanismId> mechanisms,
+    ArrayRef<CanonicalDemandId> directOrigins,
+    const CanonicalCoverageWorld &world,
+    std::optional<CanonicalStructuralProposalId> structuralProposal =
+        std::nullopt) {
   const bool candidateIdsExhausted =
       instance.candidates.size() >= kInvalidCanonicalSyncId;
   if (candidateIdsExhausted) {
@@ -76,10 +126,12 @@ LogicalResult appendCandidate(CanonicalSyncProgram &program,
   CanonicalSetCoverCandidate candidate;
   candidate.id =
       static_cast<CanonicalSetCoverCandidateId>(instance.candidates.size());
-  candidate.mechanisms.push_back(mechanism.id);
+  candidate.mechanisms.assign(mechanisms.begin(), mechanisms.end());
+  canonicalize(candidate.mechanisms);
   candidate.incidence.resize(program.getDemands().size());
-  candidate.weight = 1;
-  for (CanonicalDemandId origin : mechanism.origins) {
+  candidate.weight = candidate.mechanisms.size();
+  candidate.structuralProposal = structuralProposal;
+  for (CanonicalDemandId origin : directOrigins) {
     if (instance.universeIncidence.test(origin)) {
       candidate.directOrigins.push_back(origin);
     }
@@ -122,6 +174,7 @@ mlir::pto::buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program) {
   const bool invalidState = !program.isGraphFrozen() || program.isFrozen() ||
                             program.getSetCoverInstance().has_value() ||
                             !program.mechanismCatalogComplete ||
+                            !program.structuralProposalCatalogComplete ||
                             !program.coverageCatalogComplete;
   if (invalidState) {
     return program.getFunction().emitError(
@@ -197,13 +250,41 @@ mlir::pto::buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program) {
           "singleton world");
     }
     const std::size_t oldCandidateCount = instance.candidates.size();
-    if (failed(appendCandidate(program, instance, baselineCovered, mechanism,
-                               *world))) {
+    if (failed(appendCandidate(program, instance, baselineCovered,
+                               ArrayRef<CanonicalMechanismId>(mechanism.id),
+                               mechanism.origins, *world))) {
       return failure();
     }
     const bool candidateAdded = instance.candidates.size() != oldCandidateCount;
     if (candidateAdded) {
       providerCoverage |= instance.candidates.back().incidence;
+    }
+  }
+
+  for (const CanonicalStructuralProposal &proposal :
+       program.getStructuralProposals()) {
+    if (!proposal.admitted) {
+      continue;
+    }
+    const auto world = llvm::find_if(
+        program.getCoverageWorlds(), [&](const CanonicalCoverageWorld &item) {
+          return item.structuralProposal == proposal.id;
+        });
+    if (world == program.getCoverageWorlds().end()) {
+      return program.getFunction().emitError(
+          "canonical sync set-cover construction is missing a grounded "
+          "structural world");
+    }
+    SmallVector<CanonicalDemandId, 8> directOrigins;
+    for (CanonicalMechanismId mechanism : proposal.mechanisms) {
+      llvm::append_range(directOrigins,
+                         program.getMechanism(mechanism).origins);
+    }
+    canonicalize(directOrigins);
+    if (failed(appendCandidate(program, instance, baselineCovered,
+                               proposal.mechanisms, directOrigins, *world,
+                               proposal.id))) {
+      return failure();
     }
   }
 
@@ -221,10 +302,12 @@ mlir::pto::buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program) {
 
 LogicalResult
 mlir::pto::solveCanonicalSyncSetCover(CanonicalSyncProgram &program) {
-  const bool invalidState =
-      !program.isGraphFrozen() || program.isFrozen() ||
-      !program.getSetCoverInstance() || program.getSetCoverSolution() ||
-      !program.mechanismCatalogComplete || !program.coverageCatalogComplete;
+  const bool invalidState = !program.isGraphFrozen() || program.isFrozen() ||
+                            !program.getSetCoverInstance() ||
+                            program.getSetCoverSolution() ||
+                            !program.mechanismCatalogComplete ||
+                            !program.structuralProposalCatalogComplete ||
+                            !program.coverageCatalogComplete;
   if (invalidState) {
     return program.getFunction().emitError(
         "canonical sync set-cover solving requires one complete mutable "
@@ -233,78 +316,84 @@ mlir::pto::solveCanonicalSyncSetCover(CanonicalSyncProgram &program) {
 
   const CanonicalSetCoverInstance &instance = *program.getSetCoverInstance();
   const BitVector &universe = instance.universeIncidence;
-  BitVector covered(program.getDemands().size());
   CanonicalSetCoverSolution solution;
-  SmallVector<CanonicalMechanismId, 8> selected(instance.baseline.begin(),
-                                                instance.baseline.end());
+  BitVector selectedMechanisms(program.getMechanisms().size());
+  for (CanonicalMechanismId mechanism : instance.baseline) {
+    selectedMechanisms.set(mechanism);
+  }
+  BitVector covered =
+      activeCoverage(instance, selectedMechanisms, program.getDemands().size());
   SmallVector<CanonicalMechanismId, 8> additionOrder;
-  BitVector selectedCandidates(instance.candidates.size());
-  SmallVector<unsigned, 8> coverageCounts(program.getDemands().size(), 0U);
 
   while (!coversUniverse(covered, universe)) {
     const CanonicalSetCoverCandidate *best = nullptr;
     unsigned bestGain = 0;
+    unsigned bestCost = 0;
     for (const CanonicalSetCoverCandidate &candidate : instance.candidates) {
-      if (selectedCandidates.test(candidate.id)) {
+      const unsigned cost =
+          missingMechanismCount(candidate, selectedMechanisms);
+      if (cost == 0U) {
         continue;
       }
-      BitVector gain = candidate.incidence;
+      BitVector trialMechanisms = selectedMechanisms;
+      for (CanonicalMechanismId mechanism : candidate.mechanisms) {
+        trialMechanisms.set(mechanism);
+      }
+      BitVector gain = activeCoverage(instance, trialMechanisms,
+                                      program.getDemands().size());
       gain.reset(covered);
       const unsigned count = gain.count();
-      if (count > bestGain) {
+      if (count != 0U &&
+          betterMove(count, cost, candidate, bestGain, bestCost, best)) {
         best = &candidate;
         bestGain = count;
+        bestCost = cost;
       }
     }
     if (!best) {
       return program.getFunction().emitError(
-          "canonical sync singleton set-cover solver cannot cover its "
+          "canonical sync grouped set-cover solver cannot cover its "
           "universe");
     }
     solution.greedyCandidates.push_back(best->id);
-    selectedCandidates.set(best->id);
-    selected.push_back(best->mechanisms.front());
-    additionOrder.push_back(best->mechanisms.front());
-    covered |= best->incidence;
-    for (int demand = best->incidence.find_first(); demand >= 0;
-         demand = best->incidence.find_next(demand)) {
-      ++coverageCounts[static_cast<unsigned>(demand)];
+    for (CanonicalMechanismId mechanism : best->mechanisms) {
+      if (!selectedMechanisms.test(mechanism)) {
+        selectedMechanisms.set(mechanism);
+        additionOrder.push_back(mechanism);
+      }
     }
+    covered = activeCoverage(instance, selectedMechanisms,
+                             program.getDemands().size());
   }
 
   for (CanonicalMechanismId mechanism : llvm::reverse(additionOrder)) {
-    const CanonicalSetCoverCandidate *candidate =
-        llvm::find_if(instance.candidates,
-                      [mechanism](const CanonicalSetCoverCandidate &item) {
-                        return item.mechanisms.front() == mechanism;
-                      });
-    const bool removable =
-        llvm::all_of(universe.set_bits(), [&](unsigned demand) {
-          return !candidate->incidence.test(demand) ||
-                 coverageCounts[demand] > 1U;
-        });
-    if (!removable) {
+    selectedMechanisms.reset(mechanism);
+    BitVector trialCoverage = activeCoverage(instance, selectedMechanisms,
+                                             program.getDemands().size());
+    if (!coversUniverse(trialCoverage, universe)) {
+      selectedMechanisms.set(mechanism);
       continue;
     }
-    selected.erase(std::remove(selected.begin(), selected.end(), mechanism),
-                   selected.end());
     solution.reverseDeleted.push_back(mechanism);
-    for (int demand = candidate->incidence.find_first(); demand >= 0;
-         demand = candidate->incidence.find_next(demand)) {
-      --coverageCounts[static_cast<unsigned>(demand)];
-    }
+    covered = std::move(trialCoverage);
   }
 
-  canonicalize(selected);
-  BitVector finalCoverage(program.getDemands().size());
-  for (unsigned demand : universe.set_bits()) {
-    if (coverageCounts[demand] != 0U) {
-      finalCoverage.set(demand);
-    }
+  SmallVector<CanonicalMechanismId, 8> selected;
+  for (int mechanism = selectedMechanisms.find_first(); mechanism >= 0;
+       mechanism = selectedMechanisms.find_next(mechanism)) {
+    selected.push_back(static_cast<CanonicalMechanismId>(mechanism));
   }
+  const BitVector finalCoverage =
+      activeCoverage(instance, selectedMechanisms, program.getDemands().size());
   if (!coversUniverse(finalCoverage, universe)) {
     return program.getFunction().emitError(
-        "canonical sync singleton set-cover solution is incomplete");
+        "canonical sync grouped set-cover solution is incomplete");
+  }
+  for (CanonicalMechanismId mechanism : instance.baseline) {
+    if (!selectedMechanisms.test(mechanism)) {
+      return program.getFunction().emitError(
+          "canonical sync grouped set-cover removed baseline supply");
+    }
   }
   solution.mechanisms = std::move(selected);
   solution.weight = static_cast<std::uint64_t>(

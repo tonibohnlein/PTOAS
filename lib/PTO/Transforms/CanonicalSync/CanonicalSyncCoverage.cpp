@@ -900,6 +900,7 @@ mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
   const bool invalidState = !program.isGraphFrozen() || program.isFrozen() ||
                             program.getSetCoverInstance().has_value() ||
                             !program.mechanismCatalogComplete ||
+                            !program.structuralProposalCatalogComplete ||
                             program.coverageCatalogComplete;
   if (invalidState) {
     return program.getFunction().emitError(
@@ -938,6 +939,68 @@ mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
     if (failed(appendGroup(name, singleton))) {
       return failure();
     }
+  }
+
+  const auto findSingleton =
+      [&](CanonicalMechanismId mechanism) -> const CanonicalCoverageWorld * {
+    const auto found = llvm::find_if(
+        program.getCoverageWorlds(), [&](const CanonicalCoverageWorld &world) {
+          if (world.mechanisms.size() != baseline.size() + 1U ||
+              !llvm::is_contained(world.mechanisms, mechanism)) {
+            return false;
+          }
+          return llvm::all_of(baseline, [&](CanonicalMechanismId id) {
+            return llvm::is_contained(world.mechanisms, id);
+          });
+        });
+    return found == program.getCoverageWorlds().end() ? nullptr : &*found;
+  };
+  for (CanonicalStructuralProposal &proposal : program.structuralProposals) {
+    SmallVector<CanonicalMechanismId, 16> selected(baseline.begin(),
+                                                   baseline.end());
+    llvm::append_range(selected, proposal.mechanisms);
+    llvm::sort(selected);
+    selected.erase(std::unique(selected.begin(), selected.end()),
+                   selected.end());
+    const std::string name = (Twine("structural-g") + Twine(proposal.id)).str();
+    FailureOr<CanonicalCoverageWorld> world =
+        canonical_sync_detail::evaluateCanonicalSyncGroup(program, name,
+                                                          selected);
+    if (failed(world)) {
+      return failure();
+    }
+    BitVector singletonUnion(program.getDemands().size());
+    for (CanonicalMechanismId mechanism : proposal.mechanisms) {
+      const CanonicalCoverageWorld *singleton = findSingleton(mechanism);
+      if (!singleton) {
+        return program.getFunction().emitError(
+            "canonical sync structural grounding is missing a singleton "
+            "coverage world");
+      }
+      for (CanonicalDemandId demand : singleton->covered) {
+        singletonUnion.set(demand);
+      }
+    }
+    for (int demand = singletonUnion.find_first(); demand >= 0;
+         demand = singletonUnion.find_next(demand)) {
+      proposal.singletonUnionCoverage.push_back(
+          static_cast<CanonicalDemandId>(demand));
+    }
+    BitVector grounded(program.getDemands().size());
+    for (CanonicalDemandId demand : world->covered) {
+      grounded.set(demand);
+      proposal.groundedCoverage.push_back(demand);
+    }
+    grounded.reset(singletonUnion);
+    for (int demand = grounded.find_first(); demand >= 0;
+         demand = grounded.find_next(demand)) {
+      proposal.additionalCoverage.push_back(
+          static_cast<CanonicalDemandId>(demand));
+    }
+    proposal.admitted = !proposal.additionalCoverage.empty();
+    world->setCoverCandidate = proposal.admitted;
+    world->structuralProposal = proposal.id;
+    program.appendCoverageWorld(std::move(*world));
   }
 
   program.coverageCatalogComplete = true;

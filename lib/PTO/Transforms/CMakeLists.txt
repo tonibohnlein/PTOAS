@@ -112,6 +112,7 @@ add_mlir_dialect_library(PTOTransforms
   CanonicalSync/CanonicalSyncProgramPoints.cpp
   CanonicalSync/CanonicalSyncResources.cpp
   CanonicalSync/CanonicalSyncSelection.cpp
+  CanonicalSync/CanonicalSyncStructure.cpp
   CanonicalSync/CanonicalSyncTarget.cpp
   CanonicalSync/CanonicalSyncVerifierDataflow.cpp
   CanonicalSync/CanonicalSyncVerifierEvents.cpp
