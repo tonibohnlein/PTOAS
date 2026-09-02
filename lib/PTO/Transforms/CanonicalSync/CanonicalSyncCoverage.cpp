@@ -345,17 +345,9 @@ void joinChoiceCompletions(const CanonicalRegion &choice,
   }
 }
 
-SmallVector<CompletionFact, 32>
-evaluateFlattenedFacts(const CanonicalSyncProgram &program,
-                       ArrayRef<CanonicalMechanismId> selected) {
-  SmallVector<CompletionFact, 32> facts;
-  for (CanonicalMechanismId id : selected) {
-    const CanonicalMechanism &mechanism = program.getMechanism(id);
-    if (mechanism.kind == CanonicalMechanismKind::PipeBarrier) {
-      applyBarrier(program, mechanism, facts,
-                   program.getMechanismExecutionLoops(mechanism.id));
-    }
-  }
+void closeFlattenedFacts(const CanonicalSyncProgram &program,
+                         ArrayRef<CanonicalMechanismId> selected,
+                         SmallVectorImpl<CompletionFact> &facts) {
   bool changed = true;
   while (changed) {
     changed = joinFlattenedChoiceFacts(program, facts);
@@ -374,6 +366,35 @@ evaluateFlattenedFacts(const CanonicalSyncProgram &program,
       }
     }
   }
+}
+
+SmallVector<CompletionFact, 32>
+evaluateFlattenedFacts(const CanonicalSyncProgram &program,
+                       ArrayRef<CanonicalMechanismId> selected) {
+  SmallVector<CompletionFact, 32> facts;
+  for (CanonicalMechanismId id : selected) {
+    const CanonicalMechanism &mechanism = program.getMechanism(id);
+    if (mechanism.kind == CanonicalMechanismKind::PipeBarrier) {
+      applyBarrier(program, mechanism, facts,
+                   program.getMechanismExecutionLoops(mechanism.id));
+    }
+  }
+  closeFlattenedFacts(program, selected, facts);
+  return facts;
+}
+
+SmallVector<CompletionFact, 32> extendFlattenedFacts(
+    const CanonicalSyncProgram &program,
+    ArrayRef<CanonicalMechanismId> selected, CanonicalMechanismId singleton,
+    ArrayRef<CompletionFact> baselineFacts) {
+  SmallVector<CompletionFact, 32> facts(baselineFacts.begin(),
+                                        baselineFacts.end());
+  const CanonicalMechanism &mechanism = program.getMechanism(singleton);
+  if (mechanism.kind == CanonicalMechanismKind::PipeBarrier) {
+    applyBarrier(program, mechanism, facts,
+                 program.getMechanismExecutionLoops(mechanism.id));
+  }
+  closeFlattenedFacts(program, selected, facts);
   return facts;
 }
 
@@ -433,19 +454,14 @@ bool applyBoundaryTransfer(const CanonicalSyncProgram &program,
   return changed;
 }
 
-CanonicalRegionSummary
-summarizeRegion(const CanonicalSyncProgram &program, CanonicalRegionId region,
-                ArrayRef<CanonicalMechanismId> selected,
-                SmallVectorImpl<CanonicalRegionSummary> &summaries) {
+CanonicalRegionSummary summarizeRegionFromChildren(
+    const CanonicalSyncProgram &program, CanonicalRegionId region,
+    ArrayRef<CanonicalMechanismId> selected,
+    ArrayRef<CanonicalRegionSummary> childSummaries) {
   CanonicalRegionSummary result;
   result.region = region;
-  SmallVector<CanonicalRegionSummary, 4> childSummaries;
-  for (CanonicalRegionId childId : program.getRegionChildren(region)) {
-    const CanonicalRegion &child = program.getRegion(childId);
-    CanonicalRegionSummary childSummary =
-        summarizeRegion(program, child.id, selected, summaries);
-    result.children.push_back(child.id);
-    childSummaries.push_back(childSummary);
+  for (const CanonicalRegionSummary &childSummary : childSummaries) {
+    result.children.push_back(childSummary.region);
     for (const CompletionFact &fact : childSummary.completions) {
       CompletionFact imported = fact;
       if (program.getRegion(region).kind == CanonicalRegionKind::Loop &&
@@ -506,7 +522,43 @@ summarizeRegion(const CanonicalSyncProgram &program, CanonicalRegionId region,
           applyBoundaryTransfer(program, transfer, result.completions);
     }
   }
+  return result;
+}
+
+CanonicalRegionSummary
+summarizeRegion(const CanonicalSyncProgram &program, CanonicalRegionId region,
+                ArrayRef<CanonicalMechanismId> selected,
+                SmallVectorImpl<CanonicalRegionSummary> &summaries) {
+  SmallVector<CanonicalRegionSummary, 4> childSummaries;
+  for (CanonicalRegionId child : program.getRegionChildren(region)) {
+    childSummaries.push_back(
+        summarizeRegion(program, child, selected, summaries));
+  }
+  CanonicalRegionSummary result =
+      summarizeRegionFromChildren(program, region, selected, childSummaries);
   summaries.push_back(result);
+  return result;
+}
+
+CanonicalRegionSummary summarizeRegionIncrementally(
+    const CanonicalSyncProgram &program, CanonicalRegionId region,
+    ArrayRef<CanonicalMechanismId> selected, ArrayRef<uint8_t> dirtyRegions,
+    ArrayRef<std::size_t> baselineSummaryIndex,
+    ArrayRef<CanonicalRegionSummary> baselineSummaries,
+    SmallVectorImpl<CanonicalRegionSummary> &updatedSummaries) {
+  if (dirtyRegions[region] == 0U) {
+    return baselineSummaries[baselineSummaryIndex[region]];
+  }
+
+  SmallVector<CanonicalRegionSummary, 4> childSummaries;
+  for (CanonicalRegionId child : program.getRegionChildren(region)) {
+    childSummaries.push_back(summarizeRegionIncrementally(
+        program, child, selected, dirtyRegions, baselineSummaryIndex,
+        baselineSummaries, updatedSummaries));
+  }
+  CanonicalRegionSummary result =
+      summarizeRegionFromChildren(program, region, selected, childSummaries);
+  updatedSummaries.push_back(result);
   return result;
 }
 
@@ -727,25 +779,14 @@ coveredDemands(const CanonicalSyncProgram &program,
   return covered;
 }
 
-CanonicalCoverageWorld evaluateWorld(const CanonicalSyncProgram &program,
-                                     StringRef name,
-                                     ArrayRef<CanonicalMechanismId> selected) {
-  CanonicalCoverageWorld world;
-  world.name = name.str();
-  world.mechanisms.assign(selected.begin(), selected.end());
-  llvm::sort(world.mechanisms);
-  world.mechanisms.erase(
-      std::unique(world.mechanisms.begin(), world.mechanisms.end()),
-      world.mechanisms.end());
-
-  CanonicalRegionSummary root =
-      summarizeRegion(program, 0, world.mechanisms, world.summaries);
+CanonicalCoverageWorld finishWorldEvaluation(
+    const CanonicalSyncProgram &program, CanonicalCoverageWorld world,
+    const CanonicalRegionSummary &root,
+    ArrayRef<CompletionFact> flattenedFacts) {
   const SmallVector<CanonicalDemandId, 16> summarized =
       coveredDemands(program, world.mechanisms, root.completions);
   world.covered.assign(summarized.begin(), summarized.end());
 
-  const SmallVector<CompletionFact, 32> flattenedFacts =
-      evaluateFlattenedFacts(program, world.mechanisms);
   const SmallVector<CanonicalDemandId, 16> flattened =
       coveredDemands(program, world.mechanisms, flattenedFacts);
   world.flattenedOracleMatched = summarized == flattened;
@@ -781,20 +822,127 @@ CanonicalCoverageWorld evaluateWorld(const CanonicalSyncProgram &program,
   return world;
 }
 
-} // namespace
-
-FailureOr<CanonicalCoverageWorld>
-mlir::pto::canonical_sync_detail::evaluateCanonicalSyncGroup(
+CanonicalCoverageWorld evaluateWorld(
     const CanonicalSyncProgram &program, StringRef name,
-    ArrayRef<CanonicalMechanismId> selected) {
-  if (llvm::any_of(selected, [&program](CanonicalMechanismId id) {
-        return id >= program.getMechanisms().size();
-      })) {
+    ArrayRef<CanonicalMechanismId> selected,
+    SmallVectorImpl<CompletionFact> *flattenedOutput = nullptr) {
+  CanonicalCoverageWorld world;
+  world.name = name.str();
+  world.mechanisms.assign(selected.begin(), selected.end());
+  llvm::sort(world.mechanisms);
+  world.mechanisms.erase(
+      std::unique(world.mechanisms.begin(), world.mechanisms.end()),
+      world.mechanisms.end());
+
+  CanonicalRegionSummary root =
+      summarizeRegion(program, 0, world.mechanisms, world.summaries);
+  const SmallVector<CompletionFact, 32> flattenedFacts =
+      evaluateFlattenedFacts(program, world.mechanisms);
+  if (flattenedOutput) {
+    flattenedOutput->assign(flattenedFacts.begin(), flattenedFacts.end());
+  }
+  return finishWorldEvaluation(program, std::move(world), root,
+                               flattenedFacts);
+}
+
+FailureOr<SmallVector<uint8_t, 16>>
+findDirtyRegionPath(const CanonicalSyncProgram &program,
+                    CanonicalRegionId actionRegion) {
+  if (actionRegion >= program.getRegions().size()) {
     program.getFunction().emitError(
-        "canonical sync coverage group references an invalid mechanism");
+        "canonical sync singleton has an invalid action region");
     return failure();
   }
-  CanonicalCoverageWorld world = evaluateWorld(program, name, selected);
+
+  SmallVector<uint8_t, 16> dirtyRegions(program.getRegions().size(), 0U);
+  CanonicalRegionId current = actionRegion;
+  while (current != kInvalidCanonicalSyncId) {
+    const bool invalidAncestry = current >= program.getRegions().size() ||
+                                 dirtyRegions[current] != 0U;
+    if (invalidAncestry) {
+      program.getFunction().emitError(
+          "canonical sync singleton has an invalid region ancestry");
+      return failure();
+    }
+    dirtyRegions[current] = 1U;
+    current = program.getRegion(current).parent;
+  }
+  const bool rootNotReached = dirtyRegions.empty() || dirtyRegions[0] == 0U;
+  if (rootNotReached) {
+    program.getFunction().emitError(
+        "canonical sync singleton action region does not reach the root");
+    return failure();
+  }
+  return dirtyRegions;
+}
+
+FailureOr<SmallVector<std::size_t, 16>> indexBaselineSummaries(
+    const CanonicalSyncProgram &program,
+    ArrayRef<CanonicalRegionSummary> summaries) {
+  const std::size_t missingSummary = program.getRegions().size();
+  SmallVector<std::size_t, 16> indices(program.getRegions().size(),
+                                        missingSummary);
+  for (std::size_t index = 0; index < summaries.size(); ++index) {
+    const CanonicalRegionId region = summaries[index].region;
+    const bool invalidSummary =
+        region >= indices.size() || indices[region] != missingSummary;
+    if (invalidSummary) {
+      program.getFunction().emitError(
+          "canonical sync baseline contains invalid region summaries");
+      return failure();
+    }
+    indices[region] = index;
+  }
+  const bool missingRegion = summaries.size() != program.getRegions().size() ||
+                             llvm::is_contained(indices, missingSummary);
+  if (missingRegion) {
+    program.getFunction().emitError(
+        "canonical sync baseline omits a region summary");
+    return failure();
+  }
+  return indices;
+}
+
+FailureOr<CanonicalCoverageWorld> evaluateSingletonWorld(
+    const CanonicalSyncProgram &program, StringRef name,
+    ArrayRef<CanonicalMechanismId> baseline, CanonicalMechanismId singleton,
+    const CanonicalCoverageWorld &baselineWorld,
+    ArrayRef<CompletionFact> baselineFlattenedFacts,
+    ArrayRef<std::size_t> baselineSummaryIndex) {
+  const CanonicalMechanism &mechanism = program.getMechanism(singleton);
+  CanonicalCoverageWorld world;
+  world.name = name.str();
+  world.mechanisms.assign(baseline.begin(), baseline.end());
+  world.mechanisms.push_back(singleton);
+  llvm::sort(world.mechanisms);
+  world.mechanisms.erase(
+      std::unique(world.mechanisms.begin(), world.mechanisms.end()),
+      world.mechanisms.end());
+
+  FailureOr<SmallVector<uint8_t, 16>> dirtyRegions =
+      findDirtyRegionPath(program, mechanism.actionRegion);
+  if (failed(dirtyRegions)) {
+    return failure();
+  }
+
+  SmallVector<CanonicalRegionSummary, 8> updatedSummaries;
+  CanonicalRegionSummary root = summarizeRegionIncrementally(
+      program, 0, world.mechanisms, *dirtyRegions, baselineSummaryIndex,
+      baselineWorld.summaries, updatedSummaries);
+  world.summaries = baselineWorld.summaries;
+  for (CanonicalRegionSummary &summary : updatedSummaries) {
+    world.summaries[baselineSummaryIndex[summary.region]] = std::move(summary);
+  }
+
+  const SmallVector<CompletionFact, 32> flattenedFacts = extendFlattenedFacts(
+      program, world.mechanisms, singleton, baselineFlattenedFacts);
+  return finishWorldEvaluation(program, std::move(world), root,
+                               flattenedFacts);
+}
+
+FailureOr<CanonicalCoverageWorld>
+validateCoverageWorld(const CanonicalSyncProgram &program,
+                      CanonicalCoverageWorld world) {
   const bool unrolledMismatch =
       world.unrolledOracleExhaustive && !world.unrolledOracleMatched;
   if (world.flattenedOracleMatched && world.unrolledOracleAvailable &&
@@ -870,6 +1018,27 @@ mlir::pto::canonical_sync_detail::evaluateCanonicalSyncGroup(
   return failure();
 }
 
+void discardDetailedSummaries(CanonicalCoverageWorld &world) {
+  SmallVector<CanonicalRegionSummary, 0> empty;
+  world.summaries.swap(empty);
+}
+
+} // namespace
+
+FailureOr<CanonicalCoverageWorld>
+mlir::pto::canonical_sync_detail::evaluateCanonicalSyncGroup(
+    const CanonicalSyncProgram &program, StringRef name,
+    ArrayRef<CanonicalMechanismId> selected) {
+  if (llvm::any_of(selected, [&program](CanonicalMechanismId id) {
+        return id >= program.getMechanisms().size();
+      })) {
+    program.getFunction().emitError(
+        "canonical sync coverage group references an invalid mechanism");
+    return failure();
+  }
+  return validateCoverageWorld(program, evaluateWorld(program, name, selected));
+}
+
 LogicalResult
 mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
   const bool invalidState = !program.isGraphFrozen() || program.isFrozen() ||
@@ -880,18 +1049,6 @@ mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
     return program.getFunction().emitError(
         "canonical sync coverage requires an unsealed mechanism catalog");
   }
-  const auto appendGroup = [&program](StringRef name,
-                                      ArrayRef<CanonicalMechanismId> selected) {
-    FailureOr<CanonicalCoverageWorld> world =
-        canonical_sync_detail::evaluateCanonicalSyncGroup(program, name,
-                                                          selected);
-    if (failed(world)) {
-      return failure();
-    }
-    program.appendCoverageWorld(std::move(*world));
-    return success();
-  };
-
   SmallVector<CanonicalMechanismId, 8> baseline;
   for (const CanonicalMechanism &mechanism : program.getMechanisms()) {
     if (mechanism.kind == CanonicalMechanismKind::IntrinsicOrder ||
@@ -900,14 +1057,17 @@ mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
       baseline.push_back(mechanism.id);
     }
   }
-  if (failed(appendGroup("baseline", baseline))) {
+  SmallVector<CompletionFact, 32> baselineFlattenedFacts;
+  FailureOr<CanonicalCoverageWorld> baselineWorld = validateCoverageWorld(
+      program,
+      evaluateWorld(program, "baseline", baseline, &baselineFlattenedFacts));
+  if (failed(baselineWorld)) {
     return failure();
   }
-  if (!program.getCoverageWorlds().back().covered.empty()) {
+  if (!baselineWorld->covered.empty()) {
     InFlightDiagnostic diagnostic = program.getFunction().emitError(
         "canonical sync fixed supply covers residual demand");
-    for (CanonicalDemandId demandId :
-         program.getCoverageWorlds().back().covered) {
+    for (CanonicalDemandId demandId : baselineWorld->covered) {
       const CanonicalDemand &demand = program.getDemand(demandId);
       diagnostic << " d" << demandId << "(p" << demand.source << "->p"
                  << demand.target << ')';
@@ -915,16 +1075,34 @@ mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
     diagnostic << "; baseline integration is incomplete";
     return failure();
   }
+
+  FailureOr<SmallVector<std::size_t, 16>> baselineSummaryIndex =
+      indexBaselineSummaries(program, baselineWorld->summaries);
+  if (failed(baselineSummaryIndex)) {
+    return failure();
+  }
+  CanonicalCoverageWorld storedBaseline = *baselineWorld;
+  discardDetailedSummaries(storedBaseline);
+  program.appendCoverageWorld(std::move(storedBaseline));
+
   for (const CanonicalMechanism &mechanism : program.getMechanisms()) {
     if (llvm::is_contained(baseline, mechanism.id)) {
       continue;
     }
-    SmallVector<CanonicalMechanismId, 8> singleton = baseline;
-    singleton.push_back(mechanism.id);
     const std::string name = (Twine("singleton-m") + Twine(mechanism.id)).str();
-    if (failed(appendGroup(name, singleton))) {
+    FailureOr<CanonicalCoverageWorld> world = evaluateSingletonWorld(
+        program, name, baseline, mechanism.id, *baselineWorld,
+        baselineFlattenedFacts, *baselineSummaryIndex);
+    if (failed(world)) {
       return failure();
     }
+    FailureOr<CanonicalCoverageWorld> checked =
+        validateCoverageWorld(program, std::move(*world));
+    if (failed(checked)) {
+      return failure();
+    }
+    discardDetailedSummaries(*checked);
+    program.appendCoverageWorld(std::move(*checked));
   }
 
   program.coverageCatalogComplete = true;

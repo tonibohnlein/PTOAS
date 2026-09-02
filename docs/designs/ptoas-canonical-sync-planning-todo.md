@@ -94,6 +94,21 @@ mechanism it also caches enclosing execution loops and the source-prefix phases
 that may precede its physical source cut. The regional and flat coverage paths
 consume these caches; the bounded structured oracle remains independent.
 
+Singleton evaluation also computes the immutable baseline region summaries and
+flat fixed point once. For one direct mechanism, only its action region and the
+ancestor path to the function root are recomputed; unaffected child summaries
+are reused. The flat differential oracle starts from its own baseline fixed
+point and closes the singleton delta. The bounded structured oracle still
+executes every singleton world independently from scratch, so it continues to
+detect an unsafe incremental overclaim.
+
+Detailed region summaries remain live only while a world is checked. Once the
+regional result agrees with the flat oracle and every exhaustive bounded
+oracle, the persistent catalog keeps the authenticated mechanism and demand
+incidence plus oracle verdicts, but releases the concrete summary payload. The
+baseline summaries remain available locally until all singleton deltas have
+been evaluated.
+
 ### Sparse cover and heap solver
 
 Each singleton candidate stores sorted covered demand IDs. The instance also
