@@ -555,7 +555,7 @@ void deriveMemoryDemands(CanonicalSyncProgram &program, DemandIndex &index,
     for (const CanonicalAccess &target : program.getAccesses()) {
       const CanonicalPhase &targetPhase = program.getPhase(target.phase);
       const bool samePhase = source.phase == target.phase;
-      if (!accessesMayAlias(source, target)) {
+      if (!accessesMayAlias(source, target, program.getGmAliasPolicy())) {
         continue;
       }
       std::optional<CanonicalDemandKind> hazard =

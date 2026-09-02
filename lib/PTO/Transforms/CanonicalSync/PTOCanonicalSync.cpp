@@ -29,12 +29,22 @@ struct PTOCanonicalSyncPass
   explicit PTOCanonicalSyncPass(const CanonicalSyncOptions &options) {
     analysisOnly = options.analysisOnly;
     dump = options.dump || options.analysisOnly;
+    gmAliasPolicy =
+        stringifyCanonicalGmAliasPolicy(options.gmAliasPolicy).str();
   }
 
   void runOnOperation() override {
     CanonicalSyncOptions options;
     options.analysisOnly = analysisOnly;
     options.dump = dump || analysisOnly;
+    const std::optional<CanonicalGmAliasPolicy> parsedPolicy =
+        parseCanonicalGmAliasPolicy(gmAliasPolicy);
+    if (!parsedPolicy) {
+      getOperation().emitError("unknown canonical sync GM alias policy '")
+          << gmAliasPolicy << "'";
+      return signalPassFailure();
+    }
+    options.gmAliasPolicy = *parsedPolicy;
     if (failed(runCanonicalSync(getOperation(), options))) {
       signalPassFailure();
     }
@@ -43,8 +53,20 @@ struct PTOCanonicalSyncPass
 
 } // namespace
 
+std::optional<CanonicalGmAliasPolicy>
+parseCanonicalGmAliasPolicy(StringRef value) {
+  if (value == "conservative") {
+    return CanonicalGmAliasPolicy::Conservative;
+  }
+  if (value == "distinct-roots-unsafe") {
+    return CanonicalGmAliasPolicy::DistinctRootsUnsafe;
+  }
+  return std::nullopt;
+}
+
 FailureOr<std::unique_ptr<CanonicalSyncProgram>>
-buildCanonicalSyncProgram(func::FuncOp function) {
+buildCanonicalSyncProgram(func::FuncOp function,
+                          CanonicalGmAliasPolicy gmAliasPolicy) {
   FailureOr<CanonicalSyncTarget> target =
       CanonicalSyncTarget::resolve(function);
   if (failed(target)) {
@@ -54,7 +76,8 @@ buildCanonicalSyncProgram(func::FuncOp function) {
           function))) {
     return failure();
   }
-  auto program = std::make_unique<CanonicalSyncProgram>(function);
+  auto program = std::make_unique<CanonicalSyncProgram>(function,
+                                                        gmAliasPolicy);
   if (failed(canonical_sync_detail::buildCanonicalStructureAndAccesses(
           *program, *target)) ||
       failed(
@@ -75,7 +98,7 @@ LogicalResult runCanonicalSync(func::FuncOp function,
     return success();
   }
   FailureOr<std::unique_ptr<CanonicalSyncProgram>> program =
-      buildCanonicalSyncProgram(function);
+      buildCanonicalSyncProgram(function, options.gmAliasPolicy);
   if (failed(program)) {
     return failure();
   }

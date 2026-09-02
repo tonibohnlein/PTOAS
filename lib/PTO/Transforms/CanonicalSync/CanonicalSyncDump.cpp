@@ -44,7 +44,8 @@ void printPoint(raw_ostream &os, CanonicalProgramPoint point) {
 void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
                                           raw_ostream &os) {
   os << "CANONICAL-SYNC function=" << program.getFunction().getSymName()
-     << '\n';
+     << " gm-alias-policy="
+     << stringifyCanonicalGmAliasPolicy(program.getGmAliasPolicy()) << '\n';
   os << "TARGET npu2201-a2a3-v1 ids=0,1,2,3,4,5\n";
   os << "REGIONS " << program.getRegions().size() << '\n';
   for (const CanonicalRegion &region : program.getRegions()) {

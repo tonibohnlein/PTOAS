@@ -22,10 +22,18 @@ namespace pto {
 struct CanonicalSyncOptions {
   bool analysisOnly = false;
   bool dump = false;
+  CanonicalGmAliasPolicy gmAliasPolicy =
+      CanonicalGmAliasPolicy::Conservative;
 };
 
+std::optional<CanonicalGmAliasPolicy>
+parseCanonicalGmAliasPolicy(llvm::StringRef value);
+
 FailureOr<std::unique_ptr<CanonicalSyncProgram>>
-buildCanonicalSyncProgram(func::FuncOp function);
+buildCanonicalSyncProgram(
+    func::FuncOp function,
+    CanonicalGmAliasPolicy gmAliasPolicy =
+        CanonicalGmAliasPolicy::Conservative);
 LogicalResult buildCanonicalDirectMechanisms(CanonicalSyncProgram &program);
 LogicalResult evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program);
 LogicalResult buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program);

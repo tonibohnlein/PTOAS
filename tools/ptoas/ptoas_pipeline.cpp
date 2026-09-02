@@ -678,10 +678,13 @@ struct SerialAutoSyncPass
 
   SerialAutoSyncPass(Mode mode, bool enableBufidDebug,
                      bool canonicalAnalysisOnly = false,
-                     bool canonicalDump = false)
+                     bool canonicalDump = false,
+                     pto::CanonicalGmAliasPolicy canonicalGmAliasPolicy =
+                         pto::CanonicalGmAliasPolicy::Conservative)
       : mode(mode), enableBufidDebug(enableBufidDebug),
         canonicalAnalysisOnly(canonicalAnalysisOnly),
-        canonicalDump(canonicalDump) {}
+        canonicalDump(canonicalDump),
+        canonicalGmAliasPolicy(canonicalGmAliasPolicy) {}
 
   void runOnOperation() override {
     OpPassManager functionPM(func::FuncOp::getOperationName());
@@ -693,6 +696,7 @@ struct SerialAutoSyncPass
       pto::CanonicalSyncOptions options;
       options.analysisOnly = canonicalAnalysisOnly;
       options.dump = canonicalDump;
+      options.gmAliasPolicy = canonicalGmAliasPolicy;
       functionPM.addPass(pto::createPTOCanonicalSyncPass(options));
       break;
     }
@@ -721,6 +725,7 @@ private:
   bool enableBufidDebug;
   bool canonicalAnalysisOnly;
   bool canonicalDump;
+  pto::CanonicalGmAliasPolicy canonicalGmAliasPolicy;
 };
 } // namespace
 
@@ -1071,10 +1076,18 @@ static LogicalResult validateCompileBackendFlags(PTOBackend backend,
     llvm::errs() << "Error: --enable-canonical-sync requires --pto-arch=a2 or a3.\n";
     return failure();
   }
-  const bool canonicalDiagnostics =
-      canonicalSyncAnalysisOnly || canonicalSyncDump;
-  if (canonicalDiagnostics && !enableCanonicalSync) {
-    llvm::errs() << "Error: canonical sync analysis/dump flags require "
+  const std::optional<pto::CanonicalGmAliasPolicy> canonicalAliasPolicy =
+      pto::parseCanonicalGmAliasPolicy(canonicalSyncGmAliasPolicy);
+  if (!canonicalAliasPolicy) {
+    llvm::errs() << "Error: unsupported --canonical-sync-gm-alias-policy='"
+                 << canonicalSyncGmAliasPolicy << "'.\n";
+    return failure();
+  }
+  const bool canonicalConfiguration =
+      canonicalSyncAnalysisOnly || canonicalSyncDump ||
+      *canonicalAliasPolicy != pto::CanonicalGmAliasPolicy::Conservative;
+  if (canonicalConfiguration && !enableCanonicalSync) {
+    llvm::errs() << "Error: canonical sync diagnostic/policy flags require "
                     "--enable-canonical-sync.\n";
     return failure();
   }
@@ -1411,10 +1424,13 @@ static void appendAutoSyncPasses(PassManager &pm) {
     pto::CanonicalSyncOptions options;
     options.analysisOnly = canonicalSyncAnalysisOnly;
     options.dump = canonicalSyncDump || canonicalSyncAnalysisOnly;
+    options.gmAliasPolicy =
+        pto::parseCanonicalGmAliasPolicy(canonicalSyncGmAliasPolicy)
+            .value_or(pto::CanonicalGmAliasPolicy::Conservative);
     if (emitMlirIR) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::Canonical, false, options.analysisOnly,
-          options.dump));
+          options.dump, options.gmAliasPolicy));
     } else {
       pm.addNestedPass<func::FuncOp>(pto::createPTOCanonicalSyncPass(options));
     }

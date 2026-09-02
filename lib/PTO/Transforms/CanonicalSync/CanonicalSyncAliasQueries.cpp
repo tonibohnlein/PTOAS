@@ -45,7 +45,8 @@ bool mlir::pto::canonical_sync_detail::accessWrites(CanonicalAccessMode mode) {
 }
 
 bool mlir::pto::canonical_sync_detail::accessesMayAlias(
-    const CanonicalAccess &first, const CanonicalAccess &second) {
+    const CanonicalAccess &first, const CanonicalAccess &second,
+    CanonicalGmAliasPolicy gmAliasPolicy) {
   // An unknown address space may denote GM or any local physical storage.
   // Neither a differing default enum value nor distinct SSA roots can prove
   // such accesses disjoint.
@@ -55,10 +56,18 @@ bool mlir::pto::canonical_sync_detail::accessesMayAlias(
   if (first.space != second.space) {
     return false;
   }
-  if (first.unknownRange || second.unknownRange) {
+  const bool distinctKnownGmRoots =
+      first.space == AddressSpace::GM && first.aliasRoot && second.aliasRoot &&
+      first.aliasRoot != second.aliasRoot;
+  if (gmAliasPolicy == CanonicalGmAliasPolicy::DistinctRootsUnsafe &&
+      distinctKnownGmRoots) {
+    return false;
+  }
+  if (first.space == AddressSpace::GM &&
+      first.aliasRoot != second.aliasRoot) {
     return true;
   }
-  if (first.space == AddressSpace::GM && first.aliasRoot != second.aliasRoot) {
+  if (first.unknownRange || second.unknownRange) {
     return true;
   }
   if (first.physical && second.physical) {

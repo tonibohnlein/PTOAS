@@ -349,7 +349,8 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyAndIssuePhase(
         const bool unresolvedSameOperation =
             sameOperation && !containsKey(state.loopCarried, source.key);
         const bool nonAliasing =
-            !accessesMayAlias(source.access, destination.access);
+            !accessesMayAlias(source.access, destination.access,
+                              program.gmAliasPolicy);
         const bool nonHazard = !isHazard(source, destination);
         if (unresolvedSameOperation || nonAliasing || nonHazard) {
           continue;
@@ -446,7 +447,7 @@ LogicalResult mlir::pto::canonical_sync_detail::executeVerifierBlock(
 }
 
 LogicalResult mlir::pto::canonical_sync_detail::verifyMaterializedCanonicalSync(
-    func::FuncOp function) {
+    func::FuncOp function, CanonicalGmAliasPolicy gmAliasPolicy) {
   FailureOr<CanonicalSyncTarget> target =
       CanonicalSyncTarget::resolve(function);
   if (failed(target)) {
@@ -458,7 +459,7 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyMaterializedCanonicalSync(
     return failure();
   }
   FailureOr<std::unique_ptr<VerifierProgram>> program =
-      buildVerifierProgram(function);
+      buildVerifierProgram(function, gmAliasPolicy);
   if (failed(program)) {
     return failure();
   }

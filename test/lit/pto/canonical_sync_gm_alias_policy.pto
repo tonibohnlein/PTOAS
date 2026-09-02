@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// Distinct GM arguments conservatively alias by default. The explicit unsafe
+// compatibility policy treats only distinct, known roots as disjoint.
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 \
+// RUN:   --enable-canonical-sync --emit-pto-ir %t/distinct.pto \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=CONSERVATIVE
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-gm-alias-policy=distinct-roots-unsafe \
+// RUN:   --canonical-sync-dump --emit-pto-ir %t/distinct.pto \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNSAFE
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 \
+// RUN:   --enable-canonical-sync \
+// RUN:   --canonical-sync-gm-alias-policy=distinct-roots-unsafe \
+// RUN:   --emit-pto-ir %t/same.pto -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=SAME
+
+//--- distinct.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @distinct_gm_roots(
+      %dst: !pto.partition_tensor_view<16x128xf32>,
+      %src: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %first_addr = arith.constant 0 : i64
+    %second_addr = arith.constant 8192 : i64
+    %first = pto.alloc_tile addr = %first_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %second = pto.alloc_tile addr = %second_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    pto.tstore ins(%first : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                    cols=128, v_row=16, v_col=128, blayout=row_major,
+                    slayout=none_box, fractal=512, pad=0>)
+               outs(%dst : !pto.partition_tensor_view<16x128xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+              outs(%second : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+//--- same.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @same_gm_root(
+      %gm: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %first_addr = arith.constant 0 : i64
+    %second_addr = arith.constant 8192 : i64
+    %first = pto.alloc_tile addr = %first_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %second = pto.alloc_tile addr = %second_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    pto.tstore ins(%first : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                    cols=128, v_row=16, v_col=128, blayout=row_major,
+                    slayout=none_box, fractal=512, pad=0>)
+               outs(%gm : !pto.partition_tensor_view<16x128xf32>)
+    pto.tload ins(%gm : !pto.partition_tensor_view<16x128xf32>)
+              outs(%second : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CONSERVATIVE: error: canonical sync has no device-proven MTE3-to-MTE2 GM publication primitive
+// UNSAFE: CANONICAL-SYNC function=distinct_gm_roots gm-alias-policy=distinct-roots-unsafe
+// UNSAFE-NOT: kind=RAW
+// UNSAFE: VERIFY ok
+// SAME: error: canonical sync has no device-proven MTE3-to-MTE2 GM publication primitive

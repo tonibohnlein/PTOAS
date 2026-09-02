@@ -56,7 +56,10 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
     Option<"analysisOnly", "analysis-only", "bool", "false",
            "Build and dump the plan without changing the function">,
     Option<"dump", "dump", "bool", "false",
-           "Print the canonical graph, demands, mechanisms, and coverage">
+           "Print the canonical graph, demands, mechanisms, and coverage">,
+    Option<"gmAliasPolicy", "gm-alias-policy", "std::string",
+           "\"conservative\"",
+           "GM alias policy: conservative or distinct-roots-unsafe">
   ];
 
   let dependentDialects = [

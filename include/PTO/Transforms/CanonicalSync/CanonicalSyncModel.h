@@ -71,6 +71,10 @@ enum class CanonicalDemandKind : std::uint8_t {
   Visibility,
 };
 enum class CanonicalRequirement : std::uint8_t { Completion, Visibility };
+enum class CanonicalGmAliasPolicy : std::uint8_t {
+  Conservative,
+  DistinctRootsUnsafe,
+};
 enum class CanonicalVisibilityDirection : std::uint8_t {
   ScalarToNonScalar,
   NonScalarToScalar,
@@ -341,7 +345,11 @@ LogicalResult solveCanonicalSyncSetCover(CanonicalSyncProgram &program);
 
 class CanonicalSyncProgram {
 public:
-  explicit CanonicalSyncProgram(func::FuncOp function) : function(function) {}
+  explicit CanonicalSyncProgram(
+      func::FuncOp function,
+      CanonicalGmAliasPolicy gmAliasPolicy =
+          CanonicalGmAliasPolicy::Conservative)
+      : function(function), gmAliasPolicy(gmAliasPolicy) {}
 
   CanonicalRegionId appendRegion(CanonicalRegion region);
   CanonicalPhaseId appendPhase(CanonicalPhase phase);
@@ -367,6 +375,7 @@ public:
   bool isGraphFrozen() const { return graphFrozen; }
   bool isFrozen() const { return frozen; }
   func::FuncOp getFunction() const { return function; }
+  CanonicalGmAliasPolicy getGmAliasPolicy() const { return gmAliasPolicy; }
   llvm::ArrayRef<CanonicalRegion> getRegions() const { return regions; }
   llvm::ArrayRef<CanonicalPhase> getPhases() const { return phases; }
   llvm::ArrayRef<CanonicalAccess> getAccesses() const { return accesses; }
@@ -412,6 +421,8 @@ private:
   void setSetCoverSolution(CanonicalSetCoverSolution solution);
 
   func::FuncOp function;
+  CanonicalGmAliasPolicy gmAliasPolicy =
+      CanonicalGmAliasPolicy::Conservative;
   llvm::SmallVector<CanonicalRegion> regions;
   llvm::SmallVector<CanonicalPhase> phases;
   llvm::SmallVector<CanonicalAccess> accesses;
@@ -433,6 +444,7 @@ llvm::StringRef stringifyCanonicalCore(CanonicalCore core);
 llvm::StringRef stringifyCanonicalRegionKind(CanonicalRegionKind kind);
 llvm::StringRef stringifyCanonicalAccessMode(CanonicalAccessMode mode);
 llvm::StringRef stringifyCanonicalDemandKind(CanonicalDemandKind kind);
+llvm::StringRef stringifyCanonicalGmAliasPolicy(CanonicalGmAliasPolicy policy);
 llvm::StringRef
 stringifyCanonicalVisibilityDirection(CanonicalVisibilityDirection direction);
 llvm::StringRef

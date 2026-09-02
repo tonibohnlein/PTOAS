@@ -119,6 +119,14 @@ unrecoverable provenance produces an unknown access. Unknown accesses are kept
 in both the planner and verifier and may alias every compatible access; they
 are never discarded as an analysis convenience.
 
+For compatibility experiments only,
+`--canonical-sync-gm-alias-policy=distinct-roots-unsafe` treats distinct,
+known GM roots as disjoint. This matches the optimistic convention used by
+some older synchronization passes, but it is not sound unless the caller has
+an external no-alias guarantee. Conservative GM aliasing remains the default.
+The selected policy is also passed to the independent materialized-IR verifier
+and printed in CanonicalSync dumps.
+
 The pass runs after memory planning and before multi-buffer selection is
 resolved so that it can use both planned addresses and per-use slot identity.
 

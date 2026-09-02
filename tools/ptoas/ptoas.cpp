@@ -229,6 +229,12 @@ llvm::cl::opt<bool> canonicalSyncDump(
     llvm::cl::desc("Dump the canonical synchronization plan"),
     llvm::cl::init(false));
 
+llvm::cl::opt<std::string> canonicalSyncGmAliasPolicy(
+    "canonical-sync-gm-alias-policy",
+    llvm::cl::desc("GM alias policy for CanonicalSync: conservative or "
+                   "distinct-roots-unsafe"),
+    llvm::cl::init("conservative"));
+
 llvm::cl::opt<bool> planMemoryOrderBySize(
     "plan-memory-order-by-size",
     llvm::cl::desc("Plan larger local buffers first inside one AddressSpace "

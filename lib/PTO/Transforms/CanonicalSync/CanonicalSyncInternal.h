@@ -55,7 +55,8 @@ private:
 
 bool areMemoryLikeTypes(Type type);
 bool accessesMayAlias(const CanonicalAccess &first,
-                      const CanonicalAccess &second);
+                      const CanonicalAccess &second,
+                      CanonicalGmAliasPolicy gmAliasPolicy);
 bool accessReads(CanonicalAccessMode mode);
 bool accessWrites(CanonicalAccessMode mode);
 bool controlsCanCoexecute(llvm::ArrayRef<CanonicalControlAtom> first,
@@ -95,7 +96,8 @@ FailureOr<CanonicalCoverageWorld>
 evaluateCanonicalSyncGroup(const CanonicalSyncProgram &program,
                            llvm::StringRef name,
                            llvm::ArrayRef<CanonicalMechanismId> selected);
-LogicalResult verifyMaterializedCanonicalSync(func::FuncOp function);
+LogicalResult verifyMaterializedCanonicalSync(
+    func::FuncOp function, CanonicalGmAliasPolicy gmAliasPolicy);
 
 } // namespace canonical_sync_detail
 } // namespace pto

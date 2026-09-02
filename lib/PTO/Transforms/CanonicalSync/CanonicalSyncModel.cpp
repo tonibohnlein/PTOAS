@@ -662,6 +662,17 @@ StringRef mlir::pto::stringifyCanonicalVisibilityDirection(
   llvm_unreachable("unknown canonical visibility direction");
 }
 
+StringRef mlir::pto::stringifyCanonicalGmAliasPolicy(
+    CanonicalGmAliasPolicy policy) {
+  switch (policy) {
+  case CanonicalGmAliasPolicy::Conservative:
+    return "conservative";
+  case CanonicalGmAliasPolicy::DistinctRootsUnsafe:
+    return "distinct-roots-unsafe";
+  }
+  llvm_unreachable("unknown canonical GM alias policy");
+}
+
 StringRef mlir::pto::stringifyCanonicalCacheMaintenance(
     CanonicalCacheMaintenance maintenance) {
   switch (maintenance) {
