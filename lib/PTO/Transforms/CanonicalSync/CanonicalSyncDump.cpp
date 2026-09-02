@@ -148,6 +148,37 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
     }
     os << '\n';
   }
+  os << "OWNERSHIP-CHANNELS " << program.getOwnershipChannels().size()
+     << '\n';
+  for (const CanonicalOwnershipChannel &channel :
+       program.getOwnershipChannels()) {
+    os << "  o" << channel.id << " storage=";
+    channel.storage.printAsOperand(os, OpPrintingFlags());
+    os << " space=" << stringifyAddressSpace(channel.space) << " loop=r"
+       << channel.loop << " resource=";
+    printResource(os, channel.producer);
+    os << "->";
+    printResource(os, channel.consumer);
+    os << " depth=" << channel.staticDepth
+       << " slots=" << (channel.slotTracked ? "tracked" : "untracked")
+       << " guard=";
+    printGuard(os, channel.guard);
+    os << " ready=[";
+    llvm::interleaveComma(channel.readyEdges, os,
+                          [&os](const CanonicalOwnershipEdge &edge) {
+                            os << 'd' << edge.demand << ":a"
+                               << edge.sourceAccess << "->a"
+                               << edge.targetAccess;
+                          });
+    os << "] release=[";
+    llvm::interleaveComma(channel.releaseEdges, os,
+                          [&os](const CanonicalOwnershipEdge &edge) {
+                            os << 'd' << edge.demand << ":a"
+                               << edge.sourceAccess << "->a"
+                               << edge.targetAccess;
+                          });
+    os << "]\n";
+  }
   os << "MECHANISMS " << program.getMechanisms().size() << '\n';
   for (const CanonicalMechanism &mechanism : program.getMechanisms()) {
     os << "  m" << mechanism.id

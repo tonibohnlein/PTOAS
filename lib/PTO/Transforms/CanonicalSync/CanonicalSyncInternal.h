@@ -104,6 +104,7 @@ buildCanonicalStructureAndAccesses(CanonicalSyncProgram &program,
                                    const CanonicalSyncTarget &target);
 LogicalResult deriveCanonicalDemands(CanonicalSyncProgram &program,
                                      const CanonicalSyncTarget &target);
+void deriveCanonicalOwnershipChannels(CanonicalSyncProgram &program);
 LogicalResult
 integrateCanonicalFixedBaseline(CanonicalSyncProgram &program,
                                 const CanonicalSyncTarget &target);

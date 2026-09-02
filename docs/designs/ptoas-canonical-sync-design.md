@@ -353,6 +353,26 @@ sharing can be measured independently from new event-frontier synthesis.
 Statistics separately report all unique barrier candidates, selected barriers,
 multi-demand barrier candidates, and selected multi-demand barriers.
 
+Before mechanism construction, a diagnostic storage-ownership projection
+groups residual local-memory demands by storage root, carrying loop, directed
+producer/consumer resources, and exact control guard. A channel is recorded
+only when it contains both:
+
+- a same-iteration RAW edge that can publish the storage generation from the
+  producer to the consumer; and
+- a reverse positive-distance WAR edge that orders the consumer's read before
+  a later producer overwrite.
+
+WAW-only recurrences do not qualify because they do not establish a consumer
+last-use frontier. Cross-core, GM, unknown-space, same-resource, mismatched
+guard, and visibility demands are excluded. The record reports the static
+`alloc_multi_tile` depth when present and whether every causal access retains a
+slot expression. It is proposal evidence for later `ReadyRelease<N>`
+synthesis: it is not selectable, contributes no coverage, and cannot change
+admission, allocation, or materialization. In particular, a static depth and
+tracked slot expressions do not yet prove the distance-aware residue relation
+needed to circulate multiple event lanes.
+
 An existing GM/all fence is fixed baseline supply, represented once by its
 physical operation rather than once per demand. Its completion role publishes
 the prefixes of the queues drained by the target contract: all resources for a

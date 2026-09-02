@@ -389,3 +389,35 @@ These are host planning results, not device-performance evidence. The next
 device task should compare the default and frontier-disabled arms on the same
 launchable kernels and report dynamic execution time separately from static
 mechanism counts.
+
+## Diagnostic storage-ownership projection
+
+The next bounded milestone adds no synchronization candidate. It indexes
+residual local demands into ownership-channel signatures only when one storage
+root has a same-iteration RAW publication and a reverse positive-distance WAR
+reuse edge under the same guard, carrying loop, and same-core resource pair.
+The diagnostic exposes channel count, ready and release edges, static
+multi-buffer depth, and whether every edge retains a slot expression.
+
+This deliberately does not infer a lifecycle from an arbitrary SCC or from a
+WAW recurrence. A depth-two allocation remains insufficient to synthesize two
+event lanes until distance-aware slot analysis proves that adjacent
+generations use different slots and the reuse generation returns to the same
+slot. The frozen corpus run for this patch must therefore preserve admission,
+selected-mechanism count, and emitted IR while measuring how often complete
+channels, depth-two channels, and fully slot-tracked channels occur. Only the
+proven depth-two subset is eligible for the following atomic
+`ReadyRelease<2>` experiment.
+
+The matched 394-row host run preserved every function's status, failure stage,
+demand count, mechanism count, and selected-mechanism count relative to the
+frontier-enabled baseline. It again admitted 199 rows, and the 212 successful
+function records selected 3,345 mechanisms. Among successful functions, the
+projection found 734 complete channels in 106 functions; failed functions
+contained another 1,945 channels. None of the frozen inputs retained a
+multi-buffer root or per-access slot expression at this compilation stage, so
+the run found zero depth-two and zero fully slot-tracked channels. The signal
+is common, but this corpus cannot evaluate a multi-lane mechanism. The first
+`ReadyRelease<2>` ablation therefore needs a separate slot-preserving corpus
+drawn from pre-selection PTO IR or focused manual kernels; the frozen corpus
+remains useful only for behavior and compile-cost non-regression.

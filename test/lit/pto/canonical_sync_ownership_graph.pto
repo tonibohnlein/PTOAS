@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// The diagnostic ownership graph recognizes one local double-buffer family:
+// MTE2 publishes the selected slot to V in the same iteration, and V's read
+// releases that storage family before a later MTE2 overwrite. This record is
+// proposal evidence only and does not alter the selected synchronization plan.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-dump --emit-pto-ir %s -o %t 2> %t.log
+// RUN: FileCheck %s --check-prefix=PLAN < %t.log
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-stats --canonical-sync-analysis-only \
+// RUN:   --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=STATS
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @double_buffer_ownership(
+      %src: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %base = arith.constant 0 : i64
+    %output_addr = arith.constant 4096 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %four = arith.constant 4 : index
+    %scale = arith.constant 1.000000e+00 : f32
+    %input = pto.alloc_multi_tile addr = %base
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    %output = pto.alloc_tile addr = %output_addr
+        : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %iteration = %zero to %four step %one_index {
+      %slot_index = arith.remui %iteration, %two : index
+      %slot = pto.multi_tile_get %input[%slot_index]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%src : !pto.partition_tensor_view<16x16xf16>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tmuls ins(%slot, %scale : !pto.tile_buf<vec, 16x16xf16>, f32)
+                outs(%output : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    return
+  }
+}
+
+// PLAN-LABEL: CANONICAL-SYNC function=double_buffer_ownership
+// PLAN: OWNERSHIP-CHANNELS 1
+// PLAN: storage=%{{.*}} space=vec loop=r{{[0-9]+}}
+// PLAN-SAME: resource=AIV:PIPE_MTE2->AIV:PIPE_V depth=2 slots=tracked
+// PLAN-SAME: ready=[d{{[0-9]+}}:a{{[0-9]+}}->a{{[0-9]+}}]
+// PLAN-SAME: release=[d{{[0-9]+}}:a{{[0-9]+}}->a{{[0-9]+}}]
+// PLAN: VERIFY ok
+
+// STATS: VERIFY skipped (analysis-only; IR unchanged)
+// STATS-NEXT: {"counts":{
+// STATS-SAME: "depth_two_ownership_channels":1
+// STATS-SAME: "ownership_channels":1
+// STATS-SAME: "ownership_ready_edges":1
+// STATS-SAME: "ownership_release_edges":1
+// STATS-SAME: "slot_tracked_ownership_channels":1
+// STATS-SAME: "function":"double_buffer_ownership"
+// STATS-SAME: "status":"ok"

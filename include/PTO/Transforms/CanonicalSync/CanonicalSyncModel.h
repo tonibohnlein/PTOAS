@@ -42,6 +42,7 @@ using CanonicalFenceEffectId = std::uint32_t;
 using CanonicalDemandId = std::uint32_t;
 using CanonicalMechanismId = std::uint32_t;
 using CanonicalSetCoverCandidateId = std::uint32_t;
+using CanonicalOwnershipChannelId = std::uint32_t;
 
 inline constexpr std::uint32_t kInvalidCanonicalSyncId =
     std::numeric_limits<std::uint32_t>::max();
@@ -92,6 +93,11 @@ struct CanonicalSyncStatistics {
   std::uint64_t multiDemandPipeBarrierCoveredDemands = 0;
   std::uint64_t selectedMultiDemandPipeBarriers = 0;
   std::uint64_t selectedPipeBarriers = 0;
+  std::uint64_t ownershipChannels = 0;
+  std::uint64_t ownershipReadyEdges = 0;
+  std::uint64_t ownershipReleaseEdges = 0;
+  std::uint64_t depthTwoOwnershipChannels = 0;
+  std::uint64_t slotTrackedOwnershipChannels = 0;
   std::uint64_t coverageWorlds = 0;
   std::uint64_t coverUniverse = 0;
   std::uint64_t coverCandidates = 0;
@@ -292,6 +298,31 @@ struct CanonicalDemand {
   llvm::SmallVector<CanonicalDemandCause, 1> causes;
 };
 
+struct CanonicalOwnershipEdge {
+  CanonicalDemandId demand = kInvalidCanonicalSyncId;
+  CanonicalAccessId sourceAccess = kInvalidCanonicalSyncId;
+  CanonicalAccessId targetAccess = kInvalidCanonicalSyncId;
+};
+
+/// A diagnostic storage-generation cycle. A same-generation RAW edge
+/// publishes a local buffer from producer to consumer; a positive-distance
+/// WAR edge returns that same logical storage family to the producer. This is
+/// proposal evidence for a future atomic ReadyRelease<N> mechanism, not a
+/// correctness proof or a selectable mechanism by itself.
+struct CanonicalOwnershipChannel {
+  CanonicalOwnershipChannelId id = kInvalidCanonicalSyncId;
+  Value storage;
+  AddressSpace space = AddressSpace::Zero;
+  CanonicalRegionId loop = kInvalidCanonicalSyncId;
+  CanonicalPhysicalResource producer;
+  CanonicalPhysicalResource consumer;
+  llvm::SmallVector<CanonicalControlAtom, 2> guard;
+  std::uint32_t staticDepth = 1;
+  bool slotTracked = false;
+  llvm::SmallVector<CanonicalOwnershipEdge, 4> readyEdges;
+  llvm::SmallVector<CanonicalOwnershipEdge, 4> releaseEdges;
+};
+
 struct CanonicalMechanism {
   CanonicalMechanismId id = kInvalidCanonicalSyncId;
   CanonicalMechanismKind kind = CanonicalMechanismKind::PipeBarrier;
@@ -440,6 +471,8 @@ public:
   CanonicalAccessId appendAccess(CanonicalAccess access);
   CanonicalFenceEffectId appendFenceEffect(CanonicalFenceEffect effect);
   CanonicalDemandId appendDemand(CanonicalDemand demand);
+  CanonicalOwnershipChannelId
+  appendOwnershipChannel(CanonicalOwnershipChannel channel);
   void retainDemands(const llvm::BitVector &retained);
   void appendDemandCause(CanonicalDemandId demand, CanonicalDemandCause cause);
   CanonicalMechanismId appendMechanism(CanonicalMechanism mechanism);
@@ -474,6 +507,9 @@ public:
     return fenceEffects;
   }
   llvm::ArrayRef<CanonicalDemand> getDemands() const { return demands; }
+  llvm::ArrayRef<CanonicalOwnershipChannel> getOwnershipChannels() const {
+    return ownershipChannels;
+  }
   llvm::ArrayRef<CanonicalMechanism> getMechanisms() const {
     return mechanisms;
   }
@@ -529,6 +565,7 @@ private:
   llvm::SmallVector<CanonicalAccess> accesses;
   llvm::SmallVector<CanonicalFenceEffect> fenceEffects;
   llvm::SmallVector<CanonicalDemand> demands;
+  llvm::SmallVector<CanonicalOwnershipChannel> ownershipChannels;
   llvm::SmallVector<CanonicalMechanism> mechanisms;
   llvm::SmallVector<llvm::SmallVector<CanonicalRegionId, 2>, 0>
       mechanismExecutionLoops;

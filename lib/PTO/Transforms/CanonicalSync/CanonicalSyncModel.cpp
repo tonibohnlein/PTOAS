@@ -78,6 +78,11 @@ CanonicalDemandId CanonicalSyncProgram::appendDemand(CanonicalDemand demand) {
   return appendRecord(demands, std::move(demand), graphFrozen);
 }
 
+CanonicalOwnershipChannelId CanonicalSyncProgram::appendOwnershipChannel(
+    CanonicalOwnershipChannel channel) {
+  return appendRecord(ownershipChannels, std::move(channel), graphFrozen);
+}
+
 void CanonicalSyncProgram::retainDemands(const llvm::BitVector &retained) {
   const bool invalidState = graphFrozen || frozen ||
                             retained.size() != demands.size() ||
@@ -332,6 +337,27 @@ LogicalResult CanonicalSyncProgram::freezeGraph() {
     if (!validSource || !validTarget || !validOwner || !validGuards ||
         !validDistance || !validVisibility) {
       return fail("demand has an invalid endpoint, owner, guard, or distance");
+    }
+  }
+  for (const CanonicalOwnershipChannel &channel : ownershipChannels) {
+    const auto validEdge = [this](const CanonicalOwnershipEdge &edge) {
+      return edge.demand < demands.size() &&
+             edge.sourceAccess < accesses.size() &&
+             edge.targetAccess < accesses.size();
+    };
+    const bool validLoop =
+        channel.loop < regions.size() &&
+        regions[channel.loop].kind == CanonicalRegionKind::Loop;
+    const bool validEdges = !channel.readyEdges.empty() &&
+                            !channel.releaseEdges.empty() &&
+                            llvm::all_of(channel.readyEdges, validEdge) &&
+                            llvm::all_of(channel.releaseEdges, validEdge);
+    const bool validResources = channel.producer.core == channel.consumer.core &&
+                                channel.producer != channel.consumer;
+    if (!channel.storage || !validLoop || !validEdges || !validResources ||
+        channel.staticDepth == 0 ||
+        !validControlPath(channel.guard, regions.size())) {
+      return fail("ownership channel has an invalid storage cycle");
     }
   }
   graphFrozen = true;

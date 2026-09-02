@@ -73,6 +73,16 @@ void printCanonicalSyncStatistics(const CanonicalSyncStatistics &statistics,
       static_cast<std::int64_t>(statistics.selectedMultiDemandPipeBarriers);
   counts["selected_pipe_barriers"] =
       static_cast<std::int64_t>(statistics.selectedPipeBarriers);
+  counts["ownership_channels"] =
+      static_cast<std::int64_t>(statistics.ownershipChannels);
+  counts["ownership_ready_edges"] =
+      static_cast<std::int64_t>(statistics.ownershipReadyEdges);
+  counts["ownership_release_edges"] =
+      static_cast<std::int64_t>(statistics.ownershipReleaseEdges);
+  counts["depth_two_ownership_channels"] =
+      static_cast<std::int64_t>(statistics.depthTwoOwnershipChannels);
+  counts["slot_tracked_ownership_channels"] =
+      static_cast<std::int64_t>(statistics.slotTrackedOwnershipChannels);
   counts["coverage_worlds"] =
       static_cast<std::int64_t>(statistics.coverageWorlds);
   counts["cover_universe"] =
@@ -236,6 +246,7 @@ buildCanonicalSyncProgram(func::FuncOp function,
                                                                     *target))) {
     return failure();
   }
+  canonical_sync_detail::deriveCanonicalOwnershipChannels(*program);
   if (statistics) {
     statistics->demandsUs += elapsedMicroseconds(start);
     statistics->demands = program->getDemands().size();
