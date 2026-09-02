@@ -32,6 +32,8 @@ public:
   bool supportsPipeBarrier(CanonicalPhysicalResource resource) const;
   bool supportsEvent(CanonicalPhysicalResource source,
                      CanonicalPhysicalResource target) const;
+  bool supportsEventGmPublication(CanonicalPhysicalResource source,
+                                  CanonicalPhysicalResource target) const;
   bool supportsCrossCoreEvent(CanonicalPhysicalResource source,
                               CanonicalPhysicalResource target) const;
   FailureOr<llvm::SmallVector<CanonicalPhysicalResource, 8>>
@@ -52,6 +54,9 @@ private:
   llvm::SmallVector<
       std::pair<CanonicalPhysicalResource, CanonicalPhysicalResource>, 24>
       eventPairs;
+  llvm::SmallVector<
+      std::pair<CanonicalPhysicalResource, CanonicalPhysicalResource>, 4>
+      eventGmPublicationPairs;
   llvm::SmallVector<unsigned, 6> compilerEventIds;
   llvm::SmallVector<unsigned, 11> compilerCrossCoreEventIds;
 

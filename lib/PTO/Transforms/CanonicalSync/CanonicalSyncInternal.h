@@ -81,7 +81,8 @@ reservedEventIds(func::FuncOp function, CanonicalPhysicalResource source,
 LogicalResult
 buildCanonicalStructureAndAccesses(CanonicalSyncProgram &program,
                                    const CanonicalSyncTarget &target);
-LogicalResult deriveCanonicalDemands(CanonicalSyncProgram &program);
+LogicalResult deriveCanonicalDemands(CanonicalSyncProgram &program,
+                                     const CanonicalSyncTarget &target);
 struct CanonicalUnrolledCoverageResult {
   llvm::SmallVector<CanonicalDemandId, 16> covered;
   bool exhaustive = true;

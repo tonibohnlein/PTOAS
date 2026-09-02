@@ -57,7 +57,8 @@ buildCanonicalSyncProgram(func::FuncOp function) {
   auto program = std::make_unique<CanonicalSyncProgram>(function);
   if (failed(canonical_sync_detail::buildCanonicalStructureAndAccesses(
           *program, *target)) ||
-      failed(canonical_sync_detail::deriveCanonicalDemands(*program)) ||
+      failed(
+          canonical_sync_detail::deriveCanonicalDemands(*program, *target)) ||
       failed(program->freezeGraph())) {
     return failure();
   }

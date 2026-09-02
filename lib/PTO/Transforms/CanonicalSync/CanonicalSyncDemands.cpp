@@ -456,6 +456,7 @@ LogicalResult deriveSsaDemands(CanonicalSyncProgram &program,
 }
 
 bool requiresVisibility(const CanonicalSyncProgram &program,
+                        const CanonicalSyncTarget &targetModel,
                         const CanonicalAccess &source,
                         const CanonicalAccess &target) {
   const bool sourceMayBeGm =
@@ -465,10 +466,18 @@ bool requiresVisibility(const CanonicalSyncProgram &program,
   if (!sourceMayBeGm || !targetMayBeGm) {
     return false;
   }
-  const PIPE sourcePipe = program.getPhase(source.phase).resource.pipe;
-  const PIPE targetPipe = program.getPhase(target.phase).resource.pipe;
+  const CanonicalPhysicalResource sourceResource =
+      program.getPhase(source.phase).resource;
+  const CanonicalPhysicalResource targetResource =
+      program.getPhase(target.phase).resource;
+  const PIPE sourcePipe = sourceResource.pipe;
+  const PIPE targetPipe = targetResource.pipe;
   const bool scalarCrossing =
       (sourcePipe == PIPE::PIPE_S) != (targetPipe == PIPE::PIPE_S);
+  const bool unprovenMteRoundTrip =
+      sourcePipe == PIPE::PIPE_MTE3 && targetPipe == PIPE::PIPE_MTE2 &&
+      accessWrites(source.mode) && accessReads(target.mode) &&
+      !targetModel.supportsEventGmPublication(sourceResource, targetResource);
   // A pure WAR edge needs execution completion but transfers no value through
   // scalar DCache: the scalar read must finish before the non-scalar write (or
   // vice versa), which a directed event supplies.  RAW and WAW crossings can
@@ -476,7 +485,7 @@ bool requiresVisibility(const CanonicalSyncProgram &program,
   // requirement.
   const bool pureWar = accessReads(source.mode) && !accessWrites(source.mode) &&
                        accessWrites(target.mode) && !accessReads(target.mode);
-  return scalarCrossing && !pureWar;
+  return (scalarCrossing && !pureWar) || unprovenMteRoundTrip;
 }
 
 CanonicalVisibilityRequirement
@@ -485,11 +494,20 @@ buildVisibilityRequirement(const CanonicalSyncProgram &program,
                            const CanonicalAccess &target) {
   const bool scalarSource =
       program.getPhase(source.phase).resource.pipe == PIPE::PIPE_S;
+  const PIPE sourcePipe = program.getPhase(source.phase).resource.pipe;
+  const PIPE targetPipe = program.getPhase(target.phase).resource.pipe;
   CanonicalVisibilityRequirement requirement;
-  requirement.direction = scalarSource
-                              ? CanonicalVisibilityDirection::ScalarToNonScalar
-                              : CanonicalVisibilityDirection::NonScalarToScalar;
+  if (sourcePipe == PIPE::PIPE_MTE3 && targetPipe == PIPE::PIPE_MTE2) {
+    requirement.direction = CanonicalVisibilityDirection::Mte3ToMte2Gm;
+  } else {
+    requirement.direction =
+        scalarSource ? CanonicalVisibilityDirection::ScalarToNonScalar
+                     : CanonicalVisibilityDirection::NonScalarToScalar;
+  }
   requirement.scope = FenceScope::GM;
+  if (requirement.direction == CanonicalVisibilityDirection::Mte3ToMte2Gm) {
+    return requirement;
+  }
   if (scalarSource && accessWrites(source.mode)) {
     requirement.cacheMaintenance = CanonicalCacheMaintenance::CleanSource;
   } else if (!scalarSource && accessReads(target.mode)) {
@@ -499,6 +517,7 @@ buildVisibilityRequirement(const CanonicalSyncProgram &program,
 }
 
 void addHazardDemand(CanonicalSyncProgram &program, DemandIndex &index,
+                     const CanonicalSyncTarget &targetModel,
                      const CanonicalAccess &source,
                      const CanonicalAccess &target, CanonicalDemandKind hazard,
                      ArrayRef<CanonicalLoopDistance> distance,
@@ -507,7 +526,7 @@ void addHazardDemand(CanonicalSyncProgram &program, DemandIndex &index,
   demand.source = source.phase;
   demand.target = target.phase;
   demand.owner = owner;
-  demand.kind = requiresVisibility(program, source, target)
+  demand.kind = requiresVisibility(program, targetModel, source, target)
                     ? CanonicalDemandKind::Visibility
                     : hazard;
   demand.requirement = demand.kind == CanonicalDemandKind::Visibility
@@ -529,7 +548,8 @@ void addHazardDemand(CanonicalSyncProgram &program, DemandIndex &index,
   appendOrMerge(program, index, std::move(demand), std::move(cause));
 }
 
-void deriveMemoryDemands(CanonicalSyncProgram &program, DemandIndex &index) {
+void deriveMemoryDemands(CanonicalSyncProgram &program, DemandIndex &index,
+                         const CanonicalSyncTarget &targetModel) {
   for (const CanonicalAccess &source : program.getAccesses()) {
     const CanonicalPhase &sourcePhase = program.getPhase(source.phase);
     for (const CanonicalAccess &target : program.getAccesses()) {
@@ -553,7 +573,7 @@ void deriveMemoryDemands(CanonicalSyncProgram &program, DemandIndex &index) {
         const SmallVector<CanonicalLoopDistance, 2> zeroDistance =
             sameIterationRelation(loops);
         addHazardDemand(
-            program, index, source, target, *hazard, zeroDistance,
+            program, index, targetModel, source, target, *hazard, zeroDistance,
             findRegionLca(program, sourcePhase.region, targetPhase.region));
       }
       for (size_t carryingIndex = 0; carryingIndex < loops.size();
@@ -566,8 +586,8 @@ void deriveMemoryDemands(CanonicalSyncProgram &program, DemandIndex &index) {
         }
         const SmallVector<CanonicalLoopDistance, 2> recurrence =
             carriedIterationRelation(loops, carryingIndex);
-        addHazardDemand(program, index, source, target, *hazard, recurrence,
-                        carryingLoop);
+        addHazardDemand(program, index, targetModel, source, target, *hazard,
+                        recurrence, carryingLoop);
       }
     }
   }
@@ -589,12 +609,12 @@ void deriveExitDemands(CanonicalSyncProgram &program) {
 } // namespace
 
 LogicalResult mlir::pto::canonical_sync_detail::deriveCanonicalDemands(
-    CanonicalSyncProgram &program) {
+    CanonicalSyncProgram &program, const CanonicalSyncTarget &target) {
   DemandIndex index;
   if (failed(deriveSsaDemands(program, index))) {
     return failure();
   }
-  deriveMemoryDemands(program, index);
+  deriveMemoryDemands(program, index, target);
   deriveExitDemands(program);
   return success();
 }

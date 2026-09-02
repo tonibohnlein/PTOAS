@@ -97,7 +97,8 @@ bool isHazard(const VerifierEffect &source, const VerifierEffect &target) {
          (sourceWrite && targetWrite) || isAccReadConflict(source, target);
 }
 
-bool requiresVisibility(const VerifierEffect &source,
+bool requiresVisibility(const CanonicalSyncTarget &targetModel,
+                        const VerifierEffect &source,
                         const VerifierEffect &target) {
   const bool sourceMayBeGm =
       source.access.unknownSpace || source.access.space == AddressSpace::GM;
@@ -108,7 +109,29 @@ bool requiresVisibility(const VerifierEffect &source,
   const bool pureWar =
       accessReads(source.access.mode) && !accessWrites(source.access.mode) &&
       accessWrites(target.access.mode) && !accessReads(target.access.mode);
-  return sourceMayBeGm && targetMayBeGm && scalarCrossing && !pureWar;
+  const bool unprovenMteRoundTrip =
+      source.resource.pipe == PIPE::PIPE_MTE3 &&
+      target.resource.pipe == PIPE::PIPE_MTE2 &&
+      accessWrites(source.access.mode) && accessReads(target.access.mode) &&
+      !targetModel.supportsEventGmPublication(source.resource, target.resource);
+  return sourceMayBeGm && targetMayBeGm &&
+         ((scalarCrossing && !pureWar) || unprovenMteRoundTrip);
+}
+
+bool isUnresolvedMte3ToMte2Publication(const CanonicalSyncTarget &target,
+                                       const VerifierEffect &source,
+                                       const VerifierEffect &destination) {
+  const bool sourceMayBeGm =
+      source.access.unknownSpace || source.access.space == AddressSpace::GM;
+  const bool targetMayBeGm = destination.access.unknownSpace ||
+                             destination.access.space == AddressSpace::GM;
+  return sourceMayBeGm && targetMayBeGm &&
+         source.resource.pipe == PIPE::PIPE_MTE3 &&
+         destination.resource.pipe == PIPE::PIPE_MTE2 &&
+         accessWrites(source.access.mode) &&
+         accessReads(destination.access.mode) &&
+         !target.supportsEventGmPublication(source.resource,
+                                            destination.resource);
 }
 
 bool completionKnown(const CanonicalSyncTarget &target,
@@ -331,7 +354,12 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyAndIssuePhase(
         if (unresolvedSameOperation || nonAliasing || nonHazard) {
           continue;
         }
-        const bool visibility = requiresVisibility(source, destination);
+        if (isUnresolvedMte3ToMte2Publication(target, source, destination)) {
+          return destination.key.operation->emitError(
+              "canonical sync verifier has no device-proven MTE3-to-MTE2 GM "
+              "publication primitive");
+        }
+        const bool visibility = requiresVisibility(target, source, destination);
         const bool missingCompletion =
             !completionKnown(target, source, destination, state);
         if (missingCompletion ||

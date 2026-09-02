@@ -66,6 +66,8 @@ References:
 - [SetFlag and WaitFlag semantics](https://asc.gitcode.com/api/SIMD-API/basic_api/sync_control/intra_core_sync/SetFlag_WaitFlag_ISASI.html)
 - [Pipeline barrier semantics](https://asc.gitcode.com/api/SIMD-API/basic_api/sync_control/intra_core_sync/PipeBarrier_ISASI.html)
 - [AIC and AIV event combinations](https://asc.gitcode.com/api/SIMD-API/basic_api/sync_control/intra_core_sync/intra_core_sync_overview.html)
+- [Memory-consistency model](https://asc.gitcode.com/guide/programming_guide/advanced_programming/memory_model/memory_consistency.html)
+- [MTE3-to-MTE2 use in `InitGlobalMemory`](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/81RC1beta1/API/ascendcopapi/atlasascendc_api_07_0891.html)
 - [Static-tensor event-ID restrictions](https://asc.gitcode.com/guide/programming_guide/programming_model/ai_core_simd_programming/cpp_tensor_programming/static_tensor_programming.html)
 - [A2/A3 cross-core set semantics](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/850alpha002/API/ascendcopapi/atlasascendc_api_07_0273.html)
 - [A2/A3 cross-core wait semantics](https://www.hiascend.com/document/detail/en/canncommercial/850/API/ascendcopapi/atlasascendc_api_07_0274.html)
@@ -149,10 +151,16 @@ represents the documented hardware scheduling restriction and remains visible
 in graph dumps.
 
 GM conflicts between scalar and non-scalar pipelines require visibility, not
-only pipeline completion. MTE3 and MTE2 bypass the scalar data cache; the
-documented `MTE3_MTE2` SetFlag/WaitFlag relation orders a same-core GM store/load
-round trip as a completion demand. Every visibility demand records three
-independent requirements: direction
+only pipeline completion. `MTE3_MTE2` remains a legal event direction. The
+general completion semantics and an `InitGlobalMemory` example suggest this
+event can order DMA work, but they conflict with repeated same-address A2/A3
+store/load failures reported in
+[PTOAS issue #730](https://github.com/hw-native-sys/PTOAS/issues/730). The
+target therefore does not currently certify this completion edge as a GM
+publication point. That path is retained as `mte3-to-mte2-gm` visibility and
+fails closed until a focused target contract and device gate establish a
+concrete publication primitive.
+Every other visibility demand records three independent requirements: direction
 (`scalar-to-nonscalar` or `nonscalar-to-scalar`), fence scope, and cache
 maintenance. Scalar publication requires source cache maintenance before a GM
 fence. A scalar read acquiring a non-scalar publication requires a GM fence

@@ -74,6 +74,7 @@ enum class CanonicalRequirement : std::uint8_t { Completion, Visibility };
 enum class CanonicalVisibilityDirection : std::uint8_t {
   ScalarToNonScalar,
   NonScalarToScalar,
+  Mte3ToMte2Gm,
 };
 enum class CanonicalIterationRelation : std::uint8_t {
   Same,

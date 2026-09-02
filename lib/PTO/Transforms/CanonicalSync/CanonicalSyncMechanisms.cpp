@@ -530,6 +530,14 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
           "canonical sync visibility demand lacks explicit requirements");
       return failure();
     }
+    if (demand.visibility->direction ==
+        CanonicalVisibilityDirection::Mte3ToMte2Gm) {
+      targetPhase.operation->emitError(
+          "canonical sync has no device-proven MTE3-to-MTE2 GM "
+          "publication primitive")
+          << "; demand d" << demand.id << " fails closed";
+      return failure();
+    }
     if (source.core != destination.core) {
       targetPhase.operation->emitError(
           "canonical sync has no proven cross-core GM visibility protocol")

@@ -656,6 +656,8 @@ StringRef mlir::pto::stringifyCanonicalVisibilityDirection(
     return "scalar-to-nonscalar";
   case CanonicalVisibilityDirection::NonScalarToScalar:
     return "nonscalar-to-scalar";
+  case CanonicalVisibilityDirection::Mte3ToMte2Gm:
+    return "mte3-to-mte2-gm";
   }
   llvm_unreachable("unknown canonical visibility direction");
 }

@@ -88,6 +88,11 @@ CanonicalSyncTarget mlir::pto::makeNpu2201CanonicalSyncTarget() {
       }
     }
   }
+  // Event legality and general completion semantics do not by themselves
+  // settle the observed same-address GM publication behavior. Keep this
+  // capability empty while the documented MTE3->MTE2 examples and current
+  // A2/A3 device evidence conflict; enable a pair only after a focused target
+  // contract and device gate establish its publication guarantee.
   target.compilerEventIds = {0, 1, 2, 3, 4, 5};
   target.compilerCrossCoreEventIds = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
   return target;
@@ -158,6 +163,12 @@ bool CanonicalSyncTarget::supportsEvent(
     CanonicalPhysicalResource source, CanonicalPhysicalResource target) const {
   return source.core == target.core &&
          llvm::is_contained(eventPairs, std::make_pair(source, target));
+}
+
+bool CanonicalSyncTarget::supportsEventGmPublication(
+    CanonicalPhysicalResource source, CanonicalPhysicalResource target) const {
+  return llvm::is_contained(eventGmPublicationPairs,
+                            std::make_pair(source, target));
 }
 
 bool CanonicalSyncTarget::supportsCrossCoreEvent(
