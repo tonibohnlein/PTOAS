@@ -13769,21 +13769,16 @@ struct EmitPTOManualPass
     // encloses each fence. Dialect conversion may inline a section before it
     // rewrites the nested fence, at which point the enclosing function kind is
     // no longer a valid substitute for the section override.
-    WalkResult fenceContextResult =
-        mop.walk([&](pto::FenceBarrierAllOp fence) -> WalkResult {
-          const std::optional<bool> vectorExecution =
-              resolvePTOExecutionVector(fence);
-          if (!vectorExecution) {
-            fence.emitOpError("has no physical execution context");
-            return WalkResult::interrupt();
-          }
-          fence->setAttr(kFrozenFenceVectorExecutionAttrName,
-                         BoolAttr::get(ctx, *vectorExecution));
-          return WalkResult::advance();
-        });
-    if (fenceContextResult.wasInterrupted()) {
-      return signalPassFailure();
-    }
+    mop.walk([&](pto::FenceBarrierAllOp fence) {
+      const std::optional<bool> vectorExecution =
+          resolvePTOExecutionVector(fence);
+      // Preserve the legacy conservative lowering for unannotated PTO.
+      // Explicit section and function contexts remain authoritative, but a
+      // bare fence must not make the default product pipeline reject an
+      // otherwise valid module.
+      fence->setAttr(kFrozenFenceVectorExecutionAttrName,
+                     BoolAttr::get(ctx, vectorExecution.value_or(false)));
+    });
 
     // A3 requires explicit FFTS base setup for inter-core sync ops.
     if (targetArch == PTOArch::A3) {
