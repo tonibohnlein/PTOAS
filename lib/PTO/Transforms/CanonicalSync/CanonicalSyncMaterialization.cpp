@@ -581,8 +581,8 @@ mlir::pto::materializeAndVerifyCanonicalSync(CanonicalSyncProgram &program) {
   if (failed(emitTailBarriers(clone, program, mapping))) {
     return failure();
   }
-  if (failed(verifyMaterializedCanonicalSync(clone,
-                                             program.getGmAliasPolicy()))) {
+  if (failed(verifyMaterializedCanonicalSync(clone, program.getGmAliasPolicy(),
+                                             program.getStatistics()))) {
     function.emitError("canonical sync rejected its staged materialization; "
                        "original IR is unchanged");
     return failure();

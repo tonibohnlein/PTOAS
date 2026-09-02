@@ -42,8 +42,12 @@ module attributes {pto.target_arch = "a2a3"} {
   }
 }
 
-// CHECK: kind=VISIBILITY
-// CHECK-SAME: visibility=nonscalar-to-scalar:gm:none
+// The existing fence is immutable fixed supply. Its visibility obligation is
+// integrated before the residual demand graph is frozen; the remaining RAW
+// demand is the independent scalar-to-MTE3 completion edge.
+// CHECK: DEMANDS 1
 // CHECK: kind=fixed-fence
+// CHECK: kind=event resource=AIV:PIPE_S->AIV:PIPE_MTE3
+// CHECK: VERIFY ok
 // CHECK: pto.fence.barrier_all <gm>
 // CHECK: pto.barrier <PIPE_ALL>

@@ -75,6 +75,38 @@ enum class CanonicalGmAliasPolicy : std::uint8_t {
   Conservative,
   DistinctRootsUnsafe,
 };
+
+struct CanonicalSyncStatistics {
+  std::uint64_t regions = 0;
+  std::uint64_t phases = 0;
+  std::uint64_t accesses = 0;
+  std::uint64_t fenceEffects = 0;
+  std::uint64_t demands = 0;
+  std::uint64_t fixedCoveredDemands = 0;
+  std::uint64_t mechanisms = 0;
+  std::uint64_t coverageWorlds = 0;
+  std::uint64_t coverUniverse = 0;
+  std::uint64_t coverCandidates = 0;
+  std::uint64_t selectedMechanisms = 0;
+  std::uint64_t aliasPairTests = 0;
+  std::uint64_t aliasCandidatePairs = 0;
+  std::uint64_t localIntervalRecords = 0;
+  std::uint64_t sparseIncidenceEntries = 0;
+  std::uint64_t greedyHeapPops = 0;
+  std::uint64_t greedyIncidenceVisits = 0;
+  std::uint64_t precomputedPrefixEntries = 0;
+  std::uint64_t structureUs = 0;
+  std::uint64_t demandsUs = 0;
+  std::uint64_t mechanismsUs = 0;
+  std::uint64_t coverageUs = 0;
+  std::uint64_t setCoverBuildUs = 0;
+  std::uint64_t selectionUs = 0;
+  std::uint64_t allocationUs = 0;
+  std::uint64_t freezeUs = 0;
+  std::uint64_t materializeVerifyUs = 0;
+  std::uint64_t verifierLoopTransfers = 0;
+  std::uint64_t maxVerifierLoopStates = 0;
+};
 enum class CanonicalVisibilityDirection : std::uint8_t {
   ScalarToNonScalar,
   NonScalarToScalar,
@@ -295,15 +327,16 @@ struct CanonicalSetCoverCandidate {
   llvm::SmallVector<CanonicalMechanismId, 2> mechanisms;
   llvm::SmallVector<CanonicalDemandId, 4> directOrigins;
   llvm::SmallVector<CanonicalDemandId, 4> additionalCoverage;
-  llvm::BitVector incidence;
+  llvm::SmallVector<CanonicalDemandId, 8> coveredDemands;
   std::uint64_t weight = 0;
 };
 
 struct CanonicalSetCoverInstance {
   llvm::SmallVector<CanonicalMechanismId, 4> baseline;
   llvm::SmallVector<CanonicalDemandId, 8> universe;
-  llvm::BitVector universeIncidence;
   llvm::SmallVector<CanonicalSetCoverCandidate, 8> candidates;
+  llvm::SmallVector<llvm::SmallVector<CanonicalSetCoverCandidateId, 2>, 0>
+      providersByDemand;
 };
 
 /// A physical event group used only after ordinary allocation exhausts a
@@ -345,17 +378,19 @@ LogicalResult solveCanonicalSyncSetCover(CanonicalSyncProgram &program);
 
 class CanonicalSyncProgram {
 public:
-  explicit CanonicalSyncProgram(
-      func::FuncOp function,
-      CanonicalGmAliasPolicy gmAliasPolicy =
-          CanonicalGmAliasPolicy::Conservative)
-      : function(function), gmAliasPolicy(gmAliasPolicy) {}
+  explicit CanonicalSyncProgram(func::FuncOp function,
+                                CanonicalGmAliasPolicy gmAliasPolicy =
+                                    CanonicalGmAliasPolicy::Conservative,
+                                CanonicalSyncStatistics *statistics = nullptr)
+      : function(function), gmAliasPolicy(gmAliasPolicy),
+        statistics(statistics) {}
 
   CanonicalRegionId appendRegion(CanonicalRegion region);
   CanonicalPhaseId appendPhase(CanonicalPhase phase);
   CanonicalAccessId appendAccess(CanonicalAccess access);
   CanonicalFenceEffectId appendFenceEffect(CanonicalFenceEffect effect);
   CanonicalDemandId appendDemand(CanonicalDemand demand);
+  void retainDemands(const llvm::BitVector &retained);
   void appendDemandCause(CanonicalDemandId demand, CanonicalDemandCause cause);
   CanonicalMechanismId appendMechanism(CanonicalMechanism mechanism);
   void appendMechanismOrigin(CanonicalMechanismId mechanism,
@@ -376,7 +411,12 @@ public:
   bool isFrozen() const { return frozen; }
   func::FuncOp getFunction() const { return function; }
   CanonicalGmAliasPolicy getGmAliasPolicy() const { return gmAliasPolicy; }
+  CanonicalSyncStatistics *getStatistics() const { return statistics; }
   llvm::ArrayRef<CanonicalRegion> getRegions() const { return regions; }
+  llvm::ArrayRef<CanonicalRegionId>
+  getRegionChildren(CanonicalRegionId id) const {
+    return regionChildren[id];
+  }
   llvm::ArrayRef<CanonicalPhase> getPhases() const { return phases; }
   llvm::ArrayRef<CanonicalAccess> getAccesses() const { return accesses; }
   llvm::ArrayRef<CanonicalFenceEffect> getFenceEffects() const {
@@ -405,6 +445,14 @@ public:
   const CanonicalFenceEffect &getFenceEffect(CanonicalFenceEffectId id) const;
   const CanonicalDemand &getDemand(CanonicalDemandId id) const;
   const CanonicalMechanism &getMechanism(CanonicalMechanismId id) const;
+  llvm::ArrayRef<CanonicalRegionId>
+  getMechanismExecutionLoops(CanonicalMechanismId id) const {
+    return mechanismExecutionLoops[id];
+  }
+  llvm::ArrayRef<CanonicalPhaseId>
+  getMechanismSourcePrefix(CanonicalMechanismId id) const {
+    return mechanismSourcePrefixes[id];
+  }
 
 private:
   friend LogicalResult
@@ -421,14 +469,19 @@ private:
   void setSetCoverSolution(CanonicalSetCoverSolution solution);
 
   func::FuncOp function;
-  CanonicalGmAliasPolicy gmAliasPolicy =
-      CanonicalGmAliasPolicy::Conservative;
+  CanonicalGmAliasPolicy gmAliasPolicy = CanonicalGmAliasPolicy::Conservative;
+  CanonicalSyncStatistics *statistics = nullptr;
   llvm::SmallVector<CanonicalRegion> regions;
+  llvm::SmallVector<llvm::SmallVector<CanonicalRegionId, 4>, 0> regionChildren;
   llvm::SmallVector<CanonicalPhase> phases;
   llvm::SmallVector<CanonicalAccess> accesses;
   llvm::SmallVector<CanonicalFenceEffect> fenceEffects;
   llvm::SmallVector<CanonicalDemand> demands;
   llvm::SmallVector<CanonicalMechanism> mechanisms;
+  llvm::SmallVector<llvm::SmallVector<CanonicalRegionId, 2>, 0>
+      mechanismExecutionLoops;
+  llvm::SmallVector<llvm::SmallVector<CanonicalPhaseId, 8>, 0>
+      mechanismSourcePrefixes;
   llvm::SmallVector<CanonicalMechanismId> directMechanisms;
   llvm::SmallVector<CanonicalCoverageWorld> coverageWorlds;
   std::optional<CanonicalSetCoverInstance> setCoverInstance;

@@ -14,9 +14,12 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
+
+#include <tuple>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -207,6 +210,115 @@ CanonicalDemandId appendOrMerge(CanonicalSyncProgram &program,
 
 using PhaseMap = llvm::DenseMap<Operation *, SmallVector<CanonicalPhaseId, 2>>;
 using CompletionMap = llvm::DenseMap<Value, CanonicalPhaseId>;
+
+struct AccessPair {
+  CanonicalAccessId source = kInvalidCanonicalSyncId;
+  CanonicalAccessId target = kInvalidCanonicalSyncId;
+};
+
+struct LocalIntervalRecord {
+  AddressSpace space = AddressSpace::Zero;
+  std::uint64_t begin = 0;
+  std::uint64_t end = 0;
+  CanonicalAccessId access = kInvalidCanonicalSyncId;
+};
+
+std::uint64_t accessPairKey(CanonicalAccessId source,
+                            CanonicalAccessId target) {
+  return (static_cast<std::uint64_t>(source) << 32U) |
+         static_cast<std::uint64_t>(target);
+}
+
+SmallVector<AccessPair, 32> buildMayAliasPairs(CanonicalSyncProgram &program) {
+  SmallVector<LocalIntervalRecord, 32> intervals;
+  SmallVector<CanonicalAccessId, 16> fallback;
+  for (const CanonicalAccess &access : program.getAccesses()) {
+    const bool knownLocalRange =
+        !access.unknownSpace && access.space != AddressSpace::GM &&
+        access.physical && !access.unknownRange && !access.intervals.empty();
+    bool validIntervals = knownLocalRange;
+    if (knownLocalRange) {
+      for (const CanonicalByteInterval &interval : access.intervals) {
+        const std::optional<std::uint64_t> end = interval.end();
+        if (!end) {
+          validIntervals = false;
+          break;
+        }
+      }
+    }
+    if (!validIntervals) {
+      fallback.push_back(access.id);
+      continue;
+    }
+    for (const CanonicalByteInterval &interval : access.intervals) {
+      const std::uint64_t end = *interval.end();
+      if (interval.begin == end) {
+        continue;
+      }
+      intervals.push_back({access.space, interval.begin, end, access.id});
+    }
+  }
+
+  llvm::sort(intervals, [](const LocalIntervalRecord &left,
+                           const LocalIntervalRecord &right) {
+    return std::tie(left.space, left.begin, left.end, left.access) <
+           std::tie(right.space, right.begin, right.end, right.access);
+  });
+
+  llvm::DenseSet<std::uint64_t> pairKeys;
+  const auto addBoth = [&pairKeys](CanonicalAccessId first,
+                                   CanonicalAccessId second) {
+    pairKeys.insert(accessPairKey(first, second));
+    pairKeys.insert(accessPairKey(second, first));
+  };
+  SmallVector<LocalIntervalRecord, 16> active;
+  std::optional<AddressSpace> activeSpace;
+  for (const LocalIntervalRecord &current : intervals) {
+    if (!activeSpace || *activeSpace != current.space) {
+      active.clear();
+      activeSpace = current.space;
+    }
+    llvm::erase_if(active, [&](const LocalIntervalRecord &candidate) {
+      return candidate.end <= current.begin;
+    });
+    for (const LocalIntervalRecord &candidate : active) {
+      addBoth(candidate.access, current.access);
+    }
+    addBoth(current.access, current.access);
+    active.push_back(current);
+  }
+
+  CanonicalSyncStatistics *statistics = program.getStatistics();
+  if (statistics) {
+    statistics->localIntervalRecords = intervals.size();
+  }
+  for (CanonicalAccessId first : fallback) {
+    for (const CanonicalAccess &second : program.getAccesses()) {
+      if (statistics) {
+        ++statistics->aliasPairTests;
+      }
+      if (accessesMayAlias(program.getAccess(first), second,
+                           program.getGmAliasPolicy())) {
+        addBoth(first, second.id);
+      }
+    }
+  }
+
+  SmallVector<AccessPair, 32> result;
+  result.reserve(pairKeys.size());
+  for (std::uint64_t key : pairKeys) {
+    result.push_back({static_cast<CanonicalAccessId>(key >> 32U),
+                      static_cast<CanonicalAccessId>(key)});
+  }
+  llvm::sort(result, [](const AccessPair &left, const AccessPair &right) {
+    return std::tie(left.source, left.target) <
+           std::tie(right.source, right.target);
+  });
+  if (statistics) {
+    statistics->aliasCandidatePairs = result.size();
+  }
+  return result;
+}
 
 LogicalResult indexSsaCompletionPhases(const CanonicalSyncProgram &program,
                                        PhaseMap &operationPhases,
@@ -550,45 +662,42 @@ void addHazardDemand(CanonicalSyncProgram &program, DemandIndex &index,
 
 void deriveMemoryDemands(CanonicalSyncProgram &program, DemandIndex &index,
                          const CanonicalSyncTarget &targetModel) {
-  for (const CanonicalAccess &source : program.getAccesses()) {
+  for (const AccessPair &pair : buildMayAliasPairs(program)) {
+    const CanonicalAccess &source = program.getAccess(pair.source);
     const CanonicalPhase &sourcePhase = program.getPhase(source.phase);
-    for (const CanonicalAccess &target : program.getAccesses()) {
-      const CanonicalPhase &targetPhase = program.getPhase(target.phase);
-      const bool samePhase = source.phase == target.phase;
-      if (!accessesMayAlias(source, target, program.getGmAliasPolicy())) {
+    const CanonicalAccess &target = program.getAccess(pair.target);
+    const CanonicalPhase &targetPhase = program.getPhase(target.phase);
+    const bool samePhase = source.phase == target.phase;
+    std::optional<CanonicalDemandKind> hazard =
+        classifyHazard(program, source, target);
+    if (!hazard) {
+      continue;
+    }
+    const SmallVector<CanonicalRegionId, 2> loops =
+        commonLoops(sourcePhase, targetPhase);
+    const bool sameIterationCompatible =
+        controlsCanCoexecute(sourcePhase.controlPath, targetPhase.controlPath);
+    if (sameIterationCompatible && !samePhase &&
+        sourcePhase.operation != targetPhase.operation &&
+        sourcePhase.sourceOrder < targetPhase.sourceOrder) {
+      const SmallVector<CanonicalLoopDistance, 2> zeroDistance =
+          sameIterationRelation(loops);
+      addHazardDemand(
+          program, index, targetModel, source, target, *hazard, zeroDistance,
+          findRegionLca(program, sourcePhase.region, targetPhase.region));
+    }
+    for (size_t carryingIndex = 0; carryingIndex < loops.size();
+         ++carryingIndex) {
+      const CanonicalRegionId carryingLoop = loops[carryingIndex];
+      if (!controlsCanCoexecuteAtDistance(program, sourcePhase.controlPath,
+                                          targetPhase.controlPath,
+                                          carryingLoop)) {
         continue;
       }
-      std::optional<CanonicalDemandKind> hazard =
-          classifyHazard(program, source, target);
-      if (!hazard) {
-        continue;
-      }
-      const SmallVector<CanonicalRegionId, 2> loops =
-          commonLoops(sourcePhase, targetPhase);
-      const bool sameIterationCompatible = controlsCanCoexecute(
-          sourcePhase.controlPath, targetPhase.controlPath);
-      if (sameIterationCompatible && !samePhase &&
-          sourcePhase.operation != targetPhase.operation &&
-          sourcePhase.sourceOrder < targetPhase.sourceOrder) {
-        const SmallVector<CanonicalLoopDistance, 2> zeroDistance =
-            sameIterationRelation(loops);
-        addHazardDemand(
-            program, index, targetModel, source, target, *hazard, zeroDistance,
-            findRegionLca(program, sourcePhase.region, targetPhase.region));
-      }
-      for (size_t carryingIndex = 0; carryingIndex < loops.size();
-           ++carryingIndex) {
-        const CanonicalRegionId carryingLoop = loops[carryingIndex];
-        if (!controlsCanCoexecuteAtDistance(program, sourcePhase.controlPath,
-                                            targetPhase.controlPath,
-                                            carryingLoop)) {
-          continue;
-        }
-        const SmallVector<CanonicalLoopDistance, 2> recurrence =
-            carriedIterationRelation(loops, carryingIndex);
-        addHazardDemand(program, index, targetModel, source, target, *hazard,
-                        recurrence, carryingLoop);
-      }
+      const SmallVector<CanonicalLoopDistance, 2> recurrence =
+          carriedIterationRelation(loops, carryingIndex);
+      addHazardDemand(program, index, targetModel, source, target, *hazard,
+                      recurrence, carryingLoop);
     }
   }
 }

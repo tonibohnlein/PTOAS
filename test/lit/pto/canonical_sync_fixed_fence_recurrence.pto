@@ -83,16 +83,15 @@ module attributes {pto.target_arch = "a2a3"} {
 }
 
 // CHECK-LABEL: CANONICAL-SYNC function=fixed_fence_closes_vector_recurrence
-// CHECK: distance=[r{{[0-9]+}}:+]
+// CHECK: DEMANDS 0
 // CHECK: kind=fixed-fence fence=f0
 // CHECK: world=baseline
 // CHECK-SAME: oracle=match
 // CHECK: SET-COVER optimization=singleton
 // CHECK-SAME: universe=[]
 // CHECK-LABEL: CANONICAL-SYNC function=fixed_fence_closes_cross_pipe_recurrence
-// CHECK: d{{[0-9]+}} kind=RAW {{.*}} distance=[r{{[0-9]+}}:+]
-// CHECK-SAME: direct=m[[RECURRENCE_FENCE:[0-9]+]]
-// CHECK: m[[RECURRENCE_FENCE]] kind=fixed-fence fence=f0
+// CHECK: DEMANDS 0
+// CHECK: kind=fixed-fence fence=f0
 // CHECK: world=baseline
 // CHECK-SAME: oracle=match
 // CHECK: SET-COVER optimization=singleton

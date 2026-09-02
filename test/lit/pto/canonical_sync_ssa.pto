@@ -47,7 +47,7 @@ module attributes {pto.target_arch = "a2a3"} {
   }
 }
 
-// CHECK: DEMANDS 3
+// CHECK: DEMANDS 1
 // CHECK: kind=SSA p0->p1
 // CHECK: kind=event resource=AIV:PIPE_S->AIV:PIPE_V
 // CHECK: VERIFY ok

@@ -189,17 +189,17 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: p1 op=pto.store resource=AIV:PIPE_S
 // CHECK: a0 phase=p0 mode=R space=unknown
 // CHECK: a1 phase=p1 mode=W space=unknown
-// CHECK: kind=WAR p0->p1
+// CHECK: DEMANDS 0
 // CHECK: VERIFY ok
 // CHECK-LABEL: CANONICAL-SYNC function=normalized_volatile_reads
 // CHECK: a0 phase=p0 mode=R space=unknown{{.*}}ordered=yes
 // CHECK: a1 phase=p1 mode=R space=unknown{{.*}}ordered=no
-// CHECK: kind=ORDERED p0->p1
+// CHECK: DEMANDS 0
 // CHECK: VERIFY ok
 // CHECK-LABEL: CANONICAL-SYNC function=normalized_generic_view_alias
 // CHECK: a0 phase=p0 mode=R space=vec range=[4,8)
 // CHECK: a1 phase=p1 mode=W space=vec range=unknown
-// CHECK: kind=WAR p0->p1
+// CHECK: DEMANDS 0
 // CHECK: VERIFY ok
 // CHECK-LABEL: CANONICAL-SYNC function=normalized_wrapped_postupdate
 // CHECK: kind=SSA
@@ -235,5 +235,5 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK-LABEL: CANONICAL-SYNC function=normalized_cube_scalar_address
 // CHECK: p0 op=pto.load_scalar resource=AIC:PIPE_S
 // CHECK: p1 op=pto.tload resource=AIC:PIPE_MTE2
-// CHECK: kind=intrinsic resource=AIC:PIPE_S->AIC:PIPE_MTE2
+// CHECK: DEMANDS 0
 // CHECK: VERIFY ok

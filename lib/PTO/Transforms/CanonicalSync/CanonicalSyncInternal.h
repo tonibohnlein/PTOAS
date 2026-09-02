@@ -84,6 +84,9 @@ buildCanonicalStructureAndAccesses(CanonicalSyncProgram &program,
                                    const CanonicalSyncTarget &target);
 LogicalResult deriveCanonicalDemands(CanonicalSyncProgram &program,
                                      const CanonicalSyncTarget &target);
+LogicalResult
+integrateCanonicalFixedBaseline(CanonicalSyncProgram &program,
+                                const CanonicalSyncTarget &target);
 struct CanonicalUnrolledCoverageResult {
   llvm::SmallVector<CanonicalDemandId, 16> covered;
   bool exhaustive = true;
@@ -96,8 +99,10 @@ FailureOr<CanonicalCoverageWorld>
 evaluateCanonicalSyncGroup(const CanonicalSyncProgram &program,
                            llvm::StringRef name,
                            llvm::ArrayRef<CanonicalMechanismId> selected);
-LogicalResult verifyMaterializedCanonicalSync(
-    func::FuncOp function, CanonicalGmAliasPolicy gmAliasPolicy);
+LogicalResult
+verifyMaterializedCanonicalSync(func::FuncOp function,
+                                CanonicalGmAliasPolicy gmAliasPolicy,
+                                CanonicalSyncStatistics *statistics);
 
 } // namespace canonical_sync_detail
 } // namespace pto

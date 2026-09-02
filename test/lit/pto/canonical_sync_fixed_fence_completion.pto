@@ -9,9 +9,8 @@
 // for the full text of the License.
 
 // An existing vector-kernel GM fence drains MTE2 before publishing completion.
-// It is fixed baseline supply, so the MTE2-to-V RAW demand is absent from the
-// selectable set-cover universe even though its diagnostic direct event remains
-// in the candidate catalog.
+// It is fixed graph supply, so the MTE2-to-V RAW obligation is removed before
+// the residual demand graph and set-cover universe are frozen.
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
 // RUN:   --canonical-sync-analysis-only --emit-pto-ir %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
@@ -55,16 +54,15 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: FENCE-EFFECTS 1
 // CHECK: f0 scope=gm
 // CHECK-SAME: drains=[{{.*}}AIV:PIPE_V{{.*}}AIV:PIPE_MTE2{{.*}}]
-// CHECK: kind=RAW
-// CHECK: kind=fixed-fence fence=f0
-// CHECK: kind=event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK: DEMANDS 0
+// CHECK: m0 kind=fixed-fence fence=f0
 // CHECK: world=baseline
 // CHECK-SAME: oracle=match
 // CHECK: SET-COVER optimization=singleton
 // CHECK-SAME: universe=[]
-// CHECK: PLAN selected=[m0, m2] events=[]
+// CHECK: PLAN selected=[m0, m1] events=[]
 
-// MATERIALIZE: PLAN selected=[m0, m2] events=[]
+// MATERIALIZE: PLAN selected=[m0, m1] events=[]
 // MATERIALIZE-NOT: pto.set_flag
 // MATERIALIZE-NOT: pto.wait_flag
 // MATERIALIZE: VERIFY ok

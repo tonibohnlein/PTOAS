@@ -57,8 +57,8 @@ struct VerifierCacheAction {
 
 struct VerifierProgram {
   func::FuncOp function;
-  CanonicalGmAliasPolicy gmAliasPolicy =
-      CanonicalGmAliasPolicy::Conservative;
+  CanonicalGmAliasPolicy gmAliasPolicy = CanonicalGmAliasPolicy::Conservative;
+  CanonicalSyncStatistics *statistics = nullptr;
   llvm::DenseMap<Operation *, llvm::SmallVector<VerifierPhase, 2>> phases;
   llvm::DenseMap<Operation *, llvm::SmallVector<VerifierCacheAction, 2>>
       cacheActions;
@@ -67,7 +67,8 @@ struct VerifierProgram {
 
 FailureOr<std::unique_ptr<VerifierProgram>>
 buildVerifierProgram(func::FuncOp function,
-                     CanonicalGmAliasPolicy gmAliasPolicy);
+                     CanonicalGmAliasPolicy gmAliasPolicy,
+                     CanonicalSyncStatistics *statistics);
 
 LogicalResult verifyConcreteEventGenerations(func::FuncOp function,
                                              const CanonicalSyncTarget &target);

@@ -104,15 +104,21 @@ unclassified. The generated wrapper defines the admitted adapter as synchronous
 scalar code, and the graph retains conservative read/write GM effects for every
 pointer operand. Other opaque calls remain unclassified and fail closed.
 
-The graph is frozen before mechanisms are generated. Later stages cannot remove
-or rewrite a demand.
+Before the residual demand graph is frozen, immutable supply is integrated:
+intrinsic completion, existing proven fence effects, and mandatory section or
+function exit drains remove the obligations they already satisfy. They remain
+physical graph effects, but are not selectable demands. The residual graph is
+then frozen before mechanisms are generated. Later stages cannot remove or
+rewrite a demand.
 
 ### Alias and physical-storage rules
 
 Alias facts are propagated through allocations, planned multi-buffer
 addresses, constant and dynamic slot selection, pointer arithmetic, pointer
-round trips, views, reshapes, bitcasts, and selections. Known physical byte
-ranges prove disjointness or overlap. Unknown ranges conservatively alias.
+round trips, views, reshapes, bitcasts, and selections. Known local physical
+byte ranges are indexed by address space and swept as intervals, so demand
+discovery visits actual overlaps instead of every local-access pair. Unknown
+ranges conservatively alias.
 Distinct GM roots are also conservative because kernel arguments can alias.
 An unsupported memory type, absent address space, unscoped memory effect, or
 unrecoverable provenance produces an unknown access. Unknown accesses are kept
@@ -129,6 +135,11 @@ and printed in CanonicalSync dumps.
 
 The pass runs after memory planning and before multi-buffer selection is
 resolved so that it can use both planned addresses and per-use slot identity.
+
+`--canonical-sync-stats` prints one atomic JSON record per function. The record
+contains graph, demand, mechanism, cover, and selected-plan sizes; microsecond
+timings for each major stage; and verifier loop-transfer state growth. Failed
+functions retain the partial measurements and identify the failing stage.
 
 ### Demands
 
@@ -282,17 +293,22 @@ program. A disagreement with the flat scoreboard or with an exhaustive
 bounded run is a compiler error and prevents mutation.
 
 Coverage is computed once for each unique direct physical mechanism. A
-singleton world contains fixed baseline supply plus that mechanism. Its
+singleton world evaluates the fixed graph plus that mechanism. The separately
+evaluated fixed-only world must cover no residual demand; this is a
+differential assertion that immutable-supply integration was complete. Each
+singleton's
 bottom-up regional result must agree with the flat scoreboard and, when
 exhaustive, the bounded structured interpreter. The resulting demand set is a
 static column in the set-cover instance; later solving never invokes a coverage
 oracle again.
 
-Intrinsic order, existing fixed fences, and the required return drain are
-baseline supply. Every remaining singleton barrier or complete set/wait pair
-has weight one. Deterministic greedy selection chooses the column with the
-largest uncovered demand set, then reverse deletion removes a selected column
-when the union of the remaining cached columns still covers the universe. The
+Intrinsic order, existing fixed fences, and required exit drains are fixed
+graph supply. Every remaining singleton barrier or complete set/wait pair has
+weight one. Candidate incidence is stored sparsely in both directions. A
+deterministic lazy max-heap chooses the column with the largest uncovered
+demand set; solving only visits cached sparse incidence and never reruns a
+coverage oracle. Reverse deletion removes a selected column when every demand
+it covers still has another selected provider. The
 selected mechanisms are the materialized plan. Non-singleton mechanism groups
 and symbolic AND/OR coverage formulas are outside this implementation.
 

@@ -48,7 +48,17 @@ static std::uint32_t appendRecord(llvm::SmallVectorImpl<Record> &records,
 }
 
 CanonicalRegionId CanonicalSyncProgram::appendRegion(CanonicalRegion region) {
-  return appendRecord(regions, std::move(region), graphFrozen);
+  const CanonicalRegionId parent = region.parent;
+  const CanonicalRegionId id =
+      appendRecord(regions, std::move(region), graphFrozen);
+  regionChildren.emplace_back();
+  if (parent != kInvalidCanonicalSyncId) {
+    if (parent >= id) {
+      llvm_unreachable("canonical region parent must precede its child");
+    }
+    regionChildren[parent].push_back(id);
+  }
+  return id;
 }
 
 CanonicalPhaseId CanonicalSyncProgram::appendPhase(CanonicalPhase phase) {
@@ -68,6 +78,26 @@ CanonicalDemandId CanonicalSyncProgram::appendDemand(CanonicalDemand demand) {
   return appendRecord(demands, std::move(demand), graphFrozen);
 }
 
+void CanonicalSyncProgram::retainDemands(const llvm::BitVector &retained) {
+  const bool invalidState = graphFrozen || frozen ||
+                            retained.size() != demands.size() ||
+                            !mechanisms.empty() || !directMechanisms.empty();
+  if (invalidState) {
+    llvm_unreachable("cannot compact a frozen canonical demand graph");
+  }
+  SmallVector<CanonicalDemand, 0> remaining;
+  remaining.reserve(retained.count());
+  for (const CanonicalDemand &demand : demands) {
+    if (!retained.test(demand.id)) {
+      continue;
+    }
+    CanonicalDemand kept = demand;
+    kept.id = remaining.size();
+    remaining.push_back(std::move(kept));
+  }
+  demands = std::move(remaining);
+}
+
 void CanonicalSyncProgram::appendDemandCause(CanonicalDemandId demand,
                                              CanonicalDemandCause cause) {
   if (graphFrozen || demand >= demands.size()) {
@@ -78,10 +108,42 @@ void CanonicalSyncProgram::appendDemandCause(CanonicalDemandId demand,
 
 CanonicalMechanismId
 CanonicalSyncProgram::appendMechanism(CanonicalMechanism mechanism) {
-  return appendRecord(mechanisms, std::move(mechanism),
-                      frozen || !buildingMechanisms ||
-                          mechanismCatalogComplete ||
-                          setCoverInstance.has_value());
+  const CanonicalMechanismId id =
+      appendRecord(mechanisms, std::move(mechanism),
+                   frozen || !buildingMechanisms || mechanismCatalogComplete ||
+                       setCoverInstance.has_value());
+  const CanonicalMechanism &stored = mechanisms[id];
+  SmallVector<CanonicalRegionId, 2> loops;
+  for (CanonicalRegionId region = stored.actionRegion;
+       region != kInvalidCanonicalSyncId; region = regions[region].parent) {
+    if (regions[region].kind == CanonicalRegionKind::Loop) {
+      loops.push_back(region);
+    }
+  }
+  llvm::sort(loops);
+  mechanismExecutionLoops.push_back(std::move(loops));
+
+  SmallVector<CanonicalPhaseId, 8> prefix;
+  for (const CanonicalPhase &phase : phases) {
+    bool matchingResource = phase.resource == stored.source;
+    if (stored.kind == CanonicalMechanismKind::FixedFence &&
+        stored.fenceEffect) {
+      matchingResource = llvm::is_contained(
+          fenceEffects[*stored.fenceEffect].drainedResources, phase.resource);
+    }
+    if (matchingResource && stored.sourcePoint.operation &&
+        canonical_sync_detail::phaseMayPrecedePoint(phase,
+                                                    stored.sourcePoint) &&
+        canonical_sync_detail::controlsCanCoexecute(phase.controlPath,
+                                                    stored.guard)) {
+      prefix.push_back(phase.id);
+    }
+  }
+  if (statistics) {
+    statistics->precomputedPrefixEntries += prefix.size();
+  }
+  mechanismSourcePrefixes.push_back(std::move(prefix));
+  return id;
 }
 
 void CanonicalSyncProgram::appendMechanismOrigin(CanonicalMechanismId mechanism,
@@ -188,9 +250,27 @@ LogicalResult CanonicalSyncProgram::freezeGraph() {
     function.emitError("invalid canonical synchronization model: ") << message;
     return failure();
   };
+  const bool invalidRegionIndexSize = regionChildren.size() != regions.size();
+  if (invalidRegionIndexSize) {
+    return fail("region hierarchy index has an invalid size");
+  }
   for (const CanonicalRegion &region : regions) {
     if (region.id != 0 && region.parent >= regions.size()) {
       return fail("region has an invalid parent");
+    }
+    const ArrayRef<CanonicalRegionId> children = regionChildren[region.id];
+    const bool invalidChildren =
+        !llvm::is_sorted(children) ||
+        std::adjacent_find(children.begin(), children.end()) != children.end() ||
+        llvm::any_of(children, [&](CanonicalRegionId child) {
+          return child >= regions.size() || child <= region.id ||
+                 regions[child].parent != region.id;
+        });
+    const bool missingFromParent =
+        region.id != 0 &&
+        !llvm::is_contained(regionChildren[region.parent], region.id);
+    if (invalidChildren || missingFromParent) {
+      return fail("region hierarchy index is inconsistent");
     }
   }
   for (const CanonicalPhase &phase : phases) {
@@ -262,6 +342,12 @@ LogicalResult CanonicalSyncProgram::freeze() {
     function.emitError("invalid canonical synchronization plan: ") << message;
     return failure();
   };
+  const bool invalidReachabilityCacheSize =
+      mechanismExecutionLoops.size() != mechanisms.size() ||
+      mechanismSourcePrefixes.size() != mechanisms.size();
+  if (invalidReachabilityCacheSize) {
+    return fail("mechanism reachability cache has an invalid size");
+  }
   for (const CanonicalMechanism &mechanism : mechanisms) {
     const bool tail = mechanism.kind == CanonicalMechanismKind::TailBarrier;
     const bool hasBothPoints =
@@ -291,8 +377,28 @@ LogicalResult CanonicalSyncProgram::freeze() {
          (*mechanism.recurrenceLoop < regions.size() &&
           regions[*mechanism.recurrenceLoop].kind ==
               CanonicalRegionKind::Loop));
+    const ArrayRef<CanonicalRegionId> cachedLoops =
+        mechanismExecutionLoops[mechanism.id];
+    const ArrayRef<CanonicalPhaseId> cachedPrefix =
+        mechanismSourcePrefixes[mechanism.id];
+    const bool validCachedLoops =
+        llvm::is_sorted(cachedLoops) &&
+        std::adjacent_find(cachedLoops.begin(), cachedLoops.end()) ==
+            cachedLoops.end() &&
+        llvm::all_of(cachedLoops, [this](CanonicalRegionId id) {
+          return id < regions.size() &&
+                 regions[id].kind == CanonicalRegionKind::Loop;
+        });
+    const bool validCachedPrefix =
+        llvm::is_sorted(cachedPrefix) &&
+        std::adjacent_find(cachedPrefix.begin(), cachedPrefix.end()) ==
+            cachedPrefix.end() &&
+        llvm::all_of(cachedPrefix, [this](CanonicalPhaseId id) {
+          return id < phases.size();
+        });
     if (!validPoints || !validOrigins || !validFence ||
         !validGeneratedCacheMaintenance || !validRecurrence ||
+        !validCachedLoops || !validCachedPrefix ||
         mechanism.actionRegion >= regions.size()) {
       return fail("mechanism has an invalid action point, origin, or region");
     }
@@ -364,17 +470,15 @@ LogicalResult CanonicalSyncProgram::freeze() {
       llvm::any_of(
           setCoverInstance->universe,
           [this](CanonicalDemandId id) { return id >= demands.size(); }) ||
-      setCoverInstance->universeIncidence.size() != demands.size();
-  llvm::BitVector listedUniverse(demands.size());
-  for (CanonicalDemandId demand : setCoverInstance->universe) {
-    if (demand < demands.size()) {
-      listedUniverse.set(demand);
-    }
-  }
-  const bool inconsistentUniverse =
-      listedUniverse != setCoverInstance->universeIncidence;
-  llvm::BitVector providerCoverage(demands.size());
+      setCoverInstance->universe.size() != demands.size() ||
+      !llvm::is_sorted(setCoverInstance->universe) ||
+      std::adjacent_find(setCoverInstance->universe.begin(),
+                         setCoverInstance->universe.end()) !=
+          setCoverInstance->universe.end() ||
+      setCoverInstance->providersByDemand.size() != demands.size();
+  SmallVector<uint8_t, 8> providerCoverage(demands.size(), 0U);
   bool invalidCandidate = false;
+  bool invalidProviders = false;
   for (const CanonicalSetCoverCandidate &candidate :
        setCoverInstance->candidates) {
     const bool wrongId =
@@ -383,50 +487,79 @@ LogicalResult CanonicalSyncProgram::freeze() {
     const bool invalidMechanism =
         candidate.mechanisms.size() != 1U ||
         candidate.mechanisms.front() >= mechanisms.size();
-    const bool invalidDemand = llvm::any_of(candidate.directOrigins,
-                                            [this](CanonicalDemandId id) {
-                                              return id >= demands.size();
-                                            }) ||
-                               llvm::any_of(candidate.additionalCoverage,
-                                            [this](CanonicalDemandId id) {
-                                              return id >= demands.size();
-                                            });
-    const bool invalidIncidence = candidate.incidence.size() != demands.size();
-    llvm::BitVector listedIncidence(demands.size());
-    for (CanonicalDemandId demand : candidate.directOrigins) {
-      if (demand < demands.size()) {
-        listedIncidence.set(demand);
-      }
-    }
-    for (CanonicalDemandId demand : candidate.additionalCoverage) {
-      if (demand < demands.size()) {
-        listedIncidence.set(demand);
-      }
-    }
+    const bool invalidDemand =
+        llvm::any_of(
+            candidate.directOrigins,
+            [this](CanonicalDemandId id) { return id >= demands.size(); }) ||
+        llvm::any_of(
+            candidate.additionalCoverage,
+            [this](CanonicalDemandId id) { return id >= demands.size(); }) ||
+        llvm::any_of(candidate.coveredDemands, [this](CanonicalDemandId id) {
+          return id >= demands.size();
+        });
     const bool overlap = llvm::any_of(
         candidate.directOrigins, [&candidate](CanonicalDemandId id) {
           return llvm::is_contained(candidate.additionalCoverage, id);
         });
-    llvm::BitVector outsideUniverseIncidence = listedIncidence;
-    outsideUniverseIncidence.reset(listedUniverse);
-    const bool outsideUniverse = outsideUniverseIncidence.any();
+    const bool invalidCoverageOrder =
+        !llvm::is_sorted(candidate.directOrigins) ||
+        std::adjacent_find(candidate.directOrigins.begin(),
+                           candidate.directOrigins.end()) !=
+            candidate.directOrigins.end() ||
+        !llvm::is_sorted(candidate.additionalCoverage) ||
+        std::adjacent_find(candidate.additionalCoverage.begin(),
+                           candidate.additionalCoverage.end()) !=
+            candidate.additionalCoverage.end() ||
+        !llvm::is_sorted(candidate.coveredDemands) ||
+        std::adjacent_find(candidate.coveredDemands.begin(),
+                           candidate.coveredDemands.end()) !=
+            candidate.coveredDemands.end();
+    SmallVector<CanonicalDemandId, 8> listedCoverage(
+        candidate.directOrigins.begin(), candidate.directOrigins.end());
+    llvm::append_range(listedCoverage, candidate.additionalCoverage);
+    llvm::sort(listedCoverage);
     const bool inconsistentIncidence =
-        !invalidIncidence && listedIncidence != candidate.incidence;
-    if (!invalidIncidence) {
-      providerCoverage |= candidate.incidence;
+        ArrayRef<CanonicalDemandId>(listedCoverage) !=
+        ArrayRef<CanonicalDemandId>(candidate.coveredDemands);
+    if (!invalidDemand) {
+      for (CanonicalDemandId demand : candidate.coveredDemands) {
+        providerCoverage[demand] = 1U;
+        const bool providersAvailable =
+            setCoverInstance->providersByDemand.size() == demands.size();
+        if (providersAvailable) {
+          invalidProviders |= !llvm::is_contained(
+              setCoverInstance->providersByDemand[demand], candidate.id);
+        }
+      }
     }
     invalidCandidate |= wrongId || invalidMechanism || invalidDemand ||
-                        invalidIncidence || inconsistentIncidence || overlap ||
-                        outsideUniverse || candidate.weight == 0;
+                        inconsistentIncidence || invalidCoverageOrder ||
+                        overlap ||
+                        candidate.weight == 0;
   }
-  llvm::BitVector uncoveredUniverse = setCoverInstance->universeIncidence;
-  const bool compatibleUniverseSizes =
-      uncoveredUniverse.size() == providerCoverage.size();
-  if (compatibleUniverseSizes) {
-    uncoveredUniverse.reset(providerCoverage);
+  const bool providersAvailable =
+      setCoverInstance->providersByDemand.size() == demands.size();
+  if (providersAvailable) {
+    for (CanonicalDemandId demand = 0; demand < demands.size(); ++demand) {
+      const ArrayRef<CanonicalSetCoverCandidateId> providers =
+          setCoverInstance->providersByDemand[demand];
+      invalidProviders |=
+          !llvm::is_sorted(providers) ||
+          std::adjacent_find(providers.begin(), providers.end()) !=
+              providers.end();
+      for (CanonicalSetCoverCandidateId candidate : providers) {
+        invalidProviders |=
+            candidate >= setCoverInstance->candidates.size() ||
+            (candidate < setCoverInstance->candidates.size() &&
+             !llvm::is_contained(
+                 setCoverInstance->candidates[candidate].coveredDemands,
+                 demand));
+      }
+      invalidProviders |= setCoverInstance->providersByDemand[demand].empty();
+    }
   }
   if (invalidBaseline || invalidUniverse || invalidCandidate ||
-      inconsistentUniverse || uncoveredUniverse.any()) {
+      invalidProviders || llvm::is_contained(providerCoverage, 0U)) {
     return fail("set-cover instance references an invalid ID or incidence");
   }
   if (!setCoverSolution) {
@@ -456,18 +589,18 @@ LogicalResult CanonicalSyncProgram::freeze() {
                  llvm::is_contained(setCoverInstance->baseline, id) ||
                  llvm::is_contained(setCoverSolution->mechanisms, id);
         });
-    llvm::BitVector selectedCoverage(demands.size());
+    SmallVector<uint8_t, 8> selectedCoverage(demands.size(), 0U);
     for (const CanonicalSetCoverCandidate &candidate :
          setCoverInstance->candidates) {
       if (!llvm::is_contained(setCoverSolution->mechanisms,
                               candidate.mechanisms.front())) {
         continue;
       }
-      selectedCoverage |= candidate.incidence;
+      for (CanonicalDemandId demand : candidate.coveredDemands) {
+        selectedCoverage[demand] = 1U;
+      }
     }
-    llvm::BitVector missingCoverage = setCoverInstance->universeIncidence;
-    missingCoverage.reset(selectedCoverage);
-    const bool incompleteCoverage = missingCoverage.any();
+    const bool incompleteCoverage = llvm::is_contained(selectedCoverage, 0U);
     const std::uint64_t expectedWeight =
         static_cast<std::uint64_t>(llvm::count_if(
             setCoverSolution->mechanisms, [this](CanonicalMechanismId id) {
@@ -662,8 +795,8 @@ StringRef mlir::pto::stringifyCanonicalVisibilityDirection(
   llvm_unreachable("unknown canonical visibility direction");
 }
 
-StringRef mlir::pto::stringifyCanonicalGmAliasPolicy(
-    CanonicalGmAliasPolicy policy) {
+StringRef
+mlir::pto::stringifyCanonicalGmAliasPolicy(CanonicalGmAliasPolicy policy) {
   switch (policy) {
   case CanonicalGmAliasPolicy::Conservative:
     return "conservative";

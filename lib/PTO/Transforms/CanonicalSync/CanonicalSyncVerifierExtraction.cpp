@@ -197,10 +197,12 @@ validateVerifierNormalizedEffects(Operation *operation,
 class VerifierProgramBuilder {
 public:
   VerifierProgramBuilder(func::FuncOp function,
-                         CanonicalGmAliasPolicy gmAliasPolicy)
+                         CanonicalGmAliasPolicy gmAliasPolicy,
+                         CanonicalSyncStatistics *statistics)
       : result(std::make_unique<VerifierProgram>()), aliases(function) {
     result->function = function;
     result->gmAliasPolicy = gmAliasPolicy;
+    result->statistics = statistics;
   }
 
   FailureOr<std::unique_ptr<VerifierProgram>> build();
@@ -915,6 +917,7 @@ void VerifierProgramBuilder::bindForResults(scf::ForOp operation) {
 
 FailureOr<std::unique_ptr<VerifierProgram>>
 mlir::pto::canonical_sync_detail::buildVerifierProgram(
-    func::FuncOp function, CanonicalGmAliasPolicy gmAliasPolicy) {
-  return VerifierProgramBuilder(function, gmAliasPolicy).build();
+    func::FuncOp function, CanonicalGmAliasPolicy gmAliasPolicy,
+    CanonicalSyncStatistics *statistics) {
+  return VerifierProgramBuilder(function, gmAliasPolicy, statistics).build();
 }

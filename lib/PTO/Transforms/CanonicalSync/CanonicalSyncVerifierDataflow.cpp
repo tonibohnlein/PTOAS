@@ -279,6 +279,11 @@ LogicalResult executeLoop(const VerifierProgram &program,
           "canonical sync verifier loop transfer entered a non-fixed cycle");
     }
     visited.push_back(iteration);
+    if (program.statistics) {
+      ++program.statistics->verifierLoopTransfers;
+      program.statistics->maxVerifierLoopStates = std::max<std::uint64_t>(
+          program.statistics->maxVerifierLoopStates, visited.size());
+    }
     const VerifierState before = iteration;
     if (failed(executeVerifierBlock(
             program, target, operation.getRegion().front(), iteration))) {
@@ -348,9 +353,8 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyAndIssuePhase(
             source.key.operation == destination.key.operation;
         const bool unresolvedSameOperation =
             sameOperation && !containsKey(state.loopCarried, source.key);
-        const bool nonAliasing =
-            !accessesMayAlias(source.access, destination.access,
-                              program.gmAliasPolicy);
+        const bool nonAliasing = !accessesMayAlias(
+            source.access, destination.access, program.gmAliasPolicy);
         const bool nonHazard = !isHazard(source, destination);
         if (unresolvedSameOperation || nonAliasing || nonHazard) {
           continue;
@@ -447,7 +451,8 @@ LogicalResult mlir::pto::canonical_sync_detail::executeVerifierBlock(
 }
 
 LogicalResult mlir::pto::canonical_sync_detail::verifyMaterializedCanonicalSync(
-    func::FuncOp function, CanonicalGmAliasPolicy gmAliasPolicy) {
+    func::FuncOp function, CanonicalGmAliasPolicy gmAliasPolicy,
+    CanonicalSyncStatistics *statistics) {
   FailureOr<CanonicalSyncTarget> target =
       CanonicalSyncTarget::resolve(function);
   if (failed(target)) {
@@ -459,7 +464,7 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyMaterializedCanonicalSync(
     return failure();
   }
   FailureOr<std::unique_ptr<VerifierProgram>> program =
-      buildVerifierProgram(function, gmAliasPolicy);
+      buildVerifierProgram(function, gmAliasPolicy, statistics);
   if (failed(program)) {
     return failure();
   }

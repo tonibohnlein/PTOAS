@@ -192,12 +192,6 @@ module attributes {pto.target_arch = "a2a3"} {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %two = arith.constant 2 : index
-    %view = pto.make_tensor_view %gm, shape = [%one, %eight],
-      strides = [%eight, %one] {layout = #pto.layout<nd>} :
-      !pto.tensor_view<?x?xf32>
-    %slice = pto.partition_view %view, offsets = [%zero, %zero],
-      sizes = [%one, %eight] : !pto.tensor_view<?x?xf32> ->
-      !pto.partition_tensor_view<1x8xf32>
     %view2 = pto.make_tensor_view %gm2, shape = [%one, %eight],
       strides = [%eight, %one] {layout = #pto.layout<nd>} :
       !pto.tensor_view<?x?xf32>
@@ -207,19 +201,15 @@ module attributes {pto.target_arch = "a2a3"} {
     %tile = pto.alloc_tile addr = %addr :
       !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8,
                     blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %value = arith.constant 1.000000e+00 : f32
     scf.for %iteration = %zero to %two step %one {
       scf.if %condition {
-        pto.tload ins(%slice : !pto.partition_tensor_view<1x8xf32>)
+        pto.store_scalar %value, %gm2[%zero] : !pto.ptr<f32>, f32
+      } else {
+        pto.tload ins(%slice2 : !pto.partition_tensor_view<1x8xf32>)
                   outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1,
                          cols=8, v_row=1, v_col=8, blayout=row_major,
                          slayout=none_box, fractal=512, pad=0>)
-        pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1,
-                         cols=8, v_row=1, v_col=8, blayout=row_major,
-                         slayout=none_box, fractal=512, pad=0>)
-                   outs(%slice2 : !pto.partition_tensor_view<1x8xf32>)
-      } else {
-        %loaded = pto.load_scalar %gm2[%zero] : !pto.ptr<f32> -> f32
-        pto.store_scalar %loaded, %gm[%zero] : !pto.ptr<f32>, f32
       }
     }
     return
@@ -288,6 +278,4 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK-LABEL: func.func @canonical_sync_loop_visibility_boundary
 // CHECK: scf.for
 // CHECK: pto.cmo.cacheinvalid
-// CHECK-NEXT: pto.cmo.cacheinvalid
 // CHECK-NEXT: pto.fence.barrier_all
-// CHECK-NEXT: pto.cmo.cacheinvalid

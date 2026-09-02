@@ -57,6 +57,8 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
            "Build and dump the plan without changing the function">,
     Option<"dump", "dump", "bool", "false",
            "Print the canonical graph, demands, mechanisms, and coverage">,
+    Option<"statistics", "statistics", "bool", "false",
+           "Print one JSON statistics record per function">,
     Option<"gmAliasPolicy", "gm-alias-policy", "std::string",
            "\"conservative\"",
            "GM alias policy: conservative or distinct-roots-unsafe">

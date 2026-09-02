@@ -229,6 +229,12 @@ llvm::cl::opt<bool> canonicalSyncDump(
     llvm::cl::desc("Dump the canonical synchronization plan"),
     llvm::cl::init(false));
 
+llvm::cl::opt<bool> canonicalSyncStatistics(
+    "canonical-sync-stats",
+    llvm::cl::desc(
+        "Print one CanonicalSync JSON statistics record per function"),
+    llvm::cl::init(false));
+
 llvm::cl::opt<std::string> canonicalSyncGmAliasPolicy(
     "canonical-sync-gm-alias-policy",
     llvm::cl::desc("GM alias policy for CanonicalSync: conservative or "

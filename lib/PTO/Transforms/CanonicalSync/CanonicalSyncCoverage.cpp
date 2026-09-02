@@ -73,31 +73,13 @@ bool addFact(SmallVectorImpl<CompletionFact> &facts, CompletionFact fact) {
   return true;
 }
 
-SmallVector<CanonicalRegionId, 2>
-mechanismExecutionLoops(const CanonicalSyncProgram &program,
-                        const CanonicalMechanism &mechanism) {
-  SmallVector<CanonicalRegionId, 2> result;
-  for (CanonicalRegionId region = mechanism.actionRegion;
-       region != kInvalidCanonicalSyncId;
-       region = program.getRegion(region).parent) {
-    if (program.getRegion(region).kind == CanonicalRegionKind::Loop) {
-      result.push_back(region);
-    }
-  }
-  canonicalizeLoops(result);
-  return result;
-}
-
 void applyBarrier(const CanonicalSyncProgram &program,
                   const CanonicalMechanism &mechanism,
                   SmallVectorImpl<CompletionFact> &facts,
                   ArrayRef<CanonicalRegionId> requiredLoops = {}) {
-  for (const CanonicalPhase &phase : program.getPhases()) {
-    if (phase.resource != mechanism.source ||
-        !phaseMayPrecedePoint(phase, mechanism.sourcePoint) ||
-        !controlsCanCoexecute(phase.controlPath, mechanism.guard)) {
-      continue;
-    }
+  for (CanonicalPhaseId phaseId :
+       program.getMechanismSourcePrefix(mechanism.id)) {
+    const CanonicalPhase &phase = program.getPhase(phaseId);
     addFact(facts, {phase.id, mechanism.target, mechanism.targetPoint,
                     combineGuards(phase.controlPath, mechanism.guard),
                     SmallVector<CanonicalRegionId, 2>(requiredLoops.begin(),
@@ -129,15 +111,9 @@ bool applyFixedFence(const CanonicalSyncProgram &program,
            SmallVector<CanonicalRegionId, 2>(loops.begin(), loops.end())});
     }
   };
-  for (const CanonicalPhase &phase : program.getPhases()) {
-    const bool drained =
-        llvm::is_contained(effect.drainedResources, phase.resource);
-    const bool precedes = phaseMayPrecedePoint(phase, mechanism.sourcePoint);
-    const bool compatible =
-        controlsCanCoexecute(phase.controlPath, mechanism.guard);
-    if (!drained || !precedes || !compatible) {
-      continue;
-    }
+  for (CanonicalPhaseId phaseId :
+       program.getMechanismSourcePrefix(mechanism.id)) {
+    const CanonicalPhase &phase = program.getPhase(phaseId);
     publish(phase.id, combineGuards(phase.controlPath, mechanism.guard),
             requiredLoops);
   }
@@ -163,12 +139,9 @@ bool applyEvent(const CanonicalSyncProgram &program,
                 SmallVectorImpl<CompletionFact> &facts,
                 ArrayRef<CanonicalRegionId> requiredLoops = {}) {
   bool changed = false;
-  for (const CanonicalPhase &phase : program.getPhases()) {
-    if (phase.resource != mechanism.source ||
-        !phaseMayPrecedePoint(phase, mechanism.sourcePoint) ||
-        !controlsCanCoexecute(phase.controlPath, mechanism.guard)) {
-      continue;
-    }
+  for (CanonicalPhaseId phaseId :
+       program.getMechanismSourcePrefix(mechanism.id)) {
+    const CanonicalPhase &phase = program.getPhase(phaseId);
     changed |=
         addFact(facts, {phase.id, mechanism.target, mechanism.targetPoint,
                         combineGuards(phase.controlPath, mechanism.guard),
@@ -380,7 +353,7 @@ evaluateFlattenedFacts(const CanonicalSyncProgram &program,
     const CanonicalMechanism &mechanism = program.getMechanism(id);
     if (mechanism.kind == CanonicalMechanismKind::PipeBarrier) {
       applyBarrier(program, mechanism, facts,
-                   mechanismExecutionLoops(program, mechanism));
+                   program.getMechanismExecutionLoops(mechanism.id));
     }
   }
   bool changed = true;
@@ -393,10 +366,11 @@ evaluateFlattenedFacts(const CanonicalSyncProgram &program,
           (mechanism.kind == CanonicalMechanismKind::RecurringEvent &&
            !mechanism.boundaryRecurring)) {
         changed |= applyEvent(program, mechanism, facts,
-                              mechanismExecutionLoops(program, mechanism));
+                              program.getMechanismExecutionLoops(mechanism.id));
       } else if (mechanism.kind == CanonicalMechanismKind::FixedFence) {
-        changed |= applyFixedFence(program, mechanism, facts,
-                                   mechanismExecutionLoops(program, mechanism));
+        changed |=
+            applyFixedFence(program, mechanism, facts,
+                            program.getMechanismExecutionLoops(mechanism.id));
       }
     }
   }
@@ -466,10 +440,8 @@ summarizeRegion(const CanonicalSyncProgram &program, CanonicalRegionId region,
   CanonicalRegionSummary result;
   result.region = region;
   SmallVector<CanonicalRegionSummary, 4> childSummaries;
-  for (const CanonicalRegion &child : program.getRegions()) {
-    if (child.parent != region) {
-      continue;
-    }
+  for (CanonicalRegionId childId : program.getRegionChildren(region)) {
+    const CanonicalRegion &child = program.getRegion(childId);
     CanonicalRegionSummary childSummary =
         summarizeRegion(program, child.id, selected, summaries);
     result.children.push_back(child.id);
@@ -504,10 +476,10 @@ summarizeRegion(const CanonicalSyncProgram &program, CanonicalRegionId region,
     }
     if (mechanism.kind == CanonicalMechanismKind::PipeBarrier) {
       applyBarrier(program, mechanism, result.completions,
-                   mechanismExecutionLoops(program, mechanism));
+                   program.getMechanismExecutionLoops(mechanism.id));
     } else if (mechanism.kind == CanonicalMechanismKind::FixedFence) {
       addFixedFenceTransfers(program, mechanism, result.transfers,
-                             mechanismExecutionLoops(program, mechanism));
+                             program.getMechanismExecutionLoops(mechanism.id));
     } else if (mechanism.kind == CanonicalMechanismKind::Event ||
                mechanism.kind == CanonicalMechanismKind::CrossCoreEvent ||
                (mechanism.kind == CanonicalMechanismKind::RecurringEvent &&
@@ -518,7 +490,9 @@ summarizeRegion(const CanonicalSyncProgram &program, CanonicalRegionId region,
       transfer.sourcePoint = mechanism.sourcePoint;
       transfer.targetPoint = mechanism.targetPoint;
       transfer.guard = mechanism.guard;
-      transfer.requiredLoops = mechanismExecutionLoops(program, mechanism);
+      transfer.requiredLoops.assign(
+          program.getMechanismExecutionLoops(mechanism.id).begin(),
+          program.getMechanismExecutionLoops(mechanism.id).end());
       addBoundaryTransfer(result.transfers, std::move(transfer));
     }
   }
@@ -730,8 +704,9 @@ coveredDemands(const CanonicalSyncProgram &program,
         mechanism.kind == CanonicalMechanismKind::RecurringEvent;
     if (completionCut) {
       selectedCompletionCuts.push_back(id);
-      selectedExecutionLoops.push_back(
-          mechanismExecutionLoops(program, mechanism));
+      const ArrayRef<CanonicalRegionId> loops =
+          program.getMechanismExecutionLoops(mechanism.id);
+      selectedExecutionLoops.emplace_back(loops.begin(), loops.end());
     }
   }
   for (const CanonicalPhase &phase : program.getPhases()) {
@@ -926,6 +901,18 @@ mlir::pto::evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program) {
     }
   }
   if (failed(appendGroup("baseline", baseline))) {
+    return failure();
+  }
+  if (!program.getCoverageWorlds().back().covered.empty()) {
+    InFlightDiagnostic diagnostic = program.getFunction().emitError(
+        "canonical sync fixed supply covers residual demand");
+    for (CanonicalDemandId demandId :
+         program.getCoverageWorlds().back().covered) {
+      const CanonicalDemand &demand = program.getDemand(demandId);
+      diagnostic << " d" << demandId << "(p" << demand.source << "->p"
+                 << demand.target << ')';
+    }
+    diagnostic << "; baseline integration is incomplete";
     return failure();
   }
   for (const CanonicalMechanism &mechanism : program.getMechanisms()) {

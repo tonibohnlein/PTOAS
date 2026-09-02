@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-stats --canonical-sync-analysis-only \
+// RUN:   --emit-pto-ir %s -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @statistics_record()
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    return
+  }
+}
+
+// CHECK: VERIFY skipped (analysis-only; IR unchanged)
+// CHECK-NEXT: {"counts":{
+// CHECK-SAME: "accesses":0
+// CHECK-SAME: "max_verifier_loop_states":0
+// CHECK-SAME: "function":"statistics_record"
+// CHECK-SAME: "kind":"canonical-sync-statistics"
+// CHECK-SAME: "status":"ok"
+// CHECK-SAME: "time_us":{

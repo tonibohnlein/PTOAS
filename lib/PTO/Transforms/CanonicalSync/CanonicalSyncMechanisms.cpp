@@ -15,6 +15,9 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 
+#include <array>
+#include <iterator>
+
 using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::canonical_sync_detail;
@@ -378,6 +381,16 @@ CanonicalMechanismId internMechanism(CanonicalSyncProgram &program,
     }
   }
   mechanism.origins.push_back(origin);
+  return program.appendMechanism(std::move(mechanism));
+}
+
+CanonicalMechanismId internBaselineMechanism(CanonicalSyncProgram &program,
+                                             CanonicalMechanism mechanism) {
+  for (const CanonicalMechanism &existing : program.getMechanisms()) {
+    if (sameMechanism(existing, mechanism)) {
+      return existing.id;
+    }
+  }
   return program.appendMechanism(std::move(mechanism));
 }
 
@@ -851,7 +864,171 @@ buildRecurringForwardIndex(const CanonicalSyncProgram &program) {
   return byLoop;
 }
 
+bool intrinsicBaselineCovers(const CanonicalSyncProgram &program,
+                             const CanonicalSyncTarget &target,
+                             const CanonicalDemand &demand) {
+  if (demand.requirement != CanonicalRequirement::Completion ||
+      demand.target >= program.getPhases().size()) {
+    return false;
+  }
+  const CanonicalPhase &source = program.getPhase(demand.source);
+  const CanonicalPhase &destination = program.getPhase(demand.target);
+  const bool synchronous =
+      getVPTOSchedulingSemantics(source.operation).completionIsSynchronous;
+  return (synchronous && source.resource.core == destination.resource.core) ||
+         (source.resource == destination.resource &&
+          target.hasIntrinsicCompletion(source.resource));
+}
+
+using FixedGuard = SmallVector<CanonicalControlAtom, 2>;
+
+bool guardsCoverAllExecutions(ArrayRef<FixedGuard> guards) {
+  if (llvm::any_of(guards, [](const FixedGuard &guard) {
+        return guard.empty();
+      })) {
+    return true;
+  }
+  if (guards.empty()) {
+    return false;
+  }
+  CanonicalRegionId choice = kInvalidCanonicalSyncId;
+  for (const FixedGuard &guard : guards) {
+    for (const CanonicalControlAtom &atom : guard) {
+      choice = std::min(choice, atom.choice);
+    }
+  }
+  if (choice == kInvalidCanonicalSyncId) {
+    return false;
+  }
+
+  std::array<SmallVector<FixedGuard, 4>, 2> armGuards;
+  for (const FixedGuard &guard : guards) {
+    const auto atom = llvm::find_if(
+        guard, [choice](const CanonicalControlAtom &candidate) {
+          return candidate.choice == choice;
+        });
+    for (unsigned arm = 0; arm < armGuards.size(); ++arm) {
+      const bool excludesArm = atom != guard.end() && atom->arm != arm;
+      if (excludesArm) {
+        continue;
+      }
+      FixedGuard reduced;
+      llvm::copy_if(guard, std::back_inserter(reduced),
+                    [choice](const CanonicalControlAtom &candidate) {
+                      return candidate.choice != choice;
+                    });
+      armGuards[arm].push_back(std::move(reduced));
+    }
+  }
+  return guardsCoverAllExecutions(armGuards[0]) &&
+         guardsCoverAllExecutions(armGuards[1]);
+}
+
+bool fixedFenceCoversCompletion(const CanonicalSyncProgram &program,
+                                const CanonicalDemand &demand) {
+  const CanonicalPhase &source = program.getPhase(demand.source);
+  const CanonicalPhase &target = program.getPhase(demand.target);
+  if (!controlsCanCoexecute(demand.sourceGuard, demand.targetGuard)) {
+    return false;
+  }
+  const SmallVector<CanonicalControlAtom, 2> executionGuard =
+      conjoinCompatibleControlPaths(demand.sourceGuard, demand.targetGuard);
+  struct GuardGroup {
+    SmallVector<CanonicalRegionId, 2> loops;
+    SmallVector<FixedGuard, 4> guards;
+  };
+  SmallVector<GuardGroup, 2> groups;
+  for (const CanonicalFenceEffect &effect : program.getFenceEffects()) {
+    const bool requiredExecution =
+        llvm::all_of(effect.loopPath, [&](CanonicalRegionId loop) {
+          return llvm::is_contained(source.loopPath, loop) ||
+                 llvm::is_contained(target.loopPath, loop);
+        });
+    const bool inapplicable =
+        !llvm::is_contained(effect.drainedResources, source.resource) ||
+        !requiredExecution ||
+        !controlsCanCoexecute(executionGuard, effect.guard);
+    if (inapplicable) {
+      continue;
+    }
+    const CanonicalProgramPoint point{effect.operation,
+                                      CanonicalProgramPointPosition::After};
+    const bool ordered = phaseMayPrecedePoint(source, point) &&
+                         pointMustPrecedePhase(point, target);
+    if (!ordered) {
+      continue;
+    }
+    FixedGuard residualGuard;
+    llvm::copy_if(effect.guard, std::back_inserter(residualGuard),
+                  [&](const CanonicalControlAtom &atom) {
+                    return !llvm::is_contained(executionGuard, atom);
+                  });
+    auto group = llvm::find_if(groups, [&](const GuardGroup &candidate) {
+      return candidate.loops == effect.loopPath;
+    });
+    if (group == groups.end()) {
+      groups.push_back({effect.loopPath, {}});
+      group = std::prev(groups.end());
+    }
+    group->guards.push_back(std::move(residualGuard));
+  }
+  return llvm::any_of(groups, [](const GuardGroup &group) {
+    return guardsCoverAllExecutions(group.guards);
+  });
+}
+
+bool fixedBaselineCovers(const CanonicalSyncProgram &program,
+                         const CanonicalSyncTarget &target,
+                         const CanonicalDemand &demand) {
+  if (demand.kind == CanonicalDemandKind::ExitCompletion ||
+      intrinsicBaselineCovers(program, target, demand)) {
+    return true;
+  }
+  if (demand.requirement == CanonicalRequirement::Visibility) {
+    const bool unsupportedVisibility =
+        !demand.visibility || hasPositiveDistance(demand) ||
+        demand.visibility->direction ==
+            CanonicalVisibilityDirection::Mte3ToMte2Gm;
+    if (unsupportedVisibility) {
+      return false;
+    }
+    const CanonicalPhase &source = program.getPhase(demand.source);
+    const CanonicalPhase &destination = program.getPhase(demand.target);
+    Operation *fence = findFixedVisibilityFence(
+        source.operation, destination.operation, demand.visibility->scope);
+    return fence &&
+           succeeded(findFixedCacheMaintenance(program, demand, fence));
+  }
+  if (hasPositiveDistance(demand)) {
+    return findFixedRecurrenceFence(program, demand) != nullptr;
+  }
+  return fixedFenceCoversCompletion(program, demand);
+}
+
 } // namespace
+
+LogicalResult mlir::pto::canonical_sync_detail::integrateCanonicalFixedBaseline(
+    CanonicalSyncProgram &program, const CanonicalSyncTarget &target) {
+  const bool frozen = program.isGraphFrozen() || program.isFrozen();
+  if (frozen) {
+    return program.getFunction().emitError(
+        "canonical sync cannot integrate fixed supply into a frozen graph");
+  }
+  llvm::BitVector retained(program.getDemands().size(), true);
+  std::uint64_t fixedCovered = 0;
+  for (const CanonicalDemand &demand : program.getDemands()) {
+    if (fixedBaselineCovers(program, target, demand)) {
+      retained.reset(demand.id);
+      ++fixedCovered;
+    }
+  }
+  program.retainDemands(retained);
+  if (CanonicalSyncStatistics *statistics = program.getStatistics()) {
+    statistics->fixedCoveredDemands = fixedCovered;
+    statistics->demands = program.getDemands().size();
+  }
+  return success();
+}
 
 LogicalResult
 mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
@@ -933,16 +1110,24 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
         internMechanism(program, std::move(*mechanism), demand.id);
     program.setDirectMechanism(demand.id, id);
   }
-  if (program.getDemands().empty()) {
-    if (resolvePTOExecutionVector(program.getFunction())) {
+  for (const CanonicalPhase &phase : program.getPhases()) {
+    FailureOr<CanonicalMechanism> tail = buildTailMechanism(program, phase);
+    if (failed(tail)) {
+      return failure();
+    }
+    internBaselineMechanism(program, std::move(*tail));
+  }
+  if (program.getPhases().empty()) {
+    const std::optional<bool> vectorExecution =
+        resolvePTOExecutionVector(program.getFunction());
+    if (vectorExecution) {
       CanonicalMechanism tail;
       tail.kind = CanonicalMechanismKind::TailBarrier;
-      const bool vector = *resolvePTOExecutionVector(program.getFunction());
-      tail.source = {vector ? CanonicalCore::AIV : CanonicalCore::AIC,
+      tail.source = {*vectorExecution ? CanonicalCore::AIV : CanonicalCore::AIC,
                      PIPE::PIPE_ALL};
       tail.target = tail.source;
       tail.actionRegion = 0;
-      program.appendMechanism(std::move(tail));
+      internBaselineMechanism(program, std::move(tail));
     }
   }
   program.mechanismCatalogComplete = true;

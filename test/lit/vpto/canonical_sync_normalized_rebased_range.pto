@@ -31,6 +31,7 @@ module attributes {pto.target_arch = "a2a3"} {
 // retaining an unknown range conservatively overlaps %base[1].
 // CHECK: a0 phase=p0 mode=R space=vec range=unknown
 // CHECK: a1 phase=p1 mode=W space=vec range=[4,8)
-// CHECK: kind=WAR p0->p1
-// CHECK: kind=intrinsic resource=AIV:PIPE_S->AIV:PIPE_S
+// The overlapping scalar hazard is discharged by immutable scalar completion
+// before the residual demand graph is frozen.
+// CHECK: DEMANDS 0
 // CHECK: VERIFY ok

@@ -12,7 +12,12 @@
 
 #include "PTO/Transforms/Passes.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "llvm/ADT/ScopeExit.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <chrono>
+#include <mutex>
 
 namespace mlir {
 namespace pto {
@@ -22,6 +27,81 @@ namespace pto {
 
 namespace {
 
+using CanonicalSyncClock = std::chrono::steady_clock;
+
+std::uint64_t elapsedMicroseconds(CanonicalSyncClock::time_point start) {
+  return std::chrono::duration_cast<std::chrono::microseconds>(
+             CanonicalSyncClock::now() - start)
+      .count();
+}
+
+void printCanonicalSyncStatistics(const CanonicalSyncStatistics &statistics,
+                                  func::FuncOp function, bool succeeded,
+                                  StringRef failureStage) {
+  llvm::json::Object record;
+  record["kind"] = "canonical-sync-statistics";
+  record["function"] = function.getSymName().str();
+  record["status"] = succeeded ? "ok" : "failed";
+  if (!succeeded) {
+    record["failure_stage"] = failureStage.str();
+  }
+
+  llvm::json::Object counts;
+  counts["regions"] = static_cast<std::int64_t>(statistics.regions);
+  counts["phases"] = static_cast<std::int64_t>(statistics.phases);
+  counts["accesses"] = static_cast<std::int64_t>(statistics.accesses);
+  counts["fence_effects"] = static_cast<std::int64_t>(statistics.fenceEffects);
+  counts["demands"] = static_cast<std::int64_t>(statistics.demands);
+  counts["fixed_covered_demands"] =
+      static_cast<std::int64_t>(statistics.fixedCoveredDemands);
+  counts["mechanisms"] = static_cast<std::int64_t>(statistics.mechanisms);
+  counts["coverage_worlds"] =
+      static_cast<std::int64_t>(statistics.coverageWorlds);
+  counts["cover_universe"] =
+      static_cast<std::int64_t>(statistics.coverUniverse);
+  counts["cover_candidates"] =
+      static_cast<std::int64_t>(statistics.coverCandidates);
+  counts["selected_mechanisms"] =
+      static_cast<std::int64_t>(statistics.selectedMechanisms);
+  counts["alias_pair_tests"] =
+      static_cast<std::int64_t>(statistics.aliasPairTests);
+  counts["alias_candidate_pairs"] =
+      static_cast<std::int64_t>(statistics.aliasCandidatePairs);
+  counts["local_interval_records"] =
+      static_cast<std::int64_t>(statistics.localIntervalRecords);
+  counts["sparse_incidence_entries"] =
+      static_cast<std::int64_t>(statistics.sparseIncidenceEntries);
+  counts["greedy_heap_pops"] =
+      static_cast<std::int64_t>(statistics.greedyHeapPops);
+  counts["greedy_incidence_visits"] =
+      static_cast<std::int64_t>(statistics.greedyIncidenceVisits);
+  counts["precomputed_prefix_entries"] =
+      static_cast<std::int64_t>(statistics.precomputedPrefixEntries);
+  counts["verifier_loop_transfers"] =
+      static_cast<std::int64_t>(statistics.verifierLoopTransfers);
+  counts["max_verifier_loop_states"] =
+      static_cast<std::int64_t>(statistics.maxVerifierLoopStates);
+  record["counts"] = std::move(counts);
+
+  llvm::json::Object timing;
+  timing["structure"] = static_cast<std::int64_t>(statistics.structureUs);
+  timing["demands"] = static_cast<std::int64_t>(statistics.demandsUs);
+  timing["mechanisms"] = static_cast<std::int64_t>(statistics.mechanismsUs);
+  timing["coverage"] = static_cast<std::int64_t>(statistics.coverageUs);
+  timing["set_cover_build"] =
+      static_cast<std::int64_t>(statistics.setCoverBuildUs);
+  timing["selection"] = static_cast<std::int64_t>(statistics.selectionUs);
+  timing["allocation"] = static_cast<std::int64_t>(statistics.allocationUs);
+  timing["freeze"] = static_cast<std::int64_t>(statistics.freezeUs);
+  timing["materialize_verify"] =
+      static_cast<std::int64_t>(statistics.materializeVerifyUs);
+  record["time_us"] = std::move(timing);
+
+  static std::mutex statisticsMutex;
+  const std::lock_guard<std::mutex> lock(statisticsMutex);
+  llvm::errs() << llvm::json::Value(std::move(record)) << '\n';
+}
+
 struct PTOCanonicalSyncPass
     : public impl::PTOCanonicalSyncBase<PTOCanonicalSyncPass> {
   PTOCanonicalSyncPass() = default;
@@ -29,6 +109,7 @@ struct PTOCanonicalSyncPass
   explicit PTOCanonicalSyncPass(const CanonicalSyncOptions &options) {
     analysisOnly = options.analysisOnly;
     dump = options.dump || options.analysisOnly;
+    statistics = options.statistics;
     gmAliasPolicy =
         stringifyCanonicalGmAliasPolicy(options.gmAliasPolicy).str();
   }
@@ -37,6 +118,7 @@ struct PTOCanonicalSyncPass
     CanonicalSyncOptions options;
     options.analysisOnly = analysisOnly;
     options.dump = dump || analysisOnly;
+    options.statistics = statistics;
     const std::optional<CanonicalGmAliasPolicy> parsedPolicy =
         parseCanonicalGmAliasPolicy(gmAliasPolicy);
     if (!parsedPolicy) {
@@ -66,7 +148,8 @@ parseCanonicalGmAliasPolicy(StringRef value) {
 
 FailureOr<std::unique_ptr<CanonicalSyncProgram>>
 buildCanonicalSyncProgram(func::FuncOp function,
-                          CanonicalGmAliasPolicy gmAliasPolicy) {
+                          CanonicalGmAliasPolicy gmAliasPolicy,
+                          CanonicalSyncStatistics *statistics) {
   FailureOr<CanonicalSyncTarget> target =
       CanonicalSyncTarget::resolve(function);
   if (failed(target)) {
@@ -76,13 +159,34 @@ buildCanonicalSyncProgram(func::FuncOp function,
           function))) {
     return failure();
   }
-  auto program = std::make_unique<CanonicalSyncProgram>(function,
-                                                        gmAliasPolicy);
+  auto program = std::make_unique<CanonicalSyncProgram>(function, gmAliasPolicy,
+                                                        statistics);
+  CanonicalSyncClock::time_point start = CanonicalSyncClock::now();
   if (failed(canonical_sync_detail::buildCanonicalStructureAndAccesses(
-          *program, *target)) ||
-      failed(
-          canonical_sync_detail::deriveCanonicalDemands(*program, *target)) ||
-      failed(program->freezeGraph())) {
+          *program, *target))) {
+    return failure();
+  }
+  if (statistics) {
+    statistics->structureUs += elapsedMicroseconds(start);
+    statistics->regions = program->getRegions().size();
+    statistics->phases = program->getPhases().size();
+    statistics->accesses = program->getAccesses().size();
+    statistics->fenceEffects = program->getFenceEffects().size();
+  }
+  start = CanonicalSyncClock::now();
+  if (failed(
+          canonical_sync_detail::deriveCanonicalDemands(*program, *target))) {
+    return failure();
+  }
+  if (failed(canonical_sync_detail::integrateCanonicalFixedBaseline(*program,
+                                                                    *target))) {
+    return failure();
+  }
+  if (statistics) {
+    statistics->demandsUs += elapsedMicroseconds(start);
+    statistics->demands = program->getDemands().size();
+  }
+  if (failed(program->freezeGraph())) {
     return failure();
   }
   return std::move(program);
@@ -90,34 +194,75 @@ buildCanonicalSyncProgram(func::FuncOp function,
 
 LogicalResult runCanonicalSync(func::FuncOp function,
                                const CanonicalSyncOptions &options) {
+  CanonicalSyncStatistics statistics;
+  bool succeeded = false;
+  std::string failureStage = "declaration";
+  const auto report = llvm::make_scope_exit([&]() {
+    if (options.statistics) {
+      printCanonicalSyncStatistics(statistics, function, succeeded,
+                                   failureStage);
+    }
+  });
+  const auto timed = [](std::uint64_t &duration, auto &&callback) {
+    const CanonicalSyncClock::time_point start = CanonicalSyncClock::now();
+    const LogicalResult result = callback();
+    duration += elapsedMicroseconds(start);
+    return result;
+  };
   // External declarations contain no scheduled physical work.  The function
   // pass is still invoked for them when a generated module contains private
   // runtime adapters, so leave them unchanged instead of asking the
   // structured-program builder to manufacture a body.
   if (function.isDeclaration()) {
+    succeeded = true;
     return success();
   }
+  failureStage = "graph";
   FailureOr<std::unique_ptr<CanonicalSyncProgram>> program =
-      buildCanonicalSyncProgram(function, options.gmAliasPolicy);
+      buildCanonicalSyncProgram(function, options.gmAliasPolicy, &statistics);
   if (failed(program)) {
     return failure();
   }
-  if (failed(buildCanonicalDirectMechanisms(**program))) {
+  failureStage = "mechanisms";
+  if (failed(timed(statistics.mechanismsUs, [&]() {
+        return buildCanonicalDirectMechanisms(**program);
+      }))) {
     return failure();
   }
-  if (failed(evaluateCanonicalSyncCoverage(**program))) {
+  statistics.mechanisms = (*program)->getMechanisms().size();
+  failureStage = "coverage";
+  if (failed(timed(statistics.coverageUs, [&]() {
+        return evaluateCanonicalSyncCoverage(**program);
+      }))) {
     return failure();
   }
-  if (failed(buildCanonicalSyncSetCoverInstance(**program))) {
+  statistics.coverageWorlds = (*program)->getCoverageWorlds().size();
+  failureStage = "set-cover-build";
+  if (failed(timed(statistics.setCoverBuildUs, [&]() {
+        return buildCanonicalSyncSetCoverInstance(**program);
+      }))) {
     return failure();
   }
-  if (failed(solveCanonicalSyncSetCover(**program))) {
+  if (const auto &instance = (*program)->getSetCoverInstance()) {
+    statistics.coverUniverse = instance->universe.size();
+    statistics.coverCandidates = instance->candidates.size();
+  }
+  failureStage = "selection";
+  if (failed(timed(statistics.selectionUs,
+                   [&]() { return solveCanonicalSyncSetCover(**program); }))) {
     return failure();
   }
-  if (failed(allocateCanonicalSyncEvents(**program))) {
+  if (const auto &solution = (*program)->getSetCoverSolution()) {
+    statistics.selectedMechanisms = solution->mechanisms.size();
+  }
+  failureStage = "allocation";
+  if (failed(timed(statistics.allocationUs,
+                   [&]() { return allocateCanonicalSyncEvents(**program); }))) {
     return failure();
   }
-  if (failed((*program)->freeze())) {
+  failureStage = "freeze";
+  if (failed(
+          timed(statistics.freezeUs, [&]() { return (*program)->freeze(); }))) {
     return failure();
   }
   if (options.dump || options.analysisOnly) {
@@ -125,14 +270,19 @@ LogicalResult runCanonicalSync(func::FuncOp function,
   }
   if (options.analysisOnly) {
     llvm::errs() << "VERIFY skipped (analysis-only; IR unchanged)\n";
+    succeeded = true;
     return success();
   }
-  if (failed(materializeAndVerifyCanonicalSync(**program))) {
+  failureStage = "materialize-verify";
+  if (failed(timed(statistics.materializeVerifyUs, [&]() {
+        return materializeAndVerifyCanonicalSync(**program);
+      }))) {
     return failure();
   }
   if (options.dump) {
     llvm::errs() << "VERIFY ok\n";
   }
+  succeeded = true;
   return success();
 }
 

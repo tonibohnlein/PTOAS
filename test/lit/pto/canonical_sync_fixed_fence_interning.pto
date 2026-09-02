@@ -8,8 +8,8 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-// The fence is a single physical baseline effect even when several visibility
-// demands use it. Origins and CMO actions are diagnostics on that one effect.
+// The fence is a single physical fixed effect even when it discharges several
+// visibility obligations before the residual demand graph is frozen.
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
 // RUN:   --canonical-sync-analysis-only --emit-pto-ir %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
@@ -63,7 +63,7 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: FENCE-EFFECTS 1
 // CHECK: MECHANISMS
 // CHECK-COUNT-1: kind=fixed-fence fence=f0
-// CHECK-SAME: origins=[d{{[0-9]+}}, d{{[0-9]+}}
+// CHECK-SAME: origins=[]
 // CHECK: SET-COVER optimization=singleton
 // CHECK-SAME: universe=[]
-// CHECK: PLAN selected=[m0, m1, m2] events=[]
+// CHECK: PLAN selected=[m0, m1] events=[]

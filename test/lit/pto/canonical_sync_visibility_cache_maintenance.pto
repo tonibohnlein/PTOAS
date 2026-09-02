@@ -95,11 +95,14 @@ module attributes {pto.target_arch = "a2a3"} {
 }
 
 // CHECK-LABEL: CANONICAL-SYNC function=scalar_publish
-// CHECK: visibility=scalar-to-nonscalar:gm:clean-source
+// CHECK: DEMANDS 0
 // CHECK: kind=fixed-fence
+// CHECK: universe=[] candidates=0
 // CHECK-LABEL: CANONICAL-SYNC function=scalar_acquire
-// CHECK: visibility=nonscalar-to-scalar:gm:invalidate-target
 // CHECK: kind=fixed-fence
+// CHECK: kind=event resource=AIV:PIPE_S->AIV:PIPE_MTE3
+// CHECK: VERIFY ok
 // CHECK-LABEL: CANONICAL-SYNC function=scalar_publish_single_byte
-// CHECK: visibility=scalar-to-nonscalar:gm:clean-source
+// CHECK: DEMANDS 0
 // CHECK: kind=fixed-fence
+// CHECK: universe=[] candidates=0

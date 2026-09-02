@@ -74,10 +74,10 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: m0 kind=event resource=AIV:PIPE_MTE2->AIV:PIPE_V
 // CHECK: m1 kind=event resource=AIV:PIPE_MTE2->AIV:PIPE_V
 // CHECK: world=singleton-m0
-// CHECK-SAME: covered=[d0, d2, d3, d4, d5]
+// CHECK-SAME: covered=[d0]
 // CHECK-SAME: oracle=match
 // CHECK: world=singleton-m1
-// CHECK-SAME: covered=[d1, d2, d3, d4, d5]
+// CHECK-SAME: covered=[d1]
 // CHECK-SAME: oracle=match
 // CHECK-NOT: world=choice-group
 // CHECK: PLAN selected=[m0, m1, m2]

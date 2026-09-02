@@ -116,7 +116,7 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: m1 kind=barrier resource=AIV:PIPE_V->AIV:PIPE_V
 // CHECK: m2 kind=barrier resource=AIV:PIPE_V->AIV:PIPE_V
 // CHECK: world=singleton-m2 mechanisms=[m2, m5]
-// CHECK-SAME: covered=[d2, d3, d6, d7, d8, d9, d10, d11]
+// CHECK-SAME: covered=[d2, d3]
 // CHECK-SAME: oracle=match
 // CHECK-NOT: world=choice-group
 // CHECK: SET-COVER optimization=singleton baseline=[m5]
