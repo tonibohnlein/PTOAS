@@ -103,8 +103,7 @@ getRegionControlPath(const CanonicalSyncProgram &program,
   }
   llvm::sort(result, [](const CanonicalControlAtom &left,
                         const CanonicalControlAtom &right) {
-    return std::tie(left.choice, left.arm) <
-           std::tie(right.choice, right.arm);
+    return std::tie(left.choice, left.arm) < std::tie(right.choice, right.arm);
   });
   return result;
 }
@@ -116,8 +115,8 @@ bool idAvailable(const CanonicalSyncProgram &program,
     const bool sameKey = candidate.source == existing.source &&
                          candidate.target == existing.target &&
                          existing.eventId == eventId;
-    const bool collides = sameKey &&
-                          unitsInterfere(program, candidate, existing);
+    const bool collides =
+        sameKey && unitsInterfere(program, candidate, existing);
     if (collides) {
       return false;
     }
@@ -183,8 +182,7 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
                        std::nullopt,
                        mechanism.target,
                        mechanism.source,
-                       getRegionControlPath(program,
-                                            *mechanism.recurrenceLoop),
+                       getRegionControlPath(program, *mechanism.recurrenceLoop),
                        mechanism.recurrenceLoop,
                        0});
       units.back().boundaryRecurring = mechanism.boundaryRecurring;
@@ -235,8 +233,7 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
                           std::nullopt,
                           group.target,
                           group.source,
-                          getRegionControlPath(program,
-                                               *group.recurrenceLoop),
+                          getRegionControlPath(program, *group.recurrenceLoop),
                           group.recurrenceLoop,
                           0};
       unit.releaseGroups.push_back(static_cast<unsigned>(index));
@@ -251,8 +248,7 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
     for (AllocationUnit &unit : units) {
       if ((unit.kind == AllocationUnitKind::Ready ||
            unit.kind == AllocationUnitKind::SerializedReady) &&
-          unit.recurrenceLoop &&
-          unit.target == pool.releaseSource &&
+          unit.recurrenceLoop && unit.target == pool.releaseSource &&
           unit.source == pool.releaseTarget &&
           llvm::is_contained(pool.recurrenceLoops, *unit.recurrenceLoop)) {
         unit.releasePool = static_cast<unsigned>(poolIndex);
@@ -348,20 +344,12 @@ bool sourcePointLessInBlock(const CanonicalMechanism *first,
   return left->isBeforeInBlock(right);
 }
 
-bool sameCoalescingClass(const CanonicalMechanism &first,
-                         const CanonicalMechanism &second) {
-  return first.kind == second.kind && first.source == second.source &&
-         first.target == second.target && first.guard == second.guard &&
-         first.recurrenceLoop == second.recurrenceLoop &&
-         sameChainClass(first, second);
-}
-
 bool appendCoalescedFallback(
     const CanonicalSyncProgram &program, const CanonicalSyncTarget &target,
     const AllocationFailure &failure,
     SmallVectorImpl<CanonicalScarcityEventGroup> &groups) {
   const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
-  SmallVector<const CanonicalMechanism *, 16> candidates;
+  SmallVector<CanonicalMechanismId, 16> candidates;
   for (CanonicalMechanismId id : solution.mechanisms) {
     const CanonicalMechanism &mechanism = program.getMechanism(id);
     const bool supportedKind =
@@ -383,55 +371,33 @@ bool appendCoalescedFallback(
         mechanism.sourcePoint.operation->getBlock() ==
             mechanism.targetPoint.operation->getBlock() &&
         programPointMustPrecede(mechanism.sourcePoint, mechanism.targetPoint)) {
-      candidates.push_back(&mechanism);
+      candidates.push_back(mechanism.id);
     }
   }
 
-  SmallVector<const CanonicalMechanism *, 8> best;
-  CanonicalProgramPoint bestSource;
-  CanonicalProgramPoint bestTarget;
-  for (const CanonicalMechanism *pivot : candidates) {
-    SmallVector<const CanonicalMechanism *, 8> group;
-    CanonicalProgramPoint latestSource = pivot->sourcePoint;
-    for (const CanonicalMechanism *candidate : candidates) {
-      const bool sameClass = sameCoalescingClass(*pivot, *candidate);
-      const bool startsBeforeTarget =
-          programPointMustPrecede(candidate->sourcePoint, pivot->targetPoint);
-      const bool targetCoversCandidate =
-          programPointMustPrecede(pivot->targetPoint, candidate->targetPoint);
-      if (!sameClass || !startsBeforeTarget || !targetCoversCandidate) {
-        continue;
-      }
-      group.push_back(candidate);
-      if (programPointMustPrecede(latestSource, candidate->sourcePoint)) {
-        latestSource = candidate->sourcePoint;
-      }
-    }
-    llvm::stable_sort(group, sourcePointLessInBlock);
-    const bool improvesBest = group.size() > best.size();
+  std::optional<CanonicalEventFrontier> best;
+  for (CanonicalEventFrontier &frontier :
+       discoverCanonicalEventFrontiers(program, candidates)) {
+    const bool improvesBest =
+        !best || frontier.members.size() > best->members.size();
     if (improvesBest) {
-      best = std::move(group);
-      bestSource = latestSource;
-      bestTarget = pivot->targetPoint;
+      best = std::move(frontier);
     }
   }
-  const bool validBest =
-      best.size() >= 2 && programPointMustPrecede(bestSource, bestTarget);
-  if (!validBest) {
+  const bool invalidBest = !best || best->members.size() < 2;
+  if (invalidBest) {
     return false;
   }
 
   CanonicalScarcityEventGroup group;
   group.kind = CanonicalScarcityEventKind::Coalesced;
-  group.source = failure.source;
-  group.target = failure.target;
-  group.sourcePoint = bestSource;
-  group.targetPoint = bestTarget;
-  group.guard = best.front()->guard;
-  group.recurrenceLoop = best.front()->recurrenceLoop;
-  for (const CanonicalMechanism *mechanism : best) {
-    group.members.push_back(mechanism->id);
-  }
+  group.members = std::move(best->members);
+  group.source = best->source;
+  group.target = best->target;
+  group.sourcePoint = best->sourcePoint;
+  group.targetPoint = best->targetPoint;
+  group.guard = std::move(best->guard);
+  group.recurrenceLoop = best->recurrenceLoop;
   groups.push_back(std::move(group));
   return true;
 }
@@ -540,8 +506,7 @@ Operation *liftToBlock(Operation *operation, Block *block) {
 
 bool regionContains(const CanonicalSyncProgram &program,
                     CanonicalRegionId ancestor, CanonicalRegionId region) {
-  for (CanonicalRegionId current = region;
-       current != kInvalidCanonicalSyncId;
+  for (CanonicalRegionId current = region; current != kInvalidCanonicalSyncId;
        current = program.getRegion(current).parent) {
     if (current == ancestor) {
       return true;
@@ -552,8 +517,7 @@ bool regionContains(const CanonicalSyncProgram &program,
 
 bool appendRecurringReleasePool(
     const CanonicalSyncProgram &program, CanonicalPhysicalResource source,
-    CanonicalPhysicalResource target, bool nestedOnly,
-    std::size_t minimumSize,
+    CanonicalPhysicalResource target, bool nestedOnly, std::size_t minimumSize,
     ArrayRef<CanonicalScarcityEventGroup> groups,
     SmallVectorImpl<CanonicalRecurringReleasePool> &releasePools) {
   const SmallVector<AllocationUnit, 8> units =
@@ -568,8 +532,7 @@ bool appendRecurringReleasePool(
     if (unit.kind != AllocationUnitKind::RecurringRelease ||
         unit.source != source || unit.target != target ||
         !unit.recurrenceLoop || unit.boundaryRecurring ||
-        (nestedOnly &&
-         !regionHasLoopAncestor(program, *unit.recurrenceLoop))) {
+        (nestedOnly && !regionHasLoopAncestor(program, *unit.recurrenceLoop))) {
       continue;
     }
     Operation *loop = program.getRegion(*unit.recurrenceLoop).operation;
@@ -578,13 +541,13 @@ bool appendRecurringReleasePool(
       candidates.push_back({*unit.recurrenceLoop, frontier});
     }
   }
-  llvm::stable_sort(candidates, [](const Candidate &left,
-                                   const Candidate &right) {
-    if (left.frontier == right.frontier) {
-      return left.loop < right.loop;
-    }
-    return left.frontier->isBeforeInBlock(right.frontier);
-  });
+  llvm::stable_sort(candidates,
+                    [](const Candidate &left, const Candidate &right) {
+                      if (left.frontier == right.frontier) {
+                        return left.loop < right.loop;
+                      }
+                      return left.frontier->isBeforeInBlock(right.frontier);
+                    });
 
   SmallVector<Candidate, 8> poolMembers;
   for (const Candidate &candidate : candidates) {
@@ -685,11 +648,10 @@ bool recurringReadyReuseIsOrdered(const CanonicalSyncProgram &program,
                               *first.recurrenceLoop);
 }
 
-void commitAllocation(CanonicalSyncProgram &program,
-                      ArrayRef<AllocationUnit> units,
-                      SmallVector<CanonicalScarcityEventGroup, 2> groups,
-                      SmallVector<CanonicalRecurringReleasePool, 2>
-                          releasePools) {
+void commitAllocation(
+    CanonicalSyncProgram &program, ArrayRef<AllocationUnit> units,
+    SmallVector<CanonicalScarcityEventGroup, 2> groups,
+    SmallVector<CanonicalRecurringReleasePool, 2> releasePools) {
   for (const AllocationUnit &unit : units) {
     if (unit.kind == AllocationUnitKind::SerializedReady) {
       groups[*unit.serializedGroup].eventId = unit.eventId;
@@ -743,8 +705,7 @@ mlir::pto::allocateCanonicalSyncEvents(CanonicalSyncProgram &program) {
   }
   for (CanonicalMechanismId mechanismId :
        program.getSetCoverSolution()->mechanisms) {
-    const CanonicalMechanism &mechanism =
-        program.getMechanism(mechanismId);
+    const CanonicalMechanism &mechanism = program.getMechanism(mechanismId);
     if (mechanism.kind == CanonicalMechanismKind::CrossCoreEvent) {
       Operation *witness = mechanism.targetPoint.operation
                                ? mechanism.targetPoint.operation
@@ -781,8 +742,8 @@ mlir::pto::allocateCanonicalSyncEvents(CanonicalSyncProgram &program) {
           appendSerializedFallback(program, *target, allocationFailure, groups);
     }
     if (!repaired) {
-      repaired = appendRecurringReleasePoolFallback(
-          program, allocationFailure, groups, releasePools);
+      repaired = appendRecurringReleasePoolFallback(program, allocationFailure,
+                                                    groups, releasePools);
     }
     if (!repaired) {
       return emitAllocationFailure(program, allocationFailure);

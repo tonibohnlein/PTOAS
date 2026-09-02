@@ -73,6 +73,26 @@ bool phaseMayPrecedePoint(const CanonicalPhase &phase,
                           CanonicalProgramPoint point);
 bool pointMustPrecedePhase(CanonicalProgramPoint point,
                            const CanonicalPhase &phase);
+
+/// A maximal compatible physical event window. Every member has the same
+/// directed hardware domain, guard, action region, recurrence class, and
+/// concrete block. The synthesized set follows the latest member source and
+/// the wait precedes the earliest member target.
+struct CanonicalEventFrontier {
+  llvm::SmallVector<CanonicalMechanismId, 4> members;
+  CanonicalPhysicalResource source;
+  CanonicalPhysicalResource target;
+  CanonicalProgramPoint sourcePoint;
+  CanonicalProgramPoint targetPoint;
+  CanonicalRegionId actionRegion = kInvalidCanonicalSyncId;
+  llvm::SmallVector<CanonicalControlAtom, 2> guard;
+  std::optional<CanonicalRegionId> recurrenceLoop;
+};
+
+llvm::SmallVector<CanonicalEventFrontier, 4> discoverCanonicalEventFrontiers(
+    const CanonicalSyncProgram &program,
+    llvm::ArrayRef<CanonicalMechanismId> mechanisms);
+
 FailureOr<CanonicalPhysicalResource>
 resolvePhysicalResource(func::FuncOp function, Operation *operation, PIPE pipe);
 LogicalResult rejectUnsupportedCanonicalSyncInput(func::FuncOp function);

@@ -1,0 +1,152 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// Two one-shot MTE2-to-V demands whose windows overlap use one synthesized
+// latest-source/earliest-target event. Sequential, disjoint windows remain two
+// ordinary direct mechanisms. Coverage is still checked once per singleton.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-dump --emit-pto-ir %s -o %t 2> %t.log
+// RUN: FileCheck %s --check-prefix=PLAN < %t.log
+// RUN: FileCheck %s --check-prefix=IR < %t
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @shared_event_frontier(
+      %src0: !pto.partition_tensor_view<16x128xf32>,
+      %src1: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input0_addr = arith.constant 0 : i64
+    %input1_addr = arith.constant 8192 : i64
+    %output0_addr = arith.constant 16384 : i64
+    %output1_addr = arith.constant 24576 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %input0 = pto.alloc_tile addr = %input0_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input1 = pto.alloc_tile addr = %input1_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output0 = pto.alloc_tile addr = %output0_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output1 = pto.alloc_tile addr = %output1_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    pto.tload ins(%src0 : !pto.partition_tensor_view<16x128xf32>)
+              outs(%input0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%src1 : !pto.partition_tensor_view<16x128xf32>)
+              outs(%input1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%input0, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                    rows=16, cols=128, v_row=16, v_col=128,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                    f32)
+              outs(%output0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%input1, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                    rows=16, cols=128, v_row=16, v_col=128,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                    f32)
+              outs(%output1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @disjoint_event_windows(
+      %src0: !pto.partition_tensor_view<16x128xf32>,
+      %src1: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input0_addr = arith.constant 0 : i64
+    %input1_addr = arith.constant 8192 : i64
+    %output0_addr = arith.constant 16384 : i64
+    %output1_addr = arith.constant 24576 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %input0 = pto.alloc_tile addr = %input0_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input1 = pto.alloc_tile addr = %input1_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output0 = pto.alloc_tile addr = %output0_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output1 = pto.alloc_tile addr = %output1_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    pto.tload ins(%src0 : !pto.partition_tensor_view<16x128xf32>)
+              outs(%input0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%input0, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                    rows=16, cols=128, v_row=16, v_col=128,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                    f32)
+              outs(%output0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%src1 : !pto.partition_tensor_view<16x128xf32>)
+              outs(%input1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%input1, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                    rows=16, cols=128, v_row=16, v_col=128,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                    f32)
+              outs(%output1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// PLAN-LABEL: CANONICAL-SYNC function=shared_event_frontier
+// PLAN: m[[SHARED:[0-9]+]] kind=event synthesis=shared-event-frontier resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// PLAN-SAME: points=after(pto.tload)->before(pto.tmuls)
+// PLAN-SAME: origins=[d0, d1]
+// PLAN: world=singleton-m[[SHARED]]
+// PLAN-SAME: covered=[d0, d1]
+// PLAN-SAME: oracle=match
+// PLAN: PLAN selected=[
+// PLAN-SAME: events=[m[[SHARED]]=e0]
+// PLAN: VERIFY ok
+// PLAN-LABEL: CANONICAL-SYNC function=disjoint_event_windows
+// PLAN-NOT: synthesis=shared-event-frontier
+// PLAN: PLAN selected=[
+// PLAN-SAME: events=[m{{[0-9]+}}=e0, m{{[0-9]+}}=e1]
+// PLAN: VERIFY ok
+
+// IR-LABEL: func.func @shared_event_frontier
+// IR: pto.tload
+// IR-NEXT: pto.tload
+// IR-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// IR-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// IR-NEXT: pto.tmuls
+// IR-NEXT: pto.tmuls
+// IR-LABEL: func.func @disjoint_event_windows
+// IR: pto.tload
+// IR-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// IR-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// IR-NEXT: pto.tmuls
+// IR: pto.tload
+// IR-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+// IR-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+// IR-NEXT: pto.tmuls

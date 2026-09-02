@@ -84,6 +84,9 @@ struct CanonicalSyncStatistics {
   std::uint64_t demands = 0;
   std::uint64_t fixedCoveredDemands = 0;
   std::uint64_t mechanisms = 0;
+  std::uint64_t sharedEventFrontiers = 0;
+  std::uint64_t sharedEventFrontierMembers = 0;
+  std::uint64_t selectedSharedEventFrontiers = 0;
   std::uint64_t coverageWorlds = 0;
   std::uint64_t coverUniverse = 0;
   std::uint64_t coverCandidates = 0;
@@ -148,6 +151,10 @@ enum class CanonicalMechanismKind : std::uint8_t {
   VisibilityFence,
   FixedFence,
   TailBarrier,
+};
+enum class CanonicalMechanismSynthesis : std::uint8_t {
+  None,
+  SharedEventFrontier,
 };
 enum class CanonicalProgramPointPosition : std::uint8_t { Before, After };
 
@@ -283,6 +290,7 @@ struct CanonicalDemand {
 struct CanonicalMechanism {
   CanonicalMechanismId id = kInvalidCanonicalSyncId;
   CanonicalMechanismKind kind = CanonicalMechanismKind::PipeBarrier;
+  CanonicalMechanismSynthesis synthesis = CanonicalMechanismSynthesis::None;
   CanonicalPhysicalResource source;
   CanonicalPhysicalResource target;
   CanonicalProgramPoint sourcePoint;
@@ -536,6 +544,8 @@ stringifyCanonicalVisibilityDirection(CanonicalVisibilityDirection direction);
 llvm::StringRef
 stringifyCanonicalCacheMaintenance(CanonicalCacheMaintenance maintenance);
 llvm::StringRef stringifyCanonicalMechanismKind(CanonicalMechanismKind kind);
+llvm::StringRef
+stringifyCanonicalMechanismSynthesis(CanonicalMechanismSynthesis synthesis);
 void printCanonicalSyncProgram(const CanonicalSyncProgram &program,
                                llvm::raw_ostream &os);
 

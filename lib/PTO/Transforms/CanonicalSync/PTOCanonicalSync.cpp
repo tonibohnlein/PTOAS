@@ -12,6 +12,7 @@
 
 #include "PTO/Transforms/Passes.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
@@ -55,6 +56,12 @@ void printCanonicalSyncStatistics(const CanonicalSyncStatistics &statistics,
   counts["fixed_covered_demands"] =
       static_cast<std::int64_t>(statistics.fixedCoveredDemands);
   counts["mechanisms"] = static_cast<std::int64_t>(statistics.mechanisms);
+  counts["shared_event_frontiers"] =
+      static_cast<std::int64_t>(statistics.sharedEventFrontiers);
+  counts["shared_event_frontier_members"] =
+      static_cast<std::int64_t>(statistics.sharedEventFrontierMembers);
+  counts["selected_shared_event_frontiers"] =
+      static_cast<std::int64_t>(statistics.selectedSharedEventFrontiers);
   counts["coverage_worlds"] =
       static_cast<std::int64_t>(statistics.coverageWorlds);
   counts["cover_universe"] =
@@ -109,8 +116,8 @@ void printCanonicalSyncStatistics(const CanonicalSyncStatistics &statistics,
       static_cast<std::int64_t>(statistics.coverageOracleMechanismTests);
   counts["coverage_oracle_demand_tests"] =
       static_cast<std::int64_t>(statistics.coverageOracleDemandTests);
-  counts["coverage_oracle_source_instance_tests"] = static_cast<std::int64_t>(
-      statistics.coverageOracleSourceInstanceTests);
+  counts["coverage_oracle_source_instance_tests"] =
+      static_cast<std::int64_t>(statistics.coverageOracleSourceInstanceTests);
   counts["verifier_loop_transfers"] =
       static_cast<std::int64_t>(statistics.verifierLoopTransfers);
   counts["max_verifier_loop_states"] =
@@ -288,6 +295,11 @@ LogicalResult runCanonicalSync(func::FuncOp function,
   }
   if (const auto &solution = (*program)->getSetCoverSolution()) {
     statistics.selectedMechanisms = solution->mechanisms.size();
+    statistics.selectedSharedEventFrontiers =
+        llvm::count_if(solution->mechanisms, [&](CanonicalMechanismId id) {
+          return (*program)->getMechanism(id).synthesis ==
+                 CanonicalMechanismSynthesis::SharedEventFrontier;
+        });
   }
   failureStage = "allocation";
   if (failed(timed(statistics.allocationUs,

@@ -267,7 +267,8 @@ LogicalResult CanonicalSyncProgram::freezeGraph() {
     const ArrayRef<CanonicalRegionId> children = regionChildren[region.id];
     const bool invalidChildren =
         !llvm::is_sorted(children) ||
-        std::adjacent_find(children.begin(), children.end()) != children.end() ||
+        std::adjacent_find(children.begin(), children.end()) !=
+            children.end() ||
         llvm::any_of(children, [&](CanonicalRegionId child) {
           return child >= regions.size() || child <= region.id ||
                  regions[child].parent != region.id;
@@ -374,6 +375,12 @@ LogicalResult CanonicalSyncProgram::freeze() {
     const bool validGeneratedCacheMaintenance =
         (mechanism.kind == CanonicalMechanismKind::VisibilityFence) ==
         mechanism.generatedCacheMaintenance.has_value();
+    const bool validSynthesis =
+        mechanism.synthesis == CanonicalMechanismSynthesis::None ||
+        (mechanism.synthesis ==
+             CanonicalMechanismSynthesis::SharedEventFrontier &&
+         mechanism.kind == CanonicalMechanismKind::Event &&
+         mechanism.origins.size() >= 2);
     const bool recurring =
         mechanism.kind == CanonicalMechanismKind::RecurringEvent;
     const bool validRecurrence =
@@ -402,7 +409,7 @@ LogicalResult CanonicalSyncProgram::freeze() {
         llvm::all_of(cachedPrefix, [this](CanonicalPhaseId id) {
           return id < phases.size();
         });
-    if (!validPoints || !validOrigins || !validFence ||
+    if (!validPoints || !validOrigins || !validFence || !validSynthesis ||
         !validGeneratedCacheMaintenance || !validRecurrence ||
         !validCachedLoops || !validCachedPrefix ||
         mechanism.actionRegion >= regions.size()) {
@@ -540,8 +547,7 @@ LogicalResult CanonicalSyncProgram::freeze() {
     }
     invalidCandidate |= wrongId || invalidMechanism || invalidDemand ||
                         inconsistentIncidence || invalidCoverageOrder ||
-                        overlap ||
-                        candidate.weight == 0;
+                        overlap || candidate.weight == 0;
   }
   const bool providersAvailable =
       setCoverInstance->providersByDemand.size() == demands.size();
@@ -676,7 +682,8 @@ LogicalResult CanonicalSyncProgram::freeze() {
           pool.releaseSource == pool.releaseTarget;
       for (auto [index, loop] : llvm::enumerate(pool.recurrenceLoops)) {
         const bool invalidLoop =
-            loop >= regions.size() || (loop < regions.size() &&
+            loop >= regions.size() ||
+            (loop < regions.size() &&
              regions[loop].kind != CanonicalRegionKind::Loop);
         invalidReleasePool |= invalidLoop;
         if (loop >= regions.size()) {
@@ -929,4 +936,15 @@ mlir::pto::stringifyCanonicalMechanismKind(CanonicalMechanismKind kind) {
     return "tail";
   }
   llvm_unreachable("unknown canonical mechanism kind");
+}
+
+StringRef mlir::pto::stringifyCanonicalMechanismSynthesis(
+    CanonicalMechanismSynthesis synthesis) {
+  switch (synthesis) {
+  case CanonicalMechanismSynthesis::None:
+    return "none";
+  case CanonicalMechanismSynthesis::SharedEventFrontier:
+    return "shared-event-frontier";
+  }
+  llvm_unreachable("unknown canonical mechanism synthesis");
 }

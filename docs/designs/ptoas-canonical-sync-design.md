@@ -322,6 +322,17 @@ collective between one AIC and every participating AIV. Because the current
 graph does not represent AIV multiplicity, synchronization-group identity, or
 uniform participation, cross-core demand generation fails closed.
 
+After demand-owned direct mechanisms are interned, the planner also proposes
+non-recurring shared event frontiers. Eligible direct events must have the same
+physical core and directed event domain, control guard, action region, and
+once-only concrete block. At each distinct target frontier, the proposal places
+one set after the latest compatible source and one wait before the earliest
+compatible target. It is retained only when it subsumes at least two direct
+event windows and the concrete set point must precede the wait point. This is
+one ordinary physical event mechanism, not a bundle or an AND/OR cover column.
+Recurring mechanisms are deliberately excluded; their prime, circulation,
+release, and drain lifecycle remains a separate protocol problem.
+
 An existing GM/all fence is fixed baseline supply, represented once by its
 physical operation rather than once per demand. Its completion role publishes
 the prefixes of the queues drained by the target contract: all resources for a
@@ -352,8 +363,9 @@ inconclusive; reaching the diagnostic bound never rejects an otherwise valid
 program. A disagreement with the flat scoreboard or with an exhaustive
 bounded run is a compiler error and prevents mutation.
 
-Coverage is computed once for each unique direct physical mechanism. A
-singleton world evaluates the fixed graph plus that mechanism. The separately
+Coverage is computed once for each unique selectable physical mechanism,
+including a synthesized shared event frontier. A singleton world evaluates the
+fixed graph plus that mechanism. The separately
 evaluated fixed-only world must cover no residual demand; this is a
 differential assertion that immutable-supply integration was complete. Each
 singleton's
@@ -363,8 +375,9 @@ static column in the set-cover instance; later solving never invokes a coverage
 oracle again.
 
 Intrinsic order, existing fixed fences, and configured exit drains are fixed
-graph supply. Every remaining singleton barrier or complete set/wait pair has
-weight one. Candidate incidence is stored sparsely in both directions. A
+graph supply. Every remaining singleton barrier, direct set/wait pair, or
+shared-frontier set/wait pair has weight one. Candidate incidence is stored
+sparsely in both directions. A
 deterministic lazy max-heap chooses the column with the largest uncovered
 demand set; solving only visits cached sparse incidence and never reruns a
 coverage oracle. Reverse deletion removes a selected column when every demand

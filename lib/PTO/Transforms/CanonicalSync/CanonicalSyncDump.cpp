@@ -152,6 +152,10 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
   for (const CanonicalMechanism &mechanism : program.getMechanisms()) {
     os << "  m" << mechanism.id
        << " kind=" << stringifyCanonicalMechanismKind(mechanism.kind) << ' ';
+    if (mechanism.synthesis != CanonicalMechanismSynthesis::None) {
+      os << "synthesis="
+         << stringifyCanonicalMechanismSynthesis(mechanism.synthesis) << ' ';
+    }
     if (mechanism.kind == CanonicalMechanismKind::FixedFence) {
       os << "fence=f" << *mechanism.fenceEffect;
     } else {
@@ -278,10 +282,9 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
         solution.recurringReleasePools, os,
         [&os](const CanonicalRecurringReleasePool &pool) {
           os << "loops{";
-          llvm::interleaveComma(pool.recurrenceLoops, os,
-                                [&os](CanonicalRegionId id) {
-                                  os << 'r' << id;
-                                });
+          llvm::interleaveComma(
+              pool.recurrenceLoops, os,
+              [&os](CanonicalRegionId id) { os << 'r' << id; });
           os << "}:" << stringifyCanonicalCore(pool.releaseSource.core) << ':'
              << stringifyPIPE(pool.releaseSource.pipe) << "->"
              << stringifyCanonicalCore(pool.releaseTarget.core) << ':'

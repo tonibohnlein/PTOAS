@@ -106,6 +106,7 @@ add_mlir_dialect_library(PTOTransforms
   CanonicalSync/CanonicalSyncCoverageOracle.cpp
   CanonicalSync/CanonicalSyncDemands.cpp
   CanonicalSync/CanonicalSyncDump.cpp
+  CanonicalSync/CanonicalSyncFrontiers.cpp
   CanonicalSync/CanonicalSyncMaterialization.cpp
   CanonicalSync/CanonicalSyncMechanisms.cpp
   CanonicalSync/CanonicalSyncModel.cpp

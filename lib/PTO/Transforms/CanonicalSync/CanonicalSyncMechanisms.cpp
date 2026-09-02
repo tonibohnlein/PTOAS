@@ -16,6 +16,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 
+#include <algorithm>
 #include <array>
 #include <iterator>
 #include <unordered_map>
@@ -389,12 +390,12 @@ std::size_t hashMechanism(const CanonicalMechanism &mechanism) {
         static_cast<unsigned>(mechanism.kind),
         mechanism.fenceEffect.value_or(kInvalidCanonicalSyncId)));
   }
-  llvm::hash_code hash = llvm::hash_combine(
-      static_cast<unsigned>(mechanism.kind),
-      static_cast<unsigned>(mechanism.source.core),
-      static_cast<unsigned>(mechanism.source.pipe),
-      static_cast<unsigned>(mechanism.target.core),
-      static_cast<unsigned>(mechanism.target.pipe));
+  llvm::hash_code hash =
+      llvm::hash_combine(static_cast<unsigned>(mechanism.kind),
+                         static_cast<unsigned>(mechanism.source.core),
+                         static_cast<unsigned>(mechanism.source.pipe),
+                         static_cast<unsigned>(mechanism.target.core),
+                         static_cast<unsigned>(mechanism.target.pipe));
   for (const CanonicalControlAtom &atom : mechanism.guard) {
     hash = llvm::hash_combine(hash, atom.choice, atom.arm);
   }
@@ -493,8 +494,7 @@ CanonicalMechanismId internMechanism(CanonicalSyncProgram &program,
     return *existing;
   }
   mechanism.origins.push_back(origin);
-  const CanonicalMechanismId id =
-      program.appendMechanism(std::move(mechanism));
+  const CanonicalMechanismId id = program.appendMechanism(std::move(mechanism));
   interner.record(program.getMechanism(id));
   return id;
 }
@@ -506,10 +506,62 @@ CanonicalMechanismId internBaselineMechanism(CanonicalSyncProgram &program,
           interner.find(program, mechanism)) {
     return *existing;
   }
-  const CanonicalMechanismId id =
-      program.appendMechanism(std::move(mechanism));
+  const CanonicalMechanismId id = program.appendMechanism(std::move(mechanism));
   interner.record(program.getMechanism(id));
   return id;
+}
+
+void appendSharedEventFrontierCandidates(CanonicalSyncProgram &program,
+                                         MechanismInterner &interner) {
+  SmallVector<CanonicalMechanismId, 16> directEvents;
+  for (const CanonicalMechanism &mechanism : program.getMechanisms()) {
+    if (mechanism.kind == CanonicalMechanismKind::Event &&
+        mechanism.synthesis == CanonicalMechanismSynthesis::None) {
+      directEvents.push_back(mechanism.id);
+    }
+  }
+
+  for (const CanonicalEventFrontier &frontier :
+       discoverCanonicalEventFrontiers(program, directEvents)) {
+    if (frontier.recurrenceLoop) {
+      continue;
+    }
+    SmallVector<CanonicalDemandId, 8> origins;
+    for (CanonicalMechanismId member : frontier.members) {
+      llvm::append_range(origins, program.getMechanism(member).origins);
+    }
+    llvm::sort(origins);
+    origins.erase(std::unique(origins.begin(), origins.end()), origins.end());
+    const bool hasMultipleOrigins = origins.size() >= 2;
+    if (!hasMultipleOrigins) {
+      continue;
+    }
+
+    CanonicalMechanism mechanism;
+    mechanism.kind = CanonicalMechanismKind::Event;
+    mechanism.synthesis = CanonicalMechanismSynthesis::SharedEventFrontier;
+    mechanism.source = frontier.source;
+    mechanism.target = frontier.target;
+    mechanism.sourcePoint = frontier.sourcePoint;
+    mechanism.targetPoint = frontier.targetPoint;
+    mechanism.origins.assign(origins.begin(), origins.end());
+    mechanism.actionRegion = frontier.actionRegion;
+    mechanism.guard = frontier.guard;
+    if (std::optional<CanonicalMechanismId> existing =
+            interner.find(program, mechanism)) {
+      for (CanonicalDemandId origin : origins) {
+        program.appendMechanismOrigin(*existing, origin);
+      }
+      continue;
+    }
+    const CanonicalMechanismId id =
+        program.appendMechanism(std::move(mechanism));
+    interner.record(program.getMechanism(id));
+    if (CanonicalSyncStatistics *statistics = program.getStatistics()) {
+      ++statistics->sharedEventFrontiers;
+      statistics->sharedEventFrontierMembers += frontier.members.size();
+    }
+  }
 }
 
 FailureOr<CanonicalMechanism> buildEventMechanism(
@@ -916,8 +968,7 @@ findRecurringMechanism(const CanonicalSyncProgram &program,
                        const CanonicalDemand &demand,
                        ArrayRef<CanonicalMechanismId> candidates) {
   auto found = llvm::find_if(candidates, [&](CanonicalMechanismId id) {
-    return recurringMechanismMatches(program, program.getMechanism(id),
-                                     demand);
+    return recurringMechanismMatches(program, program.getMechanism(id), demand);
   });
   return found == candidates.end()
              ? std::nullopt
@@ -1011,9 +1062,8 @@ bool intrinsicBaselineCovers(const CanonicalSyncProgram &program,
 using FixedGuard = SmallVector<CanonicalControlAtom, 2>;
 
 bool guardsCoverAllExecutions(ArrayRef<FixedGuard> guards) {
-  if (llvm::any_of(guards, [](const FixedGuard &guard) {
-        return guard.empty();
-      })) {
+  if (llvm::any_of(guards,
+                   [](const FixedGuard &guard) { return guard.empty(); })) {
     return true;
   }
   if (guards.empty()) {
@@ -1031,8 +1081,8 @@ bool guardsCoverAllExecutions(ArrayRef<FixedGuard> guards) {
 
   std::array<SmallVector<FixedGuard, 4>, 2> armGuards;
   for (const FixedGuard &guard : guards) {
-    const auto atom = llvm::find_if(
-        guard, [choice](const CanonicalControlAtom &candidate) {
+    const auto atom =
+        llvm::find_if(guard, [choice](const CanonicalControlAtom &candidate) {
           return candidate.choice == choice;
         });
     for (unsigned arm = 0; arm < armGuards.size(); ++arm) {
@@ -1256,6 +1306,7 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
     recordRecurring(id);
     program.setDirectMechanism(demand.id, id);
   }
+  appendSharedEventFrontierCandidates(program, interner);
   for (const CanonicalPhase &phase : program.getPhases()) {
     FailureOr<CanonicalMechanism> tail = buildTailMechanism(program, phase);
     if (failed(tail)) {
