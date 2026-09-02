@@ -1,0 +1,245 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// Exact modulo guards assign disjoint physical roots to periodic lanes. The
+// synthesized ownership protocol keeps physical slot depth, event-token lanes,
+// and schedule period distinct. Its coverage is checked by executing the
+// concrete ready/release token transitions through one full period plus the
+// maximum reuse distance, so the final residue's release is also observed.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-structural-cover=storage --canonical-sync-dump \
+// RUN:   --emit-pto-ir %s -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @ownership_depth_two(
+      %src: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %addr0 = arith.constant 0 : i64
+    %addr1 = arith.constant 8192 : i64
+    %out_addr = arith.constant 16384 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %six = arith.constant 6 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %input0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input1 = pto.alloc_tile addr = %addr1 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output = pto.alloc_tile addr = %out_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %iteration = %zero to %six step %one_index {
+      %lane = arith.remsi %iteration, %two : index
+      %is_zero = arith.cmpi eq, %lane, %zero : index
+      scf.if %is_zero {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                  outs(%input0 : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box,
+                         fractal=512, pad=0>)
+        pto.tmuls ins(%input0, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                        rows=16, cols=128, v_row=16, v_col=128,
+                        blayout=row_major, slayout=none_box, fractal=512,
+                        pad=0>, f32)
+                  outs(%output : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box, fractal=512,
+                         pad=0>)
+      } else {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                  outs(%input1 : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box,
+                         fractal=512, pad=0>)
+        pto.tmuls ins(%input1, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                        rows=16, cols=128, v_row=16, v_col=128,
+                        blayout=row_major, slayout=none_box, fractal=512,
+                        pad=0>, f32)
+                  outs(%output : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box, fractal=512,
+                         pad=0>)
+      }
+    }
+    return
+  }
+
+  func.func @ownership_depth_three(
+      %src: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %addr0 = arith.constant 0 : i64
+    %addr1 = arith.constant 8192 : i64
+    %addr2 = arith.constant 16384 : i64
+    %out_addr = arith.constant 24576 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %three = arith.constant 3 : index
+    %six = arith.constant 6 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %input0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input1 = pto.alloc_tile addr = %addr1 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input2 = pto.alloc_tile addr = %addr2 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output = pto.alloc_tile addr = %out_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %iteration = %zero to %six step %one_index {
+      %lane = arith.remsi %iteration, %three : index
+      %is_zero = arith.cmpi eq, %lane, %zero : index
+      scf.if %is_zero {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                  outs(%input0 : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box,
+                         fractal=512, pad=0>)
+        pto.tmuls ins(%input0, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                        rows=16, cols=128, v_row=16, v_col=128,
+                        blayout=row_major, slayout=none_box, fractal=512,
+                        pad=0>, f32)
+                  outs(%output : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box, fractal=512,
+                         pad=0>)
+      } else {
+        %one_lane = arith.cmpi eq, %lane, %one_index : index
+        scf.if %one_lane {
+          pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                    outs(%input1 : !pto.tile_buf<loc=vec, dtype=f32,
+                           rows=16, cols=128, v_row=16, v_col=128,
+                           blayout=row_major, slayout=none_box,
+                           fractal=512, pad=0>)
+          pto.tmuls ins(%input1, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                          rows=16, cols=128, v_row=16, v_col=128,
+                          blayout=row_major, slayout=none_box, fractal=512,
+                          pad=0>, f32)
+                    outs(%output : !pto.tile_buf<loc=vec, dtype=f32,
+                           rows=16, cols=128, v_row=16, v_col=128,
+                           blayout=row_major, slayout=none_box, fractal=512,
+                           pad=0>)
+        } else {
+          pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                    outs(%input2 : !pto.tile_buf<loc=vec, dtype=f32,
+                           rows=16, cols=128, v_row=16, v_col=128,
+                           blayout=row_major, slayout=none_box,
+                           fractal=512, pad=0>)
+          pto.tmuls ins(%input2, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                          rows=16, cols=128, v_row=16, v_col=128,
+                          blayout=row_major, slayout=none_box, fractal=512,
+                          pad=0>, f32)
+                    outs(%output : !pto.tile_buf<loc=vec, dtype=f32,
+                           rows=16, cols=128, v_row=16, v_col=128,
+                           blayout=row_major, slayout=none_box, fractal=512,
+                           pad=0>)
+        }
+      }
+    }
+    return
+  }
+
+  func.func @ownership_last_consumer(
+      %src: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input_addr = arith.constant 0 : i64
+    %output0_addr = arith.constant 8192 : i64
+    %output1_addr = arith.constant 16384 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %four = arith.constant 4 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %input = pto.alloc_tile addr = %input_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output0 = pto.alloc_tile addr = %output0_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output1 = pto.alloc_tile addr = %output1_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %iteration = %zero to %four step %one_index {
+      pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                outs(%input : !pto.tile_buf<loc=vec, dtype=f32,
+                       rows=16, cols=128, v_row=16, v_col=128,
+                       blayout=row_major, slayout=none_box,
+                       fractal=512, pad=0>)
+      pto.tmuls ins(%input, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%output0 : !pto.tile_buf<loc=vec, dtype=f32,
+                       rows=16, cols=128, v_row=16, v_col=128,
+                       blayout=row_major, slayout=none_box, fractal=512,
+                       pad=0>)
+      pto.tmuls ins(%input, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%output1 : !pto.tile_buf<loc=vec, dtype=f32,
+                       rows=16, cols=128, v_row=16, v_col=128,
+                       blayout=row_major, slayout=none_box, fractal=512,
+                       pad=0>)
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: CANONICAL-SYNC function=ownership_depth_two
+// CHECK: OWNERSHIP-PROTOCOLS 1
+// CHECK: ownership=o0 mechanism=m{{[0-9]+}}
+// CHECK-SAME: depth=2 token-lanes=2 period=2 reuse-distance=2 witness-horizon=4
+// CHECK: witness=release lane=0 {{.*}}@0->{{.*}}@2
+// CHECK: witness=release lane=1 {{.*}}@1->{{.*}}@3
+// CHECK: world=singleton-m{{[0-9]+}}
+// CHECK-SAME: oracle=match
+// CHECK: PLAN selected=[
+// CHECK-SAME: .lane0=ready-e{{[0-5]}}/release-e{{[0-5]}}
+// CHECK-SAME: .lane1=ready-e{{[0-5]}}/release-e{{[0-5]}}
+// CHECK: VERIFY ok
+// CHECK-LABEL: CANONICAL-SYNC function=ownership_depth_three
+// CHECK: OWNERSHIP-PROTOCOLS 1
+// CHECK: ownership=o0 mechanism=m{{[0-9]+}}
+// CHECK-SAME: depth=3 token-lanes=3 period=3 reuse-distance=3 witness-horizon=6
+// CHECK: witness=release lane=0 {{.*}}@0->{{.*}}@3
+// CHECK: witness=release lane=1 {{.*}}@1->{{.*}}@4
+// CHECK: witness=release lane=2 {{.*}}@2->{{.*}}@5
+// CHECK: world=singleton-m{{[0-9]+}}
+// CHECK-SAME: oracle=match
+// CHECK: PLAN selected=[
+// CHECK-SAME: .lane0=ready-e{{[0-5]}}/release-e{{[0-5]}}
+// CHECK-SAME: .lane1=ready-e{{[0-5]}}/release-e{{[0-5]}}
+// CHECK-SAME: .lane2=ready-e{{[0-5]}}/release-e{{[0-5]}}
+// CHECK: VERIFY ok
+// CHECK-LABEL: CANONICAL-SYNC function=ownership_last_consumer
+// CHECK: OWNERSHIP-PROTOCOLS 1
+// CHECK: ownership=o0 mechanism=m{{[0-9]+}}
+// CHECK-SAME: depth=1 token-lanes=1 period=1 reuse-distance=1 witness-horizon=2
+// CHECK: stage=0 slot=0 lane=0
+// CHECK-SAME: consumers=[p1, p2]
+// CHECK: witness=release lane=0 p2@0->p0@1
+// CHECK: world=singleton-m{{[0-9]+}}
+// CHECK-SAME: oracle=match
+// CHECK: VERIFY ok

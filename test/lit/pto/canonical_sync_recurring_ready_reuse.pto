@@ -14,6 +14,10 @@
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
 // RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-structural-cover=storage --canonical-sync-dump \
+// RUN:   --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=SCC
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @sequential_ready_lanes_share(
@@ -228,3 +232,17 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: PLAN selected=[
 // CHECK-SAME: events=[m1=e0/release-e0, m2=e1/release-e1, m5=e2/release-e2]
 // CHECK: VERIFY ok
+
+// SCC-LABEL: CANONICAL-SYNC function=sequential_ready_lanes_share
+// SCC: OWNERSHIP-PROTOCOLS 2
+// SCC: ownership=o0 mechanism=m{{[0-9]+}}
+// SCC-SAME: depth=1 token-lanes=1 period=1 reuse-distance=1 witness-horizon=2
+// SCC: witness=ready lane=0 {{.*}}@0->{{.*}}@0
+// SCC: witness=release lane=0 {{.*}}@0->{{.*}}@1
+// SCC: STRUCTURAL-PROPOSALS 2
+// SCC: kind=storage-lifecycle
+// SCC-SAME: semantics={semantic=storage-lifecycle-scc
+// SCC-SAME: phases=2}
+// SCC-SAME: mechanisms=[m{{[0-9]+}}, m{{[0-9]+}}]
+// SCC-SAME: additional=[] admitted=no
+// SCC: VERIFY ok

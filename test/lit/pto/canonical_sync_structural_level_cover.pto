@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// The dependency DAG contains a three-stage MTE2 -> V -> MTE3 chain and the
+// direct MTE2 -> MTE3 storage demand. Structural analysis proposes the two
+// adjacent direct cuts as a region transitive basis. Only the normal coverage
+// oracle may establish that their conjunction also covers the long demand.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-structural-cover=transitive --canonical-sync-dump \
+// RUN:   --emit-pto-ir --mlir-print-ir-after=pto-canonical-sync %s \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-structural-cover=connector --canonical-sync-dump \
+// RUN:   --emit-pto-ir --mlir-print-ir-after=pto-canonical-sync %s \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=CONNECTOR
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @structural_level_transitive_cover(
+      %src: !pto.partition_tensor_view<16x128xf32>,
+      %dst: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    // Runtime topology queries are administrative, not schedulable phases,
+    // including when they occur inside a physical core section.
+    pto.section.cube {
+      %block_num = pto.get_block_num
+    }
+    %buffer_addr = arith.constant 0 : i64
+    %one = arith.constant 1.000000e+00 : f32
+    %buffer = pto.alloc_tile addr = %buffer_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+              outs(%buffer : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%buffer, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                    rows=16, cols=128, v_row=16, v_col=128,
+                    blayout=row_major, slayout=none_box, fractal=512,
+                    pad=0>, f32)
+              outs(%buffer : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+    pto.tstore ins(%buffer : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                     cols=128, v_row=16, v_col=128, blayout=row_major,
+                     slayout=none_box, fractal=512, pad=0>)
+               outs(%dst : !pto.partition_tensor_view<16x128xf32>)
+    return
+  }
+}
+
+// CHECK-LABEL: CANONICAL-SYNC function=structural_level_transitive_cover
+// CHECK: STRUCTURAL-PROPOSALS
+// CHECK: kind=region-transitive-basis
+// CHECK-SAME: additional=[d{{[0-9]+}}, d{{[0-9]+}}]
+// CHECK-SAME: admitted=yes
+// CHECK: SET-COVER optimization=grounded-groups
+// CHECK: candidate=c{{[0-9]+}} mechanisms=[m{{[0-9]+}}, m{{[0-9]+}}]
+// CHECK-SAME: weight=2
+// CHECK-SAME: proposal=g{{[0-9]+}}
+// CHECK: OPTIMIZATION enabled=yes mode=grouped-greedy
+// CHECK: coverage-verified=yes
+// CHECK: VERIFY ok
+
+// CONNECTOR-LABEL: CANONICAL-SYNC function=structural_level_transitive_cover
+// CONNECTOR: STRUCTURAL-PROPOSALS
+// CONNECTOR: kind=connector-neighborhood
+// CONNECTOR-SAME: additional=[d{{[0-9]+}}, d{{[0-9]+}}]
+// CONNECTOR-SAME: admitted=yes
+// CONNECTOR: SET-COVER optimization=grounded-groups
+// CONNECTOR: OPTIMIZATION enabled=yes mode=grouped-greedy
+// CONNECTOR: coverage-verified=yes
+// CONNECTOR: VERIFY ok

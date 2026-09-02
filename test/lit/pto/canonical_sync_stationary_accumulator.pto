@@ -1,0 +1,85 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// The Cube pipeline retains ownership of one ACC interval through the complete
+// inner reduction.  FIX consumes that stationary accumulator only after the
+// nested loop.  The synthesized period-one protocol therefore places its
+// release wait before the reduction, ready set after it, ready wait before the
+// store, and release set after the store.  Coverage is derived from those four
+// physical cuts and checked again after materialization.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-structural-cover=storage --canonical-sync-dump \
+// RUN:   --emit-pto-ir %s -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @stationary_accumulator(
+      %dst: !pto.partition_tensor_view<32x32xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %acc_addr = arith.constant 0 : i64
+    %left_addr = arith.constant 0 : i64
+    %right_addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %three = arith.constant 3 : index
+    %four = arith.constant 4 : index
+    %acc = pto.alloc_tile addr = %acc_addr :
+      !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32,
+                    v_col=32, blayout=col_major, slayout=row_major,
+                    fractal=1024, pad=0>
+    %left = pto.alloc_tile addr = %left_addr :
+      !pto.tile_buf<loc=left, dtype=f16, rows=32, cols=32, v_row=32,
+                    v_col=32, blayout=row_major, slayout=row_major,
+                    fractal=512, pad=0>
+    %right = pto.alloc_tile addr = %right_addr :
+      !pto.tile_buf<loc=right, dtype=f16, rows=32, cols=32, v_row=32,
+                    v_col=32, blayout=row_major, slayout=col_major,
+                    fractal=512, pad=0>
+    scf.for %tile = %zero to %four step %one {
+      scf.for %reduction = %zero to %three step %one {
+        pto.tmatmul.acc ins(%acc, %left, %right :
+                        !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32,
+                          v_row=32, v_col=32, blayout=col_major,
+                          slayout=row_major, fractal=1024, pad=0>,
+                        !pto.tile_buf<loc=left, dtype=f16, rows=32, cols=32,
+                          v_row=32, v_col=32, blayout=row_major,
+                          slayout=row_major, fractal=512, pad=0>,
+                        !pto.tile_buf<loc=right, dtype=f16, rows=32, cols=32,
+                          v_row=32, v_col=32, blayout=row_major,
+                          slayout=col_major, fractal=512, pad=0>)
+                  outs(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=32,
+                         cols=32, v_row=32, v_col=32, blayout=col_major,
+                         slayout=row_major, fractal=1024, pad=0>)
+      }
+      pto.tstore ins(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=32,
+                      cols=32, v_row=32, v_col=32, blayout=col_major,
+                      slayout=row_major, fractal=1024, pad=0>)
+                 outs(%dst : !pto.partition_tensor_view<32x32xf32>)
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: CANONICAL-SYNC function=stationary_accumulator
+// CHECK: OWNERSHIP-PROTOCOLS 1
+// CHECK: ownership=o0 mechanism=m{{[0-9]+}} owner=r{{[0-9]+}}
+// CHECK-SAME: resource=AIC:PIPE_M->AIC:PIPE_FIX
+// CHECK-SAME: depth=1 token-lanes=1 period=1 reuse-distance=1 witness-horizon=2
+// CHECK-SAME: family={space=acc;
+// CHECK: stage=0 slot=0 lane=0
+// CHECK-SAME: write-acquire=before(scf.for)
+// CHECK-SAME: ready=after(scf.for)
+// CHECK-SAME: read-acquire=before(pto.tstore)
+// CHECK-SAME: release=after(pto.tstore)
+// CHECK: witness=ready lane=0
+// CHECK: witness=release lane=0
+// CHECK: world=singleton-m{{[0-9]+}}
+// CHECK-SAME: oracle=match
+// CHECK: PLAN selected=[
+// CHECK: VERIFY ok

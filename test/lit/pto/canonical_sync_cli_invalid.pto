@@ -18,6 +18,12 @@
 // RUN: not ptoas --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --canonical-sync-gm-alias-policy=guess %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=POLICY-INVALID
+// RUN: not ptoas --pto-arch=a3 \
+// RUN:   --canonical-sync-structural-cover=level %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=STRUCTURAL-DEPENDENT
+// RUN: not ptoas --pto-arch=a3 --enable-canonical-sync \
+// RUN:   --canonical-sync-structural-cover=guess %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=STRUCTURAL-INVALID
 // RUN: not ptoas --pto-arch=a3 --enable-canonical-sync \
 // RUN:   --enable-insert-sync %s 2>&1 | FileCheck %s --check-prefix=EXCLUSIVE
 
@@ -32,5 +38,7 @@ module {
 // STATS-DEPENDENT: canonical sync diagnostic/policy flags require --enable-canonical-sync
 // POLICY-DEPENDENT: canonical sync diagnostic/policy flags require --enable-canonical-sync
 // POLICY-INVALID: unsupported --canonical-sync-gm-alias-policy='guess'
+// STRUCTURAL-DEPENDENT: canonical sync diagnostic/policy flags require --enable-canonical-sync
+// STRUCTURAL-INVALID: unsupported --canonical-sync-structural-cover='guess'
 // EXCLUSIVE: --enable-insert-sync, --enable-canonical-sync
 // EXCLUSIVE-SAME: mutually exclusive
