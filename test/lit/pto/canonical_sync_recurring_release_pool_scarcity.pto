@@ -1,0 +1,178 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// Seven recurring MTE2-to-V protocols require seven reverse V-to-MTE2 release
+// lifecycles. The compiler-owned pool has six IDs. One prime/body/drain release
+// token spanning the seven non-nested loops makes the selected plan feasible
+// without lexical event reuse or an internal PIPE_ALL fallback.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=PLAN
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --emit-pto-ir %s -o %t
+// RUN: FileCheck %s --check-prefix=PRIME < %t
+// RUN: FileCheck %s --check-prefix=BODY-WAIT < %t
+// RUN: FileCheck %s --check-prefix=BODY-SET < %t
+// RUN: FileCheck %s --check-prefix=DRAIN < %t
+// RUN: FileCheck %s --check-prefix=IDS < %t
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @recurring_release_pool_scarcity(
+      %src: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %addr0 = arith.constant 0 : i64
+    %addr1 = arith.constant 8192 : i64
+    %addr2 = arith.constant 16384 : i64
+    %addr3 = arith.constant 24576 : i64
+    %addr4 = arith.constant 32768 : i64
+    %addr5 = arith.constant 40960 : i64
+    %addr6 = arith.constant 49152 : i64
+    %output_addr = arith.constant 57344 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %input0 = pto.alloc_tile addr = %addr0 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input1 = pto.alloc_tile addr = %addr1 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input2 = pto.alloc_tile addr = %addr2 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input3 = pto.alloc_tile addr = %addr3 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input4 = pto.alloc_tile addr = %addr4 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input5 = pto.alloc_tile addr = %addr5 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input6 = pto.alloc_tile addr = %addr6 :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output = pto.alloc_tile addr = %output_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %iteration = %zero to %two step %one_index {
+      pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                outs(%input0 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+      pto.tmuls ins(%input0, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+    }
+    scf.for %iteration = %zero to %two step %one_index {
+      pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                outs(%input1 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+      pto.tmuls ins(%input1, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+    }
+    scf.for %iteration = %zero to %two step %one_index {
+      pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                outs(%input2 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+      pto.tmuls ins(%input2, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+    }
+    scf.for %iteration = %zero to %two step %one_index {
+      pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                outs(%input3 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+      pto.tmuls ins(%input3, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+    }
+    scf.for %iteration = %zero to %two step %one_index {
+      pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                outs(%input4 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+      pto.tmuls ins(%input4, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+    }
+    scf.for %iteration = %zero to %two step %one_index {
+      pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                outs(%input5 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+      pto.tmuls ins(%input5, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+    }
+    scf.for %iteration = %zero to %two step %one_index {
+      pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                outs(%input6 : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+      pto.tmuls ins(%input6, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                      rows=16, cols=128, v_row=16, v_col=128,
+                      blayout=row_major, slayout=none_box, fractal=512,
+                      pad=0>, f32)
+                outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=16,
+                       cols=128, v_row=16, v_col=128, blayout=row_major,
+                       slayout=none_box, fractal=512, pad=0>)
+    }
+    return
+  }
+}
+
+// PLAN: CANONICAL-SYNC function=recurring_release_pool_scarcity
+// PLAN: PLAN selected=[
+// PLAN-SAME: release-pools=[loops{{.*}}:AIV:PIPE_V->AIV:PIPE_MTE2:e
+// PLAN: VERIFY ok
+// PRIME-COUNT-1: protocol_role = "release-pool-prime-set"
+// BODY-WAIT-COUNT-7: protocol_role = "release-body-wait", pto.canonical_sync.release_pool = 0
+// BODY-SET-COUNT-7: protocol_role = "release-body-set", pto.canonical_sync.release_pool = 0
+// DRAIN-COUNT-1: protocol_role = "release-pool-drain-wait"
+// IDS-NOT: EVENT_ID6
+// IDS-NOT: EVENT_ID7

@@ -11,8 +11,9 @@
 // A recurring release is primed before its loop and drained after it. When two
 // complete protocols are in opposite arms of a once-only choice, their release
 // generations cannot coexecute and may use the same reverse event key. A
-// choice inside an outer loop is re-evaluated and is not such a certificate.
-// The independent event verifier reconstructs both cases from physical IR.
+// choice inside an outer loop is re-evaluated, so its reverse token instead
+// uses one prime/body/drain pool spanning the complete outer lifecycle. The
+// independent event verifier reconstructs both cases from physical IR.
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
 // RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
@@ -82,7 +83,7 @@ module attributes {pto.target_arch = "a2a3"} {
     return
   }
 
-  func.func @repeated_choice_release_lanes_do_not_share(
+  func.func @repeated_choice_release_lanes_use_pool(
       %src0: !pto.partition_tensor_view<16x128xf32>,
       %src1: !pto.partition_tensor_view<16x128xf32>, %condition: i1)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
@@ -155,10 +156,11 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: PLAN selected=[
 // CHECK-SAME: events=[{{.*}}=e0/release-e0, {{.*}}=e0/release-e0]
 // CHECK: VERIFY ok
-// CHECK-LABEL: CANONICAL-SYNC function=repeated_choice_release_lanes_do_not_share
+// CHECK-LABEL: CANONICAL-SYNC function=repeated_choice_release_lanes_use_pool
 // CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
 // CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
 // CHECK: PLAN selected=[
-// CHECK-SAME: events=[m1=e0/release-e0, m2=e1/release-e1,
-// CHECK-SAME: m5=e2/release-e2, m6=e3/release-e1]
+// CHECK-SAME: events=[m1=e0/release-e2, m2=e0/release-e1,
+// CHECK-SAME: m5=e0/release-e2, m6=e1/release-e1]
+// CHECK-SAME: release-pools=[loops{r6, r9}:AIV:PIPE_V->AIV:PIPE_MTE2:e2]
 // CHECK: VERIFY ok

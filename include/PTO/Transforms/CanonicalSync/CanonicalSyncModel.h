@@ -378,11 +378,26 @@ struct CanonicalScarcityEventGroup {
   std::optional<unsigned> releaseEventId;
 };
 
+/// A lifecycle that lets non-nested recurring protocols reuse a reverse
+/// release token. The token is primed before the complete structured frontier,
+/// circulated by every executed loop body, and drained afterward. A singleton
+/// pool also prevents an inner protocol's prime/drain from repeating inside an
+/// outer loop.
+struct CanonicalRecurringReleasePool {
+  llvm::SmallVector<CanonicalRegionId, 4> recurrenceLoops;
+  CanonicalPhysicalResource releaseSource;
+  CanonicalPhysicalResource releaseTarget;
+  CanonicalProgramPoint primePoint;
+  CanonicalProgramPoint drainPoint;
+  unsigned releaseEventId = 0;
+};
+
 struct CanonicalSetCoverSolution {
   llvm::SmallVector<CanonicalSetCoverCandidateId, 8> greedyCandidates;
   llvm::SmallVector<CanonicalMechanismId, 8> mechanisms;
   llvm::SmallVector<CanonicalMechanismId, 8> reverseDeleted;
   llvm::SmallVector<CanonicalScarcityEventGroup, 2> scarcityEventGroups;
+  llvm::SmallVector<CanonicalRecurringReleasePool, 2> recurringReleasePools;
   std::uint64_t weight = 0;
   bool coverageVerified = false;
 };
@@ -417,8 +432,9 @@ public:
   void setMechanismEventId(CanonicalMechanismId mechanism, unsigned eventId);
   void setMechanismReleaseEventId(CanonicalMechanismId mechanism,
                                   unsigned eventId);
-  void setScarcityEventGroups(
-      llvm::SmallVector<CanonicalScarcityEventGroup, 2> groups);
+  void setScarcityEventPlan(
+      llvm::SmallVector<CanonicalScarcityEventGroup, 2> groups,
+      llvm::SmallVector<CanonicalRecurringReleasePool, 2> releasePools);
   void setDirectMechanism(CanonicalDemandId demand,
                           CanonicalMechanismId mechanism);
 

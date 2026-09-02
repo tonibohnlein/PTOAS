@@ -76,6 +76,18 @@ findLoopRegion(const CanonicalSyncProgram &program, scf::ForOp loop) {
              : std::optional<CanonicalRegionId>(found->id);
 }
 
+bool hasEnclosingLoop(const CanonicalSyncProgram &program,
+                      CanonicalRegionId region) {
+  for (CanonicalRegionId current = program.getRegion(region).parent;
+       current != kInvalidCanonicalSyncId;
+       current = program.getRegion(current).parent) {
+    if (program.getRegion(current).kind == CanonicalRegionKind::Loop) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool hasPositiveDistance(const CanonicalDemand &demand) {
   return llvm::any_of(
       demand.iterationDistance, [](const CanonicalLoopDistance &distance) {
@@ -528,6 +540,17 @@ FailureOr<CanonicalMechanism> buildEventMechanism(
                                   !carryingFor.getBody()->empty() &&
                                   targetModel.supportsEvent(target, source);
     if (boundaryProtocol) {
+      // Boundary recurrence circulates ownership in both directions.  The
+      // forward ready lane has its own prime and drain around this loop, so a
+      // surrounding loop would repeat that lifecycle and could reset an
+      // unconsumed token.  Release pooling closes only the reverse lane.
+      // Reject until both directions can be lifted over the outer lifecycle.
+      if (hasEnclosingLoop(program, *loopRegion)) {
+        targetPhase.operation->emitError(
+            "canonical sync cannot construct a boundary recurrence protocol "
+            "inside a repeating outer loop");
+        return failure();
+      }
       // Opposite choice arms cannot host a same-iteration Set/Wait pair. Use
       // two loop-carried ownership lanes instead: both directions are primed,
       // waited at the header, set at the latch, and drained after the loop.
@@ -561,21 +584,15 @@ FailureOr<CanonicalMechanism> buildEventMechanism(
     const std::optional<CanonicalRegionId> loopRegion =
         loop && loop == targetLoop ? findLoopRegion(program, loop)
                                    : std::nullopt;
-    // The hardware protocol executes at the lifted physical cuts, not at the
-    // nominal demand endpoints. A target nested in a choice is safe when its
-    // wait is lifted before the choice and its release is placed after the
-    // choice: both actions then execute exactly once per loop iteration.
-    // Both halves may be guarded by the same nested choice.  The documented
-    // ready/release lifecycle remains balanced: the primed release token is
-    // consumed on the first execution of that arm, each execution consumes
-    // its ready token and returns one release token, and the epilogue drains
-    // the final release token.  Requiring a common physical action block keeps
-    // all four body actions under the identical guard.
-    const bool commonGuardedBodyActions =
-        loop && setAfter->getBlock() == actionBlock &&
-        waitBefore->getBlock() == actionBlock && loop->isAncestor(setAfter) &&
-        loop->isAncestor(waitBefore);
-    if (!loopRegion || !commonGuardedBodyActions ||
+    // The reverse release token is consumed and returned once on every loop
+    // iteration. The forward ready handoff must therefore also execute on
+    // every iteration. A lifted wait before a nested choice remains legal
+    // because both physical anchors then live directly in the loop body; a
+    // pair confined to one choice arm does not.
+    const bool unconditionalBodyActions =
+        loop && setAfter->getBlock() == loop.getBody() &&
+        waitBefore->getBlock() == loop.getBody();
+    if (!loopRegion || !unconditionalBodyActions ||
         !targetModel.supportsEvent(target, source)) {
       targetPhase.operation->emitError(
           "canonical sync cannot construct a single-lane recurring event "

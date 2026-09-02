@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// A boundary handshake owns both a forward ready lifecycle and a reverse
+// release lifecycle.  Nesting that handshake in another loop repeats its
+// forward prime/drain and could reset an unconsumed event.  Release pooling
+// closes only the reverse lifecycle, so this shape remains fail-closed.
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 \
+// RUN:   --enable-canonical-sync --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @nested_boundary_recurring_rejected(
+      %src: !pto.partition_tensor_view<16x128xf32>, %condition: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input_addr = arith.constant 0 : i64
+    %output_addr = arith.constant 8192 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %input = pto.alloc_tile addr = %input_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output = pto.alloc_tile addr = %output_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %outer = %zero to %two step %one_index {
+      scf.for %inner = %zero to %two step %one_index {
+        scf.if %condition {
+          pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>)
+                    outs(%input : !pto.tile_buf<loc=vec, dtype=f32,
+                           rows=16, cols=128, v_row=16, v_col=128,
+                           blayout=row_major, slayout=none_box,
+                           fractal=512, pad=0>)
+        } else {
+          pto.tmuls ins(%input, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                          rows=16, cols=128, v_row=16, v_col=128,
+                          blayout=row_major, slayout=none_box, fractal=512,
+                          pad=0>, f32)
+                    outs(%output : !pto.tile_buf<loc=vec, dtype=f32,
+                           rows=16, cols=128, v_row=16, v_col=128,
+                           blayout=row_major, slayout=none_box, fractal=512,
+                           pad=0>)
+        }
+      }
+    }
+    return
+  }
+}
+
+// CHECK: error: canonical sync cannot construct a boundary recurrence protocol
+// CHECK-SAME: inside a repeating outer loop

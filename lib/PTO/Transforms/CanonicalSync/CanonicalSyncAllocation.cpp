@@ -25,6 +25,7 @@ namespace {
 enum class AllocationUnitKind : std::uint8_t {
   Ready,
   RecurringRelease,
+  PooledRelease,
   SerializedReady,
   SerializedRelease,
   CrossCore,
@@ -34,6 +35,7 @@ struct AllocationUnit {
   AllocationUnitKind kind = AllocationUnitKind::Ready;
   SmallVector<CanonicalMechanismId, 2> mechanisms;
   std::optional<unsigned> serializedGroup;
+  std::optional<unsigned> releasePool;
   CanonicalPhysicalResource source;
   CanonicalPhysicalResource target;
   SmallVector<CanonicalControlAtom, 2> guard;
@@ -140,7 +142,8 @@ bool isScarcityMember(ArrayRef<CanonicalScarcityEventGroup> groups,
 
 SmallVector<AllocationUnit, 8>
 buildAllocationUnits(const CanonicalSyncProgram &program,
-                     ArrayRef<CanonicalScarcityEventGroup> groups) {
+                     ArrayRef<CanonicalScarcityEventGroup> groups,
+                     ArrayRef<CanonicalRecurringReleasePool> releasePools) {
   const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
   SmallVector<AllocationUnit, 8> units;
   for (CanonicalMechanismId mechanismId : solution.mechanisms) {
@@ -149,6 +152,7 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
       if (!isScarcityMember(groups, mechanism.id)) {
         units.push_back({AllocationUnitKind::Ready,
                          {mechanism.id},
+                         std::nullopt,
                          std::nullopt,
                          mechanism.source,
                          mechanism.target,
@@ -161,6 +165,7 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
     if (mechanism.kind == CanonicalMechanismKind::CrossCoreEvent) {
       units.push_back({AllocationUnitKind::CrossCore,
                        {mechanism.id},
+                       std::nullopt,
                        std::nullopt,
                        mechanism.source,
                        mechanism.target,
@@ -178,6 +183,7 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
     units.push_back({AllocationUnitKind::Ready,
                      {mechanism.id},
                      std::nullopt,
+                     std::nullopt,
                      mechanism.source,
                      mechanism.target,
                      getOnceOnlyControlPath(program, mechanism.guard),
@@ -194,14 +200,17 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
       units.push_back({AllocationUnitKind::RecurringRelease,
                        {mechanism.id},
                        std::nullopt,
+                       std::nullopt,
                        mechanism.target,
                        mechanism.source,
                        getRegionControlPath(program,
                                             *mechanism.recurrenceLoop),
                        mechanism.recurrenceLoop,
                        0});
+      units.back().boundaryRecurring = mechanism.boundaryRecurring;
     } else {
       release->mechanisms.push_back(mechanism.id);
+      release->boundaryRecurring |= mechanism.boundaryRecurring;
     }
   }
   for (auto [index, group] : llvm::enumerate(groups)) {
@@ -212,6 +221,7 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
     units.push_back({AllocationUnitKind::SerializedReady,
                      {},
                      static_cast<unsigned>(index),
+                     std::nullopt,
                      group.source,
                      group.target,
                      getOnceOnlyControlPath(program, group.guard),
@@ -222,6 +232,7 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
       units.push_back({AllocationUnitKind::SerializedRelease,
                        {},
                        static_cast<unsigned>(index),
+                       std::nullopt,
                        group.target,
                        group.source,
                        getOnceOnlyControlPath(program, group.guard),
@@ -241,6 +252,7 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
       AllocationUnit unit{AllocationUnitKind::RecurringRelease,
                           {},
                           std::nullopt,
+                          std::nullopt,
                           group.target,
                           group.source,
                           getRegionControlPath(program,
@@ -248,10 +260,51 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
                           group.recurrenceLoop,
                           0};
       unit.releaseGroups.push_back(static_cast<unsigned>(index));
+      unit.boundaryRecurring = boundaryRecurring;
       units.push_back(std::move(unit));
     } else {
       release->releaseGroups.push_back(static_cast<unsigned>(index));
+      release->boundaryRecurring |= boundaryRecurring;
     }
+  }
+  for (auto [poolIndex, pool] : llvm::enumerate(releasePools)) {
+    for (AllocationUnit &unit : units) {
+      if ((unit.kind == AllocationUnitKind::Ready ||
+           unit.kind == AllocationUnitKind::SerializedReady) &&
+          unit.recurrenceLoop &&
+          unit.target == pool.releaseSource &&
+          unit.source == pool.releaseTarget &&
+          llvm::is_contained(pool.recurrenceLoops, *unit.recurrenceLoop)) {
+        unit.releasePool = static_cast<unsigned>(poolIndex);
+      }
+    }
+    SmallVector<unsigned, 4> members;
+    for (auto [unitIndex, unit] : llvm::enumerate(units)) {
+      if (unit.kind == AllocationUnitKind::RecurringRelease &&
+          unit.source == pool.releaseSource &&
+          unit.target == pool.releaseTarget && unit.recurrenceLoop &&
+          llvm::is_contained(pool.recurrenceLoops, *unit.recurrenceLoop)) {
+        members.push_back(static_cast<unsigned>(unitIndex));
+      }
+    }
+    const bool lostAllocationUnit =
+        members.size() != pool.recurrenceLoops.size();
+    if (lostAllocationUnit) {
+      llvm_unreachable("recurring release pool lost an allocation unit");
+    }
+    AllocationUnit pooled = units[members.front()];
+    pooled.kind = AllocationUnitKind::PooledRelease;
+    pooled.releasePool = static_cast<unsigned>(poolIndex);
+    pooled.recurrenceLoop.reset();
+    pooled.guard.clear();
+    for (unsigned member : ArrayRef<unsigned>(members).drop_front()) {
+      llvm::append_range(pooled.mechanisms, units[member].mechanisms);
+      llvm::append_range(pooled.releaseGroups, units[member].releaseGroups);
+    }
+    for (unsigned member : llvm::reverse(members)) {
+      units.erase(units.begin() + member);
+    }
+    units.push_back(std::move(pooled));
   }
   return units;
 }
@@ -515,6 +568,109 @@ Operation *liftToBlock(Operation *operation, Block *block) {
   return nullptr;
 }
 
+bool regionContains(const CanonicalSyncProgram &program,
+                    CanonicalRegionId ancestor, CanonicalRegionId region) {
+  for (CanonicalRegionId current = region;
+       current != kInvalidCanonicalSyncId;
+       current = program.getRegion(current).parent) {
+    if (current == ancestor) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool appendRecurringReleasePool(
+    const CanonicalSyncProgram &program, CanonicalPhysicalResource source,
+    CanonicalPhysicalResource target, bool nestedOnly,
+    std::size_t minimumSize,
+    ArrayRef<CanonicalScarcityEventGroup> groups,
+    SmallVectorImpl<CanonicalRecurringReleasePool> &releasePools) {
+  const SmallVector<AllocationUnit, 8> units =
+      buildAllocationUnits(program, groups, releasePools);
+  Block &entry = program.getFunction().getBody().front();
+  struct Candidate {
+    CanonicalRegionId loop = kInvalidCanonicalSyncId;
+    Operation *frontier = nullptr;
+  };
+  SmallVector<Candidate, 8> candidates;
+  for (const AllocationUnit &unit : units) {
+    if (unit.kind != AllocationUnitKind::RecurringRelease ||
+        unit.source != source || unit.target != target ||
+        !unit.recurrenceLoop || unit.boundaryRecurring ||
+        (nestedOnly &&
+         !regionHasLoopAncestor(program, *unit.recurrenceLoop))) {
+      continue;
+    }
+    Operation *loop = program.getRegion(*unit.recurrenceLoop).operation;
+    Operation *frontier = liftToBlock(loop, &entry);
+    if (frontier) {
+      candidates.push_back({*unit.recurrenceLoop, frontier});
+    }
+  }
+  llvm::stable_sort(candidates, [](const Candidate &left,
+                                   const Candidate &right) {
+    if (left.frontier == right.frontier) {
+      return left.loop < right.loop;
+    }
+    return left.frontier->isBeforeInBlock(right.frontier);
+  });
+
+  SmallVector<Candidate, 8> poolMembers;
+  for (const Candidate &candidate : candidates) {
+    const bool nested = llvm::any_of(poolMembers, [&](const Candidate &member) {
+      return regionContains(program, member.loop, candidate.loop) ||
+             regionContains(program, candidate.loop, member.loop);
+    });
+    if (!nested) {
+      poolMembers.push_back(candidate);
+    }
+  }
+  const bool insufficientMembers = poolMembers.size() < minimumSize;
+  if (insufficientMembers) {
+    return false;
+  }
+
+  CanonicalRecurringReleasePool pool;
+  pool.releaseSource = source;
+  pool.releaseTarget = target;
+  pool.primePoint = {poolMembers.front().frontier,
+                     CanonicalProgramPointPosition::Before};
+  pool.drainPoint = {poolMembers.back().frontier,
+                     CanonicalProgramPointPosition::After};
+  for (const Candidate &member : poolMembers) {
+    pool.recurrenceLoops.push_back(member.loop);
+  }
+  releasePools.push_back(std::move(pool));
+  return true;
+}
+
+bool appendRequiredNestedReleasePool(
+    const CanonicalSyncProgram &program,
+    ArrayRef<CanonicalScarcityEventGroup> groups,
+    SmallVectorImpl<CanonicalRecurringReleasePool> &releasePools) {
+  const SmallVector<AllocationUnit, 8> units =
+      buildAllocationUnits(program, groups, releasePools);
+  auto candidate = llvm::find_if(units, [&](const AllocationUnit &unit) {
+    return unit.kind == AllocationUnitKind::RecurringRelease &&
+           unit.recurrenceLoop &&
+           regionHasLoopAncestor(program, *unit.recurrenceLoop);
+  });
+  return candidate != units.end() &&
+         appendRecurringReleasePool(program, candidate->source,
+                                    candidate->target, true, 1, groups,
+                                    releasePools);
+}
+
+bool appendRecurringReleasePoolFallback(
+    const CanonicalSyncProgram &program, const AllocationFailure &failure,
+    ArrayRef<CanonicalScarcityEventGroup> groups,
+    SmallVectorImpl<CanonicalRecurringReleasePool> &releasePools) {
+  return !failure.crossCore &&
+         appendRecurringReleasePool(program, failure.source, failure.target,
+                                    false, 2, groups, releasePools);
+}
+
 bool onceOnlyLoopPrecedes(const CanonicalSyncProgram &program,
                           CanonicalRegionId previousLoop,
                           CanonicalRegionId nextLoop) {
@@ -550,6 +706,10 @@ bool recurringReadyReuseIsOrdered(const CanonicalSyncProgram &program,
   if (!eligible) {
     return false;
   }
+  if (first.releasePool && first.releasePool == second.releasePool &&
+      first.recurrenceLoop != second.recurrenceLoop) {
+    return true;
+  }
   return onceOnlyLoopPrecedes(program, *first.recurrenceLoop,
                               *second.recurrenceLoop) ||
          onceOnlyLoopPrecedes(program, *second.recurrenceLoop,
@@ -558,7 +718,9 @@ bool recurringReadyReuseIsOrdered(const CanonicalSyncProgram &program,
 
 void commitAllocation(CanonicalSyncProgram &program,
                       ArrayRef<AllocationUnit> units,
-                      SmallVector<CanonicalScarcityEventGroup, 2> groups) {
+                      SmallVector<CanonicalScarcityEventGroup, 2> groups,
+                      SmallVector<CanonicalRecurringReleasePool, 2>
+                          releasePools) {
   for (const AllocationUnit &unit : units) {
     if (unit.kind == AllocationUnitKind::SerializedReady) {
       groups[*unit.serializedGroup].eventId = unit.eventId;
@@ -568,18 +730,22 @@ void commitAllocation(CanonicalSyncProgram &program,
       groups[*unit.serializedGroup].releaseEventId = unit.eventId;
       continue;
     }
+    if (unit.kind == AllocationUnitKind::PooledRelease) {
+      releasePools[*unit.releasePool].releaseEventId = unit.eventId;
+    }
     for (unsigned group : unit.releaseGroups) {
       groups[group].releaseEventId = unit.eventId;
     }
     for (CanonicalMechanismId mechanism : unit.mechanisms) {
-      if (unit.kind == AllocationUnitKind::RecurringRelease) {
+      if (unit.kind == AllocationUnitKind::RecurringRelease ||
+          unit.kind == AllocationUnitKind::PooledRelease) {
         program.setMechanismReleaseEventId(mechanism, unit.eventId);
       } else {
         program.setMechanismEventId(mechanism, unit.eventId);
       }
     }
   }
-  program.setScarcityEventGroups(std::move(groups));
+  program.setScarcityEventPlan(std::move(groups), std::move(releasePools));
 }
 
 LogicalResult
@@ -595,7 +761,7 @@ emitAllocationFailure(const CanonicalSyncProgram &program,
   witness->emitError("canonical sync exhausted compiler event IDs after "
                      "hidden macro reservations, cut coalescing, serialized "
                      "ready/release fallback, and certified recurring-ready "
-                     "reuse")
+                     "or pooled-release reuse")
       << "; domain " << stringifyCanonicalCore(allocationFailure.source.core)
       << ':' << stringifyPIPE(allocationFailure.source.pipe) << " -> "
       << stringifyPIPE(allocationFailure.target.pipe);
@@ -617,14 +783,18 @@ mlir::pto::allocateCanonicalSyncEvents(CanonicalSyncProgram &program) {
   }
 
   SmallVector<CanonicalScarcityEventGroup, 2> groups;
+  SmallVector<CanonicalRecurringReleasePool, 2> releasePools;
+  while (appendRequiredNestedReleasePool(program, groups, releasePools)) {
+  }
   const std::size_t retryLimit =
       program.getSetCoverSolution()->mechanisms.size() + 1;
   for (std::size_t attempt = 0; attempt < retryLimit; ++attempt) {
     SmallVector<AllocationUnit, 8> units =
-        buildAllocationUnits(program, groups);
+        buildAllocationUnits(program, groups, releasePools);
     AllocationFailure allocationFailure;
     if (allocateUnits(program, *target, units, allocationFailure)) {
-      commitAllocation(program, units, std::move(groups));
+      commitAllocation(program, units, std::move(groups),
+                       std::move(releasePools));
       return success();
     }
     bool repaired =
@@ -632,6 +802,10 @@ mlir::pto::allocateCanonicalSyncEvents(CanonicalSyncProgram &program) {
     if (!repaired) {
       repaired =
           appendSerializedFallback(program, *target, allocationFailure, groups);
+    }
+    if (!repaired) {
+      repaired = appendRecurringReleasePoolFallback(
+          program, allocationFailure, groups, releasePools);
     }
     if (!repaired) {
       return emitAllocationFailure(program, allocationFailure);

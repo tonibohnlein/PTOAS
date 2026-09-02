@@ -27,6 +27,7 @@ constexpr StringLiteral kGeneratedAttr = "pto.canonical_sync.generated";
 constexpr StringLiteral kMechanismAttr = "pto.canonical_sync.mechanism";
 constexpr StringLiteral kProtocolRoleAttr = "pto.canonical_sync.protocol_role";
 constexpr StringLiteral kReleaseOwnerAttr = "pto.canonical_sync.release_owner";
+constexpr StringLiteral kReleasePoolAttr = "pto.canonical_sync.release_pool";
 constexpr StringLiteral kProtocolIndexAttr =
     "pto.canonical_sync.protocol_index";
 
@@ -48,6 +49,17 @@ struct RecurringEventAction {
   Operation *sourceAnchor = nullptr;
   Operation *targetAnchor = nullptr;
   bool boundary = false;
+  std::optional<unsigned> releasePool;
+};
+
+struct RecurringReleasePoolAction {
+  unsigned index = 0;
+  CanonicalMechanismId owner = kInvalidCanonicalSyncId;
+  PIPE source = PIPE::PIPE_UNASSIGNED;
+  PIPE target = PIPE::PIPE_UNASSIGNED;
+  unsigned eventId = 0;
+  Operation *primeAnchor = nullptr;
+  Operation *drainAnchor = nullptr;
 };
 
 struct SerializedEventAction {
@@ -90,6 +102,13 @@ void tagSerializedProtocol(Operation *operation, OpBuilder &builder,
                      builder.getI32IntegerAttr(static_cast<int32_t>(index)));
 }
 
+void tagReleasePool(Operation *operation, OpBuilder &builder,
+                    unsigned pool) {
+  operation->setAttr(
+      kReleasePoolAttr,
+      builder.getI32IntegerAttr(static_cast<int32_t>(pool)));
+}
+
 LogicalResult collectActions(
     const CanonicalSyncProgram &program, const IRMapping &mapping,
     DenseMap<Operation *, SmallVector<EventAction, 2>> &sets,
@@ -98,8 +117,22 @@ LogicalResult collectActions(
     DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>>
         &visibilityFences,
     SmallVectorImpl<RecurringEventAction> &protocols,
-    SmallVectorImpl<SerializedEventAction> &serializedProtocols) {
+    SmallVectorImpl<SerializedEventAction> &serializedProtocols,
+    SmallVectorImpl<RecurringReleasePoolAction> &releasePools) {
   const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
+  const auto findReleasePool = [&](CanonicalRegionId loop,
+                                   CanonicalPhysicalResource releaseSource,
+                                   CanonicalPhysicalResource releaseTarget) {
+    for (auto [index, pool] :
+         llvm::enumerate(solution.recurringReleasePools)) {
+      if (pool.releaseSource == releaseSource &&
+          pool.releaseTarget == releaseTarget &&
+          llvm::is_contained(pool.recurrenceLoops, loop)) {
+        return std::optional<unsigned>(static_cast<unsigned>(index));
+      }
+    }
+    return std::optional<unsigned>();
+  };
   SmallVector<CanonicalMechanismId, 8> scarcityMembers;
   for (const CanonicalScarcityEventGroup &group :
        solution.scarcityEventGroups) {
@@ -125,7 +158,9 @@ LogicalResult collectActions(
         protocols.push_back({group.members.front(), group.source.pipe,
                              group.target.pipe, group.eventId,
                              *group.releaseEventId, loop, setAnchor, waitAnchor,
-                             false});
+                             false,
+                             findReleasePool(*group.recurrenceLoop,
+                                             group.target, group.source)});
         continue;
       }
       EventAction action{group.members.front(), group.source.pipe,
@@ -205,7 +240,10 @@ LogicalResult collectActions(
       protocols.push_back({mechanism.id, mechanism.source.pipe,
                            mechanism.target.pipe, *eventId,
                            *mechanism.releaseEventId, loop, setAnchor,
-                           waitAnchor, mechanism.boundaryRecurring});
+                           waitAnchor, mechanism.boundaryRecurring,
+                           findReleasePool(*mechanism.recurrenceLoop,
+                                           mechanism.target,
+                                           mechanism.source)});
       continue;
     }
     EventAction action{
@@ -213,6 +251,25 @@ LogicalResult collectActions(
         mechanism.kind == CanonicalMechanismKind::CrossCoreEvent};
     sets[setAnchor].push_back(action);
     waits[waitAnchor].push_back(action);
+  }
+  for (auto [index, pool] :
+       llvm::enumerate(solution.recurringReleasePools)) {
+    Operation *primeAnchor = mapping.lookupOrNull(pool.primePoint.operation);
+    Operation *drainAnchor = mapping.lookupOrNull(pool.drainPoint.operation);
+    Operation *firstLoop = mapping.lookupOrNull(
+        program.getRegion(pool.recurrenceLoops.front()).operation);
+    auto owner = llvm::find_if(protocols, [&](const RecurringEventAction &p) {
+      return p.loop == firstLoop && p.releasePool == index;
+    });
+    const bool valid = primeAnchor && drainAnchor && owner != protocols.end();
+    if (!valid) {
+      return program.getFunction().emitError(
+          "canonical sync failed to map a recurring release pool");
+    }
+    releasePools.push_back(
+        {static_cast<unsigned>(index), owner->mechanism,
+         pool.releaseSource.pipe, pool.releaseTarget.pipe,
+         pool.releaseEventId, primeAnchor, drainAnchor});
   }
   return success();
 }
@@ -250,9 +307,10 @@ void emitRecurringProtocols(func::FuncOp clone,
     const RecurringEventAction &releaseOwner =
         precedingOwner == preceding.end() ? protocol : *precedingOwner;
     const bool ownsRelease = releaseOwner.mechanism == protocol.mechanism;
+    const bool ownsLocalRelease = ownsRelease && !protocol.releasePool;
     const Location location = protocol.loop->getLoc();
     auto loop = cast<scf::ForOp>(protocol.loop);
-    if (ownsRelease) {
+    if (ownsLocalRelease) {
       builder.setInsertionPoint(protocol.loop);
       createProtocolEvent<SetFlagOp>(builder, location, clone, protocol.target,
                                      protocol.source, protocol.releaseEventId,
@@ -273,9 +331,12 @@ void emitRecurringProtocols(func::FuncOp clone,
     // branch-local producer/consumer cuts.
     if (ownsRelease) {
       builder.setInsertionPointToStart(loop.getBody());
-      createProtocolEvent<WaitFlagOp>(builder, location, clone, protocol.target,
-                                      protocol.source, protocol.releaseEventId,
-                                      protocol.mechanism, "release-body-wait");
+      Operation *releaseWait = createProtocolEvent<WaitFlagOp>(
+          builder, location, clone, protocol.target, protocol.source,
+          protocol.releaseEventId, protocol.mechanism, "release-body-wait");
+      if (protocol.releasePool) {
+        tagReleasePool(releaseWait, builder, *protocol.releasePool);
+      }
     }
     if (protocol.boundary) {
       builder.setInsertionPointToStart(loop.getBody());
@@ -308,12 +369,15 @@ void emitRecurringProtocols(func::FuncOp clone,
     }
     if (ownsRelease) {
       builder.setInsertionPoint(loop.getBody()->getTerminator());
-      createProtocolEvent<SetFlagOp>(builder, location, clone, protocol.target,
-                                     protocol.source, protocol.releaseEventId,
-                                     protocol.mechanism, "release-body-set");
+      Operation *releaseSet = createProtocolEvent<SetFlagOp>(
+          builder, location, clone, protocol.target, protocol.source,
+          protocol.releaseEventId, protocol.mechanism, "release-body-set");
+      if (protocol.releasePool) {
+        tagReleasePool(releaseSet, builder, *protocol.releasePool);
+      }
     }
 
-    if (ownsRelease) {
+    if (ownsLocalRelease) {
       builder.setInsertionPointAfter(protocol.loop);
       createProtocolEvent<WaitFlagOp>(builder, location, clone, protocol.target,
                                       protocol.source, protocol.releaseEventId,
@@ -327,6 +391,24 @@ void emitRecurringProtocols(func::FuncOp clone,
       tagReadyProtocol(readyDrain, builder, protocol.mechanism,
                        releaseOwner.mechanism, "ready-drain-wait");
     }
+  }
+}
+
+void emitRecurringReleasePools(
+    func::FuncOp clone, ArrayRef<RecurringReleasePoolAction> pools) {
+  OpBuilder builder(clone.getContext());
+  for (const RecurringReleasePoolAction &pool : pools) {
+    builder.setInsertionPoint(pool.primeAnchor);
+    Operation *prime = createProtocolEvent<SetFlagOp>(
+        builder, pool.primeAnchor->getLoc(), clone, pool.source, pool.target,
+        pool.eventId, pool.owner, "release-pool-prime-set");
+    tagReleasePool(prime, builder, pool.index);
+
+    builder.setInsertionPointAfter(pool.drainAnchor);
+    Operation *drain = createProtocolEvent<WaitFlagOp>(
+        builder, pool.drainAnchor->getLoc(), clone, pool.source, pool.target,
+        pool.eventId, pool.owner, "release-pool-drain-wait");
+    tagReleasePool(drain, builder, pool.index);
   }
 }
 
@@ -570,13 +652,15 @@ mlir::pto::materializeAndVerifyCanonicalSync(CanonicalSyncProgram &program) {
   DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>> visibilityFences;
   SmallVector<RecurringEventAction, 2> protocols;
   SmallVector<SerializedEventAction, 2> serializedProtocols;
+  SmallVector<RecurringReleasePoolAction, 2> releasePools;
   if (failed(collectActions(program, mapping, sets, waits, barriers,
                             visibilityFences, protocols,
-                            serializedProtocols))) {
+                            serializedProtocols, releasePools))) {
     return failure();
   }
   emitActions(clone, sets, waits, barriers, visibilityFences, program);
   emitRecurringProtocols(clone, protocols);
+  emitRecurringReleasePools(clone, releasePools);
   emitSerializedProtocols(clone, serializedProtocols);
   if (failed(emitTailBarriers(clone, program, mapping))) {
     return failure();

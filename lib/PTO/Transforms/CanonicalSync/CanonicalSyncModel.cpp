@@ -191,13 +191,16 @@ void CanonicalSyncProgram::setMechanismReleaseEventId(
   mechanisms[mechanism].releaseEventId = eventId;
 }
 
-void CanonicalSyncProgram::setScarcityEventGroups(
-    SmallVector<CanonicalScarcityEventGroup, 2> groups) {
+void CanonicalSyncProgram::setScarcityEventPlan(
+    SmallVector<CanonicalScarcityEventGroup, 2> groups,
+    SmallVector<CanonicalRecurringReleasePool, 2> releasePools) {
   if (frozen || !setCoverSolution ||
-      !setCoverSolution->scarcityEventGroups.empty()) {
+      !setCoverSolution->scarcityEventGroups.empty() ||
+      !setCoverSolution->recurringReleasePools.empty()) {
     llvm_unreachable("cannot replace a frozen event-scarcity plan");
   }
   setCoverSolution->scarcityEventGroups = std::move(groups);
+  setCoverSolution->recurringReleasePools = std::move(releasePools);
 }
 
 void CanonicalSyncProgram::setDirectMechanism(CanonicalDemandId demand,
@@ -660,6 +663,88 @@ LogicalResult CanonicalSyncProgram::freeze() {
                  !canonical_sync_detail::programPointMustPrecede(
                      group.sourcePoint, group.targetPoint));
     }
+    bool invalidReleasePool = false;
+    for (const CanonicalRecurringReleasePool &pool :
+         setCoverSolution->recurringReleasePools) {
+      invalidReleasePool |=
+          pool.recurrenceLoops.empty() || !pool.primePoint.operation ||
+          !pool.drainPoint.operation ||
+          pool.primePoint.position != CanonicalProgramPointPosition::Before ||
+          pool.drainPoint.position != CanonicalProgramPointPosition::After ||
+          !canonical_sync_detail::programPointMustPrecede(pool.primePoint,
+                                                          pool.drainPoint) ||
+          pool.releaseSource == pool.releaseTarget;
+      for (auto [index, loop] : llvm::enumerate(pool.recurrenceLoops)) {
+        const bool invalidLoop =
+            loop >= regions.size() || (loop < regions.size() &&
+             regions[loop].kind != CanonicalRegionKind::Loop);
+        invalidReleasePool |= invalidLoop;
+        if (loop >= regions.size()) {
+          continue;
+        }
+        Operation *loopOperation = regions[loop].operation;
+        invalidReleasePool |=
+            !loopOperation ||
+            !canonical_sync_detail::programPointMustPrecede(
+                pool.primePoint,
+                {loopOperation, CanonicalProgramPointPosition::Before}) ||
+            !canonical_sync_detail::programPointMustPrecede(
+                {loopOperation, CanonicalProgramPointPosition::After},
+                pool.drainPoint);
+        for (CanonicalRegionId previous :
+             ArrayRef<CanonicalRegionId>(pool.recurrenceLoops)
+                 .take_front(index)) {
+          for (CanonicalRegionId current = loop;
+               current != kInvalidCanonicalSyncId;
+               current = regions[current].parent) {
+            invalidReleasePool |= current == previous;
+          }
+          for (CanonicalRegionId current = previous;
+               current != kInvalidCanonicalSyncId;
+               current = regions[current].parent) {
+            invalidReleasePool |= current == loop;
+          }
+        }
+        const bool hasReleaseBody = llvm::any_of(
+            setCoverSolution->mechanisms, [&](CanonicalMechanismId id) {
+              if (id >= mechanisms.size()) {
+                return false;
+              }
+              const CanonicalMechanism &mechanism = mechanisms[id];
+              return mechanism.kind == CanonicalMechanismKind::RecurringEvent &&
+                     mechanism.recurrenceLoop == loop &&
+                     !mechanism.boundaryRecurring &&
+                     mechanism.target == pool.releaseSource &&
+                     mechanism.source == pool.releaseTarget;
+            });
+        const bool hasBoundaryBody = llvm::any_of(
+            setCoverSolution->mechanisms, [&](CanonicalMechanismId id) {
+              if (id >= mechanisms.size()) {
+                return false;
+              }
+              const CanonicalMechanism &mechanism = mechanisms[id];
+              return mechanism.kind == CanonicalMechanismKind::RecurringEvent &&
+                     mechanism.recurrenceLoop == loop &&
+                     mechanism.boundaryRecurring &&
+                     mechanism.target == pool.releaseSource &&
+                     mechanism.source == pool.releaseTarget;
+            });
+        invalidReleasePool |= !hasReleaseBody || hasBoundaryBody;
+      }
+      const bool validSingletonIndex =
+          pool.recurrenceLoops.size() == 1 &&
+          pool.recurrenceLoops.front() < regions.size();
+      if (validSingletonIndex) {
+        bool nestedLifecycle = false;
+        for (CanonicalRegionId current =
+                 regions[pool.recurrenceLoops.front()].parent;
+             current != kInvalidCanonicalSyncId;
+             current = regions[current].parent) {
+          nestedLifecycle |= regions[current].kind == CanonicalRegionKind::Loop;
+        }
+        invalidReleasePool |= !nestedLifecycle;
+      }
+    }
     bool invalidEventAssignment = false;
     for (const CanonicalMechanism &mechanism : mechanisms) {
       const bool selected =
@@ -685,7 +770,8 @@ LogicalResult CanonicalSyncProgram::freeze() {
     if (invalidGreedyCandidate || invalidMechanism || invalidOrder ||
         missingBaseline || invalidDeletion || incompleteCoverage ||
         setCoverSolution->weight != expectedWeight || invalidScarcityGroup ||
-        invalidEventAssignment || !setCoverSolution->coverageVerified) {
+        invalidReleasePool || invalidEventAssignment ||
+        !setCoverSolution->coverageVerified) {
       return fail("set-cover solution references an invalid ID or lacks a "
                   "checked coverage proof or event allocation");
     }

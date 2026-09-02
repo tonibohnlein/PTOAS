@@ -14,6 +14,12 @@
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
 // RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --emit-pto-ir %s -o %t
+// RUN: FileCheck %s --check-prefix=POOL-PRIME < %t
+// RUN: FileCheck %s --check-prefix=POOL-WAIT < %t
+// RUN: FileCheck %s --check-prefix=POOL-SET < %t
+// RUN: FileCheck %s --check-prefix=POOL-DRAIN < %t
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @sequential_ready_lanes_share(
@@ -144,7 +150,7 @@ module attributes {pto.target_arch = "a2a3"} {
     return
   }
 
-  func.func @repeating_outer_frontier_does_not_share(
+  func.func @repeating_outer_frontier_uses_release_pool(
       %src0: !pto.partition_tensor_view<16x128xf32>,
       %src1: !pto.partition_tensor_view<16x128xf32>)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
@@ -222,9 +228,15 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: PLAN selected=[
 // CHECK-SAME: events=[{{.*}}=e0/release-e0, {{.*}}=e1/release-e1]
 // CHECK: VERIFY ok
-// CHECK-LABEL: CANONICAL-SYNC function=repeating_outer_frontier_does_not_share
+// CHECK-LABEL: CANONICAL-SYNC function=repeating_outer_frontier_uses_release_pool
 // CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
 // CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
 // CHECK: PLAN selected=[
-// CHECK-SAME: events=[m1=e0/release-e0, m2=e1/release-e1, m5=e2/release-e2]
+// CHECK-SAME: events=[m1=e0/release-e1, m2=e0/release-e1, m5=e0/release-e1]
+// CHECK-SAME: release-pools=[loops{r4, r6}:AIV:PIPE_V->AIV:PIPE_MTE2:e1]
 // CHECK: VERIFY ok
+
+// POOL-PRIME-COUNT-1: protocol_role = "release-pool-prime-set"
+// POOL-WAIT-COUNT-2: protocol_role = "release-body-wait", pto.canonical_sync.release_pool = 0
+// POOL-SET-COUNT-2: protocol_role = "release-body-set", pto.canonical_sync.release_pool = 0
+// POOL-DRAIN-COUNT-1: protocol_role = "release-pool-drain-wait"

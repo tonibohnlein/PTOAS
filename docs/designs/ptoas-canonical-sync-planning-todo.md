@@ -159,9 +159,8 @@ The implementation audits established that:
 ## Deferred work
 
 This milestone does not add general mechanism groups, indirect-only providers,
-recurring protocol variants, new event-scarcity fallbacks, or a new cost model.
-Those remain later work after singleton planning and the current device gate are
-sound.
+or a new cost model. Those remain later work after singleton planning and the
+current device gate are sound.
 
 The coverage-efficiency follow-up based on the device measurements below is
 deliberately narrower than a semantic redesign. It:
@@ -179,11 +178,11 @@ deliberately narrower than a semantic redesign. It:
 
 ### Event-ID scarcity follow-up
 
-The branch already implements three fail-closed scarcity tools: certified
-ready-lane reuse, compatible physical-cut coalescing, and a fully verified
-serialized ready/release protocol. The earlier comparison of the other
-CanonicalSync branches identified one useful missing layer, to be considered
-only after the coverage work is measured:
+The branch now implements four fail-closed scarcity tools: certified ready-lane
+reuse, compatible physical-cut coalescing, a fully verified serialized
+ready/release protocol, and the recurring release pool described below. The
+earlier comparison of the other CanonicalSync branches identified an additional
+conflict-core repair layer for later work:
 
 1. prove allocation infeasibility before changing physical cuts;
 2. report the directed event domain and a minimal pressure/conflict core;
@@ -192,6 +191,50 @@ only after the coverage work is measured:
    already supported direct/recurring mechanism;
 4. rerun selection, allocation, and independent verification for each repair;
 5. retain strict failure as the default if no verified repair is feasible.
+
+The release-pool repair does not change the singleton cover model. Non-nested
+non-boundary recurring protocols in one reverse event domain may use one pooled
+ownership token:
+
+```text
+Set<release> before the complete structured frontier
+  -> each executed recurring body Wait<release> ... Set<release>
+  -> Wait<release> after the complete structured frontier
+```
+
+The pool is also mandatory for an inner non-boundary recurring loop whose
+ordinary reverse prime/drain would otherwise repeat inside an outer loop. This
+closes a latent reset-before-drain lifecycle hole. Zero-trip inner or outer
+executions preserve the primed token, while every executed body consumes and
+returns exactly one token. Recurrence loops in one pool must be non-nested; an
+ancestor/descendant pair could attempt a nested wait before the outer body
+returns ownership. A boundary recurrence has a second, forward prime/drain
+lifecycle; nested boundary recurrences remain fail-closed until both directions
+can be lifted over the complete outer lifecycle. Boundary handshakes are also
+excluded from release-pool scarcity repair because their two independently
+primed directions do not use the pool's forward-handoff chain.
+
+For a non-boundary recurring protocol, the forward ready Set/Wait must execute
+at the unconditional recurrence-loop body level. A handoff confined to one
+choice arm cannot close the unconditional reverse release cycle on iterations
+that skip that arm, so it remains fail-closed. A loop wholly nested in a choice
+is still supported because each dynamic execution of that loop executes its
+body handoff.
+
+The allocator treats the complete pool as one globally live reverse generation
+and may reuse a forward ready key only across different pool member loops. The
+materializer emits explicit pool tags, and the independent event verifier
+reconstructs the boundary, every member loop, the exact directed key, and the
+non-nesting proof before accepting either release-key or ready-key reuse. It
+does not accept lexical drain-before-prime ordering as a proof.
+
+The focused seven-protocol regression is
+`canonical_sync_recurring_release_pool_scarcity.pto`. The qproj corpus family
+that motivated this work contains a forward handoff confined to a conditional
+loop arm. It remains fail-closed: the unconditional release-pool proof does not
+apply when an iteration can skip the forward handoff. Supporting that family
+requires a guarded ownership protocol or a recurrence-expanded buffer-family
+proof, not an unconditional pool.
 
 No internal `PIPE_ALL` fallback is enabled or proposed as an ordinary cover
 column. A compile-total broad fallback would require a separate explicit policy

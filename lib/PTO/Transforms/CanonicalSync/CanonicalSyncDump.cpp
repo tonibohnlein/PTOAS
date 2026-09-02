@@ -272,6 +272,21 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
             os << "/release-e" << *group.releaseEventId;
           }
         });
+    os << "] release-pools=[";
+    llvm::interleaveComma(
+        solution.recurringReleasePools, os,
+        [&os](const CanonicalRecurringReleasePool &pool) {
+          os << "loops{";
+          llvm::interleaveComma(pool.recurrenceLoops, os,
+                                [&os](CanonicalRegionId id) {
+                                  os << 'r' << id;
+                                });
+          os << "}:" << stringifyCanonicalCore(pool.releaseSource.core) << ':'
+             << stringifyPIPE(pool.releaseSource.pipe) << "->"
+             << stringifyCanonicalCore(pool.releaseTarget.core) << ':'
+             << stringifyPIPE(pool.releaseTarget.pipe) << ":e"
+             << pool.releaseEventId;
+        });
     os << "]\n";
   }
 }
