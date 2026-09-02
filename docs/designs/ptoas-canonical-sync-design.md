@@ -296,21 +296,59 @@ Coverage is computed once for each unique direct physical mechanism. A
 singleton world evaluates the fixed graph plus that mechanism. The separately
 evaluated fixed-only world must cover no residual demand; this is a
 differential assertion that immutable-supply integration was complete. Each
-singleton's
-bottom-up regional result must agree with the flat scoreboard and, when
-exhaustive, the bounded structured interpreter. The resulting demand set is a
-static column in the set-cover instance; later solving never invokes a coverage
-oracle again.
+singleton's bottom-up regional result must agree with the flat scoreboard and,
+when exhaustive, the bounded structured interpreter. The resulting demand set
+is a static column in the set-cover instance; later solving never invokes a
+coverage oracle again.
+
+An opt-in structural-cover experiment proposes a bounded number of small sets
+of those existing direct mechanisms. Proposals come from same-iteration level
+boundaries, region-local transitive bases, hardware-unit and operation-stage
+slices of a boundary, and physical-storage lifecycle families. Full families
+and a bounded number of leave-one-out variants are considered. These graph and
+IR classifications are only search heuristics: they do not imply coverage and
+do not introduce a new physical synchronization recipe.
+
+Every proposed group is installed in a fresh coverage world and checked by the
+same summary, flat, and bounded-unrolled oracles. It becomes a selectable group
+column only when its grounded coverage strictly exceeds the union of its
+singleton members. Thus the experiment asks whether a promising conjunction of
+direct cuts establishes useful transitive coverage without enumerating all
+pairs or larger subsets. Proposal count, group width, omissions, and transitive
+closure storage have fixed bounds. The transitive-basis proposal operates on
+unique phase edges, so duplicate hazard rows do not masquerade as alternate
+paths.
 
 Intrinsic order, existing fixed fences, and required exit drains are fixed
 graph supply. Every remaining singleton barrier or complete set/wait pair has
 weight one. Candidate incidence is stored sparsely in both directions. A
 deterministic lazy max-heap chooses the column with the largest uncovered
-demand set; solving only visits cached sparse incidence and never reruns a
-coverage oracle. Reverse deletion removes a selected column when every demand
-it covers still has another selected provider. The
-selected mechanisms are the materialized plan. Non-singleton mechanism groups
-and symbolic AND/OR coverage formulas are outside this implementation.
+demand set per newly selected mechanism; solving only visits cached sparse
+incidence and never reruns a coverage oracle. In default mode every column is a
+singleton, preserving the original selection order. In structural mode a group
+column is a conjunction: selecting it adds all not-yet-selected member
+mechanisms, and its grounded coverage is available only while every member is
+present. Reverse deletion therefore removes physical mechanisms and recomputes
+which cached singleton and group columns remain active. The selected mechanisms
+are the materialized plan. To avoid relying only on a local density decision,
+the solver also tries a bounded number of admitted structural columns as a
+forced first choice, greedily completes each trial, reverse-deletes it, and
+keeps the smallest deterministic result. General symbolic AND/OR coverage
+formulas remain outside this implementation.
+
+The experiment deliberately does not synthesize a new synchronization recipe.
+On the historical GEMM ownership fixture, scalable transitive reduction finds
+two grounded groups with 48 additional covered rows, but neither the ordinary
+greedy solution nor a group-seeded trial reduces the 80 non-baseline physical
+mechanisms. Event allocation therefore remains infeasible in the
+`AIC:PIPE_MTE1 -> PIPE_M` domain. This is evidence that graph-guided composition
+can avoid exhaustive subset enumeration, but cannot by itself reconstruct the
+fixture's fused ready/release ownership protocols. Those require a separately
+certified lifecycle-recipe synthesis layer.
+
+The graph/IR proposal strategy and its staged path from direct-mechanism
+composition to certified lifecycle synthesis are specified in
+`ptoas-canonical-sync-structural-cover-plan.md`.
 
 ## Event allocation
 
@@ -434,12 +472,14 @@ The compiler interface is:
 --enable-canonical-sync
 --canonical-sync-analysis-only
 --canonical-sync-dump
+--canonical-sync-structural-cover=none|all|<family-list>
 ```
 
 Analysis-only mode implies a dump and does not mutate the function. Dumps have
 stable sections for target semantics, regions, phases, accesses, demands,
-mechanisms, singleton coverage worlds, the selected plan, and verification
-status.
+mechanisms, singleton and admitted structural coverage worlds, the selected
+plan, and verification status. Structural coverage defaults to `none`. A family
+list may contain `level`, `transitive`, `connector`, `semantic`, and `storage`.
 
 Canonical synchronization is mutually exclusive with the existing InsertSync,
 buffer-ID, and barrier-all modes. It rejects A5, `pto.tassign`, pre-existing
