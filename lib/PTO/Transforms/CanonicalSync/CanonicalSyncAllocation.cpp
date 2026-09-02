@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <tuple>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -53,15 +54,59 @@ struct AllocationFailure {
   bool crossCore = false;
 };
 
-bool isUnconditionalLifecycle(const AllocationUnit &unit) {
-  return unit.kind == AllocationUnitKind::RecurringRelease;
-}
-
 bool unitsInterfere(const CanonicalSyncProgram &program,
                     const AllocationUnit &first, const AllocationUnit &second) {
-  return isUnconditionalLifecycle(first) || isUnconditionalLifecycle(second) ||
-         (!recurringReadyReuseIsOrdered(program, first, second) &&
-          controlsCanCoexecute(first.guard, second.guard));
+  return !recurringReadyReuseIsOrdered(program, first, second) &&
+         controlsCanCoexecute(first.guard, second.guard);
+}
+
+bool regionHasLoopAncestor(const CanonicalSyncProgram &program,
+                           CanonicalRegionId region) {
+  for (CanonicalRegionId current = program.getRegion(region).parent;
+       current != kInvalidCanonicalSyncId;
+       current = program.getRegion(current).parent) {
+    if (program.getRegion(current).kind == CanonicalRegionKind::Loop) {
+      return true;
+    }
+  }
+  return false;
+}
+
+SmallVector<CanonicalControlAtom, 2>
+getOnceOnlyControlPath(const CanonicalSyncProgram &program,
+                       ArrayRef<CanonicalControlAtom> path) {
+  SmallVector<CanonicalControlAtom, 2> result;
+  for (const CanonicalControlAtom &atom : path) {
+    if (!regionHasLoopAncestor(program, atom.choice)) {
+      result.push_back(atom);
+    }
+  }
+  return result;
+}
+
+SmallVector<CanonicalControlAtom, 2>
+getRegionControlPath(const CanonicalSyncProgram &program,
+                     CanonicalRegionId region) {
+  SmallVector<CanonicalControlAtom, 2> result;
+  for (CanonicalRegionId current = region;
+       current != kInvalidCanonicalSyncId;) {
+    const CanonicalRegion &currentRegion = program.getRegion(current);
+    const CanonicalRegionId parent = currentRegion.parent;
+    if (parent == kInvalidCanonicalSyncId) {
+      break;
+    }
+    if (program.getRegion(parent).kind == CanonicalRegionKind::Choice &&
+        !regionHasLoopAncestor(program, parent)) {
+      result.push_back({parent, currentRegion.arm});
+    }
+    current = parent;
+  }
+  llvm::sort(result, [](const CanonicalControlAtom &left,
+                        const CanonicalControlAtom &right) {
+    return std::tie(left.choice, left.arm) <
+           std::tie(right.choice, right.arm);
+  });
+  return result;
 }
 
 bool idAvailable(const CanonicalSyncProgram &program,
@@ -107,7 +152,7 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
                          std::nullopt,
                          mechanism.source,
                          mechanism.target,
-                         mechanism.guard,
+                         getOnceOnlyControlPath(program, mechanism.guard),
                          std::nullopt,
                          0});
       }
@@ -119,7 +164,7 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
                        std::nullopt,
                        mechanism.source,
                        mechanism.target,
-                       mechanism.guard,
+                       getOnceOnlyControlPath(program, mechanism.guard),
                        std::nullopt,
                        0});
       continue;
@@ -135,7 +180,7 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
                      std::nullopt,
                      mechanism.source,
                      mechanism.target,
-                     mechanism.guard,
+                     getOnceOnlyControlPath(program, mechanism.guard),
                      mechanism.recurrenceLoop,
                      0});
     units.back().boundaryRecurring = mechanism.boundaryRecurring;
@@ -151,7 +196,8 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
                        std::nullopt,
                        mechanism.target,
                        mechanism.source,
-                       {},
+                       getRegionControlPath(program,
+                                            *mechanism.recurrenceLoop),
                        mechanism.recurrenceLoop,
                        0});
     } else {
@@ -168,7 +214,7 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
                      static_cast<unsigned>(index),
                      group.source,
                      group.target,
-                     group.guard,
+                     getOnceOnlyControlPath(program, group.guard),
                      group.recurrenceLoop,
                      0});
     units.back().boundaryRecurring = boundaryRecurring;
@@ -178,7 +224,7 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
                        static_cast<unsigned>(index),
                        group.target,
                        group.source,
-                       group.guard,
+                       getOnceOnlyControlPath(program, group.guard),
                        std::nullopt,
                        0});
       continue;
@@ -197,7 +243,8 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
                           std::nullopt,
                           group.target,
                           group.source,
-                          {},
+                          getRegionControlPath(program,
+                                               *group.recurrenceLoop),
                           group.recurrenceLoop,
                           0};
       unit.releaseGroups.push_back(static_cast<unsigned>(index));

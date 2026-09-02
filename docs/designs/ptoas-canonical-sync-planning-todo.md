@@ -197,6 +197,56 @@ No internal `PIPE_ALL` fallback is enabled or proposed as an ordinary cover
 column. A compile-total broad fallback would require a separate explicit policy
 and device evidence; it is not part of the current roadmap.
 
+Historical corpus results from the pre-publication-gate revision provide a
+useful pressure corpus even though the current pass now rejects those kernels
+earlier when they contain an unproven MTE3-to-MTE2 GM round trip. The 48
+historical allocation failures were concentrated in five directed domains:
+
+```text
+21  AIC M    -> MTE1
+12  AIV MTE2 -> V
+11  AIV V    -> MTE2
+ 2  AIV MTE2 -> MTE3
+ 2  AIC M    -> FIX
+```
+
+The first inspected `qproj_matmul` failure was dominated by reverse release
+lanes for recurring MTE1-to-M protocols, not by ordinary forward M-to-MTE1
+events. A historical release-pool experiment made two variants compile by
+sharing releases in opposite arms, but those choices were re-evaluated inside
+outer loops. The arms can therefore execute on different dynamic iterations;
+the experiment did not prove consume-before-reset and must not be reused.
+Release-key sharing is valid only across opposite arms of a choice with no
+repeating ancestor, because only one complete prime/body/drain lifecycle can
+then execute per function invocation. The allocator and independent verifier
+both enforce this restriction. Sequential release lifecycles also remain
+interfering: lexical drain-before-prime order crosses physical pipelines and is
+not a hardware consumption proof.
+
+The historical `scatter_softmax_pool` and `score_reduce` plans contain
+plausible connector chains such as MTE2-to-MTE3 plus MTE3-to-V, or V-to-MTE3
+plus MTE3-to-MTE2. Singleton worlds cannot credit a demand that only the two
+mechanisms cover jointly. This is evidence for a later bounded affected-slice
+group check, not for enumerating all mechanism pairs. Candidate groups should
+be proposed only from the failing domain and resource-compatible neighboring
+cuts, then certified by the concrete hierarchical coverage evaluator.
+
+The other local CanonicalSync implementations are not suitable for wholesale
+reuse. The older scarcity search colors lexical set/wait intervals and relies
+on a wait-before-later-set lifetime assumption that this branch deliberately
+rejects. The pattern-cover experiment improved synchronization counts on some
+accepted kernels but, with ordinary internal `PIPE_ALL` candidates removed,
+accepted only 7 of 28 comparison cases and did not expand admission. Its useful
+idea is limited to conflict-local barrier-plus-event frontiers. The retained
+policy is therefore:
+
+1. exploit exact mutual exclusion and already-certified lifecycle ordering;
+2. coalesce compatible physical cuts;
+3. use the verified serialized ready/release repair;
+4. examine bounded connector groups or alternative singleton covers only in
+   the allocation pressure slice; and
+5. fail closed if no independently verified plan fits the hardware IDs.
+
 ## Device-gate interruption on 2026-09-02
 
 The delivered archive

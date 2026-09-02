@@ -1,0 +1,164 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// A recurring release is primed before its loop and drained after it. When two
+// complete protocols are in opposite arms of a once-only choice, their release
+// generations cannot coexecute and may use the same reverse event key. A
+// choice inside an outer loop is re-evaluated and is not such a certificate.
+// The independent event verifier reconstructs both cases from physical IR.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-dump --emit-pto-ir %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @choice_release_lanes_share(
+      %src0: !pto.partition_tensor_view<16x128xf32>,
+      %src1: !pto.partition_tensor_view<16x128xf32>, %condition: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input0_addr = arith.constant 0 : i64
+    %output0_addr = arith.constant 8192 : i64
+    %input1_addr = arith.constant 16384 : i64
+    %output1_addr = arith.constant 24576 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %input0 = pto.alloc_tile addr = %input0_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output0 = pto.alloc_tile addr = %output0_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input1 = pto.alloc_tile addr = %input1_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output1 = pto.alloc_tile addr = %output1_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.if %condition {
+      scf.for %iteration = %zero to %two step %one_index {
+        pto.tload ins(%src0 : !pto.partition_tensor_view<16x128xf32>)
+                  outs(%input0 : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box,
+                         fractal=512, pad=0>)
+        pto.tmuls ins(%input0, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                        rows=16, cols=128, v_row=16, v_col=128,
+                        blayout=row_major, slayout=none_box, fractal=512,
+                        pad=0>, f32)
+                  outs(%output0 : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box, fractal=512,
+                         pad=0>)
+      }
+    } else {
+      scf.for %iteration = %zero to %two step %one_index {
+        pto.tload ins(%src1 : !pto.partition_tensor_view<16x128xf32>)
+                  outs(%input1 : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box,
+                         fractal=512, pad=0>)
+        pto.tmuls ins(%input1, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                        rows=16, cols=128, v_row=16, v_col=128,
+                        blayout=row_major, slayout=none_box, fractal=512,
+                        pad=0>, f32)
+                  outs(%output1 : !pto.tile_buf<loc=vec, dtype=f32,
+                         rows=16, cols=128, v_row=16, v_col=128,
+                         blayout=row_major, slayout=none_box, fractal=512,
+                         pad=0>)
+      }
+    }
+    return
+  }
+
+  func.func @repeated_choice_release_lanes_do_not_share(
+      %src0: !pto.partition_tensor_view<16x128xf32>,
+      %src1: !pto.partition_tensor_view<16x128xf32>, %condition: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input0_addr = arith.constant 0 : i64
+    %output0_addr = arith.constant 8192 : i64
+    %input1_addr = arith.constant 16384 : i64
+    %output1_addr = arith.constant 24576 : i64
+    %zero = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %one = arith.constant 1.000000e+00 : f32
+    %input0 = pto.alloc_tile addr = %input0_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output0 = pto.alloc_tile addr = %output0_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %input1 = pto.alloc_tile addr = %input1_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    %output1 = pto.alloc_tile addr = %output1_addr :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16,
+                    v_col=128, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>
+    scf.for %outer = %zero to %two step %one_index {
+      scf.if %condition {
+        scf.for %iteration = %zero to %two step %one_index {
+          pto.tload ins(%src0 : !pto.partition_tensor_view<16x128xf32>)
+                    outs(%input0 : !pto.tile_buf<loc=vec, dtype=f32,
+                           rows=16, cols=128, v_row=16, v_col=128,
+                           blayout=row_major, slayout=none_box,
+                           fractal=512, pad=0>)
+          pto.tmuls ins(%input0, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                          rows=16, cols=128, v_row=16, v_col=128,
+                          blayout=row_major, slayout=none_box, fractal=512,
+                          pad=0>, f32)
+                    outs(%output0 : !pto.tile_buf<loc=vec, dtype=f32,
+                           rows=16, cols=128, v_row=16, v_col=128,
+                           blayout=row_major, slayout=none_box, fractal=512,
+                           pad=0>)
+        }
+      } else {
+        scf.for %iteration = %zero to %two step %one_index {
+          pto.tload ins(%src1 : !pto.partition_tensor_view<16x128xf32>)
+                    outs(%input1 : !pto.tile_buf<loc=vec, dtype=f32,
+                           rows=16, cols=128, v_row=16, v_col=128,
+                           blayout=row_major, slayout=none_box,
+                           fractal=512, pad=0>)
+          pto.tmuls ins(%input1, %one : !pto.tile_buf<loc=vec, dtype=f32,
+                          rows=16, cols=128, v_row=16, v_col=128,
+                          blayout=row_major, slayout=none_box, fractal=512,
+                          pad=0>, f32)
+                    outs(%output1 : !pto.tile_buf<loc=vec, dtype=f32,
+                           rows=16, cols=128, v_row=16, v_col=128,
+                           blayout=row_major, slayout=none_box, fractal=512,
+                           pad=0>)
+        }
+      }
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: CANONICAL-SYNC function=choice_release_lanes_share
+// CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK: PLAN selected=[
+// CHECK-SAME: events=[{{.*}}=e0/release-e0, {{.*}}=e0/release-e0]
+// CHECK: VERIFY ok
+// CHECK-LABEL: CANONICAL-SYNC function=repeated_choice_release_lanes_do_not_share
+// CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK: kind=recurring-event resource=AIV:PIPE_MTE2->AIV:PIPE_V
+// CHECK: PLAN selected=[
+// CHECK-SAME: events=[m1=e0/release-e0, m2=e1/release-e1,
+// CHECK-SAME: m5=e2/release-e2, m6=e3/release-e1]
+// CHECK: VERIFY ok

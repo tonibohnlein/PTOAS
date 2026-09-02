@@ -97,11 +97,14 @@ SmallVector<ConcreteControlArm, 2> getControlPath(Operation *operation) {
   return result;
 }
 
+bool hasRepeatingAncestor(Operation *operation);
+
 bool controlsAreMutuallyExclusive(ArrayRef<ConcreteControlArm> first,
                                   ArrayRef<ConcreteControlArm> second) {
   return llvm::any_of(first, [&](const ConcreteControlArm &left) {
     return llvm::any_of(second, [&](const ConcreteControlArm &right) {
-      return left.choice == right.choice && left.arm != right.arm;
+      return left.choice == right.choice && left.arm != right.arm &&
+             !hasRepeatingAncestor(left.choice);
     });
   });
 }
