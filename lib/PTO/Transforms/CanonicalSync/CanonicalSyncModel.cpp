@@ -149,6 +149,37 @@ void CanonicalSyncProgram::setDirectMechanism(CanonicalDemandId demand,
   directMechanisms[demand] = mechanism;
 }
 
+CanonicalStructuralProposalId CanonicalSyncProgram::appendStructuralProposal(
+    CanonicalStructuralProposal proposal) {
+  if (frozen || !mechanismCatalogComplete || coverageCatalogComplete ||
+      structuralProposalCatalogComplete || setCoverInstance) {
+    llvm_unreachable("cannot append to a frozen structural proposal catalog");
+  }
+  auto existing = llvm::find_if(structuralProposals,
+                                [&](const CanonicalStructuralProposal &item) {
+                                  return item.mechanisms == proposal.mechanisms;
+                                });
+  if (existing != structuralProposals.end()) {
+    for (CanonicalDemandId demand : proposal.crossingDemands) {
+      if (!llvm::is_contained(existing->crossingDemands, demand)) {
+        existing->crossingDemands.push_back(demand);
+      }
+    }
+    llvm::sort(existing->crossingDemands);
+    existing->crossingDemands.erase(
+        std::unique(existing->crossingDemands.begin(),
+                    existing->crossingDemands.end()),
+        existing->crossingDemands.end());
+    if (!proposal.semanticKey.empty() &&
+        existing->semanticKey.find(proposal.semanticKey) == std::string::npos) {
+      existing->semanticKey.append("|");
+      existing->semanticKey.append(proposal.semanticKey);
+    }
+    return existing->id;
+  }
+  return appendRecord(structuralProposals, std::move(proposal), frozen);
+}
+
 void CanonicalSyncProgram::appendCoverageWorld(CanonicalCoverageWorld world) {
   if (frozen || !mechanismCatalogComplete || coverageCatalogComplete ||
       setCoverInstance) {
@@ -342,8 +373,11 @@ LogicalResult CanonicalSyncProgram::freeze() {
               });
           return invalidCompletion || invalidTransfer;
         });
+    const bool invalidStructuralProposal =
+        world.structuralProposal &&
+        *world.structuralProposal >= structuralProposals.size();
     if (invalidMechanism || invalidDemand || invalidSummary ||
-        !world.differentialDisagreements.empty() ||
+        invalidStructuralProposal || !world.differentialDisagreements.empty() ||
         !world.flattenedOracleMatched || !world.unrolledOracleAvailable ||
         (world.unrolledOracleExhaustive && !world.unrolledOracleMatched)) {
       return fail("coverage world references an invalid ID");
@@ -353,7 +387,7 @@ LogicalResult CanonicalSyncProgram::freeze() {
     return fail("set-cover instance is missing");
   }
   if (buildingMechanisms || !mechanismCatalogComplete ||
-      !coverageCatalogComplete) {
+      !structuralProposalCatalogComplete || !coverageCatalogComplete) {
     return fail("mechanism or coverage catalog is incomplete");
   }
   const bool invalidBaseline =
@@ -373,6 +407,41 @@ LogicalResult CanonicalSyncProgram::freeze() {
   }
   const bool inconsistentUniverse =
       listedUniverse != setCoverInstance->universeIncidence;
+  bool invalidStructuralProposal = false;
+  for (const CanonicalStructuralProposal &proposal : structuralProposals) {
+    const bool wrongId = proposal.id >= structuralProposals.size() ||
+                         &proposal != &structuralProposals[proposal.id];
+    const bool invalidOwner = proposal.owner >= regions.size();
+    const bool invalidMechanisms =
+        proposal.mechanisms.size() < 2U ||
+        !llvm::is_sorted(proposal.mechanisms) ||
+        std::adjacent_find(proposal.mechanisms.begin(),
+                           proposal.mechanisms.end()) !=
+            proposal.mechanisms.end() ||
+        llvm::any_of(
+            proposal.mechanisms,
+            [this](CanonicalMechanismId id) {
+              return id >= mechanisms.size();
+            });
+    const auto invalidDemandId = [this](CanonicalDemandId id) {
+      return id >= demands.size();
+    };
+    const bool invalidDemands =
+        llvm::any_of(proposal.crossingDemands, invalidDemandId) ||
+        llvm::any_of(proposal.singletonUnionCoverage, invalidDemandId) ||
+        llvm::any_of(proposal.groundedCoverage, invalidDemandId) ||
+        llvm::any_of(proposal.additionalCoverage, invalidDemandId);
+    const bool invalidAdmission =
+        proposal.admitted != !proposal.additionalCoverage.empty() ||
+        llvm::any_of(
+            proposal.additionalCoverage, [&proposal](CanonicalDemandId demand) {
+              return !llvm::is_contained(proposal.groundedCoverage, demand) ||
+                     llvm::is_contained(proposal.singletonUnionCoverage,
+                                        demand);
+            });
+    invalidStructuralProposal |= wrongId || invalidOwner || invalidMechanisms ||
+                                 invalidDemands || invalidAdmission;
+  }
   llvm::BitVector providerCoverage(demands.size());
   bool invalidCandidate = false;
   for (const CanonicalSetCoverCandidate &candidate :
@@ -381,8 +450,14 @@ LogicalResult CanonicalSyncProgram::freeze() {
         candidate.id >= setCoverInstance->candidates.size() ||
         &candidate != &setCoverInstance->candidates[candidate.id];
     const bool invalidMechanism =
-        candidate.mechanisms.size() != 1U ||
-        candidate.mechanisms.front() >= mechanisms.size();
+        candidate.mechanisms.empty() ||
+        !llvm::is_sorted(candidate.mechanisms) ||
+        std::adjacent_find(candidate.mechanisms.begin(),
+                           candidate.mechanisms.end()) !=
+            candidate.mechanisms.end() ||
+        llvm::any_of(candidate.mechanisms, [this](CanonicalMechanismId id) {
+          return id >= mechanisms.size();
+        });
     const bool invalidDemand = llvm::any_of(candidate.directOrigins,
                                             [this](CanonicalDemandId id) {
                                               return id >= demands.size();
@@ -415,9 +490,16 @@ LogicalResult CanonicalSyncProgram::freeze() {
     if (!invalidIncidence) {
       providerCoverage |= candidate.incidence;
     }
+    const bool invalidProposal =
+        candidate.structuralProposal &&
+        (*candidate.structuralProposal >= structuralProposals.size() ||
+         !structuralProposals[*candidate.structuralProposal].admitted ||
+         structuralProposals[*candidate.structuralProposal].mechanisms !=
+             candidate.mechanisms);
     invalidCandidate |= wrongId || invalidMechanism || invalidDemand ||
                         invalidIncidence || inconsistentIncidence || overlap ||
-                        outsideUniverse || candidate.weight == 0;
+                        outsideUniverse || invalidProposal ||
+                        candidate.weight != candidate.mechanisms.size();
   }
   llvm::BitVector uncoveredUniverse = setCoverInstance->universeIncidence;
   const bool compatibleUniverseSizes =
@@ -426,7 +508,8 @@ LogicalResult CanonicalSyncProgram::freeze() {
     uncoveredUniverse.reset(providerCoverage);
   }
   if (invalidBaseline || invalidUniverse || invalidCandidate ||
-      inconsistentUniverse || uncoveredUniverse.any()) {
+      invalidStructuralProposal || inconsistentUniverse ||
+      uncoveredUniverse.any()) {
     return fail("set-cover instance references an invalid ID or incidence");
   }
   if (!setCoverSolution) {
@@ -459,8 +542,11 @@ LogicalResult CanonicalSyncProgram::freeze() {
     llvm::BitVector selectedCoverage(demands.size());
     for (const CanonicalSetCoverCandidate &candidate :
          setCoverInstance->candidates) {
-      if (!llvm::is_contained(setCoverSolution->mechanisms,
-                              candidate.mechanisms.front())) {
+      const bool active = llvm::all_of(
+          candidate.mechanisms, [this](CanonicalMechanismId mechanism) {
+            return llvm::is_contained(setCoverSolution->mechanisms, mechanism);
+          });
+      if (!active) {
         continue;
       }
       selectedCoverage |= candidate.incidence;
@@ -662,8 +748,8 @@ StringRef mlir::pto::stringifyCanonicalVisibilityDirection(
   llvm_unreachable("unknown canonical visibility direction");
 }
 
-StringRef mlir::pto::stringifyCanonicalGmAliasPolicy(
-    CanonicalGmAliasPolicy policy) {
+StringRef
+mlir::pto::stringifyCanonicalGmAliasPolicy(CanonicalGmAliasPolicy policy) {
   switch (policy) {
   case CanonicalGmAliasPolicy::Conservative:
     return "conservative";
@@ -707,4 +793,23 @@ mlir::pto::stringifyCanonicalMechanismKind(CanonicalMechanismKind kind) {
     return "tail";
   }
   llvm_unreachable("unknown canonical mechanism kind");
+}
+
+StringRef mlir::pto::stringifyCanonicalStructuralProposalKind(
+    CanonicalStructuralProposalKind kind) {
+  switch (kind) {
+  case CanonicalStructuralProposalKind::LevelBoundary:
+    return "level-boundary";
+  case CanonicalStructuralProposalKind::LevelBoundaryMinusOne:
+    return "level-boundary-minus-one";
+  case CanonicalStructuralProposalKind::SemanticLevelBoundary:
+    return "semantic-level-boundary";
+  case CanonicalStructuralProposalKind::RegionTransitiveBasis:
+    return "region-transitive-basis";
+  case CanonicalStructuralProposalKind::StorageLifecycle:
+    return "storage-lifecycle";
+  case CanonicalStructuralProposalKind::StorageLifecycleMinusOne:
+    return "storage-lifecycle-minus-one";
+  }
+  llvm_unreachable("unknown canonical structural proposal kind");
 }

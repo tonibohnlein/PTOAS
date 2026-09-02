@@ -235,6 +235,12 @@ llvm::cl::opt<std::string> canonicalSyncGmAliasPolicy(
                    "distinct-roots-unsafe"),
     llvm::cl::init("conservative"));
 
+llvm::cl::opt<std::string> canonicalSyncStructuralCover(
+    "canonical-sync-structural-cover",
+    llvm::cl::desc("Structural direct-mechanism groups for CanonicalSync: "
+                   "none or level"),
+    llvm::cl::init("none"));
+
 llvm::cl::opt<bool> planMemoryOrderBySize(
     "plan-memory-order-by-size",
     llvm::cl::desc("Plan larger local buffers first inside one AddressSpace "

@@ -197,11 +197,44 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
     } else {
       os << "match";
     }
+    if (world.structuralProposal) {
+      os << " proposal=g" << *world.structuralProposal
+         << " admitted=" << (world.setCoverCandidate ? "yes" : "no");
+    }
     os << '\n';
+  }
+  os << "STRUCTURAL-PROPOSALS " << program.getStructuralProposals().size()
+     << '\n';
+  for (const CanonicalStructuralProposal &proposal :
+       program.getStructuralProposals()) {
+    os << "  proposal=g" << proposal.id
+       << " kind=" << stringifyCanonicalStructuralProposalKind(proposal.kind)
+       << " owner=r" << proposal.owner << " level=" << proposal.level
+       << " semantics={" << proposal.semanticKey << "} mechanisms=[";
+    llvm::interleaveComma(proposal.mechanisms, os,
+                          [&os](CanonicalMechanismId id) { os << 'm' << id; });
+    os << "] crossing=[";
+    llvm::interleaveComma(proposal.crossingDemands, os,
+                          [&os](CanonicalDemandId id) { os << 'd' << id; });
+    os << "] singleton-union=[";
+    llvm::interleaveComma(proposal.singletonUnionCoverage, os,
+                          [&os](CanonicalDemandId id) { os << 'd' << id; });
+    os << "] grounded=[";
+    llvm::interleaveComma(proposal.groundedCoverage, os,
+                          [&os](CanonicalDemandId id) { os << 'd' << id; });
+    os << "] additional=[";
+    llvm::interleaveComma(proposal.additionalCoverage, os,
+                          [&os](CanonicalDemandId id) { os << 'd' << id; });
+    os << "] admitted=" << (proposal.admitted ? "yes" : "no") << '\n';
   }
   if (program.getSetCoverInstance()) {
     const CanonicalSetCoverInstance &instance = *program.getSetCoverInstance();
-    os << "SET-COVER optimization=singleton baseline=[";
+    const bool grouped = llvm::any_of(
+        instance.candidates, [](const CanonicalSetCoverCandidate &candidate) {
+          return candidate.structuralProposal.has_value();
+        });
+    os << "SET-COVER optimization="
+       << (grouped ? "grounded-groups" : "singleton") << " baseline=[";
     llvm::interleaveComma(instance.baseline, os,
                           [&os](CanonicalMechanismId id) { os << 'm' << id; });
     os << "] universe=[";
@@ -219,13 +252,23 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
       os << "] additional=[";
       llvm::interleaveComma(candidate.additionalCoverage, os,
                             [&os](CanonicalDemandId id) { os << 'd' << id; });
-      os << "]\n";
+      os << ']';
+      if (candidate.structuralProposal) {
+        os << " proposal=g" << *candidate.structuralProposal;
+      }
+      os << '\n';
     }
   }
   if (program.getSetCoverSolution()) {
     const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
-    os << "OPTIMIZATION enabled=yes mode=singleton-greedy"
-       << " greedy=[";
+    const bool grouped =
+        program.getSetCoverInstance() &&
+        llvm::any_of(program.getSetCoverInstance()->candidates,
+                     [](const CanonicalSetCoverCandidate &candidate) {
+                       return candidate.structuralProposal.has_value();
+                     });
+    os << "OPTIMIZATION enabled=yes mode="
+       << (grouped ? "grouped-greedy" : "singleton-greedy") << " greedy=[";
     llvm::interleaveComma(
         solution.greedyCandidates, os,
         [&os](CanonicalSetCoverCandidateId id) { os << 'c' << id; });

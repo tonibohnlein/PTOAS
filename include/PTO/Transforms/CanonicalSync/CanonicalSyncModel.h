@@ -41,6 +41,7 @@ using CanonicalAccessId = std::uint32_t;
 using CanonicalFenceEffectId = std::uint32_t;
 using CanonicalDemandId = std::uint32_t;
 using CanonicalMechanismId = std::uint32_t;
+using CanonicalStructuralProposalId = std::uint32_t;
 using CanonicalSetCoverCandidateId = std::uint32_t;
 
 inline constexpr std::uint32_t kInvalidCanonicalSyncId =
@@ -99,6 +100,14 @@ enum class CanonicalMechanismKind : std::uint8_t {
   VisibilityFence,
   FixedFence,
   TailBarrier,
+};
+enum class CanonicalStructuralProposalKind : std::uint8_t {
+  LevelBoundary,
+  LevelBoundaryMinusOne,
+  SemanticLevelBoundary,
+  RegionTransitiveBasis,
+  StorageLifecycle,
+  StorageLifecycleMinusOne,
 };
 enum class CanonicalProgramPointPosition : std::uint8_t { Before, After };
 
@@ -288,6 +297,26 @@ struct CanonicalCoverageWorld {
   bool unrolledOracleExhaustive = false;
   bool unrolledOracleMatched = false;
   bool setCoverCandidate = false;
+  std::optional<CanonicalStructuralProposalId> structuralProposal;
+};
+
+/// One bounded graph/IR-derived suggestion for mechanisms worth grounding
+/// together. A proposal does not assert coverage: the ordinary coverage
+/// oracles populate groundedCoverage and additionalCoverage before the group
+/// may become a set-cover candidate.
+struct CanonicalStructuralProposal {
+  CanonicalStructuralProposalId id = kInvalidCanonicalSyncId;
+  CanonicalStructuralProposalKind kind =
+      CanonicalStructuralProposalKind::LevelBoundary;
+  CanonicalRegionId owner = kInvalidCanonicalSyncId;
+  unsigned level = 0;
+  std::string semanticKey;
+  llvm::SmallVector<CanonicalMechanismId, 8> mechanisms;
+  llvm::SmallVector<CanonicalDemandId, 8> crossingDemands;
+  llvm::SmallVector<CanonicalDemandId, 8> singletonUnionCoverage;
+  llvm::SmallVector<CanonicalDemandId, 8> groundedCoverage;
+  llvm::SmallVector<CanonicalDemandId, 8> additionalCoverage;
+  bool admitted = false;
 };
 
 struct CanonicalSetCoverCandidate {
@@ -297,6 +326,7 @@ struct CanonicalSetCoverCandidate {
   llvm::SmallVector<CanonicalDemandId, 4> additionalCoverage;
   llvm::BitVector incidence;
   std::uint64_t weight = 0;
+  std::optional<CanonicalStructuralProposalId> structuralProposal;
 };
 
 struct CanonicalSetCoverInstance {
@@ -339,6 +369,9 @@ struct CanonicalSetCoverSolution {
 
 class CanonicalSyncProgram;
 LogicalResult buildCanonicalDirectMechanisms(CanonicalSyncProgram &program);
+LogicalResult
+proposeCanonicalSyncStructuralGroups(CanonicalSyncProgram &program,
+                                     bool enabled);
 LogicalResult evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program);
 LogicalResult buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program);
 LogicalResult solveCanonicalSyncSetCover(CanonicalSyncProgram &program);
@@ -369,6 +402,8 @@ public:
       llvm::SmallVector<CanonicalScarcityEventGroup, 2> groups);
   void setDirectMechanism(CanonicalDemandId demand,
                           CanonicalMechanismId mechanism);
+  CanonicalStructuralProposalId
+  appendStructuralProposal(CanonicalStructuralProposal proposal);
 
   LogicalResult freezeGraph();
   LogicalResult freeze();
@@ -388,6 +423,9 @@ public:
   }
   llvm::ArrayRef<CanonicalCoverageWorld> getCoverageWorlds() const {
     return coverageWorlds;
+  }
+  llvm::ArrayRef<CanonicalStructuralProposal> getStructuralProposals() const {
+    return structuralProposals;
   }
   llvm::ArrayRef<CanonicalMechanismId> getDirectMechanisms() const {
     return directMechanisms;
@@ -410,6 +448,9 @@ private:
   friend LogicalResult
   buildCanonicalDirectMechanisms(CanonicalSyncProgram &program);
   friend LogicalResult
+  proposeCanonicalSyncStructuralGroups(CanonicalSyncProgram &program,
+                                       bool enabled);
+  friend LogicalResult
   evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program);
   friend LogicalResult
   buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program);
@@ -431,10 +472,12 @@ private:
   llvm::SmallVector<CanonicalMechanism> mechanisms;
   llvm::SmallVector<CanonicalMechanismId> directMechanisms;
   llvm::SmallVector<CanonicalCoverageWorld> coverageWorlds;
+  llvm::SmallVector<CanonicalStructuralProposal, 0> structuralProposals;
   std::optional<CanonicalSetCoverInstance> setCoverInstance;
   std::optional<CanonicalSetCoverSolution> setCoverSolution;
   bool buildingMechanisms = false;
   bool mechanismCatalogComplete = false;
+  bool structuralProposalCatalogComplete = false;
   bool coverageCatalogComplete = false;
   bool graphFrozen = false;
   bool frozen = false;
@@ -450,6 +493,8 @@ stringifyCanonicalVisibilityDirection(CanonicalVisibilityDirection direction);
 llvm::StringRef
 stringifyCanonicalCacheMaintenance(CanonicalCacheMaintenance maintenance);
 llvm::StringRef stringifyCanonicalMechanismKind(CanonicalMechanismKind kind);
+llvm::StringRef
+stringifyCanonicalStructuralProposalKind(CanonicalStructuralProposalKind kind);
 void printCanonicalSyncProgram(const CanonicalSyncProgram &program,
                                llvm::raw_ostream &os);
 
