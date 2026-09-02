@@ -30,8 +30,8 @@
 // RUN:   %t/wrong_core_latch.pto -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=WRONG-LATCH
 
-// SCALAR: error: canonical sync target forbids the required cross-core event
-// FFTS: error: canonical sync cross-core events require an unconditional pto.set_ffts setup before both endpoints
+// SCALAR: error: canonical sync cannot generate a cross-core event until collective AIC/AIV participation is represented and proven
+// FFTS: error: canonical sync cannot generate a cross-core event until collective AIC/AIV participation is represented and proven
 // VISIBILITY: error: canonical sync has no proven cross-core GM visibility protocol
 // CARRIED-VISIBILITY: error: canonical sync has no proven cross-core GM visibility protocol
 // CARRIED-REUSE-LABEL: CANONICAL-SYNC function=carried_visibility_cannot_reuse_completion

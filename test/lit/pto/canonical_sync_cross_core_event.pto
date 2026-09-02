@@ -8,16 +8,12 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-// A mode-2 FFTS counter transfers completion between ordered cube and vector
-// sections. The source and destination pipes are carried by the set and wait
-// operations respectively; counter IDs are allocated from the documented
-// cross-core pool [0, 10].
-// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
-// RUN:   --canonical-sync-dump --emit-pto-ir \
-// RUN:   --mlir-print-ir-after=pto-canonical-sync %s -o /dev/null 2>&1 \
+// Mode-2 FFTS synchronization is a collective AIC/all-AIV protocol. The
+// current graph does not represent participating AIV multiplicity or prove
+// uniform participation, so pairwise cross-core generation fails closed.
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 \
+// RUN:   --enable-canonical-sync --emit-pto-ir %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
-// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
-// RUN:   %s -o - 2>&1 | FileCheck %s --check-prefix=EMITC
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @cube_store_then_vector_load(
@@ -50,29 +46,4 @@ module attributes {pto.target_arch = "a2a3"} {
   }
 }
 
-// CHECK-LABEL: CANONICAL-SYNC function=cube_store_then_vector_load
-// CHECK: kind=RAW
-// CHECK: kind=cross-core-event resource=AIC:PIPE_FIX->AIV:PIPE_MTE2
-// CHECK: PLAN selected=[
-// CHECK-SAME: events=[{{.*}}=e{{[0-9]+}}
-// CHECK: VERIFY ok
-// CHECK-LABEL: func.func @cube_store_then_vector_load
-// CHECK: pto.section.cube
-// CHECK: pto.tstore
-// CHECK-NEXT: pto.sync.set <PIPE_FIX>, [[EVENT:[0-9]+]] {ffts_mode = 2 : i32
-// CHECK: pto.barrier <PIPE_ALL>
-// CHECK: pto.section.vector
-// CHECK: pto.sync.wait <PIPE_MTE2>, [[EVENT]] {ffts_mode = 2 : i32
-// CHECK-NEXT: pto.tload
-// CHECK: pto.barrier <PIPE_ALL>
-
-// EMITC-LABEL: AICORE void cube_store_then_vector_load
-// EMITC: set_ffts_base_addr
-// EMITC: #if defined(__DAV_CUBE__)
-// EMITC: TSTORE
-// EMITC: __builtin_cce_ffts_cross_core_sync(PIPE_FIX
-// EMITC-NEXT: pipe_barrier(PIPE_ALL);
-// EMITC: #if defined(__DAV_VEC__)
-// EMITC: __builtin_cce_wait_flag_dev([[EVENT:[0-9]+]]);
-// EMITC: TLOAD
-// EMITC-NEXT: pipe_barrier(PIPE_ALL);
+// CHECK: error: canonical sync cannot generate a cross-core event until collective AIC/AIV participation is represented and proven

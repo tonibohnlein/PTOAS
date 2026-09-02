@@ -59,25 +59,6 @@ bool isRepeatedBlock(Block *block) {
   return false;
 }
 
-bool hasOrderedUnconditionalFftsSetup(func::FuncOp function, Operation *source,
-                                      Operation *target) {
-  Block &entry = function.getBody().front();
-  bool found = false;
-  function.walk([&](SetFFTsOp setup) {
-    Operation *operation = setup.getOperation();
-    const bool unconditional = operation->getBlock() == &entry;
-    const bool precedesEndpoints =
-        programPointMustPrecede(
-            {operation, CanonicalProgramPointPosition::After},
-            {source, CanonicalProgramPointPosition::Before}) &&
-        programPointMustPrecede(
-            {operation, CanonicalProgramPointPosition::After},
-            {target, CanonicalProgramPointPosition::Before});
-    found |= unconditional && precedesEndpoints;
-  });
-  return found;
-}
-
 std::optional<CanonicalRegionId>
 findLoopRegion(const CanonicalSyncProgram &program, scf::ForOp loop) {
   auto found =
@@ -689,58 +670,15 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
     return mechanism;
   }
   if (source.core != destination.core) {
-    const bool missingFftsSetup = !hasOrderedUnconditionalFftsSetup(
-        program.getFunction(), sourcePhase.operation, targetPhase.operation);
-    if (missingFftsSetup) {
-      targetPhase.operation->emitError(
-          "canonical sync cross-core events require an unconditional "
-          "pto.set_ffts setup before both endpoints")
-          << "; demand d" << demand.id;
-      return failure();
-    }
-    if (hasPositiveDistance(demand)) {
-      targetPhase.operation->emitError(
-          "canonical sync has no repeating cross-core counter protocol")
-          << "; demand d" << demand.id;
-      return failure();
-    }
-    const bool repeated = isRepeatedBlock(sourcePhase.operation->getBlock()) ||
-                          isRepeatedBlock(targetPhase.operation->getBlock());
-    if (repeated) {
-      targetPhase.operation->emitError(
-          "canonical sync has no repeating cross-core counter protocol")
-          << "; demand d" << demand.id;
-      return failure();
-    }
-    if (sourcePhase.controlPath != targetPhase.controlPath) {
-      targetPhase.operation->emitError(
-          "canonical sync cannot balance a guarded cross-core event")
-          << "; demand d" << demand.id
-          << " requires identical source and target control paths";
-      return failure();
-    }
-    if (!target.supportsCrossCoreEvent(source, destination)) {
-      targetPhase.operation->emitError(
-          "canonical sync target forbids the required cross-core event")
-          << "; demand d" << demand.id << " crosses "
-          << stringifyCanonicalCore(source.core) << ':'
-          << stringifyPIPE(source.pipe) << " to "
-          << stringifyCanonicalCore(destination.core) << ':'
-          << stringifyPIPE(destination.pipe);
-      return failure();
-    }
-    CanonicalMechanism mechanism;
-    mechanism.kind = CanonicalMechanismKind::CrossCoreEvent;
-    mechanism.source = source;
-    mechanism.target = destination;
-    mechanism.sourcePoint = {sourcePhase.operation,
-                             CanonicalProgramPointPosition::After};
-    mechanism.targetPoint = {targetPhase.operation,
-                             CanonicalProgramPointPosition::Before};
-    mechanism.actionRegion = demand.owner;
-    mechanism.guard =
-        commonGuard(sourcePhase.controlPath, targetPhase.controlPath);
-    return mechanism;
+    targetPhase.operation->emitError(
+        "canonical sync cannot generate a cross-core event until collective "
+        "AIC/AIV participation is represented and proven")
+        << "; demand d" << demand.id << " crosses "
+        << stringifyCanonicalCore(source.core) << ':'
+        << stringifyPIPE(source.pipe) << " to "
+        << stringifyCanonicalCore(destination.core) << ':'
+        << stringifyPIPE(destination.pipe);
+    return failure();
   }
   if (hasPositiveDistance(demand)) {
     if (const CanonicalFenceEffect *effect =

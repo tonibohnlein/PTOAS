@@ -222,8 +222,6 @@ Each demand is assigned one direct mechanism:
 - documented intrinsic ordering;
 - a targeted same-pipeline barrier;
 - a legal directed set/wait event;
-- a once-only mode-2 FFTS counter transfer between ordered cube and vector
-  sections when the function already provides `pto.set_ffts` setup;
 - a single-lane ready/release recurrence protocol with explicit priming and
   draining;
 - a carrying-loop-latch DCache/fence visibility protocol;
@@ -240,10 +238,10 @@ once-only block. The lifted set captures every source-resource phase that may
 precede its physical point, including alternative branch arms and all relevant
 phases of a macro. A barrier before a macro does not complete phases inside the
 macro. Ordinary event lifecycles that repeat inside a loop use the supported
-ready/release protocol or are rejected. Cross-core counters remain once-only;
-guarded, loop-repeated, and positive-distance cross-core demands fail closed.
-Their existing `pto.set_ffts` setup must be unconditional in the function entry
-block and execute before both generated counter endpoints.
+ready/release protocol or are rejected. Mode-2 FFTS synchronization is
+collective between one AIC and every participating AIV. Because the current
+graph does not represent AIV multiplicity, synchronization-group identity, or
+uniform participation, cross-core demand generation fails closed.
 
 An existing GM/all fence is fixed baseline supply, represented once by its
 physical operation rather than once per demand. Its completion role publishes
@@ -357,14 +355,10 @@ Both repairs may reduce overlap, so they are used only after ordinary
 allocation fails. Neither adds an internal `PIPE_ALL` barrier. Unsupported
 reverse directions, incompatible cuts, and remaining scarcity still fail
 closed.
-Cross-core mode-2 FFTS counters use their documented ID range 0 through 10.
-Coexecuting cross-core generations conservatively receive distinct numeric
-counter IDs, independent of their pipe direction, and exhaustion is an error.
-
 ## Independent verification and atomic mutation
 
 Materialization first clones the function. The clone receives tagged set/wait
-pairs, mode-2 cross-core set/wait pairs, targeted barriers, and exit barriers.
+pairs, targeted barriers, and exit barriers.
 Before memory dataflow, an event
 generation verifier independently reconstructs each tagged set/wait generation
 from the emitted IR. It checks balance, direction, ID legality, control path,
