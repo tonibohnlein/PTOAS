@@ -10,7 +10,10 @@
 
 #include "CanonicalSyncInternal.h"
 
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
+
+#include <unordered_map>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -50,46 +53,108 @@ void canonicalizeLoops(SmallVectorImpl<CanonicalRegionId> &loops) {
   loops.erase(std::unique(loops.begin(), loops.end()), loops.end());
 }
 
-bool addFact(SmallVectorImpl<CompletionFact> &facts, CompletionFact fact) {
-  canonicalizeLoops(fact.requiredLoops);
-  for (CompletionFact &existing : facts) {
-    const bool sameKey = existing.phase == fact.phase &&
-                         existing.resource == fact.resource &&
-                         existing.guard == fact.guard &&
-                         existing.requiredLoops == fact.requiredLoops;
-    if (!sameKey) {
-      continue;
-    }
-    if (existing.availableAt == fact.availableAt ||
-        programPointMustPrecede(existing.availableAt, fact.availableAt)) {
-      return false;
-    }
-    if (programPointMustPrecede(fact.availableAt, existing.availableAt)) {
-      existing.availableAt = fact.availableAt;
-      return true;
+std::uint64_t resourceKey(CanonicalPhysicalResource resource) {
+  return (static_cast<std::uint64_t>(resource.core) << 32U) |
+         static_cast<std::uint32_t>(resource.pipe);
+}
+
+std::size_t hashFactKey(const CompletionFact &fact) {
+  llvm::hash_code hash = llvm::hash_combine(
+      fact.phase, static_cast<unsigned>(fact.resource.core),
+      static_cast<unsigned>(fact.resource.pipe), fact.guard.size(),
+      fact.requiredLoops.size());
+  for (const CanonicalControlAtom &atom : fact.guard) {
+    hash = llvm::hash_combine(hash, atom.choice, atom.arm);
+  }
+  for (CanonicalRegionId loop : fact.requiredLoops) {
+    hash = llvm::hash_combine(hash, loop);
+  }
+  return static_cast<std::size_t>(hash);
+}
+
+bool sameFactKey(const CompletionFact &first, const CompletionFact &second) {
+  return first.phase == second.phase && first.resource == second.resource &&
+         first.guard == second.guard &&
+         first.requiredLoops == second.requiredLoops;
+}
+
+class CompletionFactIndex {
+public:
+  CompletionFactIndex(SmallVectorImpl<CompletionFact> &facts,
+                      CanonicalSyncStatistics *statistics)
+      : facts(facts), statistics(statistics) {
+    for (std::size_t index = 0; index < facts.size(); ++index) {
+      buckets[hashFactKey(facts[index])].push_back(index);
+      byResource[resourceKey(facts[index].resource)].push_back(index);
     }
   }
-  facts.push_back(std::move(fact));
-  return true;
-}
+
+  bool add(CompletionFact fact) {
+    canonicalizeLoops(fact.requiredLoops);
+    SmallVector<std::size_t, 2> &bucket = buckets[hashFactKey(fact)];
+    for (std::size_t index : bucket) {
+      if (statistics) {
+        ++statistics->coverageFactKeyTests;
+      }
+      CompletionFact &existing = facts[index];
+      if (!sameFactKey(existing, fact)) {
+        continue;
+      }
+      if (existing.availableAt == fact.availableAt ||
+          programPointMustPrecede(existing.availableAt, fact.availableAt)) {
+        return false;
+      }
+      if (programPointMustPrecede(fact.availableAt, existing.availableAt)) {
+        existing.availableAt = fact.availableAt;
+        return true;
+      }
+    }
+    bucket.push_back(facts.size());
+    byResource[resourceKey(fact.resource)].push_back(facts.size());
+    facts.push_back(std::move(fact));
+    return true;
+  }
+
+  ArrayRef<CompletionFact> values() const { return facts; }
+
+  SmallVector<CompletionFact, 16>
+  snapshot(CanonicalPhysicalResource resource) const {
+    SmallVector<CompletionFact, 16> result;
+    const auto found = byResource.find(resourceKey(resource));
+    if (found == byResource.end()) {
+      return result;
+    }
+    result.reserve(found->second.size());
+    for (std::size_t index : found->second) {
+      result.push_back(facts[index]);
+    }
+    return result;
+  }
+
+private:
+  SmallVectorImpl<CompletionFact> &facts;
+  std::unordered_map<std::size_t, SmallVector<std::size_t, 2>> buckets;
+  std::unordered_map<std::uint64_t, SmallVector<std::size_t, 8>> byResource;
+  CanonicalSyncStatistics *statistics = nullptr;
+};
 
 void applyBarrier(const CanonicalSyncProgram &program,
                   const CanonicalMechanism &mechanism,
-                  SmallVectorImpl<CompletionFact> &facts,
+                  CompletionFactIndex &facts,
                   ArrayRef<CanonicalRegionId> requiredLoops = {}) {
   for (CanonicalPhaseId phaseId :
        program.getMechanismSourcePrefix(mechanism.id)) {
     const CanonicalPhase &phase = program.getPhase(phaseId);
-    addFact(facts, {phase.id, mechanism.target, mechanism.targetPoint,
-                    combineGuards(phase.controlPath, mechanism.guard),
-                    SmallVector<CanonicalRegionId, 2>(requiredLoops.begin(),
-                                                      requiredLoops.end())});
+    facts.add({phase.id, mechanism.target, mechanism.targetPoint,
+               combineGuards(phase.controlPath, mechanism.guard),
+               SmallVector<CanonicalRegionId, 2>(requiredLoops.begin(),
+                                                 requiredLoops.end())});
   }
 }
 
 bool applyFixedFence(const CanonicalSyncProgram &program,
                      const CanonicalMechanism &mechanism,
-                     SmallVectorImpl<CompletionFact> &facts,
+                     CompletionFactIndex &facts,
                      ArrayRef<CanonicalRegionId> requiredLoops = {}) {
   const CanonicalFenceEffect &effect =
       program.getFenceEffect(*mechanism.fenceEffect);
@@ -104,8 +169,7 @@ bool applyFixedFence(const CanonicalSyncProgram &program,
                            ArrayRef<CanonicalControlAtom> guard,
                            ArrayRef<CanonicalRegionId> loops) {
     for (CanonicalPhysicalResource destination : destinations) {
-      changed |= addFact(
-          facts,
+      changed |= facts.add(
           {phase, destination, mechanism.targetPoint,
            SmallVector<CanonicalControlAtom, 2>(guard.begin(), guard.end()),
            SmallVector<CanonicalRegionId, 2>(loops.begin(), loops.end())});
@@ -117,38 +181,46 @@ bool applyFixedFence(const CanonicalSyncProgram &program,
     publish(phase.id, combineGuards(phase.controlPath, mechanism.guard),
             requiredLoops);
   }
-  const SmallVector<CompletionFact, 16> snapshot(facts.begin(), facts.end());
-  for (const CompletionFact &fact : snapshot) {
-    const bool drained =
-        llvm::is_contained(effect.drainedResources, fact.resource);
-    const bool precedes =
-        programPointMustPrecede(fact.availableAt, mechanism.sourcePoint);
-    const bool compatible = controlsCanCoexecute(fact.guard, mechanism.guard);
-    if (!drained || !precedes || !compatible) {
-      continue;
+  for (CanonicalPhysicalResource resource : effect.drainedResources) {
+    const SmallVector<CompletionFact, 16> snapshot = facts.snapshot(resource);
+    if (CanonicalSyncStatistics *statistics = program.getStatistics()) {
+      statistics->coveragePropagationFactTests += snapshot.size();
     }
-    SmallVector<CanonicalRegionId, 2> loops = fact.requiredLoops;
-    appendUnique(loops, requiredLoops);
-    publish(fact.phase, combineGuards(fact.guard, mechanism.guard), loops);
+    for (const CompletionFact &fact : snapshot) {
+      const bool precedes =
+          programPointMustPrecede(fact.availableAt, mechanism.sourcePoint);
+      const bool compatible =
+          controlsCanCoexecute(fact.guard, mechanism.guard);
+      if (!precedes || !compatible) {
+        continue;
+      }
+      SmallVector<CanonicalRegionId, 2> loops = fact.requiredLoops;
+      appendUnique(loops, requiredLoops);
+      publish(fact.phase, combineGuards(fact.guard, mechanism.guard), loops);
+    }
   }
   return changed;
 }
 
 bool applyEvent(const CanonicalSyncProgram &program,
                 const CanonicalMechanism &mechanism,
-                SmallVectorImpl<CompletionFact> &facts,
+                CompletionFactIndex &facts,
                 ArrayRef<CanonicalRegionId> requiredLoops = {}) {
   bool changed = false;
   for (CanonicalPhaseId phaseId :
        program.getMechanismSourcePrefix(mechanism.id)) {
     const CanonicalPhase &phase = program.getPhase(phaseId);
-    changed |=
-        addFact(facts, {phase.id, mechanism.target, mechanism.targetPoint,
-                        combineGuards(phase.controlPath, mechanism.guard),
-                        SmallVector<CanonicalRegionId, 2>(
-                            requiredLoops.begin(), requiredLoops.end())});
+    changed |= facts.add(
+        {phase.id, mechanism.target, mechanism.targetPoint,
+         combineGuards(phase.controlPath, mechanism.guard),
+         SmallVector<CanonicalRegionId, 2>(requiredLoops.begin(),
+                                           requiredLoops.end())});
   }
-  const SmallVector<CompletionFact, 16> snapshot(facts.begin(), facts.end());
+  const SmallVector<CompletionFact, 16> snapshot =
+      facts.snapshot(mechanism.source);
+  if (CanonicalSyncStatistics *statistics = program.getStatistics()) {
+    statistics->coveragePropagationFactTests += snapshot.size();
+  }
   for (const CompletionFact &fact : snapshot) {
     if (fact.resource != mechanism.source ||
         !programPointMustPrecede(fact.availableAt, mechanism.sourcePoint) ||
@@ -157,9 +229,9 @@ bool applyEvent(const CanonicalSyncProgram &program,
     }
     SmallVector<CanonicalRegionId, 2> loops = fact.requiredLoops;
     appendUnique(loops, requiredLoops);
-    changed |= addFact(
-        facts, {fact.phase, mechanism.target, mechanism.targetPoint,
-                combineGuards(fact.guard, mechanism.guard), std::move(loops)});
+    changed |= facts.add(
+        {fact.phase, mechanism.target, mechanism.targetPoint,
+         combineGuards(fact.guard, mechanism.guard), std::move(loops)});
   }
   return changed;
 }
@@ -173,23 +245,134 @@ bool sameBoundaryTransfer(const CanonicalBoundaryTransfer &first,
          first.requiredLoops == second.requiredLoops;
 }
 
-bool addBoundaryTransfer(SmallVectorImpl<CanonicalBoundaryTransfer> &transfers,
-                         CanonicalBoundaryTransfer transfer) {
-  canonicalizeLoops(transfer.requiredLoops);
-  auto existing =
-      llvm::find_if(transfers, [&](CanonicalBoundaryTransfer &item) {
-        return sameBoundaryTransfer(item, transfer);
-      });
-  if (existing == transfers.end()) {
-    transfers.push_back(std::move(transfer));
-    return true;
+std::size_t hashBoundaryTransfer(const CanonicalBoundaryTransfer &transfer) {
+  llvm::hash_code hash = llvm::hash_combine(
+      static_cast<unsigned>(transfer.source.core),
+      static_cast<unsigned>(transfer.source.pipe),
+      static_cast<unsigned>(transfer.target.core),
+      static_cast<unsigned>(transfer.target.pipe),
+      transfer.sourcePoint.operation,
+      static_cast<unsigned>(transfer.sourcePoint.position),
+      transfer.targetPoint.operation,
+      static_cast<unsigned>(transfer.targetPoint.position),
+      transfer.guard.size(), transfer.requiredLoops.size());
+  for (const CanonicalControlAtom &atom : transfer.guard) {
+    hash = llvm::hash_combine(hash, atom.choice, atom.arm);
   }
-  return false;
+  for (CanonicalRegionId loop : transfer.requiredLoops) {
+    hash = llvm::hash_combine(hash, loop);
+  }
+  return static_cast<std::size_t>(hash);
 }
+
+class BoundaryTransferIndex {
+public:
+  explicit BoundaryTransferIndex(
+      SmallVectorImpl<CanonicalBoundaryTransfer> &transfers,
+      CanonicalSyncStatistics *statistics)
+      : transfers(transfers), statistics(statistics) {
+    for (std::size_t index = 0; index < transfers.size(); ++index) {
+      record(index);
+    }
+  }
+
+  std::optional<std::size_t> insert(CanonicalBoundaryTransfer transfer) {
+    canonicalizeLoops(transfer.requiredLoops);
+    SmallVector<std::size_t, 2> &bucket =
+        buckets[hashBoundaryTransfer(transfer)];
+    for (std::size_t existing : bucket) {
+      if (statistics) {
+        ++statistics->coverageTransferKeyTests;
+      }
+      if (sameBoundaryTransfer(transfers[existing], transfer)) {
+        return std::nullopt;
+      }
+    }
+    const std::size_t index = transfers.size();
+    bucket.push_back(index);
+    transfers.push_back(std::move(transfer));
+    bySource[resourceKey(transfers.back().source)].push_back(index);
+    byTarget[resourceKey(transfers.back().target)].push_back(index);
+    return index;
+  }
+
+  bool add(CanonicalBoundaryTransfer transfer) {
+    return insert(std::move(transfer)).has_value();
+  }
+
+  ArrayRef<CanonicalBoundaryTransfer> values() const { return transfers; }
+
+  void close() {
+    SmallVector<std::size_t, 16> worklist;
+    worklist.reserve(transfers.size());
+    for (std::size_t index = 0; index < transfers.size(); ++index) {
+      worklist.push_back(index);
+    }
+    for (std::size_t next = 0; next < worklist.size(); ++next) {
+      const CanonicalBoundaryTransfer current = transfers[worklist[next]];
+      composeFrom(current, bySource, current.target, true, worklist);
+      composeFrom(current, byTarget, current.source, false, worklist);
+    }
+  }
+
+private:
+  void record(std::size_t index) {
+    const CanonicalBoundaryTransfer &transfer = transfers[index];
+    buckets[hashBoundaryTransfer(transfer)].push_back(index);
+    bySource[resourceKey(transfer.source)].push_back(index);
+    byTarget[resourceKey(transfer.target)].push_back(index);
+  }
+
+  void composeFrom(
+      const CanonicalBoundaryTransfer &current,
+      const std::unordered_map<std::uint64_t, SmallVector<std::size_t, 8>> &index,
+      CanonicalPhysicalResource connector, bool currentFirst,
+      SmallVectorImpl<std::size_t> &worklist) {
+    const auto found = index.find(resourceKey(connector));
+    if (found == index.end()) {
+      return;
+    }
+    const SmallVector<std::size_t, 8> candidates = found->second;
+    for (std::size_t candidateIndex : candidates) {
+      if (statistics) {
+        ++statistics->coverageTransferComposeTests;
+      }
+      const CanonicalBoundaryTransfer candidate = transfers[candidateIndex];
+      const CanonicalBoundaryTransfer &first =
+          currentFirst ? current : candidate;
+      const CanonicalBoundaryTransfer &second =
+          currentFirst ? candidate : current;
+      const bool composablePoints =
+          programPointMustPrecede(first.targetPoint, second.sourcePoint);
+      const bool composableGuards =
+          controlsCanCoexecute(first.guard, second.guard);
+      if (!composablePoints || !composableGuards) {
+        continue;
+      }
+      CanonicalBoundaryTransfer composed;
+      composed.source = first.source;
+      composed.target = second.target;
+      composed.sourcePoint = first.sourcePoint;
+      composed.targetPoint = second.targetPoint;
+      composed.guard = combineGuards(first.guard, second.guard);
+      composed.requiredLoops = first.requiredLoops;
+      appendUnique(composed.requiredLoops, second.requiredLoops);
+      if (std::optional<std::size_t> added = insert(std::move(composed))) {
+        worklist.push_back(*added);
+      }
+    }
+  }
+
+  SmallVectorImpl<CanonicalBoundaryTransfer> &transfers;
+  std::unordered_map<std::size_t, SmallVector<std::size_t, 2>> buckets;
+  std::unordered_map<std::uint64_t, SmallVector<std::size_t, 8>> bySource;
+  std::unordered_map<std::uint64_t, SmallVector<std::size_t, 8>> byTarget;
+  CanonicalSyncStatistics *statistics = nullptr;
+};
 
 void addFixedFenceTransfers(
     const CanonicalSyncProgram &program, const CanonicalMechanism &mechanism,
-    SmallVectorImpl<CanonicalBoundaryTransfer> &transfers,
+    BoundaryTransferIndex &transfers,
     ArrayRef<CanonicalRegionId> requiredLoops = {}) {
   const CanonicalFenceEffect &effect =
       program.getFenceEffect(*mechanism.fenceEffect);
@@ -208,7 +391,7 @@ void addFixedFenceTransfers(
       transfer.targetPoint = mechanism.targetPoint;
       transfer.guard = mechanism.guard;
       transfer.requiredLoops.assign(requiredLoops.begin(), requiredLoops.end());
-      addBoundaryTransfer(transfers, std::move(transfer));
+      transfers.add(std::move(transfer));
     }
   }
 }
@@ -233,8 +416,9 @@ std::optional<unsigned> guardArm(ArrayRef<CanonicalControlAtom> guard,
 }
 
 bool joinFlattenedChoiceFacts(const CanonicalSyncProgram &program,
-                              SmallVectorImpl<CompletionFact> &facts) {
-  const SmallVector<CompletionFact, 32> snapshot(facts.begin(), facts.end());
+                              CompletionFactIndex &facts) {
+  const SmallVector<CompletionFact, 32> snapshot(facts.values().begin(),
+                                                  facts.values().end());
   bool changed = false;
   for (const CanonicalRegion &choice : program.getRegions()) {
     if (choice.kind != CanonicalRegionKind::Choice || !choice.operation) {
@@ -261,8 +445,8 @@ bool joinFlattenedChoiceFacts(const CanonicalSyncProgram &program,
         if (secondIsUnavailable) {
           continue;
         }
-        changed |= addFact(facts, {first.phase, first.resource, afterChoice,
-                                   commonGuard, first.requiredLoops});
+        changed |= facts.add({first.phase, first.resource, afterChoice,
+                              commonGuard, first.requiredLoops});
       }
     }
   }
@@ -271,13 +455,13 @@ bool joinFlattenedChoiceFacts(const CanonicalSyncProgram &program,
 
 void joinChoiceTransfers(
     const CanonicalSyncProgram &program, const CanonicalRegion &choice,
-    ArrayRef<CanonicalRegionSummary> children,
-    SmallVectorImpl<CanonicalBoundaryTransfer> &transfers) {
+    ArrayRef<const CanonicalRegionSummary *> children,
+    BoundaryTransferIndex &transfers) {
   const CanonicalRegionSummary *arms[2] = {nullptr, nullptr};
-  for (const CanonicalRegionSummary &child : children) {
-    const unsigned arm = program.getRegion(child.region).arm;
+  for (const CanonicalRegionSummary *child : children) {
+    const unsigned arm = program.getRegion(child->region).arm;
     if (arm < 2U) {
-      arms[arm] = &child;
+      arms[arm] = child;
     }
   }
   if (!arms[0] || !arms[1]) {
@@ -305,19 +489,19 @@ void joinChoiceTransfers(
                           CanonicalProgramPointPosition::After};
     joined.guard = firstGuard;
     joined.requiredLoops = first.requiredLoops;
-    addBoundaryTransfer(transfers, std::move(joined));
+    transfers.add(std::move(joined));
   }
 }
 
 void joinChoiceCompletions(const CanonicalRegion &choice,
-                           ArrayRef<CanonicalRegionSummary> children,
-                           SmallVectorImpl<CompletionFact> &completions,
+                           ArrayRef<const CanonicalRegionSummary *> children,
+                           CompletionFactIndex &completions,
                            const CanonicalSyncProgram &program) {
   const CanonicalRegionSummary *arms[2] = {nullptr, nullptr};
-  for (const CanonicalRegionSummary &child : children) {
-    const unsigned arm = program.getRegion(child.region).arm;
+  for (const CanonicalRegionSummary *child : children) {
+    const unsigned arm = program.getRegion(child->region).arm;
     if (arm < 2U) {
-      arms[arm] = &child;
+      arms[arm] = child;
     }
   }
   if (!arms[0] || !arms[1]) {
@@ -339,15 +523,15 @@ void joinChoiceCompletions(const CanonicalRegion &choice,
       if (!sameCompletion || !bothAvailable) {
         continue;
       }
-      addFact(completions, {first.phase, first.resource, afterChoice,
-                            commonGuard, first.requiredLoops});
+      completions.add({first.phase, first.resource, afterChoice, commonGuard,
+                       first.requiredLoops});
     }
   }
 }
 
 void closeFlattenedFacts(const CanonicalSyncProgram &program,
                          ArrayRef<CanonicalMechanismId> selected,
-                         SmallVectorImpl<CompletionFact> &facts) {
+                         CompletionFactIndex &facts) {
   bool changed = true;
   while (changed) {
     changed = joinFlattenedChoiceFacts(program, facts);
@@ -372,14 +556,15 @@ SmallVector<CompletionFact, 32>
 evaluateFlattenedFacts(const CanonicalSyncProgram &program,
                        ArrayRef<CanonicalMechanismId> selected) {
   SmallVector<CompletionFact, 32> facts;
+  CompletionFactIndex factIndex(facts, program.getStatistics());
   for (CanonicalMechanismId id : selected) {
     const CanonicalMechanism &mechanism = program.getMechanism(id);
     if (mechanism.kind == CanonicalMechanismKind::PipeBarrier) {
-      applyBarrier(program, mechanism, facts,
+      applyBarrier(program, mechanism, factIndex,
                    program.getMechanismExecutionLoops(mechanism.id));
     }
   }
-  closeFlattenedFacts(program, selected, facts);
+  closeFlattenedFacts(program, selected, factIndex);
   return facts;
 }
 
@@ -389,56 +574,39 @@ SmallVector<CompletionFact, 32> extendFlattenedFacts(
     ArrayRef<CompletionFact> baselineFacts) {
   SmallVector<CompletionFact, 32> facts(baselineFacts.begin(),
                                         baselineFacts.end());
+  CompletionFactIndex factIndex(facts, program.getStatistics());
   const CanonicalMechanism &mechanism = program.getMechanism(singleton);
   if (mechanism.kind == CanonicalMechanismKind::PipeBarrier) {
-    applyBarrier(program, mechanism, facts,
+    applyBarrier(program, mechanism, factIndex,
                  program.getMechanismExecutionLoops(mechanism.id));
   }
-  closeFlattenedFacts(program, selected, facts);
+  closeFlattenedFacts(program, selected, factIndex);
   return facts;
-}
-
-bool composeBoundaryTransfers(
-    SmallVectorImpl<CanonicalBoundaryTransfer> &transfers) {
-  const SmallVector<CanonicalBoundaryTransfer, 16> snapshot(transfers.begin(),
-                                                            transfers.end());
-  bool changed = false;
-  for (const CanonicalBoundaryTransfer &first : snapshot) {
-    for (const CanonicalBoundaryTransfer &second : snapshot) {
-      if (first.target != second.source ||
-          !programPointMustPrecede(first.targetPoint, second.sourcePoint) ||
-          !controlsCanCoexecute(first.guard, second.guard)) {
-        continue;
-      }
-      CanonicalBoundaryTransfer composed;
-      composed.source = first.source;
-      composed.target = second.target;
-      composed.sourcePoint = first.sourcePoint;
-      composed.targetPoint = second.targetPoint;
-      composed.guard = combineGuards(first.guard, second.guard);
-      composed.requiredLoops = first.requiredLoops;
-      appendUnique(composed.requiredLoops, second.requiredLoops);
-      changed |= addBoundaryTransfer(transfers, std::move(composed));
-    }
-  }
-  return changed;
 }
 
 bool applyBoundaryTransfer(const CanonicalSyncProgram &program,
                            const CanonicalBoundaryTransfer &transfer,
-                           SmallVectorImpl<CompletionFact> &facts) {
+                           CompletionFactIndex &facts) {
   bool changed = false;
+  if (CanonicalSyncStatistics *statistics = program.getStatistics()) {
+    statistics->coverageBoundaryPhaseTests += program.getPhases().size();
+  }
   for (const CanonicalPhase &phase : program.getPhases()) {
     if (phase.resource != transfer.source ||
         !phaseMayPrecedePoint(phase, transfer.sourcePoint) ||
         !controlsCanCoexecute(phase.controlPath, transfer.guard)) {
       continue;
     }
-    changed |= addFact(facts, {phase.id, transfer.target, transfer.targetPoint,
-                               combineGuards(phase.controlPath, transfer.guard),
-                               transfer.requiredLoops});
+    changed |= facts.add(
+        {phase.id, transfer.target, transfer.targetPoint,
+         combineGuards(phase.controlPath, transfer.guard),
+         transfer.requiredLoops});
   }
-  const SmallVector<CompletionFact, 16> snapshot(facts.begin(), facts.end());
+  const SmallVector<CompletionFact, 16> snapshot =
+      facts.snapshot(transfer.source);
+  if (CanonicalSyncStatistics *statistics = program.getStatistics()) {
+    statistics->coveragePropagationFactTests += snapshot.size();
+  }
   for (const CompletionFact &fact : snapshot) {
     if (fact.resource != transfer.source ||
         !programPointMustPrecede(fact.availableAt, transfer.sourcePoint) ||
@@ -447,9 +615,9 @@ bool applyBoundaryTransfer(const CanonicalSyncProgram &program,
     }
     SmallVector<CanonicalRegionId, 2> loops = fact.requiredLoops;
     appendUnique(loops, transfer.requiredLoops);
-    changed |= addFact(
-        facts, {fact.phase, transfer.target, transfer.targetPoint,
-                combineGuards(fact.guard, transfer.guard), std::move(loops)});
+    changed |= facts.add(
+        {fact.phase, transfer.target, transfer.targetPoint,
+         combineGuards(fact.guard, transfer.guard), std::move(loops)});
   }
   return changed;
 }
@@ -457,33 +625,37 @@ bool applyBoundaryTransfer(const CanonicalSyncProgram &program,
 CanonicalRegionSummary summarizeRegionFromChildren(
     const CanonicalSyncProgram &program, CanonicalRegionId region,
     ArrayRef<CanonicalMechanismId> selected,
-    ArrayRef<CanonicalRegionSummary> childSummaries) {
+    ArrayRef<const CanonicalRegionSummary *> childSummaries) {
   CanonicalRegionSummary result;
   result.region = region;
-  for (const CanonicalRegionSummary &childSummary : childSummaries) {
-    result.children.push_back(childSummary.region);
-    for (const CompletionFact &fact : childSummary.completions) {
+  CompletionFactIndex completionIndex(result.completions,
+                                      program.getStatistics());
+  BoundaryTransferIndex transferIndex(result.transfers,
+                                      program.getStatistics());
+  for (const CanonicalRegionSummary *childSummary : childSummaries) {
+    result.children.push_back(childSummary->region);
+    for (const CompletionFact &fact : childSummary->completions) {
       CompletionFact imported = fact;
       if (program.getRegion(region).kind == CanonicalRegionKind::Loop &&
           !llvm::is_contained(imported.requiredLoops, region)) {
         imported.requiredLoops.push_back(region);
       }
-      addFact(result.completions, std::move(imported));
+      completionIndex.add(std::move(imported));
     }
-    for (const CanonicalBoundaryTransfer &transfer : childSummary.transfers) {
+    for (const CanonicalBoundaryTransfer &transfer : childSummary->transfers) {
       CanonicalBoundaryTransfer imported = transfer;
       if (program.getRegion(region).kind == CanonicalRegionKind::Loop &&
           !llvm::is_contained(imported.requiredLoops, region)) {
         imported.requiredLoops.push_back(region);
       }
-      addBoundaryTransfer(result.transfers, std::move(imported));
+      transferIndex.add(std::move(imported));
     }
   }
   if (program.getRegion(region).kind == CanonicalRegionKind::Choice) {
     joinChoiceCompletions(program.getRegion(region), childSummaries,
-                          result.completions, program);
+                          completionIndex, program);
     joinChoiceTransfers(program, program.getRegion(region), childSummaries,
-                        result.transfers);
+                        transferIndex);
   }
   for (CanonicalMechanismId id : selected) {
     const CanonicalMechanism &mechanism = program.getMechanism(id);
@@ -491,10 +663,10 @@ CanonicalRegionSummary summarizeRegionFromChildren(
       continue;
     }
     if (mechanism.kind == CanonicalMechanismKind::PipeBarrier) {
-      applyBarrier(program, mechanism, result.completions,
+      applyBarrier(program, mechanism, completionIndex,
                    program.getMechanismExecutionLoops(mechanism.id));
     } else if (mechanism.kind == CanonicalMechanismKind::FixedFence) {
-      addFixedFenceTransfers(program, mechanism, result.transfers,
+      addFixedFenceTransfers(program, mechanism, transferIndex,
                              program.getMechanismExecutionLoops(mechanism.id));
     } else if (mechanism.kind == CanonicalMechanismKind::Event ||
                mechanism.kind == CanonicalMechanismKind::CrossCoreEvent ||
@@ -509,57 +681,72 @@ CanonicalRegionSummary summarizeRegionFromChildren(
       transfer.requiredLoops.assign(
           program.getMechanismExecutionLoops(mechanism.id).begin(),
           program.getMechanismExecutionLoops(mechanism.id).end());
-      addBoundaryTransfer(result.transfers, std::move(transfer));
+      transferIndex.add(std::move(transfer));
     }
   }
-  while (composeBoundaryTransfers(result.transfers)) {
-  }
+  transferIndex.close();
   bool factsChanged = true;
   while (factsChanged) {
     factsChanged = false;
     for (const CanonicalBoundaryTransfer &transfer : result.transfers) {
       factsChanged |=
-          applyBoundaryTransfer(program, transfer, result.completions);
+          applyBoundaryTransfer(program, transfer, completionIndex);
     }
+  }
+  if (CanonicalSyncStatistics *statistics = program.getStatistics()) {
+    ++statistics->coverageRegionSummaries;
+    statistics->coverageSummaryFacts += result.completions.size();
+    statistics->coverageSummaryTransfers += result.transfers.size();
   }
   return result;
 }
 
-CanonicalRegionSummary
+std::size_t
 summarizeRegion(const CanonicalSyncProgram &program, CanonicalRegionId region,
                 ArrayRef<CanonicalMechanismId> selected,
                 SmallVectorImpl<CanonicalRegionSummary> &summaries) {
-  SmallVector<CanonicalRegionSummary, 4> childSummaries;
+  SmallVector<std::size_t, 4> childSummaryIndices;
+  SmallVector<const CanonicalRegionSummary *, 4> childSummaryPointers;
+  childSummaryIndices.reserve(program.getRegionChildren(region).size());
+  childSummaryPointers.reserve(program.getRegionChildren(region).size());
   for (CanonicalRegionId child : program.getRegionChildren(region)) {
-    childSummaries.push_back(
+    childSummaryIndices.push_back(
         summarizeRegion(program, child, selected, summaries));
   }
+  // Resolve pointers only after all recursive insertions have completed. The
+  // summary vector may grow while a later sibling is being summarized.
+  for (std::size_t childIndex : childSummaryIndices) {
+    childSummaryPointers.push_back(&summaries[childIndex]);
+  }
   CanonicalRegionSummary result =
-      summarizeRegionFromChildren(program, region, selected, childSummaries);
-  summaries.push_back(result);
-  return result;
+      summarizeRegionFromChildren(program, region, selected,
+                                  childSummaryPointers);
+  summaries.push_back(std::move(result));
+  return summaries.size() - 1U;
 }
 
 CanonicalRegionSummary summarizeRegionIncrementally(
     const CanonicalSyncProgram &program, CanonicalRegionId region,
     ArrayRef<CanonicalMechanismId> selected, ArrayRef<uint8_t> dirtyRegions,
     ArrayRef<std::size_t> baselineSummaryIndex,
-    ArrayRef<CanonicalRegionSummary> baselineSummaries,
-    SmallVectorImpl<CanonicalRegionSummary> &updatedSummaries) {
-  if (dirtyRegions[region] == 0U) {
-    return baselineSummaries[baselineSummaryIndex[region]];
-  }
-
-  SmallVector<CanonicalRegionSummary, 4> childSummaries;
+    ArrayRef<CanonicalRegionSummary> baselineSummaries) {
+  SmallVector<CanonicalRegionSummary, 4> changedChildSummaries;
+  SmallVector<const CanonicalRegionSummary *, 4> childSummaryPointers;
+  changedChildSummaries.reserve(program.getRegionChildren(region).size());
+  childSummaryPointers.reserve(program.getRegionChildren(region).size());
   for (CanonicalRegionId child : program.getRegionChildren(region)) {
-    childSummaries.push_back(summarizeRegionIncrementally(
+    if (dirtyRegions[child] == 0U) {
+      childSummaryPointers.push_back(
+          &baselineSummaries[baselineSummaryIndex[child]]);
+      continue;
+    }
+    changedChildSummaries.push_back(summarizeRegionIncrementally(
         program, child, selected, dirtyRegions, baselineSummaryIndex,
-        baselineSummaries, updatedSummaries));
+        baselineSummaries));
+    childSummaryPointers.push_back(&changedChildSummaries.back());
   }
-  CanonicalRegionSummary result =
-      summarizeRegionFromChildren(program, region, selected, childSummaries);
-  updatedSummaries.push_back(result);
-  return result;
+  return summarizeRegionFromChildren(program, region, selected,
+                                     childSummaryPointers);
 }
 
 bool executionLoopsImpliedByPhase(ArrayRef<CanonicalRegionId> executionLoops,
@@ -834,8 +1021,9 @@ CanonicalCoverageWorld evaluateWorld(
       std::unique(world.mechanisms.begin(), world.mechanisms.end()),
       world.mechanisms.end());
 
-  CanonicalRegionSummary root =
+  const std::size_t rootIndex =
       summarizeRegion(program, 0, world.mechanisms, world.summaries);
+  const CanonicalRegionSummary &root = world.summaries[rootIndex];
   const SmallVector<CompletionFact, 32> flattenedFacts =
       evaluateFlattenedFacts(program, world.mechanisms);
   if (flattenedOutput) {
@@ -925,19 +1113,16 @@ FailureOr<CanonicalCoverageWorld> evaluateSingletonWorld(
     return failure();
   }
 
-  SmallVector<CanonicalRegionSummary, 8> updatedSummaries;
   CanonicalRegionSummary root = summarizeRegionIncrementally(
       program, 0, world.mechanisms, *dirtyRegions, baselineSummaryIndex,
-      baselineWorld.summaries, updatedSummaries);
-  world.summaries = baselineWorld.summaries;
-  for (CanonicalRegionSummary &summary : updatedSummaries) {
-    world.summaries[baselineSummaryIndex[summary.region]] = std::move(summary);
-  }
+      baselineWorld.summaries);
 
   const SmallVector<CompletionFact, 32> flattenedFacts = extendFlattenedFacts(
       program, world.mechanisms, singleton, baselineFlattenedFacts);
-  return finishWorldEvaluation(program, std::move(world), root,
-                               flattenedFacts);
+  world = finishWorldEvaluation(program, std::move(world), root,
+                                flattenedFacts);
+  world.summaries.push_back(std::move(root));
+  return world;
 }
 
 FailureOr<CanonicalCoverageWorld>

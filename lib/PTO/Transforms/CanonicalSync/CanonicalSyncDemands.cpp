@@ -376,7 +376,8 @@ LogicalResult enqueueForResult(OpResult result, scf::ForOp operation,
   return success();
 }
 
-LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
+LogicalResult traceSsaProducers(func::FuncOp function,
+                                CanonicalSyncStatistics *statistics, Value seed,
                                 const PhaseMap &operationPhases,
                                 const CompletionMap &completions,
                                 llvm::SetVector<CanonicalPhaseId> &producers) {
@@ -385,19 +386,23 @@ LogicalResult traceSsaProducers(func::FuncOp function, Value seed,
     bool fromLoopBackedge = false;
   };
   SmallVector<TraceValue, 16> worklist{{seed, false}};
-  SmallVector<TraceValue, 16> discovered;
+  llvm::DenseSet<Value> discoveredForward;
+  llvm::DenseSet<Value> discoveredBackedge;
   while (!worklist.empty()) {
     const TraceValue current = worklist.pop_back_val();
     Value value = current.value;
-    const bool alreadyDiscovered =
-        llvm::any_of(discovered, [&](const TraceValue &item) {
-          return item.value == value &&
-                 item.fromLoopBackedge == current.fromLoopBackedge;
-        });
-    if (!value || alreadyDiscovered) {
+    if (!value) {
       continue;
     }
-    discovered.push_back(current);
+    llvm::DenseSet<Value> &discovered = current.fromLoopBackedge
+                                            ? discoveredBackedge
+                                            : discoveredForward;
+    if (!discovered.insert(value).second) {
+      continue;
+    }
+    if (statistics) {
+      ++statistics->ssaTraceVisits;
+    }
     if (auto completion = completions.find(value);
         completion != completions.end()) {
       const bool synchronous = getVPTOSchedulingSemantics(value.getDefiningOp())
@@ -537,7 +542,8 @@ LogicalResult deriveSsaDemands(CanonicalSyncProgram &program,
     }
     llvm::SetVector<CanonicalPhaseId> producers;
     for (Value operand : *operands) {
-      if (failed(traceSsaProducers(program.getFunction(), operand,
+      if (failed(traceSsaProducers(program.getFunction(),
+                                   program.getStatistics(), operand,
                                    operationPhases, completions, producers))) {
         return failure();
       }

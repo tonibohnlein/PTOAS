@@ -9,8 +9,9 @@
 // for the full text of the License.
 
 // Each selectable column is one direct physical synchronization mechanism.
-// Its coverage is computed once, before solving. Greedy selection and reverse
-// deletion consume only those cached incidence sets.
+// Its coverage is computed once, before solving. Greedy selection updates
+// gains through the cached reverse incidence, and reverse deletion consumes
+// only the selected columns.
 
 #include "CanonicalSyncInternal.h"
 
@@ -214,6 +215,7 @@ mlir::pto::solveCanonicalSyncSetCover(CanonicalSyncProgram &program) {
   SmallVector<uint8_t, 8> selectedCandidates(instance.candidates.size(), 0U);
   SmallVector<uint8_t, 8> covered(program.getDemands().size(), 0U);
   SmallVector<unsigned, 8> coverageCounts(program.getDemands().size(), 0U);
+  SmallVector<unsigned, 8> gains(instance.candidates.size(), 0U);
   unsigned coveredCount = 0;
 
   struct HeapEntry {
@@ -230,8 +232,9 @@ mlir::pto::solveCanonicalSyncSetCover(CanonicalSyncProgram &program) {
   };
   std::priority_queue<HeapEntry, std::vector<HeapEntry>, HeapEntryLess> heap;
   for (const CanonicalSetCoverCandidate &candidate : instance.candidates) {
-    heap.push(
-        {static_cast<unsigned>(candidate.coveredDemands.size()), candidate.id});
+    gains[candidate.id] =
+        static_cast<unsigned>(candidate.coveredDemands.size());
+    heap.push({gains[candidate.id], candidate.id});
   }
 
   while (coveredCount != instance.universe.size()) {
@@ -245,19 +248,11 @@ mlir::pto::solveCanonicalSyncSetCover(CanonicalSyncProgram &program) {
       if (selectedCandidates[entry.candidate] != 0U) {
         continue;
       }
-      const CanonicalSetCoverCandidate &candidate =
-          instance.candidates[entry.candidate];
-      if (CanonicalSyncStatistics *statistics = program.getStatistics()) {
-        statistics->greedyIncidenceVisits += candidate.coveredDemands.size();
-      }
-      const unsigned actualGain = llvm::count_if(
-          candidate.coveredDemands,
-          [&](CanonicalDemandId demand) { return covered[demand] == 0U; });
-      if (actualGain != entry.gain) {
-        heap.push({actualGain, candidate.id});
+      if (entry.gain != gains[entry.candidate]) {
         continue;
       }
-      best = actualGain == 0U ? nullptr : &candidate;
+      best = entry.gain == 0U ? nullptr
+                              : &instance.candidates[entry.candidate];
       break;
     }
     if (!best) {
@@ -273,6 +268,17 @@ mlir::pto::solveCanonicalSyncSetCover(CanonicalSyncProgram &program) {
       if (covered[demand] == 0U) {
         covered[demand] = 1U;
         ++coveredCount;
+        for (CanonicalSetCoverCandidateId provider :
+             instance.providersByDemand[demand]) {
+          if (CanonicalSyncStatistics *statistics = program.getStatistics()) {
+            ++statistics->greedyIncidenceVisits;
+          }
+          if (selectedCandidates[provider] != 0U || gains[provider] == 0U) {
+            continue;
+          }
+          --gains[provider];
+          heap.push({gains[provider], provider});
+        }
       }
       ++coverageCounts[demand];
     }

@@ -77,6 +77,40 @@ void printCanonicalSyncStatistics(const CanonicalSyncStatistics &statistics,
       static_cast<std::int64_t>(statistics.greedyIncidenceVisits);
   counts["precomputed_prefix_entries"] =
       static_cast<std::int64_t>(statistics.precomputedPrefixEntries);
+  counts["ssa_trace_visits"] =
+      static_cast<std::int64_t>(statistics.ssaTraceVisits);
+  counts["mechanism_intern_key_tests"] =
+      static_cast<std::int64_t>(statistics.mechanismInternKeyTests);
+  counts["mechanism_prefix_phase_tests"] =
+      static_cast<std::int64_t>(statistics.mechanismPrefixPhaseTests);
+  counts["coverage_fact_key_tests"] =
+      static_cast<std::int64_t>(statistics.coverageFactKeyTests);
+  counts["coverage_transfer_key_tests"] =
+      static_cast<std::int64_t>(statistics.coverageTransferKeyTests);
+  counts["coverage_transfer_compose_tests"] =
+      static_cast<std::int64_t>(statistics.coverageTransferComposeTests);
+  counts["coverage_propagation_fact_tests"] =
+      static_cast<std::int64_t>(statistics.coveragePropagationFactTests);
+  counts["coverage_boundary_phase_tests"] =
+      static_cast<std::int64_t>(statistics.coverageBoundaryPhaseTests);
+  counts["coverage_region_summaries"] =
+      static_cast<std::int64_t>(statistics.coverageRegionSummaries);
+  counts["coverage_summary_facts"] =
+      static_cast<std::int64_t>(statistics.coverageSummaryFacts);
+  counts["coverage_summary_transfers"] =
+      static_cast<std::int64_t>(statistics.coverageSummaryTransfers);
+  counts["coverage_oracle_worlds"] =
+      static_cast<std::int64_t>(statistics.coverageOracleWorlds);
+  counts["coverage_oracle_skipped_worlds"] =
+      static_cast<std::int64_t>(statistics.coverageOracleSkippedWorlds);
+  counts["coverage_oracle_state_operations"] =
+      static_cast<std::int64_t>(statistics.coverageOracleStateOperations);
+  counts["coverage_oracle_mechanism_tests"] =
+      static_cast<std::int64_t>(statistics.coverageOracleMechanismTests);
+  counts["coverage_oracle_demand_tests"] =
+      static_cast<std::int64_t>(statistics.coverageOracleDemandTests);
+  counts["coverage_oracle_source_instance_tests"] = static_cast<std::int64_t>(
+      statistics.coverageOracleSourceInstanceTests);
   counts["verifier_loop_transfers"] =
       static_cast<std::int64_t>(statistics.verifierLoopTransfers);
   counts["max_verifier_loop_states"] =

@@ -22,7 +22,24 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: VERIFY skipped (analysis-only; IR unchanged)
 // CHECK-NEXT: {"counts":{
 // CHECK-SAME: "accesses":0
+// CHECK-SAME: "coverage_boundary_phase_tests":0
+// CHECK-SAME: "coverage_fact_key_tests":0
+// CHECK-SAME: "coverage_oracle_demand_tests":0
+// CHECK-SAME: "coverage_oracle_mechanism_tests":
+// CHECK-SAME: "coverage_oracle_skipped_worlds":0
+// CHECK-SAME: "coverage_oracle_source_instance_tests":0
+// CHECK-SAME: "coverage_oracle_state_operations":
+// CHECK-SAME: "coverage_oracle_worlds":
+// CHECK-SAME: "coverage_propagation_fact_tests":0
+// CHECK-SAME: "coverage_region_summaries":
+// CHECK-SAME: "coverage_summary_facts":
+// CHECK-SAME: "coverage_summary_transfers":
+// CHECK-SAME: "coverage_transfer_compose_tests":0
+// CHECK-SAME: "coverage_transfer_key_tests":0
 // CHECK-SAME: "max_verifier_loop_states":0
+// CHECK-SAME: "mechanism_intern_key_tests":
+// CHECK-SAME: "mechanism_prefix_phase_tests":0
+// CHECK-SAME: "ssa_trace_visits":0
 // CHECK-SAME: "function":"statistics_record"
 // CHECK-SAME: "kind":"canonical-sync-statistics"
 // CHECK-SAME: "status":"ok"

@@ -12,11 +12,13 @@
 
 #include "PTO/IR/PTOTypeUtils.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 
 #include <array>
 #include <iterator>
+#include <unordered_map>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -369,29 +371,133 @@ bool sameMechanism(const CanonicalMechanism &left,
   llvm_unreachable("unknown canonical mechanism kind");
 }
 
-CanonicalMechanismId internMechanism(CanonicalSyncProgram &program,
-                                     CanonicalMechanism mechanism,
-                                     CanonicalDemandId origin) {
-  for (const CanonicalMechanism &existing : program.getMechanisms()) {
-    if (sameMechanism(existing, mechanism)) {
-      program.appendMechanismOrigin(existing.id, origin);
-      program.appendMechanismCacheMaintenance(existing.id,
-                                              mechanism.cacheMaintenance);
-      return existing.id;
+std::size_t hashMechanism(const CanonicalMechanism &mechanism) {
+  if (mechanism.kind == CanonicalMechanismKind::FixedFence) {
+    return static_cast<std::size_t>(llvm::hash_combine(
+        static_cast<unsigned>(mechanism.kind),
+        mechanism.fenceEffect.value_or(kInvalidCanonicalSyncId)));
+  }
+  llvm::hash_code hash = llvm::hash_combine(
+      static_cast<unsigned>(mechanism.kind),
+      static_cast<unsigned>(mechanism.source.core),
+      static_cast<unsigned>(mechanism.source.pipe),
+      static_cast<unsigned>(mechanism.target.core),
+      static_cast<unsigned>(mechanism.target.pipe));
+  for (const CanonicalControlAtom &atom : mechanism.guard) {
+    hash = llvm::hash_combine(hash, atom.choice, atom.arm);
+  }
+  switch (mechanism.kind) {
+  case CanonicalMechanismKind::PipeBarrier:
+    hash = llvm::hash_combine(
+        hash, mechanism.targetPoint.operation,
+        static_cast<unsigned>(mechanism.targetPoint.position));
+    break;
+  case CanonicalMechanismKind::Event:
+  case CanonicalMechanismKind::CrossCoreEvent:
+    hash = llvm::hash_combine(
+        hash, mechanism.sourcePoint.operation,
+        static_cast<unsigned>(mechanism.sourcePoint.position),
+        mechanism.targetPoint.operation,
+        static_cast<unsigned>(mechanism.targetPoint.position));
+    break;
+  case CanonicalMechanismKind::RecurringEvent:
+    hash = llvm::hash_combine(
+        hash, mechanism.sourcePoint.operation,
+        static_cast<unsigned>(mechanism.sourcePoint.position),
+        mechanism.targetPoint.operation,
+        static_cast<unsigned>(mechanism.targetPoint.position),
+        mechanism.recurrenceLoop.value_or(kInvalidCanonicalSyncId),
+        mechanism.boundaryRecurring);
+    break;
+  case CanonicalMechanismKind::VisibilityFence:
+    hash = llvm::hash_combine(
+        hash, mechanism.targetPoint.operation,
+        static_cast<unsigned>(mechanism.targetPoint.position),
+        mechanism.generatedCacheMaintenance.has_value(),
+        mechanism.generatedCacheMaintenance
+            ? static_cast<unsigned>(*mechanism.generatedCacheMaintenance)
+            : 0U);
+    break;
+  case CanonicalMechanismKind::TailBarrier:
+    hash = llvm::hash_combine(
+        hash, mechanism.sourcePoint.operation,
+        static_cast<unsigned>(mechanism.sourcePoint.position),
+        mechanism.targetPoint.operation,
+        static_cast<unsigned>(mechanism.targetPoint.position));
+    break;
+  case CanonicalMechanismKind::IntrinsicOrder:
+  case CanonicalMechanismKind::FixedFence:
+    break;
+  }
+  return static_cast<std::size_t>(hash);
+}
+
+class MechanismInterner {
+public:
+  explicit MechanismInterner(const CanonicalSyncProgram &program)
+      : statistics(program.getStatistics()) {
+    for (const CanonicalMechanism &mechanism : program.getMechanisms()) {
+      record(mechanism);
     }
   }
+
+  std::optional<CanonicalMechanismId>
+  find(const CanonicalSyncProgram &program,
+       const CanonicalMechanism &mechanism) const {
+    const auto bucket = mechanismsByHash.find(hashMechanism(mechanism));
+    if (bucket == mechanismsByHash.end()) {
+      return std::nullopt;
+    }
+    for (CanonicalMechanismId id : bucket->second) {
+      if (statistics) {
+        ++statistics->mechanismInternKeyTests;
+      }
+      if (sameMechanism(program.getMechanism(id), mechanism)) {
+        return id;
+      }
+    }
+    return std::nullopt;
+  }
+
+  void record(const CanonicalMechanism &mechanism) {
+    mechanismsByHash[hashMechanism(mechanism)].push_back(mechanism.id);
+  }
+
+private:
+  std::unordered_map<std::size_t, SmallVector<CanonicalMechanismId, 2>>
+      mechanismsByHash;
+  CanonicalSyncStatistics *statistics = nullptr;
+};
+
+CanonicalMechanismId internMechanism(CanonicalSyncProgram &program,
+                                     MechanismInterner &interner,
+                                     CanonicalMechanism mechanism,
+                                     CanonicalDemandId origin) {
+  if (std::optional<CanonicalMechanismId> existing =
+          interner.find(program, mechanism)) {
+    program.appendMechanismOrigin(*existing, origin);
+    program.appendMechanismCacheMaintenance(*existing,
+                                            mechanism.cacheMaintenance);
+    return *existing;
+  }
   mechanism.origins.push_back(origin);
-  return program.appendMechanism(std::move(mechanism));
+  const CanonicalMechanismId id =
+      program.appendMechanism(std::move(mechanism));
+  interner.record(program.getMechanism(id));
+  return id;
 }
 
 CanonicalMechanismId internBaselineMechanism(CanonicalSyncProgram &program,
+                                             MechanismInterner &interner,
                                              CanonicalMechanism mechanism) {
-  for (const CanonicalMechanism &existing : program.getMechanisms()) {
-    if (sameMechanism(existing, mechanism)) {
-      return existing.id;
-    }
+  if (std::optional<CanonicalMechanismId> existing =
+          interner.find(program, mechanism)) {
+    return *existing;
   }
-  return program.appendMechanism(std::move(mechanism));
+  const CanonicalMechanismId id =
+      program.appendMechanism(std::move(mechanism));
+  interner.record(program.getMechanism(id));
+  return id;
 }
 
 FailureOr<CanonicalMechanism> buildEventMechanism(
@@ -786,14 +892,15 @@ bool recurringMechanismHasExactOrigin(const CanonicalSyncProgram &program,
 
 std::optional<CanonicalMechanismId>
 findRecurringMechanism(const CanonicalSyncProgram &program,
-                       const CanonicalDemand &demand) {
-  auto found = llvm::find_if(
-      program.getMechanisms(), [&](const CanonicalMechanism &mechanism) {
-        return recurringMechanismMatches(program, mechanism, demand);
-      });
-  return found == program.getMechanisms().end()
+                       const CanonicalDemand &demand,
+                       ArrayRef<CanonicalMechanismId> candidates) {
+  auto found = llvm::find_if(candidates, [&](CanonicalMechanismId id) {
+    return recurringMechanismMatches(program, program.getMechanism(id),
+                                     demand);
+  });
+  return found == candidates.end()
              ? std::nullopt
-             : std::optional<CanonicalMechanismId>(found->id);
+             : std::optional<CanonicalMechanismId>(*found);
 }
 
 const CanonicalDemand *
@@ -1059,6 +1166,21 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
     mechanism.guard = effect.guard;
     program.appendMechanism(std::move(mechanism));
   }
+  MechanismInterner interner(program);
+  SmallVector<SmallVector<CanonicalMechanismId, 2>, 0> recurringByLoop(
+      program.getRegions().size());
+  const auto recordRecurring = [&](CanonicalMechanismId id) {
+    const CanonicalMechanism &mechanism = program.getMechanism(id);
+    if (mechanism.kind != CanonicalMechanismKind::RecurringEvent ||
+        !mechanism.recurrenceLoop) {
+      return;
+    }
+    SmallVectorImpl<CanonicalMechanismId> &bucket =
+        recurringByLoop[*mechanism.recurrenceLoop];
+    if (!llvm::is_contained(bucket, id)) {
+      bucket.push_back(id);
+    }
+  };
   const SmallVector<SmallVector<CanonicalDemandId, 8>, 0>
       recurringForwardByLoop = buildRecurringForwardIndex(program);
   for (const CanonicalDemand &demand : program.getDemands()) {
@@ -1067,10 +1189,11 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
     }
     if (demand.requirement == CanonicalRequirement::Completion &&
         hasPositiveDistance(demand)) {
+      const std::optional<CanonicalRegionId> loop = carryingLoop(demand);
       std::optional<CanonicalMechanismId> recurring =
-          findRecurringMechanism(program, demand);
+          loop ? findRecurringMechanism(program, demand, recurringByLoop[*loop])
+               : std::nullopt;
       if (!recurring) {
-        const std::optional<CanonicalRegionId> loop = carryingLoop(demand);
         const CanonicalDemand *forward =
             loop ? findRecurringForwardDemand(program, demand,
                                               recurringForwardByLoop[*loop])
@@ -1083,7 +1206,8 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
               forwardMechanism->kind == CanonicalMechanismKind::RecurringEvent;
           if (recurringConstructed) {
             const CanonicalMechanismId forwardId = internMechanism(
-                program, std::move(*forwardMechanism), forward->id);
+                program, interner, std::move(*forwardMechanism), forward->id);
+            recordRecurring(forwardId);
             program.setDirectMechanism(forward->id, forwardId);
             recurring = forwardId;
           }
@@ -1107,7 +1231,8 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
       return failure();
     }
     const CanonicalMechanismId id =
-        internMechanism(program, std::move(*mechanism), demand.id);
+        internMechanism(program, interner, std::move(*mechanism), demand.id);
+    recordRecurring(id);
     program.setDirectMechanism(demand.id, id);
   }
   for (const CanonicalPhase &phase : program.getPhases()) {
@@ -1115,7 +1240,7 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
     if (failed(tail)) {
       return failure();
     }
-    internBaselineMechanism(program, std::move(*tail));
+    internBaselineMechanism(program, interner, std::move(*tail));
   }
   if (program.getPhases().empty()) {
     const std::optional<bool> vectorExecution =
@@ -1127,7 +1252,7 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program) {
                      PIPE::PIPE_ALL};
       tail.target = tail.source;
       tail.actionRegion = 0;
-      internBaselineMechanism(program, std::move(tail));
+      internBaselineMechanism(program, interner, std::move(tail));
     }
   }
   program.mechanismCatalogComplete = true;

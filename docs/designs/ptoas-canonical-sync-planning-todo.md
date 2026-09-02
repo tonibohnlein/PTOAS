@@ -163,6 +163,40 @@ recurring protocol variants, new event-scarcity fallbacks, or a new cost model.
 Those remain later work after singleton planning and the current device gate are
 sound.
 
+The coverage-efficiency follow-up based on the device measurements below is
+deliberately narrower than a semantic redesign. It:
+
+- hashes mechanism interning and indexes recurring mechanisms by carrying loop;
+- replaces linear SSA trace discovery with keyed forward/backedge sets;
+- indexes completion facts and boundary transfers, including resource-keyed
+  propagation and worklist transfer closure;
+- retains baseline child summaries by reference and avoids copying clean
+  subtrees or the complete baseline summary catalog for every singleton;
+- updates greedy gains from demand-to-provider incidence instead of rescanning
+  complete candidate columns; and
+- records fact, transfer, boundary, and bounded-oracle work counters so the
+  remaining coverage cost can be attributed on the next corpus run.
+
+### Event-ID scarcity follow-up
+
+The branch already implements three fail-closed scarcity tools: certified
+ready-lane reuse, compatible physical-cut coalescing, and a fully verified
+serialized ready/release protocol. The earlier comparison of the other
+CanonicalSync branches identified one useful missing layer, to be considered
+only after the coverage work is measured:
+
+1. prove allocation infeasibility before changing physical cuts;
+2. report the directed event domain and a minimal pressure/conflict core;
+3. propose only bounded, conflict-core-local alternatives, such as a targeted
+   source-pipeline barrier/frontier followed by one legal event, or another
+   already supported direct/recurring mechanism;
+4. rerun selection, allocation, and independent verification for each repair;
+5. retain strict failure as the default if no verified repair is feasible.
+
+No internal `PIPE_ALL` fallback is enabled or proposed as an ordinary cover
+column. A compile-total broad fallback would require a separate explicit policy
+and device evidence; it is not part of the current roadmap.
+
 ## Device-gate interruption on 2026-09-02
 
 The delivered archive
@@ -200,5 +234,29 @@ Useful historical measurements from the wrong-revision run are:
 - no standalone frozen kernel had an independent per-kernel golden, so no
   device correctness or timing was performed.
 
-The current-candidate device gate must be rerun with strict provenance failure
-when the checked-out SHA differs from the task SHA.
+The current-candidate device gate must use strict provenance failure when the
+checked-out SHA differs from the task SHA.
+
+## Device gate for `0ec958f1e`
+
+The corrected 394-kernel campaign completed with matching source and corpus
+provenance. It reported:
+
+- 394/394 crash-free planning runs;
+- 251 admitted kernels and 143 atomic, policy-driven rejections for the
+  device-unproven MTE3-to-MTE2 GM publication case;
+- 53/53 focused CanonicalSync tests and 1898/1899 full `check-pto` tests;
+- sparse cover incidence at 6.7% of the equivalent dense matrix;
+- at most three verifier loop states, so verifier-state rework is not
+  currently justified;
+- no event-scarcity rejection, with three rows using serialized repair;
+- exact non-synchronization IR equivalence on all admitted rows; and
+- seven repository-golden A3 cases passing both CanonicalSync and InsertSync
+  on cards 6 and 7. No distinct A2 target or silicon was available.
+
+The principal performance result is that demand discovery fell to 2.2% of
+planning time while coverage grew to 92.4%. The existing counters did not
+explain a 162-times coverage spread, which is why the follow-up patch adds
+inner-loop coverage and bounded-oracle counters before changing more
+algorithms. The current work after `0ec958f1e` is not covered by that device
+verdict.

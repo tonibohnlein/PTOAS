@@ -133,6 +133,7 @@ struct OracleState {
 struct OracleContext {
   bool exhaustive = true;
   const CanonicalSyncTarget *target = nullptr;
+  CanonicalSyncStatistics *statistics = nullptr;
   SmallVector<SmallVector<CanonicalDemandId, 8>, 0> demandsByTarget;
 };
 
@@ -261,6 +262,9 @@ void checkTargetDemands(const CanonicalSyncProgram &program,
                         ArrayRef<CanonicalMechanismId> selected,
                         const OracleContext &context, OracleState &state) {
   for (CanonicalDemandId demandId : context.demandsByTarget[target.phase]) {
+    if (context.statistics) {
+      ++context.statistics->coverageOracleDemandTests;
+    }
     const CanonicalDemand &demand = program.getDemand(demandId);
     if (!state.covered[demand.id] || demand.target != target.phase ||
         demand.kind == CanonicalDemandKind::ExitCompletion) {
@@ -284,6 +288,9 @@ void checkTargetDemands(const CanonicalSyncProgram &program,
     }
     for (const ResourceState &resource : state.resources) {
       for (const PhaseInstance &source : resource.issued) {
+        if (context.statistics) {
+          ++context.statistics->coverageOracleSourceInstanceTests;
+        }
         if (source.phase != demand.source ||
             !matchesDistance(demand, source, target)) {
           continue;
@@ -353,8 +360,12 @@ void applyEventWait(const CanonicalMechanism &mechanism, OracleState &state) {
 
 void executePoint(const CanonicalSyncProgram &program,
                   CanonicalProgramPoint point,
-                  ArrayRef<CanonicalMechanismId> selected, OracleState &state) {
+                  ArrayRef<CanonicalMechanismId> selected,
+                  const OracleContext &context, OracleState &state) {
   for (CanonicalMechanismId id : selected) {
+    if (context.statistics) {
+      ++context.statistics->coverageOracleMechanismTests;
+    }
     const CanonicalMechanism &mechanism = program.getMechanism(id);
     if (!guardEnabled(state.controlPath, mechanism.guard)) {
       continue;
@@ -505,9 +516,12 @@ executeOperation(const CanonicalSyncProgram &program, Operation *operation,
                  ArrayRef<CanonicalMechanismId> selected,
                  ArrayRef<OracleState> inputs, OracleContext &context) {
   SmallVector<OracleState, 8> states(inputs.begin(), inputs.end());
+  if (context.statistics) {
+    context.statistics->coverageOracleStateOperations += states.size();
+  }
   for (OracleState &state : states) {
     executePoint(program, {operation, CanonicalProgramPointPosition::Before},
-                 selected, state);
+                 selected, context, state);
   }
   if (auto choice = dyn_cast<scf::IfOp>(operation)) {
     FailureOr<SmallVector<OracleState, 8>> result =
@@ -544,7 +558,7 @@ executeOperation(const CanonicalSyncProgram &program, Operation *operation,
   }
   for (OracleState &state : states) {
     executePoint(program, {operation, CanonicalProgramPointPosition::After},
-                 selected, state);
+                 selected, context, state);
   }
   return states;
 }
@@ -576,6 +590,10 @@ FailureOr<CanonicalUnrolledCoverageResult>
 mlir::pto::canonical_sync_detail::evaluateCanonicalSyncUnrolledOracle(
     const CanonicalSyncProgram &program,
     ArrayRef<CanonicalMechanismId> selected) {
+  CanonicalSyncStatistics *statistics = program.getStatistics();
+  if (statistics) {
+    ++statistics->coverageOracleWorlds;
+  }
   const std::size_t phaseCount =
       std::max<std::size_t>(program.getPhases().size(), 1);
   const bool staticBudgetExceeded =
@@ -584,6 +602,9 @@ mlir::pto::canonical_sync_detail::evaluateCanonicalSyncUnrolledOracle(
       estimateBlockStates(program.getFunction().getBody().front()) >
       kMaxOracleStates;
   if (staticBudgetExceeded || stateBudgetExceeded) {
+    if (statistics) {
+      ++statistics->coverageOracleSkippedWorlds;
+    }
     CanonicalUnrolledCoverageResult result;
     result.exhaustive = false;
     return result;
@@ -601,6 +622,7 @@ mlir::pto::canonical_sync_detail::evaluateCanonicalSyncUnrolledOracle(
     }
   }
   OracleContext context;
+  context.statistics = statistics;
   FailureOr<CanonicalSyncTarget> target =
       CanonicalSyncTarget::resolve(program.getFunction());
   if (failed(target)) {

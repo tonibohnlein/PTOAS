@@ -125,6 +125,9 @@ CanonicalSyncProgram::appendMechanism(CanonicalMechanism mechanism) {
 
   SmallVector<CanonicalPhaseId, 8> prefix;
   for (const CanonicalPhase &phase : phases) {
+    if (statistics) {
+      ++statistics->mechanismPrefixPhaseTests;
+    }
     bool matchingResource = phase.resource == stored.source;
     if (stored.kind == CanonicalMechanismKind::FixedFence &&
         stored.fenceEffect) {
