@@ -28,6 +28,12 @@ namespace {
 constexpr unsigned kReadBit = 1;
 constexpr unsigned kWriteBit = 2;
 
+bool isRuntimeTopologyQuery(Operation *operation) {
+  const StringRef name = operation->getName().getStringRef();
+  return name == "pto.get_block_idx" || name == "pto.get_subblock_idx" ||
+         name == "pto.get_block_num" || name == "pto.get_subblock_num";
+}
+
 bool hasStaticallyNonEmptyTripCount(scf::ForOp loop) {
   const std::optional<int64_t> lower =
       getConstantIntValue(loop.getLowerBound());
@@ -323,6 +329,9 @@ LogicalResult ProgramBuilder::visitOperation(Operation *operation,
   if (isTerminator || isVisibility) {
     return success();
   }
+  if (isRuntimeTopologyQuery(operation)) {
+    return success();
+  }
   if (std::optional<SyncMacroModel> macro = getSyncMacroModel(operation)) {
     return addMacroPhases(operation, sequence, *macro);
   }
@@ -334,8 +343,9 @@ LogicalResult ProgramBuilder::visitOperation(Operation *operation,
         semantics.schedulingClass == VPTOSchedulingClass::Schedulable;
     if (!normalizedPhysical) {
       return operation->emitError(
-          "canonical sync rejects a raw physical operation without "
-          "schedulable normalized VPTOSchedulingSemantics");
+                 "canonical sync rejects a raw physical operation without "
+                 "schedulable normalized VPTOSchedulingSemantics; operation=")
+             << operation->getName();
     }
     std::optional<PIPE> pipe = getNormalizedPipe(operation, semantics);
     if (!pipe) {

@@ -88,6 +88,15 @@ struct VerifierToken {
   llvm::SmallVector<VerifierEffectKey, 8> payload;
 };
 
+struct VerifierLoopValue {
+  Operation *loop = nullptr;
+  std::uint64_t inductionValue = 0;
+
+  bool operator==(const VerifierLoopValue &other) const {
+    return loop == other.loop && inductionValue == other.inductionValue;
+  }
+};
+
 struct VerifierState {
   llvm::SmallVector<VerifierResourceState, 8> resources;
   llvm::SmallVector<VerifierToken, 8> tokens;
@@ -97,6 +106,7 @@ struct VerifierState {
   llvm::SmallVector<VerifierCacheAction, 8> cacheInvalidations;
   llvm::SmallVector<VerifierEffectKey, 16> exitComplete;
   llvm::SmallVector<VerifierEffectKey, 16> loopCarried;
+  llvm::SmallVector<VerifierLoopValue, 2> loopValues;
 };
 
 bool verifierCacheActionCovers(const VerifierCacheAction &action,

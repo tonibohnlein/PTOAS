@@ -9,17 +9,22 @@
 // for the full text of the License.
 
 // This bounded oracle deliberately does not consume region summaries. It
-// enumerates structured choices and zero, one, and two loop iterations, then
-// executes the concrete mechanism program points. The bound is a differential
-// testing aid, not a proof for arbitrary loop counts. Reaching the state cap
-// marks the result inconclusive instead of rejecting an otherwise valid
-// program; materialized verification remains the final correctness gate.
+// enumerates structured choices and enough loop iterations to witness each
+// selected periodic ownership protocol, then executes the concrete mechanism
+// program points and token transitions. The bound is a differential testing
+// aid, not a proof for arbitrary loop counts. Reaching the state cap marks the
+// result inconclusive instead of rejecting an otherwise valid program;
+// materialized verification remains the final correctness gate.
 
 #include "CanonicalSyncInternal.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Matchers.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+
+#include <limits>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -28,7 +33,8 @@ using namespace mlir::pto::canonical_sync_detail;
 namespace {
 
 constexpr std::size_t kMaxOracleStates = 512;
-constexpr unsigned kOracleLoopUnroll = 2;
+constexpr unsigned kDefaultOracleLoopUnroll = 2;
+constexpr unsigned kMaximumOracleLoopUnroll = 8;
 // The structured oracle is a bounded differential test, not the coverage
 // proof.  Avoid starting an enumeration whose straight-line demand checks
 // already exceed this development-oracle budget; the mandatory regional and
@@ -53,38 +59,63 @@ std::size_t cappedMultiply(std::size_t first, std::size_t second) {
   return first * second;
 }
 
-std::size_t estimateBlockStates(Block &block);
+CanonicalRegionId findStructuredRegion(const CanonicalSyncProgram &program,
+                                       Operation *operation,
+                                       CanonicalRegionKind kind);
 
-std::size_t estimateOperationStates(Operation *operation) {
+std::size_t estimateBlockStates(
+    const CanonicalSyncProgram &program, Block &block,
+    ArrayRef<unsigned> loopUnrollByRegion);
+
+std::size_t estimateOperationStates(
+    const CanonicalSyncProgram &program, Operation *operation,
+    ArrayRef<unsigned> loopUnrollByRegion) {
   if (auto choice = dyn_cast<scf::IfOp>(operation)) {
-    const std::size_t thenStates =
-        estimateBlockStates(choice.getThenRegion().front());
+    const std::size_t thenStates = estimateBlockStates(
+        program, choice.getThenRegion().front(), loopUnrollByRegion);
     const std::size_t elseStates =
         choice.getElseRegion().empty()
             ? 1
-            : estimateBlockStates(choice.getElseRegion().front());
+            : estimateBlockStates(program, choice.getElseRegion().front(),
+                                  loopUnrollByRegion);
     return cappedAdd(thenStates, elseStates);
   }
   if (auto loop = dyn_cast<scf::ForOp>(operation)) {
-    const std::size_t bodyStates =
-        estimateBlockStates(loop.getRegion().front());
-    // The oracle explicitly enumerates zero, one, and two iterations.
-    return cappedAdd(cappedAdd(1, bodyStates),
-                     cappedMultiply(bodyStates, bodyStates));
+    const std::size_t bodyStates = estimateBlockStates(
+        program, loop.getRegion().front(), loopUnrollByRegion);
+    const CanonicalRegionId loopId = findStructuredRegion(
+        program, loop, CanonicalRegionKind::Loop);
+    const unsigned unroll =
+        loopId < loopUnrollByRegion.size()
+            ? loopUnrollByRegion[loopId]
+            : kDefaultOracleLoopUnroll;
+    std::size_t states = 1;
+    std::size_t iterationStates = 1;
+    for (unsigned count = 1; count <= unroll; ++count) {
+      iterationStates = cappedMultiply(iterationStates, bodyStates);
+      states = cappedAdd(states, iterationStates);
+    }
+    return states;
   }
   if (auto section = dyn_cast<SectionCubeOp>(operation)) {
-    return estimateBlockStates(section.getBody().front());
+    return estimateBlockStates(program, section.getBody().front(),
+                               loopUnrollByRegion);
   }
   if (auto section = dyn_cast<SectionVectorOp>(operation)) {
-    return estimateBlockStates(section.getBody().front());
+    return estimateBlockStates(program, section.getBody().front(),
+                               loopUnrollByRegion);
   }
   return 1;
 }
 
-std::size_t estimateBlockStates(Block &block) {
+std::size_t estimateBlockStates(
+    const CanonicalSyncProgram &program, Block &block,
+    ArrayRef<unsigned> loopUnrollByRegion) {
   std::size_t states = 1;
   for (Operation &operation : block) {
-    states = cappedMultiply(states, estimateOperationStates(&operation));
+    states = cappedMultiply(
+        states, estimateOperationStates(program, &operation,
+                                        loopUnrollByRegion));
     if (states > kMaxOracleStates) {
       return states;
     }
@@ -117,7 +148,15 @@ struct ResourceState {
 };
 
 struct EventPayload {
+  enum class Kind : std::uint8_t {
+    Direct,
+    OwnershipReady,
+    OwnershipRelease,
+  };
+
   CanonicalMechanismId mechanism = kInvalidCanonicalSyncId;
+  Kind kind = Kind::Direct;
+  unsigned lane = 0;
   SmallVector<PhaseInstance, 16> phases;
 };
 
@@ -128,12 +167,14 @@ struct OracleState {
   SmallVector<CanonicalControlAtom, 2> controlPath;
   SmallVector<LoopInstance, 2> loops;
   SmallVector<bool, 16> covered;
+  bool valid = true;
 };
 
 struct OracleContext {
   bool exhaustive = true;
   const CanonicalSyncTarget *target = nullptr;
   SmallVector<SmallVector<CanonicalDemandId, 8>, 0> demandsByTarget;
+  SmallVector<unsigned, 0> loopUnrollByRegion;
 };
 
 using PhaseIndex = DenseMap<Operation *, SmallVector<CanonicalPhaseId, 2>>;
@@ -182,6 +223,86 @@ std::optional<unsigned> loopIteration(const PhaseInstance &instance,
   return found == instance.loops.end()
              ? std::nullopt
              : std::optional<unsigned>(found->iteration);
+}
+
+std::optional<std::uint64_t> evaluateIndexValue(
+    Value value, const CanonicalSyncProgram &program, const OracleState &state,
+    unsigned depth = 0U) {
+  constexpr unsigned kMaximumExpressionDepth = 8U;
+  if (!value || depth > kMaximumExpressionDepth) {
+    return std::nullopt;
+  }
+  APInt constant;
+  if (matchPattern(value, m_ConstantInt(&constant))) {
+    if (constant.isNegative() || constant.getActiveBits() > 64U) {
+      return std::nullopt;
+    }
+    return constant.getZExtValue();
+  }
+  if (auto argument = dyn_cast<BlockArgument>(value)) {
+    auto loop = dyn_cast_or_null<scf::ForOp>(
+        argument.getOwner()->getParentOp());
+    if (!loop || argument != loop.getInductionVar()) {
+      return std::nullopt;
+    }
+    const CanonicalRegionId loopId = findStructuredRegion(
+        program, loop, CanonicalRegionKind::Loop);
+    auto active = llvm::find_if(
+        state.loops, [loopId](const LoopInstance &instance) {
+          return instance.loop == loopId;
+        });
+    const std::optional<std::uint64_t> lower =
+        evaluateIndexValue(loop.getLowerBound(), program, state, depth + 1U);
+    const std::optional<std::uint64_t> step =
+        evaluateIndexValue(loop.getStep(), program, state, depth + 1U);
+    if (active == state.loops.end() || !lower || !step || *step == 0U ||
+        active->iteration >
+            (std::numeric_limits<std::uint64_t>::max() - *lower) / *step) {
+      return std::nullopt;
+    }
+    return *lower + active->iteration * *step;
+  }
+  if (auto remainder = value.getDefiningOp<arith::RemSIOp>()) {
+    const std::optional<std::uint64_t> lhs = evaluateIndexValue(
+        remainder.getLhs(), program, state, depth + 1U);
+    const std::optional<std::uint64_t> rhs = evaluateIndexValue(
+        remainder.getRhs(), program, state, depth + 1U);
+    return lhs && rhs && *rhs != 0U
+               ? std::optional<std::uint64_t>(*lhs % *rhs)
+               : std::nullopt;
+  }
+  if (auto remainder = value.getDefiningOp<arith::RemUIOp>()) {
+    const std::optional<std::uint64_t> lhs = evaluateIndexValue(
+        remainder.getLhs(), program, state, depth + 1U);
+    const std::optional<std::uint64_t> rhs = evaluateIndexValue(
+        remainder.getRhs(), program, state, depth + 1U);
+    return lhs && rhs && *rhs != 0U
+               ? std::optional<std::uint64_t>(*lhs % *rhs)
+               : std::nullopt;
+  }
+  return std::nullopt;
+}
+
+std::optional<unsigned> evaluateChoiceArm(
+    const CanonicalSyncProgram &program, scf::IfOp choice,
+    const OracleState &state) {
+  auto compare = choice.getCondition().getDefiningOp<arith::CmpIOp>();
+  if (!compare || (compare.getPredicate() != arith::CmpIPredicate::eq &&
+                   compare.getPredicate() != arith::CmpIPredicate::ne)) {
+    return std::nullopt;
+  }
+  const std::optional<std::uint64_t> lhs =
+      evaluateIndexValue(compare.getLhs(), program, state);
+  const std::optional<std::uint64_t> rhs =
+      evaluateIndexValue(compare.getRhs(), program, state);
+  if (!lhs || !rhs) {
+    return std::nullopt;
+  }
+  const bool equal = *lhs == *rhs;
+  const bool condition = compare.getPredicate() == arith::CmpIPredicate::eq
+                             ? equal
+                             : !equal;
+  return condition ? 0U : 1U;
 }
 
 bool matchesDistance(const CanonicalDemand &demand, const PhaseInstance &source,
@@ -328,11 +449,28 @@ void applyFixedFence(const CanonicalSyncProgram &program,
   appendUnique(state.globalKnown, completed);
 }
 
-void applyEventSet(const CanonicalMechanism &mechanism, OracleState &state) {
+bool sameEvent(const EventPayload &payload, CanonicalMechanismId mechanism,
+               EventPayload::Kind kind, unsigned lane) {
+  return payload.mechanism == mechanism && payload.kind == kind &&
+         payload.lane == lane;
+}
+
+void applyEventSet(const CanonicalMechanism &mechanism,
+                   EventPayload::Kind kind, unsigned lane,
+                   CanonicalPhysicalResource sourceResource,
+                   OracleState &state) {
+  if (llvm::any_of(state.events, [&](const EventPayload &payload) {
+        return sameEvent(payload, mechanism.id, kind, lane);
+      })) {
+    state.valid = false;
+    return;
+  }
   EventPayload payload;
   payload.mechanism = mechanism.id;
+  payload.kind = kind;
+  payload.lane = lane;
   const ResourceState *source =
-      getResource(static_cast<const OracleState &>(state), mechanism.source);
+      getResource(static_cast<const OracleState &>(state), sourceResource);
   if (source) {
     appendUnique(payload.phases, source->issued);
     appendUnique(payload.phases, source->known);
@@ -340,15 +478,109 @@ void applyEventSet(const CanonicalMechanism &mechanism, OracleState &state) {
   state.events.push_back(std::move(payload));
 }
 
-void applyEventWait(const CanonicalMechanism &mechanism, OracleState &state) {
+void applyEventWait(const CanonicalMechanism &mechanism,
+                    EventPayload::Kind kind, unsigned lane,
+                    CanonicalPhysicalResource targetResource,
+                    OracleState &state) {
   auto found = llvm::find_if(state.events, [&](const EventPayload &payload) {
-    return payload.mechanism == mechanism.id;
+    return sameEvent(payload, mechanism.id, kind, lane);
   });
   if (found == state.events.end()) {
+    state.valid = false;
     return;
   }
-  appendUnique(getResource(state, mechanism.target).known, found->phases);
+  appendUnique(getResource(state, targetResource).known, found->phases);
   state.events.erase(found);
+}
+
+bool loopIsActive(const OracleState &state, CanonicalRegionId loop) {
+  return llvm::any_of(state.loops, [loop](const LoopInstance &instance) {
+    return instance.loop == loop;
+  });
+}
+
+void applyOwnershipPoint(const CanonicalSyncProgram &program,
+                         const CanonicalMechanism &mechanism,
+                         const CanonicalOwnershipProtocol &protocol,
+                         CanonicalProgramPoint point, OracleState &state) {
+  Operation *loopOperation =
+      program.getRegion(protocol.recurrenceLoop).operation;
+  const CanonicalProgramPoint loopBefore{
+      loopOperation, CanonicalProgramPointPosition::Before};
+  const CanonicalProgramPoint loopAfter{
+      loopOperation, CanonicalProgramPointPosition::After};
+  if (point == loopBefore) {
+    for (unsigned lane = 0; lane < protocol.lanes.size(); ++lane) {
+      const bool seededByInitialProducer = llvm::any_of(
+          protocol.stages, [lane](const CanonicalOwnershipStage &stage) {
+            return stage.lane == lane && stage.initialProducer;
+          });
+      if (seededByInitialProducer) {
+        continue;
+      }
+      applyEventSet(mechanism, EventPayload::Kind::OwnershipRelease, lane,
+                    protocol.consumer, state);
+    }
+    return;
+  }
+  if (point == loopAfter) {
+    for (unsigned lane = 0; lane < protocol.lanes.size(); ++lane) {
+      const bool seededByInitialProducer = llvm::any_of(
+          protocol.stages, [lane](const CanonicalOwnershipStage &stage) {
+            return stage.lane == lane && stage.initialProducer;
+          });
+      const bool hasRelease = llvm::any_of(
+          state.events, [&](const EventPayload &payload) {
+            return sameEvent(payload, mechanism.id,
+                             EventPayload::Kind::OwnershipRelease, lane);
+          });
+      if (seededByInitialProducer && !hasRelease) {
+        applyEventWait(mechanism, EventPayload::Kind::OwnershipReady, lane,
+                       protocol.consumer, state);
+      } else {
+        applyEventWait(mechanism, EventPayload::Kind::OwnershipRelease, lane,
+                       protocol.producer, state);
+      }
+    }
+    return;
+  }
+  const bool loopActive = loopIsActive(state, protocol.recurrenceLoop);
+  BitVector releaseWaited(protocol.lanes.size());
+  BitVector readySet(protocol.lanes.size());
+  BitVector readyWaited(protocol.lanes.size());
+  BitVector releaseSet(protocol.lanes.size());
+  for (const CanonicalOwnershipStage &stage : protocol.stages) {
+    const bool producerActive =
+        guardEnabled(state.controlPath, stage.producerGuard);
+    const bool consumerActive =
+        guardEnabled(state.controlPath, stage.consumerGuard);
+    const bool stageProducerActive =
+        producerActive && (loopActive || stage.initialProducer);
+    if (!stage.initialProducer && stageProducerActive &&
+        stage.writeAcquire == point && !releaseWaited.test(stage.lane)) {
+      applyEventWait(mechanism, EventPayload::Kind::OwnershipRelease,
+                     stage.lane, protocol.producer, state);
+      releaseWaited.set(stage.lane);
+    }
+    if (stageProducerActive && stage.ready == point &&
+        !readySet.test(stage.lane)) {
+      applyEventSet(mechanism, EventPayload::Kind::OwnershipReady, stage.lane,
+                    protocol.producer, state);
+      readySet.set(stage.lane);
+    }
+    if (loopActive && consumerActive && stage.readAcquire == point &&
+        !readyWaited.test(stage.lane)) {
+      applyEventWait(mechanism, EventPayload::Kind::OwnershipReady, stage.lane,
+                     protocol.consumer, state);
+      readyWaited.set(stage.lane);
+    }
+    if (loopActive && consumerActive && stage.release == point &&
+        !releaseSet.test(stage.lane)) {
+      applyEventSet(mechanism, EventPayload::Kind::OwnershipRelease,
+                    stage.lane, protocol.consumer, state);
+      releaseSet.set(stage.lane);
+    }
+  }
 }
 
 void executePoint(const CanonicalSyncProgram &program,
@@ -366,6 +598,17 @@ void executePoint(const CanonicalSyncProgram &program,
         mechanism.boundaryRecurring) {
       continue;
     }
+    if (mechanism.kind == CanonicalMechanismKind::PeriodicOwnership) {
+      if (!mechanism.ownershipProtocol) {
+        state.valid = false;
+        continue;
+      }
+      applyOwnershipPoint(
+          program, mechanism,
+          program.getOwnershipProtocol(*mechanism.ownershipProtocol), point,
+          state);
+      continue;
+    }
     if (mechanism.targetPoint == point &&
         mechanism.kind == CanonicalMechanismKind::PipeBarrier) {
       applyBarrier(mechanism, state);
@@ -378,13 +621,15 @@ void executePoint(const CanonicalSyncProgram &program,
         (mechanism.kind == CanonicalMechanismKind::Event ||
          mechanism.kind == CanonicalMechanismKind::CrossCoreEvent ||
          mechanism.kind == CanonicalMechanismKind::RecurringEvent)) {
-      applyEventSet(mechanism, state);
+      applyEventSet(mechanism, EventPayload::Kind::Direct, 0,
+                    mechanism.source, state);
     }
     if (mechanism.targetPoint == point &&
         (mechanism.kind == CanonicalMechanismKind::Event ||
          mechanism.kind == CanonicalMechanismKind::CrossCoreEvent ||
          mechanism.kind == CanonicalMechanismKind::RecurringEvent)) {
-      applyEventWait(mechanism, state);
+      applyEventWait(mechanism, EventPayload::Kind::Direct, 0,
+                     mechanism.target, state);
     }
   }
 }
@@ -431,34 +676,39 @@ executeChoice(const CanonicalSyncProgram &program, scf::IfOp choice,
   SmallVector<OracleState, 8> result;
   const CanonicalRegionId choiceId =
       findStructuredRegion(program, choice, CanonicalRegionKind::Choice);
-  for (unsigned arm = 0; arm < 2U; ++arm) {
-    SmallVector<OracleState, 8> armInputs(inputs.begin(), inputs.end());
-    for (OracleState &state : armInputs) {
-      state.controlPath.push_back({choiceId, arm});
-    }
-    SmallVector<OracleState, 8> armOutputs;
-    if (arm == 0) {
-      FailureOr<SmallVector<OracleState, 8>> executed =
-          executeBlock(program, choice.getThenRegion().front(), phases,
-                       selected, armInputs, context);
-      if (failed(executed)) {
-        return failure();
+  for (const OracleState &input : inputs) {
+    const std::optional<unsigned> knownArm =
+        evaluateChoiceArm(program, choice, input);
+    for (unsigned arm = 0; arm < 2U; ++arm) {
+      if (knownArm && *knownArm != arm) {
+        continue;
       }
-      armOutputs = std::move(*executed);
-    } else if (choice.getElseRegion().empty()) {
-      armOutputs = std::move(armInputs);
-    } else {
-      FailureOr<SmallVector<OracleState, 8>> executed =
-          executeBlock(program, choice.getElseRegion().front(), phases,
-                       selected, armInputs, context);
-      if (failed(executed)) {
-        return failure();
+      SmallVector<OracleState, 1> armInputs(1, input);
+      armInputs.front().controlPath.push_back({choiceId, arm});
+      SmallVector<OracleState, 8> armOutputs;
+      if (arm == 0) {
+        FailureOr<SmallVector<OracleState, 8>> executed =
+            executeBlock(program, choice.getThenRegion().front(), phases,
+                         selected, armInputs, context);
+        if (failed(executed)) {
+          return failure();
+        }
+        armOutputs = std::move(*executed);
+      } else if (choice.getElseRegion().empty()) {
+        armOutputs.assign(armInputs.begin(), armInputs.end());
+      } else {
+        FailureOr<SmallVector<OracleState, 8>> executed =
+            executeBlock(program, choice.getElseRegion().front(), phases,
+                         selected, armInputs, context);
+        if (failed(executed)) {
+          return failure();
+        }
+        armOutputs = std::move(*executed);
       }
-      armOutputs = std::move(*executed);
-    }
-    for (OracleState &state : armOutputs) {
-      state.controlPath.pop_back();
-      result.push_back(std::move(state));
+      for (OracleState &state : armOutputs) {
+        state.controlPath.pop_back();
+        result.push_back(std::move(state));
+      }
     }
   }
   return result;
@@ -471,7 +721,11 @@ executeLoop(const CanonicalSyncProgram &program, scf::ForOp loop,
   SmallVector<OracleState, 8> result;
   const CanonicalRegionId loopId =
       findStructuredRegion(program, loop, CanonicalRegionKind::Loop);
-  for (unsigned count = 0; count <= kOracleLoopUnroll; ++count) {
+  const unsigned unroll =
+      loopId < context.loopUnrollByRegion.size()
+          ? context.loopUnrollByRegion[loopId]
+          : kDefaultOracleLoopUnroll;
+  for (unsigned count = 0; count <= unroll; ++count) {
     SmallVector<OracleState, 8> current(inputs.begin(), inputs.end());
     for (unsigned iteration = 0; iteration < count; ++iteration) {
       for (OracleState &state : current) {
@@ -570,18 +824,50 @@ executeBlock(const CanonicalSyncProgram &program, Block &block,
   return states;
 }
 
+SmallVector<unsigned, 0> buildLoopUnrolls(
+    const CanonicalSyncProgram &program,
+    ArrayRef<CanonicalMechanismId> selected, bool &withinBound) {
+  SmallVector<unsigned, 0> result(program.getRegions().size(),
+                                  kDefaultOracleLoopUnroll);
+  for (CanonicalMechanismId id : selected) {
+    const CanonicalMechanism &mechanism = program.getMechanism(id);
+    if (mechanism.kind != CanonicalMechanismKind::PeriodicOwnership ||
+        !mechanism.ownershipProtocol) {
+      continue;
+    }
+    const CanonicalOwnershipProtocol &protocol =
+        program.getOwnershipProtocol(*mechanism.ownershipProtocol);
+    if (protocol.recurrenceLoop >= result.size()) {
+      withinBound = false;
+      continue;
+    }
+    if (protocol.witnessHorizon > kMaximumOracleLoopUnroll) {
+      withinBound = false;
+    }
+    result[protocol.recurrenceLoop] =
+        std::max(result[protocol.recurrenceLoop],
+                 std::min(protocol.witnessHorizon,
+                          kMaximumOracleLoopUnroll));
+  }
+  return result;
+}
+
 } // namespace
 
 FailureOr<CanonicalUnrolledCoverageResult>
 mlir::pto::canonical_sync_detail::evaluateCanonicalSyncUnrolledOracle(
     const CanonicalSyncProgram &program,
     ArrayRef<CanonicalMechanismId> selected) {
+  OracleContext context;
+  context.loopUnrollByRegion =
+      buildLoopUnrolls(program, selected, context.exhaustive);
   const std::size_t phaseCount =
       std::max<std::size_t>(program.getPhases().size(), 1);
   const bool staticBudgetExceeded =
       program.getDemands().size() > kMaxOracleStaticChecks / phaseCount;
   const bool stateBudgetExceeded =
-      estimateBlockStates(program.getFunction().getBody().front()) >
+      estimateBlockStates(program, program.getFunction().getBody().front(),
+                          context.loopUnrollByRegion) >
       kMaxOracleStates;
   if (staticBudgetExceeded || stateBudgetExceeded) {
     CanonicalUnrolledCoverageResult result;
@@ -600,7 +886,6 @@ mlir::pto::canonical_sync_detail::evaluateCanonicalSyncUnrolledOracle(
           demandUsesDirectMechanism(program, demand, selected);
     }
   }
-  OracleContext context;
   FailureOr<CanonicalSyncTarget> target =
       CanonicalSyncTarget::resolve(program.getFunction());
   if (failed(target)) {
@@ -624,7 +909,8 @@ mlir::pto::canonical_sync_detail::evaluateCanonicalSyncUnrolledOracle(
   for (const CanonicalDemand &demand : program.getDemands()) {
     const bool coveredOnEveryPath =
         llvm::all_of(*states, [&](const OracleState &state) {
-          return state.covered[demand.id];
+          return state.valid && state.events.empty() &&
+                 state.covered[demand.id];
         });
     if (coveredOnEveryPath) {
       result.covered.push_back(demand.id);

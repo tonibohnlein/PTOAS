@@ -24,6 +24,8 @@ namespace {
 enum class AllocationUnitKind : std::uint8_t {
   Ready,
   RecurringRelease,
+  OwnershipReady,
+  OwnershipRelease,
   SerializedReady,
   SerializedRelease,
   CrossCore,
@@ -40,6 +42,8 @@ struct AllocationUnit {
   unsigned eventId = 0;
   SmallVector<unsigned, 2> releaseGroups;
   bool boundaryRecurring = false;
+  std::optional<CanonicalOwnershipProtocolId> ownershipProtocol;
+  std::optional<unsigned> ownershipLane;
 };
 
 bool recurringReadyReuseIsOrdered(const CanonicalSyncProgram &program,
@@ -51,10 +55,13 @@ struct AllocationFailure {
   CanonicalPhysicalResource target;
   Operation *witness = nullptr;
   bool crossCore = false;
+  bool ownership = false;
 };
 
 bool isUnconditionalLifecycle(const AllocationUnit &unit) {
-  return unit.kind == AllocationUnitKind::RecurringRelease;
+  return unit.kind == AllocationUnitKind::RecurringRelease ||
+         unit.kind == AllocationUnitKind::OwnershipReady ||
+         unit.kind == AllocationUnitKind::OwnershipRelease;
 }
 
 bool unitsInterfere(const CanonicalSyncProgram &program,
@@ -100,6 +107,38 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
   SmallVector<AllocationUnit, 8> units;
   for (CanonicalMechanismId mechanismId : solution.mechanisms) {
     const CanonicalMechanism &mechanism = program.getMechanism(mechanismId);
+    if (mechanism.kind == CanonicalMechanismKind::PeriodicOwnership) {
+      if (!mechanism.ownershipProtocol) {
+        llvm_unreachable("periodic ownership mechanism lacks a protocol");
+      }
+      const CanonicalOwnershipProtocol &protocol =
+          program.getOwnershipProtocol(*mechanism.ownershipProtocol);
+      for (unsigned lane = 0; lane < protocol.lanes.size(); ++lane) {
+        AllocationUnit ready{AllocationUnitKind::OwnershipReady,
+                             {mechanism.id},
+                             std::nullopt,
+                             protocol.producer,
+                             protocol.consumer,
+                             {},
+                             protocol.recurrenceLoop,
+                             0};
+        ready.ownershipProtocol = protocol.id;
+        ready.ownershipLane = lane;
+        units.push_back(std::move(ready));
+        AllocationUnit release{AllocationUnitKind::OwnershipRelease,
+                               {mechanism.id},
+                               std::nullopt,
+                               protocol.consumer,
+                               protocol.producer,
+                               {},
+                               protocol.recurrenceLoop,
+                               0};
+        release.ownershipProtocol = protocol.id;
+        release.ownershipLane = lane;
+        units.push_back(std::move(release));
+      }
+      continue;
+    }
     if (mechanism.kind == CanonicalMechanismKind::Event) {
       if (!isScarcityMember(groups, mechanism.id)) {
         units.push_back({AllocationUnitKind::Ready,
@@ -206,6 +245,19 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
       release->releaseGroups.push_back(static_cast<unsigned>(index));
     }
   }
+  // Periodic ownership lanes have a complete, independently certified token
+  // lifecycle and intentionally have no ad-hoc scarcity rewrite. Reserve
+  // their physical keys before flexible direct events; if the latter then
+  // exceed the remaining pool, the normal cut coalescing/serialization repair
+  // can still replace them with a freshly verified recipe.
+  llvm::stable_sort(units, [](const AllocationUnit &first,
+                              const AllocationUnit &second) {
+    const auto isOwnership = [](const AllocationUnit &unit) {
+      return unit.kind == AllocationUnitKind::OwnershipReady ||
+             unit.kind == AllocationUnitKind::OwnershipRelease;
+    };
+    return isOwnership(first) && !isOwnership(second);
+  });
   return units;
 }
 
@@ -231,6 +283,7 @@ bool allocateUnits(const CanonicalSyncProgram &program,
       failure.source = unit.source;
       failure.target = unit.target;
       failure.crossCore = unit.kind == AllocationUnitKind::CrossCore;
+      failure.ownership = unit.ownershipProtocol.has_value();
       const CanonicalMechanismId witnessId = unit.mechanisms.empty()
                                                  ? kInvalidCanonicalSyncId
                                                  : unit.mechanisms.front();
@@ -512,7 +565,29 @@ bool recurringReadyReuseIsOrdered(const CanonicalSyncProgram &program,
 void commitAllocation(CanonicalSyncProgram &program,
                       ArrayRef<AllocationUnit> units,
                       SmallVector<CanonicalScarcityEventGroup, 2> groups) {
+  struct OwnershipIds {
+    std::optional<unsigned> ready;
+    std::optional<unsigned> release;
+  };
+  SmallVector<SmallVector<OwnershipIds, 2>, 2> ownershipIds;
+  ownershipIds.reserve(program.getOwnershipProtocols().size());
+  for (const CanonicalOwnershipProtocol &protocol :
+       program.getOwnershipProtocols()) {
+    ownershipIds.emplace_back(protocol.lanes.size());
+  }
   for (const AllocationUnit &unit : units) {
+    if (unit.ownershipProtocol && unit.ownershipLane) {
+      OwnershipIds &ids =
+          ownershipIds[*unit.ownershipProtocol][*unit.ownershipLane];
+      if (unit.kind == AllocationUnitKind::OwnershipReady) {
+        ids.ready = unit.eventId;
+      } else if (unit.kind == AllocationUnitKind::OwnershipRelease) {
+        ids.release = unit.eventId;
+      } else {
+        llvm_unreachable("ownership allocation has an invalid unit kind");
+      }
+      continue;
+    }
     if (unit.kind == AllocationUnitKind::SerializedReady) {
       groups[*unit.serializedGroup].eventId = unit.eventId;
       continue;
@@ -532,6 +607,22 @@ void commitAllocation(CanonicalSyncProgram &program,
       }
     }
   }
+  for (const CanonicalOwnershipProtocol &protocol :
+       program.getOwnershipProtocols()) {
+    const bool selected = llvm::is_contained(
+        program.getSetCoverSolution()->mechanisms, protocol.mechanism);
+    if (!selected) {
+      continue;
+    }
+    for (unsigned lane = 0; lane < protocol.lanes.size(); ++lane) {
+      const OwnershipIds &ids = ownershipIds[protocol.id][lane];
+      if (!ids.ready || !ids.release) {
+        llvm_unreachable("selected ownership lane lacks an allocation");
+      }
+      program.setOwnershipLaneEventIds(protocol.id, lane, *ids.ready,
+                                       *ids.release);
+    }
+  }
   program.setScarcityEventGroups(std::move(groups));
 }
 
@@ -544,6 +635,12 @@ emitAllocationFailure(const CanonicalSyncProgram &program,
   if (allocationFailure.crossCore) {
     return witness->emitError(
         "canonical sync exhausted cross-core counter IDs");
+  }
+  if (allocationFailure.ownership) {
+    witness->emitError(
+        "canonical sync periodic ownership protocol exhausted compiler "
+        "event IDs; no unverified scarcity fallback is permitted");
+    return failure();
   }
   witness->emitError("canonical sync exhausted compiler event IDs after "
                      "hidden macro reservations, cut coalescing, serialized "
@@ -579,6 +676,9 @@ mlir::pto::allocateCanonicalSyncEvents(CanonicalSyncProgram &program) {
     if (allocateUnits(program, *target, units, allocationFailure)) {
       commitAllocation(program, units, std::move(groups));
       return success();
+    }
+    if (allocationFailure.ownership) {
+      return emitAllocationFailure(program, allocationFailure);
     }
     bool repaired =
         appendCoalescedFallback(program, *target, allocationFailure, groups);

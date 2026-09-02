@@ -41,7 +41,37 @@ using CanonicalAccessId = std::uint32_t;
 using CanonicalFenceEffectId = std::uint32_t;
 using CanonicalDemandId = std::uint32_t;
 using CanonicalMechanismId = std::uint32_t;
+using CanonicalStructuralProposalId = std::uint32_t;
 using CanonicalSetCoverCandidateId = std::uint32_t;
+using CanonicalOwnershipProtocolId = std::uint32_t;
+
+enum class CanonicalStructuralCoverFamily : std::uint32_t {
+  Level = 1U << 0,
+  Transitive = 1U << 1,
+  Connector = 1U << 2,
+  Semantic = 1U << 3,
+  Storage = 1U << 4,
+};
+using CanonicalStructuralCoverFamilies = std::uint32_t;
+inline constexpr CanonicalStructuralCoverFamilies
+    kAllCanonicalStructuralCoverFamilies =
+        static_cast<CanonicalStructuralCoverFamilies>(
+            CanonicalStructuralCoverFamily::Level) |
+        static_cast<CanonicalStructuralCoverFamilies>(
+            CanonicalStructuralCoverFamily::Transitive) |
+        static_cast<CanonicalStructuralCoverFamilies>(
+            CanonicalStructuralCoverFamily::Connector) |
+        static_cast<CanonicalStructuralCoverFamilies>(
+            CanonicalStructuralCoverFamily::Semantic) |
+        static_cast<CanonicalStructuralCoverFamilies>(
+            CanonicalStructuralCoverFamily::Storage);
+
+inline bool
+hasCanonicalStructuralCoverFamily(CanonicalStructuralCoverFamilies families,
+                                  CanonicalStructuralCoverFamily family) {
+  return (families & static_cast<CanonicalStructuralCoverFamilies>(family)) !=
+         0U;
+}
 
 inline constexpr std::uint32_t kInvalidCanonicalSyncId =
     std::numeric_limits<std::uint32_t>::max();
@@ -87,6 +117,11 @@ struct CanonicalSyncStatistics {
   std::uint64_t coverageWorlds = 0;
   std::uint64_t coverUniverse = 0;
   std::uint64_t coverCandidates = 0;
+  std::uint64_t structuralProposals = 0;
+  std::uint64_t admittedStructuralProposals = 0;
+  std::uint64_t structuralMechanismMemberships = 0;
+  std::uint64_t structuralAdditionalCoverageRows = 0;
+  std::uint64_t structuralSetCoverCandidates = 0;
   std::uint64_t selectedMechanisms = 0;
   std::uint64_t aliasPairTests = 0;
   std::uint64_t aliasCandidatePairs = 0;
@@ -128,9 +163,20 @@ enum class CanonicalMechanismKind : std::uint8_t {
   Event,
   CrossCoreEvent,
   RecurringEvent,
+  PeriodicOwnership,
   VisibilityFence,
   FixedFence,
   TailBarrier,
+};
+enum class CanonicalStructuralProposalKind : std::uint8_t {
+  LevelBoundary,
+  LevelBoundaryMinusOne,
+  SemanticLevelBoundary,
+  RegionTransitiveBasis,
+  ConnectorNeighborhood,
+  StorageLifecycle,
+  StorageLifecycleMinusOne,
+  StorageOwnershipProtocol,
 };
 enum class CanonicalProgramPointPosition : std::uint8_t { Before, After };
 
@@ -281,8 +327,91 @@ struct CanonicalMechanism {
   /// used when source and target are in mutually exclusive control arms and
   /// no legal same-iteration ready cut exists.
   bool boundaryRecurring = false;
+  std::optional<CanonicalOwnershipProtocolId> ownershipProtocol;
   std::optional<unsigned> eventId;
   std::optional<unsigned> releaseEventId;
+};
+
+struct CanonicalOwnershipSlot {
+  Value root;
+  CanonicalByteInterval interval;
+  Value slotExpression;
+  unsigned lane = 0;
+  unsigned reuseDistance = 0;
+};
+
+/// One circulating ready/release token pair.  A token lane may serialize a
+/// sequence of disjoint physical slots when their ownership stages form one
+/// total order.  Keeping token lanes separate from storage slots is essential:
+/// buffer depth and event pressure are related, but they are not identical.
+struct CanonicalOwnershipLane {
+  std::optional<unsigned> readyEventId;
+  std::optional<unsigned> releaseEventId;
+};
+
+struct CanonicalOwnershipStage {
+  unsigned slot = 0;
+  unsigned lane = 0;
+  /// An initial producer executes before recurrenceLoop and seeds the ready
+  /// token instead of consuming a release credit.
+  bool initialProducer = false;
+  CanonicalIterationRelation readyRelation = CanonicalIterationRelation::Same;
+  unsigned readyDistance = 0;
+  unsigned releaseDistance = 0;
+  CanonicalProgramPoint writeAcquire;
+  CanonicalProgramPoint ready;
+  CanonicalProgramPoint readAcquire;
+  CanonicalProgramPoint release;
+  llvm::SmallVector<CanonicalPhaseId, 2> producers;
+  llvm::SmallVector<CanonicalPhaseId, 4> consumers;
+  llvm::SmallVector<CanonicalControlAtom, 2> producerGuard;
+  llvm::SmallVector<CanonicalControlAtom, 2> consumerGuard;
+};
+
+enum class CanonicalOwnershipWitnessKind : std::uint8_t {
+  Ready,
+  Release,
+};
+
+struct CanonicalOwnershipWitnessEdge {
+  CanonicalOwnershipWitnessKind kind = CanonicalOwnershipWitnessKind::Ready;
+  unsigned lane = 0;
+  CanonicalPhaseId source = kInvalidCanonicalSyncId;
+  CanonicalPhaseId target = kInvalidCanonicalSyncId;
+  unsigned sourceIteration = 0;
+  unsigned targetIteration = 0;
+};
+
+/// A hardware-level ready/release ring synthesized from one normalized storage
+/// family. Physical slots and event-token lanes are distinct: sequential slots
+/// may circulate one token lane, while genuinely overlapping modulo slots use
+/// separate lanes. Every steady-state producer consumes a release token before
+/// writing, transfers readiness to the consumer, and returns the release token
+/// after the last read. A certified preheader producer may seed readiness
+/// directly. Priming and draining happen outside recurrenceLoop, so zero-trip
+/// execution is balanced.
+struct CanonicalOwnershipProtocol {
+  CanonicalOwnershipProtocolId id = kInvalidCanonicalSyncId;
+  CanonicalMechanismId mechanism = kInvalidCanonicalSyncId;
+  CanonicalRegionId owner = kInvalidCanonicalSyncId;
+  CanonicalRegionId recurrenceLoop = kInvalidCanonicalSyncId;
+  CanonicalPhysicalResource producer;
+  CanonicalPhysicalResource consumer;
+  std::string familyKey;
+  /// Number of exact physical storage slots managed by this protocol.
+  unsigned depth = 0;
+  /// Repetition period of the stage/control schedule in recurrenceLoop.
+  unsigned period = 0;
+  /// Maximum proven distance to the next use of any managed slot.
+  unsigned reuseDistance = 0;
+  unsigned witnessHorizon = 0;
+  llvm::SmallVector<Value, 2> roots;
+  llvm::SmallVector<CanonicalOwnershipSlot, 2> slots;
+  llvm::SmallVector<CanonicalOwnershipLane, 2> lanes;
+  llvm::SmallVector<CanonicalOwnershipStage, 8> stages;
+  llvm::SmallVector<CanonicalOwnershipWitnessEdge, 16> witnessEdges;
+  llvm::SmallVector<CanonicalMechanismId, 8> parentMechanisms;
+  llvm::SmallVector<CanonicalDemandId, 16> witnessDemands;
 };
 
 struct CanonicalCompletionTransfer {
@@ -320,6 +449,26 @@ struct CanonicalCoverageWorld {
   bool unrolledOracleExhaustive = false;
   bool unrolledOracleMatched = false;
   bool setCoverCandidate = false;
+  std::optional<CanonicalStructuralProposalId> structuralProposal;
+};
+
+/// One bounded graph/IR-derived suggestion for mechanisms worth grounding
+/// together. A proposal does not assert coverage: the ordinary coverage
+/// oracles populate groundedCoverage and additionalCoverage before the group
+/// may become a set-cover candidate.
+struct CanonicalStructuralProposal {
+  CanonicalStructuralProposalId id = kInvalidCanonicalSyncId;
+  CanonicalStructuralProposalKind kind =
+      CanonicalStructuralProposalKind::LevelBoundary;
+  CanonicalRegionId owner = kInvalidCanonicalSyncId;
+  unsigned level = 0;
+  std::string semanticKey;
+  llvm::SmallVector<CanonicalMechanismId, 8> mechanisms;
+  llvm::SmallVector<CanonicalDemandId, 8> crossingDemands;
+  llvm::SmallVector<CanonicalDemandId, 8> singletonUnionCoverage;
+  llvm::SmallVector<CanonicalDemandId, 8> groundedCoverage;
+  llvm::SmallVector<CanonicalDemandId, 8> additionalCoverage;
+  bool admitted = false;
 };
 
 struct CanonicalSetCoverCandidate {
@@ -329,6 +478,7 @@ struct CanonicalSetCoverCandidate {
   llvm::SmallVector<CanonicalDemandId, 4> additionalCoverage;
   llvm::SmallVector<CanonicalDemandId, 8> coveredDemands;
   std::uint64_t weight = 0;
+  std::optional<CanonicalStructuralProposalId> structuralProposal;
 };
 
 struct CanonicalSetCoverInstance {
@@ -372,6 +522,9 @@ struct CanonicalSetCoverSolution {
 
 class CanonicalSyncProgram;
 LogicalResult buildCanonicalDirectMechanisms(CanonicalSyncProgram &program);
+LogicalResult proposeCanonicalSyncStructuralGroups(
+    CanonicalSyncProgram &program,
+    CanonicalStructuralCoverFamilies enabledFamilies);
 LogicalResult evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program);
 LogicalResult buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program);
 LogicalResult solveCanonicalSyncSetCover(CanonicalSyncProgram &program);
@@ -393,6 +546,9 @@ public:
   void retainDemands(const llvm::BitVector &retained);
   void appendDemandCause(CanonicalDemandId demand, CanonicalDemandCause cause);
   CanonicalMechanismId appendMechanism(CanonicalMechanism mechanism);
+  CanonicalMechanismId
+  appendOwnershipProtocol(CanonicalOwnershipProtocol protocol,
+                          CanonicalMechanism mechanism);
   void appendMechanismOrigin(CanonicalMechanismId mechanism,
                              CanonicalDemandId demand);
   void appendMechanismCacheMaintenance(CanonicalMechanismId mechanism,
@@ -400,10 +556,15 @@ public:
   void setMechanismEventId(CanonicalMechanismId mechanism, unsigned eventId);
   void setMechanismReleaseEventId(CanonicalMechanismId mechanism,
                                   unsigned eventId);
+  void setOwnershipLaneEventIds(CanonicalOwnershipProtocolId protocol,
+                                unsigned lane, unsigned readyEventId,
+                                unsigned releaseEventId);
   void setScarcityEventGroups(
       llvm::SmallVector<CanonicalScarcityEventGroup, 2> groups);
   void setDirectMechanism(CanonicalDemandId demand,
                           CanonicalMechanismId mechanism);
+  CanonicalStructuralProposalId
+  appendStructuralProposal(CanonicalStructuralProposal proposal);
 
   LogicalResult freezeGraph();
   LogicalResult freeze();
@@ -429,6 +590,12 @@ public:
   llvm::ArrayRef<CanonicalCoverageWorld> getCoverageWorlds() const {
     return coverageWorlds;
   }
+  llvm::ArrayRef<CanonicalStructuralProposal> getStructuralProposals() const {
+    return structuralProposals;
+  }
+  llvm::ArrayRef<CanonicalOwnershipProtocol> getOwnershipProtocols() const {
+    return ownershipProtocols;
+  }
   llvm::ArrayRef<CanonicalMechanismId> getDirectMechanisms() const {
     return directMechanisms;
   }
@@ -445,6 +612,8 @@ public:
   const CanonicalFenceEffect &getFenceEffect(CanonicalFenceEffectId id) const;
   const CanonicalDemand &getDemand(CanonicalDemandId id) const;
   const CanonicalMechanism &getMechanism(CanonicalMechanismId id) const;
+  const CanonicalOwnershipProtocol &
+  getOwnershipProtocol(CanonicalOwnershipProtocolId id) const;
   llvm::ArrayRef<CanonicalRegionId>
   getMechanismExecutionLoops(CanonicalMechanismId id) const {
     return mechanismExecutionLoops[id];
@@ -457,6 +626,9 @@ public:
 private:
   friend LogicalResult
   buildCanonicalDirectMechanisms(CanonicalSyncProgram &program);
+  friend LogicalResult proposeCanonicalSyncStructuralGroups(
+      CanonicalSyncProgram &program,
+      CanonicalStructuralCoverFamilies enabledFamilies);
   friend LogicalResult
   evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program);
   friend LogicalResult
@@ -465,6 +637,7 @@ private:
   solveCanonicalSyncSetCover(CanonicalSyncProgram &program);
 
   void appendCoverageWorld(CanonicalCoverageWorld world);
+  CanonicalMechanismId appendMechanismRecord(CanonicalMechanism mechanism);
   void setSetCoverInstance(CanonicalSetCoverInstance instance);
   void setSetCoverSolution(CanonicalSetCoverSolution solution);
 
@@ -478,16 +651,19 @@ private:
   llvm::SmallVector<CanonicalFenceEffect> fenceEffects;
   llvm::SmallVector<CanonicalDemand> demands;
   llvm::SmallVector<CanonicalMechanism> mechanisms;
+  llvm::SmallVector<CanonicalOwnershipProtocol, 0> ownershipProtocols;
   llvm::SmallVector<llvm::SmallVector<CanonicalRegionId, 2>, 0>
       mechanismExecutionLoops;
   llvm::SmallVector<llvm::SmallVector<CanonicalPhaseId, 8>, 0>
       mechanismSourcePrefixes;
   llvm::SmallVector<CanonicalMechanismId> directMechanisms;
   llvm::SmallVector<CanonicalCoverageWorld> coverageWorlds;
+  llvm::SmallVector<CanonicalStructuralProposal, 0> structuralProposals;
   std::optional<CanonicalSetCoverInstance> setCoverInstance;
   std::optional<CanonicalSetCoverSolution> setCoverSolution;
   bool buildingMechanisms = false;
   bool mechanismCatalogComplete = false;
+  bool structuralProposalCatalogComplete = false;
   bool coverageCatalogComplete = false;
   bool graphFrozen = false;
   bool frozen = false;
@@ -503,6 +679,11 @@ stringifyCanonicalVisibilityDirection(CanonicalVisibilityDirection direction);
 llvm::StringRef
 stringifyCanonicalCacheMaintenance(CanonicalCacheMaintenance maintenance);
 llvm::StringRef stringifyCanonicalMechanismKind(CanonicalMechanismKind kind);
+llvm::StringRef
+stringifyCanonicalStructuralProposalKind(CanonicalStructuralProposalKind kind);
+bool canonicalOwnershipProtocolCoversDemand(
+    const CanonicalSyncProgram &program,
+    const CanonicalOwnershipProtocol &protocol, const CanonicalDemand &demand);
 void printCanonicalSyncProgram(const CanonicalSyncProgram &program,
                                llvm::raw_ostream &os);
 

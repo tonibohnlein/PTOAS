@@ -192,6 +192,7 @@ bool mlir::pto::canonical_sync_detail::operator==(const VerifierState &first,
             return left == right;
           }) ||
       !unorderedEqual<VerifierToken>(first.tokens, second.tokens, tokenEqual) ||
+      first.loopValues != second.loopValues ||
       first.resources.size() != second.resources.size()) {
     return false;
   }
@@ -297,5 +298,8 @@ VerifierState mlir::pto::canonical_sync_detail::mergeVerifierStates(
       [](const VerifierEffectKey &left, const VerifierEffectKey &right) {
         return left == right;
       });
+  if (first.loopValues == second.loopValues) {
+    result.loopValues = first.loopValues;
+  }
   return result;
 }

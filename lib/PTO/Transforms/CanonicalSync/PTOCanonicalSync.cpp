@@ -61,6 +61,16 @@ void printCanonicalSyncStatistics(const CanonicalSyncStatistics &statistics,
       static_cast<std::int64_t>(statistics.coverUniverse);
   counts["cover_candidates"] =
       static_cast<std::int64_t>(statistics.coverCandidates);
+  counts["structural_proposals"] =
+      static_cast<std::int64_t>(statistics.structuralProposals);
+  counts["admitted_structural_proposals"] =
+      static_cast<std::int64_t>(statistics.admittedStructuralProposals);
+  counts["structural_mechanism_memberships"] =
+      static_cast<std::int64_t>(statistics.structuralMechanismMemberships);
+  counts["structural_additional_coverage_rows"] = static_cast<std::int64_t>(
+      statistics.structuralAdditionalCoverageRows);
+  counts["structural_set_cover_candidates"] =
+      static_cast<std::int64_t>(statistics.structuralSetCoverCandidates);
   counts["selected_mechanisms"] =
       static_cast<std::int64_t>(statistics.selectedMechanisms);
   counts["alias_pair_tests"] =
@@ -112,6 +122,8 @@ struct PTOCanonicalSyncPass
     statistics = options.statistics;
     gmAliasPolicy =
         stringifyCanonicalGmAliasPolicy(options.gmAliasPolicy).str();
+    structuralCoverMode = stringifyCanonicalStructuralCoverFamilies(
+        options.structuralCoverFamilies);
   }
 
   void runOnOperation() override {
@@ -127,6 +139,14 @@ struct PTOCanonicalSyncPass
       return signalPassFailure();
     }
     options.gmAliasPolicy = *parsedPolicy;
+    const std::optional<CanonicalStructuralCoverFamilies> parsedFamilies =
+        parseCanonicalStructuralCoverFamilies(structuralCoverMode);
+    if (!parsedFamilies) {
+      getOperation().emitError("unknown canonical sync structural cover mode '")
+          << structuralCoverMode << "'";
+      return signalPassFailure();
+    }
+    options.structuralCoverFamilies = *parsedFamilies;
     if (failed(runCanonicalSync(getOperation(), options))) {
       signalPassFailure();
     }
@@ -144,6 +164,81 @@ parseCanonicalGmAliasPolicy(StringRef value) {
     return CanonicalGmAliasPolicy::DistinctRootsUnsafe;
   }
   return std::nullopt;
+}
+
+std::optional<CanonicalStructuralCoverFamilies>
+parseCanonicalStructuralCoverFamilies(StringRef value) {
+  if (value == "none") {
+    return 0U;
+  }
+  if (value == "all") {
+    return kAllCanonicalStructuralCoverFamilies;
+  }
+  SmallVector<StringRef, 5> names;
+  value.split(names, ',', -1, false);
+  CanonicalStructuralCoverFamilies families = 0U;
+  for (StringRef name : names) {
+    if (name == "level") {
+      families |= static_cast<CanonicalStructuralCoverFamilies>(
+          CanonicalStructuralCoverFamily::Level);
+    } else if (name == "transitive") {
+      families |= static_cast<CanonicalStructuralCoverFamilies>(
+          CanonicalStructuralCoverFamily::Transitive);
+    } else if (name == "connector") {
+      families |= static_cast<CanonicalStructuralCoverFamilies>(
+          CanonicalStructuralCoverFamily::Connector);
+    } else if (name == "semantic") {
+      families |= static_cast<CanonicalStructuralCoverFamilies>(
+          CanonicalStructuralCoverFamily::Semantic);
+    } else if (name == "storage") {
+      families |= static_cast<CanonicalStructuralCoverFamilies>(
+          CanonicalStructuralCoverFamily::Storage);
+    } else {
+      return std::nullopt;
+    }
+  }
+  if (families == 0U) {
+    return std::nullopt;
+  }
+  return families;
+}
+
+std::string stringifyCanonicalStructuralCoverFamilies(
+    CanonicalStructuralCoverFamilies families) {
+  if (families == 0U) {
+    return "none";
+  }
+  if (families == kAllCanonicalStructuralCoverFamilies) {
+    return "all";
+  }
+  std::string result;
+  const auto append = [&](StringRef name) {
+    if (!result.empty()) {
+      result.push_back(',');
+    }
+    result.append(name.data(), name.size());
+  };
+  if (hasCanonicalStructuralCoverFamily(
+          families, CanonicalStructuralCoverFamily::Level)) {
+    append("level");
+  }
+  if (hasCanonicalStructuralCoverFamily(
+          families, CanonicalStructuralCoverFamily::Transitive)) {
+    append("transitive");
+  }
+  if (hasCanonicalStructuralCoverFamily(
+          families, CanonicalStructuralCoverFamily::Connector)) {
+    append("connector");
+  }
+  if (hasCanonicalStructuralCoverFamily(
+          families, CanonicalStructuralCoverFamily::Semantic)) {
+    append("semantic");
+  }
+  if (hasCanonicalStructuralCoverFamily(
+          families, CanonicalStructuralCoverFamily::Storage)) {
+    append("storage");
+  }
+  return result;
 }
 
 FailureOr<std::unique_ptr<CanonicalSyncProgram>>
@@ -230,6 +325,17 @@ LogicalResult runCanonicalSync(func::FuncOp function,
     return failure();
   }
   statistics.mechanisms = (*program)->getMechanisms().size();
+  failureStage = "structural-proposals";
+  if (failed(proposeCanonicalSyncStructuralGroups(
+          **program, options.structuralCoverFamilies))) {
+    return failure();
+  }
+  statistics.structuralProposals =
+      (*program)->getStructuralProposals().size();
+  for (const CanonicalStructuralProposal &proposal :
+       (*program)->getStructuralProposals()) {
+    statistics.structuralMechanismMemberships += proposal.mechanisms.size();
+  }
   failureStage = "coverage";
   if (failed(timed(statistics.coverageUs, [&]() {
         return evaluateCanonicalSyncCoverage(**program);
@@ -237,6 +343,15 @@ LogicalResult runCanonicalSync(func::FuncOp function,
     return failure();
   }
   statistics.coverageWorlds = (*program)->getCoverageWorlds().size();
+  for (const CanonicalStructuralProposal &proposal :
+       (*program)->getStructuralProposals()) {
+    if (!proposal.admitted) {
+      continue;
+    }
+    ++statistics.admittedStructuralProposals;
+    statistics.structuralAdditionalCoverageRows +=
+        proposal.additionalCoverage.size();
+  }
   failureStage = "set-cover-build";
   if (failed(timed(statistics.setCoverBuildUs, [&]() {
         return buildCanonicalSyncSetCoverInstance(**program);
@@ -246,6 +361,11 @@ LogicalResult runCanonicalSync(func::FuncOp function,
   if (const auto &instance = (*program)->getSetCoverInstance()) {
     statistics.coverUniverse = instance->universe.size();
     statistics.coverCandidates = instance->candidates.size();
+    statistics.structuralSetCoverCandidates = llvm::count_if(
+        instance->candidates,
+        [](const CanonicalSetCoverCandidate &candidate) {
+          return candidate.structuralProposal.has_value();
+        });
   }
   failureStage = "selection";
   if (failed(timed(statistics.selectionUs,
@@ -256,8 +376,13 @@ LogicalResult runCanonicalSync(func::FuncOp function,
     statistics.selectedMechanisms = solution->mechanisms.size();
   }
   failureStage = "allocation";
-  if (failed(timed(statistics.allocationUs,
-                   [&]() { return allocateCanonicalSyncEvents(**program); }))) {
+  const LogicalResult allocationResult = timed(
+      statistics.allocationUs,
+      [&]() { return allocateCanonicalSyncEvents(**program); });
+  if (failed(allocationResult)) {
+    if (options.dump || options.analysisOnly) {
+      printCanonicalSyncProgram(**program, llvm::errs());
+    }
     return failure();
   }
   failureStage = "freeze";

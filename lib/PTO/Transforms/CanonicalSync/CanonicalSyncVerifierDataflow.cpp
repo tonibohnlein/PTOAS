@@ -10,15 +10,22 @@
 
 #include "CanonicalSyncVerifier.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/STLExtras.h"
+
+#include <limits>
 
 using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::canonical_sync_detail;
 
 namespace {
+
+constexpr StringLiteral kOwnershipPeriodAttr =
+    "pto.canonical_sync.ownership_period";
+constexpr unsigned kMaximumOwnershipPeriod = 8U;
 
 bool hasStaticallyNonEmptyTripCount(scf::ForOp loop) {
   const std::optional<int64_t> lower =
@@ -218,6 +225,71 @@ bool tokenKeysEqual(ArrayRef<VerifierToken> first,
   });
 }
 
+std::optional<std::uint64_t> evaluateIndexValue(Value value,
+                                                const VerifierState &state) {
+  APInt constant;
+  if (matchPattern(value, m_ConstantInt(&constant))) {
+    if (constant.isNegative() || constant.getActiveBits() > 64U) {
+      return std::nullopt;
+    }
+    return constant.getZExtValue();
+  }
+  if (auto argument = dyn_cast<BlockArgument>(value)) {
+    auto loop = dyn_cast_or_null<scf::ForOp>(
+        argument.getOwner()->getParentOp());
+    if (!loop || argument != loop.getInductionVar()) {
+      return std::nullopt;
+    }
+    auto current = llvm::find_if(
+        state.loopValues, [&](const VerifierLoopValue &entry) {
+          return entry.loop == loop.getOperation();
+        });
+    return current == state.loopValues.end()
+               ? std::nullopt
+               : std::optional<std::uint64_t>(current->inductionValue);
+  }
+  if (auto remainder = value.getDefiningOp<arith::RemSIOp>()) {
+    const std::optional<std::uint64_t> lhs =
+        evaluateIndexValue(remainder.getLhs(), state);
+    const std::optional<std::uint64_t> rhs =
+        evaluateIndexValue(remainder.getRhs(), state);
+    return lhs && rhs && *rhs != 0U
+               ? std::optional<std::uint64_t>(*lhs % *rhs)
+               : std::nullopt;
+  }
+  if (auto remainder = value.getDefiningOp<arith::RemUIOp>()) {
+    const std::optional<std::uint64_t> lhs =
+        evaluateIndexValue(remainder.getLhs(), state);
+    const std::optional<std::uint64_t> rhs =
+        evaluateIndexValue(remainder.getRhs(), state);
+    return lhs && rhs && *rhs != 0U
+               ? std::optional<std::uint64_t>(*lhs % *rhs)
+               : std::nullopt;
+  }
+  return std::nullopt;
+}
+
+std::optional<unsigned> evaluateChoiceArm(scf::IfOp operation,
+                                          const VerifierState &state) {
+  auto compare = operation.getCondition().getDefiningOp<arith::CmpIOp>();
+  if (!compare || (compare.getPredicate() != arith::CmpIPredicate::eq &&
+                   compare.getPredicate() != arith::CmpIPredicate::ne)) {
+    return std::nullopt;
+  }
+  const std::optional<std::uint64_t> lhs =
+      evaluateIndexValue(compare.getLhs(), state);
+  const std::optional<std::uint64_t> rhs =
+      evaluateIndexValue(compare.getRhs(), state);
+  if (!lhs || !rhs) {
+    return std::nullopt;
+  }
+  const bool equal = *lhs == *rhs;
+  const bool condition = compare.getPredicate() == arith::CmpIPredicate::eq
+                             ? equal
+                             : !equal;
+  return condition ? 0U : 1U;
+}
+
 void collectLoopKeys(const VerifierProgram &program, Region &region,
                      SmallVectorImpl<VerifierEffectKey> &keys) {
   region.walk([&](Operation *operation) {
@@ -241,6 +313,19 @@ void collectLoopKeys(const VerifierProgram &program, Region &region,
 LogicalResult executeIf(const VerifierProgram &program,
                         const CanonicalSyncTarget &target, scf::IfOp operation,
                         VerifierState &state) {
+  const std::optional<unsigned> knownArm =
+      evaluateChoiceArm(operation, state);
+  if (knownArm) {
+    if (*knownArm == 0U) {
+      return executeVerifierBlock(program, target,
+                                  operation.getThenRegion().front(), state);
+    }
+    return operation.getElseRegion().empty()
+               ? success()
+               : executeVerifierBlock(program, target,
+                                      operation.getElseRegion().front(),
+                                      state);
+  }
   VerifierState thenState = state;
   if (failed(executeVerifierBlock(
           program, target, operation.getThenRegion().front(), thenState))) {
@@ -266,6 +351,29 @@ LogicalResult executeLoop(const VerifierProgram &program,
                           scf::ForOp operation, VerifierState &state) {
   const VerifierState entry = state;
   VerifierState iteration = state;
+  unsigned period = 1U;
+  std::optional<std::uint64_t> lower;
+  if (auto periodAttr =
+          operation->getAttrOfType<IntegerAttr>(kOwnershipPeriodAttr)) {
+    const std::optional<int64_t> lowerValue =
+        getConstantIntValue(operation.getLowerBound());
+    const std::optional<int64_t> stepValue =
+        getConstantIntValue(operation.getStep());
+    const bool invalidPeriod = periodAttr.getInt() <= 0 ||
+                               periodAttr.getInt() > kMaximumOwnershipPeriod ||
+                               (periodAttr.getInt() > 1 &&
+                                (!lowerValue || *lowerValue < 0)) ||
+                               (periodAttr.getInt() > 1 &&
+                                (!stepValue || *stepValue != 1));
+    if (invalidPeriod) {
+      return operation.emitError(
+          "canonical sync verifier found an invalid ownership loop period");
+    }
+    period = static_cast<unsigned>(periodAttr.getInt());
+    if (lowerValue && *lowerValue >= 0) {
+      lower = static_cast<std::uint64_t>(*lowerValue);
+    }
+  }
   SmallVector<VerifierEffectKey, 16> loopKeys;
   collectLoopKeys(program, operation.getRegion(), loopKeys);
   SmallVector<VerifierState, 8> visited;
@@ -285,9 +393,24 @@ LogicalResult executeLoop(const VerifierProgram &program,
           program.statistics->maxVerifierLoopStates, visited.size());
     }
     const VerifierState before = iteration;
-    if (failed(executeVerifierBlock(
-            program, target, operation.getRegion().front(), iteration))) {
-      return failure();
+    for (unsigned offset = 0; offset < period; ++offset) {
+      if (lower &&
+          offset > std::numeric_limits<std::uint64_t>::max() - *lower) {
+        return operation.emitError(
+            "canonical sync verifier ownership induction value overflowed");
+      }
+      if (lower) {
+        iteration.loopValues.push_back(
+            {operation.getOperation(), *lower + offset});
+      }
+      const LogicalResult executed = executeVerifierBlock(
+          program, target, operation.getRegion().front(), iteration);
+      if (lower) {
+        iteration.loopValues.pop_back();
+      }
+      if (failed(executed)) {
+        return failure();
+      }
     }
     if (!tokenKeysEqual(before.tokens, iteration.tokens)) {
       return operation.emitError("canonical sync verifier found an event "

@@ -91,6 +91,7 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
     }
     os << " ordered=" << (access.ordered ? "yes" : "no")
        << " physical=" << (access.physical ? "yes" : "no")
+       << " slot=" << (access.slotExpression ? "explicit" : "root")
        << " provenance=" << access.provenance << '\n';
   }
   os << "FENCE-EFFECTS " << program.getFenceEffects().size() << '\n';
@@ -180,6 +181,78 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
     }
     os << '\n';
   }
+  os << "OWNERSHIP-PROTOCOLS " << program.getOwnershipProtocols().size()
+     << '\n';
+  for (const CanonicalOwnershipProtocol &protocol :
+       program.getOwnershipProtocols()) {
+    os << "  ownership=o" << protocol.id << " mechanism=m" << protocol.mechanism
+       << " owner=r" << protocol.owner << " loop=r" << protocol.recurrenceLoop
+       << " resource=";
+    printResource(os, protocol.producer);
+    os << "->";
+    printResource(os, protocol.consumer);
+    os << " depth=" << protocol.depth
+       << " token-lanes=" << protocol.lanes.size()
+       << " period=" << protocol.period
+       << " reuse-distance=" << protocol.reuseDistance
+       << " witness-horizon=" << protocol.witnessHorizon << " family={"
+       << protocol.familyKey << "} parents=[";
+    llvm::interleaveComma(protocol.parentMechanisms, os,
+                          [&os](CanonicalMechanismId id) { os << 'm' << id; });
+    os << "] demands=[";
+    llvm::interleaveComma(protocol.witnessDemands, os,
+                          [&os](CanonicalDemandId id) { os << 'd' << id; });
+    os << "]\n";
+    for (auto [laneIndex, lane] : llvm::enumerate(protocol.lanes)) {
+      os << "    lane=" << laneIndex;
+      if (lane.readyEventId) {
+        os << " ready=e" << *lane.readyEventId;
+      }
+      if (lane.releaseEventId) {
+        os << " release=e" << *lane.releaseEventId;
+      }
+      os << '\n';
+    }
+    for (auto [slotIndex, slot] : llvm::enumerate(protocol.slots)) {
+      os << "    slot=" << slotIndex << " lane=" << slot.lane << " range=["
+         << slot.interval.begin << ',' << *slot.interval.end()
+         << ") expression=" << (slot.slotExpression ? "explicit" : "root")
+         << " reuse-distance=" << slot.reuseDistance << '\n';
+    }
+    for (auto [stageIndex, stage] : llvm::enumerate(protocol.stages)) {
+      os << "    stage=" << stageIndex << " slot=" << stage.slot
+         << " lane=" << stage.lane
+         << " initial=" << (stage.initialProducer ? "yes" : "no")
+         << " ready-distance=" << stage.readyDistance
+         << " release-distance=" << stage.releaseDistance << " write-acquire=";
+      printPoint(os, stage.writeAcquire);
+      os << " ready=";
+      printPoint(os, stage.ready);
+      os << " read-acquire=";
+      printPoint(os, stage.readAcquire);
+      os << " release=";
+      printPoint(os, stage.release);
+      os << " producers=[";
+      llvm::interleaveComma(stage.producers, os,
+                            [&os](CanonicalPhaseId id) { os << 'p' << id; });
+      os << "] consumers=[";
+      llvm::interleaveComma(stage.consumers, os,
+                            [&os](CanonicalPhaseId id) { os << 'p' << id; });
+      os << "] producer-guard=";
+      printGuard(os, stage.producerGuard);
+      os << " consumer-guard=";
+      printGuard(os, stage.consumerGuard);
+      os << '\n';
+    }
+    for (const CanonicalOwnershipWitnessEdge &edge : protocol.witnessEdges) {
+      os << "    witness="
+         << (edge.kind == CanonicalOwnershipWitnessKind::Ready ? "ready"
+                                                               : "release")
+         << " lane=" << edge.lane << " p" << edge.source << '@'
+         << edge.sourceIteration << "->p" << edge.target << '@'
+         << edge.targetIteration << '\n';
+    }
+  }
   os << "COVERAGE " << program.getCoverageWorlds().size() << '\n';
   for (const CanonicalCoverageWorld &world : program.getCoverageWorlds()) {
     os << "  world=" << world.name << " mechanisms=[";
@@ -197,11 +270,44 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
     } else {
       os << "match";
     }
+    if (world.structuralProposal) {
+      os << " proposal=g" << *world.structuralProposal
+         << " admitted=" << (world.setCoverCandidate ? "yes" : "no");
+    }
     os << '\n';
+  }
+  os << "STRUCTURAL-PROPOSALS " << program.getStructuralProposals().size()
+     << '\n';
+  for (const CanonicalStructuralProposal &proposal :
+       program.getStructuralProposals()) {
+    os << "  proposal=g" << proposal.id
+       << " kind=" << stringifyCanonicalStructuralProposalKind(proposal.kind)
+       << " owner=r" << proposal.owner << " level=" << proposal.level
+       << " semantics={" << proposal.semanticKey << "} mechanisms=[";
+    llvm::interleaveComma(proposal.mechanisms, os,
+                          [&os](CanonicalMechanismId id) { os << 'm' << id; });
+    os << "] crossing=[";
+    llvm::interleaveComma(proposal.crossingDemands, os,
+                          [&os](CanonicalDemandId id) { os << 'd' << id; });
+    os << "] singleton-union=[";
+    llvm::interleaveComma(proposal.singletonUnionCoverage, os,
+                          [&os](CanonicalDemandId id) { os << 'd' << id; });
+    os << "] grounded=[";
+    llvm::interleaveComma(proposal.groundedCoverage, os,
+                          [&os](CanonicalDemandId id) { os << 'd' << id; });
+    os << "] additional=[";
+    llvm::interleaveComma(proposal.additionalCoverage, os,
+                          [&os](CanonicalDemandId id) { os << 'd' << id; });
+    os << "] admitted=" << (proposal.admitted ? "yes" : "no") << '\n';
   }
   if (program.getSetCoverInstance()) {
     const CanonicalSetCoverInstance &instance = *program.getSetCoverInstance();
-    os << "SET-COVER optimization=singleton baseline=[";
+    const bool grouped = llvm::any_of(
+        instance.candidates, [](const CanonicalSetCoverCandidate &candidate) {
+          return candidate.structuralProposal.has_value();
+        });
+    os << "SET-COVER optimization="
+       << (grouped ? "grounded-groups" : "singleton") << " baseline=[";
     llvm::interleaveComma(instance.baseline, os,
                           [&os](CanonicalMechanismId id) { os << 'm' << id; });
     os << "] universe=[";
@@ -219,13 +325,23 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
       os << "] additional=[";
       llvm::interleaveComma(candidate.additionalCoverage, os,
                             [&os](CanonicalDemandId id) { os << 'd' << id; });
-      os << "]\n";
+      os << ']';
+      if (candidate.structuralProposal) {
+        os << " proposal=g" << *candidate.structuralProposal;
+      }
+      os << '\n';
     }
   }
   if (program.getSetCoverSolution()) {
     const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
-    os << "OPTIMIZATION enabled=yes mode=singleton-greedy"
-       << " greedy=[";
+    const bool grouped =
+        program.getSetCoverInstance() &&
+        llvm::any_of(program.getSetCoverInstance()->candidates,
+                     [](const CanonicalSetCoverCandidate &candidate) {
+                       return candidate.structuralProposal.has_value();
+                     });
+    os << "OPTIMIZATION enabled=yes mode="
+       << (grouped ? "grouped-greedy" : "singleton-greedy") << " greedy=[";
     llvm::interleaveComma(
         solution.greedyCandidates, os,
         [&os](CanonicalSetCoverCandidateId id) { os << 'c' << id; });
@@ -244,7 +360,25 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
     os << "] events=[";
     bool firstEvent = true;
     for (CanonicalMechanismId id : solution.mechanisms) {
-      const std::optional<unsigned> eventId = program.getMechanism(id).eventId;
+      const CanonicalMechanism &mechanism = program.getMechanism(id);
+      if (mechanism.kind == CanonicalMechanismKind::PeriodicOwnership &&
+          mechanism.ownershipProtocol) {
+        const CanonicalOwnershipProtocol &protocol =
+            program.getOwnershipProtocol(*mechanism.ownershipProtocol);
+        for (auto [laneIndex, lane] : llvm::enumerate(protocol.lanes)) {
+          if (!lane.readyEventId || !lane.releaseEventId) {
+            continue;
+          }
+          if (!firstEvent) {
+            os << ", ";
+          }
+          firstEvent = false;
+          os << 'm' << id << ".lane" << laneIndex << "=ready-e"
+             << *lane.readyEventId << "/release-e" << *lane.releaseEventId;
+        }
+        continue;
+      }
+      const std::optional<unsigned> eventId = mechanism.eventId;
       if (!eventId) {
         continue;
       }
@@ -253,8 +387,8 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
       }
       firstEvent = false;
       os << 'm' << id << "=e" << *eventId;
-      if (program.getMechanism(id).releaseEventId) {
-        os << "/release-e" << *program.getMechanism(id).releaseEventId;
+      if (mechanism.releaseEventId) {
+        os << "/release-e" << *mechanism.releaseEventId;
       }
     }
     os << "] scarcity=[";

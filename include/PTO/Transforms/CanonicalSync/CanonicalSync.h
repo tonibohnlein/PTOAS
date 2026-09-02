@@ -15,6 +15,7 @@
 #include "mlir/Pass/Pass.h"
 
 #include <memory>
+#include <string>
 
 namespace mlir {
 namespace pto {
@@ -24,10 +25,15 @@ struct CanonicalSyncOptions {
   bool dump = false;
   bool statistics = false;
   CanonicalGmAliasPolicy gmAliasPolicy = CanonicalGmAliasPolicy::Conservative;
+  CanonicalStructuralCoverFamilies structuralCoverFamilies = 0U;
 };
 
 std::optional<CanonicalGmAliasPolicy>
 parseCanonicalGmAliasPolicy(llvm::StringRef value);
+std::optional<CanonicalStructuralCoverFamilies>
+parseCanonicalStructuralCoverFamilies(llvm::StringRef value);
+std::string stringifyCanonicalStructuralCoverFamilies(
+    CanonicalStructuralCoverFamilies families);
 
 FailureOr<std::unique_ptr<CanonicalSyncProgram>> buildCanonicalSyncProgram(
     func::FuncOp function,

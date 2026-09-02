@@ -31,6 +31,12 @@ namespace {
 constexpr unsigned kReadBit = 1;
 constexpr unsigned kWriteBit = 2;
 
+bool isRuntimeTopologyQuery(Operation *operation) {
+  const StringRef name = operation->getName().getStringRef();
+  return name == "pto.get_block_idx" || name == "pto.get_subblock_idx" ||
+         name == "pto.get_block_num" || name == "pto.get_subblock_num";
+}
+
 std::optional<PIPE> convertPipe(PipelineType pipe) {
   switch (pipe) {
   case PipelineType::PIPE_S:
@@ -286,6 +292,10 @@ LogicalResult VerifierProgramBuilder::collectOperation(Operation *operation) {
     return collectBlock(section.getBody().front());
   }
   if (operation->hasTrait<OpTrait::IsTerminator>()) {
+    return success();
+  }
+  if (isRuntimeTopologyQuery(operation)) {
+    coveredOperations.insert(operation);
     return success();
   }
   if (auto cmo = dyn_cast<CmoCacheInvalidOp>(operation)) {

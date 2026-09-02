@@ -61,7 +61,11 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
            "Print one JSON statistics record per function">,
     Option<"gmAliasPolicy", "gm-alias-policy", "std::string",
            "\"conservative\"",
-           "GM alias policy: conservative or distinct-roots-unsafe">
+           "GM alias policy: conservative or distinct-roots-unsafe">,
+    Option<"structuralCoverMode", "structural-cover", "std::string",
+           "\"none\"",
+           "Structural direct-mechanism groups: none, all, or a comma-separated "
+           "list of level, transitive, connector, semantic, storage">
   ];
 
   let dependentDialects = [

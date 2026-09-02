@@ -10,6 +10,7 @@
 
 #include "CanonicalSyncInternal.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
@@ -29,6 +30,10 @@ constexpr StringLiteral kProtocolRoleAttr = "pto.canonical_sync.protocol_role";
 constexpr StringLiteral kReleaseOwnerAttr = "pto.canonical_sync.release_owner";
 constexpr StringLiteral kProtocolIndexAttr =
     "pto.canonical_sync.protocol_index";
+constexpr StringLiteral kProtocolLaneAttr =
+    "pto.canonical_sync.protocol_lane";
+constexpr StringLiteral kOwnershipPeriodAttr =
+    "pto.canonical_sync.ownership_period";
 
 struct EventAction {
   CanonicalMechanismId mechanism = kInvalidCanonicalSyncId;
@@ -58,6 +63,31 @@ struct SerializedEventAction {
   unsigned releaseEventId = 0;
   SmallVector<Operation *, 4> sourceAnchors;
   SmallVector<Operation *, 4> targetAnchors;
+};
+
+struct OwnershipStageAction {
+  unsigned lane = 0;
+  unsigned index = 0;
+  bool initialProducer = false;
+  Operation *writeAcquire = nullptr;
+  Operation *ready = nullptr;
+  Operation *readAcquire = nullptr;
+  Operation *release = nullptr;
+};
+
+struct OwnershipLaneAction {
+  unsigned readyEventId = 0;
+  unsigned releaseEventId = 0;
+};
+
+struct OwnershipProtocolAction {
+  CanonicalMechanismId mechanism = kInvalidCanonicalSyncId;
+  PIPE producer = PIPE::PIPE_UNASSIGNED;
+  PIPE consumer = PIPE::PIPE_UNASSIGNED;
+  unsigned period = 0;
+  Operation *loop = nullptr;
+  SmallVector<OwnershipLaneAction, 2> lanes;
+  SmallVector<OwnershipStageAction, 8> stages;
 };
 
 void tagGenerated(Operation *operation, OpBuilder &builder,
@@ -90,6 +120,16 @@ void tagSerializedProtocol(Operation *operation, OpBuilder &builder,
                      builder.getI32IntegerAttr(static_cast<int32_t>(index)));
 }
 
+void tagOwnershipProtocol(Operation *operation, OpBuilder &builder,
+                          CanonicalMechanismId mechanism, StringRef role,
+                          unsigned lane, unsigned index) {
+  tagProtocol(operation, builder, mechanism, role);
+  operation->setAttr(kProtocolLaneAttr,
+                     builder.getI32IntegerAttr(static_cast<int32_t>(lane)));
+  operation->setAttr(kProtocolIndexAttr,
+                     builder.getI32IntegerAttr(static_cast<int32_t>(index)));
+}
+
 LogicalResult collectActions(
     const CanonicalSyncProgram &program, const IRMapping &mapping,
     DenseMap<Operation *, SmallVector<EventAction, 2>> &sets,
@@ -98,7 +138,8 @@ LogicalResult collectActions(
     DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>>
         &visibilityFences,
     SmallVectorImpl<RecurringEventAction> &protocols,
-    SmallVectorImpl<SerializedEventAction> &serializedProtocols) {
+    SmallVectorImpl<SerializedEventAction> &serializedProtocols,
+    SmallVectorImpl<OwnershipProtocolAction> &ownershipProtocols) {
   const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
   SmallVector<CanonicalMechanismId, 8> scarcityMembers;
   for (const CanonicalScarcityEventGroup &group :
@@ -167,6 +208,67 @@ LogicalResult collectActions(
       continue;
     }
     if (llvm::is_contained(scarcityMembers, mechanism.id)) {
+      continue;
+    }
+    if (mechanism.kind == CanonicalMechanismKind::PeriodicOwnership) {
+      if (!mechanism.ownershipProtocol) {
+        return program.getFunction().emitError(
+            "canonical sync ownership mechanism lacks a protocol");
+      }
+      const CanonicalOwnershipProtocol &protocol =
+          program.getOwnershipProtocol(*mechanism.ownershipProtocol);
+      Operation *loop = mapping.lookupOrNull(
+          program.getRegion(protocol.recurrenceLoop).operation);
+      if (!loop || !isa<scf::ForOp>(loop)) {
+        return program.getFunction().emitError(
+            "canonical sync failed to map an ownership protocol loop");
+      }
+      OwnershipProtocolAction action;
+      action.mechanism = mechanism.id;
+      action.producer = protocol.producer.pipe;
+      action.consumer = protocol.consumer.pipe;
+      action.period = protocol.period;
+      action.loop = loop;
+      auto existingPeriod = loop->getAttrOfType<IntegerAttr>(
+          kOwnershipPeriodAttr);
+      if ((existingPeriod &&
+           existingPeriod.getInt() != static_cast<int64_t>(action.period)) ||
+          action.period == 0U) {
+        return program.getFunction().emitError(
+            "canonical sync ownership protocols disagree on a loop period");
+      }
+      loop->setAttr(kOwnershipPeriodAttr,
+                    IntegerAttr::get(
+                        IntegerType::get(loop->getContext(), 64),
+                        action.period));
+      for (const CanonicalOwnershipLane &lane : protocol.lanes) {
+        if (!lane.readyEventId || !lane.releaseEventId) {
+          return program.getFunction().emitError(
+              "canonical sync ownership lane lacks allocated event IDs");
+        }
+        action.lanes.push_back({*lane.readyEventId, *lane.releaseEventId});
+      }
+      for (auto [index, stage] : llvm::enumerate(protocol.stages)) {
+        OwnershipStageAction concrete;
+        concrete.lane = stage.lane;
+        concrete.index = static_cast<unsigned>(index);
+        concrete.initialProducer = stage.initialProducer;
+        concrete.writeAcquire =
+            mapping.lookupOrNull(stage.writeAcquire.operation);
+        concrete.ready = mapping.lookupOrNull(stage.ready.operation);
+        concrete.readAcquire =
+            mapping.lookupOrNull(stage.readAcquire.operation);
+        concrete.release = mapping.lookupOrNull(stage.release.operation);
+        const bool invalid = concrete.lane >= action.lanes.size() ||
+                             !concrete.writeAcquire || !concrete.ready ||
+                             !concrete.readAcquire || !concrete.release;
+        if (invalid) {
+          return program.getFunction().emitError(
+              "canonical sync failed to map an ownership protocol stage");
+        }
+        action.stages.push_back(concrete);
+      }
+      ownershipProtocols.push_back(std::move(action));
       continue;
     }
     Operation *waitAnchor =
@@ -382,6 +484,135 @@ void emitSerializedProtocols(func::FuncOp clone,
   }
 }
 
+void emitOwnershipProtocols(func::FuncOp clone,
+                            ArrayRef<OwnershipProtocolAction> protocols) {
+  OpBuilder builder(clone.getContext());
+  for (const OwnershipProtocolAction &protocol : protocols) {
+    const Location loopLocation = protocol.loop->getLoc();
+    for (auto [laneIndex, lane] : llvm::enumerate(protocol.lanes)) {
+      const bool seededByInitialProducer = llvm::any_of(
+          protocol.stages, [laneIndex](const OwnershipStageAction &stage) {
+            return stage.lane == laneIndex && stage.initialProducer;
+          });
+      if (seededByInitialProducer) {
+        continue;
+      }
+      builder.setInsertionPoint(protocol.loop);
+      Operation *prime = createProtocolEvent<SetFlagOp>(
+          builder, loopLocation, clone, protocol.consumer, protocol.producer,
+          lane.releaseEventId, protocol.mechanism,
+          "ownership-release-prime-set");
+      tagOwnershipProtocol(prime, builder, protocol.mechanism,
+                           "ownership-release-prime-set", laneIndex, 0U);
+    }
+    SmallVector<std::pair<Operation *, unsigned>, 16> releaseWaits;
+    SmallVector<std::pair<Operation *, unsigned>, 16> readySets;
+    SmallVector<std::pair<Operation *, unsigned>, 16> readyWaits;
+    SmallVector<std::pair<Operation *, unsigned>, 16> releaseSets;
+    for (const OwnershipStageAction &stage : protocol.stages) {
+      const OwnershipLaneAction &lane = protocol.lanes[stage.lane];
+      const std::pair<Operation *, unsigned> releaseWaitKey{
+          stage.writeAcquire, stage.lane};
+      if (!stage.initialProducer &&
+          !llvm::is_contained(releaseWaits, releaseWaitKey)) {
+        releaseWaits.push_back(releaseWaitKey);
+        builder.setInsertionPoint(stage.writeAcquire);
+        Operation *releaseWait = createProtocolEvent<WaitFlagOp>(
+            builder, stage.writeAcquire->getLoc(), clone, protocol.consumer,
+            protocol.producer, lane.releaseEventId, protocol.mechanism,
+            "ownership-release-wait");
+        tagOwnershipProtocol(releaseWait, builder, protocol.mechanism,
+                             "ownership-release-wait", stage.lane,
+                             stage.index);
+      }
+
+      const std::pair<Operation *, unsigned> readySetKey{stage.ready,
+                                                         stage.lane};
+      if (!llvm::is_contained(readySets, readySetKey)) {
+        readySets.push_back(readySetKey);
+        builder.setInsertionPointAfter(stage.ready);
+        Operation *readySet = createProtocolEvent<SetFlagOp>(
+            builder, stage.ready->getLoc(), clone, protocol.producer,
+            protocol.consumer, lane.readyEventId, protocol.mechanism,
+            "ownership-ready-set");
+        tagOwnershipProtocol(readySet, builder, protocol.mechanism,
+                             "ownership-ready-set", stage.lane, stage.index);
+      }
+
+      const std::pair<Operation *, unsigned> readyWaitKey{
+          stage.readAcquire, stage.lane};
+      if (!llvm::is_contained(readyWaits, readyWaitKey)) {
+        readyWaits.push_back(readyWaitKey);
+        builder.setInsertionPoint(stage.readAcquire);
+        Operation *readyWait = createProtocolEvent<WaitFlagOp>(
+            builder, stage.readAcquire->getLoc(), clone, protocol.producer,
+            protocol.consumer, lane.readyEventId, protocol.mechanism,
+            "ownership-ready-wait");
+        tagOwnershipProtocol(readyWait, builder, protocol.mechanism,
+                             "ownership-ready-wait", stage.lane,
+                             stage.index);
+      }
+
+      const std::pair<Operation *, unsigned> releaseSetKey{stage.release,
+                                                           stage.lane};
+      if (!llvm::is_contained(releaseSets, releaseSetKey)) {
+        releaseSets.push_back(releaseSetKey);
+        builder.setInsertionPointAfter(stage.release);
+        Operation *releaseSet = createProtocolEvent<SetFlagOp>(
+            builder, stage.release->getLoc(), clone, protocol.consumer,
+            protocol.producer, lane.releaseEventId, protocol.mechanism,
+            "ownership-release-set");
+        tagOwnershipProtocol(releaseSet, builder, protocol.mechanism,
+                             "ownership-release-set", stage.lane,
+                             stage.index);
+      }
+    }
+    for (auto [laneIndex, lane] : llvm::enumerate(protocol.lanes)) {
+      const bool seededByInitialProducer = llvm::any_of(
+          protocol.stages, [laneIndex](const OwnershipStageAction &stage) {
+            return stage.lane == laneIndex && stage.initialProducer;
+          });
+      builder.setInsertionPointAfter(protocol.loop);
+      if (seededByInitialProducer) {
+        auto loop = cast<scf::ForOp>(protocol.loop);
+        Value nonEmpty = builder.create<arith::CmpIOp>(
+            loopLocation, arith::CmpIPredicate::slt, loop.getLowerBound(),
+            loop.getUpperBound());
+        auto drainChoice = builder.create<scf::IfOp>(
+            loopLocation, TypeRange{}, nonEmpty, /*withElseRegion=*/true);
+        {
+          OpBuilder::InsertionGuard guard(builder);
+          builder.setInsertionPointToStart(
+              &drainChoice.getThenRegion().front());
+          Operation *releaseDrain = createProtocolEvent<WaitFlagOp>(
+              builder, loopLocation, clone, protocol.consumer,
+              protocol.producer, lane.releaseEventId, protocol.mechanism,
+              "ownership-release-drain-wait");
+          tagOwnershipProtocol(releaseDrain, builder, protocol.mechanism,
+                               "ownership-release-drain-wait", laneIndex,
+                               0U);
+          builder.setInsertionPointToStart(
+              &drainChoice.getElseRegion().front());
+          Operation *readyDrain = createProtocolEvent<WaitFlagOp>(
+              builder, loopLocation, clone, protocol.producer,
+              protocol.consumer, lane.readyEventId, protocol.mechanism,
+              "ownership-ready-zero-trip-drain-wait");
+          tagOwnershipProtocol(readyDrain, builder, protocol.mechanism,
+                               "ownership-ready-zero-trip-drain-wait",
+                               laneIndex, 0U);
+        }
+        continue;
+      }
+      Operation *drain = createProtocolEvent<WaitFlagOp>(
+          builder, loopLocation, clone, protocol.consumer, protocol.producer,
+          lane.releaseEventId, protocol.mechanism,
+          "ownership-release-drain-wait");
+      tagOwnershipProtocol(drain, builder, protocol.mechanism,
+                           "ownership-release-drain-wait", laneIndex, 0U);
+    }
+  }
+}
+
 void sortActions(SmallVectorImpl<EventAction> &actions) {
   llvm::sort(actions, [](const EventAction &first, const EventAction &second) {
     return std::tie(first.source, first.target, first.eventId, first.crossCore,
@@ -570,14 +801,16 @@ mlir::pto::materializeAndVerifyCanonicalSync(CanonicalSyncProgram &program) {
   DenseMap<Operation *, SmallVector<CanonicalMechanismId, 2>> visibilityFences;
   SmallVector<RecurringEventAction, 2> protocols;
   SmallVector<SerializedEventAction, 2> serializedProtocols;
+  SmallVector<OwnershipProtocolAction, 2> ownershipProtocols;
   if (failed(collectActions(program, mapping, sets, waits, barriers,
                             visibilityFences, protocols,
-                            serializedProtocols))) {
+                            serializedProtocols, ownershipProtocols))) {
     return failure();
   }
   emitActions(clone, sets, waits, barriers, visibilityFences, program);
   emitRecurringProtocols(clone, protocols);
   emitSerializedProtocols(clone, serializedProtocols);
+  emitOwnershipProtocols(clone, ownershipProtocols);
   if (failed(emitTailBarriers(clone, program, mapping))) {
     return failure();
   }

@@ -355,6 +355,8 @@ bool sameMechanism(const CanonicalMechanism &left,
            left.targetPoint == right.targetPoint &&
            left.recurrenceLoop == right.recurrenceLoop &&
            left.boundaryRecurring == right.boundaryRecurring;
+  case CanonicalMechanismKind::PeriodicOwnership:
+    return left.ownershipProtocol == right.ownershipProtocol;
   case CanonicalMechanismKind::VisibilityFence:
     return left.targetPoint == right.targetPoint &&
            left.generatedCacheMaintenance == right.generatedCacheMaintenance;
@@ -747,29 +749,12 @@ bool recurringMechanismMatches(const CanonicalSyncProgram &program,
         demand.source == forward.source && demand.target == forward.target;
     const bool reverseEndpoints =
         demand.source == forward.target && demand.target == forward.source;
-    if (sameEndpoints || reverseEndpoints) {
-      return true;
-    }
-
-    // A branch-local forward channel also establishes completion on its
-    // target pipeline.  FIFO issue order on that physical pipeline carries
-    // the fact to a later target in another arm/iteration.  The reverse
-    // release channel supplies the symmetric reuse relation.  Keep one
-    // endpoint exact so this is a direct consequence of the documented
-    // ready/release protocol rather than a general reachability guess.
-    const CanonicalPhysicalResource demandSource =
-        program.getPhase(demand.source).resource;
-    const CanonicalPhysicalResource demandTarget =
-        program.getPhase(demand.target).resource;
-    const CanonicalPhysicalResource forwardSource =
-        program.getPhase(forward.source).resource;
-    const CanonicalPhysicalResource forwardTarget =
-        program.getPhase(forward.target).resource;
-    const bool forwardTargetPipeline =
-        demand.source == forward.source && demandTarget == forwardTarget;
-    const bool reverseTargetPipeline =
-        demandSource == forwardTarget && demandTarget == forwardSource;
-    return forwardTargetPipeline || reverseTargetPipeline;
+    // Direct mapping is deliberately endpoint-exact. A recurring channel may
+    // own the forward ready demand and its exact reverse release demand, but
+    // sharing only a physical pipe direction is not enough: distinct storage
+    // generations can use the same pair of pipelines at unrelated cuts.
+    // Any broader transitive effect is discovered later by grounded coverage.
+    return sameEndpoints || reverseEndpoints;
   });
 }
 

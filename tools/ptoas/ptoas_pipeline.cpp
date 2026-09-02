@@ -681,12 +681,15 @@ struct SerialAutoSyncPass
                      bool canonicalDump = false,
                      bool canonicalStatistics = false,
                      pto::CanonicalGmAliasPolicy canonicalGmAliasPolicy =
-                         pto::CanonicalGmAliasPolicy::Conservative)
+                         pto::CanonicalGmAliasPolicy::Conservative,
+                     pto::CanonicalStructuralCoverFamilies
+                         canonicalStructuralCoverFamilies = 0U)
       : mode(mode), enableBufidDebug(enableBufidDebug),
         canonicalAnalysisOnly(canonicalAnalysisOnly),
         canonicalDump(canonicalDump),
         canonicalStatistics(canonicalStatistics),
-        canonicalGmAliasPolicy(canonicalGmAliasPolicy) {}
+        canonicalGmAliasPolicy(canonicalGmAliasPolicy),
+        canonicalStructuralCoverFamilies(canonicalStructuralCoverFamilies) {}
 
   void runOnOperation() override {
     OpPassManager functionPM(func::FuncOp::getOperationName());
@@ -700,6 +703,7 @@ struct SerialAutoSyncPass
       options.dump = canonicalDump;
       options.statistics = canonicalStatistics;
       options.gmAliasPolicy = canonicalGmAliasPolicy;
+      options.structuralCoverFamilies = canonicalStructuralCoverFamilies;
       functionPM.addPass(pto::createPTOCanonicalSyncPass(options));
       break;
     }
@@ -730,6 +734,7 @@ private:
   bool canonicalDump;
   bool canonicalStatistics;
   pto::CanonicalGmAliasPolicy canonicalGmAliasPolicy;
+  pto::CanonicalStructuralCoverFamilies canonicalStructuralCoverFamilies;
 };
 } // namespace
 
@@ -1087,10 +1092,20 @@ static LogicalResult validateCompileBackendFlags(PTOBackend backend,
                  << canonicalSyncGmAliasPolicy << "'.\n";
     return failure();
   }
+  const std::optional<pto::CanonicalStructuralCoverFamilies>
+      canonicalStructuralCoverFamilies =
+          pto::parseCanonicalStructuralCoverFamilies(
+              canonicalSyncStructuralCover);
+  if (!canonicalStructuralCoverFamilies) {
+    llvm::errs() << "Error: unsupported --canonical-sync-structural-cover='"
+                 << canonicalSyncStructuralCover << "'.\n";
+    return failure();
+  }
   const bool canonicalConfiguration =
       canonicalSyncAnalysisOnly || canonicalSyncDump ||
       canonicalSyncStatistics ||
-      *canonicalAliasPolicy != pto::CanonicalGmAliasPolicy::Conservative;
+      *canonicalAliasPolicy != pto::CanonicalGmAliasPolicy::Conservative ||
+      *canonicalStructuralCoverFamilies != 0U;
   if (canonicalConfiguration && !enableCanonicalSync) {
     llvm::errs() << "Error: canonical sync diagnostic/policy flags require "
                     "--enable-canonical-sync.\n";
@@ -1433,10 +1448,14 @@ static void appendAutoSyncPasses(PassManager &pm) {
     options.gmAliasPolicy =
         pto::parseCanonicalGmAliasPolicy(canonicalSyncGmAliasPolicy)
             .value_or(pto::CanonicalGmAliasPolicy::Conservative);
+    options.structuralCoverFamilies =
+        pto::parseCanonicalStructuralCoverFamilies(canonicalSyncStructuralCover)
+            .value_or(0U);
     if (emitMlirIR) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::Canonical, false, options.analysisOnly,
-          options.dump, options.statistics, options.gmAliasPolicy));
+          options.dump, options.statistics, options.gmAliasPolicy,
+          options.structuralCoverFamilies));
     } else {
       pm.addNestedPass<func::FuncOp>(pto::createPTOCanonicalSyncPass(options));
     }
