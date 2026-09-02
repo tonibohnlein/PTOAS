@@ -43,7 +43,7 @@ module attributes {pto.target_arch = "a2a3"} {
   }
 }
 
-// ANALYZE: TARGET npu2201-a2a3-v1
+// ANALYZE: TARGET npu2201-a2a3-v1 ids=0,1,2,3,4,5 cross-core-planning=unsupported
 // ANALYZE: REGIONS
 // ANALYZE: PHASES
 // ANALYZE: ACCESSES

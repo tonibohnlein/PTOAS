@@ -17,10 +17,8 @@
 namespace mlir {
 namespace pto {
 
-struct CanonicalEventDomain {
-  CanonicalPhysicalResource source;
-  CanonicalPhysicalResource target;
-  llvm::SmallVector<unsigned, 6> reservedIds;
+enum class CanonicalCrossCorePlanning : std::uint8_t {
+  Unsupported,
 };
 
 class CanonicalSyncTarget {
@@ -34,15 +32,13 @@ public:
                      CanonicalPhysicalResource target) const;
   bool supportsEventGmPublication(CanonicalPhysicalResource source,
                                   CanonicalPhysicalResource target) const;
-  bool supportsCrossCoreEvent(CanonicalPhysicalResource source,
-                              CanonicalPhysicalResource target) const;
+  CanonicalCrossCorePlanning getCrossCorePlanning() const {
+    return crossCorePlanning;
+  }
   FailureOr<llvm::SmallVector<CanonicalPhysicalResource, 8>>
   getFenceDrainedResources(Operation *fence) const;
   llvm::ArrayRef<unsigned> getCompilerEventIds() const {
     return compilerEventIds;
-  }
-  llvm::ArrayRef<unsigned> getCompilerCrossCoreEventIds() const {
-    return compilerCrossCoreEventIds;
   }
   llvm::StringRef getName() const { return name; }
 
@@ -58,7 +54,8 @@ private:
       std::pair<CanonicalPhysicalResource, CanonicalPhysicalResource>, 4>
       eventGmPublicationPairs;
   llvm::SmallVector<unsigned, 6> compilerEventIds;
-  llvm::SmallVector<unsigned, 11> compilerCrossCoreEventIds;
+  CanonicalCrossCorePlanning crossCorePlanning =
+      CanonicalCrossCorePlanning::Unsupported;
 
   friend CanonicalSyncTarget makeNpu2201CanonicalSyncTarget();
 };

@@ -806,9 +806,13 @@ buildDirectMechanism(const CanonicalSyncProgram &program,
     return mechanism;
   }
   if (source.core != destination.core) {
+    const bool unsupported = target.getCrossCorePlanning() ==
+                             CanonicalCrossCorePlanning::Unsupported;
     targetPhase.operation->emitError(
-        "canonical sync cannot generate a cross-core event until collective "
-        "AIC/AIV participation is represented and proven")
+        unsupported
+            ? "canonical sync cannot generate a cross-core event until "
+              "collective AIC/AIV participation is represented and proven"
+            : "canonical sync target cross-core planner is not implemented")
         << "; demand d" << demand.id << " crosses "
         << stringifyCanonicalCore(source.core) << ':'
         << stringifyPIPE(source.pipe) << " to "

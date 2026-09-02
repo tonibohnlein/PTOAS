@@ -28,7 +28,6 @@ enum class AllocationUnitKind : std::uint8_t {
   PooledRelease,
   SerializedReady,
   SerializedRelease,
-  CrossCore,
 };
 
 struct AllocationUnit {
@@ -53,7 +52,6 @@ struct AllocationFailure {
   CanonicalPhysicalResource source;
   CanonicalPhysicalResource target;
   Operation *witness = nullptr;
-  bool crossCore = false;
 };
 
 bool unitsInterfere(const CanonicalSyncProgram &program,
@@ -115,16 +113,10 @@ bool idAvailable(const CanonicalSyncProgram &program,
                  const AllocationUnit &candidate, unsigned eventId,
                  ArrayRef<AllocationUnit> assigned) {
   for (const AllocationUnit &existing : assigned) {
-    const bool sameCrossCoreKey =
-        candidate.kind == AllocationUnitKind::CrossCore &&
-        existing.kind == AllocationUnitKind::CrossCore &&
-        existing.eventId == eventId;
-    const bool sameIntraCoreKey =
-        candidate.kind != AllocationUnitKind::CrossCore &&
-        existing.kind != AllocationUnitKind::CrossCore &&
-        candidate.source == existing.source &&
-        candidate.target == existing.target && existing.eventId == eventId;
-    const bool collides = (sameCrossCoreKey || sameIntraCoreKey) &&
+    const bool sameKey = candidate.source == existing.source &&
+                         candidate.target == existing.target &&
+                         existing.eventId == eventId;
+    const bool collides = sameKey &&
                           unitsInterfere(program, candidate, existing);
     if (collides) {
       return false;
@@ -160,18 +152,6 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
                          std::nullopt,
                          0});
       }
-      continue;
-    }
-    if (mechanism.kind == CanonicalMechanismKind::CrossCoreEvent) {
-      units.push_back({AllocationUnitKind::CrossCore,
-                       {mechanism.id},
-                       std::nullopt,
-                       std::nullopt,
-                       mechanism.source,
-                       mechanism.target,
-                       getOnceOnlyControlPath(program, mechanism.guard),
-                       std::nullopt,
-                       0});
       continue;
     }
     if (mechanism.kind != CanonicalMechanismKind::RecurringEvent) {
@@ -315,14 +295,9 @@ bool allocateUnits(const CanonicalSyncProgram &program,
                    AllocationFailure &failure) {
   SmallVector<AllocationUnit, 8> assigned;
   for (AllocationUnit &unit : units) {
-    ArrayRef<unsigned> ids = unit.kind == AllocationUnitKind::CrossCore
-                                 ? target.getCompilerCrossCoreEventIds()
-                                 : target.getCompilerEventIds();
-    SmallVector<unsigned, 6> reserved;
-    if (unit.kind != AllocationUnitKind::CrossCore) {
-      reserved =
-          reservedEventIds(program.getFunction(), unit.source, unit.target);
-    }
+    ArrayRef<unsigned> ids = target.getCompilerEventIds();
+    SmallVector<unsigned, 6> reserved =
+        reservedEventIds(program.getFunction(), unit.source, unit.target);
     const auto available = llvm::find_if(ids, [&](unsigned eventId) {
       return !llvm::is_contained(reserved, eventId) &&
              idAvailable(program, unit, eventId, assigned);
@@ -330,7 +305,6 @@ bool allocateUnits(const CanonicalSyncProgram &program,
     if (available == ids.end()) {
       failure.source = unit.source;
       failure.target = unit.target;
-      failure.crossCore = unit.kind == AllocationUnitKind::CrossCore;
       const CanonicalMechanismId witnessId = unit.mechanisms.empty()
                                                  ? kInvalidCanonicalSyncId
                                                  : unit.mechanisms.front();
@@ -386,9 +360,6 @@ bool appendCoalescedFallback(
     const CanonicalSyncProgram &program, const CanonicalSyncTarget &target,
     const AllocationFailure &failure,
     SmallVectorImpl<CanonicalScarcityEventGroup> &groups) {
-  if (failure.crossCore) {
-    return false;
-  }
   const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
   SmallVector<const CanonicalMechanism *, 16> candidates;
   for (CanonicalMechanismId id : solution.mechanisms) {
@@ -469,8 +440,7 @@ bool appendSerializedFallback(
     const CanonicalSyncProgram &program, const CanonicalSyncTarget &target,
     const AllocationFailure &failure,
     SmallVectorImpl<CanonicalScarcityEventGroup> &groups) {
-  if (failure.crossCore ||
-      !target.supportsEvent(failure.target, failure.source)) {
+  if (!target.supportsEvent(failure.target, failure.source)) {
     return false;
   }
   const CanonicalSetCoverSolution &solution = *program.getSetCoverSolution();
@@ -666,8 +636,7 @@ bool appendRecurringReleasePoolFallback(
     const CanonicalSyncProgram &program, const AllocationFailure &failure,
     ArrayRef<CanonicalScarcityEventGroup> groups,
     SmallVectorImpl<CanonicalRecurringReleasePool> &releasePools) {
-  return !failure.crossCore &&
-         appendRecurringReleasePool(program, failure.source, failure.target,
+  return appendRecurringReleasePool(program, failure.source, failure.target,
                                     false, 2, groups, releasePools);
 }
 
@@ -754,10 +723,6 @@ emitAllocationFailure(const CanonicalSyncProgram &program,
   Operation *witness = allocationFailure.witness
                            ? allocationFailure.witness
                            : program.getFunction().getOperation();
-  if (allocationFailure.crossCore) {
-    return witness->emitError(
-        "canonical sync exhausted cross-core counter IDs");
-  }
   witness->emitError("canonical sync exhausted compiler event IDs after "
                      "hidden macro reservations, cut coalescing, serialized "
                      "ready/release fallback, and certified recurring-ready "
@@ -775,6 +740,18 @@ mlir::pto::allocateCanonicalSyncEvents(CanonicalSyncProgram &program) {
   if (!program.getSetCoverSolution()) {
     return program.getFunction().emitError(
         "canonical sync event allocation requires a selected cover");
+  }
+  for (CanonicalMechanismId mechanismId :
+       program.getSetCoverSolution()->mechanisms) {
+    const CanonicalMechanism &mechanism =
+        program.getMechanism(mechanismId);
+    if (mechanism.kind == CanonicalMechanismKind::CrossCoreEvent) {
+      Operation *witness = mechanism.targetPoint.operation
+                               ? mechanism.targetPoint.operation
+                               : program.getFunction().getOperation();
+      return witness->emitError(
+          "canonical sync target has no collective cross-core planner");
+    }
   }
   FailureOr<CanonicalSyncTarget> target =
       CanonicalSyncTarget::resolve(program.getFunction());

@@ -46,7 +46,8 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
   os << "CANONICAL-SYNC function=" << program.getFunction().getSymName()
      << " gm-alias-policy="
      << stringifyCanonicalGmAliasPolicy(program.getGmAliasPolicy()) << '\n';
-  os << "TARGET npu2201-a2a3-v1 ids=0,1,2,3,4,5\n";
+  os << "TARGET npu2201-a2a3-v1 ids=0,1,2,3,4,5"
+        " cross-core-planning=unsupported\n";
   os << "REGIONS " << program.getRegions().size() << '\n';
   for (const CanonicalRegion &region : program.getRegions()) {
     os << "  r" << region.id

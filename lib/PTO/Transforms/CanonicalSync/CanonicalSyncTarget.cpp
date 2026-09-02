@@ -94,7 +94,10 @@ CanonicalSyncTarget mlir::pto::makeNpu2201CanonicalSyncTarget() {
   // A2/A3 device evidence conflict; enable a pair only after a focused target
   // contract and device gate establish its publication guarantee.
   target.compilerEventIds = {0, 1, 2, 3, 4, 5};
-  target.compilerCrossCoreEventIds = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+  // A2/A3 cross-core synchronization is a topology-dependent collective, not
+  // a pairwise pipeline event. The current graph has no participant-set or
+  // uniform-control proof, so the target exposes no cross-core planner.
+  target.crossCorePlanning = CanonicalCrossCorePlanning::Unsupported;
   return target;
 }
 
@@ -169,13 +172,6 @@ bool CanonicalSyncTarget::supportsEventGmPublication(
     CanonicalPhysicalResource source, CanonicalPhysicalResource target) const {
   return llvm::is_contained(eventGmPublicationPairs,
                             std::make_pair(source, target));
-}
-
-bool CanonicalSyncTarget::supportsCrossCoreEvent(
-    CanonicalPhysicalResource source, CanonicalPhysicalResource target) const {
-  return source.core != target.core && source.pipe != PIPE::PIPE_S &&
-         target.pipe != PIPE::PIPE_S && supportsResource(source) &&
-         supportsResource(target);
 }
 
 FailureOr<SmallVector<CanonicalPhysicalResource, 8>>

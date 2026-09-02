@@ -6,6 +6,13 @@ Canonical synchronization is an opt-in A2/A3 synchronization mode. Its first
 implementation establishes a hardware-grounded dependency and demand model and
 then selects a covering subset of direct hardware mechanisms.
 
+The current target is deliberately an intra-core planner. It detects AIC/AIV
+cross-core demands, but rejects them because A2/A3 cross-core synchronization
+is a collective protocol whose correctness depends on kernel topology,
+participant multiplicity, and uniform participation. The target interface
+therefore reports `cross-core-planning=unsupported`; it does not expose a
+pairwise cross-core event matrix or a compiler counter pool.
+
 The design separates five questions:
 
 1. Which dynamic memory effects can conflict?
@@ -44,6 +51,13 @@ The A2/A3 target table follows the NPU 2201 synchronization documentation:
   ordinary compiler allocation.
 
 The target table is explicit rather than inferred from pipe membership.
+
+Cross-core mode 2 must eventually be modeled as one AIC and every associated
+AIV participating in one atomic collective. Mode 0 and mode 1 similarly need
+their full participant and scheduling contracts. Until those facts are present
+in the immutable graph and independently reconstructed by the verifier,
+cross-core demands fail closed rather than entering the local set-cover
+instance.
 
 | Core | Supported event directions |
 | --- | --- |

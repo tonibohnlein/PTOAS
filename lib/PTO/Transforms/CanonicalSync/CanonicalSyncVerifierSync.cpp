@@ -19,9 +19,6 @@ using namespace mlir::pto::canonical_sync_detail;
 
 namespace {
 
-constexpr StringLiteral kGeneratedAttr = "pto.canonical_sync.generated";
-constexpr StringLiteral kMechanismAttr = "pto.canonical_sync.mechanism";
-
 VerifierResourceState &getResource(VerifierState &state,
                                    CanonicalPhysicalResource resource) {
   auto iterator =
@@ -178,150 +175,6 @@ LogicalResult applyWait(const VerifierProgram &program,
   return success();
 }
 
-template <typename CounterpartOp>
-FailureOr<CounterpartOp>
-findCrossCoreCounterpart(const VerifierProgram &program, Operation *operation) {
-  if (!operation->hasAttr(kGeneratedAttr)) {
-    operation->emitError(
-        "canonical sync verifier found an unowned cross-core event");
-    return failure();
-  }
-  auto mechanism = operation->getAttrOfType<IntegerAttr>(kMechanismAttr);
-  if (!mechanism) {
-    operation->emitError(
-        "canonical sync verifier found an untagged cross-core event");
-    return failure();
-  }
-  CounterpartOp result;
-  func::FuncOp function = program.function;
-  function.walk([&](CounterpartOp candidate) {
-    auto candidateMechanism =
-        candidate->template getAttrOfType<IntegerAttr>(kMechanismAttr);
-    if (candidateMechanism && candidateMechanism == mechanism) {
-      result = candidate;
-    }
-  });
-  if (!result) {
-    operation->emitError(
-        "canonical sync verifier found an unbalanced cross-core event");
-    return failure();
-  }
-  return result;
-}
-
-LogicalResult resolveCrossCoreEvent(const VerifierProgram &program,
-                                    const CanonicalSyncTarget &target,
-                                    SyncSetOp set, SyncWaitOp wait,
-                                    CanonicalPhysicalResource &source,
-                                    CanonicalPhysicalResource &destination,
-                                    unsigned &eventId) {
-  IntegerAttr setId = set.getEventIdAttr();
-  IntegerAttr waitId = wait.getEventIdAttr();
-  IntegerAttr setMode = set.getFftsModeAttr();
-  IntegerAttr waitMode = wait.getFftsModeAttr();
-  const bool invalid = !setId || !waitId || set.getEventIdDyn() ||
-                       wait.getEventIdDyn() || !setMode || !waitMode ||
-                       setId.getInt() < 0 || setId != waitId ||
-                       setMode.getInt() != 2 || waitMode.getInt() != 2;
-  if (invalid) {
-    return set.emitError(
-        "canonical sync verifier found an invalid cross-core event pair");
-  }
-  FailureOr<CanonicalPhysicalResource> sourceResult =
-      resolvePhysicalResource(program.function, set, set.getPipe().getPipe());
-  FailureOr<CanonicalPhysicalResource> destinationResult =
-      resolvePhysicalResource(program.function, wait, wait.getPipe().getPipe());
-  const bool unresolvedResources =
-      failed(sourceResult) || failed(destinationResult);
-  if (unresolvedResources) {
-    return failure();
-  }
-  source = *sourceResult;
-  destination = *destinationResult;
-  eventId = static_cast<unsigned>(setId.getInt());
-  const bool unsupported =
-      !target.supportsCrossCoreEvent(source, destination) ||
-      !llvm::is_contained(target.getCompilerCrossCoreEventIds(), eventId);
-  if (unsupported) {
-    return set.emitError(
-        "canonical sync verifier found an unsupported cross-core event key");
-  }
-  return success();
-}
-
-LogicalResult applyCrossCoreSet(const VerifierProgram &program,
-                                const CanonicalSyncTarget &target,
-                                SyncSetOp operation, VerifierState &state) {
-  FailureOr<SyncWaitOp> wait =
-      findCrossCoreCounterpart<SyncWaitOp>(program, operation);
-  if (failed(wait)) {
-    return failure();
-  }
-  CanonicalPhysicalResource source;
-  CanonicalPhysicalResource destination;
-  unsigned eventId = 0;
-  if (failed(resolveCrossCoreEvent(program, target, operation, *wait, source,
-                                   destination, eventId))) {
-    return failure();
-  }
-  auto collision = llvm::find_if(state.tokens, [&](const VerifierToken &token) {
-    return token.source == source && token.target == destination &&
-           token.eventId == eventId;
-  });
-  if (collision != state.tokens.end()) {
-    return operation.emitError(
-        "canonical sync verifier found a cross-core counter set before its "
-        "prior wait");
-  }
-  VerifierToken token;
-  token.source = source;
-  token.target = destination;
-  token.eventId = eventId;
-  const VerifierResourceState &resource = getResource(state, source);
-  addPendingKeys(resource, token.payload);
-  for (const VerifierEffectKey &key : resource.known) {
-    addKey(token.payload, key);
-  }
-  for (const VerifierEffectKey &key : state.globalKnown) {
-    addKey(token.payload, key);
-  }
-  state.tokens.push_back(std::move(token));
-  return success();
-}
-
-LogicalResult applyCrossCoreWait(const VerifierProgram &program,
-                                 const CanonicalSyncTarget &target,
-                                 SyncWaitOp operation, VerifierState &state) {
-  FailureOr<SyncSetOp> set =
-      findCrossCoreCounterpart<SyncSetOp>(program, operation);
-  if (failed(set)) {
-    return failure();
-  }
-  CanonicalPhysicalResource source;
-  CanonicalPhysicalResource destination;
-  unsigned eventId = 0;
-  if (failed(resolveCrossCoreEvent(program, target, *set, operation, source,
-                                   destination, eventId))) {
-    return failure();
-  }
-  auto token = llvm::find_if(state.tokens, [&](const VerifierToken &entry) {
-    return entry.source == source && entry.target == destination &&
-           entry.eventId == eventId;
-  });
-  if (token == state.tokens.end()) {
-    return operation.emitError(
-        "canonical sync verifier found a cross-core wait without a matching "
-        "set");
-  }
-  VerifierResourceState &resource = getResource(state, destination);
-  for (const VerifierEffectKey &key : token->payload) {
-    addKey(resource.known, key);
-    addKey(state.exitComplete, key);
-  }
-  state.tokens.erase(token);
-  return success();
-}
-
 LogicalResult applyBarrier(const VerifierProgram &program,
                            const CanonicalSyncTarget &target,
                            BarrierOp operation, VerifierState &state) {
@@ -449,11 +302,10 @@ LogicalResult mlir::pto::canonical_sync_detail::applyVerifierSyncOperation(
   if (auto wait = dyn_cast<WaitFlagOp>(operation)) {
     return applyWait(program, target, wait, state);
   }
-  if (auto set = dyn_cast<SyncSetOp>(operation)) {
-    return applyCrossCoreSet(program, target, set, state);
-  }
-  if (auto wait = dyn_cast<SyncWaitOp>(operation)) {
-    return applyCrossCoreWait(program, target, wait, state);
+  if (isa<SyncSetOp, SyncWaitOp>(operation)) {
+    return operation->emitError(
+        "canonical sync verifier rejects cross-core synchronization because "
+        "the target has no collective planner");
   }
   if (auto barrier = dyn_cast<BarrierOp>(operation)) {
     return applyBarrier(program, target, barrier, state);

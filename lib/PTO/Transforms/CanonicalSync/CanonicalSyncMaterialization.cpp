@@ -36,7 +36,6 @@ struct EventAction {
   PIPE source = PIPE::PIPE_UNASSIGNED;
   PIPE target = PIPE::PIPE_UNASSIGNED;
   unsigned eventId = 0;
-  bool crossCore = false;
 };
 
 struct RecurringEventAction {
@@ -164,7 +163,7 @@ LogicalResult collectActions(
         continue;
       }
       EventAction action{group.members.front(), group.source.pipe,
-                         group.target.pipe, group.eventId, false};
+                         group.target.pipe, group.eventId};
       sets[setAnchor].push_back(action);
       waits[waitAnchor].push_back(action);
       continue;
@@ -219,6 +218,11 @@ LogicalResult collectActions(
       visibilityFences[waitAnchor].push_back(mechanism.id);
       continue;
     }
+    if (mechanism.kind == CanonicalMechanismKind::CrossCoreEvent) {
+      return program.getFunction().emitError(
+          "canonical sync cannot materialize an unsupported cross-core "
+          "collective");
+    }
     Operation *setAnchor =
         mapping.lookupOrNull(mechanism.sourcePoint.operation);
     const std::optional<unsigned> eventId = mechanism.eventId;
@@ -246,9 +250,8 @@ LogicalResult collectActions(
                                            mechanism.source)});
       continue;
     }
-    EventAction action{
-        mechanism.id, mechanism.source.pipe, mechanism.target.pipe, *eventId,
-        mechanism.kind == CanonicalMechanismKind::CrossCoreEvent};
+    EventAction action{mechanism.id, mechanism.source.pipe,
+                       mechanism.target.pipe, *eventId};
     sets[setAnchor].push_back(action);
     waits[waitAnchor].push_back(action);
   }
@@ -466,10 +469,10 @@ void emitSerializedProtocols(func::FuncOp clone,
 
 void sortActions(SmallVectorImpl<EventAction> &actions) {
   llvm::sort(actions, [](const EventAction &first, const EventAction &second) {
-    return std::tie(first.source, first.target, first.eventId, first.crossCore,
+    return std::tie(first.source, first.target, first.eventId,
                     first.mechanism) <
            std::tie(second.source, second.target, second.eventId,
-                    second.crossCore, second.mechanism);
+                    second.mechanism);
   });
 }
 
@@ -486,15 +489,6 @@ void emitActions(
     sortActions(entry.second);
     builder.setInsertionPointAfter(entry.first);
     for (const EventAction &action : entry.second) {
-      if (action.crossCore) {
-        auto operation = builder.create<SyncSetOp>(
-            entry.first->getLoc(),
-            PipeAttr::get(clone.getContext(), action.source),
-            builder.getI32IntegerAttr(action.eventId),
-            builder.getI32IntegerAttr(2), Value());
-        tagGenerated(operation, builder, action.mechanism);
-        continue;
-      }
       auto operation = builder.create<SetFlagOp>(
           entry.first->getLoc(),
           PipeAttr::get(clone.getContext(), action.source),
@@ -508,15 +502,6 @@ void emitActions(
     sortActions(entry.second);
     builder.setInsertionPoint(entry.first);
     for (const EventAction &action : entry.second) {
-      if (action.crossCore) {
-        auto operation = builder.create<SyncWaitOp>(
-            entry.first->getLoc(),
-            PipeAttr::get(clone.getContext(), action.target),
-            builder.getI32IntegerAttr(action.eventId),
-            builder.getI32IntegerAttr(2), Value());
-        tagGenerated(operation, builder, action.mechanism);
-        continue;
-      }
       auto operation = builder.create<WaitFlagOp>(
           entry.first->getLoc(),
           PipeAttr::get(clone.getContext(), action.source),

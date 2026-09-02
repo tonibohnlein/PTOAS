@@ -46,7 +46,6 @@ struct ConcreteEventGeneration {
   CanonicalPhysicalResource source;
   CanonicalPhysicalResource target;
   unsigned eventId = 0;
-  bool crossCore = false;
   bool recurringReady = false;
   bool recurringRelease = false;
   bool boundaryReady = false;
@@ -128,25 +127,6 @@ bool hasRepeatingAncestor(Operation *operation) {
     parent = parent->getParentOp();
   }
   return false;
-}
-
-bool hasOrderedUnconditionalFftsSetup(func::FuncOp function, Operation *source,
-                                      Operation *target) {
-  Block &entry = function.getBody().front();
-  bool found = false;
-  function.walk([&](SetFFTsOp setup) {
-    Operation *operation = setup.getOperation();
-    const bool unconditional = operation->getBlock() == &entry;
-    const bool precedesEndpoints =
-        programPointMustPrecede(
-            {operation, CanonicalProgramPointPosition::After},
-            {source, CanonicalProgramPointPosition::Before}) &&
-        programPointMustPrecede(
-            {operation, CanonicalProgramPointPosition::After},
-            {target, CanonicalProgramPointPosition::Before});
-    found |= unconditional && precedesEndpoints;
-  });
-  return found;
 }
 
 FailureOr<int64_t> getMechanismId(Operation *operation) {
@@ -465,7 +445,7 @@ makeProtocolGeneration(func::FuncOp function, const CanonicalSyncTarget &target,
 bool eventGenerationKeysMatch(const ConcreteEventGeneration &first,
                               const ConcreteEventGeneration &second) {
   return first.source == second.source && first.target == second.target &&
-         first.eventId == second.eventId && first.crossCore == second.crossCore;
+         first.eventId == second.eventId;
 }
 
 bool protocolActionPrecedes(Operation *first, Operation *second);
@@ -872,73 +852,9 @@ LogicalResult resolveGeneration(func::FuncOp function,
   const bool crossCore =
       isa<SyncSetOp>(generation.set) || isa<SyncWaitOp>(generation.wait);
   if (crossCore) {
-    auto set = dyn_cast<SyncSetOp>(generation.set);
-    auto wait = dyn_cast<SyncWaitOp>(generation.wait);
-    const bool mismatchedKinds = !set || !wait;
-    const IntegerAttr setIdAttr = set ? set.getEventIdAttr() : IntegerAttr();
-    const IntegerAttr waitIdAttr = wait ? wait.getEventIdAttr() : IntegerAttr();
-    const IntegerAttr setModeAttr = set ? set.getFftsModeAttr() : IntegerAttr();
-    const IntegerAttr waitModeAttr =
-        wait ? wait.getFftsModeAttr() : IntegerAttr();
-    const bool dynamicId =
-        (set && set.getEventIdDyn()) || (wait && wait.getEventIdDyn());
-    const bool invalidStaticKey = !setIdAttr || !waitIdAttr || !setModeAttr ||
-                                  !waitModeAttr || setIdAttr.getInt() < 0 ||
-                                  waitIdAttr.getInt() < 0;
-    const bool mismatchedKey =
-        !invalidStaticKey &&
-        (setIdAttr.getInt() != waitIdAttr.getInt() ||
-         setModeAttr.getInt() != 2 || waitModeAttr.getInt() != 2);
-    if (mismatchedKinds || dynamicId || invalidStaticKey || mismatchedKey) {
-      return generation.wait->emitError(
-          "canonical sync event verifier found mismatched cross-core "
-          "generation actions");
-    }
-    FailureOr<CanonicalPhysicalResource> source = resolvePhysicalResource(
-        function, generation.set, set.getPipe().getPipe());
-    FailureOr<CanonicalPhysicalResource> destination = resolvePhysicalResource(
-        function, generation.wait, wait.getPipe().getPipe());
-    const bool unresolvedResources = failed(source) || failed(destination);
-    if (unresolvedResources) {
-      return failure();
-    }
-    const unsigned eventId = static_cast<unsigned>(setIdAttr.getInt());
-    const bool unsupported =
-        !hasOrderedUnconditionalFftsSetup(function, generation.set,
-                                          generation.wait) ||
-        !target.supportsCrossCoreEvent(*source, *destination) ||
-        !llvm::is_contained(target.getCompilerCrossCoreEventIds(), eventId);
-    if (unsupported) {
-      return generation.set->emitError(
-          "canonical sync event verifier found an unsupported cross-core "
-          "event key or missing FFTS setup");
-    }
-    generation.source = *source;
-    generation.target = *destination;
-    generation.eventId = eventId;
-    generation.crossCore = true;
-    generation.controlPath = getControlPath(generation.set);
-    if (generation.controlPath != getControlPath(generation.wait)) {
-      return generation.wait->emitError(
-          "canonical sync event verifier found path-unbalanced cross-core "
-          "generation");
-    }
-    const bool issueOrdered = programPointMustPrecede(
-        {generation.set, CanonicalProgramPointPosition::After},
-        {generation.wait, CanonicalProgramPointPosition::Before});
-    if (!issueOrdered) {
-      return generation.wait->emitError(
-          "canonical sync event verifier cannot prove cross-core "
-          "set-before-wait issue order");
-    }
-    const bool repeated = hasRepeatingAncestor(generation.set) ||
-                          hasRepeatingAncestor(generation.wait);
-    if (repeated) {
-      return generation.set->emitError(
-          "canonical sync event verifier rejects a cross-core generation "
-          "repeated by a loop");
-    }
-    return success();
+    return generation.set->emitError(
+        "canonical sync event verifier rejects cross-core synchronization "
+        "because the target has no collective planner");
   }
   auto set = dyn_cast<SetFlagOp>(generation.set);
   auto wait = dyn_cast<WaitFlagOp>(generation.wait);
@@ -1071,13 +987,9 @@ verifyInterference(ArrayRef<ConcreteEventGeneration> generations) {
     for (size_t secondIndex = firstIndex + 1; secondIndex < generations.size();
          ++secondIndex) {
       const ConcreteEventGeneration &second = generations[secondIndex];
-      const bool sameCrossCoreKey = first.crossCore && second.crossCore &&
-                                    first.eventId == second.eventId;
-      const bool sameIntraCoreKey = !first.crossCore && !second.crossCore &&
-                                    first.source == second.source &&
-                                    first.target == second.target &&
-                                    first.eventId == second.eventId;
-      const bool sameKey = sameCrossCoreKey || sameIntraCoreKey;
+      const bool sameKey = first.source == second.source &&
+                           first.target == second.target &&
+                           first.eventId == second.eventId;
       if (!sameKey ||
           controlsAreMutuallyExclusive(first.controlPath, second.controlPath)) {
         continue;
