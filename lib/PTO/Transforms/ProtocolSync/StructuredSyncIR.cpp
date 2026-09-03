@@ -217,17 +217,9 @@ void StructuredSyncIRConstruction::buildOperation(
         return;
     }
     if (auto loop = dyn_cast<scf::WhileOp>(operation)) {
-        SyncRegionId loopRegion =
-            addRegion(parent, SyncRegionKind::Loop, SyncCardinality::ZeroOrMore, operation, 0, guard, loops);
-        SmallVector<SyncRegionId, 2> nestedLoops(loops.begin(), loops.end());
-        nestedLoops.push_back(loopRegion);
-        for (Block& block : loop.getBefore()) {
-            buildBlock(block, loopRegion, guard, nestedLoops);
-        }
-        for (Block& block : loop.getAfter()) {
-            buildBlock(block, loopRegion, guard, nestedLoops);
-        }
-        finishRegion(loopRegion);
+        schedule.failures.push_back(
+            {SyncFailureReason::UnsupportedRegion, operation,
+             "scf.while requires distinct condition and body execution semantics"});
         return;
     }
     if (auto choice = dyn_cast<scf::IfOp>(operation)) {

@@ -138,6 +138,11 @@ struct SyncQueueSemantics {
     SyncQueueRole role = SyncQueueRole::Initialize;
     Value handle;
     std::optional<std::uint32_t> depth;
+    std::uint8_t directionMask = 0;
+    std::optional<std::uint32_t> localSlotCount;
+    std::optional<std::uint32_t> flagBase;
+    Value endpoint;
+    Value peerEndpoint;
 };
 
 struct SyncOpSummary {

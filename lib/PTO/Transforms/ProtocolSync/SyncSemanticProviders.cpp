@@ -97,27 +97,54 @@ std::optional<std::uint32_t> getQueueDepth(Value handle)
     return static_cast<std::uint32_t>(rawDepth);
 }
 
+void populateQueueResources(Value handle, SyncQueueSemantics& queue)
+{
+    Operation* definition = handle ? handle.getDefiningOp() : nullptr;
+    if (auto init = dyn_cast_or_null<InitializeL2G2LPipeOp>(definition)) {
+        queue.directionMask = init.getDirMask();
+        queue.localSlotCount =
+            init.getLocalSlotNumAttr() ?
+                std::optional<std::uint32_t>(static_cast<std::uint32_t>(init.getLocalSlotNumAttr().getInt())) :
+                std::nullopt;
+        queue.flagBase = init.getFlagBaseAttr() ?
+                             std::optional<std::uint32_t>(static_cast<std::uint32_t>(init.getFlagBaseAttr().getInt())) :
+                             std::nullopt;
+        queue.endpoint = init.getLocalAddr();
+        queue.peerEndpoint = init.getPeerLocalAddr();
+    } else if (auto init = dyn_cast_or_null<InitializeL2LPipeOp>(definition)) {
+        queue.directionMask = init.getDirMask();
+        queue.flagBase = init.getFlagBaseAttr() ?
+                             std::optional<std::uint32_t>(static_cast<std::uint32_t>(init.getFlagBaseAttr().getInt())) :
+                             std::nullopt;
+        queue.endpoint = init.getLocalAddr();
+        queue.peerEndpoint = init.getPeerLocalAddr();
+    }
+}
+
+SyncQueueSemantics makeQueue(SyncQueueRole role, Value handle)
+{
+    SyncQueueSemantics queue{role, handle, getQueueDepth(handle)};
+    populateQueueResources(handle, queue);
+    return queue;
+}
+
 std::optional<SyncQueueSemantics> getQueueSemanticsImpl(Operation* operation)
 {
     if (isa<InitializeL2G2LPipeOp, InitializeL2LPipeOp>(operation)) {
         Value handle = operation->getResult(0);
-        return SyncQueueSemantics{SyncQueueRole::Initialize, handle, getQueueDepth(handle)};
+        return makeQueue(SyncQueueRole::Initialize, handle);
     }
     if (auto op = dyn_cast<TAllocOp>(operation)) {
-        return SyncQueueSemantics{
-            SyncQueueRole::ProducerAcquire, op.getPipeHandle(), getQueueDepth(op.getPipeHandle())};
+        return makeQueue(SyncQueueRole::ProducerAcquire, op.getPipeHandle());
     }
     if (auto op = dyn_cast<TPushOp>(operation)) {
-        return SyncQueueSemantics{
-            SyncQueueRole::ProducerPublish, op.getPipeHandle(), getQueueDepth(op.getPipeHandle())};
+        return makeQueue(SyncQueueRole::ProducerPublish, op.getPipeHandle());
     }
     if (auto op = dyn_cast<TPopOp>(operation)) {
-        return SyncQueueSemantics{
-            SyncQueueRole::ConsumerAcquire, op.getPipeHandle(), getQueueDepth(op.getPipeHandle())};
+        return makeQueue(SyncQueueRole::ConsumerAcquire, op.getPipeHandle());
     }
     if (auto op = dyn_cast<TFreeOp>(operation)) {
-        return SyncQueueSemantics{
-            SyncQueueRole::ConsumerRelease, op.getPipeHandle(), getQueueDepth(op.getPipeHandle())};
+        return makeQueue(SyncQueueRole::ConsumerRelease, op.getPipeHandle());
     }
     return std::nullopt;
 }

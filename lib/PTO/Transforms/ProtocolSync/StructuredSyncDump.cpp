@@ -63,6 +63,18 @@ void printSummary(const SyncOpSummary& summary, unsigned id, AsmState& state, ra
         } else {
             output << "unknown";
         }
+        output << " direction=" << static_cast<unsigned>(summary.queue->directionMask) << " local-slots=";
+        if (summary.queue->localSlotCount) {
+            output << *summary.queue->localSlotCount;
+        } else {
+            output << "unknown";
+        }
+        output << " flag-base=";
+        if (summary.queue->flagBase) {
+            output << *summary.queue->flagBase;
+        } else {
+            output << "unknown";
+        }
     }
     output << '\n';
     for (const SyncEventReservation& reservation : summary.eventReservations) {

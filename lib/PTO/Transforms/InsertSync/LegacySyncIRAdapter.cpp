@@ -73,11 +73,6 @@ SyncPhysicalCore convertLegacyCore(TCoreType core)
     return SyncPhysicalCore::Unknown;
 }
 
-SyncPhysicalCore getLegacyCoreForPipe(PIPE pipe)
-{
-    return pipe == PIPE::PIPE_M || pipe == PIPE::PIPE_MTE1 ? SyncPhysicalCore::Cube : SyncPhysicalCore::Vector;
-}
-
 void appendLegacyTokens(const LegacySyncSnapshot& legacy, SmallVectorImpl<ShadowToken>& tokens)
 {
     for (const std::unique_ptr<InstanceElement>& element : legacy.syncIR) {
@@ -288,9 +283,8 @@ void comparePhases(const LegacySyncSnapshot& legacy, const StructuredSyncIR& sch
         const SyncCompletionKind completion =
             macroPhase ? SyncCompletionKind::MacroInternal : SyncCompletionKind::PhaseEnd;
         const SyncPhysicalCore legacyCore = convertLegacyCore(legacyPhase->compoundCoreType);
-        const SyncPhysicalCore expectedLegacyCore = pipe ? getLegacyCoreForPipe(*pipe) : SyncPhysicalCore::Unknown;
         if (!pipe || *pipe != phase.pipe || legacyPhase->elementOp != phase.operation ||
-            macroPhase != phase.macroPhase || legacyCore != expectedLegacyCore || completion != phase.completion) {
+            macroPhase != phase.macroPhase || legacyCore != phase.core || completion != phase.completion) {
             addMismatch(result, "phase", index, "operation, core, pipeline, macro phase, or completion differs");
             continue;
         }
@@ -304,26 +298,34 @@ void compareSemanticMetadata(const StructuredSyncIR& schedule, LegacySyncParityR
         std::optional<SyncQueueSemantics> queue = getSyncQueueSemantics(summary.operation);
         const bool queuePresenceMatches = queue.has_value() == summary.queue.has_value();
         if (!queuePresenceMatches) {
-            addMismatch(result, "queue", index, "queue classification differs");
+            result.internalConsistencyIssues.push_back({"queue", index, "queue classification differs"});
         } else if (queue && summary.queue) {
             const bool sameRole = queue->role == summary.queue->role;
             const bool sameHandle = queue->handle == summary.queue->handle;
             const bool sameDepth = queue->depth == summary.queue->depth;
-            if (!sameRole || !sameHandle || !sameDepth) {
-                addMismatch(result, "queue", index, "queue role, handle, or depth differs");
+            const bool sameDirection = queue->directionMask == summary.queue->directionMask;
+            const bool sameLocalSlots = queue->localSlotCount == summary.queue->localSlotCount;
+            const bool sameFlagBase = queue->flagBase == summary.queue->flagBase;
+            const bool sameEndpoint = queue->endpoint == summary.queue->endpoint;
+            const bool samePeerEndpoint = queue->peerEndpoint == summary.queue->peerEndpoint;
+            if (!sameRole || !sameHandle || !sameDepth || !sameDirection || !sameLocalSlots || !sameFlagBase ||
+                !sameEndpoint || !samePeerEndpoint) {
+                result.internalConsistencyIssues.push_back({"queue", index, "queue resource metadata differs"});
             }
         }
 
         std::optional<SyncMacroModel> model = getSyncMacroModel(summary.operation);
         if (!model) {
             if (!summary.eventReservations.empty()) {
-                addMismatch(result, "reservation", index, "non-macro operation reserves hidden events");
+                result.internalConsistencyIssues.push_back(
+                    {"reservation", index, "non-macro operation reserves hidden events"});
             }
             continue;
         }
         const bool reservationCountsMatch = model->hiddenEvents.size() == summary.eventReservations.size();
         if (!reservationCountsMatch) {
-            addMismatch(result, "reservation", index, "hidden event reservation counts differ");
+            result.internalConsistencyIssues.push_back(
+                {"reservation", index, "hidden event reservation counts differ"});
             continue;
         }
         for (auto [legacyReservation, reservation] : llvm::zip(model->hiddenEvents, summary.eventReservations)) {
@@ -333,7 +335,7 @@ void compareSemanticMetadata(const StructuredSyncIR& schedule, LegacySyncParityR
                 source && target && *source == reservation.source && *target == reservation.target;
             const bool sameEventIds = legacyReservation.eventIds == reservation.eventIds;
             if (!sameDirection || !sameEventIds) {
-                addMismatch(result, "reservation", index, "hidden event reservation differs");
+                result.internalConsistencyIssues.push_back({"reservation", index, "hidden event reservation differs"});
             }
         }
     }
@@ -393,9 +395,13 @@ void protocol_sync::printLegacySyncParity(
 {
     output << "PROTOCOL-SYNC legacy-parity function=@" << function.getSymName()
            << " status=" << (result.matches() ? "match" : "mismatch") << " mismatches=" << result.mismatches.size()
-           << '\n';
+           << " internal-checks=" << result.internalConsistencyIssues.size() << '\n';
     for (const LegacySyncParityMismatch& mismatch : result.mismatches) {
         output << "  parity-mismatch category=" << mismatch.category << " index=" << mismatch.index << " detail=\""
                << mismatch.detail << "\"\n";
+    }
+    for (const LegacySyncParityMismatch& issue : result.internalConsistencyIssues) {
+        output << "  internal-consistency category=" << issue.category << " index=" << issue.index << " detail=\""
+               << issue.detail << "\"\n";
     }
 }

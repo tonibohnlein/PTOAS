@@ -37,6 +37,8 @@ LogicalResult StructuredSyncIR::freeze()
     if (frozen) {
         return failure();
     }
+    llvm::SmallVector<unsigned, 64> phaseReferences(phases.size(), 0);
+    llvm::SmallVector<unsigned, 64> accessReferences(accesses.size(), 0);
     for (auto [index, region] : llvm::enumerate(regions)) {
         const bool invalidId = region.id != index;
         const bool invalidParent = region.parent != kInvalidSyncId && region.parent >= regions.size();
@@ -52,7 +54,10 @@ LogicalResult StructuredSyncIR::freeze()
         if (invalidEntryPoint || invalidExitPoint) {
             return failure();
         }
-        for (const SyncRegionElement& element : region.elements) {
+        for (auto [elementIndex, element] : llvm::enumerate(region.elements)) {
+            if (element.order != elementIndex) {
+                return failure();
+            }
             const bool invalidPhase = element.kind == SyncRegionElement::Kind::Phase && element.phase >= phases.size();
             const bool invalidChild =
                 element.kind == SyncRegionElement::Kind::ChildRegion && element.child >= regions.size();
@@ -65,6 +70,9 @@ LogicalResult StructuredSyncIR::freeze()
                 element.kind == SyncRegionElement::Kind::ChildRegion && regions[element.child].parent != region.id;
             if (wrongPhaseOwner || wrongChildOwner) {
                 return failure();
+            }
+            if (element.kind == SyncRegionElement::Kind::Phase) {
+                ++phaseReferences[element.phase];
             }
         }
     }
@@ -91,6 +99,10 @@ LogicalResult StructuredSyncIR::freeze()
             if (access >= accesses.size()) {
                 return failure();
             }
+            ++accessReferences[access];
+            if (accesses[access].phase != phase.id) {
+                return failure();
+            }
         }
     }
     for (auto [index, access] : llvm::enumerate(accesses)) {
@@ -100,6 +112,14 @@ LogicalResult StructuredSyncIR::freeze()
             return failure();
         }
         if (!access.value) {
+            return failure();
+        }
+        if (accessReferences[index] != 1) {
+            return failure();
+        }
+    }
+    for (unsigned phaseReferenceCount : phaseReferences) {
+        if (phaseReferenceCount != 1) {
             return failure();
         }
     }
