@@ -24,6 +24,7 @@ bool testExactFormulaLookup() {
   constexpr std::string_view csv = R"(op,dtype,cols,slope,bias
 TADDS,fp32,32,0.0156,25
 TROWSUM,fp16,64,0.0078,42
+TEXP,any,*,0.0314,30.1
 )";
   auto table = mlir::pto::PTOISADurationTable::parseCSV(csv);
   if (!check(succeeded(table), "formula CSV parses")) {
@@ -31,9 +32,12 @@ TROWSUM,fp16,64,0.0078,42
   }
   auto adds = table->estimate({"tadds", "fp32", 10, 32});
   auto sum = table->estimate({"TROWSUM", "fp16", 5, 64});
+  auto exp = table->estimate({"TEXP", "bf16", 4, 128});
   return check(adds.has_value(), "case-insensitive exact key") &&
          check(adds->cycles == 30, "PTO-ISA llround formula semantics") &&
          check(sum.has_value() && sum->cycles == 44, "second exact formula") &&
+         check(exp.has_value() && exp->cycles == 46,
+               "PTO-ISA explicit any/star formula is accepted") &&
          check(!table->estimate({"TADDS", "fp32", 10, 33}).has_value(),
                "unsupported column count fails closed") &&
          check(!table->estimate({"TADDS", "bf16", 10, 32}).has_value(),
@@ -47,11 +51,17 @@ bool testRejectMalformedOrAmbiguousTables() {
 TADDS,fp32,32,0.0156,25
 TADDS,fp32,32,0.0200,24
 )";
+  constexpr std::string_view duplicateWildcard = R"(op,dtype,cols,slope,bias
+TEXP,any,*,0.0314,30.1
+TEXP,any,*,0.0314,30.1
+)";
   constexpr std::string_view badHeader = R"(opcode,dtype,cols,slope,bias
 TADDS,fp32,32,0.0156,25
 )";
   return check(failed(mlir::pto::PTOISADurationTable::parseCSV(duplicate)),
                "ambiguous exact formula is rejected") &&
+         check(failed(mlir::pto::PTOISADurationTable::parseCSV(duplicateWildcard)),
+               "ambiguous wildcard formula is rejected") &&
          check(failed(mlir::pto::PTOISADurationTable::parseCSV(badHeader)),
                "wrong formula schema is rejected");
 }

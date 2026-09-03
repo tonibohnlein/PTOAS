@@ -13,6 +13,7 @@
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/KernelScheduling/ScheduleGraph.h"
+#include "PTO/Transforms/KernelScheduling/PTOISADuration.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Support/LLVM.h"
@@ -22,6 +23,8 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdint>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace mlir {
@@ -52,13 +55,16 @@ struct KernelScheduleNode {
   ScheduleGraph::VertexIdx originalOrder = 0;
   ScheduleGraph::VertexIdx block = 0;
   unsigned loopDepth = 0;
+  /// PyPTO's source-level access identity, when carried by the PTO location.
+  /// It is the stable join key for external DSA reuse-candidate provenance.
+  std::optional<unsigned> pyptoAccessOrder;
   /// Exact durations are supplied by a pinned PTO-ISA formula table. The
   /// legacy structural graph intentionally retains unit weights.
   uint64_t durationCycles = 1;
   bool hasExactDuration = false;
+  /// Present exactly when PTO-ISA supplied the node duration.
+  std::optional<PTOISADurationSignature> durationSignature;
 };
-
-class PTOISADurationTable;
 
 struct KernelScheduleGraphBuildOptions {
   /// Null keeps the existing structural graph and its unit node weights.
@@ -77,6 +83,8 @@ struct KernelScheduleDependency {
   /// SSA/control edges are zero; placement-induced reuse edges carry the
   /// globally calibrated synchronization delay used by the penalty model.
   uint64_t latencyCycles = 0;
+  /// DSA analysis evidence that selected this placement-induced dependency.
+  std::string provenance;
 };
 
 /// Owns the structural scheduling DAG and the richer dependency metadata.
@@ -89,12 +97,15 @@ public:
   VertexIdx addNode(Operation *operation, PIPE pipe, ScheduleNodeKind kind,
                     VertexIdx originalOrder, VertexIdx block,
                     unsigned loopDepth, uint64_t durationCycles = 1,
-                    bool hasExactDuration = false);
+                    bool hasExactDuration = false,
+                    std::optional<PTOISADurationSignature> durationSignature = std::nullopt,
+                    std::optional<unsigned> pyptoAccessOrder = std::nullopt);
   void addDependency(VertexIdx source, VertexIdx target,
                      ScheduleDependencyKind kind,
                      unsigned iterationDistance = 0,
                      Operation *recurrenceLoop = nullptr,
-                     uint64_t latencyCycles = 0);
+                     uint64_t latencyCycles = 0,
+                     llvm::StringRef provenance = {});
 
   const ScheduleGraph &getGraph() const { return graph_; }
   ArrayRef<KernelScheduleNode> getNodes() const { return nodes_; }

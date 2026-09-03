@@ -284,7 +284,11 @@ def PrintKernelScheduleGraph
     Option<"durationTable", "duration-table", "std::string", "\"\"",
            "Pinned PTO-ISA formula_params.csv used for node cycle weights">,
     Option<"requireExactDurations", "require-exact-durations", "bool", "false",
-           "Fail if a schedulable node lacks an exact PTO-ISA duration">
+           "Fail if a schedulable node lacks an exact PTO-ISA duration">,
+    Option<"placementReuseEdges", "placement-reuse-edges", "std::string", "\"\"",
+           "JSON file of provenance-backed selected placement reuse edges">,
+    Option<"reuseSyncLatencyCycles", "reuse-sync-latency-cycles", "unsigned", "0",
+           "Global synchronization delay assigned to every selected reuse edge">
   ];
   let dependentDialects = ["mlir::pto::PTODialect"];
 }

@@ -52,11 +52,13 @@ public:
 
 private:
   struct FormulaRow {
-    int64_t cols = 0;
+    /// A missing value is PTO-ISA's explicit `*` wildcard column, not an
+    /// extrapolated or family-average duration.
+    std::optional<int64_t> cols;
     double slope = 0.0;
     double bias = 0.0;
   };
-  /// Key: lower-case `opcode|dtype`.
+  /// Key: lower-case `opcode|dtype`; dtype may be PTO-ISA's explicit `any`.
   llvm::StringMap<std::vector<FormulaRow>> rows_;
 };
 

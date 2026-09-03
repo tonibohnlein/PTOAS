@@ -28,6 +28,28 @@ independent pair penalties—as the longest path through operation work plus
 dependency delay. Positive-distance recurrences remain outside this
 per-iteration path and must be scored through an initiation interval model.
 
+PTOAS deliberately does not reconstruct DSA buffer identity from lowered PTO:
+that information belongs to the producer that exported the DSA problem and
+solution. `--placement-reuse-edges` accepts its verified join as a small JSON
+document:
+
+```json
+{
+  "schema_version": 1,
+  "function": "kernel",
+  "edges": [{
+    "source_node": 4,
+    "target_node": 9,
+    "kind": "war",
+    "provenance": "buffers=12,37;accesses=18,24"
+  }]
+}
+```
+
+Together with `--reuse-sync-latency-cycles=W`, this adds every selected reuse
+edge to one complete graph before scoring. The importer validates node IDs,
+direction/kind, and non-empty provenance; it does not infer missing relations.
+
 The underlying `ScheduleGraph` is PTOAS-owned and has no MLIR dependency. Its
 query API satisfies OneStopParallel's typed computational DAG contract:
 

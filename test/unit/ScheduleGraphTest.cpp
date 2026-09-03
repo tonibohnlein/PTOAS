@@ -89,14 +89,15 @@ bool testCompletePlacementLongestPath() {
       nullptr, mlir::pto::PIPE::PIPE_MTE2,
       mlir::pto::ScheduleNodeKind::Transfer, 1, 0, 0,
       /*durationCycles=*/20, /*hasExactDuration=*/true);
-  const auto independent = graph.addNode(
+  graph.addNode(
       nullptr, mlir::pto::PIPE::PIPE_V, mlir::pto::ScheduleNodeKind::Compute,
       2, 0, 0, /*durationCycles=*/40, /*hasExactDuration=*/true);
   // This models a selected address reuse: a synchronization delay belongs to
   // the edge, and the whole placement is scored once through the DAG.
   graph.addDependency(first, second,
                       mlir::pto::ScheduleDependencyKind::PlacementReuseRAW,
-                      0, nullptr, /*latencyCycles=*/17);
+                      0, nullptr, /*latencyCycles=*/17,
+                      "buffers=0,1;accesses=4,9");
   // A recurrence contributes to a loop-II model, not the per-iteration path.
   graph.addDependency(second, first,
                       mlir::pto::ScheduleDependencyKind::MemoryWAR,
@@ -108,6 +109,12 @@ bool testCompletePlacementLongestPath() {
                "node and selected reuse-edge weights form the longest path") &&
          check(graph.getGraph().VertexWorkWeight(second) == 20,
                "node duration is exposed to DAG consumers") &&
+         check(graph.getDependencies().front().kind ==
+                   mlir::pto::ScheduleDependencyKind::PlacementReuseRAW,
+               "placement-induced dependency remains distinguishable") &&
+         check(graph.getDependencies().front().provenance ==
+                   "buffers=0,1;accesses=4,9",
+               "placement provenance is retained") &&
          check(graph.getDependencies().back().latencyCycles == 999,
                "recurrence latency remains explicit metadata");
 }

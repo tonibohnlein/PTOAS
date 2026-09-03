@@ -23,8 +23,10 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <optional>
+#include <string>
 
 using namespace mlir;
 
@@ -95,6 +97,34 @@ static bool isTransferPipe(pto::PIPE pipe) {
   default:
     return false;
   }
+}
+
+static std::optional<unsigned> getPyptoAccessOrder(Operation *op) {
+  std::string printed;
+  llvm::raw_string_ostream stream(printed);
+  op->getLoc().print(stream);
+  stream.flush();
+  constexpr StringLiteral marker = "pypto.access.";
+  const size_t markerOffset = StringRef(printed).find(marker);
+  if (markerOffset == StringRef::npos) {
+    return std::nullopt;
+  }
+  StringRef suffix = StringRef(printed).drop_front(markerOffset);
+  if (!suffix.consume_front(marker)) {
+    return std::nullopt;
+  }
+  size_t digits = 0;
+  while (digits < suffix.size() && suffix[digits] >= '0' && suffix[digits] <= '9') {
+    ++digits;
+  }
+  if (digits == 0) {
+    return std::nullopt;
+  }
+  unsigned order = 0;
+  if (suffix.take_front(digits).getAsInteger(10, order)) {
+    return std::nullopt;
+  }
+  return order;
 }
 
 static unsigned getLoopDepth(Operation *op) {
@@ -188,9 +218,9 @@ private:
               : pto::ScheduleNodeKind::Compute;
       uint64_t durationCycles = 1;
       bool hasExactDuration = false;
+      std::optional<pto::PTOISADurationSignature> signature;
       if (options_.durationTable) {
-        std::optional<pto::PTOISADurationSignature> signature =
-            pto::getPTOISADurationSignature(op);
+        signature = pto::getPTOISADurationSignature(op);
         std::optional<pto::PTOISADurationEstimate> estimate =
             signature ? options_.durationTable->estimate(*signature)
                       : std::nullopt;
@@ -206,7 +236,9 @@ private:
       }
       const VertexIdx id =
           graph_.addNode(op, *pipe, kind, order++, getBlockId(op->getBlock()),
-                         getLoopDepth(op), durationCycles, hasExactDuration);
+                         getLoopDepth(op), durationCycles, hasExactDuration,
+                         hasExactDuration ? signature : std::nullopt,
+                         getPyptoAccessOrder(op));
       nodeIds_.try_emplace(op, id);
     });
     memoryAccesses_.resize(graph_.getNodes().size());

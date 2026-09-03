@@ -13,8 +13,9 @@
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/MemoryBuffer.h"
 
-#include <cmath>
 #include <algorithm>
+#include <array>
+#include <cmath>
 
 using namespace mlir;
 
@@ -126,14 +127,19 @@ PTOISADurationTable::parseCSV(llvm::StringRef csv) {
     if (columns.size() != 5) {
       return failure();
     }
-    std::optional<int64_t> cols = parseInt(columns[2]);
+    std::optional<int64_t> cols;
+    if (columns[2].trim() != "*") {
+      cols = parseInt(columns[2]);
+    }
     std::optional<double> slope = parseDouble(columns[3]);
     std::optional<double> bias = parseDouble(columns[4]);
-    if (!cols || *cols <= 0 || !slope || !bias) {
+    if (columns[0].trim().empty() || columns[1].trim().empty() ||
+        (columns[2].trim() != "*" && (!cols || *cols <= 0)) || !slope ||
+        !bias) {
       return failure();
     }
     table.rows_[makeKey(columns[0], columns[1])].push_back(
-        {*cols, *slope, *bias});
+        {cols, *slope, *bias});
   }
   if (firstLine || table.rows_.empty()) {
     return failure();
@@ -141,7 +147,7 @@ PTOISADurationTable::parseCSV(llvm::StringRef csv) {
   for (auto &entry : table.rows_) {
     llvm::sort(entry.getValue(), [](const FormulaRow &lhs,
                                     const FormulaRow &rhs) {
-      return lhs.cols < rhs.cols;
+      return lhs.cols.value_or(-1) < rhs.cols.value_or(-1);
     });
     if (std::adjacent_find(entry.getValue().begin(), entry.getValue().end(),
                            [](const FormulaRow &lhs, const FormulaRow &rhs) {
@@ -158,25 +164,39 @@ PTOISADurationTable::estimate(const PTOISADurationSignature &signature) const {
   if (signature.rows <= 0 || signature.cols <= 0) {
     return std::nullopt;
   }
-  const auto entry = rows_.find(makeKey(signature.opcode, signature.dtype));
-  if (entry == rows_.end()) {
-    return std::nullopt;
+  const std::array<std::string, 2> keys = {
+      makeKey(signature.opcode, signature.dtype),
+      makeKey(signature.opcode, "any"),
+  };
+  for (const std::string &key : keys) {
+    const auto entry = rows_.find(key);
+    if (entry == rows_.end()) {
+      continue;
+    }
+    const auto exact = llvm::find_if(entry->getValue(), [&](const FormulaRow &row) {
+      return row.cols && *row.cols == signature.cols;
+    });
+    const auto wildcard = llvm::find_if(entry->getValue(), [](const FormulaRow &row) {
+      return !row.cols;
+    });
+    const FormulaRow *row = exact != entry->getValue().end()
+                                ? &*exact
+                                : (wildcard != entry->getValue().end() ? &*wildcard
+                                                                        : nullptr);
+    if (!row) {
+      continue;
+    }
+    const double cycles = row->slope * static_cast<double>(signature.rows) *
+                              static_cast<double>(signature.cols) +
+                          row->bias;
+    if (cycles <= 0.0 || !std::isfinite(cycles)) {
+      return std::nullopt;
+    }
+    // This is PTO-ISA's formula_backend_compute.hpp::RoundToCycles semantics.
+    return PTOISADurationEstimate{static_cast<uint64_t>(std::llround(cycles)),
+                                  signature};
   }
-  const auto row = llvm::find_if(entry->getValue(), [&](const FormulaRow &row) {
-    return row.cols == signature.cols;
-  });
-  if (row == entry->getValue().end()) {
-    return std::nullopt;
-  }
-  const double cycles = row->slope * static_cast<double>(signature.rows) *
-                            static_cast<double>(signature.cols) +
-                        row->bias;
-  if (cycles <= 0.0 || !std::isfinite(cycles)) {
-    return std::nullopt;
-  }
-  // This is PTO-ISA's formula_backend_compute.hpp::RoundToCycles semantics.
-  return PTOISADurationEstimate{static_cast<uint64_t>(std::llround(cycles)),
-                                signature};
+  return std::nullopt;
 }
 
 std::optional<PTOISADurationSignature>

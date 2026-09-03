@@ -27,13 +27,17 @@ KernelScheduleGraph::addNode(Operation *operation, PIPE pipe,
                              ScheduleNodeKind kind, VertexIdx originalOrder,
                              VertexIdx block, unsigned loopDepth,
                              uint64_t durationCycles,
-                             bool hasExactDuration) {
+                             bool hasExactDuration,
+                             std::optional<PTOISADurationSignature>
+                                 durationSignature,
+                             std::optional<unsigned> pyptoAccessOrder) {
   const VertexIdx id = graph_.AddVertex(
       /*workWeight=*/durationCycles, /*commWeight=*/0, /*memWeight=*/0,
       static_cast<ScheduleGraph::VertexTypeType>(pipe));
   nodes_.push_back(
       {id, operation, pipe, kind, originalOrder, block, loopDepth,
-       durationCycles, hasExactDuration});
+       pyptoAccessOrder, durationCycles, hasExactDuration,
+       std::move(durationSignature)});
   return id;
 }
 
@@ -41,7 +45,8 @@ void KernelScheduleGraph::addDependency(VertexIdx source, VertexIdx target,
                                         ScheduleDependencyKind kind,
                                         unsigned iterationDistance,
                                         Operation *recurrenceLoop,
-                                        uint64_t latencyCycles) {
+                                        uint64_t latencyCycles,
+                                        llvm::StringRef provenance) {
   const bool invalidSource = source >= nodes_.size();
   const bool invalidTarget = target >= nodes_.size();
   if (invalidSource || invalidTarget) {
@@ -56,7 +61,8 @@ void KernelScheduleGraph::addDependency(VertexIdx source, VertexIdx target,
                dependency.kind == kind &&
                dependency.iterationDistance == iterationDistance &&
                dependency.recurrenceLoop == recurrenceLoop &&
-               dependency.latencyCycles == latencyCycles;
+               dependency.latencyCycles == latencyCycles &&
+               dependency.provenance == provenance;
       });
   if (duplicate) {
     return;
@@ -64,7 +70,7 @@ void KernelScheduleGraph::addDependency(VertexIdx source, VertexIdx target,
 
   dependencies_.push_back(
       {source, target, kind, iterationDistance, recurrenceLoop,
-       latencyCycles});
+       latencyCycles, provenance.str()});
   if (iterationDistance == 0) {
     graph_.AddEdge(source, target);
   }
@@ -190,8 +196,17 @@ void printKernelScheduleGraph(llvm::raw_ostream &os, func::FuncOp func,
        << " order=" << node.originalOrder << " block=" << node.block
        << " loop_depth=" << node.loopDepth
        << " duration_cycles=" << node.durationCycles
-       << " duration_exact=" << (node.hasExactDuration ? "true" : "false")
-       << "\n";
+       << " duration_exact=" << (node.hasExactDuration ? "true" : "false");
+    if (node.pyptoAccessOrder) {
+      os << " pypto_access_order=" << *node.pyptoAccessOrder;
+    }
+    if (node.durationSignature) {
+      os << " duration_signature=" << node.durationSignature->opcode << ":"
+         << node.durationSignature->dtype << ":"
+         << node.durationSignature->rows << "x"
+         << node.durationSignature->cols;
+    }
+    os << "\n";
   }
   for (const KernelScheduleDependency *dependency :
        getSortedDependencies(graph)) {
@@ -199,11 +214,20 @@ void printKernelScheduleGraph(llvm::raw_ostream &os, func::FuncOp func,
        << " kind=" << stringifyScheduleDependencyKind(dependency->kind)
        << " distance=" << dependency->iterationDistance
        << " latency_cycles=" << dependency->latencyCycles;
+    if (!dependency->provenance.empty()) {
+      os << " provenance=" << dependency->provenance;
+    }
     if (dependency->recurrenceLoop) {
       os << " recurrence_loop_depth="
          << getLoopDepth(dependency->recurrenceLoop);
     }
     os << "\n";
+  }
+  if (FailureOr<uint64_t> longestPath = graph.getLongestPathCycles();
+      succeeded(longestPath)) {
+    os << "  longest_path_cycles=" << *longestPath << "\n";
+  } else {
+    os << "  longest_path_cycles=unavailable_cycle\n";
   }
 }
 
@@ -274,6 +298,11 @@ void printKernelScheduleGraphDot(llvm::raw_ostream &os, func::FuncOp func,
     os << "  n" << dependency->source << " -> n" << dependency->target
        << " [label=";
     std::string label = stringifyScheduleDependencyKind(dependency->kind).str();
+    if (dependency->latencyCycles != 0) {
+      label += (llvm::Twine(", latency=") +
+                llvm::Twine(dependency->latencyCycles))
+                   .str();
+    }
     if (dependency->iterationDistance != 0) {
       label +=
           (llvm::Twine(", d=") + llvm::Twine(dependency->iterationDistance))
