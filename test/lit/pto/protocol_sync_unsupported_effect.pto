@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt --pto-protocol-sync='dump=schedule statistics=true' \
+// RUN:   %s -o /dev/null 2> %t.diagnostics
+// RUN: FileCheck %s --input-file=%t.diagnostics --check-prefix=REASON
+// RUN: FileCheck %s --input-file=%t.diagnostics --check-prefix=STATS
+// RUN: FileCheck %s --input-file=%t.diagnostics --check-prefix=STATUS
+
+module {
+  func.func private @opaque(%value : i32)
+
+  func.func @unsupported_effect(%value : i32) {
+    pto.barrier #pto.pipe<PIPE_ALL>
+    func.call @opaque(%value) : (i32) -> ()
+    return
+  }
+}
+
+// REASON: PROTOCOL-SYNC legacy-parity function=@unsupported_effect status=match mismatches=0
+// REASON: provider=fixed-sync phases=0 completion=phase-end supplies=[explicit-barrier]
+// REASON: rejected reason=unsupported-effectful-operation op=func.call
+// REASON-SAME: detail="effectful operation has no synchronization summary"
+
+// STATS: "rejected_operations":1
+// STATUS: "status":"diagnostic-rejection"

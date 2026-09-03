@@ -13,6 +13,9 @@
 // internally, so compiler-generated sync around the call must avoid them.
 //
 // RUN: ptoas --pto-arch=a3 --enable-insert-sync %s -o - 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a3 --emit-pto-ir --protocol-sync-analysis-only \
+// RUN:   --protocol-sync-dump=schedule %s -o /dev/null 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=PROTOCOL
 
 module {
   func.func @tgather_waits_for_tstore_group(
@@ -98,3 +101,17 @@ module {
 // CHECK:      set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID2);
 // CHECK-NEXT: wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID2);
 // CHECK:      pto::comm::TGATHER(
+
+// PROTOCOL: PROTOCOL-SYNC legacy-parity function=@tgather_waits_for_tstore_group status=match mismatches=0
+// PROTOCOL: PROTOCOL-SYNC schedule function=@tgather_waits_for_tstore_group frozen=yes
+// PROTOCOL: summary #{{[0-9]+}} op=pto.comm.tgather provider=macro phases=2
+// PROTOCOL-SAME: completion=macro-internal supplies=[macro-internal-events]
+// PROTOCOL: reservation PIPE_MTE2->PIPE_MTE3 ids=[0]
+// PROTOCOL: reservation PIPE_MTE3->PIPE_MTE2 ids=[0]
+// PROTOCOL: PROTOCOL-SYNC legacy-parity function=@tgather_pingpong_keeps_internal_events_hidden
+// PROTOCOL-SAME: status=match mismatches=0
+// PROTOCOL: PROTOCOL-SYNC schedule function=@tgather_pingpong_keeps_internal_events_hidden frozen=yes
+// PROTOCOL: summary #{{[0-9]+}} op=pto.comm.tgather provider=macro phases=2
+// PROTOCOL-SAME: completion=macro-internal supplies=[macro-internal-events]
+// PROTOCOL: reservation PIPE_MTE2->PIPE_MTE3 ids=[0, 1]
+// PROTOCOL: reservation PIPE_MTE3->PIPE_MTE2 ids=[0, 1]

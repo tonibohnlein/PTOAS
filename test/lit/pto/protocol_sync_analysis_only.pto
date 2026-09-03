@@ -1,0 +1,106 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --enable-insert-sync %s -o %t.default
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --enable-insert-sync --protocol-sync-analysis-only \
+// RUN:   --protocol-sync-dump=schedule \
+// RUN:   --protocol-sync-statistics %s -o %t.analysis 2> %t.diagnostics
+// RUN: diff %t.default %t.analysis
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --enable-insert-sync \
+// RUN:   %s -o %t.default.cpp
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --enable-insert-sync \
+// RUN:   --protocol-sync-analysis-only %s -o %t.analysis.cpp 2> %t.codegen-diagnostics
+// RUN: diff %t.default.cpp %t.analysis.cpp
+// RUN: FileCheck %s --input-file=%t.diagnostics --check-prefix=ANALYSIS
+// RUN: not ptoas --pto-arch=a3 --protocol-sync-dump=schedule \
+// RUN:   --emit-pto-ir %s -o /dev/null 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=OPTION-ERROR
+
+module {
+  func.func @double_buffer_schedule(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %buffers = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    %temporary = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+
+    scf.for %index = %c0 to %c4 step %c1 {
+      %slot_index = arith.remsi %index, %c2 : index
+      %slot = pto.multi_tile_get %buffers[%slot_index]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf16>)
+      %is_first = arith.cmpi eq, %index, %c0 : index
+      scf.if %is_first {
+        pto.tabs ins(%slot : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%temporary : !pto.tile_buf<vec, 16x16xf16>)
+      } else {
+        pto.tstore ins(%slot : !pto.tile_buf<vec, 16x16xf16>)
+                   outs(%output : !pto.partition_tensor_view<16x16xf16>)
+      }
+    }
+    return
+  }
+
+  func.func @queue_schedule(
+      %gm_slots : memref<256xf32, #pto.address_space<gm>>,
+      %peer : i32) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %pipe = pto.initialize_l2g2l_pipe {
+      dir_mask = 1,
+      slot_size = 1024,
+      slot_num = 8,
+      local_slot_num = 8,
+      flag_base = 0
+    }(%gm_slots : memref<256xf32, #pto.address_space<gm>>,
+      %peer : i32) -> !pto.pipe
+    %tile = pto.alloc_tile :
+      !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16,
+                    v_col=16, blayout=col_major, slayout=row_major,
+                    fractal=1024, pad=0>
+    pto.tpush(%tile, %pipe :
+      !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16,
+                    v_col=16, blayout=col_major, slayout=row_major,
+                    fractal=1024, pad=0>, !pto.pipe) {split = 0}
+    return
+  }
+}
+
+// ANALYSIS: PROTOCOL-SYNC legacy-parity function=@double_buffer_schedule status=match mismatches=0
+// ANALYSIS: PROTOCOL-SYNC schedule function=@double_buffer_schedule frozen=yes
+// ANALYSIS: region #0 kind=function
+// ANALYSIS: kind=physical-section
+// ANALYSIS: kind=loop
+// ANALYSIS: kind=choice
+// ANALYSIS: kind=alternative
+// ANALYSIS: phase #{{[0-9]+}} region=#{{[0-9]+}} op=pto.tload macro=none core=vector pipe=PIPE_MTE2
+// ANALYSIS: access #{{[0-9]+}} write value=%{{[0-9]+}}
+// ANALYSIS-SAME: root=%{{[0-9]+}} space={{[0-9]+}} visibility=local
+// ANALYSIS-SAME: physical=yes aliases-unknown=no range=[{{.*}}]
+// ANALYSIS-SAME: slot=%{{[0-9]+}}/2
+// ANALYSIS: PROTOCOL-SYNC schedule-end function=@double_buffer_schedule
+// ANALYSIS: "kind":"protocol-sync-statistics"
+// ANALYSIS: PROTOCOL-SYNC legacy-parity function=@queue_schedule status=match mismatches=0
+// ANALYSIS: summary #{{[0-9]+}} op=pto.initialize_l2g2l_pipe
+// ANALYSIS-SAME: provider=queue phases=0 completion=phase-end supplies=[]
+// ANALYSIS-SAME: queue=initialize
+// ANALYSIS-SAME: handle=%{{[0-9]+}} depth=8
+// ANALYSIS: summary #{{[0-9]+}} op=pto.tpush
+// ANALYSIS-SAME: provider=queue phases=1 completion=phase-end supplies=[]
+// ANALYSIS-SAME: queue=producer-publish
+// ANALYSIS-SAME: handle=%{{[0-9]+}} depth=8
+
+// OPTION-ERROR: Error: --protocol-sync-dump and --protocol-sync-statistics require --protocol-sync-analysis-only.

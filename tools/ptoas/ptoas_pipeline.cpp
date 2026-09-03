@@ -1285,10 +1285,27 @@ static LogicalResult validateAllocationConfiguration(ModuleOp module,
   return invalidAddress ? failure() : success();
 }
 
+static LogicalResult validateProtocolSyncConfiguration() {
+  if (protocolSyncDump != "none" && protocolSyncDump != "schedule") {
+    llvm::errs() << "Error: invalid --protocol-sync-dump='"
+                 << protocolSyncDump << "', expected 'none' or 'schedule'.\n";
+    return failure();
+  }
+  if (!protocolSyncAnalysisOnly &&
+      (protocolSyncDump != "none" || protocolSyncStatistics)) {
+    llvm::errs() << "Error: --protocol-sync-dump and "
+                    "--protocol-sync-statistics require "
+                    "--protocol-sync-analysis-only.\n";
+    return failure();
+  }
+  return success();
+}
+
 static LogicalResult validateCompileOptions(ModuleOp module,
                                             PTOBuildLevel level) {
   return failed(validateAutoSyncTailHints(module)) ||
                  failed(validateTAssignConfiguration(module, level)) ||
+                 failed(validateProtocolSyncConfiguration()) ||
                  failed(validateAllocationConfiguration(module, level)) ||
                  !validateReserveBufferLevelRules(module, level)
              ? failure()
@@ -1480,6 +1497,13 @@ static LogicalResult runMainLoweringPipeline(
   }
   pm.addPass(pto::createPTOResolveReservedBuffersPass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createPTORemoveIdentityTMovPass());
+
+  if (protocolSyncAnalysisOnly) {
+    pto::PTOProtocolSyncOptions options;
+    options.dumpMode = protocolSyncDump.getValue();
+    options.statistics = protocolSyncStatistics.getValue();
+    pm.addPass(pto::createPTOProtocolSyncPass(options));
+  }
 
   appendAutoSyncPasses(pm);
 

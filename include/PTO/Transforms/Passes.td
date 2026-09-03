@@ -41,6 +41,32 @@ def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
   ];
 }
 
+def PTOProtocolSync : Pass<"pto-protocol-sync", "ModuleOp"> {
+  let summary = "Build ProtocolSync semantic and structured schedule diagnostics";
+  let description = [{
+    Builds the immutable ProtocolSync schedule and compares it with the legacy
+    InsertSync translator. This Checkpoint A pass is analysis-only and never
+    emits synchronization or mutates the input IR.
+  }];
+
+  let constructor = "mlir::pto::createPTOProtocolSyncPass()";
+
+  let options = [
+    Option<"dumpMode", "dump", "std::string", "\"none\"",
+           "Diagnostic dump: none or schedule">,
+    Option<"statistics", "statistics", "bool", "false",
+           "Emit stable ProtocolSync analysis statistics">
+  ];
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::func::FuncDialect",
+    "mlir::memref::MemRefDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::scf::SCFDialect"
+  ];
+}
+
 def PTOInjectBarrierAllSync : Pass<"pto-inject-barrier-all-sync", "func::FuncOp"> {
   let summary = "Conservatively insert PIPE_ALL barriers for PTO dialect";
   let description = [{

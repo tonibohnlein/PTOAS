@@ -218,6 +218,22 @@ llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
                                             llvm::cl::desc("Enable automatic synchronization insertion pass"),
                                             llvm::cl::init(false));
 
+llvm::cl::opt<bool> protocolSyncAnalysisOnly(
+    "protocol-sync-analysis-only",
+    llvm::cl::desc("Build and compare the immutable ProtocolSync schedule "
+                   "without changing IR"),
+    llvm::cl::init(false));
+
+llvm::cl::opt<std::string> protocolSyncDump(
+    "protocol-sync-dump",
+    llvm::cl::desc("ProtocolSync diagnostic dump: none or schedule"),
+    llvm::cl::init("none"));
+
+llvm::cl::opt<bool> protocolSyncStatistics(
+    "protocol-sync-statistics",
+    llvm::cl::desc("Emit ProtocolSync analysis statistics"),
+    llvm::cl::init(false));
+
 llvm::cl::opt<bool> planMemoryOrderBySize(
     "plan-memory-order-by-size",
     llvm::cl::desc("Plan larger local buffers first inside one AddressSpace "

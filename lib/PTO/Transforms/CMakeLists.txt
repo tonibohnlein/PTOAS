@@ -101,6 +101,14 @@ add_mlir_dialect_library(PTOTransforms
   PTOInferVPTOVecScope.cpp
 
   InsertSync/PTOInsertSync.cpp
+  InsertSync/LegacySyncIRAdapter.cpp
+  ProtocolSync/PTOProtocolSync.cpp
+  ProtocolSync/StructuredSyncDump.cpp
+  ProtocolSync/StructuredSyncIR.cpp
+  ProtocolSync/StructuredSyncIRModel.cpp
+  ProtocolSync/SyncSemanticMemory.cpp
+  ProtocolSync/SyncSemanticProviders.cpp
+  ProtocolSync/SyncSemantics.cpp
   PTOInjectBarrierAllSync.cpp
   InsertSync/InsertSyncDebug.cpp
   PTOMaterializeImplicitTmp.cpp
