@@ -12,10 +12,15 @@
 
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
 
+#include "PTO/IR/PTOMultiBuffer.h"
+#include "PTO/IR/PTOTypeUtils.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Matchers.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 
 #include <chrono>
+#include <limits>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -29,6 +34,93 @@ bool hasStaticallyNonEmptyTripCount(scf::ForOp loop)
     std::optional<int64_t> upper = getConstantIntValue(loop.getUpperBound());
     std::optional<int64_t> step = getConstantIntValue(loop.getStep());
     return lower && upper && step && *step > 0 && *lower < *upper;
+}
+
+bool sameIntervals(ArrayRef<SyncByteInterval> first, ArrayRef<SyncByteInterval> second)
+{
+    return first.size() == second.size() && llvm::equal(first, second, [](const auto& left, const auto& right) {
+               return left.begin == right.begin && left.size == right.size;
+           });
+}
+
+std::optional<std::uint64_t> getStaticMultiBufferSlotBytes(TileBufType slotType)
+{
+    const std::uint64_t elementBytes = getPTOStorageElemByteSize(slotType.getElementType());
+    if (elementBytes == 0) {
+        return std::nullopt;
+    }
+    std::uint64_t slotBytes = elementBytes;
+    for (std::int64_t dimension : slotType.getShape()) {
+        if (dimension <= 0 || dimension == ShapedType::kDynamic) {
+            return std::nullopt;
+        }
+        const std::uint64_t extent = static_cast<std::uint64_t>(dimension);
+        const bool sizeOverflows = slotBytes > std::numeric_limits<std::uint64_t>::max() / extent;
+        if (sizeOverflows) {
+            return std::nullopt;
+        }
+        slotBytes *= extent;
+    }
+    return slotBytes;
+}
+
+std::optional<SmallVector<SyncByteInterval, 2>> getCompletePhysicalSlots(
+    const SyncStorageProvenance& provenance, const std::optional<SyncSlotExpression>& slot)
+{
+    const bool cannotRecoverSlots = !slot || slot->depth < 2 || !provenance.physical;
+    if (cannotRecoverSlots) {
+        return std::nullopt;
+    }
+    auto allocation = provenance.root.getDefiningOp<AllocMultiTileOp>();
+    const bool slotCountMismatch = allocation && allocation.getResult().getType().getCount() != slot->depth;
+    if (!allocation || slotCountMismatch) {
+        return std::nullopt;
+    }
+    std::optional<std::uint64_t> slotBytes =
+        getStaticMultiBufferSlotBytes(allocation.getResult().getType().getSlotType());
+    if (!slotBytes) {
+        return std::nullopt;
+    }
+
+    SmallVector<std::int64_t, 2> slotAddresses;
+    auto addresses = allocation->getAttrOfType<DenseI64ArrayAttr>(kPtoMultiBufferAddrsAttrName);
+    const bool plannedAddressCountMismatch = addresses && addresses.size() != slot->depth;
+    if (plannedAddressCountMismatch) {
+        return std::nullopt;
+    }
+    if (addresses) {
+        slotAddresses.assign(addresses.asArrayRef().begin(), addresses.asArrayRef().end());
+    } else {
+        std::optional<std::int64_t> base = getConstantIntValue(allocation.getAddr());
+        const bool slotSizeExceedsSignedRange =
+            *slotBytes > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+        if (!base || *base < 0 || slotSizeExceedsSignedRange) {
+            return std::nullopt;
+        }
+        const std::int64_t stride = static_cast<std::int64_t>(*slotBytes);
+        slotAddresses.reserve(slot->depth);
+        for (unsigned index = 0; index < slot->depth; ++index) {
+            const std::int64_t signedIndex = static_cast<std::int64_t>(index);
+            const bool addressOverflows =
+                index != 0 && stride > (std::numeric_limits<std::int64_t>::max() - *base) / signedIndex;
+            if (addressOverflows) {
+                return std::nullopt;
+            }
+            slotAddresses.push_back(*base + signedIndex * stride);
+        }
+    }
+
+    SmallVector<SyncByteInterval, 2> intervals;
+    intervals.reserve(slotAddresses.size());
+    for (std::int64_t address : slotAddresses) {
+        const bool invalidAddress =
+            address < 0 || static_cast<std::uint64_t>(address) > std::numeric_limits<std::uint64_t>::max() - *slotBytes;
+        if (invalidAddress) {
+            return std::nullopt;
+        }
+        intervals.push_back({static_cast<std::uint64_t>(address), *slotBytes});
+    }
+    return intervals;
 }
 
 } // namespace
@@ -48,6 +140,7 @@ private:
     StructuredSyncIR& schedule;
     SyncSemanticExtractor extractor;
     ProtocolSyncStatistics* statistics;
+    llvm::DenseMap<Value, llvm::DenseMap<unsigned, SyncStorageFamilyId>> familyIndex;
 
     SyncProgramPointId addPoint(SyncProgramPointKind kind, SyncRegionId region, SyncPhaseId phase = kInvalidSyncId);
     SyncRegionId addRegion(
@@ -66,7 +159,107 @@ private:
         Operation* operation, SyncRegionId parent, ArrayRef<SyncControlAtom> guard, ArrayRef<SyncRegionId> loops);
     void addSummary(
         Operation* operation, SyncRegionId region, ArrayRef<SyncControlAtom> guard, ArrayRef<SyncRegionId> loops);
+    std::optional<SyncSlotExpression> bindSlotExpression(
+        const std::optional<SyncSlotExpression>& slot, ArrayRef<SyncRegionId> loops) const;
+    SyncStorageFamilyId getOrCreateStorageFamily(
+        const SyncMemoryEffect& effect, const std::optional<SyncSlotExpression>& slot);
 };
+
+std::optional<SyncSlotExpression> StructuredSyncIRConstruction::bindSlotExpression(
+    const std::optional<SyncSlotExpression>& slot, ArrayRef<SyncRegionId> loops) const
+{
+    if (!slot) {
+        return std::nullopt;
+    }
+    SyncSlotExpression result = *slot;
+    if (result.kind != SyncSlotExpressionKind::AffineModulo) {
+        return result;
+    }
+    for (SyncRegionId loopId : llvm::reverse(loops)) {
+        const SyncRegion& region = schedule.regions[loopId];
+        if (auto loop = dyn_cast_or_null<scf::ForOp>(region.operation)) {
+            const bool isSelectedLoop = loop.getInductionVar() == result.induction;
+            if (isSelectedLoop) {
+                result.loop = loopId;
+                return result;
+            }
+        }
+    }
+    result.kind = SyncSlotExpressionKind::Unknown;
+    result.loop = kInvalidSyncId;
+    return result;
+}
+
+SyncStorageFamilyId StructuredSyncIRConstruction::getOrCreateStorageFamily(
+    const SyncMemoryEffect& effect, const std::optional<SyncSlotExpression>& slot)
+{
+    const SyncStorageProvenance& provenance = effect.provenance;
+    const unsigned space = static_cast<unsigned>(provenance.space);
+    std::optional<SmallVector<SyncByteInterval, 2>> completeSlots = getCompletePhysicalSlots(provenance, slot);
+    SyncStorageFamily* existingFamily = nullptr;
+    auto rootEntry = familyIndex.find(provenance.root);
+    if (rootEntry != familyIndex.end()) {
+        auto spaceEntry = rootEntry->second.find(space);
+        if (spaceEntry != rootEntry->second.end()) {
+            existingFamily = &schedule.storageFamilies[spaceEntry->second];
+        }
+    }
+    if (existingFamily != nullptr) {
+        SyncStorageFamily& family = *existingFamily;
+        family.physical = family.physical || provenance.physical;
+        family.unknownRange = family.unknownRange || provenance.unknownRange;
+        family.aliasesUnknownRange = family.aliasesUnknownRange || provenance.aliasesUnknownRange;
+        if (completeSlots) {
+            if (family.physicalSlotsComplete && !sameIntervals(family.intervals, *completeSlots)) {
+                family.capacityConflict = true;
+            } else {
+                family.intervals = *completeSlots;
+                family.physicalSlotsComplete = true;
+            }
+        } else if (!family.physicalSlotsComplete) {
+            for (const SyncByteInterval& interval : provenance.intervals) {
+                const bool alreadyRecorded = llvm::any_of(family.intervals, [&](const SyncByteInterval& current) {
+                    return current.begin == interval.begin && current.size == interval.size;
+                });
+                if (!alreadyRecorded) {
+                    family.intervals.push_back(interval);
+                }
+            }
+        }
+        if (slot && slot->depth != 0) {
+            if (family.slotCount && *family.slotCount != slot->depth) {
+                family.capacityConflict = true;
+                family.slotCount.reset();
+            } else if (!family.capacityConflict) {
+                family.slotCount = slot->depth;
+            }
+        }
+        return family.id;
+    }
+
+    SyncStorageFamily family;
+    family.id = schedule.storageFamilies.size();
+    family.root = provenance.root;
+    family.space = provenance.space;
+    family.intervals = completeSlots ? *completeSlots : provenance.intervals;
+    family.physical = provenance.physical;
+    family.unknownRange = provenance.unknownRange;
+    family.aliasesUnknownRange = provenance.aliasesUnknownRange;
+    family.physicalSlotsComplete = completeSlots.has_value();
+    if (slot && slot->depth != 0) {
+        family.slotCount = slot->depth;
+    } else if (effect.visibility == SyncVisibilityClass::Local) {
+        family.slotCount = 1;
+    }
+    if (effect.visibility == SyncVisibilityClass::Local) {
+        family.role = SyncStorageRole::LocalBuffer;
+    } else if (effect.visibility == SyncVisibilityClass::Global) {
+        family.role = SyncStorageRole::GlobalBuffer;
+    }
+    schedule.storageFamilies.push_back(std::move(family));
+    familyIndex[provenance.root][space] = schedule.storageFamilies.back().id;
+    return schedule.storageFamilies.back().id;
+}
 
 SyncProgramPointId StructuredSyncIRConstruction::addPoint(
     SyncProgramPointKind kind, SyncRegionId region, SyncPhaseId phase)
@@ -192,8 +385,10 @@ void StructuredSyncIRConstruction::addSummary(
         phase.before = addPoint(SyncProgramPointKind::PhaseBefore, region, phaseId);
         for (const SyncMemoryEffect& effect : physical.effects) {
             SyncAccessId accessId = schedule.accesses.size();
+            std::optional<SyncSlotExpression> slot = bindSlotExpression(effect.slot, loops);
+            SyncStorageFamilyId family = getOrCreateStorageFamily(effect, slot);
             schedule.accesses.push_back(
-                {accessId, phaseId, effect.value, effect.provenance, effect.mode, effect.slot, effect.visibility});
+                {accessId, phaseId, family, effect.value, effect.provenance, effect.mode, slot, effect.visibility});
             phase.accesses.push_back(accessId);
         }
         phase.after = addPoint(SyncProgramPointKind::PhaseAfter, region, phaseId);

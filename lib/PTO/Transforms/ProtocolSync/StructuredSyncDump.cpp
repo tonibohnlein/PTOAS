@@ -13,6 +13,7 @@
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
 
 #include "mlir/IR/AsmState.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 
 using namespace mlir;
@@ -44,6 +45,58 @@ void printGuard(ArrayRef<SyncControlAtom> guard, raw_ostream& output)
     llvm::interleaveComma(
         guard, output, [&](const SyncControlAtom& atom) { output << '#' << atom.choice << ':' << atom.arm; });
     output << ']';
+}
+
+void printIntervals(ArrayRef<SyncByteInterval> intervals, raw_ostream& output)
+{
+    if (intervals.empty()) {
+        output << "unknown";
+        return;
+    }
+    output << '[';
+    llvm::interleaveComma(
+        intervals, output, [&](const SyncByteInterval& interval) { output << interval.begin << '+' << interval.size; });
+    output << ']';
+}
+
+void printStorageFamily(const SyncStorageFamily& family, AsmState& state, raw_ostream& output)
+{
+    output << "  storage-family #" << family.id << " root=";
+    printValue(family.root, state, output);
+    output << " role=" << stringifySyncStorageRole(family.role) << " space=" << static_cast<unsigned>(family.space)
+           << " physical=" << (family.physical ? "yes" : "no")
+           << " aliases-unknown=" << (family.aliasesUnknownRange ? "yes" : "no") << " slot-count=";
+    if (family.slotCount) {
+        output << *family.slotCount;
+    } else {
+        output << "unknown";
+    }
+    output << " range=";
+    printIntervals(family.intervals, output);
+    output << " unknown-range=" << (family.unknownRange ? "yes" : "no")
+           << " complete-slots=" << (family.physicalSlotsComplete ? "yes" : "no") << '\n';
+}
+
+void printSlotExpression(const SyncSlotExpression& slot, AsmState& state, raw_ostream& output)
+{
+    output << " expr=" << stringifySyncSlotExpressionKind(slot.kind);
+    if (slot.kind == SyncSlotExpressionKind::Constant) {
+        output << "(offset=" << slot.offset << ",modulus=" << slot.modulus << ')';
+    } else if (slot.kind == SyncSlotExpressionKind::AffineModulo) {
+        output << "(loop=#" << slot.loop << ",induction=";
+        printValue(slot.induction, state, output);
+        output << ",coefficient=" << slot.coefficient << ",offset=" << slot.offset << ",modulus=" << slot.modulus
+               << ')';
+    }
+    output << " distance-1=" << stringifySyncSlotRelation(compareSlotsAtDistance(slot, slot, 1))
+           << " distance-2=" << stringifySyncSlotRelation(compareSlotsAtDistance(slot, slot, 2)) << " reuse=";
+    const unsigned searchLimit = slot.depth != 0 ? slot.depth : slot.modulus;
+    FailureOr<unsigned> reuse = findFirstPositiveReuseDistance(slot, searchLimit);
+    if (succeeded(reuse)) {
+        output << *reuse;
+    } else {
+        output << "unknown";
+    }
 }
 
 void printSummary(const SyncOpSummary& summary, unsigned id, AsmState& state, raw_ostream& output)
@@ -137,19 +190,12 @@ void printPhase(const StructuredSyncIR& schedule, const SyncPhase& phase, AsmSta
                << " visibility=" << stringifySyncVisibility(access->visibility)
                << " physical=" << (access->storage.physical ? "yes" : "no")
                << " aliases-unknown=" << (access->storage.aliasesUnknownRange ? "yes" : "no") << " range=";
-        if (access->storage.intervals.empty()) {
-            output << "unknown";
-        } else {
-            output << '[';
-            llvm::interleaveComma(access->storage.intervals, output, [&](const SyncByteInterval& interval) {
-                output << interval.begin << '+' << interval.size;
-            });
-            output << ']';
-        }
-        output << " slot=";
+        printIntervals(access->storage.intervals, output);
+        output << " family=#" << access->family << " slot=";
         if (access->slot) {
             printValue(access->slot->selector, state, output);
             output << '/' << access->slot->depth;
+            printSlotExpression(*access->slot, state, output);
         } else {
             output << "none";
         }
@@ -164,8 +210,34 @@ void mlir::pto::protocol_sync::printStructuredSyncIR(const StructuredSyncIR& sch
     output << "PROTOCOL-SYNC schedule function=@" << schedule.getFunction().getSymName()
            << " frozen=" << (schedule.isFrozen() ? "yes" : "no") << '\n';
     AsmState state(schedule.getFunction());
+    unsigned physicalLocalFamilies = 0;
+    unsigned logicalStorageFamilies = 0;
+    for (const SyncStorageFamily& family : schedule.getStorageFamilies()) {
+        const bool completePhysicalIdentity =
+            !family.slotCount || *family.slotCount < 2 || family.physicalSlotsComplete;
+        const bool hasPhysicalLocalIdentity = family.role == SyncStorageRole::LocalBuffer && family.physical &&
+                                              !family.intervals.empty() && completePhysicalIdentity;
+        if (hasPhysicalLocalIdentity) {
+            ++physicalLocalFamilies;
+        }
+        if (family.slotCount) {
+            ++logicalStorageFamilies;
+        }
+    }
+    llvm::DenseSet<Value> queueHandles;
+    for (const SyncOpSummary& summary : schedule.getSummaries()) {
+        if (summary.queue && summary.queue->handle && summary.queue->depth) {
+            queueHandles.insert(summary.queue->handle);
+        }
+    }
+    output << "  preservation-point=post-plan-pre-buffer-select physical-local-families=" << physicalLocalFamilies
+           << " logical-storage-families=" << logicalStorageFamilies << " queue-identities=" << queueHandles.size()
+           << '\n';
     for (const auto& [id, summary] : llvm::enumerate(schedule.getSummaries())) {
         printSummary(summary, id, state, output);
+    }
+    for (const SyncStorageFamily& family : schedule.getStorageFamilies()) {
+        printStorageFamily(family, state, output);
     }
     for (const SyncRegion& region : schedule.getRegions()) {
         printRegion(region, output);

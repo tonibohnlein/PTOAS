@@ -27,19 +27,22 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdint>
-#include <limits>
 #include <optional>
 #include <string>
 
 namespace mlir::pto::protocol_sync {
 
-using SyncRegionId = std::uint32_t;
 using SyncSummaryId = std::uint32_t;
 using SyncPhaseId = std::uint32_t;
 using SyncAccessId = std::uint32_t;
 using SyncProgramPointId = std::uint32_t;
+using SyncStorageFamilyId = std::uint32_t;
 
-inline constexpr std::uint32_t kInvalidSyncId = std::numeric_limits<std::uint32_t>::max();
+enum class SyncStorageRole : std::uint8_t {
+    LocalBuffer,
+    GlobalBuffer,
+    Unknown,
+};
 
 enum class SyncRegionKind : std::uint8_t {
     Function,
@@ -112,9 +115,24 @@ struct SyncPhase {
     llvm::SmallVector<SyncAccessId, 4> accesses;
 };
 
+struct SyncStorageFamily {
+    SyncStorageFamilyId id = kInvalidSyncId;
+    Value root;
+    AddressSpace space = AddressSpace::Zero;
+    llvm::SmallVector<SyncByteInterval, 2> intervals;
+    std::optional<std::uint32_t> slotCount;
+    SyncStorageRole role = SyncStorageRole::Unknown;
+    bool physical = false;
+    bool unknownRange = true;
+    bool aliasesUnknownRange = false;
+    bool physicalSlotsComplete = false;
+    bool capacityConflict = false;
+};
+
 struct SyncAccess {
     SyncAccessId id = kInvalidSyncId;
     SyncPhaseId phase = kInvalidSyncId;
+    SyncStorageFamilyId family = kInvalidSyncId;
     Value value;
     SyncStorageProvenance storage;
     SyncAccessMode mode = SyncAccessMode::ReadWrite;
@@ -144,11 +162,13 @@ public:
     llvm::ArrayRef<SyncRegion> getRegions() const { return regions; }
     llvm::ArrayRef<SyncOpSummary> getSummaries() const { return summaries; }
     llvm::ArrayRef<SyncPhase> getPhases() const { return phases; }
+    llvm::ArrayRef<SyncStorageFamily> getStorageFamilies() const { return storageFamilies; }
     llvm::ArrayRef<SyncAccess> getAccesses() const { return accesses; }
     llvm::ArrayRef<SyncProgramPoint> getProgramPoints() const { return points; }
     llvm::ArrayRef<SyncFailure> getFailures() const { return failures; }
     const SyncRegion* findRegion(SyncRegionId id) const;
     const SyncPhase* findPhase(SyncPhaseId id) const;
+    const SyncStorageFamily* findStorageFamily(SyncStorageFamilyId id) const;
     const SyncAccess* findAccess(SyncAccessId id) const;
     LogicalResult freeze();
 
@@ -160,6 +180,7 @@ private:
     llvm::SmallVector<SyncRegion, 16> regions;
     llvm::SmallVector<SyncOpSummary, 32> summaries;
     llvm::SmallVector<SyncPhase, 32> phases;
+    llvm::SmallVector<SyncStorageFamily, 16> storageFamilies;
     llvm::SmallVector<SyncAccess, 64> accesses;
     llvm::SmallVector<SyncProgramPoint, 64> points;
     llvm::SmallVector<SyncFailure, 4> failures;
@@ -181,6 +202,7 @@ private:
 void printStructuredSyncIR(const StructuredSyncIR& schedule, llvm::raw_ostream& output);
 llvm::StringRef stringifySyncRegionKind(SyncRegionKind kind);
 llvm::StringRef stringifySyncCardinality(SyncCardinality cardinality);
+llvm::StringRef stringifySyncStorageRole(SyncStorageRole role);
 
 } // namespace mlir::pto::protocol_sync
 

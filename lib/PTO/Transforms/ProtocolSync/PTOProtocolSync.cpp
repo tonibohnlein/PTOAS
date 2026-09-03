@@ -15,7 +15,6 @@
 #include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/JSON.h"
 
 #include <chrono>
@@ -40,11 +39,8 @@ void collectScheduleStatistics(const StructuredSyncIR& schedule, ProtocolSyncSta
     statistics.structuredRegions = schedule.getRegions().size();
     statistics.phases = schedule.getPhases().size();
     statistics.accesses = schedule.getAccesses().size();
-    llvm::DenseSet<Value> storageRoots;
+    statistics.storageFamilies = schedule.getStorageFamilies().size();
     for (const SyncAccess& access : schedule.getAccesses()) {
-        if (access.storage.root) {
-            storageRoots.insert(access.storage.root);
-        }
         if (access.storage.unknownRange) {
             ++statistics.unknownRanges;
         } else {
@@ -59,8 +55,12 @@ void collectScheduleStatistics(const StructuredSyncIR& schedule, ProtocolSyncSta
         } else if (access.slot->depth == 2) {
             ++statistics.depthTwoAccesses;
         }
+        if (access.slot && access.slot->kind == SyncSlotExpressionKind::Unknown) {
+            ++statistics.slotExpressionsUnknown;
+        } else if (access.slot) {
+            ++statistics.slotExpressionsKnown;
+        }
     }
-    statistics.storageFamilies = storageRoots.size();
 }
 
 void printStatistics(

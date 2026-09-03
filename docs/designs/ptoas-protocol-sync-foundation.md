@@ -107,10 +107,34 @@ The archives are not committed into PTOAS.
 - Future mutation must occur on a clone and commit only after independent
   semantic and MLIR verification.
 
-## Next gates
+## Checkpoint B result
 
-Checkpoint B must demonstrate, on official one-buffer and double-buffer
-fixtures, both planned physical storage identity and retained logical
-slot/queue identity. Only then may storage timelines and access-derived channel
-diagnostics be added. Protocol lowering and event allocation remain outside
-this checkpoint.
+The audited sequence is memory planning, `PTOResolveReservedBuffers`,
+`PTORemoveIdentityTMov`, ProtocolSync analysis, legacy InsertSync, then
+`PTOResolveBufferSelect`. No additional IR descriptor is required at the
+ProtocolSync point: planned local byte intervals, allocation roots,
+`alloc_multi_tile` counts, `multi_tile_get` selectors, queue handles/depths,
+macro phases, and physical pipelines are simultaneously available.
+
+`StructuredSyncIR` now assigns stable storage-family IDs by allocation root and
+address space. Each family preserves its merged planned intervals, logical slot
+count, visibility role, and physical/unknown-range state. Slot selectors retain
+their original SSA value and are conservatively canonicalized as a constant or
+`(iv + offset) mod N`; unsupported expressions remain unknown. The frozen form
+uses the loop's logical iteration coordinate: `coefficient` includes the
+`scf.for` step and `offset` includes its lower bound. The diagnostic distance
+API proves the official depth-two schedule has different adjacent slots, the
+same slot at distance two, and reuse distance two. It never reports a period
+beyond the explicit search bound.
+
+`protocol_sync_information_preservation.pto` covers one-buffer, double-buffer,
+offset double-buffer, constant-slot, and nonlinear-unknown schedules. The
+existing analysis-only fixture also proves queue identity and depth survive at
+the same point. Protocol generation, `ReadyRelease<2>`, and event allocation
+remain disabled.
+
+## Next gate
+
+Checkpoint C may add access-derived storage-generation timelines and channel
+diagnostics. Synchronization emission remains out of scope until those
+diagnostics and rejection reasons have been validated.

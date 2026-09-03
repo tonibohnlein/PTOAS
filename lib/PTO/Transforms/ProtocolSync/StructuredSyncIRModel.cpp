@@ -12,10 +12,68 @@
 
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
 
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/STLExtras.h"
+
+#include <limits>
 
 using namespace mlir;
 using namespace mlir::pto::protocol_sync;
+
+namespace {
+
+bool hasValidCompleteSlots(const SyncStorageFamily& family)
+{
+    if (!family.slotCount || *family.slotCount < 2) {
+        return true;
+    }
+    const bool incompleteSlots = !family.physicalSlotsComplete || family.intervals.size() != *family.slotCount;
+    if (incompleteSlots) {
+        return false;
+    }
+    for (auto [index, interval] : llvm::enumerate(family.intervals)) {
+        const bool invalidInterval =
+            interval.size == 0 || interval.begin > std::numeric_limits<std::uint64_t>::max() - interval.size;
+        if (invalidInterval) {
+            return false;
+        }
+        const std::uint64_t intervalEnd = interval.begin + interval.size;
+        for (const SyncByteInterval& previous : llvm::ArrayRef(family.intervals).take_front(index)) {
+            const std::uint64_t previousEnd = previous.begin + previous.size;
+            if (interval.begin < previousEnd && previous.begin < intervalEnd) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool hasValidCanonicalSlot(
+    const SyncSlotExpression& slot, const SyncStorageFamily& family, const SyncPhase& phase,
+    ArrayRef<SyncRegion> regions)
+{
+    if (slot.kind == SyncSlotExpressionKind::Unknown) {
+        return true;
+    }
+    if (slot.depth == 0 || slot.modulus != slot.depth || !family.slotCount || *family.slotCount != slot.depth ||
+        slot.offset < 0 || static_cast<std::uint64_t>(slot.offset) >= slot.modulus) {
+        return false;
+    }
+    if (slot.kind == SyncSlotExpressionKind::Constant) {
+        return !slot.induction && slot.loop == kInvalidSyncId && slot.coefficient == 0;
+    }
+    const bool invalidAffineForm = !slot.induction || slot.loop >= regions.size() ||
+                                   !llvm::is_contained(phase.iterationDomain.loops, slot.loop) ||
+                                   slot.coefficient < 0 || static_cast<std::uint64_t>(slot.coefficient) >= slot.modulus;
+    if (invalidAffineForm) {
+        return false;
+    }
+    const SyncRegion& loopRegion = regions[slot.loop];
+    auto loop = dyn_cast_or_null<scf::ForOp>(loopRegion.operation);
+    return loopRegion.kind == SyncRegionKind::Loop && loop && loop.getInductionVar() == slot.induction;
+}
+
+} // namespace
 
 const SyncRegion* StructuredSyncIR::findRegion(SyncRegionId id) const
 {
@@ -25,6 +83,11 @@ const SyncRegion* StructuredSyncIR::findRegion(SyncRegionId id) const
 const SyncPhase* StructuredSyncIR::findPhase(SyncPhaseId id) const
 {
     return id < phases.size() ? &phases[id] : nullptr;
+}
+
+const SyncStorageFamily* StructuredSyncIR::findStorageFamily(SyncStorageFamilyId id) const
+{
+    return id < storageFamilies.size() ? &storageFamilies[id] : nullptr;
 }
 
 const SyncAccess* StructuredSyncIR::findAccess(SyncAccessId id) const
@@ -108,13 +171,31 @@ LogicalResult StructuredSyncIR::freeze()
     for (auto [index, access] : llvm::enumerate(accesses)) {
         const bool invalidId = access.id != index;
         const bool invalidPhase = access.phase >= phases.size();
-        if (invalidId || invalidPhase) {
+        const bool invalidFamily = access.family >= storageFamilies.size();
+        if (invalidId || invalidPhase || invalidFamily) {
             return failure();
         }
         if (!access.value) {
             return failure();
         }
+        const SyncStorageFamily& family = storageFamilies[access.family];
+        if (family.root != access.storage.root || family.space != access.storage.space) {
+            return failure();
+        }
+        if (access.slot && access.slot->depth != 0 && (!family.slotCount || *family.slotCount != access.slot->depth)) {
+            return failure();
+        }
+        if (access.slot && !hasValidCanonicalSlot(*access.slot, family, phases[access.phase], regions)) {
+            return failure();
+        }
         if (accessReferences[index] != 1) {
+            return failure();
+        }
+    }
+    for (auto [index, family] : llvm::enumerate(storageFamilies)) {
+        const bool invalidFamily = family.id != index || !family.root || (family.slotCount && *family.slotCount == 0) ||
+                                   family.capacityConflict || (family.physical && !hasValidCompleteSlots(family));
+        if (invalidFamily) {
             return failure();
         }
     }
@@ -169,4 +250,17 @@ StringRef mlir::pto::protocol_sync::stringifySyncCardinality(SyncCardinality car
             return "one-or-more";
     }
     return "exactly-once";
+}
+
+StringRef mlir::pto::protocol_sync::stringifySyncStorageRole(SyncStorageRole role)
+{
+    switch (role) {
+        case SyncStorageRole::LocalBuffer:
+            return "local-buffer";
+        case SyncStorageRole::GlobalBuffer:
+            return "global-buffer";
+        case SyncStorageRole::Unknown:
+            return "unknown";
+    }
+    return "unknown";
 }

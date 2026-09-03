@@ -55,6 +55,32 @@ StringRef mlir::pto::protocol_sync::stringifySyncAccessMode(SyncAccessMode mode)
     return "unknown";
 }
 
+StringRef mlir::pto::protocol_sync::stringifySyncSlotExpressionKind(SyncSlotExpressionKind kind)
+{
+    switch (kind) {
+        case SyncSlotExpressionKind::Unknown:
+            return "unknown";
+        case SyncSlotExpressionKind::Constant:
+            return "constant";
+        case SyncSlotExpressionKind::AffineModulo:
+            return "affine-modulo";
+    }
+    return "unknown";
+}
+
+StringRef mlir::pto::protocol_sync::stringifySyncSlotRelation(SyncSlotRelation relation)
+{
+    switch (relation) {
+        case SyncSlotRelation::Same:
+            return "same";
+        case SyncSlotRelation::Different:
+            return "different";
+        case SyncSlotRelation::Unknown:
+            return "unknown";
+    }
+    return "unknown";
+}
+
 StringRef mlir::pto::protocol_sync::stringifySyncVisibility(SyncVisibilityClass visibility)
 {
     switch (visibility) {

@@ -22,16 +22,22 @@
 #include "PTO/IR/PTO.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 
 namespace mlir::pto::protocol_sync {
+
+using SyncRegionId = std::uint32_t;
+
+inline constexpr std::uint32_t kInvalidSyncId = std::numeric_limits<std::uint32_t>::max();
 
 enum class SyncPhysicalCore : std::uint8_t { Cube, Vector, Unknown };
 
@@ -85,9 +91,29 @@ struct SyncByteInterval {
     std::uint64_t size = 0;
 };
 
+enum class SyncSlotExpressionKind : std::uint8_t {
+    Unknown,
+    Constant,
+    AffineModulo,
+};
+
+enum class SyncSlotRelation : std::uint8_t {
+    Same,
+    Different,
+    Unknown,
+};
+
 struct SyncSlotExpression {
+    // AffineModulo is expressed in the loop's logical iteration coordinate:
+    // slot(t) = (coefficient * t + offset) mod modulus.
     Value selector;
     std::uint32_t depth = 0;
+    SyncSlotExpressionKind kind = SyncSlotExpressionKind::Unknown;
+    Value induction;
+    SyncRegionId loop = kInvalidSyncId;
+    std::int64_t coefficient = 0;
+    std::int64_t offset = 0;
+    std::uint32_t modulus = 0;
 };
 
 struct SyncStorageProvenance {
@@ -234,7 +260,14 @@ private:
 };
 
 std::optional<std::uint32_t> getSyncSlotDepth(Value value);
+/// Compare first(t) with second(t + distance). Unknown inputs remain unknown.
+SyncSlotRelation compareSlotsAtDistance(
+    const SyncSlotExpression& first, const SyncSlotExpression& second, unsigned distance);
+/// Return the proven period when it does not exceed searchLimit.
+FailureOr<unsigned> findFirstPositiveReuseDistance(const SyncSlotExpression& slot, unsigned searchLimit);
 std::optional<SyncQueueSemantics> getSyncQueueSemantics(Operation* operation);
+llvm::StringRef stringifySyncSlotExpressionKind(SyncSlotExpressionKind kind);
+llvm::StringRef stringifySyncSlotRelation(SyncSlotRelation relation);
 llvm::StringRef stringifySyncPhysicalCore(SyncPhysicalCore core);
 llvm::StringRef stringifySyncAccessMode(SyncAccessMode mode);
 llvm::StringRef stringifySyncVisibility(SyncVisibilityClass visibility);

@@ -1,0 +1,214 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --enable-insert-sync --protocol-sync-analysis-only \
+// RUN:   --protocol-sync-dump=schedule --protocol-sync-statistics \
+// RUN:   %s -o %t 2> %t.diagnostics
+// RUN: FileCheck %s --input-file=%t.diagnostics
+
+module {
+  func.func @one_buffer(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %input_tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    %output_tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%input_tile : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%input_tile : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%output_tile : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%output_tile : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+
+  func.func @double_buffer(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %input_buffers = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    %output_buffers = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    scf.for %index = %c0 to %c4 step %c1 {
+      %selector = arith.remui %index, %c2 : index
+      %input_slot = pto.multi_tile_get %input_buffers[%selector]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      %output_slot = pto.multi_tile_get %output_buffers[%selector]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%input_slot : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%input_slot : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output_slot : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%output_slot : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+
+  func.func @offset_double_buffer(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %buffers = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    scf.for %index = %c0 to %c4 step %c1 {
+      %offset_index = arith.addi %index, %c1 : index
+      %selector = arith.remsi %offset_index, %c2 : index
+      %slot = pto.multi_tile_get %buffers[%selector]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%slot : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+
+  func.func @constant_slot(
+      %input : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c1 = arith.constant 1 : index
+    %buffers = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    %slot = pto.multi_tile_get %buffers[%c1]
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+       -> !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%slot : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+
+  func.func @stepped_double_buffer(
+      %input : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    %c10 = arith.constant 10 : index
+    %buffers = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    scf.for %index = %c1 to %c10 step %c3 {
+      %selector = arith.remui %index, %c2 : index
+      %slot = pto.multi_tile_get %buffers[%selector]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    return
+  }
+
+  func.func @view_propagation(
+      %input : !pto.partition_tensor_view<16x8xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %buffers = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    scf.for %index = %c0 to %c4 step %c1 {
+      %slot = pto.multi_tile_get %buffers[%c1]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      %view = pto.subview %slot[%c0, %c8] sizes [16, 8] :
+          !pto.tile_buf<vec, 16x16xf16> -> !pto.tile_buf<vec, 16x8xf16>
+      pto.tload ins(%input : !pto.partition_tensor_view<16x8xf16>)
+                outs(%view : !pto.tile_buf<vec, 16x8xf16>)
+    }
+    return
+  }
+
+  func.func @nonlinear_slot(
+      %input : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %buffers = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    scf.for %index = %c0 to %c4 step %c1 {
+      %squared = arith.muli %index, %index : index
+      %selector = arith.remsi %squared, %c2 : index
+      %slot = pto.multi_tile_get %buffers[%selector]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: PROTOCOL-SYNC legacy-parity function=@one_buffer status=match mismatches=0
+// CHECK: PROTOCOL-SYNC schedule function=@one_buffer frozen=yes
+// CHECK: preservation-point=post-plan-pre-buffer-select physical-local-families=2 logical-storage-families=2
+// CHECK: storage-family #{{[0-9]+}} root=%{{[0-9]+}} role=local-buffer space={{[0-9]+}} physical=yes
+// CHECK-SAME: slot-count=1 range=[{{[0-9]+}}+512]
+// CHECK: phase #{{[0-9]+}} region=#{{[0-9]+}} op=pto.tload{{.*}}pipe=PIPE_MTE2
+// CHECK: phase #{{[0-9]+}} region=#{{[0-9]+}} op=pto.tabs{{.*}}pipe=PIPE_V
+// CHECK: phase #{{[0-9]+}} region=#{{[0-9]+}} op=pto.tstore{{.*}}pipe=PIPE_MTE3
+
+// CHECK-LABEL: PROTOCOL-SYNC legacy-parity function=@double_buffer status=match mismatches=0
+// CHECK: PROTOCOL-SYNC schedule function=@double_buffer frozen=yes
+// CHECK: preservation-point=post-plan-pre-buffer-select physical-local-families=2 logical-storage-families=2
+// CHECK: storage-family #{{[0-9]+}} root=%{{[0-9]+}} role=local-buffer space={{[0-9]+}} physical=yes
+// CHECK-SAME: slot-count=2 range=[0+512, 1024+512]
+// CHECK-SAME: complete-slots=yes
+// CHECK: storage-family #{{[0-9]+}} root=%{{[0-9]+}} role=local-buffer space={{[0-9]+}} physical=yes
+// CHECK-SAME: slot-count=2 range=[512+512, 1536+512]
+// CHECK-SAME: complete-slots=yes
+// CHECK: phase #{{[0-9]+}} region=#{{[0-9]+}} op=pto.tload{{.*}}pipe=PIPE_MTE2
+// CHECK: slot=%{{[0-9]+}}/2 expr=affine-modulo(loop=#{{[0-9]+}},induction=%{{[^,]+}},coefficient=1,offset=0,modulus=2)
+// CHECK-SAME: distance-1=different distance-2=same reuse=2
+// CHECK: phase #{{[0-9]+}} region=#{{[0-9]+}} op=pto.tabs{{.*}}pipe=PIPE_V
+// CHECK: phase #{{[0-9]+}} region=#{{[0-9]+}} op=pto.tstore{{.*}}pipe=PIPE_MTE3
+
+// CHECK-LABEL: PROTOCOL-SYNC schedule function=@offset_double_buffer frozen=yes
+// CHECK: storage-family #{{[0-9]+}} root=%{{[0-9]+}} role=local-buffer space={{[0-9]+}} physical=yes
+// CHECK-SAME: slot-count=2 range=[{{[0-9]+}}+512, {{[0-9]+}}+512]
+// CHECK: slot=%{{[0-9]+}}/2 expr=affine-modulo(loop=#{{[0-9]+}},induction=%{{[^,]+}},coefficient=1,offset=1,modulus=2)
+// CHECK-SAME: distance-1=different distance-2=same reuse=2
+
+// CHECK-LABEL: PROTOCOL-SYNC schedule function=@constant_slot frozen=yes
+// CHECK: slot=%{{[^/]+}}/2 expr=constant(offset=1,modulus=2)
+// CHECK-SAME: distance-1=same distance-2=same reuse=1
+
+// CHECK-LABEL: PROTOCOL-SYNC schedule function=@stepped_double_buffer frozen=yes
+// CHECK: slot=%{{[0-9]+}}/2 expr=affine-modulo(loop=#{{[0-9]+}},induction=%{{[^,]+}},coefficient=1,offset=1,modulus=2)
+// CHECK-SAME: distance-1=different distance-2=same reuse=2
+
+// CHECK-LABEL: PROTOCOL-SYNC schedule function=@view_propagation frozen=yes
+// CHECK: storage-family #{{[0-9]+}} root=%{{[0-9]+}} role=local-buffer space={{[0-9]+}} physical=yes
+// CHECK-SAME: slot-count=2 range=[{{[0-9]+}}+512, {{[0-9]+}}+512]
+// CHECK-SAME: complete-slots=yes
+// CHECK: phase #{{[0-9]+}} region=#{{[0-9]+}} op=pto.tload{{.*}}pipe=PIPE_MTE2
+// CHECK: write value=%{{[0-9]+}} root=%{{[0-9]+}} space=6 visibility=local physical=yes aliases-unknown=no range=[528+16, 560+16
+// CHECK-SAME: family=#{{[0-9]+}} slot=%c1/2 expr=constant
+// CHECK-SAME: distance-1=same distance-2=same reuse=1
+
+// CHECK-LABEL: PROTOCOL-SYNC schedule function=@nonlinear_slot frozen=yes
+// CHECK: slot=%{{[0-9]+}}/2 expr=unknown distance-1=unknown distance-2=unknown reuse=unknown
+// CHECK: "slot_expressions_known":0,"slot_expressions_unknown":1
+// CHECK-SAME: "function":"nonlinear_slot"
