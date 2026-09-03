@@ -147,7 +147,7 @@ void appendScheduleRegionTokens(const StructuredSyncIR& schedule, SyncRegionId i
                 return;
             }
             tokens.push_back({ShadowTokenKind::Phase, phase->operation});
-        } else {
+        } else if (element.kind == SyncRegionElement::Kind::ChildRegion) {
             appendScheduleRegionTokens(schedule, element.child, tokens);
         }
     }
@@ -213,8 +213,9 @@ void compareStructure(
     }
     for (auto [index, pair] : llvm::enumerate(llvm::zip(legacyTokens, scheduleTokens))) {
         const auto& [legacyToken, scheduleToken] = pair;
+        const bool operationMustMatch = legacyToken.kind != ShadowTokenKind::Placeholder;
         if (legacyToken.kind != scheduleToken.kind ||
-            (legacyToken.kind == ShadowTokenKind::Phase && legacyToken.operation != scheduleToken.operation)) {
+            (operationMustMatch && legacyToken.operation != scheduleToken.operation)) {
             addMismatch(result, "structure", index, "token sequence differs");
         }
     }
@@ -232,9 +233,16 @@ void compareAccesses(
             addMismatch(result, "memory", phase.id, "invalid access id");
             return;
         }
-        if (access->mode == SyncAccessMode::Read) {
+        const bool readsMemory = access->mode == SyncAccessMode::Read ||
+                                 access->mode == SyncAccessMode::ReadWrite ||
+                                 access->mode == SyncAccessMode::Ordered;
+        const bool writesMemory = access->mode == SyncAccessMode::Write ||
+                                  access->mode == SyncAccessMode::ReadWrite ||
+                                  access->mode == SyncAccessMode::Ordered;
+        if (readsMemory) {
             reads.push_back(access);
-        } else if (access->mode == SyncAccessMode::Write) {
+        }
+        if (writesMemory) {
             writes.push_back(access);
         }
     }
@@ -396,8 +404,10 @@ LegacySyncParityResult LegacySyncIRAdapter::compare(
 void mlir::pto::protocol_sync::printLegacySyncParity(
     func::FuncOp function, const LegacySyncParityResult& result, raw_ostream& output)
 {
+    StringRef status = !result.isInternallyConsistent() ? "internal-error" :
+                       result.matches() ? "match" : "mismatch";
     output << "PROTOCOL-SYNC legacy-parity function=@" << function.getSymName()
-           << " status=" << (result.matches() ? "match" : "mismatch") << " mismatches=" << result.mismatches.size()
+           << " status=" << status << " mismatches=" << result.mismatches.size()
            << " internal-checks=" << result.internalConsistencyIssues.size() << '\n';
     for (const LegacySyncParityMismatch& mismatch : result.mismatches) {
         output << "  parity-mismatch category=" << mismatch.category << " index=" << mismatch.index << " detail=\""

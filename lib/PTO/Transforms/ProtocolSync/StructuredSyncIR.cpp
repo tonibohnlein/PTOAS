@@ -64,15 +64,24 @@ std::optional<std::uint64_t> getStaticMultiBufferSlotBytes(TileBufType slotType)
     return slotBytes;
 }
 
-std::optional<SmallVector<SyncByteInterval, 2>> getCompletePhysicalSlots(
-    const SyncStorageProvenance& provenance, const std::optional<SyncSlotExpression>& slot)
+std::optional<std::uint32_t> getAuthoritativeSlotCount(const SyncStorageProvenance& provenance)
 {
-    const bool cannotRecoverSlots = !slot || slot->depth < 2 || !provenance.physical;
+    auto allocation = provenance.root.getDefiningOp<AllocMultiTileOp>();
+    if (!allocation) {
+        return std::nullopt;
+    }
+    return static_cast<std::uint32_t>(allocation.getResult().getType().getCount());
+}
+
+std::optional<SmallVector<SyncByteInterval, 2>> getCompletePhysicalSlots(
+    const SyncStorageProvenance& provenance, std::optional<std::uint32_t> slotCount)
+{
+    const bool cannotRecoverSlots = !slotCount || *slotCount < 2 || !provenance.physical;
     if (cannotRecoverSlots) {
         return std::nullopt;
     }
     auto allocation = provenance.root.getDefiningOp<AllocMultiTileOp>();
-    const bool slotCountMismatch = allocation && allocation.getResult().getType().getCount() != slot->depth;
+    const bool slotCountMismatch = allocation && allocation.getResult().getType().getCount() != *slotCount;
     if (!allocation || slotCountMismatch) {
         return std::nullopt;
     }
@@ -84,7 +93,7 @@ std::optional<SmallVector<SyncByteInterval, 2>> getCompletePhysicalSlots(
 
     SmallVector<std::int64_t, 2> slotAddresses;
     auto addresses = allocation->getAttrOfType<DenseI64ArrayAttr>(kPtoMultiBufferAddrsAttrName);
-    const bool plannedAddressCountMismatch = addresses && addresses.size() != slot->depth;
+    const bool plannedAddressCountMismatch = addresses && addresses.size() != *slotCount;
     if (plannedAddressCountMismatch) {
         return std::nullopt;
     }
@@ -98,8 +107,8 @@ std::optional<SmallVector<SyncByteInterval, 2>> getCompletePhysicalSlots(
             return std::nullopt;
         }
         const std::int64_t stride = static_cast<std::int64_t>(*slotBytes);
-        slotAddresses.reserve(slot->depth);
-        for (unsigned index = 0; index < slot->depth; ++index) {
+        slotAddresses.reserve(*slotCount);
+        for (unsigned index = 0; index < *slotCount; ++index) {
             const std::int64_t signedIndex = static_cast<std::int64_t>(index);
             const bool addressOverflows =
                 index != 0 && stride > (std::numeric_limits<std::int64_t>::max() - *base) / signedIndex;
@@ -142,12 +151,17 @@ private:
     ProtocolSyncStatistics* statistics;
     llvm::DenseMap<Value, llvm::DenseMap<unsigned, SyncStorageFamilyId>> familyIndex;
 
-    SyncProgramPointId addPoint(SyncProgramPointKind kind, SyncRegionId region, SyncPhaseId phase = kInvalidSyncId);
+    SyncProgramPointId addPoint(
+        SyncProgramPointKind kind, SyncRegionId region, SyncPhaseId phase = kInvalidSyncId,
+        SyncSemanticActionId action = kInvalidSyncId);
     SyncRegionId addRegion(
         SyncRegionId parent, SyncRegionKind kind, SyncCardinality cardinality, Operation* operation, unsigned arm,
         ArrayRef<SyncControlAtom> guard, ArrayRef<SyncRegionId> loops);
     void finishRegion(SyncRegionId region);
     void buildBlock(Block& block, SyncRegionId parent, ArrayRef<SyncControlAtom> guard, ArrayRef<SyncRegionId> loops);
+    bool buildSingleBlockRegion(
+        Region& body, SyncRegionId parent, ArrayRef<SyncControlAtom> guard, ArrayRef<SyncRegionId> loops,
+        Operation* owner);
     void buildOperation(
         Operation* operation, SyncRegionId parent, ArrayRef<SyncControlAtom> guard, ArrayRef<SyncRegionId> loops);
     void buildLoop(
@@ -195,7 +209,11 @@ SyncStorageFamilyId StructuredSyncIRConstruction::getOrCreateStorageFamily(
 {
     const SyncStorageProvenance& provenance = effect.provenance;
     const unsigned space = static_cast<unsigned>(provenance.space);
-    std::optional<SmallVector<SyncByteInterval, 2>> completeSlots = getCompletePhysicalSlots(provenance, slot);
+    const std::optional<std::uint32_t> rootSlotCount = getAuthoritativeSlotCount(provenance);
+    const std::optional<std::uint32_t> selectorSlotCount =
+        slot && slot->depth != 0 ? std::optional<std::uint32_t>(slot->depth) : std::nullopt;
+    std::optional<SmallVector<SyncByteInterval, 2>> completeSlots =
+        getCompletePhysicalSlots(provenance, rootSlotCount);
     SyncStorageFamily* existingFamily = nullptr;
     auto rootEntry = familyIndex.find(provenance.root);
     if (rootEntry != familyIndex.end()) {
@@ -226,12 +244,15 @@ SyncStorageFamilyId StructuredSyncIRConstruction::getOrCreateStorageFamily(
                 }
             }
         }
-        if (slot && slot->depth != 0) {
-            if (family.slotCount && *family.slotCount != slot->depth) {
+        for (std::optional<std::uint32_t> observed : {rootSlotCount, selectorSlotCount}) {
+            if (!observed) {
+                continue;
+            }
+            if (family.slotCount && *family.slotCount != *observed) {
                 family.capacityConflict = true;
                 family.slotCount.reset();
             } else if (!family.capacityConflict) {
-                family.slotCount = slot->depth;
+                family.slotCount = *observed;
             }
         }
         return family.id;
@@ -246,9 +267,18 @@ SyncStorageFamilyId StructuredSyncIRConstruction::getOrCreateStorageFamily(
     family.unknownRange = provenance.unknownRange;
     family.aliasesUnknownRange = provenance.aliasesUnknownRange;
     family.physicalSlotsComplete = completeSlots.has_value();
-    if (slot && slot->depth != 0) {
-        family.slotCount = slot->depth;
-    } else if (effect.visibility == SyncVisibilityClass::Local) {
+    if (rootSlotCount) {
+        family.slotCount = *rootSlotCount;
+    }
+    if (selectorSlotCount) {
+        if (family.slotCount && *family.slotCount != *selectorSlotCount) {
+            family.capacityConflict = true;
+            family.slotCount.reset();
+        } else {
+            family.slotCount = *selectorSlotCount;
+        }
+    }
+    if (!family.slotCount && effect.visibility == SyncVisibilityClass::Local) {
         family.slotCount = 1;
     }
     if (effect.visibility == SyncVisibilityClass::Local) {
@@ -262,10 +292,10 @@ SyncStorageFamilyId StructuredSyncIRConstruction::getOrCreateStorageFamily(
 }
 
 SyncProgramPointId StructuredSyncIRConstruction::addPoint(
-    SyncProgramPointKind kind, SyncRegionId region, SyncPhaseId phase)
+    SyncProgramPointKind kind, SyncRegionId region, SyncPhaseId phase, SyncSemanticActionId action)
 {
     SyncProgramPointId id = schedule.points.size();
-    schedule.points.push_back({id, kind, region, phase});
+    schedule.points.push_back({id, kind, region, phase, action});
     return id;
 }
 
@@ -299,6 +329,22 @@ void StructuredSyncIRConstruction::finishRegion(SyncRegionId region)
     schedule.regions[region].exit = addPoint(SyncProgramPointKind::RegionExit, region);
 }
 
+bool StructuredSyncIRConstruction::buildSingleBlockRegion(
+    Region& body, SyncRegionId parent, ArrayRef<SyncControlAtom> guard, ArrayRef<SyncRegionId> loops, Operation* owner)
+{
+    if (body.empty()) {
+        return true;
+    }
+    if (!llvm::hasSingleElement(body)) {
+        schedule.failures.push_back(
+            {SyncFailureReason::UnsupportedCFG, owner,
+             "ProtocolSync initially requires structured single-block regions"});
+        return false;
+    }
+    buildBlock(body.front(), parent, guard, loops);
+    return true;
+}
+
 void StructuredSyncIRConstruction::buildLoop(
     Operation* operation, Region& body, SyncRegionId parent, SyncCardinality cardinality,
     ArrayRef<SyncControlAtom> guard, ArrayRef<SyncRegionId> loops)
@@ -306,9 +352,7 @@ void StructuredSyncIRConstruction::buildLoop(
     SyncRegionId loop = addRegion(parent, SyncRegionKind::Loop, cardinality, operation, 0, guard, loops);
     SmallVector<SyncRegionId, 2> nestedLoops(loops.begin(), loops.end());
     nestedLoops.push_back(loop);
-    for (Block& block : body) {
-        buildBlock(block, loop, guard, nestedLoops);
-    }
+    (void)buildSingleBlockRegion(body, loop, guard, nestedLoops, operation);
     finishRegion(loop);
 }
 
@@ -323,9 +367,7 @@ void StructuredSyncIRConstruction::buildChoice(
         SyncRegionId alternative =
             addRegion(choice, SyncRegionKind::Alternative, SyncCardinality::ZeroOrOne, operation, arm, armGuard, loops);
         Region& region = arm == 0 ? operation.getThenRegion() : operation.getElseRegion();
-        for (Block& block : region) {
-            buildBlock(block, alternative, armGuard, loops);
-        }
+        (void)buildSingleBlockRegion(region, alternative, armGuard, loops, operation);
         finishRegion(alternative);
     }
     finishRegion(choice);
@@ -342,9 +384,7 @@ void StructuredSyncIRConstruction::buildNestedRegion(
     }
     for (Region& body : operation->getRegions()) {
         SyncRegionId region = addRegion(parent, kind, SyncCardinality::ExactlyOnce, operation, 0, guard, loops);
-        for (Block& block : body) {
-            buildBlock(block, region, guard, loops);
-        }
+        (void)buildSingleBlockRegion(body, region, guard, loops, operation);
         finishRegion(region);
     }
 }
@@ -367,6 +407,27 @@ void StructuredSyncIRConstruction::addSummary(
     }
     schedule.summaries.push_back(std::move(summary));
     const SyncOpSummary& stored = schedule.summaries.back();
+    const bool needsOrderedSemanticAction = stored.isSupported() && stored.phases.empty() &&
+                                            (!stored.suppliedProtocols.empty() || stored.queue.has_value());
+    if (needsOrderedSemanticAction) {
+        SyncSemanticActionId actionId = schedule.semanticActions.size();
+        SyncSemanticAction action;
+        action.id = actionId;
+        action.summary = summaryId;
+        action.region = region;
+        action.operation = operation;
+        action.guard.assign(guard.begin(), guard.end());
+        action.iterationDomain.loops.assign(loops.begin(), loops.end());
+        action.before = addPoint(
+            SyncProgramPointKind::SemanticActionBefore, region, kInvalidSyncId, actionId);
+        action.after = addPoint(
+            SyncProgramPointKind::SemanticActionAfter, region, kInvalidSyncId, actionId);
+        schedule.semanticActions.push_back(std::move(action));
+        SyncRegion& owner = schedule.regions[region];
+        owner.elements.push_back(
+            {SyncRegionElement::Kind::SemanticAction, static_cast<unsigned>(owner.elements.size()),
+             kInvalidSyncId, kInvalidSyncId, actionId});
+    }
     for (const SyncPhysicalPhase& physical : stored.phases) {
         SyncPhaseId phaseId = schedule.phases.size();
         SyncPhase phase;
@@ -446,8 +507,11 @@ LogicalResult StructuredSyncIRConstruction::build()
     }
     SyncRegionId root =
         addRegion(kInvalidSyncId, SyncRegionKind::Function, SyncCardinality::ExactlyOnce, function, 0, {}, {});
-    for (Block& block : function.getBody()) {
-        buildBlock(block, root, {}, {});
+    if (!llvm::hasSingleElement(function.getBody())) {
+        schedule.failures.push_back(
+            {SyncFailureReason::UnsupportedCFG, function, "ProtocolSync initially requires single-block functions"});
+    } else {
+        buildBlock(function.getBody().front(), root, {}, {});
     }
     finishRegion(root);
     return schedule.freeze();

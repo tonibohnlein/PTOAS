@@ -42,6 +42,7 @@ enum class SyncTimelineRejection : std::uint8_t {
     ConflictingPhysicalRange,
     UnknownCapacity,
     UnsupportedCapacity,
+    IncompletePhysicalSlots,
     UnknownSlotExpression,
     PartialOverlap,
     MissingProducer,

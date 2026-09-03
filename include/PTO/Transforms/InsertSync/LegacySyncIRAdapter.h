@@ -41,6 +41,7 @@ struct LegacySyncParityResult {
     llvm::SmallVector<LegacySyncParityMismatch, 4> internalConsistencyIssues;
 
     bool matches() const { return mismatches.empty(); }
+    bool isInternallyConsistent() const { return internalConsistencyIssues.empty(); }
 };
 
 class LegacySyncIRAdapter {

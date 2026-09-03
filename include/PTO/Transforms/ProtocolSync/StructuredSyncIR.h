@@ -33,6 +33,7 @@
 namespace mlir::pto::protocol_sync {
 
 using SyncSummaryId = std::uint32_t;
+using SyncSemanticActionId = std::uint32_t;
 using SyncPhaseId = std::uint32_t;
 using SyncAccessId = std::uint32_t;
 using SyncProgramPointId = std::uint32_t;
@@ -63,6 +64,8 @@ enum class SyncCardinality : std::uint8_t {
 enum class SyncProgramPointKind : std::uint8_t {
     RegionEntry,
     RegionExit,
+    SemanticActionBefore,
+    SemanticActionAfter,
     PhaseBefore,
     PhaseAfter,
 };
@@ -77,12 +80,13 @@ struct SyncIterationDomain {
 };
 
 struct SyncRegionElement {
-    enum class Kind : std::uint8_t { Phase, ChildRegion };
+    enum class Kind : std::uint8_t { Phase, SemanticAction, ChildRegion };
 
     Kind kind = Kind::Phase;
     unsigned order = 0;
     SyncPhaseId phase = kInvalidSyncId;
     SyncRegionId child = kInvalidSyncId;
+    SyncSemanticActionId action = kInvalidSyncId;
 };
 
 struct SyncRegion {
@@ -97,6 +101,17 @@ struct SyncRegion {
     SyncProgramPointId entry = kInvalidSyncId;
     SyncProgramPointId exit = kInvalidSyncId;
     llvm::SmallVector<SyncRegionElement, 16> elements;
+};
+
+struct SyncSemanticAction {
+    SyncSemanticActionId id = kInvalidSyncId;
+    SyncSummaryId summary = kInvalidSyncId;
+    SyncRegionId region = kInvalidSyncId;
+    Operation* operation = nullptr;
+    llvm::SmallVector<SyncControlAtom, 2> guard;
+    SyncIterationDomain iterationDomain;
+    SyncProgramPointId before = kInvalidSyncId;
+    SyncProgramPointId after = kInvalidSyncId;
 };
 
 struct SyncPhase {
@@ -145,6 +160,7 @@ struct SyncProgramPoint {
     SyncProgramPointKind kind = SyncProgramPointKind::PhaseBefore;
     SyncRegionId region = kInvalidSyncId;
     SyncPhaseId phase = kInvalidSyncId;
+    SyncSemanticActionId action = kInvalidSyncId;
 };
 
 struct SyncFailure {
@@ -161,12 +177,14 @@ public:
     bool isFrozen() const { return frozen; }
     llvm::ArrayRef<SyncRegion> getRegions() const { return regions; }
     llvm::ArrayRef<SyncOpSummary> getSummaries() const { return summaries; }
+    llvm::ArrayRef<SyncSemanticAction> getSemanticActions() const { return semanticActions; }
     llvm::ArrayRef<SyncPhase> getPhases() const { return phases; }
     llvm::ArrayRef<SyncStorageFamily> getStorageFamilies() const { return storageFamilies; }
     llvm::ArrayRef<SyncAccess> getAccesses() const { return accesses; }
     llvm::ArrayRef<SyncProgramPoint> getProgramPoints() const { return points; }
     llvm::ArrayRef<SyncFailure> getFailures() const { return failures; }
     const SyncRegion* findRegion(SyncRegionId id) const;
+    const SyncSemanticAction* findSemanticAction(SyncSemanticActionId id) const;
     const SyncPhase* findPhase(SyncPhaseId id) const;
     const SyncStorageFamily* findStorageFamily(SyncStorageFamilyId id) const;
     const SyncAccess* findAccess(SyncAccessId id) const;
@@ -179,6 +197,7 @@ private:
     bool frozen = false;
     llvm::SmallVector<SyncRegion, 16> regions;
     llvm::SmallVector<SyncOpSummary, 32> summaries;
+    llvm::SmallVector<SyncSemanticAction, 8> semanticActions;
     llvm::SmallVector<SyncPhase, 32> phases;
     llvm::SmallVector<SyncStorageFamily, 16> storageFamilies;
     llvm::SmallVector<SyncAccess, 64> accesses;

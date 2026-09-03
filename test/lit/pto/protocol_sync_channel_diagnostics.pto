@@ -293,7 +293,8 @@ module {
 // CHECK-LABEL: PROTOCOL-SYNC channels function=@intervening_empty_branch
 // CHECK: timeline #0 family=#1 generation=one-shot status=admitted reason=none
 // CHECK-SAME: producers=[#0] consumers=[#1]
-// CHECK: channel #0 generation=#0 kind=one-shot capacity=1 status=rejected reason=unsupported-control-flow
+// CHECK: channel #0 generation=#0 kind=one-shot capacity=1 status=admitted reason=none
+// CHECK-SAME: oracle-ready=match oracle-release=not-applicable
 
 // CHECK-LABEL: PROTOCOL-SYNC channels function=@partial_overlapping_writes
 // CHECK: timeline #0 family=#1 generation=one-shot status=rejected reason=partial-overlap

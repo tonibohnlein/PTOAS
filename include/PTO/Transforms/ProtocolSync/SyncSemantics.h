@@ -80,8 +80,11 @@ enum class SyncFailureReason : std::uint8_t {
     MissingPipeline,
     MissingPhysicalCore,
     MissingStorageProvenance,
+    UnscopedMemoryEffect,
+    UnsupportedMemoryEffectKind,
     UnsupportedEffectfulOperation,
     UnsupportedRegion,
+    UnsupportedCFG,
     LegacyStructureMismatch,
     LegacyPhaseMismatch,
     InternalInvariant,
@@ -194,6 +197,7 @@ struct ProtocolSyncStatistics {
     std::uint64_t fixedSuppliedProtocols = 0;
     std::uint64_t hiddenEventReservations = 0;
     std::uint64_t structuredRegions = 0;
+    std::uint64_t semanticActions = 0;
     std::uint64_t phases = 0;
     std::uint64_t accesses = 0;
     std::uint64_t storageFamilies = 0;

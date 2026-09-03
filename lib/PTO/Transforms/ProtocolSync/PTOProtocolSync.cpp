@@ -39,6 +39,7 @@ std::uint64_t elapsedMicroseconds(ProtocolSyncClock::time_point start)
 void collectScheduleStatistics(const StructuredSyncIR& schedule, ProtocolSyncStatistics& statistics)
 {
     statistics.structuredRegions = schedule.getRegions().size();
+    statistics.semanticActions = schedule.getSemanticActions().size();
     statistics.phases = schedule.getPhases().size();
     statistics.accesses = schedule.getAccesses().size();
     statistics.storageFamilies = schedule.getStorageFamilies().size();
@@ -84,6 +85,7 @@ void printStatistics(
     counts["fixed_supplied_protocols"] = static_cast<std::int64_t>(statistics.fixedSuppliedProtocols);
     counts["hidden_event_reservations"] = static_cast<std::int64_t>(statistics.hiddenEventReservations);
     counts["regions"] = static_cast<std::int64_t>(statistics.structuredRegions);
+    counts["semantic_actions"] = static_cast<std::int64_t>(statistics.semanticActions);
     counts["phases"] = static_cast<std::int64_t>(statistics.phases);
     counts["accesses"] = static_cast<std::int64_t>(statistics.accesses);
     counts["storage_families"] = static_cast<std::int64_t>(statistics.storageFamilies);
@@ -245,6 +247,18 @@ private:
         result.legacyComparisonUs = elapsedMicroseconds(start);
         result.legacyParityMismatches = parity.mismatches.size();
         printLegacySyncParity(function, parity, llvm::errs());
+        const bool hasInternalScheduleFailure =
+            llvm::any_of(schedule.getFailures(), [](const SyncFailure& failure) {
+                return failure.reason == SyncFailureReason::InternalInvariant;
+            });
+        if (!parity.isInternallyConsistent() || hasInternalScheduleFailure) {
+            result.totalUs = elapsedMicroseconds(totalStart);
+            if (statistics) {
+                printStatistics(function, result, "internal-error", "semantic-consistency");
+            }
+            function.emitError("ProtocolSync internal semantic consistency check failed");
+            return failure();
+        }
         if (dumpMode == "schedule") {
             printStructuredSyncIR(schedule, llvm::errs());
         } else if (dumpMode == "channels") {

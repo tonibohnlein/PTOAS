@@ -27,8 +27,10 @@ bool hasValidCompleteSlots(const SyncStorageFamily& family)
     if (!family.slotCount || *family.slotCount < 2) {
         return true;
     }
-    const bool incompleteSlots = !family.physicalSlotsComplete || family.intervals.size() != *family.slotCount;
-    if (incompleteSlots) {
+    if (!family.physicalSlotsComplete) {
+        return true;
+    }
+    if (family.intervals.size() != *family.slotCount) {
         return false;
     }
     for (auto [index, interval] : llvm::enumerate(family.intervals)) {
@@ -80,6 +82,11 @@ const SyncRegion* StructuredSyncIR::findRegion(SyncRegionId id) const
     return id < regions.size() ? &regions[id] : nullptr;
 }
 
+const SyncSemanticAction* StructuredSyncIR::findSemanticAction(SyncSemanticActionId id) const
+{
+    return id < semanticActions.size() ? &semanticActions[id] : nullptr;
+}
+
 const SyncPhase* StructuredSyncIR::findPhase(SyncPhaseId id) const
 {
     return id < phases.size() ? &phases[id] : nullptr;
@@ -100,6 +107,7 @@ LogicalResult StructuredSyncIR::freeze()
     if (frozen) {
         return failure();
     }
+    llvm::SmallVector<unsigned, 16> actionReferences(semanticActions.size(), 0);
     llvm::SmallVector<unsigned, 64> phaseReferences(phases.size(), 0);
     llvm::SmallVector<unsigned, 64> accessReferences(accesses.size(), 0);
     for (auto [index, region] : llvm::enumerate(regions)) {
@@ -122,21 +130,49 @@ LogicalResult StructuredSyncIR::freeze()
                 return failure();
             }
             const bool invalidPhase = element.kind == SyncRegionElement::Kind::Phase && element.phase >= phases.size();
+            const bool invalidAction =
+                element.kind == SyncRegionElement::Kind::SemanticAction && element.action >= semanticActions.size();
             const bool invalidChild =
                 element.kind == SyncRegionElement::Kind::ChildRegion && element.child >= regions.size();
-            if (invalidPhase || invalidChild) {
+            if (invalidPhase || invalidAction || invalidChild) {
                 return failure();
             }
             const bool wrongPhaseOwner =
                 element.kind == SyncRegionElement::Kind::Phase && phases[element.phase].region != region.id;
+            const bool wrongActionOwner = element.kind == SyncRegionElement::Kind::SemanticAction &&
+                                          semanticActions[element.action].region != region.id;
             const bool wrongChildOwner =
                 element.kind == SyncRegionElement::Kind::ChildRegion && regions[element.child].parent != region.id;
-            if (wrongPhaseOwner || wrongChildOwner) {
+            if (wrongPhaseOwner || wrongActionOwner || wrongChildOwner) {
                 return failure();
             }
             if (element.kind == SyncRegionElement::Kind::Phase) {
                 ++phaseReferences[element.phase];
+            } else if (element.kind == SyncRegionElement::Kind::SemanticAction) {
+                ++actionReferences[element.action];
             }
+        }
+    }
+    for (auto [index, action] : llvm::enumerate(semanticActions)) {
+        const bool invalidId = action.id != index;
+        const bool invalidSummary = action.summary >= summaries.size();
+        const bool invalidRegion = action.region >= regions.size();
+        const bool invalidBefore = action.before >= points.size();
+        const bool invalidAfter = action.after >= points.size();
+        if (invalidId || invalidSummary || invalidRegion || invalidBefore || invalidAfter || !action.operation) {
+            return failure();
+        }
+        const SyncProgramPoint& before = points[action.before];
+        const SyncProgramPoint& after = points[action.after];
+        const bool wrongOperation = summaries[action.summary].operation != action.operation;
+        const bool wrongBefore = before.kind != SyncProgramPointKind::SemanticActionBefore ||
+                                 before.action != action.id || before.phase != kInvalidSyncId ||
+                                 before.region != action.region;
+        const bool wrongAfter = after.kind != SyncProgramPointKind::SemanticActionAfter ||
+                                after.action != action.id || after.phase != kInvalidSyncId ||
+                                after.region != action.region;
+        if (wrongOperation || wrongBefore || wrongAfter || actionReferences[index] != 1) {
+            return failure();
         }
     }
     for (auto [index, phase] : llvm::enumerate(phases)) {
@@ -209,8 +245,15 @@ LogicalResult StructuredSyncIR::freeze()
         const bool invalidRegion = point.region >= regions.size();
         const bool isRegionPoint =
             point.kind == SyncProgramPointKind::RegionEntry || point.kind == SyncProgramPointKind::RegionExit;
-        const bool invalidPhase = isRegionPoint ? point.phase != kInvalidSyncId : point.phase >= phases.size();
-        if (invalidId || invalidRegion || invalidPhase) {
+        const bool isActionPoint = point.kind == SyncProgramPointKind::SemanticActionBefore ||
+                                   point.kind == SyncProgramPointKind::SemanticActionAfter;
+        const bool isPhasePoint = point.kind == SyncProgramPointKind::PhaseBefore ||
+                                  point.kind == SyncProgramPointKind::PhaseAfter;
+        const bool invalidPhase =
+            isRegionPoint || isActionPoint ? point.phase != kInvalidSyncId : point.phase >= phases.size();
+        const bool invalidAction =
+            isRegionPoint || isPhasePoint ? point.action != kInvalidSyncId : point.action >= semanticActions.size();
+        if (invalidId || invalidRegion || invalidPhase || invalidAction) {
             return failure();
         }
     }

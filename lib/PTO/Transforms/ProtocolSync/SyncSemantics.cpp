@@ -156,10 +156,16 @@ StringRef mlir::pto::protocol_sync::stringifySyncFailureReason(SyncFailureReason
             return "missing-physical-core";
         case SyncFailureReason::MissingStorageProvenance:
             return "missing-storage-provenance";
+        case SyncFailureReason::UnscopedMemoryEffect:
+            return "unscoped-memory-effect";
+        case SyncFailureReason::UnsupportedMemoryEffectKind:
+            return "unsupported-memory-effect-kind";
         case SyncFailureReason::UnsupportedEffectfulOperation:
             return "unsupported-effectful-operation";
         case SyncFailureReason::UnsupportedRegion:
             return "unsupported-region";
+        case SyncFailureReason::UnsupportedCFG:
+            return "unsupported-cfg";
         case SyncFailureReason::LegacyStructureMismatch:
             return "legacy-structure-mismatch";
         case SyncFailureReason::LegacyPhaseMismatch:

@@ -112,6 +112,8 @@ module {
 // ANALYSIS-SAME: provider=queue phases=1 completion=phase-end supplies=[]
 // ANALYSIS-SAME: queue=producer-publish
 // ANALYSIS-SAME: handle=%{{[0-9]+}} depth=8 direction=1 local-slots=8 flag-base=0
+// ANALYSIS: semantic-action #{{[0-9]+}} region=#{{[0-9]+}} op=pto.initialize_l2g2l_pipe provider=queue
+// ANALYSIS-SAME: before=pp{{[0-9]+}} after=pp{{[0-9]+}}
 
 // OPTION-ERROR: Error: --protocol-sync-dump and --protocol-sync-statistics require --protocol-sync-analysis-only.
 // INVALID-DUMP: Error: invalid --protocol-sync-dump='invalid', expected 'none', 'schedule', or 'channels'.

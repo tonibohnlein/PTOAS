@@ -184,8 +184,8 @@ void linkStaticOverwrites(
         const bool sameStorageClass = timeline.family == next.family &&
                                       sameTimelineIntervals(timeline.slice, next.slice) &&
                                       sameTimelineSlotClass(timeline.slot, next.slot);
-        const bool cannotLink = !timeline.isAdmitted() || !sameStorageClass || next.producers.empty() ||
-                                timeline.generationKind != SyncGenerationKind::OneShot;
+        const bool cannotLink = !timeline.isAdmitted() || !next.isAdmitted() || !sameStorageClass ||
+                                next.producers.empty() || timeline.generationKind != SyncGenerationKind::OneShot;
         if (cannotLink) {
             continue;
         }
@@ -236,6 +236,8 @@ StorageTimelineAnalysisResult mlir::pto::protocol_sync::analyzeStorageTimelines(
             rejection = SyncTimelineRejection::UnknownCapacity;
         } else if (*family->slotCount < 1 || *family->slotCount > 2) {
             rejection = SyncTimelineRejection::UnsupportedCapacity;
+        } else if (*family->slotCount > 1 && !family->physicalSlotsComplete) {
+            rejection = SyncTimelineRejection::IncompletePhysicalSlots;
         } else if (
             *family->slotCount > 1 && (!timeline.slot || timeline.slot->kind == SyncSlotExpressionKind::Unknown)) {
             rejection = SyncTimelineRejection::UnknownSlotExpression;
@@ -307,6 +309,8 @@ StringRef mlir::pto::protocol_sync::stringifySyncTimelineRejection(SyncTimelineR
             return "unknown-capacity";
         case SyncTimelineRejection::UnsupportedCapacity:
             return "unsupported-capacity";
+        case SyncTimelineRejection::IncompletePhysicalSlots:
+            return "incomplete-physical-slots";
         case SyncTimelineRejection::UnknownSlotExpression:
             return "unknown-slot-expression";
         case SyncTimelineRejection::PartialOverlap:

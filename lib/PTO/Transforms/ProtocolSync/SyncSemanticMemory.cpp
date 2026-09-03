@@ -379,12 +379,19 @@ void mlir::pto::protocol_sync::detail::addPipelinePhase(
     for (const MemoryEffects::EffectInstance& effect : effects) {
         Value value = effect.getValue();
         if (!value) {
+            setFailure(
+                summary, SyncFailureReason::UnscopedMemoryEffect,
+                "physical operation reports a memory effect without an SSA value");
             continue;
         }
         if (isa<MemoryEffects::Read>(effect.getEffect())) {
             appendValueEffects(phase, value, SyncAccessMode::Read, context, summary, statistics);
         } else if (isa<MemoryEffects::Write>(effect.getEffect())) {
             appendValueEffects(phase, value, SyncAccessMode::Write, context, summary, statistics);
+        } else {
+            setFailure(
+                summary, SyncFailureReason::UnsupportedMemoryEffectKind,
+                "physical operation reports an unsupported memory-effect kind");
         }
     }
     summary.phases.push_back(std::move(phase));

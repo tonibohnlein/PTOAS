@@ -154,11 +154,26 @@ void printRegion(const SyncRegion& region, raw_ostream& output)
     llvm::interleaveComma(region.elements, output, [&](const SyncRegionElement& element) {
         if (element.kind == SyncRegionElement::Kind::Phase) {
             output << "phase#" << element.phase;
+        } else if (element.kind == SyncRegionElement::Kind::SemanticAction) {
+            output << "action#" << element.action;
         } else {
             output << "region#" << element.child;
         }
     });
     output << "]\n";
+}
+
+void printSemanticAction(
+    const StructuredSyncIR& schedule, const SyncSemanticAction& action, raw_ostream& output)
+{
+    const SyncOpSummary& summary = schedule.getSummaries()[action.summary];
+    output << "  semantic-action #" << action.id << " region=#" << action.region
+           << " op=" << action.operation->getName().getStringRef()
+           << " provider=" << stringifySyncSummaryProvider(summary.provider) << " guard=";
+    printGuard(action.guard, output);
+    output << " loops=";
+    printIds(action.iterationDomain.loops, output);
+    output << " before=pp" << action.before << " after=pp" << action.after << '\n';
 }
 
 void printPhase(const StructuredSyncIR& schedule, const SyncPhase& phase, AsmState& state, raw_ostream& output)
@@ -241,6 +256,9 @@ void mlir::pto::protocol_sync::printStructuredSyncIR(const StructuredSyncIR& sch
     }
     for (const SyncRegion& region : schedule.getRegions()) {
         printRegion(region, output);
+    }
+    for (const SyncSemanticAction& action : schedule.getSemanticActions()) {
+        printSemanticAction(schedule, action, output);
     }
     for (const SyncPhase& phase : schedule.getPhases()) {
         printPhase(schedule, phase, state, output);

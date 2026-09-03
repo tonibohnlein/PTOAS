@@ -35,11 +35,8 @@ void reject(SyncChannel& channel, SyncChannelRejection reason, ProtocolSyncStati
 }
 
 bool hasUnsupportedControl(
-    bool hasChoiceRegion, const PipelineStageAnalysisResult& stages, const SyncGenerationTimeline& timeline)
+    const PipelineStageAnalysisResult& stages, const SyncGenerationTimeline& timeline)
 {
-    if (hasChoiceRegion) {
-        return true;
-    }
     for (SyncStageId id : timeline.producers) {
         const SyncStage* stage = stages.findStage(id);
         if (!stage || !stage->guard.empty()) {
@@ -112,9 +109,28 @@ SmallVector<LegacyPhaseInfo, 32> indexLegacyPhases(const LegacySyncSnapshot& leg
     return result;
 }
 
-const LegacyPhaseInfo* findLegacyPhase(ArrayRef<LegacyPhaseInfo> phases, SyncPhaseId id)
+std::optional<unsigned> getLegacyMacroPhase(const CompoundInstanceElement& phase)
 {
-    return id < phases.size() ? &phases[id] : nullptr;
+    return phase.macroOpInstanceId < 0 ?
+               std::nullopt :
+               std::optional<unsigned>(static_cast<unsigned>(phase.macroOpInstanceId));
+}
+const LegacyPhaseInfo* findLegacyPhase(ArrayRef<LegacyPhaseInfo> phases, const SyncPhase& phase)
+{
+    const LegacyPhaseInfo* result = nullptr;
+    for (const LegacyPhaseInfo& candidate : phases) {
+        if (!candidate.phase || candidate.phase->elementOp != phase.operation ||
+            getLegacyMacroPhase(*candidate.phase) != phase.macroPhase) {
+            continue;
+        }
+        // Duplicate matches mean the mapping is ambiguous; keep the oracle
+        // unavailable rather than silently pairing the wrong dynamic phase.
+        if (result) {
+            return nullptr;
+        }
+        result = &candidate;
+    }
+    return result;
 }
 
 const SyncPhase* getOnlyPhase(
@@ -181,8 +197,6 @@ ChannelAnalysisResult mlir::pto::protocol_sync::analyzeChannels(
     const StorageTimelineAnalysisResult& timelines, ProtocolSyncStatistics* statistics)
 {
     ChannelAnalysisResult result;
-    const bool hasChoiceRegion = llvm::any_of(
-        schedule.getRegions(), [](const SyncRegion& region) { return region.kind == SyncRegionKind::Choice; });
     for (const SyncGenerationTimeline& timeline : timelines.getTimelines()) {
         SyncChannel channel;
         channel.id = result.channels.size();
@@ -201,7 +215,7 @@ ChannelAnalysisResult mlir::pto::protocol_sync::analyzeChannels(
             rejection = SyncChannelRejection::MultipleProducers;
         } else if (timeline.consumers.size() != 1) {
             rejection = SyncChannelRejection::MultipleConsumers;
-        } else if (hasUnsupportedControl(hasChoiceRegion, stages, timeline)) {
+        } else if (hasUnsupportedControl(stages, timeline)) {
             rejection = SyncChannelRejection::UnsupportedControlFlow;
         } else {
             const SyncStage* producer = stages.findStage(timeline.producers.front());
@@ -247,8 +261,8 @@ void mlir::pto::protocol_sync::compareWithLegacyDemandOracle(
         const SyncStorageFamily* family = schedule.findStorageFamily(timeline.family);
         const SyncPhase* producer = getOnlyPhase(schedule, stages, timeline.producers.front());
         const SyncPhase* consumer = getOnlyPhase(schedule, stages, timeline.consumers.front());
-        const LegacyPhaseInfo* legacyProducer = producer ? findLegacyPhase(legacyPhases, producer->id) : nullptr;
-        const LegacyPhaseInfo* legacyConsumer = consumer ? findLegacyPhase(legacyPhases, consumer->id) : nullptr;
+        const LegacyPhaseInfo* legacyProducer = producer ? findLegacyPhase(legacyPhases, *producer) : nullptr;
+        const LegacyPhaseInfo* legacyConsumer = consumer ? findLegacyPhase(legacyPhases, *consumer) : nullptr;
         if (!family || !legacyProducer || !legacyConsumer) {
             continue;
         }
