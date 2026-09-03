@@ -14,6 +14,7 @@
 
 #include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/JSON.h"
 

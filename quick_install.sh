@@ -18,6 +18,7 @@
 #   LLVM_BUILD_DIR   - default: <repo-parent>/llvm-project/build-shared
 #   PTO_BUILD_DIR    - default: <repo>/build
 #   PYTHON_BIN       - default: python
+#   CANN_3RD_LIB_PATH - default: <repo>/third_party
 
 set -euo pipefail
 
@@ -40,6 +41,8 @@ LLVM_SOURCE_DIR="${LLVM_SOURCE_DIR:-$(cd "${PTO_SOURCE_DIR}/.." && pwd)/llvm-pro
 LLVM_BUILD_DIR="${LLVM_BUILD_DIR:-${LLVM_SOURCE_DIR}/build-shared}"
 PTO_BUILD_DIR="${PTO_BUILD_DIR:-${PTO_SOURCE_DIR}/build}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
+CANN_3RD_LIB_PATH="${CANN_3RD_LIB_PATH:-${PTO_SOURCE_DIR}/third_party}"
+mkdir -p "${CANN_3RD_LIB_PATH}"
 
 LLVM_DIR="${LLVM_BUILD_DIR}/lib/cmake/llvm"
 MLIR_DIR="${LLVM_BUILD_DIR}/lib/cmake/mlir"
@@ -65,7 +68,8 @@ LLVM_BUILD_DIR="${LLVM_BUILD_DIR}" \
     --no-build-isolation "${PIP_VERBOSE[@]}" \
     --config-settings="build-dir=${PTO_BUILD_DIR}" \
     --config-settings="cmake.define.LLVM_DIR=${LLVM_DIR}" \
-    --config-settings="cmake.define.MLIR_DIR=${MLIR_DIR}"
+    --config-settings="cmake.define.MLIR_DIR=${MLIR_DIR}" \
+    --config-settings="cmake.define.CANN_3RD_LIB_PATH=${CANN_3RD_LIB_PATH}"
 
 echo "PTOAS editable install complete."
 echo "Build directory: ${PTO_BUILD_DIR}"

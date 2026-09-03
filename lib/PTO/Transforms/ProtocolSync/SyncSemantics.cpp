@@ -27,7 +27,7 @@ ArrayRef<SyncStorageProvenance> SyncSemanticContext::lookupStorage(Value value) 
     return found == storage.end() ? ArrayRef<SyncStorageProvenance>() : ArrayRef<SyncStorageProvenance>(found->second);
 }
 
-StringRef protocol_sync::stringifySyncPhysicalCore(SyncPhysicalCore core)
+StringRef mlir::pto::protocol_sync::stringifySyncPhysicalCore(SyncPhysicalCore core)
 {
     switch (core) {
         case SyncPhysicalCore::Cube:
@@ -40,7 +40,7 @@ StringRef protocol_sync::stringifySyncPhysicalCore(SyncPhysicalCore core)
     return "unknown";
 }
 
-StringRef protocol_sync::stringifySyncAccessMode(SyncAccessMode mode)
+StringRef mlir::pto::protocol_sync::stringifySyncAccessMode(SyncAccessMode mode)
 {
     switch (mode) {
         case SyncAccessMode::Read:
@@ -55,7 +55,7 @@ StringRef protocol_sync::stringifySyncAccessMode(SyncAccessMode mode)
     return "unknown";
 }
 
-StringRef protocol_sync::stringifySyncVisibility(SyncVisibilityClass visibility)
+StringRef mlir::pto::protocol_sync::stringifySyncVisibility(SyncVisibilityClass visibility)
 {
     switch (visibility) {
         case SyncVisibilityClass::Local:
@@ -68,7 +68,7 @@ StringRef protocol_sync::stringifySyncVisibility(SyncVisibilityClass visibility)
     return "unknown";
 }
 
-StringRef protocol_sync::stringifySyncCompletionKind(SyncCompletionKind completion)
+StringRef mlir::pto::protocol_sync::stringifySyncCompletionKind(SyncCompletionKind completion)
 {
     switch (completion) {
         case SyncCompletionKind::PhaseEnd:
@@ -81,7 +81,7 @@ StringRef protocol_sync::stringifySyncCompletionKind(SyncCompletionKind completi
     return "unknown";
 }
 
-StringRef protocol_sync::stringifySyncQueueRole(SyncQueueRole role)
+StringRef mlir::pto::protocol_sync::stringifySyncQueueRole(SyncQueueRole role)
 {
     switch (role) {
         case SyncQueueRole::Initialize:
@@ -98,7 +98,7 @@ StringRef protocol_sync::stringifySyncQueueRole(SyncQueueRole role)
     return "unknown";
 }
 
-StringRef protocol_sync::stringifySyncSummaryProvider(SyncSummaryProvider provider)
+StringRef mlir::pto::protocol_sync::stringifySyncSummaryProvider(SyncSummaryProvider provider)
 {
     switch (provider) {
         case SyncSummaryProvider::FixedSynchronization:
@@ -119,7 +119,7 @@ StringRef protocol_sync::stringifySyncSummaryProvider(SyncSummaryProvider provid
     return "none";
 }
 
-StringRef protocol_sync::stringifySyncFailureReason(SyncFailureReason reason)
+StringRef mlir::pto::protocol_sync::stringifySyncFailureReason(SyncFailureReason reason)
 {
     switch (reason) {
         case SyncFailureReason::None:

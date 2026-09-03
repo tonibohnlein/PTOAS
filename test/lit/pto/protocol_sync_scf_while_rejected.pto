@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --emit-pto-ir --protocol-sync-analysis-only \
+// RUN:   --protocol-sync-dump=schedule %s -o /dev/null 2>&1 | FileCheck %s
+
+module {
+  func.func @while_is_rejected(%limit : index) -> index {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %result = scf.while (%value = %c0) : (index) -> index {
+      %condition = arith.cmpi slt, %value, %limit : index
+      scf.condition(%condition) %value : index
+    } do {
+    ^bb0(%value : index):
+      %next = arith.addi %value, %c1 : index
+      scf.yield %next : index
+    }
+    return %result : index
+  }
+}
+
+// CHECK: PROTOCOL-SYNC schedule function=@while_is_rejected frozen=yes
+// CHECK: rejected reason=unsupported-region op=scf.while
+// CHECK-SAME: detail="scf.while requires distinct condition and body execution semantics"
+// CHECK: PROTOCOL-SYNC schedule-end function=@while_is_rejected

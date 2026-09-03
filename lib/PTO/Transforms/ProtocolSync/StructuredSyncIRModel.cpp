@@ -137,7 +137,7 @@ LogicalResult StructuredSyncIR::freeze()
     return success();
 }
 
-StringRef protocol_sync::stringifySyncRegionKind(SyncRegionKind kind)
+StringRef mlir::pto::protocol_sync::stringifySyncRegionKind(SyncRegionKind kind)
 {
     switch (kind) {
         case SyncRegionKind::Function:
@@ -156,7 +156,7 @@ StringRef protocol_sync::stringifySyncRegionKind(SyncRegionKind kind)
     return "sequence";
 }
 
-StringRef protocol_sync::stringifySyncCardinality(SyncCardinality cardinality)
+StringRef mlir::pto::protocol_sync::stringifySyncCardinality(SyncCardinality cardinality)
 {
     switch (cardinality) {
         case SyncCardinality::ExactlyOnce:

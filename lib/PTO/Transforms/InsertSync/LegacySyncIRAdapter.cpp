@@ -182,7 +182,7 @@ bool sameStorage(const BaseMemInfo& legacy, const SyncStorageProvenance& storage
 
 bool sameSlot(const BaseMemInfo& legacy, const SyncAccess& access)
 {
-    Value selector = findMultiTileSlotExpr(legacy.baseBuffer);
+    mlir::Value selector = findMultiTileSlotExpr(legacy.baseBuffer);
     if (!selector) {
         return !access.slot;
     }
@@ -298,7 +298,8 @@ void compareSemanticMetadata(const StructuredSyncIR& schedule, LegacySyncParityR
         std::optional<SyncQueueSemantics> queue = getSyncQueueSemantics(summary.operation);
         const bool queuePresenceMatches = queue.has_value() == summary.queue.has_value();
         if (!queuePresenceMatches) {
-            result.internalConsistencyIssues.push_back({"queue", index, "queue classification differs"});
+            result.internalConsistencyIssues.push_back(
+                {"queue", static_cast<std::uint32_t>(index), "queue classification differs"});
         } else if (queue && summary.queue) {
             const bool sameRole = queue->role == summary.queue->role;
             const bool sameHandle = queue->handle == summary.queue->handle;
@@ -310,7 +311,8 @@ void compareSemanticMetadata(const StructuredSyncIR& schedule, LegacySyncParityR
             const bool samePeerEndpoint = queue->peerEndpoint == summary.queue->peerEndpoint;
             if (!sameRole || !sameHandle || !sameDepth || !sameDirection || !sameLocalSlots || !sameFlagBase ||
                 !sameEndpoint || !samePeerEndpoint) {
-                result.internalConsistencyIssues.push_back({"queue", index, "queue resource metadata differs"});
+                result.internalConsistencyIssues.push_back(
+                    {"queue", static_cast<std::uint32_t>(index), "queue resource metadata differs"});
             }
         }
 
@@ -318,14 +320,14 @@ void compareSemanticMetadata(const StructuredSyncIR& schedule, LegacySyncParityR
         if (!model) {
             if (!summary.eventReservations.empty()) {
                 result.internalConsistencyIssues.push_back(
-                    {"reservation", index, "non-macro operation reserves hidden events"});
+                    {"reservation", static_cast<std::uint32_t>(index), "non-macro operation reserves hidden events"});
             }
             continue;
         }
         const bool reservationCountsMatch = model->hiddenEvents.size() == summary.eventReservations.size();
         if (!reservationCountsMatch) {
             result.internalConsistencyIssues.push_back(
-                {"reservation", index, "hidden event reservation counts differ"});
+                {"reservation", static_cast<std::uint32_t>(index), "hidden event reservation counts differ"});
             continue;
         }
         for (auto [legacyReservation, reservation] : llvm::zip(model->hiddenEvents, summary.eventReservations)) {
@@ -335,7 +337,8 @@ void compareSemanticMetadata(const StructuredSyncIR& schedule, LegacySyncParityR
                 source && target && *source == reservation.source && *target == reservation.target;
             const bool sameEventIds = legacyReservation.eventIds == reservation.eventIds;
             if (!sameDirection || !sameEventIds) {
-                result.internalConsistencyIssues.push_back({"reservation", index, "hidden event reservation differs"});
+                result.internalConsistencyIssues.push_back(
+                    {"reservation", static_cast<std::uint32_t>(index), "hidden event reservation differs"});
             }
         }
     }
@@ -390,7 +393,7 @@ LegacySyncParityResult LegacySyncIRAdapter::compare(
     return result;
 }
 
-void protocol_sync::printLegacySyncParity(
+void mlir::pto::protocol_sync::printLegacySyncParity(
     func::FuncOp function, const LegacySyncParityResult& result, raw_ostream& output)
 {
     output << "PROTOCOL-SYNC legacy-parity function=@" << function.getSymName()

@@ -201,19 +201,20 @@ void addMacroSummary(
     for (const SyncMacroPhase& macroPhase : model.phases) {
         std::optional<PIPE> pipe = convertLegacyPipe(macroPhase.pipe);
         if (!pipe) {
-            detail::setFailure(
+            protocol_sync::detail::setFailure(
                 summary, SyncFailureReason::MissingPipeline, "macro phase has no supported physical pipeline");
             continue;
         }
         SyncPhysicalPhase phase;
         phase.phaseIndex = macroPhase.phaseId;
-        detail::setPhysicalResource(operation, *pipe, phase, summary);
+        protocol_sync::detail::setPhysicalResource(operation, *pipe, phase, summary);
         phase.completion.kind = SyncCompletionKind::MacroInternal;
         for (Value value : macroPhase.defValues) {
-            detail::appendValueEffects(phase, value, SyncAccessMode::Write, context, summary, statistics);
+            protocol_sync::detail::appendValueEffects(
+                phase, value, SyncAccessMode::Write, context, summary, statistics);
         }
         for (Value value : macroPhase.useValues) {
-            detail::appendValueEffects(phase, value, SyncAccessMode::Read, context, summary, statistics);
+            protocol_sync::detail::appendValueEffects(phase, value, SyncAccessMode::Read, context, summary, statistics);
         }
         summary.phases.push_back(std::move(phase));
     }
@@ -221,11 +222,15 @@ void addMacroSummary(
         std::optional<PIPE> source = convertLegacyPipe(event.srcPipe);
         std::optional<PIPE> target = convertLegacyPipe(event.dstPipe);
         if (!source || !target) {
-            detail::setFailure(
+            protocol_sync::detail::setFailure(
                 summary, SyncFailureReason::MissingPipeline, "hidden event has no supported physical pipeline");
             continue;
         }
-        summary.eventReservations.push_back({*source, *target, event.eventIds});
+        SyncEventReservation reservation;
+        reservation.source = *source;
+        reservation.target = *target;
+        reservation.eventIds.assign(event.eventIds.begin(), event.eventIds.end());
+        summary.eventReservations.push_back(std::move(reservation));
     }
     if (!summary.eventReservations.empty()) {
         summary.suppliedProtocols.push_back({"macro-internal-events"});
@@ -238,11 +243,12 @@ void addHelperSummary(
 {
     std::optional<PIPE> pipe = getSyncHelperPipe(callee);
     if (!pipe) {
-        detail::setFailure(summary, SyncFailureReason::MissingPipeline, "helper has no recognized physical role");
+        protocol_sync::detail::setFailure(
+            summary, SyncFailureReason::MissingPipeline, "helper has no recognized physical role");
         return;
     }
     SyncPhysicalPhase phase;
-    detail::setPhysicalResource(call.getOperation(), *pipe, phase, summary);
+    protocol_sync::detail::setPhysicalResource(call.getOperation(), *pipe, phase, summary);
     auto effects = callee->getAttrOfType<ArrayAttr>("pto.tileop.effects");
     bool precise = effects && effects.size() == call.getNumOperands();
     for (auto [index, operand] : llvm::enumerate(call.getOperands())) {
@@ -256,10 +262,12 @@ void addHelperSummary(
             }
         }
         if (effect == "read" || effect == "readwrite") {
-            detail::appendValueEffects(phase, operand, SyncAccessMode::Read, context, summary, statistics);
+            protocol_sync::detail::appendValueEffects(
+                phase, operand, SyncAccessMode::Read, context, summary, statistics);
         }
         if (effect == "write" || effect == "readwrite") {
-            detail::appendValueEffects(phase, operand, SyncAccessMode::Write, context, summary, statistics);
+            protocol_sync::detail::appendValueEffects(
+                phase, operand, SyncAccessMode::Write, context, summary, statistics);
         }
     }
     if (!phase.effects.empty()) {
@@ -269,7 +277,7 @@ void addHelperSummary(
 
 } // namespace
 
-std::optional<SyncQueueSemantics> protocol_sync::getSyncQueueSemantics(Operation* operation)
+std::optional<SyncQueueSemantics> mlir::pto::protocol_sync::getSyncQueueSemantics(Operation* operation)
 {
     return getQueueSemanticsImpl(operation);
 }
@@ -298,7 +306,7 @@ SyncOpSummary SyncSemanticExtractor::summarize(Operation* operation) const
         markProvider(summary, SyncSummaryProvider::Queue, statistics);
         summary.queue = *queue;
         if (auto pipe = dyn_cast<OpPipeInterface>(operation)) {
-            detail::addPipelinePhase(operation, pipe.getPipe(), context, summary, statistics);
+            protocol_sync::detail::addPipelinePhase(operation, pipe.getPipe(), context, summary, statistics);
         }
         return summary;
     }
@@ -322,12 +330,12 @@ SyncOpSummary SyncSemanticExtractor::summarize(Operation* operation) const
     tryProvider();
     if (auto pipe = dyn_cast<OpPipeInterface>(operation)) {
         markProvider(summary, SyncSummaryProvider::Pipeline, statistics);
-        detail::addPipelinePhase(operation, pipe.getPipe(), context, summary, statistics);
+        protocol_sync::detail::addPipelinePhase(operation, pipe.getPipe(), context, summary, statistics);
         return summary;
     }
     if (isa<LoadScalarOp, StoreScalarOp>(operation)) {
         markProvider(summary, SyncSummaryProvider::Pipeline, statistics);
-        detail::addPipelinePhase(operation, PIPE::PIPE_S, context, summary, statistics);
+        protocol_sync::detail::addPipelinePhase(operation, PIPE::PIPE_S, context, summary, statistics);
         return summary;
     }
     tryProvider();

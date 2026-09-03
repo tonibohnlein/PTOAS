@@ -22,7 +22,7 @@ using namespace llvm;
 
 namespace {
 
-void printValue(Value value, AsmState& state, raw_ostream& output)
+void printValue(mlir::Value value, AsmState& state, raw_ostream& output)
 {
     if (!value) {
         output << "none";
@@ -159,7 +159,7 @@ void printPhase(const StructuredSyncIR& schedule, const SyncPhase& phase, AsmSta
 
 } // namespace
 
-void protocol_sync::printStructuredSyncIR(const StructuredSyncIR& schedule, raw_ostream& output)
+void mlir::pto::protocol_sync::printStructuredSyncIR(const StructuredSyncIR& schedule, raw_ostream& output)
 {
     output << "PROTOCOL-SYNC schedule function=@" << schedule.getFunction().getSymName()
            << " frozen=" << (schedule.isFrozen() ? "yes" : "no") << '\n';

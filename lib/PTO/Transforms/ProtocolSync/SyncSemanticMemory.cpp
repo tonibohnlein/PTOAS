@@ -55,7 +55,7 @@ void recordSlotStatistics(const std::optional<SyncSlotExpression>& slot, Protoco
 
 } // namespace
 
-std::optional<std::uint32_t> protocol_sync::getSyncSlotDepth(Value value)
+std::optional<std::uint32_t> mlir::pto::protocol_sync::getSyncSlotDepth(Value value)
 {
     Value current = value;
     for (unsigned hops = 0; current && hops < pto::kValue32; ++hops) {
@@ -79,7 +79,7 @@ std::optional<std::uint32_t> protocol_sync::getSyncSlotDepth(Value value)
     return std::nullopt;
 }
 
-SyncPhysicalCore detail::resolveCore(Operation* operation, PIPE pipe)
+SyncPhysicalCore mlir::pto::protocol_sync::detail::resolveCore(Operation* operation, PIPE pipe)
 {
     for (Operation* parent = operation; parent; parent = parent->getParentOp()) {
         if (isa<SectionCubeOp>(parent)) {
@@ -109,7 +109,7 @@ SyncPhysicalCore detail::resolveCore(Operation* operation, PIPE pipe)
     return SyncPhysicalCore::Unknown;
 }
 
-void detail::setFailure(SyncOpSummary& summary, SyncFailureReason reason, StringRef message)
+void mlir::pto::protocol_sync::detail::setFailure(SyncOpSummary& summary, SyncFailureReason reason, StringRef message)
 {
     if (summary.failure == SyncFailureReason::None) {
         summary.failure = reason;
@@ -117,7 +117,8 @@ void detail::setFailure(SyncOpSummary& summary, SyncFailureReason reason, String
     }
 }
 
-void detail::setPhysicalResource(Operation* operation, PIPE pipe, SyncPhysicalPhase& phase, SyncOpSummary& summary)
+void mlir::pto::protocol_sync::detail::setPhysicalResource(
+    Operation* operation, PIPE pipe, SyncPhysicalPhase& phase, SyncOpSummary& summary)
 {
     phase.pipe = pipe;
     phase.core = resolveCore(operation, pipe);
@@ -126,7 +127,7 @@ void detail::setPhysicalResource(Operation* operation, PIPE pipe, SyncPhysicalPh
     }
 }
 
-void detail::appendValueEffects(
+void mlir::pto::protocol_sync::detail::appendValueEffects(
     SyncPhysicalPhase& phase, Value value, SyncAccessMode mode, const SyncSemanticContext& context,
     SyncOpSummary& summary, ProtocolSyncStatistics* statistics)
 {
@@ -152,7 +153,7 @@ void detail::appendValueEffects(
     }
 }
 
-void detail::addPipelinePhase(
+void mlir::pto::protocol_sync::detail::addPipelinePhase(
     Operation* operation, PIPE pipe, const SyncSemanticContext& context, SyncOpSummary& summary,
     ProtocolSyncStatistics* statistics)
 {
