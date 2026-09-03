@@ -61,6 +61,8 @@ void printCanonicalSyncStatistics(const CanonicalSyncStatistics &statistics,
       static_cast<std::int64_t>(statistics.coverUniverse);
   counts["cover_candidates"] =
       static_cast<std::int64_t>(statistics.coverCandidates);
+  counts["storage_generations"] =
+      static_cast<std::int64_t>(statistics.storageGenerations);
   counts["structural_proposals"] =
       static_cast<std::int64_t>(statistics.structuralProposals);
   counts["admitted_structural_proposals"] =
@@ -332,6 +334,7 @@ LogicalResult runCanonicalSync(func::FuncOp function,
   }
   statistics.structuralProposals =
       (*program)->getStructuralProposals().size();
+  statistics.storageGenerations = (*program)->getStorageGenerations().size();
   for (const CanonicalStructuralProposal &proposal :
        (*program)->getStructuralProposals()) {
     statistics.structuralMechanismMemberships += proposal.mechanisms.size();

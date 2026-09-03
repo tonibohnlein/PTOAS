@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <numeric>
 #include <string>
 
 using namespace mlir;
@@ -39,6 +40,7 @@ constexpr std::size_t kMaximumOmissionsPerFamily = 16;
 constexpr std::size_t kMaximumTransitiveClosureWords = 1U << 20;
 constexpr std::size_t kMaximumLifecyclePhases = 128;
 constexpr std::size_t kMaximumLifecycleDemands = 512;
+constexpr std::size_t kMaximumOwnershipDepth = 4;
 
 enum class ProposalFamily : std::uint8_t {
   Level,
@@ -502,6 +504,11 @@ struct StorageProtocolFamily {
   CanonicalRegionId loop = kInvalidCanonicalSyncId;
   std::string key;
   SmallVector<const StorageLoopUsage *, 4> lanes;
+  /// Stable slot ordinals in the complete logical family.  A singleton
+  /// protocol fallback retains the ordinal of its physical slot rather than
+  /// renumbering that slot to zero in the storage-generation model.
+  SmallVector<unsigned, 4> familySlots;
+  unsigned familyDepth = 0;
 };
 
 std::string normalizedStorageFamilyKey(const StorageRootUsage &usage) {
@@ -611,22 +618,40 @@ SmallVector<StorageProtocolFamily, 8> buildStorageProtocolFamilies(
           return candidate.loop == usage.loop && candidate.key == key;
         });
     if (family == families.end()) {
-      families.push_back({usage.loop, key, {}});
+      StorageProtocolFamily item;
+      item.loop = usage.loop;
+      item.key = key;
+      families.push_back(std::move(item));
       family = std::prev(families.end());
     }
     family->lanes.push_back(&usage);
   }
   const std::size_t groupedFamilyCount = families.size();
   for (std::size_t index = 0; index < groupedFamilyCount; ++index) {
-    const CanonicalRegionId loop = families[index].loop;
-    const std::string key = families[index].key;
-    const SmallVector<const StorageLoopUsage *, 4> lanes =
-        families[index].lanes;
+    StorageProtocolFamily &grouped = families[index];
+    const bool unsupportedDepth =
+        grouped.lanes.size() > kMaximumOwnershipDepth;
+    if (unsupportedDepth) {
+      continue;
+    }
+    grouped.familyDepth = static_cast<unsigned>(grouped.lanes.size());
+    grouped.familySlots.resize(grouped.familyDepth);
+    std::iota(grouped.familySlots.begin(), grouped.familySlots.end(), 0U);
+    const CanonicalRegionId loop = grouped.loop;
+    const std::string key = grouped.key;
+    const SmallVector<const StorageLoopUsage *, 4> lanes = grouped.lanes;
+    const unsigned familyDepth = grouped.familyDepth;
     if (lanes.size() < 2U) {
       continue;
     }
-    for (const StorageLoopUsage *lane : lanes) {
-      families.push_back({loop, key, {lane}});
+    for (auto [slot, lane] : llvm::enumerate(lanes)) {
+      StorageProtocolFamily singleton;
+      singleton.loop = loop;
+      singleton.key = key;
+      singleton.lanes.push_back(lane);
+      singleton.familySlots.push_back(static_cast<unsigned>(slot));
+      singleton.familyDepth = familyDepth;
+      families.push_back(std::move(singleton));
     }
   }
   return families;
@@ -1550,8 +1575,8 @@ bool buildOwnershipWitness(const CanonicalSyncProgram &program,
     }
     if (stage.initialProducer) {
       protocol.witnessEdges.push_back(
-          {CanonicalOwnershipWitnessKind::Ready, stage.lane, producer,
-           firstConsumer, 0U, 0U});
+          {CanonicalOwnershipWitnessKind::Ready, stage.slot, stage.lane,
+           producer, firstConsumer, 0U, 0U});
       continue;
     }
     const BitVector producerActive = ownershipStageResidues(
@@ -1574,11 +1599,12 @@ bool buildOwnershipWitness(const CanonicalSyncProgram &program,
         continue;
       }
       protocol.witnessEdges.push_back(
-          {CanonicalOwnershipWitnessKind::Ready, stage.lane, producer,
-           firstConsumer, iteration, consumerIteration});
+          {CanonicalOwnershipWitnessKind::Ready, stage.slot, stage.lane,
+           producer, firstConsumer, iteration, consumerIteration});
       protocol.witnessEdges.push_back(
-          {CanonicalOwnershipWitnessKind::Release, stage.lane, lastConsumer,
-           producer, consumerIteration, nextProducerIteration});
+          {CanonicalOwnershipWitnessKind::Release, stage.slot, stage.lane,
+           lastConsumer, producer, consumerIteration,
+           nextProducerIteration});
     }
   }
   return true;
@@ -1640,7 +1666,16 @@ bool buildOwnershipProtocolFamily(
     CanonicalOwnershipProtocol &protocol,
     SmallVectorImpl<const StorageLoopUsage *> &slotUsages) {
   const std::size_t depth = family.lanes.size();
-  if (depth == 0U || depth > 4U) {
+  SmallVector<unsigned, 4> familySlots = family.familySlots;
+  llvm::sort(familySlots);
+  const bool invalidFamilySlots =
+      family.familyDepth < depth || family.familySlots.size() != depth ||
+      std::adjacent_find(familySlots.begin(), familySlots.end()) !=
+          familySlots.end() ||
+      llvm::any_of(familySlots, [&](unsigned slot) {
+        return slot >= family.familyDepth;
+      });
+  if (depth == 0U || depth > kMaximumOwnershipDepth || invalidFamilySlots) {
     return false;
   }
   protocol.owner = family.loop;
@@ -1818,6 +1853,124 @@ bool buildOwnershipProtocolFamily(
   return true;
 }
 
+SmallVector<unsigned, 4> bitVectorMembers(const BitVector &bits) {
+  SmallVector<unsigned, 4> members;
+  for (int member = bits.find_first(); member >= 0;
+       member = bits.find_next(member)) {
+    members.push_back(static_cast<unsigned>(member));
+  }
+  return members;
+}
+
+bool guardImplies(ArrayRef<CanonicalControlAtom> premise,
+                  ArrayRef<CanonicalControlAtom> conclusion) {
+  return llvm::all_of(conclusion, [&](const CanonicalControlAtom &atom) {
+    return llvm::is_contained(premise, atom);
+  });
+}
+
+struct StorageNextOverwrite {
+  CanonicalProgramPoint point;
+  unsigned distance = 0;
+};
+
+StorageNextOverwrite findStorageNextOverwrite(
+    const CanonicalSyncProgram &program,
+    const CanonicalOwnershipProtocol &protocol, unsigned stageIndex) {
+  const CanonicalOwnershipStage &stage = protocol.stages[stageIndex];
+  const CanonicalOwnershipSlot &slot = protocol.slots[stage.slot];
+  for (unsigned candidateIndex = stageIndex + 1U;
+       candidateIndex < protocol.stages.size(); ++candidateIndex) {
+    const CanonicalOwnershipStage &candidate =
+        protocol.stages[candidateIndex];
+    const bool guaranteedLaterOverwrite =
+        candidate.slot == stage.slot && !candidate.initialProducer &&
+        guardImplies(stage.producerGuard, candidate.producerGuard);
+    if (guaranteedLaterOverwrite) {
+      return {candidate.writeAcquire, 0U};
+    }
+  }
+
+  if (stage.initialProducer) {
+    const auto firstRecurringStage = llvm::find_if(
+        protocol.stages, [&](const CanonicalOwnershipStage &candidate) {
+          return candidate.slot == stage.slot && !candidate.initialProducer;
+        });
+    if (firstRecurringStage != protocol.stages.end()) {
+      return {firstRecurringStage->writeAcquire, 0U};
+    }
+  }
+
+  const auto recurringStage = llvm::find_if(
+      protocol.stages, [&](const CanonicalOwnershipStage &candidate) {
+        return candidate.slot == stage.slot && !candidate.initialProducer &&
+               candidate.producerGuard == stage.producerGuard;
+      });
+  if (recurringStage != protocol.stages.end()) {
+    const BitVector sourceResidues = ownershipStageResidues(
+        program, protocol.recurrenceLoop, protocol.period,
+        stage.producerGuard);
+    const BitVector targetResidues = ownershipStageResidues(
+        program, protocol.recurrenceLoop, protocol.period,
+        recurringStage->producerGuard);
+    if (const std::optional<unsigned> distance =
+            uniqueCyclicDistance(sourceResidues, targetResidues, true)) {
+      return {recurringStage->writeAcquire, *distance};
+    }
+  }
+
+  // The protocol proof always establishes a bounded reuse distance for this
+  // physical slot.  When control-dependent overwrites do not have one static
+  // successor point, retain the same-stage recurrence witness rather than
+  // claiming a branch-specific point is the unique next overwrite.
+  return {stage.writeAcquire, slot.reuseDistance};
+}
+
+void recordStorageGenerations(CanonicalSyncProgram &program,
+                              const StorageProtocolFamily &family,
+                              CanonicalOwnershipProtocol &protocol) {
+  SmallVector<unsigned, 4> stageOrdinals(protocol.slots.size());
+  for (auto [stageIndex, stage] : llvm::enumerate(protocol.stages)) {
+    const CanonicalOwnershipSlot &slot = protocol.slots[stage.slot];
+    const unsigned familySlot = family.familySlots[stage.slot];
+    const StorageNextOverwrite nextOverwrite = findStorageNextOverwrite(
+        program, protocol, static_cast<unsigned>(stageIndex));
+    CanonicalStorageGeneration generation;
+    generation.recurrenceLoop = protocol.recurrenceLoop;
+    generation.familyKey = protocol.familyKey;
+    generation.familyDepth = family.familyDepth;
+    generation.slot = familySlot;
+    generation.stageOrdinal = stageOrdinals[stage.slot]++;
+    generation.root = slot.root;
+    generation.interval = slot.interval;
+    generation.slotExpression = slot.slotExpression;
+    generation.producer = protocol.producer;
+    generation.consumer = protocol.consumer;
+    generation.writeAcquire = stage.writeAcquire;
+    generation.ready = stage.ready;
+    generation.readAcquire = stage.readAcquire;
+    generation.lastUse = stage.release;
+    generation.nextOverwrite = nextOverwrite.point;
+    generation.producers = stage.producers;
+    generation.consumers = stage.consumers;
+    generation.producerGuard = stage.producerGuard;
+    generation.consumerGuard = stage.consumerGuard;
+    generation.period = protocol.period;
+    generation.readyDistance = stage.readyDistance;
+    generation.nextOverwriteDistance = nextOverwrite.distance;
+    generation.initialProducer = stage.initialProducer;
+    if (!stage.initialProducer) {
+      generation.producerResidues = bitVectorMembers(
+          ownershipStageResidues(program, protocol.recurrenceLoop,
+                                 protocol.period, stage.producerGuard));
+    }
+    generation.consumerResidues = bitVectorMembers(
+        ownershipStageResidues(program, protocol.recurrenceLoop,
+                               protocol.period, stage.consumerGuard));
+    stage.generation = program.appendStorageGeneration(std::move(generation));
+  }
+}
+
 void synthesizeStorageOwnershipProtocols(CanonicalSyncProgram &program) {
   const SmallVector<StorageRootUsage, 8> roots =
       buildNormalizedStorageRoots(program);
@@ -1849,6 +2002,7 @@ void synthesizeStorageOwnershipProtocols(CanonicalSyncProgram &program) {
         protocol.stages.size() > kMaximumOwnershipStages) {
       continue;
     }
+    recordStorageGenerations(program, family, protocol);
     const bool allSlotsCyclic = llvm::all_of(
         llvm::seq<unsigned>(0, protocol.slots.size()), [&](unsigned slot) {
           return slotHasOwnershipCycle(program, *slotUsages[slot], protocol,

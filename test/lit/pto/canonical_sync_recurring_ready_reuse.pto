@@ -237,8 +237,8 @@ module attributes {pto.target_arch = "a2a3"} {
 // SCC: OWNERSHIP-PROTOCOLS 2
 // SCC: ownership=o0 mechanism=m{{[0-9]+}}
 // SCC-SAME: depth=1 token-lanes=1 period=1 reuse-distance=1 witness-horizon=2
-// SCC: witness=ready lane=0 {{.*}}@0->{{.*}}@0
-// SCC: witness=release lane=0 {{.*}}@0->{{.*}}@1
+// SCC: witness=ready slot=0 lane=0 {{.*}}@0->{{.*}}@0
+// SCC: witness=release slot=0 lane=0 {{.*}}@0->{{.*}}@1
 // SCC: STRUCTURAL-PROPOSALS 2
 // SCC: kind=storage-lifecycle
 // SCC-SAME: semantics={semantic=storage-lifecycle-scc

@@ -18,6 +18,9 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 
+#include <limits>
+#include <numeric>
+
 using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::canonical_sync_detail;
@@ -84,7 +87,6 @@ struct OwnershipProtocolAction {
   CanonicalMechanismId mechanism = kInvalidCanonicalSyncId;
   PIPE producer = PIPE::PIPE_UNASSIGNED;
   PIPE consumer = PIPE::PIPE_UNASSIGNED;
-  unsigned period = 0;
   Operation *loop = nullptr;
   SmallVector<OwnershipLaneAction, 2> lanes;
   SmallVector<OwnershipStageAction, 8> stages;
@@ -227,20 +229,33 @@ LogicalResult collectActions(
       action.mechanism = mechanism.id;
       action.producer = protocol.producer.pipe;
       action.consumer = protocol.consumer.pipe;
-      action.period = protocol.period;
       action.loop = loop;
-      auto existingPeriod = loop->getAttrOfType<IntegerAttr>(
+      const auto existingPeriod = loop->getAttrOfType<IntegerAttr>(
           kOwnershipPeriodAttr);
-      if ((existingPeriod &&
-           existingPeriod.getInt() != static_cast<int64_t>(action.period)) ||
-          action.period == 0U) {
+      const bool invalidExistingPeriod =
+          existingPeriod &&
+          (existingPeriod.getInt() <= 0 ||
+           static_cast<std::uint64_t>(existingPeriod.getInt()) >
+               std::numeric_limits<unsigned>::max());
+      if (protocol.period == 0U || invalidExistingPeriod) {
         return program.getFunction().emitError(
-            "canonical sync ownership protocols disagree on a loop period");
+            "canonical sync ownership protocol has an invalid loop period");
       }
+      const unsigned currentPeriod =
+          existingPeriod ? static_cast<unsigned>(existingPeriod.getInt()) : 1U;
+      const unsigned divisor = std::gcd(currentPeriod, protocol.period);
+      const bool periodOverflow =
+          currentPeriod / divisor >
+          std::numeric_limits<unsigned>::max() / protocol.period;
+      if (periodOverflow) {
+        return program.getFunction().emitError(
+            "canonical sync ownership loop period overflowed");
+      }
+      const unsigned combinedPeriod =
+          currentPeriod / divisor * protocol.period;
       loop->setAttr(kOwnershipPeriodAttr,
-                    IntegerAttr::get(
-                        IntegerType::get(loop->getContext(), 64),
-                        action.period));
+                    IntegerAttr::get(IntegerType::get(loop->getContext(), 64),
+                                     combinedPeriod));
       for (const CanonicalOwnershipLane &lane : protocol.lanes) {
         if (!lane.readyEventId || !lane.releaseEventId) {
           return program.getFunction().emitError(

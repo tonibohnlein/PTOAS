@@ -208,11 +208,18 @@ module attributes {pto.target_arch = "a2a3"} {
 }
 
 // CHECK-LABEL: CANONICAL-SYNC function=ownership_depth_two
+// CHECK: STORAGE-GENERATIONS 2
+// CHECK: generation=s0 {{.*}}depth=2 slot=0 stage=0 {{.*}}range=[0,8192) period=2
+// CHECK-SAME: next-overwrite-distance=2
+// CHECK-SAME: producer-residues=[0] consumer-residues=[0]
+// CHECK: generation=s1 {{.*}}depth=2 slot=1 stage=0 {{.*}}range=[8192,16384) period=2
+// CHECK-SAME: next-overwrite-distance=2
+// CHECK-SAME: producer-residues=[1] consumer-residues=[1]
 // CHECK: OWNERSHIP-PROTOCOLS 1
 // CHECK: ownership=o0 mechanism=m{{[0-9]+}}
 // CHECK-SAME: depth=2 token-lanes=2 period=2 reuse-distance=2 witness-horizon=4
-// CHECK: witness=release lane=0 {{.*}}@0->{{.*}}@2
-// CHECK: witness=release lane=1 {{.*}}@1->{{.*}}@3
+// CHECK: witness=release slot=0 lane=0 {{.*}}@0->{{.*}}@2
+// CHECK: witness=release slot=1 lane=1 {{.*}}@1->{{.*}}@3
 // CHECK: world=singleton-m{{[0-9]+}}
 // CHECK-SAME: oracle=match
 // CHECK: PLAN selected=[
@@ -220,12 +227,20 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK-SAME: .lane1=ready-e{{[0-5]}}/release-e{{[0-5]}}
 // CHECK: VERIFY ok
 // CHECK-LABEL: CANONICAL-SYNC function=ownership_depth_three
+// CHECK: STORAGE-GENERATIONS 3
+// CHECK: generation=s0 {{.*}}period=3
+// CHECK-SAME: next-overwrite-distance=3
+// CHECK-SAME: producer-residues=[0] consumer-residues=[0]
+// CHECK: generation=s1 {{.*}}period=3
+// CHECK-SAME: producer-residues=[1] consumer-residues=[1]
+// CHECK: generation=s2 {{.*}}period=3
+// CHECK-SAME: producer-residues=[2] consumer-residues=[2]
 // CHECK: OWNERSHIP-PROTOCOLS 1
 // CHECK: ownership=o0 mechanism=m{{[0-9]+}}
 // CHECK-SAME: depth=3 token-lanes=3 period=3 reuse-distance=3 witness-horizon=6
-// CHECK: witness=release lane=0 {{.*}}@0->{{.*}}@3
-// CHECK: witness=release lane=1 {{.*}}@1->{{.*}}@4
-// CHECK: witness=release lane=2 {{.*}}@2->{{.*}}@5
+// CHECK: witness=release slot=0 lane=0 {{.*}}@0->{{.*}}@3
+// CHECK: witness=release slot=1 lane=1 {{.*}}@1->{{.*}}@4
+// CHECK: witness=release slot=2 lane=2 {{.*}}@2->{{.*}}@5
 // CHECK: world=singleton-m{{[0-9]+}}
 // CHECK-SAME: oracle=match
 // CHECK: PLAN selected=[
@@ -234,12 +249,16 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK-SAME: .lane2=ready-e{{[0-5]}}/release-e{{[0-5]}}
 // CHECK: VERIFY ok
 // CHECK-LABEL: CANONICAL-SYNC function=ownership_last_consumer
+// CHECK: STORAGE-GENERATIONS 1
+// CHECK: generation=s0 {{.*}}period=1
+// CHECK-SAME: next-overwrite-distance=1
+// CHECK-SAME: consumers=[p1, p2]
 // CHECK: OWNERSHIP-PROTOCOLS 1
 // CHECK: ownership=o0 mechanism=m{{[0-9]+}}
 // CHECK-SAME: depth=1 token-lanes=1 period=1 reuse-distance=1 witness-horizon=2
 // CHECK: stage=0 slot=0 lane=0
 // CHECK-SAME: consumers=[p1, p2]
-// CHECK: witness=release lane=0 p2@0->p0@1
+// CHECK: witness=release slot=0 lane=0 p2@0->p0@1
 // CHECK: world=singleton-m{{[0-9]+}}
 // CHECK-SAME: oracle=match
 // CHECK: VERIFY ok

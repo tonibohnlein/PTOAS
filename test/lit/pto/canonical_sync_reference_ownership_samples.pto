@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// Keep the larger reference kernels as analysis oracles while checking only
+// stable protocol-shape invariants here.  The GEMM intentionally composes four
+// depth-two operand families and one period-one stationary accumulator in the
+// same loop; materialization must use their least-common schedule period.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-analysis-only --canonical-sync-dump \
+// RUN:   --canonical-sync-structural-cover=storage \
+// RUN:   %S/../../samples/CanonicalSyncReference/gemm_ownership_pipeline.pto \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=GEMM
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-structural-cover=storage \
+// RUN:   %S/../../samples/CanonicalSyncReference/gemm_ownership_pipeline.pto \
+// RUN:   -o /dev/null
+
+// GEMM: STORAGE-GENERATIONS 21
+// GEMM: generation=s{{[0-9]+}} {{.*}}slot=0 stage=0 {{.*}}next-overwrite-distance=0
+// GEMM: generation=s{{[0-9]+}} {{.*}}slot=0 stage=1 {{.*}}next-overwrite-distance=2
+// GEMM: OWNERSHIP-PROTOCOLS 5
+// GEMM: ownership=o0 {{.*}}depth=2 {{.*}}period=2
+// GEMM: ownership=o4 {{.*}}depth=1 {{.*}}period=1
+// GEMM: PLAN selected=[
+
+// The TopK sample's function arguments are disjoint by ABI; the unsafe option
+// below records that external fact until PTO can express it as an attribute.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-analysis-only --canonical-sync-dump \
+// RUN:   --canonical-sync-structural-cover=storage \
+// RUN:   --canonical-sync-gm-alias-policy=distinct-roots-unsafe \
+// RUN:   %S/../../samples/CanonicalSyncReference/topk_ownership_pipeline.pto \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=TOPK
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-canonical-sync \
+// RUN:   --canonical-sync-structural-cover=storage \
+// RUN:   --canonical-sync-gm-alias-policy=distinct-roots-unsafe \
+// RUN:   %S/../../samples/CanonicalSyncReference/topk_ownership_pipeline.pto \
+// RUN:   -o /dev/null
+
+// TOPK: STORAGE-GENERATIONS 4
+// TOPK: generation=s{{[0-9]+}} {{.*}}depth=2 slot=0 {{.*}}last-use=after(pto.tsort32)
+// TOPK: generation=s{{[0-9]+}} {{.*}}depth=2 slot=0 {{.*}}last-use=after(pto.tstore)
+// TOPK: OWNERSHIP-PROTOCOLS 2
+// TOPK: PLAN selected=[

@@ -1,0 +1,301 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// A compact synchronization-analysis proxy for the A2/A3 performance GEMM.
+// The four reduction slices are unrolled so last-consumer analysis can observe
+// the complete L1 panel lifetime without relying on a kernel-specific tag.
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @gemm_ownership_pipeline(
+      %a: !pto.partition_tensor_view<16x16xbf16>,
+      %b: !pto.partition_tensor_view<16x16xbf16>,
+      %out: !pto.partition_tensor_view<16x16xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %l1a0_addr = arith.constant 0 : i64
+    %l1a1_addr = arith.constant 8192 : i64
+    %l1b0_addr = arith.constant 16384 : i64
+    %l1b1_addr = arith.constant 24576 : i64
+    %l0a0_addr = arith.constant 0 : i64
+    %l0a1_addr = arith.constant 8192 : i64
+    %l0b0_addr = arith.constant 0 : i64
+    %l0b1_addr = arith.constant 8192 : i64
+    %l0c_addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %four = arith.constant 4 : index
+
+    %l1a0 = pto.alloc_tile addr = %l1a0_addr :
+      !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=16, v_row=16,
+                    v_col=16, blayout=col_major, slayout=row_major,
+                    fractal=512, pad=0>
+    %l1a1 = pto.alloc_tile addr = %l1a1_addr :
+      !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=16, v_row=16,
+                    v_col=16, blayout=col_major, slayout=row_major,
+                    fractal=512, pad=0>
+    %l1b0 = pto.alloc_tile addr = %l1b0_addr :
+      !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=16, v_row=16,
+                    v_col=16, blayout=row_major, slayout=col_major,
+                    fractal=512, pad=0>
+    %l1b1 = pto.alloc_tile addr = %l1b1_addr :
+      !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=16, v_row=16,
+                    v_col=16, blayout=row_major, slayout=col_major,
+                    fractal=512, pad=0>
+    %l0a0 = pto.alloc_tile addr = %l0a0_addr :
+      !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=16, v_row=16,
+                    v_col=16, blayout=col_major, slayout=row_major,
+                    fractal=512, pad=0>
+    %l0a1 = pto.alloc_tile addr = %l0a1_addr :
+      !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=16, v_row=16,
+                    v_col=16, blayout=col_major, slayout=row_major,
+                    fractal=512, pad=0>
+    %l0b0 = pto.alloc_tile addr = %l0b0_addr :
+      !pto.tile_buf<loc=right, dtype=bf16, rows=16, cols=16, v_row=16,
+                    v_col=16, blayout=row_major, slayout=col_major,
+                    fractal=512, pad=0>
+    %l0b1 = pto.alloc_tile addr = %l0b1_addr :
+      !pto.tile_buf<loc=right, dtype=bf16, rows=16, cols=16, v_row=16,
+                    v_col=16, blayout=row_major, slayout=col_major,
+                    fractal=512, pad=0>
+    %l0c = pto.alloc_tile addr = %l0c_addr :
+      !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16,
+                    v_col=16, blayout=col_major, slayout=row_major,
+                    fractal=1024, pad=0>
+
+    scf.for %panel = %zero to %four step %one {
+      %lane = arith.remsi %panel, %two : index
+      %use_lane0 = arith.cmpi eq, %lane, %zero : index
+      scf.if %use_lane0 {
+        pto.tload ins(%a : !pto.partition_tensor_view<16x16xbf16>)
+                  outs(%l1a0 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                         cols=16, v_row=16, v_col=16, blayout=col_major,
+                         slayout=row_major, fractal=512, pad=0>)
+        pto.tload ins(%b : !pto.partition_tensor_view<16x16xbf16>)
+                  outs(%l1b0 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                         cols=16, v_row=16, v_col=16, blayout=row_major,
+                         slayout=col_major, fractal=512, pad=0>)
+        pto.tmov ins(%l1a0 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                       cols=16, v_row=16, v_col=16, blayout=col_major,
+                       slayout=row_major, fractal=512, pad=0>)
+                 outs(%l0a0 : !pto.tile_buf<loc=left, dtype=bf16, rows=16,
+                        cols=16, v_row=16, v_col=16, blayout=col_major,
+                        slayout=row_major, fractal=512, pad=0>)
+        pto.tmov ins(%l1b0 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                       cols=16, v_row=16, v_col=16, blayout=row_major,
+                       slayout=col_major, fractal=512, pad=0>)
+                 outs(%l0b0 : !pto.tile_buf<loc=right, dtype=bf16, rows=16,
+                        cols=16, v_row=16, v_col=16, blayout=row_major,
+                        slayout=col_major, fractal=512, pad=0>)
+        pto.tmatmul ins(%l0a0, %l0b0 :
+                       !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=16,
+                         v_row=16, v_col=16, blayout=col_major,
+                         slayout=row_major, fractal=512, pad=0>,
+                       !pto.tile_buf<loc=right, dtype=bf16, rows=16, cols=16,
+                         v_row=16, v_col=16, blayout=row_major,
+                         slayout=col_major, fractal=512, pad=0>)
+                    outs(%l0c : !pto.tile_buf<loc=acc, dtype=f32, rows=16,
+                           cols=16, v_row=16, v_col=16, blayout=col_major,
+                           slayout=row_major, fractal=1024, pad=0>)
+        pto.tmov ins(%l1a0 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                       cols=16, v_row=16, v_col=16, blayout=col_major,
+                       slayout=row_major, fractal=512, pad=0>)
+                 outs(%l0a1 : !pto.tile_buf<loc=left, dtype=bf16, rows=16,
+                        cols=16, v_row=16, v_col=16, blayout=col_major,
+                        slayout=row_major, fractal=512, pad=0>)
+        pto.tmov ins(%l1b0 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                       cols=16, v_row=16, v_col=16, blayout=row_major,
+                       slayout=col_major, fractal=512, pad=0>)
+                 outs(%l0b1 : !pto.tile_buf<loc=right, dtype=bf16, rows=16,
+                        cols=16, v_row=16, v_col=16, blayout=row_major,
+                        slayout=col_major, fractal=512, pad=0>)
+        pto.tmatmul.acc ins(%l0c, %l0a1, %l0b1 :
+                           !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=col_major,
+                             slayout=row_major, fractal=1024, pad=0>,
+                           !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=col_major,
+                             slayout=row_major, fractal=512, pad=0>,
+                           !pto.tile_buf<loc=right, dtype=bf16, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=row_major,
+                             slayout=col_major, fractal=512, pad=0>)
+                        outs(%l0c : !pto.tile_buf<loc=acc, dtype=f32, rows=16,
+                               cols=16, v_row=16, v_col=16,
+                               blayout=col_major, slayout=row_major,
+                               fractal=1024, pad=0>)
+        pto.tmov ins(%l1a0 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                       cols=16, v_row=16, v_col=16, blayout=col_major,
+                       slayout=row_major, fractal=512, pad=0>)
+                 outs(%l0a0 : !pto.tile_buf<loc=left, dtype=bf16, rows=16,
+                        cols=16, v_row=16, v_col=16, blayout=col_major,
+                        slayout=row_major, fractal=512, pad=0>)
+        pto.tmov ins(%l1b0 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                       cols=16, v_row=16, v_col=16, blayout=row_major,
+                       slayout=col_major, fractal=512, pad=0>)
+                 outs(%l0b0 : !pto.tile_buf<loc=right, dtype=bf16, rows=16,
+                        cols=16, v_row=16, v_col=16, blayout=row_major,
+                        slayout=col_major, fractal=512, pad=0>)
+        pto.tmatmul.acc ins(%l0c, %l0a0, %l0b0 :
+                           !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=col_major,
+                             slayout=row_major, fractal=1024, pad=0>,
+                           !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=col_major,
+                             slayout=row_major, fractal=512, pad=0>,
+                           !pto.tile_buf<loc=right, dtype=bf16, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=row_major,
+                             slayout=col_major, fractal=512, pad=0>)
+                        outs(%l0c : !pto.tile_buf<loc=acc, dtype=f32, rows=16,
+                               cols=16, v_row=16, v_col=16,
+                               blayout=col_major, slayout=row_major,
+                               fractal=1024, pad=0>)
+        pto.tmov ins(%l1a0 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                       cols=16, v_row=16, v_col=16, blayout=col_major,
+                       slayout=row_major, fractal=512, pad=0>)
+                 outs(%l0a1 : !pto.tile_buf<loc=left, dtype=bf16, rows=16,
+                        cols=16, v_row=16, v_col=16, blayout=col_major,
+                        slayout=row_major, fractal=512, pad=0>)
+        pto.tmov ins(%l1b0 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                       cols=16, v_row=16, v_col=16, blayout=row_major,
+                       slayout=col_major, fractal=512, pad=0>)
+                 outs(%l0b1 : !pto.tile_buf<loc=right, dtype=bf16, rows=16,
+                        cols=16, v_row=16, v_col=16, blayout=row_major,
+                        slayout=col_major, fractal=512, pad=0>)
+        pto.tmatmul.acc ins(%l0c, %l0a1, %l0b1 :
+                           !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=col_major,
+                             slayout=row_major, fractal=1024, pad=0>,
+                           !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=col_major,
+                             slayout=row_major, fractal=512, pad=0>,
+                           !pto.tile_buf<loc=right, dtype=bf16, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=row_major,
+                             slayout=col_major, fractal=512, pad=0>)
+                        outs(%l0c : !pto.tile_buf<loc=acc, dtype=f32, rows=16,
+                               cols=16, v_row=16, v_col=16,
+                               blayout=col_major, slayout=row_major,
+                               fractal=1024, pad=0>)
+      } else {
+        pto.tload ins(%a : !pto.partition_tensor_view<16x16xbf16>)
+                  outs(%l1a1 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                         cols=16, v_row=16, v_col=16, blayout=col_major,
+                         slayout=row_major, fractal=512, pad=0>)
+        pto.tload ins(%b : !pto.partition_tensor_view<16x16xbf16>)
+                  outs(%l1b1 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                         cols=16, v_row=16, v_col=16, blayout=row_major,
+                         slayout=col_major, fractal=512, pad=0>)
+        pto.tmov ins(%l1a1 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                       cols=16, v_row=16, v_col=16, blayout=col_major,
+                       slayout=row_major, fractal=512, pad=0>)
+                 outs(%l0a0 : !pto.tile_buf<loc=left, dtype=bf16, rows=16,
+                        cols=16, v_row=16, v_col=16, blayout=col_major,
+                        slayout=row_major, fractal=512, pad=0>)
+        pto.tmov ins(%l1b1 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                       cols=16, v_row=16, v_col=16, blayout=row_major,
+                       slayout=col_major, fractal=512, pad=0>)
+                 outs(%l0b0 : !pto.tile_buf<loc=right, dtype=bf16, rows=16,
+                        cols=16, v_row=16, v_col=16, blayout=row_major,
+                        slayout=col_major, fractal=512, pad=0>)
+        pto.tmatmul ins(%l0a0, %l0b0 :
+                       !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=16,
+                         v_row=16, v_col=16, blayout=col_major,
+                         slayout=row_major, fractal=512, pad=0>,
+                       !pto.tile_buf<loc=right, dtype=bf16, rows=16, cols=16,
+                         v_row=16, v_col=16, blayout=row_major,
+                         slayout=col_major, fractal=512, pad=0>)
+                    outs(%l0c : !pto.tile_buf<loc=acc, dtype=f32, rows=16,
+                           cols=16, v_row=16, v_col=16, blayout=col_major,
+                           slayout=row_major, fractal=1024, pad=0>)
+        pto.tmov ins(%l1a1 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                       cols=16, v_row=16, v_col=16, blayout=col_major,
+                       slayout=row_major, fractal=512, pad=0>)
+                 outs(%l0a1 : !pto.tile_buf<loc=left, dtype=bf16, rows=16,
+                        cols=16, v_row=16, v_col=16, blayout=col_major,
+                        slayout=row_major, fractal=512, pad=0>)
+        pto.tmov ins(%l1b1 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                       cols=16, v_row=16, v_col=16, blayout=row_major,
+                       slayout=col_major, fractal=512, pad=0>)
+                 outs(%l0b1 : !pto.tile_buf<loc=right, dtype=bf16, rows=16,
+                        cols=16, v_row=16, v_col=16, blayout=row_major,
+                        slayout=col_major, fractal=512, pad=0>)
+        pto.tmatmul.acc ins(%l0c, %l0a1, %l0b1 :
+                           !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=col_major,
+                             slayout=row_major, fractal=1024, pad=0>,
+                           !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=col_major,
+                             slayout=row_major, fractal=512, pad=0>,
+                           !pto.tile_buf<loc=right, dtype=bf16, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=row_major,
+                             slayout=col_major, fractal=512, pad=0>)
+                        outs(%l0c : !pto.tile_buf<loc=acc, dtype=f32, rows=16,
+                               cols=16, v_row=16, v_col=16,
+                               blayout=col_major, slayout=row_major,
+                               fractal=1024, pad=0>)
+        pto.tmov ins(%l1a1 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                       cols=16, v_row=16, v_col=16, blayout=col_major,
+                       slayout=row_major, fractal=512, pad=0>)
+                 outs(%l0a0 : !pto.tile_buf<loc=left, dtype=bf16, rows=16,
+                        cols=16, v_row=16, v_col=16, blayout=col_major,
+                        slayout=row_major, fractal=512, pad=0>)
+        pto.tmov ins(%l1b1 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                       cols=16, v_row=16, v_col=16, blayout=row_major,
+                       slayout=col_major, fractal=512, pad=0>)
+                 outs(%l0b0 : !pto.tile_buf<loc=right, dtype=bf16, rows=16,
+                        cols=16, v_row=16, v_col=16, blayout=row_major,
+                        slayout=col_major, fractal=512, pad=0>)
+        pto.tmatmul.acc ins(%l0c, %l0a0, %l0b0 :
+                           !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=col_major,
+                             slayout=row_major, fractal=1024, pad=0>,
+                           !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=col_major,
+                             slayout=row_major, fractal=512, pad=0>,
+                           !pto.tile_buf<loc=right, dtype=bf16, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=row_major,
+                             slayout=col_major, fractal=512, pad=0>)
+                        outs(%l0c : !pto.tile_buf<loc=acc, dtype=f32, rows=16,
+                               cols=16, v_row=16, v_col=16,
+                               blayout=col_major, slayout=row_major,
+                               fractal=1024, pad=0>)
+        pto.tmov ins(%l1a1 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                       cols=16, v_row=16, v_col=16, blayout=col_major,
+                       slayout=row_major, fractal=512, pad=0>)
+                 outs(%l0a1 : !pto.tile_buf<loc=left, dtype=bf16, rows=16,
+                        cols=16, v_row=16, v_col=16, blayout=col_major,
+                        slayout=row_major, fractal=512, pad=0>)
+        pto.tmov ins(%l1b1 : !pto.tile_buf<loc=mat, dtype=bf16, rows=16,
+                       cols=16, v_row=16, v_col=16, blayout=row_major,
+                       slayout=col_major, fractal=512, pad=0>)
+                 outs(%l0b1 : !pto.tile_buf<loc=right, dtype=bf16, rows=16,
+                        cols=16, v_row=16, v_col=16, blayout=row_major,
+                        slayout=col_major, fractal=512, pad=0>)
+        pto.tmatmul.acc ins(%l0c, %l0a1, %l0b1 :
+                           !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=col_major,
+                             slayout=row_major, fractal=1024, pad=0>,
+                           !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=col_major,
+                             slayout=row_major, fractal=512, pad=0>,
+                           !pto.tile_buf<loc=right, dtype=bf16, rows=16, cols=16,
+                             v_row=16, v_col=16, blayout=row_major,
+                             slayout=col_major, fractal=512, pad=0>)
+                        outs(%l0c : !pto.tile_buf<loc=acc, dtype=f32, rows=16,
+                               cols=16, v_row=16, v_col=16,
+                               blayout=col_major, slayout=row_major,
+                               fractal=1024, pad=0>)
+      }
+      pto.tstore ins(%l0c : !pto.tile_buf<loc=acc, dtype=f32, rows=16,
+                       cols=16, v_row=16, v_col=16, blayout=col_major,
+                       slayout=row_major, fractal=1024, pad=0>)
+                 outs(%out : !pto.partition_tensor_view<16x16xf32>)
+    }
+    return
+  }
+}

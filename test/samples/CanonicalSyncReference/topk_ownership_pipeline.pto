@@ -1,0 +1,118 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// A compact synchronization-analysis proxy for the A2/A3 TopK pipeline.  The
+// two branches are exact physical slots selected by iteration modulo two.
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @topk_ownership_pipeline(
+      %src: !pto.partition_tensor_view<1x32xf16>,
+      %indices: !pto.partition_tensor_view<1x32xui32>,
+      %out: !pto.partition_tensor_view<1x64xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %src0_addr = arith.constant 0 : i64
+    %src1_addr = arith.constant 256 : i64
+    %idx_addr = arith.constant 512 : i64
+    %sort0_addr = arith.constant 1024 : i64
+    %sort1_addr = arith.constant 1536 : i64
+    %merge0_addr = arith.constant 2048 : i64
+    %merge1_addr = arith.constant 2560 : i64
+    %zero_index = arith.constant 0 : index
+    %one_index = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %four = arith.constant 4 : index
+    %block = arith.constant 64 : i32
+
+    %src0 = pto.alloc_tile addr = %src0_addr :
+      !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=32, v_row=1, v_col=32,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src1 = pto.alloc_tile addr = %src1_addr :
+      !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=32, v_row=1, v_col=32,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %idx = pto.alloc_tile addr = %idx_addr :
+      !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32, v_row=1, v_col=32,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %sort0 = pto.alloc_tile addr = %sort0_addr :
+      !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=64, v_row=1, v_col=64,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %sort1 = pto.alloc_tile addr = %sort1_addr :
+      !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=64, v_row=1, v_col=64,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %merge0 = pto.alloc_tile addr = %merge0_addr :
+      !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=64, v_row=1, v_col=64,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %merge1 = pto.alloc_tile addr = %merge1_addr :
+      !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=64, v_row=1, v_col=64,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tload ins(%indices : !pto.partition_tensor_view<1x32xui32>)
+              outs(%idx : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32,
+                     v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+                     fractal=512, pad=0>)
+    scf.for %iteration = %zero_index to %four step %one_index {
+      %lane = arith.remsi %iteration, %two : index
+      %use_lane0 = arith.cmpi eq, %lane, %zero_index : index
+      scf.if %use_lane0 {
+        pto.tload ins(%src : !pto.partition_tensor_view<1x32xf16>)
+                  outs(%src0 : !pto.tile_buf<loc=vec, dtype=f16, rows=1,
+                         cols=32, v_row=1, v_col=32, blayout=row_major,
+                         slayout=none_box, fractal=512, pad=0>)
+        pto.tsort32 ins(%src0, %idx :
+                       !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=32,
+                         v_row=1, v_col=32, blayout=row_major,
+                         slayout=none_box, fractal=512, pad=0>,
+                       !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32,
+                         v_row=1, v_col=32, blayout=row_major,
+                         slayout=none_box, fractal=512, pad=0>)
+                    outs(%sort0 : !pto.tile_buf<loc=vec, dtype=f16, rows=1,
+                           cols=64, v_row=1, v_col=64, blayout=row_major,
+                           slayout=none_box, fractal=512, pad=0>)
+        pto.tmrgsort ins(%sort0, %block :
+                        !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=64,
+                          v_row=1, v_col=64, blayout=row_major,
+                          slayout=none_box, fractal=512, pad=0>, i32)
+                     outs(%merge0 : !pto.tile_buf<loc=vec, dtype=f16, rows=1,
+                            cols=64, v_row=1, v_col=64, blayout=row_major,
+                            slayout=none_box, fractal=512, pad=0>)
+        pto.tstore ins(%merge0 : !pto.tile_buf<loc=vec, dtype=f16, rows=1,
+                         cols=64, v_row=1, v_col=64, blayout=row_major,
+                         slayout=none_box, fractal=512, pad=0>)
+                   outs(%out : !pto.partition_tensor_view<1x64xf16>)
+      } else {
+        pto.tload ins(%src : !pto.partition_tensor_view<1x32xf16>)
+                  outs(%src1 : !pto.tile_buf<loc=vec, dtype=f16, rows=1,
+                         cols=32, v_row=1, v_col=32, blayout=row_major,
+                         slayout=none_box, fractal=512, pad=0>)
+        pto.tsort32 ins(%src1, %idx :
+                       !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=32,
+                         v_row=1, v_col=32, blayout=row_major,
+                         slayout=none_box, fractal=512, pad=0>,
+                       !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32,
+                         v_row=1, v_col=32, blayout=row_major,
+                         slayout=none_box, fractal=512, pad=0>)
+                    outs(%sort1 : !pto.tile_buf<loc=vec, dtype=f16, rows=1,
+                           cols=64, v_row=1, v_col=64, blayout=row_major,
+                           slayout=none_box, fractal=512, pad=0>)
+        pto.tmrgsort ins(%sort1, %block :
+                        !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=64,
+                          v_row=1, v_col=64, blayout=row_major,
+                          slayout=none_box, fractal=512, pad=0>, i32)
+                     outs(%merge1 : !pto.tile_buf<loc=vec, dtype=f16, rows=1,
+                            cols=64, v_row=1, v_col=64, blayout=row_major,
+                            slayout=none_box, fractal=512, pad=0>)
+        pto.tstore ins(%merge1 : !pto.tile_buf<loc=vec, dtype=f16, rows=1,
+                         cols=64, v_row=1, v_col=64, blayout=row_major,
+                         slayout=none_box, fractal=512, pad=0>)
+                   outs(%out : !pto.partition_tensor_view<1x64xf16>)
+      }
+    }
+    return
+  }
+}

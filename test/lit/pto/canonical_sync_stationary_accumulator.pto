@@ -67,6 +67,11 @@ module attributes {pto.target_arch = "a2a3"} {
 }
 
 // CHECK-LABEL: CANONICAL-SYNC function=stationary_accumulator
+// CHECK: STORAGE-GENERATIONS 1
+// CHECK: generation=s0 {{.*}}resource=AIC:PIPE_M->AIC:PIPE_FIX
+// CHECK-SAME: ready=after(scf.for)
+// CHECK-SAME: last-use=after(pto.tstore)
+// CHECK-SAME: next-overwrite=before(scf.for)
 // CHECK: OWNERSHIP-PROTOCOLS 1
 // CHECK: ownership=o0 mechanism=m{{[0-9]+}} owner=r{{[0-9]+}}
 // CHECK-SAME: resource=AIC:PIPE_M->AIC:PIPE_FIX
@@ -77,8 +82,8 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK-SAME: ready=after(scf.for)
 // CHECK-SAME: read-acquire=before(pto.tstore)
 // CHECK-SAME: release=after(pto.tstore)
-// CHECK: witness=ready lane=0
-// CHECK: witness=release lane=0
+// CHECK: witness=ready slot=0 lane=0
+// CHECK: witness=release slot=0 lane=0
 // CHECK: world=singleton-m{{[0-9]+}}
 // CHECK-SAME: oracle=match
 // CHECK: PLAN selected=[

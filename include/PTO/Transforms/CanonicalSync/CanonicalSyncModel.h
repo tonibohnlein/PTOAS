@@ -43,6 +43,7 @@ using CanonicalDemandId = std::uint32_t;
 using CanonicalMechanismId = std::uint32_t;
 using CanonicalStructuralProposalId = std::uint32_t;
 using CanonicalSetCoverCandidateId = std::uint32_t;
+using CanonicalStorageGenerationId = std::uint32_t;
 using CanonicalOwnershipProtocolId = std::uint32_t;
 
 enum class CanonicalStructuralCoverFamily : std::uint32_t {
@@ -117,6 +118,7 @@ struct CanonicalSyncStatistics {
   std::uint64_t coverageWorlds = 0;
   std::uint64_t coverUniverse = 0;
   std::uint64_t coverCandidates = 0;
+  std::uint64_t storageGenerations = 0;
   std::uint64_t structuralProposals = 0;
   std::uint64_t admittedStructuralProposals = 0;
   std::uint64_t structuralMechanismMemberships = 0;
@@ -349,7 +351,46 @@ struct CanonicalOwnershipLane {
   std::optional<unsigned> releaseEventId;
 };
 
+/// One statically described generation of an exact physical storage slot.
+///
+/// This is an IR/storage fact, not a synchronization proof.  It records the
+/// producer completion frontier, first and last consumer frontiers, and the
+/// next overwrite of the same slot.  A hardware protocol may later map one or
+/// more generations to event-token lanes, but coverage is still established
+/// independently from the materialized cuts.
+struct CanonicalStorageGeneration {
+  CanonicalStorageGenerationId id = kInvalidCanonicalSyncId;
+  CanonicalRegionId recurrenceLoop = kInvalidCanonicalSyncId;
+  /// Stable semantic identity shared by the physical slots of one logical
+  /// producer/consumer buffer family.
+  std::string familyKey;
+  unsigned familyDepth = 0;
+  unsigned slot = 0;
+  unsigned stageOrdinal = 0;
+  Value root;
+  CanonicalByteInterval interval;
+  Value slotExpression;
+  CanonicalPhysicalResource producer;
+  CanonicalPhysicalResource consumer;
+  CanonicalProgramPoint writeAcquire;
+  CanonicalProgramPoint ready;
+  CanonicalProgramPoint readAcquire;
+  CanonicalProgramPoint lastUse;
+  CanonicalProgramPoint nextOverwrite;
+  llvm::SmallVector<CanonicalPhaseId, 2> producers;
+  llvm::SmallVector<CanonicalPhaseId, 4> consumers;
+  llvm::SmallVector<CanonicalControlAtom, 2> producerGuard;
+  llvm::SmallVector<CanonicalControlAtom, 2> consumerGuard;
+  llvm::SmallVector<unsigned, 4> producerResidues;
+  llvm::SmallVector<unsigned, 4> consumerResidues;
+  unsigned period = 0;
+  unsigned readyDistance = 0;
+  unsigned nextOverwriteDistance = 0;
+  bool initialProducer = false;
+};
+
 struct CanonicalOwnershipStage {
+  CanonicalStorageGenerationId generation = kInvalidCanonicalSyncId;
   unsigned slot = 0;
   unsigned lane = 0;
   /// An initial producer executes before recurrenceLoop and seeds the ready
@@ -375,6 +416,7 @@ enum class CanonicalOwnershipWitnessKind : std::uint8_t {
 
 struct CanonicalOwnershipWitnessEdge {
   CanonicalOwnershipWitnessKind kind = CanonicalOwnershipWitnessKind::Ready;
+  unsigned slot = 0;
   unsigned lane = 0;
   CanonicalPhaseId source = kInvalidCanonicalSyncId;
   CanonicalPhaseId target = kInvalidCanonicalSyncId;
@@ -549,6 +591,8 @@ public:
   CanonicalMechanismId
   appendOwnershipProtocol(CanonicalOwnershipProtocol protocol,
                           CanonicalMechanism mechanism);
+  CanonicalStorageGenerationId
+  appendStorageGeneration(CanonicalStorageGeneration generation);
   void appendMechanismOrigin(CanonicalMechanismId mechanism,
                              CanonicalDemandId demand);
   void appendMechanismCacheMaintenance(CanonicalMechanismId mechanism,
@@ -593,6 +637,9 @@ public:
   llvm::ArrayRef<CanonicalStructuralProposal> getStructuralProposals() const {
     return structuralProposals;
   }
+  llvm::ArrayRef<CanonicalStorageGeneration> getStorageGenerations() const {
+    return storageGenerations;
+  }
   llvm::ArrayRef<CanonicalOwnershipProtocol> getOwnershipProtocols() const {
     return ownershipProtocols;
   }
@@ -612,6 +659,8 @@ public:
   const CanonicalFenceEffect &getFenceEffect(CanonicalFenceEffectId id) const;
   const CanonicalDemand &getDemand(CanonicalDemandId id) const;
   const CanonicalMechanism &getMechanism(CanonicalMechanismId id) const;
+  const CanonicalStorageGeneration &
+  getStorageGeneration(CanonicalStorageGenerationId id) const;
   const CanonicalOwnershipProtocol &
   getOwnershipProtocol(CanonicalOwnershipProtocolId id) const;
   llvm::ArrayRef<CanonicalRegionId>
@@ -651,6 +700,7 @@ private:
   llvm::SmallVector<CanonicalFenceEffect> fenceEffects;
   llvm::SmallVector<CanonicalDemand> demands;
   llvm::SmallVector<CanonicalMechanism> mechanisms;
+  llvm::SmallVector<CanonicalStorageGeneration, 0> storageGenerations;
   llvm::SmallVector<CanonicalOwnershipProtocol, 0> ownershipProtocols;
   llvm::SmallVector<llvm::SmallVector<CanonicalRegionId, 2>, 0>
       mechanismExecutionLoops;

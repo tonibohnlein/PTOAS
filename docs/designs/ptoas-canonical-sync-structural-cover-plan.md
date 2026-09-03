@@ -286,6 +286,39 @@ The next GEMM milestone is therefore:
 4. retain zero body `PIPE_ALL`;
 5. pass fresh graph, lifecycle, allocation, and device correctness checks.
 
+### Ownership-synthesis checkpoint
+
+The opt-in storage experiment now has two compact, unsynchronized PTO inputs
+under `test/samples/CanonicalSyncReference/`.  They preserve the ownership
+topology of the hand-tuned A2/A3 GEMM and TopK kernels without copying their
+manual synchronization.  The corresponding lit test checks both analysis and
+full materialization.
+
+The storage analysis records an explicit generation for every exact physical
+slot lifetime.  A generation contains its logical family and stable family
+slot, producer completion cut, first consumer cut, last consumer cut, next
+overwrite, control residues, period, and reuse distance.  This identity is
+independent of whether a grouped or singleton protocol alternative is being
+tested.  Physical storage slots and event-token lanes are deliberately
+distinct: two slots may share a serialized token lane, but a witness for one
+exact slot can never prove coverage for the other.
+
+The compact GEMM input currently yields 21 storage generations and five
+selected protocols: two L1 panel channels, two L0 operand channels, and one
+stationary accumulator handoff.  The TopK input yields four generations and
+two selected depth-two channels while retaining its same-Vector barrier
+obligations.  Independent protocols with periods one through four may coexist
+in one loop; materialization and the bounded verifier use their checked
+least-common schedule period.
+
+This is a discoverability and correctness checkpoint only.  Coverage is still
+grounded from physical cuts and simulated token transitions, materialized
+events still pass the independent event verifier, and no recognition result is
+accepted as a proof by itself.  However, synthesized protocols currently have
+unit mechanism weight.  Device repeatability and a dynamic action/stall cost
+model are required before comparing their performance with direct plans or
+enabling the family by default.
+
 ## Staged implementation
 
 ### Stage A: composition prototype

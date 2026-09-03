@@ -181,6 +181,44 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
     }
     os << '\n';
   }
+  os << "STORAGE-GENERATIONS " << program.getStorageGenerations().size()
+     << '\n';
+  for (const CanonicalStorageGeneration &generation :
+       program.getStorageGenerations()) {
+    os << "  generation=s" << generation.id << " loop=r"
+       << generation.recurrenceLoop << " family={" << generation.familyKey
+       << "} depth=" << generation.familyDepth << " slot=" << generation.slot
+       << " stage=" << generation.stageOrdinal << " resource=";
+    printResource(os, generation.producer);
+    os << "->";
+    printResource(os, generation.consumer);
+    os << " range=[" << generation.interval.begin << ','
+       << *generation.interval.end() << ") period=" << generation.period
+       << " ready-distance=" << generation.readyDistance
+       << " next-overwrite-distance=" << generation.nextOverwriteDistance
+       << " initial=" << (generation.initialProducer ? "yes" : "no")
+       << " write-acquire=";
+    printPoint(os, generation.writeAcquire);
+    os << " ready=";
+    printPoint(os, generation.ready);
+    os << " read-acquire=";
+    printPoint(os, generation.readAcquire);
+    os << " last-use=";
+    printPoint(os, generation.lastUse);
+    os << " next-overwrite=";
+    printPoint(os, generation.nextOverwrite);
+    os << " producers=[";
+    llvm::interleaveComma(generation.producers, os,
+                          [&os](CanonicalPhaseId id) { os << 'p' << id; });
+    os << "] consumers=[";
+    llvm::interleaveComma(generation.consumers, os,
+                          [&os](CanonicalPhaseId id) { os << 'p' << id; });
+    os << "] producer-residues=[";
+    llvm::interleaveComma(generation.producerResidues, os);
+    os << "] consumer-residues=[";
+    llvm::interleaveComma(generation.consumerResidues, os);
+    os << "]\n";
+  }
   os << "OWNERSHIP-PROTOCOLS " << program.getOwnershipProtocols().size()
      << '\n';
   for (const CanonicalOwnershipProtocol &protocol :
@@ -221,7 +259,7 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
     }
     for (auto [stageIndex, stage] : llvm::enumerate(protocol.stages)) {
       os << "    stage=" << stageIndex << " slot=" << stage.slot
-         << " lane=" << stage.lane
+         << " lane=" << stage.lane << " generation=s" << stage.generation
          << " initial=" << (stage.initialProducer ? "yes" : "no")
          << " ready-distance=" << stage.readyDistance
          << " release-distance=" << stage.releaseDistance << " write-acquire=";
@@ -248,7 +286,8 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
       os << "    witness="
          << (edge.kind == CanonicalOwnershipWitnessKind::Ready ? "ready"
                                                                : "release")
-         << " lane=" << edge.lane << " p" << edge.source << '@'
+         << " slot=" << edge.slot << " lane=" << edge.lane << " p"
+         << edge.source << '@'
          << edge.sourceIteration << "->p" << edge.target << '@'
          << edge.targetIteration << '\n';
     }

@@ -184,6 +184,63 @@ CanonicalMechanismId CanonicalSyncProgram::appendOwnershipProtocol(
   return mechanismId;
 }
 
+namespace {
+
+bool sameProgramPoint(CanonicalProgramPoint first,
+                      CanonicalProgramPoint second) {
+  return first.operation == second.operation &&
+         first.position == second.position;
+}
+
+bool sameStorageGeneration(const CanonicalStorageGeneration &first,
+                           const CanonicalStorageGeneration &second) {
+  return first.recurrenceLoop == second.recurrenceLoop &&
+         first.familyKey == second.familyKey &&
+         first.familyDepth == second.familyDepth && first.slot == second.slot &&
+         first.stageOrdinal == second.stageOrdinal &&
+         first.root == second.root &&
+         first.interval.begin == second.interval.begin &&
+         first.interval.size == second.interval.size &&
+         first.slotExpression == second.slotExpression &&
+         first.producer == second.producer &&
+         first.consumer == second.consumer &&
+         sameProgramPoint(first.writeAcquire, second.writeAcquire) &&
+         sameProgramPoint(first.ready, second.ready) &&
+         sameProgramPoint(first.readAcquire, second.readAcquire) &&
+         sameProgramPoint(first.lastUse, second.lastUse) &&
+         sameProgramPoint(first.nextOverwrite, second.nextOverwrite) &&
+         first.producers == second.producers &&
+         first.consumers == second.consumers &&
+         first.producerGuard == second.producerGuard &&
+         first.consumerGuard == second.consumerGuard &&
+         first.producerResidues == second.producerResidues &&
+         first.consumerResidues == second.consumerResidues &&
+         first.period == second.period &&
+         first.readyDistance == second.readyDistance &&
+         first.nextOverwriteDistance == second.nextOverwriteDistance &&
+         first.initialProducer == second.initialProducer;
+}
+
+} // namespace
+
+CanonicalStorageGenerationId CanonicalSyncProgram::appendStorageGeneration(
+    CanonicalStorageGeneration generation) {
+  const bool invalidState = frozen || !mechanismCatalogComplete ||
+                            structuralProposalCatalogComplete ||
+                            coverageCatalogComplete || setCoverInstance;
+  if (invalidState) {
+    llvm_unreachable("cannot append a storage generation in this state");
+  }
+  auto existing = llvm::find_if(
+      storageGenerations, [&](const CanonicalStorageGeneration &candidate) {
+        return sameStorageGeneration(candidate, generation);
+      });
+  if (existing != storageGenerations.end()) {
+    return existing->id;
+  }
+  return appendRecord(storageGenerations, std::move(generation), frozen);
+}
+
 void CanonicalSyncProgram::appendMechanismOrigin(CanonicalMechanismId mechanism,
                                                  CanonicalDemandId demand) {
   const bool invalidMechanism = mechanism >= mechanisms.size();
@@ -494,6 +551,52 @@ LogicalResult CanonicalSyncProgram::freeze() {
       return fail("mechanism has an invalid action point, origin, or region");
     }
   }
+  for (const CanonicalStorageGeneration &generation : storageGenerations) {
+    const bool wrongId = generation.id >= storageGenerations.size() ||
+                         &generation != &storageGenerations[generation.id];
+    const bool invalidRegion =
+        generation.recurrenceLoop >= regions.size() ||
+        (generation.recurrenceLoop < regions.size() &&
+         regions[generation.recurrenceLoop].kind != CanonicalRegionKind::Loop);
+    const bool invalidStorage = !generation.root ||
+                                generation.interval.size == 0U ||
+                                !generation.interval.end();
+    const bool invalidFamily =
+        generation.familyKey.empty() || generation.familyDepth == 0U ||
+        generation.slot >= generation.familyDepth;
+    const bool invalidPoints =
+        !generation.writeAcquire.operation || !generation.ready.operation ||
+        !generation.readAcquire.operation || !generation.lastUse.operation ||
+        !generation.nextOverwrite.operation;
+    const bool invalidPhases =
+        generation.producers.empty() || generation.consumers.empty() ||
+        llvm::any_of(generation.producers,
+                     [this](CanonicalPhaseId phase) {
+                       return phase >= phases.size();
+                     }) ||
+        llvm::any_of(generation.consumers, [this](CanonicalPhaseId phase) {
+          return phase >= phases.size();
+        });
+    const bool invalidGuards =
+        !validControlPath(generation.producerGuard, regions.size()) ||
+        !validControlPath(generation.consumerGuard, regions.size());
+    const auto invalidResidue = [&generation](unsigned residue) {
+      return residue >= generation.period;
+    };
+    const bool invalidNextOverwrite =
+        generation.nextOverwriteDistance == 0U &&
+        sameProgramPoint(generation.writeAcquire, generation.nextOverwrite);
+    const bool invalidSchedule =
+        generation.period == 0U || invalidNextOverwrite ||
+        llvm::any_of(generation.producerResidues, invalidResidue) ||
+        llvm::any_of(generation.consumerResidues, invalidResidue) ||
+        (!generation.initialProducer && (generation.producerResidues.empty() ||
+                                         generation.consumerResidues.empty()));
+    if (wrongId || invalidRegion || invalidFamily || invalidStorage ||
+        invalidPoints || invalidPhases || invalidGuards || invalidSchedule) {
+      return fail("storage generation has invalid storage or schedule facts");
+    }
+  }
   for (const CanonicalOwnershipProtocol &protocol : ownershipProtocols) {
     const bool wrongId = protocol.id >= ownershipProtocols.size() ||
                          &protocol != &ownershipProtocols[protocol.id];
@@ -526,12 +629,21 @@ LogicalResult CanonicalSyncProgram::freeze() {
         llvm::any_of(
             protocol.stages,
             [this, &protocol](const CanonicalOwnershipStage &stage) {
-              const bool invalidPoint =
+              const bool invalidReference =
+                  stage.generation >= storageGenerations.size() ||
                   stage.slot >= protocol.slots.size() ||
-                  stage.lane >= protocol.lanes.size() ||
-                  protocol.slots[stage.slot].lane != stage.lane ||
-                  !stage.writeAcquire.operation || !stage.ready.operation ||
-                  !stage.readAcquire.operation || !stage.release.operation;
+                  stage.lane >= protocol.lanes.size();
+              if (invalidReference) {
+                return true;
+              }
+              const CanonicalStorageGeneration &generation =
+                  storageGenerations[stage.generation];
+              const CanonicalOwnershipSlot &slot =
+                  protocol.slots[stage.slot];
+              const bool invalidPoint =
+                  slot.lane != stage.lane || !stage.writeAcquire.operation ||
+                  !stage.ready.operation || !stage.readAcquire.operation ||
+                  !stage.release.operation;
               const bool invalidPhase =
                   stage.producers.empty() || stage.consumers.empty() ||
                   llvm::any_of(stage.producers,
@@ -551,8 +663,30 @@ LogicalResult CanonicalSyncProgram::freeze() {
                              ? stage.readyDistance != 0U
                              : stage.readyDistance == 0U) ||
                             stage.releaseDistance == 0U;
+              const bool invalidGeneration =
+                  generation.recurrenceLoop != protocol.recurrenceLoop ||
+                  generation.familyKey != protocol.familyKey ||
+                  generation.root != slot.root ||
+                  generation.interval.begin != slot.interval.begin ||
+                  generation.interval.size != slot.interval.size ||
+                  generation.slotExpression != slot.slotExpression ||
+                  generation.producer != protocol.producer ||
+                  generation.consumer != protocol.consumer ||
+                  !sameProgramPoint(generation.writeAcquire,
+                                    stage.writeAcquire) ||
+                  !sameProgramPoint(generation.ready, stage.ready) ||
+                  !sameProgramPoint(generation.readAcquire,
+                                    stage.readAcquire) ||
+                  !sameProgramPoint(generation.lastUse, stage.release) ||
+                  generation.producers != stage.producers ||
+                  generation.consumers != stage.consumers ||
+                  generation.producerGuard != stage.producerGuard ||
+                  generation.consumerGuard != stage.consumerGuard ||
+                  generation.period != protocol.period ||
+                  generation.readyDistance != stage.readyDistance ||
+                  generation.initialProducer != stage.initialProducer;
               return invalidPoint || invalidPhase || invalidGuard ||
-                     invalidDistance;
+                     invalidDistance || invalidGeneration;
             });
     const bool invalidWitness =
         protocol.witnessEdges.empty() ||
@@ -568,7 +702,10 @@ LogicalResult CanonicalSyncProgram::freeze() {
                    (edge.targetIteration <= edge.sourceIteration ||
                     edge.targetIteration - edge.sourceIteration >
                         protocol.reuseDistance));
-              return edge.lane >= protocol.lanes.size() ||
+              return edge.slot >= protocol.slots.size() ||
+                     edge.lane >= protocol.lanes.size() ||
+                     (edge.slot < protocol.slots.size() &&
+                      protocol.slots[edge.slot].lane != edge.lane) ||
                      edge.source >= phases.size() ||
                      edge.target >= phases.size() || invalidIteration;
             });
@@ -607,7 +744,10 @@ LogicalResult CanonicalSyncProgram::freeze() {
       const auto invalidEdge = llvm::find_if(
           protocol.witnessEdges,
           [this, &protocol](const CanonicalOwnershipWitnessEdge &edge) {
-            return edge.lane >= protocol.lanes.size() ||
+            return edge.slot >= protocol.slots.size() ||
+                   edge.lane >= protocol.lanes.size() ||
+                   (edge.slot < protocol.slots.size() &&
+                    protocol.slots[edge.slot].lane != edge.lane) ||
                    edge.source >= phases.size() ||
                    edge.target >= phases.size() ||
                    edge.sourceIteration >= protocol.witnessHorizon ||
@@ -1030,6 +1170,11 @@ CanonicalSyncProgram::getMechanism(CanonicalMechanismId id) const {
   return mechanisms[id];
 }
 
+const CanonicalStorageGeneration &CanonicalSyncProgram::getStorageGeneration(
+    CanonicalStorageGenerationId id) const {
+  return storageGenerations[id];
+}
+
 const CanonicalOwnershipProtocol &CanonicalSyncProgram::getOwnershipProtocol(
     CanonicalOwnershipProtocolId id) const {
   return ownershipProtocols[id];
@@ -1049,8 +1194,13 @@ bool sameOwnershipInterval(const CanonicalByteInterval &first,
   return first.begin == second.begin && first.size == second.size;
 }
 
-std::optional<unsigned>
-demandOwnershipLane(const CanonicalSyncProgram &program,
+struct DemandOwnershipSlot {
+  unsigned slot = 0;
+  unsigned lane = 0;
+};
+
+std::optional<DemandOwnershipSlot>
+demandOwnershipSlot(const CanonicalSyncProgram &program,
                     const CanonicalOwnershipProtocol &protocol,
                     const CanonicalDemand &demand) {
   for (const CanonicalDemandCause &cause : demand.causes) {
@@ -1067,14 +1217,15 @@ demandOwnershipLane(const CanonicalSyncProgram &program,
     if (!exact) {
       continue;
     }
-    for (const CanonicalOwnershipSlot &candidate : protocol.slots) {
+    for (auto [slot, candidate] : llvm::enumerate(protocol.slots)) {
       const bool matches =
           source.aliasRoot == candidate.root &&
           target.aliasRoot == candidate.root &&
           sameOwnershipInterval(source.intervals.front(), candidate.interval) &&
           sameOwnershipInterval(target.intervals.front(), candidate.interval);
       if (matches) {
-        return candidate.lane;
+        return DemandOwnershipSlot{static_cast<unsigned>(slot),
+                                   candidate.lane};
       }
     }
   }
@@ -1101,10 +1252,12 @@ ownershipRelation(const CanonicalOwnershipProtocol &protocol,
 }
 
 bool hasOwnershipWitness(const CanonicalOwnershipProtocol &protocol,
-                         unsigned lane, CanonicalOwnershipWitnessKind kind) {
+                         DemandOwnershipSlot ownership,
+                         CanonicalOwnershipWitnessKind kind) {
   return llvm::any_of(protocol.witnessEdges,
                       [&](const CanonicalOwnershipWitnessEdge &edge) {
-                        return edge.lane == lane && edge.kind == kind;
+                        return edge.slot == ownership.slot &&
+                               edge.lane == ownership.lane && edge.kind == kind;
                       });
 }
 
@@ -1160,17 +1313,19 @@ bool releaseStageProtects(const CanonicalSyncProgram &program,
 
 bool releaseChainCovers(const CanonicalSyncProgram &program,
                         const CanonicalOwnershipProtocol &protocol,
-                        unsigned lane, const CanonicalDemand &demand,
-                        bool sameIteration) {
+                        DemandOwnershipSlot ownership,
+                        const CanonicalDemand &demand, bool sameIteration) {
   return llvm::any_of(
       protocol.stages, [&](const CanonicalOwnershipStage &sourceStage) {
-        if (sourceStage.lane != lane ||
+        if (sourceStage.slot != ownership.slot ||
+            sourceStage.lane != ownership.lane ||
             !releaseStageCaptures(program, protocol, sourceStage, demand)) {
           return false;
         }
         return llvm::any_of(
             protocol.stages, [&](const CanonicalOwnershipStage &targetStage) {
-              if (targetStage.lane != lane ||
+              if (targetStage.slot != ownership.slot ||
+                  targetStage.lane != ownership.lane ||
                   !releaseStageProtects(program, protocol, targetStage,
                                         demand)) {
                 return false;
@@ -1190,27 +1345,27 @@ bool mlir::pto::canonicalOwnershipProtocolCoversDemand(
   if (demand.requirement != CanonicalRequirement::Completion) {
     return false;
   }
-  const std::optional<unsigned> lane =
-      demandOwnershipLane(program, protocol, demand);
+  const std::optional<DemandOwnershipSlot> ownership =
+      demandOwnershipSlot(program, protocol, demand);
   const std::optional<CanonicalIterationRelation> relation =
       ownershipRelation(protocol, demand);
-  if (!lane || !relation ||
-      !hasOwnershipWitness(protocol, *lane,
+  if (!ownership || !relation ||
+      !hasOwnershipWitness(protocol, *ownership,
                            CanonicalOwnershipWitnessKind::Ready) ||
-      !hasOwnershipWitness(protocol, *lane,
+      !hasOwnershipWitness(protocol, *ownership,
                            CanonicalOwnershipWitnessKind::Release)) {
     return false;
   }
   const bool readyCovered =
       llvm::any_of(protocol.stages, [&](const CanonicalOwnershipStage &stage) {
-        if (stage.lane != *lane) {
+        if (stage.slot != ownership->slot || stage.lane != ownership->lane) {
           return false;
         }
         return *relation == stage.readyRelation &&
                readyCutCovers(program, protocol, stage, demand);
       });
   return readyCovered ||
-         releaseChainCovers(program, protocol, *lane, demand,
+         releaseChainCovers(program, protocol, *ownership, demand,
                             *relation == CanonicalIterationRelation::Same);
 }
 

@@ -25,7 +25,10 @@ namespace {
 
 constexpr StringLiteral kOwnershipPeriodAttr =
     "pto.canonical_sync.ownership_period";
-constexpr unsigned kMaximumOwnershipPeriod = 8U;
+// Protocol discovery currently admits periods through four.  Independent
+// protocols in one loop are simulated over their least-common schedule period,
+// whose maximum is lcm(1, 2, 3, 4) = 12.
+constexpr unsigned kMaximumOwnershipPeriod = 12U;
 
 bool hasStaticallyNonEmptyTripCount(scf::ForOp loop) {
   const std::optional<int64_t> lower =
