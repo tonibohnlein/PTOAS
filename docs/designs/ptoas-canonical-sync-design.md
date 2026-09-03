@@ -25,6 +25,10 @@ The immutable demand graph answers the first two questions. Target semantics,
 coverage evaluation, event allocation, and the independent verifier answer the
 remaining questions without changing the graph.
 
+The current mechanism catalog, precise measurement vocabulary, ablation
+results, and event-scarcity interactions are tracked in
+[`ptoas-canonical-sync-mechanism-effectiveness.md`](ptoas-canonical-sync-mechanism-effectiveness.md).
+
 The mechanical baseline through `7418323a8` passed its A3 device gate on eight
 Ascend 910B2 cards: 164,000 launches completed without mismatch, timeout,
 runtime error, sentinel violation, or divergent repetition. The loop-alias and

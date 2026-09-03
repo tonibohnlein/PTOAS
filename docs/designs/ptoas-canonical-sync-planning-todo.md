@@ -361,6 +361,10 @@ verdict.
 
 ## Host frontier ablation after the guarded-lifecycle repair
 
+The durable interpretation of this experiment, including measurement terms
+and the mechanism's relationship to event-ID scarcity, is recorded in
+[`ptoas-canonical-sync-mechanism-effectiveness.md`](ptoas-canonical-sync-mechanism-effectiveness.md).
+
 A matched ON/OFF run used one compiler binary and the frozen 394-row corpus.
 The OFF arm disabled only synthesized non-recurring shared event frontiers;
 direct mechanisms, demand semantics, selection, allocation, materialization,
