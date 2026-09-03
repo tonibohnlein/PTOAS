@@ -14,6 +14,7 @@
 #include "PTO/IR/PTO.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/Operation.h"
@@ -228,6 +229,24 @@ SlotRelation compareSlotSSA(Value a, Value b, uint32_t N) {
 
   int64_t diff = pyMod(fa.innerOffset - fb.innerOffset, N);
   return diff == 0 ? SlotRelation::kEqual : SlotRelation::kDisjoint;
+}
+
+std::optional<std::uint32_t>
+matchUnitStrideModuloSlot(Value slot, scf::ForOp loop, std::uint32_t N) {
+  if (!slot || !loop || N == 0) {
+    return std::nullopt;
+  }
+  const std::optional<int64_t> lower = getConstantIntValue(loop.getLowerBound());
+  const std::optional<int64_t> step = getConstantIntValue(loop.getStep());
+  if (!lower || !step || *lower != 0 || *step != 1) {
+    return std::nullopt;
+  }
+  SlotForm form;
+  if (!extractSlotForm(slot, N, form) || form.N != N ||
+      form.innerSym != loop.getInductionVar()) {
+    return std::nullopt;
+  }
+  return static_cast<std::uint32_t>(pyMod(form.innerOffset, N));
 }
 
 } // namespace pto

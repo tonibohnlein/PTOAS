@@ -75,6 +75,8 @@ void printCanonicalSyncStatistics(const CanonicalSyncStatistics &statistics,
       static_cast<std::int64_t>(statistics.selectedPipeBarriers);
   counts["ownership_channels"] =
       static_cast<std::int64_t>(statistics.ownershipChannels);
+  counts["storage_generations"] =
+      static_cast<std::int64_t>(statistics.storageGenerations);
   counts["ownership_ready_edges"] =
       static_cast<std::int64_t>(statistics.ownershipReadyEdges);
   counts["ownership_release_edges"] =
@@ -83,6 +85,12 @@ void printCanonicalSyncStatistics(const CanonicalSyncStatistics &statistics,
       static_cast<std::int64_t>(statistics.depthTwoOwnershipChannels);
   counts["slot_tracked_ownership_channels"] =
       static_cast<std::int64_t>(statistics.slotTrackedOwnershipChannels);
+  counts["ready_release_2_candidates"] =
+      static_cast<std::int64_t>(statistics.readyRelease2Candidates);
+  counts["selected_ready_release_2"] =
+      static_cast<std::int64_t>(statistics.selectedReadyRelease2);
+  counts["ready_release_2_allocation_fallbacks"] =
+      static_cast<std::int64_t>(statistics.readyRelease2AllocationFallbacks);
   counts["coverage_worlds"] =
       static_cast<std::int64_t>(statistics.coverageWorlds);
   counts["cover_universe"] =
@@ -175,6 +183,8 @@ struct PTOCanonicalSyncPass
     enableSharedEventFrontiers = options.enableSharedEventFrontiers;
     gmAliasPolicy =
         stringifyCanonicalGmAliasPolicy(options.gmAliasPolicy).str();
+    ownershipPlanning =
+        stringifyCanonicalOwnershipPlanning(options.ownershipPlanning).str();
   }
 
   void runOnOperation() override {
@@ -191,6 +201,14 @@ struct PTOCanonicalSyncPass
       return signalPassFailure();
     }
     options.gmAliasPolicy = *parsedPolicy;
+    const std::optional<CanonicalOwnershipPlanning> parsedOwnership =
+        parseCanonicalOwnershipPlanning(ownershipPlanning);
+    if (!parsedOwnership) {
+      getOperation().emitError("unknown canonical sync ownership planning '")
+          << ownershipPlanning << "'";
+      return signalPassFailure();
+    }
+    options.ownershipPlanning = *parsedOwnership;
     if (failed(runCanonicalSync(getOperation(), options))) {
       signalPassFailure();
     }
@@ -210,10 +228,25 @@ parseCanonicalGmAliasPolicy(StringRef value) {
   return std::nullopt;
 }
 
+std::optional<CanonicalOwnershipPlanning>
+parseCanonicalOwnershipPlanning(StringRef value) {
+  if (value == "disabled") {
+    return CanonicalOwnershipPlanning::Disabled;
+  }
+  if (value == "diagnostic") {
+    return CanonicalOwnershipPlanning::Diagnostic;
+  }
+  if (value == "ready-release-2") {
+    return CanonicalOwnershipPlanning::ReadyRelease2;
+  }
+  return std::nullopt;
+}
+
 FailureOr<std::unique_ptr<CanonicalSyncProgram>>
 buildCanonicalSyncProgram(func::FuncOp function,
                           CanonicalGmAliasPolicy gmAliasPolicy,
-                          CanonicalSyncStatistics *statistics) {
+                          CanonicalSyncStatistics *statistics,
+                          CanonicalOwnershipPlanning ownershipPlanning) {
   FailureOr<CanonicalSyncTarget> target =
       CanonicalSyncTarget::resolve(function);
   if (failed(target)) {
@@ -237,6 +270,10 @@ buildCanonicalSyncProgram(func::FuncOp function,
     statistics->accesses = program->getAccesses().size();
     statistics->fenceEffects = program->getFenceEffects().size();
   }
+  if (failed(canonical_sync_detail::deriveCanonicalStorageGenerations(
+          *program, *target, ownershipPlanning))) {
+    return failure();
+  }
   start = CanonicalSyncClock::now();
   if (failed(
           canonical_sync_detail::deriveCanonicalDemands(*program, *target))) {
@@ -246,7 +283,7 @@ buildCanonicalSyncProgram(func::FuncOp function,
                                                                     *target))) {
     return failure();
   }
-  canonical_sync_detail::deriveCanonicalOwnershipChannels(*program);
+  canonical_sync_detail::attachCanonicalOwnershipDemandEdges(*program);
   if (statistics) {
     statistics->demandsUs += elapsedMicroseconds(start);
     statistics->demands = program->getDemands().size();
@@ -284,14 +321,16 @@ LogicalResult runCanonicalSync(func::FuncOp function,
   }
   failureStage = "graph";
   FailureOr<std::unique_ptr<CanonicalSyncProgram>> program =
-      buildCanonicalSyncProgram(function, options.gmAliasPolicy, &statistics);
+      buildCanonicalSyncProgram(function, options.gmAliasPolicy, &statistics,
+                                options.ownershipPlanning);
   if (failed(program)) {
     return failure();
   }
   failureStage = "mechanisms";
   if (failed(timed(statistics.mechanismsUs, [&]() {
         return buildCanonicalDirectMechanisms(
-            **program, options.enableSharedEventFrontiers);
+            **program, options.enableSharedEventFrontiers,
+            options.ownershipPlanning);
       }))) {
     return failure();
   }
@@ -324,7 +363,15 @@ LogicalResult runCanonicalSync(func::FuncOp function,
                    [&]() { return solveCanonicalSyncSetCover(**program); }))) {
     return failure();
   }
-  if (const auto &solution = (*program)->getSetCoverSolution()) {
+  const auto recordSelectedStatistics = [&]() {
+    statistics.selectedSharedEventFrontiers = 0;
+    statistics.selectedPipeBarriers = 0;
+    statistics.selectedReadyRelease2 = 0;
+    statistics.selectedMechanisms = 0;
+    const auto &solution = (*program)->getSetCoverSolution();
+    if (!solution) {
+      return;
+    }
     statistics.selectedMechanisms = solution->mechanisms.size();
     statistics.selectedSharedEventFrontiers =
         llvm::count_if(solution->mechanisms, [&](CanonicalMechanismId id) {
@@ -336,12 +383,19 @@ LogicalResult runCanonicalSync(func::FuncOp function,
           return (*program)->getMechanism(id).kind ==
                  CanonicalMechanismKind::PipeBarrier;
         });
-  }
+    statistics.selectedReadyRelease2 =
+        llvm::count_if(solution->mechanisms, [&](CanonicalMechanismId id) {
+          return (*program)->getMechanism(id).kind ==
+                 CanonicalMechanismKind::ReadyRelease2;
+        });
+  };
+  recordSelectedStatistics();
   failureStage = "allocation";
   if (failed(timed(statistics.allocationUs,
                    [&]() { return allocateCanonicalSyncEvents(**program); }))) {
     return failure();
   }
+  recordSelectedStatistics();
   failureStage = "freeze";
   if (failed(
           timed(statistics.freezeUs, [&]() { return (*program)->freeze(); }))) {

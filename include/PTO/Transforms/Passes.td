@@ -64,7 +64,10 @@ def PTOCanonicalSync : Pass<"pto-canonical-sync", "func::FuncOp"> {
            "Enable synthesized non-recurring shared event frontiers">,
     Option<"gmAliasPolicy", "gm-alias-policy", "std::string",
            "\"conservative\"",
-           "GM alias policy: conservative or distinct-roots-unsafe">
+           "GM alias policy: conservative or distinct-roots-unsafe">,
+    Option<"ownershipPlanning", "ownership-planning", "std::string",
+           "\"diagnostic\"",
+           "Ownership planning: disabled, diagnostic, or ready-release-2">
   ];
 
   let dependentDialects = [

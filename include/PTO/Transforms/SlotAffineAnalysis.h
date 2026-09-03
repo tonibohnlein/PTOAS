@@ -22,6 +22,13 @@
 
 #include "mlir/IR/Value.h"
 #include <cstdint>
+#include <optional>
+
+namespace mlir {
+namespace scf {
+class ForOp;
+} // namespace scf
+} // namespace mlir
 
 namespace mlir {
 namespace pto {
@@ -52,6 +59,16 @@ mlir::Value findMultiTileSlotExpr(mlir::Value v);
 ///   compareSlotSSA(%iv % 2, %j % 2)          -> kUnknown   // diff symbols
 ///   compareSlotSSA(arith.constant 0, arith.constant 1) -> kDisjoint
 SlotRelation compareSlotSSA(mlir::Value a, mlir::Value b, uint32_t N);
+
+/// Recognize the exact cyclic selector used by the first protocol-first
+/// CanonicalSync ownership mechanism. The accepted loop has constant lower
+/// bound zero and constant step one, and `slot` has the form
+/// `(loop_iv + offset) mod N`. The returned offset is normalized to `[0, N)`.
+/// Anything less precise remains unsupported rather than weakening the
+/// ownership proof.
+std::optional<std::uint32_t>
+matchUnitStrideModuloSlot(mlir::Value slot, mlir::scf::ForOp loop,
+                          std::uint32_t N);
 
 } // namespace pto
 } // namespace mlir

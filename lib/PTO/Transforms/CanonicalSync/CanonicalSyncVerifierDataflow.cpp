@@ -177,6 +177,79 @@ bool visibilityKnown(const VerifierEffect &source,
                                      });
 }
 
+bool ownershipProtocolCoversHazard(const VerifierProgram &program,
+                                   const VerifierEffect &source,
+                                   const VerifierEffect &destination) {
+  return llvm::any_of(
+      program.ownershipProtocols,
+      [&](const VerifierProgram::VerifiedOwnershipProtocol &protocol) {
+        const bool exactStorage =
+            source.access.aliasRoot == protocol.storage &&
+            destination.access.aliasRoot == protocol.storage &&
+            source.access.slotExpression == protocol.slotExpression &&
+            destination.access.slotExpression == protocol.slotExpression;
+        if (!exactStorage) {
+          return false;
+        }
+        const bool producerToConsumer =
+            source.key.operation == protocol.producer &&
+            destination.key.operation == protocol.consumer &&
+            accessWrites(source.access.mode) &&
+            accessReads(destination.access.mode);
+        const bool consumerToProducer =
+            source.key.operation == protocol.consumer &&
+            destination.key.operation == protocol.producer &&
+            accessReads(source.access.mode) &&
+            accessWrites(destination.access.mode);
+        const bool producerToProducer =
+            source.key.operation == protocol.producer &&
+            destination.key.operation == protocol.producer &&
+            accessWrites(source.access.mode) &&
+            accessWrites(destination.access.mode);
+        return producerToConsumer || consumerToProducer ||
+               producerToProducer;
+      });
+}
+
+LogicalResult validateOwnershipProtocolStorage(VerifierProgram &program) {
+  for (const VerifierProgram::VerifiedOwnershipProtocol &protocol :
+       program.ownershipProtocols) {
+    unsigned producerEffects = 0;
+    unsigned consumerEffects = 0;
+    for (const auto &entry : program.phases) {
+      for (const VerifierPhase &phase : entry.second) {
+        for (const VerifierEffect &effect : phase.effects) {
+          if (effect.access.aliasRoot != protocol.storage) {
+            continue;
+          }
+          const bool exactSlot =
+              effect.access.slotExpression == protocol.slotExpression;
+          const bool producer = entry.first == protocol.producer &&
+                                phase.resource == protocol.producerResource &&
+                                effect.access.mode ==
+                                    CanonicalAccessMode::Write;
+          const bool consumer = entry.first == protocol.consumer &&
+                                phase.resource == protocol.consumerResource &&
+                                effect.access.mode == CanonicalAccessMode::Read;
+          if (!exactSlot || (!producer && !consumer)) {
+            return entry.first->emitError(
+                "canonical sync verifier found an ownership family with "
+                "unmodeled accesses");
+          }
+          producerEffects += producer ? 1U : 0U;
+          consumerEffects += consumer ? 1U : 0U;
+        }
+      }
+    }
+    if (producerEffects != 1 || consumerEffects != 1) {
+      return protocol.loop->emitError(
+          "canonical sync verifier requires one exact ownership producer "
+          "and consumer");
+    }
+  }
+  return success();
+}
+
 LogicalResult reportHazard(const VerifierEffect &source,
                            const VerifierEffect &target, bool visibility) {
   InFlightDiagnostic diagnostic = target.key.operation->emitError(
@@ -359,6 +432,9 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyAndIssuePhase(
         if (unresolvedSameOperation || nonAliasing || nonHazard) {
           continue;
         }
+        if (ownershipProtocolCoversHazard(program, source, destination)) {
+          continue;
+        }
         if (isUnresolvedMte3ToMte2Publication(target, source, destination)) {
           return destination.key.operation->emitError(
               "canonical sync verifier has no device-proven MTE3-to-MTE2 GM "
@@ -458,14 +534,21 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyMaterializedCanonicalSync(
   if (failed(target)) {
     return failure();
   }
+  SmallVector<VerifierProgram::VerifiedOwnershipProtocol, 2>
+      ownershipProtocols;
   const bool invalidEvents =
-      failed(verifyConcreteEventGenerations(function, *target));
+      failed(verifyConcreteEventGenerations(function, *target,
+                                            ownershipProtocols));
   if (invalidEvents) {
     return failure();
   }
   FailureOr<std::unique_ptr<VerifierProgram>> program =
       buildVerifierProgram(function, gmAliasPolicy, statistics);
   if (failed(program)) {
+    return failure();
+  }
+  (*program)->ownershipProtocols = std::move(ownershipProtocols);
+  if (failed(validateOwnershipProtocolStorage(**program))) {
     return failure();
   }
   VerifierState state;

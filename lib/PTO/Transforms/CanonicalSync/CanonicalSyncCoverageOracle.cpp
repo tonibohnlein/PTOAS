@@ -9,8 +9,11 @@
 // for the full text of the License.
 
 // This bounded oracle deliberately does not consume region summaries. It
-// enumerates structured choices and zero, one, and two loop iterations, then
-// executes the concrete mechanism program points. The bound is a differential
+// enumerates structured choices and bounded loop iterations, then executes the
+// concrete mechanism program points. Ordinary worlds use zero through two
+// iterations. ReadyRelease<2> worlds use zero through four so the first slot
+// is observed after both its period and reuse distance. The bound is a
+// differential
 // testing aid, not a proof for arbitrary loop counts. Reaching the state cap
 // marks the result inconclusive instead of rejecting an otherwise valid
 // program; materialized verification remains the final correctness gate.
@@ -28,7 +31,8 @@ using namespace mlir::pto::canonical_sync_detail;
 namespace {
 
 constexpr std::size_t kMaxOracleStates = 512;
-constexpr unsigned kOracleLoopUnroll = 2;
+constexpr unsigned kDefaultOracleLoopUnroll = 2;
+constexpr unsigned kReadyRelease2OracleLoopUnroll = 4;
 // The structured oracle is a bounded differential test, not the coverage
 // proof.  Avoid starting an enumeration whose straight-line demand checks
 // already exceed this development-oracle budget; the mandatory regional and
@@ -53,38 +57,44 @@ std::size_t cappedMultiply(std::size_t first, std::size_t second) {
   return first * second;
 }
 
-std::size_t estimateBlockStates(Block &block);
+std::size_t estimateBlockStates(Block &block, unsigned loopUnroll);
 
-std::size_t estimateOperationStates(Operation *operation) {
+std::size_t estimateOperationStates(Operation *operation,
+                                    unsigned loopUnroll) {
   if (auto choice = dyn_cast<scf::IfOp>(operation)) {
     const std::size_t thenStates =
-        estimateBlockStates(choice.getThenRegion().front());
+        estimateBlockStates(choice.getThenRegion().front(), loopUnroll);
     const std::size_t elseStates =
         choice.getElseRegion().empty()
             ? 1
-            : estimateBlockStates(choice.getElseRegion().front());
+            : estimateBlockStates(choice.getElseRegion().front(), loopUnroll);
     return cappedAdd(thenStates, elseStates);
   }
   if (auto loop = dyn_cast<scf::ForOp>(operation)) {
     const std::size_t bodyStates =
-        estimateBlockStates(loop.getRegion().front());
-    // The oracle explicitly enumerates zero, one, and two iterations.
-    return cappedAdd(cappedAdd(1, bodyStates),
-                     cappedMultiply(bodyStates, bodyStates));
+        estimateBlockStates(loop.getRegion().front(), loopUnroll);
+    std::size_t total = 1;
+    std::size_t atDepth = 1;
+    for (unsigned count = 1; count <= loopUnroll; ++count) {
+      atDepth = cappedMultiply(atDepth, bodyStates);
+      total = cappedAdd(total, atDepth);
+    }
+    return total;
   }
   if (auto section = dyn_cast<SectionCubeOp>(operation)) {
-    return estimateBlockStates(section.getBody().front());
+    return estimateBlockStates(section.getBody().front(), loopUnroll);
   }
   if (auto section = dyn_cast<SectionVectorOp>(operation)) {
-    return estimateBlockStates(section.getBody().front());
+    return estimateBlockStates(section.getBody().front(), loopUnroll);
   }
   return 1;
 }
 
-std::size_t estimateBlockStates(Block &block) {
+std::size_t estimateBlockStates(Block &block, unsigned loopUnroll) {
   std::size_t states = 1;
   for (Operation &operation : block) {
-    states = cappedMultiply(states, estimateOperationStates(&operation));
+    states = cappedMultiply(states,
+                            estimateOperationStates(&operation, loopUnroll));
     if (states > kMaxOracleStates) {
       return states;
     }
@@ -117,7 +127,15 @@ struct ResourceState {
 };
 
 struct EventPayload {
+  enum class Kind : std::uint8_t {
+    Ordinary,
+    OwnershipReady,
+    OwnershipRelease,
+  };
+
   CanonicalMechanismId mechanism = kInvalidCanonicalSyncId;
+  Kind kind = Kind::Ordinary;
+  unsigned lane = 0;
   SmallVector<PhaseInstance, 16> phases;
 };
 
@@ -128,6 +146,7 @@ struct OracleState {
   SmallVector<CanonicalControlAtom, 2> controlPath;
   SmallVector<LoopInstance, 2> loops;
   SmallVector<bool, 16> covered;
+  bool valid = true;
 };
 
 struct OracleContext {
@@ -135,6 +154,8 @@ struct OracleContext {
   const CanonicalSyncTarget *target = nullptr;
   CanonicalSyncStatistics *statistics = nullptr;
   SmallVector<SmallVector<CanonicalDemandId, 8>, 0> demandsByTarget;
+  unsigned loopUnroll = kDefaultOracleLoopUnroll;
+  SmallVector<CanonicalOwnershipChannelId, 2> ownershipChannels;
 };
 
 using PhaseIndex = DenseMap<Operation *, SmallVector<CanonicalPhaseId, 2>>;
@@ -204,6 +225,34 @@ bool matchesDistance(const CanonicalDemand &demand, const PhaseInstance &source,
     if (wrongSame || wrongPositive) {
       return false;
     }
+  }
+  return true;
+}
+
+bool ownershipInstancesMayConflict(
+    const CanonicalSyncProgram &program, const CanonicalDemand &demand,
+    const PhaseInstance &source, const PhaseInstance &target,
+    const OracleContext &context) {
+  for (CanonicalOwnershipChannelId id : context.ownershipChannels) {
+    const CanonicalOwnershipChannel &channel =
+        program.getOwnershipChannels()[id];
+    if (!canonicalOwnershipChannelCoversDemand(program, channel, demand)) {
+      continue;
+    }
+    const CanonicalStorageGeneration &generation =
+        program.getStorageGeneration(channel.generation);
+    const std::optional<unsigned> sourceIteration =
+        loopIteration(source, generation.loop);
+    const std::optional<unsigned> targetIteration =
+        loopIteration(target, generation.loop);
+    if (!sourceIteration || !targetIteration) {
+      return true;
+    }
+    const unsigned sourceLane =
+        (*sourceIteration + generation.slotOffset) % generation.staticDepth;
+    const unsigned targetLane =
+        (*targetIteration + generation.slotOffset) % generation.staticDepth;
+    return sourceLane == targetLane;
   }
   return true;
 }
@@ -292,7 +341,9 @@ void checkTargetDemands(const CanonicalSyncProgram &program,
           ++context.statistics->coverageOracleSourceInstanceTests;
         }
         if (source.phase != demand.source ||
-            !matchesDistance(demand, source, target)) {
+            !matchesDistance(demand, source, target) ||
+            !ownershipInstancesMayConflict(program, demand, source, target,
+                                           context)) {
           continue;
         }
         const CanonicalPhysicalResource destination =
@@ -349,13 +400,111 @@ void applyEventSet(const CanonicalMechanism &mechanism, OracleState &state) {
 
 void applyEventWait(const CanonicalMechanism &mechanism, OracleState &state) {
   auto found = llvm::find_if(state.events, [&](const EventPayload &payload) {
-    return payload.mechanism == mechanism.id;
+    return payload.mechanism == mechanism.id &&
+           payload.kind == EventPayload::Kind::Ordinary;
   });
   if (found == state.events.end()) {
     return;
   }
   appendUnique(getResource(state, mechanism.target).known, found->phases);
   state.events.erase(found);
+}
+
+void applyOwnershipSet(const CanonicalMechanism &mechanism,
+                       EventPayload::Kind kind, unsigned lane,
+                       CanonicalPhysicalResource source,
+                       OracleState &state) {
+  const bool duplicate = llvm::any_of(state.events, [&](const EventPayload &e) {
+    return e.mechanism == mechanism.id && e.kind == kind && e.lane == lane;
+  });
+  if (duplicate) {
+    state.valid = false;
+    return;
+  }
+  EventPayload payload;
+  payload.mechanism = mechanism.id;
+  payload.kind = kind;
+  payload.lane = lane;
+  const ResourceState *resource =
+      getResource(static_cast<const OracleState &>(state), source);
+  if (resource) {
+    appendUnique(payload.phases, resource->issued);
+    appendUnique(payload.phases, resource->known);
+  }
+  state.events.push_back(std::move(payload));
+}
+
+void applyOwnershipWait(const CanonicalMechanism &mechanism,
+                        EventPayload::Kind kind, unsigned lane,
+                        CanonicalPhysicalResource target, OracleState &state) {
+  auto found = llvm::find_if(state.events, [&](const EventPayload &payload) {
+    return payload.mechanism == mechanism.id && payload.kind == kind &&
+           payload.lane == lane;
+  });
+  if (found == state.events.end()) {
+    state.valid = false;
+    return;
+  }
+  appendUnique(getResource(state, target).known, found->phases);
+  state.events.erase(found);
+}
+
+std::optional<unsigned>
+getOwnershipLane(const CanonicalStorageGeneration &generation,
+                 const OracleState &state) {
+  auto found = llvm::find_if(state.loops, [&](const LoopInstance &instance) {
+    return instance.loop == generation.loop;
+  });
+  if (found == state.loops.end()) {
+    return std::nullopt;
+  }
+  return (found->iteration + generation.slotOffset) % generation.staticDepth;
+}
+
+void executeOwnershipPoint(const CanonicalSyncProgram &program,
+                           const CanonicalMechanism &mechanism,
+                           CanonicalProgramPoint point, OracleState &state) {
+  const CanonicalOwnershipChannel &channel =
+      program.getOwnershipChannels()[*mechanism.ownershipChannel];
+  const CanonicalStorageGeneration &generation =
+      program.getStorageGeneration(channel.generation);
+  Operation *loop = program.getRegion(generation.loop).operation;
+  if (point.operation == loop &&
+      point.position == CanonicalProgramPointPosition::Before) {
+    for (unsigned lane = 0; lane < generation.staticDepth; ++lane) {
+      applyOwnershipSet(mechanism, EventPayload::Kind::OwnershipRelease, lane,
+                        generation.consumer, state);
+    }
+    return;
+  }
+  if (point.operation == loop &&
+      point.position == CanonicalProgramPointPosition::After) {
+    for (unsigned lane = 0; lane < generation.staticDepth; ++lane) {
+      applyOwnershipWait(mechanism, EventPayload::Kind::OwnershipRelease, lane,
+                         generation.producer, state);
+    }
+    return;
+  }
+  const std::optional<unsigned> lane = getOwnershipLane(generation, state);
+  if (!lane) {
+    return;
+  }
+  if (point == generation.writeAcquire) {
+    applyOwnershipWait(mechanism, EventPayload::Kind::OwnershipRelease, *lane,
+                       generation.producer, state);
+  }
+  if (point == generation.ready) {
+    applyOwnershipSet(mechanism, EventPayload::Kind::OwnershipReady, *lane,
+                      generation.producer, state);
+  }
+  if (point == generation.readAcquire) {
+    applyOwnershipWait(mechanism, EventPayload::Kind::OwnershipReady, *lane,
+                       generation.consumer, state);
+  }
+  if (point == generation.lastUse) {
+    applyOwnershipSet(mechanism, EventPayload::Kind::OwnershipRelease, *lane,
+                      generation.consumer, state);
+  }
 }
 
 void executePoint(const CanonicalSyncProgram &program,
@@ -368,6 +517,10 @@ void executePoint(const CanonicalSyncProgram &program,
     }
     const CanonicalMechanism &mechanism = program.getMechanism(id);
     if (!guardEnabled(state.controlPath, mechanism.guard)) {
+      continue;
+    }
+    if (mechanism.kind == CanonicalMechanismKind::ReadyRelease2) {
+      executeOwnershipPoint(program, mechanism, point, state);
       continue;
     }
     // A boundary handshake transfers completion from the loop latch to the
@@ -482,7 +635,7 @@ executeLoop(const CanonicalSyncProgram &program, scf::ForOp loop,
   SmallVector<OracleState, 8> result;
   const CanonicalRegionId loopId =
       findStructuredRegion(program, loop, CanonicalRegionKind::Loop);
-  for (unsigned count = 0; count <= kOracleLoopUnroll; ++count) {
+  for (unsigned count = 0; count <= context.loopUnroll; ++count) {
     SmallVector<OracleState, 8> current(inputs.begin(), inputs.end());
     for (unsigned iteration = 0; iteration < count; ++iteration) {
       for (OracleState &state : current) {
@@ -596,10 +749,19 @@ mlir::pto::canonical_sync_detail::evaluateCanonicalSyncUnrolledOracle(
   }
   const std::size_t phaseCount =
       std::max<std::size_t>(program.getPhases().size(), 1);
+  const bool hasReadyRelease2 = llvm::any_of(
+      selected, [&](CanonicalMechanismId id) {
+        return program.getMechanism(id).kind ==
+               CanonicalMechanismKind::ReadyRelease2;
+      });
+  const unsigned loopUnroll = hasReadyRelease2
+                                  ? kReadyRelease2OracleLoopUnroll
+                                  : kDefaultOracleLoopUnroll;
   const bool staticBudgetExceeded =
       program.getDemands().size() > kMaxOracleStaticChecks / phaseCount;
   const bool stateBudgetExceeded =
-      estimateBlockStates(program.getFunction().getBody().front()) >
+      estimateBlockStates(program.getFunction().getBody().front(),
+                          loopUnroll) >
       kMaxOracleStates;
   if (staticBudgetExceeded || stateBudgetExceeded) {
     if (statistics) {
@@ -623,12 +785,20 @@ mlir::pto::canonical_sync_detail::evaluateCanonicalSyncUnrolledOracle(
   }
   OracleContext context;
   context.statistics = statistics;
+  context.loopUnroll = loopUnroll;
   FailureOr<CanonicalSyncTarget> target =
       CanonicalSyncTarget::resolve(program.getFunction());
   if (failed(target)) {
     return failure();
   }
   context.target = &*target;
+  for (CanonicalMechanismId id : selected) {
+    const CanonicalMechanism &mechanism = program.getMechanism(id);
+    if (mechanism.kind == CanonicalMechanismKind::ReadyRelease2 &&
+        mechanism.ownershipChannel) {
+      context.ownershipChannels.push_back(*mechanism.ownershipChannel);
+    }
+  }
   context.demandsByTarget.resize(program.getPhases().size());
   for (const CanonicalDemand &demand : program.getDemands()) {
     if (demand.target < context.demandsByTarget.size()) {
@@ -646,7 +816,7 @@ mlir::pto::canonical_sync_detail::evaluateCanonicalSyncUnrolledOracle(
   for (const CanonicalDemand &demand : program.getDemands()) {
     const bool coveredOnEveryPath =
         llvm::all_of(*states, [&](const OracleState &state) {
-          return state.covered[demand.id];
+          return state.valid && state.covered[demand.id];
         });
     if (coveredOnEveryPath) {
       result.covered.push_back(demand.id);

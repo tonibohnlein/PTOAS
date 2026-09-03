@@ -148,13 +148,30 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
     }
     os << '\n';
   }
+  os << "STORAGE-GENERATIONS " << program.getStorageGenerations().size()
+     << '\n';
+  for (const CanonicalStorageGeneration &generation :
+       program.getStorageGenerations()) {
+    os << "  g" << generation.id << " storage=";
+    generation.storage.printAsOperand(os, OpPrintingFlags());
+    os << " space=" << stringifyAddressSpace(generation.space) << " loop=r"
+       << generation.loop << " resource=";
+    printResource(os, generation.producer);
+    os << "->";
+    printResource(os, generation.consumer);
+    os << " depth=" << generation.staticDepth
+       << " slot-offset=" << generation.slotOffset
+       << " reuse-distance=" << generation.reuseDistance
+       << " witness-horizon=" << generation.witnessHorizon << '\n';
+  }
   os << "OWNERSHIP-CHANNELS " << program.getOwnershipChannels().size()
      << '\n';
   for (const CanonicalOwnershipChannel &channel :
        program.getOwnershipChannels()) {
     os << "  o" << channel.id << " storage=";
     channel.storage.printAsOperand(os, OpPrintingFlags());
-    os << " space=" << stringifyAddressSpace(channel.space) << " loop=r"
+    os << " generation=g" << channel.generation
+       << " space=" << stringifyAddressSpace(channel.space) << " loop=r"
        << channel.loop << " resource=";
     printResource(os, channel.producer);
     os << "->";
@@ -215,6 +232,9 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
       } else if (mechanism.guardedRecurring) {
         os << " protocol=guarded-handshake";
       }
+    }
+    if (mechanism.ownershipChannel) {
+      os << " ownership=o" << *mechanism.ownershipChannel;
     }
     os << '\n';
   }
@@ -282,7 +302,26 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
     os << "] events=[";
     bool firstEvent = true;
     for (CanonicalMechanismId id : solution.mechanisms) {
-      const std::optional<unsigned> eventId = program.getMechanism(id).eventId;
+      const CanonicalMechanism &mechanism = program.getMechanism(id);
+      if (!mechanism.readyEventIds.empty()) {
+        if (!firstEvent) {
+          os << ", ";
+        }
+        firstEvent = false;
+        os << 'm' << id << "=ready{";
+        llvm::interleaveComma(mechanism.readyEventIds, os,
+                              [&os](unsigned eventId) {
+                                os << 'e' << eventId;
+                              });
+        os << "}/release{";
+        llvm::interleaveComma(mechanism.ownershipReleaseEventIds, os,
+                              [&os](unsigned eventId) {
+                                os << 'e' << eventId;
+                              });
+        os << '}';
+        continue;
+      }
+      const std::optional<unsigned> eventId = mechanism.eventId;
       if (!eventId) {
         continue;
       }
@@ -291,8 +330,8 @@ void mlir::pto::printCanonicalSyncProgram(const CanonicalSyncProgram &program,
       }
       firstEvent = false;
       os << 'm' << id << "=e" << *eventId;
-      if (program.getMechanism(id).releaseEventId) {
-        os << "/release-e" << *program.getMechanism(id).releaseEventId;
+      if (mechanism.releaseEventId) {
+        os << "/release-e" << *mechanism.releaseEventId;
       }
     }
     os << "] scarcity=[";

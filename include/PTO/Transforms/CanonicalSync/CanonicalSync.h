@@ -25,17 +25,25 @@ struct CanonicalSyncOptions {
   bool statistics = false;
   bool enableSharedEventFrontiers = true;
   CanonicalGmAliasPolicy gmAliasPolicy = CanonicalGmAliasPolicy::Conservative;
+  CanonicalOwnershipPlanning ownershipPlanning =
+      CanonicalOwnershipPlanning::Diagnostic;
 };
 
 std::optional<CanonicalGmAliasPolicy>
 parseCanonicalGmAliasPolicy(llvm::StringRef value);
+std::optional<CanonicalOwnershipPlanning>
+parseCanonicalOwnershipPlanning(llvm::StringRef value);
 
 FailureOr<std::unique_ptr<CanonicalSyncProgram>> buildCanonicalSyncProgram(
     func::FuncOp function,
     CanonicalGmAliasPolicy gmAliasPolicy = CanonicalGmAliasPolicy::Conservative,
-    CanonicalSyncStatistics *statistics = nullptr);
+    CanonicalSyncStatistics *statistics = nullptr,
+    CanonicalOwnershipPlanning ownershipPlanning =
+        CanonicalOwnershipPlanning::Diagnostic);
 LogicalResult buildCanonicalDirectMechanisms(
-    CanonicalSyncProgram &program, bool enableSharedEventFrontiers = true);
+    CanonicalSyncProgram &program, bool enableSharedEventFrontiers = true,
+    CanonicalOwnershipPlanning ownershipPlanning =
+        CanonicalOwnershipPlanning::Diagnostic);
 LogicalResult evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program);
 LogicalResult buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program);
 LogicalResult solveCanonicalSyncSetCover(CanonicalSyncProgram &program);

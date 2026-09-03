@@ -371,6 +371,8 @@ bool sameMechanism(const CanonicalMechanism &left,
            left.recurrenceLoop == right.recurrenceLoop &&
            left.boundaryRecurring == right.boundaryRecurring &&
            left.guardedRecurring == right.guardedRecurring;
+  case CanonicalMechanismKind::ReadyRelease2:
+    return left.ownershipChannel == right.ownershipChannel;
   case CanonicalMechanismKind::VisibilityFence:
     return left.targetPoint == right.targetPoint &&
            left.generatedCacheMaintenance == right.generatedCacheMaintenance;
@@ -422,6 +424,10 @@ std::size_t hashMechanism(const CanonicalMechanism &mechanism) {
         static_cast<unsigned>(mechanism.targetPoint.position),
         mechanism.recurrenceLoop.value_or(kInvalidCanonicalSyncId),
         mechanism.boundaryRecurring, mechanism.guardedRecurring);
+    break;
+  case CanonicalMechanismKind::ReadyRelease2:
+    hash = llvm::hash_combine(
+        hash, mechanism.ownershipChannel.value_or(kInvalidCanonicalSyncId));
     break;
   case CanonicalMechanismKind::VisibilityFence:
     hash = llvm::hash_combine(
@@ -1193,6 +1199,49 @@ bool fixedBaselineCovers(const CanonicalSyncProgram &program,
   return fixedFenceCoversCompletion(program, demand);
 }
 
+void appendReadyRelease2Candidates(CanonicalSyncProgram &program) {
+  for (const CanonicalOwnershipChannel &channel :
+       program.getOwnershipChannels()) {
+    if (!channel.readyRelease2Eligible) {
+      continue;
+    }
+    const CanonicalStorageGeneration &generation =
+        program.getStorageGeneration(channel.generation);
+    CanonicalMechanism mechanism;
+    mechanism.kind = CanonicalMechanismKind::ReadyRelease2;
+    mechanism.synthesis =
+        CanonicalMechanismSynthesis::StorageOwnershipProtocol;
+    mechanism.source = channel.producer;
+    mechanism.target = channel.consumer;
+    mechanism.sourcePoint = generation.ready;
+    mechanism.targetPoint = generation.readAcquire;
+    mechanism.actionRegion = findRegionLca(
+        program,
+        program.getPhase(program.getAccess(generation.producerAccess).phase)
+            .region,
+        program.getPhase(program.getAccess(generation.consumerAccess).phase)
+            .region);
+    mechanism.guard = channel.guard;
+    mechanism.recurrenceLoop = channel.loop;
+    mechanism.ownershipChannel = channel.id;
+    for (const CanonicalOwnershipEdge &edge : channel.readyEdges) {
+      if (!llvm::is_contained(mechanism.origins, edge.demand)) {
+        mechanism.origins.push_back(edge.demand);
+      }
+    }
+    for (const CanonicalOwnershipEdge &edge : channel.releaseEdges) {
+      if (!llvm::is_contained(mechanism.origins, edge.demand)) {
+        mechanism.origins.push_back(edge.demand);
+      }
+    }
+    llvm::sort(mechanism.origins);
+    program.appendMechanism(std::move(mechanism));
+    if (CanonicalSyncStatistics *statistics = program.getStatistics()) {
+      ++statistics->readyRelease2Candidates;
+    }
+  }
+}
+
 } // namespace
 
 LogicalResult mlir::pto::canonical_sync_detail::integrateCanonicalFixedBaseline(
@@ -1220,7 +1269,9 @@ LogicalResult mlir::pto::canonical_sync_detail::integrateCanonicalFixedBaseline(
 
 LogicalResult
 mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program,
-                                          bool enableSharedEventFrontiers) {
+                                          bool enableSharedEventFrontiers,
+                                          CanonicalOwnershipPlanning
+                                              ownershipPlanning) {
   const bool invalidState = !program.isGraphFrozen() || program.isFrozen() ||
                             program.getSetCoverInstance().has_value() ||
                             program.buildingMechanisms ||
@@ -1319,6 +1370,9 @@ mlir::pto::buildCanonicalDirectMechanisms(CanonicalSyncProgram &program,
   }
   if (enableSharedEventFrontiers) {
     appendSharedEventFrontierCandidates(program, interner);
+  }
+  if (ownershipPlanning == CanonicalOwnershipPlanning::ReadyRelease2) {
+    appendReadyRelease2Candidates(program);
   }
   for (const CanonicalPhase &phase : program.getPhases()) {
     FailureOr<CanonicalMechanism> tail = buildTailMechanism(program, phase);

@@ -43,6 +43,7 @@ using CanonicalDemandId = std::uint32_t;
 using CanonicalMechanismId = std::uint32_t;
 using CanonicalSetCoverCandidateId = std::uint32_t;
 using CanonicalOwnershipChannelId = std::uint32_t;
+using CanonicalStorageGenerationId = std::uint32_t;
 
 inline constexpr std::uint32_t kInvalidCanonicalSyncId =
     std::numeric_limits<std::uint32_t>::max();
@@ -76,6 +77,11 @@ enum class CanonicalGmAliasPolicy : std::uint8_t {
   Conservative,
   DistinctRootsUnsafe,
 };
+enum class CanonicalOwnershipPlanning : std::uint8_t {
+  Disabled,
+  Diagnostic,
+  ReadyRelease2,
+};
 
 struct CanonicalSyncStatistics {
   std::uint64_t regions = 0;
@@ -94,10 +100,14 @@ struct CanonicalSyncStatistics {
   std::uint64_t selectedMultiDemandPipeBarriers = 0;
   std::uint64_t selectedPipeBarriers = 0;
   std::uint64_t ownershipChannels = 0;
+  std::uint64_t storageGenerations = 0;
   std::uint64_t ownershipReadyEdges = 0;
   std::uint64_t ownershipReleaseEdges = 0;
   std::uint64_t depthTwoOwnershipChannels = 0;
   std::uint64_t slotTrackedOwnershipChannels = 0;
+  std::uint64_t readyRelease2Candidates = 0;
+  std::uint64_t selectedReadyRelease2 = 0;
+  std::uint64_t readyRelease2AllocationFallbacks = 0;
   std::uint64_t coverageWorlds = 0;
   std::uint64_t coverUniverse = 0;
   std::uint64_t coverCandidates = 0;
@@ -159,6 +169,7 @@ enum class CanonicalMechanismKind : std::uint8_t {
   Event,
   CrossCoreEvent,
   RecurringEvent,
+  ReadyRelease2,
   VisibilityFence,
   FixedFence,
   TailBarrier,
@@ -166,6 +177,7 @@ enum class CanonicalMechanismKind : std::uint8_t {
 enum class CanonicalMechanismSynthesis : std::uint8_t {
   None,
   SharedEventFrontier,
+  StorageOwnershipProtocol,
 };
 enum class CanonicalProgramPointPosition : std::uint8_t { Before, After };
 
@@ -304,6 +316,30 @@ struct CanonicalOwnershipEdge {
   CanonicalAccessId targetAccess = kInvalidCanonicalSyncId;
 };
 
+/// One exact symbolic generation family for the initial protocol-first
+/// migration. The two physical slots are selected by `(iv + offset) mod 2`.
+/// These are storage and schedule facts discovered before demands exist; they
+/// are not themselves a synchronization proof.
+struct CanonicalStorageGeneration {
+  CanonicalStorageGenerationId id = kInvalidCanonicalSyncId;
+  Value storage;
+  AddressSpace space = AddressSpace::Zero;
+  CanonicalRegionId loop = kInvalidCanonicalSyncId;
+  CanonicalPhysicalResource producer;
+  CanonicalPhysicalResource consumer;
+  CanonicalAccessId producerAccess = kInvalidCanonicalSyncId;
+  CanonicalAccessId consumerAccess = kInvalidCanonicalSyncId;
+  CanonicalProgramPoint writeAcquire;
+  CanonicalProgramPoint ready;
+  CanonicalProgramPoint readAcquire;
+  CanonicalProgramPoint lastUse;
+  Value slotExpression;
+  std::uint32_t staticDepth = 0;
+  std::uint32_t slotOffset = 0;
+  std::uint32_t reuseDistance = 0;
+  std::uint32_t witnessHorizon = 0;
+};
+
 /// A diagnostic storage-generation cycle. A same-generation RAW edge
 /// publishes a local buffer from producer to consumer; a positive-distance
 /// WAR edge returns that same logical storage family to the producer. This is
@@ -311,6 +347,7 @@ struct CanonicalOwnershipEdge {
 /// correctness proof or a selectable mechanism by itself.
 struct CanonicalOwnershipChannel {
   CanonicalOwnershipChannelId id = kInvalidCanonicalSyncId;
+  CanonicalStorageGenerationId generation = kInvalidCanonicalSyncId;
   Value storage;
   AddressSpace space = AddressSpace::Zero;
   CanonicalRegionId loop = kInvalidCanonicalSyncId;
@@ -319,6 +356,7 @@ struct CanonicalOwnershipChannel {
   llvm::SmallVector<CanonicalControlAtom, 2> guard;
   std::uint32_t staticDepth = 1;
   bool slotTracked = false;
+  bool readyRelease2Eligible = false;
   llvm::SmallVector<CanonicalOwnershipEdge, 4> readyEdges;
   llvm::SmallVector<CanonicalOwnershipEdge, 4> releaseEdges;
 };
@@ -346,8 +384,11 @@ struct CanonicalMechanism {
   /// repeated control guard. Skipped iterations leave the primed release token
   /// untouched instead of resetting it at the loop header and latch.
   bool guardedRecurring = false;
+  std::optional<CanonicalOwnershipChannelId> ownershipChannel;
   std::optional<unsigned> eventId;
   std::optional<unsigned> releaseEventId;
+  llvm::SmallVector<unsigned, 2> readyEventIds;
+  llvm::SmallVector<unsigned, 2> ownershipReleaseEventIds;
 };
 
 struct CanonicalCompletionTransfer {
@@ -452,7 +493,8 @@ struct CanonicalSetCoverSolution {
 
 class CanonicalSyncProgram;
 LogicalResult buildCanonicalDirectMechanisms(
-    CanonicalSyncProgram &program, bool enableSharedEventFrontiers);
+    CanonicalSyncProgram &program, bool enableSharedEventFrontiers,
+    CanonicalOwnershipPlanning ownershipPlanning);
 LogicalResult evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program);
 LogicalResult buildCanonicalSyncSetCoverInstance(CanonicalSyncProgram &program);
 LogicalResult solveCanonicalSyncSetCover(CanonicalSyncProgram &program);
@@ -470,6 +512,8 @@ public:
   CanonicalPhaseId appendPhase(CanonicalPhase phase);
   CanonicalAccessId appendAccess(CanonicalAccess access);
   CanonicalFenceEffectId appendFenceEffect(CanonicalFenceEffect effect);
+  CanonicalStorageGenerationId
+  appendStorageGeneration(CanonicalStorageGeneration generation);
   CanonicalDemandId appendDemand(CanonicalDemand demand);
   CanonicalOwnershipChannelId
   appendOwnershipChannel(CanonicalOwnershipChannel channel);
@@ -483,6 +527,12 @@ public:
   void setMechanismEventId(CanonicalMechanismId mechanism, unsigned eventId);
   void setMechanismReleaseEventId(CanonicalMechanismId mechanism,
                                   unsigned eventId);
+  void setMechanismOwnershipEventIds(CanonicalMechanismId mechanism,
+                                     llvm::ArrayRef<unsigned> ready,
+                                     llvm::ArrayRef<unsigned> release);
+  void disableMechanismForSelection(CanonicalMechanismId mechanism);
+  bool isMechanismDisabled(CanonicalMechanismId mechanism) const;
+  void clearSetCoverSolution();
   void setScarcityEventPlan(
       llvm::SmallVector<CanonicalScarcityEventGroup, 2> groups,
       llvm::SmallVector<CanonicalRecurringReleasePool, 2> releasePools);
@@ -507,6 +557,9 @@ public:
     return fenceEffects;
   }
   llvm::ArrayRef<CanonicalDemand> getDemands() const { return demands; }
+  llvm::ArrayRef<CanonicalStorageGeneration> getStorageGenerations() const {
+    return storageGenerations;
+  }
   llvm::ArrayRef<CanonicalOwnershipChannel> getOwnershipChannels() const {
     return ownershipChannels;
   }
@@ -531,6 +584,8 @@ public:
   const CanonicalAccess &getAccess(CanonicalAccessId id) const;
   const CanonicalFenceEffect &getFenceEffect(CanonicalFenceEffectId id) const;
   const CanonicalDemand &getDemand(CanonicalDemandId id) const;
+  const CanonicalStorageGeneration &
+  getStorageGeneration(CanonicalStorageGenerationId id) const;
   const CanonicalMechanism &getMechanism(CanonicalMechanismId id) const;
   llvm::ArrayRef<CanonicalRegionId>
   getMechanismExecutionLoops(CanonicalMechanismId id) const {
@@ -544,7 +599,8 @@ public:
 private:
   friend LogicalResult
   buildCanonicalDirectMechanisms(CanonicalSyncProgram &program,
-                                 bool enableSharedEventFrontiers);
+                                 bool enableSharedEventFrontiers,
+                                 CanonicalOwnershipPlanning ownershipPlanning);
   friend LogicalResult
   evaluateCanonicalSyncCoverage(CanonicalSyncProgram &program);
   friend LogicalResult
@@ -565,6 +621,7 @@ private:
   llvm::SmallVector<CanonicalAccess> accesses;
   llvm::SmallVector<CanonicalFenceEffect> fenceEffects;
   llvm::SmallVector<CanonicalDemand> demands;
+  llvm::SmallVector<CanonicalStorageGeneration> storageGenerations;
   llvm::SmallVector<CanonicalOwnershipChannel> ownershipChannels;
   llvm::SmallVector<CanonicalMechanism> mechanisms;
   llvm::SmallVector<llvm::SmallVector<CanonicalRegionId, 2>, 0>
@@ -575,6 +632,7 @@ private:
   llvm::SmallVector<CanonicalCoverageWorld> coverageWorlds;
   std::optional<CanonicalSetCoverInstance> setCoverInstance;
   std::optional<CanonicalSetCoverSolution> setCoverSolution;
+  llvm::BitVector disabledMechanisms;
   bool buildingMechanisms = false;
   bool mechanismCatalogComplete = false;
   bool coverageCatalogComplete = false;
@@ -587,6 +645,8 @@ llvm::StringRef stringifyCanonicalRegionKind(CanonicalRegionKind kind);
 llvm::StringRef stringifyCanonicalAccessMode(CanonicalAccessMode mode);
 llvm::StringRef stringifyCanonicalDemandKind(CanonicalDemandKind kind);
 llvm::StringRef stringifyCanonicalGmAliasPolicy(CanonicalGmAliasPolicy policy);
+llvm::StringRef
+stringifyCanonicalOwnershipPlanning(CanonicalOwnershipPlanning mode);
 llvm::StringRef
 stringifyCanonicalVisibilityDirection(CanonicalVisibilityDirection direction);
 llvm::StringRef

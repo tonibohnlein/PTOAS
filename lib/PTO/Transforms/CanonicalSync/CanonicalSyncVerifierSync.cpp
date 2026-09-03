@@ -296,6 +296,16 @@ LogicalResult mlir::pto::canonical_sync_detail::applyVerifierSyncOperation(
     const VerifierProgram &program, const CanonicalSyncTarget &target,
     Operation *operation, VerifierState &state, bool &handled) {
   handled = true;
+  auto role = operation->getAttrOfType<StringAttr>(
+      "pto.canonical_sync.protocol_role");
+  if (role && role.getValue().starts_with("ownership-") &&
+      isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp>(operation)) {
+    // The concrete event verifier reconstructs the complete two-lane token
+    // lifecycle before memory verification begins.  Its memory effects are
+    // applied as an atomic ownership protocol below rather than as four
+    // unrelated dynamic event operations.
+    return success();
+  }
   if (auto set = dyn_cast<SetFlagOp>(operation)) {
     return applySet(program, target, set, state);
   }

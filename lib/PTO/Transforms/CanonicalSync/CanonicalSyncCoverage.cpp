@@ -861,7 +861,16 @@ bool demandCovered(
     const CanonicalSyncTarget &targetModel,
     ArrayRef<uint8_t> synchronousCompletion,
     ArrayRef<CanonicalMechanismId> selectedCompletionCuts,
-    ArrayRef<SmallVector<CanonicalRegionId, 2>> selectedExecutionLoops) {
+    ArrayRef<SmallVector<CanonicalRegionId, 2>> selectedExecutionLoops,
+    ArrayRef<CanonicalOwnershipChannelId> selectedOwnershipChannels) {
+  const bool ownershipCovered = llvm::any_of(
+      selectedOwnershipChannels, [&](CanonicalOwnershipChannelId channel) {
+        return canonicalOwnershipChannelCoversDemand(
+            program, program.getOwnershipChannels()[channel], demand);
+      });
+  if (ownershipCovered) {
+    return true;
+  }
   if (demand.kind == CanonicalDemandKind::ExitCompletion) {
     const CanonicalMechanismId direct =
         program.getDirectMechanisms()[demand.id];
@@ -934,6 +943,7 @@ coveredDemands(const CanonicalSyncProgram &program,
   SmallVector<uint8_t, 16> selectedMask(program.getMechanisms().size(), 0);
   SmallVector<CanonicalMechanismId, 8> selectedCompletionCuts;
   SmallVector<SmallVector<CanonicalRegionId, 2>, 8> selectedExecutionLoops;
+  SmallVector<CanonicalOwnershipChannelId, 2> selectedOwnershipChannels;
   for (CanonicalMechanismId id : selected) {
     selectedMask[id] = 1;
     const CanonicalMechanism &mechanism = program.getMechanism(id);
@@ -947,6 +957,10 @@ coveredDemands(const CanonicalSyncProgram &program,
           program.getMechanismExecutionLoops(mechanism.id);
       selectedExecutionLoops.emplace_back(loops.begin(), loops.end());
     }
+    if (mechanism.kind == CanonicalMechanismKind::ReadyRelease2 &&
+        mechanism.ownershipChannel) {
+      selectedOwnershipChannels.push_back(*mechanism.ownershipChannel);
+    }
   }
   for (const CanonicalPhase &phase : program.getPhases()) {
     synchronousCompletion[phase.id] =
@@ -959,7 +973,7 @@ coveredDemands(const CanonicalSyncProgram &program,
             : ArrayRef<const CompletionFact *>();
     if (demandCovered(program, demand, selectedMask, sourceFacts, *target,
                       synchronousCompletion, selectedCompletionCuts,
-                      selectedExecutionLoops)) {
+                      selectedExecutionLoops, selectedOwnershipChannels)) {
       covered.push_back(demand.id);
     }
   }
@@ -1130,8 +1144,14 @@ validateCoverageWorld(const CanonicalSyncProgram &program,
                       CanonicalCoverageWorld world) {
   const bool unrolledMismatch =
       world.unrolledOracleExhaustive && !world.unrolledOracleMatched;
+  const bool ownershipNeedsExhaustiveOracle =
+      llvm::any_of(world.mechanisms, [&](CanonicalMechanismId id) {
+        return program.getMechanism(id).kind ==
+               CanonicalMechanismKind::ReadyRelease2;
+      }) &&
+      !world.unrolledOracleExhaustive;
   if (world.flattenedOracleMatched && world.unrolledOracleAvailable &&
-      !unrolledMismatch) {
+      !unrolledMismatch && !ownershipNeedsExhaustiveOracle) {
     return world;
   }
 
@@ -1146,6 +1166,9 @@ validateCoverageWorld(const CanonicalSyncProgram &program,
               ? "inconclusive"
               : (world.unrolledOracleMatched ? "match" : "mismatch"))
       << ") for demand(s)";
+  if (ownershipNeedsExhaustiveOracle) {
+    diagnostic << " ReadyRelease<2>-requires-exhaustive-oracle";
+  }
   FailureOr<CanonicalUnrolledCoverageResult> diagnosticUnrolled =
       evaluateCanonicalSyncUnrolledOracle(program, world.mechanisms);
   for (CanonicalDemandId demand : world.differentialDisagreements) {

@@ -78,6 +78,11 @@ CanonicalDemandId CanonicalSyncProgram::appendDemand(CanonicalDemand demand) {
   return appendRecord(demands, std::move(demand), graphFrozen);
 }
 
+CanonicalStorageGenerationId CanonicalSyncProgram::appendStorageGeneration(
+    CanonicalStorageGeneration generation) {
+  return appendRecord(storageGenerations, std::move(generation), graphFrozen);
+}
+
 CanonicalOwnershipChannelId CanonicalSyncProgram::appendOwnershipChannel(
     CanonicalOwnershipChannel channel) {
   return appendRecord(ownershipChannels, std::move(channel), graphFrozen);
@@ -151,6 +156,7 @@ CanonicalSyncProgram::appendMechanism(CanonicalMechanism mechanism) {
     statistics->precomputedPrefixEntries += prefix.size();
   }
   mechanismSourcePrefixes.push_back(std::move(prefix));
+  disabledMechanisms.resize(mechanisms.size());
   return id;
 }
 
@@ -194,6 +200,44 @@ void CanonicalSyncProgram::setMechanismReleaseEventId(
     llvm_unreachable("cannot allocate an invalid or frozen mechanism");
   }
   mechanisms[mechanism].releaseEventId = eventId;
+}
+
+void CanonicalSyncProgram::setMechanismOwnershipEventIds(
+    CanonicalMechanismId mechanism, ArrayRef<unsigned> ready,
+    ArrayRef<unsigned> release) {
+  const bool invalid = frozen || mechanism >= mechanisms.size() ||
+                       ready.size() != 2 || release.size() != 2 ||
+                       mechanisms[mechanism].kind !=
+                           CanonicalMechanismKind::ReadyRelease2;
+  if (invalid) {
+    llvm_unreachable("cannot allocate invalid ownership event lanes");
+  }
+  mechanisms[mechanism].readyEventIds.assign(ready.begin(), ready.end());
+  mechanisms[mechanism].ownershipReleaseEventIds.assign(release.begin(),
+                                                        release.end());
+}
+
+void CanonicalSyncProgram::disableMechanismForSelection(
+    CanonicalMechanismId mechanism) {
+  if (frozen || mechanism >= mechanisms.size() || !setCoverInstance ||
+      !setCoverSolution) {
+    llvm_unreachable("cannot disable an invalid selected mechanism");
+  }
+  disabledMechanisms.set(mechanism);
+  setCoverSolution.reset();
+}
+
+bool CanonicalSyncProgram::isMechanismDisabled(
+    CanonicalMechanismId mechanism) const {
+  return mechanism < disabledMechanisms.size() &&
+         disabledMechanisms.test(mechanism);
+}
+
+void CanonicalSyncProgram::clearSetCoverSolution() {
+  if (frozen || !setCoverInstance || !setCoverSolution) {
+    llvm_unreachable("cannot clear a missing or frozen set-cover solution");
+  }
+  setCoverSolution.reset();
 }
 
 void CanonicalSyncProgram::setScarcityEventPlan(
@@ -339,6 +383,28 @@ LogicalResult CanonicalSyncProgram::freezeGraph() {
       return fail("demand has an invalid endpoint, owner, guard, or distance");
     }
   }
+  for (const CanonicalStorageGeneration &generation : storageGenerations) {
+    const bool validLoop = generation.loop < regions.size() &&
+                           regions[generation.loop].kind ==
+                               CanonicalRegionKind::Loop;
+    const bool validAccesses = generation.producerAccess < accesses.size() &&
+                               generation.consumerAccess < accesses.size();
+    const bool validResources =
+        generation.producer.core == generation.consumer.core &&
+        generation.producer != generation.consumer;
+    const bool validPoints = generation.writeAcquire.operation &&
+                             generation.ready.operation &&
+                             generation.readAcquire.operation &&
+                             generation.lastUse.operation;
+    const bool validCycle = generation.staticDepth == 2 &&
+                            generation.slotOffset < generation.staticDepth &&
+                            generation.reuseDistance == 2 &&
+                            generation.witnessHorizon == 4;
+    if (!generation.storage || !generation.slotExpression || !validLoop ||
+        !validAccesses || !validResources || !validPoints || !validCycle) {
+      return fail("storage generation has invalid storage or schedule facts");
+    }
+  }
   for (const CanonicalOwnershipChannel &channel : ownershipChannels) {
     const auto validEdge = [this](const CanonicalOwnershipEdge &edge) {
       return edge.demand < demands.size() &&
@@ -354,7 +420,11 @@ LogicalResult CanonicalSyncProgram::freezeGraph() {
                             llvm::all_of(channel.releaseEdges, validEdge);
     const bool validResources = channel.producer.core == channel.consumer.core &&
                                 channel.producer != channel.consumer;
-    if (!channel.storage || !validLoop || !validEdges || !validResources ||
+    const bool validGeneration =
+        channel.generation < storageGenerations.size() &&
+        storageGenerations[channel.generation].storage == channel.storage;
+    if (!channel.storage || !validGeneration || !validLoop || !validEdges ||
+        !validResources ||
         channel.staticDepth == 0 ||
         !validControlPath(channel.guard, regions.size())) {
       return fail("ownership channel has an invalid storage cycle");
@@ -406,9 +476,14 @@ LogicalResult CanonicalSyncProgram::freeze() {
         (mechanism.synthesis ==
              CanonicalMechanismSynthesis::SharedEventFrontier &&
          mechanism.kind == CanonicalMechanismKind::Event &&
-         mechanism.origins.size() >= 2);
+         mechanism.origins.size() >= 2) ||
+        (mechanism.synthesis ==
+             CanonicalMechanismSynthesis::StorageOwnershipProtocol &&
+         mechanism.kind == CanonicalMechanismKind::ReadyRelease2 &&
+         mechanism.ownershipChannel.has_value());
     const bool recurring =
-        mechanism.kind == CanonicalMechanismKind::RecurringEvent;
+        mechanism.kind == CanonicalMechanismKind::RecurringEvent ||
+        mechanism.kind == CanonicalMechanismKind::ReadyRelease2;
     Operation *recurrenceOperation =
         mechanism.recurrenceLoop && *mechanism.recurrenceLoop < regions.size()
             ? regions[*mechanism.recurrenceLoop].operation
@@ -427,6 +502,13 @@ LogicalResult CanonicalSyncProgram::freeze() {
          mechanism.sourcePoint.operation->getBlock() != recurrenceBody &&
          recurrenceOperation->isAncestor(mechanism.sourcePoint.operation) &&
          recurrenceOperation->isAncestor(mechanism.targetPoint.operation));
+    const bool validOwnership =
+        (mechanism.kind == CanonicalMechanismKind::ReadyRelease2) ==
+            mechanism.ownershipChannel.has_value() &&
+        (!mechanism.ownershipChannel ||
+         (*mechanism.ownershipChannel < ownershipChannels.size() &&
+          ownershipChannels[*mechanism.ownershipChannel]
+              .readyRelease2Eligible));
     const bool validRecurrence =
         recurring == mechanism.recurrenceLoop.has_value() &&
         (!mechanism.boundaryRecurring || recurring) &&
@@ -457,7 +539,8 @@ LogicalResult CanonicalSyncProgram::freeze() {
           return id < phases.size();
         });
     if (!validPoints || !validOrigins || !validFence || !validSynthesis ||
-        !validGeneratedCacheMaintenance || !validRecurrence ||
+        !validGeneratedCacheMaintenance || !validOwnership ||
+        !validRecurrence ||
         !validCachedLoops || !validCachedPrefix ||
         mechanism.actionRegion >= regions.size()) {
       return fail("mechanism has an invalid action point, origin, or region");
@@ -810,12 +893,18 @@ LogicalResult CanonicalSyncProgram::freeze() {
            mechanism.kind == CanonicalMechanismKind::CrossCoreEvent ||
            (mechanism.kind == CanonicalMechanismKind::RecurringEvent &&
             !scarcityMembers.test(mechanism.id)));
+      const bool ownership =
+          mechanism.kind == CanonicalMechanismKind::ReadyRelease2;
       const bool assignmentMatches =
           mechanism.eventId.has_value() == mustHaveEvent &&
           mechanism.releaseEventId.has_value() ==
               (selected &&
                mechanism.kind == CanonicalMechanismKind::RecurringEvent &&
-               !scarcityMembers.test(mechanism.id));
+               !scarcityMembers.test(mechanism.id)) &&
+          mechanism.readyEventIds.size() ==
+              (selected && ownership ? 2U : 0U) &&
+          mechanism.ownershipReleaseEventIds.size() ==
+              (selected && ownership ? 2U : 0U);
       if (!assignmentMatches) {
         invalidEventAssignment = true;
         break;
@@ -864,6 +953,11 @@ CanonicalSyncProgram::getFenceEffect(CanonicalFenceEffectId id) const {
 const CanonicalDemand &
 CanonicalSyncProgram::getDemand(CanonicalDemandId id) const {
   return demands[id];
+}
+
+const CanonicalStorageGeneration &CanonicalSyncProgram::getStorageGeneration(
+    CanonicalStorageGenerationId id) const {
+  return storageGenerations[id];
 }
 
 const CanonicalMechanism &
@@ -949,6 +1043,19 @@ mlir::pto::stringifyCanonicalGmAliasPolicy(CanonicalGmAliasPolicy policy) {
   llvm_unreachable("unknown canonical GM alias policy");
 }
 
+StringRef mlir::pto::stringifyCanonicalOwnershipPlanning(
+    CanonicalOwnershipPlanning mode) {
+  switch (mode) {
+  case CanonicalOwnershipPlanning::Disabled:
+    return "disabled";
+  case CanonicalOwnershipPlanning::Diagnostic:
+    return "diagnostic";
+  case CanonicalOwnershipPlanning::ReadyRelease2:
+    return "ready-release-2";
+  }
+  llvm_unreachable("unknown canonical ownership planning mode");
+}
+
 StringRef mlir::pto::stringifyCanonicalCacheMaintenance(
     CanonicalCacheMaintenance maintenance) {
   switch (maintenance) {
@@ -975,6 +1082,8 @@ mlir::pto::stringifyCanonicalMechanismKind(CanonicalMechanismKind kind) {
     return "cross-core-event";
   case CanonicalMechanismKind::RecurringEvent:
     return "recurring-event";
+  case CanonicalMechanismKind::ReadyRelease2:
+    return "ready-release-2";
   case CanonicalMechanismKind::VisibilityFence:
     return "visibility-fence";
   case CanonicalMechanismKind::FixedFence:
@@ -992,6 +1101,8 @@ StringRef mlir::pto::stringifyCanonicalMechanismSynthesis(
     return "none";
   case CanonicalMechanismSynthesis::SharedEventFrontier:
     return "shared-event-frontier";
+  case CanonicalMechanismSynthesis::StorageOwnershipProtocol:
+    return "storage-ownership-protocol";
   }
   llvm_unreachable("unknown canonical mechanism synthesis");
 }

@@ -247,6 +247,12 @@ llvm::cl::opt<std::string> canonicalSyncGmAliasPolicy(
                    "distinct-roots-unsafe"),
     llvm::cl::init("conservative"));
 
+llvm::cl::opt<std::string> canonicalSyncOwnershipPlanning(
+    "canonical-sync-ownership-planning",
+    llvm::cl::desc("CanonicalSync ownership planning: disabled, diagnostic, "
+                   "or ready-release-2"),
+    llvm::cl::init("diagnostic"));
+
 llvm::cl::opt<bool> planMemoryOrderBySize(
     "plan-memory-order-by-size",
     llvm::cl::desc("Plan larger local buffers first inside one AddressSpace "

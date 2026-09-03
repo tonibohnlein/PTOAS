@@ -10,10 +10,14 @@
 
 #include "CanonicalSyncVerifier.h"
 
+#include "PTO/Transforms/SlotAffineAnalysis.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Matchers.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 
+#include <array>
 #include <optional>
 
 using namespace mlir;
@@ -29,6 +33,8 @@ constexpr StringLiteral kReleaseOwnerAttr = "pto.canonical_sync.release_owner";
 constexpr StringLiteral kReleasePoolAttr = "pto.canonical_sync.release_pool";
 constexpr StringLiteral kProtocolIndexAttr =
     "pto.canonical_sync.protocol_index";
+constexpr StringLiteral kOwnershipLaneAttr =
+    "pto.canonical_sync.ownership_lane";
 
 struct ConcreteControlArm {
   Operation *choice = nullptr;
@@ -88,6 +94,28 @@ struct ConcreteSerializedProtocol {
   Operation *releasePrimeSet = nullptr;
   DenseMap<unsigned, ConcreteSerializedStep> steps;
 };
+
+struct ConcreteOwnershipProtocol {
+  int64_t mechanism = -1;
+  std::array<Operation *, 2> releasePrimeSets = {nullptr, nullptr};
+  Operation *releaseBodyWait = nullptr;
+  Operation *readyBodySet = nullptr;
+  Operation *readyBodyWait = nullptr;
+  Operation *releaseBodySet = nullptr;
+  std::array<Operation *, 2> releaseDrainWaits = {nullptr, nullptr};
+};
+
+struct ConcreteDynamicSelector {
+  Value slot;
+  std::array<unsigned, 2> eventIds = {0, 0};
+};
+
+LogicalResult
+validateEventKey(func::FuncOp function, const CanonicalSyncTarget &target,
+                 Operation *operation, CanonicalPhysicalResource source,
+                 CanonicalPhysicalResource destination, unsigned eventId);
+bool eventGenerationKeysMatch(const ConcreteEventGeneration &first,
+                              const ConcreteEventGeneration &second);
 
 SmallVector<ConcreteControlArm, 2> getControlPath(Operation *operation) {
   SmallVector<ConcreteControlArm, 2> result;
@@ -316,14 +344,71 @@ LogicalResult collectSerializedProtocolOperation(
   return success();
 }
 
+LogicalResult collectOwnershipProtocolOperation(
+    Operation *operation, StringRef role,
+    DenseMap<int64_t, ConcreteOwnershipProtocol> &protocols) {
+  FailureOr<int64_t> mechanism = getMechanismId(operation);
+  if (failed(mechanism)) {
+    return failure();
+  }
+  ConcreteOwnershipProtocol &protocol = protocols[*mechanism];
+  protocol.mechanism = *mechanism;
+  Operation **slot = nullptr;
+  if (role == "ownership-release-prime-set" ||
+      role == "ownership-release-drain-wait") {
+    auto lane = operation->getAttrOfType<IntegerAttr>(kOwnershipLaneAttr);
+    if (!lane || lane.getInt() < 0 || lane.getInt() >= 2) {
+      return operation->emitError(
+          "canonical sync event verifier found an invalid ownership lane");
+    }
+    const unsigned index = static_cast<unsigned>(lane.getInt());
+    slot = role == "ownership-release-prime-set"
+               ? &protocol.releasePrimeSets[index]
+               : &protocol.releaseDrainWaits[index];
+  } else if (role == "ownership-release-body-wait") {
+    slot = &protocol.releaseBodyWait;
+  } else if (role == "ownership-ready-body-set") {
+    slot = &protocol.readyBodySet;
+  } else if (role == "ownership-ready-body-wait") {
+    slot = &protocol.readyBodyWait;
+  } else if (role == "ownership-release-body-set") {
+    slot = &protocol.releaseBodySet;
+  } else {
+    return operation->emitError(
+        "canonical sync event verifier found an unknown ownership role");
+  }
+  if (*slot) {
+    InFlightDiagnostic diagnostic = operation->emitError(
+        "canonical sync event verifier found a duplicate ownership action");
+    diagnostic.attachNote((*slot)->getLoc()) << "previous action is here";
+    return failure();
+  }
+  *slot = operation;
+  return success();
+}
+
 LogicalResult collectGenerations(
     func::FuncOp function,
     DenseMap<int64_t, ConcreteEventGeneration> &generations,
     DenseMap<int64_t, ConcreteRecurringProtocol> &protocols,
     DenseMap<int64_t, ConcreteSerializedProtocol> &serializedProtocols,
-    DenseMap<int64_t, ConcreteReleasePool> &releasePools) {
+    DenseMap<int64_t, ConcreteReleasePool> &releasePools,
+    DenseMap<int64_t, ConcreteOwnershipProtocol> &ownershipProtocols) {
   WalkResult result = function.walk([&](Operation *operation) -> WalkResult {
     auto role = operation->getAttrOfType<StringAttr>(kProtocolRoleAttr);
+    if (role && role.getValue().starts_with("ownership-")) {
+      const bool ownershipEvent =
+          isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp>(operation);
+      if (!ownershipEvent) {
+        operation->emitError("canonical sync event verifier found a non-event "
+                             "ownership action");
+        return WalkResult::interrupt();
+      }
+      return failed(collectOwnershipProtocolOperation(
+                 operation, role.getValue(), ownershipProtocols))
+                 ? WalkResult::interrupt()
+                 : WalkResult::advance();
+    }
     if (role && isa<SetFlagOp, WaitFlagOp>(operation)) {
       if (role.getValue().starts_with("release-pool-")) {
         return failed(collectReleasePoolOperation(
@@ -350,9 +435,119 @@ LogicalResult collectGenerations(
                  ? WalkResult::interrupt()
                  : WalkResult::advance();
     }
+    if (isa<SetFlagDynOp, WaitFlagDynOp>(operation)) {
+      operation->emitError(
+          "canonical sync event verifier found an unowned dynamic event");
+      return WalkResult::interrupt();
+    }
     return WalkResult::advance();
   });
   return result.wasInterrupted() ? failure() : success();
+}
+
+FailureOr<unsigned> getConstantEventId(Value value, Operation *witness) {
+  APInt constant;
+  if (!matchPattern(value, m_ConstantInt(&constant)) || constant.isNegative() ||
+      constant.getActiveBits() > 32) {
+    witness->emitError(
+        "canonical sync event verifier found a non-constant ownership event "
+        "lane");
+    return failure();
+  }
+  return static_cast<unsigned>(constant.getZExtValue());
+}
+
+FailureOr<ConcreteDynamicSelector>
+parseTwoLaneSelector(Value value, Operation *witness) {
+  auto select = value.getDefiningOp<arith::SelectOp>();
+  auto compare =
+      select ? select.getCondition().getDefiningOp<arith::CmpIOp>()
+             : arith::CmpIOp();
+  if (!select || !compare ||
+      compare.getPredicate() != arith::CmpIPredicate::eq) {
+    witness->emitError(
+        "canonical sync event verifier found an invalid ownership selector");
+    return failure();
+  }
+  APInt leftConstant;
+  APInt rightConstant;
+  const bool leftIsOne =
+      matchPattern(compare.getLhs(), m_ConstantInt(&leftConstant)) &&
+      leftConstant == 1;
+  const bool rightIsOne =
+      matchPattern(compare.getRhs(), m_ConstantInt(&rightConstant)) &&
+      rightConstant == 1;
+  if (leftIsOne == rightIsOne) {
+    witness->emitError(
+        "canonical sync event verifier found an invalid ownership lane test");
+    return failure();
+  }
+  FailureOr<unsigned> laneOne =
+      getConstantEventId(select.getTrueValue(), witness);
+  FailureOr<unsigned> laneZero =
+      getConstantEventId(select.getFalseValue(), witness);
+  if (failed(laneOne) || failed(laneZero) || *laneOne == *laneZero) {
+    if (succeeded(laneOne) && succeeded(laneZero)) {
+      witness->emitError(
+          "canonical sync event verifier requires distinct ownership lanes");
+    }
+    return failure();
+  }
+  ConcreteDynamicSelector result;
+  result.slot = leftIsOne ? compare.getRhs() : compare.getLhs();
+  result.eventIds = {*laneZero, *laneOne};
+  return result;
+}
+
+FailureOr<ConcreteEventGeneration> makeDynamicOwnershipGeneration(
+    func::FuncOp function, const CanonicalSyncTarget &target,
+    int64_t mechanism, Operation *setOperation, Operation *waitOperation,
+    const ConcreteDynamicSelector &selector, unsigned lane) {
+  auto set = dyn_cast_or_null<SetFlagDynOp>(setOperation);
+  auto wait = dyn_cast_or_null<WaitFlagDynOp>(waitOperation);
+  if (!set || !wait || lane >= 2 ||
+      set.getSrcPipe() != wait.getSrcPipe() ||
+      set.getDstPipe() != wait.getDstPipe()) {
+    Operation *witness = waitOperation ? waitOperation : setOperation;
+    witness->emitError(
+        "canonical sync event verifier found mismatched dynamic ownership "
+        "endpoints");
+    return failure();
+  }
+  const PIPE sourcePipe = set.getSrcPipe().getPipe();
+  const PIPE targetPipe = set.getDstPipe().getPipe();
+  FailureOr<CanonicalPhysicalResource> setSource =
+      resolvePhysicalResource(function, setOperation, sourcePipe);
+  FailureOr<CanonicalPhysicalResource> setTarget =
+      resolvePhysicalResource(function, setOperation, targetPipe);
+  FailureOr<CanonicalPhysicalResource> waitSource =
+      resolvePhysicalResource(function, waitOperation, sourcePipe);
+  FailureOr<CanonicalPhysicalResource> waitTarget =
+      resolvePhysicalResource(function, waitOperation, targetPipe);
+  if (failed(setSource) || failed(setTarget) || failed(waitSource) ||
+      failed(waitTarget)) {
+    return failure();
+  }
+  if (*setSource != *waitSource || *setTarget != *waitTarget) {
+    waitOperation->emitError(
+        "canonical sync event verifier found context-mismatched dynamic "
+        "ownership endpoints");
+    return failure();
+  }
+  const unsigned eventId = selector.eventIds[lane];
+  if (failed(validateEventKey(function, target, setOperation, *setSource,
+                              *setTarget, eventId))) {
+    return failure();
+  }
+  ConcreteEventGeneration generation;
+  generation.mechanism = mechanism;
+  generation.set = setOperation;
+  generation.wait = waitOperation;
+  generation.source = *setSource;
+  generation.target = *setTarget;
+  generation.eventId = eventId;
+  generation.controlPath = getControlPath(setOperation);
+  return generation;
 }
 
 bool eventActionsMatch(Operation *setOperation, Operation *waitOperation) {
@@ -440,6 +635,168 @@ makeProtocolGeneration(func::FuncOp function, const CanonicalSyncTarget &target,
   result.eventId = eventId;
   result.controlPath = getControlPath(setOperation);
   return result;
+}
+
+LogicalResult resolveOwnershipProtocol(
+    func::FuncOp function, const CanonicalSyncTarget &target,
+    const ConcreteOwnershipProtocol &protocol,
+    SmallVectorImpl<ConcreteEventGeneration> &generations,
+    SmallVectorImpl<VerifierProgram::VerifiedOwnershipProtocol>
+        &verifiedProtocols) {
+  const bool complete =
+      protocol.releasePrimeSets[0] && protocol.releasePrimeSets[1] &&
+      protocol.releaseBodyWait && protocol.readyBodySet &&
+      protocol.readyBodyWait && protocol.releaseBodySet &&
+      protocol.releaseDrainWaits[0] && protocol.releaseDrainWaits[1];
+  if (!complete) {
+    Operation *witness = protocol.releasePrimeSets[0]
+                             ? protocol.releasePrimeSets[0]
+                             : function.getOperation();
+    return witness->emitError(
+        "canonical sync event verifier found an incomplete two-lane "
+        "ownership protocol");
+  }
+  const bool dynamicKinds = isa<WaitFlagDynOp>(protocol.releaseBodyWait) &&
+                            isa<SetFlagDynOp>(protocol.readyBodySet) &&
+                            isa<WaitFlagDynOp>(protocol.readyBodyWait) &&
+                            isa<SetFlagDynOp>(protocol.releaseBodySet);
+  if (!dynamicKinds) {
+    return protocol.releaseBodyWait->emitError(
+        "canonical sync event verifier found invalid ownership action kinds");
+  }
+
+  auto releaseWait = cast<WaitFlagDynOp>(protocol.releaseBodyWait);
+  auto readySet = cast<SetFlagDynOp>(protocol.readyBodySet);
+  auto readyWait = cast<WaitFlagDynOp>(protocol.readyBodyWait);
+  auto releaseSet = cast<SetFlagDynOp>(protocol.releaseBodySet);
+  FailureOr<ConcreteDynamicSelector> releaseWaitSelector =
+      parseTwoLaneSelector(releaseWait.getEventId(), protocol.releaseBodyWait);
+  FailureOr<ConcreteDynamicSelector> readySetSelector =
+      parseTwoLaneSelector(readySet.getEventId(), protocol.readyBodySet);
+  FailureOr<ConcreteDynamicSelector> readyWaitSelector =
+      parseTwoLaneSelector(readyWait.getEventId(), protocol.readyBodyWait);
+  FailureOr<ConcreteDynamicSelector> releaseSetSelector =
+      parseTwoLaneSelector(releaseSet.getEventId(), protocol.releaseBodySet);
+  if (failed(releaseWaitSelector) || failed(readySetSelector) ||
+      failed(readyWaitSelector) || failed(releaseSetSelector)) {
+    return failure();
+  }
+  const bool matchingSelectors =
+      releaseWaitSelector->slot == readySetSelector->slot &&
+      readySetSelector->slot == readyWaitSelector->slot &&
+      readyWaitSelector->slot == releaseSetSelector->slot &&
+      releaseWaitSelector->eventIds == releaseSetSelector->eventIds &&
+      readySetSelector->eventIds == readyWaitSelector->eventIds;
+  if (!matchingSelectors) {
+    return protocol.releaseBodyWait->emitError(
+        "canonical sync event verifier found mismatched ownership lane "
+        "selectors");
+  }
+
+  auto loop = protocol.releaseBodyWait->getParentOfType<scf::ForOp>();
+  Block *body = loop ? loop.getBody() : nullptr;
+  const bool bodyPlacement =
+      loop && body && protocol.releaseBodyWait->getBlock() == body &&
+      protocol.readyBodySet->getBlock() == body &&
+      protocol.readyBodyWait->getBlock() == body &&
+      protocol.releaseBodySet->getBlock() == body &&
+      protocol.readyBodySet->getParentOfType<scf::ForOp>() == loop &&
+      protocol.readyBodyWait->getParentOfType<scf::ForOp>() == loop &&
+      protocol.releaseBodySet->getParentOfType<scf::ForOp>() == loop &&
+      !hasRepeatingAncestor(loop.getOperation());
+  if (!bodyPlacement ||
+      !matchUnitStrideModuloSlot(releaseWaitSelector->slot, loop, 2)) {
+    return protocol.releaseBodyWait->emitError(
+        "canonical sync event verifier found an invalid ownership loop");
+  }
+
+  Operation *producer = protocol.releaseBodyWait->getNextNode();
+  Operation *consumer = protocol.readyBodyWait->getNextNode();
+  const bool bodyOrder =
+      producer && consumer && producer->getNextNode() == protocol.readyBodySet &&
+      consumer->getNextNode() == protocol.releaseBodySet &&
+      protocol.readyBodySet->isBeforeInBlock(protocol.readyBodyWait);
+  if (!bodyOrder) {
+    return protocol.releaseBodyWait->emitError(
+        "canonical sync event verifier found a misordered ownership body");
+  }
+
+  Value storage;
+  unsigned matchingViews = 0;
+  loop.walk([&](MultiTileGetOp view) {
+    if (view.getSlot() != releaseWaitSelector->slot) {
+      return;
+    }
+    ++matchingViews;
+    if (!storage) {
+      storage = view.getSource();
+    } else if (storage != view.getSource()) {
+      storage = Value();
+    }
+  });
+  auto storageType = storage ? dyn_cast<MultiTileBufType>(storage.getType())
+                             : MultiTileBufType();
+  if (matchingViews != 1 || !storageType || storageType.getCount() != 2) {
+    return protocol.releaseBodyWait->emitError(
+        "canonical sync event verifier cannot identify one exact two-slot "
+        "ownership family");
+  }
+
+  std::array<ConcreteEventGeneration, 2> releaseGenerations;
+  std::array<ConcreteEventGeneration, 2> readyGenerations;
+  for (unsigned lane = 0; lane < 2; ++lane) {
+    Operation *prime = protocol.releasePrimeSets[lane];
+    Operation *drain = protocol.releaseDrainWaits[lane];
+    const bool boundaryPlacement =
+        prime->getBlock() == loop->getBlock() &&
+        drain->getBlock() == loop->getBlock() && prime->isBeforeInBlock(loop) &&
+        loop->isBeforeInBlock(drain) && !hasRepeatingAncestor(prime) &&
+        !hasRepeatingAncestor(drain);
+    if (!boundaryPlacement) {
+      return prime->emitError(
+          "canonical sync event verifier found invalid ownership protocol "
+          "boundaries");
+    }
+    FailureOr<ConcreteEventGeneration> release = makeProtocolGeneration(
+        function, target, protocol.mechanism, prime, drain);
+    FailureOr<ConcreteEventGeneration> dynamicRelease =
+        makeDynamicOwnershipGeneration(
+            function, target, protocol.mechanism, protocol.releaseBodySet,
+            protocol.releaseBodyWait, *releaseWaitSelector, lane);
+    FailureOr<ConcreteEventGeneration> ready =
+        makeDynamicOwnershipGeneration(
+            function, target, protocol.mechanism, protocol.readyBodySet,
+            protocol.readyBodyWait, *readySetSelector, lane);
+    if (failed(release) || failed(dynamicRelease) || failed(ready)) {
+      return failure();
+    }
+    const bool matchingRelease =
+        eventGenerationKeysMatch(*release, *dynamicRelease);
+    const bool reverseDirections = ready->source == release->target &&
+                                   ready->target == release->source;
+    if (!matchingRelease || !reverseDirections) {
+      return prime->emitError(
+          "canonical sync event verifier found inconsistent ownership event "
+          "keys");
+    }
+    releaseGenerations[lane] = std::move(*release);
+    readyGenerations[lane] = std::move(*ready);
+  }
+
+  VerifierProgram::VerifiedOwnershipProtocol verified;
+  verified.loop = loop.getOperation();
+  verified.producer = producer;
+  verified.consumer = consumer;
+  verified.storage = storage;
+  verified.slotExpression = releaseWaitSelector->slot;
+  verified.producerResource = readyGenerations[0].source;
+  verified.consumerResource = readyGenerations[0].target;
+  verifiedProtocols.push_back(verified);
+  for (unsigned lane = 0; lane < 2; ++lane) {
+    generations.push_back(std::move(readyGenerations[lane]));
+    generations.push_back(std::move(releaseGenerations[lane]));
+  }
+  return success();
 }
 
 bool eventGenerationKeysMatch(const ConcreteEventGeneration &first,
@@ -1028,13 +1385,17 @@ verifyInterference(ArrayRef<ConcreteEventGeneration> generations) {
 } // namespace
 
 LogicalResult mlir::pto::canonical_sync_detail::verifyConcreteEventGenerations(
-    func::FuncOp function, const CanonicalSyncTarget &target) {
+    func::FuncOp function, const CanonicalSyncTarget &target,
+    SmallVectorImpl<VerifierProgram::VerifiedOwnershipProtocol>
+        &verifiedOwnershipProtocols) {
   DenseMap<int64_t, ConcreteEventGeneration> byMechanism;
   DenseMap<int64_t, ConcreteRecurringProtocol> protocols;
   DenseMap<int64_t, ConcreteSerializedProtocol> serializedProtocols;
   DenseMap<int64_t, ConcreteReleasePool> releasePools;
+  DenseMap<int64_t, ConcreteOwnershipProtocol> ownershipProtocols;
   if (failed(collectGenerations(function, byMechanism, protocols,
-                                serializedProtocols, releasePools))) {
+                                serializedProtocols, releasePools,
+                                ownershipProtocols))) {
     return failure();
   }
   SmallVector<ConcreteEventGeneration, 8> generations;
@@ -1068,6 +1429,13 @@ LogicalResult mlir::pto::canonical_sync_detail::verifyConcreteEventGenerations(
   for (const auto &entry : serializedProtocols) {
     if (failed(resolveSerializedProtocol(function, target, entry.second,
                                          generations))) {
+      return failure();
+    }
+  }
+  for (const auto &entry : ownershipProtocols) {
+    if (failed(resolveOwnershipProtocol(function, target, entry.second,
+                                        generations,
+                                        verifiedOwnershipProtocols))) {
       return failure();
     }
   }

@@ -63,6 +63,16 @@ struct VerifierProgram {
   llvm::DenseMap<Operation *, llvm::SmallVector<VerifierCacheAction, 2>>
       cacheActions;
   llvm::DenseSet<Operation *> normalizedOperations;
+  struct VerifiedOwnershipProtocol {
+    Operation *loop = nullptr;
+    Operation *producer = nullptr;
+    Operation *consumer = nullptr;
+    Value storage;
+    Value slotExpression;
+    CanonicalPhysicalResource producerResource;
+    CanonicalPhysicalResource consumerResource;
+  };
+  llvm::SmallVector<VerifiedOwnershipProtocol, 2> ownershipProtocols;
 };
 
 FailureOr<std::unique_ptr<VerifierProgram>>
@@ -70,8 +80,10 @@ buildVerifierProgram(func::FuncOp function,
                      CanonicalGmAliasPolicy gmAliasPolicy,
                      CanonicalSyncStatistics *statistics);
 
-LogicalResult verifyConcreteEventGenerations(func::FuncOp function,
-                                             const CanonicalSyncTarget &target);
+LogicalResult verifyConcreteEventGenerations(
+    func::FuncOp function, const CanonicalSyncTarget &target,
+    llvm::SmallVectorImpl<VerifierProgram::VerifiedOwnershipProtocol>
+        &ownershipProtocols);
 
 struct VerifierResourceState {
   CanonicalPhysicalResource resource;

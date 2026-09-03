@@ -240,6 +240,9 @@ mlir::pto::solveCanonicalSyncSetCover(CanonicalSyncProgram &program) {
   };
   std::priority_queue<HeapEntry, std::vector<HeapEntry>, HeapEntryLess> heap;
   for (const CanonicalSetCoverCandidate &candidate : instance.candidates) {
+    if (program.isMechanismDisabled(candidate.mechanisms.front())) {
+      continue;
+    }
     gains[candidate.id] =
         static_cast<unsigned>(candidate.coveredDemands.size());
     heap.push({gains[candidate.id], candidate.id});

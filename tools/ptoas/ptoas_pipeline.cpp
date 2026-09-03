@@ -682,14 +682,17 @@ struct SerialAutoSyncPass
                      bool canonicalStatistics = false,
                      bool canonicalEnableSharedEventFrontiers = true,
                      pto::CanonicalGmAliasPolicy canonicalGmAliasPolicy =
-                         pto::CanonicalGmAliasPolicy::Conservative)
+                         pto::CanonicalGmAliasPolicy::Conservative,
+                     pto::CanonicalOwnershipPlanning canonicalOwnership =
+                         pto::CanonicalOwnershipPlanning::Diagnostic)
       : mode(mode), enableBufidDebug(enableBufidDebug),
         canonicalAnalysisOnly(canonicalAnalysisOnly),
         canonicalDump(canonicalDump),
         canonicalStatistics(canonicalStatistics),
         canonicalEnableSharedEventFrontiers(
             canonicalEnableSharedEventFrontiers),
-        canonicalGmAliasPolicy(canonicalGmAliasPolicy) {}
+        canonicalGmAliasPolicy(canonicalGmAliasPolicy),
+        canonicalOwnership(canonicalOwnership) {}
 
   void runOnOperation() override {
     OpPassManager functionPM(func::FuncOp::getOperationName());
@@ -705,6 +708,7 @@ struct SerialAutoSyncPass
       options.enableSharedEventFrontiers =
           canonicalEnableSharedEventFrontiers;
       options.gmAliasPolicy = canonicalGmAliasPolicy;
+      options.ownershipPlanning = canonicalOwnership;
       functionPM.addPass(pto::createPTOCanonicalSyncPass(options));
       break;
     }
@@ -736,6 +740,7 @@ private:
   bool canonicalStatistics;
   bool canonicalEnableSharedEventFrontiers;
   pto::CanonicalGmAliasPolicy canonicalGmAliasPolicy;
+  pto::CanonicalOwnershipPlanning canonicalOwnership;
 };
 } // namespace
 
@@ -1093,10 +1098,19 @@ static LogicalResult validateCompileBackendFlags(PTOBackend backend,
                  << canonicalSyncGmAliasPolicy << "'.\n";
     return failure();
   }
+  const std::optional<pto::CanonicalOwnershipPlanning> canonicalOwnership =
+      pto::parseCanonicalOwnershipPlanning(canonicalSyncOwnershipPlanning);
+  if (!canonicalOwnership) {
+    llvm::errs()
+        << "Error: unsupported --canonical-sync-ownership-planning='"
+        << canonicalSyncOwnershipPlanning << "'.\n";
+    return failure();
+  }
   const bool canonicalConfiguration =
       canonicalSyncAnalysisOnly || canonicalSyncDump ||
       canonicalSyncStatistics || canonicalSyncDisableSharedEventFrontiers ||
-      *canonicalAliasPolicy != pto::CanonicalGmAliasPolicy::Conservative;
+      *canonicalAliasPolicy != pto::CanonicalGmAliasPolicy::Conservative ||
+      *canonicalOwnership != pto::CanonicalOwnershipPlanning::Diagnostic;
   if (canonicalConfiguration && !enableCanonicalSync) {
     llvm::errs() << "Error: canonical sync diagnostic/policy flags require "
                     "--enable-canonical-sync.\n";
@@ -1441,11 +1455,14 @@ static void appendAutoSyncPasses(PassManager &pm) {
     options.gmAliasPolicy =
         pto::parseCanonicalGmAliasPolicy(canonicalSyncGmAliasPolicy)
             .value_or(pto::CanonicalGmAliasPolicy::Conservative);
+    options.ownershipPlanning =
+        pto::parseCanonicalOwnershipPlanning(canonicalSyncOwnershipPlanning)
+            .value_or(pto::CanonicalOwnershipPlanning::Diagnostic);
     if (emitMlirIR) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::Canonical, false, options.analysisOnly,
           options.dump, options.statistics, options.enableSharedEventFrontiers,
-          options.gmAliasPolicy));
+          options.gmAliasPolicy, options.ownershipPlanning));
     } else {
       pm.addNestedPass<func::FuncOp>(pto::createPTOCanonicalSyncPass(options));
     }

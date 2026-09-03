@@ -10,6 +10,7 @@
 
 #include "CanonicalSyncInternal.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
@@ -28,6 +29,8 @@ enum class AllocationUnitKind : std::uint8_t {
   PooledRelease,
   SerializedReady,
   SerializedRelease,
+  OwnershipReady,
+  OwnershipRelease,
 };
 
 struct AllocationUnit {
@@ -43,6 +46,7 @@ struct AllocationUnit {
   SmallVector<unsigned, 2> releaseGroups;
   bool boundaryRecurring = false;
   bool guardedRecurring = false;
+  std::optional<unsigned> ownershipLane;
 };
 
 bool recurringReadyReuseIsOrdered(const CanonicalSyncProgram &program,
@@ -53,6 +57,7 @@ struct AllocationFailure {
   CanonicalPhysicalResource source;
   CanonicalPhysicalResource target;
   Operation *witness = nullptr;
+  std::optional<CanonicalMechanismId> ownershipMechanism;
 };
 
 bool unitsInterfere(const CanonicalSyncProgram &program,
@@ -140,6 +145,30 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
   SmallVector<AllocationUnit, 8> units;
   for (CanonicalMechanismId mechanismId : solution.mechanisms) {
     const CanonicalMechanism &mechanism = program.getMechanism(mechanismId);
+    if (mechanism.kind == CanonicalMechanismKind::ReadyRelease2) {
+      const CanonicalOwnershipChannel &channel =
+          program.getOwnershipChannels()[*mechanism.ownershipChannel];
+      for (unsigned lane = 0; lane < channel.staticDepth; ++lane) {
+        AllocationUnit ready;
+        ready.kind = AllocationUnitKind::OwnershipReady;
+        ready.mechanisms.push_back(mechanism.id);
+        ready.source = mechanism.source;
+        ready.target = mechanism.target;
+        ready.recurrenceLoop = mechanism.recurrenceLoop;
+        ready.ownershipLane = lane;
+        units.push_back(std::move(ready));
+
+        AllocationUnit release;
+        release.kind = AllocationUnitKind::OwnershipRelease;
+        release.mechanisms.push_back(mechanism.id);
+        release.source = mechanism.target;
+        release.target = mechanism.source;
+        release.recurrenceLoop = mechanism.recurrenceLoop;
+        release.ownershipLane = lane;
+        units.push_back(std::move(release));
+      }
+      continue;
+    }
     if (mechanism.kind == CanonicalMechanismKind::Event) {
       if (!isScarcityMember(groups, mechanism.id)) {
         units.push_back({AllocationUnitKind::Ready,
@@ -289,6 +318,14 @@ buildAllocationUnits(const CanonicalSyncProgram &program,
     }
     units.push_back(std::move(pooled));
   }
+  llvm::stable_sort(units, [](const AllocationUnit &first,
+                              const AllocationUnit &second) {
+    const auto isOwnership = [](const AllocationUnit &unit) {
+      return unit.kind == AllocationUnitKind::OwnershipReady ||
+             unit.kind == AllocationUnitKind::OwnershipRelease;
+    };
+    return isOwnership(first) && !isOwnership(second);
+  });
   return units;
 }
 
@@ -315,6 +352,10 @@ bool allocateUnits(const CanonicalSyncProgram &program,
           witnessId == kInvalidCanonicalSyncId
               ? program.getFunction().getOperation()
               : program.getMechanism(witnessId).targetPoint.operation;
+      if (unit.kind == AllocationUnitKind::OwnershipReady ||
+          unit.kind == AllocationUnitKind::OwnershipRelease) {
+        failure.ownershipMechanism = witnessId;
+      }
       return false;
     }
     unit.eventId = *available;
@@ -660,7 +701,27 @@ void commitAllocation(
     CanonicalSyncProgram &program, ArrayRef<AllocationUnit> units,
     SmallVector<CanonicalScarcityEventGroup, 2> groups,
     SmallVector<CanonicalRecurringReleasePool, 2> releasePools) {
+  struct OwnershipIds {
+    SmallVector<unsigned, 2> ready;
+    SmallVector<unsigned, 2> release;
+  };
+  DenseMap<CanonicalMechanismId, OwnershipIds> ownershipIds;
   for (const AllocationUnit &unit : units) {
+    if (unit.kind == AllocationUnitKind::OwnershipReady ||
+        unit.kind == AllocationUnitKind::OwnershipRelease) {
+      if (unit.mechanisms.size() != 1 || !unit.ownershipLane) {
+        llvm_unreachable("invalid ownership allocation unit");
+      }
+      OwnershipIds &ids = ownershipIds[unit.mechanisms.front()];
+      SmallVectorImpl<unsigned> &lanes =
+          unit.kind == AllocationUnitKind::OwnershipReady ? ids.ready
+                                                          : ids.release;
+      if (lanes.size() != *unit.ownershipLane) {
+        llvm_unreachable("ownership allocation lanes are not contiguous");
+      }
+      lanes.push_back(unit.eventId);
+      continue;
+    }
     if (unit.kind == AllocationUnitKind::SerializedReady) {
       groups[*unit.serializedGroup].eventId = unit.eventId;
       continue;
@@ -683,6 +744,10 @@ void commitAllocation(
         program.setMechanismEventId(mechanism, unit.eventId);
       }
     }
+  }
+  for (const auto &entry : ownershipIds) {
+    program.setMechanismOwnershipEventIds(entry.first, entry.second.ready,
+                                          entry.second.release);
   }
   program.setScarcityEventPlan(std::move(groups), std::move(releasePools));
 }
@@ -742,6 +807,17 @@ mlir::pto::allocateCanonicalSyncEvents(CanonicalSyncProgram &program) {
       commitAllocation(program, units, std::move(groups),
                        std::move(releasePools));
       return success();
+    }
+    if (allocationFailure.ownershipMechanism) {
+      program.disableMechanismForSelection(
+          *allocationFailure.ownershipMechanism);
+      if (CanonicalSyncStatistics *statistics = program.getStatistics()) {
+        ++statistics->readyRelease2AllocationFallbacks;
+      }
+      if (failed(solveCanonicalSyncSetCover(program))) {
+        return failure();
+      }
+      return allocateCanonicalSyncEvents(program);
     }
     bool repaired =
         appendCoalescedFallback(program, *target, allocationFailure, groups);

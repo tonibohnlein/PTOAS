@@ -143,8 +143,8 @@ getVerifierNormalizedPipe(Operation *operation,
 }
 
 bool isVerifierSyncOperation(Operation *operation) {
-  return isa<SetFlagOp, WaitFlagOp, SyncSetOp, SyncWaitOp, BarrierOp>(
-      operation);
+  return isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp, SyncSetOp,
+             SyncWaitOp, BarrierOp>(operation);
 }
 
 bool isVerifierPipeChannelOperation(Operation *operation) {

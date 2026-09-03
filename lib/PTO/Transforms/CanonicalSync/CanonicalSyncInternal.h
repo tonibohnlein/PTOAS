@@ -104,7 +104,13 @@ buildCanonicalStructureAndAccesses(CanonicalSyncProgram &program,
                                    const CanonicalSyncTarget &target);
 LogicalResult deriveCanonicalDemands(CanonicalSyncProgram &program,
                                      const CanonicalSyncTarget &target);
-void deriveCanonicalOwnershipChannels(CanonicalSyncProgram &program);
+LogicalResult deriveCanonicalStorageGenerations(
+    CanonicalSyncProgram &program, const CanonicalSyncTarget &target,
+    CanonicalOwnershipPlanning ownershipPlanning);
+void attachCanonicalOwnershipDemandEdges(CanonicalSyncProgram &program);
+bool canonicalOwnershipChannelCoversDemand(
+    const CanonicalSyncProgram &program,
+    const CanonicalOwnershipChannel &channel, const CanonicalDemand &demand);
 LogicalResult
 integrateCanonicalFixedBaseline(CanonicalSyncProgram &program,
                                 const CanonicalSyncTarget &target);
