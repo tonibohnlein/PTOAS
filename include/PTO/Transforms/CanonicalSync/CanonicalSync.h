@@ -123,6 +123,11 @@ struct CanonicalSyncSelectedMechanismReport {
   CanonicalSyncMechanismOriginMask originMask = 0;
   std::size_t supplies = 0;
   std::size_t groundedCoverageRows = 0;
+  std::size_t exactSupplyDemandRows = 0;
+  std::size_t additionalGroundedCoverageRows = 0;
+  std::vector<SyncCoverDemandId> exactSupplyDemands;
+  std::vector<SyncCoverDemandId> groundedCoveredDemands;
+  bool demandDetailsTruncated = false;
   std::size_t eventUses = 0;
   std::size_t actions = 0;
   std::size_t eventSets = 0;
@@ -130,6 +135,24 @@ struct CanonicalSyncSelectedMechanismReport {
   std::size_t targetedBarriers = 0;
   std::size_t pipeAllBarriers = 0;
   unsigned maximumRecurrenceDistance = 0;
+};
+
+/// Bounded, stable graph provenance for one original synchronization row.
+/// Operation names are intentionally omitted: node IDs remain authoritative
+/// across macro phases and keep report construction independent of MLIR text.
+struct CanonicalSyncDemandReport {
+  SyncCoverDemandId demand = 0;
+  SyncCoverNodeId source = 0;
+  SyncCoverNodeId target = 0;
+  std::uint32_t sourceResource = 0;
+  std::uint32_t targetResource = 0;
+  SyncCoverScopeId scope = 0;
+  unsigned distance = 0;
+  std::vector<SyncCoverDemandKind> provenanceKinds;
+  std::vector<SyncCoverStorageWitnessId> storageWitnesses;
+  std::size_t originalDemandCount = 0;
+  std::size_t sourceGuardLiterals = 0;
+  std::size_t targetGuardLiterals = 0;
 };
 
 struct CanonicalSyncStorageLifecycleComponentReport {
@@ -465,6 +488,8 @@ struct CanonicalSyncComparisonReport {
   bool storageSyntheticRectangleGroundingTruncated = false;
   std::size_t demands = 0;
   std::size_t uniqueDemandRows = 0;
+  bool demandDetailsTruncated = false;
+  std::vector<CanonicalSyncDemandReport> demandDetails;
   std::size_t selectionBasisRows = 0;
   std::size_t basisReducedRows = 0;
   bool basisReductionTruncated = false;

@@ -45,6 +45,9 @@ constexpr std::size_t
 constexpr std::size_t kMaximumStorageProtocolAutomatonReportEntries = 256;
 constexpr std::size_t kMaximumStorageProtocolCutPlanReportEntries = 256;
 constexpr std::size_t kMaximumStorageProtocolFrontierReportEntries = 256;
+constexpr std::size_t kMaximumDemandReportEntries = 1U << 16;
+constexpr std::size_t kMaximumDemandReportWitnessIncidences = 1U << 16;
+constexpr std::size_t kMaximumSelectedDemandReportIncidences = 1U << 16;
 
 using SteadyClock = std::chrono::steady_clock;
 
@@ -412,6 +415,12 @@ std::optional<ConcreteAction> makeConcreteAction(
   const CanonicalSyncEventDomain &domain = problem.getDomains()[use.domain];
   result.source = static_cast<PipelineType>(domain.sourceResource);
   result.target = static_cast<PipelineType>(domain.targetResource);
+  const CanonicalSyncDirectedResourceCapability &directEvents =
+      program.getTargetCapabilities().directEventCompletion;
+  if (directEvents.version != 0 &&
+      !directEvents.supports(domain.sourceResource, domain.targetResource)) {
+    return std::nullopt;
+  }
   if (action.eventLaneKind == CanonicalSyncEventLaneKind::LoopIterationModulo) {
     if (!action.eventLaneScope ||
         *action.eventLaneScope >= program.getScopeBindings().size() ||
@@ -1631,12 +1640,11 @@ freshlyVerifySelection(const CanonicalSyncProgram &program,
   return result;
 }
 
-CanonicalSyncStrategyReport
-buildStrategyReport(CanonicalSyncSelectionStrategy strategy,
-                    const CanonicalSyncProgram &program,
-                    const SelectionOutcome &outcome,
-                    const FreshVerificationResult &verification,
-                    bool usedLocalizedPipeAll = false) {
+CanonicalSyncStrategyReport buildStrategyReport(
+    CanonicalSyncSelectionStrategy strategy,
+    const CanonicalSyncProgram &program, const SelectionOutcome &outcome,
+    const FreshVerificationResult &verification,
+    bool usedLocalizedPipeAll = false, bool includeDemandDetails = false) {
   const CanonicalSyncPatternProblem &problem = outcome.getProblem();
   CanonicalSyncStrategyReport report;
   report.strategy = strategy;
@@ -1666,17 +1674,35 @@ buildStrategyReport(CanonicalSyncSelectionStrategy strategy,
                                         : outcome.selection.allocation;
   report.preciseSearch = outcome.preciseSearch;
   report.preciseAllocation = outcome.preciseAllocation;
-  std::vector<std::size_t> groundedCoverageRows(problem.getMechanisms().size(),
-                                                0);
+  std::vector<const SyncCoverDemandSet *> groundedCoverage(
+      problem.getMechanisms().size(), nullptr);
   for (const CanonicalSyncPattern &pattern : problem.getPatterns()) {
     if (pattern.kind != CanonicalSyncPatternKind::Singleton ||
         pattern.members.size() != 1 ||
-        pattern.members.front() >= groundedCoverageRows.size()) {
+        pattern.members.front() >= groundedCoverage.size()) {
       continue;
     }
-    groundedCoverageRows[pattern.members.front()] = pattern.coverage.count();
+    groundedCoverage[pattern.members.front()] = &pattern.coverage;
   }
   constexpr std::size_t maximumSelectedMechanismDetails = 4096;
+  std::size_t remainingDemandDetailIncidences =
+      includeDemandDetails ? kMaximumSelectedDemandReportIncidences : 0;
+  using DemandLookupKey =
+      std::tuple<SyncCoverNodeId, SyncCoverNodeId, SyncCoverScopeId, unsigned,
+                 std::vector<SyncCoverGuardLiteral>,
+                 std::vector<SyncCoverGuardLiteral>>;
+  std::map<DemandLookupKey, SyncCoverDemandId> exactDemandBySupply;
+  if (includeDemandDetails) {
+    for (SyncCoverDemandId demandId : problem.getObligationDemands()) {
+      const SyncCoverDemand &demand =
+          program.getGraph().getDemands()[demandId];
+      exactDemandBySupply.emplace(
+          DemandLookupKey{demand.source, demand.target, demand.scope,
+                          demand.distance, demand.sourceGuard.literals,
+                          demand.targetGuard.literals},
+          demandId);
+    }
+  }
   for (CanonicalSyncMechanismId mechanismId : outcome.selection.mechanisms) {
     const CanonicalSyncMechanism &mechanism =
         problem.getMechanisms()[mechanismId];
@@ -1694,9 +1720,72 @@ buildStrategyReport(CanonicalSyncSelectionStrategy strategy,
     detail.kind = descriptor.kind;
     detail.originMask = mechanism.originMask;
     detail.supplies = descriptor.supplies.size();
-    detail.groundedCoverageRows = groundedCoverageRows[mechanismId];
+    const SyncCoverDemandSet *coverage = groundedCoverage[mechanismId];
+    detail.groundedCoverageRows = coverage ? coverage->count() : 0;
     detail.eventUses = descriptor.eventUses.size();
     detail.actions = descriptor.actions.size();
+    if (includeDemandDetails) {
+      for (const CanonicalSyncSupplyBinding &binding : descriptor.supplies) {
+        if (binding.attestedDemand) {
+          detail.exactSupplyDemands.push_back(*binding.attestedDemand);
+        }
+        const SyncCoverEdge &edge = binding.edge;
+        const auto exact = exactDemandBySupply.find(DemandLookupKey{
+            edge.source, edge.target, edge.scope, edge.distance,
+            edge.sourceGuard.literals, edge.targetGuard.literals});
+        if (exact != exactDemandBySupply.end()) {
+          detail.exactSupplyDemands.push_back(exact->second);
+        }
+      }
+      llvm::sort(detail.exactSupplyDemands);
+      detail.exactSupplyDemands.erase(
+          std::unique(detail.exactSupplyDemands.begin(),
+                      detail.exactSupplyDemands.end()),
+          detail.exactSupplyDemands.end());
+      detail.exactSupplyDemandRows = detail.exactSupplyDemands.size();
+      const std::size_t exactCovered =
+          coverage ? static_cast<std::size_t>(
+                         llvm::count_if(detail.exactSupplyDemands,
+                                        [&](SyncCoverDemandId demand) {
+                                          return coverage->contains(demand);
+                                        }))
+                   : 0;
+      detail.additionalGroundedCoverageRows =
+          detail.groundedCoverageRows > exactCovered
+              ? detail.groundedCoverageRows - exactCovered
+              : 0;
+      if (detail.exactSupplyDemands.size() >
+          remainingDemandDetailIncidences) {
+        detail.exactSupplyDemands.resize(remainingDemandDetailIncidences);
+        detail.demandDetailsTruncated = true;
+      }
+      remainingDemandDetailIncidences -= detail.exactSupplyDemands.size();
+      if (coverage) {
+        const std::vector<std::uint64_t> &coverageWords =
+            coverage->getWords();
+        for (std::size_t wordIndex = 0; wordIndex < coverageWords.size();
+             ++wordIndex) {
+          std::uint64_t word = coverageWords[wordIndex];
+          while (word != 0) {
+            if (remainingDemandDetailIncidences == 0) {
+              detail.demandDetailsTruncated = true;
+              break;
+            }
+            const unsigned bit =
+                static_cast<unsigned>(__builtin_ctzll(word));
+            const SyncCoverDemandId demand = wordIndex * 64 + bit;
+            if (demand < coverage->size()) {
+              detail.groundedCoveredDemands.push_back(demand);
+              --remainingDemandDetailIncidences;
+            }
+            word &= word - 1;
+          }
+          if (detail.demandDetailsTruncated) {
+            break;
+          }
+        }
+      }
+    }
     const bool hasRecurrenceSupply =
         llvm::any_of(descriptor.supplies, [](const auto &binding) {
           return binding.edge.distance != 0;
@@ -2257,8 +2346,49 @@ buildComparisonHeader(const CanonicalSyncProgram &program,
   report.selectionBasisRows = problem.getDemands().size();
   report.basisReducedRows = report.uniqueDemandRows - report.selectionBasisRows;
   report.basisReductionTruncated = problem.wasBasisReductionTruncated();
+  std::size_t demandReportWitnessIncidences = 0;
   for (SyncCoverDemandId demandId : problem.getObligationDemands()) {
     const SyncCoverDemand &demand = program.getGraph().getDemands()[demandId];
+    if (options.reportCallback) {
+      const bool entryLimitReached =
+          report.demandDetails.size() >= kMaximumDemandReportEntries;
+      if (entryLimitReached) {
+        report.demandDetailsTruncated = true;
+      } else {
+        const SyncCoverNode &source =
+            program.getGraph().getNodes()[demand.source];
+        const SyncCoverNode &target =
+            program.getGraph().getNodes()[demand.target];
+        CanonicalSyncDemandReport detail;
+        detail.demand = demandId;
+        detail.source = demand.source;
+        detail.target = demand.target;
+        detail.sourceResource = source.resource;
+        detail.targetResource = target.resource;
+        detail.scope = demand.scope;
+        detail.distance = demand.distance;
+        detail.provenanceKinds = demand.provenanceKinds;
+        detail.originalDemandCount = demand.originalDemandCount;
+        detail.sourceGuardLiterals = demand.sourceGuard.literals.size();
+        detail.targetGuardLiterals = demand.targetGuard.literals.size();
+        const std::size_t remainingWitnessIncidences =
+            demandReportWitnessIncidences <
+                    kMaximumDemandReportWitnessIncidences
+                ? kMaximumDemandReportWitnessIncidences -
+                      demandReportWitnessIncidences
+                : 0;
+        const std::size_t witnessCount = std::min(
+            remainingWitnessIncidences, demand.storageWitnesses.size());
+        detail.storageWitnesses.insert(
+            detail.storageWitnesses.end(), demand.storageWitnesses.begin(),
+            demand.storageWitnesses.begin() + witnessCount);
+        demandReportWitnessIncidences += witnessCount;
+        if (witnessCount != demand.storageWitnesses.size()) {
+          report.demandDetailsTruncated = true;
+        }
+        report.demandDetails.push_back(std::move(detail));
+      }
+    }
     if (demand.distance == 0) {
       ++report.zeroDistanceDemandRows;
     } else {
@@ -2758,7 +2888,8 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
             trialOptions.maximumVerificationWorkUnits);
       }
       report.strategies.push_back(buildStrategyReport(
-          strategy, *program, outcome, verification, usedLocalizedPipeAll));
+          strategy, *program, outcome, verification, usedLocalizedPipeAll,
+          static_cast<bool>(options.reportCallback)));
     }
     if (options.reportCallback && failed(options.reportCallback(report))) {
       return failure();
@@ -2811,7 +2942,9 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
     }
     if (!options.compareSelectionStrategies) {
       report.strategies.push_back(buildStrategyReport(
-          options.selection.strategy, *program, selection, verification));
+          options.selection.strategy, *program, selection, verification,
+          /*usedLocalizedPipeAll=*/false,
+          static_cast<bool>(options.reportCallback)));
       if (options.reportCallback && failed(options.reportCallback(report))) {
         return failure();
       }
@@ -2824,7 +2957,9 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
     if (!options.compareSelectionStrategies) {
       FreshVerificationResult verification;
       report.strategies.push_back(buildStrategyReport(
-          options.selection.strategy, *program, selection, verification));
+          options.selection.strategy, *program, selection, verification,
+          /*usedLocalizedPipeAll=*/false,
+          static_cast<bool>(options.reportCallback)));
       if (options.reportCallback && failed(options.reportCallback(report))) {
         return failure();
       }
@@ -2908,9 +3043,9 @@ mlir::pto::runCanonicalSync(func::FuncOp function,
     return failure();
   }
   if (!options.compareSelectionStrategies) {
-    report.strategies.push_back(buildStrategyReport(options.selection.strategy,
-                                                    *program, fallbackOutcome,
-                                                    verification, true));
+    report.strategies.push_back(buildStrategyReport(
+        options.selection.strategy, *program, fallbackOutcome, verification,
+        true, static_cast<bool>(options.reportCallback)));
     if (options.reportCallback && failed(options.reportCallback(report))) {
       return failure();
     }

@@ -289,6 +289,8 @@ llvm::json::Object jsonTargetCapabilities(
       {"cross_resource_targeted_barrier_completion",
        jsonDirectedResourceCapability(
            capabilities.crossResourceTargetedBarrierCompletion)},
+      {"direct_event_completion",
+       jsonDirectedResourceCapability(capabilities.directEventCompletion)},
       {"mte1_l0_ready_set_completes_prefix",
        jsonInteger(capabilities.mte1L0ReadySetCompletesPrefix.version)},
       {"m_l0_alternative_join_set_completes",
@@ -579,6 +581,62 @@ StringRef mechanismKindName(pto::CanonicalSyncMechanismKind kind) {
   return "unknown";
 }
 
+StringRef demandKindName(pto::SyncCoverDemandKind kind) {
+  switch (kind) {
+  case pto::SyncCoverDemandKind::SSA:
+    return "ssa";
+  case pto::SyncCoverDemandKind::MemoryRAW:
+    return "memory-raw";
+  case pto::SyncCoverDemandKind::MemoryWAR:
+    return "memory-war";
+  case pto::SyncCoverDemandKind::MemoryWAW:
+    return "memory-waw";
+  }
+  return "unknown";
+}
+
+template <typename Id> llvm::json::Array jsonIds(ArrayRef<Id> ids) {
+  llvm::json::Array result;
+  for (Id id : ids) {
+    result.push_back(jsonInteger(id));
+  }
+  return result;
+}
+
+template <typename Id>
+llvm::json::Array jsonIds(const std::vector<Id> &ids) {
+  return jsonIds(ArrayRef<Id>(ids));
+}
+
+llvm::json::Array jsonDemandKinds(ArrayRef<pto::SyncCoverDemandKind> kinds) {
+  llvm::json::Array result;
+  for (pto::SyncCoverDemandKind kind : kinds) {
+    result.push_back(demandKindName(kind));
+  }
+  return result;
+}
+
+llvm::json::Array
+jsonDemandDetails(ArrayRef<pto::CanonicalSyncDemandReport> demands) {
+  llvm::json::Array result;
+  for (const pto::CanonicalSyncDemandReport &demand : demands) {
+    result.push_back(llvm::json::Object{
+        {"demand", jsonInteger(demand.demand)},
+        {"source_node", jsonInteger(demand.source)},
+        {"target_node", jsonInteger(demand.target)},
+        {"source_resource", jsonInteger(demand.sourceResource)},
+        {"target_resource", jsonInteger(demand.targetResource)},
+        {"scope", jsonInteger(demand.scope)},
+        {"distance", jsonInteger(demand.distance)},
+        {"provenance_kinds", jsonDemandKinds(demand.provenanceKinds)},
+        {"storage_witnesses", jsonIds(demand.storageWitnesses)},
+        {"original_demand_count", jsonInteger(demand.originalDemandCount)},
+        {"source_guard_literals", jsonInteger(demand.sourceGuardLiterals)},
+        {"target_guard_literals", jsonInteger(demand.targetGuardLiterals)}});
+  }
+  return result;
+}
+
 llvm::json::Array
 jsonMechanismFamilies(pto::CanonicalSyncMechanismFamilyMask mask) {
   llvm::json::Array families;
@@ -628,6 +686,13 @@ llvm::json::Array jsonSelectedMechanisms(
         {"origins", jsonMechanismOrigins(mechanism.originMask)},
         {"supplies", jsonInteger(mechanism.supplies)},
         {"grounded_coverage_rows", jsonInteger(mechanism.groundedCoverageRows)},
+        {"exact_supply_demand_rows",
+         jsonInteger(mechanism.exactSupplyDemandRows)},
+        {"additional_grounded_coverage_rows",
+         jsonInteger(mechanism.additionalGroundedCoverageRows)},
+        {"exact_supply_demands", jsonIds(mechanism.exactSupplyDemands)},
+        {"grounded_covered_demands", jsonIds(mechanism.groundedCoveredDemands)},
+        {"demand_details_truncated", mechanism.demandDetailsTruncated},
         {"event_uses", jsonInteger(mechanism.eventUses)},
         {"actions", jsonInteger(mechanism.actions)},
         {"event_sets", jsonInteger(mechanism.eventSets)},
@@ -1101,6 +1166,8 @@ jsonReport(const pto::CanonicalSyncComparisonReport &report) {
        report.storageSyntheticRectangleGroundingTruncated},
       {"demands", jsonInteger(report.demands)},
       {"unique_demand_keys", jsonInteger(report.uniqueDemandRows)},
+      {"demand_details_truncated", report.demandDetailsTruncated},
+      {"demand_details", jsonDemandDetails(report.demandDetails)},
       {"selection_basis_rows", jsonInteger(report.selectionBasisRows)},
       {"basis_reduced_rows", jsonInteger(report.basisReducedRows)},
       {"basis_reduction_truncated", report.basisReductionTruncated},

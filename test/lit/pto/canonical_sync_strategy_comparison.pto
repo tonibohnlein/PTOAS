@@ -125,6 +125,10 @@
 // REPORT-DAG: "ownership_discovery_truncated":
 // REPORT-DAG: "demands":
 // REPORT-DAG: "unique_demand_keys":
+// REPORT-DAG: "demand_details_truncated": false
+// REPORT-DAG: "demand_details":
+// REPORT-DAG: "provenance_kinds":
+// REPORT-DAG: "storage_witnesses":
 // REPORT-DAG: "selection_basis_rows":
 // REPORT-DAG: "basis_reduced_rows":
 // REPORT-DAG: "basis_reduction_truncated":
@@ -192,6 +196,10 @@
 // CORE-REPORT-DAG: "maximum_singleton_candidate_coverage_rows":
 // CORE-REPORT-DAG: "total_singleton_candidate_coverage_rows":
 // CORE-REPORT-DAG: "grounded_coverage_rows":
+// CORE-REPORT-DAG: "exact_supply_demand_rows":
+// CORE-REPORT-DAG: "additional_grounded_coverage_rows":
+// CORE-REPORT-DAG: "exact_supply_demands":
+// CORE-REPORT-DAG: "grounded_covered_demands":
 // CORE-REPORT-DAG: "used_localized_pipe_all": false
 // CORE-REPORT-DAG: "verified": true
 // INVALID: selection-strategy must be fixed-cover, action-aware-singleton, or pair-lookahead

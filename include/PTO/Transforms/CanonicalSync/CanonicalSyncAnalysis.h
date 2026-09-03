@@ -166,6 +166,12 @@ struct CanonicalSyncResourceCapability {
 struct CanonicalSyncDirectedResourceCapability {
   std::uint16_t version = 0;
   std::vector<std::pair<std::uint32_t, std::uint32_t>> resourcePairs;
+
+  bool supports(std::uint32_t source, std::uint32_t target) const {
+    return version != 0 &&
+           std::binary_search(resourcePairs.begin(), resourcePairs.end(),
+                              std::make_pair(source, target));
+  }
 };
 
 struct CanonicalSyncTargetCapabilities {
@@ -186,6 +192,11 @@ struct CanonicalSyncTargetCapabilities {
   /// from source-prefix draining and defaults to unsupported.
   CanonicalSyncDirectedResourceCapability
       crossResourceTargetedBarrierCompletion;
+
+  /// Target- and core-qualified directed HardEvent pairs. Version zero means
+  /// that CanonicalSync has no authoritative pair table for this target and
+  /// must not advertise this field as verified target evidence.
+  CanonicalSyncDirectedResourceCapability directEventCompletion;
 
   /// Opaque graph-resource vocabulary used by target-qualified completion
   /// certificates. It is absent when no such certificate contract is active.

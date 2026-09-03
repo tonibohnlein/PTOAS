@@ -1669,6 +1669,10 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
           outs(%dst : !pto.partition_tensor_view<16x16xf32>)
         return
       }
+      func.func @cube_profile() attributes {
+          pto.kernel_kind = #pto.kernel_kind<cube>} {
+        return
+      }
     }
   )mlir",
                                                              &context);
@@ -1684,7 +1688,8 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
                                      CanonicalSyncTargetProfile profile,
                                      bool vectorCompletionOrdered,
                                      bool vectorBarrierDrain,
-                                     bool a3Ownership) {
+                                     bool a3Ownership,
+                                     bool has2201EventTable) {
     (*module)->setAttr("pto.target_arch", StringAttr::get(&context, arch));
     FailureOr<CanonicalSyncProgram> program =
         buildCanonicalSyncProgram(function);
@@ -1715,7 +1720,11 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
             pipe(PipelineType::PIPE_V)) == vectorBarrierDrain &&
         capabilities.crossResourceTargetedBarrierCompletion.version == 0 &&
         capabilities.crossResourceTargetedBarrierCompletion.resourcePairs
-            .empty();
+            .empty() &&
+        (capabilities.directEventCompletion.version != 0) ==
+            has2201EventTable &&
+        (!has2201EventTable ||
+         capabilities.directEventCompletion.supports(vector, store));
     const bool graphContracts =
         carry !=
             program->getGraph().getResourceRecurrenceCarryKinds().end() &&
@@ -1754,20 +1763,42 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
   if (!checkKnownProfile("a2", CanonicalSyncTargetProfile::A2V1,
                          /*vectorCompletionOrdered=*/false,
                          /*vectorBarrierDrain=*/true,
-                         /*a3Ownership=*/false) ||
+                         /*a3Ownership=*/false,
+                         /*has2201EventTable=*/true) ||
       !checkKnownProfile(
           "a2a3", CanonicalSyncTargetProfile::A2A3IntersectionV1,
           /*vectorCompletionOrdered=*/false,
           /*vectorBarrierDrain=*/true,
-          /*a3Ownership=*/false) ||
+          /*a3Ownership=*/false,
+          /*has2201EventTable=*/true) ||
       !checkKnownProfile("a3", CanonicalSyncTargetProfile::A3V1,
                          /*vectorCompletionOrdered=*/false,
                          /*vectorBarrierDrain=*/true,
-                         /*a3Ownership=*/true) ||
+                         /*a3Ownership=*/true,
+                         /*has2201EventTable=*/true) ||
       !checkKnownProfile("a5", CanonicalSyncTargetProfile::A5V1,
                          /*vectorCompletionOrdered=*/true,
                          /*vectorBarrierDrain=*/false,
-                         /*a3Ownership=*/false)) {
+                         /*a3Ownership=*/false,
+                         /*has2201EventTable=*/false)) {
+    return false;
+  }
+
+  (*module)->setAttr("pto.target_arch", StringAttr::get(&context, "a3"));
+  FailureOr<CanonicalSyncProgram> cube = buildCanonicalSyncProgram(
+      module->lookupSymbol<func::FuncOp>("cube_profile"));
+  if (!check(succeeded(cube), "build the A3 AIC event profile")) {
+    return false;
+  }
+  const CanonicalSyncDirectedResourceCapability &aicEvents =
+      cube->getTargetCapabilities().directEventCompletion;
+  if (!check(aicEvents.supports(pipe(PipelineType::PIPE_M),
+                                pipe(PipelineType::PIPE_MTE1)) &&
+                 !aicEvents.supports(pipe(PipelineType::PIPE_MTE3),
+                                     pipe(PipelineType::PIPE_M)) &&
+                 !aicEvents.supports(pipe(PipelineType::PIPE_S),
+                                     pipe(PipelineType::PIPE_M)),
+             "encode supported and unavailable AIC HardEvent directions")) {
     return false;
   }
 
@@ -1853,6 +1884,7 @@ bool testTargetCapabilityProfilesAreVersionedAndConservative() {
                        0 &&
                    capabilities.crossResourceTargetedBarrierCompletion
                            .version == 0 &&
+                   capabilities.directEventCompletion.version == 0 &&
                    !capabilities.targetCompletionResources &&
                    !capabilities.mte1L0ReadySetCompletesPrefix.isEnabled() &&
                    !capabilities.intrinsicMmadAccumulatorOrdering.isEnabled(),

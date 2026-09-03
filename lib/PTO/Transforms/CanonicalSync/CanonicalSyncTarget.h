@@ -23,6 +23,14 @@ namespace canonical_sync_detail {
 CanonicalSyncTargetCapabilities
 getCanonicalSyncTargetCapabilities(func::FuncOp function);
 
+/// Populate the function-specific directed HardEvent table after scheduled
+/// resources are known. A declared kernel kind is authoritative; otherwise
+/// resources unique to AIC/AIV select the core, while an ambiguous shared-only
+/// vocabulary receives the conservative intersection of both tables.
+void configureCanonicalSyncDirectEventCompletion(
+    func::FuncOp function, ArrayRef<std::uint32_t> resources,
+    CanonicalSyncTargetCapabilities &capabilities);
+
 } // namespace canonical_sync_detail
 } // namespace pto
 } // namespace mlir

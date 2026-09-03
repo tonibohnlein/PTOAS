@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <initializer_list>
+#include <iterator>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -39,6 +40,92 @@ makeResourceCapability(std::initializer_list<PipelineType> resources) {
       std::unique(capability.resources.begin(), capability.resources.end()),
       capability.resources.end());
   return capability;
+}
+
+CanonicalSyncDirectedResourceCapability makeDirectedCapability(
+    std::initializer_list<std::pair<PipelineType, PipelineType>> pairs) {
+  CanonicalSyncDirectedResourceCapability capability;
+  capability.version = 1;
+  capability.resourcePairs.reserve(pairs.size());
+  for (const auto &[source, target] : pairs) {
+    capability.resourcePairs.emplace_back(resourceId(source),
+                                          resourceId(target));
+  }
+  llvm::sort(capability.resourcePairs);
+  capability.resourcePairs.erase(
+      std::unique(capability.resourcePairs.begin(),
+                  capability.resourcePairs.end()),
+      capability.resourcePairs.end());
+  return capability;
+}
+
+CanonicalSyncDirectedResourceCapability makeAiv2201Events() {
+  using P = PipelineType;
+  return makeDirectedCapability({
+      {P::PIPE_S, P::PIPE_V},       {P::PIPE_S, P::PIPE_MTE2},
+      {P::PIPE_S, P::PIPE_MTE3},    {P::PIPE_V, P::PIPE_S},
+      {P::PIPE_V, P::PIPE_MTE2},    {P::PIPE_V, P::PIPE_MTE3},
+      {P::PIPE_MTE2, P::PIPE_S},    {P::PIPE_MTE2, P::PIPE_V},
+      {P::PIPE_MTE2, P::PIPE_MTE3}, {P::PIPE_MTE3, P::PIPE_S},
+      {P::PIPE_MTE3, P::PIPE_V},    {P::PIPE_MTE3, P::PIPE_MTE2},
+  });
+}
+
+CanonicalSyncDirectedResourceCapability makeAic2201Events() {
+  using P = PipelineType;
+  // Include combinations documented as implemented but having no current
+  // programming scenario. Exclude cells explicitly marked not involved.
+  return makeDirectedCapability({
+      {P::PIPE_M, P::PIPE_MTE1},    {P::PIPE_M, P::PIPE_MTE2},
+      {P::PIPE_M, P::PIPE_FIX},     {P::PIPE_MTE1, P::PIPE_M},
+      {P::PIPE_MTE1, P::PIPE_MTE2}, {P::PIPE_MTE1, P::PIPE_MTE3},
+      {P::PIPE_MTE1, P::PIPE_FIX},  {P::PIPE_MTE2, P::PIPE_M},
+      {P::PIPE_MTE2, P::PIPE_MTE1}, {P::PIPE_MTE2, P::PIPE_MTE3},
+      {P::PIPE_MTE2, P::PIPE_FIX},  {P::PIPE_MTE3, P::PIPE_MTE1},
+      {P::PIPE_MTE3, P::PIPE_MTE2}, {P::PIPE_MTE3, P::PIPE_FIX},
+      {P::PIPE_FIX, P::PIPE_M},     {P::PIPE_FIX, P::PIPE_MTE1},
+      {P::PIPE_FIX, P::PIPE_MTE2},  {P::PIPE_FIX, P::PIPE_MTE3},
+  });
+}
+
+enum class CoreDomain : std::uint8_t { Aic, Aiv, SharedOnly, Conflict };
+
+CoreDomain resolveCoreDomain(func::FuncOp function,
+                             ArrayRef<std::uint32_t> resources) {
+  if (auto kind = function->getAttrOfType<FunctionKernelKindAttr>(
+          FunctionKernelKindAttr::name)) {
+    return kind.getKernelKind() == FunctionKernelKind::Cube ? CoreDomain::Aic
+                                                            : CoreDomain::Aiv;
+  }
+  const auto has = [&](PipelineType resource) {
+    return llvm::is_contained(resources, resourceId(resource));
+  };
+  const bool aic = has(PipelineType::PIPE_M) ||
+                   has(PipelineType::PIPE_MTE1) ||
+                   has(PipelineType::PIPE_FIX);
+  const bool aiv = has(PipelineType::PIPE_V) || has(PipelineType::PIPE_V2);
+  if (aic && aiv) {
+    return CoreDomain::Conflict;
+  }
+  if (aic) {
+    return CoreDomain::Aic;
+  }
+  if (aiv) {
+    return CoreDomain::Aiv;
+  }
+  return CoreDomain::SharedOnly;
+}
+
+CanonicalSyncDirectedResourceCapability intersectCapabilities(
+    const CanonicalSyncDirectedResourceCapability &first,
+    const CanonicalSyncDirectedResourceCapability &second) {
+  CanonicalSyncDirectedResourceCapability result;
+  result.version = 1;
+  std::set_intersection(first.resourcePairs.begin(), first.resourcePairs.end(),
+                        second.resourcePairs.begin(),
+                        second.resourcePairs.end(),
+                        std::back_inserter(result.resourcePairs));
+  return result;
 }
 
 CanonicalSyncTargetCapabilities
@@ -111,4 +198,39 @@ mlir::pto::canonical_sync_detail::getCanonicalSyncTargetCapabilities(
     return {};
   }
   return {};
+}
+
+void mlir::pto::canonical_sync_detail::
+    configureCanonicalSyncDirectEventCompletion(
+        func::FuncOp function, ArrayRef<std::uint32_t> resources,
+        CanonicalSyncTargetCapabilities &capabilities) {
+  switch (capabilities.profile) {
+  case CanonicalSyncTargetProfile::A2V1:
+  case CanonicalSyncTargetProfile::A2A3IntersectionV1:
+  case CanonicalSyncTargetProfile::A3V1:
+    break;
+  case CanonicalSyncTargetProfile::A5V1:
+  case CanonicalSyncTargetProfile::Unsupported:
+    // The 2201 table is not evidence for 3510. Leave version zero until an
+    // authoritative 3510 directed event contract is encoded.
+    capabilities.directEventCompletion = {};
+    return;
+  }
+  const CanonicalSyncDirectedResourceCapability aic = makeAic2201Events();
+  const CanonicalSyncDirectedResourceCapability aiv = makeAiv2201Events();
+  switch (resolveCoreDomain(function, resources)) {
+  case CoreDomain::Aic:
+    capabilities.directEventCompletion = aic;
+    return;
+  case CoreDomain::Aiv:
+    capabilities.directEventCompletion = aiv;
+    return;
+  case CoreDomain::SharedOnly:
+    capabilities.directEventCompletion = intersectCapabilities(aic, aiv);
+    return;
+  case CoreDomain::Conflict:
+    capabilities.directEventCompletion.version = 1;
+    capabilities.directEventCompletion.resourcePairs.clear();
+    return;
+  }
 }

@@ -640,6 +640,8 @@ LogicalResult ProgramBuilder::buildNodesAndStorage() {
   llvm::sort(resources);
   resources.erase(std::unique(resources.begin(), resources.end()),
                   resources.end());
+  configureCanonicalSyncDirectEventCompletion(function_, resources,
+                                               targetCapabilities_);
   for (std::uint32_t resource : resources) {
     const SyncCoverEdgeKind kind =
         isCompletionOrdered(resource, targetCapabilities_)
@@ -663,7 +665,14 @@ LogicalResult ProgramBuilder::buildNodesAndStorage() {
         static_cast<std::uint32_t>(compound->kPipeValue);
     std::vector<std::uint32_t> completionTargets;
     for (std::uint32_t candidate : resources) {
-      if (candidate != resource && canSignalDirectCompletion(resource)) {
+      const bool hasAuthoritativePairs =
+          targetCapabilities_.directEventCompletion.version != 0;
+      const bool supported =
+          hasAuthoritativePairs
+              ? targetCapabilities_.directEventCompletion.supports(resource,
+                                                                    candidate)
+              : candidate != resource && canSignalDirectCompletion(resource);
+      if (candidate != resource && supported) {
         completionTargets.push_back(candidate);
       }
     }
