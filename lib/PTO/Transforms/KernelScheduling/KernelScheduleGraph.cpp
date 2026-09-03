@@ -14,6 +14,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Twine.h"
 
+#include <algorithm>
 #include <tuple>
 
 using namespace mlir;
@@ -24,19 +25,23 @@ namespace pto {
 KernelScheduleGraph::VertexIdx
 KernelScheduleGraph::addNode(Operation *operation, PIPE pipe,
                              ScheduleNodeKind kind, VertexIdx originalOrder,
-                             VertexIdx block, unsigned loopDepth) {
+                             VertexIdx block, unsigned loopDepth,
+                             uint64_t durationCycles,
+                             bool hasExactDuration) {
   const VertexIdx id = graph_.AddVertex(
-      /*workWeight=*/1, /*commWeight=*/0, /*memWeight=*/0,
+      /*workWeight=*/durationCycles, /*commWeight=*/0, /*memWeight=*/0,
       static_cast<ScheduleGraph::VertexTypeType>(pipe));
   nodes_.push_back(
-      {id, operation, pipe, kind, originalOrder, block, loopDepth});
+      {id, operation, pipe, kind, originalOrder, block, loopDepth,
+       durationCycles, hasExactDuration});
   return id;
 }
 
 void KernelScheduleGraph::addDependency(VertexIdx source, VertexIdx target,
                                         ScheduleDependencyKind kind,
                                         unsigned iterationDistance,
-                                        Operation *recurrenceLoop) {
+                                        Operation *recurrenceLoop,
+                                        uint64_t latencyCycles) {
   const bool invalidSource = source >= nodes_.size();
   const bool invalidTarget = target >= nodes_.size();
   if (invalidSource || invalidTarget) {
@@ -50,17 +55,60 @@ void KernelScheduleGraph::addDependency(VertexIdx source, VertexIdx target,
         return dependency.source == source && dependency.target == target &&
                dependency.kind == kind &&
                dependency.iterationDistance == iterationDistance &&
-               dependency.recurrenceLoop == recurrenceLoop;
+               dependency.recurrenceLoop == recurrenceLoop &&
+               dependency.latencyCycles == latencyCycles;
       });
   if (duplicate) {
     return;
   }
 
   dependencies_.push_back(
-      {source, target, kind, iterationDistance, recurrenceLoop});
+      {source, target, kind, iterationDistance, recurrenceLoop,
+       latencyCycles});
   if (iterationDistance == 0) {
     graph_.AddEdge(source, target);
   }
+}
+
+FailureOr<uint64_t> KernelScheduleGraph::getLongestPathCycles() const {
+  if (!isAcyclic()) {
+    return failure();
+  }
+  if (graph_.NumVertices() == 0) {
+    return uint64_t{0};
+  }
+  std::vector<uint64_t> distances(graph_.NumVertices(), 0);
+  std::vector<VertexIdx> indegrees;
+  std::vector<VertexIdx> ready;
+  indegrees.reserve(graph_.NumVertices());
+  ready.reserve(graph_.NumVertices());
+  for (VertexIdx node : graph_.Vertices()) {
+    indegrees.push_back(graph_.InDegree(node));
+    if (indegrees.back() == 0) {
+      ready.push_back(node);
+    }
+  }
+  for (std::size_t index = 0; index < ready.size(); ++index) {
+    const VertexIdx source = ready[index];
+    distances[source] = std::max(distances[source],
+                                 graph_.VertexWorkWeight(source));
+    for (VertexIdx target : graph_.Children(source)) {
+      uint64_t edgeLatency = 0;
+      for (const KernelScheduleDependency &dependency : dependencies_) {
+        if (dependency.source == source && dependency.target == target &&
+            dependency.iterationDistance == 0) {
+          edgeLatency = std::max(edgeLatency, dependency.latencyCycles);
+        }
+      }
+      distances[target] = std::max(
+          distances[target], distances[source] + edgeLatency +
+                                graph_.VertexWorkWeight(target));
+      if (--indegrees[target] == 0) {
+        ready.push_back(target);
+      }
+    }
+  }
+  return *std::max_element(distances.begin(), distances.end());
 }
 
 StringRef stringifyScheduleNodeKind(ScheduleNodeKind kind) {
@@ -83,6 +131,12 @@ StringRef stringifyScheduleDependencyKind(ScheduleDependencyKind kind) {
     return "memory-war";
   case ScheduleDependencyKind::MemoryWAW:
     return "memory-waw";
+  case ScheduleDependencyKind::PlacementReuseRAW:
+    return "placement-reuse-raw";
+  case ScheduleDependencyKind::PlacementReuseWAR:
+    return "placement-reuse-war";
+  case ScheduleDependencyKind::PlacementReuseWAW:
+    return "placement-reuse-waw";
   case ScheduleDependencyKind::Control:
     return "control";
   case ScheduleDependencyKind::LoopCarriedSSA:
@@ -134,13 +188,17 @@ void printKernelScheduleGraph(llvm::raw_ostream &os, func::FuncOp func,
        << " pipe=" << stringifyPIPE(node.pipe)
        << " kind=" << stringifyScheduleNodeKind(node.kind)
        << " order=" << node.originalOrder << " block=" << node.block
-       << " loop_depth=" << node.loopDepth << "\n";
+       << " loop_depth=" << node.loopDepth
+       << " duration_cycles=" << node.durationCycles
+       << " duration_exact=" << (node.hasExactDuration ? "true" : "false")
+       << "\n";
   }
   for (const KernelScheduleDependency *dependency :
        getSortedDependencies(graph)) {
     os << "  edge " << dependency->source << " -> " << dependency->target
        << " kind=" << stringifyScheduleDependencyKind(dependency->kind)
-       << " distance=" << dependency->iterationDistance;
+       << " distance=" << dependency->iterationDistance
+       << " latency_cycles=" << dependency->latencyCycles;
     if (dependency->recurrenceLoop) {
       os << " recurrence_loop_depth="
          << getLoopDepth(dependency->recurrenceLoop);
@@ -174,6 +232,12 @@ static StringRef getDependencyColor(ScheduleDependencyKind kind) {
     return "#B26A00";
   case ScheduleDependencyKind::MemoryWAW:
     return "#9C2F45";
+  case ScheduleDependencyKind::PlacementReuseRAW:
+    return "#00796B";
+  case ScheduleDependencyKind::PlacementReuseWAR:
+    return "#E65100";
+  case ScheduleDependencyKind::PlacementReuseWAW:
+    return "#AD1457";
   case ScheduleDependencyKind::Control:
     return "#6B5CA5";
   case ScheduleDependencyKind::LoopCarriedSSA:

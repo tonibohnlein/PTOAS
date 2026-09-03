@@ -40,6 +40,7 @@ add_mlir_dialect_library(PTOTransforms
   TileFusion/PTOFlattenFusionRegion.cpp
   KernelScheduling/KernelScheduleGraph.cpp
   KernelScheduling/KernelScheduleGraphBuilder.cpp
+  KernelScheduling/PTOISADuration.cpp
   KernelScheduling/PTOPrintKernelScheduleGraph.cpp
   VPTOLLVMEmitter.cpp
   VPTOCANN900LLVMEmitter.cpp

@@ -8,8 +8,25 @@ compute/transfer scheduling work. It does not change PTO IR.
 Each leaf operation that implements `OpPipeInterface`, reports a concrete pipe,
 and is not itself a synchronization operation becomes one node. The node's
 OneStopParallel vertex type is the numeric `PIPE` value returned by
-`OpPipeInterface::getPipe()`. Initial work weights are one; communication and
-memory weights are zero until a target cost model is connected.
+`OpPipeInterface::getPipe()`. The legacy structural mode uses unit work
+weights; communication and memory weights are zero. For latency scoring,
+`pto-print-kernel-schedule-graph` accepts a pinned PTO-ISA
+`formula_params.csv` through `--duration-table`. It derives an exact
+`(opcode, dtype, rows, cols)` signature for every priced operation and, with
+`--require-exact-durations`, refuses the graph if any scheduled node lacks a
+matching formula. It never substitutes a family average. Transfers,
+conversions, and signatures requiring additional PTO-ISA parameters remain
+unavailable until their complete signatures are represented.
+
+The graph separately records a latency on each dependency. Ordinary
+SSA/control/memory edges have zero added delay. A placement analysis adds
+explicit `placement-reuse-{raw,war,waw}` hazards for selected overlapping DSA
+allocations, with one globally chosen synchronization delay. The base graph
+therefore remains non-reusing and reusable across placements.
+`getLongestPathCycles()` scores the whole selected placement—not a sum of
+independent pair penalties—as the longest path through operation work plus
+dependency delay. Positive-distance recurrences remain outside this
+per-iteration path and must be scored through an initiation interval model.
 
 The underlying `ScheduleGraph` is PTOAS-owned and has no MLIR dependency. Its
 query API satisfies OneStopParallel's typed computational DAG contract:

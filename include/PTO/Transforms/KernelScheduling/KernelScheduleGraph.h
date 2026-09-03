@@ -34,6 +34,12 @@ enum class ScheduleDependencyKind : std::uint8_t {
   MemoryRAW,
   MemoryWAR,
   MemoryWAW,
+  /// A placement-induced hazard between distinct logical allocations. These
+  /// are not emitted by the base SSA graph; reuse-penalty analysis adds them
+  /// for the complete DSA placement being evaluated.
+  PlacementReuseRAW,
+  PlacementReuseWAR,
+  PlacementReuseWAW,
   Control,
   LoopCarriedSSA,
 };
@@ -46,6 +52,19 @@ struct KernelScheduleNode {
   ScheduleGraph::VertexIdx originalOrder = 0;
   ScheduleGraph::VertexIdx block = 0;
   unsigned loopDepth = 0;
+  /// Exact durations are supplied by a pinned PTO-ISA formula table. The
+  /// legacy structural graph intentionally retains unit weights.
+  uint64_t durationCycles = 1;
+  bool hasExactDuration = false;
+};
+
+class PTOISADurationTable;
+
+struct KernelScheduleGraphBuildOptions {
+  /// Null keeps the existing structural graph and its unit node weights.
+  const PTOISADurationTable *durationTable = nullptr;
+  /// Required for latency scoring: do not silently use a unit/family fallback.
+  bool requireExactDurations = false;
 };
 
 struct KernelScheduleDependency {
@@ -54,6 +73,10 @@ struct KernelScheduleDependency {
   ScheduleDependencyKind kind = ScheduleDependencyKind::SSA;
   unsigned iterationDistance = 0;
   Operation *recurrenceLoop = nullptr;
+  /// Delay after the source completes before the target can start. Structural
+  /// SSA/control edges are zero; placement-induced reuse edges carry the
+  /// globally calibrated synchronization delay used by the penalty model.
+  uint64_t latencyCycles = 0;
 };
 
 /// Owns the structural scheduling DAG and the richer dependency metadata.
@@ -65,11 +88,13 @@ public:
 
   VertexIdx addNode(Operation *operation, PIPE pipe, ScheduleNodeKind kind,
                     VertexIdx originalOrder, VertexIdx block,
-                    unsigned loopDepth);
+                    unsigned loopDepth, uint64_t durationCycles = 1,
+                    bool hasExactDuration = false);
   void addDependency(VertexIdx source, VertexIdx target,
                      ScheduleDependencyKind kind,
                      unsigned iterationDistance = 0,
-                     Operation *recurrenceLoop = nullptr);
+                     Operation *recurrenceLoop = nullptr,
+                     uint64_t latencyCycles = 0);
 
   const ScheduleGraph &getGraph() const { return graph_; }
   ArrayRef<KernelScheduleNode> getNodes() const { return nodes_; }
@@ -78,6 +103,10 @@ public:
   }
   const KernelScheduleNode &getNode(VertexIdx id) const { return nodes_[id]; }
   bool isAcyclic() const { return graph_.IsAcyclic(); }
+  /// Longest zero-distance path using both operation and dependency latency.
+  /// Positive-distance recurrences describe a loop initiation interval and are
+  /// intentionally excluded from this per-iteration DAG score.
+  FailureOr<uint64_t> getLongestPathCycles() const;
 
 private:
   ScheduleGraph graph_;
@@ -85,7 +114,9 @@ private:
   std::vector<KernelScheduleDependency> dependencies_;
 };
 
-FailureOr<KernelScheduleGraph> buildKernelScheduleGraph(func::FuncOp func);
+FailureOr<KernelScheduleGraph>
+buildKernelScheduleGraph(func::FuncOp func,
+                         KernelScheduleGraphBuildOptions options = {});
 
 StringRef stringifyScheduleNodeKind(ScheduleNodeKind kind);
 StringRef stringifyScheduleDependencyKind(ScheduleDependencyKind kind);

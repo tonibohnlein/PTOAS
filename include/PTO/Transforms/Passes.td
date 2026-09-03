@@ -280,7 +280,11 @@ def PrintKernelScheduleGraph
   let constructor = "mlir::pto::createPrintKernelScheduleGraphPass()";
   let options = [
     Option<"format", "format", "std::string", "\"text\"",
-           "Output format: text or dot">
+           "Output format: text or dot">,
+    Option<"durationTable", "duration-table", "std::string", "\"\"",
+           "Pinned PTO-ISA formula_params.csv used for node cycle weights">,
+    Option<"requireExactDurations", "require-exact-durations", "bool", "false",
+           "Fail if a schedulable node lacks an exact PTO-ISA duration">
   ];
   let dependentDialects = ["mlir::pto::PTODialect"];
 }

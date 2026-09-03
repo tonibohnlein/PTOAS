@@ -12,7 +12,20 @@ add_executable(pto-schedule-graph-unit-test
 target_include_directories(pto-schedule-graph-unit-test PRIVATE
   "${PROJECT_SOURCE_DIR}/include"
 )
+target_link_libraries(pto-schedule-graph-unit-test PRIVATE PTOTransforms)
 add_test(NAME pto_schedule_graph_unit
   COMMAND pto-schedule-graph-unit-test
 )
 set_tests_properties(pto_schedule_graph_unit PROPERTIES LABELS "PTO;unit")
+
+add_executable(pto-isa-duration-unit-test
+  PTOISADurationTest.cpp
+)
+target_include_directories(pto-isa-duration-unit-test PRIVATE
+  "${PROJECT_SOURCE_DIR}/include"
+)
+target_link_libraries(pto-isa-duration-unit-test PRIVATE PTOTransforms)
+add_test(NAME pto_isa_duration_unit
+  COMMAND pto-isa-duration-unit-test
+)
+set_tests_properties(pto_isa_duration_unit PROPERTIES LABELS "PTO;unit")

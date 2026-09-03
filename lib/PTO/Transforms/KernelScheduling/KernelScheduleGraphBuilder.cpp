@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/Transforms/KernelScheduling/KernelScheduleGraph.h"
+#include "PTO/Transforms/KernelScheduling/PTOISADuration.h"
 
 #include "../Utils.h"
 #include "PTO/IR/PTOSyncUtils.h"
@@ -115,13 +116,18 @@ static void appendUnique(SmallVectorImpl<VertexIdx> &values, VertexIdx value) {
 
 class KernelScheduleGraphBuilder {
 public:
-  explicit KernelScheduleGraphBuilder(func::FuncOp func) : func_(func) {}
+  explicit KernelScheduleGraphBuilder(func::FuncOp func,
+                                      pto::KernelScheduleGraphBuildOptions options)
+      : func_(func), options_(options) {}
 
   FailureOr<pto::KernelScheduleGraph> build() {
     if (failed(validateControlFlow())) {
       return failure();
     }
     collectNodes();
+    if (durationUnavailable_) {
+      return failure();
+    }
     addSSADependencies();
     addMemoryDependencies();
     addControlDependencies();
@@ -180,9 +186,27 @@ private:
                   isTransferPipe(*pipe)
               ? pto::ScheduleNodeKind::Transfer
               : pto::ScheduleNodeKind::Compute;
+      uint64_t durationCycles = 1;
+      bool hasExactDuration = false;
+      if (options_.durationTable) {
+        std::optional<pto::PTOISADurationSignature> signature =
+            pto::getPTOISADurationSignature(op);
+        std::optional<pto::PTOISADurationEstimate> estimate =
+            signature ? options_.durationTable->estimate(*signature)
+                      : std::nullopt;
+        if (estimate) {
+          durationCycles = estimate->cycles;
+          hasExactDuration = true;
+        } else if (options_.requireExactDurations) {
+          op->emitError("kernel schedule graph has no exact PTO-ISA duration "
+                        "for this operation");
+          durationUnavailable_ = true;
+          return;
+        }
+      }
       const VertexIdx id =
           graph_.addNode(op, *pipe, kind, order++, getBlockId(op->getBlock()),
-                         getLoopDepth(op));
+                         getLoopDepth(op), durationCycles, hasExactDuration);
       nodeIds_.try_emplace(op, id);
     });
     memoryAccesses_.resize(graph_.getNodes().size());
@@ -604,6 +628,8 @@ private:
 
   func::FuncOp func_;
   pto::KernelScheduleGraph graph_;
+  pto::KernelScheduleGraphBuildOptions options_;
+  bool durationUnavailable_ = false;
   DenseMap<Operation *, VertexIdx> nodeIds_;
   DenseMap<Block *, VertexIdx> blockIds_;
   std::vector<NodeMemoryAccesses> memoryAccesses_;
@@ -612,6 +638,7 @@ private:
 } // namespace
 
 FailureOr<pto::KernelScheduleGraph>
-mlir::pto::buildKernelScheduleGraph(func::FuncOp func) {
-  return KernelScheduleGraphBuilder(func).build();
+mlir::pto::buildKernelScheduleGraph(func::FuncOp func,
+                                    KernelScheduleGraphBuildOptions options) {
+  return KernelScheduleGraphBuilder(func, options).build();
 }

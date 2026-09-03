@@ -7,12 +7,15 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/Transforms/KernelScheduling/KernelScheduleGraph.h"
+#include "PTO/Transforms/KernelScheduling/PTOISADuration.h"
 #include "PTO/Transforms/Passes.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/Support/raw_ostream.h"
+
+#include <optional>
 
 namespace mlir {
 namespace pto {
@@ -42,9 +45,29 @@ struct PrintKernelScheduleGraphPass
       signalPassFailure();
       return;
     }
+    if (requireExactDurations && durationTable.empty()) {
+      func.emitError("--require-exact-durations requires --duration-table");
+      signalPassFailure();
+      return;
+    }
 
+    std::optional<pto::PTOISADurationTable> durationTableData;
+    if (!durationTable.empty()) {
+      FailureOr<pto::PTOISADurationTable> loaded =
+          pto::PTOISADurationTable::loadFromFile(durationTable);
+      if (failed(loaded)) {
+        func.emitError() << "failed to load PTO-ISA duration table '"
+                         << durationTable << "'";
+        signalPassFailure();
+        return;
+      }
+      durationTableData = std::move(*loaded);
+    }
+    pto::KernelScheduleGraphBuildOptions options;
+    options.durationTable = durationTableData ? &*durationTableData : nullptr;
+    options.requireExactDurations = requireExactDurations;
     FailureOr<pto::KernelScheduleGraph> graph =
-        pto::buildKernelScheduleGraph(func);
+        pto::buildKernelScheduleGraph(func, options);
     if (failed(graph)) {
       signalPassFailure();
       return;

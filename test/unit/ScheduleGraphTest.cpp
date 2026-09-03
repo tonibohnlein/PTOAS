@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/Transforms/KernelScheduling/ScheduleGraph.h"
+#include "PTO/Transforms/KernelScheduling/KernelScheduleGraph.h"
 
 #include <iostream>
 #include <string_view>
@@ -79,10 +80,43 @@ bool testCycleDetection() {
   return check(!graph.IsAcyclic(), "three-node cycle is detected");
 }
 
+bool testCompletePlacementLongestPath() {
+  mlir::pto::KernelScheduleGraph graph;
+  const auto first = graph.addNode(
+      nullptr, mlir::pto::PIPE::PIPE_V, mlir::pto::ScheduleNodeKind::Compute,
+      0, 0, 0, /*durationCycles=*/10, /*hasExactDuration=*/true);
+  const auto second = graph.addNode(
+      nullptr, mlir::pto::PIPE::PIPE_MTE2,
+      mlir::pto::ScheduleNodeKind::Transfer, 1, 0, 0,
+      /*durationCycles=*/20, /*hasExactDuration=*/true);
+  const auto independent = graph.addNode(
+      nullptr, mlir::pto::PIPE::PIPE_V, mlir::pto::ScheduleNodeKind::Compute,
+      2, 0, 0, /*durationCycles=*/40, /*hasExactDuration=*/true);
+  // This models a selected address reuse: a synchronization delay belongs to
+  // the edge, and the whole placement is scored once through the DAG.
+  graph.addDependency(first, second,
+                      mlir::pto::ScheduleDependencyKind::PlacementReuseRAW,
+                      0, nullptr, /*latencyCycles=*/17);
+  // A recurrence contributes to a loop-II model, not the per-iteration path.
+  graph.addDependency(second, first,
+                      mlir::pto::ScheduleDependencyKind::MemoryWAR,
+                      /*iterationDistance=*/1, nullptr,
+                      /*latencyCycles=*/999);
+  auto longestPath = graph.getLongestPathCycles();
+  return check(succeeded(longestPath), "weighted graph remains acyclic") &&
+         check(*longestPath == 47,
+               "node and selected reuse-edge weights form the longest path") &&
+         check(graph.getGraph().VertexWorkWeight(second) == 20,
+               "node duration is exposed to DAG consumers") &&
+         check(graph.getDependencies().back().latencyCycles == 999,
+               "recurrence latency remains explicit metadata");
+}
+
 } // namespace
 
 int main() {
   const bool passed = testEmptyGraph() && testVertexPropertiesAndEdges() &&
-                      testInvalidAndDuplicateEdges() && testCycleDetection();
+                      testInvalidAndDuplicateEdges() && testCycleDetection() &&
+                      testCompletePlacementLongestPath();
   return passed ? 0 : 1;
 }
