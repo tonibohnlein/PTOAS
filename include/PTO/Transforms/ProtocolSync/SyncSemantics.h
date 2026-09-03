@@ -30,6 +30,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <optional>
 #include <string>
 
@@ -196,6 +197,7 @@ struct ProtocolSyncStatistics {
     std::uint64_t phases = 0;
     std::uint64_t accesses = 0;
     std::uint64_t storageFamilies = 0;
+    std::uint64_t pipelineStages = 0;
     std::uint64_t knownRanges = 0;
     std::uint64_t unknownRanges = 0;
     std::uint64_t intervalIndexQueries = 0;
@@ -235,6 +237,8 @@ struct ProtocolSyncStatistics {
     std::uint64_t materializationUs = 0;
     std::uint64_t verificationUs = 0;
     std::uint64_t totalUs = 0;
+    std::map<std::string, std::uint64_t> generationRejections;
+    std::map<std::string, std::uint64_t> channelRejections;
 };
 
 class SyncSemanticContext {

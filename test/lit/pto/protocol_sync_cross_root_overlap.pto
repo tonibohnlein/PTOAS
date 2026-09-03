@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir \
+// RUN:   --enable-insert-sync --protocol-sync-analysis-only \
+// RUN:   --protocol-sync-dump=channels --protocol-sync-statistics \
+// RUN:   %s -o %t 2> %t.diagnostics
+// RUN: FileCheck %s --input-file=%t.diagnostics
+
+module {
+  func.func @cross_root_overlap(
+      %input0 : !pto.partition_tensor_view<16x16xf16>,
+      %input1 : !pto.partition_tensor_view<16x16xf16>,
+      %output0 : !pto.partition_tensor_view<16x16xf16>,
+      %output1 : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %tile0 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 16x16xf16>
+    %tile1 = pto.alloc_tile addr = %c256_i64 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input0 : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile0 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%tile0 : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output0 : !pto.partition_tensor_view<16x16xf16>)
+    pto.tload ins(%input1 : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile1 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%tile1 : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output1 : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+}
+
+// CHECK-LABEL: PROTOCOL-SYNC channels function=@cross_root_overlap
+// CHECK: timeline #0 family=#{{[0-9]+}} generation=one-shot status=rejected reason=conflicting-physical-range
+// CHECK: timeline #1 family=#{{[0-9]+}} generation=one-shot status=rejected reason=conflicting-physical-range
+// CHECK: "generation_rejections":{"conflicting-physical-range":2}

@@ -24,6 +24,9 @@
 // RUN: not ptoas --pto-arch=a3 --protocol-sync-dump=schedule \
 // RUN:   --emit-pto-ir %s -o /dev/null 2>&1 | \
 // RUN:   FileCheck %s --check-prefix=OPTION-ERROR
+// RUN: not ptoas --pto-arch=a3 --protocol-sync-analysis-only \
+// RUN:   --protocol-sync-dump=invalid --emit-pto-ir %s -o /dev/null 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=INVALID-DUMP
 
 module {
   func.func @double_buffer_schedule(
@@ -111,3 +114,4 @@ module {
 // ANALYSIS-SAME: handle=%{{[0-9]+}} depth=8 direction=1 local-slots=8 flag-base=0
 
 // OPTION-ERROR: Error: --protocol-sync-dump and --protocol-sync-statistics require --protocol-sync-analysis-only.
+// INVALID-DUMP: Error: invalid --protocol-sync-dump='invalid', expected 'none', 'schedule', or 'channels'.

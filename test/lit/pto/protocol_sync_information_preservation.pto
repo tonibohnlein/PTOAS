@@ -13,6 +13,12 @@
 // RUN:   --protocol-sync-dump=schedule --protocol-sync-statistics \
 // RUN:   %s -o %t 2> %t.diagnostics
 // RUN: FileCheck %s --input-file=%t.diagnostics
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --enable-insert-sync --protocol-sync-analysis-only \
+// RUN:   --protocol-sync-dump=channels --protocol-sync-statistics \
+// RUN:   %s -o %t.channels 2> %t.channels.diagnostics
+// RUN: FileCheck %s --check-prefix=CHANNELS \
+// RUN:   --input-file=%t.channels.diagnostics
 
 module {
   func.func @one_buffer(
@@ -212,3 +218,37 @@ module {
 // CHECK: slot=%{{[0-9]+}}/2 expr=unknown distance-1=unknown distance-2=unknown reuse=unknown
 // CHECK: "slot_expressions_known":0,"slot_expressions_unknown":1
 // CHECK-SAME: "function":"nonlinear_slot"
+
+// CHANNELS-LABEL: PROTOCOL-SYNC channels function=@one_buffer
+// CHANNELS: stage #0 region=#0 role=copy-in core=vector pipe=PIPE_MTE2
+// CHANNELS: stage #1 region=#0 role=compute core=vector pipe=PIPE_V
+// CHANNELS: stage #2 region=#0 role=copy-out core=vector pipe=PIPE_MTE3
+// CHANNELS: timeline #0 family=#1 generation=one-shot status=admitted reason=none
+// CHANNELS-SAME: producers=[#0] consumers=[#1]
+// CHANNELS: publication=[pp2 guard=[]]
+// CHANNELS-SAME: acquisitions={{.*}}pp3 guard=[]
+// CHANNELS-SAME: final-uses={{.*}}pp4 guard=[]
+// CHANNELS-SAME: next-overwrite=none reuse=none
+// CHANNELS: channel #0 generation=#0 kind=one-shot capacity=1 status=admitted reason=none
+// CHANNELS-SAME: oracle-ready=match oracle-release=not-applicable
+// CHANNELS: channel #1 generation=#1 kind=one-shot capacity=1 status=admitted reason=none
+// CHANNELS-SAME: oracle-ready=match oracle-release=not-applicable
+
+// CHANNELS-LABEL: PROTOCOL-SYNC channels function=@double_buffer
+// CHANNELS: timeline #0 family=#1 generation=loop-iteration status=admitted reason=none
+// CHANNELS-SAME: expr=affine-modulo(loop=#1,coefficient=1,offset=0,modulus=2)
+// CHANNELS-SAME: carrying-loop=#1 producers=[#0] consumers=[#1]
+// CHANNELS: publication=[pp3 guard=[]]
+// CHANNELS-SAME: acquisitions={{.*}}pp4 guard=[]
+// CHANNELS-SAME: final-uses={{.*}}pp5 guard=[]
+// CHANNELS-SAME: next-overwrite=[pp2 guard=[]] distance=2 reuse=2
+// CHANNELS: channel #0 generation=#0 kind=ready-release capacity=2 status=admitted reason=none
+// CHANNELS-SAME: oracle-ready=match oracle-release=match
+// CHANNELS: channel #1 generation=#1 kind=ready-release capacity=2 status=admitted reason=none
+// CHANNELS-SAME: oracle-ready=match oracle-release=match
+
+// CHANNELS-LABEL: PROTOCOL-SYNC channels function=@nonlinear_slot
+// CHANNELS: timeline #0 family=#1 generation=one-shot status=rejected reason=unknown-slot-expression
+// CHANNELS: channel #0 generation=#0 kind=one-shot capacity=2 status=rejected reason=timeline-rejected
+// CHANNELS: "channel_rejections":{"timeline-rejected":1}
+// CHANNELS-SAME: "generation_rejections":{"unknown-slot-expression":1}

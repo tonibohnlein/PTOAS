@@ -37,7 +37,7 @@ Use:
 
 ```text
 --protocol-sync-analysis-only
---protocol-sync-dump=schedule
+--protocol-sync-dump=schedule|channels
 --protocol-sync-statistics
 ```
 
@@ -133,8 +133,49 @@ existing analysis-only fixture also proves queue identity and depth survive at
 the same point. Protocol generation, `ReadyRelease<2>`, and event allocation
 remain disabled.
 
+## Checkpoint C result
+
+`PipelineStageAnalysis` conservatively creates one immutable discovery stage
+per exact physical phase, so stage diagnostics cannot merge across a resource,
+control, publication, or generation boundary. Roles come from physical memory
+effects: the official path is recovered as `copy-in → compute → copy-out`
+without operation-name matching.
+
+`StorageTimelineAnalysis` groups exact local access slices by storage family
+and canonical slot expression. A physical-address-space sweep also catches
+overlap between distinct allocation roots. Each admitted symbolic generation
+records its producer and consumer stages, publication, acquisitions, guarded
+final uses, and—when loop-carried—the first proven same-slot overwrite. An
+interval sweep detects partial overlapping access classes. Unknown ranges or
+slots, ordered and in-place accesses, unknown aliases, cross-root overlap,
+multiple same-slice lifecycles per iteration, missing endpoints, incompatible
+loop domains, and unproven reuse remain deterministic diagnostic rejections.
+
+Strict channel analysis admits only physical local storage with capacity one
+or two, one producer, one consumer, no unresolved semantic failure or
+branch/nested-loop control, and a single physical core. Loop-carried channels
+additionally require the proven reuse distance to equal capacity. The
+`channels` dump reports one-shot and ready/release channel shapes plus every
+timeline/channel rejection. On admitted focused fixtures, a root-indexed
+exact-storage query over the legacy translator's memory-dependency records and
+loop structure confirms the ready RAW and recurring release WAR relations.
+
+The official one-buffer fixture produces two one-shot channels. The official
+double-buffer fixture produces two capacity-two ready/release channels with
+publication, acquisition, final-use, next-overwrite, and reuse-distance-two
+frontiers. Focused negative tests cover extra consumers, guarded final uses,
+partial and cross-root overlaps, in-place access, repeated same-slice loop
+lifecycles, opaque effects, intervening branches, constant-slot
+underutilization, nonlinear selectors, and nested loops. Statistics now report
+stage counts, attempted and admitted timelines/channels, stable rejection maps,
+and their stage timings.
+
+No synchronization, protocol candidate, event allocation, or IR mutation is
+performed in Checkpoint C.
+
 ## Next gate
 
-Checkpoint C may add access-derived storage-generation timelines and channel
-diagnostics. Synchronization emission remains out of scope until those
-diagnostics and rejection reasons have been validated.
+Checkpoint D may implement atomic same-pipe and directed same-core
+`OneShotPublish`, with target legality, clone/materialize/verify/commit, and a
+fresh device-correctness campaign. Diagnostic channel admission alone is not a
+hardware certificate.

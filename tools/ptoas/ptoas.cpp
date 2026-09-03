@@ -226,7 +226,7 @@ llvm::cl::opt<bool> protocolSyncAnalysisOnly(
 
 llvm::cl::opt<std::string> protocolSyncDump(
     "protocol-sync-dump",
-    llvm::cl::desc("ProtocolSync diagnostic dump: none or schedule"),
+    llvm::cl::desc("ProtocolSync diagnostic dump: none, schedule, or channels"),
     llvm::cl::init("none"));
 
 llvm::cl::opt<bool> protocolSyncStatistics(

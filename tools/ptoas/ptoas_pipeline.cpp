@@ -1286,9 +1286,11 @@ static LogicalResult validateAllocationConfiguration(ModuleOp module,
 }
 
 static LogicalResult validateProtocolSyncConfiguration() {
-  if (protocolSyncDump != "none" && protocolSyncDump != "schedule") {
+  if (protocolSyncDump != "none" && protocolSyncDump != "schedule" &&
+      protocolSyncDump != "channels") {
     llvm::errs() << "Error: invalid --protocol-sync-dump='"
-                 << protocolSyncDump << "', expected 'none' or 'schedule'.\n";
+                 << protocolSyncDump
+                 << "', expected 'none', 'schedule', or 'channels'.\n";
     return failure();
   }
   if (!protocolSyncAnalysisOnly &&

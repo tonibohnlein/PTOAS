@@ -13,8 +13,10 @@
 #include "PTO/Transforms/Passes.h"
 
 #include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
+#include "PTO/Transforms/ProtocolSync/ChannelProtocolIR.h"
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/JSON.h"
 
 #include <chrono>
@@ -85,6 +87,7 @@ void printStatistics(
     counts["phases"] = static_cast<std::int64_t>(statistics.phases);
     counts["accesses"] = static_cast<std::int64_t>(statistics.accesses);
     counts["storage_families"] = static_cast<std::int64_t>(statistics.storageFamilies);
+    counts["pipeline_stages"] = static_cast<std::int64_t>(statistics.pipelineStages);
     counts["known_ranges"] = static_cast<std::int64_t>(statistics.knownRanges);
     counts["unknown_ranges"] = static_cast<std::int64_t>(statistics.unknownRanges);
     counts["interval_index_queries"] = static_cast<std::int64_t>(statistics.intervalIndexQueries);
@@ -112,8 +115,16 @@ void printStatistics(
     counts["materialization_transitions"] = static_cast<std::int64_t>(statistics.materializationTransitions);
     counts["verifier_transitions"] = static_cast<std::int64_t>(statistics.verifierTransitions);
     record["counts"] = std::move(counts);
-    record["generation_rejections"] = llvm::json::Object();
-    record["channel_rejections"] = llvm::json::Object();
+    llvm::json::Object generationRejections;
+    for (const auto& [reason, count] : statistics.generationRejections) {
+        generationRejections[reason] = static_cast<std::int64_t>(count);
+    }
+    record["generation_rejections"] = std::move(generationRejections);
+    llvm::json::Object channelRejections;
+    for (const auto& [reason, count] : statistics.channelRejections) {
+        channelRejections[reason] = static_cast<std::int64_t>(count);
+    }
+    record["channel_rejections"] = std::move(channelRejections);
     record["planner_result"] = "analysis-only";
     record["fallback"] = "none";
     llvm::json::Object timing;
@@ -145,9 +156,9 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
 
     void runOnOperation() final
     {
-        if (dumpMode != "none" && dumpMode != "schedule") {
+        if (dumpMode != "none" && dumpMode != "schedule" && dumpMode != "channels") {
             getOperation().emitError("unknown ProtocolSync dump mode '")
-                << dumpMode << "'; expected 'none' or 'schedule'";
+                << dumpMode << "'; expected 'none', 'schedule', or 'channels'";
             signalPassFailure();
             return;
         }
@@ -208,15 +219,44 @@ private:
         collectScheduleStatistics(schedule, result);
 
         start = ProtocolSyncClock::now();
+        FailureOr<PipelineStageAnalysisResult> stages = analyzePipelineStages(schedule);
+        result.storageAnalysisUs = elapsedMicroseconds(start);
+        if (failed(stages)) {
+            result.totalUs = elapsedMicroseconds(totalStart);
+            if (statistics) {
+                printStatistics(function, result, "internal-error", "pipeline-stages");
+            }
+            function.emitError("ProtocolSync pipeline-stage analysis failed");
+            return failure();
+        }
+        result.pipelineStages = stages->getStages().size();
+
+        start = ProtocolSyncClock::now();
+        StorageTimelineAnalysisResult timelines = analyzeStorageTimelines(schedule, *stages, &result);
+        result.generationAnalysisUs = elapsedMicroseconds(start);
+
+        start = ProtocolSyncClock::now();
+        ChannelAnalysisResult channels = analyzeChannels(schedule, *stages, timelines, &result);
+        compareWithLegacyDemandOracle(legacy, schedule, *stages, timelines, channels);
+        result.channelAnalysisUs = elapsedMicroseconds(start);
+
+        start = ProtocolSyncClock::now();
         LegacySyncParityResult parity = adapter.compare(legacy, schedule);
         result.legacyComparisonUs = elapsedMicroseconds(start);
         result.legacyParityMismatches = parity.mismatches.size();
         printLegacySyncParity(function, parity, llvm::errs());
         if (dumpMode == "schedule") {
             printStructuredSyncIR(schedule, llvm::errs());
+        } else if (dumpMode == "channels") {
+            printProtocolSyncChannels(schedule, *stages, timelines, channels, llvm::errs());
         }
         if (statistics) {
-            StringRef status = parity.matches() && schedule.getFailures().empty() ? "ok" : "diagnostic-rejection";
+            const bool oracleMismatch = llvm::any_of(channels.getChannels(), [](const SyncChannel& channel) {
+                return channel.readyOracle == SyncDemandOracleStatus::Mismatch ||
+                       channel.releaseOracle == SyncDemandOracleStatus::Mismatch;
+            });
+            StringRef status =
+                parity.matches() && schedule.getFailures().empty() && !oracleMismatch ? "ok" : "diagnostic-rejection";
             result.totalUs = elapsedMicroseconds(totalStart);
             printStatistics(function, result, status, "");
         }

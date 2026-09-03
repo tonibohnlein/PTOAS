@@ -42,18 +42,18 @@ def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
 }
 
 def PTOProtocolSync : Pass<"pto-protocol-sync", "ModuleOp"> {
-  let summary = "Build ProtocolSync semantic and structured schedule diagnostics";
+  let summary = "Build ProtocolSync schedule and lifecycle diagnostics";
   let description = [{
-    Builds the immutable ProtocolSync schedule and compares it with the legacy
-    InsertSync translator. This Checkpoint A pass is analysis-only and never
-    emits synchronization or mutates the input IR.
+    Builds the immutable ProtocolSync schedule, derives storage-generation and
+    lifecycle-channel diagnostics, and compares them with legacy analyses. The
+    pass is analysis-only and never emits synchronization or mutates input IR.
   }];
 
   let constructor = "mlir::pto::createPTOProtocolSyncPass()";
 
   let options = [
     Option<"dumpMode", "dump", "std::string", "\"none\"",
-           "Diagnostic dump: none or schedule">,
+           "Diagnostic dump: none, schedule, or channels">,
     Option<"statistics", "statistics", "bool", "false",
            "Emit stable ProtocolSync analysis statistics">
   ];

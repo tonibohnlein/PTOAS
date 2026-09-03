@@ -1,0 +1,310 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --enable-insert-sync --protocol-sync-analysis-only \
+// RUN:   --protocol-sync-dump=channels --protocol-sync-statistics \
+// RUN:   %s -o %t 2> %t.diagnostics
+// RUN: FileCheck %s --input-file=%t.diagnostics
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --enable-insert-sync --protocol-sync-analysis-only \
+// RUN:   --protocol-sync-dump=channels %s -o %t.repeat0 2> %t.repeat0.diagnostics
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --enable-insert-sync --protocol-sync-analysis-only \
+// RUN:   --protocol-sync-dump=channels %s -o %t.repeat1 2> %t.repeat1.diagnostics
+// RUN: diff %t.repeat0.diagnostics %t.repeat1.diagnostics
+
+module {
+  func.func private @opaque()
+
+  func.func @depth_one_recurrence(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %index = %c0 to %c4 step %c1 {
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+
+  func.func @constant_depth_two_recurrence(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %buffers = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    scf.for %index = %c0 to %c4 step %c1 {
+      %slot = pto.multi_tile_get %buffers[%c1]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%slot : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+
+  func.func @multiple_consumers(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output0 : !pto.partition_tensor_view<16x16xf16>,
+      %output1 : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %source = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    %result0 = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    %result1 = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%source : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%source : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%result0 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%source : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%result1 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%result0 : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output0 : !pto.partition_tensor_view<16x16xf16>)
+    pto.tstore ins(%result1 : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output1 : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+
+  func.func @sequential_generations(
+      %input0 : !pto.partition_tensor_view<16x16xf16>,
+      %input1 : !pto.partition_tensor_view<16x16xf16>,
+      %output0 : !pto.partition_tensor_view<16x16xf16>,
+      %output1 : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input0 : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output0 : !pto.partition_tensor_view<16x16xf16>)
+    pto.tload ins(%input1 : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output1 : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+
+  func.func @loop_multiple_generations(
+      %input0 : !pto.partition_tensor_view<16x16xf16>,
+      %input1 : !pto.partition_tensor_view<16x16xf16>,
+      %output0 : !pto.partition_tensor_view<16x16xf16>,
+      %output1 : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %index = %c0 to %c4 step %c1 {
+      pto.tload ins(%input0 : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output0 : !pto.partition_tensor_view<16x16xf16>)
+      pto.tload ins(%input1 : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output1 : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+
+  func.func @opaque_between_channel_endpoints(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    func.call @opaque() : () -> ()
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+
+  func.func @branch_final_use(
+      %condition : i1,
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    scf.if %condition {
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    } else {
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+
+  func.func @guarded_single_consumer(
+      %condition : i1,
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    scf.if %condition {
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+
+  func.func @intervening_empty_branch(
+      %condition : i1,
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    scf.if %condition {
+      pto.barrier #pto.pipe<PIPE_ALL>
+    } else {
+      pto.barrier #pto.pipe<PIPE_ALL>
+    }
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+
+  func.func @partial_overlapping_writes(
+      %input0 : !pto.partition_tensor_view<16x8xf16>,
+      %input1 : !pto.partition_tensor_view<16x8xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    %view0 = pto.subview %tile[%c0, %c0] sizes [16, 8] :
+        !pto.tile_buf<vec, 16x16xf16> -> !pto.tile_buf<vec, 16x8xf16>
+    %view1 = pto.subview %tile[%c0, %c4] sizes [16, 8] :
+        !pto.tile_buf<vec, 16x16xf16> -> !pto.tile_buf<vec, 16x8xf16>
+    pto.tload ins(%input0 : !pto.partition_tensor_view<16x8xf16>)
+              outs(%view0 : !pto.tile_buf<vec, 16x8xf16>)
+    pto.tload ins(%input1 : !pto.partition_tensor_view<16x8xf16>)
+              outs(%view1 : !pto.tile_buf<vec, 16x8xf16>)
+    return
+  }
+
+  func.func @in_place_access(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+
+  func.func @nested_recurrence(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %outer = %c0 to %c2 step %c1 {
+      scf.for %inner = %c0 to %c2 step %c1 {
+        pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                  outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                   outs(%output : !pto.partition_tensor_view<16x16xf16>)
+      }
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: PROTOCOL-SYNC channels function=@depth_one_recurrence
+// CHECK: timeline #0 family=#1 generation=loop-iteration status=admitted reason=none
+// CHECK-SAME: slot=implicit-depth-one carrying-loop=#1 producers=[#0] consumers=[#1]
+// CHECK: next-overwrite=[pp2 guard=[]] distance=1 reuse=1
+// CHECK: channel #0 generation=#0 kind=ready-release capacity=1 status=admitted reason=none
+// CHECK-SAME: oracle-ready=match oracle-release=match
+
+// CHECK-LABEL: PROTOCOL-SYNC channels function=@constant_depth_two_recurrence
+// CHECK: timeline #0 family=#1 generation=loop-iteration status=admitted reason=none
+// CHECK-SAME: expr=constant(offset=1,modulus=2)
+// CHECK: next-overwrite=[pp2 guard=[]] distance=1 reuse=1
+// CHECK: channel #0 generation=#0 kind=ready-release capacity=2 status=rejected reason=reuse-capacity-mismatch
+// CHECK: "channel_rejections":{"reuse-capacity-mismatch":1}
+
+// CHECK-LABEL: PROTOCOL-SYNC channels function=@multiple_consumers
+// CHECK: timeline #0 family=#1 generation=one-shot status=admitted reason=none
+// CHECK-SAME: producers=[#0] consumers=[#1, #2]
+// CHECK: channel #0 generation=#0 kind=one-shot capacity=1 status=rejected reason=multiple-consumers
+
+// CHECK-LABEL: PROTOCOL-SYNC channels function=@sequential_generations
+// CHECK: timeline #0 family=#1 generation=one-shot status=admitted reason=none
+// CHECK-SAME: producers=[#0] consumers=[#1]
+// CHECK: next-overwrite=[pp5 guard=[]] distance=0 reuse=none
+// CHECK: timeline #1 family=#1 generation=one-shot status=admitted reason=none
+// CHECK-SAME: producers=[#2] consumers=[#3]
+// CHECK: channel #0 generation=#0 kind=one-shot capacity=1 status=rejected reason=static-overwrite
+// CHECK: channel #1 generation=#1 kind=one-shot capacity=1 status=admitted reason=none
+
+// CHECK-LABEL: PROTOCOL-SYNC channels function=@loop_multiple_generations
+// CHECK: timeline #0 family=#1 generation=loop-iteration status=rejected reason=multiple-generations-per-iteration
+// CHECK: timeline #1 family=#1 generation=loop-iteration status=rejected reason=multiple-generations-per-iteration
+// CHECK: "generation_rejections":{"multiple-generations-per-iteration":2}
+
+// CHECK-LABEL: PROTOCOL-SYNC channels function=@opaque_between_channel_endpoints
+// CHECK: timeline #0 family=#1 generation=one-shot status=admitted reason=none
+// CHECK: channel #0 generation=#0 kind=one-shot capacity=1 status=rejected reason=unresolved-schedule-failure
+// CHECK: "channel_rejections":{"unresolved-schedule-failure":1}
+
+// CHECK-LABEL: PROTOCOL-SYNC channels function=@branch_final_use
+// CHECK: timeline #0 family=#1 generation=one-shot status=admitted reason=none
+// CHECK-SAME: producers=[#0] consumers=[#1, #2]
+// CHECK: final-uses={{.*}}guard=[#1:0]{{.*}}guard=[#1:1]
+// CHECK: channel #0 generation=#0 kind=one-shot capacity=1 status=rejected reason=multiple-consumers
+
+// CHECK-LABEL: PROTOCOL-SYNC channels function=@guarded_single_consumer
+// CHECK: timeline #0 family=#1 generation=one-shot status=admitted reason=none
+// CHECK-SAME: producers=[#0] consumers=[#1]
+// CHECK: acquisitions={{.*}}guard=[#1:0]
+// CHECK: channel #0 generation=#0 kind=one-shot capacity=1 status=rejected reason=unsupported-control-flow
+
+// CHECK-LABEL: PROTOCOL-SYNC channels function=@intervening_empty_branch
+// CHECK: timeline #0 family=#1 generation=one-shot status=admitted reason=none
+// CHECK-SAME: producers=[#0] consumers=[#1]
+// CHECK: channel #0 generation=#0 kind=one-shot capacity=1 status=rejected reason=unsupported-control-flow
+
+// CHECK-LABEL: PROTOCOL-SYNC channels function=@partial_overlapping_writes
+// CHECK: timeline #0 family=#1 generation=one-shot status=rejected reason=partial-overlap
+// CHECK: timeline #1 family=#1 generation=one-shot status=rejected reason=partial-overlap
+// CHECK: "generation_rejections":{"partial-overlap":2}
+
+// CHECK-LABEL: PROTOCOL-SYNC channels function=@in_place_access
+// CHECK: timeline #0 family=#1 generation=one-shot status=rejected reason=in-place-access
+// CHECK: "generation_rejections":{"in-place-access":1}
+
+// CHECK-LABEL: PROTOCOL-SYNC channels function=@nested_recurrence
+// CHECK: timeline #0 family=#1 generation=loop-iteration status=admitted reason=none
+// CHECK-SAME: carrying-loop=#2 producers=[#0] consumers=[#1]
+// CHECK: channel #0 generation=#0 kind=ready-release capacity=1 status=rejected reason=nested-loop
