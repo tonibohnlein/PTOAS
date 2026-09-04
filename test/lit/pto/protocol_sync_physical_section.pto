@@ -10,6 +10,8 @@
 // RUN: pto-test-opt --pto-protocol-sync='execution-mode=one-shot fallback-mode=fail' %s | FileCheck %s
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --protocol-sync-one-shot \
 // RUN:   --protocol-sync-fallback=fail %s -o - | FileCheck %s --check-prefix=CXX
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=direct-repair fallback-mode=fail' %s | \
+// RUN:   FileCheck %s --check-prefix=DIRECT
 
 module attributes {pto.target_arch = "a3"} {
   func.func @flat_vector(
@@ -153,3 +155,28 @@ module attributes {pto.target_arch = "a3"} {
 // CHECK-NEXT: pto.barrier <PIPE_ALL>
 // CHECK-NEXT: {{^ *}}}
 // CHECK-NEXT: {{^ *}}return
+
+// DIRECT-LABEL: func.func @flat_vector
+// DIRECT: pto.tstore
+// DIRECT-NEXT: pto.barrier <PIPE_ALL>
+// DIRECT-NEXT: return
+
+// DIRECT-LABEL: func.func @empty_vector_section
+// DIRECT: pto.section.vector {
+// DIRECT-NOT: pto.barrier
+// DIRECT: {{^ *}}}
+// DIRECT-NEXT: {{^ *}}return
+
+// DIRECT-LABEL: func.func @vector_section
+// DIRECT: pto.section.vector {
+// DIRECT: pto.tstore
+// DIRECT-NEXT: pto.barrier <PIPE_ALL>
+// DIRECT-NEXT: {{^ *}}}
+// DIRECT-NEXT: {{^ *}}return
+
+// DIRECT-LABEL: func.func @cube_section
+// DIRECT: pto.section.cube {
+// DIRECT: pto.tstore
+// DIRECT-NEXT: pto.barrier <PIPE_ALL>
+// DIRECT-NEXT: {{^ *}}}
+// DIRECT-NEXT: {{^ *}}return

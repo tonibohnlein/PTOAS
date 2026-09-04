@@ -12,6 +12,11 @@
 // RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=STRICT
 // RUN: pto-test-opt --pto-protocol-sync='execution-mode=one-shot statistics=1' \
 // RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=FALLBACK
+// RUN: not pto-test-opt \
+// RUN:   --pto-protocol-sync='execution-mode=direct-repair fallback-mode=fail dump=plan statistics=1' \
+// RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=DIRECT-STRICT
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=direct-repair statistics=1' \
+// RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=DIRECT-FALLBACK
 
 module attributes {pto.target_arch = "a3"} {
   func.func @seven_mte2_to_vector_generations(
@@ -101,3 +106,13 @@ module attributes {pto.target_arch = "a3"} {
 // FALLBACK-SAME: "planner_result":"legacy-fallback-resource-infeasible"
 // FALLBACK-SAME: "producer":"legacy-fallback-resource-infeasible"
 // FALLBACK-SAME: "status":"ok"
+// DIRECT-STRICT: PROTOCOL-SYNC direct-repair function=@seven_mte2_to_vector_generations
+// DIRECT-STRICT-SAME: status=resource-infeasible
+// DIRECT-STRICT: reason=event-capacity
+// DIRECT-STRICT-NOT: event=6
+// DIRECT-STRICT-NOT: event=7
+// DIRECT-STRICT: "fallback":"disabled"
+// DIRECT-STRICT-SAME: "producer":"fail-closed-policy"
+// DIRECT-FALLBACK: "fallback":"resource-infeasible"
+// DIRECT-FALLBACK-SAME: "planner_result":"legacy-fallback-resource-infeasible"
+// DIRECT-FALLBACK-SAME: "producer":"legacy-fallback-resource-infeasible"

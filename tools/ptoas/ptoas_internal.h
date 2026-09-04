@@ -63,6 +63,7 @@ extern llvm::cl::opt<bool> enableInsertSync;
 extern llvm::cl::opt<bool> protocolSyncAnalysisOnly;
 extern llvm::cl::opt<bool> protocolSyncOneShot;
 extern llvm::cl::opt<bool> protocolSyncReadyRelease;
+extern llvm::cl::opt<bool> protocolSyncDirectRepair;
 extern llvm::cl::opt<std::string> protocolSyncFallback;
 extern llvm::cl::opt<std::string> protocolSyncDump;
 extern llvm::cl::opt<bool> protocolSyncStatistics;

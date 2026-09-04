@@ -104,6 +104,10 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/LegacySyncIRAdapter.cpp
   ProtocolSync/ChannelAnalysis.cpp
   ProtocolSync/ChannelDump.cpp
+  ProtocolSync/DirectRepair.cpp
+  ProtocolSync/DirectRepairDump.cpp
+  ProtocolSync/DirectRepairMaterialization.cpp
+  ProtocolSync/DirectRepairVerifier.cpp
   ProtocolSync/PipelineStages.cpp
   ProtocolSync/OneShotMaterialization.cpp
   ProtocolSync/OneShotProtocol.cpp

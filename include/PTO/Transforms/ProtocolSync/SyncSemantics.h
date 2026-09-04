@@ -93,6 +93,7 @@ enum class SyncFailureReason : std::uint8_t {
 enum class ProtocolSyncProducer : std::uint8_t {
     AnalysisOnly,
     ProtocolPlan,
+    ProtocolPlusDirectResiduals,
     LegacyFallbackUnsupported,
     LegacyFallbackResourceInfeasible,
     FailClosedPolicy,
@@ -240,6 +241,10 @@ struct ProtocolSyncStatistics {
     std::uint64_t selectedTailDrains = 0;
     std::uint64_t selectedReadyReleaseProtocols = 0;
     std::uint64_t selectedReadyReleaseLanes = 0;
+    std::uint64_t directRepairCandidates = 0;
+    std::uint64_t directRepairSharedCandidates = 0;
+    std::uint64_t selectedDirectRepairs = 0;
+    std::uint64_t directRepairUncovered = 0;
     std::uint64_t eventDomains = 0;
     std::uint64_t maxEventDomainPressure = 0;
     std::uint64_t maximumEventIdPlusOne = 0;

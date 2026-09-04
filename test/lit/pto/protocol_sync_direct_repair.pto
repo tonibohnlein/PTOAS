@@ -1,0 +1,136 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-direct-repair --protocol-sync-fallback=fail \
+// RUN:   --protocol-sync-dump=plan --protocol-sync-statistics \
+// RUN:   %S/protocol_sync_one_shot.pto -o %t.ir 2> %t.plan
+// RUN: FileCheck %s --input-file=%t.ir --check-prefix=IR
+// RUN: FileCheck %s --input-file=%t.plan --check-prefix=PLAN
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-direct-repair --protocol-sync-fallback=fail \
+// RUN:   --protocol-sync-dump=plan %S/protocol_sync_one_shot.pto \
+// RUN:   -o %t.repeat.ir 2> %t.repeat.plan
+// RUN: diff %t.ir %t.repeat.ir
+// RUN: FileCheck %s --input-file=%t.repeat.plan --check-prefix=PLAN-STABLE
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-direct-repair --protocol-sync-fallback=fail \
+// RUN:   --protocol-sync-dump=residuals %S/protocol_sync_one_shot.pto \
+// RUN:   -o /dev/null 2> %t.residuals
+// RUN: FileCheck %s --input-file=%t.residuals --check-prefix=COMPLETE
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 \
+// RUN:   --protocol-sync-direct-repair --protocol-sync-fallback=fail \
+// RUN:   %S/protocol_sync_one_shot.pto -o %t.cpp
+// RUN: FileCheck %s --input-file=%t.cpp --check-prefix=CXX
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-direct-repair --protocol-sync-fallback=fail \
+// RUN:   --protocol-sync-dump=residuals %s -o %t.guard.ir 2> %t.guard.log
+// RUN: FileCheck %s --input-file=%t.guard.ir --check-prefix=GUARD-IR
+// RUN: FileCheck %s --input-file=%t.guard.log --check-prefix=GUARD-WORLD
+// RUN: not ptoas --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-direct-repair %S/protocol_sync_one_shot.pto \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=IMPLICIT
+// RUN: not ptoas --pto-arch=a2 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-direct-repair --protocol-sync-fallback=fail \
+// RUN:   %S/protocol_sync_one_shot.pto -o /dev/null 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=WRONG-TARGET
+// RUN: not ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --enable-insert-sync --protocol-sync-direct-repair \
+// RUN:   %S/protocol_sync_one_shot.pto -o /dev/null 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=MUTEX
+// RUN: not ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-direct-repair --protocol-sync-fallback=fail \
+// RUN:   --protocol-sync-dump=plan %S/protocol_sync_ready_release_1.pto \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=RECURRING
+
+// PLAN: PROTOCOL-SYNC direct-repair function=@linear_one_shot status=ready obligations=6 candidates=4 uncovered=0
+// PLAN: candidate #0 kind=directed-event core=vector source-pipe=PIPE_MTE2 target-pipe=PIPE_V
+// PLAN-SAME: event=0
+// PLAN: candidate #1 kind=pipe-barrier core=vector source-pipe=PIPE_V target-pipe=PIPE_V
+// PLAN: candidate #2 kind=directed-event core=vector source-pipe=PIPE_V target-pipe=PIPE_MTE3
+// PLAN-SAME: event=0
+// PLAN: candidate #3 kind=exit-barrier
+// PLAN-SAME: covers=[#3, #4, #5]
+// PLAN: "direct_repair_candidates":4
+// PLAN-SAME: "direct_repair_shared_candidates":1
+// PLAN-SAME: "direct_repair_uncovered":0
+// PLAN-SAME: "selected_direct_repairs":4
+// PLAN-SAME: "planner_result":"materialized-direct-repair"
+// PLAN-SAME: "producer":"protocol-plus-direct-residuals"
+
+// PLAN-STABLE: PROTOCOL-SYNC direct-repair function=@linear_one_shot status=ready obligations=6 candidates=4 uncovered=0
+// PLAN-STABLE: candidate #3 kind=exit-barrier
+
+// COMPLETE: PROTOCOL-SYNC selected-world function=@linear_one_shot status=complete
+// COMPLETE-SAME: protocols=0 completions=3 visibility=0 exit-completions=3 obligations=0
+
+// IR-LABEL: func.func @linear_one_shot
+// IR: pto.tload
+// IR-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// IR-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// IR-NEXT: pto.tabs
+// IR-NEXT: pto.barrier <PIPE_V>
+// IR-NEXT: pto.tabs
+// IR-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// IR-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// IR-NEXT: pto.tstore
+// IR-NEXT: pto.barrier <PIPE_ALL>
+// IR-NEXT: return
+
+// CXX-LABEL: AICORE void linear_one_shot(
+// CXX: TLOAD
+// CXX-NEXT: set_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+// CXX-NEXT: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+// CXX: pipe_barrier(PIPE_V);
+// CXX: set_flag(PIPE_V, PIPE_MTE3, EVENT_ID0);
+// CXX-NEXT: wait_flag(PIPE_V, PIPE_MTE3, EVENT_ID0);
+// CXX: pipe_barrier(PIPE_ALL);
+
+// GUARD-WORLD: PROTOCOL-SYNC selected-world function=@guarded_direct status=complete
+// GUARD-WORLD-SAME: obligations=0
+// GUARD-IR-LABEL: func.func @guarded_direct
+// GUARD-IR: scf.if
+// GUARD-IR: pto.tload
+// GUARD-IR-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// GUARD-IR-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// GUARD-IR-NEXT: pto.tabs
+// GUARD-IR-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// GUARD-IR-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// GUARD-IR-NEXT: pto.tstore
+// GUARD-IR: pto.barrier <PIPE_ALL>
+
+// IMPLICIT: --protocol-sync-direct-repair requires an explicit --pto-arch=a3
+// WRONG-TARGET: ProtocolSync direct-repair mode found no complete supported plan
+// MUTEX: --enable-insert-sync
+// MUTEX-SAME: --protocol-sync-direct-repair
+// MUTEX-SAME: mutually exclusive
+// RECURRING: PROTOCOL-SYNC direct-repair function=@ready_release_one status=partial
+// RECURRING: reason=unsupported-recurrence
+// RECURRING: ProtocolSync direct-repair mode found no complete supported plan
+
+module {
+  func.func @guarded_direct(
+      %condition: i1,
+      %input: !pto.partition_tensor_view<16x16xf16>,
+      %output: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %source = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    %target = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    scf.if %condition {
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%source : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%source : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%target : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%target : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}

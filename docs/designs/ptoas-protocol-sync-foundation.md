@@ -184,6 +184,9 @@ described in `docs/designs/ptoas-protocol-sync-checkpoint-e.md`. The exact
 depth-two revision still requires its purpose-built A3 device gate; neither
 host admission nor prior CanonicalSync evidence is a hardware certificate.
 
-Checkpoint F Commit 12 adds the generation-aware selected-world interpreter
-described in `docs/designs/ptoas-protocol-sync-checkpoint-f.md`. It exposes
-typed residual obligations but deliberately does not repair or select them yet.
+Checkpoint F Commit 12 adds the generation-aware selected-world interpreter.
+Commit 13 adds strict targeted direct repair with shared physical frontiers,
+compiler-pool event allocation, exact selected-world re-evaluation, independent
+verification, and module-atomic materialization. The contracts and deliberate
+mixed-selection boundary are described in
+`docs/designs/ptoas-protocol-sync-checkpoint-f.md`.

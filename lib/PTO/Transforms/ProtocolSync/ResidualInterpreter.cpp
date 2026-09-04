@@ -67,7 +67,7 @@ public:
     {
         const bool invalidEndpoint =
             completion.source >= sameIteration.size() || completion.target >= sameIteration.size();
-        const bool invalidRelation = completion.control != SyncControlRelation::MustExecute;
+        const bool invalidRelation = completion.control == SyncControlRelation::Unknown;
         if (invalidEndpoint || invalidRelation) {
             return failure();
         }
@@ -1158,6 +1158,7 @@ void updateStatistics(const SyncInterpretationResult& result, ProtocolSyncStatis
     addSaturating(statistics->interpreterTransitions, result.transitions);
     statistics->interpreterPeakStates = std::max(statistics->interpreterPeakStates, result.peakStates);
     statistics->residualObligations = result.obligations.size();
+    statistics->residualObligationsByKind.clear();
     for (const SyncResidualObligation& obligation : result.obligations) {
         std::uint64_t& count =
             statistics->residualObligationsByKind[stringifySyncObligationKind(obligation.kind).str()];

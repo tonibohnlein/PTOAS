@@ -63,10 +63,39 @@ a generation or token count, and remains meaningful when later milestones add
 path-sensitive state splitting. Work completed before an internal failure is
 still included in the transition counters.
 
-## Deliberate boundary
+## Commit 13 direct repair
 
-This milestone does not create direct repair candidates, mix protocol and
-direct synchronization, select among competing plans, or reverse-delete
-candidates. Existing one-shot and ReadyRelease emission remains limited to its
-already certified complete-function subsets. The next Checkpoint F milestone
-will plan targeted repairs over these residual records.
+`--protocol-sync-direct-repair` evaluates the empty selected world, plans
+physical recipes for every eligible residual, re-evaluates the exact selected
+world, and mutates only after the result is complete. It requires explicit
+`--pto-arch=a3` and is mutually exclusive with every legacy synchronization
+mode.
+
+The strict direct subset accepts same-core, same-block, exactly-once intervals
+with exact single-phase stages. Same-pipe intervals share a targeted barrier;
+legal cross-pipe intervals share one directed set/wait frontier. Terminal
+physical phases in the same physical section, or in the flat function, share
+one `PIPE_ALL` exit drain. Interval stabbing is deterministic and runs in
+`O(n log n)` per pipe/control group.
+
+Event allocation is independent by physical core and directed pipe domain. It
+uses only compiler IDs `0..5`, avoids imported reservations, and clears every
+tentative ID if the whole plan cannot be allocated. A separate verifier
+reconstructs coverage, frontier extrema, target legality, allocation, concrete
+placement, event pairing, and exit-drain placement on staged IR. The outer pass
+clones the complete module, so a failure in any function leaves every original
+function unchanged. The low-level in-place helper is restricted to that
+disposable staging module and does not promise local rollback. Internal planner
+invariants are never eligible for legacy fallback.
+
+Recurring intervals, cross-core edges, non-exact stages, unsupported event
+directions, ordered-memory, ACC, visibility, unknown-alias, and other
+protocol-shaped obligations fail closed. Whole-function legacy fallback
+remains available and is explicitly attributed in statistics.
+
+## Deliberate Commit 14 boundary
+
+Commit 13 repairs an empty selected world only. It does not mix OneShot or
+ReadyRelease candidates with direct candidates and does not reverse-delete
+redundant recipes. Commit 14 will select a complete mixed world and remove only
+whole candidates whose deletion preserves completeness.

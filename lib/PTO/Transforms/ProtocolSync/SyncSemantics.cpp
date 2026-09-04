@@ -183,6 +183,8 @@ StringRef mlir::pto::protocol_sync::stringifyProtocolSyncProducer(ProtocolSyncPr
             return "analysis-only";
         case ProtocolSyncProducer::ProtocolPlan:
             return "protocol-plan";
+        case ProtocolSyncProducer::ProtocolPlusDirectResiduals:
+            return "protocol-plus-direct-residuals";
         case ProtocolSyncProducer::LegacyFallbackUnsupported:
             return "legacy-fallback-unsupported";
         case ProtocolSyncProducer::LegacyFallbackResourceInfeasible:

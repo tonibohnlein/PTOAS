@@ -235,6 +235,12 @@ llvm::cl::opt<bool> protocolSyncReadyRelease(
                    "unsupported functions use legacy fallback unless "
                    "--protocol-sync-fallback=fail is selected"),
     llvm::cl::init(false));
+llvm::cl::opt<bool> protocolSyncDirectRepair(
+    "protocol-sync-direct-repair",
+    llvm::cl::desc("Emit the strict Checkpoint-F direct residual-repair plan; "
+                   "unsupported functions use legacy fallback unless "
+                   "--protocol-sync-fallback=fail is selected"),
+    llvm::cl::init(false));
 
 llvm::cl::opt<std::string> protocolSyncFallback(
     "protocol-sync-fallback",

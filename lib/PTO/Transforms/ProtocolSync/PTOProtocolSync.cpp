@@ -12,6 +12,7 @@
 
 #include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
 #include "PTO/Transforms/ProtocolSync/ChannelProtocolIR.h"
+#include "PTO/Transforms/ProtocolSync/DirectRepair.h"
 #include "PTO/Transforms/ProtocolSync/OneShotProtocol.h"
 #include "PTO/Transforms/ProtocolSync/ReadyReleaseProtocol.h"
 #include "PTO/Transforms/ProtocolSync/ResidualObligation.h"
@@ -120,10 +121,12 @@ void printStatistics(
     counts["selected_directed_event_pairs"] = static_cast<std::int64_t>(statistics.selectedDirectedEventPairs);
     counts["selected_same_pipe_barriers"] = static_cast<std::int64_t>(statistics.selectedSamePipeBarriers);
     counts["selected_tail_drains"] = static_cast<std::int64_t>(statistics.selectedTailDrains);
-    counts["selected_ready_release_protocols"] =
-        static_cast<std::int64_t>(statistics.selectedReadyReleaseProtocols);
-    counts["selected_ready_release_lanes"] =
-        static_cast<std::int64_t>(statistics.selectedReadyReleaseLanes);
+    counts["selected_ready_release_protocols"] = static_cast<std::int64_t>(statistics.selectedReadyReleaseProtocols);
+    counts["selected_ready_release_lanes"] = static_cast<std::int64_t>(statistics.selectedReadyReleaseLanes);
+    counts["direct_repair_candidates"] = static_cast<std::int64_t>(statistics.directRepairCandidates);
+    counts["direct_repair_shared_candidates"] = static_cast<std::int64_t>(statistics.directRepairSharedCandidates);
+    counts["selected_direct_repairs"] = static_cast<std::int64_t>(statistics.selectedDirectRepairs);
+    counts["direct_repair_uncovered"] = static_cast<std::int64_t>(statistics.directRepairUncovered);
     counts["event_domains"] = static_cast<std::int64_t>(statistics.eventDomains);
     counts["max_event_domain_pressure"] = static_cast<std::int64_t>(statistics.maxEventDomainPressure);
     counts["maximum_event_id"] =
@@ -200,9 +203,10 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
         const bool analysisOnly = executionMode == "analysis";
         const bool emitOneShot = executionMode == "one-shot";
         const bool emitReadyRelease = executionMode == "ready-release";
-        if (!analysisOnly && !emitOneShot && !emitReadyRelease) {
+        const bool emitDirectRepair = executionMode == "direct-repair";
+        if (!analysisOnly && !emitOneShot && !emitReadyRelease && !emitDirectRepair) {
             getOperation().emitError("unknown ProtocolSync execution mode '")
-                << executionMode << "'; expected 'analysis', 'one-shot', or 'ready-release'";
+                << executionMode << "'; expected 'analysis', 'one-shot', 'ready-release', or 'direct-repair'";
             signalPassFailure();
             return;
         }
@@ -232,7 +236,7 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
                 if (function.isDeclaration()) {
                     continue;
                 }
-                if (failed(analyzeFunction(function, false, false))) {
+                if (failed(analyzeFunction(function, false, false, false))) {
                     flushStatistics(false);
                     signalPassFailure();
                     return;
@@ -250,7 +254,7 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
             if (function.isDeclaration()) {
                 continue;
             }
-            if (failed(analyzeFunction(function, emitOneShot, emitReadyRelease))) {
+            if (failed(analyzeFunction(function, emitOneShot, emitReadyRelease, emitDirectRepair))) {
                 flushStatistics(false);
                 signalPassFailure();
                 return;
@@ -292,8 +296,7 @@ private:
     void recordStatistics(
         func::FuncOp function, const ProtocolSyncStatistics& result, StringRef status, StringRef failureStage,
         ProtocolSyncProducer producer = ProtocolSyncProducer::AnalysisOnly, StringRef plannerResult = "analysis-only",
-        StringRef fallback = "none",
-        bool stagedMutation = false)
+        StringRef fallback = "none", bool stagedMutation = false)
     {
         if (!statistics) {
             return;
@@ -353,23 +356,158 @@ private:
     FailureOr<SyncInterpretationResult> evaluateWorld(
         func::FuncOp function, const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
         const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
-        const SyncSelectedWorld& world, ProtocolSyncStatistics& result)
+        const SyncSelectedWorld& world, ProtocolSyncStatistics& result, bool allowDump = true)
     {
         const ProtocolSyncClock::time_point start = ProtocolSyncClock::now();
         FailureOr<SyncInterpretationResult> interpretation =
             interpretSelectedWorld(schedule, stages, timelines, channels, world, &result);
-        result.interpretationUs = elapsedMicroseconds(start);
-        const bool shouldDump = succeeded(interpretation) && dumpMode == "residuals";
+        result.interpretationUs += elapsedMicroseconds(start);
+        const bool shouldDump = allowDump && succeeded(interpretation) && dumpMode == "residuals";
         if (shouldDump) {
             printResidualObligations(function, world, *interpretation, llvm::errs());
         }
         return interpretation;
     }
 
-    LogicalResult emitReadyReleasePlan(func::FuncOp function, const StructuredSyncIR& schedule,
-        const PipelineStageAnalysisResult& stages, const StorageTimelineAnalysisResult& timelines,
-        const ChannelAnalysisResult& channels, ProtocolSyncStatistics& result,
-        ProtocolSyncClock::time_point totalStart)
+    LogicalResult emitDirectRepairPlan(
+        func::FuncOp function, const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
+        const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
+        ProtocolSyncStatistics& result, ProtocolSyncClock::time_point totalStart)
+    {
+        SyncSelectedWorld world;
+        FailureOr<SyncInterpretationResult> initial =
+            evaluateWorld(function, schedule, stages, timelines, channels, world, result, false);
+        if (failed(initial)) {
+            result.totalUs = elapsedMicroseconds(totalStart);
+            recordStatistics(
+                function, result, "internal-error", "selected-world", ProtocolSyncProducer::InternalError,
+                "internal-error");
+            function.emitError("ProtocolSync direct-repair interpretation failed internally");
+            return failure();
+        }
+
+        ProtocolSyncClock::time_point start = ProtocolSyncClock::now();
+        ++result.protocolPlansAttempted;
+        FailureOr<SyncDirectRepairPlan> plan = buildDirectRepairPlan(schedule, stages, initial->obligations, &result);
+        result.planningUs = elapsedMicroseconds(start);
+        const bool validPlan = succeeded(plan) && succeeded(verifyDirectRepairPlan(
+                                                      schedule, stages, initial->obligations, *plan, &result));
+        if (!validPlan) {
+            result.totalUs = elapsedMicroseconds(totalStart);
+            ++result.protocolPlansRejected;
+            recordStatistics(
+                function, result, "internal-error", "direct-repair-planning", ProtocolSyncProducer::InternalError,
+                "internal-error");
+            function.emitError("ProtocolSync direct-repair planning failed internally");
+            return failure();
+        }
+        if (dumpMode == "plan" && plan->status != SyncDirectRepairPlanStatus::Ready) {
+            printDirectRepairPlan(function, *plan, llvm::errs());
+        }
+        const bool internalRejection = llvm::any_of(plan->rejections, [](const auto& rejection) {
+            return rejection.reason == SyncDirectRepairRejection::InternalInvariant;
+        });
+        if (internalRejection) {
+            result.totalUs = elapsedMicroseconds(totalStart);
+            ++result.protocolPlansRejected;
+            recordStatistics(
+                function, result, "internal-error", "direct-repair-planning", ProtocolSyncProducer::InternalError,
+                "internal-error");
+            function.emitError("ProtocolSync direct-repair planner violated an internal invariant");
+            return failure();
+        }
+        if (!plan->isComplete()) {
+            if (dumpMode == "residuals") {
+                printResidualObligations(function, world, *initial, llvm::errs());
+            }
+            ++result.protocolPlansRejected;
+            const bool targetRejection = llvm::any_of(plan->rejections, [](const auto& rejection) {
+                return rejection.reason == SyncDirectRepairRejection::UnsupportedTarget;
+            });
+            result.totalUs = elapsedMicroseconds(totalStart);
+            return handleUnsupported(
+                function, result, "direct-repair-planning", "unsupported", !targetRejection, totalStart);
+        }
+        if (plan->status == SyncDirectRepairPlanStatus::Empty) {
+            ++result.protocolPlansAdmitted;
+            result.totalUs = elapsedMicroseconds(totalStart);
+            recordStatistics(
+                function, result, "ok", "", ProtocolSyncProducer::ProtocolPlusDirectResiduals, "no-op", "none");
+            return success();
+        }
+
+        start = ProtocolSyncClock::now();
+        const bool validAllocation =
+            succeeded(allocateDirectRepairEvents(schedule, *plan, &result)) &&
+            succeeded(verifyDirectRepairPlan(schedule, stages, initial->obligations, *plan, &result));
+        if (!validAllocation) {
+            result.allocationUs = elapsedMicroseconds(start);
+            result.totalUs = elapsedMicroseconds(totalStart);
+            ++result.protocolPlansRejected;
+            recordStatistics(
+                function, result, "internal-error", "direct-repair-allocation", ProtocolSyncProducer::InternalError,
+                "internal-error");
+            function.emitError("ProtocolSync direct-repair allocation failed internally");
+            return failure();
+        }
+        result.allocationUs = elapsedMicroseconds(start);
+        if (dumpMode == "plan") {
+            printDirectRepairPlan(function, *plan, llvm::errs());
+        }
+        if (plan->status == SyncDirectRepairPlanStatus::ResourceInfeasible) {
+            ++result.protocolPlansRejected;
+            result.totalUs = elapsedMicroseconds(totalStart);
+            return handleUnsupported(
+                function, result, "direct-repair-allocation", "resource-infeasible", true, totalStart);
+        }
+
+        SmallVector<SyncDirectCandidateId, 8> selected;
+        for (const SyncDirectRepairCandidate& candidate : plan->candidates) {
+            selected.push_back(candidate.id);
+            ++result.selectedDirectRepairs;
+            result.logicalActions += candidate.kind == SyncDirectRepairKind::DirectedEvent ? 2 : 1;
+        }
+        if (failed(applyDirectRepairCandidates(*plan, initial->obligations, selected, world))) {
+            result.totalUs = elapsedMicroseconds(totalStart);
+            ++result.protocolPlansRejected;
+            recordStatistics(
+                function, result, "internal-error", "direct-repair-selected-world", ProtocolSyncProducer::InternalError,
+                "internal-error");
+            function.emitError("ProtocolSync direct-repair selected-world construction failed internally");
+            return failure();
+        }
+        FailureOr<SyncInterpretationResult> final =
+            evaluateWorld(function, schedule, stages, timelines, channels, world, result);
+        const bool completeWorld = succeeded(final) && final->isComplete();
+        if (!completeWorld) {
+            result.totalUs = elapsedMicroseconds(totalStart);
+            ++result.protocolPlansRejected;
+            recordStatistics(
+                function, result, "internal-error", "direct-repair-selected-world", ProtocolSyncProducer::InternalError,
+                "internal-error");
+            function.emitError("ProtocolSync direct-repair selected world is not obligation-complete");
+            return failure();
+        }
+        ++result.protocolPlansAdmitted;
+        if (failed(materializeAndVerifyDirectRepairPlanInDisposableModule(
+                schedule, stages, initial->obligations, *plan, &result))) {
+            result.totalUs = elapsedMicroseconds(totalStart);
+            recordStatistics(
+                function, result, "internal-error", "direct-repair-materialization-verification",
+                ProtocolSyncProducer::InternalError, "rejected");
+            return failure();
+        }
+        result.totalUs = elapsedMicroseconds(totalStart);
+        recordStatistics(
+            function, result, "ok", "", ProtocolSyncProducer::ProtocolPlusDirectResiduals, "materialized-direct-repair",
+            "none", /*stagedMutation=*/true);
+        return success();
+    }
+
+    LogicalResult emitReadyReleasePlan(
+        func::FuncOp function, const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
+        const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
+        ProtocolSyncStatistics& result, ProtocolSyncClock::time_point totalStart)
     {
         ProtocolSyncClock::time_point start = ProtocolSyncClock::now();
         ++result.protocolPlansAttempted;
@@ -380,8 +518,7 @@ private:
             result.totalUs = elapsedMicroseconds(totalStart);
             ++result.protocolPlansRejected;
             recordStatistics(
-                function, result, "internal-error", "planning", ProtocolSyncProducer::InternalError,
-                "internal-error");
+                function, result, "internal-error", "planning", ProtocolSyncProducer::InternalError, "internal-error");
             function.emitError("ProtocolSync ReadyRelease planning failed internally");
             return failure();
         }
@@ -466,8 +603,8 @@ private:
         if (failed(materializeAndVerifyReadyReleaseProtocolPlanInPlace(schedule, stages, *plan, &result))) {
             result.totalUs = elapsedMicroseconds(totalStart);
             recordStatistics(
-                function, result, "internal-error", "materialization-verification",
-                ProtocolSyncProducer::InternalError, "rejected");
+                function, result, "internal-error", "materialization-verification", ProtocolSyncProducer::InternalError,
+                "rejected");
             return failure();
         }
         result.totalUs = elapsedMicroseconds(totalStart);
@@ -477,7 +614,7 @@ private:
         return success();
     }
 
-    LogicalResult analyzeFunction(func::FuncOp function, bool emitOneShot, bool emitReadyRelease)
+    LogicalResult analyzeFunction(func::FuncOp function, bool emitOneShot, bool emitReadyRelease, bool emitDirectRepair)
     {
         ProtocolSyncStatistics result;
         LegacySyncIRAdapter adapter;
@@ -487,8 +624,7 @@ private:
         if (failed(adapter.buildSnapshot(function, legacy))) {
             result.legacySnapshotUs = elapsedMicroseconds(start);
             result.totalUs = elapsedMicroseconds(totalStart);
-            recordStatistics(
-                function, result, "internal-error", "legacy-shadow", ProtocolSyncProducer::InternalError);
+            recordStatistics(function, result, "internal-error", "legacy-shadow", ProtocolSyncProducer::InternalError);
             function.emitError("ProtocolSync legacy shadow construction failed");
             return failure();
         }
@@ -554,7 +690,7 @@ private:
                    channel.releaseOracle == SyncDemandOracleStatus::Mismatch;
         });
         const bool diagnosticRejected = !parity.matches() || !schedule.getFailures().empty() || oracleMismatch;
-        if (!emitOneShot && !emitReadyRelease) {
+        if (!emitOneShot && !emitReadyRelease && !emitDirectRepair) {
             SyncSelectedWorld world;
             FailureOr<SyncInterpretationResult> interpretation =
                 evaluateWorld(function, schedule, *stages, timelines, channels, world, result);
@@ -576,6 +712,9 @@ private:
         if (emitReadyRelease) {
             return emitReadyReleasePlan(function, schedule, *stages, timelines, channels, result, totalStart);
         }
+        if (emitDirectRepair) {
+            return emitDirectRepairPlan(function, schedule, *stages, timelines, channels, result, totalStart);
+        }
 
         start = ProtocolSyncClock::now();
         ++result.protocolPlansAttempted;
@@ -585,8 +724,7 @@ private:
             result.totalUs = elapsedMicroseconds(totalStart);
             ++result.protocolPlansRejected;
             recordStatistics(
-                function, result, "internal-error", "planning", ProtocolSyncProducer::InternalError,
-                "internal-error");
+                function, result, "internal-error", "planning", ProtocolSyncProducer::InternalError, "internal-error");
             function.emitError("ProtocolSync one-shot planning failed internally");
             return failure();
         }
@@ -663,16 +801,15 @@ private:
         if (plan->status == SyncOneShotPlanStatus::Empty) {
             ++result.protocolPlansAdmitted;
             result.totalUs = elapsedMicroseconds(totalStart);
-            recordStatistics(
-                function, result, "ok", "", ProtocolSyncProducer::ProtocolPlan, "no-op", "none");
+            recordStatistics(function, result, "ok", "", ProtocolSyncProducer::ProtocolPlan, "no-op", "none");
             return success();
         }
         ++result.protocolPlansAdmitted;
         if (failed(materializeAndVerifyOneShotProtocolPlanInPlace(schedule, *stages, *plan, &result))) {
             result.totalUs = elapsedMicroseconds(totalStart);
             recordStatistics(
-                function, result, "internal-error", "materialization-verification",
-                ProtocolSyncProducer::InternalError, "rejected");
+                function, result, "internal-error", "materialization-verification", ProtocolSyncProducer::InternalError,
+                "rejected");
             return failure();
         }
         result.totalUs = elapsedMicroseconds(totalStart);
