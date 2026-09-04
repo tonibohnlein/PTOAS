@@ -14,6 +14,7 @@
 #include "PTO/Transforms/ProtocolSync/ChannelProtocolIR.h"
 #include "PTO/Transforms/ProtocolSync/OneShotProtocol.h"
 #include "PTO/Transforms/ProtocolSync/ReadyReleaseProtocol.h"
+#include "PTO/Transforms/ProtocolSync/ResidualObligation.h"
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
@@ -110,6 +111,7 @@ void printStatistics(
     counts["channel_candidates_rejected"] = static_cast<std::int64_t>(statistics.channelCandidatesRejected);
     counts["interpreter_transitions"] = static_cast<std::int64_t>(statistics.interpreterTransitions);
     counts["interpreter_peak_states"] = static_cast<std::int64_t>(statistics.interpreterPeakStates);
+    counts["token_certificate_transitions"] = static_cast<std::int64_t>(statistics.tokenCertificateTransitions);
     counts["protocol_candidates"] = static_cast<std::int64_t>(statistics.protocolCandidates);
     counts["protocol_plans_attempted"] = static_cast<std::int64_t>(statistics.protocolPlansAttempted);
     counts["protocol_plans_admitted"] = static_cast<std::int64_t>(statistics.protocolPlansAdmitted);
@@ -144,6 +146,11 @@ void printStatistics(
         channelRejections[reason] = static_cast<std::int64_t>(count);
     }
     record["channel_rejections"] = std::move(channelRejections);
+    llvm::json::Object residualObligations;
+    for (const auto& [kind, count] : statistics.residualObligationsByKind) {
+        residualObligations[kind] = static_cast<std::int64_t>(count);
+    }
+    record["residual_obligations_by_kind"] = std::move(residualObligations);
     record["planner_result"] = plannerResult.str();
     record["fallback"] = fallback.str();
     llvm::json::Object timing;
@@ -155,6 +162,7 @@ void printStatistics(
     timing["storage_analysis"] = static_cast<std::int64_t>(statistics.storageAnalysisUs);
     timing["generation_analysis"] = static_cast<std::int64_t>(statistics.generationAnalysisUs);
     timing["channel_analysis"] = static_cast<std::int64_t>(statistics.channelAnalysisUs);
+    timing["interpretation"] = static_cast<std::int64_t>(statistics.interpretationUs);
     timing["planning"] = static_cast<std::int64_t>(statistics.planningUs);
     timing["allocation"] = static_cast<std::int64_t>(statistics.allocationUs);
     timing["materialization"] = static_cast<std::int64_t>(statistics.materializationUs);
@@ -204,9 +212,10 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
             signalPassFailure();
             return;
         }
-        if (dumpMode != "none" && dumpMode != "schedule" && dumpMode != "channels" && dumpMode != "plan") {
+        if (dumpMode != "none" && dumpMode != "schedule" && dumpMode != "channels" && dumpMode != "residuals" &&
+            dumpMode != "plan") {
             getOperation().emitError("unknown ProtocolSync dump mode '")
-                << dumpMode << "'; expected 'none', 'schedule', 'channels', or 'plan'";
+                << dumpMode << "'; expected 'none', 'schedule', 'channels', 'residuals', or 'plan'";
             signalPassFailure();
             return;
         }
@@ -341,6 +350,22 @@ private:
         return failure();
     }
 
+    FailureOr<SyncInterpretationResult> evaluateWorld(
+        func::FuncOp function, const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
+        const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
+        const SyncSelectedWorld& world, ProtocolSyncStatistics& result)
+    {
+        const ProtocolSyncClock::time_point start = ProtocolSyncClock::now();
+        FailureOr<SyncInterpretationResult> interpretation =
+            interpretSelectedWorld(schedule, stages, timelines, channels, world, &result);
+        result.interpretationUs = elapsedMicroseconds(start);
+        const bool shouldDump = succeeded(interpretation) && dumpMode == "residuals";
+        if (shouldDump) {
+            printResidualObligations(function, world, *interpretation, llvm::errs());
+        }
+        return interpretation;
+    }
+
     LogicalResult emitReadyReleasePlan(func::FuncOp function, const StructuredSyncIR& schedule,
         const PipelineStageAnalysisResult& stages, const StorageTimelineAnalysisResult& timelines,
         const ChannelAnalysisResult& channels, ProtocolSyncStatistics& result,
@@ -359,6 +384,35 @@ private:
                 "internal-error");
             function.emitError("ProtocolSync ReadyRelease planning failed internally");
             return failure();
+        }
+
+        SyncSelectedWorld world;
+        if (plan->status == SyncReadyReleasePlanStatus::Ready) {
+            FailureOr<SyncSelectedWorld> selected = buildSelectedWorld(*plan);
+            if (failed(selected)) {
+                result.totalUs = elapsedMicroseconds(totalStart);
+                ++result.protocolPlansRejected;
+                recordStatistics(
+                    function, result, "internal-error", "selected-world", ProtocolSyncProducer::InternalError,
+                    "internal-error");
+                function.emitError("ProtocolSync ReadyRelease selected-world construction failed internally");
+                return failure();
+            }
+            world = std::move(*selected);
+        }
+        if (plan->status != SyncReadyReleasePlanStatus::Unsupported) {
+            FailureOr<SyncInterpretationResult> interpretation =
+                evaluateWorld(function, schedule, stages, timelines, channels, world, result);
+            const bool incomplete = failed(interpretation) || !interpretation->isComplete();
+            if (incomplete) {
+                result.totalUs = elapsedMicroseconds(totalStart);
+                ++result.protocolPlansRejected;
+                recordStatistics(
+                    function, result, "internal-error", "selected-world", ProtocolSyncProducer::InternalError,
+                    "internal-error");
+                function.emitError("ProtocolSync ReadyRelease selected world is not obligation-complete");
+                return failure();
+            }
         }
 
         start = ProtocolSyncClock::now();
@@ -501,6 +555,16 @@ private:
         });
         const bool diagnosticRejected = !parity.matches() || !schedule.getFailures().empty() || oracleMismatch;
         if (!emitOneShot && !emitReadyRelease) {
+            SyncSelectedWorld world;
+            FailureOr<SyncInterpretationResult> interpretation =
+                evaluateWorld(function, schedule, *stages, timelines, channels, world, result);
+            if (failed(interpretation)) {
+                result.totalUs = elapsedMicroseconds(totalStart);
+                recordStatistics(
+                    function, result, "internal-error", "selected-world", ProtocolSyncProducer::InternalError);
+                function.emitError("ProtocolSync selected-world interpretation failed internally");
+                return failure();
+            }
             result.totalUs = elapsedMicroseconds(totalStart);
             recordStatistics(function, result, diagnosticRejected ? "diagnostic-rejection" : "ok", "");
             return success();
@@ -525,6 +589,35 @@ private:
                 "internal-error");
             function.emitError("ProtocolSync one-shot planning failed internally");
             return failure();
+        }
+
+        SyncSelectedWorld world;
+        if (plan->status == SyncOneShotPlanStatus::Ready) {
+            FailureOr<SyncSelectedWorld> selected = buildSelectedWorld(*plan, channels);
+            if (failed(selected)) {
+                result.totalUs = elapsedMicroseconds(totalStart);
+                ++result.protocolPlansRejected;
+                recordStatistics(
+                    function, result, "internal-error", "selected-world", ProtocolSyncProducer::InternalError,
+                    "internal-error");
+                function.emitError("ProtocolSync one-shot selected-world construction failed internally");
+                return failure();
+            }
+            world = std::move(*selected);
+        }
+        if (plan->status != SyncOneShotPlanStatus::Unsupported) {
+            FailureOr<SyncInterpretationResult> interpretation =
+                evaluateWorld(function, schedule, *stages, timelines, channels, world, result);
+            const bool incomplete = failed(interpretation) || !interpretation->isComplete();
+            if (incomplete) {
+                result.totalUs = elapsedMicroseconds(totalStart);
+                ++result.protocolPlansRejected;
+                recordStatistics(
+                    function, result, "internal-error", "selected-world", ProtocolSyncProducer::InternalError,
+                    "internal-error");
+                function.emitError("ProtocolSync one-shot selected world is not obligation-complete");
+                return failure();
+            }
         }
 
         start = ProtocolSyncClock::now();

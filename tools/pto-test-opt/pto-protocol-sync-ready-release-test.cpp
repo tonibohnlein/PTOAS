@@ -13,6 +13,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
 #include "PTO/Transforms/ProtocolSync/ReadyReleaseProtocol.h"
+#include "PTO/Transforms/ProtocolSync/ResidualObligation.h"
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -475,6 +476,37 @@ bool testReservedEventAllocation(MLIRContext& context)
     return passed;
 }
 
+bool testSelectedWorldInterpreter(MLIRContext& context)
+{
+    OwningOpRef<ModuleOp> module = parseFixture(context);
+    if (!check(static_cast<bool>(module), "cannot parse selected-world fixture")) {
+        return false;
+    }
+    func::FuncOp function = *module->getOps<func::FuncOp>().begin();
+    AnalysisFixture fixture(function);
+    if (!check(buildAnalysis(fixture, false), "cannot build selected-world plan")) {
+        return false;
+    }
+    FailureOr<SyncSelectedWorld> world = buildSelectedWorld(*fixture.plan);
+    if (!check(succeeded(world), "cannot adapt ReadyRelease selected world")) {
+        return false;
+    }
+    FailureOr<SyncInterpretationResult> selected =
+        interpretSelectedWorld(fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels, *world);
+    bool passed = check(succeeded(selected) && selected->isComplete(), "complete selected world left residuals");
+
+    SyncSelectedWorld incomplete = *world;
+    incomplete.completions.pop_back();
+    passed &= check(
+        failed(
+            interpretSelectedWorld(fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels, incomplete)),
+        "missing release transfer was reported as a repairable residual");
+    SyncReadyReleasePlan malformed = *fixture.plan;
+    malformed.lanes.front().logicalLane = malformed.capacity;
+    passed &= check(failed(buildSelectedWorld(malformed)), "out-of-range logical lane was accepted");
+    return passed;
+}
+
 } // namespace
 
 int main()
@@ -487,12 +519,14 @@ int main()
     passed &= testVerifierNegatives(context);
     passed &= testAtomicMalformedPlan(context);
     passed &= testReservedEventAllocation(context);
+    passed &= testSelectedWorldInterpreter(context);
     if (passed) {
         llvm::outs() << "protocol-sync ReadyRelease logical planning: pass\n";
         llvm::outs() << "protocol-sync ReadyRelease depth-two planning: pass\n";
         llvm::outs() << "protocol-sync ReadyRelease emitted-IR verification: pass\n";
         llvm::outs() << "protocol-sync ReadyRelease atomic rejection: pass\n";
         llvm::outs() << "protocol-sync ReadyRelease reservation allocation: pass\n";
+        llvm::outs() << "protocol-sync ReadyRelease selected-world interpretation: pass\n";
     }
     return passed ? 0 : 1;
 }

@@ -217,6 +217,7 @@ StorageTimelineAnalysisResult mlir::pto::protocol_sync::analyzeStorageTimelines(
         SyncGenerationTimeline timeline;
         timeline.id = result.timelines.size();
         timeline.family = accessClass.family;
+        timeline.accesses.assign(accessClass.accesses.begin(), accessClass.accesses.end());
         timeline.slice = accessClass.slice;
         timeline.slot = accessClass.slot;
         if (statistics) {

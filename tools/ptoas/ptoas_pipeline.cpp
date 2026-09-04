@@ -1344,10 +1344,12 @@ static LogicalResult validateProtocolSyncConfiguration() {
     return failure();
   }
   if (protocolSyncDump != "none" && protocolSyncDump != "schedule" &&
-      protocolSyncDump != "channels" && protocolSyncDump != "plan") {
+      protocolSyncDump != "channels" && protocolSyncDump != "residuals" &&
+      protocolSyncDump != "plan") {
     llvm::errs() << "Error: invalid --protocol-sync-dump='"
                  << protocolSyncDump
-                 << "', expected 'none', 'schedule', 'channels', or 'plan'.\n";
+                 << "', expected 'none', 'schedule', 'channels', 'residuals', "
+                    "or 'plan'.\n";
     return failure();
   }
   if (!protocolSyncActive &&

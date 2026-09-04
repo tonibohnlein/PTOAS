@@ -37,7 +37,7 @@ Use:
 
 ```text
 --protocol-sync-analysis-only
---protocol-sync-dump=schedule|channels
+--protocol-sync-dump=schedule|channels|residuals
 --protocol-sync-statistics
 ```
 
@@ -183,3 +183,7 @@ Checkpoint E implements strict `ReadyRelease<1/2>` prime/body/drain protocols
 described in `docs/designs/ptoas-protocol-sync-checkpoint-e.md`. The exact
 depth-two revision still requires its purpose-built A3 device gate; neither
 host admission nor prior CanonicalSync evidence is a hardware certificate.
+
+Checkpoint F Commit 12 adds the generation-aware selected-world interpreter
+described in `docs/designs/ptoas-protocol-sync-checkpoint-f.md`. It exposes
+typed residual obligations but deliberately does not repair or select them yet.

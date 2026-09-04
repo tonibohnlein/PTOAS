@@ -13,3 +13,4 @@
 // CHECK-NEXT: protocol-sync malformed-plan rejection: pass
 // CHECK-NEXT: protocol-sync emitted-IR verifier rejection: pass
 // CHECK-NEXT: protocol-sync event allocation: pass
+// CHECK-NEXT: protocol-sync selected-world interpretation: pass

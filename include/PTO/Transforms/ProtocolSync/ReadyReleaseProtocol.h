@@ -88,6 +88,7 @@ struct SyncReadyReleasePlan {
     PIPE consumerPipe = PIPE::PIPE_UNASSIGNED;
     SyncPhaseId producerPhase = kInvalidSyncId;
     SyncPhaseId consumerPhase = kInvalidSyncId;
+    SyncRegionId loopRegion = kInvalidSyncId;
     Operation* loopOperation = nullptr;
     Operation* producerOperation = nullptr;
     Operation* consumerOperation = nullptr;

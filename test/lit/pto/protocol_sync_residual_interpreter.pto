@@ -1,0 +1,83 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-analysis-only --protocol-sync-dump=residuals \
+// RUN:   %S/protocol_sync_one_shot.pto -o /dev/null 2> %t.analysis0
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-analysis-only --protocol-sync-dump=residuals \
+// RUN:   %S/protocol_sync_one_shot.pto -o /dev/null 2> %t.analysis1
+// RUN: cmp %t.analysis0 %t.analysis1
+// RUN: FileCheck %s --input-file=%t.analysis0 --check-prefix=EMPTY
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-analysis-only --protocol-sync-dump=residuals \
+// RUN:   --protocol-sync-statistics %S/protocol_sync_one_shot.pto \
+// RUN:   -o /dev/null 2> %t.analysis-stats
+// RUN: FileCheck %s --input-file=%t.analysis-stats --check-prefix=EMPTY-STATS
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-one-shot --protocol-sync-fallback=fail \
+// RUN:   --protocol-sync-dump=residuals --protocol-sync-statistics \
+// RUN:   %S/protocol_sync_one_shot.pto -o /dev/null 2> %t.one-shot
+// RUN: FileCheck %s --input-file=%t.one-shot --check-prefix=ONE-SHOT
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-ready-release --protocol-sync-fallback=fail \
+// RUN:   --protocol-sync-dump=residuals --protocol-sync-statistics \
+// RUN:   %S/protocol_sync_ready_release_1.pto -o /dev/null 2> %t.ready-release-one
+// RUN: FileCheck %s --input-file=%t.ready-release-one --check-prefix=RR1
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-ready-release --protocol-sync-fallback=fail \
+// RUN:   --protocol-sync-dump=residuals %S/protocol_sync_ready_release_2.pto \
+// RUN:   -o /dev/null 2> %t.ready-release-two
+// RUN: FileCheck %s --input-file=%t.ready-release-two --check-prefix=RR2-WORLDS
+// RUN: FileCheck %s --input-file=%t.ready-release-two --check-prefix=RR2-PROTOCOLS
+// RUN: FileCheck %s --input-file=%t.ready-release-two --check-prefix=RR2-COMPLETIONS
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-analysis-only --protocol-sync-dump=residuals \
+// RUN:   %S/protocol_sync_channel_diagnostics.pto -o /dev/null 2> %t.residuals
+// RUN: FileCheck %s --input-file=%t.residuals --check-prefix=RESIDUALS
+
+// EMPTY: PROTOCOL-SYNC selected-world function=@linear_one_shot status=residual
+// EMPTY-SAME: protocols=0 completions=0 visibility=0 exit-completions=0 obligations=6
+// EMPTY: obligation #0 kind=completion source=#0 target=#1 generation=#0 channel=#0
+// EMPTY: obligation #5 kind=exit-completion source=#3 target=#3
+// EMPTY-STATS: "residual_obligations":6
+// EMPTY-STATS: "residual_obligations_by_kind":{"completion":3,"exit-completion":3}
+
+// ONE-SHOT: PROTOCOL-SYNC selected-world function=@linear_one_shot status=complete
+// ONE-SHOT-SAME: protocols=3 completions=3 visibility=0 exit-completions=4 obligations=0
+// ONE-SHOT: selected-protocol kind=one-shot-publish channel=#0 generation=#0 capacity=1
+// ONE-SHOT: selected-completion source=#2 target=#3 control=must-execute iteration=same-iteration distance=0
+// ONE-SHOT: "interpreter_peak_states":1
+// ONE-SHOT-SAME: "interpreter_transitions":6
+// ONE-SHOT: "residual_obligations_by_kind":{}
+// ONE-SHOT: "interpretation":{{[0-9]+}}
+
+// RR1: PROTOCOL-SYNC selected-world function=@ready_release_one status=complete
+// RR1-SAME: protocols=1 completions=2 visibility=0 exit-completions=2 obligations=0
+// RR1: selected-protocol kind=ready-release channel=#0 generation=#0 capacity=1
+// RR1: selected-completion source=#1 target=#0 control=must-execute iteration=loop-carried distance=1
+// RR1: "interpreter_peak_states":1
+// RR1-SAME: "interpreter_transitions":6
+// RR1: "token_certificate_transitions":16
+
+// RR2-WORLDS-COUNT-3: PROTOCOL-SYNC selected-world function=@ready_release_two_{{.*}} status=complete
+// RR2-PROTOCOLS-COUNT-3: selected-protocol kind=ready-release channel=#0 generation=#0 capacity=2
+// RR2-COMPLETIONS-COUNT-3: source=#1 target=#0 {{.*}} distance=2
+
+// RESIDUALS: PROTOCOL-SYNC selected-world function=@depth_one_recurrence status=residual
+// RESIDUALS: obligation #0 kind=completion source=#0 target=#1 generation=#0 channel=#0
+// RESIDUALS-NEXT: obligation #1 kind=reclamation source=#1 target=#0 generation=#0 channel=#0
+// RESIDUALS-SAME: iteration=loop-carried distance=1
+// RESIDUALS: PROTOCOL-SYNC selected-world function=@sequential_generations status=residual
+// RESIDUALS: obligation #1 kind=reclamation source=#1 target=#2 generation=#0 channel=#0
+// RESIDUALS: PROTOCOL-SYNC selected-world function=@partial_overlapping_writes status=residual
+// RESIDUALS: obligation #0 kind=unknown-alias source=#0 target=#0 generation=#0 channel=none
+// RESIDUALS: obligation #1 kind=unknown-alias source=#1 target=#1 generation=#1 channel=none
+// RESIDUALS: PROTOCOL-SYNC selected-world function=@in_place_access status=residual
+// RESIDUALS: obligation #0 kind=acc-conflict source=#0 target=#1 generation=#0 channel=none

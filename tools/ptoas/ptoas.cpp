@@ -243,7 +243,7 @@ llvm::cl::opt<std::string> protocolSyncFallback(
 
 llvm::cl::opt<std::string> protocolSyncDump(
     "protocol-sync-dump",
-    llvm::cl::desc("ProtocolSync diagnostic dump: none, schedule, channels, or plan"),
+    llvm::cl::desc("ProtocolSync diagnostic dump: none, schedule, channels, residuals, or plan"),
     llvm::cl::init("none"));
 
 llvm::cl::opt<bool> protocolSyncStatistics(

@@ -381,6 +381,7 @@ FailureOr<SyncReadyReleasePlan> mlir::pto::protocol_sync::buildReadyReleaseProto
     plan.consumerPipe = consumer->pipe;
     plan.producerPhase = producer->id;
     plan.consumerPhase = consumer->id;
+    plan.loopRegion = loopRegion->id;
     plan.loopOperation = loopRegion->operation;
     plan.producerOperation = producer->operation;
     plan.consumerOperation = consumer->operation;
@@ -419,8 +420,7 @@ FailureOr<SyncReadyReleasePlan> mlir::pto::protocol_sync::buildReadyReleaseProto
     plan.status = SyncReadyReleasePlanStatus::Ready;
     if (statistics) {
         ++statistics->protocolCandidates;
-        statistics->interpreterTransitions += plan.tokenCertificate.transitionApplications;
-        statistics->interpreterPeakStates = std::max<std::uint64_t>(statistics->interpreterPeakStates, 1);
+        statistics->tokenCertificateTransitions += plan.tokenCertificate.transitionApplications;
     }
     return plan;
 }

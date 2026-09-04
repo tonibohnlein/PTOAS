@@ -73,6 +73,7 @@ struct SyncNextOverwrite {
 struct SyncGenerationTimeline {
     SyncGenerationId id = kInvalidSyncId;
     SyncStorageFamilyId family = kInvalidSyncId;
+    llvm::SmallVector<SyncAccessId, 4> accesses;
     llvm::SmallVector<SyncByteInterval, 2> slice;
     std::optional<SyncSlotExpression> slot;
     SyncGenerationKind generationKind = SyncGenerationKind::OneShot;

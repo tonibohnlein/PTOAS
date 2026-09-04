@@ -193,6 +193,7 @@ public:
 private:
     friend class StructuredSyncIRBuilder;
     friend class StructuredSyncIRConstruction;
+    friend class StructuredSyncIRTestPeer;
     func::FuncOp function;
     bool frozen = false;
     llvm::SmallVector<SyncRegion, 16> regions;

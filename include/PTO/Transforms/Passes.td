@@ -58,7 +58,7 @@ def PTOProtocolSync : Pass<"pto-protocol-sync", "ModuleOp"> {
     Option<"fallbackMode", "fallback-mode", "std::string", "\"legacy\"",
            "Whole-function fallback for unsupported plans: legacy or fail">,
     Option<"dumpMode", "dump", "std::string", "\"none\"",
-           "Diagnostic dump: none, schedule, channels, or plan">,
+           "Diagnostic dump: none, schedule, channels, residuals, or plan">,
     Option<"statistics", "statistics", "bool", "false",
            "Emit stable ProtocolSync analysis and planning statistics">
   ];

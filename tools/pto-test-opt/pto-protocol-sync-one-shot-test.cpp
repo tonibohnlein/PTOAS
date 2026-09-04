@@ -12,6 +12,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
 #include "PTO/Transforms/ProtocolSync/OneShotProtocol.h"
+#include "PTO/Transforms/ProtocolSync/ResidualObligation.h"
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -27,10 +28,31 @@
 
 #include <functional>
 #include <string>
+#include <utility>
 
 using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::protocol_sync;
+
+namespace mlir::pto::protocol_sync {
+
+class StructuredSyncIRTestPeer {
+public:
+    static bool markGlobalReadOrdered(StructuredSyncIR& schedule, SyncPhaseId phase)
+    {
+        for (SyncAccess& access : schedule.accesses) {
+            const bool isTargetRead = access.phase == phase && access.mode == SyncAccessMode::Read &&
+                                      access.visibility == SyncVisibilityClass::Global;
+            if (isTargetRead) {
+                access.mode = SyncAccessMode::Ordered;
+                return true;
+            }
+        }
+        return false;
+    }
+};
+
+} // namespace mlir::pto::protocol_sync
 
 namespace {
 
@@ -106,6 +128,115 @@ module attributes {pto.target_arch = "a3"} {
 }
 )mlir";
 
+constexpr StringLiteral kSSACompletionFixture = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @ssa_completion(
+      %input: !pto.ptr<i32, gm>, %output: !pto.ptr<i32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %value = pto.load_scalar %input[%c0] : !pto.ptr<i32, gm> -> i32
+    pto.store_scalar %value, %output[%c0] : !pto.ptr<i32, gm>, i32
+    return
+  }
+}
+)mlir";
+
+constexpr StringLiteral kSSAPureForwardingFixture = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @ssa_pure_forwarding(
+      %input: !pto.ptr<i32, gm>, %output: !pto.ptr<i32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : i32
+    %value = pto.load_scalar %input[%c0] : !pto.ptr<i32, gm> -> i32
+    %forwarded = arith.addi %value, %c1 : i32
+    pto.store_scalar %forwarded, %output[%c0] : !pto.ptr<i32, gm>, i32
+    return
+  }
+}
+)mlir";
+
+constexpr StringLiteral kSSAChoiceFixture = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @ssa_choice(
+      %condition: i1, %then_input: !pto.ptr<i32, gm>,
+      %else_input: !pto.ptr<i32, gm>, %output: !pto.ptr<i32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %value = scf.if %condition -> (i32) {
+      %then_value = pto.load_scalar %then_input[%c0]
+          : !pto.ptr<i32, gm> -> i32
+      scf.yield %then_value : i32
+    } else {
+      %else_value = pto.load_scalar %else_input[%c0]
+          : !pto.ptr<i32, gm> -> i32
+      scf.yield %else_value : i32
+    }
+    pto.store_scalar %value, %output[%c0] : !pto.ptr<i32, gm>, i32
+    return
+  }
+}
+)mlir";
+
+constexpr StringLiteral kSSALoopCarriedFixture = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @ssa_loop_carried(
+      %initial: i32, %input: !pto.ptr<i32, gm>,
+      %output: !pto.ptr<i32, gm>, %trip_count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %result = scf.for %index = %c0 to %trip_count step %c1
+        iter_args(%carried = %initial) -> (i32) {
+      pto.store_scalar %carried, %output[%c0] : !pto.ptr<i32, gm>, i32
+      %next = pto.load_scalar %input[%c0] : !pto.ptr<i32, gm> -> i32
+      scf.yield %next : i32
+    }
+    pto.store_scalar %result, %output[%c0] : !pto.ptr<i32, gm>, i32
+    return
+  }
+}
+)mlir";
+
+constexpr StringLiteral kNestedMemoryFixture = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @nested_memory(
+      %buffer: !pto.partition_tensor_view<16x16xf16>,
+      %outer_count: index, %inner_count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %outer = %c0 to %outer_count step %c1 {
+      scf.for %inner = %c0 to %inner_count step %c1 {
+        pto.tload ins(%buffer : !pto.partition_tensor_view<16x16xf16>)
+                  outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                   outs(%buffer : !pto.partition_tensor_view<16x16xf16>)
+      }
+    }
+    return
+  }
+}
+)mlir";
+
+constexpr StringLiteral kVisibilityFixture = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @gm_visibility(%buffer: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %c512 = arith.constant 512 : i64
+    %source = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    %target = pto.alloc_tile addr = %c512 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%buffer : !pto.partition_tensor_view<16x16xf16>)
+    pto.tload ins(%buffer : !pto.partition_tensor_view<16x16xf16>)
+              outs(%target : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+}
+)mlir";
+
 bool check(bool condition, const Twine& message)
 {
     if (condition) {
@@ -166,6 +297,14 @@ bool buildAnalysis(AnalysisFixture& fixture)
     fixture.channels = analyzeChannels(fixture.schedule, *fixture.stages, fixture.timelines);
     compareWithLegacyDemandOracle(
         fixture.legacy, fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels);
+    return true;
+}
+
+bool buildOneShotAnalysis(AnalysisFixture& fixture)
+{
+    if (!buildAnalysis(fixture)) {
+        return false;
+    }
     fixture.plan = buildOneShotProtocolPlan(fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels);
     if (failed(fixture.plan) || fixture.plan->status != SyncOneShotPlanStatus::Ready) {
         return false;
@@ -233,7 +372,9 @@ bool testMalformedPlan(MLIRContext& context, StringRef name, const std::function
     }
     func::FuncOp function = *module->getOps<func::FuncOp>().begin();
     AnalysisFixture fixture(function);
-    if (!check(buildAnalysis(fixture), Twine(name) + ": cannot build ready plan")) {
+    const bool analysisBuilt = buildOneShotAnalysis(fixture);
+    const bool fixtureReady = check(analysisBuilt, Twine(name) + ": cannot build ready plan");
+    if (!fixtureReady) {
         return false;
     }
     SyncOneShotPlan malformed = *fixture.plan;
@@ -293,7 +434,7 @@ bool testMalformedMaterialization(MLIRContext& context, StringRef name, const Co
     }
     func::FuncOp function = *module->getOps<func::FuncOp>().begin();
     AnalysisFixture fixture(function);
-    const bool analysisReady = buildAnalysis(fixture);
+    const bool analysisReady = buildOneShotAnalysis(fixture);
     const std::string analysisFailure = (Twine(name) + ": cannot build ready plan").str();
     if (!check(analysisReady, analysisFailure)) {
         return false;
@@ -371,7 +512,7 @@ bool testVerifierRejectsDuplicateEventKey(MLIRContext& context)
     }
     func::FuncOp function = *module->getOps<func::FuncOp>().begin();
     AnalysisFixture fixture(function);
-    if (!check(buildAnalysis(fixture), "cannot build repeated-domain plan")) {
+    if (!check(buildOneShotAnalysis(fixture), "cannot build repeated-domain plan")) {
         return false;
     }
 
@@ -420,7 +561,7 @@ bool testEventAllocation(MLIRContext& context)
     }
     func::FuncOp function = *module->getOps<func::FuncOp>().begin();
     AnalysisFixture fixture(function);
-    if (!check(buildAnalysis(fixture), "cannot build allocation fixture")) {
+    if (!check(buildOneShotAnalysis(fixture), "cannot build allocation fixture")) {
         return false;
     }
 
@@ -479,6 +620,232 @@ bool testEventAllocation(MLIRContext& context)
     return passed;
 }
 
+bool testSelectedWorldInterpreter(MLIRContext& context)
+{
+    OwningOpRef<ModuleOp> module = parseFixture(context);
+    if (!check(static_cast<bool>(module), "cannot parse selected-world fixture")) {
+        return false;
+    }
+    func::FuncOp function = *module->getOps<func::FuncOp>().begin();
+    AnalysisFixture fixture(function);
+    if (!check(buildOneShotAnalysis(fixture), "cannot build selected-world plan")) {
+        return false;
+    }
+    FailureOr<SyncSelectedWorld> world = buildSelectedWorld(*fixture.plan, fixture.channels);
+    if (!check(succeeded(world), "cannot adapt one-shot selected world")) {
+        return false;
+    }
+    FailureOr<SyncInterpretationResult> selected =
+        interpretSelectedWorld(fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels, *world);
+    bool passed = check(succeeded(selected) && selected->isComplete(), "complete selected world left residuals");
+
+    SyncSelectedWorld empty;
+    FailureOr<SyncInterpretationResult> residuals =
+        interpretSelectedWorld(fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels, empty);
+    passed &= check(succeeded(residuals) && !residuals->isComplete(), "empty selected world did not expose residuals");
+    if (world->completions.empty()) {
+        return false;
+    }
+    world->completions.erase(world->completions.begin());
+    ProtocolSyncStatistics partialStatistics;
+    passed &= check(
+        failed(interpretSelectedWorld(
+            fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels, *world, &partialStatistics)),
+        "incomplete selected protocol was reported as a repairable residual");
+    passed &= check(
+        partialStatistics.interpreterTransitions > 0,
+        "failed interpretation discarded completed transition statistics");
+
+    FailureOr<SyncSelectedWorld> malformed = buildSelectedWorld(*fixture.plan, fixture.channels);
+    if (!check(succeeded(malformed), "cannot rebuild one-shot selected world")) {
+        return false;
+    }
+    SyncSelectedCompletion reverse = malformed->completions.front();
+    std::swap(reverse.source, reverse.target);
+    malformed->completions.push_back(reverse);
+    passed &= check(
+        failed(interpretSelectedWorld(
+            fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels, *malformed)),
+        "backward same-iteration completion was accepted");
+    return passed;
+}
+
+bool hasObligation(const SyncInterpretationResult& result, SyncObligationKind kind)
+{
+    return llvm::any_of(result.obligations, [&](const SyncResidualObligation& obligation) {
+        return obligation.kind == kind;
+    });
+}
+
+bool hasObligationBetween(const SyncInterpretationResult& result, SyncObligationKind kind, SyncPhaseId source,
+    SyncPhaseId target, SyncIterationRelationKind iteration)
+{
+    return llvm::any_of(result.obligations, [&](const SyncResidualObligation& obligation) {
+        return obligation.kind == kind && obligation.source == source && obligation.target == target &&
+               obligation.iteration.kind == iteration;
+    });
+}
+
+bool hasObligationWithRelation(const SyncInterpretationResult& result, SyncObligationKind kind, SyncPhaseId source,
+    SyncPhaseId target, const SyncIterationRelation& relation)
+{
+    return llvm::any_of(result.obligations, [&](const SyncResidualObligation& obligation) {
+        return obligation.kind == kind && obligation.source == source && obligation.target == target &&
+               obligation.iteration.kind == relation.kind && obligation.iteration.distance == relation.distance &&
+               obligation.iteration.carrier == relation.carrier;
+    });
+}
+
+bool testIndependentResidualEffects(MLIRContext& context)
+{
+    OwningOpRef<ModuleOp> ssaModule = parseFixture(context, kSSACompletionFixture);
+    if (!check(static_cast<bool>(ssaModule), "cannot parse SSA-completion fixture")) {
+        return false;
+    }
+    AnalysisFixture ssaFixture(*ssaModule->getOps<func::FuncOp>().begin());
+    if (!check(buildAnalysis(ssaFixture), "cannot analyze SSA-completion fixture")) {
+        return false;
+    }
+    SyncSelectedWorld empty;
+    FailureOr<SyncInterpretationResult> uncovered = interpretSelectedWorld(
+        ssaFixture.schedule, *ssaFixture.stages, ssaFixture.timelines, ssaFixture.channels, empty);
+    bool passed = check(
+        succeeded(uncovered) && hasObligation(*uncovered, SyncObligationKind::SSACompletion),
+        "uncovered cross-phase SSA dependency was not materialized");
+
+    SyncSelectedWorld ordered;
+    ordered.completions.push_back(
+        {0, 1, SyncControlRelation::MustExecute, {SyncIterationRelationKind::SameIteration, 0}});
+    ordered.exitCompletedPhases.push_back(1);
+    FailureOr<SyncInterpretationResult> covered = interpretSelectedWorld(
+        ssaFixture.schedule, *ssaFixture.stages, ssaFixture.timelines, ssaFixture.channels, ordered);
+    passed &= check(
+        succeeded(covered) && !hasObligation(*covered, SyncObligationKind::SSACompletion),
+        "selected completion did not discharge the SSA dependency");
+
+    OwningOpRef<ModuleOp> pureModule = parseFixture(context, kSSAPureForwardingFixture);
+    if (!check(static_cast<bool>(pureModule), "cannot parse pure SSA-forwarding fixture")) {
+        return false;
+    }
+    AnalysisFixture pureFixture(*pureModule->getOps<func::FuncOp>().begin());
+    if (!check(buildAnalysis(pureFixture), "cannot analyze pure SSA-forwarding fixture")) {
+        return false;
+    }
+    FailureOr<SyncInterpretationResult> pure = interpretSelectedWorld(
+        pureFixture.schedule, *pureFixture.stages, pureFixture.timelines, pureFixture.channels, empty);
+    passed &= check(
+        succeeded(pure) && hasObligationBetween(
+                               *pure, SyncObligationKind::SSACompletion, 0, 1,
+                               SyncIterationRelationKind::SameIteration),
+        "physical SSA producer was lost through a pure operation");
+
+    OwningOpRef<ModuleOp> choiceModule = parseFixture(context, kSSAChoiceFixture);
+    if (!check(static_cast<bool>(choiceModule), "cannot parse conditional SSA fixture")) {
+        return false;
+    }
+    AnalysisFixture choiceFixture(*choiceModule->getOps<func::FuncOp>().begin());
+    if (!check(buildAnalysis(choiceFixture), "cannot analyze conditional SSA fixture")) {
+        return false;
+    }
+    FailureOr<SyncInterpretationResult> choice = interpretSelectedWorld(
+        choiceFixture.schedule, *choiceFixture.stages, choiceFixture.timelines, choiceFixture.channels, empty);
+    const bool thenDependence = succeeded(choice) && hasObligationBetween(
+                                                        *choice, SyncObligationKind::SSACompletion, 0, 2,
+                                                        SyncIterationRelationKind::SameIteration);
+    const bool elseDependence = succeeded(choice) && hasObligationBetween(
+                                                        *choice, SyncObligationKind::SSACompletion, 1, 2,
+                                                        SyncIterationRelationKind::SameIteration);
+    passed &= check(thenDependence && elseDependence, "conditional SSA sources were not preserved across yields");
+
+    OwningOpRef<ModuleOp> loopModule = parseFixture(context, kSSALoopCarriedFixture);
+    if (!check(static_cast<bool>(loopModule), "cannot parse loop-carried SSA fixture")) {
+        return false;
+    }
+    AnalysisFixture loopFixture(*loopModule->getOps<func::FuncOp>().begin());
+    if (!check(buildAnalysis(loopFixture), "cannot analyze loop-carried SSA fixture")) {
+        return false;
+    }
+    FailureOr<SyncInterpretationResult> loop = interpretSelectedWorld(
+        loopFixture.schedule, *loopFixture.stages, loopFixture.timelines, loopFixture.channels, empty);
+    const bool loopDependence = succeeded(loop) && hasObligationBetween(
+                                                    *loop, SyncObligationKind::SSACompletion, 1, 0,
+                                                    SyncIterationRelationKind::LoopCarried);
+    passed &= check(loopDependence, "loop-carried physical SSA dependence was not preserved");
+
+    OwningOpRef<ModuleOp> nestedModule = parseFixture(context, kNestedMemoryFixture);
+    if (!check(static_cast<bool>(nestedModule), "cannot parse nested memory fixture")) {
+        return false;
+    }
+    AnalysisFixture nestedFixture(*nestedModule->getOps<func::FuncOp>().begin());
+    if (!check(buildAnalysis(nestedFixture), "cannot analyze nested memory fixture")) {
+        return false;
+    }
+    ArrayRef<SyncPhase> nestedPhases = nestedFixture.schedule.getPhases();
+    const bool validNestedShape = nestedPhases.size() == 2 && nestedPhases[0].iterationDomain.loops.size() == 2;
+    if (!check(validNestedShape, "nested memory fixture has an unexpected phase shape")) {
+        return false;
+    }
+    const SyncRegionId outerCarrier = nestedPhases[0].iterationDomain.loops.front();
+    const SyncRegionId innerCarrier = nestedPhases[0].iterationDomain.loops.back();
+    SyncSelectedWorld innerOnly;
+    innerOnly.visibility.push_back(
+        {1, 0, SyncControlRelation::MustExecute,
+         {SyncIterationRelationKind::LoopCarried, 1, innerCarrier}});
+    innerOnly.exitCompletedPhases.append({0, 1});
+    FailureOr<SyncInterpretationResult> nested = interpretSelectedWorld(
+        nestedFixture.schedule, *nestedFixture.stages, nestedFixture.timelines, nestedFixture.channels, innerOnly);
+    const SyncIterationRelation outerRelation{SyncIterationRelationKind::Unknown, 0, outerCarrier};
+    const SyncIterationRelation innerRelation{SyncIterationRelationKind::LoopCarried, 1, innerCarrier};
+    const bool outerResidual = succeeded(nested) && hasObligationWithRelation(
+                                                        *nested, SyncObligationKind::Visibility, 1, 0, outerRelation);
+    const bool innerDischarged = succeeded(nested) && !hasObligationWithRelation(
+                                                          *nested, SyncObligationKind::Visibility, 1, 0,
+                                                          innerRelation);
+    passed &= check(
+        outerResidual && innerDischarged,
+        "inner-loop visibility incorrectly discharged the enclosing-loop boundary");
+
+    OwningOpRef<ModuleOp> visibilityModule = parseFixture(context, kVisibilityFixture);
+    if (!check(static_cast<bool>(visibilityModule), "cannot parse GM-visibility fixture")) {
+        return false;
+    }
+    AnalysisFixture visibilityFixture(*visibilityModule->getOps<func::FuncOp>().begin());
+    if (!check(buildAnalysis(visibilityFixture), "cannot analyze GM-visibility fixture")) {
+        return false;
+    }
+    SyncSelectedWorld completionOnly;
+    completionOnly.completions.push_back(
+        {0, 1, SyncControlRelation::MustExecute, {SyncIterationRelationKind::SameIteration, 0}});
+    completionOnly.exitCompletedPhases.append({0, 1});
+    FailureOr<SyncInterpretationResult> visibility = interpretSelectedWorld(
+        visibilityFixture.schedule, *visibilityFixture.stages, visibilityFixture.timelines, visibilityFixture.channels,
+        completionOnly);
+    passed &= check(
+        succeeded(visibility) && hasObligation(*visibility, SyncObligationKind::Visibility),
+        "generic phase completion incorrectly discharged GM visibility");
+
+    completionOnly.visibility.push_back(
+        {0, 1, SyncControlRelation::MustExecute, {SyncIterationRelationKind::SameIteration, 0}});
+    FailureOr<SyncInterpretationResult> published = interpretSelectedWorld(
+        visibilityFixture.schedule, *visibilityFixture.stages, visibilityFixture.timelines, visibilityFixture.channels,
+        completionOnly);
+    passed &= check(
+        succeeded(published) && !hasObligation(*published, SyncObligationKind::Visibility),
+        "qualified GM visibility did not discharge the publication obligation");
+
+    // Operation providers do not yet produce Ordered accesses, so use the
+    // schedule's test peer to exercise the interpreter's forward contract.
+    const bool markedOrdered = StructuredSyncIRTestPeer::markGlobalReadOrdered(visibilityFixture.schedule, 1);
+    FailureOr<SyncInterpretationResult> orderedTargetResult = interpretSelectedWorld(
+        visibilityFixture.schedule, *visibilityFixture.stages, visibilityFixture.timelines, visibilityFixture.channels,
+        completionOnly);
+    passed &= check(
+        markedOrdered && succeeded(orderedTargetResult) &&
+            hasObligation(*orderedTargetResult, SyncObligationKind::OrderedMemory),
+        "selected completion or visibility discharged an ordered target access");
+    return passed;
+}
+
 } // namespace
 
 int main()
@@ -491,11 +858,14 @@ int main()
     passed &= testVerifierRejectsMalformedMaterializations(context);
     passed &= testVerifierRejectsDuplicateEventKey(context);
     passed &= testEventAllocation(context);
+    passed &= testSelectedWorldInterpreter(context);
+    passed &= testIndependentResidualEffects(context);
     if (passed) {
         llvm::outs() << "protocol-sync target contract: pass\n";
         llvm::outs() << "protocol-sync malformed-plan rejection: pass\n";
         llvm::outs() << "protocol-sync emitted-IR verifier rejection: pass\n";
         llvm::outs() << "protocol-sync event allocation: pass\n";
+        llvm::outs() << "protocol-sync selected-world interpretation: pass\n";
     }
     return passed ? 0 : 1;
 }

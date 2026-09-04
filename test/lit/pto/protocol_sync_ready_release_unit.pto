@@ -14,3 +14,4 @@
 // CHECK-NEXT: protocol-sync ReadyRelease emitted-IR verification: pass
 // CHECK-NEXT: protocol-sync ReadyRelease atomic rejection: pass
 // CHECK-NEXT: protocol-sync ReadyRelease reservation allocation: pass
+// CHECK-NEXT: protocol-sync ReadyRelease selected-world interpretation: pass

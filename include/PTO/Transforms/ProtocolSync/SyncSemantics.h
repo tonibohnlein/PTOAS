@@ -229,6 +229,7 @@ struct ProtocolSyncStatistics {
     std::uint64_t channelCandidatesRejected = 0;
     std::uint64_t interpreterTransitions = 0;
     std::uint64_t interpreterPeakStates = 0;
+    std::uint64_t tokenCertificateTransitions = 0;
     std::uint64_t protocolCandidates = 0;
     std::uint64_t protocolPlansAttempted = 0;
     std::uint64_t protocolPlansAdmitted = 0;
@@ -257,6 +258,7 @@ struct ProtocolSyncStatistics {
     std::uint64_t storageAnalysisUs = 0;
     std::uint64_t generationAnalysisUs = 0;
     std::uint64_t channelAnalysisUs = 0;
+    std::uint64_t interpretationUs = 0;
     std::uint64_t planningUs = 0;
     std::uint64_t allocationUs = 0;
     std::uint64_t materializationUs = 0;
@@ -264,6 +266,7 @@ struct ProtocolSyncStatistics {
     std::uint64_t totalUs = 0;
     std::map<std::string, std::uint64_t> generationRejections;
     std::map<std::string, std::uint64_t> channelRejections;
+    std::map<std::string, std::uint64_t> residualObligationsByKind;
 };
 
 class SyncSemanticContext {

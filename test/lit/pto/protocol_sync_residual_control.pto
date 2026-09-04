@@ -1,0 +1,185 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-analysis-only --protocol-sync-dump=residuals \
+// RUN:   %s -o /dev/null 2>&1 | FileCheck %s
+
+module {
+  func.func @loop_carried_global_raw(
+      %buffer: !pto.partition_tensor_view<16x16xf16>, %trip_count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %index = %c0 to %trip_count step %c1 {
+      pto.tload ins(%buffer : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%buffer : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+
+  func.func @loop_carried_same_pipe_waw(
+      %buffer: !pto.ptr<i32, gm>, %value: i32, %trip_count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %index = %c0 to %trip_count step %c1 {
+      pto.store_scalar %value, %buffer[%c0] : !pto.ptr<i32, gm>, i32
+    }
+    return
+  }
+
+  func.func @loop_carried_global_war(
+      %buffer: !pto.partition_tensor_view<16x16xf16>, %trip_count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %source = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    %target = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %index = %c0 to %trip_count step %c1 {
+      pto.tstore ins(%source : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%buffer : !pto.partition_tensor_view<16x16xf16>)
+      pto.tload ins(%buffer : !pto.partition_tensor_view<16x16xf16>)
+                outs(%target : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    return
+  }
+
+  func.func @guarded_loop_carried_raw(
+      %condition: i1, %buffer: !pto.partition_tensor_view<16x16xf16>,
+      %trip_count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %index = %c0 to %trip_count step %c1 {
+      scf.if %condition {
+        pto.tload ins(%buffer : !pto.partition_tensor_view<16x16xf16>)
+                  outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                   outs(%buffer : !pto.partition_tensor_view<16x16xf16>)
+      }
+    }
+    return
+  }
+
+  func.func @nested_outer_carried_raw(
+      %buffer: !pto.ptr<i32, gm>, %outer_count: index,
+      %inner_count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %outer = %c0 to %outer_count step %c1 {
+      %loaded = pto.load_scalar %buffer[%c0] : !pto.ptr<i32, gm> -> i32
+      scf.for %inner = %c0 to %inner_count step %c1 {
+        pto.store_scalar %loaded, %buffer[%c0] : !pto.ptr<i32, gm>, i32
+      }
+    }
+    return
+  }
+
+  func.func @nested_inner_carried_raw(
+      %buffer: !pto.partition_tensor_view<16x16xf16>,
+      %outer_count: index, %inner_count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %outer = %c0 to %outer_count step %c1 {
+      scf.for %inner = %c0 to %inner_count step %c1 {
+        pto.tload ins(%buffer : !pto.partition_tensor_view<16x16xf16>)
+                  outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                   outs(%buffer : !pto.partition_tensor_view<16x16xf16>)
+      }
+    }
+    return
+  }
+
+  func.func @alternating_arm_carried_raw(
+      %buffer: !pto.partition_tensor_view<16x16xf16>, %trip_count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %source = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    %target = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %index = %c0 to %trip_count step %c1 {
+      %parity = arith.remui %index, %c2 : index
+      %is_even = arith.cmpi eq, %parity, %c0 : index
+      scf.if %is_even {
+        pto.tstore ins(%source : !pto.tile_buf<vec, 16x16xf16>)
+                   outs(%buffer : !pto.partition_tensor_view<16x16xf16>)
+      } else {
+        pto.tload ins(%buffer : !pto.partition_tensor_view<16x16xf16>)
+                  outs(%target : !pto.tile_buf<vec, 16x16xf16>)
+      }
+    }
+    return
+  }
+
+  func.func @branch_exit_frontier(
+      %condition: i1, %buffer: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    scf.if %condition {
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%buffer : !pto.partition_tensor_view<16x16xf16>)
+    } else {
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%buffer : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: PROTOCOL-SYNC selected-world function=@loop_carried_global_raw
+// CHECK: kind=visibility source=#1 target=#0
+// CHECK-SAME: iteration=loop-carried distance=1
+// CHECK: kind=exit-completion source=#1 target=#1
+// CHECK-SAME: iteration=unknown distance=0
+
+// CHECK-LABEL: PROTOCOL-SYNC selected-world function=@loop_carried_same_pipe_waw
+// CHECK-NOT: kind=ordered-memory source=#0 target=#0
+// CHECK: kind=exit-completion source=#0 target=#0
+// CHECK-SAME: iteration=unknown distance=0
+
+// CHECK-LABEL: PROTOCOL-SYNC selected-world function=@loop_carried_global_war
+// CHECK: kind=ordered-memory source=#1 target=#0
+// CHECK-SAME: iteration=loop-carried distance=1 carrier=#[[WAR_LOOP:[0-9]+]]
+
+// CHECK-LABEL: PROTOCOL-SYNC selected-world function=@guarded_loop_carried_raw
+// CHECK: kind=visibility source=#1 target=#0
+// CHECK-SAME: iteration=unknown distance=0 carrier=#[[GUARDED_LOOP:[0-9]+]]
+// CHECK-NOT: kind=visibility source=#1 target=#0{{.*}}iteration=loop-carried distance=1
+
+// CHECK-LABEL: PROTOCOL-SYNC selected-world function=@nested_outer_carried_raw
+// CHECK: kind=visibility source=#1 target=#0
+// CHECK-SAME: iteration=unknown distance=0 carrier=#[[OUTER_LOOP:[0-9]+]]
+
+// CHECK-LABEL: PROTOCOL-SYNC selected-world function=@nested_inner_carried_raw
+// CHECK: kind=visibility source=#1 target=#0
+// CHECK-SAME: iteration=unknown distance=0 carrier=#[[NESTED_OUTER:[0-9]+]]
+// CHECK: kind=visibility source=#1 target=#0
+// CHECK-SAME: iteration=loop-carried distance=1 carrier=#[[NESTED_INNER:[0-9]+]]
+
+// CHECK-LABEL: PROTOCOL-SYNC selected-world function=@alternating_arm_carried_raw
+// CHECK: kind=visibility source=#0 target=#1
+// CHECK-SAME: iteration=unknown distance=0 carrier=#[[ALTERNATING_LOOP:[0-9]+]]
+
+// CHECK-LABEL: PROTOCOL-SYNC selected-world function=@branch_exit_frontier
+// CHECK-NOT: kind=visibility source=#0 target=#1
+// CHECK-NOT: kind=ordered-memory source=#0 target=#1
+// CHECK: kind=exit-completion source=#0 target=#0
+// CHECK-SAME: control=same-guard
+// CHECK: kind=exit-completion source=#1 target=#1
+// CHECK-SAME: control=same-guard
