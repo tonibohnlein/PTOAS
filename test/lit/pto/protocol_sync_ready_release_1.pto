@@ -15,6 +15,10 @@
 // RUN: not ptoas --pto-level=level2 --emit-pto-ir \
 // RUN:   --protocol-sync-ready-release %s -o /dev/null 2>&1 | \
 // RUN:   FileCheck %s --check-prefix=IMPLICIT
+// RUN: not ptoas --pto-arch=a2 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-ready-release --protocol-sync-fallback=fail \
+// RUN:   --protocol-sync-dump=plan %s -o /dev/null 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=A2
 // RUN: not ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
 // RUN:   --enable-insert-sync --protocol-sync-ready-release %s -o /dev/null 2>&1 | \
 // RUN:   FileCheck %s --check-prefix=MUTEX
@@ -43,6 +47,9 @@ module {
 // PLAN: ProtocolSync ready-release mode found no complete supported plan
 
 // IMPLICIT: --protocol-sync-ready-release requires an explicit --pto-arch=a3
+// A2: PROTOCOL-SYNC ready-release-plan function=@ready_release_one status=unsupported
+// A2: reason=unsupported-target
+// A2-SAME: ReadyRelease emission is qualified only for the explicit ProtocolSync A3 target
 // MUTEX: --enable-insert-sync
 // MUTEX: --protocol-sync-ready-release
 // MUTEX-SAME: mutually exclusive

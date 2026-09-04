@@ -9,12 +9,15 @@
 // for the full text of the License.
 // RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
 // RUN:   --protocol-sync-one-shot --protocol-sync-fallback=fail --protocol-sync-dump=plan \
-// RUN:   --protocol-sync-statistics %s -o %t 2> %t.diagnostics
-// RUN: FileCheck %s --input-file=%t --check-prefix=IR
-// RUN: FileCheck %s --input-file=%t.diagnostics --check-prefix=PLAN
-// RUN: not ptoas --pto-arch=a2 --pto-level=level2 --emit-pto-ir \
-// RUN:   --protocol-sync-one-shot --protocol-sync-fallback=fail --protocol-sync-dump=plan %s \
-// RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=A2
+// RUN:   --protocol-sync-statistics %s -o %t.a3 2> %t.a3.diagnostics
+// RUN: FileCheck %s --input-file=%t.a3 --check-prefix=IR
+// RUN: FileCheck %s --input-file=%t.a3.diagnostics --check-prefix=PLAN
+// RUN: ptoas --pto-arch=a2 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-one-shot --protocol-sync-fallback=fail --protocol-sync-dump=plan \
+// RUN:   --protocol-sync-statistics %s \
+// RUN:   -o %t.a2 2> %t.a2.diagnostics
+// RUN: FileCheck %s --input-file=%t.a2 --check-prefix=IR
+// RUN: FileCheck %s --input-file=%t.a2.diagnostics --check-prefix=A2-PLAN
 // RUN: not ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
 // RUN:   --enable-insert-sync --protocol-sync-one-shot %s -o /dev/null 2>&1 | \
 // RUN:   FileCheck %s --check-prefix=MUTEX
@@ -43,7 +46,7 @@ module {
     return
   }
 }
-// PLAN: PROTOCOL-SYNC one-shot-plan function=@linear_one_shot status=ready phases=4 protocols=3 core=vector
+// PLAN: PROTOCOL-SYNC one-shot-plan function=@linear_one_shot status=ready phases=4 protocols=3 core=vector target=npu2201-a3
 // PLAN: protocol #0 kind=directed-event
 // PLAN-SAME: event-id=0
 // PLAN: protocol #1 kind=pipe-barrier
@@ -73,9 +76,9 @@ module {
 // IR: pto.wait_flag
 // IR: pto.tstore
 // IR: pto.barrier <PIPE_ALL>
-// A2: status=unsupported
-// A2: reason=unsupported-target
-// A2: target profile 'a2' is not the explicit ProtocolSync A3 target
+// A2-PLAN: PROTOCOL-SYNC one-shot-plan function=@linear_one_shot status=ready phases=4 protocols=3 core=vector target=npu2201-a2
+// A2-PLAN: "planner_result":"materialized"
+// A2-PLAN-SAME: "producer":"protocol-plan"
 // MUTEX: Error: --enable-insert-sync
 // MUTEX: --protocol-sync-one-shot
 // MUTEX-SAME: mutually exclusive

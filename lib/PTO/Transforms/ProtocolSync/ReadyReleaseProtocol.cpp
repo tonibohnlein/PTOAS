@@ -359,6 +359,12 @@ FailureOr<SyncReadyReleasePlan> mlir::pto::protocol_sync::buildReadyReleaseProto
         reject(plan, kInvalidSyncId, SyncReadyReleaseRejection::UnsupportedTarget, target.getUnsupportedReason());
         return plan;
     }
+    if (!target.supportsReadyReleaseEmission()) {
+        reject(
+            plan, kInvalidSyncId, SyncReadyReleaseRejection::UnsupportedTarget,
+            "ReadyRelease emission is qualified only for the explicit ProtocolSync A3 target");
+        return plan;
+    }
     if (schedule.getPhases().empty()) {
         return plan;
     }
@@ -546,8 +552,8 @@ LogicalResult mlir::pto::protocol_sync::allocateReadyReleaseProtocolEvents(
     if (alreadyAllocated) {
         return failure();
     }
-    const bool targetSupportsProtocol =
-        target.isSupported() && target.supportsReadyRelease(plan.core, plan.producerPipe, plan.consumerPipe);
+    const bool targetSupportsProtocol = target.isSupported() && target.supportsReadyReleaseEmission() &&
+                                        target.supportsReadyRelease(plan.core, plan.producerPipe, plan.consumerPipe);
     if (!targetSupportsProtocol) {
         return failure();
     }

@@ -20,21 +20,25 @@ using namespace mlir::pto::protocol_sync;
 
 namespace {
 
-bool moduleNamesA3Target(func::FuncOp function, std::string& reason)
+bool resolveModuleTarget(func::FuncOp function, ProtocolSyncTargetKind& kind, std::string& reason)
 {
     ModuleOp module = function->getParentOfType<ModuleOp>();
     if (!module) {
-        reason = "ProtocolSync emission requires an enclosing module with an explicit A3 target";
+        reason = "ProtocolSync emission requires an enclosing module with an explicit A2 or A3 target";
         return false;
     }
     auto targetArch = module->getAttrOfType<StringAttr>("pto.target_arch");
     if (!targetArch) {
-        reason = "ProtocolSync emission requires explicit pto.target_arch = 'a3'";
+        reason = "ProtocolSync emission requires explicit pto.target_arch = 'a2' or 'a3'";
         return false;
     }
     const StringRef arch = targetArch.getValue();
-    if (!arch.equals_insensitive("a3")) {
-        reason = (llvm::Twine("target profile '") + arch + "' is not the explicit ProtocolSync A3 target").str();
+    if (arch.equals_insensitive("a2")) {
+        kind = ProtocolSyncTargetKind::Npu2201A2;
+    } else if (arch.equals_insensitive("a3")) {
+        kind = ProtocolSyncTargetKind::Npu2201A3;
+    } else {
+        reason = (llvm::Twine("target profile '") + arch + "' is not an explicit ProtocolSync A2/A3 target").str();
         return false;
     }
     if (Attribute attribute = module->getAttr("pto.device-spec")) {
@@ -43,9 +47,9 @@ bool moduleNamesA3Target(func::FuncOp function, std::string& reason)
             reason = "pto.device-spec must be a string when ProtocolSync emission is requested";
             return false;
         }
-        reason =
-            (llvm::Twine("device profile '") + deviceSpec.getValue() + "' has no ProtocolSync A3 qualification record")
-                .str();
+        reason = (llvm::Twine("device profile '") + deviceSpec.getValue() + "' has no ProtocolSync " +
+                  (kind == ProtocolSyncTargetKind::Npu2201A2 ? "A2" : "A3") + " qualification record")
+                     .str();
         return false;
     }
     return true;
@@ -56,12 +60,14 @@ bool moduleNamesA3Target(func::FuncOp function, std::string& reason)
 ProtocolSyncTarget ProtocolSyncTarget::resolve(func::FuncOp function)
 {
     ProtocolSyncTarget target;
-    if (!moduleNamesA3Target(function, target.unsupportedReason)) {
+    ProtocolSyncTargetKind kind = ProtocolSyncTargetKind::Unsupported;
+    if (!resolveModuleTarget(function, kind, target.unsupportedReason)) {
         return target;
     }
 
-    target.kind = ProtocolSyncTargetKind::Npu2201A3;
-    target.name = "npu2201-a3-protocol-sync-v1";
+    target.kind = kind;
+    target.name =
+        kind == ProtocolSyncTargetKind::Npu2201A2 ? "npu2201-a2-protocol-sync-v1" : "npu2201-a3-protocol-sync-v1";
     target.unsupportedReason.clear();
     target.compilerEventIds = {0, 1, 2, 3, 4, 5};
 
@@ -123,6 +129,8 @@ bool ProtocolSyncTarget::supportsReadyRelease(SyncPhysicalCore core, PIPE produc
 StringRef mlir::pto::protocol_sync::stringifyProtocolSyncTargetKind(ProtocolSyncTargetKind kind)
 {
     switch (kind) {
+        case ProtocolSyncTargetKind::Npu2201A2:
+            return "npu2201-a2";
         case ProtocolSyncTargetKind::Npu2201A3:
             return "npu2201-a3";
         case ProtocolSyncTargetKind::Unsupported:

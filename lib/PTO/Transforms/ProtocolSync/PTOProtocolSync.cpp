@@ -864,7 +864,10 @@ private:
             recordStatistics(function, result, diagnosticRejected ? "diagnostic-rejection" : "ok", "");
             return success();
         }
-        if (diagnosticRejected && ProtocolSyncTarget::resolve(function).isSupported()) {
+        const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(function);
+        const bool targetSupportsEmission =
+            target.isSupported() && (!emitReadyRelease || target.supportsReadyReleaseEmission());
+        if (diagnosticRejected && targetSupportsEmission) {
             return handleUnsupported(function, result, "semantic-diagnostics", "unsupported", true, totalStart);
         }
 

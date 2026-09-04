@@ -5,12 +5,16 @@
 Checkpoint D is the first ProtocolSync revision that mutates IR. It is
 intentionally a correctness milestone, not the general protocol planner.
 
-The emitted subset is limited to an explicit A3 NPU 2201 profile, same-core,
-exactly-once, strictly linear sequence of exact physical phases. Its device
-qualification remains gated on the Checkpoint-D campaign. Every adjacent phase
-pair is completion-ordered. This deliberately total phase chain makes the first
-emitted planner obligation-complete before the generation-aware
-residual-obligation interpreter exists.
+The emitted subset is limited to explicit A2 or A3 NPU 2201 profiles,
+same-core, exactly-once, strictly linear sequences of exact physical phases.
+The profiles have distinct identities even though this checkpoint uses the
+same conservative barrier, directed-event, and compiler-event-ID tables for
+both. A3 one-shot emission passed the Checkpoint-D device gate. A2 one-shot
+emission is an opt-in simulator candidate until its separate campaign passes;
+it has no A2-silicon qualification. Every adjacent phase pair is
+completion-ordered. This deliberately total phase chain makes the first emitted
+planner obligation-complete before the generation-aware residual-obligation
+interpreter exists.
 
 ## Supported plan
 
@@ -47,20 +51,29 @@ Checkpoint D rejects:
   possible earlier GM write;
 - unsupported event directions and event-ID exhaustion.
 
-A2 uses the same NPU 2201 family but remains emission-disabled until a distinct
-A2 device campaign qualifies this mutating pass. Direct pass use also requires
-an explicit `pto.target_arch = "a3"`; the target resolver never relies on the
-repository's historical attr-less A3 default. The `ptoas` CLI additionally
-requires the user to spell `--pto-arch=a3`, so the driver's historical default
-cannot qualify emission. Checkpoint D rejects every `pto.device-spec`, including
-underscore-form A3 names, until an exact profile has its own device campaign;
-legacy `Ascend910*` and A2 `Ascend910B*` names are not treated as A3 evidence.
+Direct pass use requires an explicit `pto.target_arch = "a2"` or
+`pto.target_arch = "a3"`; the target resolver never relies on the repository's
+historical attr-less A3 default. The `ptoas` CLI additionally requires the user
+to spell `--pto-arch=a2` or `--pto-arch=a3`, so the driver's historical default
+cannot qualify emission. Plans retain the resolved target identity and cannot
+be allocated or transactionally materialized under the other profile.
+Checkpoint D rejects every `pto.device-spec`, including underscore-form A3
+names, until an exact device profile has its own qualification record; legacy
+`Ascend910*` and A2 `Ascend910B*` names are not used to infer either explicit
+ProtocolSync profile.
 
-The directed-event table is the intersection of the NPU 2201 hardware matrix
-and the CANN 9.0 `HardEvent` ABI used by lowering. In particular,
-`MTE1_FIX`, `MTE3_FIX`, and `FIX_MTE1` are not exposed by that ABI and are not
-legal Checkpoint-D candidates even where a hardware overview describes a raw
-combination or no current application scenario.
+A2 enablement is deliberately narrower than shared primitive legality.
+Checkpoint D one-shot plans may use the A2 profile, but Checkpoint E
+`ReadyRelease<1/2>` remains A3-only until recurring event generations are
+separately validated on a faithful A2 simulator. Simulator evidence can qualify
+the opt-in A2 compiler path for the tested one-shot subset; it cannot establish
+silicon performance or silicon qualification.
+
+The A2 and A3 directed-event tables are the same explicit intersection of the
+NPU 2201 hardware matrix and the CANN 9.0 `HardEvent` ABI used by lowering. In
+particular, `MTE1_FIX`, `MTE3_FIX`, and `FIX_MTE1` are not exposed by that ABI
+and are not legal Checkpoint-D candidates even where a hardware overview
+describes a raw combination or no current application scenario.
 
 The GM restriction is intentional. Pipeline completion alone is not a proof of
 scalar DataCache publication or of every DMA store/load visibility case.

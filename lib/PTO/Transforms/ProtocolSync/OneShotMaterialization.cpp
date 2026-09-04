@@ -63,8 +63,7 @@ LogicalResult mlir::pto::protocol_sync::materializeOneShotProtocolPlan(
     func::FuncOp clone, const IRMapping& mapping, const SyncOneShotPlan& plan, ProtocolSyncStatistics* statistics)
 {
     const bool validPlanShape = plan.status == SyncOneShotPlanStatus::Ready && plan.emitTailBarrier &&
-                                !plan.phaseOrder.empty() &&
-                                plan.protocols.size() + 1 == plan.phaseOrder.size();
+                                !plan.phaseOrder.empty() && plan.protocols.size() + 1 == plan.phaseOrder.size();
     if (!validPlanShape) {
         return failure();
     }
@@ -146,6 +145,11 @@ LogicalResult mlir::pto::protocol_sync::materializeAndVerifyOneShotProtocolPlan(
     if (!schedule.isFrozen()) {
         return failure();
     }
+    const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
+    const bool targetMatchesPlan = target.isSupported() && target.getKind() == plan.targetKind;
+    if (!targetMatchesPlan) {
+        return failure();
+    }
 
     func::FuncOp function = schedule.getFunction();
     ModuleOp sourceModule = function->getParentOfType<ModuleOp>();
@@ -185,6 +189,11 @@ LogicalResult mlir::pto::protocol_sync::materializeAndVerifyOneShotProtocolPlanI
     ProtocolSyncStatistics* statistics)
 {
     if (!schedule.isFrozen()) {
+        return failure();
+    }
+    const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
+    const bool targetMatchesPlan = target.isSupported() && target.getKind() == plan.targetKind;
+    if (!targetMatchesPlan) {
         return failure();
     }
 

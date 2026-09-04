@@ -1339,7 +1339,7 @@ static LogicalResult validateProtocolSyncConfiguration() {
       protocolSyncDirectRepair || protocolSyncMixed;
   if (protocolSyncOneShot && ptoTargetArch.getNumOccurrences() == 0) {
     llvm::errs() << "Error: --protocol-sync-one-shot requires an explicit "
-                    "--pto-arch=a3 selection.\n";
+                    "--pto-arch=a2 or --pto-arch=a3 selection.\n";
     return failure();
   }
   const bool readyReleaseTargetMissing =

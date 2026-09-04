@@ -12,6 +12,11 @@
 // RUN:   --protocol-sync-fallback=fail %s -o - | FileCheck %s --check-prefix=CXX
 // RUN: pto-test-opt --pto-protocol-sync='execution-mode=direct-repair fallback-mode=fail' %s | \
 // RUN:   FileCheck %s --check-prefix=DIRECT
+// RUN: sed 's/pto.target_arch = "a3"/pto.target_arch = "a2"/' %s > %t.a2.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-one-shot \
+// RUN:   --protocol-sync-fallback=fail %t.a2.pto -o - | FileCheck %s
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --protocol-sync-one-shot \
+// RUN:   --protocol-sync-fallback=fail %t.a2.pto -o - | FileCheck %s --check-prefix=CXX
 
 module attributes {pto.target_arch = "a3"} {
   func.func @flat_vector(
