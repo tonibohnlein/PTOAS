@@ -74,6 +74,26 @@ bool sameCanonicalSlotExpression(const SyncSlotExpression& first, const SyncSlot
            first.coefficient == second.coefficient && first.offset == second.offset && first.modulus == second.modulus;
 }
 
+// Reconstruct capacity from the allocation itself so verification does not trust
+// the planner's cached storage-family metadata.
+std::optional<unsigned> getAllocationCapacity(Value root)
+{
+    if (!root) {
+        return std::nullopt;
+    }
+    if (auto allocation = root.getDefiningOp<AllocTileOp>()) {
+        return isa<TileBufType>(allocation.getResult().getType()) ? std::optional<unsigned>(1) : std::nullopt;
+    }
+    if (auto allocation = root.getDefiningOp<AllocMultiTileOp>()) {
+        auto type = dyn_cast<MultiTileBufType>(allocation.getResult().getType());
+        if (!type) {
+            return std::nullopt;
+        }
+        return type.getCount();
+    }
+    return std::nullopt;
+}
+
 FailureOr<ExpectedReadyRelease> reconstructExpectedProtocol(
     const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages)
 {
@@ -139,14 +159,16 @@ FailureOr<ExpectedReadyRelease> reconstructExpectedProtocol(
         if (!hasLoopAccess) {
             continue;
         }
+        const std::optional<unsigned> allocationCapacity = getAllocationCapacity(family.root);
         if (!family.physical || family.unknownRange || family.aliasesUnknownRange || family.capacityConflict ||
-            !family.slotCount || *family.slotCount < 1 || *family.slotCount > 2) {
+            !allocationCapacity || !family.slotCount || *family.slotCount != *allocationCapacity ||
+            *allocationCapacity < 1 || *allocationCapacity > 2) {
             return failure();
         }
-        if (capacity != 0 && capacity != *family.slotCount) {
+        if (capacity != 0 && capacity != *allocationCapacity) {
             return failure();
         }
-        capacity = *family.slotCount;
+        capacity = *allocationCapacity;
         for (const SyncAccess* accessPtr : familyAccesses->second) {
             const SyncAccess& access = *accessPtr;
             familyAccessed = true;

@@ -100,6 +100,32 @@ module attributes {pto.target_arch = "a3"} {
 }
 )mlir";
 
+constexpr StringLiteral kUnknownCapacityFixture = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @unknown_capacity(
+      %input: !pto.partition_tensor_view<16x16xf16>,
+      %output: !pto.partition_tensor_view<16x16xf16>,
+      %buffers: !pto.multi_tile_buf<vec, 16x16xf16, count=2>,
+      %trip_count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_index = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    scf.for %index = %c0_index to %trip_count step %c1 {
+      %selector = arith.remui %index, %c2 : index
+      %tile = pto.multi_tile_get %buffers[%selector]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}
+)mlir";
+
 bool check(bool condition, const Twine& message)
 {
     if (condition) {
@@ -293,6 +319,22 @@ bool testDepthTwoPlanAndVerifier(MLIRContext& context)
             succeeded(verifyReadyReleaseProtocolMaterialization(fixture.schedule, *fixture.stages, clone, mapping)),
         "independent verifier rejected valid non-contiguous ReadyRelease<2> emission");
 
+    const SyncGenerationTimeline& timeline = fixture.timelines.getTimelines()[fixture.plan->generation];
+    const SyncStorageFamily* family = fixture.schedule.findStorageFamily(timeline.family);
+    if (!check(family != nullptr, "ReadyRelease<2> has no storage family")) {
+        return false;
+    }
+    auto allocation = family->root.getDefiningOp<AllocMultiTileOp>();
+    if (!check(static_cast<bool>(allocation), "ReadyRelease<2> root is not alloc_multi_tile")) {
+        return false;
+    }
+    MultiTileBufType originalType = allocation.getResult().getType();
+    allocation.getResult().setType(MultiTileBufType::get(&context, originalType.getSlotType(), 3));
+    passed &= check(
+        failed(verifyReadyReleaseProtocolMaterialization(fixture.schedule, *fixture.stages, clone, mapping)),
+        "independent verifier trusted cached capacity instead of the allocation root type");
+    allocation.getResult().setType(originalType);
+
     Operation* laneOnePrime = findGenerated(clone, "release-prime-set");
     Attribute originalLane = laneOnePrime->getAttr("pto.protocol_sync.logical_lane");
     laneOnePrime->setAttr(
@@ -329,6 +371,71 @@ bool testDepthTwoPlanAndVerifier(MLIRContext& context)
         failed(verifyReadyReleaseProtocolMaterialization(fixture.schedule, *fixture.stages, clone, mapping)),
         "independent verifier accepted a missing ReadyRelease<2> prime lane");
     return passed;
+}
+
+bool testUnknownPhysicalCapacityRejected(MLIRContext& context)
+{
+    OwningOpRef<ModuleOp> module = parseFixture(context, kUnknownCapacityFixture);
+    if (!check(static_cast<bool>(module), "cannot parse unknown-capacity fixture")) {
+        return false;
+    }
+    func::FuncOp function = *module->getOps<func::FuncOp>().begin();
+    LegacySyncIRAdapter adapter;
+    LegacySyncSnapshot legacy;
+    if (!check(succeeded(adapter.buildSnapshot(function, legacy)), "cannot build unknown-capacity snapshot")) {
+        return false;
+    }
+    SyncSemanticContext sourceContext = adapter.buildSemanticContext(legacy);
+    SyncSemanticContext semanticContext;
+    for (unsigned argument : {0U, 1U}) {
+        Value value = function.getArgument(argument);
+        for (const SyncStorageProvenance& provenance : sourceContext.lookupStorage(value)) {
+            semanticContext.addStorage(value, provenance);
+        }
+    }
+    MultiTileGetOp getSlot;
+    function.walk([&](MultiTileGetOp operation) { getSlot = operation; });
+    if (!check(static_cast<bool>(getSlot), "unknown-capacity fixture has no slot selection")) {
+        return false;
+    }
+    Value tile = getSlot.getResult();
+    ArrayRef<SyncStorageProvenance> tileStorage = sourceContext.lookupStorage(tile);
+    const bool hasUnambiguousStorage = tileStorage.size() == 1;
+    if (!check(hasUnambiguousStorage, "unknown-capacity tile has ambiguous provenance")) {
+        return false;
+    }
+    SyncStorageProvenance physicalStorage = tileStorage.front();
+    physicalStorage.physical = true;
+    semanticContext.addStorage(tile, std::move(physicalStorage));
+
+    StructuredSyncIR schedule(function);
+    StructuredSyncIRBuilder builder(semanticContext);
+    if (!check(succeeded(builder.build(function, schedule)), "cannot build unknown-capacity schedule")) {
+        return false;
+    }
+    FailureOr<PipelineStageAnalysisResult> stages = analyzePipelineStages(schedule);
+    if (!check(succeeded(stages), "cannot build unknown-capacity stages")) {
+        return false;
+    }
+    StorageTimelineAnalysisResult timelines = analyzeStorageTimelines(schedule, *stages);
+    const SyncStorageFamily* localFamily = nullptr;
+    for (const SyncStorageFamily& family : schedule.getStorageFamilies()) {
+        if (family.root == function.getArgument(2)) {
+            localFamily = &family;
+            break;
+        }
+    }
+    const bool preservedDepthTwoSelector =
+        localFamily && llvm::any_of(schedule.getAccesses(), [&](const SyncAccess& access) {
+            return access.family == localFamily->id && access.slot && access.slot->depth == 2;
+        });
+    const bool rejectedAsUnknownCapacity =
+        localFamily && localFamily->physical && localFamily->role == SyncStorageRole::LocalBuffer &&
+        !localFamily->slotCount && preservedDepthTwoSelector && timelines.getTimelines().size() == 1 &&
+        timelines.getTimelines().front().rejection == SyncTimelineRejection::UnknownCapacity;
+    return check(
+        rejectedAsUnknownCapacity,
+        "physical local storage without an allocation descriptor was not rejected as unknown-capacity");
 }
 
 using CorruptMaterialization = std::function<void(func::FuncOp)>;
@@ -516,6 +623,7 @@ int main()
     MLIRContext context(registry);
     bool passed = testLogicalPlanAndAllocation(context);
     passed &= testDepthTwoPlanAndVerifier(context);
+    passed &= testUnknownPhysicalCapacityRejected(context);
     passed &= testVerifierNegatives(context);
     passed &= testAtomicMalformedPlan(context);
     passed &= testReservedEventAllocation(context);
@@ -523,6 +631,7 @@ int main()
     if (passed) {
         llvm::outs() << "protocol-sync ReadyRelease logical planning: pass\n";
         llvm::outs() << "protocol-sync ReadyRelease depth-two planning: pass\n";
+        llvm::outs() << "protocol-sync ReadyRelease authoritative capacity: pass\n";
         llvm::outs() << "protocol-sync ReadyRelease emitted-IR verification: pass\n";
         llvm::outs() << "protocol-sync ReadyRelease atomic rejection: pass\n";
         llvm::outs() << "protocol-sync ReadyRelease reservation allocation: pass\n";
