@@ -201,8 +201,7 @@ struct VPTOCombineReductionsPass
                  CombineEquivalentReductionTreePattern<VminOp, VcminOp>,
                  CombineEquivalentReductionTreePattern<VminOp, VcgminOp>>(
         &getContext());
-    if (failed(applyPatternsAndFoldGreedily(getOperation(),
-                                            std::move(patterns)))) {
+    if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns)))) {
       signalPassFailure();
     }
   }

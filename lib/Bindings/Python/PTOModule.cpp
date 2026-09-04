@@ -22,6 +22,7 @@
 #include "mlir-c/IR.h"
 #include "mlir-c/Support.h"
 #include "pto-c/Dialect/PTO.h"
+#include "pto-c/Dialect/PTOEnums.h"
 #include "pybind11/stl.h"
 #include "mlir/Bindings/Python/PybindAdaptors.h"
 #include "mlir/CAPI/IR.h"
@@ -31,8 +32,6 @@
 
 namespace py = pybind11;
 using namespace mlir::python::adaptors;
-using llvm::cast;
-using llvm::isa;
 
 static std::vector<int64_t> toInt64Vector(const py::sequence &seq) {
   std::vector<int64_t> out;
@@ -50,7 +49,7 @@ static std::vector<int64_t> toShapeVectorOrDynamicRank(py::object shapeOrRank) {
       throw py::value_error("rank must be non-negative");
     }
     return std::vector<int64_t>(static_cast<size_t>(rank),
-                                mlir::ShapedType::kDynamic);
+                                mlirShapedTypeGetDynamicSize());
   }
   return toInt64Vector(shapeOrRank.cast<py::sequence>());
 }
@@ -145,87 +144,87 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
         py::arg("context"), py::arg("load") = true);
 
     // [保留 HEAD]: AddressSpace 枚举定义
-    py::enum_<mlir::pto::AddressSpace>(m, "AddressSpace")
-    .value("Zero", mlir::pto::AddressSpace::Zero)
-    .value("GM",   mlir::pto::AddressSpace::GM)
-    .value("MAT",   mlir::pto::AddressSpace::MAT)
-    .value("LEFT",  mlir::pto::AddressSpace::LEFT)
-    .value("RIGHT",  mlir::pto::AddressSpace::RIGHT)
-    .value("ACC",  mlir::pto::AddressSpace::ACC)
-    .value("VEC",   mlir::pto::AddressSpace::VEC)
-    .value("BIAS",   mlir::pto::AddressSpace::BIAS)
-    .value("SCALING", mlir::pto::AddressSpace::SCALING)
+    py::enum_<MlirPTOAddressSpace>(m, "AddressSpace")
+    .value("Zero", MlirPTOAddressSpace_Zero)
+    .value("GM",   MlirPTOAddressSpace_GM)
+    .value("MAT",   MlirPTOAddressSpace_MAT)
+    .value("LEFT",  MlirPTOAddressSpace_LEFT)
+    .value("RIGHT",  MlirPTOAddressSpace_RIGHT)
+    .value("ACC",  MlirPTOAddressSpace_ACC)
+    .value("VEC",   MlirPTOAddressSpace_VEC)
+    .value("BIAS",   MlirPTOAddressSpace_BIAS)
+    .value("SCALING", MlirPTOAddressSpace_SCALING)
     .export_values();
-    py::enum_<mlir::pto::FenceScope>(m, "FenceScope")
-    .value("LocalMemory", mlir::pto::FenceScope::LocalMemory)
-    .value("GM", mlir::pto::FenceScope::GM)
-    .value("All", mlir::pto::FenceScope::All)
+    py::enum_<MlirPTOFenceScope>(m, "FenceScope")
+    .value("LocalMemory", MlirPTOFenceScope_LocalMemory)
+    .value("GM", MlirPTOFenceScope_GM)
+    .value("All", MlirPTOFenceScope_All)
     .export_values();
-    py::enum_<mlir::pto::BLayout>(m, "BLayout")
-    .value("RowMajor", mlir::pto::BLayout::RowMajor)
-    .value("ColMajor", mlir::pto::BLayout::ColMajor);
+    py::enum_<MlirPTOBLayout>(m, "BLayout")
+    .value("RowMajor", MlirPTOBLayout_RowMajor)
+    .value("ColMajor", MlirPTOBLayout_ColMajor);
 
-    py::enum_<mlir::pto::SLayout>(m, "SLayout")
-    .value("NoneBox", mlir::pto::SLayout::NoneBox)
-    .value("RowMajor", mlir::pto::SLayout::RowMajor)
-    .value("ColMajor", mlir::pto::SLayout::ColMajor);
+    py::enum_<MlirPTOSLayout>(m, "SLayout")
+    .value("NoneBox", MlirPTOSLayout_NoneBox)
+    .value("RowMajor", MlirPTOSLayout_RowMajor)
+    .value("ColMajor", MlirPTOSLayout_ColMajor);
 
-    py::enum_<mlir::pto::PadValue>(m, "PadValue")
-    .value("Null", mlir::pto::PadValue::Null)
-    .value("Zero", mlir::pto::PadValue::Zero)
-    .value("Max", mlir::pto::PadValue::Max)
-    .value("Min", mlir::pto::PadValue::Min);
+    py::enum_<MlirPTOPadValue>(m, "PadValue")
+    .value("Null", MlirPTOPadValue_Null)
+    .value("Zero", MlirPTOPadValue_Zero)
+    .value("Max", MlirPTOPadValue_Max)
+    .value("Min", MlirPTOPadValue_Min);
 
-    py::enum_<mlir::pto::CompactMode>(m, "CompactMode")
-    .value("Null", mlir::pto::CompactMode::Null)
-    .value("Normal", mlir::pto::CompactMode::Normal)
-    .value("RowPlusOne", mlir::pto::CompactMode::RowPlusOne);
+    py::enum_<MlirPTOCompactMode>(m, "CompactMode")
+    .value("Null", MlirPTOCompactMode_Null)
+    .value("Normal", MlirPTOCompactMode_Normal)
+    .value("RowPlusOne", MlirPTOCompactMode_RowPlusOne);
 
-    py::enum_<mlir::pto::RoundMode>(m, "RoundMode")
-    .value("NONE", mlir::pto::RoundMode::NONE)
-    .value("RINT", mlir::pto::RoundMode::RINT)
-    .value("ROUND", mlir::pto::RoundMode::ROUND)
-    .value("FLOOR", mlir::pto::RoundMode::FLOOR)
-    .value("CEIL", mlir::pto::RoundMode::CEIL)
-    .value("TRUNC", mlir::pto::RoundMode::TRUNC)
-    .value("ODD", mlir::pto::RoundMode::ODD)
-    .value("CAST_RINT", mlir::pto::RoundMode::CAST_RINT);
+    py::enum_<MlirPTORoundMode>(m, "RoundMode")
+    .value("NONE", MlirPTORoundMode_NONE)
+    .value("RINT", MlirPTORoundMode_RINT)
+    .value("ROUND", MlirPTORoundMode_ROUND)
+    .value("FLOOR", MlirPTORoundMode_FLOOR)
+    .value("CEIL", MlirPTORoundMode_CEIL)
+    .value("TRUNC", MlirPTORoundMode_TRUNC)
+    .value("ODD", MlirPTORoundMode_ODD)
+    .value("CAST_RINT", MlirPTORoundMode_CAST_RINT);
 
-    py::enum_<mlir::pto::DivPrecision>(m, "DivPrecision")
-    .value("Default", mlir::pto::DivPrecision::Default)
-    .value("HighPrecision", mlir::pto::DivPrecision::HighPrecision);
+    py::enum_<MlirPTODivPrecision>(m, "DivPrecision")
+    .value("Default", MlirPTODivPrecision_Default)
+    .value("HighPrecision", MlirPTODivPrecision_HighPrecision);
 
-    py::enum_<mlir::pto::ExpPrecision>(m, "ExpPrecision")
-    .value("Default", mlir::pto::ExpPrecision::Default)
-    .value("HighPrecision", mlir::pto::ExpPrecision::HighPrecision);
+    py::enum_<MlirPTOExpPrecision>(m, "ExpPrecision")
+    .value("Default", MlirPTOExpPrecision_Default)
+    .value("HighPrecision", MlirPTOExpPrecision_HighPrecision);
 
-    py::enum_<mlir::pto::LogPrecision>(m, "LogPrecision")
-    .value("Default", mlir::pto::LogPrecision::Default)
-    .value("HighPrecision", mlir::pto::LogPrecision::HighPrecision);
+    py::enum_<MlirPTOLogPrecision>(m, "LogPrecision")
+    .value("Default", MlirPTOLogPrecision_Default)
+    .value("HighPrecision", MlirPTOLogPrecision_HighPrecision);
 
-    py::enum_<mlir::pto::RecipPrecision>(m, "RecipPrecision")
-    .value("Default", mlir::pto::RecipPrecision::Default)
-    .value("HighPrecision", mlir::pto::RecipPrecision::HighPrecision);
+    py::enum_<MlirPTORecipPrecision>(m, "RecipPrecision")
+    .value("Default", MlirPTORecipPrecision_Default)
+    .value("HighPrecision", MlirPTORecipPrecision_HighPrecision);
 
-    py::enum_<mlir::pto::RemPrecision>(m, "RemPrecision")
-    .value("Default", mlir::pto::RemPrecision::Default)
-    .value("HighPrecision", mlir::pto::RemPrecision::HighPrecision);
+    py::enum_<MlirPTORemPrecision>(m, "RemPrecision")
+    .value("Default", MlirPTORemPrecision_Default)
+    .value("HighPrecision", MlirPTORemPrecision_HighPrecision);
 
-    py::enum_<mlir::pto::RsqrtPrecision>(m, "RsqrtPrecision")
-    .value("Default", mlir::pto::RsqrtPrecision::Default)
-    .value("HighPrecision", mlir::pto::RsqrtPrecision::HighPrecision);
+    py::enum_<MlirPTORsqrtPrecision>(m, "RsqrtPrecision")
+    .value("Default", MlirPTORsqrtPrecision_Default)
+    .value("HighPrecision", MlirPTORsqrtPrecision_HighPrecision);
 
-    py::enum_<mlir::pto::SqrtPrecision>(m, "SqrtPrecision")
-    .value("Default", mlir::pto::SqrtPrecision::Default)
-    .value("HighPrecision", mlir::pto::SqrtPrecision::HighPrecision);
+    py::enum_<MlirPTOSqrtPrecision>(m, "SqrtPrecision")
+    .value("Default", MlirPTOSqrtPrecision_Default)
+    .value("HighPrecision", MlirPTOSqrtPrecision_HighPrecision);
 
-    py::enum_<mlir::pto::FmodPrecision>(m, "FmodPrecision")
-    .value("Default", mlir::pto::FmodPrecision::Default)
-    .value("HighPrecision", mlir::pto::FmodPrecision::HighPrecision);
+    py::enum_<MlirPTOFmodPrecision>(m, "FmodPrecision")
+    .value("Default", MlirPTOFmodPrecision_Default)
+    .value("HighPrecision", MlirPTOFmodPrecision_HighPrecision);
 
-    py::enum_<mlir::pto::SaturationMode>(m, "SaturationMode")
-    .value("ON", mlir::pto::SaturationMode::ON)
-    .value("OFF", mlir::pto::SaturationMode::OFF);
+    py::enum_<MlirPTOSaturationMode>(m, "SaturationMode")
+    .value("ON", MlirPTOSaturationMode_ON)
+    .value("OFF", MlirPTOSaturationMode_OFF);
 
     py::enum_<MlirPTOCmpMode>(m, "CmpMode")
       .value("EQ", MlirPTOCmpMode_EQ)
@@ -236,105 +235,105 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
       .value("GE", MlirPTOCmpMode_GE)
       .export_values();
 
-    py::enum_<mlir::pto::PIPE>(m, "PIPE")
-      .value("PIPE_S", mlir::pto::PIPE::PIPE_S)
-      .value("PIPE_V", mlir::pto::PIPE::PIPE_V)
-      .value("PIPE_M", mlir::pto::PIPE::PIPE_M)
-      .value("PIPE_MTE1", mlir::pto::PIPE::PIPE_MTE1)
-      .value("PIPE_MTE2", mlir::pto::PIPE::PIPE_MTE2)
-      .value("PIPE_MTE3", mlir::pto::PIPE::PIPE_MTE3)
-      .value("PIPE_ALL", mlir::pto::PIPE::PIPE_ALL)
-      .value("PIPE_MTE4", mlir::pto::PIPE::PIPE_MTE4)
-      .value("PIPE_MTE5", mlir::pto::PIPE::PIPE_MTE5)
-      .value("PIPE_V2", mlir::pto::PIPE::PIPE_V2)
-      .value("PIPE_FIX", mlir::pto::PIPE::PIPE_FIX)
-      .value("VIRTUAL_PIPE_MTE2_L1A", mlir::pto::PIPE::VIRTUAL_PIPE_MTE2_L1A)
-      .value("VIRTUAL_PIPE_MTE2_L1B", mlir::pto::PIPE::VIRTUAL_PIPE_MTE2_L1B)
-      .value("PIPE_NUM", mlir::pto::PIPE::PIPE_NUM)
-      .value("PIPE_UNASSIGNED", mlir::pto::PIPE::PIPE_UNASSIGNED);
+    py::enum_<MlirPTOPIPE>(m, "PIPE")
+      .value("PIPE_S", MlirPTOPIPE_PIPE_S)
+      .value("PIPE_V", MlirPTOPIPE_PIPE_V)
+      .value("PIPE_M", MlirPTOPIPE_PIPE_M)
+      .value("PIPE_MTE1", MlirPTOPIPE_PIPE_MTE1)
+      .value("PIPE_MTE2", MlirPTOPIPE_PIPE_MTE2)
+      .value("PIPE_MTE3", MlirPTOPIPE_PIPE_MTE3)
+      .value("PIPE_ALL", MlirPTOPIPE_PIPE_ALL)
+      .value("PIPE_MTE4", MlirPTOPIPE_PIPE_MTE4)
+      .value("PIPE_MTE5", MlirPTOPIPE_PIPE_MTE5)
+      .value("PIPE_V2", MlirPTOPIPE_PIPE_V2)
+      .value("PIPE_FIX", MlirPTOPIPE_PIPE_FIX)
+      .value("VIRTUAL_PIPE_MTE2_L1A", MlirPTOPIPE_VIRTUAL_PIPE_MTE2_L1A)
+      .value("VIRTUAL_PIPE_MTE2_L1B", MlirPTOPIPE_VIRTUAL_PIPE_MTE2_L1B)
+      .value("PIPE_NUM", MlirPTOPIPE_PIPE_NUM)
+      .value("PIPE_UNASSIGNED", MlirPTOPIPE_PIPE_UNASSIGNED);
 
-    py::enum_<mlir::pto::Layout>(m, "Layout")
-      .value("ND", mlir::pto::Layout::ND)
-      .value("DN", mlir::pto::Layout::DN)
-      .value("NZ", mlir::pto::Layout::NZ)
-      .value("MX_A_ZZ", mlir::pto::Layout::MX_A_ZZ)
-      .value("MX_B_NN", mlir::pto::Layout::MX_B_NN);
+    py::enum_<MlirPTOLayout>(m, "Layout")
+      .value("ND", MlirPTOLayout_ND)
+      .value("DN", MlirPTOLayout_DN)
+      .value("NZ", MlirPTOLayout_NZ)
+      .value("MX_A_ZZ", MlirPTOLayout_MX_A_ZZ)
+      .value("MX_B_NN", MlirPTOLayout_MX_B_NN);
 
-    py::enum_<mlir::pto::AccToVecMode>(m, "AccToVecMode")
-      .value("SingleModeVec0", mlir::pto::AccToVecMode::SingleModeVec0)
-      .value("SingleModeVec1", mlir::pto::AccToVecMode::SingleModeVec1)
-      .value("DualModeSplitM", mlir::pto::AccToVecMode::DualModeSplitM)
-      .value("DualModeSplitN", mlir::pto::AccToVecMode::DualModeSplitN)
+    py::enum_<MlirPTOAccToVecMode>(m, "AccToVecMode")
+      .value("SingleModeVec0", MlirPTOAccToVecMode_SingleModeVec0)
+      .value("SingleModeVec1", MlirPTOAccToVecMode_SingleModeVec1)
+      .value("DualModeSplitM", MlirPTOAccToVecMode_DualModeSplitM)
+      .value("DualModeSplitN", MlirPTOAccToVecMode_DualModeSplitN)
       .export_values();
 
-    py::enum_<mlir::pto::TInsertMode>(m, "TInsertMode")
-      .value("SPLIT2", mlir::pto::TInsertMode::SPLIT2)
-      .value("SPLIT4", mlir::pto::TInsertMode::SPLIT4)
+    py::enum_<MlirPTOTInsertMode>(m, "TInsertMode")
+      .value("SPLIT2", MlirPTOTInsertMode_SPLIT2)
+      .value("SPLIT4", MlirPTOTInsertMode_SPLIT4)
       .export_values();
 
-    py::enum_<mlir::pto::ReluPreMode>(m, "ReluPreMode")
-      .value("NoRelu", mlir::pto::ReluPreMode::NoRelu)
-      .value("NormalRelu", mlir::pto::ReluPreMode::NormalRelu)
+    py::enum_<MlirPTOReluPreMode>(m, "ReluPreMode")
+      .value("NoRelu", MlirPTOReluPreMode_NoRelu)
+      .value("NormalRelu", MlirPTOReluPreMode_NormalRelu)
       .export_values();
 
-    py::enum_<mlir::pto::AtomicType>(m, "AtomicType")
-      .value("AtomicNone", mlir::pto::AtomicType::AtomicNone)
-      .value("AtomicAdd", mlir::pto::AtomicType::AtomicAdd)
+    py::enum_<MlirPTOAtomicType>(m, "AtomicType")
+      .value("AtomicNone", MlirPTOAtomicType_AtomicNone)
+      .value("AtomicAdd", MlirPTOAtomicType_AtomicAdd)
       .export_values();
 
-    py::enum_<mlir::pto::NotifyOp>(m, "NotifyOp")
-      .value("AtomicAdd", mlir::pto::NotifyOp::AtomicAdd)
-      .value("Set", mlir::pto::NotifyOp::Set)
+    py::enum_<MlirPTONotifyOp>(m, "NotifyOp")
+      .value("AtomicAdd", MlirPTONotifyOp_AtomicAdd)
+      .value("Set", MlirPTONotifyOp_Set)
       .export_values();
 
-    py::enum_<mlir::pto::WaitCmp>(m, "WaitCmp")
-      .value("EQ", mlir::pto::WaitCmp::EQ)
-      .value("NE", mlir::pto::WaitCmp::NE)
-      .value("GT", mlir::pto::WaitCmp::GT)
-      .value("GE", mlir::pto::WaitCmp::GE)
-      .value("LT", mlir::pto::WaitCmp::LT)
-      .value("LE", mlir::pto::WaitCmp::LE)
+    py::enum_<MlirPTOWaitCmp>(m, "WaitCmp")
+      .value("EQ", MlirPTOWaitCmp_EQ)
+      .value("NE", MlirPTOWaitCmp_NE)
+      .value("GT", MlirPTOWaitCmp_GT)
+      .value("GE", MlirPTOWaitCmp_GE)
+      .value("LT", MlirPTOWaitCmp_LT)
+      .value("LE", MlirPTOWaitCmp_LE)
       .export_values();
 
-    py::enum_<mlir::pto::ReduceOp>(m, "ReduceOp")
-      .value("Sum", mlir::pto::ReduceOp::Sum)
-      .value("Max", mlir::pto::ReduceOp::Max)
-      .value("Min", mlir::pto::ReduceOp::Min)
+    py::enum_<MlirPTOReduceOp>(m, "ReduceOp")
+      .value("Sum", MlirPTOReduceOp_Sum)
+      .value("Max", MlirPTOReduceOp_Max)
+      .value("Min", MlirPTOReduceOp_Min)
       .export_values();
 
-    py::enum_<mlir::pto::SyncOpType>(m, "SyncOpType")
-      .value("TLOAD", mlir::pto::SyncOpType::TLOAD)
-      .value("TSTORE_ACC", mlir::pto::SyncOpType::TSTORE_ACC)
-      .value("TSTORE_VEC", mlir::pto::SyncOpType::TSTORE_VEC)
-      .value("TMOV_M2L", mlir::pto::SyncOpType::TMOV_M2L)
-      .value("TMOV_M2S", mlir::pto::SyncOpType::TMOV_M2S)
-      .value("TMOV_M2B", mlir::pto::SyncOpType::TMOV_M2B)
-      .value("TMOV_M2V", mlir::pto::SyncOpType::TMOV_M2V)
-      .value("TMOV_V2M", mlir::pto::SyncOpType::TMOV_V2M)
-      .value("TMATMUL", mlir::pto::SyncOpType::TMATMUL)
-      .value("TVEC", mlir::pto::SyncOpType::TVEC)
-      .value("TVECWAIT_EVENT", mlir::pto::SyncOpType::TVECWAIT_EVENT)
+    py::enum_<MlirPTOSyncOpType>(m, "SyncOpType")
+      .value("TLOAD", MlirPTOSyncOpType_TLOAD)
+      .value("TSTORE_ACC", MlirPTOSyncOpType_TSTORE_ACC)
+      .value("TSTORE_VEC", MlirPTOSyncOpType_TSTORE_VEC)
+      .value("TMOV_M2L", MlirPTOSyncOpType_TMOV_M2L)
+      .value("TMOV_M2S", MlirPTOSyncOpType_TMOV_M2S)
+      .value("TMOV_M2B", MlirPTOSyncOpType_TMOV_M2B)
+      .value("TMOV_M2V", MlirPTOSyncOpType_TMOV_M2V)
+      .value("TMOV_V2M", MlirPTOSyncOpType_TMOV_V2M)
+      .value("TMATMUL", MlirPTOSyncOpType_TMATMUL)
+      .value("TVEC", MlirPTOSyncOpType_TVEC)
+      .value("TVECWAIT_EVENT", MlirPTOSyncOpType_TVECWAIT_EVENT)
       .export_values();
 
-    py::enum_<mlir::pto::EVENT>(m, "EVENT")
-      .value("EVENT_ID0", mlir::pto::EVENT::EVENT_ID0)
-      .value("EVENT_ID1", mlir::pto::EVENT::EVENT_ID1)
-      .value("EVENT_ID2", mlir::pto::EVENT::EVENT_ID2)
-      .value("EVENT_ID3", mlir::pto::EVENT::EVENT_ID3)
-      .value("EVENT_ID4", mlir::pto::EVENT::EVENT_ID4)
-      .value("EVENT_ID5", mlir::pto::EVENT::EVENT_ID5)
-      .value("EVENT_ID6", mlir::pto::EVENT::EVENT_ID6)
-      .value("EVENT_ID7", mlir::pto::EVENT::EVENT_ID7)
+    py::enum_<MlirPTOEVENT>(m, "EVENT")
+      .value("EVENT_ID0", MlirPTOEVENT_EVENT_ID0)
+      .value("EVENT_ID1", MlirPTOEVENT_EVENT_ID1)
+      .value("EVENT_ID2", MlirPTOEVENT_EVENT_ID2)
+      .value("EVENT_ID3", MlirPTOEVENT_EVENT_ID3)
+      .value("EVENT_ID4", MlirPTOEVENT_EVENT_ID4)
+      .value("EVENT_ID5", MlirPTOEVENT_EVENT_ID5)
+      .value("EVENT_ID6", MlirPTOEVENT_EVENT_ID6)
+      .value("EVENT_ID7", MlirPTOEVENT_EVENT_ID7)
       .export_values();
 
-    py::enum_<mlir::pto::MaskPattern>(m, "MaskPattern")
-      .value("P0101", mlir::pto::MaskPattern::P0101)
-      .value("P1010", mlir::pto::MaskPattern::P1010)
-      .value("P0001", mlir::pto::MaskPattern::P0001)
-      .value("P0010", mlir::pto::MaskPattern::P0010)
-      .value("P0100", mlir::pto::MaskPattern::P0100)
-      .value("P1000", mlir::pto::MaskPattern::P1000)
-      .value("P1111", mlir::pto::MaskPattern::P1111)
+    py::enum_<MlirPTOMaskPattern>(m, "MaskPattern")
+      .value("P0101", MlirPTOMaskPattern_P0101)
+      .value("P1010", MlirPTOMaskPattern_P1010)
+      .value("P0001", MlirPTOMaskPattern_P0001)
+      .value("P0010", MlirPTOMaskPattern_P0010)
+      .value("P0100", MlirPTOMaskPattern_P0100)
+      .value("P1000", MlirPTOMaskPattern_P1000)
+      .value("P1111", MlirPTOMaskPattern_P1111)
       .export_values();
     py::object maskPatternEnumType = m.attr("MaskPattern");
 
@@ -344,7 +343,7 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
                         })
     .def_classmethod(
         "get",
-        [](py::object cls, mlir::pto::BLayout value, MlirContext ctx) -> py::object {
+        [](py::object cls, MlirPTOBLayout value, MlirContext ctx) -> py::object {
           MlirAttribute a = mlirPTOBLayoutAttrGet(ctx, static_cast<int32_t>(value));
           if (mlirAttributeIsNull(a)) {
             return py::none();
@@ -359,7 +358,7 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
                             })
         .def_classmethod(
             "get",
-            [](py::object cls, mlir::pto::SLayout value, MlirContext ctx) -> py::object {
+            [](py::object cls, MlirPTOSLayout value, MlirContext ctx) -> py::object {
             MlirAttribute a = mlirPTOSLayoutAttrGet(ctx, static_cast<int32_t>(value));
             if (mlirAttributeIsNull(a)) {
               return py::none();
@@ -374,7 +373,7 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
                             })
         .def_classmethod(
             "get",
-            [](py::object cls, mlir::pto::PadValue value, MlirContext ctx) -> py::object {
+            [](py::object cls, MlirPTOPadValue value, MlirContext ctx) -> py::object {
             MlirAttribute a = mlirPTOPadValueAttrGet(ctx, static_cast<int32_t>(value));
             if (mlirAttributeIsNull(a)) {
               return py::none();
@@ -389,7 +388,7 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
                             })
         .def_classmethod(
             "get",
-            [](py::object cls, mlir::pto::CompactMode value, MlirContext ctx) -> py::object {
+            [](py::object cls, MlirPTOCompactMode value, MlirContext ctx) -> py::object {
             MlirAttribute a = mlirPTOCompactModeAttrGet(ctx, static_cast<int32_t>(value));
             if (mlirAttributeIsNull(a)) {
               return py::none();
@@ -404,7 +403,7 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
                             })
         .def_classmethod(
             "get",
-            [](py::object cls, mlir::pto::AccToVecMode value, MlirContext ctx) -> py::object {
+            [](py::object cls, MlirPTOAccToVecMode value, MlirContext ctx) -> py::object {
             MlirAttribute a = mlirPTOAccToVecModeAttrGet(ctx, static_cast<int32_t>(value));
             if (mlirAttributeIsNull(a)) {
               return py::none();
@@ -419,7 +418,7 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
                             })
         .def_classmethod(
             "get",
-            [](py::object cls, mlir::pto::TInsertMode value, MlirContext ctx) -> py::object {
+            [](py::object cls, MlirPTOTInsertMode value, MlirContext ctx) -> py::object {
             MlirAttribute a = mlirPTOTInsertModeAttrGet(ctx, static_cast<int32_t>(value));
             if (mlirAttributeIsNull(a)) {
               return py::none();
@@ -434,7 +433,7 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
                             })
         .def_classmethod(
             "get",
-            [](py::object cls, mlir::pto::ReluPreMode value, MlirContext ctx) -> py::object {
+            [](py::object cls, MlirPTOReluPreMode value, MlirContext ctx) -> py::object {
             MlirAttribute a = mlirPTOReluPreModeAttrGet(ctx, static_cast<int32_t>(value));
             if (mlirAttributeIsNull(a)) {
               return py::none();
@@ -449,7 +448,7 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
                             })
         .def_classmethod(
             "get",
-            [](py::object cls, mlir::pto::AtomicType value, MlirContext ctx) -> py::object {
+            [](py::object cls, MlirPTOAtomicType value, MlirContext ctx) -> py::object {
             MlirAttribute a = mlirPTOAtomicTypeAttrGet(ctx, static_cast<int32_t>(value));
             if (mlirAttributeIsNull(a)) {
               return py::none();
@@ -464,7 +463,7 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
                             })
         .def_classmethod(
             "get",
-            [](py::object cls, mlir::pto::NotifyOp value, MlirContext ctx) -> py::object {
+            [](py::object cls, MlirPTONotifyOp value, MlirContext ctx) -> py::object {
             MlirAttribute a = mlirPTONotifyOpAttrGet(ctx, static_cast<int32_t>(value));
             if (mlirAttributeIsNull(a)) {
               return py::none();
@@ -479,7 +478,7 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
                             })
         .def_classmethod(
             "get",
-            [](py::object cls, mlir::pto::WaitCmp value, MlirContext ctx) -> py::object {
+            [](py::object cls, MlirPTOWaitCmp value, MlirContext ctx) -> py::object {
             MlirAttribute a = mlirPTOWaitCmpAttrGet(ctx, static_cast<int32_t>(value));
             if (mlirAttributeIsNull(a)) {
               return py::none();
@@ -494,7 +493,7 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
                             })
         .def_classmethod(
             "get",
-            [](py::object cls, mlir::pto::ReduceOp value, MlirContext ctx) -> py::object {
+            [](py::object cls, MlirPTOReduceOp value, MlirContext ctx) -> py::object {
             MlirAttribute a = mlirPTOReduceOpAttrGet(ctx, static_cast<int32_t>(value));
             if (mlirAttributeIsNull(a)) {
               return py::none();
@@ -765,9 +764,9 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
             return mlirPTOEventAttrGetValue(self);
           });
 
-    py::enum_<mlir::pto::Coalesce>(m, "Coalesce")
-      .value("Elem", mlir::pto::Coalesce::Elem)
-      .value("Row", mlir::pto::Coalesce::Row)
+    py::enum_<MlirPTOCoalesce>(m, "Coalesce")
+      .value("Elem", MlirPTOCoalesce_Elem)
+      .value("Row", MlirPTOCoalesce_Row)
       .export_values();
 
     mlir_attribute_subclass(
@@ -798,26 +797,26 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
             return mlirPTOCoalesceAttrGetValue(self);
           });
 
-    py::enum_<mlir::pto::QuantType>(m, "QuantType")
-      .value("INT8_SYM",  mlir::pto::QuantType::INT8_SYM)
-      .value("INT8_ASYM", mlir::pto::QuantType::INT8_ASYM)
-      .value("MXFP8",     mlir::pto::QuantType::MXFP8)
-      .value("MXFP4_E2M1", mlir::pto::QuantType::MXFP4_E2M1)
+    py::enum_<MlirPTOQuantType>(m, "QuantType")
+      .value("INT8_SYM",  MlirPTOQuantType_INT8_SYM)
+      .value("INT8_ASYM", MlirPTOQuantType_INT8_ASYM)
+      .value("MXFP8",     MlirPTOQuantType_MXFP8)
+      .value("MXFP4_E2M1", MlirPTOQuantType_MXFP4_E2M1)
       .export_values();
 
-    py::enum_<mlir::pto::QuantScaleAlg>(m, "QuantScaleAlg")
-      .value("OCP", mlir::pto::QuantScaleAlg::OCP)
-      .value("NV", mlir::pto::QuantScaleAlg::NV)
+    py::enum_<MlirPTOQuantScaleAlg>(m, "QuantScaleAlg")
+      .value("OCP", MlirPTOQuantScaleAlg_OCP)
+      .value("NV", MlirPTOQuantScaleAlg_NV)
       .export_values();
 
-    py::enum_<mlir::pto::MxGroupAxis>(m, "MxGroupAxis")
-      .value("Axis0", mlir::pto::MxGroupAxis::Axis0)
-      .value("Axis1", mlir::pto::MxGroupAxis::Axis1)
+    py::enum_<MlirPTOMxGroupAxis>(m, "MxGroupAxis")
+      .value("Axis0", MlirPTOMxGroupAxis_Axis0)
+      .value("Axis1", MlirPTOMxGroupAxis_Axis1)
       .export_values();
 
-    py::enum_<mlir::pto::VecStoreMode>(m, "VecStoreMode")
-      .value("ND", mlir::pto::VecStoreMode::ND)
-      .value("NZ", mlir::pto::VecStoreMode::NZ)
+    py::enum_<MlirPTOVecStoreMode>(m, "VecStoreMode")
+      .value("ND", MlirPTOVecStoreMode_ND)
+      .value("NZ", MlirPTOVecStoreMode_NZ)
       .export_values();
 
     mlir_attribute_subclass(
@@ -968,9 +967,8 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
           py::arg("cls"), py::arg("value"), py::arg("context") = py::none())
       .def_property_readonly(
           "value",
-          [](MlirAttribute self) -> mlir::pto::MaskPattern {
-            return static_cast<mlir::pto::MaskPattern>(
-                mlirPTOMaskPatternAttrGetEnumValue(self));
+          [](MlirAttribute self) -> MlirPTOMaskPattern {
+            return mlirPTOMaskPatternAttrGetEnumValue(self);
           })
       .def_property_readonly(
           "int_value",
@@ -1410,7 +1408,7 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
                 MlirType i32 = mlirIntegerTypeGet(ctx, 32);
                 MlirAttribute sz = mlirIntegerAttrGet(i32, s_fractal_size);
                 MlirAttribute compactMode = mlirPTOCompactModeAttrGet(
-                    ctx, static_cast<int32_t>(mlir::pto::CompactMode::Null));
+                    ctx, static_cast<int32_t>(MlirPTOCompactMode_Null));
                 if (!compactModeObj.is_none()) {
                   if (py::isinstance<py::int_>(compactModeObj)) {
                     compactMode = mlirPTOCompactModeAttrGet(

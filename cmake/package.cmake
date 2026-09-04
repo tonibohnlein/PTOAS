@@ -26,20 +26,11 @@ function(pack_built_in)
 
   set(PTOAS_ROOT_DIR "${CMAKE_SOURCE_DIR}")
 
-  # Release builds may provide a repaired wheel, but the CI placeholder
-  # package deliberately omits it.  Keep validation strict whenever a path is
-  # supplied so a typo cannot silently produce a partial release package.
-  set(PTOAS_INSTALL_WHEEL FALSE)
-  if(DEFINED PTOAS_WHEEL_FILE AND NOT "${PTOAS_WHEEL_FILE}" STREQUAL "")
-      if(NOT EXISTS "${PTOAS_WHEEL_FILE}")
-          message(FATAL_ERROR "PTOAS_WHEEL_FILE does not exist: ${PTOAS_WHEEL_FILE}")
-      endif()
-      if(IS_DIRECTORY "${PTOAS_WHEEL_FILE}")
-          message(FATAL_ERROR "PTOAS_WHEEL_FILE must be a file: ${PTOAS_WHEEL_FILE}")
-      endif()
-      set(PTOAS_INSTALL_WHEEL TRUE)
-  else()
-      message(STATUS "PTOAS_WHEEL_FILE is not set; generating placeholder package without wheel")
+  if(NOT DEFINED PTOAS_WHEEL_FILE OR NOT EXISTS "${PTOAS_WHEEL_FILE}")
+      message(FATAL_ERROR "PTOAS_WHEEL_FILE must point to the repaired PTOAS wheel")
+  endif()
+  if(IS_DIRECTORY "${PTOAS_WHEEL_FILE}")
+      message(FATAL_ERROR "PTOAS_WHEEL_FILE must be a file: ${PTOAS_WHEEL_FILE}")
   endif()
 
   set(SCRIPTS_FILES
@@ -126,24 +117,11 @@ function(pack_built_in)
       COMPONENT pto_as
   )
 
-  if(PTOAS_INSTALL_WHEEL)
-      install(FILES "${PTOAS_WHEEL_FILE}"
-          DESTINATION tools/ptoas/wheels
-          ${INSTALL_OPTIONAL}
-          COMPONENT pto_as
-      )
-  else()
-      # The package XML keeps tools/ptoas/wheels as part of its stable layout.
-      # Install an empty directory so the legacy file-list generator can parse
-      # the entity entry without requiring a dummy .whl file.
-      set(PTOAS_EMPTY_WHEEL_DIR "${CMAKE_CURRENT_BINARY_DIR}/ptoas-empty-wheels")
-      file(MAKE_DIRECTORY "${PTOAS_EMPTY_WHEEL_DIR}")
-      install(DIRECTORY "${PTOAS_EMPTY_WHEEL_DIR}/"
-          DESTINATION tools/ptoas/wheels
-          ${INSTALL_OPTIONAL}
-          COMPONENT pto_as
-      )
-  endif()
+  install(FILES "${PTOAS_WHEEL_FILE}"
+      DESTINATION tools/ptoas/wheels
+      ${INSTALL_OPTIONAL}
+      COMPONENT pto_as
+  )
 
   install(FILES ${PTOAS_ROOT_DIR}/scripts/package/pto_as/bin/ptoas
       DESTINATION tools/ptoas/bin

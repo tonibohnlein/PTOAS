@@ -174,8 +174,7 @@ static Type getBufferElementType(Type type) {
   return {};
 }
 
-static Value offsetBufferPointer(Value basePtr, Type elementType,
-                                 Value elementOffset,
+static Value offsetBufferPointer(Value basePtr, Value elementOffset,
                                  PatternRewriter &rewriter, Location loc) {
   if (!basePtr) {
     return {};
@@ -603,13 +602,14 @@ static FailureOr<Value> packMadXt(Location loc, const MadXtConfig &config,
     return failure();
   }
 
-  auto constant = [&](uint64_t value) -> Value {
+  auto constant = [&rewriter, loc](uint64_t value) -> Value {
     return rewriter.create<arith::ConstantIntOp>(loc, value, mlir::pto::kValue64);
   };
-  auto shl = [&](Value value, uint64_t amount) -> Value {
+  auto shl = [&rewriter, loc, &constant](Value value,
+                                         uint64_t amount) -> Value {
     return rewriter.create<arith::ShLIOp>(loc, value, constant(amount));
   };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
+  auto bitOr = [&rewriter, loc](Value lhs, Value rhs) -> Value {
     return rewriter.create<arith::OrIOp>(loc, lhs, rhs);
   };
 
@@ -859,6 +859,13 @@ struct LoadCbufToCbControl {
   Value dstStride;
 };
 
+struct PreparedLoadCbufOperands {
+  Value source;
+  Value destination;
+  Type elementType;
+  LoadCbufToCbControl control;
+};
+
 struct LoadCbufToMxControl {
   Value xStartPosition;
   Value yStartPosition;
@@ -949,6 +956,37 @@ deriveLoadCbufControl(const LoadCbufControlQuery &query) {
   Value dstStride = math.ceilDiv(outerAlign, mlir::pto::kValue16);
   return LoadCbufToCbControl{query.outerStart, kStart, outerStep, kStep,
                              srcStride, dstStride};
+}
+
+template <typename LoadOp>
+static FailureOr<PreparedLoadCbufOperands>
+prepareLoadCbufOperands(LoadOp op, Value outerSize,
+                        PatternRewriter &rewriter) {
+  Location loc = op.getLoc();
+  Value source = materializeBufferPointer(op.getSource(), rewriter, loc);
+  Value destination =
+      materializeBufferPointer(op.getDestination(), rewriter, loc);
+  if (!source || !destination) {
+    return failure();
+  }
+  auto sourceType = dyn_cast<pto::PtrType>(source.getType());
+  if (!sourceType) {
+    return failure();
+  }
+
+  Type elementType = sourceType.getElementType();
+  FailureOr<LoadCbufToCbControl> control =
+      op.getMStart()
+          ? FailureOr<LoadCbufToCbControl>(LoadCbufToCbControl{
+                op.getMStart(), op.getKStart(), op.getMStep(), op.getKStep(),
+                op.getSrcStride(), op.getDstStride()})
+          : deriveLoadCbufControl(
+                {loc, outerSize, op.getK(), elementType, op.getStartRow(),
+                 op.getStartCol(), op.getTranspose(), rewriter});
+  if (failed(control)) {
+    return failure();
+  }
+  return PreparedLoadCbufOperands{source, destination, elementType, *control};
 }
 
 enum class CbufMxSide { Left, Right };
@@ -1196,8 +1234,8 @@ struct ExpandUvldPattern : public OpRewritePattern<pto::UvldOp> {
           "requires a recoverable pointer base for uvld expansion");
     }
 
-    Value loadPtr = offsetBufferPointer(basePtr, vecType.getElementType(),
-                                       op.getOffset(), rewriter, op.getLoc());
+    Value loadPtr =
+        offsetBufferPointer(basePtr, op.getOffset(), rewriter, op.getLoc());
     auto alignType = pto::AlignType::get(rewriter.getContext());
     Value align =
         rewriter.create<pto::VldasOp>(op.getLoc(), alignType, loadPtr);
@@ -1334,7 +1372,8 @@ struct ExpandDmaLoadPattern : public OpRewritePattern<pto::MteGmUbOp> {
 
     buildSoftwareLoopNest(
         rewriter, loc, loopPlan.softwareLoops, {zero, zero},
-        [&](Value srcOffset, Value dstOffset) {
+        [op, &rewriter, loc, zero, effectiveNBurst,
+         padding](Value srcOffset, Value dstOffset) mutable {
           Value source = offsetPointerByBytes(op.getSource(), srcOffset, rewriter, loc);
           Value destination =
               offsetPointerByBytes(op.getDestination(), dstOffset, rewriter, loc);
@@ -1376,7 +1415,8 @@ struct ExpandDmaStorePattern : public OpRewritePattern<pto::MteUbGmOp> {
 
     buildSoftwareLoopNest(
         rewriter, loc, loopPlan.softwareLoops, {zero, zero},
-        [&](Value srcOffset, Value dstOffset) {
+        [op, &rewriter, loc, zero, effectiveNBurst](Value srcOffset,
+                                                    Value dstOffset) mutable {
           Value source = offsetPointerByBytes(op.getSource(), srcOffset, rewriter, loc);
           Value destination =
               offsetPointerByBytes(op.getDestination(), dstOffset, rewriter, loc);
@@ -1434,7 +1474,7 @@ struct ExpandCubeLoadPattern : public OpRewritePattern<pto::MteGmL1Op> {
     DmaLoopPlan loopPlan = configureLoadToL1Loops(op, loops, one, rewriter);
     buildSoftwareLoopNest(
         rewriter, loc, loopPlan.softwareLoops, {zero, zero},
-        [&](Value srcOffset, Value dstOffset) {
+        [op, &rewriter, loc](Value srcOffset, Value dstOffset) mutable {
           Value source =
               offsetPointerByBytes(op.getSource(), srcOffset, rewriter, loc);
           Value destination = offsetPointerByBytes(op.getDestination(), dstOffset,
@@ -1510,7 +1550,7 @@ struct ExpandCubeStorePattern : public OpRewritePattern<pto::MteL1UbOp> {
                                                     loops.rend());
     buildSoftwareLoopNest(
         rewriter, loc, swLoopNestOrder, {zero, zero},
-        [&](Value srcOffset, Value dstOffset) {
+        [op, &rewriter, loc, zero](Value srcOffset, Value dstOffset) mutable {
           Value source =
               offsetPointerByBytes(op.getSource(), srcOffset, rewriter, loc);
           Value destination =
@@ -1613,43 +1653,28 @@ struct ExpandLeftLoadPattern : public OpRewritePattern<pto::MteL1L0aOp> {
   LogicalResult matchAndRewrite(pto::MteL1L0aOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    Value source = materializeBufferPointer(op.getSource(), rewriter, loc);
-    Value destination =
-        materializeBufferPointer(op.getDestination(), rewriter, loc);
-    auto sourceType = dyn_cast_or_null<pto::PtrType>(source.getType());
-    if (!sourceType) {
-      return rewriter.notifyMatchFailure(op, "expected typed L1 source");
-    }
-    Type elementType = sourceType.getElementType();
-    if (!destination) {
-      return rewriter.notifyMatchFailure(op, "expected pointer-like destination");
-    }
-    FailureOr<LoadCbufToCbControl> control = [&]() -> FailureOr<LoadCbufToCbControl> {
-      if (op.getMStart()) {
-        return LoadCbufToCbControl{op.getMStart(), op.getKStart(),
-                                   op.getMStep(), op.getKStep(),
-                                   op.getSrcStride(), op.getDstStride()};
-      }
-      return deriveLoadCbufControl(
-          {loc, op.getM(), op.getK(), elementType, op.getStartRow(),
-           op.getStartCol(), op.getTranspose(), rewriter});
-    }();
-    if (failed(control)) {
+    FailureOr<PreparedLoadCbufOperands> prepared =
+        prepareLoadCbufOperands(op, op.getM(), rewriter);
+    if (failed(prepared)) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to derive load_cbuf_to_ca control");
     }
+    Value source = prepared->source;
+    Value destination = prepared->destination;
+    Type elementType = prepared->elementType;
+    const LoadCbufToCbControl &control = prepared->control;
     if (pto::isPTOFloat4PackedType(elementType)) {
       rewriter.create<pto::LoadCbufToCaS4Op>(
-          loc, source, destination, control->mStart,
-          control->kStart, control->mStep, control->kStep,
-          control->srcStride, control->dstStride,
+          loc, source, destination, control.mStart,
+          control.kStart, control.mStep, control.kStep,
+          control.srcStride, control.dstStride,
           rewriter.create<arith::ConstantIntOp>(loc, op.getTranspose(),
                                                 mlir::pto::kValue64));
     } else {
       auto load = rewriter.create<pto::LoadCbufToCaOp>(
-          loc, source, destination, control->mStart,
-          control->kStart, control->mStep, control->kStep,
-          control->srcStride, control->dstStride);
+          loc, source, destination, control.mStart,
+          control.kStart, control.mStep, control.kStep,
+          control.srcStride, control.dstStride);
       load->setAttr("transpose", rewriter.getBoolAttr(op.getTranspose()));
     }
     rewriter.eraseOp(op);
@@ -1663,43 +1688,28 @@ struct ExpandRightLoadPattern : public OpRewritePattern<pto::MteL1L0bOp> {
   LogicalResult matchAndRewrite(pto::MteL1L0bOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    Value source = materializeBufferPointer(op.getSource(), rewriter, loc);
-    Value destination =
-        materializeBufferPointer(op.getDestination(), rewriter, loc);
-    auto sourceType = dyn_cast_or_null<pto::PtrType>(source.getType());
-    if (!sourceType) {
-      return rewriter.notifyMatchFailure(op, "expected typed L1 source");
-    }
-    Type elementType = sourceType.getElementType();
-    if (!destination) {
-      return rewriter.notifyMatchFailure(op, "expected pointer-like destination");
-    }
-    FailureOr<LoadCbufToCbControl> control = [&]() -> FailureOr<LoadCbufToCbControl> {
-      if (op.getMStart()) {
-        return LoadCbufToCbControl{op.getMStart(), op.getKStart(),
-                                   op.getMStep(), op.getKStep(),
-                                   op.getSrcStride(), op.getDstStride()};
-      }
-      return deriveLoadCbufControl(
-          {loc, op.getN(), op.getK(), elementType, op.getStartRow(),
-           op.getStartCol(), op.getTranspose(), rewriter});
-    }();
-    if (failed(control)) {
+    FailureOr<PreparedLoadCbufOperands> prepared =
+        prepareLoadCbufOperands(op, op.getN(), rewriter);
+    if (failed(prepared)) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to derive load_cbuf_to_cb control");
     }
+    Value source = prepared->source;
+    Value destination = prepared->destination;
+    Type elementType = prepared->elementType;
+    const LoadCbufToCbControl &control = prepared->control;
     if (pto::isPTOFloat4PackedType(elementType)) {
       rewriter.create<pto::LoadCbufToCbS4Op>(
-          loc, source, destination, control->mStart,
-          control->kStart, control->mStep, control->kStep,
-          control->srcStride, control->dstStride,
+          loc, source, destination, control.mStart,
+          control.kStart, control.mStep, control.kStep,
+          control.srcStride, control.dstStride,
           rewriter.create<arith::ConstantIntOp>(loc, op.getTranspose(),
                                                 mlir::pto::kValue64));
     } else {
       auto load = rewriter.create<pto::LoadCbufToCbOp>(
-          loc, source, destination, control->mStart,
-          control->kStart, control->mStep, control->kStep,
-          control->srcStride, control->dstStride);
+          loc, source, destination, control.mStart,
+          control.kStart, control.mStep, control.kStep,
+          control.srcStride, control.dstStride);
       load->setAttr("transpose", rewriter.getBoolAttr(op.getTranspose()));
     }
     rewriter.eraseOp(op);

@@ -33,6 +33,167 @@
 // This header should itself include the generated PTOTypeDefs.h.inc.
 #include "PTO/IR/PTO.h"
 
+// C mirror enums consumed by the online-buildable Python bindings. This is the
+// only TU that sees both the generated C++ `enum class mlir::pto::*` and the C
+// mirror, so the static_asserts below break the build on any value drift.
+#include "pto-c/Dialect/PTOEnums.h"
+
+namespace {
+#define PTO_ENUM_MIRROR_EQ(CppEnum, CppVal, CMirror)                            \
+  static_assert(static_cast<uint32_t>(mlir::pto::CppEnum::CppVal) ==            \
+                    static_cast<uint32_t>(CMirror),                             \
+                "PTOEnums.h mirror drifted from mlir::pto::" #CppEnum)
+
+PTO_ENUM_MIRROR_EQ(AddressSpace, Zero, MlirPTOAddressSpace_Zero);
+PTO_ENUM_MIRROR_EQ(AddressSpace, GM, MlirPTOAddressSpace_GM);
+PTO_ENUM_MIRROR_EQ(AddressSpace, MAT, MlirPTOAddressSpace_MAT);
+PTO_ENUM_MIRROR_EQ(AddressSpace, LEFT, MlirPTOAddressSpace_LEFT);
+PTO_ENUM_MIRROR_EQ(AddressSpace, RIGHT, MlirPTOAddressSpace_RIGHT);
+PTO_ENUM_MIRROR_EQ(AddressSpace, ACC, MlirPTOAddressSpace_ACC);
+PTO_ENUM_MIRROR_EQ(AddressSpace, VEC, MlirPTOAddressSpace_VEC);
+PTO_ENUM_MIRROR_EQ(AddressSpace, BIAS, MlirPTOAddressSpace_BIAS);
+PTO_ENUM_MIRROR_EQ(AddressSpace, SCALING, MlirPTOAddressSpace_SCALING);
+
+PTO_ENUM_MIRROR_EQ(FenceScope, LocalMemory, MlirPTOFenceScope_LocalMemory);
+PTO_ENUM_MIRROR_EQ(FenceScope, GM, MlirPTOFenceScope_GM);
+PTO_ENUM_MIRROR_EQ(FenceScope, All, MlirPTOFenceScope_All);
+
+PTO_ENUM_MIRROR_EQ(BLayout, RowMajor, MlirPTOBLayout_RowMajor);
+PTO_ENUM_MIRROR_EQ(BLayout, ColMajor, MlirPTOBLayout_ColMajor);
+
+PTO_ENUM_MIRROR_EQ(SLayout, NoneBox, MlirPTOSLayout_NoneBox);
+PTO_ENUM_MIRROR_EQ(SLayout, RowMajor, MlirPTOSLayout_RowMajor);
+PTO_ENUM_MIRROR_EQ(SLayout, ColMajor, MlirPTOSLayout_ColMajor);
+
+PTO_ENUM_MIRROR_EQ(PadValue, Null, MlirPTOPadValue_Null);
+PTO_ENUM_MIRROR_EQ(PadValue, Zero, MlirPTOPadValue_Zero);
+PTO_ENUM_MIRROR_EQ(PadValue, Max, MlirPTOPadValue_Max);
+PTO_ENUM_MIRROR_EQ(PadValue, Min, MlirPTOPadValue_Min);
+
+PTO_ENUM_MIRROR_EQ(CompactMode, Null, MlirPTOCompactMode_Null);
+PTO_ENUM_MIRROR_EQ(CompactMode, Normal, MlirPTOCompactMode_Normal);
+PTO_ENUM_MIRROR_EQ(CompactMode, RowPlusOne, MlirPTOCompactMode_RowPlusOne);
+
+PTO_ENUM_MIRROR_EQ(RoundMode, NONE, MlirPTORoundMode_NONE);
+PTO_ENUM_MIRROR_EQ(RoundMode, RINT, MlirPTORoundMode_RINT);
+PTO_ENUM_MIRROR_EQ(RoundMode, ROUND, MlirPTORoundMode_ROUND);
+PTO_ENUM_MIRROR_EQ(RoundMode, FLOOR, MlirPTORoundMode_FLOOR);
+PTO_ENUM_MIRROR_EQ(RoundMode, CEIL, MlirPTORoundMode_CEIL);
+PTO_ENUM_MIRROR_EQ(RoundMode, TRUNC, MlirPTORoundMode_TRUNC);
+PTO_ENUM_MIRROR_EQ(RoundMode, ODD, MlirPTORoundMode_ODD);
+PTO_ENUM_MIRROR_EQ(RoundMode, CAST_RINT, MlirPTORoundMode_CAST_RINT);
+
+PTO_ENUM_MIRROR_EQ(DivPrecision, Default, MlirPTODivPrecision_Default);
+PTO_ENUM_MIRROR_EQ(DivPrecision, HighPrecision, MlirPTODivPrecision_HighPrecision);
+PTO_ENUM_MIRROR_EQ(ExpPrecision, Default, MlirPTOExpPrecision_Default);
+PTO_ENUM_MIRROR_EQ(ExpPrecision, HighPrecision, MlirPTOExpPrecision_HighPrecision);
+PTO_ENUM_MIRROR_EQ(LogPrecision, Default, MlirPTOLogPrecision_Default);
+PTO_ENUM_MIRROR_EQ(LogPrecision, HighPrecision, MlirPTOLogPrecision_HighPrecision);
+PTO_ENUM_MIRROR_EQ(RecipPrecision, Default, MlirPTORecipPrecision_Default);
+PTO_ENUM_MIRROR_EQ(RecipPrecision, HighPrecision, MlirPTORecipPrecision_HighPrecision);
+PTO_ENUM_MIRROR_EQ(RemPrecision, Default, MlirPTORemPrecision_Default);
+PTO_ENUM_MIRROR_EQ(RemPrecision, HighPrecision, MlirPTORemPrecision_HighPrecision);
+PTO_ENUM_MIRROR_EQ(RsqrtPrecision, Default, MlirPTORsqrtPrecision_Default);
+PTO_ENUM_MIRROR_EQ(RsqrtPrecision, HighPrecision, MlirPTORsqrtPrecision_HighPrecision);
+PTO_ENUM_MIRROR_EQ(SqrtPrecision, Default, MlirPTOSqrtPrecision_Default);
+PTO_ENUM_MIRROR_EQ(SqrtPrecision, HighPrecision, MlirPTOSqrtPrecision_HighPrecision);
+PTO_ENUM_MIRROR_EQ(FmodPrecision, Default, MlirPTOFmodPrecision_Default);
+PTO_ENUM_MIRROR_EQ(FmodPrecision, HighPrecision, MlirPTOFmodPrecision_HighPrecision);
+
+PTO_ENUM_MIRROR_EQ(SaturationMode, ON, MlirPTOSaturationMode_ON);
+PTO_ENUM_MIRROR_EQ(SaturationMode, OFF, MlirPTOSaturationMode_OFF);
+
+PTO_ENUM_MIRROR_EQ(PIPE, PIPE_S, MlirPTOPIPE_PIPE_S);
+PTO_ENUM_MIRROR_EQ(PIPE, PIPE_V, MlirPTOPIPE_PIPE_V);
+PTO_ENUM_MIRROR_EQ(PIPE, PIPE_M, MlirPTOPIPE_PIPE_M);
+PTO_ENUM_MIRROR_EQ(PIPE, PIPE_MTE1, MlirPTOPIPE_PIPE_MTE1);
+PTO_ENUM_MIRROR_EQ(PIPE, PIPE_MTE2, MlirPTOPIPE_PIPE_MTE2);
+PTO_ENUM_MIRROR_EQ(PIPE, PIPE_MTE3, MlirPTOPIPE_PIPE_MTE3);
+PTO_ENUM_MIRROR_EQ(PIPE, PIPE_ALL, MlirPTOPIPE_PIPE_ALL);
+PTO_ENUM_MIRROR_EQ(PIPE, PIPE_MTE4, MlirPTOPIPE_PIPE_MTE4);
+PTO_ENUM_MIRROR_EQ(PIPE, PIPE_MTE5, MlirPTOPIPE_PIPE_MTE5);
+PTO_ENUM_MIRROR_EQ(PIPE, PIPE_V2, MlirPTOPIPE_PIPE_V2);
+PTO_ENUM_MIRROR_EQ(PIPE, PIPE_FIX, MlirPTOPIPE_PIPE_FIX);
+PTO_ENUM_MIRROR_EQ(PIPE, VIRTUAL_PIPE_MTE2_L1A, MlirPTOPIPE_VIRTUAL_PIPE_MTE2_L1A);
+PTO_ENUM_MIRROR_EQ(PIPE, VIRTUAL_PIPE_MTE2_L1B, MlirPTOPIPE_VIRTUAL_PIPE_MTE2_L1B);
+PTO_ENUM_MIRROR_EQ(PIPE, PIPE_NUM, MlirPTOPIPE_PIPE_NUM);
+PTO_ENUM_MIRROR_EQ(PIPE, PIPE_UNASSIGNED, MlirPTOPIPE_PIPE_UNASSIGNED);
+
+PTO_ENUM_MIRROR_EQ(Layout, ND, MlirPTOLayout_ND);
+PTO_ENUM_MIRROR_EQ(Layout, DN, MlirPTOLayout_DN);
+PTO_ENUM_MIRROR_EQ(Layout, NZ, MlirPTOLayout_NZ);
+PTO_ENUM_MIRROR_EQ(Layout, MX_A_ZZ, MlirPTOLayout_MX_A_ZZ);
+PTO_ENUM_MIRROR_EQ(Layout, MX_B_NN, MlirPTOLayout_MX_B_NN);
+
+PTO_ENUM_MIRROR_EQ(AccToVecMode, SingleModeVec0, MlirPTOAccToVecMode_SingleModeVec0);
+PTO_ENUM_MIRROR_EQ(AccToVecMode, SingleModeVec1, MlirPTOAccToVecMode_SingleModeVec1);
+PTO_ENUM_MIRROR_EQ(AccToVecMode, DualModeSplitM, MlirPTOAccToVecMode_DualModeSplitM);
+PTO_ENUM_MIRROR_EQ(AccToVecMode, DualModeSplitN, MlirPTOAccToVecMode_DualModeSplitN);
+
+PTO_ENUM_MIRROR_EQ(TInsertMode, SPLIT2, MlirPTOTInsertMode_SPLIT2);
+PTO_ENUM_MIRROR_EQ(TInsertMode, SPLIT4, MlirPTOTInsertMode_SPLIT4);
+
+PTO_ENUM_MIRROR_EQ(ReluPreMode, NoRelu, MlirPTOReluPreMode_NoRelu);
+PTO_ENUM_MIRROR_EQ(ReluPreMode, NormalRelu, MlirPTOReluPreMode_NormalRelu);
+PTO_ENUM_MIRROR_EQ(ReluPreMode, ScalarRelu, MlirPTOReluPreMode_ScalarRelu);
+PTO_ENUM_MIRROR_EQ(ReluPreMode, VectorRelu, MlirPTOReluPreMode_VectorRelu);
+PTO_ENUM_MIRROR_EQ(ReluPreMode, Pwl, MlirPTOReluPreMode_Pwl);
+
+PTO_ENUM_MIRROR_EQ(AtomicType, AtomicNone, MlirPTOAtomicType_AtomicNone);
+PTO_ENUM_MIRROR_EQ(AtomicType, AtomicAdd, MlirPTOAtomicType_AtomicAdd);
+
+PTO_ENUM_MIRROR_EQ(NotifyOp, AtomicAdd, MlirPTONotifyOp_AtomicAdd);
+PTO_ENUM_MIRROR_EQ(NotifyOp, Set, MlirPTONotifyOp_Set);
+
+PTO_ENUM_MIRROR_EQ(WaitCmp, EQ, MlirPTOWaitCmp_EQ);
+PTO_ENUM_MIRROR_EQ(WaitCmp, NE, MlirPTOWaitCmp_NE);
+PTO_ENUM_MIRROR_EQ(WaitCmp, GT, MlirPTOWaitCmp_GT);
+PTO_ENUM_MIRROR_EQ(WaitCmp, GE, MlirPTOWaitCmp_GE);
+PTO_ENUM_MIRROR_EQ(WaitCmp, LT, MlirPTOWaitCmp_LT);
+PTO_ENUM_MIRROR_EQ(WaitCmp, LE, MlirPTOWaitCmp_LE);
+
+PTO_ENUM_MIRROR_EQ(ReduceOp, Sum, MlirPTOReduceOp_Sum);
+PTO_ENUM_MIRROR_EQ(ReduceOp, Max, MlirPTOReduceOp_Max);
+PTO_ENUM_MIRROR_EQ(ReduceOp, Min, MlirPTOReduceOp_Min);
+
+PTO_ENUM_MIRROR_EQ(SyncOpType, TLOAD, MlirPTOSyncOpType_TLOAD);
+PTO_ENUM_MIRROR_EQ(SyncOpType, TSTORE_ACC, MlirPTOSyncOpType_TSTORE_ACC);
+PTO_ENUM_MIRROR_EQ(SyncOpType, TSTORE_VEC, MlirPTOSyncOpType_TSTORE_VEC);
+PTO_ENUM_MIRROR_EQ(SyncOpType, TMOV_M2L, MlirPTOSyncOpType_TMOV_M2L);
+PTO_ENUM_MIRROR_EQ(SyncOpType, TMOV_M2S, MlirPTOSyncOpType_TMOV_M2S);
+PTO_ENUM_MIRROR_EQ(SyncOpType, TMOV_M2B, MlirPTOSyncOpType_TMOV_M2B);
+PTO_ENUM_MIRROR_EQ(SyncOpType, TMOV_M2V, MlirPTOSyncOpType_TMOV_M2V);
+PTO_ENUM_MIRROR_EQ(SyncOpType, TMOV_V2M, MlirPTOSyncOpType_TMOV_V2M);
+PTO_ENUM_MIRROR_EQ(SyncOpType, TMATMUL, MlirPTOSyncOpType_TMATMUL);
+PTO_ENUM_MIRROR_EQ(SyncOpType, TVEC, MlirPTOSyncOpType_TVEC);
+PTO_ENUM_MIRROR_EQ(SyncOpType, TVECWAIT_EVENT, MlirPTOSyncOpType_TVECWAIT_EVENT);
+
+PTO_ENUM_MIRROR_EQ(EVENT, EVENT_ID0, MlirPTOEVENT_EVENT_ID0);
+PTO_ENUM_MIRROR_EQ(EVENT, EVENT_ID1, MlirPTOEVENT_EVENT_ID1);
+PTO_ENUM_MIRROR_EQ(EVENT, EVENT_ID2, MlirPTOEVENT_EVENT_ID2);
+PTO_ENUM_MIRROR_EQ(EVENT, EVENT_ID3, MlirPTOEVENT_EVENT_ID3);
+PTO_ENUM_MIRROR_EQ(EVENT, EVENT_ID4, MlirPTOEVENT_EVENT_ID4);
+PTO_ENUM_MIRROR_EQ(EVENT, EVENT_ID5, MlirPTOEVENT_EVENT_ID5);
+PTO_ENUM_MIRROR_EQ(EVENT, EVENT_ID6, MlirPTOEVENT_EVENT_ID6);
+PTO_ENUM_MIRROR_EQ(EVENT, EVENT_ID7, MlirPTOEVENT_EVENT_ID7);
+
+PTO_ENUM_MIRROR_EQ(QuantType, INT8_SYM, MlirPTOQuantType_INT8_SYM);
+PTO_ENUM_MIRROR_EQ(QuantType, INT8_ASYM, MlirPTOQuantType_INT8_ASYM);
+PTO_ENUM_MIRROR_EQ(QuantType, MXFP8, MlirPTOQuantType_MXFP8);
+PTO_ENUM_MIRROR_EQ(QuantType, MXFP4_E2M1, MlirPTOQuantType_MXFP4_E2M1);
+
+PTO_ENUM_MIRROR_EQ(QuantScaleAlg, OCP, MlirPTOQuantScaleAlg_OCP);
+PTO_ENUM_MIRROR_EQ(QuantScaleAlg, NV, MlirPTOQuantScaleAlg_NV);
+
+PTO_ENUM_MIRROR_EQ(MxGroupAxis, Axis0, MlirPTOMxGroupAxis_Axis0);
+PTO_ENUM_MIRROR_EQ(MxGroupAxis, Axis1, MlirPTOMxGroupAxis_Axis1);
+
+PTO_ENUM_MIRROR_EQ(VecStoreMode, ND, MlirPTOVecStoreMode_ND);
+PTO_ENUM_MIRROR_EQ(VecStoreMode, NZ, MlirPTOVecStoreMode_NZ);
+
+#undef PTO_ENUM_MIRROR_EQ
+} // namespace
+
 using namespace mlir;
 
 namespace {

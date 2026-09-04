@@ -9,6 +9,7 @@
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
+#include "../Utils.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -218,16 +219,8 @@ static Value getCanonicalTrackedValue(Value value) {
   return value;
 }
 
-static Operation *getTopLevelAncestorInBlock(Operation *op, Block *block) {
-  for (Operation *cur = op; cur; cur = cur->getParentOp()) {
-    if (cur->getBlock() == block) {
-      return cur;
-    }
-  }
-  return nullptr;
-}
-
-static Region *getDirectRegionUnderAncestor(Operation *op, Operation *ancestor) {
+static Region *getDirectRegionUnderAncestor(Operation *op,
+                                            const Operation *ancestor) {
   for (Operation *cur = op; cur; cur = cur->getParentOp()) {
     Operation *parent = cur->getParentOp();
     if (parent == ancestor) {
@@ -402,7 +395,7 @@ static void pruneTrackedStoresForLoadBase(SmallVectorImpl<TrackedStore> &stores,
     stores.clear();
     return;
   }
-  llvm::erase_if(stores, [&](const TrackedStore &store) {
+  llvm::erase_if(stores, [base](const TrackedStore &store) {
     return areEquivalentValues(store.base, base);
   });
 }
@@ -415,7 +408,7 @@ static bool isTailStoreUseCompatible(
     return true;
   }
   if (context.regionOp->isProperAncestor(owner)) {
-    Operation *topLevelUser = getTopLevelAncestorInBlock(owner, context.body);
+    Operation *topLevelUser = pto::getAncestorInBlock(owner, context.body);
     if (!topLevelUser) {
       return false;
     }
@@ -429,7 +422,7 @@ static bool isTailStoreUseCompatible(
   }
 
   Operation *topLevelUser =
-      getTopLevelAncestorInBlock(owner, context.parentBlock);
+      pto::getAncestorInBlock(owner, context.parentBlock);
   if (!topLevelUser) {
     return areMutuallyExclusiveByIfRegion(localScopeOp, owner);
   }
@@ -557,7 +550,7 @@ using RegionContextMap =
 
 static RegionContextMap buildRegionContexts(func::FuncOp func) {
   RegionContextMap contexts;
-  func.walk([&](pto::FusionRegionOp fusionRegion) {
+  func.walk([&contexts](pto::FusionRegionOp fusionRegion) {
     std::optional<FusionRegionStoreContext> context =
         buildFusionRegionStoreContext(fusionRegion);
     if (context) {
@@ -570,15 +563,16 @@ static RegionContextMap buildRegionContexts(func::FuncOp func) {
 static void elideFusionRegionBodies(func::FuncOp func,
                                     RegionContextMap &contexts,
                                     bool &changed) {
-  func.walk([&](pto::FusionRegionOp fusionRegion) {
+  func.walk([&contexts, &changed](pto::FusionRegionOp fusionRegion) {
     auto it = contexts.find(fusionRegion.getOperation());
     if (it == contexts.end()) {
       return;
     }
     Block &body = fusionRegion.getBody().front();
     if (isSupportedStraightLineBlock(body)) {
-      changed |=
-          elideLoadStoreRoundTripsInLeafBody(body, &it->second, nullptr);
+      changed =
+          elideLoadStoreRoundTripsInLeafBody(body, &it->second, nullptr) ||
+          changed;
     }
   });
 }
@@ -591,14 +585,15 @@ static void runElisionForLeafBody(Block *body, Operation *scopeOp,
   }
   auto it = contexts.find(fusionRegion.getOperation());
   if (it != contexts.end()) {
-    changed |= elideLoadStoreRoundTripsInLeafBody(*body, &it->second, scopeOp);
+    changed = elideLoadStoreRoundTripsInLeafBody(*body, &it->second, scopeOp) ||
+              changed;
   }
 }
 
 template <typename ScopeOp>
 static void elideVectorScopeBodies(func::FuncOp func, RegionContextMap &contexts,
                                    bool &changed) {
-  func.walk([&](ScopeOp scope) {
+  func.walk([&contexts, &changed](ScopeOp scope) {
     auto fusionRegion = scope->template getParentOfType<pto::FusionRegionOp>();
     if (fusionRegion && isSupportedStraightLineBlock(scope.getBody().front())) {
       runElisionForLeafBody(&scope.getBody().front(), scope, fusionRegion,
@@ -609,7 +604,7 @@ static void elideVectorScopeBodies(func::FuncOp func, RegionContextMap &contexts
 
 static void elideLoopBodies(func::FuncOp func, RegionContextMap &contexts,
                             bool &changed) {
-  func.walk([&](scf::ForOp loop) {
+  func.walk([&contexts, &changed](scf::ForOp loop) {
     if (!isSupportedLoopRoot(loop)) {
       return;
     }

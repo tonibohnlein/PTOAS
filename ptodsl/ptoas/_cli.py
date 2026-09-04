@@ -26,9 +26,9 @@ def _resolve_wrapper_path(argv0: str | None = None) -> Path:
 
 
 def _load_native_module():
-    from ptoas import _core
+    from ptoas._loader import ensure_core
 
-    return _core
+    return ensure_core()
 
 
 def _resolve_tileops_dir(native_module) -> Path:

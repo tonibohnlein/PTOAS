@@ -33,12 +33,6 @@ export PACKAGE_STAGE_PATH="${BUILD_PATH}/package_runtime"
 export PTOAS_PRESMOKE_SKIP_RUNOP_MARKER="${BUILD_PATH}/.skip-presmoke-runop"
 export LLVM_SOURCE_VERSION="19.1.7"
 export PTOAS_GLIBCXX_ABI="${PTOAS_GLIBCXX_ABI:-0}"
-# This branch is used to validate the native LLVM/PTOAS build and CANN package
-# lifecycle while the CI image cannot install the Python wheel build backend.
-# Keep the normal CMake/CPack package flow, but deliberately omit the wheel from
-# the generated .run artifact.  The installer handles the empty wheel directory
-# as a successful placeholder package.
-export PTOAS_PLACEHOLDER_RUN_PACKAGE="${PTOAS_PLACEHOLDER_RUN_PACKAGE:-TRUE}"
 # The PTOAS tree is built against the vpto-dev LLVM/MLIR 19 "feature-vpto"
 # branch (source of custom calling conventions such as SimtEntry). Source it
 # from GitHub by default; override with LLVM_GIT_URL / LLVM_GIT_REF when a
@@ -64,13 +58,96 @@ fi
 HARDENING_CACHE_FILE="${BASE_PATH}/cmake/LinuxHardeningCache.cmake"
 LLVM_PROJECT_URL="${LLVM_GIT_URL}"
 # Only enable the CentOS7 devtoolset-7 sysroot + gcc-toolchain when the
-# toolchain is actually present. Manylinux and non-CentOS7 images do not ship
-# /opt/rh/devtoolset-7, and forcing these flags there breaks the build because
-# clang cannot find the sysroot.
-if [ -d "/opt/rh/devtoolset-7/root" ]; then
-  DEVTOOLSET_TOOLCHAIN_FLAGS="--sysroot=/opt/rh/devtoolset-7/root --gcc-toolchain=/opt/rh/devtoolset-7/root/usr"
-else
-  DEVTOOLSET_TOOLCHAIN_FLAGS=""
+# toolchain is actually present AND the host glibc is newer than CentOS7.
+# On a CentOS7 CI image the host glibc is already 2.17, so linking against the
+# devtoolset sysroot is a no-op and would instead invalidate the pre-seeded
+# LLVM cache (whose flags carry no --sysroot), forcing a full LLVM rebuild
+# that times out. On newer hosts (Ubuntu 22.04 glibc 2.35, manylinux) the
+# sysroot flags lower the packaged libraries' glibc floor from the host value
+# down to 2.17.
+#
+# A /opt/rh/devtoolset-7 stub can also linger on non-CentOS7 CI images
+# (e.g. ubuntu24.04_x86) without the actual GCC 7 tree. gating on the
+# directory alone made those builds link libLLVMSupport/llvm-min-tblgen
+# against a nonexistent libstdc++ and hang for hours, so the sysroot is
+# only accepted when the arch-matching GCC 7 toolchain tree is complete
+# AND a probe C++ link against it succeeds within a timeout.
+devtoolset7_tree_is_usable() {
+  local root="/opt/rh/devtoolset-7/root"
+  [ -d "${root}" ] || return 1
+  [ -x "${root}/usr/bin/gcc" ] || return 1
+  { [ -f "${root}/lib64/libc.so.6" ] || [ -f "${root}/lib/libc.so.6" ] \
+    || [ -f "${root}/lib/aarch64-linux-gnu/libc.so.6" ] \
+    || [ -f "${root}/lib/x86_64-linux-gnu/libc.so.6" ]; } || return 1
+  # The GCC 7 install triplet varies across images: redhat-style
+  # (x86_64-redhat-linux / aarch64-unknown-linux-gnu) and the ubuntu-built
+  # devtoolset on the X86 image (x86_64-pc-linux-gnu). Locate the actual
+  # gcc/7 directory by globbing instead of hardcoding one triplet.
+  local gcc_dir=""
+  local arch_triplet=""
+  local _candidate
+  for _candidate in "${root}"/usr/lib/gcc/*/7; do
+    [ -d "${_candidate}" ] || continue
+    if [ -f "${_candidate}/crtbegin.o" ]         && ls "${_candidate}"/libstdc++.so* >/dev/null 2>&1; then
+      gcc_dir="${_candidate}"
+      arch_triplet="$(basename "$(dirname "${_candidate}")")"
+      break
+    fi
+  done
+  [ -n "${gcc_dir}" ] || return 1
+  [ -d "${root}/usr/include/c++/7" ] || return 1
+  # The arch-specific C++ header dir may be missing on some minimal trees;
+  # accept the gcc install triplet or any arch subdir under c++/7.
+  local _cxx_inc_arch="${root}/usr/include/c++/7/${arch_triplet}"
+  if [ ! -d "${_cxx_inc_arch}" ]; then
+    local _d
+    for _d in "${root}"/usr/include/c++/7/*/; do
+      case "$(basename "${_d}")" in
+        backward|ext) continue ;;
+      esac
+      _cxx_inc_arch="${_d%/}"
+      break
+    done
+  fi
+  [ -d "${_cxx_inc_arch}" ] || return 1
+
+  # Probe-link a tiny C++ program with the exact flags we will use. A stub
+  # tree passes the layout checks but can still deadlock the linker (seen on
+  # CI: llvm-min-tblgen link hung for hours), so require a real, timed link.
+  # Locate a working C/C++ driver first (always present on build hosts).
+  local cc_bin=""
+  if [ -n "${PTOAS_CC:-}" ] && [ -x "${PTOAS_CC}" ]; then
+    cc_bin="${PTOAS_CC}"
+  elif command -v clang++ >/dev/null 2>&1; then
+    cc_bin="$(command -v clang++)"
+  elif command -v g++ >/dev/null 2>&1; then
+    cc_bin="$(command -v g++)"
+  fi
+  [ -n "${cc_bin}" ] || return 1
+
+  local probe_src="${TMPDIR:-/tmp}/ptoas_dts7_probe.cpp"
+  local probe_bin="${TMPDIR:-/tmp}/ptoas_dts7_probe.$$"
+  printf '#include <string>\nint main(){ std::string s("ok"); return (int)s.size()==2?0:1; }\n' \
+    > "${probe_src}" 2>/dev/null || return 1
+  # 30s is far beyond a healthy link; a hanging stub tree gets killed promptly.
+  timeout 30 "${cc_bin}" "${probe_src}" -o "${probe_bin}" \
+      --sysroot="${root}" --gcc-toolchain="${root}/usr" \
+      >/dev/null 2>&1
+  local link_rc=$?
+  rm -f "${probe_src}" "${probe_bin}"
+  [ "${link_rc}" -eq 0 ] || return 1
+  return 0
+}
+
+DEVTOOLSET_TOOLCHAIN_FLAGS=""
+if devtoolset7_tree_is_usable; then
+  _host_glibc_major="$(ldd --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1 | cut -d. -f1)"
+  _host_glibc_minor="$(ldd --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1 | cut -d. -f2)"
+  if [ -n "${_host_glibc_major}" ] && { [ "${_host_glibc_major}" -gt 2 ] \
+       || { [ "${_host_glibc_major}" -eq 2 ] && [ "${_host_glibc_minor:-0}" -gt 17 ]; }; }; then
+    DEVTOOLSET_TOOLCHAIN_FLAGS="--sysroot=/opt/rh/devtoolset-7/root --gcc-toolchain=/opt/rh/devtoolset-7/root/usr"
+  fi
+  unset _host_glibc_major _host_glibc_minor
 fi
 
 # Internal builds provide a pinned clang-15 toolchain under /opt/buildtools,
@@ -266,6 +343,23 @@ llvm_build_has_bspub_npu_data_type() {
     && grep -Eq '^CMAKE_CXX_FLAGS:[^=]*=.*-DBSPUB_NPU_DATA_TYPE([[:space:]]|$)' "${cache_file}"
 }
 
+# The CentOS7 devtoolset-7 sysroot lowers the GLIBC/GLIBCXX dependency floor of
+# the packaged runtime libraries. A cache produced without it (e.g. built on a
+# manylinux/Ubuntu image) still links against the host glibc and must not be
+# reused when the devtoolset-7 toolchain is present: the resulting .run package
+# would silently require the newer host libc at install time.
+llvm_build_has_devtoolset_sysroot() {
+  # Only enforced when the build is actually going to apply the devtoolset
+  # sysroot flags (newer host glibc). On a CentOS7 CI image the flags are
+  # disabled and the pre-seeded host-glibc LLVM cache stays valid.
+  [ -n "${DEVTOOLSET_TOOLCHAIN_FLAGS}" ] || return 0
+  [ -d "/opt/rh/devtoolset-7/root" ] || return 0
+  local cache_file="${LLVM_BUILD_DIR}/CMakeCache.txt"
+  [ -f "${cache_file}" ] || return 1
+  grep -Eq '^CMAKE_C_FLAGS:[^=]*=.*--sysroot=/opt/rh/devtoolset-7/root' "${cache_file}" \
+    && grep -Eq '^CMAKE_CXX_FLAGS:[^=]*=.*--sysroot=/opt/rh/devtoolset-7/root' "${cache_file}"
+}
+
 # PTOAS links LLVM and MLIR component targets directly. Keep those components
 # shared so the Python runtime loads one copy of LLVM's command-line registry.
 # A monolithic libLLVM alongside component DSOs can register options twice.
@@ -313,6 +407,7 @@ llvm_build_cache_is_usable() {
   fi
   llvm_build_is_abi_compatible || return 1
   llvm_build_has_bspub_npu_data_type || return 1
+  llvm_build_has_devtoolset_sysroot || return 1
   llvm_build_uses_shared_components || return 1
   llvm_build_links_vectorize_target_parser || return 1
   llvm_vectorize_has_target_parser_dependency || return 1
@@ -332,8 +427,13 @@ ensure_llvm_build() {
 
   # Do not destroy a legacy cache shared by other jobs. Build the requested
   # configuration in a stable sibling directory so later PreSmoke runs can
-  # reuse it instead of repeating the LLVM build.
-  local keyed_llvm_build_dir="${default_llvm_build_dir}-ptoas-abi${PTOAS_GLIBCXX_ABI}-bspub-shared"
+  # reuse it instead of repeating the LLVM build. When the devtoolset sysroot
+  # is active (newer host glibc) keep the low-glibc tree in its own keyed
+  # directory; otherwise fall back to the default shared cache location.
+  local _dts7_key=""
+  [ -n "${DEVTOOLSET_TOOLCHAIN_FLAGS}" ] && _dts7_key="-dts7"
+  local keyed_llvm_build_dir="${default_llvm_build_dir}-ptoas-abi${PTOAS_GLIBCXX_ABI}-bspub${_dts7_key}-shared"
+  unset _dts7_key
   if [ "${PTOAS_LLVM_BUILD_DIR_EXPLICIT:-FALSE}" != "TRUE" ]; then
     export LLVM_BUILD_DIR="${keyed_llvm_build_dir}"
     if llvm_build_cache_is_usable; then
@@ -350,11 +450,55 @@ ensure_llvm_build() {
   echo "Building LLVM/MLIR ${LLVM_SOURCE_VERSION} (this can take a while)"
   mkdir -p "${LLVM_BUILD_DIR}"
 
+  # CI's BuildAccelerate/NextCache injects itself through an LD_PRELOAD
+  # exec hook (libxcache_hook.so) that intercepts clang/ld invocations. When
+  # the devtoolset sysroot is active the intercepted build misbehaves, so
+  # detach the whole cmake/ninja subtree from the hook by unsetting
+  # LD_PRELOAD. CentOS7 CI (glibc already 2.17, no sysroot) keeps the hook
+  # and its acceleration intact.
+  if [ -n "${DEVTOOLSET_TOOLCHAIN_FLAGS}" ] && [ -n "${LD_PRELOAD:-}" ]; then
+    _hook_lib="${LD_PRELOAD}"
+    case "${_hook_lib}" in
+      *libxcache_hook.so*|*nextbuild*)
+        echo "Note: unsetting LD_PRELOAD (${_hook_lib}) to detach the build from the xcache exec hook"
+        unset LD_PRELOAD
+        ;;
+    esac
+    unset _hook_lib
+  fi
+
   local python_bin
   python_bin="$(command -v python3 || command -v python)"
 
   local pybind_dir
   pybind_dir="$("${python_bin}" -m pybind11 --cmakedir 2>/dev/null || true)"
+
+  local llvm_c_flags="-DBSPUB_NPU_DATA_TYPE"
+  local llvm_cxx_flags="-DBSPUB_NPU_DATA_TYPE -D_GLIBCXX_USE_CXX11_ABI=${PTOAS_GLIBCXX_ABI}"
+  local llvm_linker_flags=""
+  if [ -n "${DEVTOOLSET_TOOLCHAIN_FLAGS}" ]; then
+    # Lower the linked GLIBC/GLIBCXX floor of the runtime libraries to the
+    # CentOS7 devtoolset-7 sysroot instead of the host libc.
+    llvm_c_flags="${llvm_c_flags} ${DEVTOOLSET_TOOLCHAIN_FLAGS}"
+    llvm_cxx_flags="${llvm_cxx_flags} ${DEVTOOLSET_TOOLCHAIN_FLAGS}"
+    # clang 15 + the devtoolset-7 sysroot headers (glibc 2.17 __REDIRECT
+    # fortify macros) miscompile llvm::sys::fs::readNativeFileSlice into an
+    # infinite self-loop when -D_FORTIFY_SOURCE is active: the tblgen binary
+    # then spins at 100% CPU forever on its first file read and the build
+    # hangs (observed as the [185/202] llvm-min-tblgen "link" hang). The
+    # LLVM build tools are not part of the delivered run package, so drop
+    # FORTIFY for this build only. The delivered PTOAS libraries keep the
+    # full hardening flags.
+    llvm_c_flags="${llvm_c_flags} -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+    llvm_cxx_flags="${llvm_cxx_flags} -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+    # LLVM's sandbox/C utility binaries (bin/count etc.) are C programs linked
+    # with the C driver, which never injects -lstdc++. With the devtoolset
+    # sysroot in effect those executables pull libLLVMSupport.so (a C++ DSO)
+    # and the link fails on the libstdc++ symbols unless stdc++ is provided
+    # explicitly. Keep it in the runtime linker flags so both the C and C++
+    # targets resolve their libstdc++ dependency against the sysroot.
+    llvm_linker_flags="-fuse-ld=lld -lstdc++"
+  fi
 
   local cmake_args=(
     -G Ninja
@@ -364,12 +508,16 @@ ensure_llvm_build() {
     # Keeping it out avoids building clangInterpreter, which is incompatible
     # with the GCC 7 libstdc++ headers used by the ARM CI image.
     -DLLVM_ENABLE_PROJECTS="mlir"
-    -DCMAKE_CXX_FLAGS="-DBSPUB_NPU_DATA_TYPE -D_GLIBCXX_USE_CXX11_ABI=${PTOAS_GLIBCXX_ABI}"
-    -DCMAKE_C_FLAGS="-DBSPUB_NPU_DATA_TYPE"
+    -DCMAKE_CXX_FLAGS="${llvm_cxx_flags}"
+    -DCMAKE_C_FLAGS="${llvm_c_flags}"
+    -DCMAKE_EXE_LINKER_FLAGS="${llvm_linker_flags}"
+    -DCMAKE_SHARED_LINKER_FLAGS="${llvm_linker_flags}"
+    -DCMAKE_MODULE_LINKER_FLAGS="${llvm_linker_flags}"
     -DLLVM_BSPUB_NPU_DATA_TYPE=ON
     -DBUILD_SHARED_LIBS=ON
     -DLLVM_BUILD_LLVM_DYLIB=OFF
     -DLLVM_LINK_LLVM_DYLIB=OFF
+    -DLLVM_USE_LINKER=lld
     -DLLVM_LLVMVectorize_LINKER_FLAGS="-L${LLVM_BUILD_DIR}/lib;-Wl,--no-as-needed;-lLLVMTargetParser;-Wl,--as-needed"
     -DLLVM_ENABLE_ASSERTIONS=ON
     -DMLIR_ENABLE_BINDINGS_PYTHON=ON
@@ -398,6 +546,25 @@ ensure_llvm_build() {
   # The linker-flags cache entry adds a linker input but not a Ninja target
   # edge, so materialize TargetParser before the parallel Vectorize link.
   cmake --build "${LLVM_BUILD_DIR}" --target LLVMTargetParser -- -j "${JOBS}"
+  # The devtoolset sysroot link has been observed to hang indefinitely on
+  # some CI ARM executors (no error, no CPU, [185/202] llvm-min-tblgen stuck
+  # for hours) while the identical command completes in 0.1s elsewhere.
+  # Build the small executable-link step serially under a timeout so a hang
+  # is detected early instead of burning the 2h job limit; on timeout print
+  # the exact link command and a process snapshot for diagnosis, then retry
+  # once with a fully sanitized environment (env -i) which has been observed
+  # to unstick similar exec-hook interactions.
+  if [ -n "${DEVTOOLSET_TOOLCHAIN_FLAGS}" ]; then
+    if ! timeout 300 cmake --build "${LLVM_BUILD_DIR}" --target llvm-min-tblgen -- -j 1 -v; then
+      echo "WARNING: llvm-min-tblgen link timed out or failed; dumping diagnostics and retrying once" >&2
+      ps -ef | grep -E "ld|lld|clang" | grep -v grep >&2 || true
+      ninja -C "${LLVM_BUILD_DIR}" -t commands llvm-min-tblgen 2>/dev/null | tail -1 >&2 || true
+      env -i PATH="${PATH}" HOME="${HOME}"         timeout 300 ninja -C "${LLVM_BUILD_DIR}" llvm-min-tblgen -j 1 -v || {
+          echo "ERROR: llvm-min-tblgen link failed after sanitized retry" >&2
+          exit 1
+        }
+    fi
+  fi
   cmake --build "${LLVM_BUILD_DIR}" -- -j "${JOBS}"
   if ! llvm_vectorize_has_target_parser_dependency; then
     echo "ERROR: LLVMVectorize was built without a dependency on LLVMTargetParser" >&2
@@ -600,7 +767,7 @@ configure_ptoas() {
     -DPTO_ENABLE_PYTHON_BINDING=ON
     -DBUILD_TESTING=ON
     -DCMAKE_BUILD_TYPE=Release
-    -DCMAKE_CXX_FLAGS="-DBSPUB_NPU_DATA_TYPE -D_GLIBCXX_USE_CXX11_ABI=0 -Wno-error=deprecated-declarations"
+    -DCMAKE_CXX_FLAGS="-DBSPUB_NPU_DATA_TYPE -D_GLIBCXX_USE_CXX11_ABI=0 -Wno-error=deprecated-declarations${DEVTOOLSET_TOOLCHAIN_FLAGS:+ ${DEVTOOLSET_TOOLCHAIN_FLAGS}}"
     -DCMAKE_INSTALL_PREFIX="${INSTALL_PATH}"
     -DCMAKE_C_COMPILER="${PTOAS_CC}"
     -DCMAKE_CXX_COMPILER="${PTOAS_CXX}"
@@ -608,6 +775,14 @@ configure_ptoas() {
     -DPACKAGE_TYPE="${PACKAGE_TYPE:-run}"
     -DCANN_3RD_LIB_PATH="${CANN_3RD_LIB_PATH}"
   )
+  if [ -n "${DEVTOOLSET_TOOLCHAIN_FLAGS:-}" ]; then
+    # Inject the devtoolset-7 sysroot + gcc-toolchain into C compilation.
+    # `-D` overrides the `-C` hardening preload, so carry the hardening flags
+    # explicitly alongside the sysroot instead of letting them be dropped.
+    ptoas_cmake_args+=(
+      "-DCMAKE_C_FLAGS=-D_FORTIFY_SOURCE=2 -fstack-protector-strong -ftrapv ${DEVTOOLSET_TOOLCHAIN_FLAGS}"
+    )
+  fi
   if [ -n "${PTOAS_WHEEL_FILE:-}" ]; then
     ptoas_cmake_args+=("-DPTOAS_WHEEL_FILE=${PTOAS_WHEEL_FILE}")
   fi
@@ -696,6 +871,28 @@ stage_ptoas_wheel() {
        --use-feature=in-tree-build --help >/dev/null 2>&1; then
     wheel_feature_args+=(--use-feature=in-tree-build)
   fi
+  # scikit-build-core reconfigures the PTOAS tree from scratch for the wheel.
+  # Pass the devtoolset-7 sysroot + gcc-toolchain through CMake defines so the
+  # wheel's native extension links against the CentOS7 libc floor, matching the
+  # LLVM/MLIR runtime libraries packaged alongside it.
+  if [ -n "${DEVTOOLSET_TOOLCHAIN_FLAGS}" ]; then
+    # -ftrapv (from the hardening preload) on aarch64 emits __muloti4 calls
+    # for __int128 multiplications; the devtoolset-7 GCC libgcc lacks that
+    # symbol, so the wheel's native extension link fails unless compiler-rt
+    # is provided. resolve_compiler_rt locates the archive (or builds it).
+    resolve_compiler_rt
+    local _wheel_rt_flags=""
+    if [ -n "${PTOAS_COMPILER_RT:-}" ]; then
+      _wheel_rt_flags="-Wl,-u,__muloti4 ${PTOAS_COMPILER_RT}"
+    fi
+    wheel_feature_args+=(
+      "--config-settings=cmake.define.CMAKE_C_FLAGS=${DEVTOOLSET_TOOLCHAIN_FLAGS}"
+      "--config-settings=cmake.define.CMAKE_CXX_FLAGS=-DBSPUB_NPU_DATA_TYPE -D_GLIBCXX_USE_CXX11_ABI=0 ${DEVTOOLSET_TOOLCHAIN_FLAGS}"
+      "--config-settings=cmake.define.CMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -lstdc++ ${_wheel_rt_flags}"
+      "--config-settings=cmake.define.CMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -lstdc++ ${_wheel_rt_flags}"
+      "--config-settings=cmake.define.CMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld -lstdc++ ${_wheel_rt_flags}"
+    )
+  fi
   CMAKE_BUILD_PARALLEL_LEVEL="${JOBS}" \
   SKBUILD_BUILD_DIR="${BUILD_PATH}" \
   LLVM_BUILD_DIR="${LLVM_BUILD_DIR}" \
@@ -782,19 +979,33 @@ package() {
   # behind an explicit opt-in for local release builds.
   rm -rf "${BUILD_OUT_PATH}"
   mkdir -p "${BUILD_OUT_PATH}"
-  unset PTOAS_WHEEL_FILE
-  if [ "${PTOAS_PLACEHOLDER_RUN_PACKAGE}" != "TRUE" ]; then
-    stage_ptoas_wheel
-  else
-    echo "Building placeholder PTOAS package without a Python wheel"
-  fi
+  # Build and repair the wheel first, then reconfigure with its absolute path
+  # so CMake/CPack owns run, RPM, and DEB payload generation uniformly.
+  stage_ptoas_wheel
   ENABLE_PACKAGE=TRUE
   configure_ptoas
   # configure_ptoas resets the build tree; rebuild all targets before the
   # install/CPack pass so generated install scripts reference real artifacts.
-  cmake --build "${BUILD_PATH}" -- -j "${JOBS}"
+  # The devtoolset build compiles several giant TableGen-generated TUs
+  # (PTO.cpp measured at ~4.6GB peak RSS). On CI executors a full
+  # -j $(nproc) wave of those can exceed available memory and the compiler
+  # gets OOM-killed with no diagnostics, failing the build silently. Cap
+  # the parallelism so peak concurrent memory stays bounded; the compile
+  # is cache-accelerated on repeat runs so the wall-clock cost is small.
+  if [ -n "${DEVTOOLSET_TOOLCHAIN_FLAGS}" ]; then
+    local _ptoas_jobs
+    _ptoas_jobs="$(( ${JOBS} > 16 ? 16 : ${JOBS} ))"
+    echo "Note: capping PTOAS build parallelism to -j ${_ptoas_jobs} (giant TUs ~4.6GB RSS each)"
+    cmake --build "${BUILD_PATH}" -- -j "${_ptoas_jobs}"
+  else
+    cmake --build "${BUILD_PATH}" -- -j "${JOBS}"
+  fi
   cmake --install "${BUILD_PATH}"
-  cmake --build "${BUILD_PATH}" --target package -- -j "${JOBS}"
+  if [ -n "${DEVTOOLSET_TOOLCHAIN_FLAGS}" ]; then
+    cmake --build "${BUILD_PATH}" --target package -- -j "${_ptoas_jobs}"
+  else
+    cmake --build "${BUILD_PATH}" --target package -- -j "${JOBS}"
+  fi
   echo "package staged under ${BUILD_OUT_PATH}"
   # Diagnostics: the OBS uploader reads build_out via the host path
   # /opt/cloud/slavespace/.../x86build/build_out; print what we actually

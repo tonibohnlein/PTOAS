@@ -168,6 +168,15 @@ if(PTOAS_ENABLE_WERROR)
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/WX>")
   endif()
 endif()
+# The devtoolset sysroot build and newer MLIR headers mark some legacy
+# rewrite-driver entry points (e.g. applyPatternsAndFoldGreedily) as
+# deprecated; upstream LLVM deprecation churn must not break the build.
+# Keep deprecated warnings visible but non-fatal on every entrypoint,
+# including the internal farmland pipeline that does not route through
+# build.sh's CMAKE_CXX_FLAGS.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wno-error=deprecated-declarations>")
+endif()
 
 # macOS: 移除已废弃的 -undefined suppress，避免 ld 警告（保留 -undefined dynamic_lookup 即可）
 if(APPLE)
@@ -266,6 +275,15 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/test/python/test_install_nightly_wheel.py"
     )
     set_tests_properties(pto_install_nightly_wheel PROPERTIES
+      LABELS "PTO"
+      ENVIRONMENT "${_pto_python_test_env}"
+    )
+    add_test(
+      NAME pto_online_core_build
+      COMMAND "${Python3_EXECUTABLE}" -S
+              "${CMAKE_CURRENT_SOURCE_DIR}/test/python/test_online_core_build.py"
+    )
+    set_tests_properties(pto_online_core_build PROPERTIES
       LABELS "PTO"
       ENVIRONMENT "${_pto_python_test_env}"
     )

@@ -16,6 +16,15 @@ foreach(_flag_var CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
       -D_FORTIFY_SOURCE=2
       -fstack-protector-strong
       -ftrapv)
+    # A caller that deliberately disabled FORTIFY (e.g. the devtoolset
+    # sysroot LLVM build, where clang+glibc-2.17 fortify headers miscompile
+    # readNativeFileSlice into an infinite loop) passes
+    # -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0; respect any explicit
+    # _FORTIFY_SOURCE assignment instead of re-enabling it.
+    if(_hardening_flag STREQUAL "-D_FORTIFY_SOURCE=2"
+        AND " ${_flag_value} " MATCHES "(^| )-D.*_FORTIFY_SOURCE=")
+      continue()
+    endif()
     if(NOT " ${_flag_value} " MATCHES "(^| )${_hardening_flag}( |$)")
       string(APPEND _flag_value " ${_hardening_flag}")
     endif()

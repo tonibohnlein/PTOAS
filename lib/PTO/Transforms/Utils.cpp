@@ -165,6 +165,16 @@ func::ReturnOp getAssumedUniqueReturnOp(func::FuncOp funcOp) {
   return returnOp;
 }
 
+Operation *getAncestorInBlock(Operation *op, const Block *block) {
+  for (Operation *current = op; current; current = current->getParentOp()) {
+    bool isInBlock = current->getBlock() == block;
+    if (isInBlock) {
+      return current;
+    }
+  }
+  return nullptr;
+}
+
 Value peelUnrealized(Value value) {
   if (auto castOp = value.getDefiningOp<UnrealizedConversionCastOp>()) {
     return castOp.getOperand(0);
@@ -828,14 +838,16 @@ static bool rangesOverlap(const SemanticRange &lhs, const SemanticRange &rhs) {
 
 LogicalResult verifySemanticNoAliasRanges(func::FuncOp func) {
   LogicalResult result = success();
-  func.walk([&](Operation *op) {
-    if (failed(result))
+  func.walk([&result](Operation *op) {
+    if (failed(result)) {
       return;
+    }
     for (auto [lhs, rhs] : getSemanticNoAliasPairs(op)) {
       auto lhsRange = resolveSemanticRange(lhs);
       auto rhsRange = resolveSemanticRange(rhs);
-      if (!lhsRange || !rhsRange || !rangesOverlap(*lhsRange, *rhsRange))
+      if (!lhsRange || !rhsRange || !rangesOverlap(*lhsRange, *rhsRange)) {
         continue;
+      }
       op->emitError("PlanMemory semantic no-alias violation: operand byte ranges overlap");
       result = failure();
       return;
@@ -998,7 +1010,9 @@ bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
   if (memorySpaceAttr.value().getAddressSpace() == pto::AddressSpace::GM) {
     return false;
   }
-  if (LocalBufferSpace.count(memorySpaceAttr.value().getAddressSpace())) {
+  const bool isLocalBufferSpace =
+      LocalBufferSpace.count(memorySpaceAttr.value().getAddressSpace()) != 0;
+  if (isLocalBufferSpace) {
     return true;
   }
   llvm_unreachable("Currently only support (UB | L1 | L0C) allocation");

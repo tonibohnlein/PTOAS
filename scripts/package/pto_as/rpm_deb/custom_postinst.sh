@@ -36,9 +36,8 @@
 #   package db file:                                 644
 #   directories:                                     755 (top-level + custom) or 555 (builtin subtrees)
 #
-# Permission cleanup is best-effort.  The CI placeholder package intentionally
-# has no wheel; pto_install_wheel treats that as a successful no-op.  A supplied
-# wheel is still validated and installed strictly.
+# Permission cleanup is best-effort, but wheel installation is mandatory. A package that reports
+# success while its ptoas launcher cannot run is not a valid installation.
 
 sourcedir="${INSTALL_PATH}"
 PTO_PLATFORM_DIR="pto_as"
@@ -48,11 +47,10 @@ ARCH_DIR="$(uname -m)-linux"
 # Only run when the install root actually exists.
 if [ -d "${INSTALL_ROOT}" ]; then
 
-    # Install a supplied wheel into the same private runtime used by the run
-    # package.  The helper skips cleanly when the placeholder package contains
-    # no wheel; when present, it selects exactly one wheel, installs it into
-    # tools/ptoas/python with --no-deps --target, and records the interpreter
-    # consumed by tools/ptoas/bin/ptoas.
+    # Install the wheel into the same private runtime used by the run package. The
+    # helper selects exactly one wheel from tools/ptoas/wheels, installs it into
+    # tools/ptoas/python with --no-deps --target, and records the
+    # interpreter consumed by tools/ptoas/bin/ptoas.
     PTOAS_COMMON="${INSTALL_ROOT}/share/info/${PTO_PLATFORM_DIR}/script/pto_common.sh"
     if [ ! -r "${PTOAS_COMMON}" ]; then
         echo "[pto-as] missing wheel runtime helper: ${PTOAS_COMMON}" >&2
@@ -148,3 +146,4 @@ if [ -d "${INSTALL_ROOT}" ]; then
 fi
 
 exit 0
+

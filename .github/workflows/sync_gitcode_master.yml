@@ -1,0 +1,133 @@
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
+name: Sync GitCode Master
+
+on:
+  schedule:
+    # Run twice an hour away from GitHub's busiest scheduling boundary.
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-gitcode-master
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'hw-native-sys/PTOAS'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout GitHub main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Fetch GitCode master
+        id: source
+        shell: bash
+        env:
+          GITCODE_USERNAME: ${{ secrets.GITCODE_USERNAME }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${GITCODE_USERNAME}" || -z "${GITCODE_TOKEN}" ]]; then
+            echo "ERROR: GITCODE_USERNAME and GITCODE_TOKEN secrets are required" >&2
+            exit 1
+          fi
+          if [[ -z "${RUNNER_TEMP:-}" ]]; then
+            echo "ERROR: RUNNER_TEMP is empty" >&2
+            exit 1
+          fi
+
+          auth_root="${RUNNER_TEMP}/ptoas-gitcode-mirror-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          case "${auth_root}" in
+            "${RUNNER_TEMP}"/ptoas-gitcode-mirror-*) ;;
+            *) echo "ERROR: unsafe authentication work path" >&2; exit 1 ;;
+          esac
+
+          cleanup() {
+            rm -rf -- "${auth_root}"
+          }
+          trap cleanup EXIT
+
+          umask 077
+          mkdir -p "${auth_root}"
+          cat > "${auth_root}/askpass" <<'EOF'
+          #!/usr/bin/env bash
+          case "$1" in
+            Username*) printf '%s\n' "${GITCODE_USERNAME}" ;;
+            Password*) printf '%s\n' "${GITCODE_TOKEN}" ;;
+            *) exit 1 ;;
+          esac
+          EOF
+          chmod 700 "${auth_root}/askpass"
+
+          export GIT_ASKPASS="${auth_root}/askpass"
+          export GIT_ASKPASS_REQUIRE=force
+          export GIT_TERMINAL_PROMPT=0
+          git fetch --no-tags https://gitcode.com/cann/pto-as.git \
+            +refs/heads/master:refs/remotes/gitcode/master
+
+          source_commit="$(git rev-parse --verify refs/remotes/gitcode/master^{commit})"
+          echo "source_commit=${source_commit}" >> "${GITHUB_OUTPUT}"
+          echo "Fetched GitCode master at ${source_commit}"
+
+      - name: Replace GitHub main
+        shell: bash
+        env:
+          SOURCE_COMMIT: ${{ steps.source.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+
+          control_commit="$(git rev-parse --verify HEAD^{commit})"
+          workflow_path=".github/workflows/sync_gitcode_master.yml"
+          git cat-file -e "${SOURCE_COMMIT}^{commit}"
+
+          current_parent="$(git rev-parse --verify "${control_commit}^" 2>/dev/null || true)"
+          if [[ "${control_commit}" == "${SOURCE_COMMIT}" ]] ||
+             { [[ "${current_parent}" == "${SOURCE_COMMIT}" ]] &&
+               git diff --quiet "${SOURCE_COMMIT}" "${control_commit}" -- \
+                 . ":(exclude)${workflow_path}"; }; then
+            echo "GitHub main already mirrors GitCode master; no update is needed."
+            {
+              echo "### GitCode mirror synchronization"
+              echo "- Source unchanged: \`${SOURCE_COMMIT}\`"
+              echo "- GitHub main unchanged: \`${control_commit}\`"
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          # Keep this GitHub-only control file so scheduled synchronization
+          # remains available after replacing the rest of main.
+          git reset --hard "${SOURCE_COMMIT}"
+          git checkout "${control_commit}" -- "${workflow_path}"
+
+          if ! git diff --cached --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore: retain GitHub mirror workflow"
+          fi
+
+          target_commit="$(git rev-parse --verify HEAD^{commit})"
+          git push \
+            --force-with-lease="refs/heads/main:${control_commit}" \
+            origin "${target_commit}:refs/heads/main"
+
+          {
+            echo "### GitCode mirror synchronization"
+            echo "- Source: \`${SOURCE_COMMIT}\`"
+            echo "- GitHub main: \`${target_commit}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

@@ -266,3 +266,86 @@ install(
   PATTERN "__pycache__" EXCLUDE
   PATTERN "*.pyc" EXCLUDE
 )
+
+# ---------------------------------------------------------------------------
+# Online-compilation fallback: ship the version-sensitive `_core` as source +
+# a self-contained header closure + a standalone CMakeLists, so a matching
+# extension can be compiled at first import against the shipped, Python-
+# independent libPTOASCompiler DSO. The prebuilt abi3 `_core` above stays the
+# fast path; this is only the fallback for non-matching interpreters.
+# ---------------------------------------------------------------------------
+option(PTOAS_ENABLE_ONLINE_CORE_COMPILE
+  "Ship ptoas._core sources + header closure for runtime online compilation" OFF)
+
+if(PTOAS_ENABLE_ONLINE_CORE_COMPILE)
+  set(_ptoas_online_dst "ptoas/_online")
+
+  # 1. The C-API-only dialect binding TU, its dialect-only module entry, and the
+  #    shared PTOModule.h header. Both .cpp files `#include "PTOModule.h"`, so it
+  #    is staged next to them (quote-include resolves within src/).
+  install(FILES
+      "${CMAKE_SOURCE_DIR}/lib/Bindings/Python/PTOModule.cpp"
+      "${CMAKE_SOURCE_DIR}/lib/Bindings/Python/PTOModule.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/NativeModuleOnline.cpp"
+    DESTINATION "${_ptoas_online_dst}/src"
+    COMPONENT PTOAS_Python)
+
+  # 2. Standalone runtime build recipe (staged as ptoas/_online/CMakeLists.txt).
+  install(FILES
+      "${CMAKE_CURRENT_SOURCE_DIR}/online_template/CMakeLists.txt"
+    DESTINATION "${_ptoas_online_dst}"
+    COMPONENT PTOAS_Python)
+
+  # 3. Project C-API headers.
+  install(FILES
+      "${CMAKE_SOURCE_DIR}/include/pto-c/Dialect/PTO.h"
+      "${CMAKE_SOURCE_DIR}/include/pto-c/Dialect/PTOEnums.h"
+    DESTINATION "${_ptoas_online_dst}/include/pto-c/Dialect"
+    COMPONENT PTOAS_Python)
+
+  # 4. Twine-free patched copy of PybindAdaptors.h (keeps the closure to
+  #    mlir-c/* + pto-c/* + pybind11 + Python.h, no LLVM C++ ADT tree).
+  install(FILES
+      "${CMAKE_CURRENT_SOURCE_DIR}/online_include/mlir/Bindings/Python/PybindAdaptors.h"
+    DESTINATION "${_ptoas_online_dst}/include/mlir/Bindings/Python"
+    COMPONENT PTOAS_Python)
+
+  # 5. mlir-c header closure + the generated mlir-config.h, resolved from the
+  #    MLIR include dirs (source tree for mlir-c/*, build tree for
+  #    mlir/Config/mlir-config.h). This list is the exact transitive closure of
+  #    PTOModule.cpp under PTOAS_ONLINE_BUILD; adding an include there means
+  #    extending this list.
+  set(_ptoas_online_mlir_headers
+      mlir-c/AffineExpr.h
+      mlir-c/AffineMap.h
+      mlir-c/Bindings/Python/Interop.h
+      mlir-c/BuiltinAttributes.h
+      mlir-c/BuiltinTypes.h
+      mlir-c/Diagnostics.h
+      mlir-c/ExecutionEngine.h
+      mlir-c/IntegerSet.h
+      mlir-c/IR.h
+      mlir-c/Pass.h
+      mlir-c/Rewrite.h
+      mlir-c/Support.h
+      mlir/Config/mlir-config.h)
+  foreach(_hdr IN LISTS _ptoas_online_mlir_headers)
+    set(_ptoas_found "")
+    foreach(_inc IN LISTS MLIR_INCLUDE_DIRS)
+      if(EXISTS "${_inc}/${_hdr}")
+        set(_ptoas_found "${_inc}/${_hdr}")
+        break()
+      endif()
+    endforeach()
+    if(NOT _ptoas_found)
+      message(FATAL_ERROR
+        "PTOAS_ENABLE_ONLINE_CORE_COMPILE: required header '${_hdr}' not found "
+        "in MLIR_INCLUDE_DIRS='${MLIR_INCLUDE_DIRS}'")
+    endif()
+    get_filename_component(_ptoas_hdr_subdir "${_hdr}" DIRECTORY)
+    install(FILES "${_ptoas_found}"
+      DESTINATION "${_ptoas_online_dst}/include/${_ptoas_hdr_subdir}"
+      COMPONENT PTOAS_Python)
+  endforeach()
+endif()
+

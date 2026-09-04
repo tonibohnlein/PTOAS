@@ -1,4 +1,4 @@
-name: PR-pipeline_pto-as
+name: PR-pipeline_cann_pto-as
 
 concurrency:
   max: 15
@@ -74,6 +74,28 @@ stages:
           image_version: ${{ jobs.JOB_image.outputs.Compile_Ascend_ARM }}
           arch: 'arm64'
           package_name: 'cann-pto-as_linux-aarch64.run'
+      JOB_build_and_test:
+        name: Build_and_test
+        needs: []
+        steps:
+          - name: Checkout
+            identifier: process_checkout
+            uses: checkout
+            with:
+              ref: ${{ atomgit.event.pull_request.merge_commit_sha }}
+              token: ${{ secrets.GIT_TOKEN }}
+          - name: Build and test PTOAS
+            timeout-minutes: 180
+            run: |
+              set -euo pipefail
+              bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/build_and_test.sh" \
+                "${{ steps.process_checkout.outputs.path }}"
+        runs-on:
+          - self-hosted
+          - arch=x64
+          - spec=xlarge
+        container:
+          image: swr.cn-north-4.myhuaweicloud.com/ci_cann/${{ jobs.JOB_image.outputs.Compile_Ascend_X86 }}
       JOB_codecheck:
         name: CodeCheck
         uses: cann/.gitcode/.gitcode/workflows/codecheck_action.yml@master

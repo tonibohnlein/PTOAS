@@ -10,6 +10,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/TileFusion/FusionAnalysis.h"
+#include "../Utils.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
@@ -154,7 +155,7 @@ collectGroupSpansInBlock(Block &block, SmallVectorImpl<GroupSpan> &spans) {
   return flushGroupSpan(block, spanIndexByGroupId, current, spans);
 }
 
-static bool isNestedInOp(Operation *op, Operation *ancestor) {
+static bool isNestedInOp(Operation *op, const Operation *ancestor) {
   for (Operation *cur = op; cur; cur = cur->getParentOp()) {
     if (cur == ancestor) {
       return true;
@@ -179,18 +180,9 @@ static void appendUniqueValue(SmallVectorImpl<Value> &values,
   }
 }
 
-static Operation *getTopLevelAncestorInBlock(Operation *op, Block *block) {
-  for (Operation *cur = op; cur; cur = cur->getParentOp()) {
-    if (cur->getBlock() == block) {
-      return cur;
-    }
-  }
-  return nullptr;
-}
-
 static bool canReplaceUseWithRegionResult(OpOperand &use, Operation *boundary) {
   Operation *topLevel =
-      getTopLevelAncestorInBlock(use.getOwner(), boundary->getBlock());
+      pto::getAncestorInBlock(use.getOwner(), boundary->getBlock());
   if (!topLevel || topLevel == boundary) {
     return false;
   }
@@ -403,7 +395,8 @@ static void replaceEscapingUsesOutsideRegion(pto::FusionRegionOp fusionRegion,
   for (auto [oldValueRef, newValue] :
        llvm::zip(oldValues, fusionRegion.getOutputs())) {
     Value oldValue = oldValueRef;
-    oldValue.replaceUsesWithIf(newValue, [&](OpOperand &use) {
+    oldValue.replaceUsesWithIf(newValue, [fusionRegion](
+                                             OpOperand &use) mutable {
       return !isNestedInOp(use.getOwner(), fusionRegion.getOperation()) &&
              canReplaceUseWithRegionResult(use, fusionRegion.getOperation());
     });

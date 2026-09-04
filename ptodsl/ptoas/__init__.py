@@ -7,3 +7,10 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 
 """Python package for the PTOAS command-line interface."""
+
+from ._loader import ensure_core
+
+# Acquire the native ``_core`` extension: the prebuilt abi3 module on a matching
+# interpreter, or an online-compiled build otherwise. This registers
+# ``sys.modules['ptoas._core']`` so ``from ptoas import _core`` works uniformly.
+ensure_core()

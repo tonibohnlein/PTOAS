@@ -275,32 +275,20 @@ pto_install_wheel() {
   local wheel_dir="${version_root}/tools/ptoas/wheels"
   local python_dir="${version_root}/tools/ptoas/python"
   local record="${version_root}/tools/ptoas/.ptoas-python.path"
-  # Keep this function POSIX-sh compatible: the CANN installer may source this
-  # file from a /bin/sh process even though direct execution uses Bash.
-  local wheel_list wheel_count wheel
-  if [ ! -d "${wheel_dir}" ]; then
-    rm -rf "${python_dir}"
-    rm -f "${record}"
-    echo "[pto-as] no PTOAS wheel directory; skipping optional wheel runtime"
-    return 0
-  fi
-  wheel_list=$(find "${wheel_dir}" -maxdepth 1 -type f -name 'ptoas*.whl' -print 2>/dev/null)
-  wheel_count=$(printf '%s\n' "${wheel_list}" | sed '/^[[:space:]]*$/d' | wc -l)
-  if [ "${wheel_count}" -eq 0 ]; then
-    rm -rf "${python_dir}"
-    rm -f "${record}"
-    echo "[pto-as] no PTOAS wheel found; skipping optional wheel runtime"
-    return 0
-  fi
-  if [ "${wheel_count}" -ne 1 ]; then
-    echo "[pto-as] expected exactly one PTOAS wheel in ${wheel_dir}" >&2
-    rm -rf "${python_dir}"
-    return 1
-  fi
   local python_bin
   python_bin=$(command -v "${PTOAS_PYTHON:-python3}" 2>/dev/null || true)
   if [ -z "${python_bin}" ]; then
     echo "[pto-as] Python interpreter is unavailable" >&2
+    return 1
+  fi
+  # Keep this function POSIX-sh compatible: the CANN installer may source this
+  # file from a /bin/sh process even though direct execution uses Bash.
+  local wheel_list wheel_count wheel
+  wheel_list=$(find "${wheel_dir}" -maxdepth 1 -type f -name 'ptoas*.whl' -print 2>/dev/null)
+  wheel_count=$(printf '%s\n' "${wheel_list}" | sed '/^[[:space:]]*$/d' | wc -l)
+  if [ "${wheel_count}" -ne 1 ]; then
+    echo "[pto-as] expected exactly one PTOAS wheel in ${wheel_dir}" >&2
+    rm -rf "${python_dir}"
     return 1
   fi
   wheel=${wheel_list}

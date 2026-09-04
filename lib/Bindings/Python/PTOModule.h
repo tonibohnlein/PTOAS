@@ -9,7 +9,11 @@
 #ifndef PTOAS_LIB_BINDINGS_PYTHON_PTOMODULE_H
 #define PTOAS_LIB_BINDINGS_PYTHON_PTOMODULE_H
 
-#include "PTO/Compiler/CompilerApi.h"
+#ifdef PTOAS_ONLINE_BUILD
+#  define PTOAS_COMPILER_EXPORT
+#else
+#  include "PTO/Compiler/CompilerApi.h"
+#endif
 #include "pybind11/pybind11.h"
 
 namespace mlir::pto::python {
