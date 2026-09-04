@@ -151,12 +151,12 @@ slots, ordered and in-place accesses, unknown aliases, cross-root overlap,
 multiple same-slice lifecycles per iteration, missing endpoints, incompatible
 loop domains, and unproven reuse remain deterministic diagnostic rejections.
 
-Strict channel analysis admits only physical local storage with capacity one
-or two, one producer, one consumer, no unresolved semantic failure or
-branch/nested-loop control, and a single physical core. Loop-carried channels
-additionally require the proven reuse distance to equal capacity. The
-`channels` dump reports one-shot and ready/release channel shapes plus every
-timeline/channel rejection. On admitted focused fixtures, a root-indexed
+Strict channel analysis admits only physical local storage whose allocation
+root proves capacity one or two, one producer, one consumer, no unresolved
+semantic failure or branch/nested-loop control, and a single physical core.
+Loop-carried channels additionally require the proven reuse distance to equal
+capacity. The `channels` dump reports one-shot and ready/release channel shapes
+plus every timeline/channel rejection. On admitted focused fixtures, a root-indexed
 exact-storage query over the legacy translator's memory-dependency records and
 loop structure confirms the ready RAW and recurring release WAR relations.
 

@@ -66,11 +66,13 @@ std::optional<std::uint64_t> getStaticMultiBufferSlotBytes(TileBufType slotType)
 
 std::optional<std::uint32_t> getAuthoritativeSlotCount(const SyncStorageProvenance& provenance)
 {
-    auto allocation = provenance.root.getDefiningOp<AllocMultiTileOp>();
-    if (!allocation) {
-        return std::nullopt;
+    if (provenance.root.getDefiningOp<AllocTileOp>()) {
+        return 1;
     }
-    return static_cast<std::uint32_t>(allocation.getResult().getType().getCount());
+    if (auto allocation = provenance.root.getDefiningOp<AllocMultiTileOp>()) {
+        return allocation.getResult().getType().getCount();
+    }
+    return std::nullopt;
 }
 
 std::optional<SmallVector<SyncByteInterval, 2>> getCompletePhysicalSlots(
@@ -244,16 +246,15 @@ SyncStorageFamilyId StructuredSyncIRConstruction::getOrCreateStorageFamily(
                 }
             }
         }
-        for (std::optional<std::uint32_t> observed : {rootSlotCount, selectorSlotCount}) {
-            if (!observed) {
-                continue;
-            }
-            if (family.slotCount && *family.slotCount != *observed) {
-                family.capacityConflict = true;
-                family.slotCount.reset();
-            } else if (!family.capacityConflict) {
-                family.slotCount = *observed;
-            }
+        const bool authoritativeCapacityConflict =
+            rootSlotCount && family.slotCount && *family.slotCount != *rootSlotCount;
+        const bool selectorCapacityConflict =
+            rootSlotCount && selectorSlotCount && *rootSlotCount != *selectorSlotCount;
+        if (authoritativeCapacityConflict || selectorCapacityConflict) {
+            family.capacityConflict = true;
+            family.slotCount.reset();
+        } else if (rootSlotCount && !family.capacityConflict) {
+            family.slotCount = *rootSlotCount;
         }
         return family.id;
     }
@@ -267,19 +268,12 @@ SyncStorageFamilyId StructuredSyncIRConstruction::getOrCreateStorageFamily(
     family.unknownRange = provenance.unknownRange;
     family.aliasesUnknownRange = provenance.aliasesUnknownRange;
     family.physicalSlotsComplete = completeSlots.has_value();
-    if (rootSlotCount) {
+    const bool selectorCapacityConflict =
+        rootSlotCount && selectorSlotCount && *rootSlotCount != *selectorSlotCount;
+    if (selectorCapacityConflict) {
+        family.capacityConflict = true;
+    } else if (rootSlotCount) {
         family.slotCount = *rootSlotCount;
-    }
-    if (selectorSlotCount) {
-        if (family.slotCount && *family.slotCount != *selectorSlotCount) {
-            family.capacityConflict = true;
-            family.slotCount.reset();
-        } else {
-            family.slotCount = *selectorSlotCount;
-        }
-    }
-    if (!family.slotCount && effect.visibility == SyncVisibilityClass::Local) {
-        family.slotCount = 1;
     }
     if (effect.visibility == SyncVisibilityClass::Local) {
         family.role = SyncStorageRole::LocalBuffer;

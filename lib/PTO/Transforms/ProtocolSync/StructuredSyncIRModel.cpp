@@ -57,8 +57,9 @@ bool hasValidCanonicalSlot(
     if (slot.kind == SyncSlotExpressionKind::Unknown) {
         return true;
     }
-    if (slot.depth == 0 || slot.modulus != slot.depth || !family.slotCount || *family.slotCount != slot.depth ||
-        slot.offset < 0 || static_cast<std::uint64_t>(slot.offset) >= slot.modulus) {
+    const bool conflictsWithKnownCapacity = family.slotCount && *family.slotCount != slot.depth;
+    if (slot.depth == 0 || slot.modulus != slot.depth || conflictsWithKnownCapacity || slot.offset < 0 ||
+        static_cast<std::uint64_t>(slot.offset) >= slot.modulus) {
         return false;
     }
     if (slot.kind == SyncSlotExpressionKind::Constant) {
@@ -218,7 +219,7 @@ LogicalResult StructuredSyncIR::freeze()
         if (family.root != access.storage.root || family.space != access.storage.space) {
             return failure();
         }
-        if (access.slot && access.slot->depth != 0 && (!family.slotCount || *family.slotCount != access.slot->depth)) {
+        if (access.slot && access.slot->depth != 0 && family.slotCount && *family.slotCount != access.slot->depth) {
             return failure();
         }
         if (access.slot && !hasValidCanonicalSlot(*access.slot, family, phases[access.phase], regions)) {
