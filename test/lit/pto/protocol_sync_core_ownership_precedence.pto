@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=one-shot fallback-mode=fail dump=plan' %s \
+// RUN:   > %t.ir 2> %t.diagnostics
+// RUN: FileCheck %s --input-file=%t.ir --check-prefix=IR
+// RUN: FileCheck %s --input-file=%t.diagnostics --check-prefix=DIAGNOSTICS
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @vector_section_overrides_cube_kind(
+      %input: !pto.partition_tensor_view<16x16xf16>,
+      %output: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    pto.section.vector {
+      %c0 = arith.constant 0 : i64
+      %c512 = arith.constant 512 : i64
+      %source = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+      %result = pto.alloc_tile addr = %c512 : !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%source : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%source : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%result : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%result : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}
+
+// DIAGNOSTICS: PROTOCOL-SYNC legacy-parity function=@vector_section_overrides_cube_kind status=match mismatches=0
+// DIAGNOSTICS-SAME: physical-core-refinements=0 internal-checks=0
+// DIAGNOSTICS-NOT: parity-refinement
+// DIAGNOSTICS: PROTOCOL-SYNC one-shot-plan function=@vector_section_overrides_cube_kind
+// DIAGNOSTICS-SAME: status=ready phases=3 protocols=2 core=vector
+// DIAGNOSTICS: tail-drain=true placement=physical-section
+
+// IR-LABEL: func.func @vector_section_overrides_cube_kind
+// IR: pto.section.vector {
+// IR-NOT: <PIPE_MTE1>
+// IR-NOT: <PIPE_M>
+// IR-NOT: <PIPE_FIX>
+// IR: pto.tload
+// IR-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// IR-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// IR-NEXT: pto.tabs
+// IR-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// IR-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// IR-NEXT: pto.tstore
+// IR-NEXT: pto.barrier <PIPE_ALL>
+// IR-NEXT: {{^ *}}}
+// IR-NEXT: {{^ *}}return
