@@ -8,12 +8,12 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 // RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
-// RUN:   --protocol-sync-one-shot --protocol-sync-dump=plan \
+// RUN:   --protocol-sync-one-shot --protocol-sync-fallback=fail --protocol-sync-dump=plan \
 // RUN:   --protocol-sync-statistics %s -o %t 2> %t.diagnostics
 // RUN: FileCheck %s --input-file=%t --check-prefix=IR
 // RUN: FileCheck %s --input-file=%t.diagnostics --check-prefix=PLAN
 // RUN: not ptoas --pto-arch=a2 --pto-level=level2 --emit-pto-ir \
-// RUN:   --protocol-sync-one-shot --protocol-sync-dump=plan %s \
+// RUN:   --protocol-sync-one-shot --protocol-sync-fallback=fail --protocol-sync-dump=plan %s \
 // RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=A2
 // RUN: not ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
 // RUN:   --enable-insert-sync --protocol-sync-one-shot %s -o /dev/null 2>&1 | \
@@ -50,7 +50,18 @@ module {
 // PLAN: protocol #2 kind=directed-event
 // PLAN-SAME: event-id=0
 // PLAN: tail-drain=true placement=function-return
+// PLAN: "event_domains":2
+// PLAN-SAME: "max_event_domain_pressure":1
+// PLAN-SAME: "maximum_event_id":0
+// PLAN-SAME: "protocol_plans_admitted":1
+// PLAN-SAME: "protocol_plans_attempted":1
+// PLAN-SAME: "protocol_plans_rejected":0
+// PLAN-SAME: "selected_directed_event_pairs":2
+// PLAN-SAME: "selected_one_shot_protocols":3
+// PLAN-SAME: "selected_same_pipe_barriers":1
+// PLAN-SAME: "selected_tail_drains":1
 // PLAN: "planner_result":"materialized"
+// PLAN-SAME: "producer":"protocol-plan"
 // IR-LABEL: func.func @linear_one_shot
 // IR: pto.tload
 // IR: pto.set_flag
@@ -64,7 +75,7 @@ module {
 // IR: pto.barrier <PIPE_ALL>
 // A2: status=unsupported
 // A2: reason=unsupported-target
-// A2: target profile 'a2' is not the device-qualified A3 target
+// A2: target profile 'a2' is not the explicit Checkpoint-D A3 target
 // MUTEX: Error: --enable-insert-sync
 // MUTEX: --protocol-sync-one-shot
 // MUTEX-SAME: mutually exclusive

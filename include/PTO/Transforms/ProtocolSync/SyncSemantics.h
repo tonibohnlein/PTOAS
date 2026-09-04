@@ -90,6 +90,15 @@ enum class SyncFailureReason : std::uint8_t {
     InternalInvariant,
 };
 
+enum class ProtocolSyncProducer : std::uint8_t {
+    AnalysisOnly,
+    ProtocolPlan,
+    LegacyFallbackUnsupported,
+    LegacyFallbackResourceInfeasible,
+    FailClosedPolicy,
+    InternalError,
+};
+
 struct SyncByteInterval {
     std::uint64_t begin = 0;
     std::uint64_t size = 0;
@@ -221,6 +230,16 @@ struct ProtocolSyncStatistics {
     std::uint64_t interpreterTransitions = 0;
     std::uint64_t interpreterPeakStates = 0;
     std::uint64_t protocolCandidates = 0;
+    std::uint64_t protocolPlansAttempted = 0;
+    std::uint64_t protocolPlansAdmitted = 0;
+    std::uint64_t protocolPlansRejected = 0;
+    std::uint64_t selectedOneShotProtocols = 0;
+    std::uint64_t selectedDirectedEventPairs = 0;
+    std::uint64_t selectedSamePipeBarriers = 0;
+    std::uint64_t selectedTailDrains = 0;
+    std::uint64_t eventDomains = 0;
+    std::uint64_t maxEventDomainPressure = 0;
+    std::uint64_t maximumEventIdPlusOne = 0;
     std::uint64_t logicalActions = 0;
     std::uint64_t residualObligations = 0;
     std::uint64_t allocationGraphVertices = 0;
@@ -274,6 +293,7 @@ SyncSlotRelation compareSlotsAtDistance(
 /// Return the proven period when it does not exceed searchLimit.
 FailureOr<unsigned> findFirstPositiveReuseDistance(const SyncSlotExpression& slot, unsigned searchLimit);
 std::optional<SyncQueueSemantics> getSyncQueueSemantics(Operation* operation);
+bool isFixedSyncOperation(Operation* operation);
 llvm::StringRef stringifySyncSlotExpressionKind(SyncSlotExpressionKind kind);
 llvm::StringRef stringifySyncSlotRelation(SyncSlotRelation relation);
 llvm::StringRef stringifySyncPhysicalCore(SyncPhysicalCore core);
@@ -283,6 +303,7 @@ llvm::StringRef stringifySyncCompletionKind(SyncCompletionKind completion);
 llvm::StringRef stringifySyncQueueRole(SyncQueueRole role);
 llvm::StringRef stringifySyncSummaryProvider(SyncSummaryProvider provider);
 llvm::StringRef stringifySyncFailureReason(SyncFailureReason reason);
+llvm::StringRef stringifyProtocolSyncProducer(ProtocolSyncProducer producer);
 
 } // namespace mlir::pto::protocol_sync
 

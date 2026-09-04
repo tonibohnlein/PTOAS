@@ -34,7 +34,7 @@ bool moduleNamesA3Target(func::FuncOp function, std::string& reason)
     }
     const StringRef arch = targetArch.getValue();
     if (!arch.equals_insensitive("a3")) {
-        reason = (llvm::Twine("target profile '") + arch + "' is not the device-qualified A3 target").str();
+        reason = (llvm::Twine("target profile '") + arch + "' is not the explicit Checkpoint-D A3 target").str();
         return false;
     }
     if (Attribute attribute = module->getAttr("pto.device-spec")) {

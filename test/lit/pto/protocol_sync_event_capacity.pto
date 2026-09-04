@@ -1,0 +1,103 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+// RUN: not pto-test-opt \
+// RUN:   --pto-protocol-sync='execution-mode=one-shot fallback-mode=fail dump=plan statistics=1' \
+// RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=STRICT
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=one-shot statistics=1' \
+// RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=FALLBACK
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @seven_mte2_to_vector_generations(
+      %input: !pto.partition_tensor_view<16x16xf16>,
+      %output: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %c512 = arith.constant 512 : i64
+    %c1024 = arith.constant 1024 : i64
+    %c1536 = arith.constant 1536 : i64
+    %c2048 = arith.constant 2048 : i64
+    %c2560 = arith.constant 2560 : i64
+    %c3072 = arith.constant 3072 : i64
+    %c3584 = arith.constant 3584 : i64
+    %c4096 = arith.constant 4096 : i64
+    %c4608 = arith.constant 4608 : i64
+    %c5120 = arith.constant 5120 : i64
+    %c5632 = arith.constant 5632 : i64
+    %c6144 = arith.constant 6144 : i64
+    %c6656 = arith.constant 6656 : i64
+    %s0 = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    %d0 = pto.alloc_tile addr = %c512 : !pto.tile_buf<vec, 16x16xf16>
+    %s1 = pto.alloc_tile addr = %c1024 : !pto.tile_buf<vec, 16x16xf16>
+    %d1 = pto.alloc_tile addr = %c1536 : !pto.tile_buf<vec, 16x16xf16>
+    %s2 = pto.alloc_tile addr = %c2048 : !pto.tile_buf<vec, 16x16xf16>
+    %d2 = pto.alloc_tile addr = %c2560 : !pto.tile_buf<vec, 16x16xf16>
+    %s3 = pto.alloc_tile addr = %c3072 : !pto.tile_buf<vec, 16x16xf16>
+    %d3 = pto.alloc_tile addr = %c3584 : !pto.tile_buf<vec, 16x16xf16>
+    %s4 = pto.alloc_tile addr = %c4096 : !pto.tile_buf<vec, 16x16xf16>
+    %d4 = pto.alloc_tile addr = %c4608 : !pto.tile_buf<vec, 16x16xf16>
+    %s5 = pto.alloc_tile addr = %c5120 : !pto.tile_buf<vec, 16x16xf16>
+    %d5 = pto.alloc_tile addr = %c5632 : !pto.tile_buf<vec, 16x16xf16>
+    %s6 = pto.alloc_tile addr = %c6144 : !pto.tile_buf<vec, 16x16xf16>
+    %d6 = pto.alloc_tile addr = %c6656 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%s0 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%s0 : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%d0 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%s1 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%s1 : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%d1 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%s2 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%s2 : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%d2 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%s3 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%s3 : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%d3 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%s4 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%s4 : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%d4 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%s5 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%s5 : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%d5 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%s6 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%s6 : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%d6 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%d0 : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    pto.tstore ins(%d1 : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    pto.tstore ins(%d2 : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    pto.tstore ins(%d3 : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    pto.tstore ins(%d4 : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    pto.tstore ins(%d5 : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    pto.tstore ins(%d6 : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+}
+
+// STRICT: status=unsupported
+// STRICT: reason=event-capacity
+// STRICT: "fallback":"disabled"
+// STRICT-SAME: "producer":"fail-closed-policy"
+// STRICT-SAME: "status":"unsupported"
+// FALLBACK: "fallback":"resource-infeasible"
+// FALLBACK-SAME: "planner_result":"legacy-fallback-resource-infeasible"
+// FALLBACK-SAME: "producer":"legacy-fallback-resource-infeasible"
+// FALLBACK-SAME: "status":"ok"

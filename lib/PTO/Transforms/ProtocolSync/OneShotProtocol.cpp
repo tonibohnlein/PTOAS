@@ -20,19 +20,18 @@ using namespace mlir::pto::protocol_sync;
 
 namespace {
 
-const SyncChannel* findUniqueChannelForGeneration(const ChannelAnalysisResult& channels, SyncGenerationId generation)
+using ChannelIndex = llvm::DenseMap<SyncGenerationId, const SyncChannel*>;
+
+ChannelIndex buildChannelIndex(const ChannelAnalysisResult& channels)
 {
-    const SyncChannel* result = nullptr;
+    ChannelIndex index;
     for (const SyncChannel& channel : channels.getChannels()) {
-        if (channel.generation != generation) {
-            continue;
+        auto [entry, inserted] = index.try_emplace(channel.generation, &channel);
+        if (!inserted) {
+            entry->second = nullptr;
         }
-        if (result) {
-            return nullptr;
-        }
-        result = &channel;
     }
-    return result;
+    return index;
 }
 
 const SyncPhase* getOnlyPhase(
@@ -107,24 +106,22 @@ bool hasUnsupportedStructuredControl(const StructuredSyncIR& schedule)
     });
 }
 
-bool isReserved(const StructuredSyncIR& schedule, PIPE source, PIPE target, unsigned eventId)
+bool hasMultiplePhysicalSections(const StructuredSyncIR& schedule)
 {
-    for (const SyncOpSummary& summary : schedule.getSummaries()) {
-        for (const SyncEventReservation& reservation : summary.eventReservations) {
-            if (reservation.source == source && reservation.target == target &&
-                llvm::is_contained(reservation.eventIds, eventId)) {
-                return true;
-            }
-        }
-    }
-    return false;
+    return llvm::count_if(schedule.getRegions(), [](const SyncRegion& region) {
+        return region.kind == SyncRegionKind::PhysicalSection;
+    }) > 1;
 }
 
-bool sameEventDomain(const SyncOneShotProtocol& first, const SyncOneShotProtocol& second)
+std::uint32_t eventDomain(SyncPhysicalCore core, PIPE source, PIPE target)
 {
-    return first.kind == SyncOneShotProtocolKind::DirectedEvent &&
-           second.kind == SyncOneShotProtocolKind::DirectedEvent && first.core == second.core &&
-           first.sourcePipe == second.sourcePipe && first.targetPipe == second.targetPipe;
+    return (static_cast<std::uint32_t>(core) << 16) | (static_cast<std::uint32_t>(source) << 8) |
+           static_cast<std::uint32_t>(target);
+}
+
+std::uint32_t reservationDomain(PIPE source, PIPE target)
+{
+    return (static_cast<std::uint32_t>(source) << 8) | static_cast<std::uint32_t>(target);
 }
 
 /// Checkpoint D does not yet have the generation-aware residual-obligation
@@ -173,6 +170,7 @@ LogicalResult validateRelevantChannels(
     const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
     const llvm::DenseMap<SyncPhaseId, unsigned>& phasePosition, SyncOneShotPlan& plan)
 {
+    const ChannelIndex channelIndex = buildChannelIndex(channels);
     for (const SyncGenerationTimeline& timeline : timelines.getTimelines()) {
         if (!isRelevantLocalTimeline(schedule, timeline)) {
             continue;
@@ -189,7 +187,8 @@ LogicalResult validateRelevantChannels(
                 "Checkpoint D requires every local timeline to have exactly one producer and one consumer");
             return failure();
         }
-        const SyncChannel* channel = findUniqueChannelForGeneration(channels, timeline.id);
+        auto foundChannel = channelIndex.find(timeline.id);
+        const SyncChannel* channel = foundChannel == channelIndex.end() ? nullptr : foundChannel->second;
         if (!channel) {
             reject(
                 plan, kInvalidSyncId, SyncOneShotRejection::IncompleteChannelSet,
@@ -282,6 +281,12 @@ FailureOr<SyncOneShotPlan> mlir::pto::protocol_sync::buildOneShotProtocolPlan(
         reject(
             plan, kInvalidSyncId, SyncOneShotRejection::UnsupportedControlFlow,
             "Checkpoint D supports only an exactly-once linear phase chain");
+        return plan;
+    }
+    if (hasMultiplePhysicalSections(schedule)) {
+        reject(
+            plan, kInvalidSyncId, SyncOneShotRejection::MixedPhysicalSections,
+            "Checkpoint D supports at most one physical section per function");
         return plan;
     }
 
@@ -412,14 +417,18 @@ FailureOr<SyncOneShotPlan> mlir::pto::protocol_sync::buildOneShotProtocolPlan(
     plan.status = SyncOneShotPlanStatus::Ready;
     if (statistics) {
         statistics->protocolCandidates += plan.protocols.size();
+        statistics->selectedOneShotProtocols += plan.protocols.size();
         for (const SyncOneShotProtocol& protocol : plan.protocols) {
             if (protocol.kind == SyncOneShotProtocolKind::PipeBarrier) {
                 ++statistics->logicalActions;
+                ++statistics->selectedSamePipeBarriers;
             } else if (protocol.kind == SyncOneShotProtocolKind::DirectedEvent) {
                 statistics->logicalActions += 2;
+                ++statistics->selectedDirectedEventPairs;
             }
         }
         ++statistics->logicalActions; // mandatory PIPE_ALL tail drain
+        ++statistics->selectedTailDrains;
     }
     return plan;
 }
@@ -435,6 +444,14 @@ LogicalResult mlir::pto::protocol_sync::allocateOneShotProtocolEvents(
         return failure();
     }
 
+    llvm::DenseMap<std::uint32_t, SmallVector<unsigned, 8>> reservations;
+    for (const SyncOpSummary& summary : schedule.getSummaries()) {
+        for (const SyncEventReservation& reservation : summary.eventReservations) {
+            SmallVector<unsigned, 8>& ids = reservations[reservationDomain(reservation.source, reservation.target)];
+            ids.append(reservation.eventIds.begin(), reservation.eventIds.end());
+        }
+    }
+    llvm::DenseMap<std::uint32_t, SmallVector<unsigned, 8>> allocatedByDomain;
     for (SyncOneShotProtocol& protocol : plan.protocols) {
         if (protocol.kind != SyncOneShotProtocolKind::DirectedEvent) {
             continue;
@@ -445,23 +462,19 @@ LogicalResult mlir::pto::protocol_sync::allocateOneShotProtocolEvents(
         if (statistics) {
             ++statistics->allocationGraphVertices;
         }
-        llvm::SmallVector<unsigned, 8> unavailable;
-        for (unsigned eventId : target.getCompilerEventIds()) {
-            if (isReserved(schedule, protocol.sourcePipe, protocol.targetPipe, eventId)) {
-                unavailable.push_back(eventId);
+        const std::uint32_t domain = eventDomain(protocol.core, protocol.sourcePipe, protocol.targetPipe);
+        auto [domainEntry, inserted] = allocatedByDomain.try_emplace(domain);
+        SmallVector<unsigned, 8>& allocated = domainEntry->second;
+        ArrayRef<unsigned> reserved = reservations[reservationDomain(protocol.sourcePipe, protocol.targetPipe)];
+        if (statistics) {
+            if (inserted) {
+                ++statistics->eventDomains;
             }
+            statistics->allocationGraphEdges += allocated.size();
         }
-        for (const SyncOneShotProtocol& previous : plan.protocols) {
-            if (previous.id >= protocol.id || !sameEventDomain(previous, protocol) || !previous.eventId) {
-                continue;
-            }
-            unavailable.push_back(*previous.eventId);
-            if (statistics) {
-                ++statistics->allocationGraphEdges;
-            }
-        }
-        auto selected = llvm::find_if(
-            target.getCompilerEventIds(), [&](unsigned eventId) { return !llvm::is_contained(unavailable, eventId); });
+        auto selected = llvm::find_if(target.getCompilerEventIds(), [&](unsigned eventId) {
+            return !llvm::is_contained(reserved, eventId) && !llvm::is_contained(allocated, eventId);
+        });
         if (selected == target.getCompilerEventIds().end()) {
             reject(
                 plan, protocol.channels.empty() ? kInvalidSyncId : protocol.channels.front(),
@@ -469,6 +482,13 @@ LogicalResult mlir::pto::protocol_sync::allocateOneShotProtocolEvents(
             return success();
         }
         protocol.eventId = *selected;
+        allocated.push_back(*selected);
+        if (statistics) {
+            statistics->maxEventDomainPressure =
+                std::max<std::uint64_t>(statistics->maxEventDomainPressure, allocated.size());
+            statistics->maximumEventIdPlusOne =
+                std::max<std::uint64_t>(statistics->maximumEventIdPlusOne, *protocol.eventId + 1);
+        }
     }
     return success();
 }

@@ -226,8 +226,14 @@ llvm::cl::opt<bool> protocolSyncAnalysisOnly(
 llvm::cl::opt<bool> protocolSyncOneShot(
     "protocol-sync-one-shot",
     llvm::cl::desc("Emit the narrow Checkpoint-D ProtocolSync one-shot plan; "
-                   "unsupported functions fail closed"),
+                   "unsupported functions use legacy fallback unless "
+                   "--protocol-sync-fallback=fail is selected"),
     llvm::cl::init(false));
+
+llvm::cl::opt<std::string> protocolSyncFallback(
+    "protocol-sync-fallback",
+    llvm::cl::desc("ProtocolSync whole-function fallback: legacy or fail"),
+    llvm::cl::init("legacy"));
 
 llvm::cl::opt<std::string> protocolSyncDump(
     "protocol-sync-dump",

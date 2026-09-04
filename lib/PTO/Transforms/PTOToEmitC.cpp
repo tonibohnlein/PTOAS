@@ -5340,6 +5340,8 @@ static constexpr llvm::StringLiteral kAutoSyncTailBarrierAttr =
     "pto.auto_sync_tail_barrier";
 static constexpr llvm::StringLiteral kAutoSyncTailHintAttr =
     "pto.auto_sync_tail_hint";
+static constexpr llvm::StringLiteral kAutoSyncTailSectionLocalAttr =
+    "pto.auto_sync_tail_section_local";
 static constexpr llvm::StringLiteral kAutoSyncTailPolicyBarrierAll =
     "barrier_all";
 static constexpr llvm::StringLiteral kAutoSyncTailPolicyMte3ToSEvent0 =
@@ -5442,6 +5444,14 @@ struct PTOBarrierToEmitC : public OpConversionPattern<pto::BarrierOp> {
                                 ConversionPatternRewriter &rewriter) const override {
     if (op->hasAttr(kAutoSyncTailBarrierAttr)) {
       auto modeAttr = rewriter.getStringAttr(getAutoSyncTailModeToken(op));
+      if (op->hasAttrOfType<UnitAttr>(kAutoSyncTailSectionLocalAttr)) {
+        auto args = rewriter.getArrayAttr(
+            {emitc::OpaqueAttr::get(rewriter.getContext(), modeAttr.getValue())});
+        rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
+            op, TypeRange{}, "ptoas_auto_sync_tail", args, ArrayAttr{},
+            ValueRange{});
+        return success();
+      }
       if (auto emitcFunc = op->getParentOfType<emitc::FuncOp>()) {
         emitcFunc->setAttr(kAutoSyncTailPendingModeAttr, modeAttr);
       } else if (auto funcOp = op->getParentOfType<func::FuncOp>()) {

@@ -8,22 +8,26 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 // RUN: split-file %s %t
-// RUN: not pto-test-opt --pto-protocol-sync='execution-mode=one-shot dump=plan' \
+// RUN: not pto-test-opt --pto-protocol-sync='execution-mode=one-shot fallback-mode=fail dump=plan' \
 // RUN:   %t/queue.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=QUEUE
-// RUN: not pto-test-opt --pto-protocol-sync='execution-mode=one-shot dump=plan' \
+// RUN: not pto-test-opt --pto-protocol-sync='execution-mode=one-shot fallback-mode=fail dump=plan' \
 // RUN:   %t/rejected-timeline.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=TIMELINE
-// RUN: not pto-test-opt --pto-protocol-sync='execution-mode=one-shot dump=plan' \
+// RUN: not pto-test-opt --pto-protocol-sync='execution-mode=one-shot fallback-mode=fail dump=plan' \
 // RUN:   %t/attrless.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=ATTRLESS
-// RUN: not pto-test-opt --pto-protocol-sync='execution-mode=one-shot' \
+// RUN: not pto-test-opt --pto-protocol-sync='execution-mode=one-shot fallback-mode=fail dump=plan' \
+// RUN:   %t/multiple-sections.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=MULTIPLE-SECTIONS
+// RUN: not pto-test-opt --pto-protocol-sync='execution-mode=one-shot fallback-mode=fail statistics=1' \
 // RUN:   --mlir-print-ir-after-failure %t/module-atomicity.pto -o /dev/null 2>&1 | \
 // RUN:   FileCheck %s --check-prefix=ATOMIC
-// RUN: not ptoas --pto-arch=a3 --pto-backend=vpto --protocol-sync-one-shot \
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=one-shot statistics=1' \
+// RUN:   %t/queue.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=FALLBACK
+// RUN: not ptoas --pto-arch=a3 --pto-backend=vpto --protocol-sync-one-shot --protocol-sync-fallback=fail \
 // RUN:   --protocol-sync-statistics %t/vpto-no-tile.pto -o /dev/null 2>&1 | \
 // RUN:   FileCheck %s --check-prefix=VPTO
 // RUN: not ptoas --protocol-sync-one-shot %t/attrless.pto -o /dev/null 2>&1 | \
 // RUN:   FileCheck %s --check-prefix=CLI-IMPLICIT
 
-// QUEUE: ProtocolSync one-shot mode cannot safely handle this function
+// QUEUE: ProtocolSync one-shot mode found no complete supported plan
 
 // TIMELINE: status=unsupported
 // TIMELINE: reason=non-one-shot-channel
@@ -33,6 +37,15 @@
 // ATTRLESS: reason=unsupported-target
 // ATTRLESS: requires explicit pto.target_arch = 'a3'
 
+// MULTIPLE-SECTIONS: status=unsupported
+// MULTIPLE-SECTIONS: reason=mixed-physical-sections
+// MULTIPLE-SECTIONS: supports at most one physical section per function
+
+// ATOMIC: "failure_stage":"module-transaction"
+// ATOMIC-SAME: "function":"would_be_supported"
+// ATOMIC-SAME: "planner_result":"rolled-back"
+// ATOMIC-SAME: "producer":"protocol-plan"
+// ATOMIC-SAME: "status":"rolled-back"
 // ATOMIC: IR Dump After PTOProtocolSync
 // ATOMIC-LABEL: func.func @would_be_supported
 // ATOMIC: pto.tload
@@ -42,8 +55,13 @@
 // ATOMIC-NOT: pto.protocol_sync.generated
 // ATOMIC: scf.for
 
-// VPTO: "producer":"one-shot"
-// VPTO: ProtocolSync one-shot mode cannot safely handle this function
+// FALLBACK: "fallback":"unsupported"
+// FALLBACK-SAME: "planner_result":"legacy-fallback-unsupported"
+// FALLBACK-SAME: "producer":"legacy-fallback-unsupported"
+// FALLBACK-SAME: "status":"ok"
+
+// VPTO: ProtocolSync one-shot mode found no complete supported plan
+// VPTO: "producer":"fail-closed-policy"
 
 // CLI-IMPLICIT: --protocol-sync-one-shot requires an explicit --pto-arch=a3
 
@@ -125,6 +143,19 @@ module attributes {pto.target_arch = "a3"} {
                 outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
       pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
                  outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}
+
+//--- multiple-sections.pto
+module attributes {pto.target_arch = "a3"} {
+  func.func @multiple_empty_sections() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    pto.section.vector {
+      %c0 = arith.constant 0 : i64
+    }
+    pto.section.vector {
+      %c1 = arith.constant 1 : i64
     }
     return
   }

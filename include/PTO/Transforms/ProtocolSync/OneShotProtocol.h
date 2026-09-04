@@ -13,6 +13,7 @@
 
 #include "PTO/Transforms/ProtocolSync/ChannelProtocolIR.h"
 #include "PTO/Transforms/ProtocolSync/ProtocolSyncTarget.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -87,8 +88,9 @@ struct SyncOneShotPlan {
     llvm::SmallVector<SyncPhaseId, 8> phaseOrder;
 
     /// Tail drain is mandatory whenever phaseOrder is non-empty. When
-    /// tailSectionOperation is set, PIPE_ALL is emitted before that section's
-    /// terminator. Otherwise it is emitted before the function return.
+    /// tailSectionOperation is set, PIPE_ALL is emitted as the final operation
+    /// in that terminator-free section. Otherwise it is emitted before the
+    /// function return.
     bool emitTailBarrier = false;
     Operation* tailSectionOperation = nullptr;
 
@@ -103,9 +105,20 @@ FailureOr<SyncOneShotPlan> buildOneShotProtocolPlan(
 LogicalResult allocateOneShotProtocolEvents(
     const StructuredSyncIR& schedule, SyncOneShotPlan& plan, ProtocolSyncStatistics* statistics = nullptr);
 LogicalResult materializeAndVerifyOneShotProtocolPlan(
-    const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
-    const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels, const SyncOneShotPlan& plan,
+    const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages, const SyncOneShotPlan& plan,
     ProtocolSyncStatistics* statistics = nullptr);
+/// Materialize and independently verify one function inside a caller-owned
+/// disposable module transaction. The caller must discard that module on
+/// failure and verify the complete module once before committing it.
+LogicalResult materializeAndVerifyOneShotProtocolPlanInPlace(
+    const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages, const SyncOneShotPlan& plan,
+    ProtocolSyncStatistics* statistics = nullptr);
+LogicalResult materializeOneShotProtocolPlan(
+    func::FuncOp clone, const IRMapping& mapping, const SyncOneShotPlan& plan,
+    ProtocolSyncStatistics* statistics = nullptr);
+LogicalResult verifyOneShotProtocolMaterialization(
+    const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages, func::FuncOp clone,
+    const IRMapping& mapping, ProtocolSyncStatistics* statistics = nullptr);
 void printOneShotProtocolPlan(func::FuncOp function, const SyncOneShotPlan& plan, llvm::raw_ostream& output);
 
 llvm::StringRef stringifySyncOneShotProtocolKind(SyncOneShotProtocolKind kind);

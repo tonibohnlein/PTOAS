@@ -291,8 +291,17 @@ void comparePhases(const LegacySyncSnapshot& legacy, const StructuredSyncIR& sch
         const SyncCompletionKind completion =
             macroPhase ? SyncCompletionKind::MacroInternal : SyncCompletionKind::PhaseEnd;
         const SyncPhysicalCore legacyCore = convertLegacyCore(legacyPhase->compoundCoreType);
+        const bool physicalCoreRefinement = legacyCore == SyncPhysicalCore::Vector &&
+                                            phase.core == SyncPhysicalCore::Cube && phase.operation &&
+                                            phase.operation->getParentOfType<SectionCubeOp>();
+        if (physicalCoreRefinement) {
+            result.physicalCoreRefinements.push_back(
+                {"physical-core", static_cast<std::uint32_t>(index),
+                 "explicit cube-section ownership refines the legacy pipe-derived vector core"});
+        }
         if (!pipe || *pipe != phase.pipe || legacyPhase->elementOp != phase.operation ||
-            macroPhase != phase.macroPhase || legacyCore != phase.core || completion != phase.completion) {
+            macroPhase != phase.macroPhase || (!physicalCoreRefinement && legacyCore != phase.core) ||
+            completion != phase.completion) {
             addMismatch(result, "phase", index, "operation, core, pipeline, macro phase, or completion differs");
             continue;
         }
@@ -408,10 +417,15 @@ void mlir::pto::protocol_sync::printLegacySyncParity(
                        result.matches() ? "match" : "mismatch";
     output << "PROTOCOL-SYNC legacy-parity function=@" << function.getSymName()
            << " status=" << status << " mismatches=" << result.mismatches.size()
+           << " physical-core-refinements=" << result.physicalCoreRefinements.size()
            << " internal-checks=" << result.internalConsistencyIssues.size() << '\n';
     for (const LegacySyncParityMismatch& mismatch : result.mismatches) {
         output << "  parity-mismatch category=" << mismatch.category << " index=" << mismatch.index << " detail=\""
                << mismatch.detail << "\"\n";
+    }
+    for (const LegacySyncParityMismatch& refinement : result.physicalCoreRefinements) {
+        output << "  parity-refinement category=" << refinement.category << " index=" << refinement.index
+               << " detail=\"" << refinement.detail << "\"\n";
     }
     for (const LegacySyncParityMismatch& issue : result.internalConsistencyIssues) {
         output << "  internal-consistency category=" << issue.category << " index=" << issue.index << " detail=\""

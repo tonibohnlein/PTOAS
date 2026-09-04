@@ -175,3 +175,22 @@ StringRef mlir::pto::protocol_sync::stringifySyncFailureReason(SyncFailureReason
     }
     return "internal-invariant";
 }
+
+StringRef mlir::pto::protocol_sync::stringifyProtocolSyncProducer(ProtocolSyncProducer producer)
+{
+    switch (producer) {
+        case ProtocolSyncProducer::AnalysisOnly:
+            return "analysis-only";
+        case ProtocolSyncProducer::ProtocolPlan:
+            return "protocol-plan";
+        case ProtocolSyncProducer::LegacyFallbackUnsupported:
+            return "legacy-fallback-unsupported";
+        case ProtocolSyncProducer::LegacyFallbackResourceInfeasible:
+            return "legacy-fallback-resource-infeasible";
+        case ProtocolSyncProducer::FailClosedPolicy:
+            return "fail-closed-policy";
+        case ProtocolSyncProducer::InternalError:
+            return "internal-error";
+    }
+    return "internal-error";
+}

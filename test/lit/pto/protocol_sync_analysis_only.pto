@@ -33,6 +33,12 @@
 // RUN: not ptoas --pto-arch=a3 --protocol-sync-analysis-only \
 // RUN:   --protocol-sync-dump=plan --emit-pto-ir %s -o /dev/null 2>&1 | \
 // RUN:   FileCheck %s --check-prefix=PLAN-REQUIRES-EMISSION
+// RUN: not ptoas --pto-arch=a3 --protocol-sync-one-shot \
+// RUN:   --protocol-sync-fallback=invalid --emit-pto-ir %s -o /dev/null 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=INVALID-FALLBACK
+// RUN: not ptoas --pto-arch=a3 --protocol-sync-fallback=fail \
+// RUN:   --emit-pto-ir %s -o /dev/null 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=FALLBACK-REQUIRES-EMISSION
 
 module {
   func.func @double_buffer_schedule(
@@ -125,3 +131,5 @@ module {
 // INVALID-DUMP: Error: invalid --protocol-sync-dump='invalid', expected 'none', 'schedule', 'channels', or 'plan'.
 // MODE-MUTEX: Error: --protocol-sync-analysis-only and --protocol-sync-one-shot are mutually exclusive.
 // PLAN-REQUIRES-EMISSION: Error: --protocol-sync-dump=plan requires --protocol-sync-one-shot.
+// INVALID-FALLBACK: Error: invalid --protocol-sync-fallback='invalid', expected 'legacy' or 'fail'.
+// FALLBACK-REQUIRES-EMISSION: Error: --protocol-sync-fallback requires --protocol-sync-one-shot.

@@ -1303,6 +1303,19 @@ static LogicalResult validateProtocolSyncConfiguration() {
                     "--pto-arch=a3 selection.\n";
     return failure();
   }
+  if (protocolSyncFallback != "legacy" && protocolSyncFallback != "fail") {
+    llvm::errs() << "Error: invalid --protocol-sync-fallback='"
+                 << protocolSyncFallback
+                 << "', expected 'legacy' or 'fail'.\n";
+    return failure();
+  }
+  const bool fallbackWithoutOneShot =
+      !protocolSyncOneShot && protocolSyncFallback.getNumOccurrences() != 0;
+  if (fallbackWithoutOneShot) {
+    llvm::errs() << "Error: --protocol-sync-fallback requires "
+                    "--protocol-sync-one-shot.\n";
+    return failure();
+  }
   if (protocolSyncDump != "none" && protocolSyncDump != "schedule" &&
       protocolSyncDump != "channels" && protocolSyncDump != "plan") {
     llvm::errs() << "Error: invalid --protocol-sync-dump='"
@@ -1527,6 +1540,7 @@ static LogicalResult runMainLoweringPipeline(
     pto::PTOProtocolSyncOptions options;
     options.executionMode =
         protocolSyncOneShot ? "one-shot" : "analysis";
+    options.fallbackMode = protocolSyncFallback.getValue();
     options.dumpMode = protocolSyncDump.getValue();
     options.statistics = protocolSyncStatistics.getValue();
     pm.addPass(pto::createPTOProtocolSyncPass(options));

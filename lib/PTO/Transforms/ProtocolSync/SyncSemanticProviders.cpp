@@ -282,6 +282,11 @@ std::optional<SyncQueueSemantics> mlir::pto::protocol_sync::getSyncQueueSemantic
     return getQueueSemanticsImpl(operation);
 }
 
+bool mlir::pto::protocol_sync::isFixedSyncOperation(Operation* operation)
+{
+    return !getFixedProtocolKind(operation).empty();
+}
+
 SyncOpSummary SyncSemanticExtractor::summarize(Operation* operation) const
 {
     SyncOpSummary summary;

@@ -107,6 +107,7 @@ add_mlir_dialect_library(PTOTransforms
   ProtocolSync/PipelineStages.cpp
   ProtocolSync/OneShotMaterialization.cpp
   ProtocolSync/OneShotProtocol.cpp
+  ProtocolSync/OneShotVerifier.cpp
   ProtocolSync/ProtocolSyncTarget.cpp
   ProtocolSync/PTOProtocolSync.cpp
   ProtocolSync/StructuredSyncDump.cpp

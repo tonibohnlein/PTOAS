@@ -5,11 +5,12 @@
 Checkpoint D is the first ProtocolSync revision that mutates IR. It is
 intentionally a correctness milestone, not the general protocol planner.
 
-The emitted subset is limited to a device-qualified A3 NPU 2201, same-core, exactly-once,
-strictly linear sequence of exact physical phases. Every adjacent phase pair is
-completion-ordered. This deliberately total phase chain makes the first emitted
-planner obligation-complete before the generation-aware residual-obligation
-interpreter exists.
+The emitted subset is limited to an explicit A3 NPU 2201 profile, same-core,
+exactly-once, strictly linear sequence of exact physical phases. Its device
+qualification remains gated on the Checkpoint-D campaign. Every adjacent phase
+pair is completion-ordered. This deliberately total phase chain makes the first
+emitted planner obligation-complete before the generation-aware
+residual-obligation interpreter exists.
 
 ## Supported plan
 
@@ -23,15 +24,16 @@ For adjacent phases `A` and `B`:
 
 Every function containing physical phases receives one final `PIPE_ALL` drain.
 When phases execute inside one explicit Cube or Vector physical section, the
-barrier is emitted inside that section before its terminator. Otherwise it is
-emitted before the function return.
+barrier is emitted as the final operation in that terminator-free section.
+Otherwise it is emitted before the function return.
 
 ## Admission restrictions
 
 Checkpoint D rejects:
 
 - loops, choices, guarded stages, and multi-phase macros;
-- mixed AIC/AIV functions or phases spanning different physical sections;
+- mixed AIC/AIV functions, more than one physical section, or phases spanning
+  different section ownership contexts;
 - existing synchronization, queue actions, or other ordered semantic actions;
 - unsupported or incomplete schedule facts;
 - recurring, rejected, or unauthenticated local channels;
@@ -66,20 +68,40 @@ Different directed event domains may use the same numeric ID.
 
 ## Atomic mutation
 
+`--protocol-sync-fallback=legacy|fail` controls anticipated unsupported or
+resource-infeasible plans. The rollout default is `legacy`, which applies
+InsertSync to the pristine staged function. `fail` is the strict admission and
+diagnostic mode. Unsupported targets and internal planner, materializer, or
+verifier failures never fall back.
+
 ProtocolSync:
 
 1. clones the complete input module;
 2. plans, materializes, and verifies every defined function only in that staged
    module;
-3. independently reconstructs every tagged protocol from the frozen schedule;
-4. validates direction, event ID, reservations, placement, exact phase-chain
-   completeness, channel coverage, and tail drain;
-5. runs the MLIR verifier on each staging module and on the complete staged
-   input module;
-6. commits all cloned function bodies only after every function succeeds.
+3. independently reconstructs every required protocol from the frozen schedule
+   without consuming planner channel, protocol-kind, direction, or ID claims;
+4. enumerates all fixed synchronization operations and rejects untagged or
+   unexplained actions;
+5. validates direction, event ID, reservations, exact frontier placement,
+   exact phase-chain completeness, pair uniqueness, and tail drain;
+6. independently verifies each materialized function in place, then runs the
+   MLIR verifier once on the complete staged input module;
+7. commits all cloned function bodies only after every function succeeds.
 
-Any unsupported function or verification failure leaves the entire original
-module unchanged and instructs the user to run legacy InsertSync.
+Strict-mode rejection or verification failure leaves the entire original
+module unchanged. Statistics are buffered until module commit, so a staged
+mutation in a rejected module is reported as `rolled-back`, never
+`materialized`.
+
+Statistics separately report attempted/admitted/rejected plans, selected
+one-shot protocols, directed event pairs, same-pipe barriers, tail drains,
+event-domain count and pressure, and the maximum allocated compiler event ID.
+The selected-action counters describe planner decisions; final `status`
+distinguishes committed results from module rollback. The `producer` field uses
+the stable amendment categories `protocol-plan`, `legacy-fallback-unsupported`,
+`legacy-fallback-resource-infeasible`, `fail-closed-policy`, and
+`internal-error` (plus `analysis-only` when emission is disabled).
 
 ## Non-goals
 

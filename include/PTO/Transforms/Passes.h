@@ -49,6 +49,8 @@ std::unique_ptr<Pass> createPTOVerifyTFreePass();
 
 // Creates a pass for ...
 std::unique_ptr<Pass> createPTOInsertSyncPass();
+/// Apply the legacy InsertSync implementation directly to one function.
+LogicalResult runPTOInsertSync(func::FuncOp func);
 std::unique_ptr<Pass>
 createPTOProtocolSyncPass(const PTOProtocolSyncOptions &options = {});
 std::unique_ptr<Pass> createPTOInjectBarrierAllSyncPass();

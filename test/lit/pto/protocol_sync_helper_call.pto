@@ -1,0 +1,52 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=one-shot fallback-mode=fail' %s | FileCheck %s
+
+module attributes {pto.target_arch = "a3"} {
+  func.func private @copy(
+      %source: !pto.tile_buf<vec, 16x16xf16>,
+      %result: !pto.tile_buf<vec, 16x16xf16>)
+      attributes {pto.tileop.effects = ["read", "write"],
+                  pto.tileop.helper,
+                  pto.tileop.kind = "vector"} {
+    return
+  }
+
+  func.func @helper_chain(
+      %input: !pto.partition_tensor_view<16x16xf16>,
+      %output: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %c512 = arith.constant 512 : i64
+    %source = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    %result = pto.alloc_tile addr = %c512 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%source : !pto.tile_buf<vec, 16x16xf16>)
+    func.call @copy(%source, %result) :
+      (!pto.tile_buf<vec, 16x16xf16>, !pto.tile_buf<vec, 16x16xf16>) -> ()
+    pto.tstore ins(%result : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func private @copy
+// CHECK-NOT: pto.protocol_sync.generated
+// CHECK: return
+// CHECK-LABEL: func.func @helper_chain
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// CHECK-NEXT: call @copy
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// CHECK-NEXT: pto.tstore
+// CHECK-NEXT: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: return

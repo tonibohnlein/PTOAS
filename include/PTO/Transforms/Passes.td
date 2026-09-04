@@ -55,6 +55,8 @@ def PTOProtocolSync : Pass<"pto-protocol-sync", "ModuleOp"> {
   let options = [
     Option<"executionMode", "execution-mode", "std::string", "\"analysis\"",
            "Execution mode: analysis or one-shot">,
+    Option<"fallbackMode", "fallback-mode", "std::string", "\"legacy\"",
+           "Whole-function fallback for unsupported plans: legacy or fail">,
     Option<"dumpMode", "dump", "std::string", "\"none\"",
            "Diagnostic dump: none, schedule, channels, or plan">,
     Option<"statistics", "statistics", "bool", "false",
