@@ -1,0 +1,164 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-ready-release --protocol-sync-fallback=fail \
+// RUN:   --protocol-sync-dump=plan --protocol-sync-statistics %s \
+// RUN:   -o %t 2> %t.diagnostics
+// RUN: FileCheck %s --input-file=%t --check-prefix=IR
+// RUN: FileCheck %s --input-file=%t.diagnostics --check-prefix=PLAN
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 \
+// RUN:   --protocol-sync-ready-release --protocol-sync-fallback=fail %s \
+// RUN:   -o %t.cpp
+// RUN: FileCheck %s --input-file=%t.cpp --check-prefix=CXX
+
+module {
+  func.func @ready_release_two_offset_zero(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>,
+      %trip_count : index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %buffers = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    scf.for %index = %c0 to %trip_count step %c1 {
+      %selector = arith.remui %index, %c2 : index
+      %slot = pto.multi_tile_get %buffers[%selector]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%slot : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+
+  func.func @ready_release_two_offset_one(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>,
+      %trip_count : index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %buffers = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    scf.for %index = %c0 to %trip_count step %c1 {
+      %offset_index = arith.addi %index, %c1 : index
+      %selector = arith.remui %offset_index, %c2 : index
+      %slot = pto.multi_tile_get %buffers[%selector]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%slot : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+
+  func.func @ready_release_two_equivalent_selectors(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>,
+      %trip_count : index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %buffers = pto.alloc_multi_tile
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    scf.for %index = %c0 to %trip_count step %c1 {
+      %producer_selector = arith.remui %index, %c2 : index
+      %producer_slot = pto.multi_tile_get %buffers[%producer_selector]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      %consumer_selector = arith.remui %index, %c2 : index
+      %consumer_slot = pto.multi_tile_get %buffers[%consumer_selector]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%producer_slot : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%consumer_slot : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}
+
+// PLAN: ready-release-plan function=@ready_release_two_offset_zero status=ready
+// PLAN-SAME: capacity=2 core=vector
+// PLAN: lane #0 ready-event-id=0 release-event-id=0
+// PLAN-NEXT: lane #1 ready-event-id=1 release-event-id=1
+// PLAN: slots=[0, 1, 0, 1, 0, 1] transition-applications=17
+// PLAN: ready-release-plan function=@ready_release_two_offset_one status=ready
+// PLAN-SAME: capacity=2 core=vector
+// PLAN: lane #0 ready-event-id=0 release-event-id=0
+// PLAN-NEXT: lane #1 ready-event-id=1 release-event-id=1
+// PLAN: slots=[1, 0, 1, 0, 1, 0] transition-applications=17
+// PLAN: ready-release-plan function=@ready_release_two_equivalent_selectors status=ready
+// PLAN-SAME: capacity=2 core=vector
+// PLAN: slots=[0, 1, 0, 1, 0, 1] transition-applications=17
+// PLAN: "selected_ready_release_lanes":2
+// PLAN: "selected_ready_release_lanes":2
+// PLAN: "selected_ready_release_lanes":2
+
+// IR-LABEL: func.func @ready_release_two_offset_zero
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// IR-NEXT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
+// IR-NEXT: scf.for
+// IR: pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>, %[[RELEASE0:[0-9]+]]]
+// IR-NEXT: pto.tload
+// IR-NEXT: pto.set_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>, %[[READY0:[0-9]+]]]
+// IR-NEXT: pto.wait_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>, %[[READY0]]]
+// IR-NEXT: pto.tstore
+// IR-NEXT: pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>, %[[RELEASE0]]]
+// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// IR-NEXT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
+// IR-NOT: pto.barrier
+// IR: return
+
+// IR-LABEL: func.func @ready_release_two_offset_one
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// IR-NEXT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
+// IR-NEXT: scf.for
+// IR: arith.select
+// IR: pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>
+// IR: pto.set_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>
+// IR: pto.wait_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>
+// IR: pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>
+// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// IR-NEXT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
+// IR-NOT: pto.barrier
+// IR: return
+
+// IR-LABEL: func.func @ready_release_two_equivalent_selectors
+// IR: pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>
+// IR: pto.tload
+// IR-NEXT: pto.set_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>
+// IR-NEXT: pto.wait_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>
+// IR-NEXT: pto.tstore
+// IR-NEXT: pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>
+// IR-NOT: pto.barrier
+// IR: return
+
+// CXX-LABEL: AICORE void ready_release_two_offset_zero(
+// CXX: set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID0);
+// CXX-NEXT: set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID1);
+// CXX: for (
+// CXX: wait_flag(PIPE_MTE3, PIPE_MTE2, v{{[0-9]+}});
+// CXX: set_flag(PIPE_MTE2, PIPE_MTE3, v{{[0-9]+}});
+// CXX: wait_flag(PIPE_MTE2, PIPE_MTE3, v{{[0-9]+}});
+// CXX: set_flag(PIPE_MTE3, PIPE_MTE2, v{{[0-9]+}});
+// CXX: wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID0);
+// CXX-NEXT: wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID1);
+// CXX-NOT: pipe_barrier
+// CXX: return;

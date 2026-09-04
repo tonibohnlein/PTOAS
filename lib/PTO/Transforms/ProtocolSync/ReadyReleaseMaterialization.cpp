@@ -13,9 +13,11 @@
 #include "PTO/Transforms/ProtocolSync/ReadyReleaseProtocol.h"
 
 #include "PTO/IR/PTO.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Verifier.h"
+#include "llvm/ADT/STLExtras.h"
 
 #include <chrono>
 
@@ -32,6 +34,7 @@ constexpr StringLiteral kProtocolKindAttr = "pto.protocol_sync.protocol_kind";
 constexpr StringLiteral kReadyReleaseKind = "ready-release";
 constexpr StringLiteral kRoleAttr = "pto.protocol_sync.role";
 constexpr StringLiteral kLaneAttr = "pto.protocol_sync.logical_lane";
+constexpr StringLiteral kLanesAttr = "pto.protocol_sync.logical_lanes";
 
 std::uint64_t elapsedMicroseconds(ReadyReleaseClock::time_point start)
 {
@@ -49,6 +52,16 @@ void tagAction(Operation* operation, OpBuilder& builder, StringRef role, std::op
     }
 }
 
+void tagDynamicAction(Operation* operation, OpBuilder& builder, StringRef role, unsigned capacity)
+{
+    tagAction(operation, builder, role, std::nullopt);
+    llvm::SmallVector<std::int32_t, 2> lanes;
+    for (unsigned lane = 0; lane < capacity; ++lane) {
+        lanes.push_back(static_cast<std::int32_t>(lane));
+    }
+    operation->setAttr(kLanesAttr, builder.getDenseI32ArrayAttr(lanes));
+}
+
 template <typename OpTy>
 Operation* createEvent(
     OpBuilder& builder, Location location, func::FuncOp clone, PIPE source, PIPE target, unsigned eventId,
@@ -61,15 +74,53 @@ Operation* createEvent(
     return operation.getOperation();
 }
 
+template <typename OpTy>
+Operation* createDynamicEvent(
+    OpBuilder& builder, Location location, func::FuncOp clone, PIPE source, PIPE target, Value eventId, StringRef role,
+    unsigned capacity)
+{
+    auto operation = builder.create<OpTy>(
+        location, PipeAttr::get(clone.getContext(), source), PipeAttr::get(clone.getContext(), target), eventId);
+    tagDynamicAction(operation, builder, role, capacity);
+    return operation.getOperation();
+}
+
+Value createLaneOnePredicate(OpBuilder& builder, Location location, Value selector, unsigned capacity)
+{
+    const bool needsIndexCast = selector.getType() != builder.getIndexType();
+    if (needsIndexCast) {
+        selector = builder.create<arith::IndexCastOp>(location, builder.getIndexType(), selector);
+    }
+    Value capacityValue = builder.create<arith::ConstantIndexOp>(location, capacity);
+    Value selectedLane = builder.create<arith::RemUIOp>(location, selector, capacityValue);
+    Value laneOne = builder.create<arith::ConstantIndexOp>(location, 1);
+    return builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq, selectedLane, laneOne);
+}
+
+Value createEventSelector(
+    OpBuilder& builder, Location location, Value selectsLaneOne, ArrayRef<SyncReadyReleaseLane> lanes, bool ready)
+{
+    const unsigned laneZeroId = ready ? *lanes[0].readyEventId : *lanes[0].releaseEventId;
+    const unsigned laneOneId = ready ? *lanes[1].readyEventId : *lanes[1].releaseEventId;
+    Value laneZeroEvent = builder.create<arith::ConstantIndexOp>(location, laneZeroId);
+    Value laneOneEvent = builder.create<arith::ConstantIndexOp>(location, laneOneId);
+    return builder.create<arith::SelectOp>(location, selectsLaneOne, laneOneEvent, laneZeroEvent);
+}
+
 } // namespace
 
 LogicalResult mlir::pto::protocol_sync::materializeReadyReleaseProtocolPlan(
     func::FuncOp clone, const IRMapping& mapping, const SyncReadyReleasePlan& plan, ProtocolSyncStatistics* statistics)
 {
-    const bool validPlan = plan.status == SyncReadyReleasePlanStatus::Ready && plan.capacity == 1 &&
-                           plan.lanes.size() == 1 && plan.lanes.front().logicalLane == 0 &&
-                           plan.lanes.front().readyEventId && plan.lanes.front().releaseEventId &&
-                           plan.tokenCertificate.zeroTripSafe && plan.tokenCertificate.oneTripSafe &&
+    const bool validCapacity = plan.capacity == 1 || plan.capacity == 2;
+    const bool validLanes =
+        plan.lanes.size() == plan.capacity && llvm::all_of(llvm::enumerate(plan.lanes), [](auto indexedLane) {
+            const SyncReadyReleaseLane& lane = indexedLane.value();
+            return lane.logicalLane == indexedLane.index() && lane.readyEventId && lane.releaseEventId;
+        });
+    const bool validSelector = plan.capacity == 1 ? !plan.slot : plan.slot.has_value();
+    const bool validPlan = plan.status == SyncReadyReleasePlanStatus::Ready && validCapacity && validLanes &&
+                           validSelector && plan.tokenCertificate.zeroTripSafe && plan.tokenCertificate.oneTripSafe &&
                            plan.tokenCertificate.oddEvenSafe && plan.tokenCertificate.steadyStateStable;
     if (!validPlan) {
         return failure();
@@ -86,38 +137,68 @@ LogicalResult mlir::pto::protocol_sync::materializeReadyReleaseProtocolPlan(
     }
 
     const ReadyReleaseClock::time_point start = ReadyReleaseClock::now();
-    const SyncReadyReleaseLane& lane = plan.lanes.front();
     OpBuilder builder(clone.getContext());
     builder.setInsertionPoint(loop);
-    createEvent<SetFlagOp>(
-        builder, loop.getLoc(), clone, plan.consumerPipe, plan.producerPipe, *lane.releaseEventId, "release-prime-set",
-        lane.logicalLane);
+    for (const SyncReadyReleaseLane& lane : plan.lanes) {
+        createEvent<SetFlagOp>(
+            builder, loop.getLoc(), clone, plan.consumerPipe, plan.producerPipe, *lane.releaseEventId,
+            "release-prime-set", lane.logicalLane);
+    }
 
     builder.setInsertionPoint(producer);
-    createEvent<WaitFlagOp>(
-        builder, producer->getLoc(), clone, plan.consumerPipe, plan.producerPipe, *lane.releaseEventId,
-        "release-body-wait", lane.logicalLane);
-    builder.setInsertionPointAfter(producer);
-    createEvent<SetFlagOp>(
-        builder, producer->getLoc(), clone, plan.producerPipe, plan.consumerPipe, *lane.readyEventId, "ready-body-set",
-        lane.logicalLane);
+    if (plan.capacity == 1) {
+        const SyncReadyReleaseLane& lane = plan.lanes.front();
+        createEvent<WaitFlagOp>(
+            builder, producer->getLoc(), clone, plan.consumerPipe, plan.producerPipe, *lane.releaseEventId,
+            "release-body-wait", lane.logicalLane);
+        builder.setInsertionPointAfter(producer);
+        createEvent<SetFlagOp>(
+            builder, producer->getLoc(), clone, plan.producerPipe, plan.consumerPipe, *lane.readyEventId,
+            "ready-body-set", lane.logicalLane);
 
-    builder.setInsertionPoint(consumer);
-    createEvent<WaitFlagOp>(
-        builder, consumer->getLoc(), clone, plan.producerPipe, plan.consumerPipe, *lane.readyEventId, "ready-body-wait",
-        lane.logicalLane);
-    builder.setInsertionPointAfter(consumer);
-    createEvent<SetFlagOp>(
-        builder, consumer->getLoc(), clone, plan.consumerPipe, plan.producerPipe, *lane.releaseEventId,
-        "release-body-set", lane.logicalLane);
+        builder.setInsertionPoint(consumer);
+        createEvent<WaitFlagOp>(
+            builder, consumer->getLoc(), clone, plan.producerPipe, plan.consumerPipe, *lane.readyEventId,
+            "ready-body-wait", lane.logicalLane);
+        builder.setInsertionPointAfter(consumer);
+        createEvent<SetFlagOp>(
+            builder, consumer->getLoc(), clone, plan.consumerPipe, plan.producerPipe, *lane.releaseEventId,
+            "release-body-set", lane.logicalLane);
+    } else {
+        Value selector = mapping.lookupOrNull(plan.slot->selector);
+        if (!selector) {
+            return failure();
+        }
+        Value selectsLaneOne = createLaneOnePredicate(builder, producer->getLoc(), selector, plan.capacity);
+        Value releaseEvent = createEventSelector(builder, producer->getLoc(), selectsLaneOne, plan.lanes, false);
+        Value readyEvent = createEventSelector(builder, producer->getLoc(), selectsLaneOne, plan.lanes, true);
+        createDynamicEvent<WaitFlagDynOp>(
+            builder, producer->getLoc(), clone, plan.consumerPipe, plan.producerPipe, releaseEvent, "release-body-wait",
+            plan.capacity);
+        builder.setInsertionPointAfter(producer);
+        createDynamicEvent<SetFlagDynOp>(
+            builder, producer->getLoc(), clone, plan.producerPipe, plan.consumerPipe, readyEvent, "ready-body-set",
+            plan.capacity);
+
+        builder.setInsertionPoint(consumer);
+        createDynamicEvent<WaitFlagDynOp>(
+            builder, consumer->getLoc(), clone, plan.producerPipe, plan.consumerPipe, readyEvent, "ready-body-wait",
+            plan.capacity);
+        builder.setInsertionPointAfter(consumer);
+        createDynamicEvent<SetFlagDynOp>(
+            builder, consumer->getLoc(), clone, plan.consumerPipe, plan.producerPipe, releaseEvent, "release-body-set",
+            plan.capacity);
+    }
 
     builder.setInsertionPointAfter(loop);
-    createEvent<WaitFlagOp>(
-        builder, loop.getLoc(), clone, plan.consumerPipe, plan.producerPipe, *lane.releaseEventId, "release-drain-wait",
-        lane.logicalLane);
+    for (const SyncReadyReleaseLane& lane : plan.lanes) {
+        createEvent<WaitFlagOp>(
+            builder, loop.getLoc(), clone, plan.consumerPipe, plan.producerPipe, *lane.releaseEventId,
+            "release-drain-wait", lane.logicalLane);
+    }
 
     if (statistics) {
-        statistics->materializationTransitions += 6;
+        statistics->materializationTransitions += 4 + 2 * plan.capacity;
         statistics->materializationUs += elapsedMicroseconds(start);
     }
     return success();
@@ -166,7 +247,19 @@ LogicalResult mlir::pto::protocol_sync::materializeAndVerifyReadyReleaseProtocol
     }
     func::FuncOp function = schedule.getFunction();
     IRMapping identityMapping;
-    function.walk([&](Operation* operation) { identityMapping.map(operation, operation); });
+    function.walk([&](Operation* operation) {
+        identityMapping.map(operation, operation);
+        for (Value result : operation->getResults()) {
+            identityMapping.map(result, result);
+        }
+        for (Region& region : operation->getRegions()) {
+            for (Block& block : region) {
+                for (BlockArgument argument : block.getArguments()) {
+                    identityMapping.map(argument, argument);
+                }
+            }
+        }
+    });
     if (failed(materializeReadyReleaseProtocolPlan(function, identityMapping, plan, statistics))) {
         return failure();
     }

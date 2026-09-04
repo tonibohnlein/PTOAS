@@ -10,6 +10,7 @@
 // RUN: pto-protocol-sync-ready-release-test | FileCheck %s
 
 // CHECK: protocol-sync ReadyRelease logical planning: pass
+// CHECK-NEXT: protocol-sync ReadyRelease depth-two planning: pass
 // CHECK-NEXT: protocol-sync ReadyRelease emitted-IR verification: pass
 // CHECK-NEXT: protocol-sync ReadyRelease atomic rejection: pass
 // CHECK-NEXT: protocol-sync ReadyRelease reservation allocation: pass

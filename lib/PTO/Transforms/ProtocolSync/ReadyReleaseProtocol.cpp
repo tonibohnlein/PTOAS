@@ -25,7 +25,7 @@ using namespace mlir::pto::protocol_sync;
 
 namespace {
 
-constexpr unsigned kCheckpointEMaximumCapacity = 1;
+constexpr unsigned kCheckpointEMaximumCapacity = 2;
 constexpr unsigned kTokenWitnessHorizon = 6;
 
 std::uint32_t eventDomain(SyncPhysicalCore core, PIPE source, PIPE target)
@@ -109,6 +109,26 @@ bool frontierIs(const SyncProgramFrontier& frontier, SyncProgramPointId point)
            frontier.points.front().guard.empty();
 }
 
+bool sameCanonicalSlotExpression(const SyncSlotExpression& first, const SyncSlotExpression& second)
+{
+    return first.kind == second.kind && first.depth == second.depth && first.loop == second.loop &&
+           first.coefficient == second.coefficient && first.offset == second.offset && first.modulus == second.modulus;
+}
+
+std::optional<SyncSlotExpression> findProducerSlot(
+    const StructuredSyncIR& schedule, const SyncGenerationTimeline& timeline, const SyncPhase& producer)
+{
+    for (const SyncAccess& access : schedule.getAccesses()) {
+        const bool matchesProducer = access.phase == producer.id && access.family == timeline.family &&
+                                     access.mode == SyncAccessMode::Write && access.slot && timeline.slot &&
+                                     sameCanonicalSlotExpression(*access.slot, *timeline.slot);
+        if (matchesProducer) {
+            return access.slot;
+        }
+    }
+    return std::nullopt;
+}
+
 unsigned slotAtIteration(const SyncReadyReleasePlan& plan, unsigned iteration)
 {
     if (plan.capacity == 1) {
@@ -130,23 +150,33 @@ unsigned slotAtIteration(const SyncReadyReleasePlan& plan, unsigned iteration)
     return static_cast<unsigned>((product + offset) % slot.modulus);
 }
 
+bool applyTokenTransfer(
+    const SyncReadyReleasePlan& plan, unsigned iteration, llvm::MutableArrayRef<bool> free,
+    llvm::MutableArrayRef<bool> ready)
+{
+    const unsigned lane = slotAtIteration(plan, iteration);
+    if (lane >= plan.capacity || !free[lane] || ready[lane]) {
+        return false;
+    }
+    free[lane] = false;
+    ready[lane] = true;
+    if (free[lane] || !ready[lane]) {
+        return false;
+    }
+    ready[lane] = false;
+    free[lane] = true;
+    return true;
+}
+
 bool simulateTripCount(const SyncReadyReleasePlan& plan, unsigned tripCount, unsigned& transitionApplications)
 {
     llvm::SmallVector<bool, 2> free(plan.capacity, true);
     llvm::SmallVector<bool, 2> ready(plan.capacity, false);
     for (unsigned iteration = 0; iteration < tripCount; ++iteration) {
         ++transitionApplications;
-        const unsigned lane = slotAtIteration(plan, iteration);
-        if (lane >= plan.capacity || !free[lane] || ready[lane]) {
+        if (!applyTokenTransfer(plan, iteration, free, ready)) {
             return false;
         }
-        free[lane] = false;
-        ready[lane] = true;
-        if (free[lane] || !ready[lane]) {
-            return false;
-        }
-        ready[lane] = false;
-        free[lane] = true;
     }
     return llvm::all_of(free, [](bool value) { return value; }) &&
            llvm::none_of(ready, [](bool value) { return value; });
@@ -154,15 +184,36 @@ bool simulateTripCount(const SyncReadyReleasePlan& plan, unsigned tripCount, uns
 
 bool canonicalStateIsInductive(const SyncReadyReleasePlan& plan, unsigned& transitionApplications)
 {
-    if (plan.capacity != 1 || plan.slot) {
+    const bool validSingleLane = plan.capacity == 1 && !plan.slot;
+    const bool validDoubleLane = plan.capacity == 2 && plan.slot &&
+                                 plan.slot->kind == SyncSlotExpressionKind::AffineModulo && plan.slot->depth == 2 &&
+                                 plan.slot->modulus == 2 && plan.slot->coefficient == 1 && plan.slot->offset >= 0 &&
+                                 plan.slot->offset < 2;
+    if (!validSingleLane && !validDoubleLane) {
         return false;
     }
 
-    // ReadyRelease<1> always selects lane zero. Starting from the canonical
-    // Free state, one complete body transfer returns that lane to Free. This
-    // is the induction step for every subsequent iteration; the finite runs
-    // below remain useful boundary witnesses rather than the proof itself.
-    return slotAtIteration(plan, 0) == 0 && simulateTripCount(plan, 1, transitionApplications);
+    // Starting from the canonical Free state, one selector period visits each
+    // lane exactly once and every complete body transfer returns that lane to
+    // Free. Repetition of this period is the arbitrary-trip induction step;
+    // the finite runs below remain boundary witnesses rather than the proof.
+    llvm::SmallVector<bool, 2> free(plan.capacity, true);
+    llvm::SmallVector<bool, 2> ready(plan.capacity, false);
+    llvm::SmallVector<bool, 2> visited(plan.capacity, false);
+    for (unsigned iteration = 0; iteration < plan.capacity; ++iteration) {
+        const unsigned lane = slotAtIteration(plan, iteration);
+        if (lane >= plan.capacity || visited[lane]) {
+            return false;
+        }
+        visited[lane] = true;
+        ++transitionApplications;
+        if (!applyTokenTransfer(plan, iteration, free, ready)) {
+            return false;
+        }
+    }
+    return llvm::all_of(visited, [](bool value) { return value; }) &&
+           llvm::all_of(free, [](bool value) { return value; }) &&
+           llvm::none_of(ready, [](bool value) { return value; });
 }
 
 bool buildTokenCertificate(SyncReadyReleasePlan& plan)
@@ -286,16 +337,22 @@ FailureOr<SyncReadyReleasePlan> mlir::pto::protocol_sync::buildReadyReleaseProto
             "the legacy demand oracle did not authenticate both ready and release relations");
         return plan;
     }
-    if (plan.capacity != 1 || plan.capacity > kCheckpointEMaximumCapacity || *timeline.reuseDistance != plan.capacity) {
+    if (plan.capacity == 0 || plan.capacity > kCheckpointEMaximumCapacity || *timeline.reuseDistance != plan.capacity) {
         reject(
             plan, channel.id, SyncReadyReleaseRejection::UnsupportedCapacity,
-            "this Checkpoint E milestone supports only ReadyRelease<1>");
+            "ReadyRelease requires authoritative capacity and reuse distance one or two");
         return plan;
     }
-    if (timeline.slot) {
+    const bool validSingleLane = plan.capacity == 1 && !timeline.slot;
+    const bool validDoubleLane =
+        plan.capacity == 2 && timeline.slot && timeline.slot->kind == SyncSlotExpressionKind::AffineModulo &&
+        timeline.slot->selector && timeline.slot->induction && timeline.slot->loop == loopRegion->id &&
+        timeline.slot->depth == 2 && timeline.slot->modulus == 2 && timeline.slot->coefficient == 1 &&
+        timeline.slot->offset >= 0 && timeline.slot->offset < 2;
+    if (!validSingleLane && !validDoubleLane) {
         reject(
             plan, channel.id, SyncReadyReleaseRejection::UnsupportedCapacity,
-            "ReadyRelease<1> requires the authoritative implicit single-slot storage form");
+            "ReadyRelease requires an implicit single slot or exact unit-stride modulo-two selector");
         return plan;
     }
     const bool hasExactEndpointSet = timeline.producers.size() == 1 && timeline.consumers.size() == 1 &&
@@ -327,6 +384,15 @@ FailureOr<SyncReadyReleasePlan> mlir::pto::protocol_sync::buildReadyReleaseProto
     plan.loopOperation = loopRegion->operation;
     plan.producerOperation = producer->operation;
     plan.consumerOperation = consumer->operation;
+    if (plan.capacity == 2) {
+        plan.slot = findProducerSlot(schedule, timeline, *producer);
+        if (!plan.slot) {
+            reject(
+                plan, channel.id, SyncReadyReleaseRejection::InternalInvariant,
+                "the admitted depth-two timeline has no canonical producer slot selector");
+            return plan;
+        }
+    }
 
     if (!target.supportsReadyRelease(plan.core, plan.producerPipe, plan.consumerPipe)) {
         reject(
@@ -341,7 +407,9 @@ FailureOr<SyncReadyReleasePlan> mlir::pto::protocol_sync::buildReadyReleaseProto
         return plan;
     }
 
-    plan.lanes.push_back({0, std::nullopt, std::nullopt});
+    for (unsigned lane = 0; lane < plan.capacity; ++lane) {
+        plan.lanes.push_back({lane, std::nullopt, std::nullopt});
+    }
     if (!buildTokenCertificate(plan)) {
         reject(
             plan, channel.id, SyncReadyReleaseRejection::InvalidTokenTransfer,

@@ -13,9 +13,12 @@
 #include "PTO/Transforms/ProtocolSync/ReadyReleaseProtocol.h"
 
 #include "PTO/IR/PTO.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+
+#include <limits>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -29,6 +32,7 @@ constexpr StringLiteral kProtocolKindAttr = "pto.protocol_sync.protocol_kind";
 constexpr StringLiteral kReadyReleaseKind = "ready-release";
 constexpr StringLiteral kRoleAttr = "pto.protocol_sync.role";
 constexpr StringLiteral kLaneAttr = "pto.protocol_sync.logical_lane";
+constexpr StringLiteral kLanesAttr = "pto.protocol_sync.logical_lanes";
 
 struct ExpectedReadyRelease {
     const SyncPhase* producer = nullptr;
@@ -37,15 +41,17 @@ struct ExpectedReadyRelease {
     SyncPhysicalCore core = SyncPhysicalCore::Unknown;
     PIPE producerPipe = PIPE::PIPE_UNASSIGNED;
     PIPE consumerPipe = PIPE::PIPE_UNASSIGNED;
+    unsigned capacity = 0;
+    Value slotSelector;
 };
 
 struct ConcreteReadyRelease {
-    Operation* releasePrimeSet = nullptr;
+    llvm::SmallVector<Operation*, 2> releasePrimeSets;
     Operation* releaseBodyWait = nullptr;
     Operation* readyBodySet = nullptr;
     Operation* readyBodyWait = nullptr;
     Operation* releaseBodySet = nullptr;
-    Operation* releaseDrainWait = nullptr;
+    llvm::SmallVector<Operation*, 2> releaseDrainWaits;
 };
 
 bool isReserved(const StructuredSyncIR& schedule, PIPE source, PIPE target, unsigned eventId)
@@ -59,6 +65,12 @@ bool isReserved(const StructuredSyncIR& schedule, PIPE source, PIPE target, unsi
         }
     }
     return false;
+}
+
+bool sameCanonicalSlotExpression(const SyncSlotExpression& first, const SyncSlotExpression& second)
+{
+    return first.kind == second.kind && first.depth == second.depth && first.loop == second.loop &&
+           first.coefficient == second.coefficient && first.offset == second.offset && first.modulus == second.modulus;
 }
 
 FailureOr<ExpectedReadyRelease> reconstructExpectedProtocol(
@@ -97,6 +109,9 @@ FailureOr<ExpectedReadyRelease> reconstructExpectedProtocol(
     const SyncPhase* producer = nullptr;
     const SyncPhase* consumer = nullptr;
     unsigned accessedLocalFamilies = 0;
+    unsigned capacity = 0;
+    std::optional<SyncSlotExpression> slot;
+    Value producerSelector;
     llvm::DenseMap<SyncStorageFamilyId, llvm::SmallVector<const SyncAccess*, 4>> accessesByFamily;
     for (const SyncAccess& access : schedule.getAccesses()) {
         accessesByFamily[access.family].push_back(&access);
@@ -106,7 +121,7 @@ FailureOr<ExpectedReadyRelease> reconstructExpectedProtocol(
             continue;
         }
         if (!family.physical || family.unknownRange || family.aliasesUnknownRange || family.capacityConflict ||
-            !family.slotCount || *family.slotCount != 1) {
+            !family.slotCount || *family.slotCount < 1 || *family.slotCount > 2) {
             return failure();
         }
         bool familyAccessed = false;
@@ -114,6 +129,10 @@ FailureOr<ExpectedReadyRelease> reconstructExpectedProtocol(
         if (familyAccesses == accessesByFamily.end()) {
             continue;
         }
+        if (capacity != 0 && capacity != *family.slotCount) {
+            return failure();
+        }
+        capacity = *family.slotCount;
         for (const SyncAccess* accessPtr : familyAccesses->second) {
             const SyncAccess& access = *accessPtr;
             familyAccessed = true;
@@ -126,14 +145,34 @@ FailureOr<ExpectedReadyRelease> reconstructExpectedProtocol(
                                           [](const SyncByteInterval& left, const SyncByteInterval& right) {
                                               return left.begin == right.begin && left.size == right.size;
                                           });
-            if (!phase || access.slot || access.visibility != SyncVisibilityClass::Local || !exactStorage) {
+            const bool validSingleSlot = capacity == 1 && !access.slot;
+            const bool validDoubleSlot =
+                capacity == 2 && access.slot && access.slot->kind == SyncSlotExpressionKind::AffineModulo &&
+                access.slot->selector && access.slot->induction && access.slot->loop == loopRegion->id &&
+                access.slot->depth == 2 && access.slot->modulus == 2 && access.slot->coefficient == 1 &&
+                access.slot->offset >= 0 && access.slot->offset < 2;
+            const bool validAccess = phase && (validSingleSlot || validDoubleSlot) &&
+                                     access.visibility == SyncVisibilityClass::Local && exactStorage;
+            if (!validAccess) {
                 return failure();
+            }
+            if (validDoubleSlot) {
+                const bool inconsistentSlot = slot && !sameCanonicalSlotExpression(*slot, *access.slot);
+                if (inconsistentSlot) {
+                    return failure();
+                }
+                if (!slot) {
+                    slot = access.slot;
+                }
             }
             if (access.mode == SyncAccessMode::Write) {
                 if (producer && producer != phase) {
                     return failure();
                 }
                 producer = phase;
+                if (validDoubleSlot && !producerSelector) {
+                    producerSelector = access.slot->selector;
+                }
             } else if (access.mode == SyncAccessMode::Read) {
                 if (consumer && consumer != phase) {
                     return failure();
@@ -145,10 +184,11 @@ FailureOr<ExpectedReadyRelease> reconstructExpectedProtocol(
         }
         accessedLocalFamilies += familyAccessed ? 1U : 0U;
     }
-    if (accessedLocalFamilies != 1 || !producer || !consumer || producer == consumer || !producer->operation ||
-        !consumer->operation || producer->core == SyncPhysicalCore::Unknown || producer->core != consumer->core ||
-        producer->pipe == consumer->pipe || producer->operation->getBlock() != loop.getBody() ||
-        consumer->operation->getBlock() != loop.getBody() ||
+    const bool validCapacity = (capacity == 1 && !slot) || (capacity == 2 && slot && producerSelector);
+    if (accessedLocalFamilies != 1 || !validCapacity || !producer || !consumer || producer == consumer ||
+        !producer->operation || !consumer->operation || producer->core == SyncPhysicalCore::Unknown ||
+        producer->core != consumer->core || producer->pipe == consumer->pipe ||
+        producer->operation->getBlock() != loop.getBody() || consumer->operation->getBlock() != loop.getBody() ||
         !producer->operation->isBeforeInBlock(consumer->operation)) {
         return failure();
     }
@@ -189,15 +229,35 @@ FailureOr<ExpectedReadyRelease> reconstructExpectedProtocol(
     result.core = producer->core;
     result.producerPipe = producer->pipe;
     result.consumerPipe = consumer->pipe;
+    result.capacity = capacity;
+    if (producerSelector) {
+        result.slotSelector = producerSelector;
+    }
     return result;
 }
 
-LogicalResult collectConcreteProtocol(func::FuncOp clone, ConcreteReadyRelease& protocol)
+std::optional<unsigned> getLogicalLane(IntegerAttr lane, unsigned capacity)
 {
-    llvm::DenseMap<StringRef, Operation**> roles = {
-        {"release-prime-set", &protocol.releasePrimeSet}, {"release-body-wait", &protocol.releaseBodyWait},
-        {"ready-body-set", &protocol.readyBodySet},       {"ready-body-wait", &protocol.readyBodyWait},
-        {"release-body-set", &protocol.releaseBodySet},   {"release-drain-wait", &protocol.releaseDrainWait},
+    if (!lane) {
+        return std::nullopt;
+    }
+    const APInt& value = lane.getValue();
+    const bool validValue = !value.isNegative() && value.ult(capacity);
+    if (!validValue) {
+        return std::nullopt;
+    }
+    return static_cast<unsigned>(value.getLimitedValue());
+}
+
+LogicalResult collectConcreteProtocol(func::FuncOp clone, unsigned capacity, ConcreteReadyRelease& protocol)
+{
+    protocol.releasePrimeSets.assign(capacity, nullptr);
+    protocol.releaseDrainWaits.assign(capacity, nullptr);
+    llvm::DenseMap<StringRef, Operation**> bodyRoles = {
+        {"release-body-wait", &protocol.releaseBodyWait},
+        {"ready-body-set", &protocol.readyBodySet},
+        {"ready-body-wait", &protocol.readyBodyWait},
+        {"release-body-set", &protocol.releaseBodySet},
     };
     bool malformed = false;
     clone.walk([&](Operation* operation) {
@@ -209,25 +269,56 @@ LogicalResult collectConcreteProtocol(func::FuncOp clone, ConcreteReadyRelease& 
         auto kind = operation->getAttrOfType<StringAttr>(kProtocolKindAttr);
         auto role = operation->getAttrOfType<StringAttr>(kRoleAttr);
         auto protocolId = operation->getAttrOfType<IntegerAttr>(kProtocolAttr);
-        auto lane = operation->getAttrOfType<IntegerAttr>(kLaneAttr);
-        const bool validTag = fixedSync && operation->hasAttrOfType<UnitAttr>(kGeneratedAttr) && kind && role &&
-                              protocolId && protocolId.getInt() == 0 && lane && lane.getInt() == 0 &&
-                              kind.getValue() == kReadyReleaseKind;
-        if (!validTag) {
+        const bool validBaseTag = fixedSync && operation->hasAttrOfType<UnitAttr>(kGeneratedAttr) && kind && role &&
+                                  protocolId && protocolId.getInt() == 0 && kind.getValue() == kReadyReleaseKind;
+        if (!validBaseTag) {
             malformed = true;
             return;
         }
-        auto found = roles.find(role.getValue());
-        const bool duplicateOrUnknownRole = found == roles.end() || (found != roles.end() && *found->second);
-        if (duplicateOrUnknownRole) {
+
+        const bool prime = role.getValue() == "release-prime-set";
+        const bool drain = role.getValue() == "release-drain-wait";
+        if (prime || drain) {
+            auto lane = operation->getAttrOfType<IntegerAttr>(kLaneAttr);
+            std::optional<unsigned> laneValue = getLogicalLane(lane, capacity);
+            const bool validLane = laneValue && !operation->hasAttr(kLanesAttr);
+            if (!validLane) {
+                malformed = true;
+                return;
+            }
+            llvm::SmallVectorImpl<Operation*>& actions = prime ? protocol.releasePrimeSets : protocol.releaseDrainWaits;
+            Operation*& action = actions[*laneValue];
+            if (action) {
+                malformed = true;
+                return;
+            }
+            action = operation;
+            return;
+        }
+
+        auto found = bodyRoles.find(role.getValue());
+        const bool duplicateOrUnknownBodyRole = found == bodyRoles.end() || *found->second;
+        if (duplicateOrUnknownBodyRole) {
+            malformed = true;
+            return;
+        }
+        auto lane = operation->getAttrOfType<IntegerAttr>(kLaneAttr);
+        auto lanes = operation->getAttrOfType<DenseI32ArrayAttr>(kLanesAttr);
+        const bool validSingleLane = capacity == 1 && lane && lane.getInt() == 0 && !lanes;
+        const bool validDoubleLane =
+            capacity == 2 && !lane && lanes && lanes.size() == 2 && lanes[0] == 0 && lanes[1] == 1;
+        if (!validSingleLane && !validDoubleLane) {
             malformed = true;
             return;
         }
         *found->second = operation;
     });
-    const bool complete = protocol.releasePrimeSet && protocol.releaseBodyWait && protocol.readyBodySet &&
-                          protocol.readyBodyWait && protocol.releaseBodySet && protocol.releaseDrainWait;
-    return success(!malformed && complete);
+    const bool completeBoundaries =
+        llvm::all_of(protocol.releasePrimeSets, [](Operation* operation) { return operation != nullptr; }) &&
+        llvm::all_of(protocol.releaseDrainWaits, [](Operation* operation) { return operation != nullptr; });
+    const bool completeBody =
+        protocol.releaseBodyWait && protocol.readyBodySet && protocol.readyBodyWait && protocol.releaseBodySet;
+    return success(!malformed && completeBoundaries && completeBody);
 }
 
 bool eventIs(Operation* operation, bool set, PIPE source, PIPE target, unsigned& eventId)
@@ -250,35 +341,142 @@ bool eventIs(Operation* operation, bool set, PIPE source, PIPE target, unsigned&
     return true;
 }
 
+bool dynamicEventIs(Operation* operation, bool set, PIPE source, PIPE target, Value& eventId)
+{
+    if (set) {
+        auto event = dyn_cast_or_null<SetFlagDynOp>(operation);
+        const bool validSet = event && event.getSrcPipe().getPipe() == source && event.getDstPipe().getPipe() == target;
+        if (!validSet) {
+            return false;
+        }
+        eventId = event.getEventId();
+        return true;
+    }
+    auto event = dyn_cast_or_null<WaitFlagDynOp>(operation);
+    const bool validWait = event && event.getSrcPipe().getPipe() == source && event.getDstPipe().getPipe() == target;
+    if (!validWait) {
+        return false;
+    }
+    eventId = event.getEventId();
+    return true;
+}
+
+std::optional<unsigned> getConstantIndex(Value value)
+{
+    auto constant = value.getDefiningOp<arith::ConstantIndexOp>();
+    const bool validConstant = constant && constant.value() >= 0 &&
+                               static_cast<std::uint64_t>(constant.value()) <= std::numeric_limits<unsigned>::max();
+    if (!validConstant) {
+        return std::nullopt;
+    }
+    return static_cast<unsigned>(constant.value());
+}
+
+Value stripIndexCast(Value value)
+{
+    if (auto cast = value.getDefiningOp<arith::IndexCastOp>()) {
+        return cast.getIn();
+    }
+    return value;
+}
+
+bool matchEventSelector(Value value, Value expectedSelector, llvm::SmallVectorImpl<unsigned>& eventIds)
+{
+    auto select = value.getDefiningOp<arith::SelectOp>();
+    auto compare = select ? select.getCondition().getDefiningOp<arith::CmpIOp>() : arith::CmpIOp();
+    const bool validSelect = select && compare && compare.getPredicate() == arith::CmpIPredicate::eq;
+    if (!validSelect) {
+        return false;
+    }
+    auto selectedLane = compare.getLhs().getDefiningOp<arith::RemUIOp>();
+    std::optional<unsigned> laneOne = getConstantIndex(compare.getRhs());
+    std::optional<unsigned> modulus = selectedLane ? getConstantIndex(selectedLane.getRhs()) : std::nullopt;
+    std::optional<unsigned> laneOneEvent = getConstantIndex(select.getTrueValue());
+    std::optional<unsigned> laneZeroEvent = getConstantIndex(select.getFalseValue());
+    const bool validSelector = selectedLane && stripIndexCast(selectedLane.getLhs()) == expectedSelector && laneOne &&
+                               *laneOne == 1 && modulus && *modulus == 2 && laneZeroEvent && laneOneEvent;
+    if (!validSelector) {
+        return false;
+    }
+    eventIds.assign({*laneZeroEvent, *laneOneEvent});
+    return true;
+}
+
 LogicalResult verifyEvents(
     const StructuredSyncIR& schedule, const ProtocolSyncTarget& target, const ExpectedReadyRelease& expected,
-    const ConcreteReadyRelease& protocol)
+    const ConcreteReadyRelease& protocol, const IRMapping& mapping)
 {
-    unsigned primeRelease = 0;
-    unsigned bodyReleaseWait = 0;
-    unsigned bodyReadySet = 0;
-    unsigned bodyReadyWait = 0;
-    unsigned bodyReleaseSet = 0;
-    unsigned drainRelease = 0;
-    const bool kindsAndDirections =
-        eventIs(protocol.releasePrimeSet, true, expected.consumerPipe, expected.producerPipe, primeRelease) &&
-        eventIs(protocol.releaseBodyWait, false, expected.consumerPipe, expected.producerPipe, bodyReleaseWait) &&
-        eventIs(protocol.readyBodySet, true, expected.producerPipe, expected.consumerPipe, bodyReadySet) &&
-        eventIs(protocol.readyBodyWait, false, expected.producerPipe, expected.consumerPipe, bodyReadyWait) &&
-        eventIs(protocol.releaseBodySet, true, expected.consumerPipe, expected.producerPipe, bodyReleaseSet) &&
-        eventIs(protocol.releaseDrainWait, false, expected.consumerPipe, expected.producerPipe, drainRelease);
-    if (!kindsAndDirections || primeRelease != bodyReleaseWait || primeRelease != bodyReleaseSet ||
-        primeRelease != drainRelease || bodyReadySet != bodyReadyWait) {
+    llvm::SmallVector<unsigned, 2> releaseIds;
+    for (unsigned lane = 0; lane < expected.capacity; ++lane) {
+        unsigned prime = 0;
+        unsigned drain = 0;
+        const bool validBoundary =
+            eventIs(protocol.releasePrimeSets[lane], true, expected.consumerPipe, expected.producerPipe, prime) &&
+            eventIs(protocol.releaseDrainWaits[lane], false, expected.consumerPipe, expected.producerPipe, drain) &&
+            prime == drain;
+        if (!validBoundary) {
+            return failure();
+        }
+        releaseIds.push_back(prime);
+    }
+
+    llvm::SmallVector<unsigned, 2> readyIds;
+    if (expected.capacity == 1) {
+        unsigned bodyReleaseWait = 0;
+        unsigned bodyReadySet = 0;
+        unsigned bodyReadyWait = 0;
+        unsigned bodyReleaseSet = 0;
+        const bool validBody =
+            eventIs(protocol.releaseBodyWait, false, expected.consumerPipe, expected.producerPipe, bodyReleaseWait) &&
+            eventIs(protocol.readyBodySet, true, expected.producerPipe, expected.consumerPipe, bodyReadySet) &&
+            eventIs(protocol.readyBodyWait, false, expected.producerPipe, expected.consumerPipe, bodyReadyWait) &&
+            eventIs(protocol.releaseBodySet, true, expected.consumerPipe, expected.producerPipe, bodyReleaseSet) &&
+            releaseIds.front() == bodyReleaseWait && releaseIds.front() == bodyReleaseSet &&
+            bodyReadySet == bodyReadyWait;
+        if (!validBody) {
+            return failure();
+        }
+        readyIds.push_back(bodyReadySet);
+    } else {
+        Value releaseWait;
+        Value releaseSet;
+        Value readySet;
+        Value readyWait;
+        const bool validDynamicBody =
+            dynamicEventIs(
+                protocol.releaseBodyWait, false, expected.consumerPipe, expected.producerPipe, releaseWait) &&
+            dynamicEventIs(protocol.readyBodySet, true, expected.producerPipe, expected.consumerPipe, readySet) &&
+            dynamicEventIs(protocol.readyBodyWait, false, expected.producerPipe, expected.consumerPipe, readyWait) &&
+            dynamicEventIs(protocol.releaseBodySet, true, expected.consumerPipe, expected.producerPipe, releaseSet) &&
+            releaseWait == releaseSet && readySet == readyWait;
+        Value expectedSelector = mapping.lookupOrNull(expected.slotSelector);
+        llvm::SmallVector<unsigned, 2> selectedReleaseIds;
+        if (!validDynamicBody || !expectedSelector ||
+            !matchEventSelector(releaseWait, expectedSelector, selectedReleaseIds) ||
+            !matchEventSelector(readySet, expectedSelector, readyIds) || selectedReleaseIds != releaseIds) {
+            return failure();
+        }
+    }
+
+    const bool completeIdSets = readyIds.size() == expected.capacity && releaseIds.size() == expected.capacity;
+    const bool uniqueDoubleLaneIds =
+        expected.capacity != 2 || (completeIdSets && readyIds[0] != readyIds[1] && releaseIds[0] != releaseIds[1]);
+    if (!completeIdSets || !uniqueDoubleLaneIds) {
         return failure();
     }
-    const bool legalDirections =
-        target.supportsEvent({expected.core, expected.producerPipe}, {expected.core, expected.consumerPipe}) &&
-        target.supportsEvent({expected.core, expected.consumerPipe}, {expected.core, expected.producerPipe});
-    const bool legalIds = llvm::is_contained(target.getCompilerEventIds(), bodyReadySet) &&
-                          llvm::is_contained(target.getCompilerEventIds(), primeRelease) &&
-                          !isReserved(schedule, expected.producerPipe, expected.consumerPipe, bodyReadySet) &&
-                          !isReserved(schedule, expected.consumerPipe, expected.producerPipe, primeRelease);
-    return success(legalDirections && legalIds);
+    if (!target.supportsReadyRelease(expected.core, expected.producerPipe, expected.consumerPipe)) {
+        return failure();
+    }
+    for (unsigned lane = 0; lane < expected.capacity; ++lane) {
+        const bool legalIds = llvm::is_contained(target.getCompilerEventIds(), readyIds[lane]) &&
+                              llvm::is_contained(target.getCompilerEventIds(), releaseIds[lane]) &&
+                              !isReserved(schedule, expected.producerPipe, expected.consumerPipe, readyIds[lane]) &&
+                              !isReserved(schedule, expected.consumerPipe, expected.producerPipe, releaseIds[lane]);
+        if (!legalIds) {
+            return failure();
+        }
+    }
+    return success();
 }
 
 LogicalResult verifyPlacement(
@@ -290,10 +488,14 @@ LogicalResult verifyPlacement(
     if (!loop || !producer || !consumer) {
         return failure();
     }
-    const bool boundaryPlacement = protocol.releasePrimeSet->getBlock() == loop->getBlock() &&
-                                   protocol.releaseDrainWait->getBlock() == loop->getBlock() &&
-                                   protocol.releasePrimeSet->getNextNode() == loop &&
-                                   loop->getNextNode() == protocol.releaseDrainWait;
+    bool boundaryPlacement = protocol.releasePrimeSets.front()->getBlock() == loop->getBlock() &&
+                             protocol.releaseDrainWaits.front()->getBlock() == loop->getBlock();
+    for (unsigned lane = 1; lane < expected.capacity; ++lane) {
+        boundaryPlacement &= protocol.releasePrimeSets[lane - 1]->getNextNode() == protocol.releasePrimeSets[lane] &&
+                             protocol.releaseDrainWaits[lane - 1]->getNextNode() == protocol.releaseDrainWaits[lane];
+    }
+    boundaryPlacement &= protocol.releasePrimeSets.back()->getNextNode() == loop &&
+                         loop->getNextNode() == protocol.releaseDrainWaits.front();
     const bool bodyPlacement =
         protocol.releaseBodyWait->getNextNode() == producer && producer->getNextNode() == protocol.readyBodySet &&
         protocol.readyBodySet->getNextNode() == protocol.readyBodyWait &&
@@ -317,14 +519,14 @@ LogicalResult mlir::pto::protocol_sync::verifyReadyReleaseProtocolMaterializatio
         return failure();
     }
     ConcreteReadyRelease protocol;
-    const bool validMaterialization = succeeded(collectConcreteProtocol(clone, protocol)) &&
-                                      succeeded(verifyEvents(schedule, target, *expected, protocol)) &&
+    const bool validMaterialization = succeeded(collectConcreteProtocol(clone, expected->capacity, protocol)) &&
+                                      succeeded(verifyEvents(schedule, target, *expected, protocol, mapping)) &&
                                       succeeded(verifyPlacement(*expected, protocol, mapping));
     if (!validMaterialization) {
         return failure();
     }
     if (statistics) {
-        statistics->verifierTransitions += 6;
+        statistics->verifierTransitions += 4 + 2 * expected->capacity;
     }
     return success();
 }

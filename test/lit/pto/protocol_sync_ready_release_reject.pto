@@ -14,7 +14,7 @@
 // RUN:   FileCheck %s --check-prefix=ATOMIC
 // RUN: not pto-test-opt \
 // RUN:   --pto-protocol-sync='execution-mode=ready-release fallback-mode=fail dump=plan' \
-// RUN:   %t/depth-two.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=DEPTH-TWO
+// RUN:   %t/constant-slot-two.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=CONSTANT-SLOT
 // RUN: not pto-test-opt \
 // RUN:   --pto-protocol-sync='execution-mode=ready-release fallback-mode=fail' \
 // RUN:   %t/existing-sync.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXISTING
@@ -39,10 +39,9 @@
 // ATOMIC-NOT: pto.protocol_sync.generated
 // ATOMIC: return
 
-// DEPTH-TWO: PROTOCOL-SYNC ready-release-plan function=@depth_two status=unsupported
-// DEPTH-TWO: reason=unsupported-capacity
-// DEPTH-TWO: supports only ReadyRelease<1>
-// DEPTH-TWO: ProtocolSync ready-release mode found no complete supported plan
+// CONSTANT-SLOT: PROTOCOL-SYNC ready-release-plan function=@constant_slot_two status=unsupported
+// CONSTANT-SLOT: reason=non-ready-release-channel
+// CONSTANT-SLOT: ProtocolSync ready-release mode found no complete supported plan
 
 // EXISTING: ProtocolSync ready-release mode found no complete supported plan
 
@@ -84,22 +83,20 @@ module attributes {pto.target_arch = "a3"} {
   }
 }
 
-//--- depth-two.pto
+//--- constant-slot-two.pto
 module attributes {pto.target_arch = "a3"} {
-  func.func @depth_two(
+  func.func @constant_slot_two(
       %input: !pto.partition_tensor_view<16x16xf16>,
       %output: !pto.partition_tensor_view<16x16xf16>,
       %trip_count: index)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c0_index = arith.constant 0 : index
     %c1_index = arith.constant 1 : index
-    %c2_index = arith.constant 2 : index
     %c0 = arith.constant 0 : i64
     %buffers = pto.alloc_multi_tile addr = %c0
         : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
     scf.for %index = %c0_index to %trip_count step %c1_index {
-      %selector = arith.remui %index, %c2_index : index
-      %slot = pto.multi_tile_get %buffers[%selector]
+      %slot = pto.multi_tile_get %buffers[%c0_index]
           : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
          -> !pto.tile_buf<vec, 16x16xf16>
       pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)

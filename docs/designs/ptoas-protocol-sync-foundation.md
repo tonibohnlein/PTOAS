@@ -179,8 +179,7 @@ Checkpoint D implements the opt-in, atomic same-pipe and directed same-core
 `OneShotPublish` subset with target legality and independent verification. Its
 exact-device qualification remains a separate campaign.
 
-The first Checkpoint E milestone implements the strict `ReadyRelease<1>`
-prime/body/drain protocol described in
-`docs/designs/ptoas-protocol-sync-checkpoint-e.md`. `ReadyRelease<2>` and its
-purpose-built A3 device gate remain the next milestone; neither host admission
-nor prior CanonicalSync evidence is a hardware certificate.
+Checkpoint E implements strict `ReadyRelease<1/2>` prime/body/drain protocols
+described in `docs/designs/ptoas-protocol-sync-checkpoint-e.md`. The exact
+depth-two revision still requires its purpose-built A3 device gate; neither
+host admission nor prior CanonicalSync evidence is a hardware certificate.

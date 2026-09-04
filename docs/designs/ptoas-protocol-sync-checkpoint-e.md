@@ -3,8 +3,8 @@
 ## Scope
 
 Checkpoint E adds recurring local-buffer ownership protocols after the
-Checkpoint D one-shot foundation. The first implementation milestone is the
-strict `ReadyRelease<1>` vertical slice. It is opt-in with:
+Checkpoint D one-shot foundation. The implementation admits strict
+`ReadyRelease<1>` and `ReadyRelease<2>` vertical slices. It is opt-in with:
 
 ```text
 --protocol-sync-ready-release
@@ -15,8 +15,7 @@ strict `ReadyRelease<1>` vertical slice. It is opt-in with:
 
 It is not a production replacement for InsertSync. The implementation remains
 A3-only and device-unqualified until the purpose-built repeated-launch campaign
-passes. `ReadyRelease<2>` is the next milestone and is not enabled by this
-revision.
+passes.
 
 ## Admission contract
 
@@ -25,7 +24,8 @@ The initial planner admits one complete local lifecycle in one non-nested
 
 - exactly one physical local storage timeline and one channel;
 - one producer and one consumer phase on distinct pipes of the same core;
-- authoritative capacity one and same-slot reuse distance one;
+- authoritative capacity/reuse distance one with an implicit slot, or two with
+  an exact unit-stride `(iv + offset) mod 2` selector;
 - exact publication, acquisition, final-use, and next-overwrite frontiers;
 - matching ready RAW and release WAR results from the legacy shadow oracle;
 - legal A3 events in both producer-to-consumer and consumer-to-producer
@@ -39,38 +39,43 @@ verifier failures never fall back.
 
 ## Atomic protocol
 
-Logical lane selection precedes event-ID allocation. The single-lane token
-state begins as `Free=1, Ready=0`, and the planner certifies zero, one, odd,
-even, and inductive steady-state transfers before allocation.
+Logical lane selection precedes event-ID allocation. Every lane begins as
+`Free=1, Ready=0`, and the planner certifies zero, one, odd, even, and inductive
+steady-state transfers before allocation. Capacity two supports initial
+selector offsets zero and one.
 
 For producer pipe `P` and consumer pipe `Q`, the emitted protocol is:
 
 ```text
-before loop:       SetFlag<Q,P>(release)
-before producer:   WaitFlag<Q,P>(release)
-after producer:    SetFlag<P,Q>(ready)
-before consumer:   WaitFlag<P,Q>(ready)
-after consumer:    SetFlag<Q,P>(release)
-after loop:        WaitFlag<Q,P>(release)
+before loop:       SetFlag<Q,P>(release[lane]) for every lane
+before producer:   WaitFlag<Q,P>(release[slot])
+after producer:    SetFlag<P,Q>(ready[slot])
+before consumer:   WaitFlag<P,Q>(ready[slot])
+after consumer:    SetFlag<Q,P>(release[slot])
+after loop:        WaitFlag<Q,P>(release[lane]) for every lane
 ```
 
+Capacity one uses static event operations. Capacity two selects the allocated
+IDs with dynamic event operations derived from the preserved slot SSA value.
 The compiler pool is `0..5`; imported reservations are excluded independently
-for the ready and release domains. The loop body never receives `PIPE_ALL`.
+for the ready and release domains. IDs need not be contiguous. The loop body
+never receives `PIPE_ALL`.
 
 ## Transaction and verification
 
 The pass analyzes and mutates a disposable module clone. It commits function
 bodies only after every function succeeds and the complete module verifies.
-The emitted-IR verifier does not consume the selected plan: it reconstructs
-the capacity-one storage lifecycle from frozen accesses and stages, then checks
-all six roles, placement, directions, IDs, reservations, and absence of a body
-barrier. Focused fault injection covers missing actions, wrong IDs/directions,
-misplacement, bad lane tags, and a fabricated body `PIPE_ALL`.
+The emitted-IR verifier does not consume the selected plan: it reconstructs the
+storage capacity, slot selector, and lifecycle from frozen accesses and stages,
+then checks every prime/body/drain role, dynamic lane-to-ID selection,
+placement, directions, IDs, reservations, and absence of a body barrier.
+Focused fault injection covers missing actions, wrong IDs/directions,
+misplacement, selector corruption, bad lane tags, and a fabricated body
+`PIPE_ALL`.
 
-## Next milestone
+## Qualification gate
 
-`ReadyRelease<2>` will reuse the atomic protocol but add two independently
-allocated logical lanes, selection from the preserved slot SSA value, both
-initial offsets, non-contiguous IDs, and independent selector reconstruction.
-It requires the dedicated A3 zero/one/odd/even/random trip-count device gate
-before qualification.
+The exact `ReadyRelease<2>` revision requires the dedicated A3 zero/one/two,
+odd/even, varied/random trip-count, both-offset, non-contiguous-ID, and repeated
+launch device gate before qualification. Host verification or prior
+CanonicalSync evidence is not a hardware certificate.

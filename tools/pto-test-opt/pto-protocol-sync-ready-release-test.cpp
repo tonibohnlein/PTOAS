@@ -71,6 +71,34 @@ module attributes {pto.target_arch = "a3"} {
 }
 )mlir";
 
+constexpr StringLiteral kDepthTwoFixture = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @ready_release_two(
+      %input: !pto.partition_tensor_view<16x16xf16>,
+      %output: !pto.partition_tensor_view<16x16xf16>,
+      %trip_count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_index = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c0 = arith.constant 0 : i64
+    %buffers = pto.alloc_multi_tile addr = %c0
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    scf.for %index = %c0_index to %trip_count step %c1 {
+      %selector = arith.remui %index, %c2 : index
+      %slot = pto.multi_tile_get %buffers[%selector]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%slot : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}
+)mlir";
+
 bool check(bool condition, const Twine& message)
 {
     if (condition) {
@@ -193,6 +221,113 @@ Operation* findGenerated(func::FuncOp function, StringRef role)
         }
     });
     return result;
+}
+
+bool testDepthTwoPlanAndVerifier(MLIRContext& context)
+{
+    OwningOpRef<ModuleOp> module = parseFixture(context, kDepthTwoFixture);
+    if (!check(static_cast<bool>(module), "cannot parse ReadyRelease<2> fixture")) {
+        return false;
+    }
+    func::FuncOp function = *module->getOps<func::FuncOp>().begin();
+    AnalysisFixture fixture(function);
+    if (!check(buildAnalysis(fixture, false), "cannot build ReadyRelease<2> logical plan")) {
+        return false;
+    }
+    bool passed = true;
+    const SyncReadyReleaseTokenCertificate& certificate = fixture.plan->tokenCertificate;
+    passed &= check(
+        fixture.plan->capacity == 2 && fixture.plan->lanes.size() == 2 && fixture.plan->slot &&
+            fixture.plan->slot->kind == SyncSlotExpressionKind::AffineModulo && fixture.plan->slot->offset == 0,
+        "ReadyRelease<2> did not retain its two-lane selector");
+    passed &= check(
+        llvm::all_of(
+            fixture.plan->lanes,
+            [](const SyncReadyReleaseLane& lane) { return !lane.readyEventId && !lane.releaseEventId; }),
+        "ReadyRelease<2> assigned physical IDs before logical selection");
+    passed &= check(
+        certificate.zeroTripSafe && certificate.oneTripSafe && certificate.oddEvenSafe &&
+            certificate.steadyStateStable && certificate.transitionApplications == 17 &&
+            certificate.slotWitness == llvm::SmallVector<unsigned, 8>{0, 1, 0, 1, 0, 1},
+        "ReadyRelease<2> token certificate did not cover its complete selector period");
+
+    SyncReadyReleasePlan exhausted = *fixture.plan;
+    SyncEventReservation fullReadyDomain;
+    fullReadyDomain.source = PIPE::PIPE_MTE2;
+    fullReadyDomain.target = PIPE::PIPE_MTE3;
+    fullReadyDomain.eventIds = {0, 1, 2, 3, 4, 5};
+    const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(function);
+    passed &= check(
+        succeeded(
+            allocateReadyReleaseProtocolEvents(target, ArrayRef<SyncEventReservation>{fullReadyDomain}, exhausted)) &&
+            exhausted.status == SyncReadyReleasePlanStatus::Unsupported && exhausted.rejections.size() == 1 &&
+            exhausted.rejections.front().reason == SyncReadyReleaseRejection::EventCapacity &&
+            llvm::all_of(
+                exhausted.lanes,
+                [](const SyncReadyReleaseLane& lane) { return !lane.readyEventId && !lane.releaseEventId; }),
+        "ReadyRelease<2> exhaustion did not remove the complete unallocated candidate");
+
+    SyncEventReservation sparseReady;
+    sparseReady.source = PIPE::PIPE_MTE2;
+    sparseReady.target = PIPE::PIPE_MTE3;
+    sparseReady.eventIds = {0, 2};
+    SyncEventReservation sparseRelease;
+    sparseRelease.source = PIPE::PIPE_MTE3;
+    sparseRelease.target = PIPE::PIPE_MTE2;
+    sparseRelease.eventIds = {0, 3};
+    const SyncEventReservation sparseReservations[] = {sparseReady, sparseRelease};
+    passed &= check(
+        succeeded(allocateReadyReleaseProtocolEvents(target, sparseReservations, *fixture.plan)) &&
+            fixture.plan->status == SyncReadyReleasePlanStatus::Ready && fixture.plan->lanes[0].readyEventId == 1 &&
+            fixture.plan->lanes[1].readyEventId == 3 && fixture.plan->lanes[0].releaseEventId == 1 &&
+            fixture.plan->lanes[1].releaseEventId == 2,
+        "ReadyRelease<2> did not allocate independent non-contiguous domains");
+
+    IRMapping mapping;
+    OwningOpRef<ModuleOp> stagingModule = ModuleOp::create(function.getLoc());
+    func::FuncOp clone = cast<func::FuncOp>(function->clone(mapping));
+    stagingModule->push_back(clone);
+    passed &= check(
+        succeeded(materializeReadyReleaseProtocolPlan(clone, mapping, *fixture.plan)) &&
+            succeeded(verifyReadyReleaseProtocolMaterialization(fixture.schedule, *fixture.stages, clone, mapping)),
+        "independent verifier rejected valid non-contiguous ReadyRelease<2> emission");
+
+    Operation* laneOnePrime = findGenerated(clone, "release-prime-set");
+    Attribute originalLane = laneOnePrime->getAttr("pto.protocol_sync.logical_lane");
+    laneOnePrime->setAttr(
+        "pto.protocol_sync.logical_lane", IntegerAttr::get(IntegerType::get(clone.getContext(), 64), 4294967297LL));
+    passed &= check(
+        failed(verifyReadyReleaseProtocolMaterialization(fixture.schedule, *fixture.stages, clone, mapping)),
+        "independent verifier accepted oversized logical-lane metadata");
+    laneOnePrime->setAttr("pto.protocol_sync.logical_lane", originalLane);
+
+    auto releaseWait = cast<WaitFlagDynOp>(findGenerated(clone, "release-body-wait"));
+    auto releaseSelector = releaseWait.getEventId().getDefiningOp<arith::SelectOp>();
+    auto laneCompare = releaseSelector.getCondition().getDefiningOp<arith::CmpIOp>();
+    Value originalLaneOne = laneCompare.getRhs();
+    OpBuilder corruptBuilder(laneCompare);
+    Value oversizedLaneOne = corruptBuilder.create<arith::ConstantIndexOp>(laneCompare.getLoc(), 4294967297LL);
+    laneCompare->setOperand(1, oversizedLaneOne);
+    passed &= check(
+        failed(verifyReadyReleaseProtocolMaterialization(fixture.schedule, *fixture.stages, clone, mapping)),
+        "independent verifier accepted an oversized selector constant");
+    laneCompare->setOperand(1, originalLaneOne);
+    oversizedLaneOne.getDefiningOp()->erase();
+
+    Value laneOne = releaseSelector.getTrueValue();
+    Value laneZero = releaseSelector.getFalseValue();
+    releaseSelector->setOperand(1, laneZero);
+    releaseSelector->setOperand(2, laneOne);
+    passed &= check(
+        failed(verifyReadyReleaseProtocolMaterialization(fixture.schedule, *fixture.stages, clone, mapping)),
+        "independent verifier accepted a swapped release-lane selector");
+    releaseSelector->setOperand(1, laneOne);
+    releaseSelector->setOperand(2, laneZero);
+    findGenerated(clone, "release-prime-set")->erase();
+    passed &= check(
+        failed(verifyReadyReleaseProtocolMaterialization(fixture.schedule, *fixture.stages, clone, mapping)),
+        "independent verifier accepted a missing ReadyRelease<2> prime lane");
+    return passed;
 }
 
 using CorruptMaterialization = std::function<void(func::FuncOp)>;
@@ -348,11 +483,13 @@ int main()
     registry.insert<arith::ArithDialect, func::FuncDialect, PTODialect, scf::SCFDialect>();
     MLIRContext context(registry);
     bool passed = testLogicalPlanAndAllocation(context);
+    passed &= testDepthTwoPlanAndVerifier(context);
     passed &= testVerifierNegatives(context);
     passed &= testAtomicMalformedPlan(context);
     passed &= testReservedEventAllocation(context);
     if (passed) {
         llvm::outs() << "protocol-sync ReadyRelease logical planning: pass\n";
+        llvm::outs() << "protocol-sync ReadyRelease depth-two planning: pass\n";
         llvm::outs() << "protocol-sync ReadyRelease emitted-IR verification: pass\n";
         llvm::outs() << "protocol-sync ReadyRelease atomic rejection: pass\n";
         llvm::outs() << "protocol-sync ReadyRelease reservation allocation: pass\n";
