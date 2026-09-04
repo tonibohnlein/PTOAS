@@ -81,6 +81,13 @@ public:
   VertexWorkWeightType VertexWorkWeight(VertexIdx vertex) const {
     return workWeights_[vertex];
   }
+  bool SetVertexWorkWeight(VertexIdx vertex, VertexWorkWeightType workWeight) {
+    if (vertex >= NumVertices()) {
+      return false;
+    }
+    workWeights_[vertex] = workWeight;
+    return true;
+  }
   VertexCommWeightType VertexCommWeight(VertexIdx vertex) const {
     return commWeights_[vertex];
   }

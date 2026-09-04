@@ -40,6 +40,12 @@ bool testVertexPropertiesAndEdges() {
       check(source == 0 && middle == 1 && target == 2, "stable vertex ids");
   passed &= check(graph.NumVertexTypes() == 6, "type range includes gaps");
   passed &= check(graph.VertexWorkWeight(middle) == 21, "work weight");
+  passed &= check(graph.SetVertexWorkWeight(middle, 25),
+                  "work weight can be resolved after graph construction");
+  passed &= check(graph.VertexWorkWeight(middle) == 25,
+                  "resolved work weight is retained");
+  passed &= check(!graph.SetVertexWorkWeight(3, 25),
+                  "invalid work-weight vertex rejected");
   passed &= check(graph.VertexCommWeight(middle) == 22, "communication weight");
   passed &= check(graph.VertexMemWeight(middle) == 23, "memory weight");
   passed &= check(graph.VertexType(middle) == 5, "vertex type");
@@ -119,11 +125,38 @@ bool testCompletePlacementLongestPath() {
                "recurrence latency remains explicit metadata");
 }
 
+bool testExternallyResolvedNodeDuration() {
+  mlir::pto::KernelScheduleGraph graph;
+  const auto source = graph.addNode(
+      nullptr, mlir::pto::PIPE::PIPE_V, mlir::pto::ScheduleNodeKind::Compute,
+      0, 0, 0);
+  const auto target = graph.addNode(
+      nullptr, mlir::pto::PIPE::PIPE_MTE2,
+      mlir::pto::ScheduleNodeKind::Transfer, 1, 0, 0);
+  graph.addDependency(source, target, mlir::pto::ScheduleDependencyKind::SSA);
+  const bool firstResolved = succeeded(graph.setNodeDuration(
+      source, 13, "pto_isa_a2a3_cce_vrsqrt"));
+  const bool secondResolved =
+      succeeded(graph.setNodeDuration(target, 29, "static_transfer_bandwidth"));
+  const auto longestPath = graph.getLongestPathCycles();
+  return check(firstResolved && secondResolved, "external durations apply") &&
+         check(graph.getNode(source).hasExactDuration,
+               "external duration is exact") &&
+         check(graph.getNode(source).durationProvenance ==
+                   "pto_isa_a2a3_cce_vrsqrt",
+               "external duration provenance retained") &&
+         check(succeeded(longestPath) && *longestPath == 42,
+               "external durations change the weighted longest path") &&
+         check(failed(graph.setNodeDuration(target, 0, "")),
+               "empty provenance is rejected");
+}
+
 } // namespace
 
 int main() {
   const bool passed = testEmptyGraph() && testVertexPropertiesAndEdges() &&
                       testInvalidAndDuplicateEdges() && testCycleDetection() &&
-                      testCompletePlacementLongestPath();
+                      testCompletePlacementLongestPath() &&
+                      testExternallyResolvedNodeDuration();
   return passed ? 0 : 1;
 }

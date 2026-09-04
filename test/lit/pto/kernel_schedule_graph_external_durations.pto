@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -mlir-disable-threading '-pto-print-kernel-schedule-graph=node-durations=%S/kernel_schedule_graph_external_durations.json require-exact-durations=true' | FileCheck %s
+// RUN: not pto-test-opt %s -mlir-disable-threading '-pto-print-kernel-schedule-graph=node-durations=%S/kernel_schedule_graph_external_durations_wrong_graph.json require-exact-durations=true' 2>&1 | FileCheck %s --check-prefix=WRONG-GRAPH
+
+module {
+  func.func @external_duration(%src: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %value = pto.load_scalar %src[%c0] : !pto.ptr<f32> -> f32 loc("pypto.access.0")
+    return
+  }
+}
+
+// CHECK-LABEL: KernelScheduleGraph @external_duration nodes=1
+// CHECK: node[0] op=pto.load_scalar
+// CHECK-SAME: duration_cycles=37 duration_exact=true
+// CHECK-SAME: pypto_access_order=0
+// CHECK-SAME: duration_provenance=test_exact_provider
+// CHECK: longest_path_cycles=37
+
+// WRONG-GRAPH: error: invalid or mismatched resolved node-duration file

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "function": "placement_recurrence",
+  "edges": [
+    {
+      "source_node": 1,
+      "target_node": 0,
+      "kind": "war",
+      "iteration_distance": 1,
+      "recurrence_loop_depth": 1,
+      "provenance": "buffers=0,1;candidate=0;accesses=4,2"
+    }
+  ]
+}

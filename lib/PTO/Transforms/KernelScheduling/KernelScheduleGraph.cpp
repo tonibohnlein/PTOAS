@@ -37,8 +37,22 @@ KernelScheduleGraph::addNode(Operation *operation, PIPE pipe,
   nodes_.push_back(
       {id, operation, pipe, kind, originalOrder, block, loopDepth,
        pyptoAccessOrder, durationCycles, hasExactDuration,
-       std::move(durationSignature)});
+       std::move(durationSignature), {}});
   return id;
+}
+
+LogicalResult KernelScheduleGraph::setNodeDuration(
+    VertexIdx id, uint64_t durationCycles, llvm::StringRef provenance) {
+  if (id >= nodes_.size() || provenance.empty() ||
+      !graph_.SetVertexWorkWeight(id, durationCycles)) {
+    return failure();
+  }
+  KernelScheduleNode &node = nodes_[id];
+  node.durationCycles = durationCycles;
+  node.hasExactDuration = true;
+  node.durationSignature.reset();
+  node.durationProvenance = provenance.str();
+  return success();
 }
 
 void KernelScheduleGraph::addDependency(VertexIdx source, VertexIdx target,
@@ -205,6 +219,9 @@ void printKernelScheduleGraph(llvm::raw_ostream &os, func::FuncOp func,
          << node.durationSignature->dtype << ":"
          << node.durationSignature->rows << "x"
          << node.durationSignature->cols;
+    }
+    if (!node.durationProvenance.empty()) {
+      os << " duration_provenance=" << node.durationProvenance;
     }
     os << "\n";
   }

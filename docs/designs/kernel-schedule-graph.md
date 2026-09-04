@@ -10,13 +10,15 @@ and is not itself a synchronization operation becomes one node. The node's
 OneStopParallel vertex type is the numeric `PIPE` value returned by
 `OpPipeInterface::getPipe()`. The legacy structural mode uses unit work
 weights; communication and memory weights are zero. For latency scoring,
-`pto-print-kernel-schedule-graph` accepts a pinned PTO-ISA
-`formula_params.csv` through `--duration-table`. It derives an exact
-`(opcode, dtype, rows, cols)` signature for every priced operation and, with
-`--require-exact-durations`, refuses the graph if any scheduled node lacks a
-matching formula. It never substitutes a family average. Transfers,
-conversions, and signatures requiring additional PTO-ISA parameters remain
-unavailable until their complete signatures are represented.
+`pto-print-kernel-schedule-graph` accepts either a pinned PTO-ISA
+`formula_params.csv` through `--duration-table`, or PyPTO's resolved composite
+provider output through `--node-durations`. The latter combines formula,
+transfer-bandwidth, scalar-stage, matmul, and exact Perf-Sim evidence without
+duplicating that logic in PTOAS. Its JSON binds every positive cycle value and
+provenance string to the function, exact unweighted graph SHA-256, node ID,
+operation, and `pypto_access_order`. `--require-exact-durations` refuses any
+unresolved node. The two duration inputs are mutually exclusive; neither may
+substitute a family average or fallback.
 
 The graph separately records a latency on each dependency. Ordinary
 SSA/control/memory edges have zero added delay. A placement analysis adds
@@ -41,14 +43,21 @@ document:
     "source_node": 4,
     "target_node": 9,
     "kind": "war",
+    "iteration_distance": 1,
+    "recurrence_loop_depth": 1,
     "provenance": "buffers=12,37;accesses=18,24"
   }]
 }
 ```
 
 Together with `--reuse-sync-latency-cycles=W`, this adds every selected reuse
-edge to one complete graph before scoring. The importer validates node IDs,
-direction/kind, and non-empty provenance; it does not infer missing relations.
+edge to one complete graph before scoring. The topology-only PyPTO contract
+also binds the edge set to the exact unweighted graph SHA-256. The importer
+validates function identity, node IDs, direction/kind, recurrence distance and
+common-loop depth, and non-empty provenance. A file naming another function is
+an error rather than an empty edge set. Positive-distance placement edges stay
+as recurrence metadata and do not make the per-iteration DAG cyclic. It does
+not infer missing relations.
 
 The underlying `ScheduleGraph` is PTOAS-owned and has no MLIR dependency. Its
 query API satisfies OneStopParallel's typed computational DAG contract:
@@ -107,6 +116,16 @@ Stable text output:
 
 ```bash
 pto-test-opt input.pto '-pto-print-kernel-schedule-graph=format=text'
+```
+
+Complete placement latency using graph-bound PyPTO inputs:
+
+```bash
+pto-test-opt input.pto '-pto-print-kernel-schedule-graph=format=text' \
+  -o /dev/null > ptoas-schedule-graph.txt
+# Produce durations.json and edges.json against ptoas-schedule-graph.txt.
+pto-test-opt input.pto \
+  '-pto-print-kernel-schedule-graph=node-durations=durations.json placement-reuse-edges=edges.json reuse-sync-latency-cycles=64 require-exact-durations=true'
 ```
 
 Graphviz output:

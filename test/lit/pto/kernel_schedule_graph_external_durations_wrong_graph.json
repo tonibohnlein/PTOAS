@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "contract": "ptoas_resolved_node_durations_v1",
+  "function": "external_duration",
+  "ptoas_graph_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "schedule_semantic_sha256": "test-fixture",
+  "graph_shape": {
+    "node_count": 1,
+    "dag_edge_count": 0,
+    "dependency_count": 0
+  },
+  "duration_model": {
+    "model_version": "test-fixture"
+  },
+  "dynamic_loop_ids": [],
+  "nodes": [{
+    "node_id": 0,
+    "pypto_access_order": 0,
+    "op_name": "pto.load_scalar",
+    "cycles": 37,
+    "source": "test_exact_provider",
+    "detail": "fixed fixture duration"
+  }]
+}

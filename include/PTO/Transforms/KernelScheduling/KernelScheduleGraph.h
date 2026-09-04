@@ -64,6 +64,8 @@ struct KernelScheduleNode {
   bool hasExactDuration = false;
   /// Present exactly when PTO-ISA supplied the node duration.
   std::optional<PTOISADurationSignature> durationSignature;
+  /// Stable producer provenance for externally resolved exact durations.
+  std::string durationProvenance;
 };
 
 struct KernelScheduleGraphBuildOptions {
@@ -106,6 +108,8 @@ public:
                      Operation *recurrenceLoop = nullptr,
                      uint64_t latencyCycles = 0,
                      llvm::StringRef provenance = {});
+  LogicalResult setNodeDuration(VertexIdx id, uint64_t durationCycles,
+                                llvm::StringRef provenance);
 
   const ScheduleGraph &getGraph() const { return graph_; }
   ArrayRef<KernelScheduleNode> getNodes() const { return nodes_; }

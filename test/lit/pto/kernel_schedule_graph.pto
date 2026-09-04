@@ -9,6 +9,8 @@
 // RUN: pto-test-opt %s '-pto-print-kernel-schedule-graph=format=text' | FileCheck %s --check-prefix=TEXT
 // RUN: pto-test-opt %s '-pto-print-kernel-schedule-graph=format=dot' | FileCheck %s --check-prefix=DOT
 // RUN: not pto-test-opt %s '-pto-print-kernel-schedule-graph=format=json' 2>&1 | FileCheck %s --check-prefix=INVALID
+// RUN: not pto-test-opt %s '-pto-print-kernel-schedule-graph=placement-reuse-edges=%S/kernel_schedule_graph_wrong_function.json' 2>&1 | FileCheck %s --check-prefix=WRONG-FUNCTION
+// RUN: not pto-test-opt %s '-pto-print-kernel-schedule-graph=placement-reuse-edges=%S/kernel_schedule_graph_wrong_graph.json' 2>&1 | FileCheck %s --check-prefix=WRONG-GRAPH
 
 module {
   func.func @kernel_schedule_graph(%src: !pto.ptr<f32>,
@@ -71,3 +73,5 @@ module {
 // DOT-SAME: style=dashed];
 
 // INVALID: error: unsupported kernel schedule graph format 'json'; expected 'text' or 'dot'
+// WRONG-FUNCTION: error: invalid placement-reuse edge file
+// WRONG-GRAPH: error: invalid placement-reuse edge file

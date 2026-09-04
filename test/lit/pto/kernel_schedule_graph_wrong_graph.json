@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "contract": "ptoas_placement_reuse_topology_v1",
+  "topology_only": true,
+  "function": "kernel_schedule_graph",
+  "ptoas_graph_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "edges": []
+}

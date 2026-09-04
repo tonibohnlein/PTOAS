@@ -283,6 +283,8 @@ def PrintKernelScheduleGraph
            "Output format: text or dot">,
     Option<"durationTable", "duration-table", "std::string", "\"\"",
            "Pinned PTO-ISA formula_params.csv used for node cycle weights">,
+    Option<"nodeDurations", "node-durations", "std::string", "\"\"",
+           "Graph-bound JSON file of externally resolved exact node durations">,
     Option<"requireExactDurations", "require-exact-durations", "bool", "false",
            "Fail if a schedulable node lacks an exact PTO-ISA duration">,
     Option<"placementReuseEdges", "placement-reuse-edges", "std::string", "\"\"",

@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s '-pto-print-kernel-schedule-graph=format=text' | FileCheck %s
+// RUN: pto-test-opt %s -mlir-disable-threading '-pto-print-kernel-schedule-graph=format=text' | FileCheck %s
 
 module {
   func.func @scalar_recurrence(%src: !pto.ptr<i32>, %dst: !pto.ptr<i32>) {
@@ -48,8 +48,10 @@ module {
 // CHECK-NEXT: node[3] op=pto.store_scalar pipe=PIPE_S
 // CHECK-DAG: edge 2 -> 1 kind=loop-carried-ssa distance=1
 // CHECK-DAG: edge 1 -> 1 kind=memory-waw distance=1
+// CHECK: longest_path_cycles=3
 
 // CHECK-LABEL: KernelScheduleGraph @nested_recurrence_owners nodes=1
 // CHECK: node[0] op=pto.tmuls pipe=PIPE_V
-// CHECK-DAG: edge 0 -> 0 kind=memory-waw distance=1 recurrence_loop_depth=1
-// CHECK-DAG: edge 0 -> 0 kind=memory-waw distance=1 recurrence_loop_depth=2
+// CHECK-DAG: edge 0 -> 0 kind=memory-waw distance=1 latency_cycles=0 recurrence_loop_depth=1
+// CHECK-DAG: edge 0 -> 0 kind=memory-waw distance=1 latency_cycles=0 recurrence_loop_depth=2
+// CHECK: longest_path_cycles=1

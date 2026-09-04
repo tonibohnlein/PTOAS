@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -mlir-disable-threading '-pto-print-kernel-schedule-graph=placement-reuse-edges=%S/kernel_schedule_graph_placement_recurrence.json reuse-sync-latency-cycles=64' | FileCheck %s
+
+module {
+  func.func @placement_recurrence(%src: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c32 = arith.constant 32 : index
+    %view = pto.make_tensor_view %src,
+      shape = [%c2, %c32], strides = [%c32, %c1]
+      : !pto.tensor_view<2x32xf32>
+    %input = pto.alloc_tile :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %output = pto.alloc_tile :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    scf.for %i = %c0 to %c2 step %c1 {
+      %part = pto.partition_view %view,
+        offsets = [%i, %c0], sizes = [%c1, %c32]
+        : !pto.tensor_view<2x32xf32>
+          -> !pto.partition_tensor_view<1x32xf32>
+      pto.tload ins(%part : !pto.partition_tensor_view<1x32xf32>)
+        outs(%input : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.trelu ins(%input : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+        outs(%output : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: KernelScheduleGraph @placement_recurrence nodes=2
+// CHECK-DAG: edge 1 -> 0 kind=placement-reuse-war distance=1 latency_cycles=64
+// CHECK-SAME: provenance=buffers=0,1;candidate=0;accesses=4,2 recurrence_loop_depth=1
