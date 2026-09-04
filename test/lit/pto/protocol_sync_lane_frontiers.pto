@@ -1,0 +1,182 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --enable-insert-sync %s -o %t.default
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --enable-insert-sync --protocol-sync-analysis-only \
+// RUN:   --protocol-sync-dump=lane-frontiers --protocol-sync-statistics \
+// RUN:   %s -o %t.analysis 2> %t.diagnostics
+// RUN: diff %t.default %t.analysis
+// RUN: FileCheck %s --input-file=%t.diagnostics
+// RUN: FileCheck %s --check-prefix=LEGACY --input-file=%t.analysis
+
+module {
+  func.func @same_lane_chain(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %source = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    %middle = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    %result = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%source : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%source : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%middle : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%middle : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%result : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%result : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+
+  func.func @multiple_consumers(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output0 : !pto.partition_tensor_view<16x16xf16>,
+      %output1 : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %source = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    %result0 = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    %result1 = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%source : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%source : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%result0 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%source : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%result1 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%result0 : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output0 : !pto.partition_tensor_view<16x16xf16>)
+    pto.tstore ins(%result1 : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output1 : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+
+  func.func @choice_consumers(
+      %condition : i1,
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    scf.if %condition {
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    } else {
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+
+  func.func @static_reuse_demands(
+      %input0 : !pto.partition_tensor_view<16x16xf16>,
+      %input1 : !pto.partition_tensor_view<16x16xf16>,
+      %output0 : !pto.partition_tensor_view<16x16xf16>,
+      %output1 : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input0 : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output0 : !pto.partition_tensor_view<16x16xf16>)
+    pto.tload ins(%input1 : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output1 : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+
+  func.func @loop_ready_release(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %index = %c0 to %c4 step %c1 {
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+
+  func.func @in_place_residual(
+      %input : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+}
+
+// CHECK-LABEL: PROTOCOL-SYNC lane-frontiers function=@same_lane_chain
+// CHECK: semantics=structural-only lane-order=partial target-ordering=unproven selectable=no
+// CHECK: execution-lane #{{[0-9]+}} core=vector pipe=PIPE_V order=structured-partial occurrences=2
+// CHECK: demand=ready source-execution-lane=#{{[0-9]+}} target-execution-lane=#{{[0-9]+}} topology=same-lane status=found
+// CHECK: target-proof=required selectable=no
+
+// CHECK-LABEL: PROTOCOL-SYNC lane-frontiers function=@multiple_consumers
+// CHECK: demand=ready source-execution-lane=#0 target-execution-lane=#1 topology=cross-lane status=found
+// CHECK: source-stages=[#0] source-frontier=[pp2 guard=[]] placement=exact
+// CHECK: target-stages=[#1, #2] target-frontier=[pp3 guard=[]] placement=linear-coalesced
+// CHECK: channel-reason=multiple-consumers
+// CHECK-SAME: target-proof=required selectable=no
+
+// CHECK-LABEL: PROTOCOL-SYNC lane-frontiers function=@choice_consumers
+// CHECK: demand=ready source-execution-lane=#0 target-execution-lane=#1 topology=cross-lane status=found
+// CHECK: target-stages=[#1, #2] target-frontier=[pp3 guard=[]] placement=choice-entry
+// CHECK: channel-reason=multiple-consumers
+
+// CHECK-LABEL: PROTOCOL-SYNC lane-frontiers function=@static_reuse_demands
+// CHECK: demand=release source-execution-lane=#1 target-execution-lane=#0 topology=cross-lane status=found
+// CHECK: channel-reason=static-overwrite timeline-reason=none iteration-distance=0
+
+// CHECK-LABEL: PROTOCOL-SYNC lane-frontiers function=@loop_ready_release
+// CHECK: demand=ready source-execution-lane=#0 target-execution-lane=#1 topology=cross-lane status=found
+// CHECK: demand=release source-execution-lane=#1 target-execution-lane=#0 topology=cross-lane status=found
+// CHECK: channel-reason=none timeline-reason=none iteration-distance=1
+
+// CHECK-LABEL: PROTOCOL-SYNC lane-frontiers function=@in_place_residual
+// CHECK: demand=residual source-execution-lane=unknown target-execution-lane=unknown topology=unknown status=timeline-rejected
+// CHECK: channel-reason=timeline-rejected timeline-reason=in-place-access
+
+// LEGACY-LABEL: func.func @same_lane_chain
+// LEGACY: pto.tabs
+// LEGACY-NEXT: pto.barrier <PIPE_V>
+// LEGACY-NEXT: pto.tabs
+
+// LEGACY-LABEL: func.func @multiple_consumers
+// LEGACY: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// LEGACY: pto.tabs
+// LEGACY-NOT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>
+// LEGACY: pto.tabs
+
+// LEGACY-LABEL: func.func @choice_consumers
+// LEGACY: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+// LEGACY-NEXT: scf.if
+
+// LEGACY-LABEL: func.func @static_reuse_demands
+// LEGACY: pto.tstore
+// LEGACY-NEXT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// LEGACY-NEXT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// LEGACY-NEXT: pto.tload
+
+// LEGACY-LABEL: func.func @loop_ready_release
+// LEGACY: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// LEGACY: scf.for
+// LEGACY-NEXT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// LEGACY: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]

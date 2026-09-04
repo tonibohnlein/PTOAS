@@ -110,6 +110,8 @@ add_mlir_dialect_library(PTOTransforms
   ProtocolSync/DirectRepairMaterialization.cpp
   ProtocolSync/DirectRepairVerifier.cpp
   ProtocolSync/EventAllocation.cpp
+  ProtocolSync/LaneFrontierAnalysis.cpp
+  ProtocolSync/LaneFrontierDump.cpp
   ProtocolSync/MixedProtocolPlan.cpp
   ProtocolSync/MixedProtocolVerifier.cpp
   ProtocolSync/PipelineStages.cpp

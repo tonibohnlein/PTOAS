@@ -37,13 +37,18 @@ Use:
 
 ```text
 --protocol-sync-analysis-only
---protocol-sync-dump=schedule|channels|residuals
+--protocol-sync-one-shot
+--protocol-sync-ready-release
+--protocol-sync-direct-repair
+--protocol-sync-mixed
+--protocol-sync-dump=schedule|channels|lane-frontiers|residuals|plan
 --protocol-sync-statistics
 ```
 
-The dump and statistics options require analysis-only mode. Registering the
-pass or compiling without these flags does not run a preparatory walk and does
-not change the default pipeline.
+The dump and statistics options require one ProtocolSync analysis or emission
+mode. The `plan` dump is emission-only. Registering the pass or compiling
+without these flags does not run a preparatory walk and does not change the
+default pipeline.
 
 Statistics are emitted as one JSON record per function. The schema includes
 work counters and microsecond timers for all later stages from the outset;
@@ -173,6 +178,84 @@ and their stage timings.
 
 No synchronization, protocol candidate, event allocation, or IR mutation is
 performed in Checkpoint C.
+
+## Checkpoint C.5 lane/frontier experiment
+
+The read-only experiment projects every physical phase onto an execution lane
+identified by `(physical core, pipe)`. Each projected occurrence retains its
+region, guard, loop domain, and before/after program points. Occurrences are
+printed in stable structured discovery order, which is explicitly a partial
+order across alternatives and iterations rather than an executable total
+order. An execution lane is distinct from the logical ownership lanes in a
+`ReadyRelease<N>` protocol: the latter select storage slots such as ping and
+pong, while the former identify where operations execute.
+
+For each admitted storage timeline, the experiment examines ready and release
+demands separately while retaining their common generation and strict-channel
+rejection. Ready demands are grouped by target lane and searched backward to
+the earliest covered acquisition. Release demands are grouped by source lane
+and extend from final use to the next overwrite. The initial structural
+frontier rules admit only:
+
+- an exact endpoint;
+- the earliest or latest endpoint in one linear region and guard class; or
+- the entry or exit of the first enclosing choice when the peer is outside
+  that choice.
+
+A rejected storage timeline is recorded as a residual experiment instead of
+being silently dropped. The `lane-frontiers` dump and JSON counters therefore
+measure same-lane versus cross-lane demands, linear coalescing, choice-boundary
+hoisting, ready/release decomposition, and frontiers found for channels that
+the strict Checkpoint C recognizer rejects.
+
+These records are observations, not protocol or direct-repair candidates. They
+are never selectable and do not establish event-direction legality, pipeline
+completion, visibility, or lane completion order. In particular, same-lane
+membership does not mean that synchronization is unnecessary.
+
+The focused experiment currently shows:
+
+- a Vector `PIPE_V → PIPE_V` chain has one structural same-lane frontier while
+  legacy InsertSync emits a `PIPE_V` barrier at that point;
+- two linear consumers on one target lane collapse to one earliest-acquisition
+  frontier, matching legacy's single ready event pair;
+- consumers in the two arms of one `scf.if` collapse to the choice entry,
+  matching legacy's hoisted wait;
+- a static same-buffer overwrite separates into a ready demand and a reverse
+  release demand, matching legacy's two directed pairs; and
+- depth-one and depth-two loop timelines expose paired ready/release frontiers
+  with reuse distance one and two respectively.
+
+A diagnostic sweep over the 25 functions in the lane, channel, and information
+preservation fixtures produced 46 experiments: 35 structural frontiers, ten
+timeline residuals, and one unresolved schedule. Thirteen found frontiers came
+from strict-channel rejections: four `multiple-consumers`, four
+`static-overwrite`, two `reuse-capacity-mismatch`, two `nested-loop`, and one
+`unsupported-control-flow`. This is static fixture evidence only; it says that
+lane/frontier structure survives those recognizer rejections, not that the
+corresponding protocols are complete or target-legal.
+
+The existing overlapping-access regression adds a second boundary. Its two
+MTE2 loads share a pipe and need no legacy barrier, while its two Vector writes
+share a pipe and retain a legacy `PIPE_V` barrier. Both are rejected before
+timeline frontiers are available (`partial-overlap` or
+`conflicting-physical-range`). Residual repair therefore cannot be reconstructed
+from admitted channels, or even admitted timelines, alone. A later residual
+experiment must retain raw access-pair endpoints and ask the target model for
+the hazard-specific same-lane completion rule.
+
+This supports lane-aware frontier discovery and demand-specific reasoning, but
+it also fixes the boundary for the next design amendment: only a target query
+may classify a found same-lane frontier as intrinsic ordering, a targeted
+barrier, or unsupported. Recurring ready/release observations must remain one
+atomic protocol during selection.
+
+When Checkpoint E selects a `ReadyRelease<1>` plan, the lane-frontier dump also
+reports a read-only differential result. It compares the selected producer and
+consumer execution lanes plus publication, acquisition, final-use, and
+next-overwrite points with the C.5 observations. This catches structural drift,
+but it is not an independent hardware proof because both analyses consume the
+same frozen schedule and storage timeline.
 
 ## Checkpoint D and E status
 

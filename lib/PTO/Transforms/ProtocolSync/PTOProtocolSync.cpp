@@ -13,6 +13,7 @@
 #include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
 #include "PTO/Transforms/ProtocolSync/ChannelProtocolIR.h"
 #include "PTO/Transforms/ProtocolSync/DirectRepair.h"
+#include "PTO/Transforms/ProtocolSync/LaneFrontierAnalysis.h"
 #include "PTO/Transforms/ProtocolSync/MixedProtocolPlan.h"
 #include "PTO/Transforms/ProtocolSync/OneShotProtocol.h"
 #include "PTO/Transforms/ProtocolSync/ReadyReleaseProtocol.h"
@@ -110,6 +111,19 @@ void printStatistics(
     counts["channel_candidates_attempted"] = static_cast<std::int64_t>(statistics.channelCandidatesAttempted);
     counts["channel_candidates_admitted"] = static_cast<std::int64_t>(statistics.channelCandidatesAdmitted);
     counts["channel_candidates_rejected"] = static_cast<std::int64_t>(statistics.channelCandidatesRejected);
+    counts["execution_lanes"] = static_cast<std::int64_t>(statistics.executionLanes);
+    counts["lane_occurrences"] = static_cast<std::int64_t>(statistics.laneOccurrences);
+    counts["lane_frontier_experiments"] = static_cast<std::int64_t>(statistics.laneFrontierExperiments);
+    counts["lane_ready_experiments"] = static_cast<std::int64_t>(statistics.laneReadyExperiments);
+    counts["lane_release_experiments"] = static_cast<std::int64_t>(statistics.laneReleaseExperiments);
+    counts["lane_residual_experiments"] = static_cast<std::int64_t>(statistics.laneResidualExperiments);
+    counts["lane_frontiers_found"] = static_cast<std::int64_t>(statistics.laneFrontiersFound);
+    counts["same_lane_frontiers_found"] = static_cast<std::int64_t>(statistics.sameLaneFrontiersFound);
+    counts["cross_lane_frontiers_found"] = static_cast<std::int64_t>(statistics.crossLaneFrontiersFound);
+    counts["linear_frontiers_coalesced"] = static_cast<std::int64_t>(statistics.linearFrontiersCoalesced);
+    counts["choice_boundary_frontiers_found"] = static_cast<std::int64_t>(statistics.choiceBoundaryFrontiersFound);
+    counts["frontiers_found_for_rejected_channels"] =
+        static_cast<std::int64_t>(statistics.frontiersFoundForRejectedChannels);
     counts["interpreter_transitions"] = static_cast<std::int64_t>(statistics.interpreterTransitions);
     counts["interpreter_peak_states"] = static_cast<std::int64_t>(statistics.interpreterPeakStates);
     counts["memory_pair_tests"] = static_cast<std::int64_t>(statistics.memoryPairTests);
@@ -168,6 +182,11 @@ void printStatistics(
         residualObligations[kind] = static_cast<std::int64_t>(count);
     }
     record["residual_obligations_by_kind"] = std::move(residualObligations);
+    llvm::json::Object laneFrontierRejections;
+    for (const auto& [reason, count] : statistics.laneFrontierRejections) {
+        laneFrontierRejections[reason] = static_cast<std::int64_t>(count);
+    }
+    record["lane_frontier_rejections"] = std::move(laneFrontierRejections);
     record["planner_result"] = plannerResult.str();
     record["fallback"] = fallback.str();
     llvm::json::Object timing;
@@ -180,6 +199,7 @@ void printStatistics(
     timing["generation_analysis"] = static_cast<std::int64_t>(statistics.generationAnalysisUs);
     timing["channel_analysis"] = static_cast<std::int64_t>(statistics.channelAnalysisUs);
     timing["interpretation"] = static_cast<std::int64_t>(statistics.interpretationUs);
+    timing["lane_frontier_analysis"] = static_cast<std::int64_t>(statistics.laneFrontierAnalysisUs);
     timing["planning"] = static_cast<std::int64_t>(statistics.planningUs);
     timing["allocation"] = static_cast<std::int64_t>(statistics.allocationUs);
     timing["materialization"] = static_cast<std::int64_t>(statistics.materializationUs);
@@ -232,9 +252,10 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
             return;
         }
         if (dumpMode != "none" && dumpMode != "schedule" && dumpMode != "channels" && dumpMode != "residuals" &&
-            dumpMode != "plan") {
+            dumpMode != "lane-frontiers" && dumpMode != "plan") {
             getOperation().emitError("unknown ProtocolSync dump mode '")
-                << dumpMode << "'; expected 'none', 'schedule', 'channels', 'residuals', or 'plan'";
+                << dumpMode
+                << "'; expected 'none', 'schedule', 'channels', 'lane-frontiers', 'residuals', or 'plan'";
             signalPassFailure();
             return;
         }
@@ -243,7 +264,6 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
             signalPassFailure();
             return;
         }
-
         if (analysisOnly) {
             SmallVector<func::FuncOp, 8> functions;
             getOperation().walk([&](func::FuncOp function) { functions.push_back(function); });
@@ -665,7 +685,8 @@ private:
     LogicalResult emitReadyReleasePlan(
         func::FuncOp function, const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
         const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
-        ProtocolSyncStatistics& result, ProtocolSyncClock::time_point totalStart)
+        const LaneFrontierAnalysisResult& laneFrontiers, ProtocolSyncStatistics& result,
+        ProtocolSyncClock::time_point totalStart)
     {
         ProtocolSyncClock::time_point start = ProtocolSyncClock::now();
         ++result.protocolPlansAttempted;
@@ -724,6 +745,8 @@ private:
         result.allocationUs = elapsedMicroseconds(start);
         if (dumpMode == "plan") {
             printReadyReleaseProtocolPlan(function, *plan, llvm::errs());
+        } else if (dumpMode == "lane-frontiers" && plan->status == SyncReadyReleasePlanStatus::Ready) {
+            printReadyReleaseFrontierComparison(schedule, laneFrontiers, *plan, llvm::errs());
         }
         if (plan->status == SyncReadyReleasePlanStatus::Unsupported) {
             ++result.protocolPlansRejected;
@@ -824,6 +847,11 @@ private:
         compareWithLegacyDemandOracle(legacy, schedule, *stages, timelines, channels);
         result.channelAnalysisUs = elapsedMicroseconds(start);
         start = ProtocolSyncClock::now();
+        LaneFrontierAnalysisResult laneFrontiers =
+            analyzeLaneFrontiers(schedule, *stages, timelines, channels, &result);
+        result.laneFrontierAnalysisUs = elapsedMicroseconds(start);
+
+        start = ProtocolSyncClock::now();
         LegacySyncParityResult parity = adapter.compare(legacy, schedule);
         result.legacyComparisonUs = elapsedMicroseconds(start);
         result.legacyParityMismatches = parity.mismatches.size();
@@ -843,6 +871,8 @@ private:
             printStructuredSyncIR(schedule, llvm::errs());
         } else if (dumpMode == "channels") {
             printProtocolSyncChannels(schedule, *stages, timelines, channels, llvm::errs());
+        } else if (dumpMode == "lane-frontiers") {
+            printLaneFrontierAnalysis(schedule, laneFrontiers, llvm::errs());
         }
         const bool oracleMismatch = llvm::any_of(channels.getChannels(), [](const SyncChannel& channel) {
             return channel.readyOracle == SyncDemandOracleStatus::Mismatch ||
@@ -875,7 +905,8 @@ private:
         }
 
         if (emitReadyRelease) {
-            return emitReadyReleasePlan(function, schedule, *stages, timelines, channels, result, totalStart);
+            return emitReadyReleasePlan(
+                function, schedule, *stages, timelines, channels, laneFrontiers, result, totalStart);
         }
         if (emitMixed) {
             return emitMixedPlan(function, schedule, *stages, timelines, channels, context, result, totalStart);
