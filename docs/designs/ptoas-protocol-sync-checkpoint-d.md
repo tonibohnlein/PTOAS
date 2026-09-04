@@ -27,6 +27,12 @@ When phases execute inside one explicit Cube or Vector physical section, the
 barrier is emitted as the final operation in that terminator-free section.
 Otherwise it is emitted before the function return.
 
+Physical-core ownership follows the nearest explicit Cube or Vector section.
+For a flat function without a physical section, its explicit `pto.kernel_kind`
+resolves core-ambiguous scalar and data-movement pipelines. The legacy shadow's
+pipe-derived Vector classification may be refined only when that authoritative
+context and the ProtocolSync phase both identify the Cube core.
+
 ## Admission restrictions
 
 Checkpoint D rejects:

@@ -73,6 +73,33 @@ SyncPhysicalCore convertLegacyCore(TCoreType core)
     return SyncPhysicalCore::Unknown;
 }
 
+enum class CubeCoreAuthority {
+    None,
+    PhysicalSection,
+    FunctionKernelKind,
+};
+
+CubeCoreAuthority getCubeCoreAuthority(Operation* operation)
+{
+    if (!operation) {
+        return CubeCoreAuthority::None;
+    }
+    for (Operation* parent = operation->getParentOp(); parent; parent = parent->getParentOp()) {
+        if (isa<SectionCubeOp>(parent)) {
+            return CubeCoreAuthority::PhysicalSection;
+        }
+        if (isa<SectionVectorOp>(parent)) {
+            return CubeCoreAuthority::None;
+        }
+        if (auto function = dyn_cast<func::FuncOp>(parent)) {
+            auto kind = function->getAttrOfType<FunctionKernelKindAttr>(FunctionKernelKindAttr::name);
+            const bool isCube = kind && kind.getKernelKind() == FunctionKernelKind::Cube;
+            return isCube ? CubeCoreAuthority::FunctionKernelKind : CubeCoreAuthority::None;
+        }
+    }
+    return CubeCoreAuthority::None;
+}
+
 void appendLegacyTokens(const LegacySyncSnapshot& legacy, SmallVectorImpl<ShadowToken>& tokens)
 {
     for (const std::unique_ptr<InstanceElement>& element : legacy.syncIR) {
@@ -291,13 +318,18 @@ void comparePhases(const LegacySyncSnapshot& legacy, const StructuredSyncIR& sch
         const SyncCompletionKind completion =
             macroPhase ? SyncCompletionKind::MacroInternal : SyncCompletionKind::PhaseEnd;
         const SyncPhysicalCore legacyCore = convertLegacyCore(legacyPhase->compoundCoreType);
+        const CubeCoreAuthority cubeAuthority = getCubeCoreAuthority(phase.operation);
         const bool physicalCoreRefinement = legacyCore == SyncPhysicalCore::Vector &&
-                                            phase.core == SyncPhysicalCore::Cube && phase.operation &&
-                                            phase.operation->getParentOfType<SectionCubeOp>();
+                                            phase.core == SyncPhysicalCore::Cube &&
+                                            cubeAuthority != CubeCoreAuthority::None;
         if (physicalCoreRefinement) {
+            StringRef authority = "function cube kernel kind";
+            if (cubeAuthority == CubeCoreAuthority::PhysicalSection) {
+                authority = "explicit cube-section ownership";
+            }
             result.physicalCoreRefinements.push_back(
                 {"physical-core", static_cast<std::uint32_t>(index),
-                 "explicit cube-section ownership refines the legacy pipe-derived vector core"});
+                 (authority + " refines the legacy pipe-derived vector core").str()});
         }
         if (!pipe || *pipe != phase.pipe || legacyPhase->elementOp != phase.operation ||
             macroPhase != phase.macroPhase || (!physicalCoreRefinement && legacyCore != phase.core) ||

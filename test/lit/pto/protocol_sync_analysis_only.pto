@@ -113,7 +113,9 @@ module {
 // ANALYSIS: PROTOCOL-SYNC schedule-end function=@double_buffer_schedule
 // ANALYSIS: "kind":"protocol-sync-statistics"
 // ANALYSIS: PROTOCOL-SYNC legacy-parity function=@queue_schedule status=mismatch mismatches=1
-// ANALYSIS: parity-mismatch category=phase
+// ANALYSIS: parity-mismatch category=memory
+// ANALYSIS: parity-refinement category=physical-core
+// ANALYSIS-SAME: detail="function cube kernel kind refines the legacy pipe-derived vector core"
 // ANALYSIS: PROTOCOL-SYNC schedule function=@queue_schedule frozen=yes
 // ANALYSIS: preservation-point=post-plan-pre-buffer-select physical-local-families=1 logical-storage-families=1 queue-identities=1
 // ANALYSIS: summary #{{[0-9]+}} op=pto.initialize_l2g2l_pipe

@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=one-shot fallback-mode=fail dump=plan' %s \
+// RUN:   > %t.ir 2> %t.diagnostics
+// RUN: FileCheck %s --input-file=%t.ir --check-prefix=IR
+// RUN: FileCheck %s --input-file=%t.diagnostics --check-prefix=DIAGNOSTICS
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @flat_cube(
+      %input: !pto.partition_tensor_view<16x16xf16>,
+      %output: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : i64
+    %c512 = arith.constant 512 : i64
+    %c1024 = arith.constant 1024 : i64
+    %c1536 = arith.constant 1536 : i64
+    %c2048 = arith.constant 2048 : i64
+    %matA = pto.alloc_tile addr = %c0 : !pto.tile_buf<mat, 16x16xf16>
+    %matB = pto.alloc_tile addr = %c512 : !pto.tile_buf<mat, 16x16xf16>
+    %left = pto.alloc_tile addr = %c1024 : !pto.tile_buf<left, 16x16xf16>
+    %right = pto.alloc_tile addr = %c1536 : !pto.tile_buf<right, 16x16xf16>
+    %acc = pto.alloc_tile addr = %c2048 : !pto.tile_buf<acc, 16x16xf32>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%matA : !pto.tile_buf<mat, 16x16xf16>)
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%matB : !pto.tile_buf<mat, 16x16xf16>)
+    pto.tmov ins(%matA : !pto.tile_buf<mat, 16x16xf16>)
+             outs(%left : !pto.tile_buf<left, 16x16xf16>)
+    pto.tmov ins(%matB : !pto.tile_buf<mat, 16x16xf16>)
+             outs(%right : !pto.tile_buf<right, 16x16xf16>)
+    pto.tmatmul ins(%left, %right : !pto.tile_buf<left, 16x16xf16>,
+                                        !pto.tile_buf<right, 16x16xf16>)
+                 outs(%acc : !pto.tile_buf<acc, 16x16xf32>)
+    pto.tstore ins(%acc : !pto.tile_buf<acc, 16x16xf32>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+}
+
+// DIAGNOSTICS: PROTOCOL-SYNC legacy-parity function=@flat_cube status=match mismatches=0
+// DIAGNOSTICS-SAME: physical-core-refinements=3 internal-checks=0
+// DIAGNOSTICS-COUNT-3: parity-refinement category=physical-core
+// DIAGNOSTICS-SAME: detail="function cube kernel kind refines the legacy pipe-derived vector core"
+// DIAGNOSTICS: PROTOCOL-SYNC one-shot-plan function=@flat_cube status=ready phases=6 protocols=5 core=cube
+// DIAGNOSTICS: tail-drain=true placement=function-return
+
+// IR-LABEL: func.func @flat_cube
+// IR: pto.tload
+// IR-NEXT: pto.barrier <PIPE_MTE2>
+// IR-NEXT: pto.tload
+// IR-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+// IR-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+// IR-NEXT: pto.tmov
+// IR-NEXT: pto.barrier <PIPE_MTE1>
+// IR-NEXT: pto.tmov
+// IR-NEXT: pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+// IR-NEXT: pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+// IR-NEXT: pto.tmatmul
+// IR-NEXT: pto.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+// IR-NEXT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+// IR-NEXT: pto.tstore
+// IR-NEXT: pto.barrier <PIPE_ALL>
+// IR-NEXT: return
