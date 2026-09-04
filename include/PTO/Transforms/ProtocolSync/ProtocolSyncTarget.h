@@ -22,35 +22,36 @@
 
 namespace mlir::pto::protocol_sync {
 
-enum class SyncOneShotTargetKind : std::uint8_t { Npu2201A3, Unsupported };
+enum class ProtocolSyncTargetKind : std::uint8_t { Npu2201A3, Unsupported };
 
-struct SyncOneShotResource {
+struct ProtocolSyncResource {
     SyncPhysicalCore core = SyncPhysicalCore::Unknown;
     PIPE pipe = PIPE::PIPE_UNASSIGNED;
-    bool operator==(const SyncOneShotResource& other) const { return core == other.core && pipe == other.pipe; }
+    bool operator==(const ProtocolSyncResource& other) const { return core == other.core && pipe == other.pipe; }
 };
 
 class ProtocolSyncTarget {
 public:
     static ProtocolSyncTarget resolve(func::FuncOp function);
-    bool isSupported() const { return kind == SyncOneShotTargetKind::Npu2201A3; }
-    SyncOneShotTargetKind getKind() const { return kind; }
+    bool isSupported() const { return kind == ProtocolSyncTargetKind::Npu2201A3; }
+    ProtocolSyncTargetKind getKind() const { return kind; }
     llvm::StringRef getName() const { return name; }
     llvm::StringRef getUnsupportedReason() const { return unsupportedReason; }
-    bool supportsPipeBarrier(SyncOneShotResource resource) const;
-    bool supportsEvent(SyncOneShotResource source, SyncOneShotResource target) const;
+    bool supportsPipeBarrier(ProtocolSyncResource resource) const;
+    bool supportsEvent(ProtocolSyncResource source, ProtocolSyncResource target) const;
+    bool supportsReadyRelease(SyncPhysicalCore core, PIPE producer, PIPE consumer) const;
     llvm::ArrayRef<unsigned> getCompilerEventIds() const { return compilerEventIds; }
 
 private:
-    SyncOneShotTargetKind kind = SyncOneShotTargetKind::Unsupported;
+    ProtocolSyncTargetKind kind = ProtocolSyncTargetKind::Unsupported;
     std::string name = "unsupported";
     std::string unsupportedReason = "unsupported target";
-    llvm::SmallVector<SyncOneShotResource, 8> barrierResources;
-    llvm::SmallVector<std::pair<SyncOneShotResource, SyncOneShotResource>, 24> eventPairs;
+    llvm::SmallVector<ProtocolSyncResource, 8> barrierResources;
+    llvm::SmallVector<std::pair<ProtocolSyncResource, ProtocolSyncResource>, 24> eventPairs;
     llvm::SmallVector<unsigned, 6> compilerEventIds;
 };
 
-llvm::StringRef stringifySyncOneShotTargetKind(SyncOneShotTargetKind kind);
+llvm::StringRef stringifyProtocolSyncTargetKind(ProtocolSyncTargetKind kind);
 
 } // namespace mlir::pto::protocol_sync
 #endif // PTO_TRANSFORMS_PROTOCOLSYNC_PROTOCOLSYNCTARGET_H

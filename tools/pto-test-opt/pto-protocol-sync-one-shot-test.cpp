@@ -183,7 +183,7 @@ bool testTargetContract(MLIRContext& context)
     func::FuncOp function = *module->getOps<func::FuncOp>().begin();
     ProtocolSyncTarget target = ProtocolSyncTarget::resolve(function);
     bool passed = check(target.isSupported(), "explicit A3 target was rejected");
-    const auto cube = [](PIPE pipe) { return SyncOneShotResource{SyncPhysicalCore::Cube, pipe}; };
+    const auto cube = [](PIPE pipe) { return ProtocolSyncResource{SyncPhysicalCore::Cube, pipe}; };
     passed &= check(!target.supportsEvent(cube(PIPE::PIPE_MTE1), cube(PIPE::PIPE_FIX)), "MTE1_FIX admitted");
     passed &= check(!target.supportsEvent(cube(PIPE::PIPE_MTE3), cube(PIPE::PIPE_FIX)), "MTE3_FIX admitted");
     passed &= check(!target.supportsEvent(cube(PIPE::PIPE_FIX), cube(PIPE::PIPE_MTE1)), "FIX_MTE1 admitted");
@@ -195,8 +195,7 @@ bool testTargetContract(MLIRContext& context)
         stringifyProtocolSyncProducer(ProtocolSyncProducer::ProtocolPlan) == "protocol-plan",
         "protocol-plan producer spelling changed");
     passed &= check(
-        stringifyProtocolSyncProducer(ProtocolSyncProducer::LegacyFallbackUnsupported) ==
-            "legacy-fallback-unsupported",
+        stringifyProtocolSyncProducer(ProtocolSyncProducer::LegacyFallbackUnsupported) == "legacy-fallback-unsupported",
         "unsupported fallback producer spelling changed");
     passed &= check(
         stringifyProtocolSyncProducer(ProtocolSyncProducer::LegacyFallbackResourceInfeasible) ==

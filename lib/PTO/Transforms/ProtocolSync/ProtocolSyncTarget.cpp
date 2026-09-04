@@ -7,7 +7,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
-//===- ProtocolSyncTarget.cpp - Checkpoint D target facts ---------------===//
+//===- ProtocolSyncTarget.cpp - Shared ProtocolSync target facts --------===//
 #include "PTO/Transforms/ProtocolSync/ProtocolSyncTarget.h"
 
 #include "mlir/IR/BuiltinOps.h"
@@ -24,27 +24,27 @@ bool moduleNamesA3Target(func::FuncOp function, std::string& reason)
 {
     ModuleOp module = function->getParentOfType<ModuleOp>();
     if (!module) {
-        reason = "ProtocolSync one-shot emission requires an enclosing module with an explicit A3 target";
+        reason = "ProtocolSync emission requires an enclosing module with an explicit A3 target";
         return false;
     }
     auto targetArch = module->getAttrOfType<StringAttr>("pto.target_arch");
     if (!targetArch) {
-        reason = "ProtocolSync one-shot emission requires explicit pto.target_arch = 'a3'";
+        reason = "ProtocolSync emission requires explicit pto.target_arch = 'a3'";
         return false;
     }
     const StringRef arch = targetArch.getValue();
     if (!arch.equals_insensitive("a3")) {
-        reason = (llvm::Twine("target profile '") + arch + "' is not the explicit Checkpoint-D A3 target").str();
+        reason = (llvm::Twine("target profile '") + arch + "' is not the explicit ProtocolSync A3 target").str();
         return false;
     }
     if (Attribute attribute = module->getAttr("pto.device-spec")) {
         auto deviceSpec = dyn_cast<StringAttr>(attribute);
         if (!deviceSpec) {
-            reason = "pto.device-spec must be a string when ProtocolSync one-shot emission is requested";
+            reason = "pto.device-spec must be a string when ProtocolSync emission is requested";
             return false;
         }
         reason =
-            (llvm::Twine("device profile '") + deviceSpec.getValue() + "' has no Checkpoint-D A3 qualification record")
+            (llvm::Twine("device profile '") + deviceSpec.getValue() + "' has no ProtocolSync A3 qualification record")
                 .str();
         return false;
     }
@@ -60,12 +60,12 @@ ProtocolSyncTarget ProtocolSyncTarget::resolve(func::FuncOp function)
         return target;
     }
 
-    target.kind = SyncOneShotTargetKind::Npu2201A3;
+    target.kind = ProtocolSyncTargetKind::Npu2201A3;
     target.name = "npu2201-a3-protocol-sync-v1";
     target.unsupportedReason.clear();
     target.compilerEventIds = {0, 1, 2, 3, 4, 5};
 
-    const auto resource = [](SyncPhysicalCore core, PIPE pipe) { return SyncOneShotResource{core, pipe}; };
+    const auto resource = [](SyncPhysicalCore core, PIPE pipe) { return ProtocolSyncResource{core, pipe}; };
     const auto addEvent = [&](SyncPhysicalCore core, PIPE source, PIPE destination) {
         target.eventPairs.push_back({resource(core, source), resource(core, destination)});
     };
@@ -104,23 +104,28 @@ ProtocolSyncTarget ProtocolSyncTarget::resolve(func::FuncOp function)
     return target;
 }
 
-bool ProtocolSyncTarget::supportsPipeBarrier(SyncOneShotResource resource) const
+bool ProtocolSyncTarget::supportsPipeBarrier(ProtocolSyncResource resource) const
 {
     return isSupported() && llvm::is_contained(barrierResources, resource);
 }
 
-bool ProtocolSyncTarget::supportsEvent(SyncOneShotResource source, SyncOneShotResource target) const
+bool ProtocolSyncTarget::supportsEvent(ProtocolSyncResource source, ProtocolSyncResource target) const
 {
     return isSupported() && source.core == target.core &&
            llvm::is_contained(eventPairs, std::make_pair(source, target));
 }
 
-StringRef mlir::pto::protocol_sync::stringifySyncOneShotTargetKind(SyncOneShotTargetKind kind)
+bool ProtocolSyncTarget::supportsReadyRelease(SyncPhysicalCore core, PIPE producer, PIPE consumer) const
+{
+    return supportsEvent({core, producer}, {core, consumer}) && supportsEvent({core, consumer}, {core, producer});
+}
+
+StringRef mlir::pto::protocol_sync::stringifyProtocolSyncTargetKind(ProtocolSyncTargetKind kind)
 {
     switch (kind) {
-        case SyncOneShotTargetKind::Npu2201A3:
+        case ProtocolSyncTargetKind::Npu2201A3:
             return "npu2201-a3";
-        case SyncOneShotTargetKind::Unsupported:
+        case ProtocolSyncTargetKind::Unsupported:
             return "unsupported";
     }
     return "unsupported";

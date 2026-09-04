@@ -127,9 +127,9 @@ module {
 // ANALYSIS: semantic-action #{{[0-9]+}} region=#{{[0-9]+}} op=pto.initialize_l2g2l_pipe provider=queue
 // ANALYSIS-SAME: before=pp{{[0-9]+}} after=pp{{[0-9]+}}
 
-// OPTION-ERROR: Error: --protocol-sync-dump and --protocol-sync-statistics require either --protocol-sync-analysis-only or --protocol-sync-one-shot.
+// OPTION-ERROR: Error: --protocol-sync-dump and --protocol-sync-statistics require either --protocol-sync-analysis-only or a ProtocolSync emission mode.
 // INVALID-DUMP: Error: invalid --protocol-sync-dump='invalid', expected 'none', 'schedule', 'channels', or 'plan'.
 // MODE-MUTEX: Error: --protocol-sync-analysis-only and --protocol-sync-one-shot are mutually exclusive.
-// PLAN-REQUIRES-EMISSION: Error: --protocol-sync-dump=plan requires --protocol-sync-one-shot.
+// PLAN-REQUIRES-EMISSION: Error: --protocol-sync-dump=plan requires a ProtocolSync emission mode.
 // INVALID-FALLBACK: Error: invalid --protocol-sync-fallback='invalid', expected 'legacy' or 'fail'.
-// FALLBACK-REQUIRES-EMISSION: Error: --protocol-sync-fallback requires --protocol-sync-one-shot.
+// FALLBACK-REQUIRES-EMISSION: Error: --protocol-sync-fallback requires a ProtocolSync emission mode.

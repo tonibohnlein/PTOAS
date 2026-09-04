@@ -45,16 +45,16 @@ def PTOProtocolSync : Pass<"pto-protocol-sync", "ModuleOp"> {
   let summary = "Analyze or emit narrow ProtocolSync plans";
   let description = [{
     Builds the immutable ProtocolSync schedule and lifecycle diagnostics. In
-    analysis mode it never changes IR. Checkpoint-D one-shot mode accepts only
-    a fully certified, exactly-once, single-core linear phase chain, emits an
-    atomic barrier/event plan on a clone, verifies it, and commits on success.
+    analysis mode it never changes IR. One-shot and ReadyRelease emission modes
+    accept only fully certified subsets, emit an atomic plan on a clone, verify
+    it independently, and commit on success.
   }];
 
   let constructor = "mlir::pto::createPTOProtocolSyncPass()";
 
   let options = [
     Option<"executionMode", "execution-mode", "std::string", "\"analysis\"",
-           "Execution mode: analysis or one-shot">,
+           "Execution mode: analysis, one-shot, or ready-release">,
     Option<"fallbackMode", "fallback-mode", "std::string", "\"legacy\"",
            "Whole-function fallback for unsupported plans: legacy or fail">,
     Option<"dumpMode", "dump", "std::string", "\"none\"",

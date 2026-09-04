@@ -75,7 +75,7 @@ module {
 // IR: pto.barrier <PIPE_ALL>
 // A2: status=unsupported
 // A2: reason=unsupported-target
-// A2: target profile 'a2' is not the explicit Checkpoint-D A3 target
+// A2: target profile 'a2' is not the explicit ProtocolSync A3 target
 // MUTEX: Error: --enable-insert-sync
 // MUTEX: --protocol-sync-one-shot
 // MUTEX-SAME: mutually exclusive

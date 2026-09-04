@@ -173,9 +173,14 @@ and their stage timings.
 No synchronization, protocol candidate, event allocation, or IR mutation is
 performed in Checkpoint C.
 
-## Next gate
+## Checkpoint D and E status
 
-Checkpoint D may implement atomic same-pipe and directed same-core
-`OneShotPublish`, with target legality, clone/materialize/verify/commit, and a
-fresh device-correctness campaign. Diagnostic channel admission alone is not a
-hardware certificate.
+Checkpoint D implements the opt-in, atomic same-pipe and directed same-core
+`OneShotPublish` subset with target legality and independent verification. Its
+exact-device qualification remains a separate campaign.
+
+The first Checkpoint E milestone implements the strict `ReadyRelease<1>`
+prime/body/drain protocol described in
+`docs/designs/ptoas-protocol-sync-checkpoint-e.md`. `ReadyRelease<2>` and its
+purpose-built A3 device gate remain the next milestone; neither host admission
+nor prior CanonicalSync evidence is a hardware certificate.

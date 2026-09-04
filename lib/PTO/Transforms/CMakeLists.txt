@@ -110,6 +110,9 @@ add_mlir_dialect_library(PTOTransforms
   ProtocolSync/OneShotVerifier.cpp
   ProtocolSync/ProtocolSyncTarget.cpp
   ProtocolSync/PTOProtocolSync.cpp
+  ProtocolSync/ReadyReleaseMaterialization.cpp
+  ProtocolSync/ReadyReleaseProtocol.cpp
+  ProtocolSync/ReadyReleaseVerifier.cpp
   ProtocolSync/StructuredSyncDump.cpp
   ProtocolSync/StructuredSyncIR.cpp
   ProtocolSync/StructuredSyncIRModel.cpp

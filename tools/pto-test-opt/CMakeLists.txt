@@ -76,6 +76,27 @@ add_dependencies(pto-protocol-sync-one-shot-test
   PTOPassesIncGen
 )
 
+add_llvm_executable(pto-protocol-sync-ready-release-test
+  pto-protocol-sync-ready-release-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+
+target_link_libraries(pto-protocol-sync-ready-release-test PRIVATE
+  PTOIR
+  PTOTransforms
+  MLIRArithDialect
+  MLIRFuncDialect
+  MLIRIR
+  MLIRParser
+  MLIRSCFDialect
+  MLIRSupport
+)
+
+add_dependencies(pto-protocol-sync-ready-release-test
+  PTOOpsIncGen
+  PTOPassesIncGen
+)
+
 add_llvm_executable(pto-vfsimt-size-patcher-test
   pto-vfsimt-size-patcher-test.cpp
   PARTIAL_SOURCES_INTENDED

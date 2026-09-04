@@ -1217,11 +1217,13 @@ static LogicalResult validateTAssignConfiguration(ModuleOp module,
   }
   const int enabledAutoSyncModes =
       (enableInsertSync ? 1 : 0) + (enableBufidSync ? 1 : 0) +
-      (enableInjectBarrierAllSync ? 1 : 0) + (protocolSyncOneShot ? 1 : 0);
+      (enableInjectBarrierAllSync ? 1 : 0) + (protocolSyncOneShot ? 1 : 0) +
+      (protocolSyncReadyRelease ? 1 : 0);
   if (enabledAutoSyncModes > 1) {
     llvm::errs() << "Error: --enable-insert-sync, --enable-bufid_sync, "
                     "--enable-inject-barrier-all-sync, and "
-                    "--protocol-sync-one-shot are mutually exclusive.\n";
+                    "--protocol-sync-one-shot, and "
+                    "--protocol-sync-ready-release are mutually exclusive.\n";
     return failure();
   }
   if (hasTAssign && enableInjectBarrierAllSync) {
@@ -1237,6 +1239,11 @@ static LogicalResult validateTAssignConfiguration(ModuleOp module,
   if (hasTAssign && protocolSyncOneShot) {
     llvm::errs() << "Error: pto.tassign is outside the Checkpoint-D "
                     "ProtocolSync one-shot subset.\n";
+    return failure();
+  }
+  if (hasTAssign && protocolSyncReadyRelease) {
+    llvm::errs() << "Error: pto.tassign is outside the Checkpoint-E "
+                    "ProtocolSync ReadyRelease subset.\n";
     return failure();
   }
   return success();
@@ -1292,14 +1299,34 @@ static LogicalResult validateAllocationConfiguration(ModuleOp module,
 
 static LogicalResult validateProtocolSyncConfiguration() {
   const bool protocolSyncActive =
-      protocolSyncAnalysisOnly || protocolSyncOneShot;
-  if (protocolSyncAnalysisOnly && protocolSyncOneShot) {
+      protocolSyncAnalysisOnly || protocolSyncOneShot ||
+      protocolSyncReadyRelease;
+  const int selectedModes = (protocolSyncAnalysisOnly ? 1 : 0) +
+                            (protocolSyncOneShot ? 1 : 0) +
+                            (protocolSyncReadyRelease ? 1 : 0);
+  if (protocolSyncAnalysisOnly && protocolSyncOneShot &&
+      !protocolSyncReadyRelease) {
     llvm::errs() << "Error: --protocol-sync-analysis-only and "
                     "--protocol-sync-one-shot are mutually exclusive.\n";
     return failure();
   }
+  if (selectedModes > 1) {
+    llvm::errs() << "Error: --protocol-sync-analysis-only, "
+                    "--protocol-sync-one-shot, and "
+                    "--protocol-sync-ready-release are mutually exclusive.\n";
+    return failure();
+  }
+  const bool protocolSyncEmission =
+      protocolSyncOneShot || protocolSyncReadyRelease;
   if (protocolSyncOneShot && ptoTargetArch.getNumOccurrences() == 0) {
     llvm::errs() << "Error: --protocol-sync-one-shot requires an explicit "
+                    "--pto-arch=a3 selection.\n";
+    return failure();
+  }
+  const bool readyReleaseTargetMissing =
+      protocolSyncReadyRelease && ptoTargetArch.getNumOccurrences() == 0;
+  if (readyReleaseTargetMissing) {
+    llvm::errs() << "Error: --protocol-sync-ready-release requires an explicit "
                     "--pto-arch=a3 selection.\n";
     return failure();
   }
@@ -1309,11 +1336,11 @@ static LogicalResult validateProtocolSyncConfiguration() {
                  << "', expected 'legacy' or 'fail'.\n";
     return failure();
   }
-  const bool fallbackWithoutOneShot =
-      !protocolSyncOneShot && protocolSyncFallback.getNumOccurrences() != 0;
-  if (fallbackWithoutOneShot) {
+  const bool fallbackWithoutEmission =
+      !protocolSyncEmission && protocolSyncFallback.getNumOccurrences() != 0;
+  if (fallbackWithoutEmission) {
     llvm::errs() << "Error: --protocol-sync-fallback requires "
-                    "--protocol-sync-one-shot.\n";
+                    "a ProtocolSync emission mode.\n";
     return failure();
   }
   if (protocolSyncDump != "none" && protocolSyncDump != "schedule" &&
@@ -1328,12 +1355,12 @@ static LogicalResult validateProtocolSyncConfiguration() {
     llvm::errs() << "Error: --protocol-sync-dump and "
                     "--protocol-sync-statistics require either "
                     "--protocol-sync-analysis-only or "
-                    "--protocol-sync-one-shot.\n";
+                    "a ProtocolSync emission mode.\n";
     return failure();
   }
-  if (protocolSyncDump == "plan" && !protocolSyncOneShot) {
+  if (protocolSyncDump == "plan" && !protocolSyncEmission) {
     llvm::errs() << "Error: --protocol-sync-dump=plan requires "
-                    "--protocol-sync-one-shot.\n";
+                    "a ProtocolSync emission mode.\n";
     return failure();
   }
   return success();
@@ -1536,10 +1563,12 @@ static LogicalResult runMainLoweringPipeline(
   pm.addPass(pto::createPTOResolveReservedBuffersPass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createPTORemoveIdentityTMovPass());
 
-  if (protocolSyncAnalysisOnly || protocolSyncOneShot) {
+  if (protocolSyncAnalysisOnly || protocolSyncOneShot ||
+      protocolSyncReadyRelease) {
     pto::PTOProtocolSyncOptions options;
-    options.executionMode =
-        protocolSyncOneShot ? "one-shot" : "analysis";
+    options.executionMode = protocolSyncOneShot       ? "one-shot"
+                            : protocolSyncReadyRelease ? "ready-release"
+                                                       : "analysis";
     options.fallbackMode = protocolSyncFallback.getValue();
     options.dumpMode = protocolSyncDump.getValue();
     options.statistics = protocolSyncStatistics.getValue();
@@ -1743,7 +1772,8 @@ int mlir::pto::compilePTOASModule(
   // The state is assembled and validated once above, so backend branches
   // cannot observe partially validated option combinations.
   const bool protocolSyncActive =
-      protocolSyncAnalysisOnly || protocolSyncOneShot;
+      protocolSyncAnalysisOnly || protocolSyncOneShot ||
+      protocolSyncReadyRelease;
   if (effectiveBackend == PTOBackend::VPTO && !state.hasTileOpsToExpand &&
       !protocolSyncActive) {
     return runVPTOSkipMainlinePipeline(module, context, state, result,

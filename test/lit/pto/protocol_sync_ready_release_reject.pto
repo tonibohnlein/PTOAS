@@ -1,0 +1,157 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+// RUN: split-file %s %t
+// RUN: not pto-test-opt \
+// RUN:   --pto-protocol-sync='execution-mode=ready-release fallback-mode=fail dump=plan statistics=1' \
+// RUN:   --mlir-print-ir-after-failure %t/module-atomicity.pto -o /dev/null 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=ATOMIC
+// RUN: not pto-test-opt \
+// RUN:   --pto-protocol-sync='execution-mode=ready-release fallback-mode=fail dump=plan' \
+// RUN:   %t/depth-two.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=DEPTH-TWO
+// RUN: not pto-test-opt \
+// RUN:   --pto-protocol-sync='execution-mode=ready-release fallback-mode=fail' \
+// RUN:   %t/existing-sync.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXISTING
+// RUN: pto-test-opt \
+// RUN:   --pto-protocol-sync='execution-mode=ready-release fallback-mode=legacy statistics=1' \
+// RUN:   %t/existing-sync.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=FALLBACK
+// RUN: not pto-test-opt \
+// RUN:   --pto-protocol-sync='execution-mode=ready-release fallback-mode=fail dump=plan' \
+// RUN:   %t/intervening-structural.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=INTERVENING
+
+// ATOMIC: "failure_stage":"module-transaction"
+// ATOMIC-SAME: "function":"would_be_supported"
+// ATOMIC-SAME: "planner_result":"rolled-back"
+// ATOMIC-SAME: "producer":"protocol-plan"
+// ATOMIC-SAME: "status":"rolled-back"
+// ATOMIC: IR Dump After PTOProtocolSync
+// ATOMIC-LABEL: func.func @would_be_supported
+// ATOMIC: scf.for
+// ATOMIC-NOT: pto.protocol_sync.generated
+// ATOMIC: return
+// ATOMIC-LABEL: func.func @later_rejection
+// ATOMIC-NOT: pto.protocol_sync.generated
+// ATOMIC: return
+
+// DEPTH-TWO: PROTOCOL-SYNC ready-release-plan function=@depth_two status=unsupported
+// DEPTH-TWO: reason=unsupported-capacity
+// DEPTH-TWO: supports only ReadyRelease<1>
+// DEPTH-TWO: ProtocolSync ready-release mode found no complete supported plan
+
+// EXISTING: ProtocolSync ready-release mode found no complete supported plan
+
+// FALLBACK: "fallback":"unsupported"
+// FALLBACK-SAME: "planner_result":"legacy-fallback-unsupported"
+// FALLBACK-SAME: "producer":"legacy-fallback-unsupported"
+// FALLBACK-SAME: "status":"ok"
+
+// INTERVENING: PROTOCOL-SYNC ready-release-plan function=@intervening_structural status=unsupported
+// INTERVENING: reason=unsupported-function-shape
+// INTERVENING: ProtocolSync ready-release mode found no complete supported plan
+
+//--- module-atomicity.pto
+module attributes {pto.target_arch = "a3"} {
+  func.func @would_be_supported(
+      %input: !pto.partition_tensor_view<16x16xf16>,
+      %output: !pto.partition_tensor_view<16x16xf16>,
+      %trip_count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_index = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c0 = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %index = %c0_index to %trip_count step %c1 {
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+
+  func.func @later_rejection() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tabs ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+}
+
+//--- depth-two.pto
+module attributes {pto.target_arch = "a3"} {
+  func.func @depth_two(
+      %input: !pto.partition_tensor_view<16x16xf16>,
+      %output: !pto.partition_tensor_view<16x16xf16>,
+      %trip_count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_index = arith.constant 0 : index
+    %c1_index = arith.constant 1 : index
+    %c2_index = arith.constant 2 : index
+    %c0 = arith.constant 0 : i64
+    %buffers = pto.alloc_multi_tile addr = %c0
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    scf.for %index = %c0_index to %trip_count step %c1_index {
+      %selector = arith.remui %index, %c2_index : index
+      %slot = pto.multi_tile_get %buffers[%selector]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%slot : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}
+
+//--- existing-sync.pto
+module attributes {pto.target_arch = "a3"} {
+  func.func @existing_sync(
+      %input: !pto.partition_tensor_view<16x16xf16>,
+      %output: !pto.partition_tensor_view<16x16xf16>,
+      %trip_count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_index = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c0 = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %index = %c0_index to %trip_count step %c1 {
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+      pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+      pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}
+
+//--- intervening-structural.pto
+module attributes {pto.target_arch = "a3"} {
+  func.func @intervening_structural(
+      %input: !pto.partition_tensor_view<16x16xf16>,
+      %output: !pto.partition_tensor_view<16x16xf16>,
+      %trip_count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_index = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c0 = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %index = %c0_index to %trip_count step %c1 {
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+      %unused = arith.constant 7 : index
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}

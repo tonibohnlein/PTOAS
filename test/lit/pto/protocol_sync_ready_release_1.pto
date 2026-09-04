@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-ready-release --protocol-sync-fallback=fail \
+// RUN:   --protocol-sync-dump=plan --protocol-sync-statistics %s \
+// RUN:   -o %t 2> %t.diagnostics
+// RUN: FileCheck %s --input-file=%t --check-prefix=IR
+// RUN: FileCheck %s --input-file=%t.diagnostics --check-prefix=PLAN
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 \
+// RUN:   --protocol-sync-ready-release --protocol-sync-fallback=fail %s \
+// RUN:   -o %t.cpp
+// RUN: FileCheck %s --input-file=%t.cpp --check-prefix=CXX
+// RUN: not ptoas --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-ready-release %s -o /dev/null 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=IMPLICIT
+// RUN: not ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --enable-insert-sync --protocol-sync-ready-release %s -o /dev/null 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=MUTEX
+
+module {
+  func.func @ready_release_one(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>,
+      %trip_count : index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %index = %c0 to %trip_count step %c1 {
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}
+
+// PLAN: PROTOCOL-SYNC ready-release-plan function=@ready_release_one status=ready channel=#0 capacity=1 core=vector
+// PLAN-SAME: producer-pipe={{[0-9]+}} consumer-pipe={{[0-9]+}}
+// PLAN: lane #0 ready-event-id=0 release-event-id=0
+// PLAN: token-certificate zero-trip=safe one-trip=safe odd-even=safe steady-state=stable slots=[0, 0, 0, 0, 0, 0] transition-applications=16
+// PLAN: "event_domains":2
+// PLAN-SAME: "max_event_domain_pressure":1
+// PLAN-SAME: "selected_ready_release_lanes":1
+// PLAN-SAME: "selected_ready_release_protocols":1
+// PLAN: "planner_result":"materialized-ready-release"
+// PLAN-SAME: "producer":"protocol-plan"
+
+// IR-LABEL: func.func @ready_release_one
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// IR-NEXT: scf.for
+// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// IR-NEXT: pto.tload
+// IR-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+// IR-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+// IR-NEXT: pto.tstore
+// IR-NEXT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// IR-NOT: pto.barrier
+// IR: return
+
+// CXX-LABEL: AICORE void ready_release_one(
+// CXX: set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID0);
+// CXX-NEXT: for (
+// CXX: wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID0);
+// CXX-NEXT: TLOAD
+// CXX-NEXT: set_flag(PIPE_MTE2, PIPE_MTE3, EVENT_ID0);
+// CXX-NEXT: wait_flag(PIPE_MTE2, PIPE_MTE3, EVENT_ID0);
+// CXX-NEXT: TSTORE
+// CXX-NEXT: set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID0);
+// CXX: wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID0);
+// CXX-NOT: pipe_barrier
+// CXX: return;
+
+// IMPLICIT: --protocol-sync-ready-release requires an explicit --pto-arch=a3
+// MUTEX: --enable-insert-sync
+// MUTEX: --protocol-sync-ready-release
+// MUTEX-SAME: mutually exclusive

@@ -229,6 +229,12 @@ llvm::cl::opt<bool> protocolSyncOneShot(
                    "unsupported functions use legacy fallback unless "
                    "--protocol-sync-fallback=fail is selected"),
     llvm::cl::init(false));
+llvm::cl::opt<bool> protocolSyncReadyRelease(
+    "protocol-sync-ready-release",
+    llvm::cl::desc("Emit the strict Checkpoint-E ProtocolSync ReadyRelease plan; "
+                   "unsupported functions use legacy fallback unless "
+                   "--protocol-sync-fallback=fail is selected"),
+    llvm::cl::init(false));
 
 llvm::cl::opt<std::string> protocolSyncFallback(
     "protocol-sync-fallback",

@@ -13,6 +13,7 @@
 #include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
 #include "PTO/Transforms/ProtocolSync/ChannelProtocolIR.h"
 #include "PTO/Transforms/ProtocolSync/OneShotProtocol.h"
+#include "PTO/Transforms/ProtocolSync/ReadyReleaseProtocol.h"
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
@@ -117,6 +118,10 @@ void printStatistics(
     counts["selected_directed_event_pairs"] = static_cast<std::int64_t>(statistics.selectedDirectedEventPairs);
     counts["selected_same_pipe_barriers"] = static_cast<std::int64_t>(statistics.selectedSamePipeBarriers);
     counts["selected_tail_drains"] = static_cast<std::int64_t>(statistics.selectedTailDrains);
+    counts["selected_ready_release_protocols"] =
+        static_cast<std::int64_t>(statistics.selectedReadyReleaseProtocols);
+    counts["selected_ready_release_lanes"] =
+        static_cast<std::int64_t>(statistics.selectedReadyReleaseLanes);
     counts["event_domains"] = static_cast<std::int64_t>(statistics.eventDomains);
     counts["max_event_domain_pressure"] = static_cast<std::int64_t>(statistics.maxEventDomainPressure);
     counts["maximum_event_id"] =
@@ -186,9 +191,10 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
         pendingStatistics.clear();
         const bool analysisOnly = executionMode == "analysis";
         const bool emitOneShot = executionMode == "one-shot";
-        if (!analysisOnly && !emitOneShot) {
+        const bool emitReadyRelease = executionMode == "ready-release";
+        if (!analysisOnly && !emitOneShot && !emitReadyRelease) {
             getOperation().emitError("unknown ProtocolSync execution mode '")
-                << executionMode << "'; expected 'analysis' or 'one-shot'";
+                << executionMode << "'; expected 'analysis', 'one-shot', or 'ready-release'";
             signalPassFailure();
             return;
         }
@@ -204,8 +210,8 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
             signalPassFailure();
             return;
         }
-        if (dumpMode == "plan" && !emitOneShot) {
-            getOperation().emitError("ProtocolSync plan dumps require execution mode 'one-shot'");
+        if (dumpMode == "plan" && analysisOnly) {
+            getOperation().emitError("ProtocolSync plan dumps require an emission execution mode");
             signalPassFailure();
             return;
         }
@@ -217,7 +223,7 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
                 if (function.isDeclaration()) {
                     continue;
                 }
-                if (failed(analyzeFunction(function, false))) {
+                if (failed(analyzeFunction(function, false, false))) {
                     flushStatistics(false);
                     signalPassFailure();
                     return;
@@ -235,7 +241,7 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
             if (function.isDeclaration()) {
                 continue;
             }
-            if (failed(analyzeFunction(function, true))) {
+            if (failed(analyzeFunction(function, emitOneShot, emitReadyRelease))) {
                 flushStatistics(false);
                 signalPassFailure();
                 return;
@@ -331,11 +337,93 @@ private:
         recordStatistics(
             function, result, "unsupported", failureStage, ProtocolSyncProducer::FailClosedPolicy, "unsupported",
             allowFallback ? "disabled" : "not-permitted");
-        function.emitError("ProtocolSync one-shot mode found no complete supported plan");
+        function.emitError("ProtocolSync ") << executionMode << " mode found no complete supported plan";
         return failure();
     }
 
-    LogicalResult analyzeFunction(func::FuncOp function, bool emitOneShot)
+    LogicalResult emitReadyReleasePlan(func::FuncOp function, const StructuredSyncIR& schedule,
+        const PipelineStageAnalysisResult& stages, const StorageTimelineAnalysisResult& timelines,
+        const ChannelAnalysisResult& channels, ProtocolSyncStatistics& result,
+        ProtocolSyncClock::time_point totalStart)
+    {
+        ProtocolSyncClock::time_point start = ProtocolSyncClock::now();
+        ++result.protocolPlansAttempted;
+        FailureOr<SyncReadyReleasePlan> plan =
+            buildReadyReleaseProtocolPlan(schedule, stages, timelines, channels, &result);
+        result.planningUs = elapsedMicroseconds(start);
+        if (failed(plan)) {
+            result.totalUs = elapsedMicroseconds(totalStart);
+            ++result.protocolPlansRejected;
+            recordStatistics(
+                function, result, "internal-error", "planning", ProtocolSyncProducer::InternalError,
+                "internal-error");
+            function.emitError("ProtocolSync ReadyRelease planning failed internally");
+            return failure();
+        }
+
+        start = ProtocolSyncClock::now();
+        if (failed(allocateReadyReleaseProtocolEvents(schedule, *plan, &result))) {
+            result.allocationUs = elapsedMicroseconds(start);
+            result.totalUs = elapsedMicroseconds(totalStart);
+            ++result.protocolPlansRejected;
+            recordStatistics(
+                function, result, "internal-error", "allocation", ProtocolSyncProducer::InternalError,
+                "internal-error");
+            function.emitError("ProtocolSync ReadyRelease event allocation failed internally");
+            return failure();
+        }
+        result.allocationUs = elapsedMicroseconds(start);
+        if (dumpMode == "plan") {
+            printReadyReleaseProtocolPlan(function, *plan, llvm::errs());
+        }
+        if (plan->status == SyncReadyReleasePlanStatus::Unsupported) {
+            ++result.protocolPlansRejected;
+            const bool allocationFailure =
+                llvm::any_of(plan->rejections, [](const SyncReadyReleasePlanRejection& rejection) {
+                    return rejection.reason == SyncReadyReleaseRejection::EventCapacity;
+                });
+            const bool internalRejection =
+                llvm::any_of(plan->rejections, [](const SyncReadyReleasePlanRejection& rejection) {
+                    return rejection.reason == SyncReadyReleaseRejection::InternalInvariant;
+                });
+            const bool targetRejection =
+                llvm::any_of(plan->rejections, [](const SyncReadyReleasePlanRejection& rejection) {
+                    return rejection.reason == SyncReadyReleaseRejection::UnsupportedTarget;
+                });
+            result.totalUs = elapsedMicroseconds(totalStart);
+            if (internalRejection) {
+                recordStatistics(
+                    function, result, "internal-error", "planning", ProtocolSyncProducer::InternalError,
+                    "internal-error", "not-permitted");
+                function.emitError("ProtocolSync ReadyRelease planning rejected an internal invariant");
+                return failure();
+            }
+            return handleUnsupported(
+                function, result, allocationFailure ? "allocation" : "planning",
+                allocationFailure ? "resource-infeasible" : "unsupported", !targetRejection, totalStart);
+        }
+        if (plan->status == SyncReadyReleasePlanStatus::Empty) {
+            ++result.protocolPlansAdmitted;
+            result.totalUs = elapsedMicroseconds(totalStart);
+            recordStatistics(function, result, "ok", "", ProtocolSyncProducer::ProtocolPlan, "no-op", "none");
+            return success();
+        }
+        ++result.protocolPlansAdmitted;
+        if (failed(materializeAndVerifyReadyReleaseProtocolPlanInPlace(schedule, stages, *plan, &result))) {
+            result.totalUs = elapsedMicroseconds(totalStart);
+            recordStatistics(
+                function, result, "internal-error", "materialization-verification",
+                ProtocolSyncProducer::InternalError, "rejected");
+            return failure();
+        }
+        result.totalUs = elapsedMicroseconds(totalStart);
+        recordStatistics(
+            function, result, "ok", "", ProtocolSyncProducer::ProtocolPlan, "materialized-ready-release", "none",
+            /*stagedMutation=*/true);
+        return success();
+    }
+
+    LogicalResult analyzeFunction(func::FuncOp function, bool emitOneShot, bool emitReadyRelease)
     {
         ProtocolSyncStatistics result;
         LegacySyncIRAdapter adapter;
@@ -412,13 +500,17 @@ private:
                    channel.releaseOracle == SyncDemandOracleStatus::Mismatch;
         });
         const bool diagnosticRejected = !parity.matches() || !schedule.getFailures().empty() || oracleMismatch;
-        if (!emitOneShot) {
+        if (!emitOneShot && !emitReadyRelease) {
             result.totalUs = elapsedMicroseconds(totalStart);
             recordStatistics(function, result, diagnosticRejected ? "diagnostic-rejection" : "ok", "");
             return success();
         }
         if (diagnosticRejected && ProtocolSyncTarget::resolve(function).isSupported()) {
             return handleUnsupported(function, result, "semantic-diagnostics", "unsupported", true, totalStart);
+        }
+
+        if (emitReadyRelease) {
+            return emitReadyReleasePlan(function, schedule, *stages, timelines, channels, result, totalStart);
         }
 
         start = ProtocolSyncClock::now();
