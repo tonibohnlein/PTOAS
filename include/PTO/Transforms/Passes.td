@@ -42,20 +42,23 @@ def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
 }
 
 def PTOProtocolSync : Pass<"pto-protocol-sync", "ModuleOp"> {
-  let summary = "Build ProtocolSync schedule and lifecycle diagnostics";
+  let summary = "Analyze or emit narrow ProtocolSync plans";
   let description = [{
-    Builds the immutable ProtocolSync schedule, derives storage-generation and
-    lifecycle-channel diagnostics, and compares them with legacy analyses. The
-    pass is analysis-only and never emits synchronization or mutates input IR.
+    Builds the immutable ProtocolSync schedule and lifecycle diagnostics. In
+    analysis mode it never changes IR. Checkpoint-D one-shot mode accepts only
+    a fully certified, exactly-once, single-core linear phase chain, emits an
+    atomic barrier/event plan on a clone, verifies it, and commits on success.
   }];
 
   let constructor = "mlir::pto::createPTOProtocolSyncPass()";
 
   let options = [
+    Option<"executionMode", "execution-mode", "std::string", "\"analysis\"",
+           "Execution mode: analysis or one-shot">,
     Option<"dumpMode", "dump", "std::string", "\"none\"",
-           "Diagnostic dump: none, schedule, or channels">,
+           "Diagnostic dump: none, schedule, channels, or plan">,
     Option<"statistics", "statistics", "bool", "false",
-           "Emit stable ProtocolSync analysis statistics">
+           "Emit stable ProtocolSync analysis and planning statistics">
   ];
 
   let dependentDialects = [

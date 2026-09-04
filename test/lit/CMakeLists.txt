@@ -26,6 +26,7 @@ configure_lit_site_cfg(
 
 set(PTOIR_TEST_DEPENDS
   ptoas_runtime_deps
+  pto-protocol-sync-one-shot-test
   pto-test-opt
   pto-vpto-scheduler-tracker-test
 )

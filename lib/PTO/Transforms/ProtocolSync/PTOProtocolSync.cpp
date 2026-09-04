@@ -7,22 +7,21 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
-
-//===- PTOProtocolSync.cpp - Analysis-only ProtocolSync pass ------------===//
-
+//===- PTOProtocolSync.cpp - Protocol-first synchronization pass --------===//
 #include "PTO/Transforms/Passes.h"
 
 #include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
 #include "PTO/Transforms/ProtocolSync/ChannelProtocolIR.h"
+#include "PTO/Transforms/ProtocolSync/OneShotProtocol.h"
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Verifier.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/JSON.h"
 
 #include <chrono>
 
 namespace mlir::pto {
-
 #define GEN_PASS_DEF_PTOPROTOCOLSYNC
 #include "PTO/Transforms/Passes.h.inc"
 
@@ -67,13 +66,14 @@ void collectScheduleStatistics(const StructuredSyncIR& schedule, ProtocolSyncSta
 }
 
 void printStatistics(
-    func::FuncOp function, const ProtocolSyncStatistics& statistics, StringRef status, StringRef failureStage)
+    func::FuncOp function, const ProtocolSyncStatistics& statistics, StringRef status, StringRef failureStage,
+    StringRef producer = "analysis-only", StringRef plannerResult = "analysis-only", StringRef fallback = "none")
 {
     llvm::json::Object record;
     record["kind"] = "protocol-sync-statistics";
     record["function"] = function.getSymName().str();
     record["status"] = status.str();
-    record["producer"] = "analysis-only";
+    record["producer"] = producer.str();
     if (!failureStage.empty()) {
         record["failure_stage"] = failureStage.str();
     }
@@ -127,8 +127,8 @@ void printStatistics(
         channelRejections[reason] = static_cast<std::int64_t>(count);
     }
     record["channel_rejections"] = std::move(channelRejections);
-    record["planner_result"] = "analysis-only";
-    record["fallback"] = "none";
+    record["planner_result"] = plannerResult.str();
+    record["fallback"] = fallback.str();
     llvm::json::Object timing;
     timing["semantic_extraction"] = static_cast<std::int64_t>(statistics.semanticExtractionUs);
     timing["schedule_construction"] = static_cast<std::int64_t>(statistics.scheduleConstructionUs);
@@ -153,57 +153,110 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
     explicit PTOProtocolSyncPass(const PTOProtocolSyncOptions& options)
     {
         dumpMode = options.dumpMode;
+        executionMode = options.executionMode;
         statistics = options.statistics;
     }
 
     void runOnOperation() final
     {
-        if (dumpMode != "none" && dumpMode != "schedule" && dumpMode != "channels") {
+        const bool analysisOnly = executionMode == "analysis";
+        const bool emitOneShot = executionMode == "one-shot";
+        if (!analysisOnly && !emitOneShot) {
+            getOperation().emitError("unknown ProtocolSync execution mode '")
+                << executionMode << "'; expected 'analysis' or 'one-shot'";
+            signalPassFailure();
+            return;
+        }
+        if (dumpMode != "none" && dumpMode != "schedule" && dumpMode != "channels" && dumpMode != "plan") {
             getOperation().emitError("unknown ProtocolSync dump mode '")
-                << dumpMode << "'; expected 'none', 'schedule', or 'channels'";
+                << dumpMode << "'; expected 'none', 'schedule', 'channels', or 'plan'";
+            signalPassFailure();
+            return;
+        }
+        if (dumpMode == "plan" && !emitOneShot) {
+            getOperation().emitError("ProtocolSync plan dumps require execution mode 'one-shot'");
             signalPassFailure();
             return;
         }
 
-        SmallVector<func::FuncOp, 8> functions;
-        getOperation().walk([&](func::FuncOp function) { functions.push_back(function); });
-        for (func::FuncOp function : functions) {
-            const bool isDeclaration = function.isDeclaration();
-            if (isDeclaration) {
+        if (analysisOnly) {
+            SmallVector<func::FuncOp, 8> functions;
+            getOperation().walk([&](func::FuncOp function) { functions.push_back(function); });
+            for (func::FuncOp function : functions) {
+                if (function.isDeclaration()) {
+                    continue;
+                }
+                if (failed(analyzeFunction(function, false))) {
+                    signalPassFailure();
+                    return;
+                }
+            }
+            markAllAnalysesPreserved();
+            return;
+        }
+
+        OwningOpRef<ModuleOp> stagingModule = cast<ModuleOp>(getOperation()->clone());
+        SmallVector<func::FuncOp, 8> stagedFunctions;
+        stagingModule->walk([&](func::FuncOp function) { stagedFunctions.push_back(function); });
+        for (func::FuncOp function : stagedFunctions) {
+            if (function.isDeclaration()) {
                 continue;
             }
-            if (failed(analyzeFunction(function))) {
+            if (failed(analyzeFunction(function, true))) {
                 signalPassFailure();
                 return;
             }
         }
-        markAllAnalysesPreserved();
+        if (failed(mlir::verify(*stagingModule))) {
+            getOperation().emitError("ProtocolSync rejected its staged module; original IR is unchanged");
+            signalPassFailure();
+            return;
+        }
+
+        SmallVector<func::FuncOp, 8> originalFunctions;
+        getOperation().walk([&](func::FuncOp function) { originalFunctions.push_back(function); });
+        if (originalFunctions.size() != stagedFunctions.size()) {
+            getOperation().emitError("ProtocolSync staged-module function correspondence changed");
+            signalPassFailure();
+            return;
+        }
+        for (auto [original, staged] : llvm::zip_equal(originalFunctions, stagedFunctions)) {
+            if (original.getSymName() != staged.getSymName() || original.isDeclaration() != staged.isDeclaration() ||
+                original.getFunctionType() != staged.getFunctionType()) {
+                getOperation().emitError("ProtocolSync staged-module function correspondence is invalid");
+                signalPassFailure();
+                return;
+            }
+        }
+        for (auto [original, staged] : llvm::zip_equal(originalFunctions, stagedFunctions)) {
+            if (!original.isDeclaration()) {
+                original.getBody().takeBody(staged.getBody());
+            }
+        }
     }
 
 private:
-    LogicalResult analyzeFunction(func::FuncOp function)
+    LogicalResult analyzeFunction(func::FuncOp function, bool emitOneShot)
     {
+        const StringRef producer = emitOneShot ? "one-shot" : "analysis-only";
         ProtocolSyncStatistics result;
         LegacySyncIRAdapter adapter;
         LegacySyncSnapshot legacy;
         const ProtocolSyncClock::time_point totalStart = ProtocolSyncClock::now();
-
         ProtocolSyncClock::time_point start = ProtocolSyncClock::now();
         if (failed(adapter.buildSnapshot(function, legacy))) {
             result.legacySnapshotUs = elapsedMicroseconds(start);
             result.totalUs = elapsedMicroseconds(totalStart);
             if (statistics) {
-                printStatistics(function, result, "internal-error", "legacy-shadow");
+                printStatistics(function, result, "internal-error", "legacy-shadow", producer);
             }
             function.emitError("ProtocolSync legacy shadow construction failed");
             return failure();
         }
         result.legacySnapshotUs = elapsedMicroseconds(start);
-
         start = ProtocolSyncClock::now();
         SyncSemanticContext context = adapter.buildSemanticContext(legacy);
         result.semanticContextUs = elapsedMicroseconds(start);
-
         StructuredSyncIR schedule(function);
         start = ProtocolSyncClock::now();
         StructuredSyncIRBuilder builder(context, &result);
@@ -212,27 +265,25 @@ private:
             collectScheduleStatistics(schedule, result);
             result.totalUs = elapsedMicroseconds(totalStart);
             if (statistics) {
-                printStatistics(function, result, "internal-error", "schedule");
+                printStatistics(function, result, "internal-error", "schedule", producer);
             }
             function.emitError("ProtocolSync structured schedule failed");
             return failure();
         }
         result.scheduleConstructionUs = elapsedMicroseconds(start);
         collectScheduleStatistics(schedule, result);
-
         start = ProtocolSyncClock::now();
         FailureOr<PipelineStageAnalysisResult> stages = analyzePipelineStages(schedule);
         result.storageAnalysisUs = elapsedMicroseconds(start);
         if (failed(stages)) {
             result.totalUs = elapsedMicroseconds(totalStart);
             if (statistics) {
-                printStatistics(function, result, "internal-error", "pipeline-stages");
+                printStatistics(function, result, "internal-error", "pipeline-stages", producer);
             }
             function.emitError("ProtocolSync pipeline-stage analysis failed");
             return failure();
         }
         result.pipelineStages = stages->getStages().size();
-
         start = ProtocolSyncClock::now();
         StorageTimelineAnalysisResult timelines = analyzeStorageTimelines(schedule, *stages, &result);
         result.generationAnalysisUs = elapsedMicroseconds(start);
@@ -241,38 +292,108 @@ private:
         ChannelAnalysisResult channels = analyzeChannels(schedule, *stages, timelines, &result);
         compareWithLegacyDemandOracle(legacy, schedule, *stages, timelines, channels);
         result.channelAnalysisUs = elapsedMicroseconds(start);
-
         start = ProtocolSyncClock::now();
         LegacySyncParityResult parity = adapter.compare(legacy, schedule);
         result.legacyComparisonUs = elapsedMicroseconds(start);
         result.legacyParityMismatches = parity.mismatches.size();
         printLegacySyncParity(function, parity, llvm::errs());
-        const bool hasInternalScheduleFailure =
-            llvm::any_of(schedule.getFailures(), [](const SyncFailure& failure) {
-                return failure.reason == SyncFailureReason::InternalInvariant;
-            });
+        const bool hasInternalScheduleFailure = llvm::any_of(schedule.getFailures(), [](const SyncFailure& failure) {
+            return failure.reason == SyncFailureReason::InternalInvariant;
+        });
         if (!parity.isInternallyConsistent() || hasInternalScheduleFailure) {
             result.totalUs = elapsedMicroseconds(totalStart);
             if (statistics) {
-                printStatistics(function, result, "internal-error", "semantic-consistency");
+                printStatistics(function, result, "internal-error", "semantic-consistency", producer);
             }
             function.emitError("ProtocolSync internal semantic consistency check failed");
             return failure();
         }
+
         if (dumpMode == "schedule") {
             printStructuredSyncIR(schedule, llvm::errs());
         } else if (dumpMode == "channels") {
             printProtocolSyncChannels(schedule, *stages, timelines, channels, llvm::errs());
         }
-        if (statistics) {
-            const bool oracleMismatch = llvm::any_of(channels.getChannels(), [](const SyncChannel& channel) {
-                return channel.readyOracle == SyncDemandOracleStatus::Mismatch ||
-                       channel.releaseOracle == SyncDemandOracleStatus::Mismatch;
-            });
-            StringRef status =
-                parity.matches() && schedule.getFailures().empty() && !oracleMismatch ? "ok" : "diagnostic-rejection";
+        const bool oracleMismatch = llvm::any_of(channels.getChannels(), [](const SyncChannel& channel) {
+            return channel.readyOracle == SyncDemandOracleStatus::Mismatch ||
+                   channel.releaseOracle == SyncDemandOracleStatus::Mismatch;
+        });
+        const bool diagnosticRejected = !parity.matches() || !schedule.getFailures().empty() || oracleMismatch;
+        if (!emitOneShot) {
+            if (statistics) {
+                result.totalUs = elapsedMicroseconds(totalStart);
+                printStatistics(function, result, diagnosticRejected ? "diagnostic-rejection" : "ok", "");
+            }
+            return success();
+        }
+        if (diagnosticRejected) {
             result.totalUs = elapsedMicroseconds(totalStart);
-            printStatistics(function, result, status, "");
+            if (statistics) {
+                printStatistics(
+                    function, result, "unsupported", "semantic-diagnostics", "one-shot", "not-run", "legacy-required");
+            }
+            function.emitError("ProtocolSync one-shot mode cannot safely handle this function; use legacy InsertSync");
+            return failure();
+        }
+
+        start = ProtocolSyncClock::now();
+        FailureOr<SyncOneShotPlan> plan = buildOneShotProtocolPlan(schedule, *stages, timelines, channels, &result);
+        result.planningUs = elapsedMicroseconds(start);
+        if (failed(plan)) {
+            result.totalUs = elapsedMicroseconds(totalStart);
+            if (statistics) {
+                printStatistics(function, result, "internal-error", "planning", "one-shot", "internal-error");
+            }
+            function.emitError("ProtocolSync one-shot planning failed internally");
+            return failure();
+        }
+
+        start = ProtocolSyncClock::now();
+        if (failed(allocateOneShotProtocolEvents(schedule, *plan, &result))) {
+            result.allocationUs = elapsedMicroseconds(start);
+            result.totalUs = elapsedMicroseconds(totalStart);
+            if (statistics) {
+                printStatistics(function, result, "internal-error", "allocation", "one-shot", "internal-error");
+            }
+            function.emitError("ProtocolSync one-shot event allocation failed internally");
+            return failure();
+        }
+        result.allocationUs = elapsedMicroseconds(start);
+        if (dumpMode == "plan") {
+            printOneShotProtocolPlan(function, *plan, llvm::errs());
+        }
+        if (plan->status == SyncOneShotPlanStatus::Unsupported) {
+            const bool allocationFailure =
+                llvm::any_of(plan->rejections, [](const SyncOneShotPlanRejection& rejection) {
+                    return rejection.reason == SyncOneShotRejection::EventCapacity;
+                });
+            result.totalUs = elapsedMicroseconds(totalStart);
+            if (statistics) {
+                printStatistics(
+                    function, result, "unsupported", allocationFailure ? "allocation" : "planning", "one-shot",
+                    "unsupported", "legacy-required");
+            }
+            function.emitError("ProtocolSync one-shot mode found no complete supported plan; use legacy InsertSync");
+            return failure();
+        }
+        if (plan->status == SyncOneShotPlanStatus::Empty) {
+            result.totalUs = elapsedMicroseconds(totalStart);
+            if (statistics) {
+                printStatistics(function, result, "ok", "", "one-shot", "no-op", "none");
+            }
+            return success();
+        }
+        if (failed(materializeAndVerifyOneShotProtocolPlan(schedule, *stages, timelines, channels, *plan, &result))) {
+            result.totalUs = elapsedMicroseconds(totalStart);
+            if (statistics) {
+                printStatistics(
+                    function, result, "internal-error", "materialization-verification", "one-shot", "rejected");
+            }
+            return failure();
+        }
+        result.totalUs = elapsedMicroseconds(totalStart);
+        if (statistics) {
+            printStatistics(function, result, "ok", "", "one-shot", "materialized", "none");
         }
         return success();
     }

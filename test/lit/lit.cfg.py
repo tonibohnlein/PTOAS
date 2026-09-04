@@ -75,6 +75,7 @@ tool_dirs = [config.ptoir_tools_dir, config.ptoir_test_tools_dir,
              config.llvm_tools_dir]
 tools = [
     'ptoas',
+    'pto-protocol-sync-one-shot-test',
     'pto-test-opt',
     'pto-vpto-scheduler-tracker-test',
 ]

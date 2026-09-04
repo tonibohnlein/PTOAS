@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-one-shot --protocol-sync-dump=plan \
+// RUN:   --protocol-sync-statistics %s -o %t 2> %t.diagnostics
+// RUN: FileCheck %s --input-file=%t --check-prefix=IR
+// RUN: FileCheck %s --input-file=%t.diagnostics --check-prefix=PLAN
+// RUN: not ptoas --pto-arch=a2 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-one-shot --protocol-sync-dump=plan %s \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=A2
+// RUN: not ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --enable-insert-sync --protocol-sync-one-shot %s -o /dev/null 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=MUTEX
+// RUN: not ptoas --pto-arch=a5 --pto-level=level2 --emit-pto-ir \
+// RUN:   --enable-bufid_sync --protocol-sync-one-shot %s -o /dev/null 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=MUTEX
+// RUN: not ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --enable-inject-barrier-all-sync --protocol-sync-one-shot %s -o /dev/null 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=MUTEX
+module {
+  func.func @linear_one_shot(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %source = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    %middle = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    %result = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%source : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%source : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%middle : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%middle : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%result : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%result : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+}
+// PLAN: PROTOCOL-SYNC one-shot-plan function=@linear_one_shot status=ready phases=4 protocols=3 core=vector
+// PLAN: protocol #0 kind=directed-event
+// PLAN-SAME: event-id=0
+// PLAN: protocol #1 kind=pipe-barrier
+// PLAN: protocol #2 kind=directed-event
+// PLAN-SAME: event-id=0
+// PLAN: tail-drain=true placement=function-return
+// PLAN: "planner_result":"materialized"
+// IR-LABEL: func.func @linear_one_shot
+// IR: pto.tload
+// IR: pto.set_flag
+// IR: pto.wait_flag
+// IR: pto.tabs
+// IR: pto.barrier <PIPE_V>
+// IR: pto.tabs
+// IR: pto.set_flag
+// IR: pto.wait_flag
+// IR: pto.tstore
+// IR: pto.barrier <PIPE_ALL>
+// A2: status=unsupported
+// A2: reason=unsupported-target
+// A2: target profile 'a2' is not the device-qualified A3 target
+// MUTEX: Error: --enable-insert-sync
+// MUTEX: --protocol-sync-one-shot
+// MUTEX-SAME: mutually exclusive

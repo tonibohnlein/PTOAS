@@ -223,10 +223,15 @@ llvm::cl::opt<bool> protocolSyncAnalysisOnly(
     llvm::cl::desc("Build and compare the immutable ProtocolSync schedule "
                    "without changing IR"),
     llvm::cl::init(false));
+llvm::cl::opt<bool> protocolSyncOneShot(
+    "protocol-sync-one-shot",
+    llvm::cl::desc("Emit the narrow Checkpoint-D ProtocolSync one-shot plan; "
+                   "unsupported functions fail closed"),
+    llvm::cl::init(false));
 
 llvm::cl::opt<std::string> protocolSyncDump(
     "protocol-sync-dump",
-    llvm::cl::desc("ProtocolSync diagnostic dump: none, schedule, or channels"),
+    llvm::cl::desc("ProtocolSync diagnostic dump: none, schedule, channels, or plan"),
     llvm::cl::init("none"));
 
 llvm::cl::opt<bool> protocolSyncStatistics(

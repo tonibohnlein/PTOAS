@@ -1,0 +1,149 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+// RUN: split-file %s %t
+// RUN: not pto-test-opt --pto-protocol-sync='execution-mode=one-shot dump=plan' \
+// RUN:   %t/queue.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=QUEUE
+// RUN: not pto-test-opt --pto-protocol-sync='execution-mode=one-shot dump=plan' \
+// RUN:   %t/rejected-timeline.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=TIMELINE
+// RUN: not pto-test-opt --pto-protocol-sync='execution-mode=one-shot dump=plan' \
+// RUN:   %t/attrless.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=ATTRLESS
+// RUN: not pto-test-opt --pto-protocol-sync='execution-mode=one-shot' \
+// RUN:   --mlir-print-ir-after-failure %t/module-atomicity.pto -o /dev/null 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=ATOMIC
+// RUN: not ptoas --pto-arch=a3 --pto-backend=vpto --protocol-sync-one-shot \
+// RUN:   --protocol-sync-statistics %t/vpto-no-tile.pto -o /dev/null 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=VPTO
+// RUN: not ptoas --protocol-sync-one-shot %t/attrless.pto -o /dev/null 2>&1 | \
+// RUN:   FileCheck %s --check-prefix=CLI-IMPLICIT
+
+// QUEUE: ProtocolSync one-shot mode cannot safely handle this function
+
+// TIMELINE: status=unsupported
+// TIMELINE: reason=non-one-shot-channel
+// TIMELINE: requires every local-storage timeline to be admitted
+
+// ATTRLESS: status=unsupported
+// ATTRLESS: reason=unsupported-target
+// ATTRLESS: requires explicit pto.target_arch = 'a3'
+
+// ATOMIC: IR Dump After PTOProtocolSync
+// ATOMIC-LABEL: func.func @would_be_supported
+// ATOMIC: pto.tload
+// ATOMIC-NOT: pto.protocol_sync.generated
+// ATOMIC: return
+// ATOMIC-LABEL: func.func @later_rejection
+// ATOMIC-NOT: pto.protocol_sync.generated
+// ATOMIC: scf.for
+
+// VPTO: "producer":"one-shot"
+// VPTO: ProtocolSync one-shot mode cannot safely handle this function
+
+// CLI-IMPLICIT: --protocol-sync-one-shot requires an explicit --pto-arch=a3
+
+//--- queue.pto
+module attributes {pto.target_arch = "a3"} {
+  func.func @queue_action_with_argument(
+      %gmSlots: memref<256xf32, #pto.address_space<gm>>,
+      %consumer: i32,
+      %tile: !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                           blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %pipe = pto.initialize_l2g2l_pipe {
+      dir_mask = 1,
+      slot_size = 1024,
+      slot_num = 8,
+      local_slot_num = 8,
+      flag_base = 0
+    }(%gmSlots : memref<256xf32, #pto.address_space<gm>>, %consumer : i32) -> !pto.pipe
+    pto.tpop(%tile, %pipe :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                    blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+      !pto.pipe) {split = 1}
+    return
+  }
+}
+
+//--- rejected-timeline.pto
+module attributes {pto.target_arch = "a3"} {
+  func.func @unmapped_local_arguments(
+      %source: !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                             blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+      %target: !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                             blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    pto.tabs ins(%source : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                                             blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+             outs(%target : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                                              blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+//--- attrless.pto
+module {
+  func.func @attrless() {
+    return
+  }
+}
+
+//--- module-atomicity.pto
+module attributes {pto.target_arch = "a3"} {
+  func.func @would_be_supported(
+      %input: !pto.partition_tensor_view<16x16xf16>,
+      %output: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %c512 = arith.constant 512 : i64
+    %source = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    %result = pto.alloc_tile addr = %c512 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+              outs(%source : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%source : !pto.tile_buf<vec, 16x16xf16>)
+             outs(%result : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%result : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+
+  func.func @later_rejection(
+      %input: !pto.partition_tensor_view<16x16xf16>,
+      %output: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %i = %c0 to %c4 step %c1 {
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}
+
+//--- vpto-no-tile.pto
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @low_level_vpto(
+      %dst: !pto.ptr<i16, ub>, %source0: !pto.ptr<i16, ub>, %source1: !pto.ptr<i16, ub>)
+      attributes {pto.aicore} {
+    %c128 = arith.constant 128 : i64
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c2 = arith.constant 2 : i64
+    %c3 = arith.constant 3 : i64
+    %c4 = arith.constant 4 : i64
+    %c5 = arith.constant 5 : i64
+    pto.ub.vadd %dst, %source0, %source1, %c128, %c0, %c1, %c2, %c3, %c4, %c5 :
+      !pto.ptr<i16, ub>, !pto.ptr<i16, ub>, !pto.ptr<i16, ub>, i64, i64, i64, i64, i64, i64, i64
+    return
+  }
+}

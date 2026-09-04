@@ -61,6 +61,7 @@ extern llvm::cl::opt<VPTOSchedulerCLIMode> vptoSchedulerMode;
 extern llvm::cl::opt<bool> vptoSchedulerTrace;
 extern llvm::cl::opt<bool> enableInsertSync;
 extern llvm::cl::opt<bool> protocolSyncAnalysisOnly;
+extern llvm::cl::opt<bool> protocolSyncOneShot;
 extern llvm::cl::opt<std::string> protocolSyncDump;
 extern llvm::cl::opt<bool> protocolSyncStatistics;
 extern llvm::cl::opt<bool> enableBufidSync;

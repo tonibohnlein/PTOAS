@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+// RUN: not ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-one-shot --protocol-sync-statistics %s \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s
+// RUN: not ptoas --pto-arch=a5 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-one-shot --protocol-sync-dump=plan %s \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=A5
+module {
+  func.func @recurring_channel_is_checkpoint_e(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %i = %c0 to %c4 step %c1 {
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}
+// CHECK: "producer":"one-shot"
+// CHECK-SAME: "status":"unsupported"
+// CHECK: ProtocolSync one-shot mode found no complete supported plan; use legacy InsertSync
+// A5: PROTOCOL-SYNC one-shot-plan
+// A5-SAME: status=unsupported
+// A5: reason=unsupported-target
+// A5: ProtocolSync one-shot mode found no complete supported plan; use legacy InsertSync

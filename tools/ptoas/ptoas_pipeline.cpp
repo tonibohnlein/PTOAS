@@ -1217,11 +1217,11 @@ static LogicalResult validateTAssignConfiguration(ModuleOp module,
   }
   const int enabledAutoSyncModes =
       (enableInsertSync ? 1 : 0) + (enableBufidSync ? 1 : 0) +
-      (enableInjectBarrierAllSync ? 1 : 0);
+      (enableInjectBarrierAllSync ? 1 : 0) + (protocolSyncOneShot ? 1 : 0);
   if (enabledAutoSyncModes > 1) {
     llvm::errs() << "Error: --enable-insert-sync, --enable-bufid_sync, "
-                    "and --enable-inject-barrier-all-sync are mutually "
-                    "exclusive.\n";
+                    "--enable-inject-barrier-all-sync, and "
+                    "--protocol-sync-one-shot are mutually exclusive.\n";
     return failure();
   }
   if (hasTAssign && enableInjectBarrierAllSync) {
@@ -1232,6 +1232,11 @@ static LogicalResult validateTAssignConfiguration(ModuleOp module,
   if (hasTAssign && enableBufidSync) {
     llvm::errs() << "Error: pto.tassign requires --enable-bufid_sync to be "
                     "disabled.\n";
+    return failure();
+  }
+  if (hasTAssign && protocolSyncOneShot) {
+    llvm::errs() << "Error: pto.tassign is outside the Checkpoint-D "
+                    "ProtocolSync one-shot subset.\n";
     return failure();
   }
   return success();
@@ -1286,18 +1291,36 @@ static LogicalResult validateAllocationConfiguration(ModuleOp module,
 }
 
 static LogicalResult validateProtocolSyncConfiguration() {
-  if (protocolSyncDump != "none" && protocolSyncDump != "schedule" &&
-      protocolSyncDump != "channels") {
-    llvm::errs() << "Error: invalid --protocol-sync-dump='"
-                 << protocolSyncDump
-                 << "', expected 'none', 'schedule', or 'channels'.\n";
+  const bool protocolSyncActive =
+      protocolSyncAnalysisOnly || protocolSyncOneShot;
+  if (protocolSyncAnalysisOnly && protocolSyncOneShot) {
+    llvm::errs() << "Error: --protocol-sync-analysis-only and "
+                    "--protocol-sync-one-shot are mutually exclusive.\n";
     return failure();
   }
-  if (!protocolSyncAnalysisOnly &&
+  if (protocolSyncOneShot && ptoTargetArch.getNumOccurrences() == 0) {
+    llvm::errs() << "Error: --protocol-sync-one-shot requires an explicit "
+                    "--pto-arch=a3 selection.\n";
+    return failure();
+  }
+  if (protocolSyncDump != "none" && protocolSyncDump != "schedule" &&
+      protocolSyncDump != "channels" && protocolSyncDump != "plan") {
+    llvm::errs() << "Error: invalid --protocol-sync-dump='"
+                 << protocolSyncDump
+                 << "', expected 'none', 'schedule', 'channels', or 'plan'.\n";
+    return failure();
+  }
+  if (!protocolSyncActive &&
       (protocolSyncDump != "none" || protocolSyncStatistics)) {
     llvm::errs() << "Error: --protocol-sync-dump and "
-                    "--protocol-sync-statistics require "
-                    "--protocol-sync-analysis-only.\n";
+                    "--protocol-sync-statistics require either "
+                    "--protocol-sync-analysis-only or "
+                    "--protocol-sync-one-shot.\n";
+    return failure();
+  }
+  if (protocolSyncDump == "plan" && !protocolSyncOneShot) {
+    llvm::errs() << "Error: --protocol-sync-dump=plan requires "
+                    "--protocol-sync-one-shot.\n";
     return failure();
   }
   return success();
@@ -1500,8 +1523,10 @@ static LogicalResult runMainLoweringPipeline(
   pm.addPass(pto::createPTOResolveReservedBuffersPass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createPTORemoveIdentityTMovPass());
 
-  if (protocolSyncAnalysisOnly) {
+  if (protocolSyncAnalysisOnly || protocolSyncOneShot) {
     pto::PTOProtocolSyncOptions options;
+    options.executionMode =
+        protocolSyncOneShot ? "one-shot" : "analysis";
     options.dumpMode = protocolSyncDump.getValue();
     options.statistics = protocolSyncStatistics.getValue();
     pm.addPass(pto::createPTOProtocolSyncPass(options));
@@ -1703,7 +1728,10 @@ int mlir::pto::compilePTOASModule(
 
   // The state is assembled and validated once above, so backend branches
   // cannot observe partially validated option combinations.
-  if (effectiveBackend == PTOBackend::VPTO && !state.hasTileOpsToExpand) {
+  const bool protocolSyncActive =
+      protocolSyncAnalysisOnly || protocolSyncOneShot;
+  if (effectiveBackend == PTOBackend::VPTO && !state.hasTileOpsToExpand &&
+      !protocolSyncActive) {
     return runVPTOSkipMainlinePipeline(module, context, state, result,
                                        emitVPTOHostStub);
   }

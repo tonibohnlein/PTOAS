@@ -55,6 +55,27 @@ add_dependencies(pto-vpto-scheduler-tracker-test
   PTOPassesIncGen
 )
 
+add_llvm_executable(pto-protocol-sync-one-shot-test
+  pto-protocol-sync-one-shot-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+
+target_link_libraries(pto-protocol-sync-one-shot-test PRIVATE
+  PTOIR
+  PTOTransforms
+  MLIRArithDialect
+  MLIRFuncDialect
+  MLIRIR
+  MLIRParser
+  MLIRSCFDialect
+  MLIRSupport
+)
+
+add_dependencies(pto-protocol-sync-one-shot-test
+  PTOOpsIncGen
+  PTOPassesIncGen
+)
+
 add_llvm_executable(pto-vfsimt-size-patcher-test
   pto-vfsimt-size-patcher-test.cpp
   PARTIAL_SOURCES_INTENDED
