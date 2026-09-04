@@ -118,6 +118,27 @@ add_dependencies(pto-protocol-sync-direct-repair-test
   PTOPassesIncGen
 )
 
+add_llvm_executable(pto-protocol-sync-mixed-test
+  pto-protocol-sync-mixed-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+
+target_link_libraries(pto-protocol-sync-mixed-test PRIVATE
+  PTOIR
+  PTOTransforms
+  MLIRArithDialect
+  MLIRFuncDialect
+  MLIRIR
+  MLIRParser
+  MLIRSCFDialect
+  MLIRSupport
+)
+
+add_dependencies(pto-protocol-sync-mixed-test
+  PTOOpsIncGen
+  PTOPassesIncGen
+)
+
 add_llvm_executable(pto-vfsimt-size-patcher-test
   pto-vfsimt-size-patcher-test.cpp
   PARTIAL_SOURCES_INTENDED

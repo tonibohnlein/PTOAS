@@ -29,6 +29,11 @@ namespace mlir::pto::protocol_sync {
 
 enum class SyncReadyReleasePlanStatus : std::uint8_t { Empty, Ready, Unsupported };
 
+enum class SyncReadyReleasePlanningScope : std::uint8_t {
+    WholeFunction,
+    MixedCandidate,
+};
+
 enum class SyncReadyReleaseRejection : std::uint8_t {
     None,
     UnsupportedTarget,
@@ -101,7 +106,8 @@ struct SyncReadyReleasePlan {
 FailureOr<SyncReadyReleasePlan> buildReadyReleaseProtocolPlan(
     const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
     const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
-    ProtocolSyncStatistics* statistics = nullptr);
+    ProtocolSyncStatistics* statistics = nullptr,
+    SyncReadyReleasePlanningScope scope = SyncReadyReleasePlanningScope::WholeFunction);
 LogicalResult allocateReadyReleaseProtocolEvents(
     const StructuredSyncIR& schedule, SyncReadyReleasePlan& plan, ProtocolSyncStatistics* statistics = nullptr);
 LogicalResult allocateReadyReleaseProtocolEvents(

@@ -30,6 +30,7 @@ namespace {
 constexpr StringLiteral kGeneratedAttr = "pto.protocol_sync.generated";
 constexpr StringLiteral kCandidateAttr = "pto.protocol_sync.direct_candidate_id";
 constexpr StringLiteral kRoleAttr = "pto.protocol_sync.role";
+constexpr StringLiteral kProtocolKindAttr = "pto.protocol_sync.protocol_kind";
 constexpr StringLiteral kSectionLocalTailAttr = "pto.auto_sync_tail_section_local";
 
 bool sameGuard(ArrayRef<SyncControlAtom> first, ArrayRef<SyncControlAtom> second)
@@ -225,6 +226,11 @@ LogicalResult collectConcreteCandidates(
         const bool fixed = isFixedSyncOperation(operation);
         const bool generated = operation->hasAttr(kGeneratedAttr);
         if (!fixed && !generated) {
+            return;
+        }
+        const bool belongsToOtherProtocol =
+            !operation->hasAttr(kCandidateAttr) && operation->hasAttr(kProtocolKindAttr);
+        if (belongsToOtherProtocol) {
             return;
         }
         auto candidateAttr = operation->getAttrOfType<IntegerAttr>(kCandidateAttr);

@@ -1219,13 +1219,14 @@ static LogicalResult validateTAssignConfiguration(ModuleOp module,
       (enableInsertSync ? 1 : 0) + (enableBufidSync ? 1 : 0) +
       (enableInjectBarrierAllSync ? 1 : 0) + (protocolSyncOneShot ? 1 : 0) +
       (protocolSyncReadyRelease ? 1 : 0) +
-      (protocolSyncDirectRepair ? 1 : 0);
+      (protocolSyncDirectRepair ? 1 : 0) + (protocolSyncMixed ? 1 : 0);
   if (enabledAutoSyncModes > 1) {
     llvm::errs() << "Error: --enable-insert-sync, --enable-bufid_sync, "
                     "--enable-inject-barrier-all-sync, and "
                     "--protocol-sync-one-shot, and "
                     "--protocol-sync-ready-release, and "
-                    "--protocol-sync-direct-repair are mutually exclusive.\n";
+                    "--protocol-sync-direct-repair, and "
+                    "--protocol-sync-mixed are mutually exclusive.\n";
     return failure();
   }
   if (hasTAssign && enableInjectBarrierAllSync) {
@@ -1251,6 +1252,11 @@ static LogicalResult validateTAssignConfiguration(ModuleOp module,
   if (hasTAssign && protocolSyncDirectRepair) {
     llvm::errs() << "Error: pto.tassign is outside the Checkpoint-F "
                     "ProtocolSync direct-repair subset.\n";
+    return failure();
+  }
+  if (hasTAssign && protocolSyncMixed) {
+    llvm::errs() << "Error: pto.tassign is outside the Checkpoint-F "
+                    "ProtocolSync mixed subset.\n";
     return failure();
   }
   return success();
@@ -1307,11 +1313,13 @@ static LogicalResult validateAllocationConfiguration(ModuleOp module,
 static LogicalResult validateProtocolSyncConfiguration() {
   const bool protocolSyncActive =
       protocolSyncAnalysisOnly || protocolSyncOneShot ||
-      protocolSyncReadyRelease || protocolSyncDirectRepair;
+      protocolSyncReadyRelease || protocolSyncDirectRepair ||
+      protocolSyncMixed;
   const int selectedModes = (protocolSyncAnalysisOnly ? 1 : 0) +
                             (protocolSyncOneShot ? 1 : 0) +
                             (protocolSyncReadyRelease ? 1 : 0) +
-                            (protocolSyncDirectRepair ? 1 : 0);
+                            (protocolSyncDirectRepair ? 1 : 0) +
+                            (protocolSyncMixed ? 1 : 0);
   if (protocolSyncAnalysisOnly && protocolSyncOneShot &&
       !protocolSyncReadyRelease) {
     llvm::errs() << "Error: --protocol-sync-analysis-only and "
@@ -1322,12 +1330,13 @@ static LogicalResult validateProtocolSyncConfiguration() {
     llvm::errs() << "Error: --protocol-sync-analysis-only, "
                     "--protocol-sync-one-shot, and "
                     "--protocol-sync-ready-release, and "
-                    "--protocol-sync-direct-repair are mutually exclusive.\n";
+                    "--protocol-sync-direct-repair, and "
+                    "--protocol-sync-mixed are mutually exclusive.\n";
     return failure();
   }
   const bool protocolSyncEmission =
       protocolSyncOneShot || protocolSyncReadyRelease ||
-      protocolSyncDirectRepair;
+      protocolSyncDirectRepair || protocolSyncMixed;
   if (protocolSyncOneShot && ptoTargetArch.getNumOccurrences() == 0) {
     llvm::errs() << "Error: --protocol-sync-one-shot requires an explicit "
                     "--pto-arch=a3 selection.\n";
@@ -1344,6 +1353,13 @@ static LogicalResult validateProtocolSyncConfiguration() {
       protocolSyncDirectRepair && ptoTargetArch.getNumOccurrences() == 0;
   if (directRepairTargetMissing) {
     llvm::errs() << "Error: --protocol-sync-direct-repair requires an explicit "
+                    "--pto-arch=a3 selection.\n";
+    return failure();
+  }
+  const bool mixedTargetMissing =
+      protocolSyncMixed && ptoTargetArch.getNumOccurrences() == 0;
+  if (mixedTargetMissing) {
+    llvm::errs() << "Error: --protocol-sync-mixed requires an explicit "
                     "--pto-arch=a3 selection.\n";
     return failure();
   }
@@ -1583,11 +1599,13 @@ static LogicalResult runMainLoweringPipeline(
   pm.addNestedPass<mlir::func::FuncOp>(pto::createPTORemoveIdentityTMovPass());
 
   if (protocolSyncAnalysisOnly || protocolSyncOneShot ||
-      protocolSyncReadyRelease || protocolSyncDirectRepair) {
+      protocolSyncReadyRelease || protocolSyncDirectRepair ||
+      protocolSyncMixed) {
     pto::PTOProtocolSyncOptions options;
     options.executionMode = protocolSyncOneShot       ? "one-shot"
                             : protocolSyncReadyRelease ? "ready-release"
                             : protocolSyncDirectRepair ? "direct-repair"
+                            : protocolSyncMixed        ? "mixed"
                                                        : "analysis";
     options.fallbackMode = protocolSyncFallback.getValue();
     options.dumpMode = protocolSyncDump.getValue();
@@ -1793,7 +1811,8 @@ int mlir::pto::compilePTOASModule(
   // cannot observe partially validated option combinations.
   const bool protocolSyncActive =
       protocolSyncAnalysisOnly || protocolSyncOneShot ||
-      protocolSyncReadyRelease || protocolSyncDirectRepair;
+      protocolSyncReadyRelease || protocolSyncDirectRepair ||
+      protocolSyncMixed;
   if (effectiveBackend == PTOBackend::VPTO && !state.hasTileOpsToExpand &&
       !protocolSyncActive) {
     return runVPTOSkipMainlinePipeline(module, context, state, result,

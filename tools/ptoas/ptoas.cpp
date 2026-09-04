@@ -241,6 +241,12 @@ llvm::cl::opt<bool> protocolSyncDirectRepair(
                    "unsupported functions use legacy fallback unless "
                    "--protocol-sync-fallback=fail is selected"),
     llvm::cl::init(false));
+llvm::cl::opt<bool> protocolSyncMixed(
+    "protocol-sync-mixed",
+    llvm::cl::desc("Emit the Checkpoint-F mixed protocol/direct plan; "
+                   "unsupported functions use legacy fallback unless "
+                   "--protocol-sync-fallback=fail is selected"),
+    llvm::cl::init(false));
 
 llvm::cl::opt<std::string> protocolSyncFallback(
     "protocol-sync-fallback",

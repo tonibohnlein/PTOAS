@@ -43,7 +43,7 @@ void tagGenerated(Operation* operation, OpBuilder& builder, SyncDirectCandidateI
     operation->setAttr(kRoleAttr, builder.getStringAttr(role));
 }
 
-LogicalResult materializeDirectRepairPlanOnClone(
+LogicalResult materializeDirectRepairPlanImpl(
     func::FuncOp clone, const IRMapping& mapping, const SyncDirectRepairPlan& plan, ProtocolSyncStatistics* statistics)
 {
     if (plan.status != SyncDirectRepairPlanStatus::Ready || plan.candidates.empty()) {
@@ -128,6 +128,13 @@ LogicalResult materializeDirectRepairPlanOnClone(
 
 } // namespace
 
+LogicalResult mlir::pto::protocol_sync::materializeDirectRepairPlan(
+    func::FuncOp clone, const IRMapping& mapping, const SyncDirectRepairPlan& plan,
+    ProtocolSyncStatistics* statistics)
+{
+    return materializeDirectRepairPlanImpl(clone, mapping, plan, statistics);
+}
+
 LogicalResult mlir::pto::protocol_sync::materializeAndVerifyDirectRepairPlan(
     const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
     ArrayRef<SyncResidualObligation> obligations, const SyncDirectRepairPlan& plan, ProtocolSyncStatistics* statistics)
@@ -143,7 +150,7 @@ LogicalResult mlir::pto::protocol_sync::materializeAndVerifyDirectRepairPlan(
     IRMapping mapping;
     OwningOpRef<ModuleOp> stagingModule = cast<ModuleOp>(sourceModule->clone(mapping));
     auto clone = dyn_cast_or_null<func::FuncOp>(mapping.lookupOrNull(function.getOperation()));
-    if (!clone || failed(materializeDirectRepairPlanOnClone(clone, mapping, plan, statistics))) {
+    if (!clone || failed(materializeDirectRepairPlan(clone, mapping, plan, statistics))) {
         return failure();
     }
     const DirectRepairClock::time_point verificationStart = DirectRepairClock::now();
@@ -171,7 +178,7 @@ LogicalResult mlir::pto::protocol_sync::materializeAndVerifyDirectRepairPlanInDi
     func::FuncOp function = schedule.getFunction();
     IRMapping identityMapping;
     function.walk([&](Operation* operation) { identityMapping.map(operation, operation); });
-    if (failed(materializeDirectRepairPlanOnClone(function, identityMapping, plan, statistics))) {
+    if (failed(materializeDirectRepairPlan(function, identityMapping, plan, statistics))) {
         return failure();
     }
     const DirectRepairClock::time_point verificationStart = DirectRepairClock::now();

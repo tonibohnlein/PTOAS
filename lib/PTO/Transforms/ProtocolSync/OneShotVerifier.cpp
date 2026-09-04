@@ -23,6 +23,10 @@ namespace {
 
 constexpr StringLiteral kGeneratedAttr = "pto.protocol_sync.generated";
 constexpr StringLiteral kProtocolAttr = "pto.protocol_sync.protocol_id";
+constexpr StringLiteral kProtocolKindAttr = "pto.protocol_sync.protocol_kind";
+constexpr StringLiteral kOneShotKind = "one-shot";
+constexpr StringLiteral kReadyReleaseKind = "ready-release";
+constexpr StringLiteral kDirectCandidateAttr = "pto.protocol_sync.direct_candidate_id";
 constexpr StringLiteral kRoleAttr = "pto.protocol_sync.role";
 constexpr StringLiteral kTailRole = "tail-drain";
 constexpr StringLiteral kSectionLocalTailAttr = "pto.auto_sync_tail_section_local";
@@ -196,7 +200,18 @@ LogicalResult collectConcreteProtocols(func::FuncOp clone, unsigned boundaryCoun
         if (!fixedSync && !generated) {
             return;
         }
+        auto protocolKind = operation->getAttrOfType<StringAttr>(kProtocolKindAttr);
+        const bool belongsToOtherCandidate = operation->hasAttr(kDirectCandidateAttr) ||
+                                             (protocolKind && protocolKind.getValue() == kReadyReleaseKind);
+        if (belongsToOtherCandidate) {
+            return;
+        }
         if (!fixedSync || !operation->hasAttrOfType<UnitAttr>(kGeneratedAttr)) {
+            malformed = true;
+            return;
+        }
+        const bool belongsToOneShot = protocolKind && protocolKind.getValue() == kOneShotKind;
+        if (!belongsToOneShot) {
             malformed = true;
             return;
         }
@@ -264,9 +279,11 @@ LogicalResult verifyTail(
         Operation* final = &body.back();
         auto barrier = dyn_cast<BarrierOp>(final);
         auto role = final->getAttrOfType<StringAttr>(kRoleAttr);
+        auto kind = final->getAttrOfType<StringAttr>(kProtocolKindAttr);
         return success(
             barrier && final->hasAttrOfType<UnitAttr>(kGeneratedAttr) && role && role.getValue() == kTailRole &&
-            !final->hasAttr(kProtocolAttr) && barrier.getPipe().getPipe() == PIPE::PIPE_ALL &&
+            !final->hasAttr(kProtocolAttr) && kind && kind.getValue() == kOneShotKind &&
+            barrier.getPipe().getPipe() == PIPE::PIPE_ALL &&
             final->hasAttrOfType<UnitAttr>(kSectionLocalTailAttr) &&
             tailBarriers.size() == 1 && tailBarriers.front() == final);
     }
@@ -278,8 +295,10 @@ LogicalResult verifyTail(
         Operation* previous = operation->getPrevNode();
         auto barrier = dyn_cast_or_null<BarrierOp>(previous);
         auto role = previous ? previous->getAttrOfType<StringAttr>(kRoleAttr) : StringAttr();
+        auto kind = previous ? previous->getAttrOfType<StringAttr>(kProtocolKindAttr) : StringAttr();
         const bool validTail = barrier && previous->hasAttrOfType<UnitAttr>(kGeneratedAttr) && role &&
                                role.getValue() == kTailRole && !previous->hasAttr(kProtocolAttr) &&
+                               kind && kind.getValue() == kOneShotKind &&
                                !previous->hasAttr(kSectionLocalTailAttr) &&
                                barrier.getPipe().getPipe() == PIPE::PIPE_ALL;
         if (!validTail) {

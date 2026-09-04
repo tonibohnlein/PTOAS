@@ -17,6 +17,11 @@
 // RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=DIRECT-STRICT
 // RUN: pto-test-opt --pto-protocol-sync='execution-mode=direct-repair statistics=1' \
 // RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=DIRECT-FALLBACK
+// RUN: pto-test-opt \
+// RUN:   --pto-protocol-sync='execution-mode=mixed dump=plan statistics=1' \
+// RUN:   %s -o %t.mixed.ir 2> %t.mixed.log
+// RUN: FileCheck %s --input-file=%t.mixed.log --check-prefix=MIXED-RETRY
+// RUN: FileCheck %s --input-file=%t.mixed.ir --check-prefix=MIXED-IR
 
 module attributes {pto.target_arch = "a3"} {
   func.func @seven_mte2_to_vector_generations(
@@ -116,3 +121,16 @@ module attributes {pto.target_arch = "a3"} {
 // DIRECT-FALLBACK: "fallback":"resource-infeasible"
 // DIRECT-FALLBACK-SAME: "planner_result":"legacy-fallback-resource-infeasible"
 // DIRECT-FALLBACK-SAME: "producer":"legacy-fallback-resource-infeasible"
+// MIXED-RETRY: PROTOCOL-SYNC mixed-plan function=@seven_mte2_to_vector_generations
+// MIXED-RETRY-SAME: status=resource-infeasible protocol=none
+// MIXED-RETRY: event=unallocated
+// MIXED-RETRY-NOT: event={{[0-9]+}}
+// MIXED-RETRY: "allocation_retries":1
+// MIXED-RETRY-SAME: "protocol_plans_admitted":0
+// MIXED-RETRY-SAME: "protocol_plans_attempted":2
+// MIXED-RETRY-SAME: "protocol_plans_rejected":2
+// MIXED-RETRY-SAME: "fallback":"resource-infeasible"
+// MIXED-RETRY-SAME: "planner_result":"legacy-fallback-resource-infeasible"
+// MIXED-RETRY-SAME: "producer":"legacy-fallback-resource-infeasible"
+// MIXED-IR-LABEL: func.func @seven_mte2_to_vector_generations
+// MIXED-IR-NOT: pto.protocol_sync.generated

@@ -33,6 +33,7 @@ constexpr StringLiteral kReadyReleaseKind = "ready-release";
 constexpr StringLiteral kRoleAttr = "pto.protocol_sync.role";
 constexpr StringLiteral kLaneAttr = "pto.protocol_sync.logical_lane";
 constexpr StringLiteral kLanesAttr = "pto.protocol_sync.logical_lanes";
+constexpr StringLiteral kDirectCandidateAttr = "pto.protocol_sync.direct_candidate_id";
 
 struct ExpectedReadyRelease {
     const SyncPhase* producer = nullptr;
@@ -76,9 +77,8 @@ bool sameCanonicalSlotExpression(const SyncSlotExpression& first, const SyncSlot
 FailureOr<ExpectedReadyRelease> reconstructExpectedProtocol(
     const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages)
 {
-    const bool validBaseShape = schedule.isFrozen() && schedule.getFailures().empty() &&
-                                schedule.getSemanticActions().empty() && schedule.getPhases().size() == 2 &&
-                                stages.getStages().size() == 2;
+    const bool validBaseShape =
+        schedule.isFrozen() && schedule.getFailures().empty() && schedule.getSemanticActions().empty();
     if (!validBaseShape) {
         return failure();
     }
@@ -120,14 +120,28 @@ FailureOr<ExpectedReadyRelease> reconstructExpectedProtocol(
         if (family.role != SyncStorageRole::LocalBuffer) {
             continue;
         }
-        if (!family.physical || family.unknownRange || family.aliasesUnknownRange || family.capacityConflict ||
-            !family.slotCount || *family.slotCount < 1 || *family.slotCount > 2) {
-            return failure();
-        }
         bool familyAccessed = false;
         auto familyAccesses = accessesByFamily.find(family.id);
         if (familyAccesses == accessesByFamily.end()) {
             continue;
+        }
+        bool hasLoopAccess = false;
+        bool hasOutsideAccess = false;
+        for (const SyncAccess* access : familyAccesses->second) {
+            const SyncPhase* phase = schedule.findPhase(access->phase);
+            const bool inLoop = phase && llvm::is_contained(phase->iterationDomain.loops, loopRegion->id);
+            hasLoopAccess |= inLoop;
+            hasOutsideAccess |= !inLoop;
+        }
+        if (hasLoopAccess && hasOutsideAccess) {
+            return failure();
+        }
+        if (!hasLoopAccess) {
+            continue;
+        }
+        if (!family.physical || family.unknownRange || family.aliasesUnknownRange || family.capacityConflict ||
+            !family.slotCount || *family.slotCount < 1 || *family.slotCount > 2) {
+            return failure();
         }
         if (capacity != 0 && capacity != *family.slotCount) {
             return failure();
@@ -202,6 +216,13 @@ FailureOr<ExpectedReadyRelease> reconstructExpectedProtocol(
     if (!exactStages) {
         return failure();
     }
+    const bool loopHasOnlyProtocolPhases = llvm::all_of(schedule.getPhases(), [&](const SyncPhase& phase) {
+        const bool inLoop = llvm::is_contained(phase.iterationDomain.loops, loopRegion->id);
+        return !inLoop || phase.id == producer->id || phase.id == consumer->id;
+    });
+    if (!loopHasOnlyProtocolPhases) {
+        return failure();
+    }
 
     llvm::DenseMap<SyncStorageFamilyId, unsigned> globalModes;
     for (const SyncAccess& access : schedule.getAccesses()) {
@@ -267,6 +288,11 @@ LogicalResult collectConcreteProtocol(func::FuncOp clone, unsigned capacity, Con
             return;
         }
         auto kind = operation->getAttrOfType<StringAttr>(kProtocolKindAttr);
+        const bool belongsToOtherCandidate = operation->hasAttr(kDirectCandidateAttr) ||
+                                             (kind && kind.getValue() == "one-shot");
+        if (belongsToOtherCandidate) {
+            return;
+        }
         auto role = operation->getAttrOfType<StringAttr>(kRoleAttr);
         auto protocolId = operation->getAttrOfType<IntegerAttr>(kProtocolAttr);
         const bool validBaseTag = fixedSync && operation->hasAttrOfType<UnitAttr>(kGeneratedAttr) && kind && role &&

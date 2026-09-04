@@ -76,6 +76,7 @@ tool_dirs = [config.ptoir_tools_dir, config.ptoir_test_tools_dir,
 tools = [
     'ptoas',
     'pto-protocol-sync-direct-repair-test',
+    'pto-protocol-sync-mixed-test',
     'pto-protocol-sync-one-shot-test',
     'pto-protocol-sync-ready-release-test',
     'pto-test-opt',

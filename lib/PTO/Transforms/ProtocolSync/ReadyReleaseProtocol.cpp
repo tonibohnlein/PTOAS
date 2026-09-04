@@ -255,12 +255,69 @@ bool validateEndpointShape(const SyncPhase& producer, const SyncPhase& consumer,
            consumer.iterationDomain.loops == producer.iterationDomain.loops;
 }
 
+const SyncGenerationTimeline* findTimeline(
+    const StorageTimelineAnalysisResult& timelines, SyncGenerationId generation)
+{
+    ArrayRef<SyncGenerationTimeline> records = timelines.getTimelines();
+    const bool validGeneration = generation < records.size() && records[generation].id == generation;
+    if (!validGeneration) {
+        return nullptr;
+    }
+    return &records[generation];
+}
+
+bool isReadyReleaseCandidate(const SyncGenerationTimeline& timeline, const SyncChannel& channel)
+{
+    return timeline.isAdmitted() && channel.isAdmitted() && channel.generation == timeline.id &&
+           channel.kind == SyncChannelKind::ReadyRelease &&
+           timeline.generationKind == SyncGenerationKind::LoopIteration && timeline.nextOverwrite &&
+           timeline.reuseDistance;
+}
+
+bool selectMixedCandidate(
+    const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
+    const SyncGenerationTimeline*& selectedTimeline, const SyncChannel*& selectedChannel)
+{
+    selectedTimeline = nullptr;
+    selectedChannel = nullptr;
+    for (const SyncChannel& channel : channels.getChannels()) {
+        const SyncGenerationTimeline* timeline = findTimeline(timelines, channel.generation);
+        if (!timeline || !isReadyReleaseCandidate(*timeline, channel)) {
+            continue;
+        }
+        if (selectedTimeline) {
+            return false;
+        }
+        selectedTimeline = timeline;
+        selectedChannel = &channel;
+    }
+    return selectedTimeline && selectedChannel;
+}
+
+bool loopContainsOnlyCandidatePhases(
+    const StructuredSyncIR& schedule, const SyncRegion& loopRegion, const SyncPhase& producer,
+    const SyncPhase& consumer, SyncStorageFamilyId family)
+{
+    const bool isolatedPhases = llvm::all_of(schedule.getPhases(), [&](const SyncPhase& phase) {
+        const bool inCandidateLoop = llvm::is_contained(phase.iterationDomain.loops, loopRegion.id);
+        return !inCandidateLoop || phase.id == producer.id || phase.id == consumer.id;
+    });
+    const bool isolatedFamily = llvm::all_of(schedule.getAccesses(), [&](const SyncAccess& access) {
+        if (access.family != family) {
+            return true;
+        }
+        const SyncPhase* phase = schedule.findPhase(access.phase);
+        return phase && llvm::is_contained(phase->iterationDomain.loops, loopRegion.id);
+    });
+    return isolatedPhases && isolatedFamily;
+}
+
 } // namespace
 
 FailureOr<SyncReadyReleasePlan> mlir::pto::protocol_sync::buildReadyReleaseProtocolPlan(
     const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
     const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
-    ProtocolSyncStatistics* statistics)
+    ProtocolSyncStatistics* statistics, SyncReadyReleasePlanningScope scope)
 {
     if (!schedule.isFrozen()) {
         return failure();
@@ -306,24 +363,32 @@ FailureOr<SyncReadyReleasePlan> mlir::pto::protocol_sync::buildReadyReleaseProto
             "ReadyRelease requires exact non-scalar GM effects on disjoint read-only and write-only families");
         return plan;
     }
-    const bool hasOneCandidate = timelines.getTimelines().size() == 1 && channels.getChannels().size() == 1;
-    if (!hasOneCandidate) {
+    const SyncGenerationTimeline* timelinePtr = nullptr;
+    const SyncChannel* channelPtr = nullptr;
+    if (scope == SyncReadyReleasePlanningScope::WholeFunction) {
+        const bool hasOneCandidate = timelines.getTimelines().size() == 1 && channels.getChannels().size() == 1;
+        if (!hasOneCandidate) {
+            reject(
+                plan, kInvalidSyncId, SyncReadyReleaseRejection::IncompleteChannelSet,
+                "the initial ReadyRelease slice requires exactly one local timeline and channel");
+            return plan;
+        }
+        timelinePtr = &timelines.getTimelines().front();
+        channelPtr = &channels.getChannels().front();
+    } else if (!selectMixedCandidate(timelines, channels, timelinePtr, channelPtr)) {
         reject(
             plan, kInvalidSyncId, SyncReadyReleaseRejection::IncompleteChannelSet,
-            "the initial ReadyRelease slice requires exactly one local timeline and channel");
+            "mixed selection requires exactly one complete ReadyRelease candidate");
         return plan;
     }
 
-    const SyncGenerationTimeline& timeline = timelines.getTimelines().front();
-    const SyncChannel& channel = channels.getChannels().front();
+    const SyncGenerationTimeline& timeline = *timelinePtr;
+    const SyncChannel& channel = *channelPtr;
     plan.channel = channel.id;
     plan.generation = timeline.id;
     plan.capacity = channel.capacity;
     plan.slot = timeline.slot;
-    const bool isReadyReleaseChannel =
-        timeline.isAdmitted() && channel.isAdmitted() && channel.generation == timeline.id &&
-        channel.kind == SyncChannelKind::ReadyRelease && timeline.generationKind == SyncGenerationKind::LoopIteration &&
-        timeline.nextOverwrite && timeline.reuseDistance;
+    const bool isReadyReleaseChannel = isReadyReleaseCandidate(timeline, channel);
     if (!isReadyReleaseChannel) {
         reject(
             plan, channel.id, SyncReadyReleaseRejection::NonReadyReleaseChannel,
@@ -355,8 +420,10 @@ FailureOr<SyncReadyReleasePlan> mlir::pto::protocol_sync::buildReadyReleaseProto
             "ReadyRelease requires an implicit single slot or exact unit-stride modulo-two selector");
         return plan;
     }
-    const bool hasExactEndpointSet = timeline.producers.size() == 1 && timeline.consumers.size() == 1 &&
-                                     schedule.getPhases().size() == 2 && stages.getStages().size() == 2;
+    const bool hasExactEndpointSet =
+        timeline.producers.size() == 1 && timeline.consumers.size() == 1 &&
+        (scope == SyncReadyReleasePlanningScope::MixedCandidate ||
+         (schedule.getPhases().size() == 2 && stages.getStages().size() == 2));
     if (!hasExactEndpointSet) {
         reject(
             plan, channel.id, SyncReadyReleaseRejection::UnsupportedFunctionShape,
@@ -374,6 +441,13 @@ FailureOr<SyncReadyReleasePlan> mlir::pto::protocol_sync::buildReadyReleaseProto
         reject(
             plan, channel.id, SyncReadyReleaseRejection::UnsupportedFunctionShape,
             "ReadyRelease endpoints must be distinct ordered pipes in one exact loop body and physical core");
+        return plan;
+    }
+    if (scope == SyncReadyReleasePlanningScope::MixedCandidate &&
+        !loopContainsOnlyCandidatePhases(schedule, *loopRegion, *producer, *consumer, timeline.family)) {
+        reject(
+            plan, channel.id, SyncReadyReleaseRejection::UnsupportedFunctionShape,
+            "mixed ReadyRelease requires an isolated carrier loop and confines its local family to that loop");
         return plan;
     }
     plan.core = producer->core;

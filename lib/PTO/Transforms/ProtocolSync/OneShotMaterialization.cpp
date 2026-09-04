@@ -26,6 +26,8 @@ namespace {
 using OneShotClock = std::chrono::steady_clock;
 constexpr StringLiteral kGeneratedAttr = "pto.protocol_sync.generated";
 constexpr StringLiteral kProtocolAttr = "pto.protocol_sync.protocol_id";
+constexpr StringLiteral kProtocolKindAttr = "pto.protocol_sync.protocol_kind";
+constexpr StringLiteral kOneShotKind = "one-shot";
 constexpr StringLiteral kRoleAttr = "pto.protocol_sync.role";
 constexpr StringLiteral kTailRole = "tail-drain";
 constexpr StringLiteral kSectionLocalTailAttr = "pto.auto_sync_tail_section_local";
@@ -39,12 +41,14 @@ void tagGenerated(Operation* operation, OpBuilder& builder, SyncOneShotProtocolI
 {
     operation->setAttr(kGeneratedAttr, builder.getUnitAttr());
     operation->setAttr(kProtocolAttr, builder.getI32IntegerAttr(static_cast<std::int32_t>(protocol)));
+    operation->setAttr(kProtocolKindAttr, builder.getStringAttr(kOneShotKind));
     operation->setAttr(kRoleAttr, builder.getStringAttr(role));
 }
 
 void tagTail(BarrierOp barrier, OpBuilder& builder, bool sectionLocal)
 {
     barrier->setAttr(kGeneratedAttr, builder.getUnitAttr());
+    barrier->setAttr(kProtocolKindAttr, builder.getStringAttr(kOneShotKind));
     barrier->setAttr(kRoleAttr, builder.getStringAttr(kTailRole));
     barrier->setAttr("pto.auto_sync_tail_barrier", builder.getUnitAttr());
     barrier->setAttr("pto.auto_sync_tail_hint", builder.getStringAttr("barrier_all"));

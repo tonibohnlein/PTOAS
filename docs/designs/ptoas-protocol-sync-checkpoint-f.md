@@ -93,9 +93,38 @@ directions, ordered-memory, ACC, visibility, unknown-alias, and other
 protocol-shaped obligations fail closed. Whole-function legacy fallback
 remains available and is explicitly attributed in statistics.
 
-## Deliberate Commit 14 boundary
+## Commit 14 mixed selection
 
-Commit 13 repairs an empty selected world only. It does not mix OneShot or
-ReadyRelease candidates with direct candidates and does not reverse-delete
-redundant recipes. Commit 14 will select a complete mixed world and remove only
-whole candidates whose deletion preserves completeness.
+`--protocol-sync-mixed` selects one complete protocol candidate when one is
+certified, interprets that logical world, and plans direct repair only for the
+remaining obligations. The current deterministic preference is a complete
+ReadyRelease candidate, then a complete one-shot candidate, then direct-only
+repair. ReadyRelease may coexist with exactly-once physical phases outside its
+carrier loop; no additional physical phase may execute in that loop.
+
+Before event allocation, the selector rebuilds and interprets the complete
+world after removing each direct candidate in reverse order and then the whole
+protocol candidate. A deletion is retained only when the resulting world is
+still complete. Direct recipes and ReadyRelease prime/body/drain actions are
+never split. The independent verifier repeats the essential-candidate checks
+and requires deterministic deletion accounting. Ordered completion and
+obligation indices keep each trial-world construction in `O(R log R)`; the
+mandated full interpreter run remains the dominant per-candidate work.
+
+Allocation is combined across the selected protocol and direct recipes. Event
+IDs owned by the protocol become reservations for direct repair, in addition
+to imported reservations. A failure clears the whole tentative allocation. If
+an optional protocol cannot allocate, selection is retried once without it;
+an incomplete or unallocatable retry uses the attributed whole-function
+fallback policy. The abandoned resource-infeasible plan is counted as a
+rejected attempt before retry.
+
+Materialization uses the existing whole-module transaction. One-shot,
+ReadyRelease, and direct actions carry disjoint ownership tags, each component
+verifier accepts only its own tags, and a final mixed verifier rejects unknown
+or multiply owned generated synchronization. The initial mixed surface still
+rejects multiple ReadyRelease candidates, extra recurring physical phases,
+the selected ReadyRelease family being accessed outside its carrier loop,
+visibility protocols, ordered/ACC effects, cross-core repair, and unsupported
+event directions. Unrelated outside-loop local families are not interpreted as
+part of the ReadyRelease protocol.

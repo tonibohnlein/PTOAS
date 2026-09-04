@@ -108,6 +108,8 @@ add_mlir_dialect_library(PTOTransforms
   ProtocolSync/DirectRepairDump.cpp
   ProtocolSync/DirectRepairMaterialization.cpp
   ProtocolSync/DirectRepairVerifier.cpp
+  ProtocolSync/MixedProtocolPlan.cpp
+  ProtocolSync/MixedProtocolVerifier.cpp
   ProtocolSync/PipelineStages.cpp
   ProtocolSync/OneShotMaterialization.cpp
   ProtocolSync/OneShotProtocol.cpp

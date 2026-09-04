@@ -27,6 +27,7 @@ configure_lit_site_cfg(
 set(PTOIR_TEST_DEPENDS
   ptoas_runtime_deps
   pto-protocol-sync-direct-repair-test
+  pto-protocol-sync-mixed-test
   pto-protocol-sync-one-shot-test
   pto-protocol-sync-ready-release-test
   pto-test-opt

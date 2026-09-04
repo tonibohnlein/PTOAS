@@ -111,6 +111,15 @@ LogicalResult applyDirectRepairCandidates(
     llvm::ArrayRef<SyncDirectCandidateId> selected, SyncSelectedWorld& world);
 LogicalResult allocateDirectRepairEvents(
     const StructuredSyncIR& schedule, SyncDirectRepairPlan& plan, ProtocolSyncStatistics* statistics = nullptr);
+LogicalResult allocateDirectRepairEvents(
+    const ProtocolSyncTarget& target, llvm::ArrayRef<SyncEventReservation> reservations,
+    SyncDirectRepairPlan& plan, ProtocolSyncStatistics* statistics = nullptr);
+
+/// Low-level emitter for a function inside caller-owned disposable staging IR.
+/// The caller must verify and discard the complete staging module on failure.
+LogicalResult materializeDirectRepairPlan(
+    func::FuncOp clone, const IRMapping& mapping, const SyncDirectRepairPlan& plan,
+    ProtocolSyncStatistics* statistics = nullptr);
 
 LogicalResult verifyDirectRepairMaterialization(
     const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,

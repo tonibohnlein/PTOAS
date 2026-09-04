@@ -248,20 +248,22 @@ void appendExitCandidates(ArrayRef<ExitGroup> groups, SyncDirectRepairPlan& plan
     }
 }
 
-bool sameCompletion(const SyncSelectedCompletion& first, const SyncSelectedCompletion& second)
+using CompletionKey = std::tuple<
+    SyncPhaseId, SyncPhaseId, SyncControlRelation, SyncIterationRelationKind, unsigned, SyncRegionId>;
+
+CompletionKey completionKey(const SyncSelectedCompletion& completion)
 {
-    return first.source == second.source && first.target == second.target && first.control == second.control &&
-           first.iteration.kind == second.iteration.kind && first.iteration.distance == second.iteration.distance &&
-           first.iteration.carrier == second.iteration.carrier;
+    return {
+        completion.source, completion.target, completion.control, completion.iteration.kind,
+        completion.iteration.distance, completion.iteration.carrier};
 }
 
-bool isReserved(const StructuredSyncIR& schedule, PIPE source, PIPE target, unsigned eventId)
+bool isReserved(
+    ArrayRef<SyncEventReservation> reservations, PIPE source, PIPE target, unsigned eventId)
 {
-    return llvm::any_of(schedule.getSummaries(), [&](const SyncOpSummary& summary) {
-        return llvm::any_of(summary.eventReservations, [&](const SyncEventReservation& reservation) {
-            return reservation.source == source && reservation.target == target &&
-                   llvm::is_contained(reservation.eventIds, eventId);
-        });
+    return llvm::any_of(reservations, [&](const SyncEventReservation& reservation) {
+        return reservation.source == source && reservation.target == target &&
+               llvm::is_contained(reservation.eventIds, eventId);
     });
 }
 
@@ -468,6 +470,12 @@ LogicalResult mlir::pto::protocol_sync::applyDirectRepairCandidates(
     }
     SyncSelectedWorld staged = world;
     llvm::BitVector selectedCandidates(plan.candidates.size());
+    std::set<CompletionKey> knownCompletions;
+    for (const SyncSelectedCompletion& completion : staged.completions) {
+        knownCompletions.insert(completionKey(completion));
+    }
+    std::set<SyncPhaseId> knownExitCompletions(
+        staged.exitCompletedPhases.begin(), staged.exitCompletedPhases.end());
     for (SyncDirectCandidateId candidateId : selected) {
         const bool invalidCandidate = candidateId >= plan.candidates.size() || selectedCandidates.test(candidateId);
         if (invalidCandidate) {
@@ -486,7 +494,7 @@ LogicalResult mlir::pto::protocol_sync::applyDirectRepairCandidates(
             }
             const SyncResidualObligation& obligation = obligations[obligationId];
             if (obligation.kind == SyncObligationKind::ExitCompletion) {
-                if (!llvm::is_contained(staged.exitCompletedPhases, obligation.source)) {
+                if (knownExitCompletions.insert(obligation.source).second) {
                     staged.exitCompletedPhases.push_back(obligation.source);
                 }
                 continue;
@@ -496,9 +504,7 @@ LogicalResult mlir::pto::protocol_sync::applyDirectRepairCandidates(
             }
             const SyncSelectedCompletion completion{
                 obligation.source, obligation.target, obligation.control, obligation.iteration};
-            if (!llvm::any_of(staged.completions, [&](const SyncSelectedCompletion& existing) {
-                    return sameCompletion(existing, completion);
-                })) {
+            if (knownCompletions.insert(completionKey(completion)).second) {
                 staged.completions.push_back(completion);
             }
         }
@@ -510,12 +516,27 @@ LogicalResult mlir::pto::protocol_sync::applyDirectRepairCandidates(
 LogicalResult mlir::pto::protocol_sync::allocateDirectRepairEvents(
     const StructuredSyncIR& schedule, SyncDirectRepairPlan& plan, ProtocolSyncStatistics* statistics)
 {
-    const bool validInput = schedule.isFrozen() && plan.status == SyncDirectRepairPlanStatus::Ready;
-    if (!validInput) {
+    if (!schedule.isFrozen()) {
         return failure();
     }
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
     if (!target.isSupported()) {
+        return failure();
+    }
+
+    SmallVector<SyncEventReservation, 8> reservations;
+    for (const SyncOpSummary& summary : schedule.getSummaries()) {
+        reservations.append(summary.eventReservations.begin(), summary.eventReservations.end());
+    }
+    return allocateDirectRepairEvents(target, reservations, plan, statistics);
+}
+
+LogicalResult mlir::pto::protocol_sync::allocateDirectRepairEvents(
+    const ProtocolSyncTarget& target, ArrayRef<SyncEventReservation> reservations,
+    SyncDirectRepairPlan& plan, ProtocolSyncStatistics* statistics)
+{
+    const bool canAllocate = target.isSupported() && plan.status == SyncDirectRepairPlanStatus::Ready;
+    if (!canAllocate) {
         return failure();
     }
     std::map<EventDomain, std::set<unsigned>> used;
@@ -528,7 +549,7 @@ LogicalResult mlir::pto::protocol_sync::allocateDirectRepairEvents(
         std::optional<unsigned> selected;
         for (unsigned eventId : target.getCompilerEventIds()) {
             const bool available = domain.count(eventId) == 0 &&
-                                   !isReserved(schedule, candidate.sourcePipe, candidate.targetPipe, eventId);
+                                   !isReserved(reservations, candidate.sourcePipe, candidate.targetPipe, eventId);
             if (available) {
                 selected = eventId;
                 break;

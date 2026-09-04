@@ -245,6 +245,10 @@ struct ProtocolSyncStatistics {
     std::uint64_t directRepairSharedCandidates = 0;
     std::uint64_t selectedDirectRepairs = 0;
     std::uint64_t directRepairUncovered = 0;
+    std::uint64_t mixedSelectionCandidates = 0;
+    std::uint64_t reverseDeletionAttempts = 0;
+    std::uint64_t reverseDeletionRemoved = 0;
+    std::uint64_t allocationRetries = 0;
     std::uint64_t eventDomains = 0;
     std::uint64_t maxEventDomainPressure = 0;
     std::uint64_t maximumEventIdPlusOne = 0;
