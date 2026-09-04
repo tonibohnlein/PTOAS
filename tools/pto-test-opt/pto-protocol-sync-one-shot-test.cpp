@@ -27,6 +27,7 @@
 
 #include <functional>
 #include <string>
+#include <utility>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -147,7 +148,7 @@ struct AnalysisFixture {
     {}
 };
 
-bool buildAnalysis(AnalysisFixture& fixture)
+bool buildAnalysis(AnalysisFixture& fixture, bool allocateEvents = true)
 {
     func::FuncOp function = fixture.schedule.getFunction();
     if (failed(fixture.adapter.buildSnapshot(function, fixture.legacy))) {
@@ -170,6 +171,9 @@ bool buildAnalysis(AnalysisFixture& fixture)
     if (failed(fixture.plan) || fixture.plan->status != SyncOneShotPlanStatus::Ready) {
         return false;
     }
+    if (!allocateEvents) {
+        return true;
+    }
     return succeeded(allocateOneShotProtocolEvents(fixture.schedule, *fixture.plan)) &&
            fixture.plan->status == SyncOneShotPlanStatus::Ready;
 }
@@ -181,16 +185,19 @@ bool testTargetContract(MLIRContext& context)
         return false;
     }
     func::FuncOp function = *module->getOps<func::FuncOp>().begin();
-    ProtocolSyncTarget target = ProtocolSyncTarget::resolve(function);
-    bool passed = check(target.isSupported(), "explicit A3 target was rejected");
+    ProtocolSyncTarget a3Target = ProtocolSyncTarget::resolve(function);
+    bool passed = check(a3Target.isSupported(), "explicit A3 target was rejected");
+    passed &= check(a3Target.getKind() == ProtocolSyncTargetKind::Npu2201A3, "A3 target kind changed");
+    passed &= check(a3Target.getName() == "npu2201-a3-protocol-sync-v1", "A3 target name changed");
+    passed &= check(a3Target.supportsReadyReleaseEmission(), "A3 ReadyRelease qualification disappeared");
     const auto cube = [](PIPE pipe) { return ProtocolSyncResource{SyncPhysicalCore::Cube, pipe}; };
-    passed &= check(!target.supportsEvent(cube(PIPE::PIPE_MTE1), cube(PIPE::PIPE_FIX)), "MTE1_FIX admitted");
-    passed &= check(!target.supportsEvent(cube(PIPE::PIPE_MTE3), cube(PIPE::PIPE_FIX)), "MTE3_FIX admitted");
-    passed &= check(!target.supportsEvent(cube(PIPE::PIPE_FIX), cube(PIPE::PIPE_MTE1)), "FIX_MTE1 admitted");
-    passed &= check(target.supportsEvent(cube(PIPE::PIPE_M), cube(PIPE::PIPE_FIX)), "M_FIX rejected");
-    passed &= check(target.supportsEvent(cube(PIPE::PIPE_MTE2), cube(PIPE::PIPE_FIX)), "MTE2_FIX rejected");
-    passed &= check(target.supportsEvent(cube(PIPE::PIPE_FIX), cube(PIPE::PIPE_MTE3)), "FIX_MTE3 rejected");
-    passed &= check(target.getCompilerEventIds() == ArrayRef<unsigned>({0, 1, 2, 3, 4, 5}), "event pool changed");
+    passed &= check(!a3Target.supportsEvent(cube(PIPE::PIPE_MTE1), cube(PIPE::PIPE_FIX)), "MTE1_FIX admitted");
+    passed &= check(!a3Target.supportsEvent(cube(PIPE::PIPE_MTE3), cube(PIPE::PIPE_FIX)), "MTE3_FIX admitted");
+    passed &= check(!a3Target.supportsEvent(cube(PIPE::PIPE_FIX), cube(PIPE::PIPE_MTE1)), "FIX_MTE1 admitted");
+    passed &= check(a3Target.supportsEvent(cube(PIPE::PIPE_M), cube(PIPE::PIPE_FIX)), "M_FIX rejected");
+    passed &= check(a3Target.supportsEvent(cube(PIPE::PIPE_MTE2), cube(PIPE::PIPE_FIX)), "MTE2_FIX rejected");
+    passed &= check(a3Target.supportsEvent(cube(PIPE::PIPE_FIX), cube(PIPE::PIPE_MTE3)), "FIX_MTE3 rejected");
+    passed &= check(a3Target.getCompilerEventIds() == ArrayRef<unsigned>({0, 1, 2, 3, 4, 5}), "event pool changed");
     passed &= check(
         stringifyProtocolSyncProducer(ProtocolSyncProducer::ProtocolPlan) == "protocol-plan",
         "protocol-plan producer spelling changed");
@@ -209,19 +216,123 @@ bool testTargetContract(MLIRContext& context)
         "internal-error producer spelling changed");
 
     module->getOperation()->setAttr("pto.target_arch", StringAttr::get(&context, "a2"));
-    passed &= check(!ProtocolSyncTarget::resolve(function).isSupported(), "unqualified A2 target was admitted");
-    module->getOperation()->setAttr("pto.target_arch", StringAttr::get(&context, "a3"));
-    for (StringRef deviceSpec : {"Ascend910", "Ascend910A", "Ascend910B1", "Ascend910B3", "Ascend910_1234"}) {
-        module->getOperation()->setAttr("pto.device-spec", StringAttr::get(&context, deviceSpec));
-        passed &= check(
-            !ProtocolSyncTarget::resolve(function).isSupported(),
-            Twine("unqualified device profile admitted: ") + deviceSpec);
+    ProtocolSyncTarget a2Target = ProtocolSyncTarget::resolve(function);
+    passed &= check(a2Target.isSupported(), "explicit A2 target was rejected");
+    passed &= check(a2Target.getKind() == ProtocolSyncTargetKind::Npu2201A2, "A2 target kind changed");
+    passed &= check(a2Target.getName() == "npu2201-a2-protocol-sync-v1", "A2 target name changed");
+    passed &= check(!a2Target.supportsReadyReleaseEmission(), "A2 ReadyRelease was admitted without qualification");
+    passed &= check(a2Target.getCompilerEventIds() == a3Target.getCompilerEventIds(), "A2/A3 event pools diverged");
+
+    constexpr PIPE cubeBarriers[] = {PIPE::PIPE_M, PIPE::PIPE_MTE1, PIPE::PIPE_MTE2, PIPE::PIPE_MTE3, PIPE::PIPE_FIX};
+    constexpr PIPE vectorBarriers[] = {PIPE::PIPE_V, PIPE::PIPE_MTE2, PIPE::PIPE_MTE3};
+    constexpr std::pair<PIPE, PIPE> cubeEvents[] = {
+        {PIPE::PIPE_M, PIPE::PIPE_MTE1},   {PIPE::PIPE_M, PIPE::PIPE_MTE2},    {PIPE::PIPE_M, PIPE::PIPE_FIX},
+        {PIPE::PIPE_MTE1, PIPE::PIPE_M},   {PIPE::PIPE_MTE1, PIPE::PIPE_MTE2}, {PIPE::PIPE_MTE1, PIPE::PIPE_MTE3},
+        {PIPE::PIPE_MTE2, PIPE::PIPE_M},   {PIPE::PIPE_MTE2, PIPE::PIPE_MTE1}, {PIPE::PIPE_MTE2, PIPE::PIPE_MTE3},
+        {PIPE::PIPE_MTE2, PIPE::PIPE_FIX}, {PIPE::PIPE_MTE3, PIPE::PIPE_MTE1}, {PIPE::PIPE_MTE3, PIPE::PIPE_MTE2},
+        {PIPE::PIPE_FIX, PIPE::PIPE_M},    {PIPE::PIPE_FIX, PIPE::PIPE_MTE2},  {PIPE::PIPE_FIX, PIPE::PIPE_MTE3}};
+    constexpr PIPE vectorEventPipes[] = {PIPE::PIPE_S, PIPE::PIPE_V, PIPE::PIPE_MTE2, PIPE::PIPE_MTE3};
+    constexpr SyncPhysicalCore cores[] = {SyncPhysicalCore::Cube, SyncPhysicalCore::Vector};
+    constexpr PIPE pipes[] = {PIPE::PIPE_S,    PIPE::PIPE_V,   PIPE::PIPE_M,   PIPE::PIPE_MTE1,      PIPE::PIPE_MTE2,
+                              PIPE::PIPE_MTE3, PIPE::PIPE_FIX, PIPE::PIPE_ALL, PIPE::PIPE_UNASSIGNED};
+    for (SyncPhysicalCore core : cores) {
+        for (PIPE pipe : pipes) {
+            const ProtocolSyncResource resource{core, pipe};
+            const bool expectedBarrier = core == SyncPhysicalCore::Cube ? llvm::is_contained(cubeBarriers, pipe) :
+                                                                          llvm::is_contained(vectorBarriers, pipe);
+            passed &= check(
+                a2Target.supportsPipeBarrier(resource) == expectedBarrier, "A2 barrier table differs from fixture");
+            passed &= check(
+                a3Target.supportsPipeBarrier(resource) == expectedBarrier, "A3 barrier table differs from fixture");
+            passed &= check(
+                a2Target.supportsPipeBarrier(resource) == a3Target.supportsPipeBarrier(resource),
+                "A2/A3 barrier tables diverged");
+            for (PIPE destination : pipes) {
+                const bool expectedEvent = core == SyncPhysicalCore::Cube ?
+                                               llvm::is_contained(cubeEvents, std::make_pair(pipe, destination)) :
+                                               pipe != destination && llvm::is_contained(vectorEventPipes, pipe) &&
+                                                   llvm::is_contained(vectorEventPipes, destination);
+                passed &= check(
+                    a2Target.supportsEvent(resource, {core, destination}) == expectedEvent,
+                    "A2 event table differs from fixture");
+                passed &= check(
+                    a3Target.supportsEvent(resource, {core, destination}) == expectedEvent,
+                    "A3 event table differs from fixture");
+                passed &= check(
+                    a2Target.supportsEvent(resource, {core, destination}) ==
+                        a3Target.supportsEvent(resource, {core, destination}),
+                    "A2/A3 event tables diverged");
+                const SyncPhysicalCore otherCore =
+                    core == SyncPhysicalCore::Cube ? SyncPhysicalCore::Vector : SyncPhysicalCore::Cube;
+                passed &= check(
+                    !a2Target.supportsEvent(resource, {otherCore, destination}) &&
+                        !a3Target.supportsEvent(resource, {otherCore, destination}),
+                    "cross-core pair entered the local event table");
+            }
+        }
+    }
+
+    for (StringRef arch : {"a2", "a3"}) {
+        module->getOperation()->setAttr("pto.target_arch", StringAttr::get(&context, arch));
+        for (StringRef deviceSpec : {"Ascend910", "Ascend910A", "Ascend910B1", "Ascend910B3", "Ascend910_1234"}) {
+            module->getOperation()->setAttr("pto.device-spec", StringAttr::get(&context, deviceSpec));
+            passed &= check(
+                !ProtocolSyncTarget::resolve(function).isSupported(),
+                Twine("unqualified device profile admitted: ") + deviceSpec);
+        }
     }
     module->getOperation()->setAttr("pto.device-spec", UnitAttr::get(&context));
     passed &= check(!ProtocolSyncTarget::resolve(function).isSupported(), "non-string device profile was admitted");
     module->getOperation()->removeAttr("pto.device-spec");
+    module->getOperation()->setAttr("pto.target_arch", StringAttr::get(&context, "a5"));
+    passed &= check(!ProtocolSyncTarget::resolve(function).isSupported(), "A5 target was admitted");
     module->getOperation()->removeAttr("pto.target_arch");
     passed &= check(!ProtocolSyncTarget::resolve(function).isSupported(), "attr-less target was admitted");
+    return passed;
+}
+
+bool testPlanTargetIdentity(MLIRContext& context, StringRef plannedArch, StringRef replayArch)
+{
+    OwningOpRef<ModuleOp> module = parseFixture(context);
+    if (!check(static_cast<bool>(module), "cannot parse target-identity fixture")) {
+        return false;
+    }
+    module->getOperation()->setAttr("pto.target_arch", StringAttr::get(&context, plannedArch));
+    func::FuncOp function = *module->getOps<func::FuncOp>().begin();
+    AnalysisFixture fixture(function);
+    const bool fixtureBuilt =
+        check(buildAnalysis(fixture, false), Twine("cannot build ") + plannedArch + " target-identity fixture");
+    if (fixtureBuilt == false) {
+        return false;
+    }
+    std::string planBefore;
+    llvm::raw_string_ostream planBeforeOutput(planBefore);
+    printOneShotProtocolPlan(function, *fixture.plan, planBeforeOutput);
+    planBeforeOutput.flush();
+    module->getOperation()->setAttr("pto.target_arch", StringAttr::get(&context, replayArch));
+    bool passed = check(
+        failed(allocateOneShotProtocolEvents(fixture.schedule, *fixture.plan)),
+        Twine(plannedArch) + " plan was allocated by the " + replayArch + " target");
+    std::string planAfter;
+    llvm::raw_string_ostream planAfterOutput(planAfter);
+    printOneShotProtocolPlan(function, *fixture.plan, planAfterOutput);
+    planAfterOutput.flush();
+    passed &= check(planAfter == planBefore, "target-identity allocation rejection mutated the plan");
+
+    module->getOperation()->setAttr("pto.target_arch", StringAttr::get(&context, plannedArch));
+    passed &= check(
+        succeeded(allocateOneShotProtocolEvents(fixture.schedule, *fixture.plan)),
+        Twine("cannot allocate ") + plannedArch + " target-identity fixture");
+    const std::string before = printFunction(function);
+    module->getOperation()->setAttr("pto.target_arch", StringAttr::get(&context, replayArch));
+    passed &= check(
+        failed(materializeAndVerifyOneShotProtocolPlan(fixture.schedule, *fixture.stages, *fixture.plan)),
+        Twine(plannedArch) + " plan was accepted by the " + replayArch + " target");
+    passed &= check(printFunction(function) == before, "staged target-identity rejection mutated the function");
+    passed &= check(
+        failed(materializeAndVerifyOneShotProtocolPlanInPlace(fixture.schedule, *fixture.stages, *fixture.plan)),
+        Twine(plannedArch) + " plan was accepted in place by the " + replayArch + " target");
+    passed &= check(printFunction(function) == before, "in-place target-identity rejection mutated the function");
     return passed;
 }
 
@@ -400,6 +511,7 @@ SyncOneShotPlan makeAllocationPlan(unsigned count, PIPE source, PIPE target)
 {
     SyncOneShotPlan plan;
     plan.status = SyncOneShotPlanStatus::Ready;
+    plan.targetKind = ProtocolSyncTargetKind::Npu2201A3;
     for (unsigned id = 0; id < count; ++id) {
         SyncOneShotProtocol protocol;
         protocol.id = id;
@@ -487,6 +599,8 @@ int main()
     registry.insert<arith::ArithDialect, func::FuncDialect, PTODialect, scf::SCFDialect>();
     MLIRContext context(registry);
     bool passed = testTargetContract(context);
+    passed &= testPlanTargetIdentity(context, "a3", "a2");
+    passed &= testPlanTargetIdentity(context, "a2", "a3");
     passed &= testVerifierRejectsMalformedPlans(context);
     passed &= testVerifierRejectsMalformedMaterializations(context);
     passed &= testVerifierRejectsDuplicateEventKey(context);

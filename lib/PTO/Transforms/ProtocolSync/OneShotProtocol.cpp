@@ -259,6 +259,7 @@ FailureOr<SyncOneShotPlan> mlir::pto::protocol_sync::buildOneShotProtocolPlan(
         reject(plan, kInvalidSyncId, SyncOneShotRejection::UnsupportedTarget, target.getUnsupportedReason());
         return plan;
     }
+    plan.targetKind = target.getKind();
     if (!schedule.getFailures().empty()) {
         reject(
             plan, kInvalidSyncId, SyncOneShotRejection::ScheduleFailure,
@@ -440,7 +441,8 @@ LogicalResult mlir::pto::protocol_sync::allocateOneShotProtocolEvents(
         return success();
     }
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
-    if (!target.isSupported()) {
+    const bool targetMatchesPlan = target.isSupported() && target.getKind() == plan.targetKind;
+    if (!targetMatchesPlan) {
         return failure();
     }
 
@@ -568,7 +570,7 @@ void mlir::pto::protocol_sync::printOneShotProtocolPlan(
     output << "PROTOCOL-SYNC one-shot-plan function=@" << function.getSymName()
            << " status=" << stringifySyncOneShotPlanStatus(plan.status) << " phases=" << plan.phaseOrder.size()
            << " protocols=" << plan.protocols.size() << " core=" << stringifySyncPhysicalCore(plan.functionCore)
-           << '\n';
+           << " target=" << stringifyProtocolSyncTargetKind(plan.targetKind) << '\n';
     for (const SyncOneShotProtocol& protocol : plan.protocols) {
         output << "  protocol #" << protocol.id << " kind=" << stringifySyncOneShotProtocolKind(protocol.kind)
                << " phases=#" << protocol.sourcePhase << "->#" << protocol.targetPhase

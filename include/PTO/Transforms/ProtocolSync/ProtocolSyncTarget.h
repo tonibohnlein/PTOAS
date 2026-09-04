@@ -22,7 +22,7 @@
 
 namespace mlir::pto::protocol_sync {
 
-enum class ProtocolSyncTargetKind : std::uint8_t { Npu2201A3, Unsupported };
+enum class ProtocolSyncTargetKind : std::uint8_t { Npu2201A2, Npu2201A3, Unsupported };
 
 struct ProtocolSyncResource {
     SyncPhysicalCore core = SyncPhysicalCore::Unknown;
@@ -33,12 +33,15 @@ struct ProtocolSyncResource {
 class ProtocolSyncTarget {
 public:
     static ProtocolSyncTarget resolve(func::FuncOp function);
-    bool isSupported() const { return kind == ProtocolSyncTargetKind::Npu2201A3; }
+    bool isSupported() const { return kind != ProtocolSyncTargetKind::Unsupported; }
+    /// Profile-level qualification for emitting a complete recurring protocol.
+    bool supportsReadyReleaseEmission() const { return kind == ProtocolSyncTargetKind::Npu2201A3; }
     ProtocolSyncTargetKind getKind() const { return kind; }
     llvm::StringRef getName() const { return name; }
     llvm::StringRef getUnsupportedReason() const { return unsupportedReason; }
     bool supportsPipeBarrier(ProtocolSyncResource resource) const;
     bool supportsEvent(ProtocolSyncResource source, ProtocolSyncResource target) const;
+    /// Primitive-level legality of both directed event transfers.
     bool supportsReadyRelease(SyncPhysicalCore core, PIPE producer, PIPE consumer) const;
     llvm::ArrayRef<unsigned> getCompilerEventIds() const { return compilerEventIds; }
 

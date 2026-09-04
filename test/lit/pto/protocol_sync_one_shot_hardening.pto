@@ -35,7 +35,7 @@
 
 // ATTRLESS: status=unsupported
 // ATTRLESS: reason=unsupported-target
-// ATTRLESS: requires explicit pto.target_arch = 'a3'
+// ATTRLESS: requires explicit pto.target_arch = 'a2' or 'a3'
 
 // MULTIPLE-SECTIONS: status=unsupported
 // MULTIPLE-SECTIONS: reason=mixed-physical-sections
@@ -63,7 +63,7 @@
 // VPTO: ProtocolSync one-shot mode found no complete supported plan
 // VPTO: "producer":"fail-closed-policy"
 
-// CLI-IMPLICIT: --protocol-sync-one-shot requires an explicit --pto-arch=a3
+// CLI-IMPLICIT: --protocol-sync-one-shot requires an explicit --pto-arch=a2 or --pto-arch=a3
 
 //--- queue.pto
 module attributes {pto.target_arch = "a3"} {

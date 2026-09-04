@@ -11,6 +11,10 @@
 // RUN:   > %t.ir 2> %t.diagnostics
 // RUN: FileCheck %s --input-file=%t.ir --check-prefix=IR
 // RUN: FileCheck %s --input-file=%t.diagnostics --check-prefix=DIAGNOSTICS
+// RUN: sed 's/pto.target_arch = "a3"/pto.target_arch = "a2"/' %s > %t.a2.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir \
+// RUN:   --protocol-sync-one-shot --protocol-sync-fallback=fail %t.a2.pto -o %t.a2
+// RUN: FileCheck %s --input-file=%t.a2 --check-prefix=A2
 
 module attributes {pto.target_arch = "a3"} {
   func.func @flat_cube(
@@ -68,3 +72,15 @@ module attributes {pto.target_arch = "a3"} {
 // IR-NEXT: pto.tstore
 // IR-NEXT: pto.barrier <PIPE_ALL>
 // IR-NEXT: return
+
+// A2-LABEL: func.func @flat_cube
+// A2: pto.barrier <PIPE_MTE2>
+// A2: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+// A2: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+// A2: pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+// A2: pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+// A2: pto.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+// A2: pto.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+// A2: pto.tstore
+// A2-NEXT: pto.barrier <PIPE_ALL>
+// A2-NEXT: return
