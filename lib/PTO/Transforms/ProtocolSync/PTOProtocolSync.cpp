@@ -866,7 +866,10 @@ private:
         }
         const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(function);
         const bool targetSupportsEmission =
-            target.isSupported() && (!emitReadyRelease || target.supportsReadyReleaseEmission());
+            (emitOneShot && target.supportsOneShotEmission()) ||
+            (emitReadyRelease && target.supportsReadyReleaseEmission()) ||
+            (emitDirectRepair && target.supportsDirectRepairEmission()) ||
+            (emitMixed && target.supportsMixedEmission());
         if (diagnosticRejected && targetSupportsEmission) {
             return handleUnsupported(function, result, "semantic-diagnostics", "unsupported", true, totalStart);
         }

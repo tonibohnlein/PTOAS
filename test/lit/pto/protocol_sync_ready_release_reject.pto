@@ -57,7 +57,7 @@
 
 // A2-FALLBACK: PROTOCOL-SYNC ready-release-plan function=@existing_sync status=unsupported
 // A2-FALLBACK: reason=unsupported-target
-// A2-FALLBACK-SAME: ReadyRelease emission is qualified only for the explicit ProtocolSync A3 target
+// A2-FALLBACK-SAME: target profile 'npu2201-a2-protocol-sync-v1' has no ProtocolSync ReadyRelease qualification record
 // A2-FALLBACK-NOT: legacy-fallback
 // A2-FALLBACK: "producer":"fail-closed-policy"
 

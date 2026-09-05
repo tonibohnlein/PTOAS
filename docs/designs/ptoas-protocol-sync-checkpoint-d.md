@@ -10,8 +10,8 @@ same-core, exactly-once, strictly linear sequences of exact physical phases.
 The profiles have distinct identities even though this checkpoint uses the
 same conservative barrier, directed-event, and compiler-event-ID tables for
 both. A3 one-shot emission passed the Checkpoint-D device gate. A2 one-shot
-emission is an opt-in simulator candidate until its separate campaign passes;
-it has no A2-silicon qualification. Every adjacent phase pair is
+emission passed a separate NPU-2201 simulator campaign through the explicit A2
+compiler path, but it has no A2-silicon qualification. Every adjacent phase pair is
 completion-ordered. This deliberately total phase chain makes the first emitted
 planner obligation-complete before the generation-aware residual-obligation
 interpreter exists.
@@ -64,16 +64,23 @@ ProtocolSync profile.
 
 A2 enablement is deliberately narrower than shared primitive legality.
 Checkpoint D one-shot plans may use the A2 profile, but Checkpoint E
-`ReadyRelease<1/2>` remains A3-only until recurring event generations are
-separately validated on a faithful A2 simulator. Simulator evidence can qualify
-the opt-in A2 compiler path for the tested one-shot subset; it cannot establish
-silicon performance or silicon qualification.
+`ReadyRelease<1/2>`, residual direct repair, and mixed planning remain A3-only
+until each mode is separately qualified. The A2 one-shot campaign established
+that the installed NPU-2201 model enforces matching directed set/wait events:
+removing a set or changing the wait ID deadlocked under a watchdog. That model
+has no A2-distinct identity, does not expose an instruction trace, and did not
+make removal of a same-pipe barrier observable. The resulting qualification is
+therefore limited to directed-event correctness on the shared NPU-2201
+simulator; it does not establish same-pipe barrier timing, A2 silicon behavior,
+performance, recurring protocols, cross-core synchronization, or GM
+publication.
 
-The A2 and A3 directed-event tables are the same explicit intersection of the
-NPU 2201 hardware matrix and the CANN 9.0 `HardEvent` ABI used by lowering. In
-particular, `MTE1_FIX`, `MTE3_FIX`, and `FIX_MTE1` are not exposed by that ABI
-and are not legal Checkpoint-D candidates even where a hardware overview
-describes a raw combination or no current application scenario.
+The A2 and A3 directed-event tables are the same conservative subset of the
+NPU 2201 hardware matrix and the CANN 9.0 `HardEvent` ABI used by lowering.
+Every retained direction is present in the installed ABI. `MTE3_FIX` is absent
+and therefore cannot be emitted. `MTE1_FIX` and `FIX_MTE1` are present in that
+ABI but remain deliberately unsupported by this checkpoint; declining those
+directions is conservative rather than an ABI requirement.
 
 The GM restriction is intentional. Pipeline completion alone is not a proof of
 scalar DataCache publication or of every DMA store/load visibility case.

@@ -110,6 +110,47 @@ ProtocolSyncTarget ProtocolSyncTarget::resolve(func::FuncOp function)
     return target;
 }
 
+bool ProtocolSyncTarget::supportsEmission(ProtocolSyncEmissionMode mode) const
+{
+    if (!isSupported()) {
+        return false;
+    }
+    switch (mode) {
+        case ProtocolSyncEmissionMode::OneShot:
+            return true;
+        case ProtocolSyncEmissionMode::ReadyRelease:
+        case ProtocolSyncEmissionMode::DirectRepair:
+        case ProtocolSyncEmissionMode::Mixed:
+            return kind == ProtocolSyncTargetKind::Npu2201A3;
+    }
+    return false;
+}
+
+std::string ProtocolSyncTarget::getUnsupportedReason(ProtocolSyncEmissionMode mode) const
+{
+    if (!isSupported()) {
+        return unsupportedReason;
+    }
+    StringRef modeName;
+    switch (mode) {
+        case ProtocolSyncEmissionMode::OneShot:
+            modeName = "one-shot";
+            break;
+        case ProtocolSyncEmissionMode::ReadyRelease:
+            modeName = "ReadyRelease";
+            break;
+        case ProtocolSyncEmissionMode::DirectRepair:
+            modeName = "direct-repair";
+            break;
+        case ProtocolSyncEmissionMode::Mixed:
+            modeName = "mixed";
+            break;
+    }
+    return (llvm::Twine("target profile '") + name + "' has no ProtocolSync " + modeName +
+            " qualification record")
+        .str();
+}
+
 bool ProtocolSyncTarget::supportsPipeBarrier(ProtocolSyncResource resource) const
 {
     return isSupported() && llvm::is_contained(barrierResources, resource);

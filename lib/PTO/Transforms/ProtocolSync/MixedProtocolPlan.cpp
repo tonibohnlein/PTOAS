@@ -552,11 +552,13 @@ FailureOr<SyncMixedProtocolPlan> mlir::pto::protocol_sync::buildMixedProtocolPla
         return failure();
     }
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
-    if (!target.isSupported()) {
+    if (!target.supportsMixedEmission()) {
         SyncMixedProtocolPlan plan;
         plan.protocolsEnabled = enableProtocols;
         plan.status = SyncMixedPlanStatus::Unsupported;
-        plan.failures.push_back({SyncMixedPlanRejection::UnsupportedTarget, target.getUnsupportedReason().str()});
+        plan.failures.push_back({
+            SyncMixedPlanRejection::UnsupportedTarget,
+            target.getUnsupportedReason(ProtocolSyncEmissionMode::Mixed)});
         return plan;
     }
 
@@ -800,7 +802,7 @@ LogicalResult mlir::pto::protocol_sync::allocateMixedProtocolEvents(
         return success();
     }
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
-    if (!target.isSupported()) {
+    if (!target.supportsMixedEmission()) {
         return failure();
     }
 

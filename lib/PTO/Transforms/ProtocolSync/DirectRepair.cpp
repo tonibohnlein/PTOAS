@@ -267,10 +267,11 @@ LogicalResult allocateDirectRepairEventsImpl(
     const ProtocolSyncTarget& target, ArrayRef<SyncEventReservation> reservations, const StructuredSyncIR* schedule,
     SyncDirectRepairPlan& plan, ProtocolSyncStatistics* statistics)
 {
-    const bool canAllocate = target.isSupported() && plan.status == SyncDirectRepairPlanStatus::Ready &&
-                             llvm::none_of(plan.candidates, [](const SyncDirectRepairCandidate& candidate) {
-                                 return candidate.eventId.has_value();
-                             });
+    const bool canAllocate =
+        target.supportsDirectRepairEmission() && plan.status == SyncDirectRepairPlanStatus::Ready &&
+        llvm::none_of(plan.candidates, [](const SyncDirectRepairCandidate& candidate) {
+            return candidate.eventId.has_value();
+        });
     if (!canAllocate) {
         return failure();
     }
@@ -340,10 +341,11 @@ FailureOr<SyncDirectRepairPlan> mlir::pto::protocol_sync::buildDirectRepairPlan(
     }
 
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
-    if (!target.isSupported()) {
+    if (!target.supportsDirectRepairEmission()) {
         plan.status = SyncDirectRepairPlanStatus::Unsupported;
-        plan.rejections.push_back(
-            {kInvalidSyncId, SyncDirectRepairRejection::UnsupportedTarget, target.getUnsupportedReason().str()});
+        plan.rejections.push_back({
+            kInvalidSyncId, SyncDirectRepairRejection::UnsupportedTarget,
+            target.getUnsupportedReason(ProtocolSyncEmissionMode::DirectRepair)});
         for (const SyncResidualObligation& obligation : obligations) {
             plan.uncoveredObligations.push_back(obligation.id);
         }
@@ -564,7 +566,7 @@ LogicalResult mlir::pto::protocol_sync::allocateDirectRepairEvents(
         return failure();
     }
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
-    if (!target.isSupported()) {
+    if (!target.supportsDirectRepairEmission()) {
         return failure();
     }
 

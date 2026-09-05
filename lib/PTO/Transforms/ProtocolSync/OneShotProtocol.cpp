@@ -245,8 +245,10 @@ FailureOr<SyncOneShotPlan> mlir::pto::protocol_sync::buildOneShotProtocolPlan(
 
     SyncOneShotPlan plan;
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
-    if (!target.isSupported()) {
-        reject(plan, kInvalidSyncId, SyncOneShotRejection::UnsupportedTarget, target.getUnsupportedReason());
+    if (!target.supportsOneShotEmission()) {
+        reject(
+            plan, kInvalidSyncId, SyncOneShotRejection::UnsupportedTarget,
+            target.getUnsupportedReason(ProtocolSyncEmissionMode::OneShot));
         return plan;
     }
     plan.targetKind = target.getKind();
@@ -431,7 +433,7 @@ LogicalResult mlir::pto::protocol_sync::allocateOneShotProtocolEvents(
         return success();
     }
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
-    const bool targetMatchesPlan = target.isSupported() && target.getKind() == plan.targetKind;
+    const bool targetMatchesPlan = target.supportsOneShotEmission() && target.getKind() == plan.targetKind;
     if (!targetMatchesPlan) {
         return failure();
     }

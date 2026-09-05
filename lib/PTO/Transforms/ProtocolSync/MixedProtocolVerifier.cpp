@@ -330,7 +330,7 @@ LogicalResult verifyReverseMinimality(
 LogicalResult verifyAllocationState(const StructuredSyncIR& schedule, const SyncMixedProtocolPlan& plan)
 {
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
-    if (!target.isSupported()) {
+    if (!target.supportsMixedEmission()) {
         return failure();
     }
     SmallVector<SyncEventReservation, 8> reservations;
@@ -489,7 +489,7 @@ LogicalResult mlir::pto::protocol_sync::verifyMixedProtocolPlan(
         return failure();
     }
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
-    if (!target.isSupported()) {
+    if (!target.supportsMixedEmission()) {
         return success(
             plan.status == SyncMixedPlanStatus::Unsupported && !plan.hasProtocol() &&
             plan.directRepair.candidates.empty() && hasOnlyFailure(plan, SyncMixedPlanRejection::UnsupportedTarget));

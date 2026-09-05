@@ -355,14 +355,10 @@ FailureOr<SyncReadyReleasePlan> mlir::pto::protocol_sync::buildReadyReleaseProto
 
     SyncReadyReleasePlan plan;
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
-    if (!target.isSupported()) {
-        reject(plan, kInvalidSyncId, SyncReadyReleaseRejection::UnsupportedTarget, target.getUnsupportedReason());
-        return plan;
-    }
     if (!target.supportsReadyReleaseEmission()) {
         reject(
             plan, kInvalidSyncId, SyncReadyReleaseRejection::UnsupportedTarget,
-            "ReadyRelease emission is qualified only for the explicit ProtocolSync A3 target");
+            target.getUnsupportedReason(ProtocolSyncEmissionMode::ReadyRelease));
         return plan;
     }
     if (schedule.getPhases().empty()) {
@@ -552,7 +548,7 @@ LogicalResult mlir::pto::protocol_sync::allocateReadyReleaseProtocolEvents(
     if (alreadyAllocated) {
         return failure();
     }
-    const bool targetSupportsProtocol = target.isSupported() && target.supportsReadyReleaseEmission() &&
+    const bool targetSupportsProtocol = target.supportsReadyReleaseEmission() &&
                                         target.supportsReadyRelease(plan.core, plan.producerPipe, plan.consumerPipe);
     if (!targetSupportsProtocol) {
         return failure();

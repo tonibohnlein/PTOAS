@@ -611,7 +611,7 @@ LogicalResult mlir::pto::protocol_sync::verifyReadyReleaseProtocolMaterializatio
 {
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
     FailureOr<ExpectedReadyRelease> expected = reconstructExpectedProtocol(schedule, stages);
-    const bool validInputs = target.isSupported() && target.supportsReadyReleaseEmission() && succeeded(expected);
+    const bool validInputs = target.supportsReadyReleaseEmission() && succeeded(expected);
     if (!validInputs) {
         return failure();
     }

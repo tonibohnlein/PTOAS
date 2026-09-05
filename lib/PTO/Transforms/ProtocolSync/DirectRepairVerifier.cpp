@@ -478,7 +478,7 @@ LogicalResult mlir::pto::protocol_sync::verifyDirectRepairPlan(
         }
     }
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
-    if (!target.isSupported()) {
+    if (!target.supportsDirectRepairEmission()) {
         const bool canonicalUncovered = llvm::all_of(llvm::enumerate(plan.uncoveredObligations), [](auto indexed) {
             return indexed.value() == indexed.index();
         });
@@ -487,7 +487,8 @@ LogicalResult mlir::pto::protocol_sync::verifyDirectRepairPlan(
             plan.uncoveredObligations.size() == obligations.size() && canonicalUncovered &&
             plan.rejections.size() == 1 && plan.rejections.front().obligation == kInvalidSyncId &&
             plan.rejections.front().reason == SyncDirectRepairRejection::UnsupportedTarget &&
-            plan.rejections.front().detail == target.getUnsupportedReason();
+            plan.rejections.front().detail ==
+                target.getUnsupportedReason(ProtocolSyncEmissionMode::DirectRepair);
         return success(validUnsupported);
     }
     if (plan.status == SyncDirectRepairPlanStatus::Unsupported) {

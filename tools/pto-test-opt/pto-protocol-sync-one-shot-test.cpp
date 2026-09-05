@@ -311,7 +311,7 @@ struct AnalysisFixture {
     {}
 };
 
-bool buildAnalysis(AnalysisFixture& fixture, bool allocateEvents = true)
+bool buildAnalysis(AnalysisFixture& fixture)
 {
     func::FuncOp function = fixture.schedule.getFunction();
     if (failed(fixture.adapter.buildSnapshot(function, fixture.legacy))) {
@@ -333,7 +333,7 @@ bool buildAnalysis(AnalysisFixture& fixture, bool allocateEvents = true)
     return true;
 }
 
-bool buildOneShotAnalysis(AnalysisFixture& fixture)
+bool buildOneShotAnalysis(AnalysisFixture& fixture, bool allocateEvents = true)
 {
     if (!buildAnalysis(fixture)) {
         return false;
@@ -360,7 +360,10 @@ bool testTargetContract(MLIRContext& context)
     bool passed = check(a3Target.isSupported(), "explicit A3 target was rejected");
     passed &= check(a3Target.getKind() == ProtocolSyncTargetKind::Npu2201A3, "A3 target kind changed");
     passed &= check(a3Target.getName() == "npu2201-a3-protocol-sync-v1", "A3 target name changed");
+    passed &= check(a3Target.supportsOneShotEmission(), "A3 one-shot qualification disappeared");
     passed &= check(a3Target.supportsReadyReleaseEmission(), "A3 ReadyRelease qualification disappeared");
+    passed &= check(a3Target.supportsDirectRepairEmission(), "A3 direct-repair qualification disappeared");
+    passed &= check(a3Target.supportsMixedEmission(), "A3 mixed qualification disappeared");
     const auto cube = [](PIPE pipe) { return ProtocolSyncResource{SyncPhysicalCore::Cube, pipe}; };
     passed &= check(!a3Target.supportsEvent(cube(PIPE::PIPE_MTE1), cube(PIPE::PIPE_FIX)), "MTE1_FIX admitted");
     passed &= check(!a3Target.supportsEvent(cube(PIPE::PIPE_MTE3), cube(PIPE::PIPE_FIX)), "MTE3_FIX admitted");
@@ -391,7 +394,11 @@ bool testTargetContract(MLIRContext& context)
     passed &= check(a2Target.isSupported(), "explicit A2 target was rejected");
     passed &= check(a2Target.getKind() == ProtocolSyncTargetKind::Npu2201A2, "A2 target kind changed");
     passed &= check(a2Target.getName() == "npu2201-a2-protocol-sync-v1", "A2 target name changed");
+    passed &= check(a2Target.supportsOneShotEmission(), "A2 one-shot qualification disappeared");
     passed &= check(!a2Target.supportsReadyReleaseEmission(), "A2 ReadyRelease was admitted without qualification");
+    passed &= check(
+        !a2Target.supportsDirectRepairEmission(), "A2 direct repair was admitted without qualification");
+    passed &= check(!a2Target.supportsMixedEmission(), "A2 mixed planning was admitted without qualification");
     passed &= check(a2Target.getCompilerEventIds() == a3Target.getCompilerEventIds(), "A2/A3 event pools diverged");
 
     constexpr PIPE cubeBarriers[] = {PIPE::PIPE_M, PIPE::PIPE_MTE1, PIPE::PIPE_MTE2, PIPE::PIPE_MTE3, PIPE::PIPE_FIX};
@@ -472,7 +479,7 @@ bool testPlanTargetIdentity(MLIRContext& context, StringRef plannedArch, StringR
     func::FuncOp function = *module->getOps<func::FuncOp>().begin();
     AnalysisFixture fixture(function);
     const bool fixtureBuilt =
-        check(buildAnalysis(fixture, false), Twine("cannot build ") + plannedArch + " target-identity fixture");
+        check(buildOneShotAnalysis(fixture, false), Twine("cannot build ") + plannedArch + " target-identity fixture");
     if (fixtureBuilt == false) {
         return false;
     }

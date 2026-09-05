@@ -24,6 +24,8 @@ namespace mlir::pto::protocol_sync {
 
 enum class ProtocolSyncTargetKind : std::uint8_t { Npu2201A2, Npu2201A3, Unsupported };
 
+enum class ProtocolSyncEmissionMode : std::uint8_t { OneShot, ReadyRelease, DirectRepair, Mixed };
+
 struct ProtocolSyncResource {
     SyncPhysicalCore core = SyncPhysicalCore::Unknown;
     PIPE pipe = PIPE::PIPE_UNASSIGNED;
@@ -34,11 +36,15 @@ class ProtocolSyncTarget {
 public:
     static ProtocolSyncTarget resolve(func::FuncOp function);
     bool isSupported() const { return kind != ProtocolSyncTargetKind::Unsupported; }
-    /// Profile-level qualification for emitting a complete recurring protocol.
-    bool supportsReadyReleaseEmission() const { return kind == ProtocolSyncTargetKind::Npu2201A3; }
+    bool supportsEmission(ProtocolSyncEmissionMode mode) const;
+    bool supportsOneShotEmission() const { return supportsEmission(ProtocolSyncEmissionMode::OneShot); }
+    bool supportsReadyReleaseEmission() const { return supportsEmission(ProtocolSyncEmissionMode::ReadyRelease); }
+    bool supportsDirectRepairEmission() const { return supportsEmission(ProtocolSyncEmissionMode::DirectRepair); }
+    bool supportsMixedEmission() const { return supportsEmission(ProtocolSyncEmissionMode::Mixed); }
     ProtocolSyncTargetKind getKind() const { return kind; }
     llvm::StringRef getName() const { return name; }
     llvm::StringRef getUnsupportedReason() const { return unsupportedReason; }
+    std::string getUnsupportedReason(ProtocolSyncEmissionMode mode) const;
     bool supportsPipeBarrier(ProtocolSyncResource resource) const;
     bool supportsEvent(ProtocolSyncResource source, ProtocolSyncResource target) const;
     /// Primitive-level legality of both directed event transfers.

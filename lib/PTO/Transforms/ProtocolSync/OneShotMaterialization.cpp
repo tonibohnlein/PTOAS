@@ -146,7 +146,7 @@ LogicalResult mlir::pto::protocol_sync::materializeAndVerifyOneShotProtocolPlan(
         return failure();
     }
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
-    const bool targetMatchesPlan = target.isSupported() && target.getKind() == plan.targetKind;
+    const bool targetMatchesPlan = target.supportsOneShotEmission() && target.getKind() == plan.targetKind;
     if (!targetMatchesPlan) {
         return failure();
     }
@@ -192,7 +192,7 @@ LogicalResult mlir::pto::protocol_sync::materializeAndVerifyOneShotProtocolPlanI
         return failure();
     }
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
-    const bool targetMatchesPlan = target.isSupported() && target.getKind() == plan.targetKind;
+    const bool targetMatchesPlan = target.supportsOneShotEmission() && target.getKind() == plan.targetKind;
     if (!targetMatchesPlan) {
         return failure();
     }

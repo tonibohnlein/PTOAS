@@ -403,7 +403,7 @@ LogicalResult mlir::pto::protocol_sync::verifyOneShotProtocolMaterialization(
 {
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
     FailureOr<VerifiedScheduleChain> chain = reconstructScheduleChain(schedule, stages);
-    const bool validInputs = target.isSupported() && verifyVisibilitySubset(schedule) && succeeded(chain);
+    const bool validInputs = target.supportsOneShotEmission() && verifyVisibilitySubset(schedule) && succeeded(chain);
     if (!validInputs) {
         return failure();
     }
