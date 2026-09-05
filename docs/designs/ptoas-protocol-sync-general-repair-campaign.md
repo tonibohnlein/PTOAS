@@ -111,3 +111,38 @@ Validation on 2026-09-06:
 
 Next is N0 collection/environment recovery and the four-way native baseline;
 N0 as a whole and the full campaign remain incomplete.
+
+### N0b — static frontend collection adapter accepted
+
+Built the frozen PyPTO snapshot's `pypto_core` incrementally in `build-corpus`
+with an isolated Python 3.14.6 environment, system-installed CPU torch 2.12.0,
+and nanobind. Initialized only the pinned libbacktrace, msgpack-c and Simpler
+source submodules. The first build exposed a missing Simpler header; after
+recovering that pinned source, the same targeted build resumed successfully.
+No frontend tracked source, unrelated checkout, or global environment changed.
+The build used two workers; nested libbacktrace make was explicitly limited to
+one worker via `CMAKE_BUILD_PARALLEL_LEVEL=1` at configuration time.
+
+The static adapter inventories 349 example/model entry seeds at these source
+revisions. This is not a generated-kernel count or a complete acceptance
+population: nested constructors, missing signature facts and parameterized tests
+still require collection work. Raw PTO comes from public pre-pass specialization
+and `ir.compile(skip_ptoas=True, memory_planner=PYPTO)`, not cached C++ or legacy
+synchronization. Partial outputs retain their failed parent record. Module
+imports execute trusted frontend top-level Python; the adapter never invokes
+the compiled kernel or a device runner.
+
+Both independent N0 reviewers accepted after fixing an implicit codegen thread
+pool: `PYPTO_CODEGEN_MAX_WORKERS=1` now accompanies the BLAS/OpenMP limits in
+both parent and standalone worker paths. Added source-file import verification,
+runtime/package/module provenance, syntax-error accounting and explicit scope
+documentation. The hello-world smoke emitted raw physically planned PTO.
+
+Validation on 2026-09-06: 36 stdlib experiment tests passed; focused evidence lit
+test passed; the 46-test ProtocolSync suite passed in 58.99 seconds without a
+new native build. Changed-code prefilter: four files, zero errors/warnings.
+Artifacts: `build/protocol-sync-collector-focused.json`,
+`build/protocol-sync-collector-suite.json`, and
+`build/protocol-sync-native-corpus/smoke-hello-world/`.
+No full system/device campaign was run. Next: execute collection and extend
+construction/parameterized adapters, preserving their separate denominators.

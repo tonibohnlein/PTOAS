@@ -9,6 +9,7 @@
 // for the full text of the License.
 
 // RUN: %python %S/../../experiments/protocol_sync/test_records.py
+// RUN: %python %S/../../experiments/protocol_sync/test_frontend_collection.py
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir \
 // RUN:   --enable-insert-sync --protocol-sync-analysis-only \
 // RUN:   --protocol-sync-dump=storage-tracks --protocol-sync-statistics \

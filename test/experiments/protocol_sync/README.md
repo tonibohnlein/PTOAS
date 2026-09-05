@@ -151,3 +151,34 @@ examples address the frozen 394-row manifest. Commands, raw diagnostics, output
 hashes and parent-campaign provenance are retained. Rejected analysis verdicts
 are not successes merely because the analysis process returned zero. This is
 host source generation, not device compilation or execution.
+
+## Frozen frontend collection
+
+`collect_frontend.py` inventories top-level and nested `pl.jit`/`pl.program`
+entries in the frozen PyPTO and PyPTO-Lib `examples/` and `models/` trees.
+This is a **static-entry adapter, not the parameterized test population**.
+Nested factories, unresolved signatures, failed imports/codegen, and the
+PyPTO-Lib documented `_draft.py` entries remain in `collection.json`.
+The generated-input manifest must be joined with that ledger for acceptance:
+partial outputs never turn a failed parent seed into a successful program.
+
+Use a clean snapshot with its own ABI-compatible `pypto_core` build and an
+isolated frontend Python. The worker uses public `specialize()` followed by
+`ir.compile(skip_ptoas=True, memory_planner=PYPTO)` on the A2/A3 frontend backend.
+It does not call kernel execution, InsertSync, or a cached compiled artifact.
+Importing these trusted source files still executes their top-level Python.
+Only source-backed full annotations and runtime scalar markers are used;
+missing shapes or constructor arguments are not guessed.
+
+```bash
+taskset -c 0,1 .venv/bin/python test/experiments/protocol_sync/collect_frontend.py \
+  --pypto-root build/protocol-sync-native-corpus/sources/pypto \
+  --lib-root build/protocol-sync-native-corpus/sources/pypto-lib \
+  --python build/protocol-sync-native-corpus/.venv/bin/python \
+  --results build/protocol-sync-native-corpus/static-n0
+```
+
+Collection is serial, with explicitly bounded codegen/BLAS worker counts.
+Artifacts include source commits/trees/submodules, extension/Python/CMake hashes,
+runtime package versions, script snapshots, per-seed commands and logs, unchanged
+raw PTO, and a hash manifest. No NPU correctness claim follows from collection.
