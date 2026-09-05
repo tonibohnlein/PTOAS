@@ -11,6 +11,7 @@
 //===- EventAllocation.cpp - Shared event lifetime allocation ----------===//
 
 #include "PTO/Transforms/ProtocolSync/EventAllocation.h"
+#include "PTO/Transforms/ProtocolSync/EventLifetime.h"
 
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
@@ -42,7 +43,8 @@ bool controlsAreMutuallyExclusive(ArrayRef<SyncControlAtom> first, ArrayRef<Sync
     });
 }
 
-bool generationsInterfere(const SyncEventGeneration& first, const SyncEventGeneration& second)
+bool generationsInterfere(
+    const SyncEventGeneration& first, const SyncEventGeneration& second, const SyncEventConsumptionOrder& order)
 {
     const bool differentDomain = eventDomain(first) != eventDomain(second);
     if (differentDomain) {
@@ -56,9 +58,9 @@ bool generationsInterfere(const SyncEventGeneration& first, const SyncEventGener
     }
     // Lexical wait-before-set order does not prove that an asynchronous target
     // pipeline consumed the first event before the source issues the next set.
-    // Reuse between coexecuting generations needs a future certified target
-    // happens-before relation; until then they conservatively interfere.
-    return true;
+    // A directed acknowledgement chain can prove consumption before rearm
+    // without moving either frontier or inserting additional ordering.
+    return !order.provesConsumedBeforeSet(first.id, second.id) && !order.provesConsumedBeforeSet(second.id, first.id);
 }
 
 bool isReserved(ArrayRef<SyncEventReservation> reservations, const SyncEventGeneration& generation, unsigned eventId)
@@ -282,6 +284,7 @@ FailureOr<SyncEventAllocationResult> mlir::pto::protocol_sync::allocateSyncEvent
     }
 
     SyncEventAllocationResult result;
+    const auto consumptionOrder = buildEventConsumptionOrder(generations);
     result.graphVertices = generations.size();
     result.eventIds.assign(generations.size(), 0);
     std::map<EventDomain, SmallVector<unsigned, 8>> domainVertices;
@@ -298,12 +301,11 @@ FailureOr<SyncEventAllocationResult> mlir::pto::protocol_sync::allocateSyncEvent
             ++result.searchLimitHits;
             return result;
         }
-        llvm::SmallVector<llvm::BitVector, 16> adjacency(
-            vertices.size(), llvm::BitVector(vertices.size()));
+        llvm::SmallVector<llvm::BitVector, 16> adjacency(vertices.size(), llvm::BitVector(vertices.size()));
         std::uint64_t domainEdges = 0;
         for (auto [firstPosition, first] : llvm::enumerate(vertices)) {
             for (auto [secondOffset, second] : llvm::enumerate(ArrayRef(vertices).drop_front(firstPosition + 1))) {
-                if (!generationsInterfere(generations[first], generations[second])) {
+                if (!generationsInterfere(generations[first], generations[second], consumptionOrder)) {
                     continue;
                 }
                 const unsigned secondPosition = firstPosition + secondOffset + 1;
@@ -319,8 +321,7 @@ FailureOr<SyncEventAllocationResult> mlir::pto::protocol_sync::allocateSyncEvent
             result.eventIds.clear();
             return result;
         }
-        const std::uint64_t completeEdgeCount =
-            static_cast<std::uint64_t>(vertices.size()) * (vertices.size() - 1) / 2;
+        const std::uint64_t completeEdgeCount = static_cast<std::uint64_t>(vertices.size()) * (vertices.size() - 1) / 2;
         if (domainEdges == 0) {
             for (unsigned vertex : vertices) {
                 result.eventIds[vertex] = colors.front();
@@ -338,8 +339,7 @@ FailureOr<SyncEventAllocationResult> mlir::pto::protocol_sync::allocateSyncEvent
             for (auto [position, vertex] : llvm::enumerate(vertices)) {
                 result.eventIds[vertex] = colors[position];
             }
-            result.maximumDomainPressure =
-                std::max<std::uint64_t>(result.maximumDomainPressure, vertices.size());
+            result.maximumDomainPressure = std::max<std::uint64_t>(result.maximumDomainPressure, vertices.size());
             continue;
         }
 
@@ -428,6 +428,7 @@ LogicalResult mlir::pto::protocol_sync::verifySyncEventGenerationAssignment(
     if (allocated != generations.size()) {
         return failure();
     }
+    const auto consumptionOrder = buildEventConsumptionOrder(generations);
     for (const SyncEventGeneration& generation : generations) {
         const unsigned eventId = *generation.eventId;
         const bool invalidId =
@@ -449,7 +450,7 @@ LogicalResult mlir::pto::protocol_sync::verifySyncEventGenerationAssignment(
         for (auto [position, first] : llvm::enumerate(vertices)) {
             for (unsigned second : ArrayRef(vertices).drop_front(position + 1)) {
                 const bool collides = generations[first].eventId == generations[second].eventId &&
-                                      generationsInterfere(generations[first], generations[second]);
+                                      generationsInterfere(generations[first], generations[second], consumptionOrder);
                 if (collides) {
                     return failure();
                 }

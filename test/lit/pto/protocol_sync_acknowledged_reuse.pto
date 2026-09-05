@@ -1,0 +1,63 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.a2.may-alias.pto
+// RUN: FileCheck %s --input-file=%t.a2.may-alias.pto
+// RUN: FileCheck %s --input-file=%t.a2.may-alias.pto --check-prefix=COUNT
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a2.may-alias.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFIED
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.a2.assume-disjoint-arguments.pto
+// RUN: FileCheck %s --input-file=%t.a2.assume-disjoint-arguments.pto
+// RUN: FileCheck %s --input-file=%t.a2.assume-disjoint-arguments.pto --check-prefix=COUNT
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a2.assume-disjoint-arguments.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFIED
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.a3.may-alias.pto
+// RUN: FileCheck %s --input-file=%t.a3.may-alias.pto
+// RUN: FileCheck %s --input-file=%t.a3.may-alias.pto --check-prefix=COUNT
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a3.may-alias.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFIED
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.a3.assume-disjoint-arguments.pto
+// RUN: FileCheck %s --input-file=%t.a3.assume-disjoint-arguments.pto
+// RUN: FileCheck %s --input-file=%t.a3.assume-disjoint-arguments.pto --check-prefix=COUNT
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a3.assume-disjoint-arguments.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFIED
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail %s -o %t.cpp
+
+// Seven forward generations exceed the six-ID pool without safe reuse.
+// Required reverse reclamation already acknowledges each consumption; no
+// frontier motion or additional serialization is needed to reuse event zero.
+// CHECK-LABEL: func.func @acknowledged_reuse
+// CHECK-NOT: EVENT_ID{{[1-9]}}
+// CHECK: return
+// COUNT-COUNT-7: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// COUNT-NOT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>
+// COUNT: return
+// VERIFIED: concrete-verification function=@acknowledged_reuse status=accepted
+
+module {
+  func.func @acknowledged_reuse(%input: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %offset = arith.constant 512 : i64
+    %a = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %offset : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+}

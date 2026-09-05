@@ -653,7 +653,7 @@ bool testVerifierRejectsMalformedMaterializations(MLIRContext& context)
     return passed;
 }
 
-bool testVerifierRequiresDistinctCoexecutingEvents(MLIRContext& context)
+bool testVerifierAcceptsAcknowledgedEventReuse(MLIRContext& context)
 {
     OwningOpRef<ModuleOp> module = parseFixture(context, kRepeatedDomainFixture);
     if (!check(static_cast<bool>(module), "cannot parse repeated-domain fixture")) {
@@ -671,9 +671,22 @@ bool testVerifierRequiresDistinctCoexecutingEvents(MLIRContext& context)
             repeatedDomain.push_back(&protocol);
         }
     }
+    const bool hasTwoForwardGenerations = repeatedDomain.size() == 2;
+    if (!check(hasTwoForwardGenerations, "expected two forward event generations")) {
+        return false;
+    }
+    // The historical OneShot builder already inserts a reverse handoff here.
+    // Its consumption acknowledgement, not lexical order, permits ID reuse.
+    // This reference builder is not the normal parallelism-first planner.
+    const bool hasAcknowledgement = llvm::any_of(fixture.plan->protocols, [&](const SyncOneShotProtocol& protocol) {
+        return protocol.kind == SyncOneShotProtocolKind::DirectedEvent && protocol.sourcePipe == PIPE::PIPE_V &&
+               protocol.targetPipe == PIPE::PIPE_MTE2 &&
+               protocol.sourceOperation == repeatedDomain[0]->targetOperation &&
+               protocol.targetOperation == repeatedDomain[1]->sourceOperation;
+    });
     if (!check(
-            repeatedDomain.size() == 2 && repeatedDomain[0]->eventId == 0 && repeatedDomain[1]->eventId == 1,
-            "coexecuting same-domain generations did not receive distinct event IDs")) {
+            hasAcknowledgement && repeatedDomain[0]->eventId == 0 && repeatedDomain[1]->eventId == 0,
+            "acknowledged same-domain generations did not reuse event zero")) {
         return false;
     }
 
@@ -691,7 +704,7 @@ bool testVerifierRequiresDistinctCoexecutingEvents(MLIRContext& context)
     }
     return check(
         succeeded(verifyOneShotProtocolMaterialization(fixture.schedule, *fixture.stages, clone, mapping)),
-        "verifier rejected distinct coexecuting same-domain event IDs");
+        "verifier rejected acknowledged reuse of a same-domain event ID");
 }
 
 SyncOneShotPlan makeAllocationPlan(unsigned count, PIPE source, PIPE target)
@@ -1213,7 +1226,7 @@ int main()
     passed &= testPlanSharedCapability(context, "a2", "a3");
     passed &= testVerifierRejectsMalformedPlans(context);
     passed &= testVerifierRejectsMalformedMaterializations(context);
-    passed &= testVerifierRequiresDistinctCoexecutingEvents(context);
+    passed &= testVerifierAcceptsAcknowledgedEventReuse(context);
     passed &= testEventAllocation(context);
     passed &= testControlExclusiveEventAllocation(context);
     passed &= testSelectedWorldInterpreter(context);

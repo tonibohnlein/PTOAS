@@ -14,6 +14,8 @@
 #include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/ProtocolSync/DirectRepair.h"
+#include "PTO/Transforms/ProtocolSync/ConcreteSyncVerifier.h"
+#include "PTO/Transforms/ProtocolSync/EventLifetime.h"
 #include "PTO/Transforms/ProtocolSync/ResidualObligation.h"
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -36,6 +38,8 @@ using namespace mlir::pto::protocol_sync;
 
 bool checkIndependentReadinessInterleavings(
     const StructuredSyncIR& schedule, SyncPhaseId first, SyncPhaseId second, bool& overlapWitness);
+bool checkStructuredFrontierInterleavings(
+    const StructuredSyncIR& schedule, unsigned trips, std::uint64_t choices, bool* unsafeWitness);
 
 namespace {
 
@@ -393,6 +397,185 @@ bool testSharedRepairAndMaterialization(MLIRContext& context)
     return testReadinessOverlapAndMutations(function) && passed;
 }
 
+std::string acknowledgedReuseFixture(bool insideLoop = false)
+{
+    std::string text = R"mlir(module attributes {pto.target_arch = "a3"} {
+      func.func @acknowledged_reuse(%input: !pto.partition_tensor_view<16x16xf16>)
+          attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+        %zero = arith.constant 0 : i64
+        %offset = arith.constant 512 : i64
+        %a = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 16x16xf16>
+        %b = pto.alloc_tile addr = %offset : !pto.tile_buf<vec, 16x16xf16>
+    )mlir";
+    if (insideLoop) {
+        text += "%lo = arith.constant 0 : index\n%hi = arith.constant 3 : index\n"
+                "%step = arith.constant 1 : index\nscf.for %i = %lo to %hi step %step {\n";
+    }
+    for (unsigned index = 0; index < 7; ++index) {
+        text += R"mlir(
+          pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+          pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+        )mlir";
+    }
+    return text + (insideLoop ? "}\nreturn\n}\n}\n" : "return\n}\n}\n");
+}
+
+bool testEventLoopAncestry(MLIRContext& context)
+{
+    auto module = parseFixture(context, acknowledgedReuseFixture(true));
+    if (!module) {
+        return false;
+    }
+    AnalysisFixture fixture(*module->getOps<func::FuncOp>().begin());
+    const bool analyzed = buildAnalysis(fixture) && fixture.schedule.getPhases().size() == 14;
+    if (!analyzed) {
+        return false;
+    }
+    SmallVector<SyncEventGeneration, 3> events;
+    for (unsigned index = 0; index < 3; ++index) {
+        const auto* source = fixture.schedule.findPhase(index);
+        const auto* target = fixture.schedule.findPhase(index + 1);
+        // Deliberately false metadata: actual ancestry must prevent reuse.
+        events.push_back(
+            {index,
+             SyncEventGenerationKind::DirectRepair,
+             source->core,
+             source->pipe,
+             target->pipe,
+             source->operation,
+             target->operation,
+             {},
+             kInvalidSyncId,
+             false,
+             0});
+    }
+    return check(
+        !buildEventConsumptionOrder(events).provesConsumedBeforeSet(0, 2),
+        "once-only event proof trusted metadata instead of actual loop ancestry");
+}
+
+bool testConsumptionProofBoundaries(const StructuredSyncIR& schedule)
+{
+    const bool expectedPhaseCount = schedule.getPhases().size() == 14;
+    if (!expectedPhaseCount) {
+        return false;
+    }
+    SmallVector<SyncEventGeneration, 16> events;
+    for (unsigned index = 0; index < 13; ++index) {
+        const auto* source = schedule.findPhase(index);
+        const auto* target = schedule.findPhase(index + 1);
+        events.push_back(
+            {index,
+             SyncEventGenerationKind::DirectRepair,
+             source->core,
+             source->pipe,
+             target->pipe,
+             source->operation,
+             target->operation,
+             {},
+             kInvalidSyncId,
+             false,
+             0});
+    }
+    const auto model = ProtocolSyncTarget::resolve(schedule.getFunction());
+    if (!check(
+            buildEventConsumptionOrder(events).provesConsumedBeforeSet(0, 2) &&
+                succeeded(verifySyncEventGenerationAssignment(model, {}, events, false)),
+            "acknowledgement did not prove consumption before reuse")) {
+        return false;
+    }
+    for (unsigned mutation = 0; mutation < 4; ++mutation) {
+        auto changed = events;
+        if (mutation == 0) {
+            changed.erase(std::next(changed.begin())); // Remove the acknowledgement.
+            for (auto [id, event] : llvm::enumerate(changed)) {
+                event.id = id;
+            }
+        } else if (mutation == 1) {
+            changed.front().recurring = true;
+        } else if (mutation == 2) {
+            changed.front().setAnchor = nullptr;
+        } else {
+            changed.front().guard.push_back({0, 0});
+        }
+        if (!check(
+                failed(verifySyncEventGenerationAssignment(model, {}, changed, false)),
+                "unproven event consumption must retain interference")) {
+            return false;
+        }
+    }
+    events.resize(129, events.front());
+    for (auto [id, event] : llvm::enumerate(events)) {
+        event.id = id;
+    }
+    return check(
+        !buildEventConsumptionOrder(events).provesConsumedBeforeSet(0, 2),
+        "bounded proof exhaustion must not invent consumption order");
+}
+
+bool testAcknowledgedEventReuse(MLIRContext& context)
+{
+    auto module = parseFixture(context, acknowledgedReuseFixture());
+    if (!module) {
+        return false;
+    }
+    auto function = *module->getOps<func::FuncOp>().begin();
+    AnalysisFixture fixture(function);
+    const bool validFixture = buildAnalysis(fixture) && testConsumptionProofBoundaries(fixture.schedule);
+    if (!validFixture) {
+        return false;
+    }
+    auto residuals = interpretEmpty(fixture);
+    if (failed(residuals)) {
+        return false;
+    }
+    auto plan = buildDirectRepairPlan(fixture.schedule, *fixture.stages, residuals->obligations);
+    ProtocolSyncStatistics statistics;
+    const bool allocated = succeeded(plan) && plan->isComplete() &&
+                           succeeded(allocateDirectRepairEvents(fixture.schedule, *plan, &statistics));
+    if (!check(
+            allocated && statistics.maxEventDomainPressure == 1,
+            "seven acknowledged generations must reuse one ID per direction")) {
+        return false;
+    }
+    if (failed(
+            materializeAndVerifyDirectRepairPlan(fixture.schedule, *fixture.stages, residuals->obligations, *plan))) {
+        return false;
+    }
+    AnalysisFixture emitted(function);
+    bool overlap = false;
+    if (!check(
+            buildAnalysis(emitted) && checkIndependentReadinessInterleavings(emitted.schedule, 0, 1, overlap),
+            "reused IDs must pass fresh concrete and independent asynchronous verification")) {
+        return false;
+    }
+    Operation* acknowledgement = nullptr;
+    function.walk([&](SetFlagOp set) {
+        const bool firstAcknowledgement = !acknowledgement && set.getSrcPipe().getPipe() == PIPE::PIPE_V;
+        if (firstAcknowledgement) {
+            acknowledgement = set;
+        }
+    });
+    WaitFlagOp consumption;
+    function.walk([&](WaitFlagOp wait) {
+        const bool firstConsumption = !consumption && wait.getSrcPipe().getPipe() == PIPE::PIPE_V;
+        if (firstConsumption) {
+            consumption = wait;
+        }
+    });
+    if (!check(acknowledgement && consumption, "missing acknowledgement actions")) {
+        return false;
+    }
+    consumption->erase();
+    acknowledgement->erase();
+    AnalysisFixture broken(function);
+    bool unsafeWitness = false;
+    return check(
+        buildAnalysis(broken) && failed(verifyFreshConcreteSyncSemantics(function)) &&
+            !checkStructuredFrontierInterleavings(broken.schedule, 0, 0, &unsafeWitness) && unsafeWitness,
+        "removed acknowledgement must invalidate concrete reuse and expose an unsafe execution");
+}
+
 bool testVerifierRollbackAndRecurrence(MLIRContext& context)
 {
     OwningOpRef<ModuleOp> module = parseFixture(context, kSharedFixture);
@@ -677,6 +860,8 @@ int main()
     passed &= testNonAdjacentSamePipe(context);
     passed &= testEventCapacity(context);
     passed &= testModuleAtomicity(context);
+    passed &= testAcknowledgedEventReuse(context);
+    passed &= testEventLoopAncestry(context);
     if (passed) {
         llvm::outs() << "protocol-sync direct independent readiness and overlap witness: pass\n";
         llvm::outs() << "protocol-sync direct full-world interpretation: pass\n";
@@ -686,6 +871,7 @@ int main()
         llvm::outs() << "protocol-sync direct event capacity: pass\n";
         llvm::outs() << "protocol-sync direct reservation allocation: pass\n";
         llvm::outs() << "protocol-sync direct module atomicity: pass\n";
+        llvm::outs() << "protocol-sync acknowledged event reuse and independent mutations: pass\n";
     }
     return passed ? 0 : 1;
 }

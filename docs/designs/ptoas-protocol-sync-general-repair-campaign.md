@@ -168,9 +168,67 @@ Validation on 2026-09-06:
 - Independent read-only algorithm and compiler-integration reviews by
   `campaign_n0_algorithm_review` and `campaign_n0_compiler_review`: accepted.
 
-Next is P2: certified event-generation death/reuse and honest pressure
+P2 follows with event-generation death/reuse and honest pressure
 classification. No serialized resource-recovery path is enabled by this slice.
 Selective structured admission and the frozen corpus closure remain unfinished.
+
+### P2a — once-only acknowledged event reuse
+
+`EventLifetime` proves event consumption using an action-order graph, separate
+from physical-memory completion. For each qualified logical handoff, its signal
+precedes its consuming wait. Strictly ordered synchronization actions on the
+same physical core and pipe supply further edges. The graph crosses directed
+event domains: a V-to-MTE2 acknowledgement can prove that an earlier MTE2-to-V
+wait consumed its token before MTE2 signals its next generation.
+
+Planned waits are before their target phases and signals after their source
+phases; concrete reconstruction uses the actual synchronization operations.
+Ambiguous same-point ties add no edges. Every edge advances lexical position or
+the before/after offset, so the proof cannot depend on a cyclic assumption about
+the assigned event ID. Safe sharing follows by induction over that order: every
+previous consumption precedes the next rearm. No signal/wait is moved or added.
+
+Scope is deliberately bounded: unguarded, non-recurring handoffs in a single-block
+function, with actual ancestry checked independently of generation metadata.
+Loops, choices, missing anchors, recurring protocol kinds, and more than 128
+total logical generations yield no new reuse proof. Conservative interference
+remains. An absent path is not proof of simultaneous liveness; the existing
+`ResourceInfeasible` result describes conservative graph coloring, not certified
+physical scarcity. P2b must establish that distinction before any serialization
+recovery is enabled.
+
+The regression has seven load/compute generations sharing exact local storage.
+Required reverse reclamation already acknowledges each forward acquisition.
+All seven forward generations and six reverse generations use one ID per
+direction. The native fixture is tested in A2/A3 and both GM contracts, with
+fresh concrete verification and C++ emission. The execution oracle checks safe
+reused generations and requires an actual unsafe witness when an acknowledgement
+is removed. Separate negatives cover absent acknowledgements, forged loop
+metadata, guards, missing anchors, and valid-ID inputs exceeding the proof cap.
+The P1 independent-readiness regression remains the check against newly added
+serialization. This is host/model evidence, not a device performance result.
+
+Validation over P0/P1 commit `ed7037859cc15faf717261fe714acd745afe2f15`
+on 2026-09-06:
+
+- Targeted two-worker build of `PTOASCompiler` and the direct, mixed,
+  loop-memory, OneShot, ReadyRelease, local-memory and scoreboard unit targets:
+  passed; no LLVM rebuild. The OneShot reference regression was updated to
+  explicitly check its existing reverse acknowledgement before expecting reuse.
+- With the workspace venv on PATH, `taskset -c 0,1 .venv/bin/python
+  /home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit -v -j1
+  build/test/lit --filter 'protocol_sync_' -o build/protocol-sync-p2a-tests.json`:
+  **48/48 passed**, 62.22 seconds. Result SHA-256:
+  `84687677044b976222749989a8bd34ff5f43a41ae6da4ec16c9c87b435a8027f`.
+  A subsequent named-boolean compliance cleanup changes no test semantics;
+  its affected OneShot target is rebuilt and rerun separately.
+- Changed-code compliance check: nine files, zero errors/warnings;
+  `git diff --check` passed. Independent algorithm and compiler-integration
+  reviews accepted this bounded slice. No full system/device or new corpus run.
+
+P2a does not finish P2: unknown interference and proof-budget exhaustion still
+need explicit propagation before any pressure-recovery policy is enabled.
+Selective loop/choice synthesis and complete frontend admission remain open.
 
 ### Historical N0 progress
 

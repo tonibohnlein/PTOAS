@@ -117,6 +117,7 @@ add_mlir_dialect_library(PTOTransforms
   ProtocolSync/DirectRepairMaterialization.cpp
   ProtocolSync/DirectRepairVerifier.cpp
   ProtocolSync/EventAllocation.cpp
+  ProtocolSync/EventLifetime.cpp
   ProtocolSync/GMAliasPolicy.cpp
   ProtocolSync/LocalAccessRegion.cpp
   ProtocolSync/LocalMemoryAnalysis.cpp

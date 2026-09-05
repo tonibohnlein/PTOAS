@@ -17,3 +17,4 @@
 // CHECK-NEXT: protocol-sync direct event capacity: pass
 // CHECK-NEXT: protocol-sync direct reservation allocation: pass
 // CHECK-NEXT: protocol-sync direct module atomicity: pass
+// CHECK-NEXT: protocol-sync acknowledged event reuse and independent mutations: pass

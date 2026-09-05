@@ -35,10 +35,11 @@ enum class SyncEventGenerationKind : std::uint8_t {
 
 /// One logical set/wait generation in a directed hardware-event domain.
 /// For once-only generations, setAnchor and waitAnchor denote the physical
-/// operations immediately before/after which the set and wait are emitted;
-/// they support materialization diagnostics, not lifetime reuse by lexical
-/// order. Recurring ReadyRelease lanes span their complete prime/body/drain
-/// protocol.
+/// source/target operations after/before which the set and wait are emitted.
+/// Concrete reconstruction instead supplies the actual set/wait operations.
+/// These points support a bounded event-action consumption proof, never reuse
+/// based on lexical cross-pipe wait-before-set order alone. Recurring
+/// ReadyRelease lanes span their complete prime/body/drain protocol.
 struct SyncEventGeneration {
     SyncEventGenerationId id = kInvalidSyncId;
     SyncEventGenerationKind kind = SyncEventGenerationKind::OneShot;
@@ -86,6 +87,8 @@ struct SyncEventAllocationResult {
 /// count with bounded deterministic DSATUR. A minimization limit preserves the
 /// feasible assignment. A feasibility/input limit reports AnalysisLimit and is
 /// never classified as hardware resource exhaustion.
+/// ResourceInfeasible refers to the conservative interference graph; it is not
+/// by itself a proof that target resources require added serialization.
 FailureOr<SyncEventAllocationResult> allocateSyncEventGenerations(
     const ProtocolSyncTarget& target, llvm::ArrayRef<SyncEventReservation> reservations,
     llvm::ArrayRef<SyncEventGeneration> generations, const SyncEventAllocationOptions& options = {});
