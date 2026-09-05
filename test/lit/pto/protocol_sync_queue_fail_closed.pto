@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=analysis dump=schedule' \
+// RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=RESIDUAL
+// RUN: not pto-test-opt \
+// RUN:   --pto-protocol-sync='execution-mode=direct-repair fallback-mode=fail' \
+// RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=DIRECT
+// RUN: not pto-test-opt \
+// RUN:   --pto-protocol-sync='execution-mode=mixed fallback-mode=fail' \
+// RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=MIXED
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @queue_phase_is_fixed_supply(
+      %gm_slots: memref<256xf32, #pto.address_space<gm>>, %peer: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %pipe = pto.initialize_l2g2l_pipe {
+      dir_mask = 1,
+      slot_size = 1024,
+      slot_num = 8,
+      local_slot_num = 8,
+      flag_base = 0
+    }(%gm_slots : memref<256xf32, #pto.address_space<gm>>,
+      %peer : i32) -> !pto.pipe
+    %tile = pto.alloc_tile : !pto.tile_buf<acc, 16x16xf32>
+    pto.tpush(%tile, %pipe : !pto.tile_buf<acc, 16x16xf32>, !pto.pipe) {split = 0}
+    return
+  }
+}
+
+// RESIDUAL-LABEL: PROTOCOL-SYNC schedule function=@queue_phase_is_fixed_supply
+// RESIDUAL: semantic-action #{{[0-9]+}} region=#{{[0-9]+}} op=pto.tpush
+// RESIDUAL: phase #{{[0-9]+}} region=#{{[0-9]+}} op=pto.tpush
+// DIRECT: ProtocolSync direct-repair mode found no complete supported plan
+// MIXED: ProtocolSync mixed mode found no complete supported plan

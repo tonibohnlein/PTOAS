@@ -74,6 +74,49 @@ bool sameCanonicalSlotExpression(const SyncSlotExpression& first, const SyncSlot
            first.coefficient == second.coefficient && first.offset == second.offset && first.modulus == second.modulus;
 }
 
+bool rangesOverlap(ArrayRef<SyncByteInterval> first, ArrayRef<SyncByteInterval> second)
+{
+    for (const SyncByteInterval& lhs : first) {
+        const bool invalidLeft = lhs.size == 0 || lhs.begin > std::numeric_limits<std::uint64_t>::max() - lhs.size;
+        if (invalidLeft) {
+            return true;
+        }
+        const std::uint64_t lhsEnd = lhs.begin + lhs.size;
+        for (const SyncByteInterval& rhs : second) {
+            const bool invalidRight = rhs.size == 0 || rhs.begin > std::numeric_limits<std::uint64_t>::max() - rhs.size;
+            if (invalidRight) {
+                return true;
+            }
+            const std::uint64_t rhsEnd = rhs.begin + rhs.size;
+            if (lhs.begin < rhsEnd && rhs.begin < lhsEnd) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool globalEffectsAreIndependentlyDisjoint(ArrayRef<const SyncAccess*> accesses)
+{
+    for (auto [index, first] : llvm::enumerate(accesses)) {
+        for (const SyncAccess* second : accesses.drop_front(index + 1)) {
+            const bool hasWrite = first->mode != SyncAccessMode::Read || second->mode != SyncAccessMode::Read;
+            if (!hasWrite || first->storage.space != second->storage.space) {
+                continue;
+            }
+            const bool exactDistinctRanges = first->family != second->family && first->storage.physical &&
+                                             second->storage.physical && !first->storage.unknownRange &&
+                                             !second->storage.unknownRange && !first->storage.aliasesUnknownRange &&
+                                             !second->storage.aliasesUnknownRange &&
+                                             !first->storage.intervals.empty() && !second->storage.intervals.empty();
+            if (!exactDistinctRanges || rangesOverlap(first->storage.intervals, second->storage.intervals)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 // Reconstruct capacity from the allocation itself so verification does not trust
 // the planner's cached storage-family metadata.
 std::optional<unsigned> getAllocationCapacity(Value root)
@@ -247,6 +290,7 @@ FailureOr<ExpectedReadyRelease> reconstructExpectedProtocol(
     }
 
     llvm::DenseMap<SyncStorageFamilyId, unsigned> globalModes;
+    llvm::SmallVector<const SyncAccess*, 8> globalAccesses;
     for (const SyncAccess& access : schedule.getAccesses()) {
         if (access.visibility == SyncVisibilityClass::Unknown || access.mode == SyncAccessMode::Ordered ||
             access.mode == SyncAccessMode::ReadWrite) {
@@ -262,7 +306,11 @@ FailureOr<ExpectedReadyRelease> reconstructExpectedProtocol(
             if (modes == 3U) {
                 return failure();
             }
+            globalAccesses.push_back(&access);
         }
+    }
+    if (!globalEffectsAreIndependentlyDisjoint(globalAccesses)) {
+        return failure();
     }
 
     ExpectedReadyRelease result;
@@ -310,8 +358,9 @@ LogicalResult collectConcreteProtocol(func::FuncOp clone, unsigned capacity, Con
             return;
         }
         auto kind = operation->getAttrOfType<StringAttr>(kProtocolKindAttr);
-        const bool belongsToOtherCandidate = operation->hasAttr(kDirectCandidateAttr) ||
-                                             (kind && kind.getValue() == "one-shot");
+        const bool belongsToOtherCandidate =
+            operation->hasAttr(kDirectCandidateAttr) ||
+            (kind && (kind.getValue() == "one-shot" || kind.getValue() == "one-shot-publish"));
         if (belongsToOtherCandidate) {
             return;
         }

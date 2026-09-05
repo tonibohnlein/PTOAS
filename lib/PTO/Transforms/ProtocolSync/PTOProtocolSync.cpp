@@ -52,13 +52,12 @@ void collectScheduleStatistics(const StructuredSyncIR& schedule, ProtocolSyncSta
         } else {
             ++statistics.knownRanges;
         }
-        if (!access.slot) {
-            ++statistics.depthOneAccesses;
-        } else if (access.slot->depth == 0) {
+        const SyncStorageFamily* family = schedule.findStorageFamily(access.family);
+        if (!family || !family->slotCount) {
             ++statistics.unknownCapacityAccesses;
-        } else if (access.slot->depth == 1) {
+        } else if (*family->slotCount == 1) {
             ++statistics.depthOneAccesses;
-        } else if (access.slot->depth == 2) {
+        } else if (*family->slotCount == 2) {
             ++statistics.depthTwoAccesses;
         }
         if (access.slot && access.slot->kind == SyncSlotExpressionKind::Unknown) {
@@ -113,6 +112,10 @@ void printStatistics(
     counts["channel_candidates_rejected"] = static_cast<std::int64_t>(statistics.channelCandidatesRejected);
     counts["interpreter_transitions"] = static_cast<std::int64_t>(statistics.interpreterTransitions);
     counts["interpreter_peak_states"] = static_cast<std::int64_t>(statistics.interpreterPeakStates);
+    counts["memory_pair_tests"] = static_cast<std::int64_t>(statistics.memoryPairTests);
+    counts["no_alias_results"] = static_cast<std::int64_t>(statistics.noAliasResults);
+    counts["may_alias_results"] = static_cast<std::int64_t>(statistics.mayAliasResults);
+    counts["unknown_alias_results"] = static_cast<std::int64_t>(statistics.unknownAliasResults);
     counts["token_certificate_transitions"] = static_cast<std::int64_t>(statistics.tokenCertificateTransitions);
     counts["protocol_candidates"] = static_cast<std::int64_t>(statistics.protocolCandidates);
     counts["protocol_plans_attempted"] = static_cast<std::int64_t>(statistics.protocolPlansAttempted);
@@ -131,6 +134,11 @@ void printStatistics(
     counts["mixed_selection_candidates"] = static_cast<std::int64_t>(statistics.mixedSelectionCandidates);
     counts["reverse_deletion_attempts"] = static_cast<std::int64_t>(statistics.reverseDeletionAttempts);
     counts["reverse_deletion_removed"] = static_cast<std::int64_t>(statistics.reverseDeletionRemoved);
+    counts["complete_worlds_attempted"] = static_cast<std::int64_t>(statistics.completeWorldsAttempted);
+    counts["complete_worlds_feasible"] = static_cast<std::int64_t>(statistics.completeWorldsFeasible);
+    counts["selected_world_event_pairs"] = static_cast<std::int64_t>(statistics.selectedWorldEventPairs);
+    counts["selected_world_targeted_barriers"] = static_cast<std::int64_t>(statistics.selectedWorldTargetedBarriers);
+    counts["selected_world_fixed_exit_drains"] = static_cast<std::int64_t>(statistics.selectedWorldFixedExitDrains);
     counts["allocation_retries"] = static_cast<std::int64_t>(statistics.allocationRetries);
     counts["event_domains"] = static_cast<std::int64_t>(statistics.eventDomains);
     counts["max_event_domain_pressure"] = static_cast<std::int64_t>(statistics.maxEventDomainPressure);
@@ -141,6 +149,7 @@ void printStatistics(
     counts["allocation_graph_vertices"] = static_cast<std::int64_t>(statistics.allocationGraphVertices);
     counts["allocation_graph_edges"] = static_cast<std::int64_t>(statistics.allocationGraphEdges);
     counts["allocation_backtracking_nodes"] = static_cast<std::int64_t>(statistics.allocationBacktrackingNodes);
+    counts["allocation_search_limit_hits"] = static_cast<std::int64_t>(statistics.allocationSearchLimitHits);
     counts["materialization_transitions"] = static_cast<std::int64_t>(statistics.materializationTransitions);
     counts["verifier_transitions"] = static_cast<std::int64_t>(statistics.verifierTransitions);
     record["counts"] = std::move(counts);
@@ -212,8 +221,7 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
         const bool emitMixed = executionMode == "mixed";
         if (!analysisOnly && !emitOneShot && !emitReadyRelease && !emitDirectRepair && !emitMixed) {
             getOperation().emitError("unknown ProtocolSync execution mode '")
-                << executionMode
-                << "'; expected 'analysis', 'one-shot', 'ready-release', 'direct-repair', or 'mixed'";
+                << executionMode << "'; expected 'analysis', 'one-shot', 'ready-release', 'direct-repair', or 'mixed'";
             signalPassFailure();
             return;
         }
@@ -514,16 +522,15 @@ private:
     LogicalResult emitMixedPlan(
         func::FuncOp function, const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
         const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
-        ProtocolSyncStatistics& result, ProtocolSyncClock::time_point totalStart)
+        const SyncSemanticContext& context, ProtocolSyncStatistics& result, ProtocolSyncClock::time_point totalStart)
     {
         ProtocolSyncClock::time_point start = ProtocolSyncClock::now();
         ++result.protocolPlansAttempted;
         FailureOr<SyncMixedProtocolPlan> plan =
             buildMixedProtocolPlan(schedule, stages, timelines, channels, true, &result);
         result.planningUs = elapsedMicroseconds(start);
-        const LogicalResult verified = failed(plan) ? failure()
-                                                    : verifyMixedProtocolPlan(
-                                                          schedule, stages, timelines, channels, *plan, &result);
+        const LogicalResult verified =
+            failed(plan) ? failure() : verifyMixedProtocolPlan(schedule, stages, timelines, channels, *plan, &result);
         if (failed(verified)) {
             result.totalUs = elapsedMicroseconds(totalStart);
             ++result.protocolPlansRejected;
@@ -542,8 +549,7 @@ private:
                 return failure.reason == SyncMixedPlanRejection::UnsupportedTarget;
             });
             result.totalUs = elapsedMicroseconds(totalStart);
-            return handleUnsupported(
-                function, result, "mixed-selection", "unsupported", !targetRejection, totalStart);
+            return handleUnsupported(function, result, "mixed-selection", "unsupported", !targetRejection, totalStart);
         }
         if (plan->status == SyncMixedPlanStatus::Empty) {
             ++result.protocolPlansAdmitted;
@@ -557,7 +563,8 @@ private:
         }
 
         start = ProtocolSyncClock::now();
-        if (failed(allocateMixedProtocolEvents(schedule, *plan, &result))) {
+        const bool selectionProvedResourceInfeasible = plan->status == SyncMixedPlanStatus::ResourceInfeasible;
+        if (!selectionProvedResourceInfeasible && failed(allocateMixedProtocolEvents(schedule, *plan, &result))) {
             result.allocationUs = elapsedMicroseconds(start);
             result.totalUs = elapsedMicroseconds(totalStart);
             ++result.protocolPlansRejected;
@@ -567,18 +574,18 @@ private:
             function.emitError("ProtocolSync mixed allocation failed internally");
             return failure();
         }
-        const bool retryAfterResourceFailure =
-            plan->status == SyncMixedPlanStatus::ResourceInfeasible && plan->hasProtocol();
+        const bool retryAfterResourceFailure = !selectionProvedResourceInfeasible &&
+                                               plan->status == SyncMixedPlanStatus::ResourceInfeasible &&
+                                               plan->hasProtocol();
         if (retryAfterResourceFailure) {
             ++result.allocationRetries;
             ++result.protocolPlansRejected;
             ++result.protocolPlansAttempted;
             FailureOr<SyncMixedProtocolPlan> retry =
                 buildMixedProtocolPlan(schedule, stages, timelines, channels, false, &result);
-            const LogicalResult retryVerified = failed(retry) ? failure()
-                                                              : verifyMixedProtocolPlan(
-                                                                    schedule, stages, timelines, channels,
-                                                                    *retry, &result);
+            const LogicalResult retryVerified =
+                failed(retry) ? failure() :
+                                verifyMixedProtocolPlan(schedule, stages, timelines, channels, *retry, &result);
             if (failed(retryVerified)) {
                 result.allocationUs = elapsedMicroseconds(start);
                 result.totalUs = elapsedMicroseconds(totalStart);
@@ -589,16 +596,15 @@ private:
                 function.emitError("ProtocolSync mixed allocation retry failed internally");
                 return failure();
             }
-            const LogicalResult retryAllocated = retry->isComplete()
-                                                     ? allocateMixedProtocolEvents(schedule, *retry, &result)
-                                                     : success();
+            const LogicalResult retryAllocated =
+                retry->isComplete() ? allocateMixedProtocolEvents(schedule, *retry, &result) : success();
             if (failed(retryAllocated)) {
                 result.allocationUs = elapsedMicroseconds(start);
                 result.totalUs = elapsedMicroseconds(totalStart);
                 ++result.protocolPlansRejected;
                 recordStatistics(
-                    function, result, "internal-error", "mixed-retry-allocation",
-                    ProtocolSyncProducer::InternalError, "internal-error");
+                    function, result, "internal-error", "mixed-retry-allocation", ProtocolSyncProducer::InternalError,
+                    "internal-error");
                 function.emitError("ProtocolSync mixed retry allocation failed internally");
                 return failure();
             }
@@ -614,8 +620,7 @@ private:
             const bool resourceInfeasible =
                 retryAfterResourceFailure || plan->status == SyncMixedPlanStatus::ResourceInfeasible;
             const StringRef reason = resourceInfeasible ? "resource-infeasible" : "unsupported";
-            return handleUnsupported(
-                function, result, "mixed-allocation", reason, true, totalStart);
+            return handleUnsupported(function, result, "mixed-allocation", reason, true, totalStart);
         }
         if (failed(verifyMixedProtocolPlan(schedule, stages, timelines, channels, *plan, &result))) {
             result.totalUs = elapsedMicroseconds(totalStart);
@@ -643,7 +648,7 @@ private:
         }
         ++result.protocolPlansAdmitted;
         if (failed(materializeAndVerifyMixedProtocolPlanInDisposableModule(
-                schedule, stages, timelines, channels, *plan, &result))) {
+                schedule, stages, timelines, channels, *plan, context, &result))) {
             result.totalUs = elapsedMicroseconds(totalStart);
             recordStatistics(
                 function, result, "internal-error", "mixed-materialization-verification",
@@ -652,8 +657,8 @@ private:
         }
         result.totalUs = elapsedMicroseconds(totalStart);
         recordStatistics(
-            function, result, "ok", "", ProtocolSyncProducer::ProtocolPlusDirectResiduals,
-            "materialized-mixed", "none", /*stagedMutation=*/true);
+            function, result, "ok", "", ProtocolSyncProducer::ProtocolPlusDirectResiduals, "materialized-mixed", "none",
+            /*stagedMutation=*/true);
         return success();
     }
 
@@ -867,7 +872,7 @@ private:
             return emitReadyReleasePlan(function, schedule, *stages, timelines, channels, result, totalStart);
         }
         if (emitMixed) {
-            return emitMixedPlan(function, schedule, *stages, timelines, channels, result, totalStart);
+            return emitMixedPlan(function, schedule, *stages, timelines, channels, context, result, totalStart);
         }
         if (emitDirectRepair) {
             return emitDirectRepairPlan(function, schedule, *stages, timelines, channels, result, totalStart);

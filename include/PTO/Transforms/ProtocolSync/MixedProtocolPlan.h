@@ -14,7 +14,7 @@
 #define PTO_TRANSFORMS_PROTOCOLSYNC_MIXEDPROTOCOLPLAN_H
 
 #include "PTO/Transforms/ProtocolSync/DirectRepair.h"
-#include "PTO/Transforms/ProtocolSync/OneShotProtocol.h"
+#include "PTO/Transforms/ProtocolSync/OneShotPublish.h"
 #include "PTO/Transforms/ProtocolSync/ReadyReleaseProtocol.h"
 
 #include <cstdint>
@@ -43,12 +43,27 @@ struct SyncMixedPlanFailure {
     std::string detail;
 };
 
+enum class SyncMixedWorldKind : std::uint8_t {
+    DirectOnly,
+    OneShotPublish,
+    ReadyRelease,
+    CombinedProtocols,
+};
+
+struct SyncMixedWorldCost {
+    std::uint64_t generatedEventPairs = 0;
+    std::uint64_t targetedBarriers = 0;
+    std::uint64_t fixedExitDrains = 0;
+    std::uint64_t eventPressure = 0;
+    std::uint64_t staticActions = 0;
+};
+
 /// A complete Checkpoint-F world. Protocol plans and direct recipes remain
 /// indivisible candidates: selection and reverse deletion never expose their
 /// individual materialized actions.
 struct SyncMixedProtocolPlan {
     SyncMixedPlanStatus status = SyncMixedPlanStatus::Empty;
-    std::optional<SyncOneShotPlan> oneShot;
+    std::optional<SyncOneShotPublishPlan> oneShot;
     std::optional<SyncReadyReleasePlan> readyRelease;
     llvm::SmallVector<SyncResidualObligation, 16> directObligations;
     SyncDirectRepairPlan directRepair;
@@ -57,6 +72,10 @@ struct SyncMixedProtocolPlan {
     std::uint64_t candidateCountBeforeDeletion = 0;
     std::uint64_t reverseDeletionAttempts = 0;
     std::uint64_t reverseDeletionRemoved = 0;
+    std::uint64_t completeWorldsAttempted = 0;
+    std::uint64_t completeWorldsFeasible = 0;
+    SyncMixedWorldKind selectedWorldKind = SyncMixedWorldKind::DirectOnly;
+    SyncMixedWorldCost selectedCost;
     bool protocolsEnabled = true;
     llvm::SmallVector<SyncMixedPlanFailure, 2> failures;
 
@@ -86,11 +105,13 @@ LogicalResult allocateMixedProtocolEvents(
 LogicalResult materializeAndVerifyMixedProtocolPlanInDisposableModule(
     const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
     const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
-    const SyncMixedProtocolPlan& plan, ProtocolSyncStatistics* statistics = nullptr);
+    const SyncMixedProtocolPlan& plan, const SyncSemanticContext& context,
+    ProtocolSyncStatistics* statistics = nullptr);
 
 void printMixedProtocolPlan(func::FuncOp function, const SyncMixedProtocolPlan& plan, llvm::raw_ostream& output);
 llvm::StringRef stringifySyncMixedPlanStatus(SyncMixedPlanStatus status);
 llvm::StringRef stringifySyncMixedPlanRejection(SyncMixedPlanRejection rejection);
+llvm::StringRef stringifySyncMixedWorldKind(SyncMixedWorldKind kind);
 
 } // namespace mlir::pto::protocol_sync
 

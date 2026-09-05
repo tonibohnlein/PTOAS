@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=analysis dump=residuals' \
+// RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=RESIDUAL
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=analysis statistics=1' \
+// RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=STATS
+// RUN: not pto-test-opt \
+// RUN:   --pto-protocol-sync='execution-mode=direct-repair fallback-mode=fail' \
+// RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=REJECT
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @distinct_gm_arguments_may_alias(
+      %first: !pto.partition_tensor_view<16x16xf16>,
+      %second: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %c512 = arith.constant 512 : i64
+    %source = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    %target = pto.alloc_tile addr = %c512 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%first : !pto.partition_tensor_view<16x16xf16>)
+    pto.tload ins(%second : !pto.partition_tensor_view<16x16xf16>)
+              outs(%target : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+}
+
+// RESIDUAL-LABEL: PROTOCOL-SYNC selected-world function=@distinct_gm_arguments_may_alias
+// RESIDUAL: kind=unknown-alias source=#0 target=#1
+// RESIDUAL-SAME: global or unknown storage may alias
+// STATS: "may_alias_results":0
+// STATS-SAME: "memory_pair_tests":1
+// STATS-SAME: "no_alias_results":0
+// STATS-SAME: "unknown_alias_results":1
+// REJECT: ProtocolSync direct-repair mode found no complete supported plan

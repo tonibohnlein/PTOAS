@@ -11,6 +11,7 @@
 #include "PTO/Transforms/ProtocolSync/OneShotProtocol.h"
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/ProtocolSync/EventAllocation.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -89,9 +90,8 @@ bool hasExcludedSemanticInput(const StructuredSyncIR& schedule)
         })) {
         return true;
     }
-    const unsigned physicalSections = llvm::count_if(schedule.getRegions(), [](const SyncRegion& region) {
-        return region.kind == SyncRegionKind::PhysicalSection;
-    });
+    const unsigned physicalSections = llvm::count_if(
+        schedule.getRegions(), [](const SyncRegion& region) { return region.kind == SyncRegionKind::PhysicalSection; });
     const bool unsupportedRegion = llvm::any_of(schedule.getRegions(), [](const SyncRegion& region) {
         return region.kind == SyncRegionKind::Choice || region.kind == SyncRegionKind::Alternative ||
                region.kind == SyncRegionKind::Loop;
@@ -189,8 +189,8 @@ struct ConcreteProtocol {
     Operation* wait = nullptr;
 };
 
-LogicalResult collectConcreteProtocols(func::FuncOp clone, unsigned boundaryCount,
-    llvm::DenseMap<SyncOneShotProtocolId, ConcreteProtocol>& records,
+LogicalResult collectConcreteProtocols(
+    func::FuncOp clone, unsigned boundaryCount, llvm::DenseMap<SyncOneShotProtocolId, ConcreteProtocol>& records,
     SmallVectorImpl<Operation*>& tailBarriers)
 {
     bool malformed = false;
@@ -201,8 +201,8 @@ LogicalResult collectConcreteProtocols(func::FuncOp clone, unsigned boundaryCoun
             return;
         }
         auto protocolKind = operation->getAttrOfType<StringAttr>(kProtocolKindAttr);
-        const bool belongsToOtherCandidate = operation->hasAttr(kDirectCandidateAttr) ||
-                                             (protocolKind && protocolKind.getValue() == kReadyReleaseKind);
+        const bool belongsToOtherCandidate =
+            operation->hasAttr(kDirectCandidateAttr) || (protocolKind && protocolKind.getValue() == kReadyReleaseKind);
         if (belongsToOtherCandidate) {
             return;
         }
@@ -283,8 +283,7 @@ LogicalResult verifyTail(
         return success(
             barrier && final->hasAttrOfType<UnitAttr>(kGeneratedAttr) && role && role.getValue() == kTailRole &&
             !final->hasAttr(kProtocolAttr) && kind && kind.getValue() == kOneShotKind &&
-            barrier.getPipe().getPipe() == PIPE::PIPE_ALL &&
-            final->hasAttrOfType<UnitAttr>(kSectionLocalTailAttr) &&
+            barrier.getPipe().getPipe() == PIPE::PIPE_ALL && final->hasAttrOfType<UnitAttr>(kSectionLocalTailAttr) &&
             tailBarriers.size() == 1 && tailBarriers.front() == final);
     }
 
@@ -297,9 +296,8 @@ LogicalResult verifyTail(
         auto role = previous ? previous->getAttrOfType<StringAttr>(kRoleAttr) : StringAttr();
         auto kind = previous ? previous->getAttrOfType<StringAttr>(kProtocolKindAttr) : StringAttr();
         const bool validTail = barrier && previous->hasAttrOfType<UnitAttr>(kGeneratedAttr) && role &&
-                               role.getValue() == kTailRole && !previous->hasAttr(kProtocolAttr) &&
-                               kind && kind.getValue() == kOneShotKind &&
-                               !previous->hasAttr(kSectionLocalTailAttr) &&
+                               role.getValue() == kTailRole && !previous->hasAttr(kProtocolAttr) && kind &&
+                               kind.getValue() == kOneShotKind && !previous->hasAttr(kSectionLocalTailAttr) &&
                                barrier.getPipe().getPipe() == PIPE::PIPE_ALL;
         if (!validTail) {
             invalid = true;
@@ -308,55 +306,45 @@ LogicalResult verifyTail(
     return success(!invalid && returnCount != 0 && tailBarriers.size() == returnCount);
 }
 
-std::uint64_t eventKey(SyncPhysicalCore core, PIPE source, PIPE target, unsigned eventId)
-{
-    return (static_cast<std::uint64_t>(core) << 24) | (static_cast<std::uint64_t>(source) << 16) |
-           (static_cast<std::uint64_t>(target) << 8) | eventId;
-}
-
-LogicalResult verifyBoundary(const StructuredSyncIR& schedule, const ProtocolSyncTarget& target,
-    const SyncPhase& expectedSource, const SyncPhase& expectedTarget, Operation* source,
-    Operation* destination, const ConcreteProtocol& record, llvm::DenseSet<std::uint64_t>& allocatedEvents)
+LogicalResult verifyBoundary(
+    const StructuredSyncIR& schedule, const ProtocolSyncTarget& target, const SyncPhase& expectedSource,
+    const SyncPhase& expectedTarget, Operation* source, Operation* destination, const ConcreteProtocol& record,
+    std::optional<unsigned>& eventId)
 {
     if (expectedSource.pipe == expectedTarget.pipe) {
         auto barrier = dyn_cast_or_null<BarrierOp>(record.barrier);
-        return success(barrier && !record.set && !record.wait &&
-                       barrier.getPipe().getPipe() == expectedSource.pipe &&
-                       target.supportsPipeBarrier({expectedSource.core, expectedSource.pipe}) &&
-                       destination->getPrevNode() == record.barrier);
+        return success(
+            barrier && !record.set && !record.wait && barrier.getPipe().getPipe() == expectedSource.pipe &&
+            target.supportsPipeBarrier({expectedSource.core, expectedSource.pipe}) &&
+            destination->getPrevNode() == record.barrier);
     }
 
     auto set = dyn_cast_or_null<SetFlagOp>(record.set);
     auto wait = dyn_cast_or_null<WaitFlagOp>(record.wait);
-    const bool validEvent = set && wait && !record.barrier &&
-                            set.getSrcPipe().getPipe() == expectedSource.pipe &&
-                            set.getDstPipe().getPipe() == expectedTarget.pipe &&
-                            wait.getSrcPipe().getPipe() == expectedSource.pipe &&
-                            wait.getDstPipe().getPipe() == expectedTarget.pipe &&
-                            set.getEventId().getEvent() == wait.getEventId().getEvent() &&
-                            source->getNextNode() == record.set && destination->getPrevNode() == record.wait &&
-                            isBefore(record.set, record.wait) &&
-                            target.supportsEvent(
-                                {expectedSource.core, expectedSource.pipe},
-                                {expectedTarget.core, expectedTarget.pipe});
+    const bool validEvent =
+        set && wait && !record.barrier && set.getSrcPipe().getPipe() == expectedSource.pipe &&
+        set.getDstPipe().getPipe() == expectedTarget.pipe && wait.getSrcPipe().getPipe() == expectedSource.pipe &&
+        wait.getDstPipe().getPipe() == expectedTarget.pipe &&
+        set.getEventId().getEvent() == wait.getEventId().getEvent() && source->getNextNode() == record.set &&
+        destination->getPrevNode() == record.wait && isBefore(record.set, record.wait) &&
+        target.supportsEvent({expectedSource.core, expectedSource.pipe}, {expectedTarget.core, expectedTarget.pipe});
     if (!validEvent) {
         return failure();
     }
 
-    const unsigned eventId = static_cast<unsigned>(set.getEventId().getEvent());
-    return success(llvm::is_contained(target.getCompilerEventIds(), eventId) &&
-                   !isReserved(schedule, expectedSource.pipe, expectedTarget.pipe, eventId) &&
-                   allocatedEvents
-                       .insert(eventKey(expectedSource.core, expectedSource.pipe, expectedTarget.pipe, eventId))
-                       .second);
+    eventId = static_cast<unsigned>(set.getEventId().getEvent());
+    return success(
+        llvm::is_contained(target.getCompilerEventIds(), *eventId) &&
+        !isReserved(schedule, expectedSource.pipe, expectedTarget.pipe, *eventId));
 }
 
-LogicalResult verifyBoundaries(const StructuredSyncIR& schedule, const ProtocolSyncTarget& target,
-    const VerifiedScheduleChain& chain, const IRMapping& mapping,
-    const llvm::DenseMap<SyncOneShotProtocolId, ConcreteProtocol>& records, ProtocolSyncStatistics* statistics)
+LogicalResult verifyBoundaries(
+    const StructuredSyncIR& schedule, const ProtocolSyncTarget& target, const VerifiedScheduleChain& chain,
+    const IRMapping& mapping, const llvm::DenseMap<SyncOneShotProtocolId, ConcreteProtocol>& records,
+    ProtocolSyncStatistics* statistics)
 {
     unsigned expectedConcreteRecords = 0;
-    llvm::DenseSet<std::uint64_t> allocatedEvents;
+    SmallVector<SyncEventGeneration, 8> generations;
     for (unsigned index = 0; index + 1 < chain.phases.size(); ++index) {
         const SyncPhase& expectedSource = *chain.phases[index];
         const SyncPhase& expectedTarget = *chain.phases[index + 1];
@@ -374,18 +362,37 @@ LogicalResult verifyBoundaries(const StructuredSyncIR& schedule, const ProtocolS
             }
         } else {
             ++expectedConcreteRecords;
-            const bool validBoundary = found != records.end() &&
-                                       succeeded(verifyBoundary(schedule, target, expectedSource, expectedTarget,
-                                           source, destination, found->second, allocatedEvents));
+            std::optional<unsigned> eventId;
+            const bool validBoundary = found != records.end() && succeeded(verifyBoundary(
+                                                                     schedule, target, expectedSource, expectedTarget,
+                                                                     source, destination, found->second, eventId));
             if (!validBoundary) {
                 return failure();
+            }
+            if (eventId) {
+                SyncEventGeneration generation;
+                generation.id = generations.size();
+                generation.kind = SyncEventGenerationKind::OneShot;
+                generation.core = expectedSource.core;
+                generation.sourcePipe = expectedSource.pipe;
+                generation.targetPipe = expectedTarget.pipe;
+                generation.setAnchor = expectedSource.operation;
+                generation.waitAnchor = expectedTarget.operation;
+                generation.eventId = eventId;
+                generations.push_back(std::move(generation));
             }
         }
         if (statistics) {
             ++statistics->verifierTransitions;
         }
     }
-    return success(records.size() == expectedConcreteRecords);
+    SmallVector<SyncEventReservation, 8> reservations;
+    for (const SyncOpSummary& summary : schedule.getSummaries()) {
+        reservations.append(summary.eventReservations.begin(), summary.eventReservations.end());
+    }
+    return success(
+        records.size() == expectedConcreteRecords &&
+        succeeded(verifySyncEventGenerationAssignment(target, reservations, generations, false)));
 }
 
 } // namespace

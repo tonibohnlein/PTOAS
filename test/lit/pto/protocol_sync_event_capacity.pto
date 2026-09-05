@@ -20,7 +20,7 @@
 // RUN: pto-test-opt \
 // RUN:   --pto-protocol-sync='execution-mode=mixed dump=plan statistics=1' \
 // RUN:   %s -o %t.mixed.ir 2> %t.mixed.log
-// RUN: FileCheck %s --input-file=%t.mixed.log --check-prefix=MIXED-RETRY
+// RUN: FileCheck %s --input-file=%t.mixed.log --check-prefix=MIXED-SCARCITY
 // RUN: FileCheck %s --input-file=%t.mixed.ir --check-prefix=MIXED-IR
 
 module attributes {pto.target_arch = "a3"} {
@@ -102,10 +102,15 @@ module attributes {pto.target_arch = "a3"} {
   }
 }
 
-// STRICT: status=unsupported
+// STRICT: PROTOCOL-SYNC one-shot-plan function=@seven_mte2_to_vector_generations status=unsupported
+// STRICT: protocol #0 kind=directed-event phases=#0->#1
+// STRICT-SAME: event-id=none
+// STRICT: protocol #2 kind=directed-event phases=#2->#3
+// STRICT-SAME: event-id=none
 // STRICT: reason=event-capacity
-// STRICT: "fallback":"disabled"
-// STRICT-SAME: "producer":"fail-closed-policy"
+// STRICT: "max_event_domain_pressure":6
+// STRICT-SAME: "maximum_event_id":-1
+// STRICT-SAME: "planner_result":"unsupported"
 // STRICT-SAME: "status":"unsupported"
 // FALLBACK: "fallback":"resource-infeasible"
 // FALLBACK-SAME: "planner_result":"legacy-fallback-resource-infeasible"
@@ -113,24 +118,22 @@ module attributes {pto.target_arch = "a3"} {
 // FALLBACK-SAME: "status":"ok"
 // DIRECT-STRICT: PROTOCOL-SYNC direct-repair function=@seven_mte2_to_vector_generations
 // DIRECT-STRICT-SAME: status=resource-infeasible
+// DIRECT-STRICT: candidate #0 kind=directed-event
+// DIRECT-STRICT-SAME: event=unallocated
+// DIRECT-STRICT: candidate #1 kind=directed-event
+// DIRECT-STRICT-SAME: event=unallocated
 // DIRECT-STRICT: reason=event-capacity
-// DIRECT-STRICT-NOT: event=6
-// DIRECT-STRICT-NOT: event=7
-// DIRECT-STRICT: "fallback":"disabled"
-// DIRECT-STRICT-SAME: "producer":"fail-closed-policy"
+// DIRECT-STRICT: "planner_result":"unsupported"
 // DIRECT-FALLBACK: "fallback":"resource-infeasible"
 // DIRECT-FALLBACK-SAME: "planner_result":"legacy-fallback-resource-infeasible"
 // DIRECT-FALLBACK-SAME: "producer":"legacy-fallback-resource-infeasible"
-// MIXED-RETRY: PROTOCOL-SYNC mixed-plan function=@seven_mte2_to_vector_generations
-// MIXED-RETRY-SAME: status=resource-infeasible protocol=none
-// MIXED-RETRY: event=unallocated
-// MIXED-RETRY-NOT: event={{[0-9]+}}
-// MIXED-RETRY: "allocation_retries":1
-// MIXED-RETRY-SAME: "protocol_plans_admitted":0
-// MIXED-RETRY-SAME: "protocol_plans_attempted":2
-// MIXED-RETRY-SAME: "protocol_plans_rejected":2
-// MIXED-RETRY-SAME: "fallback":"resource-infeasible"
-// MIXED-RETRY-SAME: "planner_result":"legacy-fallback-resource-infeasible"
-// MIXED-RETRY-SAME: "producer":"legacy-fallback-resource-infeasible"
+// MIXED-SCARCITY: PROTOCOL-SYNC mixed-plan function=@seven_mte2_to_vector_generations
+// MIXED-SCARCITY-SAME: status=resource-infeasible world=direct-only
+// MIXED-SCARCITY-SAME: worlds-attempted=16 worlds-feasible=0
+// MIXED-SCARCITY: reason=event-capacity
+// MIXED-SCARCITY: "allocation_retries":0
+// MIXED-SCARCITY-SAME: "fallback":"resource-infeasible"
+// MIXED-SCARCITY-SAME: "planner_result":"legacy-fallback-resource-infeasible"
+// MIXED-SCARCITY-SAME: "status":"ok"
 // MIXED-IR-LABEL: func.func @seven_mte2_to_vector_generations
 // MIXED-IR-NOT: pto.protocol_sync.generated

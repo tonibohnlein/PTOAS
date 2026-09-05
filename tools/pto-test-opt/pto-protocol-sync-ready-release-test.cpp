@@ -23,6 +23,7 @@
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <functional>
@@ -173,7 +174,36 @@ bool buildAnalysis(AnalysisFixture& fixture, bool allocate)
     if (failed(fixture.adapter.buildSnapshot(function, fixture.legacy))) {
         return false;
     }
-    fixture.semanticContext = fixture.adapter.buildSemanticContext(fixture.legacy);
+    SyncSemanticContext sourceContext = fixture.adapter.buildSemanticContext(fixture.legacy);
+    llvm::DenseSet<Value> copied;
+    auto copyStorage = [&](Value value) {
+        if (!copied.insert(value).second) {
+            return;
+        }
+        for (SyncStorageProvenance provenance : sourceContext.lookupStorage(value)) {
+            auto rootArgument = dyn_cast<BlockArgument>(provenance.root);
+            const bool isGlobalArgument = provenance.space == AddressSpace::GM && rootArgument &&
+                                          rootArgument.getOwner() == &function.getBody().front();
+            if (isGlobalArgument) {
+                provenance.physical = true;
+                provenance.unknownRange = false;
+                provenance.aliasesUnknownRange = false;
+                provenance.intervals = {{4096ULL * (rootArgument.getArgNumber() + 1), 512ULL}};
+            }
+            fixture.semanticContext.addStorage(value, std::move(provenance));
+        }
+    };
+    for (Value argument : function.getArguments()) {
+        copyStorage(argument);
+    }
+    function.walk([&](Operation* operation) {
+        for (Value operand : operation->getOperands()) {
+            copyStorage(operand);
+        }
+        for (Value result : operation->getResults()) {
+            copyStorage(result);
+        }
+    });
     StructuredSyncIRBuilder builder(fixture.semanticContext);
     if (failed(builder.build(function, fixture.schedule))) {
         return false;
@@ -318,6 +348,25 @@ bool testDepthTwoPlanAndVerifier(MLIRContext& context)
         succeeded(materializeReadyReleaseProtocolPlan(clone, mapping, *fixture.plan)) &&
             succeeded(verifyReadyReleaseProtocolMaterialization(fixture.schedule, *fixture.stages, clone, mapping)),
         "independent verifier rejected valid non-contiguous ReadyRelease<2> emission");
+
+    LegacySyncIRAdapter ambiguousAdapter;
+    LegacySyncSnapshot ambiguousLegacy;
+    StructuredSyncIR ambiguousSchedule(function);
+    FailureOr<PipelineStageAnalysisResult> ambiguousStages = failure();
+    bool builtAmbiguousSchedule = succeeded(ambiguousAdapter.buildSnapshot(function, ambiguousLegacy));
+    if (builtAmbiguousSchedule) {
+        SyncSemanticContext ambiguousContext = ambiguousAdapter.buildSemanticContext(ambiguousLegacy);
+        StructuredSyncIRBuilder ambiguousBuilder(ambiguousContext);
+        builtAmbiguousSchedule = succeeded(ambiguousBuilder.build(function, ambiguousSchedule));
+        if (builtAmbiguousSchedule) {
+            ambiguousStages = analyzePipelineStages(ambiguousSchedule);
+            builtAmbiguousSchedule = succeeded(ambiguousStages);
+        }
+    }
+    passed &= check(
+        builtAmbiguousSchedule &&
+            failed(verifyReadyReleaseProtocolMaterialization(ambiguousSchedule, *ambiguousStages, clone, mapping)),
+        "independent verifier accepted ReadyRelease with ambiguous GM arguments");
 
     const SyncGenerationTimeline& timeline = fixture.timelines.getTimelines()[fixture.plan->generation];
     const SyncStorageFamily* family = fixture.schedule.findStorageFamily(timeline.family);

@@ -8,20 +8,15 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
+// RUN: not ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-mixed --protocol-sync-fallback=fail \
+// RUN:   --protocol-sync-dump=plan --protocol-sync-statistics \
+// RUN:   %s -o /dev/null 2> %t.plan
+// RUN: FileCheck %s --input-file=%t.plan --check-prefix=MIXED-FAIL
 // RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
 // RUN:   --protocol-sync-mixed --protocol-sync-fallback=fail \
 // RUN:   --protocol-sync-dump=plan --protocol-sync-statistics \
-// RUN:   %s -o %t.ir 2> %t.plan
-// RUN: FileCheck %s --input-file=%t.ir --check-prefix=IR
-// RUN: FileCheck %s --input-file=%t.plan --check-prefix=PLAN
-// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
-// RUN:   --protocol-sync-mixed --protocol-sync-fallback=fail \
-// RUN:   --protocol-sync-dump=residuals %s -o %t.cli.ir 2> %t.cli.log
-// RUN: FileCheck %s --input-file=%t.cli.ir --check-prefix=IR
-// RUN: FileCheck %s --input-file=%t.cli.log --check-prefix=WORLD
-// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
-// RUN:   --protocol-sync-mixed --protocol-sync-fallback=fail \
-// RUN:   --protocol-sync-dump=plan %S/protocol_sync_one_shot.pto \
+// RUN:   %S/protocol_sync_one_shot.pto \
 // RUN:   -o /dev/null 2> %t.one-shot
 // RUN: FileCheck %s --input-file=%t.one-shot --check-prefix=ONE-SHOT
 // RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
@@ -61,46 +56,22 @@ module attributes {pto.target_arch = "a3"} {
   }
 }
 
-// PLAN: PROTOCOL-SYNC mixed-plan function=@ready_release_with_direct_tail status=ready protocol=ready-release
-// PLAN-SAME: initial-residuals=3 direct-candidates=2 candidates-before-deletion=3 reverse-attempts=3 reverse-removed=0
-// PLAN: PROTOCOL-SYNC ready-release-plan function=@ready_release_with_direct_tail status=ready
-// PLAN: PROTOCOL-SYNC direct-repair function=@ready_release_with_direct_tail status=ready obligations=3 candidates=2 uncovered=0
-// PLAN: candidate #0 kind=directed-event
-// PLAN-SAME: event=1
-// PLAN: candidate #1 kind=exit-barrier
-// PLAN: "mixed_selection_candidates":3
-// PLAN-SAME: "reverse_deletion_attempts":3
-// PLAN-SAME: "reverse_deletion_removed":0
-// PLAN-SAME: "selected_direct_repairs":2
-// PLAN-SAME: "selected_ready_release_protocols":1
-// PLAN: "planner_result":"materialized-mixed"
-// PLAN-SAME: "producer":"protocol-plus-direct-residuals"
+// MIXED-FAIL: PROTOCOL-SYNC mixed-plan function=@ready_release_with_direct_tail status=unsupported
+// MIXED-FAIL: ProtocolSync mixed mode found no complete supported plan
 
-// WORLD: PROTOCOL-SYNC selected-world function=@ready_release_with_direct_tail status=complete
-// WORLD-SAME: protocols=1 completions=3 visibility=0 exit-completions=4 obligations=0
+// ONE-SHOT: PROTOCOL-SYNC mixed-plan function=@linear_one_shot status=ready world=one-shot-publish
+// ONE-SHOT-SAME: initial-residuals=3 direct-candidates=1 candidates-before-deletion=4 reverse-attempts=4 reverse-removed=0 worlds-attempted=6 worlds-feasible=6 event-pairs=2 targeted-barriers=1 fixed-exit-drains=1
+// ONE-SHOT: one-shot-publish #0 kind=directed-event phases=#0->#1 channels=[#0]
+// ONE-SHOT: one-shot-publish #1 kind=pipe-barrier phases=#1->#2 channels=[#1]
+// ONE-SHOT: one-shot-publish #2 kind=directed-event phases=#2->#3 channels=[#2]
+// ONE-SHOT: "complete_worlds_attempted":6
+// ONE-SHOT-SAME: "complete_worlds_feasible":6
+// ONE-SHOT: "selected_world_event_pairs":2
+// ONE-SHOT-SAME: "selected_world_fixed_exit_drains":1
+// ONE-SHOT-SAME: "selected_world_targeted_barriers":1
 
-// ONE-SHOT: PROTOCOL-SYNC mixed-plan function=@linear_one_shot status=ready protocol=one-shot
-// ONE-SHOT-SAME: initial-residuals=0 direct-candidates=0 candidates-before-deletion=1 reverse-attempts=1 reverse-removed=0
-
-// DIRECT: PROTOCOL-SYNC mixed-plan function=@guarded_direct status=ready protocol=none
-// DIRECT-SAME: direct-candidates=3 candidates-before-deletion=3 reverse-attempts=3 reverse-removed=0
-
-// IR-LABEL: func.func @ready_release_with_direct_tail
-// IR: pto.tload
-// IR-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID1>]
-// IR-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID1>]
-// IR-NEXT: pto.tstore
-// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
-// IR-NEXT: scf.for
-// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
-// IR-NEXT: pto.tload
-// IR-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
-// IR-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
-// IR-NEXT: pto.tstore
-// IR-NEXT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
-// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
-// IR-NEXT: pto.barrier <PIPE_ALL>
-// IR-NEXT: return
+// DIRECT: PROTOCOL-SYNC mixed-plan function=@guarded_direct status=ready world=direct-only
+// DIRECT-SAME: direct-candidates=3 candidates-before-deletion=4 reverse-attempts=4 reverse-removed=1 worlds-attempted=1 worlds-feasible=1 event-pairs=2 targeted-barriers=0 fixed-exit-drains=1
 
 // IMPLICIT: --protocol-sync-mixed requires an explicit --pto-arch=a3
 // MUTEX: --enable-insert-sync

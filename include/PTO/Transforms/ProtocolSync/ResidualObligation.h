@@ -115,8 +115,19 @@ struct SyncInterpretationResult {
     llvm::SmallVector<SyncResidualObligation, 16> obligations;
     std::uint64_t transitions = 0;
     std::uint64_t peakStates = 0;
+    std::uint64_t memoryPairTests = 0;
+    std::uint64_t noAliasResults = 0;
+    std::uint64_t mayAliasResults = 0;
+    std::uint64_t unknownAliasResults = 0;
 
     bool isComplete() const { return obligations.empty(); }
+};
+
+struct SyncInterpretationOptions {
+    /// Concrete verification reconstructs fixed synchronization as selected
+    /// world effects. Those operations must then not also appear as opaque
+    /// semantic actions. Planning keeps the default fail-closed behavior.
+    bool fixedSynchronizationIsModeled = false;
 };
 
 FailureOr<SyncSelectedWorld> buildSelectedWorld(const SyncOneShotPlan& plan, const ChannelAnalysisResult& channels);
@@ -124,7 +135,8 @@ FailureOr<SyncSelectedWorld> buildSelectedWorld(const SyncReadyReleasePlan& plan
 FailureOr<SyncInterpretationResult> interpretSelectedWorld(
     const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
     const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
-    const SyncSelectedWorld& world, ProtocolSyncStatistics* statistics = nullptr);
+    const SyncSelectedWorld& world, ProtocolSyncStatistics* statistics = nullptr,
+    const SyncInterpretationOptions& options = {});
 void printResidualObligations(
     func::FuncOp function, const SyncSelectedWorld& world, const SyncInterpretationResult& result,
     llvm::raw_ostream& output);

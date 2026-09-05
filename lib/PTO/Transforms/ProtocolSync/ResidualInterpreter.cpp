@@ -628,8 +628,10 @@ AliasRelation aliasRelation(const SyncAccess& first, const SyncAccess& second)
         second.storage.aliasesUnknownRange) {
         return AliasRelation::Unknown;
     }
-    if (!first.storage.physical || !second.storage.physical) {
-        return AliasRelation::NoAlias;
+    const bool incompleteRange = !first.storage.physical || !second.storage.physical ||
+                                 first.storage.intervals.empty() || second.storage.intervals.empty();
+    if (incompleteRange) {
+        return AliasRelation::Unknown;
     }
     return intervalsOverlap(first.storage.intervals, second.storage.intervals) ? AliasRelation::MayAlias :
                                                                                  AliasRelation::NoAlias;
@@ -650,21 +652,33 @@ LogicalResult appendMemoryObligation(
     AliasRelation alias, const SyncIterationRelation& relation, ResidualAccumulator& accumulator)
 {
     SyncResidualObligation obligation;
-    if (alias == AliasRelation::Unknown) {
-        obligation.kind = SyncObligationKind::UnknownAlias;
-    } else if (sourceAccess.mode == SyncAccessMode::Ordered || targetAccess.mode == SyncAccessMode::Ordered) {
+    const bool publishesToReader = writesMemory(sourceAccess.mode) && readsMemory(targetAccess.mode);
+    if (sourceAccess.mode == SyncAccessMode::Ordered || targetAccess.mode == SyncAccessMode::Ordered) {
         obligation.kind = SyncObligationKind::OrderedMemory;
+    } else if (alias == AliasRelation::Unknown) {
+        obligation.kind = publishesToReader ? SyncObligationKind::UnknownAlias : SyncObligationKind::Completion;
+    } else if (
+        source.core == target.core && source.pipe == target.pipe && source.pipe != PIPE::PIPE_S &&
+        source.pipe != PIPE::PIPE_UNASSIGNED) {
+        obligation.kind = SyncObligationKind::Completion;
     } else {
-        const bool publishesToReader = writesMemory(sourceAccess.mode) && readsMemory(targetAccess.mode);
         obligation.kind = publishesToReader ? SyncObligationKind::Visibility : SyncObligationKind::OrderedMemory;
     }
     obligation.source = source.id;
     obligation.target = target.id;
     obligation.control = controlRelation(&source, &target);
     obligation.iteration = relation;
-    obligation.detail = alias == AliasRelation::Unknown ?
-                            "global or unknown storage may alias without a selected ordering proof" :
-                            "ordered memory or visibility is not established by the selected world";
+    if (obligation.kind == SyncObligationKind::OrderedMemory) {
+        obligation.detail = "ordered memory is not established by the selected world";
+    } else if (alias == AliasRelation::Unknown && publishesToReader) {
+        obligation.detail = "global or unknown storage may alias without a selected ordering proof";
+    } else if (alias == AliasRelation::Unknown) {
+        obligation.detail = "potential global alias requires a selected completion order";
+    } else if (obligation.kind == SyncObligationKind::Completion) {
+        obligation.detail = "asynchronous same-pipeline memory work requires targeted completion";
+    } else {
+        obligation.detail = "visibility is not established by the selected world";
+    }
     return accumulator.append(std::move(obligation));
 }
 
@@ -674,18 +688,22 @@ bool memoryHazardCovered(
     const SyncIterationRelation& relation, const StructuredSyncIR& schedule)
 {
     const bool hasOrderedEndpoint = source.mode == SyncAccessMode::Ordered || target.mode == SyncAccessMode::Ordered;
-    if (alias == AliasRelation::Unknown || hasOrderedEndpoint) {
+    if (hasOrderedEndpoint) {
         return false;
     }
     const bool publishesToReader = writesMemory(source.mode) && readsMemory(target.mode);
+    if (alias == AliasRelation::Unknown) {
+        return publishesToReader ? visibilityGraph.covers(sourcePhase, targetPhase, relation) :
+                                   completionGraph.covers(sourcePhase, targetPhase, relation);
+    }
     if (publishesToReader) {
         return visibilityGraph.covers(sourcePhase, targetPhase, relation);
     }
     const SyncPhase* sourcePhaseRecord = schedule.findPhase(sourcePhase);
     const SyncPhase* targetPhaseRecord = schedule.findPhase(targetPhase);
-    const bool intrinsicallyOrdered = sourcePhaseRecord && targetPhaseRecord &&
-                                      sourcePhaseRecord->core == targetPhaseRecord->core &&
-                                      sourcePhaseRecord->pipe == targetPhaseRecord->pipe;
+    const bool intrinsicallyOrdered =
+        sourcePhaseRecord && targetPhaseRecord && sourcePhaseRecord->core == targetPhaseRecord->core &&
+        sourcePhaseRecord->pipe == PIPE::PIPE_S && targetPhaseRecord->pipe == PIPE::PIPE_S;
     if (intrinsicallyOrdered) {
         return true;
     }
@@ -702,7 +720,21 @@ LogicalResult evaluateMemoryPair(
     if (!source || !target) {
         return failure();
     }
+    if (!checkedIncrement(accumulator.result.memoryPairTests)) {
+        return failure();
+    }
     const AliasRelation alias = aliasRelation(sourceAccess, targetAccess);
+    std::uint64_t* aliasCounter = nullptr;
+    if (alias == AliasRelation::NoAlias) {
+        aliasCounter = &accumulator.result.noAliasResults;
+    } else if (alias == AliasRelation::MayAlias) {
+        aliasCounter = &accumulator.result.mayAliasResults;
+    } else {
+        aliasCounter = &accumulator.result.unknownAliasResults;
+    }
+    if (!checkedIncrement(*aliasCounter)) {
+        return failure();
+    }
     if (alias == AliasRelation::NoAlias) {
         return success();
     }
@@ -851,7 +883,10 @@ LogicalResult appendSSACompletion(
         return success();
     }
     const SyncIterationRelation relation = ssaIterationRelation(source, target, kind, carrier);
-    if (!graph.covers(source.id, target.id, relation)) {
+    const bool intrinsicScalarOrder = source.core == target.core && source.pipe == PIPE::PIPE_S &&
+                                      target.pipe == PIPE::PIPE_S &&
+                                      relation.kind != SyncIterationRelationKind::Unknown;
+    if (!intrinsicScalarOrder && !graph.covers(source.id, target.id, relation)) {
         SyncResidualObligation obligation;
         obligation.kind = SyncObligationKind::SSACompletion;
         obligation.source = source.id;
@@ -993,9 +1028,16 @@ std::pair<const SyncPhase*, const SyncPhase*> findNeighborPhases(const Structure
     return {before, after};
 }
 
-LogicalResult evaluateOpaqueEffects(const StructuredSyncIR& schedule, ResidualAccumulator& accumulator)
+LogicalResult evaluateOpaqueEffects(
+    const StructuredSyncIR& schedule, const SyncInterpretationOptions& options, ResidualAccumulator& accumulator)
 {
     for (const SyncSemanticAction& action : schedule.getSemanticActions()) {
+        const bool modeledFixedSynchronization =
+            options.fixedSynchronizationIsModeled && action.summary < schedule.getSummaries().size() &&
+            schedule.getSummaries()[action.summary].provider == SyncSummaryProvider::FixedSynchronization;
+        if (modeledFixedSynchronization) {
+            continue;
+        }
         const auto [source, target] = findNeighborPhases(schedule, action.operation);
         SyncResidualObligation obligation;
         obligation.kind = SyncObligationKind::OrderedMemory;
@@ -1094,11 +1136,22 @@ bool allGuardPathsCovered(
     return true;
 }
 
+const SyncRegion* enclosingPhysicalSection(const StructuredSyncIR& schedule, const SyncPhase& phase)
+{
+    const SyncRegion* region = schedule.findRegion(phase.region);
+    while (region && region->kind != SyncRegionKind::PhysicalSection) {
+        region = region->parent == kInvalidSyncId ? nullptr : schedule.findRegion(region->parent);
+    }
+    return region;
+}
+
 bool isTerminalPhase(const StructuredSyncIR& schedule, const SyncPhase& source)
 {
+    const SyncRegion* sourceSection = enclosingPhysicalSection(schedule, source);
     llvm::SmallVector<const SyncPhase*, 8> later;
     for (const SyncPhase& target : schedule.getPhases()) {
-        const bool eligible = target.id > source.id && resourceKey(target) == resourceKey(source) &&
+        const bool sameExitDomain = enclosingPhysicalSection(schedule, target) == sourceSection;
+        const bool eligible = sameExitDomain && target.id > source.id && resourceKey(target) == resourceKey(source) &&
                               loopDomainIsPrefix(target.iterationDomain.loops, source.iterationDomain.loops) &&
                               guardsCompatible(source.guard, target.guard);
         if (eligible) {
@@ -1108,10 +1161,16 @@ bool isTerminalPhase(const StructuredSyncIR& schedule, const SyncPhase& source)
     return !allGuardPathsCovered(schedule, later, source.guard);
 }
 
-bool exitIsCovered(const SyncSelectedWorld& world, const CompletionGraph& graph, SyncPhaseId phase)
+bool exitIsCovered(
+    const StructuredSyncIR& schedule, const SyncSelectedWorld& world, const CompletionGraph& graph,
+    const SyncPhase& phase)
 {
     return llvm::any_of(world.exitCompletedPhases, [&](SyncPhaseId completed) {
-        return phase == completed || graph.covers(phase, completed, {SyncIterationRelationKind::SameIteration, 0});
+        const SyncPhase* completedPhase = schedule.findPhase(completed);
+        const bool sameExitDomain = completedPhase && enclosingPhysicalSection(schedule, *completedPhase) ==
+                                                          enclosingPhysicalSection(schedule, phase);
+        return sameExitDomain && (phase.id == completed ||
+                                  graph.covers(phase.id, completed, {SyncIterationRelationKind::SameIteration, 0}));
     });
 }
 
@@ -1120,7 +1179,7 @@ LogicalResult evaluateExitCompletion(
     ResidualAccumulator& accumulator)
 {
     for (const SyncPhase& phase : schedule.getPhases()) {
-        const bool skip = !isTerminalPhase(schedule, phase) || exitIsCovered(world, graph, phase.id);
+        const bool skip = !isTerminalPhase(schedule, phase) || exitIsCovered(schedule, world, graph, phase);
         if (skip) {
             continue;
         }
@@ -1132,7 +1191,9 @@ LogicalResult evaluateExitCompletion(
         obligation.iteration = phase.iterationDomain.loops.empty() ?
                                    SyncIterationRelation{SyncIterationRelationKind::SameIteration, 0} :
                                    SyncIterationRelation{SyncIterationRelationKind::Unknown, 0};
-        obligation.detail = "terminal physical work is not completed before function exit";
+        obligation.detail = enclosingPhysicalSection(schedule, phase) ?
+                                "terminal physical work is not completed before physical section exit" :
+                                "terminal physical work is not completed before function exit";
         if (failed(accumulator.append(std::move(obligation)))) {
             return failure();
         }
@@ -1157,6 +1218,10 @@ void updateStatistics(const SyncInterpretationResult& result, ProtocolSyncStatis
     }
     addSaturating(statistics->interpreterTransitions, result.transitions);
     statistics->interpreterPeakStates = std::max(statistics->interpreterPeakStates, result.peakStates);
+    addSaturating(statistics->memoryPairTests, result.memoryPairTests);
+    addSaturating(statistics->noAliasResults, result.noAliasResults);
+    addSaturating(statistics->mayAliasResults, result.mayAliasResults);
+    addSaturating(statistics->unknownAliasResults, result.unknownAliasResults);
     statistics->residualObligations = result.obligations.size();
     statistics->residualObligationsByKind.clear();
     for (const SyncResidualObligation& obligation : result.obligations) {
@@ -1171,7 +1236,7 @@ void updateStatistics(const SyncInterpretationResult& result, ProtocolSyncStatis
 FailureOr<SyncInterpretationResult> mlir::pto::protocol_sync::interpretSelectedWorld(
     const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
     const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
-    const SyncSelectedWorld& world, ProtocolSyncStatistics* statistics)
+    const SyncSelectedWorld& world, ProtocolSyncStatistics* statistics, const SyncInterpretationOptions& options)
 {
     ResidualAccumulator accumulator;
     bool statisticsUpdated = false;
@@ -1202,7 +1267,7 @@ FailureOr<SyncInterpretationResult> mlir::pto::protocol_sync::interpretSelectedW
     }
     const bool invalidResult = failed(evaluateMemoryHazards(schedule, completionGraph, visibilityGraph, accumulator)) ||
                                failed(evaluateSSACompletions(schedule, completionGraph, accumulator)) ||
-                               failed(evaluateOpaqueEffects(schedule, accumulator)) ||
+                               failed(evaluateOpaqueEffects(schedule, options, accumulator)) ||
                                failed(evaluateExitCompletion(schedule, world, completionGraph, accumulator));
     if (invalidResult) {
         return failure();

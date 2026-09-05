@@ -67,10 +67,13 @@ scalar DataCache publication or of every DMA store/load visibility case.
 
 ## Allocation
 
-Each selected event generation in one directed event domain receives a distinct
-compiler event ID after subtracting hidden macro reservations. Lexical
-`WaitFlag`-before-later-`SetFlag` order is not accepted as a consumption proof.
-Different directed event domains may use the same numeric ID.
+Allocation subtracts hidden macro reservations and colors an explicit
+event-generation interference graph per directed domain. Coexecuting
+generations conservatively receive distinct IDs: lexical wait-before-set order
+does not prove asynchronous target-pipeline consumption. Reuse is currently
+limited to mutually exclusive structural arms and distinct directed domains.
+A future relaxation requires an explicit certified target happens-before
+relation.
 
 ## Atomic mutation
 

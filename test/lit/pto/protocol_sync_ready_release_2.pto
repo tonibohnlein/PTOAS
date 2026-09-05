@@ -7,16 +7,11 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
-// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN: not ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
 // RUN:   --protocol-sync-ready-release --protocol-sync-fallback=fail \
 // RUN:   --protocol-sync-dump=plan --protocol-sync-statistics %s \
-// RUN:   -o %t 2> %t.diagnostics
-// RUN: FileCheck %s --input-file=%t --check-prefix=IR
+// RUN:   -o /dev/null 2> %t.diagnostics
 // RUN: FileCheck %s --input-file=%t.diagnostics --check-prefix=PLAN
-// RUN: ptoas --pto-arch=a3 --pto-level=level2 \
-// RUN:   --protocol-sync-ready-release --protocol-sync-fallback=fail %s \
-// RUN:   -o %t.cpp
-// RUN: FileCheck %s --input-file=%t.cpp --check-prefix=CXX
 
 module {
   func.func @ready_release_two_offset_zero(
@@ -94,71 +89,6 @@ module {
   }
 }
 
-// PLAN: ready-release-plan function=@ready_release_two_offset_zero status=ready
-// PLAN-SAME: capacity=2 core=vector
-// PLAN: lane #0 ready-event-id=0 release-event-id=0
-// PLAN-NEXT: lane #1 ready-event-id=1 release-event-id=1
-// PLAN: slots=[0, 1, 0, 1, 0, 1] transition-applications=17
-// PLAN: ready-release-plan function=@ready_release_two_offset_one status=ready
-// PLAN-SAME: capacity=2 core=vector
-// PLAN: lane #0 ready-event-id=0 release-event-id=0
-// PLAN-NEXT: lane #1 ready-event-id=1 release-event-id=1
-// PLAN: slots=[1, 0, 1, 0, 1, 0] transition-applications=17
-// PLAN: ready-release-plan function=@ready_release_two_equivalent_selectors status=ready
-// PLAN-SAME: capacity=2 core=vector
-// PLAN: slots=[0, 1, 0, 1, 0, 1] transition-applications=17
-// PLAN: "selected_ready_release_lanes":2
-// PLAN: "selected_ready_release_lanes":2
-// PLAN: "selected_ready_release_lanes":2
-
-// IR-LABEL: func.func @ready_release_two_offset_zero
-// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
-// IR-NEXT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
-// IR-NEXT: scf.for
-// IR: pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>, %[[RELEASE0:[0-9]+]]]
-// IR-NEXT: pto.tload
-// IR-NEXT: pto.set_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>, %[[READY0:[0-9]+]]]
-// IR-NEXT: pto.wait_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>, %[[READY0]]]
-// IR-NEXT: pto.tstore
-// IR-NEXT: pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>, %[[RELEASE0]]]
-// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
-// IR-NEXT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
-// IR-NOT: pto.barrier
-// IR: return
-
-// IR-LABEL: func.func @ready_release_two_offset_one
-// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
-// IR-NEXT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
-// IR-NEXT: scf.for
-// IR: arith.select
-// IR: pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>
-// IR: pto.set_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>
-// IR: pto.wait_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>
-// IR: pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>
-// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
-// IR-NEXT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
-// IR-NOT: pto.barrier
-// IR: return
-
-// IR-LABEL: func.func @ready_release_two_equivalent_selectors
-// IR: pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>
-// IR: pto.tload
-// IR-NEXT: pto.set_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>
-// IR-NEXT: pto.wait_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>
-// IR-NEXT: pto.tstore
-// IR-NEXT: pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>
-// IR-NOT: pto.barrier
-// IR: return
-
-// CXX-LABEL: AICORE void ready_release_two_offset_zero(
-// CXX: set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID0);
-// CXX-NEXT: set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID1);
-// CXX: for (
-// CXX: wait_flag(PIPE_MTE3, PIPE_MTE2, v{{[0-9]+}});
-// CXX: set_flag(PIPE_MTE2, PIPE_MTE3, v{{[0-9]+}});
-// CXX: wait_flag(PIPE_MTE2, PIPE_MTE3, v{{[0-9]+}});
-// CXX: set_flag(PIPE_MTE3, PIPE_MTE2, v{{[0-9]+}});
-// CXX: wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID0);
-// CXX-NEXT: wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID1);
-// CXX-NOT: pipe_barrier
-// CXX: return;
+// PLAN: ready-release-plan function=@ready_release_two_offset_zero status=unsupported
+// PLAN: reason=unsupported-visibility
+// PLAN: ProtocolSync ready-release mode found no complete supported plan

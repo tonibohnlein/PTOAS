@@ -58,7 +58,6 @@
 module attributes {pto.target_arch = "a3"} {
   func.func @would_be_supported(
       %input: !pto.partition_tensor_view<16x16xf16>,
-      %output: !pto.partition_tensor_view<16x16xf16>,
       %trip_count: index)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c0_index = arith.constant 0 : index
@@ -68,8 +67,7 @@ module attributes {pto.target_arch = "a3"} {
     scf.for %index = %c0_index to %trip_count step %c1 {
       pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
                 outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
-      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
-                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+      %value = pto.tgetval ins(%tile, %c0_index : !pto.tile_buf<vec, 16x16xf16>, index) outs : f16
     }
     return
   }
@@ -87,7 +85,6 @@ module attributes {pto.target_arch = "a3"} {
 module attributes {pto.target_arch = "a3"} {
   func.func @constant_slot_two(
       %input: !pto.partition_tensor_view<16x16xf16>,
-      %output: !pto.partition_tensor_view<16x16xf16>,
       %trip_count: index)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c0_index = arith.constant 0 : index
@@ -101,8 +98,7 @@ module attributes {pto.target_arch = "a3"} {
          -> !pto.tile_buf<vec, 16x16xf16>
       pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
                 outs(%slot : !pto.tile_buf<vec, 16x16xf16>)
-      pto.tstore ins(%slot : !pto.tile_buf<vec, 16x16xf16>)
-                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+      %value = pto.tgetval ins(%slot, %c0_index : !pto.tile_buf<vec, 16x16xf16>, index) outs : f16
     }
     return
   }
@@ -135,7 +131,6 @@ module attributes {pto.target_arch = "a3"} {
 module attributes {pto.target_arch = "a3"} {
   func.func @intervening_structural(
       %input: !pto.partition_tensor_view<16x16xf16>,
-      %output: !pto.partition_tensor_view<16x16xf16>,
       %trip_count: index)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c0_index = arith.constant 0 : index
@@ -146,8 +141,7 @@ module attributes {pto.target_arch = "a3"} {
       pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
                 outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
       %unused = arith.constant 7 : index
-      pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
-                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+      %value = pto.tgetval ins(%tile, %c0_index : !pto.tile_buf<vec, 16x16xf16>, index) outs : f16
     }
     return
   }

@@ -230,6 +230,10 @@ struct ProtocolSyncStatistics {
     std::uint64_t channelCandidatesRejected = 0;
     std::uint64_t interpreterTransitions = 0;
     std::uint64_t interpreterPeakStates = 0;
+    std::uint64_t memoryPairTests = 0;
+    std::uint64_t noAliasResults = 0;
+    std::uint64_t mayAliasResults = 0;
+    std::uint64_t unknownAliasResults = 0;
     std::uint64_t tokenCertificateTransitions = 0;
     std::uint64_t protocolCandidates = 0;
     std::uint64_t protocolPlansAttempted = 0;
@@ -248,6 +252,11 @@ struct ProtocolSyncStatistics {
     std::uint64_t mixedSelectionCandidates = 0;
     std::uint64_t reverseDeletionAttempts = 0;
     std::uint64_t reverseDeletionRemoved = 0;
+    std::uint64_t completeWorldsAttempted = 0;
+    std::uint64_t completeWorldsFeasible = 0;
+    std::uint64_t selectedWorldEventPairs = 0;
+    std::uint64_t selectedWorldTargetedBarriers = 0;
+    std::uint64_t selectedWorldFixedExitDrains = 0;
     std::uint64_t allocationRetries = 0;
     std::uint64_t eventDomains = 0;
     std::uint64_t maxEventDomainPressure = 0;
@@ -257,6 +266,7 @@ struct ProtocolSyncStatistics {
     std::uint64_t allocationGraphVertices = 0;
     std::uint64_t allocationGraphEdges = 0;
     std::uint64_t allocationBacktrackingNodes = 0;
+    std::uint64_t allocationSearchLimitHits = 0;
     std::uint64_t materializationTransitions = 0;
     std::uint64_t verifierTransitions = 0;
     std::uint64_t semanticExtractionUs = 0;

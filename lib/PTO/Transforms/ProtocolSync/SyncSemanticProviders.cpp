@@ -85,6 +85,20 @@ bool isSyncHelperMemoryOperand(Type type)
     return isa<PtrType, TileBufType, TensorViewType, PartitionTensorViewType>(type);
 }
 
+FailureOr<std::optional<SyncAccessMode>> parseHelperEffect(Attribute effect)
+{
+    auto value = dyn_cast<StringAttr>(effect);
+    if (!value) {
+        return failure();
+    }
+    return llvm::StringSwitch<FailureOr<std::optional<SyncAccessMode>>>(value.getValue())
+        .Case("read", std::optional<SyncAccessMode>(SyncAccessMode::Read))
+        .Case("write", std::optional<SyncAccessMode>(SyncAccessMode::Write))
+        .Case("readwrite", std::optional<SyncAccessMode>(SyncAccessMode::ReadWrite))
+        .Case("none", std::optional<SyncAccessMode>())
+        .Default(failure());
+}
+
 std::optional<std::uint32_t> getQueueDepth(Value handle)
 {
     Operation* definition = handle ? handle.getDefiningOp() : nullptr;
@@ -249,23 +263,51 @@ void addHelperSummary(
     }
     SyncPhysicalPhase phase;
     protocol_sync::detail::setPhysicalResource(call.getOperation(), *pipe, phase, summary);
-    auto effects = callee->getAttrOfType<ArrayAttr>("pto.tileop.effects");
-    bool precise = effects && effects.size() == call.getNumOperands();
+    Attribute effectsAttribute = callee->getAttr("pto.tileop.effects");
+    auto effects = dyn_cast_or_null<ArrayAttr>(effectsAttribute);
+    if (effectsAttribute && !effects) {
+        protocol_sync::detail::setFailure(
+            summary, SyncFailureReason::UnsupportedMemoryEffectKind, "helper effect metadata must be an array");
+        return;
+    }
+    const bool mismatchedEffects = effects && effects.size() != call.getNumOperands();
+    if (mismatchedEffects) {
+        protocol_sync::detail::setFailure(
+            summary, SyncFailureReason::UnsupportedMemoryEffectKind,
+            "helper effect array length does not match the call operand count");
+        return;
+    }
     for (auto [index, operand] : llvm::enumerate(call.getOperands())) {
-        if (!isSyncHelperMemoryOperand(operand.getType())) {
+        const bool memoryOperand = isSyncHelperMemoryOperand(operand.getType());
+        std::optional<SyncAccessMode> effect =
+            memoryOperand ? std::optional<SyncAccessMode>(SyncAccessMode::ReadWrite) : std::nullopt;
+        if (effects) {
+            FailureOr<std::optional<SyncAccessMode>> parsed = parseHelperEffect(effects[index]);
+            if (failed(parsed)) {
+                protocol_sync::detail::setFailure(
+                    summary, SyncFailureReason::UnsupportedMemoryEffectKind,
+                    (Twine("helper effect entry #") + Twine(index) + " is not a recognized string").str());
+                return;
+            }
+            effect = *parsed;
+        }
+        if (!memoryOperand) {
+            if (effect) {
+                protocol_sync::detail::setFailure(
+                    summary, SyncFailureReason::UnsupportedMemoryEffectKind,
+                    (Twine("non-memory helper operand #") + Twine(index) + " declares a memory effect").str());
+                return;
+            }
             continue;
         }
-        StringRef effect = "readwrite";
-        if (precise) {
-            if (auto value = dyn_cast<StringAttr>(effects[index])) {
-                effect = value.getValue();
-            }
+        if (!effect) {
+            continue;
         }
-        if (effect == "read" || effect == "readwrite") {
+        if (*effect == SyncAccessMode::Read || *effect == SyncAccessMode::ReadWrite) {
             protocol_sync::detail::appendValueEffects(
                 phase, operand, SyncAccessMode::Read, context, summary, statistics);
         }
-        if (effect == "write" || effect == "readwrite") {
+        if (*effect == SyncAccessMode::Write || *effect == SyncAccessMode::ReadWrite) {
             protocol_sync::detail::appendValueEffects(
                 phase, operand, SyncAccessMode::Write, context, summary, statistics);
         }

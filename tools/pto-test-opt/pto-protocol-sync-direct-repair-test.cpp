@@ -331,13 +331,19 @@ bool testSharedRepairAndMaterialization(MLIRContext& context)
     unsigned sets = 0;
     unsigned waits = 0;
     unsigned tails = 0;
+    const unsigned directedCandidates =
+        llvm::count_if(plan->candidates, [](const SyncDirectRepairCandidate& candidate) {
+            return candidate.kind == SyncDirectRepairKind::DirectedEvent;
+        });
     function.walk([&](Operation* operation) {
         sets += isa<SetFlagOp>(operation) ? 1 : 0;
         waits += isa<WaitFlagOp>(operation) ? 1 : 0;
         auto barrier = dyn_cast<BarrierOp>(operation);
         tails += barrier && barrier.getPipe().getPipe() == PIPE::PIPE_ALL ? 1 : 0;
     });
-    passed &= check(sets == 2 && waits == 2 && tails == 1, "materialized shared recipe has wrong action counts");
+    passed &= check(
+        sets == directedCandidates && waits == directedCandidates && tails == 1,
+        "materialized shared recipe has wrong action counts");
     return passed;
 }
 
@@ -521,8 +527,9 @@ bool testEventCapacity(MLIRContext& context)
         candidate.eventId.reset();
         capacityPlan.candidates.push_back(std::move(candidate));
     }
+    ProtocolSyncStatistics allocationStatistics;
     bool passed = check(
-        succeeded(allocateDirectRepairEvents(fixture.schedule, capacityPlan)) &&
+        succeeded(allocateDirectRepairEvents(fixture.schedule, capacityPlan, &allocationStatistics)) &&
             capacityPlan.status == SyncDirectRepairPlanStatus::Ready,
         "six direct events did not fit the compiler event pool");
     llvm::SmallVector<unsigned, 6> eventIds;
@@ -535,8 +542,15 @@ bool testEventCapacity(MLIRContext& context)
     passed &= check(
         eventIds == llvm::SmallVector<unsigned, 6>({0, 1, 2, 3, 4, 5}),
         "six direct events did not receive exactly compiler IDs 0..5");
+    passed &= check(
+        allocationStatistics.allocationGraphVertices == 6 && allocationStatistics.allocationGraphEdges == 15 &&
+            allocationStatistics.maxEventDomainPressure == 6,
+        "overlapping direct generations produced incorrect interference statistics");
 
     capacityPlan.status = SyncDirectRepairPlanStatus::Ready;
+    for (SyncDirectRepairCandidate& candidate : capacityPlan.candidates) {
+        candidate.eventId.reset();
+    }
     SyncDirectRepairCandidate seventh = *event;
     seventh.id = capacityPlan.candidates.size();
     capacityPlan.candidates.push_back(std::move(seventh));

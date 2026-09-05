@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+//===- ConcreteSyncVerifier.h - Verify emitted synchronization -*- C++ -*-===//
+
+#ifndef PTO_TRANSFORMS_PROTOCOLSYNC_CONCRETESYNCVERIFIER_H
+#define PTO_TRANSFORMS_PROTOCOLSYNC_CONCRETESYNCVERIFIER_H
+
+#include "PTO/Transforms/ProtocolSync/SyncSemantics.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Support/LogicalResult.h"
+
+namespace mlir::pto::protocol_sync {
+
+/// Rebuild semantic facts from the staged function, reconstruct synchronization
+/// effects from concrete PTO operations without consulting planner candidates
+/// or diagnostic tags, and require the resulting world to discharge every
+/// memory, generation, visibility, SSA, and exit obligation.
+LogicalResult verifyConcreteSyncSemantics(
+    const SyncSemanticContext& context, func::FuncOp function, ProtocolSyncStatistics* statistics = nullptr);
+
+} // namespace mlir::pto::protocol_sync
+
+#endif // PTO_TRANSFORMS_PROTOCOLSYNC_CONCRETESYNCVERIFIER_H

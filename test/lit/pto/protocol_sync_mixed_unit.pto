@@ -8,9 +8,13 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 // RUN: pto-protocol-sync-mixed-test | FileCheck %s
-// CHECK: protocol-sync mixed selection and reverse deletion: pass
+// CHECK: protocol-sync mixed ambiguous GM fail-closed: pass
+// CHECK-NEXT: protocol-sync mixed selection and reverse deletion: pass
 // CHECK-NEXT: protocol-sync successful whole-candidate deletion: pass
 // CHECK-NEXT: protocol-sync mixed combined event allocation: pass
 // CHECK-NEXT: protocol-sync mixed independent verification: pass
 // CHECK-NEXT: protocol-sync ReadyRelease family isolation: pass
+// CHECK-NEXT: protocol-sync complete-world competition and shared frontier: pass
+// CHECK-NEXT: protocol-sync candidate-granularity world selection: pass
+// CHECK-NEXT: protocol-sync concrete emitted-IR verifier negatives: pass
 // CHECK-NEXT: protocol-sync mixed atomic materialization: pass

@@ -11,6 +11,7 @@
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
+#include "PTO/Transforms/ProtocolSync/EventAllocation.h"
 #include "PTO/Transforms/ProtocolSync/OneShotProtocol.h"
 #include "PTO/Transforms/ProtocolSync/ResidualObligation.h"
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
@@ -44,6 +45,19 @@ public:
             const bool isTargetRead = access.phase == phase && access.mode == SyncAccessMode::Read &&
                                       access.visibility == SyncVisibilityClass::Global;
             if (isTargetRead) {
+                access.mode = SyncAccessMode::Ordered;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static bool markGlobalWriteOrdered(StructuredSyncIR& schedule, SyncPhaseId phase)
+    {
+        for (SyncAccess& access : schedule.accesses) {
+            const bool isSourceWrite = access.phase == phase && access.mode == SyncAccessMode::Write &&
+                                       access.visibility == SyncVisibilityClass::Global;
+            if (isSourceWrite) {
                 access.mode = SyncAccessMode::Ordered;
                 return true;
             }
@@ -232,6 +246,25 @@ module attributes {pto.target_arch = "a3"} {
                outs(%buffer : !pto.partition_tensor_view<16x16xf16>)
     pto.tload ins(%buffer : !pto.partition_tensor_view<16x16xf16>)
               outs(%target : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+}
+)mlir";
+
+constexpr StringLiteral kOrderedUnknownAliasFixture = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @ordered_unknown_alias(
+      %first: !pto.partition_tensor_view<16x16xf16>,
+      %second: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %c512 = arith.constant 512 : i64
+    %source = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    %target = pto.alloc_tile addr = %c512 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%first : !pto.partition_tensor_view<16x16xf16>)
+    pto.tstore ins(%target : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%second : !pto.partition_tensor_view<16x16xf16>)
     return
   }
 }
@@ -504,7 +537,7 @@ bool testVerifierRejectsMalformedMaterializations(MLIRContext& context)
     return passed;
 }
 
-bool testVerifierRejectsDuplicateEventKey(MLIRContext& context)
+bool testVerifierRequiresDistinctCoexecutingEvents(MLIRContext& context)
 {
     OwningOpRef<ModuleOp> module = parseFixture(context, kRepeatedDomainFixture);
     if (!check(static_cast<bool>(module), "cannot parse repeated-domain fixture")) {
@@ -513,6 +546,18 @@ bool testVerifierRejectsDuplicateEventKey(MLIRContext& context)
     func::FuncOp function = *module->getOps<func::FuncOp>().begin();
     AnalysisFixture fixture(function);
     if (!check(buildOneShotAnalysis(fixture), "cannot build repeated-domain plan")) {
+        return false;
+    }
+    SmallVector<const SyncOneShotProtocol*, 2> repeatedDomain;
+    for (const SyncOneShotProtocol& protocol : fixture.plan->protocols) {
+        if (protocol.kind == SyncOneShotProtocolKind::DirectedEvent && protocol.sourcePipe == PIPE::PIPE_MTE2 &&
+            protocol.targetPipe == PIPE::PIPE_V) {
+            repeatedDomain.push_back(&protocol);
+        }
+    }
+    if (!check(
+            repeatedDomain.size() == 2 && repeatedDomain[0]->eventId == 0 && repeatedDomain[1]->eventId == 1,
+            "coexecuting same-domain generations did not receive distinct event IDs")) {
         return false;
     }
 
@@ -528,13 +573,9 @@ bool testVerifierRejectsDuplicateEventKey(MLIRContext& context)
             "verifier rejected valid repeated-domain materialization")) {
         return false;
     }
-    auto secondSet = cast<SetFlagOp>(findGenerated(clone, "event-set", 2));
-    auto secondWait = cast<WaitFlagOp>(findGenerated(clone, "event-wait", 2));
-    secondSet.setEventIdAttr(EventAttr::get(&context, EVENT::EVENT_ID0));
-    secondWait.setEventIdAttr(EventAttr::get(&context, EVENT::EVENT_ID0));
     return check(
-        failed(verifyOneShotProtocolMaterialization(fixture.schedule, *fixture.stages, clone, mapping)),
-        "verifier accepted a duplicate same-domain event key");
+        succeeded(verifyOneShotProtocolMaterialization(fixture.schedule, *fixture.stages, clone, mapping)),
+        "verifier rejected distinct coexecuting same-domain event IDs");
 }
 
 SyncOneShotPlan makeAllocationPlan(unsigned count, PIPE source, PIPE target)
@@ -575,6 +616,9 @@ bool testEventAllocation(MLIRContext& context)
         passed &= check(protocol.eventId == expected, "same-domain allocation did not use a distinct event ID");
     }
     passed &= check(statistics.eventDomains == 1, "same-domain pressure reported the wrong domain count");
+    passed &= check(
+        statistics.allocationGraphVertices == 6 && statistics.allocationGraphEdges == 15,
+        "overlapping one-shot generations produced the wrong interference graph");
     passed &= check(statistics.maxEventDomainPressure == 6, "same-domain pressure was not reported");
     passed &= check(statistics.maximumEventIdPlusOne == 6, "maximum allocated event ID was not reported");
 
@@ -617,6 +661,174 @@ bool testEventAllocation(MLIRContext& context)
     passed &=
         check(succeeded(allocateOneShotProtocolEvents(reservationSchedule, reserved)), "reserved allocation failed");
     passed &= check(reserved.protocols.front().eventId == 1, "allocator reused hidden reserved event ID zero");
+    return passed;
+}
+
+bool testControlExclusiveEventAllocation(MLIRContext& context)
+{
+    OwningOpRef<ModuleOp> module = parseFixture(context, kSSAChoiceFixture);
+    if (!check(static_cast<bool>(module), "cannot parse control-exclusive allocation fixture")) {
+        return false;
+    }
+    func::FuncOp function = *module->getOps<func::FuncOp>().begin();
+    AnalysisFixture fixture(function);
+    if (!check(buildAnalysis(fixture), "cannot analyze control-exclusive allocation fixture")) {
+        return false;
+    }
+    SmallVector<const SyncPhase*, 2> guardedPhases;
+    for (const SyncPhase& phase : fixture.schedule.getPhases()) {
+        if (!phase.guard.empty()) {
+            guardedPhases.push_back(&phase);
+        }
+    }
+    const bool hasTwoGuardedPhases =
+        check(guardedPhases.size() == 2, "choice fixture does not have two guarded phases");
+    if (!hasTwoGuardedPhases) {
+        return false;
+    }
+    SmallVector<SyncEventGeneration, 2> exclusive;
+    for (const SyncPhase* phase : guardedPhases) {
+        SyncEventGeneration generation;
+        generation.id = exclusive.size();
+        generation.kind = SyncEventGenerationKind::DirectRepair;
+        generation.core = SyncPhysicalCore::Vector;
+        generation.sourcePipe = PIPE::PIPE_MTE2;
+        generation.targetPipe = PIPE::PIPE_V;
+        generation.setAnchor = phase->operation;
+        generation.waitAnchor = phase->operation->getBlock()->getTerminator();
+        generation.guard.assign(phase->guard.begin(), phase->guard.end());
+        exclusive.push_back(std::move(generation));
+    }
+    const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(function);
+    FailureOr<SyncEventAllocationResult> exclusiveAllocation = allocateSyncEventGenerations(target, {}, exclusive);
+    bool passed = check(
+        succeeded(exclusiveAllocation) && exclusiveAllocation->status == SyncEventAllocationStatus::Allocated &&
+            exclusiveAllocation->graphEdges == 0 && exclusiveAllocation->eventIds.size() == 2 &&
+            exclusiveAllocation->eventIds[0] == 0 && exclusiveAllocation->eventIds[1] == 0,
+        "mutually exclusive event generations did not share one ID");
+
+    SmallVector<SyncEventGeneration, 2> coexecuting = exclusive;
+    for (SyncEventGeneration& generation : coexecuting) {
+        generation.guard.clear();
+    }
+    FailureOr<SyncEventAllocationResult> coexecutingAllocation = allocateSyncEventGenerations(target, {}, coexecuting);
+    passed &= check(
+        succeeded(coexecutingAllocation) && coexecutingAllocation->status == SyncEventAllocationStatus::Allocated &&
+            coexecutingAllocation->graphEdges == 1 && coexecutingAllocation->eventIds.size() == 2 &&
+            coexecutingAllocation->eventIds[0] != coexecutingAllocation->eventIds[1],
+        "coexecuting event generations did not interfere");
+    for (SyncEventGeneration& generation : coexecuting) {
+        generation.eventId = 0;
+    }
+    passed &= check(
+        failed(verifySyncEventGenerationAssignment(target, {}, coexecuting, false)),
+        "event verifier accepted one ID for coexecuting generations");
+
+    SmallVector<SyncEventGeneration, 512> largeExclusive;
+    for (unsigned arm = 0; arm < 512; ++arm) {
+        SyncEventGeneration generation = exclusive.front();
+        generation.id = arm;
+        generation.guard.clear();
+        generation.guard.push_back({0, arm});
+        largeExclusive.push_back(std::move(generation));
+    }
+    FailureOr<SyncEventAllocationResult> largeAllocation =
+        allocateSyncEventGenerations(target, {}, largeExclusive);
+    passed &= check(
+        succeeded(largeAllocation) && largeAllocation->status == SyncEventAllocationStatus::Allocated &&
+            largeAllocation->graphEdges == 0 && largeAllocation->maximumDomainPressure == 1 &&
+            llvm::all_equal(largeAllocation->eventIds),
+        "large structurally exclusive allocation did not take the bounded edgeless fast path");
+    const bool largeWasAllocated =
+        succeeded(largeAllocation) && largeAllocation->status == SyncEventAllocationStatus::Allocated;
+    if (largeWasAllocated) {
+        for (auto [generation, eventId] : llvm::zip_equal(largeExclusive, largeAllocation->eventIds)) {
+            generation.eventId = eventId;
+        }
+    }
+    passed &= check(
+        succeeded(verifySyncEventGenerationAssignment(target, {}, largeExclusive, false)),
+        "allocator and verifier disagreed at the shared default domain limit");
+
+    SmallVector<SyncEventGeneration, 1025> overLimit;
+    overLimit.append(largeExclusive.begin(), largeExclusive.end());
+    for (SyncEventGeneration& generation : overLimit) {
+        generation.eventId.reset();
+    }
+    for (unsigned arm = overLimit.size(); arm < 1025; ++arm) {
+        SyncEventGeneration generation = exclusive.front();
+        generation.id = arm;
+        generation.guard.clear();
+        generation.guard.push_back({0, arm});
+        overLimit.push_back(std::move(generation));
+    }
+    FailureOr<SyncEventAllocationResult> limitedAllocation =
+        allocateSyncEventGenerations(target, {}, overLimit);
+    passed &= check(
+        succeeded(limitedAllocation) && limitedAllocation->status == SyncEventAllocationStatus::AnalysisLimit &&
+            limitedAllocation->eventIds.empty() && limitedAllocation->searchLimitHits == 1,
+        "generation-domain input limit was not reported as an analysis limit");
+    SyncEventAllocationOptions invalidRaisedLimit;
+    invalidRaisedLimit.maximumBacktrackingNodes = kHardMaximumEventBacktrackingNodes + 1;
+    invalidRaisedLimit.maximumExactVertices = kHardMaximumExactEventVertices + 1;
+    invalidRaisedLimit.maximumGenerationsPerDomain = kHardMaximumEventGenerationsPerDomain + 1;
+    passed &= check(
+        failed(allocateSyncEventGenerations(target, {}, largeExclusive, invalidRaisedLimit)) &&
+            failed(verifySyncEventGenerationAssignment(target, {}, largeExclusive, false, invalidRaisedLimit)),
+        "allocator or verifier accepted options above immutable safety caps");
+
+    SmallVector<SyncEventGeneration, 3> boundedSearch;
+    for (unsigned index = 0; index < 3; ++index) {
+        SyncEventGeneration generation = exclusive.front();
+        generation.id = index;
+        generation.guard.clear();
+        if (index != 1) {
+            generation.guard.push_back({0, index / 2});
+        }
+        boundedSearch.push_back(std::move(generation));
+    }
+    SyncEventAllocationOptions lowBudget;
+    lowBudget.maximumBacktrackingNodes = 1;
+    FailureOr<SyncEventAllocationResult> boundedAllocation =
+        allocateSyncEventGenerations(target, {}, boundedSearch, lowBudget);
+    passed &= check(
+        succeeded(boundedAllocation) && boundedAllocation->status == SyncEventAllocationStatus::Allocated &&
+            boundedAllocation->eventIds.size() == 3 &&
+            boundedAllocation->eventIds[0] == boundedAllocation->eventIds[2] &&
+            boundedAllocation->eventIds[0] != boundedAllocation->eventIds[1] &&
+            boundedAllocation->searchLimitHits == 1 && boundedAllocation->backtrackingNodes == 1,
+        "bounded minimization discarded or misclassified a known feasible assignment");
+
+    SyncEventAllocationOptions loweredExactLimit;
+    loweredExactLimit.maximumExactVertices = 2;
+    FailureOr<SyncEventAllocationResult> loweredExactAllocation =
+        allocateSyncEventGenerations(target, {}, boundedSearch, loweredExactLimit);
+    passed &= check(
+        succeeded(loweredExactAllocation) &&
+            loweredExactAllocation->status == SyncEventAllocationStatus::Allocated &&
+            loweredExactAllocation->maximumDomainPressure == 2 && loweredExactAllocation->searchLimitHits == 1 &&
+            loweredExactAllocation->backtrackingNodes == 0,
+        "lowered exact-search cap did not skip recursive minimization and retain feasibility");
+
+    SmallVector<SyncEventGeneration, 129> aboveExactLimit;
+    for (unsigned arm = 0; arm < 128; ++arm) {
+        SyncEventGeneration generation = exclusive.front();
+        generation.id = arm;
+        generation.guard.clear();
+        generation.guard.push_back({0, arm});
+        aboveExactLimit.push_back(std::move(generation));
+    }
+    SyncEventGeneration central = exclusive.front();
+    central.id = aboveExactLimit.size();
+    central.guard.clear();
+    aboveExactLimit.push_back(std::move(central));
+    FailureOr<SyncEventAllocationResult> aboveExactAllocation =
+        allocateSyncEventGenerations(target, {}, aboveExactLimit);
+    passed &= check(
+        succeeded(aboveExactAllocation) && aboveExactAllocation->status == SyncEventAllocationStatus::Allocated &&
+            aboveExactAllocation->graphEdges == 128 && aboveExactAllocation->maximumDomainPressure == 2 &&
+            aboveExactAllocation->searchLimitHits == 1 && aboveExactAllocation->backtrackingNodes == 0,
+        "above-cap nontrivial graph entered recursive minimization or lost its feasible coloring");
     return passed;
 }
 
@@ -664,21 +876,21 @@ bool testSelectedWorldInterpreter(MLIRContext& context)
     std::swap(reverse.source, reverse.target);
     malformed->completions.push_back(reverse);
     passed &= check(
-        failed(interpretSelectedWorld(
-            fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels, *malformed)),
+        failed(
+            interpretSelectedWorld(fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels, *malformed)),
         "backward same-iteration completion was accepted");
     return passed;
 }
 
 bool hasObligation(const SyncInterpretationResult& result, SyncObligationKind kind)
 {
-    return llvm::any_of(result.obligations, [&](const SyncResidualObligation& obligation) {
-        return obligation.kind == kind;
-    });
+    return llvm::any_of(
+        result.obligations, [&](const SyncResidualObligation& obligation) { return obligation.kind == kind; });
 }
 
-bool hasObligationBetween(const SyncInterpretationResult& result, SyncObligationKind kind, SyncPhaseId source,
-    SyncPhaseId target, SyncIterationRelationKind iteration)
+bool hasObligationBetween(
+    const SyncInterpretationResult& result, SyncObligationKind kind, SyncPhaseId source, SyncPhaseId target,
+    SyncIterationRelationKind iteration)
 {
     return llvm::any_of(result.obligations, [&](const SyncResidualObligation& obligation) {
         return obligation.kind == kind && obligation.source == source && obligation.target == target &&
@@ -686,8 +898,9 @@ bool hasObligationBetween(const SyncInterpretationResult& result, SyncObligation
     });
 }
 
-bool hasObligationWithRelation(const SyncInterpretationResult& result, SyncObligationKind kind, SyncPhaseId source,
-    SyncPhaseId target, const SyncIterationRelation& relation)
+bool hasObligationWithRelation(
+    const SyncInterpretationResult& result, SyncObligationKind kind, SyncPhaseId source, SyncPhaseId target,
+    const SyncIterationRelation& relation)
 {
     return llvm::any_of(result.obligations, [&](const SyncResidualObligation& obligation) {
         return obligation.kind == kind && obligation.source == source && obligation.target == target &&
@@ -710,8 +923,8 @@ bool testIndependentResidualEffects(MLIRContext& context)
     FailureOr<SyncInterpretationResult> uncovered = interpretSelectedWorld(
         ssaFixture.schedule, *ssaFixture.stages, ssaFixture.timelines, ssaFixture.channels, empty);
     bool passed = check(
-        succeeded(uncovered) && hasObligation(*uncovered, SyncObligationKind::SSACompletion),
-        "uncovered cross-phase SSA dependency was not materialized");
+        succeeded(uncovered) && !hasObligation(*uncovered, SyncObligationKind::SSACompletion),
+        "intrinsically ordered scalar SSA dependency produced a residual");
 
     SyncSelectedWorld ordered;
     ordered.completions.push_back(
@@ -734,10 +947,10 @@ bool testIndependentResidualEffects(MLIRContext& context)
     FailureOr<SyncInterpretationResult> pure = interpretSelectedWorld(
         pureFixture.schedule, *pureFixture.stages, pureFixture.timelines, pureFixture.channels, empty);
     passed &= check(
-        succeeded(pure) && hasObligationBetween(
-                               *pure, SyncObligationKind::SSACompletion, 0, 1,
-                               SyncIterationRelationKind::SameIteration),
-        "physical SSA producer was lost through a pure operation");
+        succeeded(pure) &&
+            !hasObligationBetween(
+                *pure, SyncObligationKind::SSACompletion, 0, 1, SyncIterationRelationKind::SameIteration),
+        "pure scalar SSA forwarding produced a completion residual");
 
     OwningOpRef<ModuleOp> choiceModule = parseFixture(context, kSSAChoiceFixture);
     if (!check(static_cast<bool>(choiceModule), "cannot parse conditional SSA fixture")) {
@@ -749,13 +962,13 @@ bool testIndependentResidualEffects(MLIRContext& context)
     }
     FailureOr<SyncInterpretationResult> choice = interpretSelectedWorld(
         choiceFixture.schedule, *choiceFixture.stages, choiceFixture.timelines, choiceFixture.channels, empty);
-    const bool thenDependence = succeeded(choice) && hasObligationBetween(
-                                                        *choice, SyncObligationKind::SSACompletion, 0, 2,
-                                                        SyncIterationRelationKind::SameIteration);
-    const bool elseDependence = succeeded(choice) && hasObligationBetween(
-                                                        *choice, SyncObligationKind::SSACompletion, 1, 2,
-                                                        SyncIterationRelationKind::SameIteration);
-    passed &= check(thenDependence && elseDependence, "conditional SSA sources were not preserved across yields");
+    const bool thenOrdered = succeeded(choice) && !hasObligationBetween(
+                                                      *choice, SyncObligationKind::SSACompletion, 0, 2,
+                                                      SyncIterationRelationKind::SameIteration);
+    const bool elseOrdered = succeeded(choice) && !hasObligationBetween(
+                                                      *choice, SyncObligationKind::SSACompletion, 1, 2,
+                                                      SyncIterationRelationKind::SameIteration);
+    passed &= check(thenOrdered && elseOrdered, "conditional scalar SSA source produced a completion residual");
 
     OwningOpRef<ModuleOp> loopModule = parseFixture(context, kSSALoopCarriedFixture);
     if (!check(static_cast<bool>(loopModule), "cannot parse loop-carried SSA fixture")) {
@@ -767,10 +980,10 @@ bool testIndependentResidualEffects(MLIRContext& context)
     }
     FailureOr<SyncInterpretationResult> loop = interpretSelectedWorld(
         loopFixture.schedule, *loopFixture.stages, loopFixture.timelines, loopFixture.channels, empty);
-    const bool loopDependence = succeeded(loop) && hasObligationBetween(
-                                                    *loop, SyncObligationKind::SSACompletion, 1, 0,
-                                                    SyncIterationRelationKind::LoopCarried);
-    passed &= check(loopDependence, "loop-carried physical SSA dependence was not preserved");
+    const bool loopOrdered =
+        succeeded(loop) &&
+        !hasObligationBetween(*loop, SyncObligationKind::SSACompletion, 1, 0, SyncIterationRelationKind::LoopCarried);
+    passed &= check(loopOrdered, "loop-carried scalar SSA source produced a completion residual");
 
     OwningOpRef<ModuleOp> nestedModule = parseFixture(context, kNestedMemoryFixture);
     if (!check(static_cast<bool>(nestedModule), "cannot parse nested memory fixture")) {
@@ -789,21 +1002,18 @@ bool testIndependentResidualEffects(MLIRContext& context)
     const SyncRegionId innerCarrier = nestedPhases[0].iterationDomain.loops.back();
     SyncSelectedWorld innerOnly;
     innerOnly.visibility.push_back(
-        {1, 0, SyncControlRelation::MustExecute,
-         {SyncIterationRelationKind::LoopCarried, 1, innerCarrier}});
+        {1, 0, SyncControlRelation::MustExecute, {SyncIterationRelationKind::LoopCarried, 1, innerCarrier}});
     innerOnly.exitCompletedPhases.append({0, 1});
     FailureOr<SyncInterpretationResult> nested = interpretSelectedWorld(
         nestedFixture.schedule, *nestedFixture.stages, nestedFixture.timelines, nestedFixture.channels, innerOnly);
     const SyncIterationRelation outerRelation{SyncIterationRelationKind::Unknown, 0, outerCarrier};
     const SyncIterationRelation innerRelation{SyncIterationRelationKind::LoopCarried, 1, innerCarrier};
-    const bool outerResidual = succeeded(nested) && hasObligationWithRelation(
-                                                        *nested, SyncObligationKind::Visibility, 1, 0, outerRelation);
-    const bool innerDischarged = succeeded(nested) && !hasObligationWithRelation(
-                                                          *nested, SyncObligationKind::Visibility, 1, 0,
-                                                          innerRelation);
+    const bool outerResidual =
+        succeeded(nested) && hasObligationWithRelation(*nested, SyncObligationKind::Visibility, 1, 0, outerRelation);
+    const bool innerDischarged =
+        succeeded(nested) && !hasObligationWithRelation(*nested, SyncObligationKind::Visibility, 1, 0, innerRelation);
     passed &= check(
-        outerResidual && innerDischarged,
-        "inner-loop visibility incorrectly discharged the enclosing-loop boundary");
+        outerResidual && innerDischarged, "inner-loop visibility incorrectly discharged the enclosing-loop boundary");
 
     OwningOpRef<ModuleOp> visibilityModule = parseFixture(context, kVisibilityFixture);
     if (!check(static_cast<bool>(visibilityModule), "cannot parse GM-visibility fixture")) {
@@ -843,6 +1053,33 @@ bool testIndependentResidualEffects(MLIRContext& context)
         markedOrdered && succeeded(orderedTargetResult) &&
             hasObligation(*orderedTargetResult, SyncObligationKind::OrderedMemory),
         "selected completion or visibility discharged an ordered target access");
+
+    OwningOpRef<ModuleOp> orderedUnknownModule = parseFixture(context, kOrderedUnknownAliasFixture);
+    if (!check(static_cast<bool>(orderedUnknownModule), "cannot parse ordered unknown-alias fixture")) {
+        return false;
+    }
+    AnalysisFixture orderedUnknownFixture(*orderedUnknownModule->getOps<func::FuncOp>().begin());
+    if (!check(buildAnalysis(orderedUnknownFixture), "cannot analyze ordered unknown-alias fixture")) {
+        return false;
+    }
+    const bool markedSourceOrdered =
+        StructuredSyncIRTestPeer::markGlobalWriteOrdered(orderedUnknownFixture.schedule, 0);
+    SyncSelectedWorld selectedOrder;
+    selectedOrder.completions.push_back(
+        {0, 1, SyncControlRelation::MustExecute, {SyncIterationRelationKind::SameIteration, 0}});
+    selectedOrder.exitCompletedPhases.append({0, 1});
+    FailureOr<SyncInterpretationResult> orderedUnknown = interpretSelectedWorld(
+        orderedUnknownFixture.schedule, *orderedUnknownFixture.stages, orderedUnknownFixture.timelines,
+        orderedUnknownFixture.channels, selectedOrder);
+    const bool preservesOrderedEffect =
+        succeeded(orderedUnknown) &&
+        hasObligationBetween(
+            *orderedUnknown, SyncObligationKind::OrderedMemory, 0, 1, SyncIterationRelationKind::SameIteration) &&
+        !hasObligationBetween(
+            *orderedUnknown, SyncObligationKind::Completion, 0, 1, SyncIterationRelationKind::SameIteration);
+    passed &= check(
+        markedSourceOrdered && preservesOrderedEffect,
+        "unknown aliasing converted an ordered endpoint into a repairable completion");
     return passed;
 }
 
@@ -856,8 +1093,9 @@ int main()
     bool passed = testTargetContract(context);
     passed &= testVerifierRejectsMalformedPlans(context);
     passed &= testVerifierRejectsMalformedMaterializations(context);
-    passed &= testVerifierRejectsDuplicateEventKey(context);
+    passed &= testVerifierRequiresDistinctCoexecutingEvents(context);
     passed &= testEventAllocation(context);
+    passed &= testControlExclusiveEventAllocation(context);
     passed &= testSelectedWorldInterpreter(context);
     passed &= testIndependentResidualEffects(context);
     if (passed) {

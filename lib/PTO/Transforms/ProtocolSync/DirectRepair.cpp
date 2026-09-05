@@ -12,12 +12,13 @@
 
 #include "PTO/Transforms/ProtocolSync/DirectRepair.h"
 
+#include "PTO/Transforms/ProtocolSync/EventAllocation.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
 #include <limits>
-#include <map>
 #include <set>
 #include <tuple>
 
@@ -248,32 +249,76 @@ void appendExitCandidates(ArrayRef<ExitGroup> groups, SyncDirectRepairPlan& plan
     }
 }
 
-using CompletionKey = std::tuple<
-    SyncPhaseId, SyncPhaseId, SyncControlRelation, SyncIterationRelationKind, unsigned, SyncRegionId>;
+using CompletionKey =
+    std::tuple<SyncPhaseId, SyncPhaseId, SyncControlRelation, SyncIterationRelationKind, unsigned, SyncRegionId>;
 
 CompletionKey completionKey(const SyncSelectedCompletion& completion)
 {
     return {
-        completion.source, completion.target, completion.control, completion.iteration.kind,
-        completion.iteration.distance, completion.iteration.carrier};
+        completion.source,
+        completion.target,
+        completion.control,
+        completion.iteration.kind,
+        completion.iteration.distance,
+        completion.iteration.carrier};
 }
 
-bool isReserved(
-    ArrayRef<SyncEventReservation> reservations, PIPE source, PIPE target, unsigned eventId)
+LogicalResult allocateDirectRepairEventsImpl(
+    const ProtocolSyncTarget& target, ArrayRef<SyncEventReservation> reservations, const StructuredSyncIR* schedule,
+    SyncDirectRepairPlan& plan, ProtocolSyncStatistics* statistics)
 {
-    return llvm::any_of(reservations, [&](const SyncEventReservation& reservation) {
-        return reservation.source == source && reservation.target == target &&
-               llvm::is_contained(reservation.eventIds, eventId);
-    });
-}
-
-using EventDomain = std::tuple<std::uint8_t, std::uint8_t, std::uint8_t>;
-
-EventDomain eventDomain(const SyncDirectRepairCandidate& candidate)
-{
-    return {
-        static_cast<std::uint8_t>(candidate.core), static_cast<std::uint8_t>(candidate.sourcePipe),
-        static_cast<std::uint8_t>(candidate.targetPipe)};
+    const bool canAllocate = target.isSupported() && plan.status == SyncDirectRepairPlanStatus::Ready &&
+                             llvm::none_of(plan.candidates, [](const SyncDirectRepairCandidate& candidate) {
+                                 return candidate.eventId.has_value();
+                             });
+    if (!canAllocate) {
+        return failure();
+    }
+    SmallVector<SyncEventGeneration, 8> generations;
+    SmallVector<SyncDirectRepairCandidate*, 8> eventCandidates;
+    for (SyncDirectRepairCandidate& candidate : plan.candidates) {
+        if (candidate.kind != SyncDirectRepairKind::DirectedEvent) {
+            continue;
+        }
+        SyncEventGeneration generation;
+        generation.id = generations.size();
+        generation.kind = SyncEventGenerationKind::DirectRepair;
+        generation.core = candidate.core;
+        generation.sourcePipe = candidate.sourcePipe;
+        generation.targetPipe = candidate.targetPipe;
+        generation.setAnchor = candidate.sourceOperation;
+        generation.waitAnchor = candidate.targetOperation;
+        if (schedule) {
+            const SyncPhase* source = schedule->findPhase(candidate.sourcePhase);
+            if (!source) {
+                return failure();
+            }
+            generation.guard.assign(source->guard.begin(), source->guard.end());
+        }
+        generations.push_back(std::move(generation));
+        eventCandidates.push_back(&candidate);
+    }
+    FailureOr<SyncEventAllocationResult> allocation = allocateSyncEventGenerations(target, reservations, generations);
+    if (failed(allocation)) {
+        return failure();
+    }
+    if (statistics) {
+        recordSyncEventAllocationStatistics(*allocation, *statistics);
+    }
+    if (allocation->status == SyncEventAllocationStatus::ResourceInfeasible) {
+        plan.status = SyncDirectRepairPlanStatus::ResourceInfeasible;
+        plan.rejections.push_back(
+            {kInvalidSyncId, SyncDirectRepairRejection::EventCapacity,
+             "interfering direct event generations exhaust the compiler event pool"});
+        return success();
+    }
+    if (allocation->status != SyncEventAllocationStatus::Allocated) {
+        return failure();
+    }
+    for (auto [candidate, eventId] : llvm::zip_equal(eventCandidates, allocation->eventIds)) {
+        candidate->eventId = eventId;
+    }
+    return success();
 }
 
 } // namespace
@@ -474,8 +519,7 @@ LogicalResult mlir::pto::protocol_sync::applyDirectRepairCandidates(
     for (const SyncSelectedCompletion& completion : staged.completions) {
         knownCompletions.insert(completionKey(completion));
     }
-    std::set<SyncPhaseId> knownExitCompletions(
-        staged.exitCompletedPhases.begin(), staged.exitCompletedPhases.end());
+    std::set<SyncPhaseId> knownExitCompletions(staged.exitCompletedPhases.begin(), staged.exitCompletedPhases.end());
     for (SyncDirectCandidateId candidateId : selected) {
         const bool invalidCandidate = candidateId >= plan.candidates.size() || selectedCandidates.test(candidateId);
         if (invalidCandidate) {
@@ -528,57 +572,12 @@ LogicalResult mlir::pto::protocol_sync::allocateDirectRepairEvents(
     for (const SyncOpSummary& summary : schedule.getSummaries()) {
         reservations.append(summary.eventReservations.begin(), summary.eventReservations.end());
     }
-    return allocateDirectRepairEvents(target, reservations, plan, statistics);
+    return allocateDirectRepairEventsImpl(target, reservations, &schedule, plan, statistics);
 }
 
 LogicalResult mlir::pto::protocol_sync::allocateDirectRepairEvents(
-    const ProtocolSyncTarget& target, ArrayRef<SyncEventReservation> reservations,
-    SyncDirectRepairPlan& plan, ProtocolSyncStatistics* statistics)
+    const ProtocolSyncTarget& target, ArrayRef<SyncEventReservation> reservations, SyncDirectRepairPlan& plan,
+    ProtocolSyncStatistics* statistics)
 {
-    const bool canAllocate = target.isSupported() && plan.status == SyncDirectRepairPlanStatus::Ready;
-    if (!canAllocate) {
-        return failure();
-    }
-    std::map<EventDomain, std::set<unsigned>> used;
-    for (SyncDirectRepairCandidate& candidate : plan.candidates) {
-        candidate.eventId.reset();
-        if (candidate.kind != SyncDirectRepairKind::DirectedEvent) {
-            continue;
-        }
-        std::set<unsigned>& domain = used[eventDomain(candidate)];
-        std::optional<unsigned> selected;
-        for (unsigned eventId : target.getCompilerEventIds()) {
-            const bool available = domain.count(eventId) == 0 &&
-                                   !isReserved(reservations, candidate.sourcePipe, candidate.targetPipe, eventId);
-            if (available) {
-                selected = eventId;
-                break;
-            }
-        }
-        if (!selected) {
-            for (SyncDirectRepairCandidate& reset : plan.candidates) {
-                reset.eventId.reset();
-            }
-            plan.status = SyncDirectRepairPlanStatus::ResourceInfeasible;
-            plan.rejections.push_back(
-                {kInvalidSyncId, SyncDirectRepairRejection::EventCapacity,
-                 "compiler event pool cannot allocate every direct candidate in one directed domain"});
-            return success();
-        }
-        candidate.eventId = *selected;
-        domain.insert(*selected);
-        if (statistics) {
-            statistics->maximumEventIdPlusOne =
-                std::max(statistics->maximumEventIdPlusOne, static_cast<std::uint64_t>(*selected + 1));
-        }
-    }
-    if (statistics) {
-        statistics->eventDomains += used.size();
-        for (const auto& [domain, eventIds] : used) {
-            (void)domain;
-            statistics->maxEventDomainPressure =
-                std::max(statistics->maxEventDomainPressure, static_cast<std::uint64_t>(eventIds.size()));
-        }
-    }
-    return success();
+    return allocateDirectRepairEventsImpl(target, reservations, nullptr, plan, statistics);
 }

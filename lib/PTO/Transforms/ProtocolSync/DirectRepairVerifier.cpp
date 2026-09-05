@@ -13,6 +13,7 @@
 #include "PTO/Transforms/ProtocolSync/DirectRepair.h"
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/ProtocolSync/EventAllocation.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -91,13 +92,6 @@ bool isReserved(const StructuredSyncIR& schedule, PIPE source, PIPE target, unsi
     });
 }
 
-std::uint64_t eventKey(const SyncDirectRepairCandidate& candidate, unsigned eventId)
-{
-    return (static_cast<std::uint64_t>(candidate.core) << 24) |
-           (static_cast<std::uint64_t>(candidate.sourcePipe) << 16) |
-           (static_cast<std::uint64_t>(candidate.targetPipe) << 8) | eventId;
-}
-
 LogicalResult verifyExitCandidate(
     const StructuredSyncIR& schedule, ArrayRef<SyncResidualObligation> obligations,
     const SyncDirectRepairCandidate& candidate)
@@ -133,7 +127,7 @@ LogicalResult verifyExitCandidate(
 LogicalResult verifyFrontierCandidate(
     const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
     ArrayRef<SyncResidualObligation> obligations, const ProtocolSyncTarget& target,
-    const SyncDirectRepairCandidate& candidate, llvm::DenseSet<std::uint64_t>& allocatedEvents)
+    const SyncDirectRepairCandidate& candidate)
 {
     const SyncPhase* frontierSource = schedule.findPhase(candidate.sourcePhase);
     const SyncPhase* frontierTarget = schedule.findPhase(candidate.targetPhase);
@@ -161,8 +155,7 @@ LogicalResult verifyFrontierCandidate(
         if (candidate.eventId) {
             const unsigned eventId = *candidate.eventId;
             const bool validId = llvm::is_contained(target.getCompilerEventIds(), eventId) &&
-                                 !isReserved(schedule, candidate.sourcePipe, candidate.targetPipe, eventId) &&
-                                 allocatedEvents.insert(eventKey(candidate, eventId)).second;
+                                 !isReserved(schedule, candidate.sourcePipe, candidate.targetPipe, eventId);
             if (!validId) {
                 return failure();
             }
@@ -291,7 +284,7 @@ bool onlyGeneratedBetween(Operation* first, Operation* second)
 
 LogicalResult verifyConcreteFrontier(
     const StructuredSyncIR& schedule, const ProtocolSyncTarget& target, const SyncDirectRepairCandidate& candidate,
-    const ConcreteCandidate& concrete, const IRMapping& mapping, llvm::DenseSet<std::uint64_t>& allocatedEvents)
+    const ConcreteCandidate& concrete, const IRMapping& mapping)
 {
     Operation* source = mapping.lookupOrNull(schedule.findPhase(candidate.sourcePhase)->operation);
     Operation* destination = mapping.lookupOrNull(schedule.findPhase(candidate.targetPhase)->operation);
@@ -318,8 +311,8 @@ LogicalResult verifyConcreteFrontier(
         target.supportsEvent({candidate.core, candidate.sourcePipe}, {candidate.core, candidate.targetPipe}) &&
         llvm::is_contained(target.getCompilerEventIds(), eventId) &&
         !isReserved(schedule, candidate.sourcePipe, candidate.targetPipe, eventId) &&
-        allocatedEvents.insert(eventKey(candidate, eventId)).second && onlyGeneratedBetween(source, concrete.set) &&
-        isBefore(concrete.set, concrete.wait) && onlyGeneratedBetween(concrete.wait, destination);
+        onlyGeneratedBetween(source, concrete.set) && isBefore(concrete.set, concrete.wait) &&
+        onlyGeneratedBetween(concrete.wait, destination);
     return success(valid);
 }
 
@@ -502,17 +495,33 @@ LogicalResult mlir::pto::protocol_sync::verifyDirectRepairPlan(
     }
 
     llvm::BitVector covered(obligations.size());
-    llvm::DenseSet<std::uint64_t> allocatedEvents;
+    SmallVector<SyncEventGeneration, 8> generations;
     for (auto [index, candidate] : llvm::enumerate(plan.candidates)) {
         if (candidate.id != index || !llvm::is_sorted(candidate.obligations)) {
             return failure();
         }
-        const LogicalResult verified =
-            candidate.kind == SyncDirectRepairKind::ExitBarrier ?
-                verifyExitCandidate(schedule, obligations, candidate) :
-                verifyFrontierCandidate(schedule, stages, obligations, target, candidate, allocatedEvents);
+        const LogicalResult verified = candidate.kind == SyncDirectRepairKind::ExitBarrier ?
+                                           verifyExitCandidate(schedule, obligations, candidate) :
+                                           verifyFrontierCandidate(schedule, stages, obligations, target, candidate);
         if (failed(verified)) {
             return failure();
+        }
+        if (candidate.kind == SyncDirectRepairKind::DirectedEvent) {
+            const SyncPhase* source = schedule.findPhase(candidate.sourcePhase);
+            if (!source) {
+                return failure();
+            }
+            SyncEventGeneration generation;
+            generation.id = generations.size();
+            generation.kind = SyncEventGenerationKind::DirectRepair;
+            generation.core = candidate.core;
+            generation.sourcePipe = candidate.sourcePipe;
+            generation.targetPipe = candidate.targetPipe;
+            generation.setAnchor = candidate.sourceOperation;
+            generation.waitAnchor = candidate.targetOperation;
+            generation.guard.assign(source->guard.begin(), source->guard.end());
+            generation.eventId = candidate.eventId;
+            generations.push_back(std::move(generation));
         }
         for (SyncObligationId id : candidate.obligations) {
             const bool invalidCoverage = id >= covered.size() || covered.test(id);
@@ -526,6 +535,13 @@ LogicalResult mlir::pto::protocol_sync::verifyDirectRepairPlan(
         }
     }
     if (failed(verifyCandidatesCannotShareFrontier(schedule, plan.candidates))) {
+        return failure();
+    }
+    SmallVector<SyncEventReservation, 8> reservations;
+    for (const SyncOpSummary& summary : schedule.getSummaries()) {
+        reservations.append(summary.eventReservations.begin(), summary.eventReservations.end());
+    }
+    if (failed(verifySyncEventGenerationAssignment(target, reservations, generations))) {
         return failure();
     }
 
@@ -594,7 +610,7 @@ LogicalResult mlir::pto::protocol_sync::verifyDirectRepairPlan(
         });
         const bool anyAllocated = llvm::any_of(directed, [](const auto& candidate) { return candidate.eventId; });
         const bool allAllocated = llvm::all_of(directed, [](const auto& candidate) { return candidate.eventId; });
-        if (anyAllocated != allAllocated) {
+        if (anyAllocated && !allAllocated) {
             return failure();
         }
     }
@@ -617,16 +633,14 @@ LogicalResult mlir::pto::protocol_sync::verifyDirectRepairMaterialization(
         return failure();
     }
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
-    llvm::DenseSet<std::uint64_t> allocatedEvents;
     for (const SyncDirectRepairCandidate& candidate : plan.candidates) {
         auto found = records.find(candidate.id);
         if (found == records.end()) {
             return failure();
         }
-        const LogicalResult verified =
-            candidate.kind == SyncDirectRepairKind::ExitBarrier ?
-                verifyConcreteTail(clone, candidate, found->second, mapping) :
-                verifyConcreteFrontier(schedule, target, candidate, found->second, mapping, allocatedEvents);
+        const LogicalResult verified = candidate.kind == SyncDirectRepairKind::ExitBarrier ?
+                                           verifyConcreteTail(clone, candidate, found->second, mapping) :
+                                           verifyConcreteFrontier(schedule, target, candidate, found->second, mapping);
         if (failed(verified)) {
             return failure();
         }

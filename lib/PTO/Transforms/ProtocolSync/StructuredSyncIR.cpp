@@ -75,6 +75,14 @@ std::optional<std::uint32_t> getAuthoritativeSlotCount(const SyncStorageProvenan
     return std::nullopt;
 }
 
+bool capacitiesConflict(const std::optional<std::uint32_t>& first, const std::optional<std::uint32_t>& second)
+{
+    if (!first || !second) {
+        return false;
+    }
+    return *first != *second;
+}
+
 std::optional<SmallVector<SyncByteInterval, 2>> getCompletePhysicalSlots(
     const SyncStorageProvenance& provenance, std::optional<std::uint32_t> slotCount)
 {
@@ -212,8 +220,10 @@ SyncStorageFamilyId StructuredSyncIRConstruction::getOrCreateStorageFamily(
     const SyncStorageProvenance& provenance = effect.provenance;
     const unsigned space = static_cast<unsigned>(provenance.space);
     const std::optional<std::uint32_t> rootSlotCount = getAuthoritativeSlotCount(provenance);
-    const std::optional<std::uint32_t> selectorSlotCount =
-        slot && slot->depth != 0 ? std::optional<std::uint32_t>(slot->depth) : std::nullopt;
+    std::optional<std::uint32_t> selectorSlotCount;
+    if (slot && slot->depth != 0) {
+        selectorSlotCount = slot->depth;
+    }
     std::optional<SmallVector<SyncByteInterval, 2>> completeSlots =
         getCompletePhysicalSlots(provenance, rootSlotCount);
     SyncStorageFamily* existingFamily = nullptr;
@@ -246,10 +256,8 @@ SyncStorageFamilyId StructuredSyncIRConstruction::getOrCreateStorageFamily(
                 }
             }
         }
-        const bool authoritativeCapacityConflict =
-            rootSlotCount && family.slotCount && *family.slotCount != *rootSlotCount;
-        const bool selectorCapacityConflict =
-            rootSlotCount && selectorSlotCount && *rootSlotCount != *selectorSlotCount;
+        const bool authoritativeCapacityConflict = capacitiesConflict(rootSlotCount, family.slotCount);
+        const bool selectorCapacityConflict = capacitiesConflict(rootSlotCount, selectorSlotCount);
         if (authoritativeCapacityConflict || selectorCapacityConflict) {
             family.capacityConflict = true;
             family.slotCount.reset();
@@ -268,8 +276,7 @@ SyncStorageFamilyId StructuredSyncIRConstruction::getOrCreateStorageFamily(
     family.unknownRange = provenance.unknownRange;
     family.aliasesUnknownRange = provenance.aliasesUnknownRange;
     family.physicalSlotsComplete = completeSlots.has_value();
-    const bool selectorCapacityConflict =
-        rootSlotCount && selectorSlotCount && *rootSlotCount != *selectorSlotCount;
+    const bool selectorCapacityConflict = capacitiesConflict(rootSlotCount, selectorSlotCount);
     if (selectorCapacityConflict) {
         family.capacityConflict = true;
     } else if (rootSlotCount) {
@@ -401,8 +408,9 @@ void StructuredSyncIRConstruction::addSummary(
     }
     schedule.summaries.push_back(std::move(summary));
     const SyncOpSummary& stored = schedule.summaries.back();
-    const bool needsOrderedSemanticAction = stored.isSupported() && stored.phases.empty() &&
-                                            (!stored.suppliedProtocols.empty() || stored.queue.has_value());
+    const bool fixedProtocolWithoutPhase = stored.phases.empty() && !stored.suppliedProtocols.empty();
+    const bool needsOrderedSemanticAction =
+        stored.queue.has_value() || (stored.isSupported() && fixedProtocolWithoutPhase);
     if (needsOrderedSemanticAction) {
         SyncSemanticActionId actionId = schedule.semanticActions.size();
         SyncSemanticAction action;

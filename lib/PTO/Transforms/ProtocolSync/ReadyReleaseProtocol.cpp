@@ -13,11 +13,13 @@
 #include "PTO/Transforms/ProtocolSync/ReadyReleaseProtocol.h"
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/ProtocolSync/EventAllocation.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
+#include <limits>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -27,17 +29,6 @@ namespace {
 
 constexpr unsigned kCheckpointEMaximumCapacity = 2;
 constexpr unsigned kTokenWitnessHorizon = 6;
-
-std::uint32_t eventDomain(SyncPhysicalCore core, PIPE source, PIPE target)
-{
-    return (static_cast<std::uint32_t>(core) << 16) | (static_cast<std::uint32_t>(source) << 8) |
-           static_cast<std::uint32_t>(target);
-}
-
-std::uint32_t reservationDomain(PIPE source, PIPE target)
-{
-    return (static_cast<std::uint32_t>(source) << 8) | static_cast<std::uint32_t>(target);
-}
 
 void reject(SyncReadyReleasePlan& plan, SyncChannelId channel, SyncReadyReleaseRejection reason, StringRef detail)
 {
@@ -75,6 +66,7 @@ bool hasUnsupportedControl(const StructuredSyncIR& schedule, const SyncRegion*& 
 bool hasUnsupportedVisibility(const StructuredSyncIR& schedule)
 {
     llvm::DenseMap<SyncStorageFamilyId, unsigned> globalModes;
+    llvm::SmallVector<const SyncAccess*, 8> globalAccesses;
     for (const SyncAccess& access : schedule.getAccesses()) {
         if (access.visibility == SyncVisibilityClass::Unknown) {
             return true;
@@ -91,6 +83,45 @@ bool hasUnsupportedVisibility(const StructuredSyncIR& schedule)
         modes |= access.mode == SyncAccessMode::Read ? 1U : 2U;
         if (modes == 3U) {
             return true;
+        }
+        globalAccesses.push_back(&access);
+    }
+    auto rangesOverlap = [](ArrayRef<SyncByteInterval> first, ArrayRef<SyncByteInterval> second) {
+        for (const SyncByteInterval& lhs : first) {
+            const bool invalidLeft = lhs.size == 0 || lhs.begin > std::numeric_limits<std::uint64_t>::max() - lhs.size;
+            if (invalidLeft) {
+                return true;
+            }
+            const std::uint64_t lhsEnd = lhs.begin + lhs.size;
+            for (const SyncByteInterval& rhs : second) {
+                const bool invalidRight =
+                    rhs.size == 0 || rhs.begin > std::numeric_limits<std::uint64_t>::max() - rhs.size;
+                if (invalidRight) {
+                    return true;
+                }
+                const std::uint64_t rhsEnd = rhs.begin + rhs.size;
+                if (lhs.begin < rhsEnd && rhs.begin < lhsEnd) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    for (auto [index, first] : llvm::enumerate(globalAccesses)) {
+        for (const SyncAccess* second : ArrayRef(globalAccesses).drop_front(index + 1)) {
+            const bool hasWrite = first->mode != SyncAccessMode::Read || second->mode != SyncAccessMode::Read;
+            if (!hasWrite || first->storage.space != second->storage.space) {
+                continue;
+            }
+            const bool provenDisjoint = first->family != second->family && first->storage.physical &&
+                                        second->storage.physical && !first->storage.unknownRange &&
+                                        !second->storage.unknownRange && !first->storage.aliasesUnknownRange &&
+                                        !second->storage.aliasesUnknownRange && !first->storage.intervals.empty() &&
+                                        !second->storage.intervals.empty() &&
+                                        !rangesOverlap(first->storage.intervals, second->storage.intervals);
+            if (!provenDisjoint) {
+                return true;
+            }
         }
     }
     return false;
@@ -255,8 +286,7 @@ bool validateEndpointShape(const SyncPhase& producer, const SyncPhase& consumer,
            consumer.iterationDomain.loops == producer.iterationDomain.loops;
 }
 
-const SyncGenerationTimeline* findTimeline(
-    const StorageTimelineAnalysisResult& timelines, SyncGenerationId generation)
+const SyncGenerationTimeline* findTimeline(const StorageTimelineAnalysisResult& timelines, SyncGenerationId generation)
 {
     ArrayRef<SyncGenerationTimeline> records = timelines.getTimelines();
     const bool validGeneration = generation < records.size() && records[generation].id == generation;
@@ -420,10 +450,9 @@ FailureOr<SyncReadyReleasePlan> mlir::pto::protocol_sync::buildReadyReleaseProto
             "ReadyRelease requires an implicit single slot or exact unit-stride modulo-two selector");
         return plan;
     }
-    const bool hasExactEndpointSet =
-        timeline.producers.size() == 1 && timeline.consumers.size() == 1 &&
-        (scope == SyncReadyReleasePlanningScope::MixedCandidate ||
-         (schedule.getPhases().size() == 2 && stages.getStages().size() == 2));
+    const bool hasExactEndpointSet = timeline.producers.size() == 1 && timeline.consumers.size() == 1 &&
+                                     (scope == SyncReadyReleasePlanningScope::MixedCandidate ||
+                                      (schedule.getPhases().size() == 2 && stages.getStages().size() == 2));
     if (!hasExactEndpointSet) {
         reject(
             plan, channel.id, SyncReadyReleaseRejection::UnsupportedFunctionShape,
@@ -523,55 +552,51 @@ LogicalResult mlir::pto::protocol_sync::allocateReadyReleaseProtocolEvents(
         return failure();
     }
 
-    llvm::DenseMap<std::uint32_t, llvm::SmallVector<unsigned, 8>> reservations;
-    for (const SyncEventReservation& reservation : importedReservations) {
-        auto& ids = reservations[reservationDomain(reservation.source, reservation.target)];
-        ids.append(reservation.eventIds.begin(), reservation.eventIds.end());
-    }
-
-    const auto allocateDomain = [&](PIPE source, PIPE targetPipe, llvm::SmallVectorImpl<unsigned>& allocated) {
-        const ArrayRef<unsigned> reserved = reservations[reservationDomain(source, targetPipe)];
-        for (unsigned lane = 0; lane < plan.capacity; ++lane) {
-            auto selected = llvm::find_if(target.getCompilerEventIds(), [&](unsigned eventId) {
-                return !llvm::is_contained(reserved, eventId) && !llvm::is_contained(allocated, eventId);
-            });
-            if (selected == target.getCompilerEventIds().end()) {
-                return false;
-            }
-            allocated.push_back(*selected);
-        }
-        return true;
+    SmallVector<SyncEventGeneration, 4> generations;
+    SmallVector<std::optional<unsigned>*, 4> assignmentSlots;
+    const auto appendGeneration = [&](SyncReadyReleaseLane& lane, bool ready) {
+        SyncEventGeneration generation;
+        generation.id = generations.size();
+        generation.kind =
+            ready ? SyncEventGenerationKind::ReadyReleaseReady : SyncEventGenerationKind::ReadyReleaseRelease;
+        generation.core = plan.core;
+        generation.sourcePipe = ready ? plan.producerPipe : plan.consumerPipe;
+        generation.targetPipe = ready ? plan.consumerPipe : plan.producerPipe;
+        generation.setAnchor = ready ? plan.producerOperation : plan.consumerOperation;
+        generation.waitAnchor = ready ? plan.consumerOperation : plan.producerOperation;
+        generation.recurrenceOwner = plan.loopRegion;
+        generation.recurring = true;
+        generations.push_back(std::move(generation));
+        assignmentSlots.push_back(ready ? &lane.readyEventId : &lane.releaseEventId);
     };
-
-    llvm::SmallVector<unsigned, 2> readyIds;
-    llvm::SmallVector<unsigned, 2> releaseIds;
-    const bool allocatedReady = allocateDomain(plan.producerPipe, plan.consumerPipe, readyIds);
-    const bool allocatedRelease = allocateDomain(plan.consumerPipe, plan.producerPipe, releaseIds);
-    if (!allocatedReady || !allocatedRelease) {
+    for (SyncReadyReleaseLane& lane : plan.lanes) {
+        appendGeneration(lane, true);
+        appendGeneration(lane, false);
+    }
+    FailureOr<SyncEventAllocationResult> allocation =
+        allocateSyncEventGenerations(target, importedReservations, generations);
+    if (failed(allocation)) {
+        return failure();
+    }
+    if (statistics) {
+        recordSyncEventAllocationStatistics(*allocation, *statistics);
+    }
+    if (allocation->status == SyncEventAllocationStatus::ResourceInfeasible) {
         reject(
             plan, plan.channel, SyncReadyReleaseRejection::EventCapacity,
             "the complete ReadyRelease candidate does not fit the compiler event pool");
         return success();
     }
-    for (unsigned lane = 0; lane < plan.capacity; ++lane) {
-        plan.lanes[lane].readyEventId = readyIds[lane];
-        plan.lanes[lane].releaseEventId = releaseIds[lane];
+    if (allocation->status != SyncEventAllocationStatus::Allocated) {
+        return failure();
+    }
+    for (auto [slot, eventId] : llvm::zip_equal(assignmentSlots, allocation->eventIds)) {
+        *slot = eventId;
     }
     if (statistics) {
         ++statistics->selectedReadyReleaseProtocols;
         statistics->selectedReadyReleaseLanes += plan.lanes.size();
         statistics->logicalActions += 4 + 2 * plan.lanes.size();
-        statistics->allocationGraphVertices += 2 * plan.capacity;
-        statistics->allocationGraphEdges += plan.capacity > 0 ? 2 * (plan.capacity - 1) : 0;
-        statistics->eventDomains += eventDomain(plan.core, plan.producerPipe, plan.consumerPipe) ==
-                                            eventDomain(plan.core, plan.consumerPipe, plan.producerPipe) ?
-                                        1 :
-                                        2;
-        statistics->maxEventDomainPressure = std::max<std::uint64_t>(statistics->maxEventDomainPressure, plan.capacity);
-        for (const SyncReadyReleaseLane& lane : plan.lanes) {
-            statistics->maximumEventIdPlusOne = std::max<std::uint64_t>(
-                statistics->maximumEventIdPlusOne, std::max(*lane.readyEventId, *lane.releaseEventId) + 1);
-        }
     }
     return success();
 }

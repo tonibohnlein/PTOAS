@@ -12,12 +12,13 @@
 
 #include "PTO/Transforms/ProtocolSync/MixedProtocolPlan.h"
 
+#include "PTO/Transforms/ProtocolSync/EventAllocation.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 
-#include <map>
-#include <set>
+#include <algorithm>
+#include <limits>
 #include <tuple>
 
 using namespace mlir;
@@ -25,13 +26,6 @@ using namespace mlir::pto;
 using namespace mlir::pto::protocol_sync;
 
 namespace {
-
-bool hasInternalRejection(const SyncOneShotPlan& plan)
-{
-    return llvm::any_of(plan.rejections, [](const SyncOneShotPlanRejection& rejection) {
-        return rejection.reason == SyncOneShotRejection::InternalInvariant;
-    });
-}
 
 bool hasInternalRejection(const SyncReadyReleasePlan& plan)
 {
@@ -47,19 +41,60 @@ bool hasInternalRejection(const SyncDirectRepairPlan& plan)
     });
 }
 
-FailureOr<SyncSelectedWorld> buildProtocolWorld(
-    const SyncMixedProtocolPlan& plan, const ChannelAnalysisResult& channels, bool includeProtocol = true)
+SmallVector<SyncOneShotPublishId, 4> allOneShotCandidates(const SyncMixedProtocolPlan& plan)
 {
-    if (!includeProtocol || !plan.hasProtocol()) {
-        return SyncSelectedWorld{};
+    SmallVector<SyncOneShotPublishId, 4> selected;
+    if (!plan.oneShot) {
+        return selected;
     }
-    if (plan.oneShot && plan.readyRelease) {
+    for (const SyncOneShotPublishCandidate& candidate : plan.oneShot->candidates) {
+        selected.push_back(candidate.id);
+    }
+    return selected;
+}
+
+FailureOr<SyncOneShotPublishPlan> selectOneShotCandidates(
+    const SyncMixedProtocolPlan& plan, ArrayRef<SyncOneShotPublishId> selected)
+{
+    SyncOneShotPublishPlan result;
+    if (selected.empty()) {
+        return result;
+    }
+    if (!plan.oneShot) {
         return failure();
     }
-    if (plan.oneShot) {
-        return buildSelectedWorld(*plan.oneShot, channels);
+    llvm::BitVector seen(plan.oneShot->candidates.size());
+    for (SyncOneShotPublishId id : selected) {
+        const bool valid = id < seen.size() && !seen.test(id) && plan.oneShot->candidates[id].id == id;
+        if (!valid) {
+            return failure();
+        }
+        seen.set(id);
+        SyncOneShotPublishCandidate candidate = plan.oneShot->candidates[id];
+        candidate.id = result.candidates.size();
+        result.candidates.push_back(std::move(candidate));
     }
-    return buildSelectedWorld(*plan.readyRelease);
+    return result;
+}
+
+FailureOr<SyncSelectedWorld> buildProtocolWorld(
+    const SyncMixedProtocolPlan& plan, const ChannelAnalysisResult& channels,
+    ArrayRef<SyncOneShotPublishId> selectedOneShot, bool includeReadyRelease)
+{
+    SyncSelectedWorld world;
+    if (includeReadyRelease && plan.readyRelease) {
+        FailureOr<SyncSelectedWorld> readyRelease = buildSelectedWorld(*plan.readyRelease);
+        if (failed(readyRelease)) {
+            return failure();
+        }
+        world = std::move(*readyRelease);
+    }
+    FailureOr<SyncOneShotPublishPlan> oneShot = selectOneShotCandidates(plan, selectedOneShot);
+    const bool invalidOneShot = failed(oneShot) || failed(appendOneShotPublishSelectedWorld(*oneShot, channels, world));
+    if (invalidOneShot) {
+        return failure();
+    }
+    return world;
 }
 
 SmallVector<SyncDirectCandidateId, 8> allDirectCandidates(const SyncDirectRepairPlan& direct)
@@ -73,9 +108,10 @@ SmallVector<SyncDirectCandidateId, 8> allDirectCandidates(const SyncDirectRepair
 
 FailureOr<SyncSelectedWorld> buildCompleteWorld(
     const SyncMixedProtocolPlan& plan, const ChannelAnalysisResult& channels,
-    ArrayRef<SyncDirectCandidateId> selectedDirect, bool includeProtocol = true)
+    ArrayRef<SyncDirectCandidateId> selectedDirect, ArrayRef<SyncOneShotPublishId> selectedOneShot,
+    bool includeReadyRelease)
 {
-    FailureOr<SyncSelectedWorld> world = buildProtocolWorld(plan, channels, includeProtocol);
+    FailureOr<SyncSelectedWorld> world = buildProtocolWorld(plan, channels, selectedOneShot, includeReadyRelease);
     const LogicalResult applied =
         failed(world) ? failure() :
                         applyDirectRepairCandidates(plan.directRepair, plan.directObligations, selectedDirect, *world);
@@ -83,6 +119,24 @@ FailureOr<SyncSelectedWorld> buildCompleteWorld(
         return failure();
     }
     return world;
+}
+
+void pruneOneShotCandidates(SyncMixedProtocolPlan& plan, ArrayRef<SyncOneShotPublishId> selected)
+{
+    if (!plan.oneShot) {
+        return;
+    }
+    SyncOneShotPublishPlan retained;
+    for (SyncOneShotPublishId id : selected) {
+        SyncOneShotPublishCandidate candidate = plan.oneShot->candidates[id];
+        candidate.id = retained.candidates.size();
+        retained.candidates.push_back(std::move(candidate));
+    }
+    if (retained.candidates.empty()) {
+        plan.oneShot.reset();
+    } else {
+        plan.oneShot = std::move(retained);
+    }
 }
 
 LogicalResult pruneDirectCandidates(SyncMixedProtocolPlan& plan, ArrayRef<SyncDirectCandidateId> selected)
@@ -145,11 +199,13 @@ LogicalResult reverseDeleteCandidates(
     ProtocolSyncStatistics* statistics)
 {
     SmallVector<SyncDirectCandidateId, 8> selected = allDirectCandidates(plan.directRepair);
+    SmallVector<SyncOneShotPublishId, 4> selectedOneShot = allOneShotCandidates(plan);
     for (std::size_t reverseIndex = selected.size(); reverseIndex > 0; --reverseIndex) {
         SmallVector<SyncDirectCandidateId, 8> trial(selected);
         trial.erase(trial.begin() + reverseIndex - 1);
         ++plan.reverseDeletionAttempts;
-        FailureOr<SyncSelectedWorld> world = buildCompleteWorld(plan, channels, trial);
+        FailureOr<SyncSelectedWorld> world =
+            buildCompleteWorld(plan, channels, trial, selectedOneShot, plan.readyRelease.has_value());
         if (failed(world)) {
             return failure();
         }
@@ -164,9 +220,12 @@ LogicalResult reverseDeleteCandidates(
         }
     }
 
-    if (plan.hasProtocol()) {
+    for (std::size_t reverseIndex = selectedOneShot.size(); reverseIndex > 0; --reverseIndex) {
+        SmallVector<SyncOneShotPublishId, 4> trial(selectedOneShot);
+        trial.erase(trial.begin() + reverseIndex - 1);
         ++plan.reverseDeletionAttempts;
-        FailureOr<SyncSelectedWorld> world = buildCompleteWorld(plan, channels, selected, false);
+        FailureOr<SyncSelectedWorld> world =
+            buildCompleteWorld(plan, channels, selected, trial, plan.readyRelease.has_value());
         if (failed(world)) {
             return failure();
         }
@@ -176,20 +235,37 @@ LogicalResult reverseDeleteCandidates(
             return failure();
         }
         if (result->isComplete()) {
-            plan.oneShot.reset();
+            selectedOneShot = std::move(trial);
+            ++plan.reverseDeletionRemoved;
+        }
+    }
+
+    if (plan.readyRelease) {
+        ++plan.reverseDeletionAttempts;
+        FailureOr<SyncSelectedWorld> world = buildCompleteWorld(plan, channels, selected, selectedOneShot, false);
+        if (failed(world)) {
+            return failure();
+        }
+        FailureOr<SyncInterpretationResult> result =
+            interpretSelectedWorld(schedule, stages, timelines, channels, *world, statistics);
+        if (failed(result)) {
+            return failure();
+        }
+        if (result->isComplete()) {
             plan.readyRelease.reset();
             ++plan.reverseDeletionRemoved;
         }
     }
 
+    pruneOneShotCandidates(plan, selectedOneShot);
     return pruneDirectCandidates(plan, selected);
 }
 
 void clearEventIds(SyncMixedProtocolPlan& plan)
 {
     if (plan.oneShot) {
-        for (SyncOneShotProtocol& protocol : plan.oneShot->protocols) {
-            protocol.eventId.reset();
+        for (SyncOneShotPublishCandidate& candidate : plan.oneShot->candidates) {
+            candidate.eventId.reset();
         }
     }
     if (plan.readyRelease) {
@@ -205,8 +281,8 @@ void clearEventIds(SyncMixedProtocolPlan& plan)
 
 bool hasAllocatedEvent(const SyncMixedProtocolPlan& plan)
 {
-    const bool oneShotAllocated = plan.oneShot && llvm::any_of(plan.oneShot->protocols, [](const auto& protocol) {
-                                      return protocol.eventId.has_value();
+    const bool oneShotAllocated = plan.oneShot && llvm::any_of(plan.oneShot->candidates, [](const auto& candidate) {
+                                      return candidate.eventId.has_value();
                                   });
     const bool readyReleaseAllocated =
         plan.readyRelease && llvm::any_of(plan.readyRelease->lanes, [](const auto& lane) {
@@ -217,120 +293,86 @@ bool hasAllocatedEvent(const SyncMixedProtocolPlan& plan)
     return oneShotAllocated || readyReleaseAllocated || directAllocated;
 }
 
-void appendReservation(SmallVectorImpl<SyncEventReservation>& reservations, PIPE source, PIPE target, unsigned eventId)
+LogicalResult buildMixedEventGenerations(
+    const StructuredSyncIR& schedule, SyncMixedProtocolPlan& plan, SmallVectorImpl<SyncEventGeneration>& generations,
+    SmallVectorImpl<std::optional<unsigned>*>& assignmentSlots)
 {
-    auto found = llvm::find_if(reservations, [&](const SyncEventReservation& reservation) {
-        return reservation.source == source && reservation.target == target;
-    });
-    if (found == reservations.end()) {
-        reservations.push_back({source, target, {eventId}});
-    } else if (!llvm::is_contained(found->eventIds, eventId)) {
-        found->eventIds.push_back(eventId);
-    }
-}
-
-void appendProtocolReservations(const SyncMixedProtocolPlan& plan, SmallVectorImpl<SyncEventReservation>& reservations)
-{
+    const auto appendGeneration = [&](SyncEventGenerationKind kind, SyncPhysicalCore core, PIPE sourcePipe,
+                                      PIPE targetPipe, Operation* setAnchor, Operation* waitAnchor,
+                                      ArrayRef<SyncControlAtom> guard, SyncRegionId recurrenceOwner, bool recurring,
+                                      std::optional<unsigned>& eventId) {
+        SyncEventGeneration generation;
+        generation.id = generations.size();
+        generation.kind = kind;
+        generation.core = core;
+        generation.sourcePipe = sourcePipe;
+        generation.targetPipe = targetPipe;
+        generation.setAnchor = setAnchor;
+        generation.waitAnchor = waitAnchor;
+        generation.guard.assign(guard.begin(), guard.end());
+        generation.recurrenceOwner = recurrenceOwner;
+        generation.recurring = recurring;
+        generation.eventId = eventId;
+        generations.push_back(std::move(generation));
+        assignmentSlots.push_back(&eventId);
+    };
     if (plan.oneShot) {
-        for (const SyncOneShotProtocol& protocol : plan.oneShot->protocols) {
-            if (protocol.kind == SyncOneShotProtocolKind::DirectedEvent && protocol.eventId) {
-                appendReservation(reservations, protocol.sourcePipe, protocol.targetPipe, *protocol.eventId);
+        for (SyncOneShotPublishCandidate& candidate : plan.oneShot->candidates) {
+            if (candidate.kind != SyncOneShotPublishKind::DirectedEvent) {
+                continue;
             }
+            const SyncPhase* source = schedule.findPhase(candidate.sourcePhase);
+            if (!source) {
+                return failure();
+            }
+            appendGeneration(
+                SyncEventGenerationKind::OneShot, candidate.core, candidate.sourcePipe, candidate.targetPipe,
+                candidate.sourceOperation, candidate.targetOperation, source->guard, kInvalidSyncId, false,
+                candidate.eventId);
         }
     }
     if (plan.readyRelease) {
-        for (const SyncReadyReleaseLane& lane : plan.readyRelease->lanes) {
-            appendReservation(
-                reservations, plan.readyRelease->producerPipe, plan.readyRelease->consumerPipe, *lane.readyEventId);
-            appendReservation(
-                reservations, plan.readyRelease->consumerPipe, plan.readyRelease->producerPipe, *lane.releaseEventId);
+        SyncReadyReleasePlan& readyRelease = *plan.readyRelease;
+        for (SyncReadyReleaseLane& lane : readyRelease.lanes) {
+            appendGeneration(
+                SyncEventGenerationKind::ReadyReleaseReady, readyRelease.core, readyRelease.producerPipe,
+                readyRelease.consumerPipe, readyRelease.producerOperation, readyRelease.consumerOperation, {},
+                readyRelease.loopRegion, true, lane.readyEventId);
+            appendGeneration(
+                SyncEventGenerationKind::ReadyReleaseRelease, readyRelease.core, readyRelease.consumerPipe,
+                readyRelease.producerPipe, readyRelease.consumerOperation, readyRelease.producerOperation, {},
+                readyRelease.loopRegion, true, lane.releaseEventId);
         }
     }
-}
-
-using EventDomain = std::tuple<std::uint8_t, std::uint8_t, std::uint8_t>;
-
-LogicalResult recordEvent(
-    std::map<EventDomain, std::set<unsigned>>& events, SyncPhysicalCore core, PIPE source, PIPE destination,
-    unsigned eventId, const ProtocolSyncTarget& target)
-{
-    if (!llvm::is_contained(target.getCompilerEventIds(), eventId)) {
-        return failure();
-    }
-    auto& domain = events[{
-        static_cast<std::uint8_t>(core), static_cast<std::uint8_t>(source), static_cast<std::uint8_t>(destination)}];
-    return success(domain.insert(eventId).second);
-}
-
-LogicalResult collectAllocatedEvents(
-    const SyncMixedProtocolPlan& plan, const ProtocolSyncTarget& target,
-    std::map<EventDomain, std::set<unsigned>>& events)
-{
-    if (plan.oneShot) {
-        for (const SyncOneShotProtocol& protocol : plan.oneShot->protocols) {
-            if (protocol.kind == SyncOneShotProtocolKind::DirectedEvent &&
-                (!protocol.eventId ||
-                 failed(recordEvent(
-                     events, protocol.core, protocol.sourcePipe, protocol.targetPipe, *protocol.eventId, target)))) {
-                return failure();
-            }
+    for (SyncDirectRepairCandidate& candidate : plan.directRepair.candidates) {
+        if (candidate.kind != SyncDirectRepairKind::DirectedEvent) {
+            continue;
         }
-    }
-    if (plan.readyRelease) {
-        for (const SyncReadyReleaseLane& lane : plan.readyRelease->lanes) {
-            if (!lane.readyEventId || !lane.releaseEventId ||
-                failed(recordEvent(
-                    events, plan.readyRelease->core, plan.readyRelease->producerPipe, plan.readyRelease->consumerPipe,
-                    *lane.readyEventId, target)) ||
-                failed(recordEvent(
-                    events, plan.readyRelease->core, plan.readyRelease->consumerPipe, plan.readyRelease->producerPipe,
-                    *lane.releaseEventId, target))) {
-                return failure();
-            }
-        }
-    }
-    for (const SyncDirectRepairCandidate& candidate : plan.directRepair.candidates) {
-        if (candidate.kind == SyncDirectRepairKind::DirectedEvent &&
-            (!candidate.eventId ||
-             failed(recordEvent(
-                 events, candidate.core, candidate.sourcePipe, candidate.targetPipe, *candidate.eventId, target)))) {
+        const SyncPhase* source = schedule.findPhase(candidate.sourcePhase);
+        if (!source) {
             return failure();
         }
+        appendGeneration(
+            SyncEventGenerationKind::DirectRepair, candidate.core, candidate.sourcePipe, candidate.targetPipe,
+            candidate.sourceOperation, candidate.targetOperation, source->guard, kInvalidSyncId, false,
+            candidate.eventId);
     }
     return success();
 }
 
-bool hasCapacityRejection(const SyncOneShotPlan& plan)
-{
-    return llvm::any_of(plan.rejections, [](const SyncOneShotPlanRejection& rejection) {
-        return rejection.reason == SyncOneShotRejection::EventCapacity;
-    });
-}
-
-bool hasCapacityRejection(const SyncReadyReleasePlan& plan)
-{
-    return llvm::any_of(plan.rejections, [](const SyncReadyReleasePlanRejection& rejection) {
-        return rejection.reason == SyncReadyReleaseRejection::EventCapacity;
-    });
-}
-
-void recordSelectedStatistics(
-    const SyncMixedProtocolPlan& plan, const std::map<EventDomain, std::set<unsigned>>& events,
-    ProtocolSyncStatistics& statistics)
+void recordSelectedStatistics(const SyncMixedProtocolPlan& plan, ProtocolSyncStatistics& statistics)
 {
     if (plan.oneShot) {
-        statistics.selectedOneShotProtocols += plan.oneShot->protocols.size();
-        for (const SyncOneShotProtocol& protocol : plan.oneShot->protocols) {
-            if (protocol.kind == SyncOneShotProtocolKind::PipeBarrier) {
+        statistics.selectedOneShotProtocols += plan.oneShot->candidates.size();
+        for (const SyncOneShotPublishCandidate& candidate : plan.oneShot->candidates) {
+            if (candidate.kind == SyncOneShotPublishKind::PipeBarrier) {
                 ++statistics.selectedSamePipeBarriers;
                 ++statistics.logicalActions;
-            } else if (protocol.kind == SyncOneShotProtocolKind::DirectedEvent) {
+            } else if (candidate.kind == SyncOneShotPublishKind::DirectedEvent) {
                 ++statistics.selectedDirectedEventPairs;
                 statistics.logicalActions += 2;
             }
         }
-        ++statistics.selectedTailDrains;
-        ++statistics.logicalActions;
     }
     if (plan.readyRelease) {
         ++statistics.selectedReadyReleaseProtocols;
@@ -340,69 +382,130 @@ void recordSelectedStatistics(
     statistics.selectedDirectRepairs += plan.directRepair.candidates.size();
     for (const SyncDirectRepairCandidate& candidate : plan.directRepair.candidates) {
         statistics.logicalActions += candidate.kind == SyncDirectRepairKind::DirectedEvent ? 2 : 1;
-    }
-    statistics.eventDomains += events.size();
-    for (const auto& [domain, eventIds] : events) {
-        (void)domain;
-        statistics.allocationGraphVertices += eventIds.size();
-        statistics.allocationGraphEdges += eventIds.size() * (eventIds.size() - 1) / 2;
-        statistics.maxEventDomainPressure = std::max<std::uint64_t>(statistics.maxEventDomainPressure, eventIds.size());
-        if (!eventIds.empty()) {
-            statistics.maximumEventIdPlusOne =
-                std::max<std::uint64_t>(statistics.maximumEventIdPlusOne, *eventIds.rbegin() + 1);
-        }
+        statistics.selectedTailDrains += candidate.kind == SyncDirectRepairKind::ExitBarrier ? 1 : 0;
     }
 }
 
-} // namespace
-
-FailureOr<SyncMixedProtocolPlan> mlir::pto::protocol_sync::buildMixedProtocolPlan(
-    const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
-    const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels, bool enableProtocols,
-    ProtocolSyncStatistics* statistics)
+SyncMixedWorldKind classifyWorld(const SyncMixedProtocolPlan& plan)
 {
-    if (!schedule.isFrozen()) {
+    if (plan.oneShot && plan.readyRelease) {
+        return SyncMixedWorldKind::CombinedProtocols;
+    }
+    if (plan.readyRelease) {
+        return SyncMixedWorldKind::ReadyRelease;
+    }
+    return plan.oneShot ? SyncMixedWorldKind::OneShotPublish : SyncMixedWorldKind::DirectOnly;
+}
+
+SyncMixedWorldCost computeWorldCost(const SyncMixedProtocolPlan& plan, std::uint64_t eventPressure)
+{
+    SyncMixedWorldCost cost;
+    cost.eventPressure = eventPressure;
+    if (plan.oneShot) {
+        for (const SyncOneShotPublishCandidate& candidate : plan.oneShot->candidates) {
+            cost.generatedEventPairs += candidate.kind == SyncOneShotPublishKind::DirectedEvent ? 1 : 0;
+            cost.targetedBarriers += candidate.kind == SyncOneShotPublishKind::PipeBarrier ? 1 : 0;
+            cost.staticActions += candidate.kind == SyncOneShotPublishKind::DirectedEvent ? 2 :
+                                  candidate.kind == SyncOneShotPublishKind::PipeBarrier   ? 1 :
+                                                                                            0;
+        }
+    }
+    if (plan.readyRelease) {
+        cost.generatedEventPairs += 2 * plan.readyRelease->lanes.size();
+        cost.staticActions += 4 + 2 * plan.readyRelease->lanes.size();
+    }
+    for (const SyncDirectRepairCandidate& candidate : plan.directRepair.candidates) {
+        cost.generatedEventPairs += candidate.kind == SyncDirectRepairKind::DirectedEvent ? 1 : 0;
+        cost.targetedBarriers += candidate.kind == SyncDirectRepairKind::PipeBarrier ? 1 : 0;
+        cost.fixedExitDrains += candidate.kind == SyncDirectRepairKind::ExitBarrier ? 1 : 0;
+        if (candidate.kind != SyncDirectRepairKind::ExitBarrier) {
+            cost.staticActions += candidate.kind == SyncDirectRepairKind::DirectedEvent ? 2 : 1;
+        }
+    }
+    return cost;
+}
+
+unsigned worldTieBreak(SyncMixedWorldKind kind)
+{
+    switch (kind) {
+        case SyncMixedWorldKind::CombinedProtocols:
+            return 0;
+        case SyncMixedWorldKind::ReadyRelease:
+            return 1;
+        case SyncMixedWorldKind::OneShotPublish:
+            return 2;
+        case SyncMixedWorldKind::DirectOnly:
+            return 3;
+    }
+    return 3;
+}
+
+bool worldCostsLess(const SyncMixedProtocolPlan& first, const SyncMixedProtocolPlan& second)
+{
+    const SyncMixedWorldCost& left = first.selectedCost;
+    const SyncMixedWorldCost& right = second.selectedCost;
+    const std::uint64_t leftProtocols =
+        (first.oneShot ? first.oneShot->candidates.size() : 0) + (first.readyRelease ? 1 : 0);
+    const std::uint64_t rightProtocols =
+        (second.oneShot ? second.oneShot->candidates.size() : 0) + (second.readyRelease ? 1 : 0);
+    const auto leftKey = std::make_tuple(
+        left.generatedEventPairs, left.targetedBarriers, left.eventPressure, left.staticActions,
+        worldTieBreak(first.selectedWorldKind), std::numeric_limits<std::uint64_t>::max() - leftProtocols);
+    const auto rightKey = std::make_tuple(
+        right.generatedEventPairs, right.targetedBarriers, right.eventPressure, right.staticActions,
+        worldTieBreak(second.selectedWorldKind), std::numeric_limits<std::uint64_t>::max() - rightProtocols);
+    return leftKey < rightKey;
+}
+
+struct ProtocolSelection {
+    SmallVector<SyncOneShotPublishId, 4> oneShot;
+    bool readyRelease = false;
+};
+
+FailureOr<std::optional<SyncOneShotPublishPlan>> selectOneShotAlternative(
+    const std::optional<SyncOneShotPublishPlan>& candidates, ArrayRef<SyncOneShotPublishId> selected)
+{
+    if (selected.empty()) {
+        return std::optional<SyncOneShotPublishPlan>{};
+    }
+    if (!candidates) {
         return failure();
     }
+    SyncMixedProtocolPlan source;
+    source.oneShot = candidates;
+    FailureOr<SyncOneShotPublishPlan> subset = selectOneShotCandidates(source, selected);
+    if (failed(subset)) {
+        return failure();
+    }
+    return std::optional<SyncOneShotPublishPlan>(std::move(*subset));
+}
+
+void recordSelectionAllocationWork(const ProtocolSyncStatistics& source, ProtocolSyncStatistics* destination)
+{
+    if (!destination) {
+        return;
+    }
+    destination->allocationGraphVertices += source.allocationGraphVertices;
+    destination->allocationGraphEdges += source.allocationGraphEdges;
+    destination->allocationBacktrackingNodes += source.allocationBacktrackingNodes;
+    destination->allocationSearchLimitHits += source.allocationSearchLimitHits;
+    destination->eventDomains += source.eventDomains;
+    destination->maxEventDomainPressure = std::max(destination->maxEventDomainPressure, source.maxEventDomainPressure);
+    destination->maximumEventIdPlusOne = std::max(destination->maximumEventIdPlusOne, source.maximumEventIdPlusOne);
+}
+
+FailureOr<SyncMixedProtocolPlan> buildCompleteCandidateWorld(
+    const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
+    const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
+    std::optional<SyncOneShotPublishPlan> oneShot, std::optional<SyncReadyReleasePlan> readyRelease,
+    ProtocolSyncStatistics* statistics)
+{
     SyncMixedProtocolPlan plan;
-    plan.protocolsEnabled = enableProtocols;
-    const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
-    if (!target.isSupported()) {
-        plan.status = SyncMixedPlanStatus::Unsupported;
-        plan.failures.push_back({SyncMixedPlanRejection::UnsupportedTarget, target.getUnsupportedReason().str()});
-        return plan;
-    }
-
-    if (enableProtocols) {
-        FailureOr<SyncReadyReleasePlan> readyRelease = buildReadyReleaseProtocolPlan(
-            schedule, stages, timelines, channels, nullptr, SyncReadyReleasePlanningScope::MixedCandidate);
-        const bool readyReleaseFailed = failed(readyRelease) || hasInternalRejection(*readyRelease);
-        if (readyReleaseFailed) {
-            return failure();
-        }
-        if (readyRelease->status == SyncReadyReleasePlanStatus::Ready) {
-            plan.readyRelease = std::move(*readyRelease);
-            if (statistics) {
-                ++statistics->protocolCandidates;
-                statistics->tokenCertificateTransitions += plan.readyRelease->tokenCertificate.transitionApplications;
-            }
-        } else {
-            FailureOr<SyncOneShotPlan> oneShot =
-                buildOneShotProtocolPlan(schedule, stages, timelines, channels, nullptr);
-            const bool oneShotFailed = failed(oneShot) || hasInternalRejection(*oneShot);
-            if (oneShotFailed) {
-                return failure();
-            }
-            if (oneShot->status == SyncOneShotPlanStatus::Ready) {
-                plan.oneShot = std::move(*oneShot);
-                if (statistics) {
-                    statistics->protocolCandidates += plan.oneShot->protocols.size();
-                }
-            }
-        }
-    }
-
-    FailureOr<SyncSelectedWorld> protocolWorld = buildProtocolWorld(plan, channels);
+    plan.oneShot = std::move(oneShot);
+    plan.readyRelease = std::move(readyRelease);
+    SmallVector<SyncOneShotPublishId, 4> selectedOneShot = allOneShotCandidates(plan);
+    FailureOr<SyncSelectedWorld> protocolWorld =
+        buildProtocolWorld(plan, channels, selectedOneShot, plan.readyRelease.has_value());
     if (failed(protocolWorld)) {
         return failure();
     }
@@ -415,11 +518,13 @@ FailureOr<SyncMixedProtocolPlan> mlir::pto::protocol_sync::buildMixedProtocolPla
     plan.directObligations = residuals->obligations;
     FailureOr<SyncDirectRepairPlan> direct =
         buildDirectRepairPlan(schedule, stages, plan.directObligations, statistics);
+    if (failed(direct)) {
+        return failure();
+    }
     const LogicalResult directVerified =
-        failed(direct) ? failure() :
-                         verifyDirectRepairPlan(schedule, stages, plan.directObligations, *direct, statistics);
-    const bool directPlanValid = succeeded(directVerified) && !hasInternalRejection(*direct);
-    if (!directPlanValid) {
+        verifyDirectRepairPlan(schedule, stages, plan.directObligations, *direct, statistics);
+    const bool invalidDirectPlan = failed(directVerified) || hasInternalRejection(*direct);
+    if (invalidDirectPlan) {
         return failure();
     }
     plan.directRepair = std::move(*direct);
@@ -427,18 +532,207 @@ FailureOr<SyncMixedProtocolPlan> mlir::pto::protocol_sync::buildMixedProtocolPla
         plan.status = SyncMixedPlanStatus::Unsupported;
         plan.failures.push_back(
             {SyncMixedPlanRejection::IncompleteDirectRepair,
-             "selected protocols leave residual obligations outside the direct-repair subset"});
-        if (statistics) {
-            statistics->mixedSelectionCandidates += plan.hasProtocol() ? 1 : 0;
-            statistics->mixedSelectionCandidates += plan.directRepair.candidates.size();
-        }
+             "this complete protocol world leaves obligations outside the direct-repair subset"});
         return plan;
     }
-
     if (failed(selectMixedProtocolCandidates(schedule, stages, timelines, channels, plan, statistics))) {
         return failure();
     }
     return plan;
+}
+
+} // namespace
+
+FailureOr<SyncMixedProtocolPlan> mlir::pto::protocol_sync::buildMixedProtocolPlan(
+    const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
+    const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels, bool enableProtocols,
+    ProtocolSyncStatistics* statistics)
+{
+    if (!schedule.isFrozen()) {
+        return failure();
+    }
+    const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
+    if (!target.isSupported()) {
+        SyncMixedProtocolPlan plan;
+        plan.protocolsEnabled = enableProtocols;
+        plan.status = SyncMixedPlanStatus::Unsupported;
+        plan.failures.push_back({SyncMixedPlanRejection::UnsupportedTarget, target.getUnsupportedReason().str()});
+        return plan;
+    }
+
+    std::optional<SyncOneShotPublishPlan> oneShot;
+    std::optional<SyncReadyReleasePlan> readyRelease;
+    if (enableProtocols) {
+        FailureOr<SyncOneShotPublishPlan> candidates =
+            buildOneShotPublishCandidates(schedule, stages, timelines, channels);
+        if (failed(candidates)) {
+            return failure();
+        }
+        if (!candidates->candidates.empty()) {
+            if (failed(verifyOneShotPublishPlan(schedule, stages, timelines, channels, *candidates))) {
+                return failure();
+            }
+            if (statistics) {
+                statistics->protocolCandidates += candidates->candidates.size();
+            }
+            oneShot = std::move(*candidates);
+        }
+
+        FailureOr<SyncReadyReleasePlan> candidate = buildReadyReleaseProtocolPlan(
+            schedule, stages, timelines, channels, nullptr, SyncReadyReleasePlanningScope::MixedCandidate);
+        const bool readyReleaseFailed = failed(candidate) || hasInternalRejection(*candidate);
+        if (readyReleaseFailed) {
+            return failure();
+        }
+        if (candidate->status == SyncReadyReleasePlanStatus::Ready) {
+            if (statistics) {
+                ++statistics->protocolCandidates;
+                statistics->tokenCertificateTransitions += candidate->tokenCertificate.transitionApplications;
+            }
+            readyRelease = std::move(*candidate);
+        }
+    }
+
+    std::optional<SyncMixedProtocolPlan> best;
+    std::optional<SyncMixedProtocolPlan> unsupported;
+    std::optional<SyncMixedProtocolPlan> resourceInfeasible;
+    ProtocolSelection bestSelection;
+    std::uint64_t worldsAttempted = 0;
+    std::uint64_t worldsFeasible = 0;
+    const auto evaluateSelection = [&](const ProtocolSelection& selection) -> LogicalResult {
+        ++worldsAttempted;
+        FailureOr<std::optional<SyncOneShotPublishPlan>> selectedOneShot =
+            selectOneShotAlternative(oneShot, selection.oneShot);
+        if (failed(selectedOneShot)) {
+            return failure();
+        }
+        std::optional<SyncReadyReleasePlan> selectedReadyRelease;
+        if (selection.readyRelease) {
+            if (!readyRelease) {
+                return failure();
+            }
+            selectedReadyRelease = readyRelease;
+        }
+        FailureOr<SyncMixedProtocolPlan> candidate = buildCompleteCandidateWorld(
+            schedule, stages, timelines, channels, std::move(*selectedOneShot), std::move(selectedReadyRelease),
+            statistics);
+        if (failed(candidate)) {
+            return failure();
+        }
+        candidate->protocolsEnabled = enableProtocols;
+        candidate->selectedWorldKind = classifyWorld(*candidate);
+        if (!candidate->isComplete()) {
+            if (!unsupported) {
+                unsupported = std::move(*candidate);
+            }
+            return success();
+        }
+
+        SyncMixedProtocolPlan allocated = *candidate;
+        ProtocolSyncStatistics allocationStatistics;
+        if (failed(allocateMixedProtocolEvents(schedule, allocated, &allocationStatistics))) {
+            return failure();
+        }
+        recordSelectionAllocationWork(allocationStatistics, statistics);
+        if (allocated.status == SyncMixedPlanStatus::ResourceInfeasible) {
+            allocated.selectedCost = computeWorldCost(*candidate, allocationStatistics.maxEventDomainPressure);
+            if (!resourceInfeasible) {
+                resourceInfeasible = std::move(allocated);
+            }
+            return success();
+        }
+        candidate->selectedCost = computeWorldCost(*candidate, allocationStatistics.maxEventDomainPressure);
+        ++worldsFeasible;
+        if (!best || worldCostsLess(*candidate, *best)) {
+            best = std::move(*candidate);
+            bestSelection = selection;
+        }
+        return success();
+    };
+
+    ProtocolSelection emptySelection;
+    if (failed(evaluateSelection(emptySelection))) {
+        return failure();
+    }
+    if (oneShot) {
+        for (const SyncOneShotPublishCandidate& candidate : oneShot->candidates) {
+            ProtocolSelection singleton;
+            singleton.oneShot.push_back(candidate.id);
+            if (failed(evaluateSelection(singleton))) {
+                return failure();
+            }
+        }
+    }
+    if (readyRelease) {
+        ProtocolSelection singleton;
+        singleton.readyRelease = true;
+        if (failed(evaluateSelection(singleton))) {
+            return failure();
+        }
+    }
+
+    const unsigned protocolCandidateCount = (oneShot ? oneShot->candidates.size() : 0) + (readyRelease ? 1 : 0);
+    if (!best && protocolCandidateCount > 1) {
+        ProtocolSelection allProtocols;
+        if (oneShot) {
+            for (const SyncOneShotPublishCandidate& candidate : oneShot->candidates) {
+                allProtocols.oneShot.push_back(candidate.id);
+            }
+        }
+        allProtocols.readyRelease = readyRelease.has_value();
+        if (failed(evaluateSelection(allProtocols))) {
+            return failure();
+        }
+    }
+    if (best) {
+        if (oneShot) {
+            for (const SyncOneShotPublishCandidate& candidate : oneShot->candidates) {
+                if (llvm::is_contained(bestSelection.oneShot, candidate.id)) {
+                    continue;
+                }
+                ProtocolSelection trial = bestSelection;
+                trial.oneShot.push_back(candidate.id);
+                llvm::sort(trial.oneShot);
+                if (failed(evaluateSelection(trial))) {
+                    return failure();
+                }
+            }
+        }
+        if (readyRelease && !bestSelection.readyRelease) {
+            ProtocolSelection trial = bestSelection;
+            trial.readyRelease = true;
+            if (failed(evaluateSelection(trial))) {
+                return failure();
+            }
+        }
+    }
+
+    if (statistics) {
+        statistics->completeWorldsAttempted += worldsAttempted;
+        statistics->completeWorldsFeasible += worldsFeasible;
+    }
+    if (best) {
+        best->completeWorldsAttempted = worldsAttempted;
+        best->completeWorldsFeasible = worldsFeasible;
+        if (statistics) {
+            statistics->selectedWorldEventPairs += best->selectedCost.generatedEventPairs;
+            statistics->selectedWorldTargetedBarriers += best->selectedCost.targetedBarriers;
+            statistics->selectedWorldFixedExitDrains += best->selectedCost.fixedExitDrains;
+        }
+        return std::move(*best);
+    }
+    SyncMixedProtocolPlan result = resourceInfeasible ? std::move(*resourceInfeasible) :
+                                   unsupported        ? std::move(*unsupported) :
+                                                        SyncMixedProtocolPlan{};
+    result.protocolsEnabled = enableProtocols;
+    result.completeWorldsAttempted = worldsAttempted;
+    result.completeWorldsFeasible = 0;
+    if (!resourceInfeasible && !unsupported) {
+        result.status = SyncMixedPlanStatus::Unsupported;
+        result.failures.push_back(
+            {SyncMixedPlanRejection::IncompleteDirectRepair, "no complete protocol/direct world was constructible"});
+    }
+    return result;
 }
 
 LogicalResult mlir::pto::protocol_sync::selectMixedProtocolCandidates(
@@ -446,20 +740,23 @@ LogicalResult mlir::pto::protocol_sync::selectMixedProtocolCandidates(
     const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels, SyncMixedProtocolPlan& plan,
     ProtocolSyncStatistics* statistics)
 {
-    const bool validCandidatePool = schedule.isFrozen() && plan.directRepair.isComplete() &&
-                                    !(plan.oneShot && plan.readyRelease) && plan.failures.empty() &&
-                                    !hasAllocatedEvent(plan);
+    const bool validCandidatePool =
+        schedule.isFrozen() && plan.directRepair.isComplete() && plan.failures.empty() && !hasAllocatedEvent(plan);
     if (!validCandidatePool) {
         return failure();
     }
-    plan.candidateCountBeforeDeletion = plan.directRepair.candidates.size() + (plan.hasProtocol() ? 1 : 0);
+    plan.candidateCountBeforeDeletion = plan.directRepair.candidates.size();
+    plan.candidateCountBeforeDeletion += plan.oneShot ? plan.oneShot->candidates.size() : 0;
+    plan.candidateCountBeforeDeletion += plan.readyRelease ? 1 : 0;
     plan.reverseDeletionAttempts = 0;
     plan.reverseDeletionRemoved = 0;
     if (failed(reverseDeleteCandidates(schedule, stages, timelines, channels, plan, statistics))) {
         return failure();
     }
     SmallVector<SyncDirectCandidateId, 8> selectedDirect = allDirectCandidates(plan.directRepair);
-    FailureOr<SyncSelectedWorld> selectedWorld = buildCompleteWorld(plan, channels, selectedDirect);
+    SmallVector<SyncOneShotPublishId, 4> selectedOneShot = allOneShotCandidates(plan);
+    FailureOr<SyncSelectedWorld> selectedWorld =
+        buildCompleteWorld(plan, channels, selectedDirect, selectedOneShot, plan.readyRelease.has_value());
     if (failed(selectedWorld)) {
         return failure();
     }
@@ -469,7 +766,19 @@ LogicalResult mlir::pto::protocol_sync::selectMixedProtocolCandidates(
     if (!finalWorldComplete) {
         return failure();
     }
+    FailureOr<SyncSelectedWorld> protocolWorld =
+        buildProtocolWorld(plan, channels, selectedOneShot, plan.readyRelease.has_value());
+    if (failed(protocolWorld)) {
+        return failure();
+    }
+    FailureOr<SyncInterpretationResult> initial =
+        interpretSelectedWorld(schedule, stages, timelines, channels, *protocolWorld, statistics);
+    if (failed(initial)) {
+        return failure();
+    }
+    plan.initialResidualCount = initial->obligations.size();
     plan.selectedWorld = std::move(*selectedWorld);
+    plan.selectedWorldKind = classifyWorld(plan);
     plan.status = plan.hasProtocol() || !plan.directRepair.candidates.empty() ? SyncMixedPlanStatus::Ready :
                                                                                 SyncMixedPlanStatus::Empty;
     if (statistics) {
@@ -496,65 +805,39 @@ LogicalResult mlir::pto::protocol_sync::allocateMixedProtocolEvents(
     }
 
     SyncMixedProtocolPlan allocated = plan;
-    if (allocated.oneShot) {
-        const LogicalResult allocatedOneShot = allocateOneShotProtocolEvents(schedule, *allocated.oneShot);
-        const bool oneShotReady =
-            succeeded(allocatedOneShot) && allocated.oneShot->status == SyncOneShotPlanStatus::Ready;
-        if (!oneShotReady) {
-            const bool capacity = hasCapacityRejection(*allocated.oneShot);
-            clearEventIds(plan);
-            if (!capacity) {
-                return failure();
-            }
-            plan.status = SyncMixedPlanStatus::ResourceInfeasible;
-            plan.failures.push_back(
-                {SyncMixedPlanRejection::EventCapacity, "one-shot protocol exhausted a selected event domain"});
-            return success();
-        }
-    }
-    if (allocated.readyRelease) {
-        const LogicalResult allocatedReadyRelease =
-            allocateReadyReleaseProtocolEvents(schedule, *allocated.readyRelease);
-        const bool readyReleaseReady =
-            succeeded(allocatedReadyRelease) && allocated.readyRelease->status == SyncReadyReleasePlanStatus::Ready;
-        if (!readyReleaseReady) {
-            const bool capacity = hasCapacityRejection(*allocated.readyRelease);
-            clearEventIds(plan);
-            if (!capacity) {
-                return failure();
-            }
-            plan.status = SyncMixedPlanStatus::ResourceInfeasible;
-            plan.failures.push_back(
-                {SyncMixedPlanRejection::EventCapacity, "ReadyRelease protocol exhausted a selected event domain"});
-            return success();
-        }
-    }
-
     SmallVector<SyncEventReservation, 8> reservations;
     for (const SyncOpSummary& summary : schedule.getSummaries()) {
         reservations.append(summary.eventReservations.begin(), summary.eventReservations.end());
     }
-    appendProtocolReservations(allocated, reservations);
-    if (allocated.directRepair.status == SyncDirectRepairPlanStatus::Ready) {
-        if (failed(allocateDirectRepairEvents(target, reservations, allocated.directRepair))) {
-            return failure();
-        }
-        if (allocated.directRepair.status == SyncDirectRepairPlanStatus::ResourceInfeasible) {
-            clearEventIds(plan);
-            plan.status = SyncMixedPlanStatus::ResourceInfeasible;
-            plan.failures.push_back(
-                {SyncMixedPlanRejection::EventCapacity, "direct repair exhausted a selected event domain"});
-            return success();
-        }
-    }
-
-    std::map<EventDomain, std::set<unsigned>> events;
-    if (failed(collectAllocatedEvents(allocated, target, events))) {
+    SmallVector<SyncEventGeneration, 16> generations;
+    SmallVector<std::optional<unsigned>*, 16> assignmentSlots;
+    if (failed(buildMixedEventGenerations(schedule, allocated, generations, assignmentSlots))) {
         return failure();
+    }
+    FailureOr<SyncEventAllocationResult> allocation = allocateSyncEventGenerations(target, reservations, generations);
+    if (failed(allocation)) {
+        return failure();
+    }
+    if (statistics) {
+        recordSyncEventAllocationStatistics(*allocation, *statistics);
+    }
+    if (allocation->status == SyncEventAllocationStatus::ResourceInfeasible) {
+        clearEventIds(plan);
+        plan.status = SyncMixedPlanStatus::ResourceInfeasible;
+        plan.failures.push_back(
+            {SyncMixedPlanRejection::EventCapacity,
+             "interfering mixed-protocol event generations exhaust a selected event domain"});
+        return success();
+    }
+    if (allocation->status != SyncEventAllocationStatus::Allocated) {
+        return failure();
+    }
+    for (auto [slot, eventId] : llvm::zip_equal(assignmentSlots, allocation->eventIds)) {
+        *slot = eventId;
     }
     plan = std::move(allocated);
     if (statistics) {
-        recordSelectedStatistics(plan, events, *statistics);
+        recordSelectedStatistics(plan, *statistics);
     }
     return success();
 }
@@ -572,6 +855,21 @@ StringRef mlir::pto::protocol_sync::stringifySyncMixedPlanStatus(SyncMixedPlanSt
             return "resource-infeasible";
     }
     return "unsupported";
+}
+
+StringRef mlir::pto::protocol_sync::stringifySyncMixedWorldKind(SyncMixedWorldKind kind)
+{
+    switch (kind) {
+        case SyncMixedWorldKind::DirectOnly:
+            return "direct-only";
+        case SyncMixedWorldKind::OneShotPublish:
+            return "one-shot-publish";
+        case SyncMixedWorldKind::ReadyRelease:
+            return "ready-release";
+        case SyncMixedWorldKind::CombinedProtocols:
+            return "combined-protocols";
+    }
+    return "direct-only";
 }
 
 StringRef mlir::pto::protocol_sync::stringifySyncMixedPlanRejection(SyncMixedPlanRejection rejection)
@@ -594,20 +892,36 @@ StringRef mlir::pto::protocol_sync::stringifySyncMixedPlanRejection(SyncMixedPla
 void mlir::pto::protocol_sync::printMixedProtocolPlan(
     func::FuncOp function, const SyncMixedProtocolPlan& plan, llvm::raw_ostream& output)
 {
-    StringRef protocol = plan.readyRelease ? "ready-release" : plan.oneShot ? "one-shot" : "none";
     output << "PROTOCOL-SYNC mixed-plan function=@" << function.getSymName()
-           << " status=" << stringifySyncMixedPlanStatus(plan.status) << " protocol=" << protocol
+           << " status=" << stringifySyncMixedPlanStatus(plan.status)
+           << " world=" << stringifySyncMixedWorldKind(plan.selectedWorldKind)
            << " initial-residuals=" << plan.initialResidualCount
            << " direct-candidates=" << plan.directRepair.candidates.size()
            << " candidates-before-deletion=" << plan.candidateCountBeforeDeletion
            << " reverse-attempts=" << plan.reverseDeletionAttempts << " reverse-removed=" << plan.reverseDeletionRemoved
-           << '\n';
+           << " worlds-attempted=" << plan.completeWorldsAttempted << " worlds-feasible=" << plan.completeWorldsFeasible
+           << " event-pairs=" << plan.selectedCost.generatedEventPairs
+           << " targeted-barriers=" << plan.selectedCost.targetedBarriers
+           << " fixed-exit-drains=" << plan.selectedCost.fixedExitDrains
+           << " event-pressure=" << plan.selectedCost.eventPressure << '\n';
     for (const SyncMixedPlanFailure& failure : plan.failures) {
         output << "  reason=" << stringifySyncMixedPlanRejection(failure.reason) << " detail=\"" << failure.detail
                << "\"\n";
     }
     if (plan.oneShot) {
-        printOneShotProtocolPlan(function, *plan.oneShot, output);
+        for (const SyncOneShotPublishCandidate& candidate : plan.oneShot->candidates) {
+            output << "  one-shot-publish #" << candidate.id
+                   << " kind=" << stringifySyncOneShotPublishKind(candidate.kind) << " phases=#"
+                   << candidate.sourcePhase << "->#" << candidate.targetPhase << " channels=[";
+            llvm::interleaveComma(candidate.channels, output, [&](SyncChannelId channel) { output << '#' << channel; });
+            output << "] event=";
+            if (candidate.eventId) {
+                output << *candidate.eventId;
+            } else {
+                output << "unallocated";
+            }
+            output << '\n';
+        }
     }
     if (plan.readyRelease) {
         printReadyReleaseProtocolPlan(function, *plan.readyRelease, output);

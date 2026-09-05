@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt \
+// RUN:   --pto-protocol-sync='execution-mode=direct-repair fallback-mode=fail' \
+// RUN:   %s | FileCheck %s
+
+module attributes {pto.target_arch = "a3"} {
+  func.func private @produce(%tile: !pto.tile_buf<vec, 16x16xf16>)
+      attributes {pto.tileop.effects = ["write"], pto.tileop.helper,
+                  pto.tileop.kind = "vector"} {
+    return
+  }
+
+  func.func private @consume(%tile: !pto.tile_buf<vec, 16x16xf16>)
+      attributes {pto.tileop.effects = ["read"], pto.tileop.helper,
+                  pto.tileop.kind = "vector"} {
+    return
+  }
+
+  func.func @two_vector_sections()
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    pto.section.vector {
+      %c0 = arith.constant 0 : i64
+      %first = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+      func.call @produce(%first) : (!pto.tile_buf<vec, 16x16xf16>) -> ()
+      func.call @consume(%first) : (!pto.tile_buf<vec, 16x16xf16>) -> ()
+    }
+    pto.section.vector {
+      %c512 = arith.constant 512 : i64
+      %second = pto.alloc_tile addr = %c512 : !pto.tile_buf<vec, 16x16xf16>
+      func.call @produce(%second) : (!pto.tile_buf<vec, 16x16xf16>) -> ()
+      func.call @consume(%second) : (!pto.tile_buf<vec, 16x16xf16>) -> ()
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @two_vector_sections
+// CHECK: pto.section.vector {
+// CHECK: call @consume
+// CHECK-NEXT: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: {{^ *}}}
+// CHECK: pto.section.vector {
+// CHECK: call @consume
+// CHECK-NEXT: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: {{^ *}}}
+// CHECK-NEXT: {{^ *}}return

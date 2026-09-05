@@ -11,6 +11,7 @@
 #include "PTO/Transforms/ProtocolSync/OneShotProtocol.h"
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/ProtocolSync/EventAllocation.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 
@@ -109,19 +110,8 @@ bool hasUnsupportedStructuredControl(const StructuredSyncIR& schedule)
 bool hasMultiplePhysicalSections(const StructuredSyncIR& schedule)
 {
     return llvm::count_if(schedule.getRegions(), [](const SyncRegion& region) {
-        return region.kind == SyncRegionKind::PhysicalSection;
-    }) > 1;
-}
-
-std::uint32_t eventDomain(SyncPhysicalCore core, PIPE source, PIPE target)
-{
-    return (static_cast<std::uint32_t>(core) << 16) | (static_cast<std::uint32_t>(source) << 8) |
-           static_cast<std::uint32_t>(target);
-}
-
-std::uint32_t reservationDomain(PIPE source, PIPE target)
-{
-    return (static_cast<std::uint32_t>(source) << 8) | static_cast<std::uint32_t>(target);
+               return region.kind == SyncRegionKind::PhysicalSection;
+           }) > 1;
 }
 
 /// Checkpoint D does not yet have the generation-aware residual-obligation
@@ -444,14 +434,12 @@ LogicalResult mlir::pto::protocol_sync::allocateOneShotProtocolEvents(
         return failure();
     }
 
-    llvm::DenseMap<std::uint32_t, SmallVector<unsigned, 8>> reservations;
+    SmallVector<SyncEventReservation, 8> reservations;
     for (const SyncOpSummary& summary : schedule.getSummaries()) {
-        for (const SyncEventReservation& reservation : summary.eventReservations) {
-            SmallVector<unsigned, 8>& ids = reservations[reservationDomain(reservation.source, reservation.target)];
-            ids.append(reservation.eventIds.begin(), reservation.eventIds.end());
-        }
+        reservations.append(summary.eventReservations.begin(), summary.eventReservations.end());
     }
-    llvm::DenseMap<std::uint32_t, SmallVector<unsigned, 8>> allocatedByDomain;
+    SmallVector<SyncEventGeneration, 8> generations;
+    SmallVector<SyncOneShotProtocol*, 8> eventProtocols;
     for (SyncOneShotProtocol& protocol : plan.protocols) {
         if (protocol.kind != SyncOneShotProtocolKind::DirectedEvent) {
             continue;
@@ -459,36 +447,37 @@ LogicalResult mlir::pto::protocol_sync::allocateOneShotProtocolEvents(
         if (protocol.eventId) {
             return failure();
         }
-        if (statistics) {
-            ++statistics->allocationGraphVertices;
-        }
-        const std::uint32_t domain = eventDomain(protocol.core, protocol.sourcePipe, protocol.targetPipe);
-        auto [domainEntry, inserted] = allocatedByDomain.try_emplace(domain);
-        SmallVector<unsigned, 8>& allocated = domainEntry->second;
-        ArrayRef<unsigned> reserved = reservations[reservationDomain(protocol.sourcePipe, protocol.targetPipe)];
-        if (statistics) {
-            if (inserted) {
-                ++statistics->eventDomains;
-            }
-            statistics->allocationGraphEdges += allocated.size();
-        }
-        auto selected = llvm::find_if(target.getCompilerEventIds(), [&](unsigned eventId) {
-            return !llvm::is_contained(reserved, eventId) && !llvm::is_contained(allocated, eventId);
-        });
-        if (selected == target.getCompilerEventIds().end()) {
-            reject(
-                plan, protocol.channels.empty() ? kInvalidSyncId : protocol.channels.front(),
-                SyncOneShotRejection::EventCapacity, "the selected directed event domain exhausts compiler event IDs");
-            return success();
-        }
-        protocol.eventId = *selected;
-        allocated.push_back(*selected);
-        if (statistics) {
-            statistics->maxEventDomainPressure =
-                std::max<std::uint64_t>(statistics->maxEventDomainPressure, allocated.size());
-            statistics->maximumEventIdPlusOne =
-                std::max<std::uint64_t>(statistics->maximumEventIdPlusOne, *protocol.eventId + 1);
-        }
+        SyncEventGeneration generation;
+        generation.id = generations.size();
+        generation.kind = SyncEventGenerationKind::OneShot;
+        generation.core = protocol.core;
+        generation.sourcePipe = protocol.sourcePipe;
+        generation.targetPipe = protocol.targetPipe;
+        generation.setAnchor = protocol.sourceOperation;
+        generation.waitAnchor = protocol.targetOperation;
+        generations.push_back(std::move(generation));
+        eventProtocols.push_back(&protocol);
+    }
+    FailureOr<SyncEventAllocationResult> allocation = allocateSyncEventGenerations(target, reservations, generations);
+    if (failed(allocation)) {
+        return failure();
+    }
+    if (statistics) {
+        recordSyncEventAllocationStatistics(*allocation, *statistics);
+    }
+    if (allocation->status == SyncEventAllocationStatus::ResourceInfeasible) {
+        const SyncOneShotProtocol* witness = eventProtocols.empty() ? nullptr : eventProtocols.front();
+        reject(
+            plan, !witness || witness->channels.empty() ? kInvalidSyncId : witness->channels.front(),
+            SyncOneShotRejection::EventCapacity,
+            "interfering event generations exhaust the compiler event pool in one directed domain");
+        return success();
+    }
+    if (allocation->status != SyncEventAllocationStatus::Allocated) {
+        return failure();
+    }
+    for (auto [protocol, eventId] : llvm::zip_equal(eventProtocols, allocation->eventIds)) {
+        protocol->eventId = eventId;
     }
     return success();
 }
