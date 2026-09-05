@@ -67,6 +67,7 @@ extern llvm::cl::opt<bool> protocolSyncDirectRepair;
 extern llvm::cl::opt<bool> protocolSyncMixed;
 extern llvm::cl::opt<std::string> protocolSyncFallback;
 extern llvm::cl::opt<std::string> protocolSyncDump;
+extern llvm::cl::opt<std::string> protocolSyncGMAlias;
 extern llvm::cl::opt<bool> protocolSyncStatistics;
 extern llvm::cl::opt<bool> enableBufidSync;
 extern llvm::cl::opt<bool> enableBufidSyncDebug;

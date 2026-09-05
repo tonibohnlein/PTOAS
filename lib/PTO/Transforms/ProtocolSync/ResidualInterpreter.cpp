@@ -11,6 +11,7 @@
 //===- ResidualInterpreter.cpp - Interpret selected synchronization -----===//
 
 #include "PTO/Transforms/ProtocolSync/ResidualObligation.h"
+#include "PTO/Transforms/ProtocolSync/GMAliasPolicy.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -616,9 +617,12 @@ bool intervalsOverlap(ArrayRef<SyncByteInterval> first, ArrayRef<SyncByteInterva
     return false;
 }
 
-AliasRelation aliasRelation(const SyncAccess& first, const SyncAccess& second)
+AliasRelation aliasRelation(const StructuredSyncIR& schedule, const SyncAccess& first, const SyncAccess& second)
 {
     if (first.storage.space != second.storage.space) {
+        return AliasRelation::NoAlias;
+    }
+    if (haveDisjointGMArgumentRoots(schedule, first, second)) {
         return AliasRelation::NoAlias;
     }
     if (first.family == second.family) {
@@ -723,7 +727,7 @@ LogicalResult evaluateMemoryPair(
     if (!checkedIncrement(accumulator.result.memoryPairTests)) {
         return failure();
     }
-    const AliasRelation alias = aliasRelation(sourceAccess, targetAccess);
+    const AliasRelation alias = aliasRelation(schedule, sourceAccess, targetAccess);
     std::uint64_t* aliasCounter = nullptr;
     if (alias == AliasRelation::NoAlias) {
         aliasCounter = &accumulator.result.noAliasResults;

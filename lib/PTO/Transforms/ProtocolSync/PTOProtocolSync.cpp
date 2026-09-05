@@ -14,6 +14,7 @@
 #include "PTO/Transforms/ProtocolSync/ChannelProtocolIR.h"
 #include "PTO/Transforms/ProtocolSync/ConcreteSyncVerifier.h"
 #include "PTO/Transforms/ProtocolSync/DirectRepair.h"
+#include "PTO/Transforms/ProtocolSync/GMAliasPolicy.h"
 #include "PTO/Transforms/ProtocolSync/LaneFrontierAnalysis.h"
 #include "PTO/Transforms/ProtocolSync/LanePatternAnalysis.h"
 #include "PTO/Transforms/ProtocolSync/MixedProtocolPlan.h"
@@ -45,6 +46,7 @@ std::uint64_t elapsedMicroseconds(ProtocolSyncClock::time_point start)
 
 void collectScheduleStatistics(const StructuredSyncIR& schedule, ProtocolSyncStatistics& statistics)
 {
+    statistics.gmAliasMode = schedule.getGMAliasMode();
     statistics.structuredRegions = schedule.getRegions().size();
     statistics.semanticActions = schedule.getSemanticActions().size();
     statistics.phases = schedule.getPhases().size();
@@ -82,6 +84,7 @@ void printStatistics(
     record["function"] = function.str();
     record["status"] = status.str();
     record["producer"] = stringifyProtocolSyncProducer(producer).str();
+    record["gm_alias_mode"] = stringifySyncGMAliasMode(statistics.gmAliasMode).str();
     if (!failureStage.empty()) {
         record["failure_stage"] = failureStage.str();
     }
@@ -351,12 +354,19 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
         dumpMode = options.dumpMode;
         executionMode = options.executionMode;
         fallbackMode = options.fallbackMode;
+        gmAliasMode = options.gmAliasMode;
         statistics = options.statistics;
     }
 
     void runOnOperation() final
     {
         pendingStatistics.clear();
+        const bool invalidAliasMode = !gmAliasMode.empty() && !parseSyncGMAliasMode(gmAliasMode);
+        if (invalidAliasMode) {
+            getOperation().emitError("ProtocolSync gm-alias must be 'may-alias' or 'assume-disjoint-arguments'");
+            signalPassFailure();
+            return;
+        }
         const bool analysisOnly = executionMode == "analysis";
         const bool emitOneShot = executionMode == "one-shot";
         const bool emitReadyRelease = executionMode == "ready-release";
@@ -454,6 +464,9 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
         for (auto [original, staged] : llvm::zip_equal(originalFunctions, stagedFunctions)) {
             if (!original.isDeclaration()) {
                 original.getBody().takeBody(staged.getBody());
+                if (Attribute contract = staged->getAttr(kSyncGMAliasContract)) {
+                    original->setAttr(kSyncGMAliasContract, contract);
+                }
             }
         }
         flushStatistics(true);
@@ -933,6 +946,17 @@ private:
         func::FuncOp function, bool emitOneShot, bool emitReadyRelease, bool emitDirectRepair, bool emitMixed)
     {
         ProtocolSyncStatistics result;
+        FailureOr<SyncGMAliasMode> effectiveAliasMode =
+            resolveSyncGMAliasMode(function, parseSyncGMAliasMode(gmAliasMode));
+        if (failed(effectiveAliasMode)) {
+            return failure();
+        }
+        result.gmAliasMode = *effectiveAliasMode;
+        const bool emission = emitOneShot || emitReadyRelease || emitDirectRepair || emitMixed;
+        if (emission && !gmAliasMode.empty()) {
+            auto contract = StringAttr::get(function.getContext(), stringifySyncGMAliasMode(*effectiveAliasMode));
+            function->setAttr(kSyncGMAliasContract, contract);
+        }
         LegacySyncIRAdapter adapter;
         LegacySyncSnapshot legacy;
         const ProtocolSyncClock::time_point totalStart = ProtocolSyncClock::now();
@@ -947,6 +971,7 @@ private:
         result.legacySnapshotUs = elapsedMicroseconds(start);
         start = ProtocolSyncClock::now();
         SyncSemanticContext context = adapter.buildSemanticContext(legacy);
+        context.setGMAliasOverride(*effectiveAliasMode);
         result.semanticContextUs = elapsedMicroseconds(start);
         StructuredSyncIR schedule(function);
         start = ProtocolSyncClock::now();

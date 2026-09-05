@@ -175,6 +175,7 @@ public:
 
     func::FuncOp getFunction() const { return function; }
     bool isFrozen() const { return frozen; }
+    SyncGMAliasMode getGMAliasMode() const { return gmAliasMode; }
     llvm::ArrayRef<SyncRegion> getRegions() const { return regions; }
     llvm::ArrayRef<SyncOpSummary> getSummaries() const { return summaries; }
     llvm::ArrayRef<SyncSemanticAction> getSemanticActions() const { return semanticActions; }
@@ -196,6 +197,7 @@ private:
     friend class StructuredSyncIRTestPeer;
     func::FuncOp function;
     bool frozen = false;
+    SyncGMAliasMode gmAliasMode = SyncGMAliasMode::MayAlias;
     llvm::SmallVector<SyncRegion, 16> regions;
     llvm::SmallVector<SyncOpSummary, 32> summaries;
     llvm::SmallVector<SyncSemanticAction, 8> semanticActions;

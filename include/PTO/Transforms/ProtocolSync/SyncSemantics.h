@@ -42,6 +42,9 @@ inline constexpr std::uint32_t kInvalidSyncId = std::numeric_limits<std::uint32_
 
 enum class SyncPhysicalCore : std::uint8_t { Cube, Vector, Unknown };
 
+/// Caller contract, never inferred from different SSA names or planner tags.
+enum class SyncGMAliasMode : std::uint8_t { MayAlias, AssumeDisjointArguments };
+
 enum class SyncAccessMode : std::uint8_t {
     Read,
     Write,
@@ -200,6 +203,7 @@ struct SyncOpSummary {
 };
 
 struct ProtocolSyncStatistics {
+    SyncGMAliasMode gmAliasMode = SyncGMAliasMode::MayAlias;
     std::uint64_t operationsVisited = 0;
     std::uint64_t operationsSummarized = 0;
     std::uint64_t providerLookupAttempts = 0;
@@ -377,9 +381,12 @@ class SyncSemanticContext {
 public:
     void addStorage(Value value, SyncStorageProvenance provenance);
     llvm::ArrayRef<SyncStorageProvenance> lookupStorage(Value value) const;
+    void setGMAliasOverride(SyncGMAliasMode mode) { gmAliasOverride = mode; }
+    std::optional<SyncGMAliasMode> getGMAliasOverride() const { return gmAliasOverride; }
 
 private:
     llvm::DenseMap<Value, llvm::SmallVector<SyncStorageProvenance, 2>> storage;
+    std::optional<SyncGMAliasMode> gmAliasOverride;
 };
 
 class SyncSemanticExtractor {

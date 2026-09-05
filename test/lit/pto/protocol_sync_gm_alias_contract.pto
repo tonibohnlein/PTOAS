@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: not pto-test-opt --pto-protocol-sync='execution-mode=mixed fallback-mode=fail' %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=SAFE
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=direct-repair fallback-mode=fail gm-alias=assume-disjoint-arguments statistics=1' %s -o %t.direct 2> %t.direct.log
+// RUN: FileCheck %s --check-prefix=CONTRACT --input-file=%t.direct
+// RUN: FileCheck %s --check-prefix=STATS --input-file=%t.direct.log
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=mixed fallback-mode=fail gm-alias=assume-disjoint-arguments' %s -o %t.mixed
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=one-shot fallback-mode=fail gm-alias=assume-disjoint-arguments' %s -o %t.one-shot
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=analysis dump=concrete-verification' %t.direct -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFIED
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=analysis dump=concrete-verification' %t.mixed -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFIED
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=analysis dump=concrete-verification gm-alias=may-alias' %t.direct -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNCOVERED
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=analysis gm-alias=assume-disjoint-arguments' %s -o %t.analysis
+// RUN: pto-test-opt %s -o %t.original
+// RUN: diff %t.analysis %t.original
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.cli
+// RUN: FileCheck %s --check-prefix=CONTRACT --input-file=%t.cli
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.a2
+// RUN: FileCheck %s --check-prefix=CONTRACT --input-file=%t.a2
+// RUN: not ptoas --protocol-sync-analysis-only --protocol-sync-gm-alias=invalid %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=INVALID
+// RUN: not ptoas --protocol-sync-gm-alias=may-alias %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=MODE
+// RUN: not pto-test-opt --pto-protocol-sync='gm-alias=invalid' %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=PASS-INVALID
+// RUN: sed 's/pto.kernel_kind =/pto.gm_alias = "invalid", pto.kernel_kind =/' %s | not pto-test-opt --pto-protocol-sync='execution-mode=analysis' -o /dev/null 2>&1 | FileCheck %s --check-prefix=IR-INVALID
+// RUN: sed 's/pto.kernel_kind =/pto.gm_alias = "invalid", pto.kernel_kind =/' %s | not pto-test-opt --pto-protocol-sync='execution-mode=analysis gm-alias=assume-disjoint-arguments' -o /dev/null 2>&1 | FileCheck %s --check-prefix=IR-INVALID
+// RUN: sed 's/pto.kernel_kind =/pto.gm_alias = 1 : i32, pto.kernel_kind =/' %s | not pto-test-opt --pto-protocol-sync='execution-mode=analysis' -o /dev/null 2>&1 | FileCheck %s --check-prefix=IR-INVALID
+// RUN: sed 's/pto.kernel_kind =/pto.gm_alias = "assume-disjoint-arguments", pto.kernel_kind =/' %s | pto-test-opt --pto-protocol-sync='execution-mode=mixed fallback-mode=fail' -o %t.inherited
+// RUN: FileCheck %s --check-prefix=CONTRACT --input-file=%t.inherited
+// RUN: sed 's/pto.kernel_kind =/pto.gm_alias = "assume-disjoint-arguments", pto.kernel_kind =/' %s | not pto-test-opt --pto-protocol-sync='execution-mode=mixed fallback-mode=fail gm-alias=may-alias' -o /dev/null 2>&1 | FileCheck %s --check-prefix=SAFE
+// RUN: split-file %S/protocol_sync_one_shot_hardening.pto %t.atomicity
+// RUN: not pto-test-opt --pto-protocol-sync='execution-mode=one-shot fallback-mode=fail gm-alias=assume-disjoint-arguments' --mlir-print-ir-after-failure %t.atomicity/module-atomicity.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=ATOMIC
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @two_copies(
+      %input0: !pto.partition_tensor_view<16x16xf16>,
+      %output0: !pto.partition_tensor_view<16x16xf16>,
+      %input1: !pto.partition_tensor_view<16x16xf16>,
+      %output1: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %c512 = arith.constant 512 : i64
+    %first = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    %second = pto.alloc_tile addr = %c512 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input0 : !pto.partition_tensor_view<16x16xf16>) outs(%first : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%first : !pto.tile_buf<vec, 16x16xf16>) outs(%output0 : !pto.partition_tensor_view<16x16xf16>)
+    pto.tload ins(%input1 : !pto.partition_tensor_view<16x16xf16>) outs(%second : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%second : !pto.tile_buf<vec, 16x16xf16>) outs(%output1 : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+}
+
+// SAFE: ProtocolSync mixed mode found no complete supported plan
+// CONTRACT: pto.gm_alias = "assume-disjoint-arguments"
+// CONTRACT: pto.set_flag
+// CONTRACT: pto.wait_flag
+// STATS: "gm_alias_mode":"assume-disjoint-arguments"
+// VERIFIED: concrete-verification function=@two_copies status=accepted first-failed-stage=none
+// UNCOVERED: concrete-verification function=@two_copies status=rejected first-failed-stage=residual-obligations
+// INVALID: --protocol-sync-gm-alias must be 'may-alias' or 'assume-disjoint-arguments'
+// MODE: --protocol-sync-gm-alias requires a ProtocolSync mode
+// PASS-INVALID: ProtocolSync gm-alias must be 'may-alias' or 'assume-disjoint-arguments'
+// IR-INVALID: pto.gm_alias must be 'may-alias' or 'assume-disjoint-arguments'
+// ATOMIC: IR Dump After PTOProtocolSync
+// ATOMIC-NOT: pto.gm_alias
+// ATOMIC: func.func @would_be_supported
+// ATOMIC-NOT: pto.gm_alias
+// ATOMIC: func.func @later_rejection
+// ATOMIC-NOT: pto.gm_alias

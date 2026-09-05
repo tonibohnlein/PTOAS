@@ -17,7 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from acceptance import classify_strict, summarize_acceptance
-from campaign import inputs
+from campaign import inputs, probe_command
 from census import classify_track, first_control_gate, population, summarize, topology_hash
 from records import fields, new_function, parse_diagnostics
 
@@ -124,6 +124,18 @@ class EvidenceTests(unittest.TestCase):
 
 class AcceptanceTests(unittest.TestCase):
     """Admission is not inferred from absent diagnostics or aggregate failures."""
+
+    def test_all_probes_share_architecture_and_alias_contract(self):
+        args = SimpleNamespace(python=Path("python"), ptoas=Path("ptoas"),
+                               input_root=Path("inputs"), arch="a2", gm_alias=None)
+        for alias in (None, "may-alias", "assume-disjoint-arguments"):
+            args.gm_alias = alias
+            for strict in (False, True):
+                command = probe_command(args, {"source": "kernel.pto"}, "plan", strict)
+                self.assertIn("--pto-arch=a2", command)
+                overrides = [flag for flag in command if flag.startswith("--protocol-sync-gm-alias=")]
+                self.assertEqual(overrides, [] if alias is None else [f"--protocol-sync-gm-alias={alias}"])
+                self.assertEqual("--protocol-sync-fallback=fail" in command, strict)
 
     def test_missing_statistics_or_crash_is_not_rejection(self):
         for return_code in (0, 1, -11, 124):

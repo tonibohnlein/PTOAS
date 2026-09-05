@@ -1315,6 +1315,19 @@ static LogicalResult validateProtocolSyncConfiguration() {
       protocolSyncAnalysisOnly || protocolSyncOneShot ||
       protocolSyncReadyRelease || protocolSyncDirectRepair ||
       protocolSyncMixed;
+  const bool hasGMAliasOverride = protocolSyncGMAlias.getNumOccurrences() != 0;
+  if (hasGMAliasOverride) {
+    if (!protocolSyncActive) {
+      llvm::errs() << "Error: --protocol-sync-gm-alias requires a ProtocolSync mode.\n";
+      return failure();
+    }
+    if (protocolSyncGMAlias != "may-alias" &&
+        protocolSyncGMAlias != "assume-disjoint-arguments") {
+      llvm::errs() << "Error: --protocol-sync-gm-alias must be 'may-alias' or "
+                      "'assume-disjoint-arguments'.\n";
+      return failure();
+    }
+  }
   const int selectedModes = (protocolSyncAnalysisOnly ? 1 : 0) +
                             (protocolSyncOneShot ? 1 : 0) +
                             (protocolSyncReadyRelease ? 1 : 0) +
@@ -1618,6 +1631,7 @@ static LogicalResult runMainLoweringPipeline(
                             : protocolSyncMixed        ? "mixed"
                                                        : "analysis";
     options.fallbackMode = protocolSyncFallback.getValue();
+    options.gmAliasMode = protocolSyncGMAlias.getValue();
     options.dumpMode = protocolSyncDump.getValue();
     options.statistics = protocolSyncStatistics.getValue();
     pm.addPass(pto::createPTOProtocolSyncPass(options));

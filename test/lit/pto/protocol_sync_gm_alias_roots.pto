@@ -1,0 +1,124 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=analysis dump=schedule gm-alias=assume-disjoint-arguments' %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=ROOTS
+// RUN: pto-test-opt --pto-protocol-sync='execution-mode=analysis dump=residuals gm-alias=assume-disjoint-arguments' %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=HAZARD
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @same_root(
+      %input: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 16x16xf16>
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>) outs(%input : !pto.partition_tensor_view<16x16xf16>)
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+
+  func.func @choice_roots(
+      %first: !pto.partition_tensor_view<16x16xf16>,
+      %second: !pto.partition_tensor_view<16x16xf16>, %condition: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 16x16xf16>
+    %selected = scf.if %condition -> (!pto.partition_tensor_view<16x16xf16>) {
+      scf.yield %first : !pto.partition_tensor_view<16x16xf16>
+    } else {
+      scf.yield %second : !pto.partition_tensor_view<16x16xf16>
+    }
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>) outs(%first : !pto.partition_tensor_view<16x16xf16>)
+    pto.tload ins(%selected : !pto.partition_tensor_view<16x16xf16>) outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+
+  func.func @loop_roots(
+      %first: !pto.partition_tensor_view<16x16xf16>,
+      %second: !pto.partition_tensor_view<16x16xf16>, %count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %addr = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %addr : !pto.tile_buf<vec, 16x16xf16>
+    %result = scf.for %iv = %zero to %count step %one iter_args(%carried = %first) -> (!pto.partition_tensor_view<16x16xf16>) {
+      pto.tload ins(%carried : !pto.partition_tensor_view<16x16xf16>) outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+      scf.yield %second : !pto.partition_tensor_view<16x16xf16>
+    }
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>) outs(%result : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+
+  func.func @view_roots(%input: !pto.ptr<f16>, %offset: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %sixteen = arith.constant 16 : index
+    %addr = arith.constant 0 : i64
+    %pointer = pto.addptr %input, %offset : !pto.ptr<f16> -> !pto.ptr<f16>
+    %view = pto.make_tensor_view %pointer, shape = [%sixteen, %sixteen], strides = [%sixteen, %one] : !pto.tensor_view<16x16xf16>
+    %part = pto.partition_view %view, offsets = [%zero, %zero], sizes = [%sixteen, %sixteen] : !pto.tensor_view<16x16xf16> -> !pto.partition_tensor_view<16x16xf16>
+    %tile = pto.alloc_tile addr = %addr : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+
+  func.func @selected_pointer(%first: !pto.ptr<f16>, %second: !pto.ptr<f16>, %condition: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %pointer = arith.select %condition, %first, %second : !pto.ptr<f16>
+    %cast = pto.castptr %pointer : !pto.ptr<f16> -> !pto.ptr<f32>
+    %value = pto.load_scalar %cast[%zero] : !pto.ptr<f32> -> f32
+    return
+  }
+
+  func.func @integer_round_trip(%input: !pto.ptr<f16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %address = pto.castptr %input : !pto.ptr<f16> -> i64
+    %pointer = pto.castptr %address : i64 -> !pto.ptr<f16>
+    %value = pto.load_scalar %pointer[%zero] : !pto.ptr<f16> -> f16
+    return
+  }
+
+  func.func @loop_fixed_point(%input: !pto.ptr<f16>, %count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %result = scf.for %iv = %zero to %count step %one iter_args(%carried = %input) -> (!pto.ptr<f16>) {
+      %value = pto.load_scalar %carried[%zero] : !pto.ptr<f16> -> f16
+      scf.yield %carried : !pto.ptr<f16>
+    }
+    %last = pto.load_scalar %result[%zero] : !pto.ptr<f16> -> f16
+    return
+  }
+}
+
+// ROOTS-LABEL: schedule function=@same_root
+// ROOTS-SAME: gm-alias=assume-disjoint-arguments
+// ROOTS: visibility=global{{.*}}gm-roots=[%arg0] gm-roots-complete=yes
+// ROOTS: visibility=global{{.*}}gm-roots=[%arg0] gm-roots-complete=yes
+// ROOTS-LABEL: schedule function=@choice_roots
+// ROOTS: visibility=global{{.*}}gm-roots=[%arg0, %arg1] gm-roots-complete=yes
+// ROOTS-LABEL: schedule function=@loop_roots
+// ROOTS: visibility=global{{.*}}gm-roots=[%arg0, %arg1] gm-roots-complete=yes
+// ROOTS: visibility=global{{.*}}gm-roots=[%arg0, %arg1] gm-roots-complete=yes
+// ROOTS-LABEL: schedule function=@view_roots
+// ROOTS: visibility=global{{.*}}gm-roots=[%arg0] gm-roots-complete=yes
+// ROOTS-LABEL: schedule function=@selected_pointer
+// ROOTS: visibility=global{{.*}}gm-roots=[%arg0, %arg1] gm-roots-complete=yes
+// ROOTS-LABEL: schedule function=@integer_round_trip
+// ROOTS: visibility=global{{.*}}gm-roots=[] gm-roots-complete=no
+// ROOTS-LABEL: schedule function=@loop_fixed_point
+// ROOTS: visibility=global{{.*}}gm-roots=[%arg0] gm-roots-complete=yes
+// ROOTS: visibility=global{{.*}}gm-roots=[%arg0] gm-roots-complete=yes
+
+// HAZARD-LABEL: selected-world function=@same_root
+// HAZARD: kind=visibility source=#0 target=#1
+// HAZARD-LABEL: selected-world function=@choice_roots
+// HAZARD: kind={{(visibility|unknown-alias)}} source=#0 target=#1

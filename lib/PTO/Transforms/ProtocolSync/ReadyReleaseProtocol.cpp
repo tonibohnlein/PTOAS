@@ -11,6 +11,7 @@
 //===- ReadyReleaseProtocol.cpp - Recurring protocol planning ----------===//
 
 #include "PTO/Transforms/ProtocolSync/ReadyReleaseProtocol.h"
+#include "PTO/Transforms/ProtocolSync/GMAliasPolicy.h"
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/ProtocolSync/EventAllocation.h"
@@ -119,7 +120,7 @@ bool hasUnsupportedVisibility(const StructuredSyncIR& schedule)
                                         !second->storage.aliasesUnknownRange && !first->storage.intervals.empty() &&
                                         !second->storage.intervals.empty() &&
                                         !rangesOverlap(first->storage.intervals, second->storage.intervals);
-            if (!provenDisjoint) {
+            if (!provenDisjoint && !haveDisjointGMArgumentRoots(schedule, *first, *second)) {
                 return true;
             }
         }

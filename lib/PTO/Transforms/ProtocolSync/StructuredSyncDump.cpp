@@ -11,6 +11,7 @@
 //===- StructuredSyncDump.cpp - Deterministic schedule dump -------------===//
 
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
+#include "PTO/Transforms/ProtocolSync/GMAliasPolicy.h"
 
 #include "mlir/IR/AsmState.h"
 #include "llvm/ADT/DenseSet.h"
@@ -231,6 +232,12 @@ void printPhase(const StructuredSyncIR& schedule, const SyncPhase& phase, AsmSta
         } else {
             output << "none";
         }
+        if (access->storage.space == AddressSpace::GM) {
+            const SyncGMArgumentRoots roots = traceSyncGMArgumentRoots(schedule.getFunction(), access->value);
+            output << " gm-roots=[";
+            llvm::interleaveComma(roots.roots, output, [&](mlir::Value root) { printValue(root, state, output); });
+            output << "] gm-roots-complete=" << (roots.complete ? "yes" : "no");
+        }
         output << '\n';
     }
 }
@@ -240,7 +247,8 @@ void printPhase(const StructuredSyncIR& schedule, const SyncPhase& phase, AsmSta
 void mlir::pto::protocol_sync::printStructuredSyncIR(const StructuredSyncIR& schedule, raw_ostream& output)
 {
     output << "PROTOCOL-SYNC schedule function=@" << schedule.getFunction().getSymName()
-           << " frozen=" << (schedule.isFrozen() ? "yes" : "no") << '\n';
+           << " frozen=" << (schedule.isFrozen() ? "yes" : "no")
+           << " gm-alias=" << stringifySyncGMAliasMode(schedule.getGMAliasMode()) << '\n';
     AsmState state(schedule.getFunction());
     unsigned physicalLocalFamilies = 0;
     unsigned logicalStorageFamilies = 0;

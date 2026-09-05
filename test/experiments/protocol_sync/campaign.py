@@ -56,6 +56,8 @@ def arguments():
     parser.add_argument("--python", type=Path, default=Path(sys.executable))
     parser.add_argument("--workers", type=int, choices=(1, 2), default=2)
     parser.add_argument("--expected-rows", type=int, required=True)
+    parser.add_argument("--arch", choices=("a2", "a3"), default="a3")
+    parser.add_argument("--gm-alias", choices=("may-alias", "assume-disjoint-arguments"))
     parser.add_argument("--allow-dirty", action="store_true")
     args = parser.parse_args()
     for key in ("input_root", "ptoas", "python", "build_root"):
@@ -94,13 +96,21 @@ def inputs(args):
     return rows
 
 
-def execute_probe(args, row, dump, suffix="", strict=False):
-    """Keep actual strict admission separate from every analysis-only blocker."""
+def probe_command(args, row, dump, strict=False):
+    """Use one declared architecture and alias contract for every probe."""
     flags = ["--protocol-sync-mixed", "--protocol-sync-fallback=fail"] if strict else [
         "--enable-insert-sync", "--protocol-sync-analysis-only"]
-    command = [str(args.python), str(args.ptoas), "--pto-arch=a3", f"--pto-level={row.get('level', 'level3')}",
-               "--emit-pto-ir", *flags, f"--protocol-sync-dump={dump}", "--protocol-sync-statistics",
-               str(args.input_root / row["source"]), "-o", "/dev/null"]
+    if args.gm_alias is not None:
+        flags.append(f"--protocol-sync-gm-alias={args.gm_alias}")
+    return [str(args.python), str(args.ptoas), f"--pto-arch={args.arch}",
+            f"--pto-level={row.get('level', 'level3')}", "--emit-pto-ir", *flags,
+            f"--protocol-sync-dump={dump}", "--protocol-sync-statistics",
+            str(args.input_root / row["source"]), "-o", "/dev/null"]
+
+
+def execute_probe(args, row, dump, suffix="", strict=False):
+    """Keep actual strict admission separate from every analysis-only blocker."""
+    command = probe_command(args, row, dump, strict)
     try:
         result = subprocess.run(command, capture_output=True, timeout=120, check=False)
         output = result.stdout + result.stderr
@@ -111,7 +121,8 @@ def execute_probe(args, row, dump, suffix="", strict=False):
     diagnostic = args.results / "diagnostics" / f"{row['case_id']}{suffix}.txt.gz"
     diagnostic.write_bytes(gzip.compress(output, mtime=0))
     record = dict(row, command=command, return_code=return_code,
-                  diagnostics_sha256=sha256(diagnostic))
+                  diagnostics_sha256=sha256(diagnostic), target_arch=args.arch,
+                  gm_alias_override=args.gm_alias)
     record.update(parse_diagnostics(output.decode("utf-8", errors="replace")))
     return record
 
@@ -146,6 +157,7 @@ def prepare_campaign(args):
         "experiment_clean": not experiment_dirty,
         "toolchain": toolchain,
         "mode": args.mode, "workers": args.workers,
+        "target_arch": args.arch, "gm_alias_override": args.gm_alias,
         "started_utc": datetime.now(timezone.utc).isoformat(),
         "invocation": sys.argv, "python_version": sys.version,
         "input_root": str(args.input_root),

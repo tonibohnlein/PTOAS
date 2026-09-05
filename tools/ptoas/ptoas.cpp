@@ -260,6 +260,12 @@ llvm::cl::opt<std::string> protocolSyncDump(
         "concrete-verification, residuals, or plan"),
     llvm::cl::init("none"));
 
+llvm::cl::opt<std::string> protocolSyncGMAlias(
+    "protocol-sync-gm-alias",
+    llvm::cl::desc(
+        "GM caller contract: may-alias or assume-disjoint-arguments; unset inherits IR or may-alias"),
+    llvm::cl::init(""));
+
 llvm::cl::opt<bool> protocolSyncStatistics(
     "protocol-sync-statistics",
     llvm::cl::desc("Emit ProtocolSync analysis statistics"),

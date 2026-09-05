@@ -11,6 +11,7 @@
 //===- StructuredSyncIR.cpp - Build immutable physical schedule ---------===//
 
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
+#include "PTO/Transforms/ProtocolSync/GMAliasPolicy.h"
 
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOTypeUtils.h"
@@ -528,6 +529,11 @@ LogicalResult StructuredSyncIRBuilder::build(func::FuncOp function, StructuredSy
     if (wrongFunction || alreadyFrozen) {
         return failure();
     }
+    FailureOr<SyncGMAliasMode> aliasMode = resolveSyncGMAliasMode(function, context.getGMAliasOverride());
+    if (failed(aliasMode)) {
+        return failure();
+    }
+    schedule.gmAliasMode = *aliasMode;
     StructuredSyncIRConstruction builder(schedule, context, statistics);
     return builder.build();
 }

@@ -702,3 +702,26 @@ retains overlapping exposed blockers independently of strict admission.
 The [GM alias contract](ptoas-protocol-sync-gm-alias-contract.md) records the
 agreed default-safe / assumed-disjoint-argument modes for the next semantic
 implementation; this diagnostic snapshot does not implement the mode switch.
+
+## Native-coverage revision: explicit GM alias contract
+
+The first semantic slice adds `--protocol-sync-gm-alias=may-alias` and
+`--protocol-sync-gm-alias=assume-disjoint-arguments`. One shared caller contract
+now feeds residual interpretation, OneShot, ReadyRelease and concrete
+verification. Supported views, casts and SCF forwarding retain possible argument
+roots; incomplete roots and same-root accesses do not gain disjointness.
+The [contract report](ptoas-protocol-sync-gm-alias-contract.md) records the
+CLI/IR precedence, transactional emission and exact limitations.
+
+The host full suite passes 1,894 tests with one unsupported and zero failures.
+The two new lit files exercise native direct/mixed/OneShot admission, stronger
+may-alias re-verification, invalid/overridden contracts, read-only analysis,
+rollback, branch/loop roots and integer-round-trip rejection. The campaign
+runner now records A2/A3 and alias overrides independently and preserves each
+kernel's overlapping diagnostics. Its 19 accounting tests pass.
+
+This is not general may-alias repair, access-region precision, a canonical
+local-obligation store, structured loop repair, or target publication
+qualification. No new device claim or selectable lifecycle family is added.
+Fresh-main frontend snapshots are pinned in the C7.1 report; their native
+build, input collection and four-way acceptance campaign remain pending.

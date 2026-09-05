@@ -9,6 +9,7 @@
 // for the full text of the License.
 //===- OneShotVerifier.cpp - Independent emitted-protocol verifier -------===//
 #include "PTO/Transforms/ProtocolSync/OneShotProtocol.h"
+#include "PTO/Transforms/ProtocolSync/GMAliasPolicy.h"
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/ProtocolSync/EventAllocation.h"
@@ -158,7 +159,7 @@ FailureOr<VerifiedScheduleChain> reconstructScheduleChain(
 
 bool verifyVisibilitySubset(const StructuredSyncIR& schedule)
 {
-    bool seenGlobalWrite = false;
+    SmallVector<const SyncAccess*, 4> globalWrites;
     for (const SyncPhase& phase : schedule.getPhases()) {
         for (SyncAccessId accessId : phase.accesses) {
             const SyncAccess* access = schedule.findAccess(accessId);
@@ -172,11 +173,14 @@ bool verifyVisibilitySubset(const StructuredSyncIR& schedule)
                 access->mode == SyncAccessMode::ReadWrite) {
                 return false;
             }
-            if (access->mode == SyncAccessMode::Read && seenGlobalWrite) {
+            const bool mayFollowAliasingWrite = llvm::any_of(globalWrites, [&](const SyncAccess* write) {
+                return !haveDisjointGMArgumentRoots(schedule, *write, *access);
+            });
+            if (access->mode == SyncAccessMode::Read && mayFollowAliasingWrite) {
                 return false;
             }
             if (access->mode == SyncAccessMode::Write) {
-                seenGlobalWrite = true;
+                globalWrites.push_back(access);
             }
         }
     }

@@ -9,6 +9,7 @@
 // for the full text of the License.
 //===- OneShotProtocol.cpp - Checkpoint D planning and allocation --------===//
 #include "PTO/Transforms/ProtocolSync/OneShotProtocol.h"
+#include "PTO/Transforms/ProtocolSync/GMAliasPolicy.h"
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/ProtocolSync/EventAllocation.h"
@@ -120,7 +121,7 @@ bool hasMultiplePhysicalSections(const StructuredSyncIR& schedule)
 /// milestone and must fail closed.
 bool hasUnsupportedVisibility(const StructuredSyncIR& schedule, StringRef& detail)
 {
-    bool seenGlobalWrite = false;
+    SmallVector<const SyncAccess*, 4> globalWrites;
     for (const SyncPhase& phase : schedule.getPhases()) {
         for (SyncAccessId accessId : phase.accesses) {
             const SyncAccess* access = schedule.findAccess(accessId);
@@ -143,12 +144,15 @@ bool hasUnsupportedVisibility(const StructuredSyncIR& schedule, StringRef& detai
                 detail = "ordered or read-write GM effects require residual visibility analysis";
                 return true;
             }
-            if (access->mode == SyncAccessMode::Read && seenGlobalWrite) {
+            const bool mayFollowAliasingWrite = llvm::any_of(globalWrites, [&](const SyncAccess* write) {
+                return !haveDisjointGMArgumentRoots(schedule, *write, *access);
+            });
+            if (access->mode == SyncAccessMode::Read && mayFollowAliasingWrite) {
                 detail = "a GM read follows a possible GM write and requires a publication contract";
                 return true;
             }
             if (access->mode == SyncAccessMode::Write) {
-                seenGlobalWrite = true;
+                globalWrites.push_back(access);
             }
         }
     }

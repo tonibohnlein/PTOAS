@@ -103,6 +103,14 @@ residual snapshot, and actual strict mixed emission with fallback disabled.
 Optional manifest `level` is `level2` or `level3` (default: already physically
 assigned level 3). It never guesses physical-core ownership or GM noalias.
 
+Use separate fresh result directories for the four acceptance combinations:
+`--arch a2` / `--arch a3`, each with `--gm-alias may-alias` and
+`--gm-alias assume-disjoint-arguments`. Every probe in a campaign receives
+the same architecture and alias override, recorded in `run.json` and each row.
+Without an alias override the compiler inherits any valid input contract and
+otherwise uses may-alias; individual statistics record the effective mode.
+Do not compare different alias modes as if they used the same caller contract.
+
 The acceptance matrix preserves *all exposed* extraction, generation/channel,
 residual-kind, and direct-repair diagnostics even when strict emission stops at
 an earlier gate. Missing extraction still limits the downstream universe; an

@@ -181,6 +181,16 @@ row count, with collection failures retained. The delivery goal is all valid
 collected A2/A3 kernels compiling natively in both GM alias modes, without
 legacy fallback. This fresh acceptance campaign is not yet complete.
 
+The collection work has pinned fresh main snapshots locally:
+
+- PyPTO: `9f657f37ed20ce148b46fb7229c267a152a0644e`.
+- PyPTO-Lib: `57e9d6a9294d9c38edd042f1edb5bdc50b4622bb`.
+
+These source pins are not yet a collected kernel manifest or an admission
+result. The isolated frontend build, collection and four A2/A3-by-alias-mode
+campaigns remain pending. Existing nearby checkouts and their binaries were
+not substituted for these revisions.
+
 The new runner's acceptance mode records actual strict mixed admission plus
 independent schedule/storage and empty-world residual snapshots. All exposed
 blocker classes remain per kernel even when strict emission fails earlier.

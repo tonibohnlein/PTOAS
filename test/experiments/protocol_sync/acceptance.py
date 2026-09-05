@@ -44,6 +44,8 @@ def observed_blockers(row):
 def summarize_acceptance(rows):
     """Return a per-program matrix; counts overlap and cannot predict admission."""
     records = [{"case_id": row["case_id"], "source": row["source"],
+                "target_arch": row.get("target_arch", "a3"),
+                "gm_alias_override": row.get("gm_alias_override"),
                 "input_sha256": row["input_sha256"], "strict_status": classify_strict(row["strict_mixed"]),
                 "blockers": observed_blockers(row),
                 "empty_world_return_code": row["empty_world"]["return_code"]} for row in rows]
