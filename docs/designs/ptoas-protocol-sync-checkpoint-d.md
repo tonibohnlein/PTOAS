@@ -5,13 +5,13 @@
 Checkpoint D is the first ProtocolSync revision that mutates IR. It is
 intentionally a correctness milestone, not the general protocol planner.
 
-The emitted subset is limited to explicit A2 or A3 NPU 2201 profiles,
+The emitted subset is limited to the shared NPU 2201 A2/A3 capability profile,
 same-core, exactly-once, strictly linear sequences of exact physical phases.
-The profiles have distinct identities even though this checkpoint uses the
-same conservative barrier, directed-event, and compiler-event-ID tables for
-both. A3 one-shot emission passed the Checkpoint-D device gate. A2 one-shot
-emission passed a separate NPU-2201 simulator campaign through the explicit A2
-compiler path, but it has no A2-silicon qualification. Every adjacent phase pair is
+A2 and A3 retain distinct requested-target names only for diagnostics and
+provenance; capability checks use one conservative barrier, directed-event,
+compiler-event-ID, and emission-mode contract. The shared profile is qualified
+on the NPU-2201 A2/A3 simulator. A3 additionally passed the Checkpoint-D silicon
+gate; no separate A2-silicon result is claimed. Every adjacent phase pair is
 completion-ordered. This deliberately total phase chain makes the first emitted
 planner obligation-complete before the generation-aware residual-obligation
 interpreter exists.
@@ -56,26 +56,26 @@ Direct pass use requires an explicit `pto.target_arch = "a2"` or
 historical attr-less A3 default. The `ptoas` CLI additionally requires the user
 to spell `--pto-arch=a2` or `--pto-arch=a3`, so the driver's historical default
 cannot qualify emission. Plans retain the resolved target identity and cannot
-be allocated or transactionally materialized under the other profile.
+be allocated or transactionally materialized under an incompatible capability
+profile. Replaying an A2 plan through A3, or the reverse, is compatible because
+both resolve to `Npu2201A2A3`; the original requested target remains provenance.
 Checkpoint D rejects every `pto.device-spec`, including underscore-form A3
 names, until an exact device profile has its own qualification record; legacy
 `Ascend910*` and A2 `Ascend910B*` names are not used to infer either explicit
 ProtocolSync profile.
 
-A2 enablement is deliberately narrower than shared primitive legality.
-Checkpoint D one-shot plans may use the A2 profile, but Checkpoint E
-`ReadyRelease<1/2>`, residual direct repair, and mixed planning remain A3-only
-until each mode is separately qualified. The A2 one-shot campaign established
-that the installed NPU-2201 model enforces matching directed set/wait events:
+All ProtocolSync emission modes use the shared A2/A3 capability profile. The
+simulator campaign established that the installed NPU-2201 model enforces
+matching directed set/wait events:
 removing a set or changing the wait ID deadlocked under a watchdog. That model
 has no A2-distinct identity, does not expose an instruction trace, and did not
 make removal of a same-pipe barrier observable. The resulting qualification is
-therefore limited to directed-event correctness on the shared NPU-2201
-simulator; it does not establish same-pipe barrier timing, A2 silicon behavior,
-performance, recurring protocols, cross-core synchronization, or GM
-publication.
+therefore a shared A2/A3 simulator qualification, not evidence of separate A2
+silicon behavior or performance. A3 silicon campaigns additionally cover
+one-shot and recurring protocols. Cross-core synchronization and unsupported GM
+publication remain outside the profile.
 
-The A2 and A3 directed-event tables are the same conservative subset of the
+The shared A2/A3 directed-event table is a conservative subset of the
 NPU 2201 hardware matrix and the CANN 9.0 `HardEvent` ABI used by lowering.
 Every retained direction is present in the installed ABI. `MTE3_FIX` is absent
 and therefore cannot be emitted. `MTE1_FIX` and `FIX_MTE1` are present in that

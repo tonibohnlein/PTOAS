@@ -37,10 +37,10 @@
 // RUN: not ptoas --pto-level=level2 --emit-pto-ir \
 // RUN:   --protocol-sync-direct-repair %S/protocol_sync_one_shot.pto \
 // RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=IMPLICIT
-// RUN: not ptoas --pto-arch=a2 --pto-level=level2 --emit-pto-ir \
+// RUN: ptoas --pto-arch=a2 --pto-level=level2 --emit-pto-ir \
 // RUN:   --protocol-sync-direct-repair --protocol-sync-fallback=fail \
-// RUN:   %S/protocol_sync_one_shot.pto -o /dev/null 2>&1 | \
-// RUN:   FileCheck %s --check-prefix=WRONG-TARGET
+// RUN:   %S/protocol_sync_one_shot.pto -o %t.a2.ir
+// RUN: FileCheck %s --input-file=%t.a2.ir --check-prefix=IR
 // RUN: not ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
 // RUN:   --enable-insert-sync --protocol-sync-direct-repair \
 // RUN:   %S/protocol_sync_one_shot.pto -o /dev/null 2>&1 | \
@@ -114,8 +114,7 @@
 // GUARD-IR-NEXT: pto.tstore
 // GUARD-IR: pto.barrier <PIPE_ALL>
 
-// IMPLICIT: --protocol-sync-direct-repair requires an explicit --pto-arch=a3
-// WRONG-TARGET: ProtocolSync direct-repair mode found no complete supported plan
+// IMPLICIT: --protocol-sync-direct-repair requires an explicit --pto-arch=a2 or --pto-arch=a3
 // MUTEX: --enable-insert-sync
 // MUTEX-SAME: --protocol-sync-direct-repair
 // MUTEX-SAME: mutually exclusive

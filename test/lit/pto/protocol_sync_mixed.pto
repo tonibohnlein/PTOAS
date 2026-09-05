@@ -26,9 +26,11 @@
 // RUN: FileCheck %s --input-file=%t.direct --check-prefix=DIRECT
 // RUN: not ptoas --pto-level=level2 --emit-pto-ir --protocol-sync-mixed \
 // RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=IMPLICIT
-// RUN: not ptoas --pto-arch=a2 --pto-level=level2 --emit-pto-ir \
-// RUN:   --protocol-sync-mixed --protocol-sync-fallback=fail %s \
-// RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=WRONG-TARGET
+// RUN: ptoas --pto-arch=a2 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-mixed --protocol-sync-fallback=fail \
+// RUN:   --protocol-sync-dump=plan %S/protocol_sync_one_shot.pto \
+// RUN:   -o /dev/null 2> %t.a2
+// RUN: FileCheck %s --input-file=%t.a2 --check-prefix=A2
 // RUN: not ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
 // RUN:   --enable-insert-sync --protocol-sync-mixed %s -o /dev/null 2>&1 | \
 // RUN:   FileCheck %s --check-prefix=MUTEX
@@ -76,8 +78,8 @@ module attributes {pto.target_arch = "a3"} {
 // DIRECT: PROTOCOL-SYNC mixed-plan function=@guarded_direct status=ready world=direct-only
 // DIRECT-SAME: direct-candidates=3 candidates-before-deletion=4 reverse-attempts=4 reverse-removed=1 worlds-attempted=1 worlds-feasible=1 event-pairs=2 targeted-barriers=0 fixed-exit-drains=1
 
-// IMPLICIT: --protocol-sync-mixed requires an explicit --pto-arch=a3
-// WRONG-TARGET: ProtocolSync mixed mode found no complete supported plan
+// IMPLICIT: --protocol-sync-mixed requires an explicit --pto-arch=a2 or --pto-arch=a3
+// A2: PROTOCOL-SYNC mixed-plan function=@linear_one_shot status=ready world=one-shot-publish
 // MUTEX: --enable-insert-sync
 // MUTEX-SAME: --protocol-sync-mixed
 // MUTEX-SAME: mutually exclusive

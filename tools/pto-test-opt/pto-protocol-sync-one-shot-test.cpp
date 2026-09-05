@@ -360,6 +360,12 @@ bool testTargetContract(MLIRContext& context)
     bool passed = check(a3Target.isSupported(), "explicit A3 target was rejected");
     passed &= check(a3Target.getKind() == ProtocolSyncTargetKind::Npu2201A3, "A3 target kind changed");
     passed &= check(a3Target.getName() == "npu2201-a3-protocol-sync-v1", "A3 target name changed");
+    passed &= check(
+        a3Target.getCapabilityProfile() == ProtocolSyncCapabilityProfile::Npu2201A2A3,
+        "A3 did not resolve to the shared A2/A3 capability profile");
+    passed &= check(
+        a3Target.getCapabilityProfileName() == "npu2201-a2a3-protocol-sync-v1",
+        "shared A2/A3 capability profile name changed");
     passed &= check(a3Target.supportsOneShotEmission(), "A3 one-shot qualification disappeared");
     passed &= check(a3Target.supportsReadyReleaseEmission(), "A3 ReadyRelease qualification disappeared");
     passed &= check(a3Target.supportsDirectRepairEmission(), "A3 direct-repair qualification disappeared");
@@ -394,11 +400,16 @@ bool testTargetContract(MLIRContext& context)
     passed &= check(a2Target.isSupported(), "explicit A2 target was rejected");
     passed &= check(a2Target.getKind() == ProtocolSyncTargetKind::Npu2201A2, "A2 target kind changed");
     passed &= check(a2Target.getName() == "npu2201-a2-protocol-sync-v1", "A2 target name changed");
-    passed &= check(a2Target.supportsOneShotEmission(), "A2 one-shot qualification disappeared");
-    passed &= check(!a2Target.supportsReadyReleaseEmission(), "A2 ReadyRelease was admitted without qualification");
     passed &= check(
-        !a2Target.supportsDirectRepairEmission(), "A2 direct repair was admitted without qualification");
-    passed &= check(!a2Target.supportsMixedEmission(), "A2 mixed planning was admitted without qualification");
+        a2Target.getCapabilityProfile() == ProtocolSyncCapabilityProfile::Npu2201A2A3,
+        "A2 did not resolve to the shared A2/A3 capability profile");
+    passed &= check(
+        a2Target.getCapabilityProfile() == a3Target.getCapabilityProfile(),
+        "A2/A3 capability profiles diverged");
+    passed &= check(a2Target.supportsOneShotEmission(), "A2 one-shot qualification disappeared");
+    passed &= check(a2Target.supportsReadyReleaseEmission(), "A2 ReadyRelease shared capability disappeared");
+    passed &= check(a2Target.supportsDirectRepairEmission(), "A2 direct repair shared capability disappeared");
+    passed &= check(a2Target.supportsMixedEmission(), "A2 mixed shared capability disappeared");
     passed &= check(a2Target.getCompilerEventIds() == a3Target.getCompilerEventIds(), "A2/A3 event pools diverged");
 
     constexpr PIPE cubeBarriers[] = {PIPE::PIPE_M, PIPE::PIPE_MTE1, PIPE::PIPE_MTE2, PIPE::PIPE_MTE3, PIPE::PIPE_FIX};
@@ -469,48 +480,33 @@ bool testTargetContract(MLIRContext& context)
     return passed;
 }
 
-bool testPlanTargetIdentity(MLIRContext& context, StringRef plannedArch, StringRef replayArch)
+bool testPlanSharedCapability(MLIRContext& context, StringRef plannedArch, StringRef replayArch)
 {
     OwningOpRef<ModuleOp> module = parseFixture(context);
-    if (!check(static_cast<bool>(module), "cannot parse target-identity fixture")) {
+    if (!check(static_cast<bool>(module), "cannot parse shared-capability fixture")) {
         return false;
     }
     module->getOperation()->setAttr("pto.target_arch", StringAttr::get(&context, plannedArch));
     func::FuncOp function = *module->getOps<func::FuncOp>().begin();
     AnalysisFixture fixture(function);
-    const bool fixtureBuilt =
-        check(buildOneShotAnalysis(fixture, false), Twine("cannot build ") + plannedArch + " target-identity fixture");
+    const bool fixtureBuilt = check(
+        buildOneShotAnalysis(fixture, false), Twine("cannot build ") + plannedArch + " shared-capability fixture");
     if (fixtureBuilt == false) {
         return false;
     }
-    std::string planBefore;
-    llvm::raw_string_ostream planBeforeOutput(planBefore);
-    printOneShotProtocolPlan(function, *fixture.plan, planBeforeOutput);
-    planBeforeOutput.flush();
+    const ProtocolSyncTargetKind requestedTarget = fixture.plan->targetKind;
+    const ProtocolSyncCapabilityProfile capabilityProfile = fixture.plan->capabilityProfile;
     module->getOperation()->setAttr("pto.target_arch", StringAttr::get(&context, replayArch));
     bool passed = check(
-        failed(allocateOneShotProtocolEvents(fixture.schedule, *fixture.plan)),
-        Twine(plannedArch) + " plan was allocated by the " + replayArch + " target");
-    std::string planAfter;
-    llvm::raw_string_ostream planAfterOutput(planAfter);
-    printOneShotProtocolPlan(function, *fixture.plan, planAfterOutput);
-    planAfterOutput.flush();
-    passed &= check(planAfter == planBefore, "target-identity allocation rejection mutated the plan");
-
-    module->getOperation()->setAttr("pto.target_arch", StringAttr::get(&context, plannedArch));
-    passed &= check(
         succeeded(allocateOneShotProtocolEvents(fixture.schedule, *fixture.plan)),
-        Twine("cannot allocate ") + plannedArch + " target-identity fixture");
-    const std::string before = printFunction(function);
-    module->getOperation()->setAttr("pto.target_arch", StringAttr::get(&context, replayArch));
+        Twine(plannedArch) + " plan was not allocated through the shared " + replayArch + " capability profile");
+    passed &= check(fixture.plan->targetKind == requestedTarget, "allocation changed requested-target provenance");
     passed &= check(
-        failed(materializeAndVerifyOneShotProtocolPlan(fixture.schedule, *fixture.stages, *fixture.plan)),
-        Twine(plannedArch) + " plan was accepted by the " + replayArch + " target");
-    passed &= check(printFunction(function) == before, "staged target-identity rejection mutated the function");
+        fixture.plan->capabilityProfile == capabilityProfile,
+        "allocation changed the plan capability profile");
     passed &= check(
-        failed(materializeAndVerifyOneShotProtocolPlanInPlace(fixture.schedule, *fixture.stages, *fixture.plan)),
-        Twine(plannedArch) + " plan was accepted in place by the " + replayArch + " target");
-    passed &= check(printFunction(function) == before, "in-place target-identity rejection mutated the function");
+        succeeded(materializeAndVerifyOneShotProtocolPlan(fixture.schedule, *fixture.stages, *fixture.plan)),
+        Twine(plannedArch) + " plan was not materialized through the shared " + replayArch + " capability profile");
     return passed;
 }
 
@@ -547,6 +543,9 @@ bool testVerifierRejectsMalformedPlans(MLIRContext& context)
         context, "source-pipe", [](SyncOneShotPlan& plan) { plan.protocols.front().sourcePipe = PIPE::PIPE_M; });
     passed &= testMalformedPlan(context, "tail", [](SyncOneShotPlan& plan) {
         plan.tailSectionOperation = plan.protocols.front().sourceOperation;
+    });
+    passed &= testMalformedPlan(context, "capability-profile", [](SyncOneShotPlan& plan) {
+        plan.capabilityProfile = ProtocolSyncCapabilityProfile::Unsupported;
     });
     return passed;
 }
@@ -700,6 +699,7 @@ SyncOneShotPlan makeAllocationPlan(unsigned count, PIPE source, PIPE target)
     SyncOneShotPlan plan;
     plan.status = SyncOneShotPlanStatus::Ready;
     plan.targetKind = ProtocolSyncTargetKind::Npu2201A3;
+    plan.capabilityProfile = ProtocolSyncCapabilityProfile::Npu2201A2A3;
     for (unsigned id = 0; id < count; ++id) {
         SyncOneShotProtocol protocol;
         protocol.id = id;
@@ -1209,8 +1209,8 @@ int main()
     registry.insert<arith::ArithDialect, func::FuncDialect, PTODialect, scf::SCFDialect>();
     MLIRContext context(registry);
     bool passed = testTargetContract(context);
-    passed &= testPlanTargetIdentity(context, "a3", "a2");
-    passed &= testPlanTargetIdentity(context, "a2", "a3");
+    passed &= testPlanSharedCapability(context, "a3", "a2");
+    passed &= testPlanSharedCapability(context, "a2", "a3");
     passed &= testVerifierRejectsMalformedPlans(context);
     passed &= testVerifierRejectsMalformedMaterializations(context);
     passed &= testVerifierRequiresDistinctCoexecutingEvents(context);

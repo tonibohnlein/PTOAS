@@ -24,6 +24,11 @@ namespace mlir::pto::protocol_sync {
 
 enum class ProtocolSyncTargetKind : std::uint8_t { Npu2201A2, Npu2201A3, Unsupported };
 
+/// Hardware capabilities shared by requested compiler targets. A2 and A3 use
+/// one NPU 2201 synchronization contract; their target kinds are retained only
+/// for diagnostics and provenance.
+enum class ProtocolSyncCapabilityProfile : std::uint8_t { Npu2201A2A3, Unsupported };
+
 enum class ProtocolSyncEmissionMode : std::uint8_t { OneShot, ReadyRelease, DirectRepair, Mixed };
 
 struct ProtocolSyncResource {
@@ -35,14 +40,17 @@ struct ProtocolSyncResource {
 class ProtocolSyncTarget {
 public:
     static ProtocolSyncTarget resolve(func::FuncOp function);
-    bool isSupported() const { return kind != ProtocolSyncTargetKind::Unsupported; }
+    bool isSupported() const { return capabilityProfile != ProtocolSyncCapabilityProfile::Unsupported; }
     bool supportsEmission(ProtocolSyncEmissionMode mode) const;
     bool supportsOneShotEmission() const { return supportsEmission(ProtocolSyncEmissionMode::OneShot); }
     bool supportsReadyReleaseEmission() const { return supportsEmission(ProtocolSyncEmissionMode::ReadyRelease); }
     bool supportsDirectRepairEmission() const { return supportsEmission(ProtocolSyncEmissionMode::DirectRepair); }
     bool supportsMixedEmission() const { return supportsEmission(ProtocolSyncEmissionMode::Mixed); }
+    /// Requested compiler target retained for diagnostics and provenance.
     ProtocolSyncTargetKind getKind() const { return kind; }
     llvm::StringRef getName() const { return name; }
+    ProtocolSyncCapabilityProfile getCapabilityProfile() const { return capabilityProfile; }
+    llvm::StringRef getCapabilityProfileName() const { return capabilityProfileName; }
     llvm::StringRef getUnsupportedReason() const { return unsupportedReason; }
     std::string getUnsupportedReason(ProtocolSyncEmissionMode mode) const;
     bool supportsPipeBarrier(ProtocolSyncResource resource) const;
@@ -53,7 +61,9 @@ public:
 
 private:
     ProtocolSyncTargetKind kind = ProtocolSyncTargetKind::Unsupported;
+    ProtocolSyncCapabilityProfile capabilityProfile = ProtocolSyncCapabilityProfile::Unsupported;
     std::string name = "unsupported";
+    std::string capabilityProfileName = "unsupported";
     std::string unsupportedReason = "unsupported target";
     llvm::SmallVector<ProtocolSyncResource, 8> barrierResources;
     llvm::SmallVector<std::pair<ProtocolSyncResource, ProtocolSyncResource>, 24> eventPairs;
@@ -61,6 +71,7 @@ private:
 };
 
 llvm::StringRef stringifyProtocolSyncTargetKind(ProtocolSyncTargetKind kind);
+llvm::StringRef stringifyProtocolSyncCapabilityProfile(ProtocolSyncCapabilityProfile profile);
 
 } // namespace mlir::pto::protocol_sync
 #endif // PTO_TRANSFORMS_PROTOCOLSYNC_PROTOCOLSYNCTARGET_H

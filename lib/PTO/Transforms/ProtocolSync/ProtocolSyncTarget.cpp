@@ -68,6 +68,8 @@ ProtocolSyncTarget ProtocolSyncTarget::resolve(func::FuncOp function)
     target.kind = kind;
     target.name =
         kind == ProtocolSyncTargetKind::Npu2201A2 ? "npu2201-a2-protocol-sync-v1" : "npu2201-a3-protocol-sync-v1";
+    target.capabilityProfile = ProtocolSyncCapabilityProfile::Npu2201A2A3;
+    target.capabilityProfileName = "npu2201-a2a3-protocol-sync-v1";
     target.unsupportedReason.clear();
     target.compilerEventIds = {0, 1, 2, 3, 4, 5};
 
@@ -117,11 +119,10 @@ bool ProtocolSyncTarget::supportsEmission(ProtocolSyncEmissionMode mode) const
     }
     switch (mode) {
         case ProtocolSyncEmissionMode::OneShot:
-            return true;
         case ProtocolSyncEmissionMode::ReadyRelease:
         case ProtocolSyncEmissionMode::DirectRepair:
         case ProtocolSyncEmissionMode::Mixed:
-            return kind == ProtocolSyncTargetKind::Npu2201A3;
+            return capabilityProfile == ProtocolSyncCapabilityProfile::Npu2201A2A3;
     }
     return false;
 }
@@ -175,6 +176,18 @@ StringRef mlir::pto::protocol_sync::stringifyProtocolSyncTargetKind(ProtocolSync
         case ProtocolSyncTargetKind::Npu2201A3:
             return "npu2201-a3";
         case ProtocolSyncTargetKind::Unsupported:
+            return "unsupported";
+    }
+    return "unsupported";
+}
+
+StringRef mlir::pto::protocol_sync::stringifyProtocolSyncCapabilityProfile(
+    ProtocolSyncCapabilityProfile profile)
+{
+    switch (profile) {
+        case ProtocolSyncCapabilityProfile::Npu2201A2A3:
+            return "npu2201-a2a3";
+        case ProtocolSyncCapabilityProfile::Unsupported:
             return "unsupported";
     }
     return "unsupported";

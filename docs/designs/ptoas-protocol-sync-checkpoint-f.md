@@ -69,8 +69,9 @@ still included in the transition counters.
 `--protocol-sync-direct-repair` evaluates the empty selected world, plans
 physical recipes for every eligible residual, re-evaluates the exact selected
 world, and mutates only after the result is complete. It requires explicit
-`--pto-arch=a3` and is mutually exclusive with every legacy synchronization
-mode.
+`--pto-arch=a2` or `--pto-arch=a3`; both select the shared
+`Npu2201A2A3` capability profile. It is mutually exclusive with every legacy
+synchronization mode.
 
 The strict direct subset accepts same-core, same-block, exactly-once intervals
 with exact single-phase stages. Same-pipe intervals share a targeted barrier;

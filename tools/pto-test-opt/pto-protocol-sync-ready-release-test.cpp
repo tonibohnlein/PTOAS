@@ -663,6 +663,30 @@ bool testSelectedWorldInterpreter(MLIRContext& context)
     return passed;
 }
 
+bool testA2SharedCapability(MLIRContext& context)
+{
+    bool passed = true;
+    for (StringRef source : {StringRef(kFixture), StringRef(kDepthTwoFixture)}) {
+        OwningOpRef<ModuleOp> module = parseFixture(context, source);
+        if (!check(static_cast<bool>(module), "cannot parse A2 shared-capability fixture")) {
+            return false;
+        }
+        module->getOperation()->setAttr("pto.target_arch", StringAttr::get(&context, "a2"));
+        func::FuncOp function = *module->getOps<func::FuncOp>().begin();
+        AnalysisFixture fixture(function);
+        const bool ready = buildAnalysis(fixture, true);
+        passed &= check(ready, "A2 did not admit a shared ReadyRelease capability");
+        if (!ready) {
+            continue;
+        }
+        passed &= check(
+            succeeded(materializeAndVerifyReadyReleaseProtocolPlan(
+                fixture.schedule, *fixture.stages, *fixture.plan)),
+            "A2 shared ReadyRelease capability failed materialization or verification");
+    }
+    return passed;
+}
+
 } // namespace
 
 int main()
@@ -677,6 +701,7 @@ int main()
     passed &= testAtomicMalformedPlan(context);
     passed &= testReservedEventAllocation(context);
     passed &= testSelectedWorldInterpreter(context);
+    passed &= testA2SharedCapability(context);
     if (passed) {
         llvm::outs() << "protocol-sync ReadyRelease logical planning: pass\n";
         llvm::outs() << "protocol-sync ReadyRelease depth-two planning: pass\n";

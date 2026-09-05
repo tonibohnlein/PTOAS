@@ -13,9 +13,10 @@ Checkpoint D one-shot foundation. The implementation admits strict
 --protocol-sync-statistics
 ```
 
-It is not a production replacement for InsertSync. The implementation remains
-A3-only and device-unqualified until the purpose-built repeated-launch campaign
-passes.
+It is not a production replacement for InsertSync. A2 and A3 use the same
+`Npu2201A2A3` capability profile. The shared profile is simulator-qualified for
+A2/A3, and the purpose-built repeated-launch campaign additionally qualifies
+the recurring implementation on A3 silicon.
 
 ## Admission contract
 
@@ -29,7 +30,7 @@ The initial planner admits one complete local lifecycle in one non-nested
   unit-stride `(iv + offset) mod 2` selector and reuse distance two;
 - exact publication, acquisition, final-use, and next-overwrite frontiers;
 - matching ready RAW and release WAR results from the legacy shadow oracle;
-- legal A3 events in both producer-to-consumer and consumer-to-producer
+- legal NPU 2201 A2/A3 events in both producer-to-consumer and consumer-to-producer
   directions;
 - no branch, physical section, queue, fixed synchronization, opaque semantic
   action, scalar GM visibility, or mixed read/write GM family.
@@ -80,7 +81,8 @@ misplacement, selector corruption, bad lane tags, and a fabricated body
 
 ## Qualification gate
 
-The exact `ReadyRelease<2>` revision requires the dedicated A3 zero/one/two,
+The exact `ReadyRelease<2>` revision requires the dedicated zero/one/two,
 odd/even, varied/random trip-count, both-offset, non-contiguous-ID, and repeated
-launch device gate before qualification. Host verification or prior
-CanonicalSync evidence is not a hardware certificate.
+launch gate before qualification. That evidence is simulator qualification for
+the shared A2/A3 profile and silicon qualification when run on A3 hardware.
+Host verification or prior CanonicalSync evidence is not a hardware certificate.

@@ -1346,21 +1346,21 @@ static LogicalResult validateProtocolSyncConfiguration() {
       protocolSyncReadyRelease && ptoTargetArch.getNumOccurrences() == 0;
   if (readyReleaseTargetMissing) {
     llvm::errs() << "Error: --protocol-sync-ready-release requires an explicit "
-                    "--pto-arch=a3 selection.\n";
+                    "--pto-arch=a2 or --pto-arch=a3 selection.\n";
     return failure();
   }
   const bool directRepairTargetMissing =
       protocolSyncDirectRepair && ptoTargetArch.getNumOccurrences() == 0;
   if (directRepairTargetMissing) {
     llvm::errs() << "Error: --protocol-sync-direct-repair requires an explicit "
-                    "--pto-arch=a3 selection.\n";
+                    "--pto-arch=a2 or --pto-arch=a3 selection.\n";
     return failure();
   }
   const bool mixedTargetMissing =
       protocolSyncMixed && ptoTargetArch.getNumOccurrences() == 0;
   if (mixedTargetMissing) {
     llvm::errs() << "Error: --protocol-sync-mixed requires an explicit "
-                    "--pto-arch=a3 selection.\n";
+                    "--pto-arch=a2 or --pto-arch=a3 selection.\n";
     return failure();
   }
   if (protocolSyncFallback != "legacy" && protocolSyncFallback != "fail") {

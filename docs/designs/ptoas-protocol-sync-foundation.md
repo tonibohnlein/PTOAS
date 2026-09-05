@@ -98,11 +98,12 @@ The archives are not committed into PTOAS.
 - Generated cross-core AIC/AIV synchronization is unsupported initially.
 - Event-direction legality does not establish MTE3-to-MTE2 same-address GM
   publication; that capability remains fail-closed.
-- A3 is selectively device-qualified. A2 remains device-unqualified.
+- A2 and A3 use one simulator-qualified NPU 2201 capability profile. A3 has
+  additional silicon qualification; no A2-silicon result is claimed.
 - Existing function/section drains are production policy and are not removed
   by the diagnostic pass.
-- No ReadyRelease protocol is enabled until a purpose-built A3 fixture proves
-  logical lane depth, selector evolution, reuse distance, and repeated device
+- ReadyRelease was enabled only after purpose-built fixtures proved logical
+  lane depth, selector evolution, reuse distance, and repeated A3 device
   execution.
 - Future mutation must occur on a clone and commit only after independent
   semantic and MLIR verification.

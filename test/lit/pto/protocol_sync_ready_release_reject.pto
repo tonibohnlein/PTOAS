@@ -23,7 +23,7 @@
 // RUN:   %t/existing-sync.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=FALLBACK
 // RUN: sed 's/pto.target_arch = "a3"/pto.target_arch = "a2"/' \
 // RUN:   %t/existing-sync.pto > %t/existing-sync-a2.pto
-// RUN: not pto-test-opt \
+// RUN: pto-test-opt \
 // RUN:   --pto-protocol-sync='execution-mode=ready-release fallback-mode=legacy dump=plan statistics=1' \
 // RUN:   %t/existing-sync-a2.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=A2-FALLBACK
 // RUN: not pto-test-opt \
@@ -55,11 +55,10 @@
 // FALLBACK-SAME: "producer":"legacy-fallback-unsupported"
 // FALLBACK-SAME: "status":"ok"
 
-// A2-FALLBACK: PROTOCOL-SYNC ready-release-plan function=@existing_sync status=unsupported
-// A2-FALLBACK: reason=unsupported-target
-// A2-FALLBACK-SAME: target profile 'npu2201-a2-protocol-sync-v1' has no ProtocolSync ReadyRelease qualification record
-// A2-FALLBACK-NOT: legacy-fallback
-// A2-FALLBACK: "producer":"fail-closed-policy"
+// A2-FALLBACK: "fallback":"unsupported"
+// A2-FALLBACK-SAME: "planner_result":"legacy-fallback-unsupported"
+// A2-FALLBACK-SAME: "producer":"legacy-fallback-unsupported"
+// A2-FALLBACK-SAME: "status":"ok"
 
 // INTERVENING: PROTOCOL-SYNC ready-release-plan function=@intervening_structural status=unsupported
 // INTERVENING: reason=unsupported-function-shape

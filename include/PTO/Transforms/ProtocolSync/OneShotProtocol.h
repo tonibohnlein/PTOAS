@@ -82,7 +82,10 @@ struct SyncOneShotPlanRejection {
 /// residual-obligation interpreter.
 struct SyncOneShotPlan {
     SyncOneShotPlanStatus status = SyncOneShotPlanStatus::Empty;
+    /// Requested target is provenance only; compatibility is determined by
+    /// capabilityProfile.
     ProtocolSyncTargetKind targetKind = ProtocolSyncTargetKind::Unsupported;
+    ProtocolSyncCapabilityProfile capabilityProfile = ProtocolSyncCapabilityProfile::Unsupported;
     SyncPhysicalCore functionCore = SyncPhysicalCore::Unknown;
 
     /// Exact lexical order of physical phases certified by the planner.
