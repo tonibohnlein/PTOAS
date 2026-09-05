@@ -174,13 +174,21 @@ Static set/wait generations are paired by concrete direction, event ID,
 control block, and lifetime. A second set before the matching wait is rejected;
 coexecuting generations conservatively require distinct IDs until a target
 consumption proof certifies safe reuse. Targeted barriers complete all eligible
-earlier work on their named pipe before later physical work, while a `PIPE_ALL`
+earlier work on their named pipe before later work **on that same pipe**; they
+do not transfer completion to another pipeline. A separate directed handoff is
+required for that transfer. Named barriers do not discharge function-exit
+completion obligations. A `PIPE_ALL`
 drain must occupy the concrete function- or physical-section-exit frontier.
 The verifier independently recognizes the complete ReadyRelease
 prime/body/drain recipe, without consuming adjacent unrelated static events,
 checks static and dynamic lane selection, proves the zero/one/odd/even token
 invariant for capacities one and two, and validates the resulting recurring
 event generations against target reservations.
+
+The additional concrete local scoreboard checks ordinary straight-line vector
+UB hazards by replaying actual events and barriers, independently of this
+completion graph. Its scope and the target-contract corrections are recorded
+in [the hardware-grounded continuation](ptoas-protocol-sync-hardware-grounded-continuation.md).
 
 The reconstructed world is interpreted over the newly extracted memory and
 storage facts, with concrete fixed synchronization treated as modeled supply.

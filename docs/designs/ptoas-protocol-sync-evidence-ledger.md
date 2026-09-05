@@ -2,6 +2,13 @@
 
 ## Purpose and status
 
+**Target-policy correction, 2026-09-05:** the
+[hardware-grounded continuation](ptoas-protocol-sync-hardware-grounded-continuation.md)
+removes the diagnostic MTE2 load/load intrinsic-order exemption and restricts
+named-barrier supply to its own pipe. Target-discharge counts and grouped
+transition counts below remain historical; no corrected-policy corpus rerun
+is claimed. This does not invalidate the target-independent byte-overlap census.
+
 This document is the consolidated evidence record for the read-only
 ProtocolSync lane and storage experiments through Checkpoint C.7. It records
 the questions asked, methods used, measurements obtained, conclusions that the

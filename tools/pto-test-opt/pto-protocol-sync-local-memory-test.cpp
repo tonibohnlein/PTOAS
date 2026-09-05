@@ -275,6 +275,235 @@ module {
     return true;
 }
 
+std::string branchEffect(unsigned mode, StringRef buffer)
+{
+    const std::string operand = buffer.str() + " : !pto.tile_buf<vec, 16x16xf16>";
+    if (mode == 0) {
+        return "pto.tload ins(%in : !pto.partition_tensor_view<16x16xf16>) outs(" + operand + ")\n";
+    }
+    if (mode == 1) {
+        return "pto.tstore ins(" + operand + ") outs(%out : !pto.partition_tensor_view<16x16xf16>)\n";
+    }
+    return "pto.tabs ins(" + operand + ") outs(" + operand + ")\n";
+}
+
+std::string makeBranchProgram(unsigned encoding, bool emptyElse)
+{
+    std::string text = kPrelude.str();
+    const auto position = text.find("@oracle(");
+    text.insert(position + StringRef("@oracle(").size(), "%condition: i1, ");
+    text += branchEffect(0, "%a") + "scf.if %condition {\n";
+    for (unsigned arm = 0; arm < 2; ++arm) {
+        for (StringRef buffer : {StringRef("%a"), StringRef("%b")}) {
+            if (arm == 0 || !emptyElse) {
+                text += branchEffect(encoding % 3, buffer);
+            }
+            encoding /= 3;
+        }
+        text += arm == 0 ? "} else {\n" : "}\n";
+    }
+    return text + branchEffect(1, "%a") + branchEffect(0, "%b") + "return\n}\n}\n";
+}
+
+bool onPath(const SyncPhase& phase, unsigned arm) { return phase.guard.empty() || phase.guard.front().arm == arm; }
+
+bool checkMayDefinitions(const Fixture& fixture, const SyncLocalMemoryAnalysis& analysis)
+{
+    const auto phases = fixture.schedule.getPhases();
+    for (const SyncLocalMemoryState& state : analysis.states) {
+        std::set<std::uint32_t> expected;
+        for (unsigned arm = 0; arm < 2; ++arm) {
+            if (!onPath(phases[state.phase], arm)) {
+                continue;
+            }
+            for (const SyncLocalMemoryState& prior : analysis.states) {
+                const bool possibleWriter = prior.atom == state.atom && prior.writes && prior.phase < state.phase &&
+                                            onPath(phases[prior.phase], arm);
+                if (possibleWriter) {
+                    expected.insert(prior.id);
+                }
+            }
+        }
+        const std::set<std::uint32_t> actual(state.mayDefinitions.begin(), state.mayDefinitions.end());
+        if (!check(actual == expected, "may-definitions must equal possible prior conservative writes")) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool checkBranchPaths(const Fixture& fixture, const SyncLocalMemoryAnalysis& analysis)
+{
+    const auto phases = fixture.schedule.getPhases();
+    for (unsigned arm = 0; arm < 2; ++arm) {
+        SmallVector<llvm::BitVector> reach(phases.size(), llvm::BitVector(phases.size()));
+        for (const SyncResidualObligation& requirement : analysis.requirements) {
+            const auto& source = phases[requirement.source];
+            const auto& target = phases[requirement.target];
+            const bool oppositeArms =
+                !source.guard.empty() && !target.guard.empty() && source.guard.front().arm != target.guard.front().arm;
+            if (oppositeArms) {
+                return check(false, "must not order mutually exclusive arms");
+            }
+            const bool bothExecute = onPath(source, arm) && onPath(target, arm);
+            if (bothExecute) {
+                reach[source.id].set(target.id);
+            }
+        }
+        for (unsigned middle = 0; middle < phases.size(); ++middle) {
+            for (auto& successors : reach) {
+                if (successors.test(middle)) {
+                    successors |= reach[middle];
+                }
+            }
+        }
+        // Reference intervals come from the fixture's three known byte sets,
+        // not from production atoms or region summaries.
+        for (const SyncAccess& source : fixture.schedule.getAccesses()) {
+            if (source.storage.space != AddressSpace::VEC || !onPath(phases[source.phase], arm)) {
+                continue;
+            }
+            auto first = source.value.getDefiningOp<AllocTileOp>().getAddr().getDefiningOp<arith::ConstantOp>();
+            const auto begin = cast<IntegerAttr>(first.getValue()).getInt();
+            for (const SyncAccess& target : fixture.schedule.getAccesses()) {
+                if (target.storage.space != AddressSpace::VEC || source.phase >= target.phase ||
+                    !onPath(phases[target.phase], arm) ||
+                    (source.mode == SyncAccessMode::Read && target.mode == SyncAccessMode::Read)) {
+                    continue;
+                }
+                auto second = target.value.getDefiningOp<AllocTileOp>().getAddr().getDefiningOp<arith::ConstantOp>();
+                const auto endBegin = cast<IntegerAttr>(second.getValue()).getInt();
+                const bool overlaps = begin < endBegin + 512 && endBegin < begin + 512;
+                if (overlaps && !reach[source.phase].test(target.phase)) {
+                    return check(false, "branch transfer dropped a feasible cross-boundary hazard");
+                }
+            }
+        }
+    }
+    return true;
+}
+
+bool testCompositionalRegions(MLIRContext& context)
+{
+    for (unsigned encoding = 0; encoding < 162; ++encoding) {
+        auto module = parseSourceString<ModuleOp>(makeBranchProgram(encoding % 81, encoding >= 81), &context);
+        if (!module) {
+            return false;
+        }
+        Fixture fixture(std::move(module));
+        if (!fixture.build()) {
+            return false;
+        }
+        auto baseline = analyzeLocalMemory(fixture.schedule);
+        const bool protectedBoundary = succeeded(baseline) && !baseline->boundary.empty() &&
+                                       baseline->coveredAccesses.none() && baseline->states.empty() &&
+                                       baseline->requirements.empty() && baseline->regionSummaries.empty() &&
+                                       baseline->expandedStateStatus == SyncLocalExpandedStateStatus::NotRequested;
+        if (!check(protectedBoundary, "production must not run unused cross-region expansion")) {
+            return false;
+        }
+        auto analysis = analyzeLocalMemory(fixture.schedule, {/*expandState=*/true});
+        const bool validAnalysis = succeeded(analysis) &&
+                                   analysis->expandedStateStatus == SyncLocalExpandedStateStatus::Complete &&
+                                   !analysis->regionSummaries.empty() && checkByteOracle(fixture, *analysis) &&
+                                   checkBranchPaths(fixture, *analysis) && checkMayDefinitions(fixture, *analysis);
+        if (!validAnalysis) {
+            return false;
+        }
+        if (!check(failed(analyzeLocalRegionFlow(fixture.schedule, *analysis)), "must not append a second transfer")) {
+            return false;
+        }
+        if (!check(analysis->coveredAccesses.none(), "unverified branch boundaries must retain old protection")) {
+            return false;
+        }
+        for (const SyncLocalRegionSummary& summary : analysis->regionSummaries) {
+            if (!check(
+                    summary.complete && summary.outgoing.mustDefinitions.empty() && summary.outgoing.mayHaveLiveIn,
+                    "conservative writes are not kills")) {
+                return false;
+            }
+            for (std::uint32_t definition : summary.incoming.mayDefinitions) {
+                if (!check(llvm::is_contained(summary.outgoing.mayDefinitions, definition), "incoming may-def lost")) {
+                    return false;
+                }
+            }
+        }
+    }
+    llvm::outs() << "protocol-sync compositional branch oracle: 162 programs, 324 paths pass\n";
+    return true;
+}
+
+bool testExpansionLimits(MLIRContext& context)
+{
+    constexpr unsigned writeCount = 1600;
+    std::string text = kPrelude.str();
+    for (unsigned i = 0; i < writeCount; ++i) {
+        text += branchEffect(0, "%a");
+    }
+    auto module = parseSourceString<ModuleOp>(text + "return\n}\n}\n", &context);
+    if (!module) {
+        return false;
+    }
+    Fixture fixture(std::move(module));
+    if (!fixture.build()) {
+        return false;
+    }
+    auto baseline = analyzeLocalMemory(fixture.schedule);
+    const bool sparse = succeeded(baseline) && baseline->boundary.empty() && baseline->atoms.size() == 1 &&
+                        baseline->states.size() == writeCount && baseline->requirements.size() == writeCount - 1 &&
+                        baseline->coveredAccesses.count() == writeCount && baseline->regionSummaries.empty() &&
+                        baseline->expandedStateStatus == SyncLocalExpandedStateStatus::NotRequested;
+    if (!check(sparse, "long straight-line production chain must remain sparse and covered")) {
+        return false;
+    }
+    for (const SyncLocalMemoryState& state : baseline->states) {
+        const auto predecessor = state.id == 0 ? kInvalidSyncId : state.id - 1;
+        if (!check(
+                state.mayDefinitions.empty() && state.previousDefinition == predecessor,
+                "production uses predecessor links, not expanded may-definition snapshots")) {
+            return false;
+        }
+    }
+    auto expanded = analyzeLocalMemory(fixture.schedule, {/*expandState=*/true});
+    const bool preserved = succeeded(expanded) &&
+                           expanded->expandedStateStatus == SyncLocalExpandedStateStatus::LimitExceeded &&
+                           expanded->coveredAccesses == baseline->coveredAccesses &&
+                           expanded->requirements.size() == baseline->requirements.size() &&
+                           expanded->states.size() == baseline->states.size() && expanded->regionSummaries.empty();
+    if (!check(preserved, "diagnostic exhaustion must preserve the complete production baseline")) {
+        return false;
+    }
+    for (unsigned id = 0; id < baseline->requirements.size(); ++id) {
+        const auto& expected = baseline->requirements[id];
+        const auto& actual = expanded->requirements[id];
+        if (!check(
+                actual.id == expected.id && actual.kind == expected.kind &&
+                    actual.sourceAccess == expected.sourceAccess && actual.targetAccess == expected.targetAccess &&
+                    actual.atoms == expected.atoms,
+                "expansion limit must not change requirement identity or endpoints")) {
+            return false;
+        }
+    }
+    auto branch = parseSourceString<ModuleOp>(makeBranchProgram(0, false), &context);
+    if (!branch) {
+        return false;
+    }
+    Fixture branchFixture(std::move(branch));
+    if (!branchFixture.build()) {
+        return false;
+    }
+    auto limited = analyzeLocalMemory(branchFixture.schedule, {/*expandState=*/true, /*maximumExpandedEntries=*/0});
+    const bool boundaryPreserved = succeeded(limited) && !limited->boundary.empty() &&
+                                   limited->expandedStateStatus == SyncLocalExpandedStateStatus::LimitExceeded &&
+                                   limited->coveredAccesses.none() && limited->states.empty() &&
+                                   limited->requirements.empty() && limited->regionSummaries.empty();
+    if (!check(boundaryPreserved, "cross-region limit must retain old protection without partial results")) {
+        return false;
+    }
+    llvm::outs() << "protocol-sync expansion limits: 1600-write baseline and branch budget pass\n";
+    return true;
+}
+
 } // namespace
 
 int main()
@@ -283,5 +512,8 @@ int main()
     registry.insert<PTODialect, arith::ArithDialect, func::FuncDialect, scf::SCFDialect>();
     MLIRContext context(registry);
     context.disableMultithreading();
-    return testSparseChains(context) && testConcreteMutations(context) && testUnknownAndOverflow(context) ? 0 : 1;
+    return testSparseChains(context) && testConcreteMutations(context) && testUnknownAndOverflow(context) &&
+                   testCompositionalRegions(context) && testExpansionLimits(context) ?
+               0 :
+               1;
 }

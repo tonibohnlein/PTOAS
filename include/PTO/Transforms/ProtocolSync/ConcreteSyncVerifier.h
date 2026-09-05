@@ -27,6 +27,14 @@ namespace mlir::pto::protocol_sync {
 FailureOr<SyncSelectedWorld> reconstructFixedSyncSupply(
     const StructuredSyncIR& schedule, llvm::SmallVectorImpl<SyncEventReservation>* occupiedEvents = nullptr);
 
+/// Additional instruction-ordered check for ordinary, non-recurring vector UB
+/// accesses within one block. Reconstructs event payloads and per-pipe knowledge
+/// directly, without selected completions, atoms, timelines, or requirements.
+/// Other domains and region boundaries still require the existing verifier;
+/// success here alone is not a complete function certificate.
+LogicalResult verifyConcreteLocalScoreboard(
+    const StructuredSyncIR& schedule, SyncAccessId* uncoveredSource = nullptr, SyncAccessId* uncoveredTarget = nullptr);
+
 /// Rebuild provenance as well as the schedule for a mutated or cloned function.
 LogicalResult verifyFreshConcreteSyncSemantics(func::FuncOp function, ProtocolSyncStatistics* statistics = nullptr);
 

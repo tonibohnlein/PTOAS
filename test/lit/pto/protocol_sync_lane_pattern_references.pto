@@ -23,9 +23,9 @@
 // RUN: FileCheck %s --input-file=%t.storage-diagnostics --check-prefix=STORAGE
 
 // These reduced cases pin placements selected by the older CanonicalSync
-// experiments. The MTE2 WAW case intentionally records a disagreement: the
-// old hardware-graph test selected a barrier, while the current target query
-// inherits InsertSync's TLoad-to-TLoad intrinsic-order exemption.
+// experiments. The MTE2 WAW case now agrees with hardware-graph's barrier:
+// overlapping DataCopy destinations are not intrinsically ordered on A2/A3.
+// The diagnostic no longer inherits InsertSync's TLoad-to-TLoad exemption.
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @reference_shared_event(
@@ -131,9 +131,10 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: target-query=supported checkpoint-e=not-applicable checkpoint-e-reason=none cost-logical=1 cost-steady-actions=2 selectable=no
 
 // CHECK-LABEL: PROTOCOL-SYNC lane-patterns function=@reference_old_mte2_barrier
-// CHECK: raw-pair #0 hazard=waw{{.*}}interval=after(pp2)->before(pp5) completion-query=intrinsic
-// CHECK: raw-pair #1 hazard=waw{{.*}}interval=after(pp4)->before(pp7) completion-query=intrinsic
-// CHECK-NOT: kind=same-lane-completion-cut
+// CHECK: raw-pair #0 hazard=waw{{.*}}interval=after(pp2)->before(pp5) completion-query=pipe-barrier
+// CHECK: raw-pair #1 hazard=waw{{.*}}interval=after(pp4)->before(pp7) completion-query=pipe-barrier
+// CHECK: kind=same-lane-completion-cut
+// CHECK: raw-pair-members=[r#0, r#1]
 // CHECK: PROTOCOL-SYNC lane-patterns-end function=@reference_old_mte2_barrier
 
 // CHECK-LABEL: PROTOCOL-SYNC lane-patterns function=@reference_vector_completion_cut
@@ -158,9 +159,9 @@ module attributes {pto.target_arch = "a2a3"} {
 // STORAGE: reference-placement=after(pto.tload)->before(pto.tabs)
 
 // STORAGE-LABEL: PROTOCOL-SYNC storage-tracks function=@reference_old_mte2_barrier
-// STORAGE: kind=residual origin=raw-access-pair old-pattern=raw-storage-hazard old-mechanism=intrinsic
-// STORAGE: reference-placement=after(pto.tload)->before(pto.tload)
-// STORAGE: target-query=intrinsic checkpoint-e=not-applicable
+// STORAGE: kind=completion origin=completion-cut old-pattern=multi-demand-pipe-barrier old-mechanism=barrier
+// STORAGE: reference-placement=before(pto.tload)->before(pto.tload)
+// STORAGE: target-query=pipe-barrier checkpoint-e=not-applicable
 
 // STORAGE-LABEL: PROTOCOL-SYNC storage-tracks function=@reference_vector_completion_cut
 // STORAGE: kind=completion origin=completion-cut old-pattern=multi-demand-pipe-barrier old-mechanism=barrier lanes=#1->#1

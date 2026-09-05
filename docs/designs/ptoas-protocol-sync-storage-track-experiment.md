@@ -2,6 +2,12 @@
 
 ## Status and invariant
 
+The tables below predate the
+[MTE2 ordering correction](ptoas-protocol-sync-hardware-grounded-continuation.md).
+They remain frozen historical evidence. Target-dependent transition grouping
+and discharge need a fresh census; physical overlap facts are unaffected by
+the ordering-policy change.
+
 This document records the diagnostic-only experiment following the lane-pattern
 study. It changes no candidate selection, materialization, verification, or
 fallback behavior. Every storage transition is emitted with `selectable=no`.

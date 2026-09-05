@@ -623,12 +623,20 @@ LogicalResult addBarrierCompletions(ConcreteState& state, BarrierOp barrier)
 {
     const PIPE pipe = barrier.getPipe().getPipe();
     SmallVector<const SyncPhase*, 8> sources = phasesBefore(state.schedule, barrier, pipe);
-    SmallVector<const SyncPhase*, 8> targets = phasesAfter(state.schedule, barrier);
+    // A named barrier completes its own pipeline prefix. It does not transfer
+    // that completion to another pipeline; that requires a directed handoff.
+    SmallVector<const SyncPhase*, 8> targets = phasesAfter(state.schedule, barrier, pipe);
     bool added = false;
     for (const SyncPhase* source : sources) {
         if (!state.target.supportsPipeBarrier({source->core, pipe})) {
             return failure();
         }
+        if (!source->iterationDomain.loops.empty()) {
+            continue;
+        }
+        // A named barrier remains valid without a later access on this pipe,
+        // but does not establish completion before function or section exit.
+        added = true;
         for (const SyncPhase* target : targets) {
             const bool compatible = source->core == target->core && source->iterationDomain.loops.empty() &&
                                     target->iterationDomain.loops.empty();
@@ -638,7 +646,6 @@ LogicalResult addBarrierCompletions(ConcreteState& state, BarrierOp barrier)
             if (failed(addSameIterationCompletion(state, *source, *target))) {
                 return failure();
             }
-            added = true;
         }
     }
     return success(added);
@@ -672,8 +679,10 @@ LogicalResult addTailCompletions(ConcreteState& state, BarrierOp barrier)
     for (const SyncPhase& phase : state.schedule.getPhases()) {
         const SyncRegion* section = enclosingPhysicalSection(state.schedule, phase);
         const bool sameDomain = sectionOperation ? section && section->operation == sectionOperation : !section;
-        if (sameDomain && existing.insert(phase.id).second) {
-            state.world.exitCompletedPhases.push_back(phase.id);
+        if (sameDomain) {
+            if (existing.insert(phase.id).second) {
+                state.world.exitCompletedPhases.push_back(phase.id);
+            }
             added = true;
         }
     }
@@ -837,6 +846,9 @@ LogicalResult mlir::pto::protocol_sync::verifyConcreteSyncSemantics(
     }
     if (failed(verifyLocalMemoryCoverage(schedule, state.world))) {
         return rejectAtStage("local-memory-coverage", firstFailedStage);
+    }
+    if (failed(verifyConcreteLocalScoreboard(schedule))) {
+        return rejectAtStage("local-concrete-scoreboard", firstFailedStage);
     }
     return success();
 }

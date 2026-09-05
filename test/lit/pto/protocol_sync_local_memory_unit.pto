@@ -11,3 +11,5 @@
 // CHECK: protocol-sync local byte and sparse-pair oracle: 243 programs pass
 // CHECK-NEXT: protocol-sync local concrete mutations: pass
 // CHECK-NEXT: protocol-sync local unknown and overflow bounds: pass
+// CHECK-NEXT: protocol-sync compositional branch oracle: 162 programs, 324 paths pass
+// CHECK-NEXT: protocol-sync expansion limits: 1600-write baseline and branch budget pass

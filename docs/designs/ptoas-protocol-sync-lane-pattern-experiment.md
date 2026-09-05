@@ -54,17 +54,25 @@ pairs separately record the same-lane completion query.
 
 ## Target boundary
 
-Lane membership proves neither pipeline completion nor synchronization
-legality. The A3 target model classifies each same-lane raw hazard as:
+**2026-09-05 correction:** the current target query no longer treats overlapping
+MTE2 `tload` destinations as intrinsically ordered. It requires a pipe barrier,
+in agreement with the A2/A3 DataCopy contract and the older hardware-graph
+fixture. The classifications and corpus tables below are historical outputs
+of the previous model, not hardware-qualified conclusions. They have not been
+rebaselined under this correction; see the
+[hardware-grounded continuation](ptoas-protocol-sync-hardware-grounded-continuation.md).
 
-- `intrinsic` for the currently modeled MTE2 `tload`-to-`tload` WAW case;
+Lane membership proves neither pipeline completion nor synchronization
+legality. The A3 target model used for the frozen measurements classified each same-lane raw hazard as:
+
+- `intrinsic` for the then-modeled MTE2 `tload`-to-`tload` WAW case;
 - `pipe-barrier` when that lane has a supported same-pipe barrier;
 - `unsupported-target` or `unsupported-mechanism`; or
 - `not-applicable` for a cross-lane pair.
 
 Only `pipe-barrier` pairs may enter `same-lane-completion-cut`. This is why the
-old shared-MTE2-barrier fixture now produces two intrinsic raw pairs and no
-barrier candidate. The rule agrees with the current `ProtocolSyncTarget` and
+old shared-MTE2-barrier fixture originally produced two intrinsic raw pairs and no
+barrier candidate. That rule agreed with the then-current `ProtocolSyncTarget` and
 InsertSync exemption; it is not, by itself, an ISA or device qualification.
 
 The event and ready/release target queries similarly report feasibility only.
@@ -146,7 +154,9 @@ The old shared-event fixture reproduced the selected
 `after(tload)->before(tmuls)` event placement. Its disjoint-window negative did
 not form a shared candidate. The old shared-MTE2-barrier fixture instead
 reported intrinsic completion for both WAW pairs, correcting the earlier
-prototype's unnecessary barrier under the current target model.
+prototype's barrier only under the then-current target model. That
+interpretation is superseded by the target correction above: the old barrier
+is consistent with the documented overlapping-destination constraint.
 
 The lifted-choice fixture reproduced the ready placement at the choice entry
 and the balanced release at the choice exit, while reporting Checkpoint E's

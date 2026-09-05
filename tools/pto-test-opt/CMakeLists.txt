@@ -132,6 +132,15 @@ target_link_libraries(pto-protocol-sync-local-memory-test PRIVATE
 )
 add_dependencies(pto-protocol-sync-local-memory-test PTOOpsIncGen PTOPassesIncGen)
 
+add_llvm_executable(pto-protocol-sync-scoreboard-test
+  pto-protocol-sync-scoreboard-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-protocol-sync-scoreboard-test PRIVATE
+  PTOIR PTOTransforms MLIRArithDialect MLIRFuncDialect MLIRIR MLIRParser MLIRSCFDialect MLIRSupport
+)
+add_dependencies(pto-protocol-sync-scoreboard-test PTOOpsIncGen PTOPassesIncGen)
+
 target_link_libraries(pto-protocol-sync-mixed-test PRIVATE
   PTOIR
   PTOTransforms

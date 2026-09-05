@@ -1303,6 +1303,11 @@ FailureOr<SyncInterpretationResult> mlir::pto::protocol_sync::interpretSelectedW
     accumulator.result.localRequirements = local->requirements.size();
     accumulator.result.localAnalysisBoundary = local->boundary;
     for (const SyncResidualObligation& requirement : local->requirements) {
+        // Cross-region state is retained, but does not replace legacy protection
+        // before participation, placement and concrete coverage are supported.
+        if (!local->boundary.empty()) {
+            continue;
+        }
         if (completionGraph.covers(requirement.source, requirement.target, requirement.iteration)) {
             ++accumulator.result.localRequirementsCovered;
         } else if (failed(accumulator.append(requirement))) {

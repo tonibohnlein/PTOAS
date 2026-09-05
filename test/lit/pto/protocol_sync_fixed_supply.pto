@@ -32,8 +32,12 @@
 // CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
 // CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
 // CHECK-NEXT: pto.tabs
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>,
 // CHECK-NEXT: pto.barrier <PIPE_V>
 // CHECK-NEXT: pto.tabs
+// CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>,
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>,
+// CHECK-NEXT: pto.tstore
 // VERIFY: concrete-verification function=@fixed_partial status=accepted first-failed-stage=none
 
 module {

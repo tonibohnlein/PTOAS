@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+// RUN: pto-protocol-sync-scoreboard-test | FileCheck %s
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir \
+// RUN:   --protocol-sync-direct-repair --protocol-sync-fallback=fail %s -o %t.a2.ir
+// RUN: FileCheck %s --input-file=%t.a2.ir --check-prefix=REPAIR
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir \
+// RUN:   --protocol-sync-direct-repair --protocol-sync-fallback=fail %s -o %t.a3.ir
+// RUN: FileCheck %s --input-file=%t.a3.ir --check-prefix=REPAIR
+// CHECK: protocol-sync concrete scoreboard: 40 A2/A3 cases pass
+
+// REPAIR-LABEL: func.func @named_barrier_requires_exit_drain
+// REPAIR: pto.tload
+// REPAIR-NEXT: pto.barrier <PIPE_MTE2>
+// REPAIR-NEXT: pto.barrier <PIPE_ALL>
+// REPAIR-NEXT: return
+
+module {
+  func.func @named_barrier_requires_exit_drain(%in: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%in : !pto.partition_tensor_view<16x16xf16>)
+              outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.barrier <PIPE_MTE2>
+    return
+  }
+}

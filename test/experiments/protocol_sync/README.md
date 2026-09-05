@@ -13,13 +13,21 @@ edits and uncommitted experiment scripts unless `--allow-dirty` is explicitly
 used for debugging. Debug runs are not clean baselines.
 
 ```bash
-cmake --build build --parallel 2
+cmake --build build --target PTOASCompiler --parallel 2
 .venv/bin/python test/experiments/protocol_sync/campaign.py \
   --mode storage --workers 2 --expected-rows 394 \
   --input-root build/protocol-sync-lane-c6-corpus/inputs \
   --manifest build/protocol-sync-lane-c6-corpus/inputs/build/device-corpus-d99520397/manifest.tsv \
   --results build/protocol-sync-c71/storage
 ```
+
+For transform-only changes, this targeted build refreshes the compiler DSO in
+an already prepared workspace. It does not rebuild every Python module or test
+executable. Batch compiler edits before rebuilding, and do not rebuild between
+campaign probes when the source has not changed. Initial package setup or
+binding/ABI changes require their corresponding package targets. Build any
+unit-test executables separately only when running those tests; reserve the full
+build and host suite for milestone/integration validation.
 
 Use `--mode lane` and a different fresh result directory for C.6. Manifest rows
 are tab-separated and require `case_id` and `source`; `source` is relative to

@@ -177,10 +177,10 @@ ProtocolSyncSameLaneCompletion ProtocolSyncTarget::querySameLaneCompletion(
     if (!source || !target || resource.core == SyncPhysicalCore::Unknown || resource.pipe == PIPE::PIPE_UNASSIGNED) {
         return ProtocolSyncSameLaneCompletion::UnsupportedMechanism;
     }
-    const bool intrinsicTLoadOrder = resource.pipe == PIPE::PIPE_MTE2 && isa<TLoadOp>(source) && isa<TLoadOp>(target);
-    if (intrinsicTLoadOrder) {
-        return ProtocolSyncSameLaneCompletion::Intrinsic;
-    }
+    // A2/A3 DataCopy requires a PIPE_MTE2 barrier for overlapping load
+    // destinations. InsertSync's TLoad exemption is not a target guarantee.
+    // Keep same-lane hazards explicit until an operation-specific completion
+    // rule has independent ISA and device qualification.
     return supportsPipeBarrier(resource) ? ProtocolSyncSameLaneCompletion::PipeBarrier :
                                            ProtocolSyncSameLaneCompletion::UnsupportedMechanism;
 }

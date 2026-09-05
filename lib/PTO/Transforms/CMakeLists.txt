@@ -105,6 +105,7 @@ add_mlir_dialect_library(PTOTransforms
   ProtocolSync/ChannelAnalysis.cpp
   ProtocolSync/ChannelDump.cpp
   ProtocolSync/ConcreteSyncVerifier.cpp
+  ProtocolSync/ConcreteLocalScoreboard.cpp
   ProtocolSync/DirectRepair.cpp
   ProtocolSync/DirectRepairDump.cpp
   ProtocolSync/DirectRepairMaterialization.cpp
@@ -113,6 +114,7 @@ add_mlir_dialect_library(PTOTransforms
   ProtocolSync/GMAliasPolicy.cpp
   ProtocolSync/LocalAccessRegion.cpp
   ProtocolSync/LocalMemoryAnalysis.cpp
+  ProtocolSync/LocalMemoryRegionFlow.cpp
   ProtocolSync/LocalMemoryVerifier.cpp
   ProtocolSync/LaneFrontierAnalysis.cpp
   ProtocolSync/LaneFrontierDump.cpp

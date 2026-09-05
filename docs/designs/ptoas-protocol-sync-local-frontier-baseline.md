@@ -19,15 +19,22 @@ repair, or the full current-main PyPTO/PyPTO-Lib acceptance goal. The historical
 4/152 result is not an updated admission measurement. No device campaign or new
 target qualification is claimed by this patch.
 
+The later [hardware-grounded continuation](ptoas-protocol-sync-hardware-grounded-continuation.md)
+tightens named-barrier supply, corrects the MTE2 diagnostic exemption, and adds
+a concrete per-pipe scoreboard. Its focused host validation is separate from
+the frozen corpus measurements in this document.
+
 ## Five cooperating mechanisms
 
 1. `LocalAccessRegion.cpp` independently recovers allocation footprints from
    actual addressed IR, with checked size multiplication and address addition.
    It does not promote the legacy alias map's intervals to authoritative facts.
-2. `LocalMemoryAnalysis.cpp` partitions footprints with an endpoint sweep and
-   constructs per-atom may-definition/use records and sparse outstanding-access
-   requirements. Requirement IDs and access/atom provenance do not depend on
-   which protocol world is selected.
+2. `LocalMemoryAnalysis.cpp` partitions footprints with an endpoint sweep;
+   `LocalMemoryRegionFlow.cpp` constructs per-atom may-definition/use records
+   and sparse outstanding-access requirements. Expanded compositional region
+   histories are opt-in diagnostics; their budget cannot abort that baseline.
+   Requirement IDs and access/atom provenance do not depend on which protocol
+   world is selected.
 3. The selected-world interpreter propagates the completion supplied by
    validated concrete fixed synchronization and selected candidates before
    returning residual requirements. It retains a separate visibility graph;
@@ -117,15 +124,25 @@ interpreter or a PTO hardware oracle.
 ## Reproduction and acceptance tests
 
 Use the workspace's configured Python and LLVM tools, with at most two build or
-test workers in aggregate:
+test workers in aggregate. Batch related edits and build only the consuming
+target during iteration:
 
 ```sh
-cmake --build build --parallel 2
+cmake --build build --target pto-protocol-sync-local-memory-test --parallel 2
 build/tools/pto-test-opt/pto-protocol-sync-local-memory-test
-llvm-lit -j 2 -v --filter protocol_sync build/test/lit
-llvm-lit -j 2 build/test/lit
+
+# For CLI checks after transform-only changes in an already prepared build:
+cmake --build build --target PTOASCompiler --parallel 2
+llvm-lit -j 2 -v --filter 'protocol_sync_(local_reuse|fixed_supply)\.pto$' build/test/lit
 .venv/bin/python .agents/skills/enforce-ptoas-code-compliance/scripts/check_changed_code.py --repo . --base HEAD
 ```
+
+`PTOASCompiler` refreshes the compiler DSO without requesting all Python modules
+and test executable relinks. Binding/ABI or package changes require their own
+affected targets. Build `pto-test-opt` or other unit executables only when the
+chosen tests use them. Run the focused ProtocolSync suite at a coherent semantic
+checkpoint, and the full host suite at milestone/integration gates, not after
+each assertion, formatting, or documentation edit.
 
 The unit oracle enumerates all 243 read/write/read-write sequences of length
 five over overlapping physical footprints. It reconstructs each access's byte
@@ -219,17 +236,21 @@ accounting error in `v1`; actual compiler and verifier outcomes are unchanged.
 
 ### Structured continuation
 
-1. Extend independently recovered access provenance to static views and
-   conservative dynamic bounds, with independent byte-set tests and explicit
-   analysis limits.
-2. Add per-atom path joins and participation; retain alternative writers and
-   outstanding readers rather than selecting a lexical last writer.
-3. Add iteration-local and carried requirements together with recurring event
-   consumption, entry/exit, and zero/arbitrary-trip proofs.
-4. Broaden domains and fixed supply only with their target contracts. Preserve
-   GM may-alias versus assumed-disjoint policy and visibility distinctions.
-5. Adapt protocol certificates to canonical generation/obligation subsets and
-   evaluate the current-main native acceptance population in both GM modes.
+The [structured-repair continuation](ptoas-protocol-sync-structured-repair.md)
+records the region-transfer refactor and the remaining loop/participation gates.
+
+1. Make per-atom transfer compositional, retaining internal and boundary
+   requirements, possible generations, and outstanding reads/writes.
+2. Deliver unconditional single-loop repair with iteration-local and carried
+   requirements, recurring event consumption, entry/exit, and zero/arbitrary-trip
+   proofs. It must not require a strict storage-channel pattern.
+3. Add participation and verified placement across choices and joins, then
+   compose accepted choice and loop summaries.
+4. Recover metadata state, bounded views and authoritative core provenance
+   alongside selected examples. Preserve both GM contracts and the distinction
+   between completion and visibility. Other effect domains need their contracts.
+5. Optimize motion, event reuse and optional protocol certificates after the
+   structured baseline works; evaluate native acceptance in both GM modes.
 
 ## Changed-code applicability
 
