@@ -31,11 +31,14 @@
 namespace mlir::pto::protocol_sync {
 
 enum class SyncLocalExpandedStateStatus { NotRequested, Complete, LimitExceeded };
+enum class SyncLocalLoopStatus { NotRequested, Complete, Unsupported, LimitExceeded };
 
 struct SyncLocalFlowOptions {
     /// Diagnostic only: production uses sparse predecessor/outstanding links.
     bool expandState = false;
     std::size_t maximumExpandedEntries = 1048576;
+    /// Occurrence-aware single-loop requirements only; no emission admission.
+    bool analyzeSingleLoop = false;
 };
 
 struct SyncLocalAccessRegion {
@@ -105,6 +108,8 @@ struct SyncLocalMemoryAnalysis {
     llvm::SmallVector<SyncLocalRegionSummary, 8> regionSummaries;
     llvm::SmallVector<SyncResidualObligation, 16> requirements;
     SyncLocalExpandedStateStatus expandedStateStatus = SyncLocalExpandedStateStatus::NotRequested;
+    SyncLocalLoopStatus loopStatus = SyncLocalLoopStatus::NotRequested;
+    SyncRegionId loopCarrier = kInvalidSyncId;
     std::string boundary;
 };
 
@@ -121,6 +126,12 @@ FailureOr<SyncLocalMemoryAnalysis> analyzeLocalMemory(
 /// Without expansion, the caller must establish a single-block/guard domain.
 LogicalResult analyzeLocalRegionFlow(
     const StructuredSyncIR& schedule, SyncLocalMemoryAnalysis& result, SyncLocalFlowOptions options = {});
+
+/// Diagnostic single scf.for transfer over the shared atom partition. Includes
+/// entry, distance-one backedges, exit, and zero-trip obligations. Results do
+/// not authorize clearing rejected-timeline protection or recurring emission.
+LogicalResult analyzeLocalLoopFlow(
+    const StructuredSyncIR& schedule, SyncLocalMemoryAnalysis& result, std::size_t maximumEntries);
 
 /// Exhaustive, non-atomized reference check. Does not consume sparse states,
 /// requirements, candidate IDs, or planner coverage. The world must have been

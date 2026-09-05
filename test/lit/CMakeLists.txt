@@ -29,6 +29,7 @@ set(PTOIR_TEST_DEPENDS
   pto-protocol-sync-direct-repair-test
   pto-protocol-sync-mixed-test
   pto-protocol-sync-local-memory-test
+  pto-protocol-sync-loop-memory-test
   pto-protocol-sync-scoreboard-test
   pto-protocol-sync-one-shot-test
   pto-protocol-sync-ready-release-test

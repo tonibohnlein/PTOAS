@@ -31,7 +31,7 @@ bool sameGuard(ArrayRef<SyncControlAtom> first, ArrayRef<SyncControlAtom> second
            });
 }
 
-bool collectRegions(const StructuredSyncIR& schedule, SyncLocalMemoryAnalysis& result)
+bool collectRegions(const StructuredSyncIR& schedule, SyncLocalMemoryAnalysis& result, bool allowLoop)
 {
     const SyncPhase* first = nullptr;
     for (const SyncAccess& access : schedule.getAccesses()) {
@@ -42,7 +42,7 @@ bool collectRegions(const StructuredSyncIR& schedule, SyncLocalMemoryAnalysis& r
         const bool exactPhase = phase && phase->operation && phase->core == SyncPhysicalCore::Vector &&
                                 !phase->macroPhase && phase->completion == SyncCompletionKind::PhaseEnd;
         const bool ordinaryPhase =
-            exactPhase && phase->iterationDomain.loops.empty() && access.mode != SyncAccessMode::Ordered;
+            exactPhase && (allowLoop || phase->iterationDomain.loops.empty()) && access.mode != SyncAccessMode::Ordered;
         if (!ordinaryPhase) {
             result.boundary = "local domain needs ordinary non-recurring physical phases";
             return false;
@@ -113,12 +113,23 @@ FailureOr<SyncLocalMemoryAnalysis> mlir::pto::protocol_sync::analyzeLocalMemory(
     SyncLocalMemoryAnalysis result;
     result.scope = schedule.getFunction();
     result.coveredAccesses.resize(schedule.getAccesses().size());
-    if (!collectRegions(schedule, result)) {
+    if (options.analyzeSingleLoop) {
+        result.loopStatus = SyncLocalLoopStatus::Unsupported;
+    }
+    if (!collectRegions(schedule, result, options.analyzeSingleLoop)) {
         result.regions.clear();
         return result;
     }
     if (failed(buildAtoms(result))) {
         return failure();
+    }
+    if (options.analyzeSingleLoop) {
+        if (failed(analyzeLocalLoopFlow(schedule, result, options.maximumExpandedEntries))) {
+            return failure();
+        }
+        // The occurrence and event-lifetime verifier must consume these facts
+        // before they can replace existing recurring timeline protection.
+        return result;
     }
     const bool productionDomain = result.boundary.empty();
     if (productionDomain && failed(analyzeLocalRegionFlow(schedule, result))) {

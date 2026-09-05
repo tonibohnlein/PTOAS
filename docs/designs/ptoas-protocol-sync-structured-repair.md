@@ -116,6 +116,11 @@ the full host suite for small assertion, formatting, or documentation changes.
 
 ## Step 2: unconditional single-loop repair (not implemented)
 
+The [single-loop occurrence foundation](ptoas-protocol-sync-single-loop-occurrences.md)
+implements the initial requirement-discovery slice as an opt-in analysis with
+an independent bounded oracle. Native recurring repair and its concrete token
+verification remain unimplemented; this does not change loop admission.
+
 Add explicit same-iteration and carried occurrence relations, including
 same-static-phase backedges. Compose live-in, body, zero-trip bypass and exit
 states, retaining outstanding readers as well as writes. Canonical obligations

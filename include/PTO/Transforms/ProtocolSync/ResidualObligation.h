@@ -57,6 +57,12 @@ enum class SyncControlRelation : std::uint8_t {
 enum class SyncIterationRelationKind : std::uint8_t {
     SameIteration,
     LoopCarried,
+    /// Outside-before -> body(i), for every executing iteration i.
+    LoopEntry,
+    /// Body(i) -> outside-after, for every executing iteration i.
+    LoopExit,
+    /// Outside-before -> outside-after on the zero-trip path only.
+    LoopBypass,
     Unknown,
 };
 

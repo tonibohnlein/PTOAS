@@ -142,6 +142,12 @@ StringRef mlir::pto::protocol_sync::stringifySyncIterationRelationKind(SyncItera
             return "same-iteration";
         case SyncIterationRelationKind::LoopCarried:
             return "loop-carried";
+        case SyncIterationRelationKind::LoopEntry:
+            return "loop-entry";
+        case SyncIterationRelationKind::LoopExit:
+            return "loop-exit";
+        case SyncIterationRelationKind::LoopBypass:
+            return "loop-bypass";
         case SyncIterationRelationKind::Unknown:
             return "unknown";
     }
