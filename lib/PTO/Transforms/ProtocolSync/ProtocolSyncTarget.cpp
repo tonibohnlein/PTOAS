@@ -168,6 +168,23 @@ bool ProtocolSyncTarget::supportsReadyRelease(SyncPhysicalCore core, PIPE produc
     return supportsEvent({core, producer}, {core, consumer}) && supportsEvent({core, consumer}, {core, producer});
 }
 
+ProtocolSyncSameLaneCompletion ProtocolSyncTarget::querySameLaneCompletion(
+    ProtocolSyncResource resource, Operation* source, Operation* target) const
+{
+    if (!isSupported()) {
+        return ProtocolSyncSameLaneCompletion::UnsupportedTarget;
+    }
+    if (!source || !target || resource.core == SyncPhysicalCore::Unknown || resource.pipe == PIPE::PIPE_UNASSIGNED) {
+        return ProtocolSyncSameLaneCompletion::UnsupportedMechanism;
+    }
+    const bool intrinsicTLoadOrder = resource.pipe == PIPE::PIPE_MTE2 && isa<TLoadOp>(source) && isa<TLoadOp>(target);
+    if (intrinsicTLoadOrder) {
+        return ProtocolSyncSameLaneCompletion::Intrinsic;
+    }
+    return supportsPipeBarrier(resource) ? ProtocolSyncSameLaneCompletion::PipeBarrier :
+                                           ProtocolSyncSameLaneCompletion::UnsupportedMechanism;
+}
+
 StringRef mlir::pto::protocol_sync::stringifyProtocolSyncTargetKind(ProtocolSyncTargetKind kind)
 {
     switch (kind) {
@@ -191,4 +208,22 @@ StringRef mlir::pto::protocol_sync::stringifyProtocolSyncCapabilityProfile(
             return "unsupported";
     }
     return "unsupported";
+}
+
+StringRef mlir::pto::protocol_sync::stringifyProtocolSyncSameLaneCompletion(
+    ProtocolSyncSameLaneCompletion completion)
+{
+    switch (completion) {
+        case ProtocolSyncSameLaneCompletion::Intrinsic:
+            return "intrinsic";
+        case ProtocolSyncSameLaneCompletion::PipeBarrier:
+            return "pipe-barrier";
+        case ProtocolSyncSameLaneCompletion::UnsupportedTarget:
+            return "unsupported-target";
+        case ProtocolSyncSameLaneCompletion::UnsupportedMechanism:
+            return "unsupported-mechanism";
+        case ProtocolSyncSameLaneCompletion::NotApplicable:
+            return "not-applicable";
+    }
+    return "unsupported-mechanism";
 }

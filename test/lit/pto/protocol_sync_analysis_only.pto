@@ -131,7 +131,7 @@ module {
 
 // OPTION-ERROR: Error: --protocol-sync-dump and --protocol-sync-statistics require either --protocol-sync-analysis-only or a ProtocolSync emission mode.
 // INVALID-DUMP: Error: invalid --protocol-sync-dump='invalid', expected 'none', 'schedule', 'channels',
-// INVALID-DUMP-SAME: 'lane-frontiers', 'residuals', or 'plan'.
+// INVALID-DUMP-SAME: 'lane-frontiers', 'storage-tracks', 'residuals', or 'plan'.
 // MODE-MUTEX: Error: --protocol-sync-analysis-only and --protocol-sync-one-shot are mutually exclusive.
 // PLAN-REQUIRES-EMISSION: Error: --protocol-sync-dump=plan requires a ProtocolSync emission mode.
 // INVALID-FALLBACK: Error: invalid --protocol-sync-fallback='invalid', expected 'legacy' or 'fail'.

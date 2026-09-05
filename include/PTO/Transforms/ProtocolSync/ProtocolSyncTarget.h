@@ -31,6 +31,14 @@ enum class ProtocolSyncCapabilityProfile : std::uint8_t { Npu2201A2A3, Unsupport
 
 enum class ProtocolSyncEmissionMode : std::uint8_t { OneShot, ReadyRelease, DirectRepair, Mixed };
 
+enum class ProtocolSyncSameLaneCompletion : std::uint8_t {
+    Intrinsic,
+    PipeBarrier,
+    UnsupportedTarget,
+    UnsupportedMechanism,
+    NotApplicable,
+};
+
 struct ProtocolSyncResource {
     SyncPhysicalCore core = SyncPhysicalCore::Unknown;
     PIPE pipe = PIPE::PIPE_UNASSIGNED;
@@ -57,6 +65,8 @@ public:
     bool supportsEvent(ProtocolSyncResource source, ProtocolSyncResource target) const;
     /// Primitive-level legality of both directed event transfers.
     bool supportsReadyRelease(SyncPhysicalCore core, PIPE producer, PIPE consumer) const;
+    ProtocolSyncSameLaneCompletion querySameLaneCompletion(
+        ProtocolSyncResource resource, Operation* source, Operation* target) const;
     llvm::ArrayRef<unsigned> getCompilerEventIds() const { return compilerEventIds; }
 
 private:
@@ -72,6 +82,7 @@ private:
 
 llvm::StringRef stringifyProtocolSyncTargetKind(ProtocolSyncTargetKind kind);
 llvm::StringRef stringifyProtocolSyncCapabilityProfile(ProtocolSyncCapabilityProfile profile);
+llvm::StringRef stringifyProtocolSyncSameLaneCompletion(ProtocolSyncSameLaneCompletion completion);
 
 } // namespace mlir::pto::protocol_sync
 #endif // PTO_TRANSFORMS_PROTOCOLSYNC_PROTOCOLSYNCTARGET_H

@@ -12,6 +12,11 @@
 // RUN:   --protocol-sync-dump=plan --protocol-sync-statistics %s \
 // RUN:   -o /dev/null 2> %t.diagnostics
 // RUN: FileCheck %s --input-file=%t.diagnostics --check-prefix=PLAN
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-analysis-only \
+// RUN:   --protocol-sync-dump=storage-tracks %s \
+// RUN:   -o %t.storage 2> %t.storage-diagnostics
+// RUN: FileCheck %s --input-file=%t.storage-diagnostics --check-prefix=STORAGE
 
 module {
   func.func @ready_release_two_offset_zero(
@@ -92,3 +97,25 @@ module {
 // PLAN: ready-release-plan function=@ready_release_two_offset_zero status=unsupported
 // PLAN: reason=unsupported-visibility
 // PLAN: ProtocolSync ready-release mode found no complete supported plan
+
+// STORAGE: PROTOCOL-SYNC storage-tracks function=@ready_release_two_offset_zero
+// STORAGE: independent-lifecycle component=#0 status=ready reason=none
+// STORAGE-NEXT: independent-e-differential status=independent-only e-rejection=unsupported-visibility
+// STORAGE: storage-track #0 space=vec range=[0,512) families=[#1:slot=0]
+// STORAGE: occurrence access=a#1 family=#1 physical-slot=0 generation=#0
+// STORAGE-SAME: slot-binding=affine-conditional slot-depth=2 slot-loop=#1 slot-coefficient=1 slot-offset=0 slot-modulus=2 membership=slot(t)==0
+// STORAGE: storage-track #1 space=vec range=[512,1024) families=[#1:slot=1]
+// STORAGE: occurrence access=a#1 family=#1 physical-slot=1 generation=#0
+// STORAGE-SAME: membership=slot(t)==1
+// STORAGE: storage-transition #0 kind=ready origin=lane-frontier
+// STORAGE-SAME: tracks=[t#0, t#1]
+// STORAGE: storage-transition #1 kind=release origin=lane-frontier
+// STORAGE: iteration-distance=2
+
+// STORAGE: PROTOCOL-SYNC storage-tracks function=@ready_release_two_offset_one
+// STORAGE: independent-lifecycle component=#0 status=ready reason=none
+// STORAGE-NEXT: independent-e-differential status=independent-only e-rejection=unsupported-visibility
+
+// STORAGE: PROTOCOL-SYNC storage-tracks function=@ready_release_two_equivalent_selectors
+// STORAGE: independent-lifecycle component=#0 status=ready reason=none
+// STORAGE-NEXT: independent-e-differential status=independent-only e-rejection=unsupported-visibility

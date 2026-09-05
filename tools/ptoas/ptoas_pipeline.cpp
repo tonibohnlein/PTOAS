@@ -1379,12 +1379,13 @@ static LogicalResult validateProtocolSyncConfiguration() {
   if (protocolSyncDump != "none" && protocolSyncDump != "schedule" &&
       protocolSyncDump != "channels" && protocolSyncDump != "residuals" &&
       protocolSyncDump != "lane-frontiers" &&
+      protocolSyncDump != "storage-tracks" &&
       protocolSyncDump != "plan") {
     llvm::errs() << "Error: invalid --protocol-sync-dump='"
                  << protocolSyncDump
                  << "', expected 'none', 'schedule', 'channels', "
-                    "'lane-frontiers', 'residuals', "
-                    "or 'plan'.\n";
+                    "'lane-frontiers', 'storage-tracks', 'residuals', or "
+                    "'plan'.\n";
     return failure();
   }
   if (!protocolSyncActive &&

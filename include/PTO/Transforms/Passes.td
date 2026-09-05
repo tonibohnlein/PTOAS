@@ -45,11 +45,12 @@ def PTOProtocolSync : Pass<"pto-protocol-sync", "ModuleOp"> {
   let summary = "Analyze or emit narrow ProtocolSync plans";
   let description = [{
     Builds the immutable ProtocolSync schedule, derives storage-generation and
-    lifecycle-channel diagnostics, projects physical execution lanes, runs
-    structural frontier experiments, and compares with legacy analyses. In
-    analysis mode it never changes IR. One-shot, ReadyRelease, direct-repair,
-    and mixed emission modes accept only fully certified subsets, emit an
-    atomic plan on a clone, verify it independently, and commit on success.
+    lifecycle-channel diagnostics, projects physical execution lanes and
+    atomic storage tracks, runs structural frontier experiments, and compares
+    with legacy analyses. In analysis mode it never changes IR. One-shot,
+    ReadyRelease, direct-repair, and mixed emission modes accept only fully
+    certified subsets, emit an atomic plan on a clone, verify it independently,
+    and commit on success.
   }];
 
   let constructor = "mlir::pto::createPTOProtocolSyncPass()";
@@ -60,7 +61,7 @@ def PTOProtocolSync : Pass<"pto-protocol-sync", "ModuleOp"> {
     Option<"fallbackMode", "fallback-mode", "std::string", "\"legacy\"",
            "Whole-function fallback for unsupported plans: legacy or fail">,
     Option<"dumpMode", "dump", "std::string", "\"none\"",
-           "Diagnostic dump: none, schedule, channels, lane-frontiers, residuals, or plan">,
+           "Diagnostic dump: none, schedule, channels, lane-frontiers, storage-tracks, residuals, or plan">,
     Option<"statistics", "statistics", "bool", "false",
            "Emit stable ProtocolSync analysis and planning statistics">
   ];

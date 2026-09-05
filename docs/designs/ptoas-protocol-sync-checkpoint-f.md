@@ -191,3 +191,22 @@ late wait, a wrong direction, an overlapping same-ID generation, a missing
 prime, and an inconsistent depth-two lane role. Verifier-only reanalysis is
 accounted in `verifier_transitions` and does not inflate planner analysis or
 residual statistics.
+
+## Post-C.7 evidence and remaining F revision
+
+The 2026-09-05 storage-track campaign found that F has the correct completeness
+boundary but not yet one canonical obligation source. Exact atom projection and
+raw-pair expansion are lossless for the current linear subset, while branch
+joins, loop-instance generations, dynamic-range precision, fixed supplied
+protocols, and proxy/resource effects remain incomplete or separate.
+
+Before concrete emitted-IR verification landed, reanalyzing 199 old
+synchronized PTO programs recognized 5,868 fixed protocol actions but imported
+zero of them into the planning selected world. The concrete verifier now
+reconstructs modeled supply from emitted synchronization, closing part of that
+gap. The corpus audit must be rerun against this verifier before claiming actual
+old-placement coverage; planning still needs to consume the canonical typed
+obligations and fixed-supply facts proposed in the
+[obligation-engine amendment](ptoas-protocol-sync-obligation-engine-amendment.md).
+Protocol recognizers and direct repair should both discharge that same store;
+they must not maintain independent hazard universes.

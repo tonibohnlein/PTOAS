@@ -14,10 +14,12 @@
 #include "PTO/Transforms/ProtocolSync/ChannelProtocolIR.h"
 #include "PTO/Transforms/ProtocolSync/DirectRepair.h"
 #include "PTO/Transforms/ProtocolSync/LaneFrontierAnalysis.h"
+#include "PTO/Transforms/ProtocolSync/LanePatternAnalysis.h"
 #include "PTO/Transforms/ProtocolSync/MixedProtocolPlan.h"
 #include "PTO/Transforms/ProtocolSync/OneShotProtocol.h"
 #include "PTO/Transforms/ProtocolSync/ReadyReleaseProtocol.h"
 #include "PTO/Transforms/ProtocolSync/ResidualObligation.h"
+#include "PTO/Transforms/ProtocolSync/StorageTrackAnalysis.h"
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
@@ -108,6 +110,18 @@ void printStatistics(
     counts["generation_timelines_attempted"] = static_cast<std::int64_t>(statistics.generationTimelinesAttempted);
     counts["generation_timelines_admitted"] = static_cast<std::int64_t>(statistics.generationTimelinesAdmitted);
     counts["generation_timelines_rejected"] = static_cast<std::int64_t>(statistics.generationTimelinesRejected);
+    counts["raw_access_endpoints_retained"] = static_cast<std::int64_t>(statistics.rawAccessEndpointsRetained);
+    counts["raw_access_pairs"] = static_cast<std::int64_t>(statistics.rawAccessPairs);
+    counts["raw_access_pair_completion_intrinsic"] =
+        static_cast<std::int64_t>(statistics.rawAccessPairCompletionIntrinsic);
+    counts["raw_access_pair_completion_pipe_barrier"] =
+        static_cast<std::int64_t>(statistics.rawAccessPairCompletionPipeBarrier);
+    counts["raw_access_pair_completion_unsupported_target"] =
+        static_cast<std::int64_t>(statistics.rawAccessPairCompletionUnsupportedTarget);
+    counts["raw_access_pair_completion_unsupported_mechanism"] =
+        static_cast<std::int64_t>(statistics.rawAccessPairCompletionUnsupportedMechanism);
+    counts["raw_access_pair_completion_not_applicable"] =
+        static_cast<std::int64_t>(statistics.rawAccessPairCompletionNotApplicable);
     counts["channel_candidates_attempted"] = static_cast<std::int64_t>(statistics.channelCandidatesAttempted);
     counts["channel_candidates_admitted"] = static_cast<std::int64_t>(statistics.channelCandidatesAdmitted);
     counts["channel_candidates_rejected"] = static_cast<std::int64_t>(statistics.channelCandidatesRejected);
@@ -124,6 +138,84 @@ void printStatistics(
     counts["choice_boundary_frontiers_found"] = static_cast<std::int64_t>(statistics.choiceBoundaryFrontiersFound);
     counts["frontiers_found_for_rejected_channels"] =
         static_cast<std::int64_t>(statistics.frontiersFoundForRejectedChannels);
+    counts["lane_pattern_candidates"] = static_cast<std::int64_t>(statistics.lanePatternCandidates);
+    counts["shared_one_shot_frontiers"] = static_cast<std::int64_t>(statistics.sharedOneShotFrontiers);
+    counts["same_lane_completion_cuts"] = static_cast<std::int64_t>(statistics.sameLaneCompletionCuts);
+    counts["choice_balanced_round_trips"] = static_cast<std::int64_t>(statistics.choiceBalancedRoundTrips);
+    counts["lane_pattern_target_supported"] = static_cast<std::int64_t>(statistics.lanePatternTargetSupported);
+    counts["lane_pattern_target_rejected"] = static_cast<std::int64_t>(statistics.lanePatternTargetRejected);
+    counts["lane_pattern_checkpoint_e_admitted"] = static_cast<std::int64_t>(statistics.lanePatternCheckpointEAdmitted);
+    counts["lane_pattern_checkpoint_e_rejected"] = static_cast<std::int64_t>(statistics.lanePatternCheckpointERejected);
+    counts["lane_pattern_checkpoint_e_not_applicable"] =
+        static_cast<std::int64_t>(statistics.lanePatternCheckpointENotApplicable);
+    counts["lane_pattern_logical_cost"] = static_cast<std::int64_t>(statistics.lanePatternLogicalCost);
+    counts["lane_pattern_steady_state_actions"] = static_cast<std::int64_t>(statistics.lanePatternSteadyStateActions);
+    counts["storage_track_accesses_attempted"] = static_cast<std::int64_t>(statistics.storageTrackAccessesAttempted);
+    counts["storage_track_accesses_projected"] = static_cast<std::int64_t>(statistics.storageTrackAccessesProjected);
+    counts["storage_track_accesses_unprojected"] =
+        static_cast<std::int64_t>(statistics.storageTrackAccessesUnprojected);
+    counts["storage_tracks"] = static_cast<std::int64_t>(statistics.storageTracks);
+    counts["storage_track_occurrences"] = static_cast<std::int64_t>(statistics.storageTrackOccurrences);
+    counts["storage_tracks_multiple_families"] = static_cast<std::int64_t>(statistics.storageTracksMultipleFamilies);
+    counts["storage_tracks_uncertain_alias"] = static_cast<std::int64_t>(statistics.storageTracksUncertainAlias);
+    counts["storage_tracks_multiple_physical_cores"] =
+        static_cast<std::int64_t>(statistics.storageTracksMultiplePhysicalCores);
+    counts["storage_projection_exact_accesses"] = static_cast<std::int64_t>(statistics.storageProjectionExactAccesses);
+    counts["storage_projection_access_mask_mismatches"] =
+        static_cast<std::int64_t>(statistics.storageProjectionAccessMaskMismatches);
+    counts["storage_projection_pair_relations"] = static_cast<std::int64_t>(statistics.storageProjectionPairRelations);
+    counts["storage_projection_overlap_pairs"] = static_cast<std::int64_t>(statistics.storageProjectionOverlapPairs);
+    counts["storage_projection_disjoint_pairs"] = static_cast<std::int64_t>(statistics.storageProjectionDisjointPairs);
+    counts["storage_projection_overlap_pairs_missing_track"] =
+        static_cast<std::int64_t>(statistics.storageProjectionOverlapPairsMissingTrack);
+    counts["storage_projection_disjoint_pairs_sharing_track"] =
+        static_cast<std::int64_t>(statistics.storageProjectionDisjointPairsSharingTrack);
+    counts["storage_projection_read_read_overlap_pairs"] =
+        static_cast<std::int64_t>(statistics.storageProjectionReadReadOverlapPairs);
+    counts["storage_projection_accumulator_read_read_overlap_pairs"] =
+        static_cast<std::int64_t>(statistics.storageProjectionAccumulatorReadReadOverlapPairs);
+    counts["storage_projection_cross_lane_read_read_overlap_pairs"] =
+        static_cast<std::int64_t>(statistics.storageProjectionCrossLaneReadReadOverlapPairs);
+    counts["storage_projection_overlap_components"] =
+        static_cast<std::int64_t>(statistics.storageProjectionOverlapComponents);
+    counts["storage_projection_maximum_atoms_per_component"] =
+        static_cast<std::int64_t>(statistics.storageProjectionMaximumAtomsPerComponent);
+    counts["storage_projection_maximum_atoms_per_access"] =
+        static_cast<std::int64_t>(statistics.storageProjectionMaximumAtomsPerAccess);
+    counts["storage_transition_frontiers"] = static_cast<std::int64_t>(statistics.storageTransitionFrontiers);
+    counts["storage_lifecycle_transitions"] = static_cast<std::int64_t>(statistics.storageLifecycleTransitions);
+    counts["storage_completion_transitions"] = static_cast<std::int64_t>(statistics.storageCompletionTransitions);
+    counts["storage_residual_transitions"] = static_cast<std::int64_t>(statistics.storageResidualTransitions);
+    counts["storage_raw_pairs_covered"] = static_cast<std::int64_t>(statistics.storageRawPairsCovered);
+    counts["storage_raw_pairs_uncovered"] = static_cast<std::int64_t>(statistics.storageRawPairsUncovered);
+    counts["storage_transition_target_supported"] =
+        static_cast<std::int64_t>(statistics.storageTransitionTargetSupported);
+    counts["storage_transition_target_rejected"] =
+        static_cast<std::int64_t>(statistics.storageTransitionTargetRejected);
+    counts["storage_transition_pair_memberships"] =
+        static_cast<std::int64_t>(statistics.storageTransitionPairMemberships);
+    counts["storage_transition_pairs_covered_once"] =
+        static_cast<std::int64_t>(statistics.storageTransitionPairsCoveredOnce);
+    counts["storage_transition_pairs_multiply_covered"] =
+        static_cast<std::int64_t>(statistics.storageTransitionPairsMultiplyCovered);
+    counts["storage_transition_invalid_pair_memberships"] =
+        static_cast<std::int64_t>(statistics.storageTransitionInvalidPairMemberships);
+    counts["storage_transition_track_mask_mismatches"] =
+        static_cast<std::int64_t>(statistics.storageTransitionTrackMaskMismatches);
+    counts["storage_transition_linear_frontier_memberships"] =
+        static_cast<std::int64_t>(statistics.storageTransitionLinearFrontierMemberships);
+    counts["storage_transition_linear_frontier_mismatches"] =
+        static_cast<std::int64_t>(statistics.storageTransitionLinearFrontierMismatches);
+    counts["storage_transition_frontier_memberships_not_linear"] =
+        static_cast<std::int64_t>(statistics.storageTransitionFrontierMembershipsNotLinear);
+    counts["storage_lifecycle_components_attempted"] =
+        static_cast<std::int64_t>(statistics.storageLifecycleComponentsAttempted);
+    counts["storage_lifecycles_reconstructed"] = static_cast<std::int64_t>(statistics.storageLifecyclesReconstructed);
+    counts["storage_lifecycle_e_matches"] = static_cast<std::int64_t>(statistics.storageLifecycleEMatches);
+    counts["storage_lifecycle_e_mismatches"] = static_cast<std::int64_t>(statistics.storageLifecycleEMismatches);
+    counts["storage_lifecycle_independent_only"] =
+        static_cast<std::int64_t>(statistics.storageLifecycleIndependentOnly);
+    counts["storage_lifecycle_e_only"] = static_cast<std::int64_t>(statistics.storageLifecycleEOnly);
     counts["interpreter_transitions"] = static_cast<std::int64_t>(statistics.interpreterTransitions);
     counts["interpreter_peak_states"] = static_cast<std::int64_t>(statistics.interpreterPeakStates);
     counts["memory_pair_tests"] = static_cast<std::int64_t>(statistics.memoryPairTests);
@@ -187,6 +279,31 @@ void printStatistics(
         laneFrontierRejections[reason] = static_cast<std::int64_t>(count);
     }
     record["lane_frontier_rejections"] = std::move(laneFrontierRejections);
+    llvm::json::Object lanePatternKinds;
+    for (const auto& [kind, count] : statistics.lanePatternKinds) {
+        lanePatternKinds[kind] = static_cast<std::int64_t>(count);
+    }
+    record["lane_pattern_kinds"] = std::move(lanePatternKinds);
+    llvm::json::Object storageProjectionRejections;
+    for (const auto& [reason, count] : statistics.storageProjectionRejections) {
+        storageProjectionRejections[reason] = static_cast<std::int64_t>(count);
+    }
+    record["storage_projection_rejections"] = std::move(storageProjectionRejections);
+    llvm::json::Object storageTransitionKinds;
+    for (const auto& [kind, count] : statistics.storageTransitionKinds) {
+        storageTransitionKinds[kind] = static_cast<std::int64_t>(count);
+    }
+    record["storage_transition_kinds"] = std::move(storageTransitionKinds);
+    llvm::json::Object storageLifecycleRejections;
+    for (const auto& [reason, count] : statistics.storageLifecycleRejections) {
+        storageLifecycleRejections[reason] = static_cast<std::int64_t>(count);
+    }
+    record["storage_lifecycle_rejections"] = std::move(storageLifecycleRejections);
+    llvm::json::Object storageLifecycleIndependentERejections;
+    for (const auto& [reason, count] : statistics.storageLifecycleIndependentERejections) {
+        storageLifecycleIndependentERejections[reason] = static_cast<std::int64_t>(count);
+    }
+    record["storage_lifecycle_independent_e_rejections"] = std::move(storageLifecycleIndependentERejections);
     record["planner_result"] = plannerResult.str();
     record["fallback"] = fallback.str();
     llvm::json::Object timing;
@@ -200,6 +317,8 @@ void printStatistics(
     timing["channel_analysis"] = static_cast<std::int64_t>(statistics.channelAnalysisUs);
     timing["interpretation"] = static_cast<std::int64_t>(statistics.interpretationUs);
     timing["lane_frontier_analysis"] = static_cast<std::int64_t>(statistics.laneFrontierAnalysisUs);
+    timing["lane_pattern_analysis"] = static_cast<std::int64_t>(statistics.lanePatternAnalysisUs);
+    timing["storage_track_analysis"] = static_cast<std::int64_t>(statistics.storageTrackAnalysisUs);
     timing["planning"] = static_cast<std::int64_t>(statistics.planningUs);
     timing["allocation"] = static_cast<std::int64_t>(statistics.allocationUs);
     timing["materialization"] = static_cast<std::int64_t>(statistics.materializationUs);
@@ -251,11 +370,14 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
             signalPassFailure();
             return;
         }
-        if (dumpMode != "none" && dumpMode != "schedule" && dumpMode != "channels" && dumpMode != "residuals" &&
-            dumpMode != "lane-frontiers" && dumpMode != "plan") {
+        const bool validDumpMode = dumpMode == "none" || dumpMode == "schedule" || dumpMode == "channels" ||
+                                   dumpMode == "lane-frontiers" || dumpMode == "storage-tracks" ||
+                                   dumpMode == "residuals" || dumpMode == "plan";
+        if (!validDumpMode) {
             getOperation().emitError("unknown ProtocolSync dump mode '")
                 << dumpMode
-                << "'; expected 'none', 'schedule', 'channels', 'lane-frontiers', 'residuals', or 'plan'";
+                << "'; expected 'none', 'schedule', 'channels', 'lane-frontiers', 'storage-tracks', 'residuals', or "
+                   "'plan'";
             signalPassFailure();
             return;
         }
@@ -685,8 +807,8 @@ private:
     LogicalResult emitReadyReleasePlan(
         func::FuncOp function, const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
         const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
-        const LaneFrontierAnalysisResult& laneFrontiers, ProtocolSyncStatistics& result,
-        ProtocolSyncClock::time_point totalStart)
+        const LaneFrontierAnalysisResult& laneFrontiers, const StorageTrackAnalysisResult& storageTracks,
+        ProtocolSyncStatistics& result, ProtocolSyncClock::time_point totalStart)
     {
         ProtocolSyncClock::time_point start = ProtocolSyncClock::now();
         ++result.protocolPlansAttempted;
@@ -747,6 +869,8 @@ private:
             printReadyReleaseProtocolPlan(function, *plan, llvm::errs());
         } else if (dumpMode == "lane-frontiers" && plan->status == SyncReadyReleasePlanStatus::Ready) {
             printReadyReleaseFrontierComparison(schedule, laneFrontiers, *plan, llvm::errs());
+        } else if (dumpMode == "storage-tracks" && plan->status == SyncReadyReleasePlanStatus::Ready) {
+            printReadyReleaseStorageTrackComparison(schedule, storageTracks, *plan, llvm::errs());
         }
         if (plan->status == SyncReadyReleasePlanStatus::Unsupported) {
             ++result.protocolPlansRejected;
@@ -850,6 +974,14 @@ private:
         LaneFrontierAnalysisResult laneFrontiers =
             analyzeLaneFrontiers(schedule, *stages, timelines, channels, &result);
         result.laneFrontierAnalysisUs = elapsedMicroseconds(start);
+        start = ProtocolSyncClock::now();
+        LanePatternAnalysisResult lanePatterns =
+            analyzeLanePatterns(schedule, *stages, timelines, channels, laneFrontiers, &result);
+        result.lanePatternAnalysisUs = elapsedMicroseconds(start);
+        start = ProtocolSyncClock::now();
+        StorageTrackAnalysisResult storageTracks =
+            analyzeStorageTracks(schedule, *stages, timelines, channels, laneFrontiers, lanePatterns, &result);
+        result.storageTrackAnalysisUs = elapsedMicroseconds(start);
 
         start = ProtocolSyncClock::now();
         LegacySyncParityResult parity = adapter.compare(legacy, schedule);
@@ -873,6 +1005,9 @@ private:
             printProtocolSyncChannels(schedule, *stages, timelines, channels, llvm::errs());
         } else if (dumpMode == "lane-frontiers") {
             printLaneFrontierAnalysis(schedule, laneFrontiers, llvm::errs());
+            printLanePatternAnalysis(schedule, timelines, lanePatterns, llvm::errs());
+        } else if (dumpMode == "storage-tracks") {
+            printStorageTrackAnalysis(schedule, laneFrontiers, storageTracks, llvm::errs());
         }
         const bool oracleMismatch = llvm::any_of(channels.getChannels(), [](const SyncChannel& channel) {
             return channel.readyOracle == SyncDemandOracleStatus::Mismatch ||
@@ -906,7 +1041,7 @@ private:
 
         if (emitReadyRelease) {
             return emitReadyReleasePlan(
-                function, schedule, *stages, timelines, channels, laneFrontiers, result, totalStart);
+                function, schedule, *stages, timelines, channels, laneFrontiers, storageTracks, result, totalStart);
         }
         if (emitMixed) {
             return emitMixedPlan(function, schedule, *stages, timelines, channels, context, result, totalStart);

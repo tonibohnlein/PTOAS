@@ -11,6 +11,7 @@
 //===- pto-protocol-sync-ready-release-test.cpp -------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
 #include "PTO/Transforms/ProtocolSync/ReadyReleaseProtocol.h"
 #include "PTO/Transforms/ProtocolSync/ResidualObligation.h"
@@ -415,6 +416,27 @@ bool testDepthTwoPlanAndVerifier(MLIRContext& context)
         "independent verifier accepted a swapped release-lane selector");
     releaseSelector->setOperand(1, laneOne);
     releaseSelector->setOperand(2, laneZero);
+
+    auto clonedAllocation = mapping.lookupOrNull(allocation.getResult()).getDefiningOp<AllocMultiTileOp>();
+    const std::int64_t shiftedAddresses[] = {512, 1024};
+    clonedAllocation->setAttr(kPtoMultiBufferAddrsAttrName, DenseI64ArrayAttr::get(&context, shiftedAddresses));
+    passed &= check(
+        failed(verifyReadyReleaseProtocolMaterialization(fixture.schedule, *fixture.stages, clone, mapping)),
+        "independent verifier accepted shifted physical slot ranges");
+    clonedAllocation->removeAttr(kPtoMultiBufferAddrsAttrName);
+
+    Value clonedSlot = mapping.lookupOrNull(fixture.plan->slot->selector);
+    auto clonedRemainder = clonedSlot.getDefiningOp<arith::RemUIOp>();
+    Value originalModulus = clonedRemainder.getRhs();
+    OpBuilder modulusBuilder(clonedRemainder);
+    Value wrongModulus = modulusBuilder.create<arith::ConstantIndexOp>(clonedRemainder.getLoc(), 1);
+    clonedRemainder->setOperand(1, wrongModulus);
+    passed &= check(
+        failed(verifyReadyReleaseProtocolMaterialization(fixture.schedule, *fixture.stages, clone, mapping)),
+        "independent verifier accepted a changed slot modulus");
+    clonedRemainder->setOperand(1, originalModulus);
+    wrongModulus.getDefiningOp()->erase();
+
     findGenerated(clone, "release-prime-set")->erase();
     passed &= check(
         failed(verifyReadyReleaseProtocolMaterialization(fixture.schedule, *fixture.stages, clone, mapping)),
@@ -540,6 +562,21 @@ bool testVerifierNegatives(MLIRContext& context)
         Operation* prime = findGenerated(function, "release-prime-set");
         Operation* drain = findGenerated(function, "release-drain-wait");
         prime->moveAfter(drain);
+    });
+    passed &= testMalformedMaterialization(context, "ready-signal-placement", [](func::FuncOp function) {
+        Operation* signal = findGenerated(function, "ready-body-set");
+        signal->moveBefore(findGenerated(function, "release-body-wait"));
+    });
+    passed &= testMalformedMaterialization(context, "ready-wait-placement", [](func::FuncOp function) {
+        Operation* wait = findGenerated(function, "ready-body-wait");
+        wait->moveAfter(findGenerated(function, "release-body-set"));
+    });
+    passed &= testMalformedMaterialization(context, "guarded-ready-signal", [](func::FuncOp function) {
+        Operation* signal = findGenerated(function, "ready-body-set");
+        OpBuilder builder(signal);
+        Value condition = builder.create<arith::ConstantIntOp>(signal->getLoc(), 1, 1);
+        auto choice = builder.create<scf::IfOp>(signal->getLoc(), TypeRange{}, condition, false);
+        signal->moveBefore(choice.thenYield());
     });
     passed &= testMalformedMaterialization(context, "logical-lane", [](func::FuncOp function) {
         Operation* prime = findGenerated(function, "release-prime-set");

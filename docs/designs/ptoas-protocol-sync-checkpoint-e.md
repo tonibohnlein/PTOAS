@@ -13,6 +13,15 @@ Checkpoint D one-shot foundation. The implementation admits strict
 --protocol-sync-statistics
 ```
 
+The diagnostic `--protocol-sync-dump=storage-tracks` mode also compares a
+selected plan with the read-only storage projection. It requires matching
+track masks, physical slots, directions, publication, acquisition, final use,
+and next overwrite. This is a structural differential over shared schedule
+facts, not an independent hardware proof. The complete fixture and corpus
+results, including the correction from channel-admission proxy status to the
+actual E planner result, are recorded in the [experiment evidence
+ledger](ptoas-protocol-sync-evidence-ledger.md).
+
 It is not a production replacement for InsertSync. A2 and A3 use the same
 `Npu2201A2A3` capability profile. The shared profile is simulator-qualified for
 A2/A3, and the purpose-built repeated-launch campaign additionally qualifies
@@ -68,16 +77,23 @@ never receives `PIPE_ALL`.
 The pass analyzes and mutates a disposable module clone. It commits function
 bodies only after every function succeeds and the complete module verifies.
 The emitted-IR verifier does not consume the selected plan: it reconstructs the
-storage capacity from the allocation root type, checks it against the frozen
-family record, and reconstructs the slot selector and lifecycle from frozen
-accesses and stages. It then checks every prime/body/drain role, dynamic
-lane-to-ID selection, placement, directions, IDs, reservations, and absence of
-a body barrier. A selector describes which slot an access uses; it does not
-prove storage capacity. Other local roots remain unknown-capacity until a typed
-queue or allocation descriptor supplies an authoritative value.
-Focused fault injection covers missing actions, wrong IDs/directions,
-misplacement, selector corruption, bad lane tags, and a fabricated body
-`PIPE_ALL`.
+storage capacity and physical slot addresses from the allocation, checks them
+against the frozen family record, and reconstructs the slot selector and
+lifecycle from frozen accesses and stages. It then checks every
+prime/body/drain role, dynamic lane-to-ID selection, placement, directions,
+IDs, reservations, slot modulus, and absence of a body barrier. A selector
+describes which slot an access uses; it does not prove storage capacity. Other
+local roots remain unknown-capacity until a typed queue or allocation
+descriptor supplies an authoritative value. Focused fault injection covers
+missing actions, moved signals/waits, nesting an action under a guard, wrong
+IDs/directions, shifted physical ranges, changed allocation capacity or slot
+modulus, selector corruption, bad lane tags, and a fabricated body `PIPE_ALL`.
+
+A separate C.7 reconstructor derives the strict lifecycle without reading E's
+answer and matches all four `ReadyRelease<1/2>` fixtures on capacity, lanes,
+phases, slots, and all four frontiers. It discovers 177 similarly narrow shapes
+in 76 corpus functions that E rejects for other whole-function gates. This is
+useful discovery evidence, not an expansion of E's admission contract.
 
 ## Qualification gate
 

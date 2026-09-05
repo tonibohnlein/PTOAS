@@ -41,7 +41,7 @@ Use:
 --protocol-sync-ready-release
 --protocol-sync-direct-repair
 --protocol-sync-mixed
---protocol-sync-dump=schedule|channels|lane-frontiers|residuals|plan
+--protocol-sync-dump=schedule|channels|lane-frontiers|storage-tracks|residuals|plan
 --protocol-sync-statistics
 ```
 
@@ -78,6 +78,12 @@ shared provenance provider before legacy InsertSync consumes the new frontend.
   deterministic rejection of an unsupported effectful operation.
 
 ## Research evidence retained
+
+The consolidated [experiment and related-work evidence
+ledger](ptoas-protocol-sync-evidence-ledger.md) records the C.5-C.7 hypotheses,
+methods, measurements, claim boundaries, reproduction artifacts, and primary
+literature comparisons. The per-experiment reports remain the detailed source
+for lane-pattern and storage-track construction.
 
 The four archived CanonicalSync campaigns remain external evidence:
 
@@ -256,6 +262,68 @@ consumer execution lanes plus publication, acquisition, final-use, and
 next-overwrite points with the C.5 observations. This catches structural drift,
 but it is not an independent hardware proof because both analyses consume the
 same frozen schedule and storage timeline.
+
+## Checkpoint C.6 lane-pattern experiment
+
+The follow-up experiment retains raw physical-access endpoints across rejected
+storage timelines and adds three diagnostic-only recognizers:
+`SharedOneShotFrontier`, `SameLaneCompletionCut`, and
+`ChoiceBalancedRoundTrip`. Every candidate records its old CanonicalSync
+analogue, target-query result, Checkpoint E status, and estimated action cost.
+No candidate is selectable.
+
+On the frozen 394-row A3 corpus, all rows completed and the experiment recorded
+18,151 endpoints, 66,839 hazardous access pairs, and 1,050 candidates. The
+target model classified 470 raw pairs as intrinsically complete, 51,261 as
+requiring a same-pipe barrier, and 15,108 as cross-lane/not-applicable. All 22
+shared one-shot placements matched an old selected event at the operation-name
+level. Of 1,020 same-lane cuts, 507 matched an old selected barrier; all 481
+cuts in old-admitted rows matched. Eight balanced-choice candidates survived
+inside four old fail-closed rows but remained rejected by Checkpoint E for
+multiple consumers.
+
+The detailed method, fixture outcomes, comparison limitation, and conclusions
+are recorded in the [lane-pattern experiment
+report](ptoas-protocol-sync-lane-pattern-experiment.md). The result
+supports lanes as a structural discovery and differential layer, not as a
+replacement for storage/iteration proofs or target-specific completion rules.
+Stable/alternating L1 and accumulator protocols remain postponed until their
+missing storage, core, and iteration facts are repaired.
+
+## Checkpoint C.7 storage-track experiment
+
+The next read-only layer partitions exact local byte ranges into atomic storage
+tracks and combines them with execution lanes, control, and iteration order to
+form storage-transition frontiers. Affine depth-two occurrences retain
+conditional `slot(t)==0/1` membership, and partial overlaps become shared and
+unshared atoms rather than an overlap equivalence class.
+
+On the frozen 394-row corpus, 18,025 of 18,151 attempted accesses projected to
+3,492 tracks. The experiment represented all 66,839 members of its exact,
+linear raw-pair universe with 37,261 lifecycle, completion, or residual
+transitions. The actual Checkpoint E planner admitted none of the corpus's 474
+recurring transition records, while all four strict `ReadyRelease<1/2>` fixture
+functions matched E's storage masks, physical slots, directions, and lifecycle
+placements. Thus the storage/lane layer is a broader discovery substrate, not
+a substitute for E's complete protocol proof.
+
+The post-rebase audits found zero atom-mask mismatches across 1,276,033 exact
+interval pair relations and zero raw-pair omissions, but they also exposed the
+remaining correctness boundary: 12,622 non-linear frontier memberships lack a
+path proof, branch joins lack must/may-reaching generations, dynamic subview
+precision can be lost, and fixed supplied protocols are not imported into the
+selected world. An independent narrow reconstructor found 177 strict lifecycle
+shapes in 76 corpus functions, all still outside E's complete admission.
+
+The exact semantics, comparison limitations, corpus breakdown, literature
+analogues, and remaining completeness gaps are recorded in the [storage-track
+experiment report](ptoas-protocol-sync-storage-track-experiment.md). The
+cross-experiment claims and source-by-source literature assessment are indexed
+in the [evidence ledger](ptoas-protocol-sync-evidence-ledger.md).
+The resulting pass revision is specified in the
+[obligation-engine amendment](ptoas-protocol-sync-obligation-engine-amendment.md):
+canonical path-sensitive typed obligations become the correctness substrate,
+while E and other patterns remain atomic proof/compression templates.
 
 ## Checkpoint D and E status
 

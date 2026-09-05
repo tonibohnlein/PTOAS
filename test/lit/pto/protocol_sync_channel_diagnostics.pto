@@ -20,6 +20,11 @@
 // RUN:   --enable-insert-sync --protocol-sync-analysis-only \
 // RUN:   --protocol-sync-dump=channels %s -o %t.repeat1 2> %t.repeat1.diagnostics
 // RUN: diff %t.repeat0.diagnostics %t.repeat1.diagnostics
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --enable-insert-sync --protocol-sync-analysis-only \
+// RUN:   --protocol-sync-dump=storage-tracks --protocol-sync-statistics \
+// RUN:   %s -o %t.storage 2> %t.storage-diagnostics
+// RUN: FileCheck %s --input-file=%t.storage-diagnostics --check-prefix=STORAGE
 
 module {
   func.func private @opaque()
@@ -309,3 +314,36 @@ module {
 // CHECK: timeline #0 family=#1 generation=loop-iteration status=admitted reason=none
 // CHECK-SAME: carrying-loop=#2 producers=[#0] consumers=[#1]
 // CHECK: channel #0 generation=#0 kind=ready-release capacity=1 status=rejected reason=nested-loop
+
+// STORAGE-LABEL: PROTOCOL-SYNC storage-tracks function=@branch_final_use
+// STORAGE: projection-audit status=exact exact-accesses=3
+// STORAGE-SAME: overlap-pairs=3
+// STORAGE: transition-audit status=exact raw-pairs=0 memberships=0 covered-once=0 uncovered=0
+// STORAGE: independent-lifecycle component=#0 status=rejected reason=unsupported-control
+// STORAGE: storage-transition #0 kind=ready origin=lane-frontier
+// STORAGE-SAME: raw-pair-members=[]
+
+// STORAGE-LABEL: PROTOCOL-SYNC storage-tracks function=@guarded_single_consumer
+// STORAGE: projection-audit status=exact exact-accesses=2
+// STORAGE-SAME: overlap-pairs=1
+// STORAGE: transition-audit status=exact raw-pairs=0 memberships=0 covered-once=0 uncovered=0
+// STORAGE: independent-lifecycle component=#0 status=rejected reason=unsupported-control
+// STORAGE: storage-transition #0 kind=ready origin=lane-frontier
+// STORAGE-SAME: raw-pair-members=[]
+
+// STORAGE-LABEL: PROTOCOL-SYNC storage-tracks function=@intervening_empty_branch
+// STORAGE: transition-audit status=exact raw-pairs=1 memberships=1 covered-once=1 uncovered=0
+// STORAGE: storage-transition #0 kind=ready origin=lane-frontier
+// STORAGE-SAME: raw-pair-members=[r#0]
+
+// STORAGE-LABEL: PROTOCOL-SYNC storage-tracks function=@partial_overlapping_writes
+// STORAGE: storage-track #0 space=vec range=[0,8)
+// STORAGE: storage-track #1 space=vec range=[8,16)
+// STORAGE: occurrence access=a#1 family=#1
+// STORAGE-NEXT: occurrence access=a#3 family=#1
+// STORAGE: storage-track #2 space=vec range=[16,24)
+// STORAGE: kind=residual origin=raw-access-pair old-pattern=raw-storage-hazard old-mechanism=intrinsic lanes=#0->#0
+// STORAGE: target-query=intrinsic checkpoint-e=not-applicable
+// STORAGE: "storage_raw_pairs_covered":1
+// STORAGE-SAME: "storage_raw_pairs_uncovered":0
+// STORAGE: "storage_transition_kinds":{"residual":1}

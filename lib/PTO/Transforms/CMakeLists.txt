@@ -112,6 +112,10 @@ add_mlir_dialect_library(PTOTransforms
   ProtocolSync/EventAllocation.cpp
   ProtocolSync/LaneFrontierAnalysis.cpp
   ProtocolSync/LaneFrontierDump.cpp
+  ProtocolSync/LanePatternAnalysis.cpp
+  ProtocolSync/LanePatternCompletion.cpp
+  ProtocolSync/LanePatternDump.cpp
+  ProtocolSync/LanePatternFrontiers.cpp
   ProtocolSync/MixedProtocolPlan.cpp
   ProtocolSync/MixedProtocolVerifier.cpp
   ProtocolSync/PipelineStages.cpp
@@ -135,6 +139,13 @@ add_mlir_dialect_library(PTOTransforms
   ProtocolSync/SyncSemantics.cpp
   ProtocolSync/StorageTimeline.cpp
   ProtocolSync/StorageTimelineAccess.cpp
+  ProtocolSync/StorageTrackComparison.cpp
+  ProtocolSync/StorageTrackAudit.cpp
+  ProtocolSync/StorageTrackDump.cpp
+  ProtocolSync/StorageLifecycleReconstruction.cpp
+  ProtocolSync/StorageTrackProjection.cpp
+  ProtocolSync/StorageTrackStrings.cpp
+  ProtocolSync/StorageTransitionFrontiers.cpp
   PTOInjectBarrierAllSync.cpp
   InsertSync/InsertSyncDebug.cpp
   PTOMaterializeImplicitTmp.cpp

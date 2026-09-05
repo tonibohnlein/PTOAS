@@ -13,8 +13,10 @@
 #include "PTO/Transforms/ProtocolSync/ReadyReleaseProtocol.h"
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOMultiBuffer.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Matchers.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 
@@ -43,6 +45,9 @@ struct ExpectedReadyRelease {
     PIPE producerPipe = PIPE::PIPE_UNASSIGNED;
     PIPE consumerPipe = PIPE::PIPE_UNASSIGNED;
     unsigned capacity = 0;
+    Value storageRoot;
+    llvm::SmallVector<SyncByteInterval, 2> storageIntervals;
+    std::optional<SyncSlotExpression> slot;
     Value slotSelector;
 };
 
@@ -174,6 +179,8 @@ FailureOr<ExpectedReadyRelease> reconstructExpectedProtocol(
     unsigned accessedLocalFamilies = 0;
     unsigned capacity = 0;
     std::optional<SyncSlotExpression> slot;
+    Value storageRoot;
+    llvm::SmallVector<SyncByteInterval, 2> storageIntervals;
     Value producerSelector;
     llvm::DenseMap<SyncStorageFamilyId, llvm::SmallVector<const SyncAccess*, 4>> accessesByFamily;
     for (const SyncAccess& access : schedule.getAccesses()) {
@@ -212,6 +219,8 @@ FailureOr<ExpectedReadyRelease> reconstructExpectedProtocol(
             return failure();
         }
         capacity = *allocationCapacity;
+        storageRoot = family.root;
+        storageIntervals.assign(family.intervals.begin(), family.intervals.end());
         for (const SyncAccess* accessPtr : familyAccesses->second) {
             const SyncAccess& access = *accessPtr;
             familyAccessed = true;
@@ -321,6 +330,9 @@ FailureOr<ExpectedReadyRelease> reconstructExpectedProtocol(
     result.producerPipe = producer->pipe;
     result.consumerPipe = consumer->pipe;
     result.capacity = capacity;
+    result.storageRoot = storageRoot;
+    result.storageIntervals = std::move(storageIntervals);
+    result.slot = slot;
     if (producerSelector) {
         result.slotSelector = producerSelector;
     }
@@ -477,6 +489,73 @@ Value stripIndexCast(Value value)
     return value;
 }
 
+bool storageAddressesMatch(const ExpectedReadyRelease& expected, const IRMapping& mapping)
+{
+    Value root = mapping.lookupOrNull(expected.storageRoot);
+    const bool intervalCountMatches = expected.storageIntervals.size() == expected.capacity;
+    if (!root || !intervalCountMatches) {
+        return false;
+    }
+    if (auto allocation = root.getDefiningOp<AllocTileOp>()) {
+        std::optional<std::int64_t> address = getConstantIntValue(allocation.getAddr());
+        return expected.capacity == 1 && address && *address >= 0 &&
+               static_cast<std::uint64_t>(*address) == expected.storageIntervals.front().begin;
+    }
+    auto allocation = root.getDefiningOp<AllocMultiTileOp>();
+    if (!allocation) {
+        return false;
+    }
+    const bool allocationCountMatches = allocation.getResult().getType().getCount() == expected.capacity;
+    if (!allocationCountMatches) {
+        return false;
+    }
+    auto addresses = allocation->getAttrOfType<DenseI64ArrayAttr>(kPtoMultiBufferAddrsAttrName);
+    if (addresses) {
+        const bool addressCountMatches = addresses.size() == expected.capacity;
+        if (!addressCountMatches) {
+            return false;
+        }
+        for (auto [address, interval] : llvm::zip(addresses.asArrayRef(), expected.storageIntervals)) {
+            const std::uint64_t unsignedAddress = address < 0 ? 0 : static_cast<std::uint64_t>(address);
+            if (address < 0 || unsignedAddress != interval.begin) {
+                return false;
+            }
+        }
+        return true;
+    }
+    std::optional<std::int64_t> base = getConstantIntValue(allocation.getAddr());
+    if (!base || *base < 0 || expected.storageIntervals.empty()) {
+        return false;
+    }
+    const std::uint64_t unsignedBase = static_cast<std::uint64_t>(*base);
+    const std::uint64_t slotBytes = expected.storageIntervals.front().size;
+    if (slotBytes == 0) {
+        return false;
+    }
+    for (auto [index, interval] : llvm::enumerate(expected.storageIntervals)) {
+        if (slotBytes != interval.size ||
+            index > (std::numeric_limits<std::uint64_t>::max() - unsignedBase) / slotBytes ||
+            interval.begin != unsignedBase + index * slotBytes) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool slotModulusMatches(const ExpectedReadyRelease& expected, const IRMapping& mapping)
+{
+    if (expected.capacity == 1) {
+        return !expected.slot && !expected.slotSelector;
+    }
+    if (!expected.slot || !expected.slotSelector || expected.slot->modulus != expected.capacity) {
+        return false;
+    }
+    Value selector = mapping.lookupOrNull(expected.slotSelector);
+    auto remainder = selector ? selector.getDefiningOp<arith::RemUIOp>() : arith::RemUIOp();
+    std::optional<std::int64_t> modulus = remainder ? getConstantIntValue(remainder.getRhs()) : std::nullopt;
+    return modulus && *modulus > 0 && static_cast<std::uint64_t>(*modulus) == expected.slot->modulus;
+}
+
 bool matchEventSelector(Value value, Value expectedSelector, llvm::SmallVectorImpl<unsigned>& eventIds)
 {
     auto select = value.getDefiningOp<arith::SelectOp>();
@@ -617,6 +696,8 @@ LogicalResult mlir::pto::protocol_sync::verifyReadyReleaseProtocolMaterializatio
     }
     ConcreteReadyRelease protocol;
     const bool validMaterialization = succeeded(collectConcreteProtocol(clone, expected->capacity, protocol)) &&
+                                      storageAddressesMatch(*expected, mapping) &&
+                                      slotModulusMatches(*expected, mapping) &&
                                       succeeded(verifyEvents(schedule, target, *expected, protocol, mapping)) &&
                                       succeeded(verifyPlacement(*expected, protocol, mapping));
     if (!validMaterialization) {

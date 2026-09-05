@@ -1,0 +1,291 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir \
+// RUN:   --enable-insert-sync --protocol-sync-analysis-only \
+// RUN:   --protocol-sync-dump=storage-tracks %s -o %t 2> %t.diagnostics
+// RUN: FileCheck %s --input-file=%t.diagnostics --check-prefix=STORAGE
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir \
+// RUN:   --enable-insert-sync --protocol-sync-analysis-only \
+// RUN:   --protocol-sync-dump=channels %s -o %t.channels 2> %t.channel-diagnostics
+// RUN: FileCheck %s --input-file=%t.channel-diagnostics --check-prefix=CHANNEL
+
+module {
+  func.func @chained_nontransitive_overlap(
+      %input0 : !pto.partition_tensor_view<16x16xf16>,
+      %input1 : !pto.partition_tensor_view<16x16xf16>,
+      %input2 : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %c512_i64 = arith.constant 512 : i64
+    %tile0 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 16x16xf16>
+    %tile1 = pto.alloc_tile addr = %c256_i64 : !pto.tile_buf<vec, 16x16xf16>
+    %tile2 = pto.alloc_tile addr = %c512_i64 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input0 : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile0 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%input1 : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile1 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%input2 : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile2 : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+
+  func.func @whole_prefix_suffix(
+      %input0 : !pto.partition_tensor_view<16x16xf16>,
+      %input1 : !pto.partition_tensor_view<8x16xf16>,
+      %input2 : !pto.partition_tensor_view<8x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %whole = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 16x16xf16>
+    %prefix = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 8x16xf16>
+    %suffix = pto.alloc_tile addr = %c256_i64 : !pto.tile_buf<vec, 8x16xf16>
+    pto.tload ins(%input0 : !pto.partition_tensor_view<16x16xf16>)
+              outs(%whole : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%input1 : !pto.partition_tensor_view<8x16xf16>)
+              outs(%prefix : !pto.tile_buf<vec, 8x16xf16>)
+    pto.tload ins(%input2 : !pto.partition_tensor_view<8x16xf16>)
+              outs(%suffix : !pto.tile_buf<vec, 8x16xf16>)
+    return
+  }
+
+  func.func @dynamic_subview_range_loss(
+      %offset : index,
+      %output : !pto.partition_tensor_view<1x64xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c0_i64 = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %c0_i64
+        : !pto.tile_buf<vec, 8x64xf32>
+    %sub = pto.subview %tile[%c0, %offset] sizes [1, 64] :
+        !pto.tile_buf<vec, 8x64xf32> -> !pto.tile_buf<vec, 1x64xf32>
+    pto.tstore ins(%sub : !pto.tile_buf<vec, 1x64xf32>)
+               outs(%output : !pto.partition_tensor_view<1x64xf32>)
+    return
+  }
+
+  func.func @join_same_atom_writers(
+      %condition : i1,
+      %input0 : !pto.partition_tensor_view<16x16xf16>,
+      %input1 : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 16x16xf16>
+    scf.if %condition {
+      pto.tload ins(%input0 : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    } else {
+      pto.tload ins(%input1 : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+
+  func.func @join_different_atom_writers(
+      %condition : i1,
+      %input0 : !pto.partition_tensor_view<16x16xf16>,
+      %input1 : !pto.partition_tensor_view<16x16xf16>,
+      %output0 : !pto.partition_tensor_view<16x16xf16>,
+      %output1 : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c512_i64 = arith.constant 512 : i64
+    %tile0 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 16x16xf16>
+    %tile1 = pto.alloc_tile addr = %c512_i64 : !pto.tile_buf<vec, 16x16xf16>
+    scf.if %condition {
+      pto.tload ins(%input0 : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile0 : !pto.tile_buf<vec, 16x16xf16>)
+    } else {
+      pto.tload ins(%input1 : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile1 : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    pto.tstore ins(%tile0 : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output0 : !pto.partition_tensor_view<16x16xf16>)
+    pto.tstore ins(%tile1 : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output1 : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+
+  func.func @one_arm_write_before_join_read(
+      %condition : i1,
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 16x16xf16>
+    scf.if %condition {
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+
+  func.func @conditional_overwrite(
+      %condition : i1,
+      %input0 : !pto.partition_tensor_view<16x16xf16>,
+      %input1 : !pto.partition_tensor_view<16x16xf16>,
+      %output0 : !pto.partition_tensor_view<16x16xf16>,
+      %output1 : !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input0 : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output0 : !pto.partition_tensor_view<16x16xf16>)
+    scf.if %condition {
+      pto.tload ins(%input1 : !pto.partition_tensor_view<16x16xf16>)
+                outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 16x16xf16>)
+               outs(%output1 : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+
+  func.func @modulo_four_step_two(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>,
+      %trip_count : index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c0_i64 = arith.constant 0 : i64
+    %buffers = pto.alloc_multi_tile addr = %c0_i64
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=4>
+    scf.for %index = %c0 to %trip_count step %c2 {
+      %selector = arith.remui %index, %c4 : index
+      %slot = pto.multi_tile_get %buffers[%selector]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=4>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%slot : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+
+  func.func @modulo_six_step_two(
+      %input : !pto.partition_tensor_view<16x16xf16>,
+      %output : !pto.partition_tensor_view<16x16xf16>,
+      %trip_count : index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c6 = arith.constant 6 : index
+    %c0_i64 = arith.constant 0 : i64
+    %buffers = pto.alloc_multi_tile addr = %c0_i64
+        : !pto.multi_tile_buf<vec, 16x16xf16, count=6>
+    scf.for %index = %c0 to %trip_count step %c2 {
+      %selector = arith.remui %index, %c6 : index
+      %slot = pto.multi_tile_get %buffers[%selector]
+          : !pto.multi_tile_buf<vec, 16x16xf16, count=6>
+         -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>)
+                outs(%slot : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%slot : !pto.tile_buf<vec, 16x16xf16>)
+                 outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}
+
+// STORAGE-LABEL: PROTOCOL-SYNC storage-tracks function=@chained_nontransitive_overlap
+// STORAGE: projection-audit status=exact
+// STORAGE-SAME: pair-relations=3 overlap-pairs=2 disjoint-pairs=1
+// STORAGE-SAME: overlap-missing-track=0 disjoint-sharing-track=0
+// STORAGE-SAME: components=1 max-atoms-per-component=4 max-atoms-per-access=2
+// STORAGE: transition-audit status=exact raw-pairs=2 memberships=2 covered-once=2 uncovered=0
+// STORAGE: storage-track #0 space=vec range=[0,256) families=[#1:slot=none]
+// STORAGE: storage-track #1 space=vec range=[256,512) families=[#1:slot=none, #3:slot=none]
+// STORAGE: storage-track #2 space=vec range=[512,768) families=[#3:slot=none, #5:slot=none]
+// STORAGE: storage-track #3 space=vec range=[768,1024) families=[#5:slot=none]
+
+// STORAGE-LABEL: PROTOCOL-SYNC storage-tracks function=@whole_prefix_suffix
+// STORAGE: projection-audit status=exact
+// STORAGE-SAME: pair-relations=3 overlap-pairs=2 disjoint-pairs=1
+// STORAGE-SAME: overlap-missing-track=0 disjoint-sharing-track=0
+// STORAGE-SAME: components=1 max-atoms-per-component=2 max-atoms-per-access=2
+// STORAGE: transition-audit status=exact raw-pairs=2 memberships=2 covered-once=2 uncovered=0
+// STORAGE: storage-track #0 space=vec range=[0,256) families=[#1:slot=none, #3:slot=none]
+// STORAGE: occurrence access=a#1
+// STORAGE-NEXT: occurrence access=a#3
+// STORAGE: storage-track #1 space=vec range=[256,512) families=[#1:slot=none, #5:slot=none]
+// STORAGE: occurrence access=a#1
+// STORAGE-NEXT: occurrence access=a#5
+
+// STORAGE-LABEL: PROTOCOL-SYNC storage-tracks function=@dynamic_subview_range_loss
+// STORAGE: projection-audit status=exact exact-accesses=1
+// STORAGE: storage-track #0 space=vec range=[0,2048)
+// STORAGE-SAME: uncertain-alias=no
+
+// STORAGE-LABEL: PROTOCOL-SYNC storage-tracks function=@join_same_atom_writers
+// STORAGE: projection-audit status=exact exact-accesses=3
+// STORAGE-SAME: overlap-pairs=3
+// STORAGE: transition-audit status=exact raw-pairs=0 memberships=0 covered-once=0 uncovered=0
+// STORAGE: occurrence access=a#1 family=#1 physical-slot=none generation=#0
+// STORAGE: occurrence access=a#3 family=#1 physical-slot=none generation=#1
+// STORAGE: occurrence access=a#4 family=#1 physical-slot=none generation=#1
+// STORAGE: storage-transition #0 kind=ready origin=lane-frontier
+// STORAGE-SAME: raw-pair-members=[]
+
+// STORAGE-LABEL: PROTOCOL-SYNC storage-tracks function=@join_different_atom_writers
+// STORAGE: projection-audit status=exact exact-accesses=4
+// STORAGE-SAME: pair-relations=6 overlap-pairs=2 disjoint-pairs=4
+// STORAGE: transition-audit status=exact raw-pairs=0 memberships=0 covered-once=0 uncovered=0
+// STORAGE: storage-transition #0 kind=ready origin=lane-frontier
+// STORAGE-SAME: raw-pair-members=[]
+// STORAGE: storage-transition #1 kind=ready origin=lane-frontier
+// STORAGE-SAME: raw-pair-members=[]
+
+// STORAGE-LABEL: PROTOCOL-SYNC storage-tracks function=@one_arm_write_before_join_read
+// STORAGE: projection-audit status=exact exact-accesses=2
+// STORAGE-SAME: overlap-pairs=1
+// STORAGE: transition-audit status=exact raw-pairs=0 memberships=0 covered-once=0 uncovered=0
+// STORAGE: storage-transition #0 kind=ready origin=lane-frontier
+// STORAGE-SAME: raw-pair-members=[]
+
+// STORAGE-LABEL: PROTOCOL-SYNC storage-tracks function=@conditional_overwrite
+// STORAGE: projection-audit status=exact exact-accesses=4
+// STORAGE-SAME: overlap-pairs=6
+// STORAGE: transition-audit status=exact raw-pairs=2 memberships=2 covered-once=2 uncovered=0
+// STORAGE: storage-transition #0 kind=ready origin=lane-frontier
+// STORAGE-SAME: raw-pair-members=[r#0]
+// STORAGE: storage-transition #1 kind=release origin=lane-frontier
+// STORAGE-SAME: raw-pair-members=[]
+// STORAGE: storage-transition #2 kind=ready origin=lane-frontier
+// STORAGE-SAME: raw-pair-members=[]
+// STORAGE: storage-transition #3 kind=residual origin=raw-access-pair
+// STORAGE-SAME: raw-pair-members=[r#1]
+
+// STORAGE-LABEL: PROTOCOL-SYNC storage-tracks function=@modulo_four_step_two
+// STORAGE: independent-lifecycle component=#0 status=rejected reason=unsupported-capacity
+// STORAGE-SAME: capacity=4 reuse-distance=0
+
+// STORAGE-LABEL: PROTOCOL-SYNC storage-tracks function=@modulo_six_step_two
+// STORAGE: independent-lifecycle component=#0 status=rejected reason=unsupported-capacity
+// STORAGE-SAME: capacity=6 reuse-distance=0
+
+// CHANNEL-LABEL: PROTOCOL-SYNC channels function=@modulo_four_step_two
+// CHANNEL: timeline #0 family=#1 generation=one-shot status=rejected reason=unsupported-capacity
+// CHANNEL-SAME: expr=affine-modulo(loop=#1,coefficient=2,offset=0,modulus=4)
+// CHANNEL: capacity=4 status=rejected reason=timeline-rejected
+
+// CHANNEL-LABEL: PROTOCOL-SYNC channels function=@modulo_six_step_two
+// CHANNEL: timeline #0 family=#1 generation=one-shot status=rejected reason=unsupported-capacity
+// CHANNEL-SAME: expr=affine-modulo(loop=#1,coefficient=2,offset=0,modulus=6)
+// CHANNEL: capacity=6 status=rejected reason=timeline-rejected

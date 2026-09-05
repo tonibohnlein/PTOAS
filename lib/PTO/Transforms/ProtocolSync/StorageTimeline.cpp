@@ -33,6 +33,28 @@ void reject(SyncGenerationTimeline& timeline, SyncTimelineRejection reason, Prot
     }
 }
 
+void retainRawAccesses(
+    const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages, const StorageAccessClass& accessClass,
+    SyncGenerationTimeline& timeline, ProtocolSyncStatistics* statistics)
+{
+    for (SyncAccessId id : accessClass.accesses) {
+        const SyncAccess* access = schedule.findAccess(id);
+        const SyncPhase* phase = access ? schedule.findPhase(access->phase) : nullptr;
+        const SyncStage* stage = phase ? stages.findStageForPhase(phase->id) : nullptr;
+        SyncRawAccessEndpoint endpoint;
+        endpoint.access = id;
+        endpoint.phase = phase ? phase->id : kInvalidSyncId;
+        endpoint.stage = stage ? stage->id : kInvalidSyncId;
+        endpoint.before = phase ? phase->before : kInvalidSyncId;
+        endpoint.after = phase ? phase->after : kInvalidSyncId;
+        endpoint.mode = access ? access->mode : SyncAccessMode::ReadWrite;
+        timeline.rawAccesses.push_back(endpoint);
+        if (statistics) {
+            ++statistics->rawAccessEndpointsRetained;
+        }
+    }
+}
+
 bool buildStageSets(
     const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages, const StorageAccessClass& accessClass,
     SyncGenerationTimeline& timeline, SyncTimelineRejection& rejection)
@@ -220,6 +242,7 @@ StorageTimelineAnalysisResult mlir::pto::protocol_sync::analyzeStorageTimelines(
         timeline.accesses.assign(accessClass.accesses.begin(), accessClass.accesses.end());
         timeline.slice = accessClass.slice;
         timeline.slot = accessClass.slot;
+        retainRawAccesses(schedule, stages, accessClass, timeline, statistics);
         if (statistics) {
             ++statistics->generationTimelinesAttempted;
         }

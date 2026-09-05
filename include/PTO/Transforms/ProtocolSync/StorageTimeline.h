@@ -10,8 +10,10 @@
 
 //===- StorageTimeline.h - Storage-generation timeline model --*- C++ -*-===//
 //
-// Timelines derive symbolic contents from immutable accesses. They carry only
-// diagnostic evidence and contain no selected synchronization or event IDs.
+// Timelines derive symbolic contents from immutable accesses. Raw access
+// endpoints are retained even when lifecycle recognition rejects a timeline,
+// so later read-only diagnostics can reconstruct direct residual intervals.
+// The model contains no selected synchronization or event IDs.
 //
 //===----------------------------------------------------------------------===//
 
@@ -70,6 +72,15 @@ struct SyncNextOverwrite {
     unsigned iterationDistance = 0;
 };
 
+struct SyncRawAccessEndpoint {
+    SyncAccessId access = kInvalidSyncId;
+    SyncPhaseId phase = kInvalidSyncId;
+    SyncStageId stage = kInvalidSyncId;
+    SyncProgramPointId before = kInvalidSyncId;
+    SyncProgramPointId after = kInvalidSyncId;
+    SyncAccessMode mode = SyncAccessMode::ReadWrite;
+};
+
 struct SyncGenerationTimeline {
     SyncGenerationId id = kInvalidSyncId;
     SyncStorageFamilyId family = kInvalidSyncId;
@@ -78,6 +89,7 @@ struct SyncGenerationTimeline {
     std::optional<SyncSlotExpression> slot;
     SyncGenerationKind generationKind = SyncGenerationKind::OneShot;
     SyncRegionId carryingRegion = kInvalidSyncId;
+    llvm::SmallVector<SyncRawAccessEndpoint, 8> rawAccesses;
     llvm::SmallVector<SyncStageId, 2> producers;
     llvm::SmallVector<SyncStageId, 4> consumers;
     SyncProgramFrontier publication;

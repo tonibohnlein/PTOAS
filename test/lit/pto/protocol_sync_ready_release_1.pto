@@ -12,6 +12,11 @@
 // RUN:   --protocol-sync-dump=plan --protocol-sync-statistics %s \
 // RUN:   -o /dev/null 2> %t.diagnostics
 // RUN: FileCheck %s --input-file=%t.diagnostics --check-prefix=PLAN
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-analysis-only \
+// RUN:   --protocol-sync-dump=storage-tracks %s \
+// RUN:   -o %t.storage 2> %t.storage-diagnostics
+// RUN: FileCheck %s --input-file=%t.storage-diagnostics --check-prefix=STORAGE
 // RUN: not ptoas --pto-level=level2 --emit-pto-ir \
 // RUN:   --protocol-sync-ready-release %s -o /dev/null 2>&1 | \
 // RUN:   FileCheck %s --check-prefix=IMPLICIT
@@ -45,6 +50,20 @@ module {
 // PLAN: PROTOCOL-SYNC ready-release-plan function=@ready_release_one status=unsupported
 // PLAN: reason=unsupported-visibility
 // PLAN: ProtocolSync ready-release mode found no complete supported plan
+
+// STORAGE: PROTOCOL-SYNC storage-tracks function=@ready_release_one
+// STORAGE: independent-lifecycle component=#0 status=ready reason=none
+// STORAGE-NEXT: independent-e-differential status=independent-only e-rejection=unsupported-visibility
+// STORAGE: storage-track #0 space=vec range=[0,512) families=[#1:slot=none]
+// STORAGE: occurrence access=a#1 family=#1 physical-slot=none generation=#0
+// STORAGE-SAME: slot-binding=unslotted membership=unconditional
+// STORAGE: storage-transition #0 kind=ready origin=lane-frontier old-pattern=storage-ready-frontier
+// STORAGE-SAME: resource=AIV:PIPE_MTE2->AIV:PIPE_MTE3
+// STORAGE-SAME: tracks=[t#0] raw-pair-members=[r#0]
+// STORAGE: reference-placement=after(pto.tload)->before(pto.tstore)
+// STORAGE: storage-transition #1 kind=release origin=lane-frontier old-pattern=storage-release-frontier
+// STORAGE-SAME: tracks=[t#0]
+// STORAGE: reference-placement=after(pto.tstore)->before(pto.tload)
 
 // IMPLICIT: --protocol-sync-ready-release requires an explicit --pto-arch=a2 or --pto-arch=a3
 // A2: PROTOCOL-SYNC ready-release-plan function=@ready_release_one status=unsupported
